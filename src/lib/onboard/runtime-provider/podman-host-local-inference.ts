@@ -1849,14 +1849,25 @@ function executeExactProbe(
       `Podman inference probe create returned exit ${String(run.status)}: ${redactedCommandEvidence(redactor, run)}`,
     );
   }
-  let runtimeId: string | null;
-  try {
-    runtimeId = lookupContainerId(engine, spec.name);
-  } catch (error) {
-    captureFailure(error);
-    throw new PodmanInferenceIndeterminateCleanupError(
-      "Podman inference probe identity lookup failed after create.",
-    );
+  let runtimeId: string | null = null;
+  let acknowledgementFailure: Error | null = null;
+  if (run.status === 0 && !run.error) {
+    try {
+      runtimeId = exactContainerId(run.stdout.trim());
+    } catch (error) {
+      acknowledgementFailure =
+        error instanceof Error ? error : new Error(errorEvidence(redactor, error));
+    }
+  }
+  if (runtimeId === null) {
+    try {
+      runtimeId = lookupContainerId(engine, spec.name);
+    } catch (error) {
+      captureFailure(error);
+      throw new PodmanInferenceIndeterminateCleanupError(
+        "Podman inference probe identity lookup failed after create.",
+      );
+    }
   }
   if (runtimeId === null) {
     throw new Error(
@@ -1872,32 +1883,16 @@ function executeExactProbe(
       "Podman inference probe identity is indeterminate after create.",
     );
   }
-  if (run.status === 0 && !run.error) {
-    let acknowledgementFailure: Error | null = null;
+  if (acknowledgementFailure !== null) {
+    captureFailure(acknowledgementFailure);
+    cleanupExactProbe(engine, container, spec, phase, onFailureEvidence, redactor);
     try {
-      const reportedId = exactContainerId(run.stdout.trim());
-      if (reportedId !== container.runtimeId) {
-        throw new Error(
-          "Podman inference probe create identity disagrees with exact name inspection.",
-        );
-      }
+      assertAuthority();
     } catch (error) {
-      acknowledgementFailure =
-        error instanceof Error ? error : new Error(errorEvidence(redactor, error));
-      captureFailure(acknowledgementFailure);
+      captureFailure(error);
+      throw new PodmanInferenceCapturedFailureError(errorEvidence(redactor, error));
     }
-    if (acknowledgementFailure !== null) {
-      cleanupExactProbe(engine, container, spec, phase, onFailureEvidence, redactor);
-      try {
-        assertAuthority();
-      } catch (error) {
-        captureFailure(error);
-        throw new PodmanInferenceCapturedFailureError(errorEvidence(redactor, error));
-      }
-      throw new PodmanInferenceCapturedFailureError(
-        errorEvidence(redactor, acknowledgementFailure),
-      );
-    }
+    throw new PodmanInferenceCapturedFailureError(errorEvidence(redactor, acknowledgementFailure));
   }
 
   let failure: Error | null = null;

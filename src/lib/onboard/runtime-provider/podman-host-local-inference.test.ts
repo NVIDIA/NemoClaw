@@ -239,33 +239,55 @@ describe("Podman host-local inference lifecycle", () => {
     ).toBe(true);
   });
 
-  it.each([
-    ["malformed", "not-a-full-container-id", "must be a full immutable ID"],
-    ["a different full ID", `${"d".repeat(64)}\n`, "disagrees with exact name inspection"],
-  ] as const)(
-    "captures %s successful disposable-probe create acknowledgement and removes all residue",
-    (_label, acknowledgement, expectedFailure) => {
-      const harness = createPodmanHostLocalInferenceTestHarness();
-      harness.state.probeRunAcknowledgementText = acknowledgement;
-      const runtime = operationRuntime(harness);
+  it("uses a valid full container ID when probe name lookup would time out (#9211)", () => {
+    const harness = createPodmanHostLocalInferenceTestHarness();
+    harness.state.probePostCreateNameLookupTimeout = true;
+    expect(() =>
+      operationRuntime(harness).startManaged(harness.input, harness.writer),
+    ).not.toThrow();
+  });
 
-      expect(() => runtime.startManaged(harness.input, harness.writer)).toThrow(expectedFailure);
-      expect(
-        harness.failures.some(
-          ({ phase, message }) => phase === "ready" && message.includes(expectedFailure),
-        ),
-      ).toBe(true);
-      const evidenceIndex = harness.events.indexOf("evidence:ready");
-      const removeIndex = harness.events.findIndex((event) =>
-        event.includes(`podman:rm --force ${"c".repeat(64)}`),
-      );
-      expect(evidenceIndex).toBeGreaterThanOrEqual(0);
-      expect(removeIndex).toBeGreaterThan(evidenceIndex);
-      expect(harness.probe()).toBeNull();
-      expect(harness.container()).toBeNull();
-      expect(harness.written).toHaveLength(0);
-    },
-  );
+  it("captures a malformed disposable-probe create acknowledgement and removes all residue", () => {
+    const harness = createPodmanHostLocalInferenceTestHarness();
+    harness.state.probeRunAcknowledgementText = "not-a-full-container-id";
+    const runtime = operationRuntime(harness);
+
+    expect(() => runtime.startManaged(harness.input, harness.writer)).toThrow(
+      "must be a full immutable ID",
+    );
+    expect(
+      harness.failures.some(
+        ({ phase, message }) =>
+          phase === "ready" && message.includes("must be a full immutable ID"),
+      ),
+    ).toBe(true);
+    const evidenceIndex = harness.events.indexOf("evidence:ready");
+    const removeIndex = harness.events.findIndex((event) =>
+      event.includes(`podman:rm --force ${"c".repeat(64)}`),
+    );
+    expect(evidenceIndex).toBeGreaterThanOrEqual(0);
+    expect(removeIndex).toBeGreaterThan(evidenceIndex);
+    expect(harness.probe()).toBeNull();
+    expect(harness.container()).toBeNull();
+    expect(harness.written).toHaveLength(0);
+  });
+
+  it("retains a same-name probe when the acknowledged full container ID is absent", () => {
+    const harness = createPodmanHostLocalInferenceTestHarness();
+    harness.state.probeRunAcknowledgementText = `${"d".repeat(64)}\n`;
+    const runtime = operationRuntime(harness);
+
+    expect(() => runtime.startManaged(harness.input, harness.writer)).toThrow(
+      "probe identity is indeterminate after create",
+    );
+    expect(harness.probe()).toMatchObject({ id: "c".repeat(64), running: true });
+    expect(
+      harness.events.some((event) => event.includes(`podman:rm --force ${"c".repeat(64)}`)),
+    ).toBe(false);
+    expect(
+      harness.events.some((event) => event.includes(`podman:rm --force ${"d".repeat(64)}`)),
+    ).toBe(false);
+  });
 
   it("accepts a lost disposable-probe remove acknowledgement only after exact absence proof", () => {
     const harness = createPodmanHostLocalInferenceTestHarness();

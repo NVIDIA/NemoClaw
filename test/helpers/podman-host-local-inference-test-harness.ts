@@ -118,6 +118,7 @@ export interface PodmanHostLocalInferenceHarness {
     runSemanticMismatchText: string | null;
     probeRunLostAcknowledgement: boolean;
     probeRunAcknowledgementText: string | null;
+    probePostCreateNameLookupTimeout: boolean;
     probeWaitFailure: boolean;
     probeRemoveLostAcknowledgement: boolean;
     probeRemoveLeavesContainer: boolean;
@@ -391,6 +392,7 @@ export function createPodmanHostLocalInferenceTestHarness(
     runSemanticMismatchText: null as string | null,
     probeRunLostAcknowledgement: false,
     probeRunAcknowledgementText: null as string | null,
+    probePostCreateNameLookupTimeout: false,
     probeWaitFailure: false,
     probeRemoveLostAcknowledgement: false,
     probeRemoveLeavesContainer: false,
@@ -512,6 +514,13 @@ export function createPodmanHostLocalInferenceTestHarness(
         const candidate = [currentContainer, currentProbe].find(
           (container) => container?.name === expectedName,
         );
+        if (
+          state.probePostCreateNameLookupTimeout &&
+          candidate === currentProbe &&
+          currentProbe !== null
+        ) {
+          return result(1, "", "spawnSync /usr/local/bin/podman ETIMEDOUT", new Error("ETIMEDOUT"));
+        }
         if (!candidate) return result();
         return result(0, `${candidate.id}\t${candidate.name}\n`);
       }
