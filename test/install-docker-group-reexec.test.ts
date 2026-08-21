@@ -129,12 +129,18 @@ function runEnsureDocker(
         .readFileSync(sgLog, "utf-8")
         .split("\n")
         .filter((line) => line.length > 0)
-      : [];
+    : [];
   const sgProvider = fs.existsSync(sgProviderLog)
     ? fs.readFileSync(sgProviderLog, "utf-8").trim()
     : null;
 
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr, sgArgs, sgProvider };
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    sgArgs,
+    sgProvider,
+  };
 }
 
 describeLinux("install.sh ensure_docker — #4414 non-interactive self re-exec", () => {
