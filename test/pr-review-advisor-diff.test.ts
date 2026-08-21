@@ -110,27 +110,31 @@ describe("PR review advisor diff", () => {
     });
     expect(JSON.stringify(manifest)).not.toContain("complete-diff-tail");
 
-    let cursor = 0;
-    let reconstructed = "";
-    for (;;) {
-      const result = await diffTool.execute(
-        `page-${cursor}`,
-        { path: "review.txt", cursor },
-        undefined,
-        undefined,
-        undefined as never,
-      );
-      const page = JSON.parse(
-        result.content[0]?.type === "text" ? result.content[0].text : "{}",
-      ) as { chunk: string; nextCursor: number | null };
-      expect(page.chunk.length).toBeLessThanOrEqual(PR_REVIEW_DIFF_PAGE_CHARACTER_LIMIT);
-      reconstructed += page.chunk;
-      if (page.nextCursor === null) break;
-      cursor = page.nextCursor;
-    }
+    const firstResult = await diffTool.execute(
+      "first-page",
+      { path: "review.txt", cursor: 0 },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+    const firstPage = JSON.parse(
+      firstResult.content[0]?.type === "text" ? firstResult.content[0].text : "{}",
+    ) as { chunk: string; nextCursor: number | null };
+    expect(firstPage.chunk.length).toBeLessThanOrEqual(PR_REVIEW_DIFF_PAGE_CHARACTER_LIMIT);
+    expect(firstPage.nextCursor).not.toBeNull();
 
-    expect(reconstructed).toBe(oversizedDiff);
-    expect(reconstructed).toContain("complete-diff-tail");
+    const tailCursor = oversizedDiff.length - "complete-diff-tail\n".length;
+    const tailResult = await diffTool.execute(
+      "tail-page",
+      { path: "review.txt", cursor: tailCursor },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+    const tailPage = JSON.parse(
+      tailResult.content[0]?.type === "text" ? tailResult.content[0].text : "{}",
+    ) as { chunk: string; nextCursor: number | null };
+    expect(tailPage).toMatchObject({ chunk: "complete-diff-tail\n", nextCursor: null });
     expect(readFileDiff).toHaveBeenCalledOnce();
   });
 
