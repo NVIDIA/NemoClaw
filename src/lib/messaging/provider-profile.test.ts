@@ -90,6 +90,20 @@ describe("messaging credential provider profile", () => {
     ).toThrow(/does not match NemoClaw's endpointless messaging credential contract/);
   });
 
+  it("reports a failed existing-profile export separately (#9875)", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stderr: "profile already exists" })
+      .mockReturnValueOnce({ status: 1, stderr: "gateway unavailable" });
+
+    expect(() =>
+      ensureMessagingCredentialProviderProfile({
+        root: "/repo",
+        runOpenshell,
+      }),
+    ).toThrow(/already exists but could not be exported for validation/);
+  });
+
   it.each(["not-json", `${EXPECTED_PROFILE}\n${EXPECTED_PROFILE}`])(
     "rejects malformed or ambiguous existing profile output (#9875)",
     (stdout) => {

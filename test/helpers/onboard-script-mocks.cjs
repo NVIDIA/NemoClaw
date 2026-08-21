@@ -50,6 +50,11 @@ function normalizeCommand(command) {
   return (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
 }
 
+function providerNameAfterAction(args, providerIndex) {
+  const firstArgument = providerIndex + 2;
+  return args[firstArgument] === "-g" ? args[firstArgument + 2] : args[firstArgument];
+}
+
 function createStatefulMessagingProviderRunner({
   commands,
   initialProviders = [],
@@ -64,15 +69,39 @@ function createStatefulMessagingProviderRunner({
     const providerIndex = args.indexOf("provider");
     commands.push({ command: normalized, env: options.env || null });
 
-    if (providerIndex >= 0 && args[providerIndex + 1] === "create") {
-      const name = args[args.indexOf("--name") + 1];
-      const type = args[args.indexOf("--type") + 1];
-      const credential = args[args.indexOf("--credential") + 1];
-      if (name && type && credential) providers.set(name, { type, credential });
+    const providerAction = providerIndex >= 0 ? args[providerIndex + 1] : null;
+    if (providerAction === "profile") {
+      const fileIndex = args.indexOf("--file");
+      return args[providerIndex + 2] === "import" && fileIndex >= 0 && args[fileIndex + 1]
+        ? { status: 0 }
+        : { status: 1, stderr: "unsupported provider profile command" };
+    }
+    if (
+      args[providerIndex - 1] === "sandbox" &&
+      (providerAction === "attach" || providerAction === "detach")
+    ) {
+      return args.length >= providerIndex + 4
+        ? { status: 0 }
+        : { status: 1, stderr: `invalid provider ${providerAction} command` };
+    }
+    if (providerAction === "create") {
+      const nameIndex = args.indexOf("--name");
+      const typeIndex = args.indexOf("--type");
+      const credentialIndex = args.indexOf("--credential");
+      const name = nameIndex >= 0 ? args[nameIndex + 1] : null;
+      const type = typeIndex >= 0 ? args[typeIndex + 1] : null;
+      const credential = credentialIndex >= 0 ? args[credentialIndex + 1] : null;
+      if (!name || !type || !credential) {
+        return { status: 1, stderr: "invalid provider create command" };
+      }
+      providers.set(name, { type, credential });
       return { status: 0 };
     }
-    if (providerIndex >= 0 && args[providerIndex + 1] === "get") {
+    if (providerAction === "get") {
       const name = args.at(-1);
+      if (!name || name === "get") {
+        return { status: 1, stderr: "invalid provider get command" };
+      }
       const provider = providers.get(name);
       return provider
         ? {
@@ -85,6 +114,27 @@ function createStatefulMessagingProviderRunner({
             ].join("\n"),
           }
         : { status: 1, stderr: `provider '${name}' not found` };
+    }
+    if (providerAction === "update") {
+      const name = providerNameAfterAction(args, providerIndex);
+      const credentialIndex = args.indexOf("--credential");
+      const credential = credentialIndex >= 0 ? args[credentialIndex + 1] : null;
+      const provider = providers.get(name);
+      if (!name || !provider || (credentialIndex >= 0 && !credential)) {
+        return { status: 1, stderr: "invalid provider update command" };
+      }
+      if (credential) provider.credential = credential;
+      return { status: 0 };
+    }
+    if (providerAction === "delete") {
+      const name = providerNameAfterAction(args, providerIndex);
+      if (!name || !providers.delete(name)) {
+        return { status: 1, stderr: "invalid provider delete command" };
+      }
+      return { status: 0 };
+    }
+    if (providerIndex >= 0) {
+      return { status: 1, stderr: "unsupported provider command" };
     }
     if (
       readySandboxName &&
