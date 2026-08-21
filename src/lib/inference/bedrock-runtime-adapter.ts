@@ -39,6 +39,8 @@ import {
 } from "./bedrock-runtime-translation";
 import {
   BEDROCK_RUNTIME_ADAPTER_GENERATION_ENV,
+  BEDROCK_RUNTIME_ADAPTER_UNINSTALL_JOURNAL_VERSION,
+  type BedrockRuntimeAdapterLifecyclePaths,
   canonicalPath,
   canonicalPid,
   isBedrockRuntimeAdapterState,
@@ -371,6 +373,8 @@ async function waitForAdapterHealth(
 async function ensureBedrockRuntimeAdapterLocked(options: {
   classification: Extract<CustomAnthropicEndpointClassification, { kind: "bedrock-runtime" }>;
   compatibleCredential?: string | null;
+  lifecycle: BedrockRuntimeAdapterLifecyclePaths;
+  gatewayPort: number;
 }): Promise<{
   baseUrl: string;
   localBaseUrl: string;
@@ -459,6 +463,7 @@ async function ensureBedrockRuntimeAdapterLocked(options: {
     env: childEnv,
     buildEnv: buildSubprocessEnv,
   });
+  let preserveFailedStartupEvidence = false;
   try {
     persistLocalAdapterPid(PID_PATH, child.pid);
 
@@ -477,25 +482,52 @@ async function ensureBedrockRuntimeAdapterLocked(options: {
     if (!Number.isSafeInteger(uid) || uid! < 0) {
       throw new Error("Bedrock Runtime adapter current-user identity could not be recorded");
     }
-    writeLocalAdapterSecretFile(TOKEN_PATH, token);
-    writeDurablePrivateBedrockRuntimeJson(STATE_PATH, {
-      version: 2,
+    const user = os.userInfo().username;
+    const executablePath = canonicalPath(process.execPath);
+    const scriptPath = canonicalPath(getAdapterScriptPath());
+    const tokenHash = adapterTokenHash(token);
+    const updatedAt = new Date().toISOString();
+    const lifecycleIdentity = {
       generation,
-      endpointUrl,
-      region,
-      credentialHash,
       pid,
       processStart,
-      user: os.userInfo().username,
+      user,
       uid,
-      executablePath: canonicalPath(process.execPath),
-      scriptPath: canonicalPath(getAdapterScriptPath()),
+      executablePath,
+      scriptPath,
       adapterPort: BEDROCK_RUNTIME_ADAPTER_PORT,
-      tokenHash: adapterTokenHash(token),
-      updatedAt: new Date().toISOString(),
-    });
+      tokenHash,
+    };
+    writeLocalAdapterSecretFile(TOKEN_PATH, token);
+    preserveFailedStartupEvidence = true;
+    try {
+      writeDurablePrivateBedrockRuntimeJson(STATE_PATH, {
+        version: 2,
+        ...lifecycleIdentity,
+        endpointUrl,
+        region,
+        credentialHash,
+        updatedAt,
+      });
+    } catch (error) {
+      writeDurablePrivateBedrockRuntimeJson(options.lifecycle.journalPath, {
+        version: BEDROCK_RUNTIME_ADAPTER_UNINSTALL_JOURNAL_VERSION,
+        phase: "prepared",
+        gatewayPort: options.gatewayPort,
+        ...lifecycleIdentity,
+        createdAt: updatedAt,
+        updatedAt,
+      });
+      throw new Error(
+        "Bedrock Runtime adapter lifecycle state could not be published; PID and token evidence were preserved. Rerun uninstall before onboarding.",
+        { cause: error },
+      );
+    }
+    preserveFailedStartupEvidence = false;
   } catch (err) {
-    cleanupFailedLocalAdapterStartup(ADAPTER_PROCESS, child.pid);
+    if (!preserveFailedStartupEvidence) {
+      cleanupFailedLocalAdapterStartup(ADAPTER_PROCESS, child.pid);
+    }
     throw err;
   }
   process.env[BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV] = token;
@@ -529,7 +561,11 @@ export async function ensureBedrockRuntimeAdapter(options: {
         "Bedrock Runtime adapter uninstall cleanup is incomplete; rerun uninstall before onboarding.",
       );
     }
-    return ensureBedrockRuntimeAdapterLocked(options);
+    return ensureBedrockRuntimeAdapterLocked({
+      ...options,
+      lifecycle,
+      gatewayPort: GATEWAY_PORT,
+    });
   });
 }
 

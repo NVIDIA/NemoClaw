@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import crypto from "node:crypto";
+import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 
@@ -70,6 +71,7 @@ import {
   readLocalAdapterTextFile,
   spawnDetachedNodeAdapter,
   waitForLocalAdapterHealth,
+  writeLocalAdapterSecretFile,
 } from "./local-adapter-lifecycle";
 
 const US_EAST_1_CLASSIFICATION = {
@@ -506,6 +508,64 @@ describe("Bedrock Runtime OpenAI adapter", () => {
       adapterPort: 11_436,
       tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
     });
+  });
+
+  it("preserves exact lifecycle evidence when durable state publication fails", async () => {
+    const journalPath = "/__nemoclaw_test__/bedrock-runtime-adapter/8080/uninstall.json";
+    let journalPublished = false;
+    const existsSync = vi
+      .spyOn(fs, "existsSync")
+      .mockImplementation((target) => (String(target) === journalPath ? journalPublished : false));
+    vi.mocked(waitForLocalAdapterHealth).mockResolvedValueOnce(true);
+    vi.mocked(writeDurablePrivateBedrockRuntimeJson)
+      .mockImplementationOnce(() => {
+        throw new Error("EIO: lifecycle state write failed");
+      })
+      .mockImplementationOnce(() => {
+        journalPublished = true;
+      });
+
+    try {
+      await expect(
+        ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+      ).rejects.toThrow("PID and token evidence were preserved");
+
+      const [tokenPath, token] = vi.mocked(writeLocalAdapterSecretFile).mock.calls.at(-1) ?? [];
+      expect(tokenPath).toMatch(/bedrock-runtime-adapter-token$/u);
+      expect(token).toMatch(/^[a-f0-9]{48}$/u);
+      expect(cleanupFailedLocalAdapterStartup).not.toHaveBeenCalled();
+      expect(vi.mocked(writeDurablePrivateBedrockRuntimeJson).mock.calls).toEqual([
+        [
+          expect.stringMatching(/bedrock-runtime-adapter\.json$/u),
+          expect.objectContaining({
+            version: 2,
+            generation: expect.stringMatching(/^[a-f0-9]{32}$/u),
+            pid: 4242,
+            processStart: "linux:test-boot:4242",
+            tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+          }),
+        ],
+        [
+          journalPath,
+          expect.objectContaining({
+            version: 1,
+            phase: "prepared",
+            gatewayPort: 8080,
+            generation: expect.stringMatching(/^[a-f0-9]{32}$/u),
+            pid: 4242,
+            processStart: "linux:test-boot:4242",
+            tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+          }),
+        ],
+      ]);
+
+      await expect(
+        ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+      ).rejects.toThrow("uninstall cleanup is incomplete");
+      expect(spawnDetachedNodeAdapter).toHaveBeenCalledTimes(1);
+    } finally {
+      existsSync.mockRestore();
+    }
   });
 
   it("does not replace a running PID whose stable identity disagrees with lifecycle state", async () => {

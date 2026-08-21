@@ -53,7 +53,7 @@ Before it removes the selected state root, uninstall stops only the adapter boun
 Before each signal, uninstall revalidates the canonical PID, current user, stable process start identity, lifecycle generation, executable path, and launcher path.
 Before it deletes lifecycle evidence, uninstall revalidates process absence, the state generation, the PID, and the local bearer-token hash.
 If the adapter remains after `SIGTERM` and `SIGKILL`, uninstall exits nonzero before state-root cleanup.
-It preserves the selected gateway's PID, bearer token, lifecycle state, and prepared uninstall journal for a retry.
+It preserves the selected gateway's PID, bearer token, any lifecycle state that was published, and prepared uninstall journal for a retry.
 If required evidence conflicts before journal preparation, uninstall preserves that evidence and does not signal a process.
 
 The lifecycle evidence is `<selected-state-root>/bedrock-runtime-adapter.pid`, `<selected-state-root>/bedrock-runtime-adapter-token`, and `<selected-state-root>/bedrock-runtime-adapter.json`.

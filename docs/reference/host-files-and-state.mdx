@@ -144,7 +144,7 @@ Outside portable cleanup, the shared host state is eligible for removal only whe
 
 Before it removes a selected state root, uninstall must prove that its state-bound Amazon Bedrock adapter process is absent.
 It revalidates the process identity and lifecycle generation before each signal and revalidates the evidence before deletion.
-If a stop remains unresolved after journal preparation, uninstall exits nonzero and preserves the PID, token, state, and per-gateway journal.
+If a stop remains unresolved after journal preparation, uninstall exits nonzero and preserves the PID, token, any lifecycle state that was published, and per-gateway journal.
 An earlier evidence conflict also exits nonzero and preserves every existing lifecycle file.
 Only full uninstall performs adapter-port orphan discovery; selected-gateway cleanup does not inspect sibling gateway state.
 

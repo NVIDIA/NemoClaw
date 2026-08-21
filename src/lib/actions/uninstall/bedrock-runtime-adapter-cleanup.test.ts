@@ -90,6 +90,13 @@ function writeLegacyEvidence(home: string): void {
   });
 }
 
+function writeFailedStartupEvidence(home: string): void {
+  const paths = adapterPaths(home);
+  fs.mkdirSync(paths.stateDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(paths.pidPath, `${String(PID)}\n`, { mode: 0o600 });
+  fs.writeFileSync(paths.tokenPath, `${TOKEN}\n`, { mode: 0o600 });
+}
+
 function writeJournal(
   home: string,
   phase:
@@ -226,6 +233,49 @@ function stop(home: string, host: ReturnType<typeof cleanupHost>["host"], scanOr
 }
 
 describe("Bedrock Runtime adapter fail-closed uninstall cleanup (#9552)", () => {
+  it("retires failed-startup PID and token evidence after proving process exit", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-stop-startup-journal-"));
+    const processes = new Map([[PID, managedProcess()]]);
+    writeFailedStartupEvidence(home);
+    writeJournal(home, "prepared");
+    const { host, kills } = cleanupHost(home, processes, {
+      onKill: (pid) => processes.delete(pid),
+    });
+
+    try {
+      expect(stop(home, host)).toMatchObject({ ok: true, status: "stopped", pid: PID });
+      expect(kills).toEqual([{ pid: PID, signal: "SIGTERM" }]);
+      expect(fs.existsSync(adapterPaths(home).pidPath)).toBe(false);
+      expect(fs.existsSync(adapterPaths(home).tokenPath)).toBe(false);
+      expect(fs.existsSync(adapterPaths(home).statePath)).toBe(false);
+      expect(fs.existsSync(lifecyclePaths(home).journalPath)).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves failed-startup evidence when TERM and KILL cannot prove exit", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-stop-startup-failure-"));
+    const processes = new Map([[PID, managedProcess()]]);
+    writeFailedStartupEvidence(home);
+    writeJournal(home, "prepared");
+    const { host, kills } = cleanupHost(home, processes);
+
+    try {
+      expect(stop(home, host)).toMatchObject({ ok: false, fatal: true, pid: PID });
+      expect(kills).toEqual([
+        { pid: PID, signal: "SIGTERM" },
+        { pid: PID, signal: "SIGKILL" },
+      ]);
+      expect(fs.existsSync(adapterPaths(home).pidPath)).toBe(true);
+      expect(fs.existsSync(adapterPaths(home).tokenPath)).toBe(true);
+      expect(fs.existsSync(adapterPaths(home).statePath)).toBe(false);
+      expect(fs.existsSync(lifecyclePaths(home).journalPath)).toBe(true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("returns a fatal result and preserves lifecycle evidence after TERM and KILL exhaustion", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-stop-exhaustion-"));
     const processes = new Map([[PID, managedProcess()]]);
