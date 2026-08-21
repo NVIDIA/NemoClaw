@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 // sandbox-state computes its backup root from HOME at module load time.
 const ORIGINAL_HOME = process.env.HOME;
@@ -35,7 +35,12 @@ function writeExecutable(filePath: string, source: string): void {
  * SSH contract against a local sandbox-root directory, so backupSandboxState /
  * restoreSandboxState exercise the real code path without a live sandbox.
  */
-function writeFakeSandboxBins(binDir: string, fakeRoot: string): void {
+function writeFakeSandboxBins(
+  binDir: string,
+  fakeRoot: string,
+  options: { denyConfigSshRead?: boolean } = {},
+): void {
+  const configReadDenial = options.denyConfigSshRead === true ? "process.exit(1);" : "";
   writeExecutable(
     path.join(binDir, "openshell"),
     `#!/bin/sh
@@ -71,6 +76,7 @@ function readStdin() {
 }
 if (cmd.includes("[ -d ")) { process.exit(0); }
 if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
+  ${configReadDenial}
   process.stdout.write(fs.readFileSync(path.join(dir, "openclaw.json")));
   process.exit(0);
 }
@@ -115,6 +121,50 @@ function writeOpenClawRegistry(sandboxName: string): void {
 }
 
 describe("OpenClaw durable config file (#5027)", () => {
+  it("uses a supplied state-file capture when SSH cannot read openclaw.json", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sealed-config-snapshot-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const fakeRoot = path.join(fixture, "sandbox-root");
+      const openclawDir = path.join(fakeRoot, ".openclaw");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(openclawDir, { recursive: true });
+      const original = Buffer.from(
+        JSON.stringify({ models: { default: "nvidia/test" }, apiKey: "secret" }),
+      );
+      fs.writeFileSync(path.join(openclawDir, "openclaw.json"), original);
+      writeFakeSandboxBins(binDir, fakeRoot, { denyConfigSshRead: true });
+      writeOpenClawRegistry("alpha");
+      process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
+
+      const captureStateFile = vi.fn(() => ({ outcome: "backed_up" as const, data: original }));
+      const backup = sandboxState.backupSandboxState("alpha", { captureStateFile });
+
+      expect(backup.success).toBe(true);
+      expect(backup.backedUpFiles).toEqual(["openclaw.json"]);
+      expect(backup.failedFiles).toEqual([]);
+      expect(captureStateFile).toHaveBeenCalledWith({
+        sandboxName: "alpha",
+        dir: "/sandbox/.openclaw",
+        spec: { path: "openclaw.json", strategy: "copy" },
+      });
+      const stored = JSON.parse(
+        fs.readFileSync(path.join(backup.manifest!.backupPath, "openclaw.json"), "utf-8"),
+      );
+      expect(stored.models.default).toBe("nvidia/test");
+      expect(stored.apiKey).toBe("[STRIPPED_BY_MIGRATION]");
+    } finally {
+      void (oldOpenshell === undefined
+        ? Reflect.deleteProperty(process.env, "NEMOCLAW_OPENSHELL_BIN")
+        : Reflect.set(process.env, "NEMOCLAW_OPENSHELL_BIN", oldOpenshell));
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it("backs up and restores openclaw.json settings while sanitizing secrets", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-snapshot-"));
     const oldPath = process.env.PATH;

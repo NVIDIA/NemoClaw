@@ -153,10 +153,9 @@ describe("preparePortableExperimentalHost", () => {
     const portableSandboxAddresses = new BlockList();
     portableSandboxAddresses.addSubnet(networkAddress!, Number(prefixText), "ipv4");
 
-    expect(PORTABLE_DOCKER_NETWORK_SUBNET).toBe("169.254.1.0/24");
-    expect(PORTABLE_REGISTRY_IP).toBe("169.254.1.3");
+    expect(PORTABLE_DOCKER_NETWORK_SUBNET).toBe("10.87.0.0/24");
+    expect(PORTABLE_REGISTRY_IP).toBe("10.87.0.3");
     expect(PORTABLE_HOST_GATEWAY_IP).toBe("169.254.2.2");
-    expect(portableSandboxAddresses.check("169.254.1.2", "ipv4")).toBe(true);
     expect(portableSandboxAddresses.check(PORTABLE_REGISTRY_IP, "ipv4")).toBe(true);
     expect(portableSandboxAddresses.check(PORTABLE_HOST_GATEWAY_IP, "ipv4")).toBe(false);
     expect(PORTABLE_HOST_GATEWAY_IP).not.toBe(PORTABLE_REGISTRY_IP);
@@ -645,7 +644,7 @@ describe("preparePortableExperimentalHost", () => {
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
       .mockReturnValueOnce(result())
       .mockReturnValueOnce(result(0, JSON.stringify([{ Subnet: PORTABLE_DOCKER_NETWORK_SUBNET }])))
-      .mockReturnValueOnce(result(0, `1 true ${PORTABLE_REGISTRY_IP}`));
+      .mockReturnValueOnce(result(0, `1|true|${PORTABLE_REGISTRY_IP}`));
     const ip = vi
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
       .mockReturnValueOnce(result(0, NO_RETIRED_GATEWAY_EVIDENCE))
@@ -743,7 +742,7 @@ describe("preparePortableExperimentalHost", () => {
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
       .mockReturnValueOnce(result())
       .mockReturnValueOnce(result(0, JSON.stringify([{ Subnet: PORTABLE_DOCKER_NETWORK_SUBNET }])))
-      .mockReturnValueOnce(result(0, `1 true ${PORTABLE_REGISTRY_IP}`));
+      .mockReturnValueOnce(result(0, `1|true|${PORTABLE_REGISTRY_IP}`));
 
     preparePortableExperimentalHost(
       { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
@@ -767,7 +766,7 @@ describe("preparePortableExperimentalHost", () => {
   it.each<[SpawnResult, string]>([
     [
       result(0, JSON.stringify([{ Subnet: "10.88.0.0/16" }])),
-      "Refusing to reuse network 'openshell-docker' with unexpected subnet '10.88.0.0/16'. Expected 169.254.1.0/24.",
+      "Refusing to reuse network 'openshell-docker' with unexpected subnet '10.88.0.0/16'. Expected 10.87.0.0/24.",
     ],
     [
       {
@@ -1049,7 +1048,7 @@ describe("preparePortableExperimentalHost", () => {
     const docker = vi
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
       .mockReturnValueOnce(result())
-      .mockReturnValueOnce(result(0, "1 true"))
+      .mockReturnValueOnce(result(0, "1|true|"))
       .mockReturnValueOnce(result());
 
     preparePortableExperimentalHost(
@@ -1113,7 +1112,7 @@ describe("preparePortableExperimentalHost", () => {
     const docker = vi
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
       .mockReturnValueOnce(result())
-      .mockReturnValueOnce(result(0, `1 true ${PORTABLE_REGISTRY_IP}`));
+      .mockReturnValueOnce(result(0, `1|true|${PORTABLE_REGISTRY_IP}`));
 
     try {
       const prepared = preparePortableExperimentalHost(scope.env, {
@@ -1370,7 +1369,7 @@ describe("preparePortableExperimentalHost", () => {
       const docker = vi
         .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
         .mockReturnValueOnce(result())
-        .mockReturnValueOnce(result(0, `1 true ${PORTABLE_REGISTRY_IP}`));
+        .mockReturnValueOnce(result(0, `1|true|${PORTABLE_REGISTRY_IP}`));
 
       const prepared = preparePortableExperimentalHost(
         { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },

@@ -22,6 +22,7 @@ import {
 import {
   assertMcpProviderRecoverable,
   observeMcpCredentialRevision,
+  refreshMcpProviderEnvironment,
   waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
@@ -137,6 +138,50 @@ Provider:
     expect(() => assertMcpProviderRecoverable(entry)).toThrow(
       /legacy generic profile.*cannot bind to an MCP endpoint/,
     );
+  });
+
+  it("republishes an exact provider only after policy binding without reading its credential", () => {
+    const id = "11111111-2222-4333-8444-555555555555";
+    const providerResult = (resourceVersion: number) => ({
+      pid: 1234,
+      status: 0,
+      signal: null,
+      output: [
+        null,
+        `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: ${resourceVersion}\nCredential keys: GITHUB_TOKEN\n`,
+        "",
+      ],
+      stdout: `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: ${resourceVersion}\nCredential keys: GITHUB_TOKEN\n`,
+      stderr: "",
+    });
+    const run = vi
+      .spyOn(providerCommand, "runOpenshellProviderCommand")
+      .mockReturnValueOnce(providerResult(7))
+      .mockReturnValueOnce({
+        pid: 1234,
+        status: 0,
+        signal: null,
+        output: [null, "", ""],
+        stdout: "",
+        stderr: "",
+      })
+      .mockReturnValueOnce(providerResult(8));
+
+    expect(
+      refreshMcpProviderEnvironment({
+        server: "github",
+        agent: "openclaw",
+        adapter: "mcporter",
+        url: "https://api.githubcopilot.com/mcp",
+        env: ["GITHUB_TOKEN"],
+        providerName: "alpha-mcp-github",
+        providerId: id,
+        policyName: "mcp-bridge-github",
+        addedAt: "2026-08-19T00:00:00.000Z",
+      }),
+    ).toMatchObject({ resourceVersion: 8 });
+    expect(run.mock.calls[1]?.[0]).toEqual(["provider", "update", "alpha-mcp-github"]);
+    expect(run.mock.calls[1]?.[0]).not.toContain("--credential");
   });
 
   it("distinguishes a real detach from OpenShell's idempotent success", () => {
@@ -306,8 +351,34 @@ alpha-mcp-slack   generic  1                 0
       stdout: "canonical",
       stderr: "",
     });
+    const refreshAfterObservedAbsence = vi.fn();
 
-    waitForAttachedMcpCredential("alpha", {
+    waitForAttachedMcpCredential(
+      "alpha",
+      {
+        server: "github",
+        agent: "openclaw",
+        adapter: "mcporter",
+        url: "https://mcp.example.test/mcp",
+        env: ["GITHUB_TOKEN"],
+        providerName: "alpha-mcp-github-0123456789abcdef",
+        providerId: "11111111-2222-4333-8444-555555555555",
+        policyName: "mcp-bridge-github",
+        addedAt: "2026-06-01T00:00:00.000Z",
+      },
+      { refreshAfterObservedAbsence },
+    );
+
+    const proofCommand = exec.mock.calls[0]?.[1] ?? "";
+    expect(proofCommand).toContain("\n");
+    expect(proofCommand).toContain("valid_placeholder");
+    expect(proofCommand).toContain("GITHUB_TOKEN");
+    expect(proofCommand).not.toContain("base64 -d");
+    expect(refreshAfterObservedAbsence).not.toHaveBeenCalled();
+  });
+
+  it("refreshes once after a fresh exec reports the credential absent (#9764)", () => {
+    const entry: McpBridgeEntry = {
       server: "github",
       agent: "openclaw",
       adapter: "mcporter",
@@ -317,13 +388,137 @@ alpha-mcp-slack   generic  1                 0
       providerId: "11111111-2222-4333-8444-555555555555",
       policyName: "mcp-bridge-github",
       addedAt: "2026-06-01T00:00:00.000Z",
+    };
+    const exec = vi
+      .spyOn(processRecovery, "executeSandboxExecCommand")
+      .mockReturnValueOnce({ status: 0, stdout: "absent", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "v12", stderr: "" });
+    const refreshAfterObservedAbsence = vi.fn();
+
+    waitForAttachedMcpCredential("alpha", entry, { refreshAfterObservedAbsence });
+
+    expect(refreshAfterObservedAbsence).toHaveBeenCalledTimes(1);
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not repeat the refresh when the credential remains absent (#9764)", () => {
+    vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
+    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+      status: 0,
+      stdout: "absent",
+      stderr: "",
+    });
+    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
+    const refreshAfterObservedAbsence = vi.fn();
+
+    expect(() =>
+      waitForAttachedMcpCredential(
+        "alpha",
+        {
+          server: "github",
+          agent: "openclaw",
+          adapter: "mcporter",
+          url: "https://mcp.example.test/mcp",
+          env: ["GITHUB_TOKEN"],
+          providerName: "alpha-mcp-github-0123456789abcdef",
+          providerId: "11111111-2222-4333-8444-555555555555",
+          policyName: "mcp-bridge-github",
+          addedAt: "2026-06-01T00:00:00.000Z",
+        },
+        { refreshAfterObservedAbsence },
+      ),
+    ).toThrow(/did not synchronize the expected credential revision/);
+    expect(refreshAfterObservedAbsence).toHaveBeenCalledTimes(1);
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["unavailable", null],
+    ["malformed", { status: 0, stdout: "raw-secret", stderr: "" }],
+  ])("does not refresh when a credential observation is %s (#9764)", (_case, result) => {
+    vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
+    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue(result);
+    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
+    const refreshAfterObservedAbsence = vi.fn();
+
+    expect(() =>
+      waitForAttachedMcpCredential(
+        "alpha",
+        {
+          server: "github",
+          agent: "openclaw",
+          adapter: "mcporter",
+          url: "https://mcp.example.test/mcp",
+          env: ["GITHUB_TOKEN"],
+          providerName: "alpha-mcp-github-0123456789abcdef",
+          providerId: "11111111-2222-4333-8444-555555555555",
+          policyName: "mcp-bridge-github",
+          addedAt: "2026-06-01T00:00:00.000Z",
+        },
+        { refreshAfterObservedAbsence },
+      ),
+    ).toThrow(/did not synchronize the expected credential revision/);
+    expect(refreshAfterObservedAbsence).not.toHaveBeenCalled();
+  });
+
+  it("propagates a credential refresh failure after observed absence (#9764)", () => {
+    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+      status: 0,
+      stdout: "absent",
+      stderr: "",
+    });
+    const refreshAfterObservedAbsence = vi.fn(() => {
+      throw new Error("credential-free refresh failed");
     });
 
-    const proofCommand = exec.mock.calls[0]?.[1] ?? "";
-    expect(proofCommand).toContain("\n");
-    expect(proofCommand).toContain("valid_placeholder");
-    expect(proofCommand).toContain("GITHUB_TOKEN");
-    expect(proofCommand).not.toContain("base64 -d");
+    expect(() =>
+      waitForAttachedMcpCredential(
+        "alpha",
+        {
+          server: "github",
+          agent: "openclaw",
+          adapter: "mcporter",
+          url: "https://mcp.example.test/mcp",
+          env: ["GITHUB_TOKEN"],
+          providerName: "alpha-mcp-github-0123456789abcdef",
+          providerId: "11111111-2222-4333-8444-555555555555",
+          policyName: "mcp-bridge-github",
+          addedAt: "2026-06-01T00:00:00.000Z",
+        },
+        { refreshAfterObservedAbsence },
+      ),
+    ).toThrow("credential-free refresh failed");
+    expect(refreshAfterObservedAbsence).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not accept a stale revision after the absence refresh (#9764)", () => {
+    vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
+    const exec = vi
+      .spyOn(processRecovery, "executeSandboxExecCommand")
+      .mockReturnValueOnce({ status: 0, stdout: "absent", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "v11", stderr: "" });
+    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
+    const refreshAfterObservedAbsence = vi.fn();
+
+    expect(() =>
+      waitForAttachedMcpCredential(
+        "alpha",
+        {
+          server: "github",
+          agent: "openclaw",
+          adapter: "mcporter",
+          url: "https://mcp.example.test/mcp",
+          env: ["GITHUB_TOKEN"],
+          providerName: "alpha-mcp-github-0123456789abcdef",
+          providerId: "11111111-2222-4333-8444-555555555555",
+          policyName: "mcp-bridge-github",
+          addedAt: "2026-06-01T00:00:00.000Z",
+        },
+        { previousRevision: "v11", refreshAfterObservedAbsence },
+      ),
+    ).toThrow(/did not synchronize the expected credential revision/);
+    expect(refreshAfterObservedAbsence).toHaveBeenCalledTimes(1);
+    expect(exec).toHaveBeenCalledTimes(2);
   });
 
   it("fails detach verification when the strict OpenShell exec is unavailable", () => {

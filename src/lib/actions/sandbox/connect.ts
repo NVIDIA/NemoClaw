@@ -1163,6 +1163,7 @@ function exitWithConnectSpawnResult(sandboxName: string, result: SpawnLikeResult
 }
 
 type WaitForSandboxReadyOptions = {
+  allowInitialErrorAfterStart?: boolean;
   allowDockerRuntimeInspection?: boolean;
   captureSandboxList?: (
     args: string[],
@@ -1173,15 +1174,26 @@ type WaitForSandboxReadyOptions = {
   successLogs?: readonly string[];
 };
 
+// OpenShell can transiently publish `Error` immediately after `sandbox start`
+// before the same sandbox advances through `Provisioning` to `Ready`. Its list
+// output exposes no structured transition reason, so only the start caller opts
+// into ten three-second grace polls; every other terminal phase still fails
+// immediately, and a persistent Error fails after the bound. Remove this
+// compatibility exception once OpenShell exposes a structured restart signal or
+// guarantees that post-start recovery never emits the terminal Error phase.
+const START_INITIAL_ERROR_GRACE_POLLS = 10;
+
 // Readiness budget for the repair paths that wait for a restarted sandbox
 // before they touch in-sandbox processes or host forwards. A cold agent boot on
 // a constrained host can exceed the interactive budget, and `start` and
 // `connect --probe-only` prove the same readiness for the same sandbox.
 export const SANDBOX_REPAIR_READY_TIMEOUT_SEC = 300;
 
+/** Wait for a sandbox to become ready, exiting with recovery guidance on terminal failure. */
 export function waitForSandboxReadyOrExit(
   sandboxName: string,
   {
+    allowInitialErrorAfterStart = false,
     allowDockerRuntimeInspection = true,
     captureSandboxList = captureOpenshell,
     defaultTimeoutSec = 120,
@@ -1230,7 +1242,9 @@ export function waitForSandboxReadyOrExit(
   if (!listCommandFailed && status && /^unknown$/i.test(status)) {
     failIfGatewayBlocksConnectReadiness(sandboxName);
   }
-  if (status && TERMINAL_SANDBOX_PHASES.has(status)) {
+  let remainingInitialErrorGracePolls =
+    allowInitialErrorAfterStart && status === "Error" ? START_INITIAL_ERROR_GRACE_POLLS - 1 : 0;
+  if (status && TERMINAL_SANDBOX_PHASES.has(status) && remainingInitialErrorGracePolls === 0) {
     console.error("");
     console.error(`  Sandbox '${sandboxName}' is in '${status}' state.`);
     console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
@@ -1265,7 +1279,13 @@ export function waitForSandboxReadyOrExit(
       failIfGatewayBlocksConnectReadiness(sandboxName);
     }
     if (cur !== "unknown") everSeen = true;
-    if (TERMINAL_SANDBOX_PHASES.has(cur)) {
+    const waitingThroughInitialError = cur === "Error" && remainingInitialErrorGracePolls > 0;
+    if (waitingThroughInitialError) {
+      remainingInitialErrorGracePolls -= 1;
+    } else {
+      remainingInitialErrorGracePolls = 0;
+    }
+    if (TERMINAL_SANDBOX_PHASES.has(cur) && !waitingThroughInitialError) {
       console.error("");
       console.error(`  Sandbox '${sandboxName}' entered '${cur}' state.`);
       console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
@@ -1559,15 +1579,43 @@ export async function connectSandbox(
   sandboxName: string,
   options: SandboxConnectOptions = {},
 ): Promise<void> {
-  return withConnectSandboxLifecycleLock(sandboxName, async () => {
-    await connectSandboxWithinLifecycleFence(sandboxName, options);
+  const started = await withConnectSandboxLifecycleLock(sandboxName, async () => {
+    const prepared = await prepareConnectSandboxWithinLifecycleFence(sandboxName, options);
+    if (!prepared) return null;
+    return {
+      completion: runConnectChildWithShieldsRelockNotice(
+        prepared.binary,
+        prepared.args,
+        {
+          hostCwd: ROOT,
+          stdin: true,
+          ...(prepared.hostEnv ? { hostEnv: prepared.hostEnv } : {}),
+        },
+        sandboxName,
+        prepared.watchShields,
+      ),
+    };
   });
+  if (!started) return;
+
+  // Start the selected child under the lifecycle lock, then release the lock
+  // before waiting for an interactive shell that can remain open indefinitely.
+  const result = await started.completion;
+  result.releaseSignals?.();
+  exitWithConnectSpawnResult(sandboxName, result);
 }
 
-async function connectSandboxWithinLifecycleFence(
+type PreparedConnectChild = {
+  binary: string;
+  args: string[];
+  hostEnv?: NodeJS.ProcessEnv;
+  watchShields: boolean;
+};
+
+async function prepareConnectSandboxWithinLifecycleFence(
   sandboxName: string,
   { probeOnly = false, requireLaunchReadinessPublication = true }: SandboxConnectOptions,
-): Promise<void> {
+): Promise<PreparedConnectChild | null> {
   if (probeOnly) {
     let readiness = await inspectLaunchReadiness(sandboxName);
     let publication: Awaited<ReturnType<typeof publishLaunchReadiness>>;
@@ -1606,7 +1654,7 @@ async function connectSandboxWithinLifecycleFence(
           assertHermesPortableLifecycleForConnect(sandboxName, verified, gatewayName);
         }
         console.log(`  Probe complete: launch readiness is healthy for '${sandboxName}'.`);
-        return;
+        return null;
       }
       // Refuse recovery only when a prior epoch might exist and could not be
       // durably rotated. When the authority and receipt are both securely
@@ -1669,13 +1717,14 @@ async function connectSandboxWithinLifecycleFence(
       break;
     }
     if (publication.kind === "validation-failed") {
-      console.error(
-        `  Probe failed: final launch-readiness validation failed due to ${publication.category}.`,
-      );
+      const failedCheck = publication.failedCheck
+        ? ` because the ${publication.failedCheck} failed`
+        : ` due to ${publication.category}`;
+      console.error(`  Probe failed: final launch-readiness validation failed${failedCheck}.`);
       process.exit(1);
     }
     if (publication.kind === "evidence-failed") {
-      if (!requireLaunchReadinessPublication) return;
+      if (!requireLaunchReadinessPublication) return null;
       // A platform without a per-user runtime authority (macOS) can never
       // store launch-readiness evidence. The probe and recovery still
       // succeeded, and `launch` runs the complete preflight without the
@@ -1685,14 +1734,14 @@ async function connectSandboxWithinLifecycleFence(
         console.log(
           "  Note: launch-readiness evidence is unavailable on this platform; the next launch runs the complete preflight.",
         );
-        return;
+        return null;
       }
       console.error(
         "  Probe failed: complete probe and recovery succeeded, but final launch-readiness evidence could not be verified or published.",
       );
       process.exit(1);
     }
-    return;
+    return null;
   }
 
   const { agent, sb, hermesPortable } = await prepareInteractiveSession(sandboxName);
@@ -1781,17 +1830,10 @@ async function connectSandboxWithinLifecycleFence(
   const connectArgs = portableAuthority
     ? ["sandbox", "connect", "-g", portableAuthority.gatewayName, sandboxName]
     : ["sandbox", "connect", sandboxName];
-  const result = await runConnectChildWithShieldsRelockNotice(
-    portableAuthority?.executablePath ?? getOpenshellBinary(),
-    connectArgs,
-    {
-      hostCwd: ROOT,
-      stdin: true,
-      ...(portableAuthority ? { hostEnv: portableAuthority.env } : {}),
-    },
-    sandboxName,
-    agent?.name === "openclaw" || sb?.agent === "openclaw",
-  );
-  result.releaseSignals?.();
-  exitWithConnectSpawnResult(sandboxName, result);
+  return {
+    binary: portableAuthority?.executablePath ?? getOpenshellBinary(),
+    args: connectArgs,
+    ...(portableAuthority ? { hostEnv: portableAuthority.env } : {}),
+    watchShields: agent?.name === "openclaw" || sb?.agent === "openclaw",
+  };
 }

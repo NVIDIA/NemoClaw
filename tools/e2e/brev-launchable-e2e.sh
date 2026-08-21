@@ -562,13 +562,21 @@ boot_image="$(timeout 300s brev exec "$INSTANCE_NAME" 'set -euo pipefail
   | sed -n 's/^NEMOCLAW_BOOT_IMAGE=//p' | tail -n 1)"
 [ -n "$boot_image" ] || die "booted image identity is missing"
 
+if [ "$boot_image" = "$expected_boot_image" ]; then
+  image_selection_status=passed
+  reported_boot_image="$boot_image"
+else
+  image_selection_status=failed
+  reported_boot_image="<redacted>"
+fi
 jq -n --arg candidateSha "$CANDIDATE_SHA" --arg producerRun "$producer_run" \
-  --arg bootImage "$boot_image" --arg workspaceName "$INSTANCE_NAME" --arg workspaceId "$workspace_id" \
-  '{candidateSha:$candidateSha,producer:{runId:$producerRun,status:"success"},boot:{bootImage:$bootImage},workspace:{name:$workspaceName,id:$workspaceId},fullE2e:"pending"}' \
+  --arg bootImage "$reported_boot_image" --arg expectedBootImage "$expected_boot_image" \
+  --arg imageSelectionStatus "$image_selection_status" \
+  --arg workspaceName "$INSTANCE_NAME" --arg workspaceId "$workspace_id" \
+  '{candidateSha:$candidateSha,producer:{runId:$producerRun,status:"success"},boot:{bootImage:$bootImage},workspace:{name:$workspaceName,id:$workspaceId},fullE2e:"pending",validation:{imageSelection:{status:$imageSelectionStatus,expected:$expectedBootImage,observed:$bootImage},runtimeProvenance:{status:"not-run",checks:[]},fullE2E:"not-run"}}' \
   >"$WORK_DIR/launchable-e2e.json"
 
-[ "$boot_image" = "$expected_boot_image" ] \
-  || die "booted image does not match the producer handoff"
+[ "$image_selection_status" = passed ] || die "booted image does not match the producer handoff"
 
 # Return the baked runtime receipt.
 # shellcheck disable=SC2016
@@ -597,18 +605,53 @@ identity="$(timeout 300s brev exec "$INSTANCE_NAME" 'set -euo pipefail
     --argjson runtimeOverrides "$runtime_overrides" \
     "{schemaVersion:\$schemaVersion,sourceRepository:\$sourceRepository,sourcePath:\$sourcePath,repoSha:\$repoSha,provisionSha:\$provisionSha,imageRepositorySha:\$imageRepositorySha,repoClean:\$repoClean,runtimeOverrides:\$runtimeOverrides}"' \
   | sed -n 's/^NEMOCLAW_IDENTITY=//p' | tail -n 1)"
-jq -e --arg sha "$CANDIDATE_SHA" --arg imageRepositorySha "$image_repository_sha" '
-  .schemaVersion == 1 and .sourceRepository == "NVIDIA/NemoClaw" and
-  .sourcePath == "/opt/nemoclaw-image/NemoClaw" and
-  .repoSha == $sha and .provisionSha == $sha and
-  .imageRepositorySha == $imageRepositorySha and
-  .repoClean == true and .runtimeOverrides == false' \
-  <<<"$identity" >/dev/null || die "booted image runtime does not match the producer handoff"
-source_path="$(jq -er .sourcePath <<<"$identity")"
+runtime_checks="$(jq -c --arg sha "$CANDIDATE_SHA" --arg imageRepositorySha "$image_repository_sha" '
+  def reported($field; $observed):
+    if $field == "schemaVersion" then
+      if ($observed | type) == "number" and $observed == ($observed | floor) and
+          $observed >= 0 and $observed <= 999 then $observed else "<redacted>" end
+    elif $field == "sourceRepository" then
+      if $observed == "NVIDIA/NemoClaw" then $observed else "<redacted>" end
+    elif $field == "sourcePath" then
+      if $observed == "/opt/nemoclaw-image/NemoClaw" then $observed else "<redacted>" end
+    elif $field == "repoSha" or $field == "provisionSha" or $field == "imageRepositorySha" then
+      if ($observed | type) == "string" and ($observed | test("^[0-9a-f]{40}$")) then $observed else "<redacted>" end
+    elif $field == "repoClean" or $field == "runtimeOverrides" then
+      if ($observed | type) == "boolean" then $observed else "<redacted>" end
+    else "<redacted>"
+    end;
+  def check($field; $expected; $observed):
+    {field:$field,expected:$expected,observed:reported($field; $observed),
+      status:(if $observed == $expected then "passed" else "failed" end)};
+  [
+    check("schemaVersion"; 1; .schemaVersion),
+    check("sourceRepository"; "NVIDIA/NemoClaw"; .sourceRepository),
+    check("sourcePath"; "/opt/nemoclaw-image/NemoClaw"; .sourcePath),
+    check("repoSha"; $sha; .repoSha),
+    check("provisionSha"; $sha; .provisionSha),
+    check("imageRepositorySha"; $imageRepositorySha; .imageRepositorySha),
+    check("repoClean"; true; .repoClean),
+    check("runtimeOverrides"; false; .runtimeOverrides)
+  ]' <<<"$identity")" || die "booted image runtime identity is malformed"
+runtime_status="$(jq -r 'if all(.status == "passed") then "passed" else "failed" end' \
+  <<<"$runtime_checks")"
+reported_identity="$(jq -c 'map({key:.field,value:.observed}) | from_entries' \
+  <<<"$runtime_checks")"
 
-jq --argjson identity "$identity" '.boot += $identity' \
+jq --argjson identity "$reported_identity" --arg status "$runtime_status" --argjson checks "$runtime_checks" '
+  .boot += $identity | .validation.runtimeProvenance = {status:$status,checks:$checks}' \
   "$WORK_DIR/launchable-e2e.json" >"$WORK_DIR/launchable-e2e.tmp"
 mv "$WORK_DIR/launchable-e2e.tmp" "$WORK_DIR/launchable-e2e.json"
+
+if [ "$runtime_status" = failed ]; then
+  while IFS= read -r mismatch; do
+    log "Runtime provenance check failed: $mismatch"
+  done < <(jq -r '.[] | select(.status == "failed") |
+    "\(.field) expected \(.expected | tojson), observed \(.observed | tojson)"' \
+    <<<"$runtime_checks")
+  die "booted image runtime provenance failed"
+fi
+source_path="$(jq -er .sourcePath <<<"$identity")"
 
 # Run the existing suite from the baked checkout; no source copy, install, or rebuild.
 raw_log_directory="$(mktemp -d "${RUNNER_TEMP:-/tmp}/brev-launchable-e2e.XXXXXX")"
@@ -647,8 +690,12 @@ Path(source).unlink(missing_ok=True)
 PY
 raw_log=""
 if [ "$e2e_status" -ne 0 ] || ! grep -q '^NEMOCLAW_FULL_E2E_PASSED$' "$WORK_DIR/full-e2e.log"; then
+  jq '.fullE2e = "failed" | .validation.fullE2E = "failed"' \
+    "$WORK_DIR/launchable-e2e.json" >"$WORK_DIR/launchable-e2e.tmp"
+  mv "$WORK_DIR/launchable-e2e.tmp" "$WORK_DIR/launchable-e2e.json"
   die "full E2E failed"
 fi
-jq '.fullE2e = "passed"' "$WORK_DIR/launchable-e2e.json" >"$WORK_DIR/launchable-e2e.tmp"
+jq '.fullE2e = "passed" | .validation.fullE2E = "passed"' \
+  "$WORK_DIR/launchable-e2e.json" >"$WORK_DIR/launchable-e2e.tmp"
 mv "$WORK_DIR/launchable-e2e.tmp" "$WORK_DIR/launchable-e2e.json"
 log "Full E2E passed"

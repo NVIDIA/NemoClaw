@@ -6,7 +6,6 @@ import { shieldsTimeoutDurationFlag } from "../../../lib/cli/duration-flags";
 import {
   assertHermesPortableCommandUnavailable,
   NemoClawCommand,
-  withSandboxCommandLifecycleLock,
 } from "../../../lib/cli/nemoclaw-oclif-command";
 import { sandboxNameArg } from "../../../lib/sandbox/command-support";
 import * as shields from "../../../lib/shields/index";
@@ -27,14 +26,13 @@ export default class ShieldsDownCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(ShieldsDownCommand);
-    await withSandboxCommandLifecycleLock(args.sandboxName, () => {
-      assertHermesPortableCommandUnavailable(args.sandboxName, "sandbox:shields:down");
-      return shields.shieldsDown(args.sandboxName, {
-        timeout: flags.timeout ?? null,
-        reason: flags.reason ?? null,
-        policy: flags.policy ?? "permissive",
-        throwOnError: true,
-      });
+    shields.shieldsDown(args.sandboxName, {
+      timeout: flags.timeout ?? null,
+      reason: flags.reason ?? null,
+      policy: flags.policy ?? "permissive",
+      throwOnError: true,
+      assertCommandAvailable: () =>
+        assertHermesPortableCommandUnavailable(args.sandboxName, "sandbox:shields:down"),
     });
   }
 }

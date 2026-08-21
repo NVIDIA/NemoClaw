@@ -112,6 +112,11 @@ spec:
       c: gcc-14
       cxx: g++-14
       cudaHostCxx: g++-14
+    requestGuardToolchain:
+      version: 1.26.6
+      archives:
+        amd64: sha256:708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89
+        arm64: sha256:d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e
     packages:
       build-essential: 12.10ubuntu1
       ca-certificates: 20260601~24.04.1
@@ -119,7 +124,6 @@ spec:
       curl: 8.5.0-2ubuntu10.12
       g++-14: 14.2.0-4ubuntu2~24.04.1
       gcc-14: 14.2.0-4ubuntu2~24.04.1
-      golang-go: 2:1.22~2build1
       libcurl4-openssl-dev: 8.5.0-2ubuntu10.12
       libssl-dev: 3.0.13-0ubuntu3.12
     cmake:
@@ -148,7 +152,7 @@ spec:
       - /opt/llama.cpp/lib/libggml-cuda.so
       - /usr/local/bin/llama-server
       - /usr/local/bin/nemoclaw-llama-cpp-request-guard
-      - /usr/local/share/licenses/go/copyright
+      - /usr/local/share/licenses/go/LICENSE
       - /usr/local/share/licenses/llama.cpp/AUTHORS
       - /usr/local/share/licenses/llama.cpp/LICENSE
     forbiddenPaths:
@@ -165,5 +169,6 @@ spec:
       ca-certificates: 20260601~24.04.1
       libcurl4t64: 8.5.0-2ubuntu10.12
       libgomp1: 14.2.0-4ubuntu2~24.04.1
+      libssl3t64: 3.0.13-0ubuntu3.12
     writablePaths:
       - /tmp

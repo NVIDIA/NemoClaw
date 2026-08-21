@@ -6,7 +6,6 @@ import fs from "node:fs";
 
 import type { AgentDefinition } from "../../agent/defs";
 import { log } from "../../cli/logger";
-import { getCuaRuntimeReadinessDigest } from "../../cua/contract";
 import { parseGatewayInference, planInferenceRouteReconcile } from "../../inference/config";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import { normalizeInferenceSelection } from "../../inference/selection";
@@ -50,6 +49,7 @@ import {
 import {
   captureLaunchReadiness,
   LaunchReadinessEvidenceError,
+  type LaunchReadinessFailedCheck,
   type LaunchReadinessHealthDeps,
   LaunchReadinessObservationError as ObservationError,
   requireLaunchSemanticHealth,
@@ -132,6 +132,7 @@ export type LaunchReadinessPublicationResult =
   | {
       kind: "validation-failed";
       category: "identity" | "config" | "health" | "session";
+      failedCheck?: LaunchReadinessFailedCheck;
     }
   | { kind: "evidence-failed" };
 
@@ -628,9 +629,6 @@ export function buildLaunchReadinessRegistryProjection(
       installPath: install.installPath,
       loadPaths: install.loadPaths ? [...install.loadPaths] : null,
     })),
-    cuaRuntimeReadinessSha256: entry.cuaRuntimeReadiness
-      ? launchReadinessDigest(getCuaRuntimeReadinessDigest(entry.cuaRuntimeReadiness))
-      : null,
   };
 }
 
@@ -838,13 +836,16 @@ function debugDecision(category: LaunchReadinessDecisionCategory): void {
   );
 }
 
-function publicationValidationCategory(
-  error: unknown,
-): LaunchReadinessPublicationValidationCategory | null {
+function publicationValidationCategory(error: unknown): {
+  category: LaunchReadinessPublicationValidationCategory;
+  failedCheck?: LaunchReadinessFailedCheck;
+} | null {
   if (!(error instanceof ObservationError)) return null;
-  return ["identity", "config", "health", "session"].includes(error.category)
-    ? (error.category as LaunchReadinessPublicationValidationCategory)
-    : null;
+  if (!["identity", "config", "health", "session"].includes(error.category)) return null;
+  return {
+    category: error.category as LaunchReadinessPublicationValidationCategory,
+    ...(error.failedCheck ? { failedCheck: error.failedCheck } : {}),
+  };
 }
 
 function fallback(
@@ -1218,9 +1219,9 @@ export async function publishLaunchReadiness(
         try {
           captured = await captureLaunchIdentity(sandboxName, gatewayName, gatewayPort, deps);
         } catch (error) {
-          const category = publicationValidationCategory(error);
-          return category
-            ? ({ kind: "validation-failed", category } as const)
+          const validation = publicationValidationCategory(error);
+          return validation
+            ? ({ kind: "validation-failed", ...validation } as const)
             : ({ kind: "evidence-failed" } as const);
         } finally {
           recordPerformanceStage("publication-validation", validationStartedAt);
