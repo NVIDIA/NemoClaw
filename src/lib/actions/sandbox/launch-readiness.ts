@@ -904,11 +904,12 @@ function resolveOpenClawPairingSettlementTarget(
   deps: LaunchReadinessDeps,
   requiredGeneration?: string,
 ): OpenClawPairingSettlementTarget | null {
+  // Policy eligibility belongs to the settlement caller. Ordinary onboarding
+  // permits policy skip, while Portable pairing requires the finalized marker.
   if (
     !entry ||
     entry.name !== sandboxName ||
     (entry.agent !== null && entry.agent !== "openclaw") ||
-    entry.policyPresetsFinalized !== true ||
     entry.pendingRouteReservation === true ||
     entry.reservationSessionId ||
     !Number.isInteger(entry.gatewayPort) ||

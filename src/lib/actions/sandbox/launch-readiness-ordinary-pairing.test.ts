@@ -57,9 +57,23 @@ describe("ordinary OpenClaw pairing target", () => {
     });
   });
 
+  it("resolves ordinary pairing after a supported policy-skip onboarding (#9817)", () => {
+    vi.mocked(deps.getSandbox!).mockReturnValue({
+      ...openClawEntry(),
+      policyPresetsFinalized: undefined,
+    });
+
+    expect(resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME, deps)).toEqual({
+      gatewayName: GATEWAY_NAME,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: FINGERPRINT,
+      stateDirectory: "/sandbox/.openclaw",
+      version: "1.0.0",
+    });
+  });
+
   it.each([
     ["missing agent identity", { agent: undefined }],
-    ["unfinished policy selection", { policyPresetsFinalized: undefined }],
     ["pending route reservation", { pendingRouteReservation: true }],
     ["changed gateway binding", { gatewayName: "nemoclaw-8081" }],
     ["missing lifecycle generation", { lifecycleGeneration: undefined }],
