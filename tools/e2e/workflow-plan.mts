@@ -165,6 +165,7 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
       "suites",
       "supportReasons",
       "supported",
+      "timeout_minutes",
       "unresolvedReason",
     ])
   ) {
@@ -186,6 +187,9 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
     typeof value.environmentOrInferenceEndpoint === "string" &&
     typeof value.unresolvedReason === "string" &&
     typeof value.supported === "boolean" &&
+    typeof value.timeout_minutes === "number" &&
+    Number.isSafeInteger(value.timeout_minutes) &&
+    value.timeout_minutes > 0 &&
     isStringArray(value.suites) &&
     isStringArray(value.requiredSecrets) &&
     isStringArray(value.supportReasons) &&

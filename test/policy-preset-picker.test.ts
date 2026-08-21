@@ -33,6 +33,8 @@ async function runSelectionPrompt(
   input: string,
   { applied = [] }: AppliedOptions = {},
 ) {
+  const originalExitCode = process.exitCode;
+  process.exitCode = undefined;
   const stderr: string[] = [];
   const counts = { ref: 0, pause: 0, unref: 0 };
   const stdin = process.stdin as typeof process.stdin & {
@@ -88,10 +90,12 @@ async function runSelectionPrompt(
     return {
       selected,
       stderr: stderr.join(""),
+      exitCode: process.exitCode,
       counts,
       close,
     };
   } finally {
+    process.exitCode = originalExitCode;
     stdin.ref = original.ref;
     stdin.pause = original.pause;
     stdin.unref = original.unref;
@@ -254,18 +258,18 @@ describe("policy preset pickers", () => {
       expect(result.selected).toBeNull();
     });
 
-    it("rejects out-of-range preset number", async () => {
+    it("rejects out-of-range preset number with a failure status (#9742)", async () => {
       const result = await runSelectionPrompt("selectFromList", "99\n");
 
       expect(result.stderr).toContain("Invalid preset number.");
-      expect(result.selected).toBeNull();
+      expect(result).toMatchObject({ selected: null, exitCode: 1 });
     });
 
-    it("rejects non-numeric preset input", async () => {
+    it("rejects non-numeric preset input with a failure status (#9742)", async () => {
       const result = await runSelectionPrompt("selectFromList", "npm\n");
 
       expect(result.stderr).toContain("Invalid preset number.");
-      expect(result.selected).toBeNull();
+      expect(result).toMatchObject({ selected: null, exitCode: 1 });
     });
 
     it("prints numbered list with applied markers, legend, and default prompt", async () => {

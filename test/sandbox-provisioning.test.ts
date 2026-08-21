@@ -1276,7 +1276,7 @@ describe("Hermes sandbox provisioning", () => {
     return { result, tmp };
   }
 
-  it("installs Hermes' native Anthropic provider dependency (#4230)", () => {
+  it("installs the selected Hermes extras, including native Anthropic (#4230)", () => {
     const { result, tmp } = runHermesUvExtrasExpansion();
     try {
       expect(result.status).toBe(0);
@@ -1292,6 +1292,8 @@ describe("Hermes sandbox provisioning", () => {
         "pty",
         "--extra",
         "mcp",
+        "--extra",
+        "acp",
       ]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

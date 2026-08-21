@@ -10,7 +10,7 @@ user_invocable: true
 # NemoClaw Maintainer Evening
 
 Close the day with one release candidate, one cumulative documentation change, and a clear handoff.
-Tagging is optional. Do not turn post-tag automation into part of the tag wait.
+Tagging is optional. Report tag creation first, then let the tag skill finish post-tag follow-through.
 
 See [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md) for the daily
 cadence and the [release-train policy](../nemoclaw-maintainer-policies/references/release-train.md)
@@ -43,10 +43,9 @@ the release and one canonical dated entry headed `## vX.Y.Z`. Follow
 documentation writer review. Do not create a separate release-entry PR when the active cumulative
 docs PR can carry it.
 
-Merge the documentation PR before selecting the tag candidate. Then wait for the resulting exact
-commit's `Docs / Post-Merge Catch-Up` run. The `Publish documentation catch-up` job must succeed,
-which records an independently approved empty Pi result for that commit. A release entry without
-this result is not complete.
+Merge the documentation PR before selecting the tag candidate. A docs-only merge does not start
+another `Docs / Post-Merge Catch-Up` run. Preserve the merged PR, its final commit, its merge commit,
+and the final automated refresh coverage commit for the tag session.
 
 If another product merge lands before candidate selection, decide whether it belongs in this
 release. When it does, update the cumulative documentation change first. When it does not, the tag
@@ -63,7 +62,7 @@ Show:
 - merged work in `vX.Y.Z`;
 - open PRs and issues still carrying `vX.Y.Z`;
 - the canonical release entry;
-- the exact Pi documentation run and job URL;
+- the cumulative docs PR, coverage commit, later commits and PRs, review state, and check state;
 - known image-publication state; and
 - the newest full E2E status, SHA, age, and URLs.
 
@@ -75,7 +74,7 @@ move to the next target, but do not perform label writes here.
 Load `nemoclaw-maintainer-cut-release-tag` and pass the exact version. That skill owns:
 
 - the exact-version plan and candidate;
-- nonwaivable documentation and image evidence;
+- the required release entry, documentation coverage decision, and image evidence;
 - the maintainer's focused, full, or proceed E2E choice;
 - `../nemoclaw-release-vX.Y.Z/release-brief.md`;
 - the exact confirmation phrase; and
@@ -84,25 +83,21 @@ Load `nemoclaw-maintainer-cut-release-tag` and pass the exact version. That skil
 Do not run a full E2E suite automatically. Do not ask for confirmation until the release brief is
 complete and the maintainer has reviewed it.
 
-## 5. Return the Handoff
+## 5. Complete the Handoff
 
-After tag readback, return immediately with:
+After tag readback, report:
 
 - tag and candidate commit;
 - plan and release-brief paths;
-- documentation and image evidence URLs;
-- E2E decision and exception reason, if any; and
-- current state of `latest`, release labels, public documentation, release images, `lkg`, and the Announcement.
+- documentation coverage, maintainer decision, and image evidence URLs; and
+- E2E decision and exception reason, if any.
 
-Those states continue outside tag cutting; some share a workflow or depend on another post-tag
-state. A tag-triggered release-image rebuild can fail and be retried without changing the semver
-tag. Draft the public Announcement later with
-`nemoclaw-maintainer-release-notes`; do not delay tag completion for it.
+Then let `nemoclaw-maintainer-cut-release-tag` monitor the automatic post-tag workflows, draft the
+Announcement, and report `lkg` state. A post-tag failure does not change tag success.
 
 ## Hard Rules
 
 - Never cut a tag without the maintainer's exact confirmation phrase.
-- Never bypass the release entry, approved-empty Pi result, or applicable GHCR evidence.
+- Never bypass the release entry, documentation coverage decision, or applicable GHCR evidence.
 - Never make a different candidate stale merely because `main` advanced or a later documentation PR opened.
-- Never wait for `latest`, label retirement, public documentation, release images, `lkg`, or the Announcement
-  before reporting the tag as cut.
+- Never delay the tag-cut report for post-tag work. Continue the same task after that report.

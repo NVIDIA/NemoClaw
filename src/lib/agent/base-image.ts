@@ -63,6 +63,17 @@ function agentBaseImageBuildArgs(agent: AgentDefinition): Record<string, string>
 }
 
 const HERMES_MCP_RUNTIME_PROBE_OK = "nemoclaw-hermes-mcp-runtime-ok";
+const HERMES_BASE_IMAGE_PROBE_GUARDS = [
+  "--network",
+  "none",
+  "--cap-drop",
+  "ALL",
+  "--security-opt",
+  "no-new-privileges",
+  "--read-only",
+  "--user",
+  "sandbox",
+] as const;
 // Matches the official Hermes base repository for both Dockerfile manifest-list
 // pins and Docker-normalized platform manifest digests.
 const HERMES_OFFICIAL_BASE_DIGEST_REF =
@@ -288,20 +299,23 @@ function hermesFinalDockerfileAcceptsBase(
 }
 
 /**
- * Verify that a Hermes base contains both the MCP SDK and Hermes' native
- * Streamable HTTP integration. Version output alone is insufficient because
- * these dependencies are installed through an optional upstream extra.
+ * Verify that a Hermes base contains the native MCP Streamable HTTP runtime,
+ * the pinned ACP SDK, and Hermes' ACP adapter. Version output alone is
+ * insufficient because these dependencies are installed through optional
+ * upstream extras.
  */
 export function hermesBaseImageSupportsMcp(imageRef: string): boolean {
   const output = dockerCapture(
     [
       "run",
       "--rm",
+      ...HERMES_BASE_IMAGE_PROBE_GUARDS,
       "--entrypoint",
       "/opt/hermes/.venv/bin/python",
       imageRef,
+      "-I",
       "-c",
-      `import mcp; from tools import mcp_tool; assert getattr(mcp_tool, "_MCP_AVAILABLE", False); assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False); print("${HERMES_MCP_RUNTIME_PROBE_OK}")`,
+      `import importlib.metadata as metadata; import sys; import acp; import mcp; from acp_adapter.server import HermesACPAgent; from tools import mcp_tool; metadata.version("agent-client-protocol") == "0.9.0" or sys.exit(1); getattr(mcp_tool, "_MCP_AVAILABLE", False) or sys.exit(1); getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False) or sys.exit(1); print("${HERMES_MCP_RUNTIME_PROBE_OK}")`,
     ],
     { ignoreError: true, timeout: 20_000 },
   );
@@ -318,7 +332,7 @@ function createAgentBaseImageResolutionOptions(
     agent.name === "hermes"
       ? {
           validateImage: hermesBaseImageSupportsMcp,
-          validationDescription: "the required MCP Streamable HTTP runtime",
+          validationDescription: "the required MCP Streamable HTTP and ACP runtimes",
         }
       : createDeepAgentsCodeBaseImageResolutionOptions(agent, dockerfilePath);
   const pinnedRemoteRef = getHermesPinnedRemoteBaseRef(agent) ?? undefined;

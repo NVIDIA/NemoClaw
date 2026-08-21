@@ -74,6 +74,27 @@ describe("sandbox inference invocation probe", () => {
     expect(probeSandboxInferenceInvocation(input, { execute })).toEqual({ ok: true });
   });
 
+  it("pins the invocation to the recorded owning gateway (#9834)", () => {
+    const execute = vi.fn(() => ({
+      status: 0,
+      stdout: '200\n{"choices":[{"message":{"content":"OK"}}]}',
+      stderr: "",
+    }));
+
+    expect(
+      probeSandboxInferenceInvocation(
+        { ...input, gatewayName: "recorded-gateway" },
+        { execute },
+      ),
+    ).toEqual({ ok: true });
+    expect(execute).toHaveBeenCalledWith(
+      "dcode-workspace",
+      expect.any(String),
+      expect.any(Number),
+      { gatewayName: "recorded-gateway", allowLocalDockerFallback: false },
+    );
+  });
+
   it("accepts a served response body that serializes an empty tool call list (#9108)", () => {
     const body = JSON.stringify({
       object: "chat.completion",

@@ -5,6 +5,7 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import type { E2eExecutionMetadata } from "../../../tools/e2e/execution-coverage.mts";
+import { liveTargetTimeoutContract } from "../../../tools/e2e/onboard-timeout-contract.mts";
 
 import { listTargets, requireTargets } from "./registry.ts";
 import { resolveRunnerForTarget } from "./runner-routing.ts";
@@ -39,6 +40,7 @@ export interface LiveTargetMatrixEntry extends LiveTargetInventoryEntry {
   suites: string[];
   requiredSecrets: string[];
   pendingRuntimeSuites: string[];
+  timeout_minutes: number;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -98,6 +100,7 @@ function liveMatrixEntry(
     suites: target.suiteIds ?? [],
     requiredSecrets: target.requiredSecrets ?? [],
     pendingRuntimeSuites: support.pendingRuntimeSuites,
+    timeout_minutes: liveTargetTimeoutContract(target.environment?.lifecycle).targetTimeoutMinutes,
   };
 }
 

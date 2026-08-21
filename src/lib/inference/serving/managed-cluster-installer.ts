@@ -53,6 +53,7 @@ export interface ManagedClusterInstallerOptions {
   readonly platform: VllmProfile["platform"];
   readonly promptFn: (question: string) => Promise<string>;
   readonly beforeInstall?: (modelId: string) => void;
+  readonly checkpointInstallIntent?: (modelId: string) => void;
 }
 
 export interface ManagedClusterInstallerEffects {
@@ -540,6 +541,9 @@ export async function tryInstallManagedClusterManagedVllm(
 
     const profile = managedProfile(plan, resolution.recipe);
     const model = managedModel(plan, resolution.recipe);
+    options.checkpointInstallIntent?.(
+      String(options.env?.NEMOCLAW_VLLM_MODEL ?? "").trim() || plan.model.id,
+    );
     options.beforeInstall?.(plan.model.servedName);
 
     const prerequisites = effects.prerequisites();

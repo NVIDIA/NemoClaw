@@ -78,12 +78,12 @@ exit 1`);
     );
   });
 
-  it("rejects an incompatible Hermes candidate and builds the local fallback", () => {
-    const remoteDigest = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
+  it("accepts a remote Hermes candidate with the required MCP and ACP runtimes", () => {
+    const remoteDigest = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"b".repeat(64)}`;
     const bin = fakeDocker(`
 printf "%s\\0" "$@" >> "$DOCKER_LOG"
 printf "\\0" >> "$DOCKER_LOG"
-if [[ "$1" == pull || "$1" == build ]]; then exit 0; fi
+if [[ "$1" == pull ]]; then exit 0; fi
 if [[ "$1" == image && "$2" == inspect ]]; then printf "%s\\n" "$REMOTE_DIGEST"; exit 0; fi
 if [[ "$1" == run ]]; then
   entrypoint=""
@@ -94,7 +94,14 @@ if [[ "$1" == run ]]; then
   done
   if [[ "$entrypoint" == /usr/bin/ldd ]]; then printf "ldd (Ubuntu GLIBC 2.39) 2.39\\n"; exit 0; fi
   if [[ "$entrypoint" == sh ]]; then exit 0; fi
-  if [[ "$entrypoint" == /opt/hermes/.venv/bin/python ]]; then [[ "$image" != "$REMOTE_DIGEST" ]]; exit; fi
+  if [[ "$entrypoint" == /opt/hermes/.venv/bin/python ]]; then
+    probe="\${@: -1}"
+    [[ "$probe" == *'import mcp'* ]]
+    [[ "$probe" == *'import acp'* ]]
+    [[ "$probe" == *'metadata.version("agent-client-protocol") == "0.9.0"'* ]]
+    [[ "$probe" == *'from acp_adapter.server import HermesACPAgent'* ]]
+    exit
+  fi
 fi
 exit 2`);
     const dockerLog = path.join(bin, "docker.log");
@@ -120,7 +127,91 @@ exit 2`);
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("lacks the packaged MCP Streamable HTTP client imports");
+    expect(readFileSync(githubEnv, "utf8").trim()).toBe(`HERMES_BASE_IMAGE=${remoteDigest}`);
+    const calls = readFileSync(dockerLog, "utf8")
+      .split("\0\0")
+      .filter(Boolean)
+      .map((call) => call.split("\0").filter(Boolean));
+    expect(calls.some((args) => args[0] === "build")).toBe(false);
+    const runtimeProbe = calls.find(
+      (args) => args.includes("/opt/hermes/.venv/bin/python") && args.includes(remoteDigest),
+    );
+    expect(runtimeProbe?.slice(0, -1)).toEqual([
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--cap-drop",
+      "ALL",
+      "--security-opt",
+      "no-new-privileges",
+      "--read-only",
+      "--user",
+      "sandbox",
+      "--entrypoint",
+      "/opt/hermes/.venv/bin/python",
+      remoteDigest,
+      "-I",
+      "-c",
+    ]);
+    expect(runtimeProbe?.at(-1)).toContain("or sys.exit(1)");
+    expect(runtimeProbe?.at(-1)).not.toContain("assert ");
+  });
+
+  it("rejects a Hermes candidate that has MCP but lacks ACP and builds locally", () => {
+    const remoteDigest = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
+    const bin = fakeDocker(`
+printf "%s\\0" "$@" >> "$DOCKER_LOG"
+printf "\\0" >> "$DOCKER_LOG"
+if [[ "$1" == pull || "$1" == build ]]; then exit 0; fi
+if [[ "$1" == image && "$2" == inspect ]]; then printf "%s\\n" "$REMOTE_DIGEST"; exit 0; fi
+if [[ "$1" == run ]]; then
+  entrypoint=""
+  image=""
+  while (($#)); do
+    if [[ "$1" == --entrypoint ]]; then entrypoint="$2"; image="$3"; break; fi
+    shift
+  done
+  if [[ "$entrypoint" == /usr/bin/ldd ]]; then printf "ldd (Ubuntu GLIBC 2.39) 2.39\\n"; exit 0; fi
+  if [[ "$entrypoint" == sh ]]; then exit 0; fi
+  if [[ "$entrypoint" == /opt/hermes/.venv/bin/python ]]; then
+    probe="\${@: -1}"
+    [[ "$probe" == *'import mcp'* ]]
+    if [[ "$image" == "$MCP_ONLY_DIGEST" ]]; then exit 1; fi
+    [[ "$probe" == *'import acp'* ]]
+    [[ "$probe" == *'metadata.version("agent-client-protocol") == "0.9.0"'* ]]
+    [[ "$probe" == *'from acp_adapter.server import HermesACPAgent'* ]]
+    exit
+  fi
+fi
+exit 2`);
+    const dockerLog = path.join(bin, "docker.log");
+    const githubEnv = path.join(bin, "github.env");
+    writeFileSync(githubEnv, "");
+    const resolver = hermesAction.runs.steps.find(
+      (step) => step.name === "Resolve Hermes sandbox base image",
+    )?.run;
+
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-c", resolver ?? ""], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      timeout: execTimeout(),
+      env: {
+        ...process.env,
+        DOCKER_LOG: dockerLog,
+        GITHUB_ACTION_PATH: path.join(repoRoot, ".github/actions/resolve-hermes-base-image"),
+        GITHUB_ENV: githubEnv,
+        GITHUB_SHA: "1".repeat(40),
+        PATH: `${bin}:${process.env.PATH}`,
+        MCP_ONLY_DIGEST: remoteDigest,
+        REMOTE_DIGEST: remoteDigest,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain(
+      "lacks the required MCP Streamable HTTP or ACP 0.9.0 adapter imports",
+    );
     expect(result.stdout).toContain("building locally");
     expect(readFileSync(githubEnv, "utf8").trim()).toBe(
       "HERMES_BASE_IMAGE=nemoclaw-hermes-base-local",

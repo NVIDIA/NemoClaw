@@ -126,7 +126,7 @@ describe("ollama-auth-proxy request handler", () => {
     await new Promise<void>((resolve) => backend?.server.close(() => resolve()));
     const res = await request(proxyPort, { path: "/api/tags", auth: `Bearer ${TOKEN}` });
     expect(res.status).toBe(502);
-    expect(res.body).toMatch(/Ollama backend error/);
+    expect(res.body).toMatch(/Backend error/);
     expect(proxy?.exitCode).toBeNull();
   });
 

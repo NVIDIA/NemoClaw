@@ -637,9 +637,9 @@ describe("connectSandbox flow", () => {
       ["sandbox", "connect", "alpha"],
       expect.any(Object),
     );
-    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
-      "Probe complete: recovered OpenClaw gateway in 'alpha'.",
-    );
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Probe complete: recovered OpenClaw gateway in 'alpha'.");
+    expect(output).toMatch(/Probe timing: .*lifecycleAction=skipped .*result=ready/);
   });
 
   it("probe-only accepts healthy launch evidence without duplicate recovery or publication (#8942)", async () => {
@@ -658,8 +658,10 @@ describe("connectSandbox flow", () => {
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
-    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
-      "Probe complete: launch readiness is healthy for 'alpha'.",
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Probe complete: launch readiness is healthy for 'alpha'.");
+    expect(output).toMatch(
+      /Probe timing: .*lifecycleAction=reused forwardAction=skipped result=ready/,
     );
   });
 
@@ -715,6 +717,9 @@ describe("connectSandbox flow", () => {
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
       "complete probe and recovery did not run because prior launch-readiness evidence could not be fenced",
+    );
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
+      /Probe timing: .*result=failed failedStage=readiness/,
     );
   });
 
@@ -853,9 +858,13 @@ describe("connectSandbox flow", () => {
     );
   });
 
-  it("probe-only reports final semantic validation failure as a runtime failure (#8942)", async () => {
+  it("probe-only names the failed final semantic check (#9834)", async () => {
     const harness = createConnectHarness({
-      readinessPublicationResult: { kind: "validation-failed", category: "health" },
+      readinessPublicationResult: {
+        kind: "validation-failed",
+        category: "health",
+        failedCheck: "inference request",
+      },
     });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
@@ -864,7 +873,7 @@ describe("connectSandbox flow", () => {
 
     expect(harness.checkAndRecoverSpy).toHaveBeenCalled();
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
-      "final launch-readiness validation failed due to health",
+      "final launch-readiness validation failed because the inference request failed",
     );
     expect(harness.errorSpy.mock.calls.flat().join("\n")).not.toContain(
       "complete probe and recovery succeeded",
