@@ -40,7 +40,10 @@ import type {
   ManagedBootstrapActivatedTransaction,
   ManagedBootstrapPreparedTransaction,
 } from "./adapter";
-import { createDockerManagedBootstrapSurface } from "./docker-runtime";
+import {
+  completeDockerManagedNativeGpuFallbackOwnerCleanup,
+  createDockerManagedBootstrapSurface,
+} from "./docker-runtime";
 import { authority, IDENTITY, NEW_ID, OLD_ID } from "./docker-test-fixture";
 
 beforeEach(() => {
@@ -61,6 +64,127 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe("Docker managed-bootstrap native fallback owner cleanup", () => {
+  const handoff = Object.freeze({
+    kind: "openshell-owner-cleanup-required" as const,
+    sandboxName: "alpha",
+    sandboxId: "sandbox-alpha",
+    runtimeId: NEW_ID,
+  });
+  const exactRecoveryReceipt = () => ({
+    schemaVersion: 1 as const,
+    providerId: "docker",
+    sourcePhase: "owner-cleanup-required",
+    sandbox: {
+      sandboxName: "alpha",
+      sandboxId: "sandbox-alpha",
+      driverId: "docker",
+    },
+    bootstrapIdentity: IDENTITY,
+    outcome: "rolled-back" as const,
+    finalization: {
+      schemaVersion: 1 as const,
+      sandbox: {
+        sandboxName: "alpha",
+        sandboxId: "sandbox-alpha",
+        driverId: "docker",
+      },
+      bootstrapIdentity: IDENTITY,
+      outcome: "rolled-back" as const,
+      restoredRuntimeId: null,
+      restoredSpecHash: null,
+      heldWorkloadRemoved: true,
+      alreadyRolledBack: false,
+      finalizedAt: "2026-08-21T00:00:00.000Z",
+    },
+  });
+
+  it("reconciles an exact owner-bound handoff before authorizing fallback", async () => {
+    const runOpenshell = vi.fn((args: string[]) =>
+      args[1] === "get"
+        ? { status: 0, stdout: "ID: sandbox-alpha\n", stderr: "" }
+        : { status: 0, stdout: "", stderr: "" },
+    );
+    const recoverUnfinished = vi.fn(async () => ({
+      receipts: [exactRecoveryReceipt()],
+      failures: [],
+    }));
+
+    await expect(
+      completeDockerManagedNativeGpuFallbackOwnerCleanup({
+        providerId: "docker",
+        bootstrapIdentity: IDENTITY,
+        handoff,
+        runOpenshell,
+        recoverUnfinished,
+      }),
+    ).resolves.toEqual({
+      kind: "openshell-owner-cleanup-completed",
+      sandboxName: "alpha",
+      sandboxId: "sandbox-alpha",
+      runtimeId: NEW_ID,
+    });
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["sandbox", "get", "alpha"],
+      expect.objectContaining({ suppressOutput: true }),
+    );
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["sandbox", "delete", "alpha"],
+      expect.objectContaining({ suppressOutput: true }),
+    );
+    expect(runOpenshell.mock.invocationCallOrder[1]).toBeLessThan(
+      recoverUnfinished.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("refuses mutable-name deletion when the durable sandbox ID changed", async () => {
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: "ID: sandbox-replacement\n",
+      stderr: "",
+    }));
+    const recoverUnfinished = vi.fn();
+
+    await expect(
+      completeDockerManagedNativeGpuFallbackOwnerCleanup({
+        providerId: "docker",
+        bootstrapIdentity: IDENTITY,
+        handoff,
+        runOpenshell,
+        recoverUnfinished,
+      }),
+    ).resolves.toBe(handoff);
+    expect(runOpenshell).toHaveBeenCalledOnce();
+    expect(recoverUnfinished).not.toHaveBeenCalled();
+  });
+
+  it("does not authorize fallback without the exact durable rollback receipt", async () => {
+    const runOpenshell = vi.fn((args: string[]) =>
+      args[1] === "get"
+        ? { status: 0, stdout: "ID: sandbox-alpha\n", stderr: "" }
+        : { status: 0, stdout: "", stderr: "" },
+    );
+    const recoverUnfinished = vi.fn(async () => ({
+      receipts: [],
+      failures: [],
+    }));
+
+    await expect(
+      completeDockerManagedNativeGpuFallbackOwnerCleanup({
+        providerId: "docker",
+        bootstrapIdentity: IDENTITY,
+        handoff,
+        runOpenshell,
+        recoverUnfinished,
+      }),
+    ).resolves.toBe(handoff);
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(recoverUnfinished).toHaveBeenCalledOnce();
+  });
 });
 
 describe("Docker managed-bootstrap lifecycle composition", () => {
