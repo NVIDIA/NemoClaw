@@ -744,7 +744,7 @@ export async function startFakeMcpHttpsServer(options: {
         "cache-control": "no-cache",
         connection: "keep-alive",
       });
-      res.flushHeaders();
+      res.write(": connected\n\n");
       serverEventStreams.add(res);
       res.once("close", () => serverEventStreams.delete(res));
       return;

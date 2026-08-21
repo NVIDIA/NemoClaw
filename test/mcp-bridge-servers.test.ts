@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
 import type { IncomingMessage } from "node:http";
 import https from "node:https";
@@ -397,6 +398,11 @@ describe("authenticated MCP live fixtures", () => {
     });
     expect(eventChannel.statusCode).toBe(200);
     expect(eventChannel.headers["content-type"]).toBe("text/event-stream");
+    eventChannel.setEncoding("utf8");
+    const [firstEventChunk] = await once(eventChannel, "data", {
+      signal: AbortSignal.timeout(1_000),
+    });
+    expect(firstEventChunk).toBe(": connected\n\n");
     expect(eventChannel.complete).toBe(false);
     eventChannel.destroy();
 
