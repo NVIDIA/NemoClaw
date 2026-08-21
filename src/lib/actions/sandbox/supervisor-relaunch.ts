@@ -288,6 +288,10 @@ export function relaunchManagedSupervisorSession(
         }
         const runLifecycleProbe = deps.runOpenshell;
         if (!runLifecycleProbe) return finalizeFailure();
+        const lifecycleDeps = {
+          runOpenshell: runLifecycleProbe,
+          ...(deps.sleep ? { sleep: deps.sleep } : {}),
+        };
         const outcome = {
           ...finalize(
             {
@@ -296,10 +300,7 @@ export function relaunchManagedSupervisorSession(
               sandboxName,
               lifecycleReleaseTimeoutSecs: getDockerGpuSupervisorReconnectTimeoutSecs(1),
             },
-            {
-              runOpenshell: runLifecycleProbe,
-              sleep,
-            },
+            lifecycleDeps,
           ),
           stateRestored: true,
           stateBackupRemoved: removeSettledStateBackup(),

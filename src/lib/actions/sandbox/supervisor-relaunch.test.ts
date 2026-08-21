@@ -161,7 +161,7 @@ describe("relaunchManagedSupervisorSession", () => {
         sandboxName: "alpha",
         supervisorReady: true,
       },
-      expect.objectContaining({ runOpenshell: deps.runOpenshell, sleep: expect.any(Function) }),
+      { runOpenshell: deps.runOpenshell },
     );
   });
 
@@ -394,8 +394,20 @@ describe("relaunchManagedSupervisorSession", () => {
         sandboxName: "alpha",
         supervisorReady: true,
       },
-      expect.objectContaining({ runOpenshell: deps.runOpenshell, sleep: expect.any(Function) }),
+      { runOpenshell: deps.runOpenshell },
     );
+  });
+
+  it("uses only an injected host sleep for lifecycle polling after recreation (#9531)", () => {
+    const sleep = vi.fn();
+    const deps = baseDeps({ sleep });
+    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
+
+    expect(relaunch?.finalize(true)).toMatchObject({ backupRemoved: true, rolledBack: false });
+    expect(deps.finalize).toHaveBeenCalledWith(expect.objectContaining({ supervisorReady: true }), {
+      runOpenshell: deps.runOpenshell,
+      sleep,
+    });
   });
 
   it("rolls back when managed health fails after state restore", () => {

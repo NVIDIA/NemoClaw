@@ -457,7 +457,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         sandboxName: "recovered-box",
         supervisorReady: true,
       }),
-      expect.objectContaining({ runOpenshell: expect.any(Function), sleep: expect.any(Function) }),
+      { runOpenshell: expect.any(Function) },
     );
   });
 
