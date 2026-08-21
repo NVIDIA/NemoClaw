@@ -63,13 +63,6 @@ function unverifiedFormulaBoundaryEvents(operation: string): string[] {
 function writeExecutable(target: string, contents: string) {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
-/**
- * Run install-openshell.sh with a fake `openshell` binary that reports the
- * given version. The download/install code path is never reached because we
- * either exit early (version + capability ok / missing capability)
- * or hit an upgrade/reinstall warn and then the script tries to download — so we stub
- * curl and gh to fail fast.
- */
 function runWithInstalledVersion(
   version: string,
   extraEnv: NodeJS.ProcessEnv = {},
@@ -85,7 +78,7 @@ function runWithInstalledVersion(
     driverVersionExit?: number;
     driverReadable?: boolean;
     homebrewAvailable?: boolean;
-    homebrewFormula?: boolean;
+    homebrewFormulaDigest?: string;
     os?: string;
     arch?: string;
   } = {},
@@ -181,7 +174,6 @@ exit 1`,
         );
     }
 
-    // Stub curl to fail so the install path exits without doing real network I/O
     writeExecutable(
       path.join(fakeBin, "curl"),
       `#!/usr/bin/env bash
@@ -189,7 +181,6 @@ echo "curl stub: $*" >&2
 exit 1`,
     );
 
-    // Stub gh CLI similarly
     writeExecutable(
       path.join(fakeBin, "gh"),
       `#!/usr/bin/env bash
@@ -197,7 +188,18 @@ exit 1`,
     );
 
     if ((options.os ?? "Linux") === "Darwin") {
-      const homebrewFormula = options.homebrewFormula ?? true;
+      const tap = path.join(tmp, "tap");
+      const formula = path.join(tap, "Formula", "openshell.rb");
+      fs.mkdirSync(path.dirname(formula), { recursive: true });
+      fs.writeFileSync(formula, "class Openshell < Formula\nend\n");
+      writeExecutable(
+        path.join(fakeBin, "sha256sum"),
+        `#!/usr/bin/env bash
+case "\${1:-}" in
+  */openshell.rb) printf '%s  %s\\n' '${options.homebrewFormulaDigest ?? PINNED_OPEN_SHELL_SHA256.formula}' "$1" ;;
+  *) /usr/bin/sha256sum "$@" ;;
+esac`,
+      );
       writeExecutable(
         path.join(fakeBin, "codesign"),
         `#!/usr/bin/env bash
@@ -222,8 +224,9 @@ exit 0`,
             path.join(fakeBin, "brew"),
             `#!/usr/bin/env bash
 case "$*" in
+  "--repository nvidia/openshell") printf '%s\\n' ${JSON.stringify(tap)}; exit 0 ;;
   "list --formula openshell")
-    exit ${homebrewFormula ? "0" : "1"}
+    exit 0
     ;;
   "info --json=v2 openshell")
     printf '%s\n' '{"formulae":[{"name":"openshell","tap":"nvidia/openshell"}]}'
@@ -504,18 +507,19 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     expect(result.stdout).not.toContain("Installing OpenShell from release");
   });
 
-  it("triggers reinstall on macOS when OpenShell is missing required gateway binaries", () => {
+  it("triggers reinstall on macOS when the Homebrew formula digest is stale", () => {
     const result = runWithInstalledVersion(
       REQUIRED_OPENSHELL_VERSION,
       {},
       {
-        driverBins: false,
+        driverBins: "gateway",
+        homebrewFormulaDigest: ZERO_SHA256,
         os: "Darwin",
         arch: "arm64",
       },
     );
     expect(result.status).not.toBe(0);
-    expect(result.stdout).toMatch(/missing Docker-driver binaries/);
+    expect(result.stdout).toMatch(/cannot confirm the pinned Homebrew gateway formula/);
     expect(result.stdout).toContain(
       `Installing OpenShell from release 'v${REQUIRED_OPENSHELL_VERSION}'`,
     );
