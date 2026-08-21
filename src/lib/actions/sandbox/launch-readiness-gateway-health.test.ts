@@ -89,6 +89,7 @@ describe("Deep Agents Code OpenRouter launch readiness", () => {
     ).resolves.toBeUndefined();
     expect(currentDeps.inferenceInvocationProbe).toHaveBeenCalledWith({
       sandboxName: SANDBOX,
+      gatewayName: GATEWAY,
       provider: "openrouter-api",
       model: MODEL,
       preferredInferenceApi: null,

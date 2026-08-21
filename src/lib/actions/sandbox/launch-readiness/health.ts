@@ -170,6 +170,7 @@ export async function requireLaunchSemanticHealth(
       if (!provider || !model) throw new LaunchReadinessEvidenceError();
       const invocation = (deps.inferenceInvocationProbe ?? runSandboxInferenceInvocationProbe)({
         sandboxName,
+        gatewayName,
         provider,
         model,
         preferredInferenceApi: normalizedString(entry.preferredInferenceApi),

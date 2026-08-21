@@ -5,10 +5,15 @@ import { getSandboxInferenceConfig } from "../../inference/config";
 import { validateInferenceResponseBody } from "../../inference/health";
 import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "../../inference/max-tokens-field";
 import { shellQuote } from "../../runner";
-import { executeSandboxExecCommand, type SandboxCommandResult } from "./process-recovery";
+import {
+  executeSandboxExecCommand,
+  type SandboxCommandResult,
+  type SandboxExecCommandOptions,
+} from "./process-recovery";
 
 export type SandboxInferenceInvocationInput = {
   sandboxName: string;
+  gatewayName?: string;
   provider: string;
   model: string;
   preferredInferenceApi: string | null;
@@ -19,7 +24,12 @@ export type SandboxInferenceInvocationResult =
   | { ok: false; detail: string; httpStatus: number | null };
 
 export type SandboxInferenceInvocationDeps = {
-  execute?: (sandboxName: string, command: string, timeout?: number) => SandboxCommandResult | null;
+  execute?: (
+    sandboxName: string,
+    command: string,
+    timeout?: number,
+    options?: SandboxExecCommandOptions,
+  ) => SandboxCommandResult | null;
 };
 
 /**
@@ -109,6 +119,7 @@ export function probeSandboxInferenceInvocation(
     input.sandboxName,
     buildSandboxInferenceInvocationCommand(input),
     timeoutMs,
+    { gatewayName: input.gatewayName },
   );
   if (!result) {
     return {

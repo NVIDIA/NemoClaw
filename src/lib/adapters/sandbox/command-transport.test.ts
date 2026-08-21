@@ -167,6 +167,29 @@ describe("sandbox command transport privileged execution lease", () => {
     expect(mocks.spawnSync).not.toHaveBeenCalled();
   });
 
+  it("pins OpenShell exec to the requested gateway (#9834)", () => {
+    const deps = createDependencies();
+    mocks.spawnSync.mockReturnValue(spawnResult("ok"));
+
+    expect(
+      executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {
+        gatewayName: "recorded-gateway",
+      }),
+    ).toEqual({ status: 0, stdout: "ok", stderr: "" });
+    expect(mocks.spawnSync.mock.calls[0]?.[1]).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "alpha",
+      "-g",
+      "recorded-gateway",
+      "--",
+      "sh",
+      "-c",
+      "marked:id",
+    ]);
+  });
+
   it("holds one lease across OpenShell failure and the complete local fallback", () => {
     const events: string[] = [];
     let leaseHeld = false;
