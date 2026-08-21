@@ -167,6 +167,11 @@
       "category": "security"
     },
     {
+      "file": "test/release-daily-brev-image.test.ts",
+      "test": "attests one daily request before the isolated dispatch job (#9799)",
+      "category": "security"
+    },
+    {
       "file": "test/release-lkg-brev-image.test.ts",
       "test": "keeps the LKG credential on the production-only dispatch step (#9798)",
       "category": "security"

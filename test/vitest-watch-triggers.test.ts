@@ -41,6 +41,8 @@ const E2E_WORKFLOW_CONTRACTS = [
 ] as const;
 
 const OPAQUE_INPUTS = [
+  ".github/workflows/release-daily-brev-image.yaml",
+  "scripts/release-daily-brev-image.sh",
   ".github/workflows/release-lkg-brev-image.yaml",
   "scripts/release-lkg-brev-image.sh",
   "managed-inference/models/example.yaml",
@@ -85,6 +87,10 @@ const OPAQUE_INPUTS = [
   ".github/workflows/platform-vitest-main.yaml",
   "tools/wsl/ci-helper.ps1",
   "ci/platform-vitest-macos-requirements.lock",
+  ".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md",
+  ".agents/skills/nemoclaw-maintainer-evening/SKILL.md",
+  ".agents/skills/nemoclaw-maintainer-release-notes/SKILL.md",
+  ".agents/skills/nemoclaw-maintainer-policies/references/release-train.md",
 ] as const;
 
 function triggeredBy(relativePath: string): string[] {
@@ -92,6 +98,13 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
+  it.each([
+    ".github/workflows/release-daily-brev-image.yaml",
+    "scripts/release-daily-brev-image.sh",
+  ])("maps each daily image caller input to its contract test [%s] (#9799)", (inputPath) => {
+    expect(triggeredBy(inputPath)).toEqual(["test/release-daily-brev-image.test.ts"]);
+  });
+
   it.each([".github/workflows/release-lkg-brev-image.yaml", "scripts/release-lkg-brev-image.sh"])(
     "maps each LKG image caller input to its contract test [%s] (#9798)",
     (inputPath) => {
@@ -266,6 +279,18 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("ci/platform-vitest-macos-requirements.lock")).toEqual([
       "test/platform-vitest-main-workflow.test.ts",
     ]);
+    expect(triggeredBy(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md")).toEqual([
+      "test/release-post-tag-follow-through.test.ts",
+    ]);
+    expect(triggeredBy(".agents/skills/nemoclaw-maintainer-evening/SKILL.md")).toEqual([
+      "test/release-post-tag-follow-through.test.ts",
+    ]);
+    expect(triggeredBy(".agents/skills/nemoclaw-maintainer-release-notes/SKILL.md")).toEqual([
+      "test/release-post-tag-follow-through.test.ts",
+    ]);
+    expect(
+      triggeredBy(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md"),
+    ).toEqual(["test/release-post-tag-follow-through.test.ts"]);
   });
 
   it.each(Array.from(vitestWatchTriggerPatterns, (value) => [value]))(

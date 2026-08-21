@@ -43,6 +43,7 @@ import { shouldForceCompletionsApi } from "../validation";
 import { getProbeRecovery } from "../validation-recovery";
 import { summarizeProbeForDisplay } from "./probe-diagnostics";
 import { normalizeReasoningFlag } from "./reasoning-mode";
+import { OnboardDeferredExitError } from "./session-bootstrap";
 
 export type EndpointValidationResult =
   | {
@@ -91,7 +92,7 @@ export interface InferenceSelectionValidationDeps {
    * Optional abort teardown hook for tests. Production loads the helper lazily
    * so openshell binaries stay out of the validation unit graph.
    */
-  teardownOrphanManagedGatewayOnAbort?: () => void;
+  teardownOrphanManagedGatewayOnAbort?: () => boolean;
   promptValidationRecovery(
     label: string,
     recovery: ReturnType<typeof getProbeRecovery>,
@@ -158,15 +159,16 @@ export function createInferenceSelectionValidationHelpers(
 
   function exitNonInteractiveValidationFailure(): never {
     // #8952: tear down an unowned managed gateway before fatal exit.
+    let gatewayCleanupComplete = false;
     try {
       const teardown =
         deps.teardownOrphanManagedGatewayOnAbort ??
         (() => {
           const { teardownOrphanManagedGatewayOnAbort } =
             require("./gateway-destroy") as typeof import("./gateway-destroy");
-          teardownOrphanManagedGatewayOnAbort();
+          return teardownOrphanManagedGatewayOnAbort();
         });
-      teardown();
+      gatewayCleanupComplete = teardown();
     } catch (error) {
       // Helper never throws; this covers require/load / inject failures.
       console.error(
@@ -174,8 +176,9 @@ export function createInferenceSelectionValidationHelpers(
       );
     }
     process.exitCode = 1;
-    (process.exit as (code?: number) => void)(1);
-    throw new Error("Non-interactive endpoint validation failed.");
+    throw new OnboardDeferredExitError(1, {
+      preserveIncompleteSession: gatewayCleanupComplete,
+    });
   }
 
   function printValidationFailure(
