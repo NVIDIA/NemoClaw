@@ -158,7 +158,7 @@ function decodeProcAddress(addr: string): number[] | null {
  *   - IPv4: first byte 0x7F (127.0.0.0/8)
  *   - IPv6 canonical loopback: 15 zero bytes then 0x01 (::1)
  *   - IPv4-mapped IPv6 loopback: 10 zero bytes, then 0xFF 0xFF, then any
- *     127.x.y.z (byte 12 == 0x7F). Covers ::ffff:127.0.0.0/8.
+ *     127.x.y.z (byte 12 == 0x7F). Covers ::ffff:127.0.0.0/104.
  * Returns false for any input the decoder produced that does not match one
  * of these shapes.
  */
@@ -226,7 +226,7 @@ function probeLinuxLoopbackBind(port: number): BackendProbeResult | null {
  * as loopback. Handles the same three semantic cases as
  * `isLoopbackProcAddress`, but on the cross-platform lsof-style form so the
  * IPv4 accept range matches on both probes: any 127.x.y.z (127.0.0.0/8),
- * ::1, and ::ffff:127.0.0.0/8. Advisor PRA-4 (Ultra) flagged the earlier
+ * ::1, and ::ffff:127.0.0.0/104. Advisor PRA-4 (Ultra) flagged the earlier
  * exact-match against "127.0.0.1" as an incomplete classifier that would
  * refuse legitimate loopback binds and, worse, mask a genuine non-loopback
  * mistake as "not-loopback" on the fallback path.
@@ -372,7 +372,7 @@ function buildProxyServer(token: string, backendUrl: URL): http.Server {
         return;
       }
       clientRes.writeHead(502, { "Content-Type": "text/plain" });
-      clientRes.end(`Ollama backend error: ${err.message}`);
+      clientRes.end(`Backend error: ${err.message}`);
     };
 
     const proxyReq = http.request(
