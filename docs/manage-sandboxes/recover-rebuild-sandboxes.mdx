@@ -154,7 +154,15 @@ The lease has a fixed 24-hour lifetime that repeated launches do not extend.
 Leaving the agent with `/exit` does not revoke it, and users do not refresh it manually.
 
 During the lease, `launch` still verifies the owning OpenShell gateway, exact live sandbox identity, registry and agent configuration, effective policy, inference route, required forwards, and semantic runtime health.
+<AgentOnly variant="openclaw,hermes">
 Configured inference must return HTTP 2xx from the semantic `inference.local` probe, which is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+Configured inference must return HTTP 2xx from the semantic `inference.local` probe for every provider except `openrouter-api`.
+The OpenRouter adapter returns HTTP 404 for `GET /v1/models`.
+NemoClaw accepts that result only after a bounded inference request for the recorded model succeeds.
+A failed request rejects launch readiness and identifies the inference request as the failed check.
+</AgentOnly>
 <AgentOnly variant="openclaw">
 
 For OpenClaw, `connect --probe-only` settles the existing allowlisted pairing flow before it publishes a credential-free pairing qualification with the lease.
