@@ -7,7 +7,10 @@ import os from "node:os";
 import path from "node:path";
 
 import type { ContainerEngine } from "../../adapters/container-engine";
-import { isPolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
+import {
+  isPolicyAuthorityRefusalError,
+  PolicyAuthorityRefusalError,
+} from "../../adapters/openshell/policy-authority";
 import { checkPortAvailable } from "../../onboard/preflight";
 import type { RuntimeProviderBundle } from "../../onboard/runtime-provider/contract";
 import { createHostLocalCreateJournalStore } from "../../onboard/runtime-provider/host-local-create-journal";
@@ -587,6 +590,7 @@ export async function installManagedLlamaCpp(
       { env },
     );
     engine = operation.engine;
+    options.revalidatePolicyRequirements?.("reserve the managed llama.cpp runtime");
     const reservation = claimManagedLlamaCppOwner(paths, {
       schemaVersion: 1,
       sandboxName: options.sandboxName,
@@ -694,6 +698,7 @@ export async function installManagedLlamaCpp(
 
     let receipt = loadManagedLlamaCppReceipt(paths);
     if (receipt !== null) {
+      options.revalidatePolicyRequirements?.("resume the managed llama.cpp runtime");
       receipt = lifecycle.resume(receipt);
     } else {
       const port = await checkPort(hostPort);
@@ -706,11 +711,13 @@ export async function installManagedLlamaCpp(
       const transactionId = randomBytes(32).toString("hex");
       receipt = lifecycle.start(createManagedLlamaCppReceiptWriter(paths, transactionId));
     }
+    options.revalidatePolicyRequirements?.(
+      "report successful managed llama.cpp runtime activation",
+    );
     const apiKey = loadOrCreateManagedLlamaCppApiKey(paths);
     env[LLAMA_CPP_CREDENTIAL_ENV] = apiKey;
     return { ok: true, apiKey, model: recipe.spec.model.servedName, receipt };
   } catch (error) {
-    if (isPolicyAuthorityRefusalError(error)) throw error;
     const reason = error instanceof Error ? error.message : String(error);
     const rollbackError = rollbackFreshUnjournaledInstall({
       engine,
@@ -718,6 +725,12 @@ export async function installManagedLlamaCpp(
       ownerCreated,
       paths,
     });
+    if (isPolicyAuthorityRefusalError(error)) {
+      if (rollbackError === null) throw error;
+      throw new PolicyAuthorityRefusalError(
+        `${reason} Fresh ownership rollback also failed: ${rollbackError}`,
+      );
+    }
     return {
       ok: false,
       reason:
@@ -751,6 +764,7 @@ export async function resumeManagedLlamaCppRuntime(
     "llama-cpp",
     { env },
   );
+  options.revalidatePolicyRequirements?.("inspect the managed llama.cpp runtime");
   const engine = operation.engine;
   const verify = options.verifyGguf ?? verifyLlamaCppGgufCacheEntry;
   const checkPort = options.checkPort ?? checkPortAvailable;
@@ -807,8 +821,10 @@ export async function resumeManagedLlamaCppRuntime(
     const transactionId = randomBytes(32).toString("hex");
     lifecycle.start(createManagedLlamaCppReceiptWriter(paths, transactionId));
   } else {
+    options.revalidatePolicyRequirements?.("resume the managed llama.cpp runtime");
     lifecycle.resume(receipt);
   }
+  options.revalidatePolicyRequirements?.("report successful managed llama.cpp runtime recovery");
   const apiKey = loadManagedLlamaCppApiKey(paths);
   if (apiKey === null) throw new Error("Managed llama.cpp API-key authority is missing.");
   env[LLAMA_CPP_CREDENTIAL_ENV] = apiKey;

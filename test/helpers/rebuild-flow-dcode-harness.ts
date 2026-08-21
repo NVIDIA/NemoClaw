@@ -45,6 +45,7 @@ import {
   registryPersistence,
   resolve,
   sandboxList,
+  sandboxRecreateProbe,
   sandboxSession,
   sandboxState,
   sandboxVersion,
@@ -365,11 +366,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       sandboxEntryReadCount < configuredReads.length
         ? configuredReads[sandboxEntryReadCount++]
         : sandboxEntry;
-    return entry
-      ? (Object.assign(entry, {
-          policyAuthority: entry.policyAuthority ?? "nemoclaw-managed",
-        }) as never)
-      : null;
+    return entry ? (entry as never) : null;
   });
   let registryLoadCount = 0;
   vi.spyOn(registryPersistence, "load").mockImplementation(() => {
@@ -532,6 +529,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           failedFiles: [],
         })),
     );
+  const deletedSourceGateways = new Set<string>(
+    overrides.reconciledSandboxGatewayState?.state === "missing" ? ["nemoclaw"] : [],
+  );
   const captureOpenshellSpy = vi
     .spyOn(openshellRuntime, "captureOpenshell")
     .mockImplementation((args: unknown, options?: unknown) => {
@@ -550,7 +550,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
             stderr: "Error: sandbox alpha not found",
           };
     });
-  const deletedSourceGateways = new Set<string>();
+  vi.spyOn(sandboxRecreateProbe, "observeSandboxPresenceOnGateway").mockImplementation(
+    ({ gatewayName }: { gatewayName: string }) =>
+      deletedSourceGateways.has(gatewayName) ? "missing" : "present",
+  );
   const runOpenshellSpy = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
     const argv = args as string[];
     const deleteGateway = sourceSandboxGateway(argv, "delete");
@@ -590,8 +593,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);
   const onboardSpy = vi
     .spyOn(rebuildOnboardDependencies, "onboard")
-    .mockImplementation(async () => {
+    .mockImplementation(async (...args: unknown[]) => {
       await overrides.onboard?.(session);
+      const options = args[0] as { targetGatewayName: string };
+      deletedSourceGateways.delete(options.targetGatewayName);
     });
   vi.spyOn(rebuildOnboardDependencies, "hydrateCredentialEnv").mockImplementation(
     (...args: unknown[]) => onboardCredentialEnv.hydrateCredentialEnv(String(args[0] ?? "")),

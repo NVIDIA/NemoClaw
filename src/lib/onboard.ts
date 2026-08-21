@@ -1836,12 +1836,13 @@ const handleRoutedSelection = setupNimRoutedSelection.createRoutedSelectionHandl
   hydrateCredentialEnv,
   normalizeCredentialValue,
   saveCredential,
+  resolveRouterProviderKeyBridge: providerKeyBridge.resolveRouterProviderKeyBridge,
   stageRouterProviderKeyBridge: providerKeyBridge.stageRouterProviderKeyBridge,
   resolveProviderCredential,
   ensureNamedCredential: credentialPrompt.ensureNamedCredential,
   returningToProviderSelection: credentialPrompt.returningToProviderSelection,
-  log: console.log,
-  error: console.error,
+  log: (message) => console.log(message),
+  error: (message) => console.error(message),
 });
 
 async function handleNimLocalSelection(
@@ -2613,6 +2614,7 @@ const {
   buildOrphanedSandboxRollbackMessage,
   ensureDashboardForward,
   ensureAgentDashboardForward,
+  ensureFinalizationAgentDashboardForward,
   ensureFinalizationDashboardForward,
   ensureAgentFixedForward,
   fetchGatewayAuthTokenFromSandbox,
@@ -3343,6 +3345,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         branchState: agent ? "agent_setup" : "openclaw",
         authoritativePolicyTier:
           opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
+        revalidatePolicyRequirements: policyAuthorityBindings.revalidatePolicyRequirements,
         agentSetupDeps: {
           handleAgentSetup: agentOnboard.handleAgentSetup,
           agentSetupContext: () => ({
@@ -3408,10 +3411,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           webSearchProvider: (config) => webSearchProviderForConfig(config),
         },
         finalizationDeps: {
-          ensureAgentDashboardForward: (name, selectedAgent) =>
-            selectedAgent
-              ? ensureAgentDashboardForward(name, selectedAgent)
-              : ensureFinalizationDashboardForward(name),
+          ensureAgentDashboardForward: ensureFinalizationAgentDashboardForward,
           setDefaultSandbox: registry.setDefault,
           verifyWebSearchInsideSandbox,
           toSessionUpdates: (updates) =>

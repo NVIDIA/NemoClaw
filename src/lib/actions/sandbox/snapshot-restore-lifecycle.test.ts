@@ -136,6 +136,46 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.updateSandboxMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { label: "missing", content: "version: 1\n" },
+    { label: "empty", content: "version: 1\nnetwork_policies: {}\n" },
+  ])(
+    "refuses an external restore before effects when the required network_policies mapping is $label (#9833)",
+    async ({ content }) => {
+      const cleanupBasePolicy = vi.fn(() => true);
+      f.getSandboxMock.mockReturnValue({
+        name: "alpha",
+        agent: "openclaw",
+        policyAuthority: "externally-managed",
+        baselineExclusions: [
+          {
+            version: 1,
+            agent: "openclaw",
+            key: "github",
+            digest: "approved-digest",
+          },
+        ],
+      });
+      f.getLatestBackupMock.mockReturnValue(f.latestBackupFixture);
+      f.prepareInitialSandboxCreatePolicyMock.mockReturnValue({
+        policyPath: "/tmp/current-base-policy.yaml",
+        appliedPresets: [],
+        sourceBytes: Buffer.from(content),
+        cleanup: cleanupBasePolicy,
+      });
+      const { runSandboxSnapshot } = await import("./snapshot");
+
+      await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+        exitCode: 1,
+      });
+
+      expect(cleanupBasePolicy).toHaveBeenCalledOnce();
+      expect(f.inspectSandboxPolicyAuthorityMock).not.toHaveBeenCalled();
+      expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+      expect(f.updateSandboxMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("delegates managed and custom-image snapshot restores to the state layer", async () => {
     f.getLatestBackupMock.mockReturnValue({
       snapshotVersion: 4,

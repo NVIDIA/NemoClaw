@@ -864,13 +864,17 @@ async function compensatePreparationFailure(
   error: unknown,
   deps: RuntimeIdentityCommandDeps,
 ): Promise<never> {
-  if (isBlueprintPolicyAuthorityRefusalError(error)) throw error;
   const message = error instanceof Error ? error.message : String(error);
   try {
     await deleteCreatedProvider(receipt, deps);
   } catch (cleanupError) {
     const cleanupMessage =
       cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+    if (isBlueprintPolicyAuthorityRefusalError(error)) {
+      throw new BlueprintPolicyAuthorityRefusalError(
+        `${message}; cleanup failed: ${cleanupMessage}`,
+      );
+    }
     throw new Error(`${message}; cleanup failed: ${cleanupMessage}`);
   }
   throw error;

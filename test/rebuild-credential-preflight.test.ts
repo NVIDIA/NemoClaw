@@ -167,6 +167,7 @@ wait();`,
   fs.mkdirSync(workspaceDir, { recursive: true });
   fs.writeFileSync(path.join(workspaceDir, "marker.txt"), "test-workspace");
   const deleteMarker = path.join(tmpDir, "sandbox-delete-invoked");
+  const policyQueryMarker = path.join(tmpDir, "policy-query-invoked");
   const atomicityMarker = path.join(fakeRoot, "rebuild-atomicity-marker.txt");
   fs.writeFileSync(atomicityMarker, "dcode-atomicity-marker\n");
 
@@ -185,6 +186,15 @@ const fs = require("fs");
 const a = process.argv.slice(2);
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
 if (a[0] === "-V" || a[0] === "--version") { process.stdout.write("openshell 0.0.106\\n"); process.exit(0); }
+if (a[0] === "policy") {
+  fs.writeFileSync(${JSON.stringify(policyQueryMarker)}, a.join(" ") + "\\n", { flag: "a" });
+  if (a[1] === "list" && a.includes("--global")) process.exit(0);
+  if (a[1] === "get" && a.includes("--output") && a.includes("json")) {
+    process.stdout.write(JSON.stringify({scope:"sandbox",sandbox:"${sandboxName}",status:"effective",policy_source:"sandbox",policy:{}}) + "\\n");
+    process.exit(0);
+  }
+  process.exit(64);
+}
 if (a[0] === "sandbox" && a[1] === "list") { process.stdout.write("${sandboxName} Ready\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "get") {
@@ -329,7 +339,7 @@ process.exit(0);
     { mode: 0o755 },
   );
 
-  return { tmpDir, nemoclawDir, sandboxName, deleteMarker };
+  return { tmpDir, nemoclawDir, sandboxName, deleteMarker, policyQueryMarker };
 }
 
 function runCli(
@@ -384,6 +394,7 @@ describe("atomic rebuild process contracts (#2273)", () => {
     expect(output).toContain("Cancelled.");
     expect(output).not.toContain("preflight failed");
     expect(output).not.toContain("Backing up sandbox state");
+    expect(fs.existsSync(fixture.policyQueryMarker)).toBe(false);
     expect(registryHasSandbox(fixture)).toBe(true);
   });
 

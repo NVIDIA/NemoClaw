@@ -320,6 +320,35 @@ async function runRestoreTimerWithBudget(
       throw new Error("Auto-restore authority changed before Shields transition takeover");
     }
   };
+  const relockConfigAfterPolicyAuthorityRefusal = (): void => {
+    if (!args.configPath) return;
+    assertTakeoverAuthority();
+    const lockTarget = shields.resolvePersistedAutoRestoreTarget(args.sandboxName, args);
+    if (!lockTarget) {
+      throw new Error("Missing config directory for policy-authority recovery re-lock");
+    }
+    shields.relockAgentConfigAfterPolicyAuthorityRefusal(
+      args.sandboxName,
+      lockTarget,
+      args.processToken!,
+      args.allowLegacyHermesProtocol,
+    );
+  };
+  const preservePolicyAuthorityRefusal = (): void => {
+    try {
+      relockConfigAfterPolicyAuthorityRefusal();
+    } catch (error) {
+      appendAudit({
+        action: "shields_auto_restore_lock_warning",
+        sandbox: args.sandboxName,
+        timestamp: new Date().toISOString(),
+        restored_by: "auto_timer",
+        policy_snapshot: args.snapshotPath,
+        warning: error instanceof Error ? error.message : String(error),
+        lock_verified: false,
+      });
+    }
+  };
   const terminalRecoveryFailure = (attempt: number): Error => {
     const lockPath = getMcpLifecycleLockPath(args.sandboxName, STATE_DIR);
     const reason = `Auto-restore recovery failed after ${String(attempt)} ${attempt === 1 ? "attempt" : "attempts"} while the exact timer generation still owned recovery authority`;
@@ -613,6 +642,7 @@ async function runRestoreTimerWithBudget(
           });
           exitCode = 1;
           if (isPolicyAuthorityRefusalError(error)) {
+            preservePolicyAuthorityRefusal();
             terminalPolicyAuthorityRefusal = true;
             return;
           }
@@ -682,6 +712,7 @@ async function runRestoreTimerWithBudget(
     if (isDurableContainmentFailure(reportedError)) {
       terminalContainment = true;
     } else if (isPolicyAuthorityRefusalError(reportedError)) {
+      preservePolicyAuthorityRefusal();
       terminalPolicyAuthorityRefusal = true;
     } else if (markerMatchesCurrentTimer(args)) {
       if (recoveryBudget.attemptsUsed === attemptsAtEntry) {

@@ -404,7 +404,7 @@ export async function runRebuildPostRestorePhase(
   registry.updateSandbox(sandboxName, {
     agentVersion: agentDef.expectedVersion || null,
     policies: restoredBuiltinPresets,
-    policyTier: normalizePolicyTierName(sb.policyTier),
+    policyTier: externallyManagedPolicy ? null : normalizePolicyTierName(sb.policyTier),
     policyPresetsFinalized,
     ...(externallyManagedPolicy
       ? { baselineExclusions: [], customPolicies: [], policyAuthority }

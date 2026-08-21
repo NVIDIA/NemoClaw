@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import { PolicyAuthorityRefusalError } from "../adapters/openshell/policy-authority";
 import type { InferenceSelection } from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
@@ -167,7 +168,9 @@ export function registerSandbox(
       requestedPolicyAuthority !== undefined &&
       recordedPolicyAuthority !== requestedPolicyAuthority
     ) {
-      throw new Error("Cannot register a sandbox after its policy authority changed");
+      throw new PolicyAuthorityRefusalError(
+        "Cannot register a sandbox after its policy authority changed",
+      );
     }
     const policyAuthority = requestedPolicyAuthority ?? recordedPolicyAuthority;
     if (retainedDefaultSandbox(data.defaultSandbox, data.sandboxes) === null) {
@@ -428,13 +431,17 @@ function changesHostLocalInferenceLifecycleAuthority(
   );
 }
 
-function changesRecordedPolicyAuthority(
+function assertRecordedPolicyAuthorityUnchanged(
   current: SandboxEntry,
   updates: Partial<SandboxEntry>,
-): boolean {
-  if (!Object.prototype.hasOwnProperty.call(updates, "policyAuthority")) return false;
+): void {
+  if (!Object.prototype.hasOwnProperty.call(updates, "policyAuthority")) return;
   const requested = normalizeSandboxPolicyAuthority(updates.policyAuthority);
-  return current.policyAuthority !== undefined && requested !== current.policyAuthority;
+  if (current.policyAuthority === undefined || requested === current.policyAuthority) return;
+  throw new PolicyAuthorityRefusalError(
+    `Refusing to update sandbox '${current.name}' because its policy authority changed ` +
+      `from ${current.policyAuthority} to ${requested ?? "unrecorded"}.`,
+  );
 }
 
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {
@@ -446,7 +453,7 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
       return false;
     }
     if (changesHostLocalInferenceLifecycleAuthority(current, updates)) return false;
-    if (changesRecordedPolicyAuthority(current, updates)) return false;
+    assertRecordedPolicyAuthorityUnchanged(current, updates);
     data.sandboxes[name] = { ...current, ...updates };
     save(data);
     return true;
@@ -486,7 +493,7 @@ export function restoreSandboxEntry(
       normalizeSandboxPolicyAuthority(current.policyAuthority) !==
         normalizeSandboxPolicyAuthority(entry.policyAuthority)
     ) {
-      throw new Error(
+      throw new PolicyAuthorityRefusalError(
         `Refusing to restore sandbox '${entry.name}' because its policy authority changed during recovery.`,
       );
     }

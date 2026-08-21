@@ -32,6 +32,7 @@ export interface FinalOnboardFlowPhaseOptions<
 > {
   branchState: "agent_setup" | "openclaw";
   authoritativePolicyTier?: string | null;
+  revalidatePolicyRequirements?(context: Context, operation: string): void;
   agentSetupDeps: AgentSetupStateOptions<Context["agent"]>["deps"];
   policiesDeps: PoliciesStateOptions<Context["agent"], WebSearchConfig>["deps"];
   finalization: {
@@ -116,6 +117,9 @@ export function createFinalOnboardFlowPhases<
   const finalizationPhase = createFinalizationPhase<Context>(async (context) => {
     assertSandboxCreatedContext(context, "finalization");
     const webSearchEnabled = options.finalization.webSearchEnabled(context.webSearchConfig);
+    const revalidatePolicyRequirements =
+      options.revalidatePolicyRequirements?.bind(null, context) ??
+      finalizationDeps.revalidatePolicyRequirements;
     const finalizationResult = await handleFinalizationState({
       sandboxName: context.sandboxName,
       model: context.model,
@@ -132,7 +136,7 @@ export function createFinalOnboardFlowPhases<
           ? options.finalization.webSearchProvider(context.webSearchConfig)
           : null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
-      deps: finalizationDeps,
+      deps: { ...finalizationDeps, revalidatePolicyRequirements },
     });
     return { result: finalizationResult.stateResult };
   });

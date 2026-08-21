@@ -421,15 +421,14 @@ describe("connectSandbox flow", () => {
     async (httpStatus) => {
       const response = `OK ${String(httpStatus)}`;
       const harness = createConnectHarness({
-        inferenceGetOutput: "Provider: ollama-local\nModel: qwen3-vl:4b\n",
+        inferenceGetOutput:
+          "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3-vl:4b\n",
         inferenceProbeResponses: [response, response],
         registryEntry: { provider: "ollama-local", model: "qwen3-vl:4b" },
       });
-
       await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
         "process.exit(1)",
       );
-
       expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
         "inference.local/v1/models must return HTTP 2xx",
       );
@@ -443,15 +442,18 @@ describe("connectSandbox flow", () => {
 
   it("rechecks HTTP 2xx after repairing an Ollama inference route (#8502)", async () => {
     const harness = createConnectHarness({
-      inferenceGetOutput: "Provider: ollama-local\nModel: qwen3-vl:4b\n",
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3-vl:4b\n",
       inferenceProbeResponses: ["BROKEN 503", "OK 401", "OK 401"],
-      registryEntry: { provider: "ollama-local", model: "qwen3-vl:4b" },
+      registryEntry: {
+        provider: "ollama-local",
+        model: "qwen3-vl:4b",
+        policyAuthority: "nemoclaw-managed",
+      },
     });
-
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
       "process.exit(1)",
     );
-
     expect(harness.runSetupDnsProxySpy).toHaveBeenCalled();
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
       "inference.local/v1/models must return HTTP 2xx",
@@ -465,12 +467,11 @@ describe("connectSandbox flow", () => {
         provider: "nvidia-prod",
         model: "nvidia/nemotron-3-super-120b-a12b",
       },
-      inferenceGetOutput: "Provider: nvidia-prod\nModel: nvidia/nemotron-3-super-120b-a12b\n",
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
       inferenceProbeResponses: [longProbeDetail],
     });
-
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
-
     expect(harness.applyVmDnsMonkeypatchSpy).not.toHaveBeenCalled();
     expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
     expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
@@ -886,7 +887,8 @@ describe("connectSandbox flow", () => {
         provider: "nvidia-prod",
         model: "nvidia/nemotron-3-super-120b-a12b",
       },
-      inferenceGetOutput: "Provider: nvidia-prod\nModel: nvidia/nemotron-3-super-120b-a12b\n",
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
       inferenceProbeResponses: ["route probe unavailable"],
     });
 

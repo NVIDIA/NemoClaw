@@ -240,29 +240,35 @@ export async function restoreExistingMcpBridgeRuntime(
 ): Promise<void> {
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
-  const resolvedByServer = await preflightMcpEntryTargets(entries);
+  const teardownRollback = options.lifecyclePhase === "teardown-rollback";
+  const resolvedByServer = teardownRollback
+    ? new Map<string, McpBridgeTargetValidation>()
+    : await preflightMcpEntryTargets(entries);
   const sandbox = getSandboxOrThrow(sandboxName);
   assertMcpDestroyNotPending(sandbox);
-  const requiredPolicyContents = entries.map((entry) =>
-    buildRequiredMcpBridgePolicy(entry, resolvedTargetPins(resolvedByServer, entry)),
-  );
-  const policyAuthorityReceipt = qualifyMcpPolicyAuthorityReceipt({
-    operation: "restore managed MCP runtime",
-    requiredPolicyContents,
-    sandboxName,
-  });
+  const policyAuthorityReceipt = teardownRollback
+    ? undefined
+    : qualifyMcpPolicyAuthorityReceipt({
+        operation: "restore managed MCP runtime",
+        requiredPolicyContents: entries.map((entry) =>
+          buildRequiredMcpBridgePolicy(entry, resolvedTargetPins(resolvedByServer, entry)),
+        ),
+        sandboxName,
+      });
   const revalidateBeforeMutation = () =>
-    revalidateMcpPolicyAuthorityReceipt(
-      policyAuthorityReceipt,
-      options.validateContainingPolicyReceipt,
-    );
-  const policyAuthority = policyAuthorityReceipt.authority;
-  if (options.lifecyclePhase !== "teardown-rollback") {
+    policyAuthorityReceipt
+      ? revalidateMcpPolicyAuthorityReceipt(
+          policyAuthorityReceipt,
+          options.validateContainingPolicyReceipt,
+        )
+      : Promise.resolve();
+  const policyAuthority = policyAuthorityReceipt?.authority;
+  if (!teardownRollback) {
     assertMcpCredentialBoundaryRuntimeVersion();
   }
   await revalidateBeforeMutation();
   await ensureSandboxGatewaySelected(sandboxName);
-  if (options.lifecyclePhase === "teardown-rollback") {
+  if (teardownRollback) {
     // A failed delete/rebuild must be able to restore a backward-compatible
     // Deep Agents entry on the same old image it just scrubbed. New/rebuilt
     // images use the default path and must prove the current marker before any
@@ -316,7 +322,7 @@ export async function restoreExistingMcpBridgeRuntime(
       {},
       {
         replaceExisting: true,
-        teardownRollback: options.lifecyclePhase === "teardown-rollback",
+        teardownRollback,
         credentialRevision,
       },
     );

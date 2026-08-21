@@ -45,6 +45,7 @@ import {
   registryPersistence,
   resolve,
   sandboxList,
+  sandboxRecreateProbe,
   sandboxSession,
   sandboxState,
   sandboxVersion,
@@ -531,6 +532,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         })),
     );
   const deletedSourceGateways = new Set<string>();
+  vi.spyOn(sandboxRecreateProbe, "observeSandboxPresenceOnGateway").mockImplementation(
+    ({ gatewayName }: { gatewayName: string }) =>
+      deletedSourceGateways.has(gatewayName) ? "missing" : "present",
+  );
   const runOpenshellSpy = vi
     .spyOn(openshellRuntime, "runOpenshell")
     .mockImplementation((args: unknown) => {
@@ -605,6 +610,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .mockImplementation(async (...args: unknown[]) => {
       const options = args[0] as RebuildRecreateOnboardOpts;
       await overrides.onboard?.(session, options);
+      deletedSourceGateways.delete(options.targetGatewayName);
     });
   vi.spyOn(rebuildOnboardDependencies, "preflightAuthoritativeRebuildTarget").mockImplementation(
     async (options: unknown) => {

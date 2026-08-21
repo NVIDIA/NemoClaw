@@ -52,6 +52,10 @@ function unclassifiedBase(site: string): DiscoveredPolicyRead {
   return { site, view: "base", failureHandling: "unclassified" };
 }
 
+function unclassifiedFull(site: string): DiscoveredPolicyRead {
+  return { site, view: "full", failureHandling: "unclassified" };
+}
+
 function ignoredFull(site: string): DiscoveredPolicyRead {
   return { site, view: "full", failureHandling: "ignore-error" };
 }
@@ -75,7 +79,11 @@ export const MUTATION_READS: readonly AuditedPolicyReadFile[] = [
   },
   {
     relativePath: "nemoclaw/src/blueprint/runner.ts",
-    expectedReads: [unclassifiedBase("actionApply")],
+    expectedReads: [
+      unclassifiedFull("inspectBlueprintPolicyAuthority"),
+      unclassifiedFull("inspectBlueprintPolicyAuthority"),
+      unclassifiedBase("actionApply"),
+    ],
   },
   {
     relativePath: "src/lib/shields/index.ts",
@@ -96,6 +104,10 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
     ],
   },
   {
+    relativePath: "src/lib/actions/sandbox/launch-readiness.ts",
+    expectedReads: [unclassifiedFull("captureLivePolicy")],
+  },
+  {
     relativePath: "src/lib/policy/commands.ts",
     expectedReads: [
       {
@@ -108,6 +120,8 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
         view: "full",
         failureHandling: "unclassified",
       },
+      unclassifiedFull("buildPolicyGetFullJsonCommand"),
+      unclassifiedFull("buildGlobalPolicyGetFullJsonCommand"),
     ],
   },
 ] as const;
@@ -418,8 +432,12 @@ function directPolicyReadView(
     ts.isExpression(element) ? literalText(element) : null,
   );
   if (values[offset] !== "policy" || values[offset + 1] !== "get") return null;
-  if (values[offset + 2] === "--base") return "base";
-  if (values[offset + 2] === "--full") return "full";
+  const readArguments = values.slice(offset + 2);
+  const hasBase = readArguments.includes("--base");
+  const hasFull = readArguments.includes("--full");
+  if (hasBase === hasFull) return null;
+  if (hasBase) return "base";
+  if (hasFull) return "full";
   return null;
 }
 

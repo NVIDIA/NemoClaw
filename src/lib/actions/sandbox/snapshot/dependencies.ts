@@ -8,6 +8,10 @@ import { assertHermesPortableCommandUnavailable } from "../../../onboard/experim
 import type { SandboxEntry } from "../../../state/registry/types";
 
 export {
+  isPolicyAuthorityRefusalError,
+  PolicyAuthorityRefusalError,
+} from "../../../adapters/openshell/policy-authority";
+export {
   confirmHostLocalInferenceAuthority,
   type PreparedHostLocalInferenceAuthority,
   prepareHostLocalInferenceAuthority,

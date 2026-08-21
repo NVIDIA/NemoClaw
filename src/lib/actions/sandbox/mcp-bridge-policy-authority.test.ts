@@ -12,7 +12,7 @@ const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
 
 describe("managed MCP policy authority", () => {
   it(
-    "rechecks externally managed policy before MCP lifecycle and rollback mutations (#9833)",
+    "verifies external policy before active MCP mutations and preserves owned teardown cleanup (#9833)",
     { timeout: 40_000 },
     () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-policy-authority-"));
@@ -40,6 +40,7 @@ let authorityCheck = 0;
 let rejectAuthorityAt = 0;
 let rejectAfterAdapter = false;
 let refuseRollbackAfterAdapterFailure = false;
+let refusePolicyRemoval = false;
 let rollbackRefusalOffset = 1;
 let recordRollbackInspections = false;
 let adapterRegistered = false;
@@ -56,6 +57,7 @@ const inspectPolicyAuthority = (options) => {
       requirement.includes("mcp_bridge_example:") &&
       requirement.includes("credential_binding:"),
     operation: options.operation,
+    providerBinding: /\n\s+provider:\s+(\S+)/u.exec(requirement)?.[1] ?? null,
     requirementCount: options.requiredPolicyContents?.length ?? 0,
   });
   if (authorityMode === "missing") {
@@ -74,7 +76,14 @@ const inspectPolicyAuthority = (options) => {
 replace(policy, "preflightMcpPolicyAuthority", inspectPolicyAuthority);
 replace(policyAuthority, "preflightSandboxPolicyAuthority", inspectPolicyAuthority);
 replace(policy, "applyGeneratedPolicy", () => mutations.push("policy:apply"));
-replace(policy, "removeGeneratedPolicy", () => mutations.push("policy:remove"));
+replace(policy, "removeGeneratedPolicy", () => {
+  mutations.push("policy:remove");
+  if (refusePolicyRemoval) {
+    throw new policy.McpPolicyAuthorityRefusalError(
+      "OpenShell policy authority changed during MCP removal",
+    );
+  }
+});
 replace(policy, "assertGeneratedPolicyMutationSafe", () => {
   mutations.push("policy:managed-ownership-check");
   throw new Error("managed policy ownership check must not run");
@@ -86,6 +95,7 @@ replace(policies, "getPresetContentGatewayState", () => {
 
 replace(adapters, "assertAgentMcpConfigMutationAllowed", () => {});
 replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
+replace(adapters, "assertAgentMcpTeardownRuntimeCapability", () => {});
 replace(adapters, "inspectAgentAdapterRegistration", () => ({
   state: adapterRegistered ? "registered" : "absent",
 }));
@@ -123,7 +133,10 @@ replace(provider, "assertMcpProviderRecoverable", () => {
 replace(provider, "assertNoAttachedProviderCredentialCollisions", () => {});
 replace(provider, "assertNoProviderCredentialCollisions", () => {});
 replace(provider, "attachProvider", () => mutations.push("provider:attach"));
-replace(provider, "deleteProvider", () => mutations.push("provider:delete"));
+replace(provider, "deleteProvider", () => {
+  providerExists = false;
+  mutations.push("provider:delete");
+});
 replace(provider, "detachProvider", () => {
   mutations.push("provider:detach");
   return "detached";
@@ -167,13 +180,16 @@ const addOptions = {
 };
 
 (async () => {
-  let missingMessage = "";
-  try {
-    await bridge.addMcpBridge("alpha", addOptions);
-  } catch (error) {
-    missingMessage = error instanceof Error ? error.message : String(error);
+  const missingMessages = [];
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await bridge.addMcpBridge("alpha", addOptions);
+    } catch (error) {
+      missingMessages.push(error instanceof Error ? error.message : String(error));
+    }
   }
   const afterMissing = {
+    bridge: registry.getSandbox("alpha")?.mcp?.bridges?.example,
     bridgePresent: !!registry.getSandbox("alpha")?.mcp?.bridges?.example,
     customPolicies: registry.getCustomPolicies("alpha"),
     mutations: [...mutations],
@@ -196,6 +212,7 @@ const addOptions = {
     driftAddMessage = error instanceof Error ? error.message : String(error);
   }
   const afterDriftAdd = {
+    bridge: registry.getSandbox("drift-add")?.mcp?.bridges?.example,
     bridgePresent: !!registry.getSandbox("drift-add")?.mcp?.bridges?.example,
     mutations: [...mutations],
   };
@@ -340,6 +357,35 @@ const addOptions = {
     mutations: [...mutations],
   };
 
+  const removeDriftEntry = {
+    ...afterAdd.bridge,
+    providerName: "remove-drift-mcp-example",
+    providerId,
+  };
+  registry.registerSandbox({
+    name: "remove-drift",
+    agent: "openclaw",
+    gatewayName: "nemoclaw",
+    policyAuthority: "nemoclaw-managed",
+    mcp: { bridges: { example: removeDriftEntry } },
+  });
+  authorityMode = "managed";
+  refusePolicyRemoval = true;
+  adapterRegistered = true;
+  providerExists = true;
+  mutations.length = 0;
+  let removeDriftMessage = "";
+  try {
+    await bridge.removeMcpBridge("remove-drift", "example");
+  } catch (error) {
+    removeDriftMessage = error instanceof Error ? error.message : String(error);
+  }
+  refusePolicyRemoval = false;
+  const afterRemoveDrift = {
+    bridgePresent: !!registry.getSandbox("remove-drift")?.mcp?.bridges?.example,
+    mutations: [...mutations],
+  };
+
   registry.registerSandbox({
     name: "resume",
     agent: "openclaw",
@@ -363,6 +409,7 @@ const addOptions = {
     },
   });
   authorityMode = "external";
+  providerExists = true;
   providerRecoverable = false;
   delete process.env.MCP_TOKEN;
   mutations.length = 0;
@@ -385,14 +432,16 @@ const addOptions = {
     afterFinalDrift,
     afterMissing,
     afterRemove,
+    afterRemoveDrift,
     afterResumeFailure,
     afterRestart,
     driftAddMessage,
     driftRestartMessage,
     finalDriftMessage,
-    missingMessage,
+    missingMessages,
     preflights,
     removeMessage,
+    removeDriftMessage,
     rollbackRaces,
     restoreRaces,
     resumeMessage,
@@ -419,11 +468,12 @@ const addOptions = {
         expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
         const payload = JSON.parse(result.stdout.slice(result.stdout.indexOf("{"))) as {
           afterAdd: {
-            bridge?: { addState?: string };
+            bridge?: { addState?: string; providerName?: string };
             customPolicies: unknown[];
             mutations: string[];
           };
           afterDriftAdd: {
+            bridge?: { addState?: string; providerName?: string };
             bridgePresent: boolean;
             mutations: string[];
           };
@@ -436,6 +486,7 @@ const addOptions = {
             mutations: string[];
           };
           afterMissing: {
+            bridge?: { addState?: string; providerName?: string };
             bridgePresent: boolean;
             customPolicies: unknown[];
             mutations: string[];
@@ -443,6 +494,10 @@ const addOptions = {
           afterRemove: {
             bridgePresent: boolean;
             customPolicies: unknown[];
+            mutations: string[];
+          };
+          afterRemoveDrift: {
+            bridgePresent: boolean;
             mutations: string[];
           };
           afterResumeFailure: {
@@ -458,14 +513,16 @@ const addOptions = {
           driftAddMessage: string;
           driftRestartMessage: string;
           finalDriftMessage: string;
-          missingMessage: string;
+          missingMessages: string[];
           preflights: Array<{
             externalPolicy: string;
             hasBoundRequirement: boolean;
             operation: string;
+            providerBinding: string | null;
             requirementCount: number;
           }>;
           removeMessage: string;
+          removeDriftMessage: string;
           rollbackRaces: Array<{
             bridge?: { addState?: string };
             message: string;
@@ -480,14 +537,27 @@ const addOptions = {
           resumeMessage: string;
         };
 
-        expect(payload.missingMessage).toContain("missing entries");
-        expect(payload.afterMissing).toEqual({
-          bridgePresent: false,
-          customPolicies: [],
-          mutations: [],
-        });
+        expect(payload.missingMessages).toEqual([
+          expect.stringContaining("missing entries"),
+          expect.stringContaining("missing entries"),
+        ]);
+        expect(
+          payload.preflights.slice(0, 2).map(({ providerBinding }) => providerBinding),
+        ).toEqual(["alpha-mcp-example", "alpha-mcp-example"]);
+        expect(payload.afterMissing.bridgePresent).toBe(false);
+        expect(payload.afterMissing.bridge).toBeUndefined();
+        expect(payload.afterMissing.customPolicies).toEqual([]);
+        expect(payload.afterMissing.mutations).not.toContain("registry:write");
+        expect(
+          payload.afterMissing.mutations.some((event) =>
+            /^(adapter|policy|provider):/u.test(event),
+          ),
+        ).toBe(false);
         expect(payload.driftAddMessage).toContain("authority changed");
-        expect(payload.afterDriftAdd.bridgePresent).toBe(false);
+        expect(payload.afterDriftAdd.bridgePresent).toBe(true);
+        expect(payload.afterDriftAdd.bridge).toEqual(
+          expect.objectContaining({ addState: "prepared", providerName: expect.any(String) }),
+        );
         expect(
           payload.afterDriftAdd.mutations.some((event) =>
             /^(adapter|policy|provider):/u.test(event),
@@ -524,7 +594,7 @@ const addOptions = {
           expect.objectContaining({ addState: "preflighted" }),
         );
         expect(payload.afterFinalDrift.mutations).toContain("adapter:register");
-        expect(payload.afterFinalDrift.mutations).not.toEqual(
+        expect(payload.afterFinalDrift.mutations).toEqual(
           expect.arrayContaining(["adapter:remove", "provider:detach", "provider:delete"]),
         );
 
@@ -536,13 +606,11 @@ const addOptions = {
           "provider:delete",
         ];
         expect(payload.rollbackRaces).toHaveLength(rollbackSequence.length);
-        expect(payload.rollbackRaces.map(({ message }) => message)).toEqual([
-          expect.stringContaining("authority changed"),
-          expect.stringContaining("authority changed"),
-          expect.stringContaining("authority changed"),
-          expect.stringContaining("authority changed"),
-          expect.stringContaining("authority changed"),
-        ]);
+        expect(payload.rollbackRaces.map(({ message }) => message)).toEqual(
+          Array.from({ length: rollbackSequence.length }, () =>
+            expect.stringContaining("adapter reload failed"),
+          ),
+        );
         expect(payload.rollbackRaces.map(({ bridge }) => bridge)).toEqual([
           expect.objectContaining({ addState: "preflighted" }),
           expect.objectContaining({ addState: "preflighted" }),
@@ -556,13 +624,7 @@ const addOptions = {
             expect(adapterRegistration).toBeGreaterThanOrEqual(0);
             return mutations.slice(adapterRegistration + 1);
           }),
-        ).toEqual([
-          [],
-          rollbackSequence.slice(0, 1),
-          rollbackSequence.slice(0, 2),
-          rollbackSequence.slice(0, 3),
-          rollbackSequence.slice(0, 4),
-        ]);
+        ).toEqual(Array.from({ length: rollbackSequence.length }, () => rollbackSequence));
 
         expect(payload.restoreRaces).toHaveLength(6);
         expect(payload.restoreRaces.map(({ message }) => message)).toEqual([
@@ -577,12 +639,25 @@ const addOptions = {
           0, 1, 2, 3, 4, 5,
         ]);
 
-        expect(payload.removeMessage).toContain("externally managed");
-        expect(payload.afterRemove).toEqual({
-          bridgePresent: true,
-          customPolicies: [],
-          mutations: [],
-        });
+        expect(payload.removeMessage).toBe("");
+        expect(payload.afterRemove.bridgePresent).toBe(false);
+        expect(payload.afterRemove.customPolicies).toEqual([]);
+        expect(payload.afterRemove.mutations).toEqual(
+          expect.arrayContaining(["adapter:remove", "provider:detach", "provider:delete"]),
+        );
+        expect(payload.afterRemove.mutations.some((event) => event.startsWith("policy:"))).toBe(
+          false,
+        );
+        expect(payload.removeDriftMessage).toContain("authority changed during MCP removal");
+        expect(payload.afterRemoveDrift.bridgePresent).toBe(true);
+        expect(payload.afterRemoveDrift.mutations).toEqual(
+          expect.arrayContaining([
+            "adapter:remove",
+            "policy:remove",
+            "provider:detach",
+            "provider:delete",
+          ]),
+        );
         expect(payload.resumeMessage).toContain("provider recovery failed");
         expect(payload.afterResumeFailure.bridgePresent).toBe(true);
         expect(payload.afterResumeFailure.customPolicies).toEqual([]);
@@ -598,14 +673,15 @@ const addOptions = {
             .length,
         ).toBeGreaterThanOrEqual(5);
         expect(
-          payload.preflights.filter(({ operation }) => operation === "remove MCP server 'example'")
-            .length,
-        ).toBeGreaterThanOrEqual(1);
+          payload.preflights.filter(({ operation }) => operation === "remove MCP server 'example'"),
+        ).toEqual([]);
         expect(payload.preflights).toEqual(
           expect.arrayContaining([
             expect.objectContaining({ hasBoundRequirement: true, requirementCount: 1 }),
-            expect.objectContaining({ hasBoundRequirement: false, requirementCount: 0 }),
           ]),
+        );
+        expect(payload.preflights.every(({ hasBoundRequirement }) => hasBoundRequirement)).toBe(
+          true,
         );
       } finally {
         fs.rmSync(home, { recursive: true, force: true });

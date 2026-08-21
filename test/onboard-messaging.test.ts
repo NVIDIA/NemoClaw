@@ -1228,9 +1228,7 @@ const { createSandbox } = require(${onboardPath});
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+      writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -1252,6 +1250,7 @@ runner.runCapture = (command) => {
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
+registry.updateSandbox = () => true;
 const { createSandbox } = require(${onboardPath});
 
 (async () => {

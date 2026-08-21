@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { SandboxEntry } from "../../state/registry";
 import {
   applyAbsentSandboxRebuildPolicyCarryForward,
+  applyManagedSandboxRebuildPolicyCarryForward,
   completeHermesPortableSandboxRegistration,
   proveRecreateSourceBeforePolicyCarryForward,
   readManagedDcodeCreateSelectionDrift,
@@ -30,17 +31,21 @@ describe("authoritative rebuild policy carry-forward", () => {
   });
 
   it("replaces stale resumed presets after the outer rebuild deletes the source sandbox (#9792)", () => {
+    const events: string[] = [];
     const note = vi.fn();
-    const applyRecreatePolicyCarryForward = vi.fn();
+    const applyRecreatePolicyCarryForward = vi.fn(() => events.push("carry-forward"));
+    const revalidatePolicyAuthority = vi.fn(() => events.push("revalidate"));
     const filteredPolicyPresets = ["github"];
 
     applyAbsentSandboxRebuildPolicyCarryForward(
       {
         sandboxName: "alpha",
         liveExists: false,
+        policyAuthority: "nemoclaw-managed",
         nonInteractive: true,
         note,
         rebuildPolicyPresets: filteredPolicyPresets,
+        revalidatePolicyAuthority,
       },
       applyRecreatePolicyCarryForward,
     );
@@ -51,19 +56,24 @@ describe("authoritative rebuild policy carry-forward", () => {
       note,
       filteredPolicyPresets,
     );
+    expect(revalidatePolicyAuthority).toHaveBeenCalledOnce();
+    expect(events).toEqual(["revalidate", "carry-forward"]);
   });
 
   it("preserves an intentionally empty preset selection after the outer delete (#9792)", () => {
     const note = vi.fn();
     const applyRecreatePolicyCarryForward = vi.fn();
+    const revalidatePolicyAuthority = vi.fn();
 
     applyAbsentSandboxRebuildPolicyCarryForward(
       {
         sandboxName: "alpha",
         liveExists: false,
+        policyAuthority: "nemoclaw-managed",
         nonInteractive: true,
         note,
         rebuildPolicyPresets: [],
+        revalidatePolicyAuthority,
       },
       applyRecreatePolicyCarryForward,
     );
@@ -74,6 +84,69 @@ describe("authoritative rebuild policy carry-forward", () => {
       note,
       [],
     );
+  });
+
+  it("does not carry managed presets into an absent external sandbox (#9833)", () => {
+    const applyRecreatePolicyCarryForward = vi.fn();
+    const revalidatePolicyAuthority = vi.fn();
+
+    applyAbsentSandboxRebuildPolicyCarryForward(
+      {
+        sandboxName: "alpha",
+        liveExists: false,
+        policyAuthority: "externally-managed",
+        nonInteractive: true,
+        note: vi.fn(),
+        rebuildPolicyPresets: ["github"],
+        revalidatePolicyAuthority,
+      },
+      applyRecreatePolicyCarryForward,
+    );
+
+    expect(revalidatePolicyAuthority).not.toHaveBeenCalled();
+    expect(applyRecreatePolicyCarryForward).not.toHaveBeenCalled();
+  });
+
+  it("does not carry managed presets into a live external recreation (#9833)", () => {
+    const applyRecreatePolicyCarryForward = vi.fn();
+    const revalidatePolicyAuthority = vi.fn();
+
+    applyManagedSandboxRebuildPolicyCarryForward(
+      {
+        sandboxName: "alpha",
+        policyAuthority: "externally-managed",
+        nonInteractive: true,
+        note: vi.fn(),
+        rebuildPolicyPresets: ["github"],
+        revalidatePolicyAuthority,
+      },
+      applyRecreatePolicyCarryForward,
+    );
+
+    expect(revalidatePolicyAuthority).not.toHaveBeenCalled();
+    expect(applyRecreatePolicyCarryForward).not.toHaveBeenCalled();
+  });
+
+  it("revalidates managed authority before live recreate policy carry-forward (#9833)", () => {
+    const applyRecreatePolicyCarryForward = vi.fn();
+    const revalidatePolicyAuthority = vi.fn(() => {
+      throw new Error("policy authority changed");
+    });
+
+    expect(() =>
+      applyManagedSandboxRebuildPolicyCarryForward(
+        {
+          sandboxName: "alpha",
+          policyAuthority: "nemoclaw-managed",
+          nonInteractive: true,
+          note: vi.fn(),
+          rebuildPolicyPresets: ["github"],
+          revalidatePolicyAuthority,
+        },
+        applyRecreatePolicyCarryForward,
+      ),
+    ).toThrow("policy authority changed");
+    expect(applyRecreatePolicyCarryForward).not.toHaveBeenCalled();
   });
 });
 

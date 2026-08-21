@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { PolicyAuthorityRefusalError } from "../adapters/openshell/policy-authority";
 import { ensureAgentDashboardForward } from "./agent-dashboard-forward";
 
 describe("ensureAgentDashboardForward", () => {
@@ -156,6 +157,99 @@ describe("ensureAgentDashboardForward", () => {
       { preserveSandboxPorts: [9120, 8642] },
     );
     expect(process.env.CHAT_UI_URL).toBe("https://hermes.example.test:9120/ui");
+  });
+
+  it("threads authority through the forward and withholds its URL after drift (#9833)", async () => {
+    const refusal = new PolicyAuthorityRefusalError("policy authority changed");
+    const revalidatePolicyAuthority = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw refusal;
+      });
+    const compensateDashboardForward = vi.fn();
+    const ensureDashboardForward = vi.fn(
+      (
+        _sandboxName,
+        chatUiUrl = "",
+        options?: {
+          revalidatePolicyAuthority?: (operation: string) => void;
+          onForwardStarted?: (port: number) => void;
+        },
+      ) => {
+        options?.revalidatePolicyAuthority?.("start dashboard forward");
+        const port = Number(new URL(chatUiUrl).port);
+        options?.onForwardStarted?.(port);
+        return port;
+      },
+    );
+
+    const result = ensureAgentDashboardForward({
+      sandboxName: "hm",
+      agent: { dashboard: { kind: "ui" }, forwardPort: 18789 },
+      ensureDashboardForward,
+      revalidatePolicyAuthority,
+      compensateDashboardForward,
+    });
+    await expect(result).rejects.toBe(refusal);
+
+    expect(ensureDashboardForward).toHaveBeenCalledWith(
+      "hm",
+      "http://127.0.0.1:18789",
+      expect.objectContaining({
+        revalidatePolicyAuthority,
+        onForwardStarted: expect.any(Function),
+      }),
+    );
+    expect(revalidatePolicyAuthority).toHaveBeenCalledWith("start dashboard forward");
+    expect(compensateDashboardForward).toHaveBeenCalledExactlyOnceWith(18789);
+    expect(process.env.CHAT_UI_URL).toBeUndefined();
+  });
+
+  it("compensates primary and optional forwards when final authority is refused (#9833)", async () => {
+    const refusal = new PolicyAuthorityRefusalError("policy authority changed at finality");
+    const revalidatePolicyAuthority = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw refusal;
+      });
+    const compensateDashboardForward = vi.fn();
+    const ensureDashboardForward = vi.fn(
+      (
+        _sandboxName,
+        chatUiUrl = "",
+        options?: {
+          revalidatePolicyAuthority?: (operation: string) => void;
+          onForwardStarted?: (port: number) => void;
+        },
+      ) => {
+        const port = Number(new URL(chatUiUrl).port);
+        options?.revalidatePolicyAuthority?.(`start dashboard forward ${String(port)}`);
+        options?.onForwardStarted?.(port);
+        return port;
+      },
+    );
+
+    await expect(
+      ensureAgentDashboardForward({
+        sandboxName: "hm",
+        agent: {
+          dashboard: { kind: "ui" },
+          forwardPort: 18789,
+          forward_ports: [18789, 8642],
+        },
+        ensureDashboardForward,
+        revalidatePolicyAuthority,
+        compensateDashboardForward,
+      }),
+    ).rejects.toBe(refusal);
+
+    expect(ensureDashboardForward).toHaveBeenCalledTimes(2);
+    expect(compensateDashboardForward.mock.calls).toEqual([[8642], [18789]]);
+    expect(process.env.CHAT_UI_URL).toBeUndefined();
   });
 
   it("forwards an API-kind agent on the sandbox-owned primary port", async () => {

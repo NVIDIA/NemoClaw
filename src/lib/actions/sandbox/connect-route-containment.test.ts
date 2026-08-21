@@ -82,6 +82,7 @@ describe("connect route containment", () => {
       gatewayPort: 8080,
       provider: "anthropic-prod",
       model: "claude-sonnet-4-20250514",
+      policyAuthority: "nemoclaw-managed",
     } as const;
     const harness = createConnectHarness({
       inferenceGetOutput:
@@ -205,6 +206,7 @@ describe("connect route containment", () => {
       gatewayPort: 8080,
       provider: "nvidia-prod",
       model: "nvidia/model-a",
+      policyAuthority: "nemoclaw-managed",
     } as const;
     const harness = createConnectHarness({
       registryEntry: alpha,
@@ -422,6 +424,7 @@ describe("connect route containment", () => {
       openshellDriver: "docker",
       provider: "anthropic-prod",
       model: "claude-sonnet-4-20250514",
+      policyAuthority: "nemoclaw-managed",
     } as const;
     const harness = createConnectHarness({
       inferenceGetOutput:

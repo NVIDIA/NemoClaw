@@ -171,14 +171,11 @@ function publishAttachedProvidersBeforeDockerSandboxCreation(
 ): void {
   if (input.openshellDriver !== "docker") return;
   const providersRequiringExistenceProbe = new Set(
-    [input.inferenceProvider, ...input.messagingProviders].filter(
-      (provider): provider is string => Boolean(provider),
+    [input.inferenceProvider, ...input.messagingProviders].filter((provider): provider is string =>
+      Boolean(provider),
     ),
   );
-  const attachedProviders = new Set([
-    ...providersRequiringExistenceProbe,
-    ...input.extraProviders,
-  ]);
+  const attachedProviders = new Set([...providersRequiringExistenceProbe, ...input.extraProviders]);
   for (const attachedProvider of attachedProviders) {
     if (
       providersRequiringExistenceProbe.has(attachedProvider) &&
@@ -222,24 +219,45 @@ type ApplyRecreatePolicyCarryForward = (
   rebuildPolicyPresets?: readonly string[],
 ) => void;
 
-/** Reseed an outer rebuild after its owned delete leaves no live source branch. */
-export function applyAbsentSandboxRebuildPolicyCarryForward(
+/** Carry managed rebuild policy intent only while the recorded authority remains current. */
+export function applyManagedSandboxRebuildPolicyCarryForward(
   input: {
     readonly sandboxName: string;
-    readonly liveExists: boolean;
+    readonly policyAuthority: "nemoclaw-managed" | "externally-managed";
     readonly nonInteractive: boolean;
     readonly note: (message: string) => void;
     readonly rebuildPolicyPresets?: readonly string[];
+    readonly revalidatePolicyAuthority: (operation: string) => void;
   },
   applyRecreatePolicyCarryForward: ApplyRecreatePolicyCarryForward,
 ): void {
-  if (input.liveExists || !Array.isArray(input.rebuildPolicyPresets)) return;
+  if (input.policyAuthority !== "nemoclaw-managed") return;
+  input.revalidatePolicyAuthority(
+    `carrying forward managed policy presets for sandbox '${input.sandboxName}'`,
+  );
   applyRecreatePolicyCarryForward(
     input.sandboxName,
     input.nonInteractive,
     input.note,
     input.rebuildPolicyPresets,
   );
+}
+
+/** Reseed an outer rebuild after its owned delete leaves no live source branch. */
+export function applyAbsentSandboxRebuildPolicyCarryForward(
+  input: {
+    readonly sandboxName: string;
+    readonly liveExists: boolean;
+    readonly policyAuthority: "nemoclaw-managed" | "externally-managed";
+    readonly nonInteractive: boolean;
+    readonly note: (message: string) => void;
+    readonly rebuildPolicyPresets?: readonly string[];
+    readonly revalidatePolicyAuthority: (operation: string) => void;
+  },
+  applyRecreatePolicyCarryForward: ApplyRecreatePolicyCarryForward,
+): void {
+  if (input.liveExists || !Array.isArray(input.rebuildPolicyPresets)) return;
+  applyManagedSandboxRebuildPolicyCarryForward(input, applyRecreatePolicyCarryForward);
 }
 
 export function proveRecreateSourceBeforePolicyCarryForward<T>(input: {
@@ -249,6 +267,15 @@ export function proveRecreateSourceBeforePolicyCarryForward<T>(input: {
   const runtime = input.createRecreateRuntime();
   input.carryForward();
   return runtime;
+}
+
+async function validatePortableManagedWorkloadSelection(input: {
+  readonly portableLifecycle: boolean;
+  readonly selectionNeedsValidation: boolean;
+  readonly prepareWorkload: () => Promise<unknown>;
+}): Promise<void> {
+  if (!input.portableLifecycle || !input.selectionNeedsValidation) return;
+  await input.prepareWorkload();
 }
 
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
@@ -505,98 +532,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           inspectSandboxForCreate,
           createIntent?.toolDisclosure ?? null,
         );
-    const sessionPolicyAuthority = onboardSession.loadSession()?.policyAuthority ?? null;
-    const qualifyPolicyAuthority = (
-      sandboxIsLive = liveExists,
-      operation = `prepare sandbox '${sandboxName}'`,
-    ) =>
-      policyAuthorityPreflight.qualifySandboxPolicyAuthority({
-        sandboxName,
-        gatewayName: GATEWAY_NAME,
-        liveExists: sandboxIsLive,
-        recordedAuthorities: [existingEntry?.policyAuthority, sessionPolicyAuthority],
-        prepareRequiredPolicy: () =>
-          sandboxCreatePlanMaterialization.prepareSandboxCreatePolicy(policyRequirementIntent)
-            .initialSandboxPolicy,
-        operation,
-      });
-    const policyAuthorityInspection = qualifyPolicyAuthority();
-    const resolvedPolicyAuthority = policyAuthorityInspection.authority;
-    const revalidatePolicyAuthority = (sandboxIsLive: boolean, operation: string): void => {
-      const inspection = qualifyPolicyAuthority(sandboxIsLive, operation);
-      assertCreatePolicyAuthorityUnchanged(
-        inspection.authority,
-        resolvedPolicyAuthority,
-        operation,
-      );
-    };
-    assertHermesPortablePolicyAuthority(
-      agentCreateInput.hermesPortableLifecycle,
-      resolvedPolicyAuthority,
-    );
-    backfillExistingSandboxPolicyAuthority({
-      sandboxName,
-      existingEntry,
-      policyAuthority: resolvedPolicyAuthority,
-      updateSandbox: registry.updateSandbox,
-    });
-    onboardSession.updateSession((session) => {
-      session.policyAuthority = resolvedPolicyAuthority;
-      if (resolvedPolicyAuthority === "externally-managed") session.policyPresets = null;
-    });
-    // Prove the preserved source row before replacing its stale preset list.
-    // Policy carry-forward is an owned post-delete mutation, but applying it
-    // before recreate recovery makes the journal correctly reject that row as
-    // changed before the replacement can be created.
-    let recreateRuntime:
-      | import("../sandbox-recreate-transaction").SandboxRecreateRuntime
-      | OwnedSandboxRecreateRuntime = proveRecreateSourceBeforePolicyCarryForward({
-      createRecreateRuntime: () =>
-        sandboxRecreateTransaction.createSandboxRecreateRuntime(
-          onboardSession,
-          createIntent?.recreateTransaction,
-          sandboxName,
-          GATEWAY_NAME,
-          existingEntry,
-          getSandboxRecreateObservation,
-          note,
-        ),
-      carryForward: () =>
-        applyAbsentSandboxRebuildPolicyCarryForward(
-          {
-            sandboxName,
-            liveExists,
-            nonInteractive: isNonInteractive(),
-            note,
-            rebuildPolicyPresets: createIntent?.rebuildPolicyPresets,
-          },
-          policyPresetCarry.applyRecreatePolicyCarryForward,
-        ),
-    });
-    const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
-      ({ chatUiUrl } = await sandboxReuse.restoreReusedSandboxDashboardState({
-        sandboxName,
-        chatUiUrl,
-        env: process.env,
-        agent,
-        model,
-        provider,
-        selectionVerified,
-        sandboxGpuConfig: effectiveSandboxGpuConfig,
-        gatewayName: GATEWAY_NAME,
-        gatewayPort: GATEWAY_PORT,
-        manageDashboard,
-        ensureDashboardForward,
-        hermesDashboardForwarding,
-        updateReusedSandboxMetadata,
-        releaseDashboardPort: dashboardPortReservationScope.release,
-        revalidatePolicyRequirements: (operation) => revalidatePolicyAuthority(true, operation),
-      }));
-    };
-    if (recreateRuntime.acceptedTarget) {
-      await restoreReusedSandboxDashboard(true);
-      return sandboxName;
-    }
     const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(
       liveExists,
       isManagedDcodeAgent,
@@ -677,6 +612,105 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxName,
         workloadKind: workload.source.kind,
       });
+    await validatePortableManagedWorkloadSelection({
+      portableLifecycle: agentCreateInput.portableLifecycle,
+      selectionNeedsValidation: tempManagedRuntime || managedWorkloadRebuild !== null,
+      prepareWorkload: ensurePreparedSandboxWorkload,
+    });
+    const sessionPolicyAuthority = onboardSession.loadSession()?.policyAuthority ?? null;
+    const qualifyPolicyAuthority = (
+      sandboxIsLive = liveExists,
+      operation = `prepare sandbox '${sandboxName}'`,
+    ) =>
+      policyAuthorityPreflight.qualifySandboxPolicyAuthority({
+        sandboxName,
+        gatewayName: GATEWAY_NAME,
+        liveExists: sandboxIsLive,
+        recordedAuthorities: [existingEntry?.policyAuthority, sessionPolicyAuthority],
+        prepareRequiredPolicy: () =>
+          sandboxCreatePlanMaterialization.prepareSandboxCreatePolicy(policyRequirementIntent)
+            .initialSandboxPolicy,
+        operation,
+      });
+    const policyAuthorityInspection = qualifyPolicyAuthority();
+    const resolvedPolicyAuthority = policyAuthorityInspection.authority;
+    const revalidatePolicyAuthority = (sandboxIsLive: boolean, operation: string): void => {
+      const inspection = qualifyPolicyAuthority(sandboxIsLive, operation);
+      assertCreatePolicyAuthorityUnchanged(
+        inspection.authority,
+        resolvedPolicyAuthority,
+        operation,
+      );
+    };
+    assertHermesPortablePolicyAuthority(
+      agentCreateInput.hermesPortableLifecycle,
+      resolvedPolicyAuthority,
+    );
+    backfillExistingSandboxPolicyAuthority({
+      sandboxName,
+      existingEntry,
+      policyAuthority: resolvedPolicyAuthority,
+      updateSandbox: registry.updateSandbox,
+    });
+    onboardSession.updateSession((session) => {
+      session.policyAuthority = resolvedPolicyAuthority;
+      if (resolvedPolicyAuthority === "externally-managed") session.policyPresets = null;
+    });
+    // Prove the preserved source row before replacing its stale preset list.
+    // Policy carry-forward is an owned post-delete mutation, but applying it
+    // before recreate recovery makes the journal correctly reject that row as
+    // changed before the replacement can be created.
+    let recreateRuntime:
+      | import("../sandbox-recreate-transaction").SandboxRecreateRuntime
+      | OwnedSandboxRecreateRuntime = proveRecreateSourceBeforePolicyCarryForward({
+      createRecreateRuntime: () =>
+        sandboxRecreateTransaction.createSandboxRecreateRuntime(
+          onboardSession,
+          createIntent?.recreateTransaction,
+          sandboxName,
+          GATEWAY_NAME,
+          existingEntry,
+          getSandboxRecreateObservation,
+          note,
+        ),
+      carryForward: () =>
+        applyAbsentSandboxRebuildPolicyCarryForward(
+          {
+            sandboxName,
+            liveExists,
+            policyAuthority: resolvedPolicyAuthority,
+            nonInteractive: isNonInteractive(),
+            note,
+            rebuildPolicyPresets: createIntent?.rebuildPolicyPresets,
+            revalidatePolicyAuthority: (operation) => revalidatePolicyAuthority(false, operation),
+          },
+          policyPresetCarry.applyRecreatePolicyCarryForward,
+        ),
+    });
+    const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
+      ({ chatUiUrl } = await sandboxReuse.restoreReusedSandboxDashboardState({
+        sandboxName,
+        chatUiUrl,
+        env: process.env,
+        agent,
+        model,
+        provider,
+        selectionVerified,
+        sandboxGpuConfig: effectiveSandboxGpuConfig,
+        gatewayName: GATEWAY_NAME,
+        gatewayPort: GATEWAY_PORT,
+        manageDashboard,
+        ensureDashboardForward,
+        hermesDashboardForwarding,
+        updateReusedSandboxMetadata,
+        releaseDashboardPort: dashboardPortReservationScope.release,
+        revalidatePolicyRequirements: (operation) => revalidatePolicyAuthority(true, operation),
+      }));
+    };
+    if (recreateRuntime.acceptedTarget) {
+      await restoreReusedSandboxDashboard(true);
+      return sandboxName;
+    }
     // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
     const sandboxWasLiveDefault =
       liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
@@ -979,11 +1013,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         baseImageResolutionContext,
         previousEntry?.imageTag,
       );
-      policyPresetCarry.applyRecreatePolicyCarryForward(
-        sandboxName,
-        isNonInteractive(),
-        note,
-        createIntent?.rebuildPolicyPresets,
+      applyManagedSandboxRebuildPolicyCarryForward(
+        {
+          sandboxName,
+          policyAuthority: resolvedPolicyAuthority,
+          nonInteractive: isNonInteractive(),
+          note,
+          rebuildPolicyPresets: createIntent?.rebuildPolicyPresets,
+          revalidatePolicyAuthority: (operation) => revalidatePolicyAuthority(true, operation),
+        },
+        policyPresetCarry.applyRecreatePolicyCarryForward,
       );
 
       const noRestorePending =
@@ -1480,7 +1519,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxWasLiveDefault,
         runtimeFields: sandboxRuntimeFields,
         messagingProviders,
-        inferenceProvider: provider,
         liveExists,
       },
       {
@@ -1489,7 +1527,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         scriptsDir: SCRIPTS,
         gatewayName: GATEWAY_NAME,
         providerExistsInGateway,
-        runOpenshell,
         armCancelRollback: sandboxCancelRollback.arm,
         dockerInfoFormat,
         runCapture,

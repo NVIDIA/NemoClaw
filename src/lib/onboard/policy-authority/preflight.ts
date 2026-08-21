@@ -147,6 +147,14 @@ type ProviderPolicyRequirements = {
   readonly operation: string;
 };
 
+type RevalidatedPolicyContext = Omit<
+  ProviderPolicyRequirements,
+  "agent" | "gatewayName" | "observabilityEnabled" | "operation"
+> & {
+  readonly agent: AgentDefinition | null;
+  readonly session: { readonly observabilityEnabled?: boolean | null } | null;
+};
+
 /** Include every selected feature that adds a network policy requirement. */
 export function requiredOnboardPolicyPresets(input: {
   readonly additionalPresets: readonly string[];
@@ -184,7 +192,11 @@ type PolicyAuthoritySession = {
 
 export function createOnboardPolicyAuthorityBindings<Session extends PolicyAuthoritySession>(
   runtime: {
+    readonly GATEWAY_NAME: string;
     readonly ROOT: string;
+    readonly agentDefs: {
+      readonly loadAgent: (name: string) => AgentDefinition;
+    };
     readonly agentOnboard: {
       readonly getAgentPolicyPath: (agent: AgentDefinition) => string | null;
     };
@@ -201,7 +213,45 @@ export function createOnboardPolicyAuthorityBindings<Session extends PolicyAutho
 ): {
   readonly bindPolicyAuthority: (gatewayName: string, session: Session | null) => Promise<Session>;
   readonly preflightPolicyRequirements: (requirements: ProviderPolicyRequirements) => void;
+  readonly revalidatePolicyRequirements: (
+    context: RevalidatedPolicyContext,
+    operation: string,
+  ) => void;
 } {
+  const preflightPolicyRequirements = (requirements: ProviderPolicyRequirements): void => {
+    const sandboxName =
+      requirements.sandboxName ?? getDefaultSandboxNameForAgent(requirements.agent);
+    const observed = runtime.inspectSandboxForCreate(sandboxName);
+    qualifySandboxPolicyAuthority({
+      sandboxName,
+      gatewayName: requirements.gatewayName,
+      liveExists: observed.liveExists,
+      recordedAuthorities: [
+        observed.existingEntry?.policyAuthority,
+        runtime.onboardSession.loadSession()?.policyAuthority,
+      ],
+      operation: requirements.operation,
+      prepareRequiredPolicy: () =>
+        prepareInitialSandboxCreatePolicy(
+          runtime.agentOnboard.getAgentPolicyPath(requirements.agent) ??
+            path.join(runtime.ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+          [...requirements.selectedMessagingChannels],
+          {
+            directGpu: requirements.gpuPassthrough,
+            additionalPresets: requiredOnboardPolicyPresets({
+              additionalPresets: requirements.hermesToolGateways,
+              provider: requirements.provider,
+              webSearchConfig: requirements.webSearchConfig,
+              agentName: requirements.agent.name,
+              observabilityEnabled: requirements.observabilityEnabled,
+            }),
+            agentName: requirements.agent.name,
+            policyTier: observed.existingEntry?.policyTier ?? policyTier,
+            baselineExclusions: observed.existingEntry?.baselineExclusions ?? [],
+          },
+        ),
+    });
+  };
   return {
     async bindPolicyAuthority(gatewayName, session) {
       const inspection = qualifyGlobalPolicyAuthority({
@@ -214,38 +264,19 @@ export function createOnboardPolicyAuthorityBindings<Session extends PolicyAutho
         if (inspection.authority === "externally-managed") current.policyPresets = null;
       });
     },
-    preflightPolicyRequirements(requirements) {
-      const sandboxName =
-        requirements.sandboxName ?? getDefaultSandboxNameForAgent(requirements.agent);
-      const observed = runtime.inspectSandboxForCreate(sandboxName);
-      qualifySandboxPolicyAuthority({
-        sandboxName,
-        gatewayName: requirements.gatewayName,
-        liveExists: observed.liveExists,
-        recordedAuthorities: [
-          observed.existingEntry?.policyAuthority,
-          runtime.onboardSession.loadSession()?.policyAuthority,
-        ],
-        operation: requirements.operation,
-        prepareRequiredPolicy: () =>
-          prepareInitialSandboxCreatePolicy(
-            runtime.agentOnboard.getAgentPolicyPath(requirements.agent) ??
-              path.join(runtime.ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
-            [...requirements.selectedMessagingChannels],
-            {
-              directGpu: requirements.gpuPassthrough,
-              additionalPresets: requiredOnboardPolicyPresets({
-                additionalPresets: requirements.hermesToolGateways,
-                provider: requirements.provider,
-                webSearchConfig: requirements.webSearchConfig,
-                agentName: requirements.agent.name,
-                observabilityEnabled: requirements.observabilityEnabled,
-              }),
-              agentName: requirements.agent.name,
-              policyTier: observed.existingEntry?.policyTier ?? policyTier,
-              baselineExclusions: observed.existingEntry?.baselineExclusions ?? [],
-            },
-          ),
+    preflightPolicyRequirements,
+    revalidatePolicyRequirements(context, operation) {
+      preflightPolicyRequirements({
+        gatewayName: runtime.GATEWAY_NAME,
+        sandboxName: context.sandboxName,
+        agent: context.agent ?? runtime.agentDefs.loadAgent("openclaw"),
+        selectedMessagingChannels: context.selectedMessagingChannels,
+        hermesToolGateways: context.hermesToolGateways,
+        gpuPassthrough: context.gpuPassthrough,
+        provider: context.provider,
+        webSearchConfig: context.webSearchConfig,
+        observabilityEnabled: context.session?.observabilityEnabled === true,
+        operation,
       });
     },
   };

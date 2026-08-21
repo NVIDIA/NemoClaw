@@ -111,6 +111,7 @@ export interface PolicyContext {
 }
 
 const POLICY_DOC_URL = "docs/network-policy/customize-network-policy.mdx";
+const EXTERNAL_POLICY_CHANGE_PATH = "Ask the external policy authority to supply a changed entry.";
 
 function hostStemsFromContent(content: string | null | undefined): {
   public: string[];
@@ -259,23 +260,39 @@ function buildBaselineExclusions(
   return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
 }
 
-function buildApprovalPath(sandboxName: string): PolicyContextApprovalPath {
+function buildApprovalPath(
+  sandboxName: string,
+  externallyManaged: boolean,
+): PolicyContextApprovalPath {
   return {
     inspect: `nemoclaw ${sandboxName} policy list`,
-    add: `nemoclaw ${sandboxName} policy add <preset>`,
-    remove: `nemoclaw ${sandboxName} policy remove <preset>`,
+    add: externallyManaged
+      ? EXTERNAL_POLICY_CHANGE_PATH
+      : `nemoclaw ${sandboxName} policy add <preset>`,
+    remove: externallyManaged
+      ? EXTERNAL_POLICY_CHANGE_PATH
+      : `nemoclaw ${sandboxName} policy remove <preset>`,
     excludeBaseline: `nemoclaw ${sandboxName} policy exclude <key> --dry-run`,
-    restoreBaseline: `nemoclaw ${sandboxName} policy restore <key>`,
+    restoreBaseline: externallyManaged
+      ? EXTERNAL_POLICY_CHANGE_PATH
+      : `nemoclaw ${sandboxName} policy restore <key>`,
     documentation: POLICY_DOC_URL,
   };
 }
 
-function buildSupportBoundaries(tier: PolicyContextTier | null): PolicyContextSupportBoundary[] {
+function buildSupportBoundaries(
+  tier: PolicyContextTier | null,
+  externallyManaged: boolean,
+): PolicyContextSupportBoundary[] {
   return [
     {
       capability: "preset selection",
-      owner: "nemoclaw",
-      note: tier ? `tier: ${tier.label}` : "no tier recorded",
+      owner: externallyManaged ? "external" : "nemoclaw",
+      note: externallyManaged
+        ? "the external policy authority must supply a changed entry"
+        : tier
+          ? `tier: ${tier.label}`
+          : "no tier recorded",
     },
     {
       capability: "host allowlist enforcement",
@@ -284,8 +301,10 @@ function buildSupportBoundaries(tier: PolicyContextTier | null): PolicyContextSu
     },
     {
       capability: "shields toggle",
-      owner: "nemoclaw",
-      note: "shields up locks down mutable config",
+      owner: externallyManaged ? "external" : "nemoclaw",
+      note: externallyManaged
+        ? "the external authority controls live policy changes; restrictive NemoClaw-owned configuration protection and cleanup may still proceed"
+        : "shields up locks down mutable config",
     },
     {
       capability: "credential storage",
@@ -367,8 +386,8 @@ export function buildPolicyContext(
   options: BuildPolicyContextOptions = {},
 ): PolicyContext {
   const sandbox = registry.getSandbox(sandboxName);
-  const tierName =
-    sandbox?.policyAuthority === "externally-managed" ? null : (sandbox?.policyTier ?? null);
+  const externallyManaged = sandbox?.policyAuthority === "externally-managed";
+  const tierName = externallyManaged ? null : (sandbox?.policyTier ?? null);
   const tierDef = tierName ? getTier(tierName) : null;
   const tier: PolicyContextTier | null = tierDef
     ? { name: tierDef.name, label: tierDef.label, description: tierDef.description }
@@ -391,8 +410,8 @@ export function buildPolicyContext(
       sandboxName,
       sandbox?.baselineExclusionTransition ?? null,
     ),
-    approvalPath: buildApprovalPath(sandboxName),
-    supportBoundaries: buildSupportBoundaries(tier),
+    approvalPath: buildApprovalPath(sandboxName, externallyManaged),
+    supportBoundaries: buildSupportBoundaries(tier, externallyManaged),
     generatedAt: new Date().toISOString(),
   };
 }
@@ -435,12 +454,19 @@ function exclusionStatusTag(status: PolicyContextExclusionStatus): string {
   }
 }
 
-function formatExclusionLine(exclusion: PolicyContextExclusion, sandboxName: string): string {
+function formatExclusionLine(
+  exclusion: PolicyContextExclusion,
+  sandboxName: string,
+  restoreAction: string,
+): string {
+  const restore = restoreAction.startsWith("nemoclaw ")
+    ? `\`nemoclaw ${sandboxName} policy restore ${exclusion.key}\``
+    : restoreAction;
   return [
     `- \`${exclusion.key}\` — status: ${exclusionStatusTag(exclusion.status)}`,
     `  acknowledged: ${exclusion.acknowledgedAt ?? "(unknown)"}`,
     `  impact: ${exclusion.supportImpact}`,
-    `  restore: \`nemoclaw ${sandboxName} policy restore ${exclusion.key}\``,
+    `  restore: ${restore}`,
   ].join("\n");
 }
 
@@ -459,6 +485,10 @@ function formatPresetLine(preset: PolicyContextPreset): string {
     `  status: ${verificationTag(preset.verification)}`,
     `  hosts: ${categories}${redactedNote}`,
   ].join("\n");
+}
+
+function formatApprovalAction(action: string): string {
+  return action.startsWith("nemoclaw ") ? `\`${action}\`` : action;
 }
 
 export function renderPolicyContextMarkdown(ctx: PolicyContext): string {
@@ -502,16 +532,18 @@ export function renderPolicyContextMarkdown(ctx: PolicyContext): string {
     lines.push("- none");
   } else {
     for (const exclusion of ctx.baselineExclusions) {
-      lines.push(formatExclusionLine(exclusion, ctx.sandboxName));
+      lines.push(formatExclusionLine(exclusion, ctx.sandboxName, ctx.approvalPath.restoreBaseline));
     }
   }
   lines.push("");
   lines.push("## Approval and remediation");
   lines.push(`- inspect: \`${ctx.approvalPath.inspect}\``);
-  lines.push(`- add a preset: \`${ctx.approvalPath.add}\``);
-  lines.push(`- remove a preset: \`${ctx.approvalPath.remove}\``);
+  lines.push(`- add a preset: ${formatApprovalAction(ctx.approvalPath.add)}`);
+  lines.push(`- remove a preset: ${formatApprovalAction(ctx.approvalPath.remove)}`);
   lines.push(`- preview a baseline exclusion: \`${ctx.approvalPath.excludeBaseline}\``);
-  lines.push(`- restore a baseline entry: \`${ctx.approvalPath.restoreBaseline}\``);
+  lines.push(
+    `- restore a baseline entry: ${formatApprovalAction(ctx.approvalPath.restoreBaseline)}`,
+  );
   lines.push(`- documentation: ${ctx.approvalPath.documentation}`);
   lines.push("");
   lines.push("## Support boundaries");

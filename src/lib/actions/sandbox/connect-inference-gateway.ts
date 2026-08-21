@@ -6,6 +6,10 @@ import {
   GatewayRouteConflictError,
   isAdvisoryProviderModelRouteConflict,
 } from "../../inference/gateway-route-compatibility";
+import {
+  assertRecordedPolicyAuthority,
+  inspectSandboxPolicyAuthority,
+} from "../../adapters/openshell/policy-authority";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
@@ -74,4 +78,17 @@ export function assertSandboxGatewayRouteCompatible(
   if (!result.ok && !isAdvisoryProviderModelRouteConflict(result)) {
     throw new GatewayRouteConflictError(result);
   }
+}
+
+export function createSandboxInferenceRoutePolicyAuthorityRevalidator(
+  sandboxName: string,
+  gatewayName: string,
+  recordedPolicyAuthority: unknown,
+): (operation: string) => void {
+  return (operation) => {
+    const current = registry.getSandbox(sandboxName);
+    assertRecordedPolicyAuthority(recordedPolicyAuthority, current?.policyAuthority, operation);
+    const observed = inspectSandboxPolicyAuthority({ sandboxName, gatewayName });
+    assertRecordedPolicyAuthority(recordedPolicyAuthority, observed.authority, operation);
+  };
 }

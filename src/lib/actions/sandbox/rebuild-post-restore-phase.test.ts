@@ -216,20 +216,21 @@ describe("rebuild post-restore phase", () => {
         baselineExclusions: [{ key: "openclaw_docs" }],
         customPolicies: [{ name: "custom-api", content: "network_policies: {}" }],
         policies: ["npm"],
+        policyTier: "restricted",
       } as never,
     };
 
     await runRebuildPostRestorePhase(args);
 
-    expect(registry.updateSandbox).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({
-        baselineExclusions: [],
-        customPolicies: [],
-        policies: [],
-        policyAuthority: "externally-managed",
-      }),
-    );
+    expect(registry.updateSandbox).toHaveBeenCalledWith("alpha", {
+      agentVersion: null,
+      baselineExclusions: [],
+      customPolicies: [],
+      policies: [],
+      policyAuthority: "externally-managed",
+      policyPresetsFinalized: undefined,
+      policyTier: null,
+    });
   });
 
   it("fails when doctor returns 255 and the final OpenClaw config hash is unverified (#9530)", async () => {

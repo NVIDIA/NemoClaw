@@ -13,7 +13,7 @@ describe("runSandboxSnapshot restore: baseline exclusions", () => {
     const openClawBaseline = {
       agent: "openclaw",
       policyPath: "/repo/nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
-      content: "version: 1\nnetwork_policies: {}\n",
+      content: "version: 1\nnetwork_policies:\n  baseline: {}\n",
     };
 
     expect(f.resolveAgentBaselinePolicyMock(undefined)).toEqual(openClawBaseline);
@@ -57,7 +57,7 @@ describe("runSandboxSnapshot restore: baseline exclusions", () => {
     f.prepareInitialSandboxCreatePolicyMock.mockReturnValue({
       policyPath: "/tmp/snapshot-clone-policy.yaml",
       appliedPresets: [],
-      sourceBytes: Buffer.from("version: 1\nnetwork_policies: {}\n"),
+      sourceBytes: Buffer.from("version: 1\nnetwork_policies:\n  baseline: {}\n"),
       cleanup,
     });
 

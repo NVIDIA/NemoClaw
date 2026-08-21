@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   configureDcodeSession,
+  expectNoDcodeMutation,
   makeDcodeSandboxEntry,
 } from "../../../../test/helpers/rebuild-dcode-flow-helpers";
 import {
@@ -51,6 +52,30 @@ describe("rebuildSandbox DCode flow: recovery", () => {
       { targetAgentType: "langchain-deepagents-code" },
     );
   });
+
+  it("refuses an absent legacy DCode sandbox without a recorded policy authority (#9833)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: {
+        ...makeDcodeSandboxEntry(),
+        policyAuthority: undefined,
+      },
+      sandboxListOutput: "",
+      reconciledSandboxGatewayState: { state: "missing", output: "" },
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Policy authority preflight failed");
+
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "the sandbox is absent and its recorded policy authority is missing",
+    );
+    expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
+    expectNoDcodeMutation(harness);
+  });
+
   it("replays captured custom policies during stale DCode recovery without a backup (#6195)", async () => {
     const customPolicy = {
       name: "custom-egress",

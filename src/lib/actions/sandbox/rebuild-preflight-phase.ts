@@ -173,23 +173,6 @@ export async function runRebuildPreflightPhase(
     allowLegacyManagedImageRecovery,
     bail,
   );
-  let policyAuthorityReceipt: RebuildPolicyAuthorityReceipt;
-  try {
-    policyAuthorityReceipt = await qualifyRebuildPolicyAuthority({
-      sandboxName,
-      sandboxEntry,
-      manifest: recoveryManifest,
-      requestedObservabilityEnabled,
-    });
-  } catch (error) {
-    printRebuildPreflightFailure(
-      `policy authority could not be qualified: ${error instanceof Error ? error.message : String(error)}`,
-      "Confirm the recorded OpenShell gateway policy source and every required network-policy entry before retrying.",
-      "Policy authority preflight failed.",
-      bail,
-    );
-    return null;
-  }
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
   if (!isSingleAgentRebuildSupported(sandboxEntry, bail)) return null;
 
@@ -247,6 +230,23 @@ export async function runRebuildPreflightPhase(
     confirmedEntrySnapshot,
     versionCheck,
   );
+  let policyAuthorityReceipt: RebuildPolicyAuthorityReceipt;
+  try {
+    policyAuthorityReceipt = await qualifyRebuildPolicyAuthority({
+      sandboxName,
+      sandboxEntry: expectedSandboxEntry,
+      manifest: recoveryManifest,
+      requestedObservabilityEnabled,
+    });
+  } catch (error) {
+    printRebuildPreflightFailure(
+      `policy authority could not be qualified: ${error instanceof Error ? error.message : String(error)}`,
+      "Confirm the recorded OpenShell gateway policy source and every required network-policy entry before retrying.",
+      "Policy authority preflight failed.",
+      bail,
+    );
+    return null;
+  }
   const dcodePreflight = createDcodeRebuildOrchestrator({
     sandboxName,
     entry: expectedSandboxEntry,

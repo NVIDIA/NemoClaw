@@ -14,7 +14,6 @@ import {
   McpPolicyAuthorityRefusalError,
   qualifyMcpPolicyAuthorityReceipt,
   removeGeneratedPolicy,
-  revalidateContainingMcpPolicyAuthority,
   revalidateMcpPolicyAuthorityReceipt,
 } from "./mcp-bridge-policy";
 import type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
@@ -160,7 +159,6 @@ export async function prepareMcpBridgesForDestroy(
   let providerDetachAttempted = false;
   try {
     for (const entry of entries) {
-      await revalidateBeforeMutation();
       scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry);
       scrubbedAdapters.push(entry);
     }
@@ -173,7 +171,6 @@ export async function prepareMcpBridgesForDestroy(
     }
     for (const entry of entries) {
       inspectExactMcpDestroyProvider(entry, { allowMissing: false });
-      await revalidateBeforeMutation();
       providerDetachAttempted = true;
       const detachOutcome = detachProvider(sandboxName, entry, { allowLegacyGeneric: true });
       if (detachOutcome === "unknown") {
@@ -188,7 +185,6 @@ export async function prepareMcpBridgesForDestroy(
       // detached one entry before a later entry fails.
       detached.push(entry);
     }
-    await revalidateBeforeMutation();
     const marked = registry.updateSandbox(sandboxName, {
       mcp: {
         bridges: Object.fromEntries(
@@ -206,29 +202,36 @@ export async function prepareMcpBridgesForDestroy(
       );
     }
   } catch (error) {
-    if (error instanceof McpPolicyAuthorityRefusalError) throw error;
     const rollbackFailures: string[] = [];
     let runtimeRestored = false;
-    if (removedPolicies.length > 0 || providerDetachAttempted) {
+    let snapshotCurrent = true;
+    try {
+      assertMcpDestroySnapshotCurrent(sandboxName, entries);
+    } catch (snapshotError) {
+      snapshotCurrent = false;
+      rollbackFailures.push(
+        snapshotError instanceof Error ? snapshotError.message : String(snapshotError),
+      );
+    }
+    if (snapshotCurrent && scrubbedAdapters.length > 0) {
       try {
-        await revalidateBeforeMutation();
-        await restoreExistingMcpBridgeRuntime(
-          sandboxName,
-          removedPolicies.length > 0 ? removedPolicies : scrubbedAdapters,
-          {
-            lifecyclePhase: "teardown-rollback",
-            validateContainingPolicyReceipt,
-          },
-        );
+        await restoreExistingMcpBridgeRuntime(sandboxName, scrubbedAdapters, {
+          lifecyclePhase: "teardown-rollback",
+        });
         runtimeRestored = true;
       } catch (rollbackError) {
-        if (rollbackError instanceof McpPolicyAuthorityRefusalError) throw rollbackError;
         rollbackFailures.push(
           rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
         );
       }
     }
-    if (!runtimeRestored) {
+    if (
+      snapshotCurrent &&
+      !runtimeRestored &&
+      removedPolicies.length === 0 &&
+      !providerDetachAttempted &&
+      !(error instanceof McpPolicyAuthorityRefusalError)
+    ) {
       rollbackFailures.push(
         ...(await rollbackScrubbedMcpAdapters(
           sandboxName,
@@ -239,9 +242,8 @@ export async function prepareMcpBridgesForDestroy(
       );
     }
     const current = registry.getSandbox(sandboxName);
-    if (current?.mcp?.destroyPreparedAt) {
+    if (runtimeRestored && current?.mcp?.destroyPreparedAt) {
       try {
-        await revalidateBeforeMutation();
         registry.updateSandbox(sandboxName, {
           mcp: {
             bridges: Object.fromEntries(
@@ -253,13 +255,19 @@ export async function prepareMcpBridgesForDestroy(
           },
         });
       } catch (rollbackError) {
-        if (rollbackError instanceof McpPolicyAuthorityRefusalError) throw rollbackError;
         rollbackFailures.push(
           rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
         );
       }
     }
     const detail = error instanceof Error ? error.message : String(error);
+    if (error instanceof McpPolicyAuthorityRefusalError) {
+      throw new McpPolicyAuthorityRefusalError(
+        rollbackFailures.length > 0
+          ? `${detail}\nMCP destroy compensation remains pending: ${rollbackFailures.join("; ")}`
+          : detail,
+      );
+    }
     throw new McpBridgeError(
       rollbackFailures.length > 0
         ? `${detail}\nMCP destroy rollback could not reattach: ${rollbackFailures.join("; ")}`
@@ -310,14 +318,19 @@ export async function restoreMcpBridgesAfterDestroyAbort(
   if (preparation.entries.length === 0 || preparation.destroyAlreadyPending) {
     return;
   }
-  await revalidateMcpDestroyAbortPolicyAuthority(
-    sandboxName,
-    preparation,
-    validateContainingPolicyReceipt,
-  );
+  let authorityRefusal: McpPolicyAuthorityRefusalError | undefined;
+  try {
+    await revalidateMcpDestroyAbortPolicyAuthority(
+      sandboxName,
+      preparation,
+      validateContainingPolicyReceipt,
+    );
+  } catch (error) {
+    if (!(error instanceof McpPolicyAuthorityRefusalError)) throw error;
+    authorityRefusal = error;
+  }
   const preparedSandbox = assertMcpDestroySnapshotCurrent(sandboxName, preparation.entries);
   const destroyPreparedAt = preparedSandbox.mcp?.destroyPreparedAt ?? nowIso();
-  await revalidateContainingMcpPolicyAuthority(validateContainingPolicyReceipt);
   const cleared = registry.updateSandbox(sandboxName, {
     mcp: {
       bridges: Object.fromEntries(
@@ -340,13 +353,11 @@ export async function restoreMcpBridgesAfterDestroyAbort(
       inspectExactMcpDestroyProvider(entry, { allowMissing: false });
     await restoreExistingMcpBridgeRuntime(sandboxName, preparation.entries, {
       lifecyclePhase: "teardown-rollback",
-      validateContainingPolicyReceipt,
+      ...(authorityRefusal ? {} : { validateContainingPolicyReceipt }),
     });
   } catch (error) {
-    if (error instanceof McpPolicyAuthorityRefusalError) throw error;
     let markerRestoreFailure = "";
     try {
-      await revalidateContainingMcpPolicyAuthority(validateContainingPolicyReceipt);
       const restored = registry.updateSandbox(sandboxName, {
         mcp: {
           bridges: Object.fromEntries(
@@ -360,17 +371,31 @@ export async function restoreMcpBridgesAfterDestroyAbort(
       });
       if (!restored) markerRestoreFailure = "sandbox registry entry disappeared";
     } catch (restoreError) {
-      if (restoreError instanceof McpPolicyAuthorityRefusalError) throw restoreError;
       markerRestoreFailure =
         restoreError instanceof Error ? restoreError.message : String(restoreError);
     }
     const detail = error instanceof Error ? error.message : String(error);
+    if (authorityRefusal) {
+      throw new McpPolicyAuthorityRefusalError(
+        `${authorityRefusal.message}\nMCP destroy-abort compensation remains pending: ${
+          markerRestoreFailure ? `${detail}; ${markerRestoreFailure}` : detail
+        }`,
+      );
+    }
+    if (error instanceof McpPolicyAuthorityRefusalError) {
+      throw new McpPolicyAuthorityRefusalError(
+        markerRestoreFailure
+          ? `${detail}; MCP destroy compensation remains pending: ${markerRestoreFailure}`
+          : detail,
+      );
+    }
     throw new McpBridgeError(
       markerRestoreFailure
         ? `${detail}; could not restore the MCP destroy retry marker: ${markerRestoreFailure}`
         : detail,
     );
   }
+  if (authorityRefusal) throw authorityRefusal;
 }
 
 /**

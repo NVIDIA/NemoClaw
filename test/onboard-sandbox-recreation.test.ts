@@ -55,7 +55,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox list")) return _deleted ? "" : "my-assistant NotReady";
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
+registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive", policyAuthority: "nemoclaw-managed" });
 childProcess.spawn = () => {
   throw new Error("unexpected sandbox create");
 };
@@ -292,7 +292,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false, policyAuthority: "nemoclaw-managed" });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -446,7 +446,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false, policyAuthority: "nemoclaw-managed" });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -578,7 +578,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false, policyAuthority: "nemoclaw-managed" });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -733,6 +733,7 @@ registry.getSandbox = () => ({
   gpuEnabled: false,
   policies: ["npm"],
   policyTier: "balanced",
+  policyAuthority: "nemoclaw-managed",
 });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
@@ -865,7 +866,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
+registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive", policyAuthority: "nemoclaw-managed" });
 
 // Mock prompt to return "y" (reuse)
 credentials.prompt = async () => "y";
@@ -1007,7 +1008,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
+registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive", policyAuthority: "nemoclaw-managed" });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -1139,7 +1140,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
+registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive", policyAuthority: "nemoclaw-managed" });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;

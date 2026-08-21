@@ -150,7 +150,12 @@ function upsertRecoveredSandbox(
     }
   }
   if (existing) {
-    registry.updateSandbox(validName, entry);
+    const {
+      policies: _recoveredPolicies,
+      policyAuthority: _recoveredAuthority,
+      ...updates
+    } = entry;
+    registry.updateSandbox(validName, updates);
     return false;
   }
   registry.registerSandbox(entry);

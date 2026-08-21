@@ -47,7 +47,9 @@ The design goal is to keep messaging channel behavior out of core onboard/rebuil
 - Keep transitional compatibility tables derived from manifests. `src/lib/sandbox/channels.ts` intentionally builds legacy CLI metadata from `listBuiltInMessagingChannelManifests()`.
 - Channel add and start must inspect OpenShell policy authority before credential, provider, policy, or registry mutation.
 - An externally managed policy must contain each exact channel policy entry before add or start continues. NemoClaw must not record those entries as applied presets.
-- Channel remove must refuse an externally managed policy before tunnel, credential, provider, policy, in-sandbox state, or registry mutation.
+- Channel remove must clean NemoClaw-managed tunnels, credentials, providers, in-sandbox state, and registry state under either policy authority.
+- Channel remove must preserve externally managed policy. Only the policy-removal step may refuse when authority changed or cannot be inspected.
+- Add rollback must clean newly written credentials and restore or remove owned providers even when policy verification starts to refuse after the add mutation. Compensation must not change live policy after refusal.
 
 ## Adding or Changing a Channel
 

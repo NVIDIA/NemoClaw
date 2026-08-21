@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as registry from "../../../state/registry";
-import { qualifySnapshotPolicyAuthority } from "./snapshot";
+import { qualifySnapshotPolicyAuthority, resolveSnapshotPolicyRequirements } from "./snapshot";
 
 describe("snapshot policy authority qualification", () => {
   afterEach(() => {
@@ -41,5 +41,22 @@ describe("snapshot policy authority qualification", () => {
       policyAuthority: "externally-managed",
     });
     expect(sourceEntry).toEqual({ name: "alpha", policyAuthority: "externally-managed" });
+  });
+
+  it.each([
+    ["absent", "version: 1\n"],
+    ["empty", "version: 1\nnetwork_policies: {}\n"],
+  ])("rejects a required policy whose network_policies mapping is %s (#9833)", (_case, content) => {
+    expect(() =>
+      resolveSnapshotPolicyRequirements({
+        basePolicyContent: content,
+        builtinPresetNames: [],
+        customPolicies: [],
+        operation: "restore snapshot 'alpha'",
+        sandboxName: "alpha",
+      }),
+    ).toThrow(
+      "Refusing to restore snapshot 'alpha': a required network policy document is invalid.",
+    );
   });
 });

@@ -45,7 +45,27 @@ function runTerminalDashboardScenario(scenario: "create" | "reuse") {
   fs.mkdirSync(fakeBin, { recursive: true });
   writeExecutable(
     path.join(fakeBin, "openshell"),
-    '#!/usr/bin/env bash\nif [ "${1:-}" = sandbox ] && [ "${2:-}" = get ]; then printf "Sandbox:\\n\\n  Id: fixture-terminal-sandbox\\n  Name: %s\\n  Phase: Ready\\n" "${!#}"; fi\nexit 0\n',
+    `#!/usr/bin/env bash
+if [ "\${1:-}" = sandbox ] && [ "\${2:-}" = get ]; then
+  printf "Sandbox:\\n\\n  Id: fixture-terminal-sandbox\\n  Name: %s\\n  Phase: Ready\\n" "\${!#}"
+  exit 0
+fi
+if [ "\${1:-}" = policy ] && [ "\${2:-}" = list ]; then exit 0; fi
+if [ "\${1:-}" = policy ] && [ "\${2:-}" = get ]; then
+  case " \$* " in
+    *" --output json "*)
+      case " \$* " in *" --global "*) exit 64 ;; esac
+      printf '{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":{}}\\n' "\${!#}"
+      exit 0
+      ;;
+    *" --base "*)
+      printf 'version: 1\\nnetwork_policies: {}\\n'
+      exit 0
+      ;;
+  esac
+fi
+exit 0
+`,
   );
 
   const script = String.raw`
@@ -138,6 +158,7 @@ registry.getSandbox = () =>
         dashboardPort: 18789,
         observabilityEnabled: false,
         toolDisclosure: "progressive",
+        policyAuthority: "nemoclaw-managed",
       }
     : null;
 registry.registerSandbox = (entry) => {

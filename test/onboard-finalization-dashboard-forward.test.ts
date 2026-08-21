@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { PolicyAuthorityRefusalError } from "../src/lib/adapters/openshell/policy-authority";
 import { GATEWAY_PORT } from "../src/lib/core/ports";
 import { createOnboardDashboardHelpers } from "../src/lib/onboard/dashboard";
 import type { ListSandboxesFn } from "../src/lib/onboard/dashboard-port";
@@ -78,6 +79,45 @@ describe("finalization dashboard forward", () => {
 
     expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).toBe(18790);
     expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
+  });
+
+  it("withholds the final dashboard URL when policy authority drifts after forwarding (#9833)", () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const operations: string[] = [];
+    const refusal = new PolicyAuthorityRefusalError("policy authority changed");
+    const { helpers, runOpenshell } = createFinalizationForwardHarness({
+      forwardList:
+        "SANDBOX BIND PORT PID STATUS\n" + "reonboard-test 127.0.0.1 18790 42001 running",
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18790 }],
+      }),
+    });
+
+    let caught: unknown;
+    const recordOperation = (operation: string): void => {
+      operations.push(operation);
+    };
+    const revalidatePolicyAuthority = vi
+      .fn(recordOperation)
+      .mockImplementationOnce(recordOperation)
+      .mockImplementationOnce(recordOperation)
+      .mockImplementationOnce((operation) => {
+        recordOperation(operation);
+        throw refusal;
+      });
+    try {
+      helpers.ensureFinalizationDashboardForward("reonboard-test", revalidatePolicyAuthority);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBe(refusal);
+    expect(operations).toContain("start dashboard forward 18790 for sandbox 'reonboard-test'");
+    const exactStops = runOpenshell.mock.calls.filter(
+      ([args]) => args.join(" ") === "forward stop 18790 reonboard-test",
+    );
+    expect(exactStops).toHaveLength(2);
+    expect(process.env.CHAT_UI_URL).toBeUndefined();
   });
 
   it("fails without reallocating when another sandbox holds the persisted port (#8970)", () => {

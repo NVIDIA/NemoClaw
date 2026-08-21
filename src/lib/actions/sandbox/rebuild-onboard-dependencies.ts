@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isPolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
@@ -35,6 +36,7 @@ function loadOnboardModule(): RebuildOnboardModule {
  * the onboarding APIs are side-effect-free named imports.
  */
 export const rebuildOnboardDependencies = {
+  isPolicyAuthorityRefusalError,
   ensureValidatedWebSearchCredential(
     config: NonNullable<RebuildDurableConfig["webSearchConfig"]>,
     nonInteractive?: boolean,

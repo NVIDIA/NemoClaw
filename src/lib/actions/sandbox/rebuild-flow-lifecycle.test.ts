@@ -78,6 +78,28 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
+  it("stops before backup or delete when the registry has an unknown non-MCP preset (#9833)", async () => {
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: {
+        policies: ["npm", "retired-custom-policy"],
+        policyPresetsFinalized: true,
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Policy authority preflight failed");
+
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      'recorded policy preset "retired-custom-policy"',
+    );
+    expect(harness.ensureTargetGatewaySpy).not.toHaveBeenCalled();
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expect(harness.relockSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+  });
+
   it("rebuilds a live Shields-up external-policy sandbox without policy mutation (#9833)", async () => {
     const harness = createRebuildFlowHarness({
       applyPreset: () => {
@@ -210,6 +232,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
       applyPreset: () => true,
       backupPolicyPresets: ["npm", "bad", "throw", "mcp-bridge-github"],
       sandboxEntry: {
+        mcp: { bridges: { github: mcpEntry } },
         policies: ["npm", "mcp-bridge-github"],
         policyPresetsFinalized: true,
         policyTier: "balanced",
@@ -434,26 +457,40 @@ network_policies:
 
   it("waits for post-delete sandbox absence before inner onboarding (#7194)", async () => {
     const events: string[] = [];
-    let sandboxGetAttempts = 0;
-    const probeSequence = [
-      {
-        event: "stale-live",
-        result: { status: 0, output: "Sandbox: alpha\nId: sbx-0d6f4c2a91\nPhase: Ready" },
-      },
-      {
-        event: "absent",
-        result: { status: 1, output: "", stderr: "Error: sandbox alpha not found" },
-      },
-    ];
+    let sourceDeleted = false;
+    let replacementCreated = false;
     const harness = createRebuildFlowHarness({
       captureOpenshell: () => {
-        const probe = probeSequence[Math.min(sandboxGetAttempts, probeSequence.length - 1)];
-        sandboxGetAttempts += 1;
-        events.push(probe.event);
-        return probe.result;
+        const sandboxIsLive = !sourceDeleted || replacementCreated;
+        events.push(
+          sandboxIsLive
+            ? replacementCreated
+              ? "replacement-live"
+              : "source-live"
+            : "source-missing",
+        );
+        return sandboxIsLive
+          ? {
+              status: 0,
+              output: "Sandbox: alpha\nId: sbx-0d6f4c2a91\nPhase: Ready",
+              stdout: "Sandbox: alpha\nId: sbx-0d6f4c2a91\nPhase: Ready",
+              stderr: "",
+            }
+          : {
+              status: 1,
+              output: "",
+              stdout: "",
+              stderr: "Error: sandbox alpha not found",
+            };
+      },
+      runOpenshell: (argv) => {
+        const deletesSource = argv.join(" ") === "sandbox delete -g nemoclaw alpha";
+        sourceDeleted ||= deletesSource;
+        return deletesSource ? { status: 0, output: "" } : undefined;
       },
       onboard: () => {
         events.push("onboard");
+        replacementCreated = true;
       },
     });
 
@@ -461,14 +498,11 @@ network_policies:
       harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
     ).resolves.toBeUndefined();
 
-    // Open the journal against the live source, wait for absence, then prove
-    // absence once more before the journal records the deleted phase (#7734).
-    expect(events).toEqual(["stale-live", "absent", "absent", "onboard"]);
-    expect(
-      harness.captureOpenshellSpy.mock.calls.filter(
-        ([args]) => Array.isArray(args) && args.join(" ") === "sandbox get -g nemoclaw alpha",
-      ),
-    ).toHaveLength(3);
+    const stateTransitions = events.filter(
+      (event, index) => index === 0 || event !== events[index - 1],
+    );
+    expect(stateTransitions).toEqual(["source-live", "source-missing", "onboard"]);
+    expect(events.indexOf("source-missing")).toBeLessThan(events.indexOf("onboard"));
   });
 
   it("accepts the agent version cached by the confirmation probe before lock acquisition", async () => {

@@ -69,6 +69,35 @@ function hasActiveShieldsTransition(homeDir: string): boolean {
     );
 }
 
+function expectRestrictiveShieldsDownRecovery(
+  harness: ReturnType<typeof createShieldsFlowHarness>,
+  homeDir: string,
+): void {
+  const stateDir = path.join(homeDir, ".nemoclaw", "state");
+  const policySetCalls = harness.runSpy.mock.calls.filter(
+    ([command]) => Array.isArray(command) && command.includes("policy") && command.includes("set"),
+  );
+  expect(policySetCalls).toHaveLength(1);
+  expect(harness.getOpenClawPosture()).toBe("locked");
+  expect(
+    harness.dockerSpawnCalls.filter(
+      ({ args }) =>
+        args.includes("lock") && args.some((arg) => arg.endsWith("openclaw-config-guard.py")),
+    ),
+  ).toHaveLength(2);
+  expect(
+    JSON.parse(fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf8")),
+  ).toMatchObject({ shieldsDown: true });
+  expect(fs.existsSync(path.join(stateDir, "shields-timer-openclaw.json"))).toBe(true);
+  expect(fs.readdirSync(stateDir).some((name) => name.startsWith("shields-transition-"))).toBe(
+    true,
+  );
+  expect(harness.auditSpy).not.toHaveBeenCalledWith(
+    expect.objectContaining({ action: "shields_down" }),
+  );
+  expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain("Config unlocked for");
+}
+
 function writeExpiredShieldsTimer(homeDir: string, sandboxName: string): void {
   const stateDir = path.join(homeDir, ".nemoclaw", "state");
   const snapshotPath = path.join(stateDir, "policy-snapshot-test.yaml");
@@ -414,9 +443,10 @@ describe("Shields policy-authority mutation boundaries", () => {
     expect(harness.auditSpy).not.toHaveBeenCalled();
   });
 
-  it("rechecks an active transition before publishing Shields down success (#9833)", () => {
+  it("relocks config and preserves recovery after a post-unlock authority refusal (#9833)", () => {
     writeLockedShieldsState(homeDir, "openclaw", openClawConfigPath);
     const harness = createShieldsFlowHarness(requireSource, homeDir, {
+      confirmOpenClawInodeFlags: true,
       initialOpenClawPosture: "locked",
     });
     const policyAuthority = requireSource(
@@ -427,12 +457,47 @@ describe("Shields policy-authority mutation boundaries", () => {
     );
 
     expect(() => harness.shieldsDown("openclaw", { throwOnError: true })).toThrow(
-      /policy authority changed/u,
+      expect.objectContaining({ code: "NEMOCLAW_POLICY_AUTHORITY_REFUSAL" }),
     );
 
-    expect(harness.getOpenClawPosture()).toBe("mutable");
+    expectRestrictiveShieldsDownRecovery(harness, homeDir);
     expect(harness.auditSpy).not.toHaveBeenCalled();
-    expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain("Config unlocked for");
+  });
+
+  it("relocks config when rollback policy restoration is refused (#9833)", () => {
+    writeLockedShieldsState(homeDir, "openclaw", openClawConfigPath);
+    const harness = createShieldsFlowHarness(requireSource, homeDir, {
+      confirmOpenClawInodeFlags: true,
+      fork: () => fakeTimerChild(),
+      initialOpenClawPosture: "locked",
+      timerDiesAfterUnlock: true,
+    });
+    const policyAuthority = requireSource(
+      "../adapters/openshell/policy-authority.js",
+    ) as typeof import("../src/lib/adapters/openshell/policy-authority.js");
+    const inspectAuthority = vi.mocked(policyAuthority.inspectSandboxPolicyAuthority);
+    const timerControl = requireSource(
+      "./timer-control.js",
+    ) as typeof import("../src/lib/shields/timer-control.js");
+    const isProcessAlive = vi.mocked(timerControl.isProcessAlive).getMockImplementation()!;
+    const livenessEffects = new Map<boolean, () => void>([
+      [false, () => inspectAuthority.mockReturnValue(externalInspection)],
+    ]);
+    vi.mocked(timerControl.isProcessAlive).mockImplementation((pid, deadline) => {
+      const alive = isProcessAlive(pid, deadline);
+      livenessEffects.get(alive)?.();
+      return alive;
+    });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "rollback policy authority race",
+        throwOnError: true,
+      }),
+    ).toThrow(expect.objectContaining({ code: "NEMOCLAW_POLICY_AUTHORITY_REFUSAL" }));
+
+    expectRestrictiveShieldsDownRecovery(harness, homeDir);
   });
 
   it("checks policy authority before every inline config relock callback (#9833)", () => {
@@ -630,8 +695,16 @@ describe("Hermes Shields provider policy authority", () => {
     expect(harness.transitionSpy).not.toHaveBeenCalled();
   });
 
-  it("refuses retained-provider recovery before protection mutation under external authority (#9833)", () => {
+  it("restores restrictive provider protection before rejecting mutable persisted posture under external authority (#9833)", () => {
     harness.lifecycleGateSpy.mockReturnValue(true);
+    const lifecycleDir = path.join(
+      process.env.HOME!,
+      ".nemoclaw",
+      "state",
+      "runtime-provider-lifecycle",
+    );
+    fs.mkdirSync(lifecycleDir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(lifecycleDir, 0o700);
     harness.registrySpy.mockReturnValue({
       ...hermesProviderConsumerSandbox,
       policyAuthority: "externally-managed",
@@ -649,6 +722,38 @@ describe("Hermes Shields provider policy authority", () => {
       "process exit 2",
     );
 
-    expect(harness.transitionSpy).not.toHaveBeenCalled();
+    expect(harness.transitionSpy).toHaveBeenCalledOnce();
+    expect(harness.transitionSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ target: "locked", rollback: "locked" }),
+    );
+  });
+
+  it("rebinds a replacement config lock under external authority (#9833)", () => {
+    harness.lifecycleGateSpy.mockReturnValue(false);
+    harness.registrySpy.mockReturnValue({
+      ...hermesProviderConsumerSandbox,
+      policyAuthority: "externally-managed",
+    });
+    writeLockedShieldsState(
+      process.env.HOME!,
+      hermesProviderConsumerSandbox.name,
+      "/sandbox/.hermes/config.yaml",
+    );
+    const policyAuthority = requireSource(
+      "../adapters/openshell/policy-authority.js",
+    ) as typeof import("../src/lib/adapters/openshell/policy-authority.js");
+    vi.mocked(policyAuthority.inspectSandboxPolicyAuthority).mockReturnValue(externalInspection);
+
+    harness.shields.rebindReplacementConfigLock(hermesProviderConsumerSandbox.name, true);
+
+    expect(harness.transitionSpy).toHaveBeenCalledTimes(2);
+    expect(harness.transitionSpy).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ target: "locked", rollback: "locked" }),
+    );
+    expect(harness.transitionSpy).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ target: "locked", rollback: "locked" }),
+    );
   });
 });

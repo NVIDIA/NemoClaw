@@ -190,6 +190,36 @@ describe("sandbox create intent machine boundary", () => {
     });
   });
 
+  it.each([
+    { label: "resume", authoritativeResumeConfig: false },
+    { label: "repair", authoritativeResumeConfig: true },
+  ])(
+    "suppresses stale rebuild presets at the externally managed $label create boundary (#9833)",
+    async ({ authoritativeResumeConfig }) => {
+      const session = createSession({
+        sandboxName: "saved",
+        policyAuthority: "externally-managed",
+        policyPresets: ["github"],
+      });
+      const { deps, calls } = createDeps({}, session);
+
+      await handleSandboxState({
+        ...baseOptions(deps, session),
+        authoritativeResumeConfig,
+        rebuildPolicyPresets: ["github"],
+        resume: true,
+        sandboxName: "saved",
+      });
+
+      const createIntent = calls.createSandbox.mock.calls[0]?.at(-1);
+      expect(createIntent).not.toHaveProperty("rebuildPolicyPresets");
+      expect(createIntent).toMatchObject({
+        resolved: { policy: { options: { additionalPresets: [] } } },
+      });
+      expect(session.policyPresets).toBeNull();
+    },
+  );
+
   it("carries an explicit recreate request through a fresh sandbox decision (#8847)", async () => {
     const session = createSession({ sandboxName: "same-sandbox" });
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });

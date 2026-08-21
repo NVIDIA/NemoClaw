@@ -46,3 +46,15 @@ export function buildGlobalPolicyGetFullJsonCommand(gatewayName?: string): strin
     "json",
   ]);
 }
+
+/** Check whether the global policy has revision history. */
+export function buildGlobalPolicyListCommand(gatewayName?: string): string[] {
+  return buildOpenshellCommand([
+    "policy",
+    "list",
+    ...policyGetGatewayArgs(gatewayName),
+    "--global",
+    "--limit",
+    "1",
+  ]);
+}

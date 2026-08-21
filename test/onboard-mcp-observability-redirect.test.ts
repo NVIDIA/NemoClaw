@@ -16,9 +16,27 @@ describe("onboard managed MCP recreation redirect", () => {
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "redirect.js");
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [ "\${1:-}" = policy ] && [ "\${2:-}" = list ]; then exit 0; fi
+if [ "\${1:-}" = policy ] && [ "\${2:-}" = get ]; then
+  case " \$* " in
+    *" --output json "*)
+      case " \$* " in *" --global "*) exit 64 ;; esac
+      printf '{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":{}}\\n' "\${!#}"
+      exit 0
+      ;;
+    *" --base "*)
+      printf 'version: 1\\nnetwork_policies: {}\\n'
+      exit 0
+      ;;
+  esac
+fi
+exit 0
+`,
+      { mode: 0o755 },
+    );
 
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
@@ -52,6 +70,7 @@ registry.getSandbox = () => ({
   preferredInferenceApi: "openai-completions",
   toolDisclosure: "progressive",
   observabilityEnabled: true,
+  policyAuthority: "nemoclaw-managed",
   mcp: {
     version: 1,
     bridges: {

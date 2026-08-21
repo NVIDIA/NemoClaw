@@ -69,6 +69,7 @@ import {
   assertSandboxGatewayRouteCompatible,
   buildGatewayInferenceGetArgs,
   buildGatewayInferenceSetArgs,
+  createSandboxInferenceRoutePolicyAuthorityRevalidator,
 } from "./connect-inference-gateway";
 import {
   buildSandboxInferenceRouteProbeArgs,
@@ -172,7 +173,9 @@ export type SandboxInferenceRouteRepairDeps = {
   applyVmDnsMonkeypatch: (
     sandboxName: string,
     sb: SandboxEntry | null,
+    options?: { revalidatePolicyAuthority?: (operation: string) => void },
   ) => { ok: boolean; reason?: string };
+  revalidatePolicyAuthority?: (operation: string) => void;
   reapplyVmInferenceRoute: (
     sandboxName: string,
     sb: SandboxEntry | null,
@@ -193,6 +196,7 @@ export type ManagedInferenceRouteResetDeps = {
   ) => boolean;
   runInferenceSet: (provider: string, model: string) => { status: number | null };
   probe: (sandboxName: string, options?: InferenceRouteProbeOptions) => SandboxInferenceRouteProbe;
+  revalidatePolicyAuthority?: (operation: string) => void;
   printUnrecoverableInferenceRoute: (sandboxName: string, route: string, detail: string) => void;
   log?: (message: string) => void;
   error?: (message: string) => void;
@@ -693,7 +697,9 @@ export function repairSandboxInferenceRouteWithDeps(
           `  inference.local is unavailable inside '${sandboxName}'. Applying OpenShell VM DNS monkeypatch...`,
         );
       }
-      const patch = deps.applyVmDnsMonkeypatch(sandboxName, sb);
+      const patch = deps.applyVmDnsMonkeypatch(sandboxName, sb, {
+        revalidatePolicyAuthority: deps.revalidatePolicyAuthority,
+      });
       const patchedProbe = patch.ok
         ? deps.probe(sandboxName, {
             attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
@@ -701,6 +707,9 @@ export function repairSandboxInferenceRouteWithDeps(
           })
         : null;
       if (patchedProbe?.healthy) {
+        deps.revalidatePolicyAuthority?.(
+          `report successful VM inference route repair for sandbox '${sandboxName}'`,
+        );
         if (!quiet) {
           log("  inference.local route repaired.");
         }
@@ -727,7 +736,13 @@ export function repairSandboxInferenceRouteWithDeps(
         `  inference.local is unavailable inside '${sandboxName}'. Reapplying OpenShell inference route...`,
       );
     }
+    deps.revalidatePolicyAuthority?.(`reapply the inference route for sandbox '${sandboxName}'`);
     const finalProbe = deps.reapplyVmInferenceRoute(sandboxName, sb);
+    if (finalProbe?.healthy) {
+      deps.revalidatePolicyAuthority?.(
+        `report successful inference route reapply for sandbox '${sandboxName}'`,
+      );
+    }
     if (!quiet) {
       if (finalProbe?.healthy) {
         log("  inference.local route repaired.");
@@ -755,6 +770,7 @@ export function repairSandboxInferenceRouteWithDeps(
     log("");
     log(`  inference.local is unavailable inside '${sandboxName}'. Repairing sandbox DNS proxy...`);
   }
+  deps.revalidatePolicyAuthority?.(`repair the DNS proxy for sandbox '${sandboxName}'`);
   const repair = deps.repairLegacyDnsProxy(sandboxName, quiet);
   if (repair.exitCode !== 0) {
     if (!quiet) {
@@ -772,6 +788,11 @@ export function repairSandboxInferenceRouteWithDeps(
     attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
     delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
   });
+  if (repairedProbe.healthy) {
+    deps.revalidatePolicyAuthority?.(
+      `report successful DNS proxy repair for sandbox '${sandboxName}'`,
+    );
+  }
   if (!quiet) {
     if (repairedProbe.healthy) {
       log("  inference.local route repaired.");
@@ -791,6 +812,7 @@ function repairSandboxInferenceRouteIfNeeded(
   sb: SandboxEntry | null,
   agent: InferenceRouteProbeAgent,
   gatewayName: string,
+  revalidatePolicyAuthority: (operation: string) => void,
   { quiet = false }: { quiet?: boolean } = {},
 ): SandboxInferenceRouteRepairResult {
   return repairSandboxInferenceRouteWithDeps(
@@ -802,6 +824,7 @@ function repairSandboxInferenceRouteIfNeeded(
       probe: (name, options) => probeSandboxInferenceRoute(name, agent, options),
       shouldApplyVmDnsMonkeypatch,
       applyVmDnsMonkeypatch: applyOpenShellVmDnsMonkeypatch,
+      revalidatePolicyAuthority,
       reapplyVmInferenceRoute: (name, sandbox) =>
         reapplyVmInferenceRoute(name, sandbox, agent, gatewayName),
       repairLegacyDnsProxy: (name, isQuiet) =>
@@ -899,6 +922,7 @@ export function resetManagedInferenceRouteWithDeps(
   }
 
   if (!quiet) log(`  Resetting inference route to ${route}.`);
+  deps.revalidatePolicyAuthority?.(`reset the inference route for sandbox '${sandboxName}'`);
   const resetResult = deps.runInferenceSet(provider, model);
   const resetFailed = resetResult.status !== 0;
   if (!resetFailed && !deps.verifyLocalInferenceRouteDependencies(provider, { quiet })) {
@@ -910,6 +934,9 @@ export function resetManagedInferenceRouteWithDeps(
     delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
   });
   if (finalProbe.healthy) {
+    deps.revalidatePolicyAuthority?.(
+      `report successful inference route reset for sandbox '${sandboxName}'`,
+    );
     if (!quiet) log("  inference.local route repaired.");
     return true;
   }
@@ -925,6 +952,7 @@ function resetManagedInferenceRoute(
   sb: SandboxEntry,
   agent: InferenceRouteProbeAgent,
   gatewayName: string,
+  revalidatePolicyAuthority: (operation: string) => void,
   { detail, quiet = false }: { detail: string; quiet?: boolean },
 ): boolean {
   return resetManagedInferenceRouteWithDeps(
@@ -939,6 +967,7 @@ function resetManagedInferenceRoute(
           timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
         }),
       probe: (name, options) => probeSandboxInferenceRoute(name, agent, options),
+      revalidatePolicyAuthority,
       printUnrecoverableInferenceRoute,
     },
   );
@@ -960,6 +989,11 @@ function ensureSandboxInferenceRouteUnlocked(
     assertNoOpenShellGatewayEndpointOverride();
     const { provider, model } = inference;
     const gatewayName = resolveSandboxGatewayName(sb);
+    const revalidatePolicyAuthority = createSandboxInferenceRoutePolicyAuthorityRevalidator(
+      sandboxName,
+      gatewayName,
+      sb.policyAuthority,
+    );
     // The live route exposes only provider/model. Prove the target's durable
     // custom endpoint/API identity before any route read, probe, or mutation.
     assertSandboxGatewayRouteCompatible(sandboxName, sb, gatewayName);
@@ -993,6 +1027,7 @@ function ensureSandboxInferenceRouteUnlocked(
         // plan.kind === "repair": empty gateway, genuine repair — quiet-aware.
         console.log(`  Setting inference route to ${recordedRoute} for sandbox '${sandboxName}'`);
       }
+      revalidatePolicyAuthority(`reconcile the inference route for sandbox '${sandboxName}'`);
       const swapResult = runOpenshell(buildGatewayInferenceSetArgs(gatewayName, provider, model), {
         ignoreError: true,
         timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
@@ -1003,9 +1038,14 @@ function ensureSandboxInferenceRouteUnlocked(
         );
       }
     }
-    const repairResult = repairSandboxInferenceRouteIfNeeded(sandboxName, sb, agent, gatewayName, {
-      quiet,
-    });
+    const repairResult = repairSandboxInferenceRouteIfNeeded(
+      sandboxName,
+      sb,
+      agent,
+      gatewayName,
+      revalidatePolicyAuthority,
+      { quiet },
+    );
     if (!repairResult.healthy && !repairResult.repairAttempted) {
       // Unavailable or malformed probe output is a permanent fail-closed
       // classification at the OpenShell exec/DNS/TLS/proxy boundary. There is
@@ -1023,10 +1063,17 @@ function ensureSandboxInferenceRouteUnlocked(
     }
     let routeReady = repairResult.healthy;
     if (!routeReady && repairResult.repairAttempted) {
-      routeReady = resetManagedInferenceRoute(sandboxName, sb, agent, gatewayName, {
-        detail: repairResult.detail,
-        quiet,
-      });
+      routeReady = resetManagedInferenceRoute(
+        sandboxName,
+        sb,
+        agent,
+        gatewayName,
+        revalidatePolicyAuthority,
+        {
+          detail: repairResult.detail,
+          quiet,
+        },
+      );
       if (!routeReady) return { sandbox: sb, routeHealthy: false };
     }
     if (provider === "ollama-local") {
@@ -1050,6 +1097,11 @@ function ensureSandboxInferenceRouteUnlocked(
         }
         return { sandbox: sb, routeHealthy: false };
       }
+    }
+    if (routeReady && (plan.kind !== "aligned" || repairResult.repairAttempted)) {
+      revalidatePolicyAuthority(
+        `report successful inference route reconciliation for sandbox '${sandboxName}'`,
+      );
     }
     return { sandbox: sb, routeHealthy: routeReady };
   } catch (error) {

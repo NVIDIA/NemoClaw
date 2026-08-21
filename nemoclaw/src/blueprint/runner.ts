@@ -13,9 +13,19 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join, sep } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { execa } from "execa";
@@ -63,7 +73,7 @@ const { parseOpenShellPolicy, withoutProviderComposedPolicies } =
 const sourceOrGeneratedSandboxName = importedSandboxName as typeof importedSandboxName & {
   default?: typeof importedSandboxName;
 };
-const { assertValidName, assertValidProviderName } =
+const { assertValidName, assertValidProviderName, isValidProviderName } =
   sourceOrGeneratedSandboxName.default ?? sourceOrGeneratedSandboxName;
 
 type Action = "plan" | "apply" | "status" | "rollback";
@@ -72,7 +82,9 @@ type RollbackPlanSource = {
   sandbox_name?: unknown;
   sandbox_created_by_apply?: unknown;
   inference_provider_created_by_apply?: unknown;
+  provider_gateway?: unknown;
   inference?: unknown;
+  inference_route_recovery?: unknown;
   identity?: unknown;
   policy_authority?: unknown;
 };
@@ -127,12 +139,36 @@ const MISSING_PROVIDER_INSPECTION_PATTERN =
   /(?:\bprovider\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bprovider\b|\bunknown provider\b)/i;
 const POLICY_AUTHORITY_MAX_BYTES = 1024 * 1024;
 const POLICY_AUTHORITY_TIMEOUT_MS = 30_000;
+const DEFAULT_INFERENCE_ROUTE_TIMEOUT_SECONDS = 180;
 
 interface InferenceRouteBinding {
   provider: string;
   model: string;
   timeoutSeconds?: number;
 }
+
+type ConfiguredInferenceRouteSnapshot = {
+  state: "configured";
+  provider: string;
+  model: string;
+  timeout_seconds?: number;
+};
+
+type InferenceRouteSnapshot = ConfiguredInferenceRouteSnapshot | { state: "unconfigured" };
+
+type ObservedReplacementInferenceRoute = ConfiguredInferenceRouteSnapshot & {
+  timeout_seconds: number;
+};
+
+type RestorableInferenceRouteSnapshot =
+  | ObservedReplacementInferenceRoute
+  | { state: "unconfigured" };
+
+type InferenceRouteRecoveryReceipt = {
+  gateway: string;
+  previous_route: RestorableInferenceRouteSnapshot;
+  replacement_route: ObservedReplacementInferenceRoute;
+};
 
 function assertReusableRuntimeIdentitySandbox(output: string, expectedName: string): void {
   const lines = output.replace(/\u001b\[[0-9;]*m/g, "").split(/\r?\n/);
@@ -145,6 +181,22 @@ function assertReusableRuntimeIdentitySandbox(output: string, expectedName: stri
       `Sandbox '${expectedName}' is not reusable for runtime identity apply: expected exact name and Ready phase, received ${boundedCommandError(output)}`,
     );
   }
+}
+
+async function inspectReusableSandboxOnGateway(
+  sandboxName: string,
+  gateway: string,
+  context: string,
+): Promise<void> {
+  const result = await runCmd(["openshell", "sandbox", "get", "-g", gateway, sandboxName], {
+    reject: false,
+  });
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Failed to inspect sandbox '${sandboxName}' ${context}: ${boundedCommandError(`${result.stderr}\n${result.stdout}`)}`,
+    );
+  }
+  assertReusableRuntimeIdentitySandbox(result.stdout, sandboxName);
 }
 
 function parseInferenceRouteBinding(output: string): InferenceRouteBinding | null {
@@ -182,6 +234,276 @@ function isUnconfiguredInferenceRoute(output: string): boolean {
     if (trimmed) routeLines.push(trimmed);
   }
   return routeLines.length === 1 && routeLines[0]?.toLowerCase() === "not configured";
+}
+
+function isInferenceRouteSnapshot(value: unknown): value is InferenceRouteSnapshot {
+  return (
+    isPlainObject(value) &&
+    ((value.state === "unconfigured" && Object.keys(value).length === 1) ||
+      (value.state === "configured" &&
+        hasOnlyKeys(value, ["state", "provider", "model", "timeout_seconds"]) &&
+        typeof value.provider === "string" &&
+        value.provider.trim().length > 0 &&
+        typeof value.model === "string" &&
+        value.model.trim().length > 0 &&
+        (value.timeout_seconds === undefined ||
+          (typeof value.timeout_seconds === "number" &&
+            Number.isInteger(value.timeout_seconds) &&
+            value.timeout_seconds >= 0))))
+  );
+}
+
+function isInferenceRouteRecoveryReceipt(value: unknown): value is InferenceRouteRecoveryReceipt {
+  if (
+    !isPlainObject(value) ||
+    !hasOnlyKeys(value, ["gateway", "previous_route", "replacement_route"]) ||
+    !isValidProviderName(value.gateway) ||
+    !isInferenceRouteSnapshot(value.previous_route) ||
+    (value.previous_route.state === "configured" &&
+      typeof value.previous_route.timeout_seconds !== "number") ||
+    !isPlainObject(value.replacement_route)
+  ) {
+    return false;
+  }
+  return (
+    isInferenceRouteSnapshot(value.replacement_route) &&
+    value.replacement_route.state === "configured" &&
+    typeof value.replacement_route.timeout_seconds === "number"
+  );
+}
+
+function routeBindingSnapshot(binding: InferenceRouteBinding): ConfiguredInferenceRouteSnapshot {
+  return {
+    state: "configured",
+    provider: binding.provider,
+    model: binding.model,
+    ...(binding.timeoutSeconds === undefined ? {} : { timeout_seconds: binding.timeoutSeconds }),
+  };
+}
+
+function routeMatchesRequestedSelection(
+  route: InferenceRouteSnapshot,
+  requested: { provider: string; model: string; timeout_seconds?: number },
+): boolean {
+  return (
+    route.state === "configured" &&
+    route.provider === requested.provider &&
+    route.model === requested.model &&
+    (requested.timeout_seconds === undefined || route.timeout_seconds === requested.timeout_seconds)
+  );
+}
+
+function providerDeleteArgs(provider: string, gateway: string): string[] {
+  return ["openshell", "provider", "delete", "-g", gateway, provider];
+}
+
+function providerGetArgs(provider: string, gateway: string): string[] {
+  return ["openshell", "provider", "get", "-g", gateway, provider];
+}
+
+function providerCreateArgs(provider: string, type: string, gateway: string): string[] {
+  return ["openshell", "provider", "create", "-g", gateway, "--name", provider, "--type", type];
+}
+
+function scopeOpenShellCommandToGateway(args: string[], gateway: string): string[] {
+  if (args[0] !== "openshell") return args;
+  const gatewayFlags = args.flatMap((entry, index) =>
+    entry === "-g" || entry === "--gateway" ? [index] : [],
+  );
+  if (gatewayFlags.length > 1) {
+    throw new Error("OpenShell command contains multiple gateway targets");
+  }
+  if (gatewayFlags.length === 1) {
+    const existingGateway = args[(gatewayFlags[0] ?? 0) + 1];
+    if (existingGateway !== gateway) {
+      throw new Error(
+        `OpenShell command targets gateway '${existingGateway}' instead of '${gateway}'`,
+      );
+    }
+    return [...args];
+  }
+  const insertionIndex =
+    args[1] === "provider"
+      ? args[2] === "profile" || args[2] === "refresh"
+        ? 4
+        : 3
+      : args[1] === "sandbox" && args[2] === "provider"
+        ? 4
+        : 3;
+  return [...args.slice(0, insertionIndex), "-g", gateway, ...args.slice(insertionIndex)];
+}
+
+function assertRestorablePriorInferenceRoute(
+  route: InferenceRouteSnapshot,
+): asserts route is RestorableInferenceRouteSnapshot {
+  if (
+    route.state === "configured" &&
+    (typeof route.timeout_seconds !== "number" ||
+      !Number.isFinite(route.timeout_seconds) ||
+      !Number.isInteger(route.timeout_seconds))
+  ) {
+    throw new Error(
+      "Refusing to replace the inference route because its prior timeout is not a finite integer",
+    );
+  }
+}
+
+async function inspectActiveGatewayIdentity(): Promise<string> {
+  const result = await runCmd(["openshell", "status"], { reject: false });
+  const output = `${result.stderr}\n${result.stdout}`;
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Failed to inspect the active OpenShell gateway: ${boundedCommandError(output)}`,
+    );
+  }
+  const lines = output.replace(/\u001b\[[0-9;]*m/g, "").split(/\r?\n/);
+  const gateways = lines
+    .map((line) => /^\s*Gateway:\s*(.+?)\s*$/i.exec(line)?.[1]?.trim())
+    .filter((gateway): gateway is string => Boolean(gateway));
+  const connected = lines.some((line) => /^\s*Status:\s*Connected\b/i.test(line));
+  if (!connected || gateways.length !== 1) {
+    throw new Error(
+      `Failed to prove the active OpenShell gateway identity: ${boundedCommandError(output)}`,
+    );
+  }
+  return assertValidProviderName(gateways[0], "OpenShell gateway name");
+}
+
+async function inspectInferenceRoute(
+  context: string,
+  gateway: string,
+): Promise<InferenceRouteSnapshot> {
+  assertValidProviderName(gateway, "OpenShell gateway name");
+  const result = await runCmd(["openshell", "inference", "get", "-g", gateway], {
+    reject: false,
+  });
+  const output = `${result.stderr}\n${result.stdout}`;
+  if (result.exitCode !== 0) {
+    throw new Error(`Failed to inspect ${context}: ${boundedCommandError(output)}`);
+  }
+  const binding = parseInferenceRouteBinding(result.stdout);
+  if (binding) {
+    assertValidProviderName(binding.provider, "active inference route provider name");
+    return routeBindingSnapshot(binding);
+  }
+  if (isUnconfiguredInferenceRoute(result.stdout)) {
+    return { state: "unconfigured" };
+  }
+  throw new Error(`Failed to parse ${context}: ${boundedCommandError(output)}`);
+}
+
+async function restoreInferenceRoute(receipt: InferenceRouteRecoveryReceipt): Promise<void> {
+  assertValidProviderName(receipt.gateway, "OpenShell gateway name");
+  if (receipt.replacement_route.state === "configured") {
+    assertValidProviderName(
+      receipt.replacement_route.provider,
+      "replacement inference route provider name",
+    );
+  }
+  if (receipt.previous_route.state === "configured") {
+    assertValidProviderName(
+      receipt.previous_route.provider,
+      "previous inference route provider name",
+    );
+  }
+
+  const activeRoute = await inspectInferenceRoute(
+    "the active inference route during cleanup",
+    receipt.gateway,
+  );
+  if (isDeepStrictEqual(activeRoute, receipt.previous_route)) return;
+  if (!isDeepStrictEqual(activeRoute, receipt.replacement_route)) {
+    throw new Error(
+      "Failed to restore the previous inference route because the active route no longer matches the route set by this apply",
+    );
+  }
+  const restoreArgs =
+    receipt.previous_route.state === "unconfigured"
+      ? ["openshell", "inference", "delete", "-g", receipt.gateway]
+      : [
+          "openshell",
+          "inference",
+          "set",
+          "-g",
+          receipt.gateway,
+          "--provider",
+          receipt.previous_route.provider,
+          "--model",
+          receipt.previous_route.model,
+          "--timeout",
+          String(receipt.previous_route.timeout_seconds),
+        ];
+  const restore = await runCmd(restoreArgs, { reject: false });
+  if (restore.exitCode !== 0) {
+    throw new Error(
+      `Failed to restore the previous inference route: ${boundedCommandError(restore.stderr)}`,
+    );
+  }
+
+  const restoredRoute = await inspectInferenceRoute(
+    "the restored inference route",
+    receipt.gateway,
+  );
+  if (!isDeepStrictEqual(restoredRoute, receipt.previous_route)) {
+    throw new Error("Failed to verify the restored inference route");
+  }
+}
+
+async function setInferenceRouteWithRecovery(options: {
+  provider: string;
+  model: string;
+  timeoutSeconds?: number;
+  gateway: string;
+  priorRoute: RestorableInferenceRouteSnapshot;
+  revalidatePolicyAuthority: () => Promise<void>;
+  persistRecoveryReceipt: (receipt: InferenceRouteRecoveryReceipt) => void;
+}): Promise<void> {
+  const intendedReplacement: ObservedReplacementInferenceRoute = {
+    state: "configured",
+    provider: options.provider,
+    model: options.model,
+    timeout_seconds: options.timeoutSeconds ?? DEFAULT_INFERENCE_ROUTE_TIMEOUT_SECONDS,
+  };
+  const inferenceArgs = ["openshell", "inference", "set", "-g", options.gateway];
+  inferenceArgs.push("--provider", options.provider, "--model", options.model);
+  if (options.timeoutSeconds !== undefined) {
+    inferenceArgs.push("--timeout", String(options.timeoutSeconds));
+  }
+
+  await options.revalidatePolicyAuthority();
+  const currentPriorRoute = await inspectInferenceRoute(
+    "the active inference route immediately before route mutation",
+    options.gateway,
+  );
+  assertRestorablePriorInferenceRoute(currentPriorRoute);
+  if (!isDeepStrictEqual(currentPriorRoute, options.priorRoute)) {
+    throw new Error(
+      "Refusing to replace the inference route because it changed after the prior route was inspected",
+    );
+  }
+  const recoveryReceipt: InferenceRouteRecoveryReceipt = {
+    gateway: options.gateway,
+    previous_route: currentPriorRoute,
+    replacement_route: intendedReplacement,
+  };
+  // Persist both exact route states before the replacement command so an
+  // interrupted apply can compensate without guessing whether the command ran.
+  options.persistRecoveryReceipt(recoveryReceipt);
+
+  const inferenceResult = await runCmd(inferenceArgs, { reject: false });
+  if (inferenceResult.exitCode !== 0) {
+    throw new Error(
+      `Failed to set inference route (provider '${options.provider}', model '${options.model}'): ${boundedCommandError(inferenceResult.stderr)}`,
+    );
+  }
+
+  const observedReplacement = await inspectInferenceRoute(
+    "the replacement inference route",
+    recoveryReceipt.gateway,
+  );
+  if (!isDeepStrictEqual(observedReplacement, intendedReplacement)) {
+    throw new Error("Failed to verify the exact replacement inference route");
+  }
 }
 
 function isAction(value: string | undefined): value is Action {
@@ -403,6 +725,45 @@ function progress(pct: number, label: string): void {
   process.stdout.write(`PROGRESS:${String(pct)}:${label}\n`);
 }
 
+function writeFileAtomically(path: string, content: string): void {
+  const temporaryPath = `${path}.${String(process.pid)}.tmp`;
+  try {
+    writeFileSync(temporaryPath, content, { encoding: "utf-8", mode: 0o600 });
+    syncPath(temporaryPath);
+    renameSync(temporaryPath, path);
+    syncPath(dirname(path));
+  } catch (error) {
+    try {
+      unlinkSync(temporaryPath);
+    } catch {
+      // The rename may already have consumed the temporary path.
+    }
+    throw error;
+  }
+}
+
+function createDirectoryDurably(path: string): void {
+  const firstCreatedPath = mkdirSync(path, { recursive: true });
+  if (firstCreatedPath === undefined) return;
+  const createdDirectories = [path];
+  for (let current = path; current !== firstCreatedPath; ) {
+    current = dirname(current);
+    createdDirectories.unshift(current);
+  }
+  for (const createdDirectory of createdDirectories) {
+    syncPath(dirname(createdDirectory));
+  }
+}
+
+function syncPath(path: string): void {
+  const descriptor = openSync(path, "r");
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
 function readRollbackSandboxName(value: RollbackPlanSource | null): string {
   if (!value || typeof value.sandbox_name !== "string" || value.sandbox_name.trim() === "") {
     throw new Error("rollback plan sandbox_name must be a non-empty string");
@@ -451,6 +812,25 @@ function assertReusableInferenceProvider(
       `Inference provider '${expected.name}' does not match the requested non-secret binding; refusing runtime identity apply`,
     );
   }
+}
+
+async function inspectReusableInferenceProvider(options: {
+  name: string;
+  type: string;
+  requiresEndpointConfig: boolean;
+  requiresCredential: boolean;
+  gateway: string;
+}): Promise<boolean> {
+  const result = await runCmd(providerGetArgs(options.name, options.gateway), { reject: false });
+  const output = `${result.stderr}\n${result.stdout}`;
+  if (result.exitCode === 0) {
+    assertReusableInferenceProvider(result.stdout, options);
+    return true;
+  }
+  if (MISSING_PROVIDER_INSPECTION_PATTERN.test(output)) return false;
+  throw new Error(
+    `Failed to inspect inference provider '${options.name}' before runtime identity apply: ${boundedCommandError(output)}`,
+  );
 }
 
 // ── Utilities ───────────────────────────────────────────────────
@@ -583,13 +963,85 @@ async function runCmd(
 }
 
 async function inspectBlueprintPolicyAuthority(
+  gateway: string,
   sandboxName?: string,
 ): Promise<BlueprintPolicyAuthorityInspection> {
   const subject = sandboxName === undefined ? "global" : "sandbox";
+  if (sandboxName === undefined) {
+    const history = await runBlueprintPolicyAuthorityCommand(
+      ["openshell", "policy", "list", "-g", gateway, "--global", "--limit", "1"],
+      subject,
+    );
+    if (history.stdout.trim().length === 0) {
+      return { authority: "nemoclaw-managed", effectivePolicy: {} };
+    }
+  }
   const command =
     sandboxName === undefined
-      ? ["openshell", "policy", "get", "--global", "--full", "--output", "json"]
-      : ["openshell", "policy", "get", sandboxName, "--full", "--output", "json"];
+      ? ["openshell", "policy", "get", "-g", gateway, "--global", "--full", "--output", "json"]
+      : ["openshell", "policy", "get", "-g", gateway, "--full", "--output", "json", sandboxName];
+  const result = await runBlueprintPolicyAuthorityCommand(command, subject);
+  if (result.stdout.trim().length === 0) {
+    throw new BlueprintPolicyAuthorityRefusalError(
+      `OpenShell returned empty ${subject} policy authority metadata. Policy-dependent operations must stop.`,
+    );
+  }
+
+  let metadata: unknown;
+  try {
+    metadata = JSON.parse(result.stdout);
+  } catch {
+    throw new BlueprintPolicyAuthorityRefusalError(
+      `OpenShell returned malformed ${subject} policy authority metadata. Policy-dependent operations must stop.`,
+    );
+  }
+  if (!isPlainObject(metadata)) {
+    throw new BlueprintPolicyAuthorityRefusalError(
+      `OpenShell returned invalid ${subject} policy authority metadata. Policy-dependent operations must stop.`,
+    );
+  }
+  if (sandboxName === undefined) {
+    if (
+      metadata.scope !== "global" ||
+      (metadata.status !== "loaded" && metadata.status !== "superseded") ||
+      (metadata.policy_source !== undefined && metadata.policy_source !== "global") ||
+      Object.hasOwn(metadata, "sandbox")
+    ) {
+      throw new BlueprintPolicyAuthorityRefusalError(
+        "OpenShell returned invalid global policy authority metadata. Policy-dependent operations must stop.",
+      );
+    }
+    if (metadata.status === "superseded") {
+      return { authority: "nemoclaw-managed", effectivePolicy: {} };
+    }
+    if (!isPlainObject(metadata.policy)) {
+      throw new BlueprintPolicyAuthorityRefusalError(
+        "OpenShell returned invalid global policy authority metadata. Policy-dependent operations must stop.",
+      );
+    }
+    return { authority: "externally-managed", effectivePolicy: metadata.policy };
+  }
+  if (
+    metadata.scope !== "sandbox" ||
+    metadata.sandbox !== sandboxName ||
+    metadata.status !== "effective" ||
+    (metadata.policy_source !== "sandbox" && metadata.policy_source !== "global") ||
+    !isPlainObject(metadata.policy)
+  ) {
+    throw new BlueprintPolicyAuthorityRefusalError(
+      "OpenShell returned invalid sandbox policy authority metadata. Policy-dependent operations must stop.",
+    );
+  }
+  return {
+    authority: metadata.policy_source === "sandbox" ? "nemoclaw-managed" : "externally-managed",
+    effectivePolicy: metadata.policy,
+  };
+}
+
+async function runBlueprintPolicyAuthorityCommand(
+  command: string[],
+  subject: "global" | "sandbox",
+): Promise<Awaited<ReturnType<typeof runCmd>>> {
   let result: Awaited<ReturnType<typeof runCmd>>;
   try {
     result = await runCmd(command, {
@@ -611,55 +1063,7 @@ async function inspectBlueprintPolicyAuthority(
       `OpenShell ${subject} policy authority inspection failed. Policy-dependent operations must stop.`,
     );
   }
-  if (result.stdout.trim().length === 0) {
-    if (sandboxName === undefined) {
-      return { authority: "nemoclaw-managed", effectivePolicy: {} };
-    }
-    throw new BlueprintPolicyAuthorityRefusalError(
-      `OpenShell returned empty ${subject} policy authority metadata. Policy-dependent operations must stop.`,
-    );
-  }
-
-  let metadata: unknown;
-  try {
-    metadata = JSON.parse(result.stdout);
-  } catch {
-    throw new BlueprintPolicyAuthorityRefusalError(
-      `OpenShell returned malformed ${subject} policy authority metadata. Policy-dependent operations must stop.`,
-    );
-  }
-  if (!isPlainObject(metadata) || !isPlainObject(metadata.policy)) {
-    throw new BlueprintPolicyAuthorityRefusalError(
-      `OpenShell returned invalid ${subject} policy authority metadata. Policy-dependent operations must stop.`,
-    );
-  }
-  if (sandboxName === undefined) {
-    if (
-      metadata.scope !== "global" ||
-      metadata.status !== "loaded" ||
-      (metadata.policy_source !== undefined && metadata.policy_source !== "global") ||
-      Object.hasOwn(metadata, "sandbox")
-    ) {
-      throw new BlueprintPolicyAuthorityRefusalError(
-        "OpenShell returned invalid global policy authority metadata. Policy-dependent operations must stop.",
-      );
-    }
-    return { authority: "externally-managed", effectivePolicy: metadata.policy };
-  }
-  if (
-    metadata.scope !== "sandbox" ||
-    metadata.sandbox !== sandboxName ||
-    metadata.status !== "effective" ||
-    (metadata.policy_source !== "sandbox" && metadata.policy_source !== "global")
-  ) {
-    throw new BlueprintPolicyAuthorityRefusalError(
-      "OpenShell returned invalid sandbox policy authority metadata. Policy-dependent operations must stop.",
-    );
-  }
-  return {
-    authority: metadata.policy_source === "sandbox" ? "nemoclaw-managed" : "externally-managed",
-    effectivePolicy: metadata.policy,
-  };
+  return result;
 }
 
 function assertBlueprintPolicyAuthorityUnchanged(
@@ -731,9 +1135,10 @@ async function runRuntimeIdentityCommand(
   };
 }
 
-function runtimeIdentityCommandDeps(): RuntimeIdentityCommandDeps {
+function runtimeIdentityCommandDeps(gateway: string): RuntimeIdentityCommandDeps {
   return {
-    run: runRuntimeIdentityCommand,
+    run: (args, options) =>
+      runRuntimeIdentityCommand(scopeOpenShellCommandToGateway(args, gateway), options),
     formatError: boundedCommandError,
   };
 }
@@ -741,10 +1146,11 @@ function runtimeIdentityCommandDeps(): RuntimeIdentityCommandDeps {
 function runtimeIdentityDeps(
   persistReceipt: (receipt: RuntimeIdentityReceipt) => void,
   revalidatePolicyAuthority: () => Promise<void>,
+  gateway: string,
   profilePolicy?: RuntimeIdentityProfilePolicy,
 ): RuntimeIdentityDeps {
   return {
-    ...runtimeIdentityCommandDeps(),
+    ...runtimeIdentityCommandDeps(gateway),
     validateEndpointUrl,
     persistReceipt,
     revalidatePolicyAuthority,
@@ -854,8 +1260,10 @@ interface PersistedRunPlan {
   sandbox_name: string;
   sandbox_created_by_apply: boolean;
   inference_provider_created_by_apply: boolean;
+  provider_gateway?: string;
   policy_additions: PolicyAdditions;
   inference: SafeInferencePlan;
+  inference_route_recovery?: InferenceRouteRecoveryReceipt;
   identity?: RuntimeIdentityReceipt;
   policy_authority?: BlueprintPolicyAuthorityReceipt;
   timestamp: string;
@@ -872,8 +1280,10 @@ type StatusRunPlan = {
   sandbox_name?: string;
   sandbox_created_by_apply?: boolean;
   inference_provider_created_by_apply?: boolean;
+  provider_gateway?: string;
   policy_additions?: PolicyAdditions;
   inference?: SafeInferencePlan;
+  inference_route_recovery?: InferenceRouteRecoveryReceipt;
   identity?: RuntimeIdentityReceipt;
   policy_authority?: BlueprintPolicyAuthorityReceipt;
   router?: {
@@ -961,8 +1371,10 @@ function buildPersistedRunPlan(args: {
   sandboxName: string;
   sandboxCreatedByApply: boolean;
   inferenceProviderCreatedByApply: boolean;
+  providerGateway?: string;
   policyAdditions: PolicyAdditions;
   inferenceCfg: InferenceProfile;
+  inferenceRouteRecoveryReceipt?: InferenceRouteRecoveryReceipt;
   policyAuthorityReceipt?: BlueprintPolicyAuthorityReceipt;
   runtimeIdentityReceipt?: RuntimeIdentityReceipt;
   timestamp: string;
@@ -979,6 +1391,12 @@ function buildPersistedRunPlan(args: {
   };
   if (args.runtimeIdentityReceipt) {
     plan.identity = args.runtimeIdentityReceipt;
+  }
+  if (args.providerGateway) {
+    plan.provider_gateway = args.providerGateway;
+  }
+  if (args.inferenceRouteRecoveryReceipt) {
+    plan.inference_route_recovery = args.inferenceRouteRecoveryReceipt;
   }
   if (args.policyAuthorityReceipt) {
     plan.policy_authority = args.policyAuthorityReceipt;
@@ -1031,6 +1449,9 @@ function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPl
   if (typeof source.inference_provider_created_by_apply === "boolean") {
     safePlan.inference_provider_created_by_apply = source.inference_provider_created_by_apply;
   }
+  if (isValidProviderName(source.provider_gateway)) {
+    safePlan.provider_gateway = source.provider_gateway;
+  }
 
   if (isPolicyAdditions(source.policy_additions)) {
     safePlan.policy_additions = source.policy_additions;
@@ -1038,6 +1459,10 @@ function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPl
 
   if (isPlainObject(source.inference)) {
     safePlan.inference = buildSafeInferencePlan(source.inference);
+  }
+
+  if (isInferenceRouteRecoveryReceipt(source.inference_route_recovery)) {
+    safePlan.inference_route_recovery = source.inference_route_recovery;
   }
 
   if (isRuntimeIdentityReceipt(source.identity)) {
@@ -1152,9 +1577,10 @@ export async function actionApply(
   if (credentialEnv) {
     credential = process.env[credentialEnv] ?? credentialDefault;
   }
-  const initialPolicyAuthority = await inspectBlueprintPolicyAuthority();
+  const inferenceGateway = await inspectActiveGatewayIdentity();
+  const initialPolicyAuthority = await inspectBlueprintPolicyAuthority(inferenceGateway);
   const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
-  mkdirSync(stateDir, { recursive: true });
+  createDirectoryDurably(stateDir);
 
   let runtimeIdentityReceipt: RuntimeIdentityReceipt | undefined;
   let policyAuthorityReceipt: BlueprintPolicyAuthorityReceipt = {
@@ -1163,16 +1589,19 @@ export async function actionApply(
   };
   let sandboxPolicyAuthority: BlueprintPolicyAuthorityInspection | null = null;
   let sandboxCreatedByApply = false;
+  let reuseExistingSandbox = false;
   let inferenceProviderCreatedByApply = false;
+  let inferenceRouteRecoveryReceipt: InferenceRouteRecoveryReceipt | undefined;
   const revalidatePolicyAuthority = async (): Promise<void> => {
     const recorded = sandboxPolicyAuthority ?? initialPolicyAuthority;
     const observed = await inspectBlueprintPolicyAuthority(
+      inferenceGateway,
       sandboxPolicyAuthority ? sandboxName : undefined,
     );
     assertBlueprintPolicyAuthorityUnchanged(recorded, observed, policyAdditions);
   };
   const persistRunPlan = (): void => {
-    writeFileSync(
+    writeFileAtomically(
       join(stateDir, "plan.json"),
       JSON.stringify(
         buildPersistedRunPlan({
@@ -1181,8 +1610,10 @@ export async function actionApply(
           sandboxName,
           sandboxCreatedByApply,
           inferenceProviderCreatedByApply,
+          providerGateway: inferenceGateway,
           policyAdditions,
           inferenceCfg,
+          inferenceRouteRecoveryReceipt,
           policyAuthorityReceipt,
           runtimeIdentityReceipt,
           timestamp: new Date().toISOString(),
@@ -1192,25 +1623,22 @@ export async function actionApply(
       ),
     );
   };
-  const identityDeps = runtimeIdentityDeps(
-    (receipt) => {
-      runtimeIdentityReceipt = receipt;
-      persistRunPlan();
-    },
-    revalidatePolicyAuthority,
-    options?.runtimeIdentityProfilePolicy,
-  );
+  let identityDeps: RuntimeIdentityDeps | undefined;
   persistRunPlan();
   assertBlueprintExternalPolicyRequirements(initialPolicyAuthority, policyAdditions);
 
   try {
-    let reuseExistingSandbox = false;
     let reuseExistingInferenceProvider = false;
     let reuseExistingInferenceRoute = false;
+    let priorInferenceRoute: RestorableInferenceRouteSnapshot | undefined;
     if (runtimeIdentityConfig) {
-      const sandboxResult = await runCmd(["openshell", "sandbox", "get", sandboxName], {
-        reject: false,
-      });
+      const sandboxResult = await runCmd(
+        scopeOpenShellCommandToGateway(
+          ["openshell", "sandbox", "get", sandboxName],
+          inferenceGateway,
+        ),
+        { reject: false },
+      );
       const sandboxOutput = `${sandboxResult.stderr}\n${sandboxResult.stdout}`;
       if (sandboxResult.exitCode === 0) {
         assertReusableRuntimeIdentitySandbox(sandboxResult.stdout, sandboxName);
@@ -1220,50 +1648,47 @@ export async function actionApply(
           `Failed to inspect sandbox '${sandboxName}' before runtime identity apply: ${boundedCommandError(sandboxOutput)}`,
         );
       }
-
-      const providerResult = await runCmd(["openshell", "provider", "get", providerName], {
-        reject: false,
+      identityDeps = runtimeIdentityDeps(
+        (receipt) => {
+          runtimeIdentityReceipt = receipt;
+          persistRunPlan();
+        },
+        revalidatePolicyAuthority,
+        inferenceGateway,
+        options?.runtimeIdentityProfilePolicy,
+      );
+      // Persist the provider authority before any runtime identity or inference
+      // provider can be created on this gateway.
+      persistRunPlan();
+      reuseExistingInferenceProvider = await inspectReusableInferenceProvider({
+        name: providerName,
+        type: providerType,
+        requiresEndpointConfig: endpoint !== "",
+        requiresCredential: credential !== "",
+        gateway: inferenceGateway,
       });
-      const providerOutput = `${providerResult.stderr}\n${providerResult.stdout}`;
-      if (providerResult.exitCode === 0) {
-        assertReusableInferenceProvider(providerResult.stdout, {
-          name: providerName,
-          type: providerType,
-          requiresEndpointConfig: endpoint !== "",
-          requiresCredential: credential !== "",
-        });
-        reuseExistingInferenceProvider = true;
-      } else if (!MISSING_PROVIDER_INSPECTION_PATTERN.test(providerOutput)) {
-        throw new Error(
-          `Failed to inspect inference provider '${providerName}' before runtime identity apply: ${boundedCommandError(providerOutput)}`,
-        );
-      }
 
-      if (reuseExistingSandbox && reuseExistingInferenceProvider) {
-        const routeResult = await runCmd(["openshell", "inference", "get"], {
-          reject: false,
+      {
+        const observedPriorRoute = await inspectInferenceRoute(
+          "the active inference route before runtime identity apply",
+          inferenceGateway,
+        );
+        assertRestorablePriorInferenceRoute(observedPriorRoute);
+        priorInferenceRoute = observedPriorRoute;
+        reuseExistingInferenceRoute = routeMatchesRequestedSelection(priorInferenceRoute, {
+          provider: providerName,
+          model,
+          ...(inferenceCfg.timeout_secs === undefined
+            ? {}
+            : { timeout_seconds: inferenceCfg.timeout_secs }),
         });
-        const routeOutput = `${routeResult.stderr}\n${routeResult.stdout}`;
-        if (routeResult.exitCode !== 0) {
-          throw new Error(
-            `Failed to inspect the active inference route before runtime identity apply: ${boundedCommandError(routeOutput)}`,
-          );
-        }
-        const activeRoute = parseInferenceRouteBinding(routeResult.stdout);
-        if (!activeRoute && !isUnconfiguredInferenceRoute(routeResult.stdout)) {
-          throw new Error(
-            `Failed to parse the active inference route before runtime identity apply: ${boundedCommandError(routeOutput)}`,
-          );
-        }
-        reuseExistingInferenceRoute =
-          activeRoute?.provider === providerName &&
-          activeRoute.model === model &&
-          (inferenceCfg.timeout_secs === undefined ||
-            activeRoute.timeoutSeconds === inferenceCfg.timeout_secs);
       }
 
       if (reuseExistingSandbox) {
-        sandboxPolicyAuthority = await inspectBlueprintPolicyAuthority(sandboxName);
+        sandboxPolicyAuthority = await inspectBlueprintPolicyAuthority(
+          inferenceGateway,
+          sandboxName,
+        );
         policyAuthorityReceipt = {
           authority: sandboxPolicyAuthority.authority,
           scope: "sandbox",
@@ -1286,7 +1711,7 @@ export async function actionApply(
     if (reuseExistingSandbox) {
       log(`Sandbox '${sandboxName}' already exists, reusing.`);
     } else {
-      const currentGlobalPolicyAuthority = await inspectBlueprintPolicyAuthority();
+      const currentGlobalPolicyAuthority = await inspectBlueprintPolicyAuthority(inferenceGateway);
       assertBlueprintPolicyAuthorityUnchanged(
         initialPolicyAuthority,
         currentGlobalPolicyAuthority,
@@ -1296,6 +1721,8 @@ export async function actionApply(
         "openshell",
         "sandbox",
         "create",
+        "-g",
+        inferenceGateway,
         "--from",
         sandboxImage,
         "--name",
@@ -1318,17 +1745,12 @@ export async function actionApply(
       if (createResult.exitCode !== 0) {
         if (createResult.stderr.includes("already exists")) {
           reuseExistingSandbox = true;
-          if (runtimeIdentityConfig) {
-            const racedSandbox = await runCmd(["openshell", "sandbox", "get", sandboxName], {
-              reject: false,
-            });
-            if (racedSandbox.exitCode !== 0) {
-              throw new Error(
-                `Failed to inspect sandbox '${sandboxName}' after concurrent creation: ${boundedCommandError(`${racedSandbox.stderr}\n${racedSandbox.stdout}`)}`,
-              );
-            }
-            assertReusableRuntimeIdentitySandbox(racedSandbox.stdout, sandboxName);
-          }
+          persistRunPlan();
+          await inspectReusableSandboxOnGateway(
+            sandboxName,
+            inferenceGateway,
+            "after concurrent creation",
+          );
           log(`Sandbox '${sandboxName}' already exists, reusing.`);
         } else {
           throw new Error(`Failed to create sandbox: ${createResult.stderr}`);
@@ -1337,7 +1759,10 @@ export async function actionApply(
     }
 
     {
-      const currentSandboxPolicyAuthority = await inspectBlueprintPolicyAuthority(sandboxName);
+      const currentSandboxPolicyAuthority = await inspectBlueprintPolicyAuthority(
+        inferenceGateway,
+        sandboxName,
+      );
       const recordedPolicyAuthority =
         sandboxPolicyAuthority ?? (sandboxCreatedByApply ? initialPolicyAuthority : null);
       if (recordedPolicyAuthority) {
@@ -1356,21 +1781,30 @@ export async function actionApply(
       assertBlueprintExternalPolicyRequirements(currentSandboxPolicyAuthority, policyAdditions);
     }
 
+    if (priorInferenceRoute === undefined) {
+      persistRunPlan();
+      const observedPriorRoute = await inspectInferenceRoute(
+        "the active inference route before provider mutation",
+        inferenceGateway,
+      );
+      assertRestorablePriorInferenceRoute(observedPriorRoute);
+      priorInferenceRoute = observedPriorRoute;
+      reuseExistingInferenceRoute = routeMatchesRequestedSelection(priorInferenceRoute, {
+        provider: providerName,
+        model,
+        ...(inferenceCfg.timeout_secs === undefined
+          ? {}
+          : { timeout_seconds: inferenceCfg.timeout_secs }),
+      });
+    }
+
     // Keep runtime credentials unattached until OpenShell accepts the
     // sandbox's requested inference route.
     progress(50, "Configuring inference provider");
     if (reuseExistingInferenceProvider) {
       log(`Provider '${providerName}' already exists, reusing.`);
     } else {
-      const providerArgs = [
-        "openshell",
-        "provider",
-        "create",
-        "--name",
-        providerName,
-        "--type",
-        providerType,
-      ];
+      const providerArgs = providerCreateArgs(providerName, providerType, inferenceGateway);
       // Pass the env-var NAME (not the value) to --credential; openshell reads the value from the env.
       // Scope the credential to the subprocess to avoid leaking into later commands.
       const credEnv: Record<string, string> = {};
@@ -1399,7 +1833,7 @@ export async function actionApply(
       if (providerResult.exitCode !== 0) {
         if (providerResult.stderr.includes("already exists")) {
           if (runtimeIdentityConfig) {
-            const racedProvider = await runCmd(["openshell", "provider", "get", providerName], {
+            const racedProvider = await runCmd(providerGetArgs(providerName, inferenceGateway), {
               reject: false,
             });
             if (racedProvider.exitCode !== 0) {
@@ -1431,33 +1865,27 @@ export async function actionApply(
     if (reuseExistingInferenceRoute) {
       log(`Inference route '${providerName} / ${model}' is already active, reusing.`);
     } else {
-      const inferenceArgs = [
-        "openshell",
-        "inference",
-        "set",
-        "--provider",
-        providerName,
-        "--model",
+      await setInferenceRouteWithRecovery({
+        provider: providerName,
         model,
-      ];
-      if (inferenceCfg.timeout_secs !== undefined) {
-        inferenceArgs.push("--timeout", String(inferenceCfg.timeout_secs));
-      }
-      await revalidatePolicyAuthority();
-      const inferenceResult = await runCmd(inferenceArgs, { reject: false });
-      // Another required mutation: without a routed provider the sandbox cannot
-      // perform inference, so a non-zero result must abort the apply. (#6703)
-      if (inferenceResult.exitCode !== 0) {
-        throw new Error(
-          `Failed to set inference route (provider '${providerName}', model '${model}'): ${boundedCommandError(inferenceResult.stderr)}`,
-        );
-      }
+        ...(inferenceCfg.timeout_secs === undefined
+          ? {}
+          : { timeoutSeconds: inferenceCfg.timeout_secs }),
+        gateway: inferenceGateway,
+        priorRoute: priorInferenceRoute,
+        revalidatePolicyAuthority,
+        persistRecoveryReceipt: (receipt) => {
+          inferenceRouteRecoveryReceipt = receipt;
+          persistRunPlan();
+        },
+      });
     }
 
     if (runtimeIdentityReceipt) {
-      const attachmentSandbox = await runCmd(["openshell", "sandbox", "get", sandboxName], {
-        reject: false,
-      });
+      const attachmentSandbox = await runCmd(
+        ["openshell", "sandbox", "get", "-g", inferenceGateway, sandboxName],
+        { reject: false },
+      );
       if (attachmentSandbox.exitCode !== 0) {
         throw new Error(
           `Failed to inspect sandbox '${sandboxName}' immediately before runtime identity attachment: ${boundedCommandError(`${attachmentSandbox.stderr}\n${attachmentSandbox.stdout}`)}`,
@@ -1468,7 +1896,7 @@ export async function actionApply(
       const attachmentCreated = await attachRuntimeIdentity(
         runtimeIdentityReceipt,
         sandboxName,
-        identityDeps,
+        identityDeps!,
       );
       runtimeIdentityReceipt = {
         ...runtimeIdentityReceipt,
@@ -1476,11 +1904,14 @@ export async function actionApply(
       };
       persistRunPlan();
       await revalidatePolicyAuthority();
-      await mintRuntimeIdentityCredential(runtimeIdentityReceipt, identityDeps);
+      await mintRuntimeIdentityCredential(runtimeIdentityReceipt, identityDeps!);
     }
 
     if (hasPolicyAdditions && sandboxPolicyAuthority) {
-      const currentPolicyAuthority = await inspectBlueprintPolicyAuthority(sandboxName);
+      const currentPolicyAuthority = await inspectBlueprintPolicyAuthority(
+        inferenceGateway,
+        sandboxName,
+      );
       assertBlueprintPolicyAuthorityUnchanged(
         sandboxPolicyAuthority,
         currentPolicyAuthority,
@@ -1490,9 +1921,10 @@ export async function actionApply(
 
     if (hasPolicyAdditions && sandboxPolicyAuthority?.authority === "nemoclaw-managed") {
       progress(78, "Applying policy additions");
-      const currentPolicy = await runCmd(["openshell", "policy", "get", "--base", sandboxName], {
-        reject: false,
-      });
+      const currentPolicy = await runCmd(
+        ["openshell", "policy", "get", "-g", inferenceGateway, "--base", sandboxName],
+        { reject: false },
+      );
       if (currentPolicy.exitCode !== 0) {
         throw new Error(
           `Failed to read current policy before applying additions: ${currentPolicy.stderr}`,
@@ -1505,7 +1937,10 @@ export async function actionApply(
         mode: 0o600,
       });
 
-      const currentPolicyAuthority = await inspectBlueprintPolicyAuthority(sandboxName);
+      const currentPolicyAuthority = await inspectBlueprintPolicyAuthority(
+        inferenceGateway,
+        sandboxName,
+      );
       assertBlueprintPolicyAuthorityUnchanged(
         sandboxPolicyAuthority,
         currentPolicyAuthority,
@@ -1513,7 +1948,17 @@ export async function actionApply(
       );
 
       const policySet = await runCmd(
-        ["openshell", "policy", "set", "--policy", mergedPolicyFile, "--wait", sandboxName],
+        [
+          "openshell",
+          "policy",
+          "set",
+          "-g",
+          inferenceGateway,
+          "--policy",
+          mergedPolicyFile,
+          "--wait",
+          sandboxName,
+        ],
         { reject: false },
       );
       if (policySet.exitCode !== 0) {
@@ -1529,11 +1974,35 @@ export async function actionApply(
     log(`Sandbox '${sandboxName}' is ready.`);
     log(`Inference: ${providerName} -> ${model} @ ${endpoint}`);
   } catch (error) {
-    if (isBlueprintPolicyAuthorityRefusalError(error)) throw error;
     const cleanupFailures: string[] = [];
+    let inferenceRouteRestored = false;
+    if (inferenceRouteRecoveryReceipt) {
+      try {
+        await restoreInferenceRoute(inferenceRouteRecoveryReceipt);
+        inferenceRouteRestored = true;
+        if (!inferenceProviderCreatedByApply) {
+          inferenceRouteRecoveryReceipt = undefined;
+          persistRunPlan();
+        }
+      } catch (cleanupError) {
+        const detail = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+        try {
+          persistRunPlan();
+        } catch (persistError) {
+          const persistDetail =
+            persistError instanceof Error ? persistError.message : String(persistError);
+          cleanupFailures.push(
+            `Failed to persist inference route recovery receipt: ${boundedCommandError(persistDetail, [credential])}`,
+          );
+        }
+        cleanupFailures.push(
+          `Inference route recovery remains required: ${boundedCommandError(detail, [credential])}`,
+        );
+      }
+    }
     if (runtimeIdentityReceipt) {
       try {
-        await compensateRuntimeIdentityApply(runtimeIdentityReceipt, sandboxName, identityDeps);
+        await compensateRuntimeIdentityApply(runtimeIdentityReceipt, sandboxName, identityDeps!);
         runtimeIdentityReceipt = {
           ...runtimeIdentityReceipt,
           provider_created: false,
@@ -1547,38 +2016,68 @@ export async function actionApply(
       }
     }
     if (sandboxCreatedByApply) {
-      await runCmd(["openshell", "sandbox", "stop", sandboxName], { reject: false });
-      const remove = await runCmd(["openshell", "sandbox", "remove", sandboxName], {
-        reject: false,
-      });
-      if (remove.exitCode === 0 || MISSING_SANDBOX_PATTERN.test(remove.stderr)) {
-        sandboxCreatedByApply = false;
-        persistRunPlan();
-      } else {
+      try {
+        await runCmd(["openshell", "sandbox", "stop", "-g", inferenceGateway, sandboxName], {
+          reject: false,
+        });
+      } catch {
+        // Sandbox removal remains authoritative when the preceding stop command is inconclusive.
+      }
+      try {
+        const remove = await runCmd(
+          ["openshell", "sandbox", "remove", "-g", inferenceGateway, sandboxName],
+          { reject: false },
+        );
+        if (remove.exitCode === 0 || MISSING_SANDBOX_PATTERN.test(remove.stderr)) {
+          sandboxCreatedByApply = false;
+          persistRunPlan();
+        } else {
+          cleanupFailures.push(
+            `Failed to remove sandbox '${sandboxName}': ${boundedCommandError(remove.stderr)}`,
+          );
+        }
+      } catch (cleanupError) {
+        const detail = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
         cleanupFailures.push(
-          `Failed to remove sandbox '${sandboxName}': ${boundedCommandError(remove.stderr)}`,
+          `Failed to remove sandbox '${sandboxName}': ${boundedCommandError(detail)}`,
         );
       }
     }
-    if (inferenceProviderCreatedByApply && !sandboxCreatedByApply) {
-      const removeProvider = await runCmd(["openshell", "provider", "delete", providerName], {
-        reject: false,
-      });
-      if (
-        removeProvider.exitCode === 0 ||
-        MISSING_PROVIDER_INSPECTION_PATTERN.test(removeProvider.stderr)
-      ) {
-        inferenceProviderCreatedByApply = false;
-        persistRunPlan();
-      } else {
+    if (
+      inferenceProviderCreatedByApply &&
+      !sandboxCreatedByApply &&
+      (inferenceRouteRecoveryReceipt === undefined || inferenceRouteRestored)
+    ) {
+      try {
+        const removeProvider = await runCmd(providerDeleteArgs(providerName, inferenceGateway), {
+          reject: false,
+        });
+        if (
+          removeProvider.exitCode === 0 ||
+          MISSING_PROVIDER_INSPECTION_PATTERN.test(removeProvider.stderr)
+        ) {
+          inferenceProviderCreatedByApply = false;
+          if (inferenceRouteRestored) inferenceRouteRecoveryReceipt = undefined;
+          persistRunPlan();
+        } else {
+          cleanupFailures.push(
+            `Failed to remove inference provider '${providerName}': ${boundedCommandError(removeProvider.stderr)}`,
+          );
+        }
+      } catch (cleanupError) {
+        const detail = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
         cleanupFailures.push(
-          `Failed to remove inference provider '${providerName}': ${boundedCommandError(removeProvider.stderr)}`,
+          `Failed to remove inference provider '${providerName}': ${boundedCommandError(detail)}`,
         );
       }
     }
-
     const message = error instanceof Error ? error.message : String(error);
     if (cleanupFailures.length > 0) {
+      if (isBlueprintPolicyAuthorityRefusalError(error)) {
+        throw new BlueprintPolicyAuthorityRefusalError(
+          `${message}; cleanup failed: ${cleanupFailures.join("; ")}`,
+        );
+      }
       throw new Error(`${message}; cleanup failed: ${cleanupFailures.join("; ")}`);
     }
     throw error;
@@ -1643,10 +2142,16 @@ export async function actionRollback(rid: string): Promise<void> {
 
   const runsDir = join(homedir(), ".nemoclaw", "state", "runs");
   const stateDir = safeRunDir(runsDir, rid);
+  let stateEntries: string[];
   try {
-    readdirSync(stateDir);
+    stateEntries = readdirSync(stateDir);
   } catch {
     throw new Error(`Run ${rid} not found.`);
+  }
+  if (stateEntries.includes("rolled_back")) {
+    syncPath(stateDir);
+    progress(100, "Rollback already complete");
+    return;
   }
 
   const planFile = join(stateDir, "plan.json");
@@ -1654,7 +2159,10 @@ export async function actionRollback(rid: string): Promise<void> {
   let sandboxCreatedByApply = false;
   let inferenceProviderCreatedByApply = false;
   let inferenceProviderName: string | undefined;
+  let providerGateway: string | undefined;
+  let inferenceRouteRecoveryReceipt: InferenceRouteRecoveryReceipt | undefined;
   let runtimeIdentityReceipt: RuntimeIdentityReceipt | undefined;
+  let runtimeIdentityOwnedResources = false;
   try {
     const planData = readFileSync(planFile, "utf-8");
     const parsedPlan: unknown = JSON.parse(planData);
@@ -1678,33 +2186,75 @@ export async function actionRollback(rid: string): Promise<void> {
     }
     sandboxCreatedByApply = rollbackPlan?.sandbox_created_by_apply === true;
     inferenceProviderCreatedByApply = rollbackPlan?.inference_provider_created_by_apply === true;
+    if (rollbackPlan?.provider_gateway !== undefined) {
+      if (!isValidProviderName(rollbackPlan.provider_gateway)) {
+        throw new Error("provider gateway receipt is invalid");
+      }
+      providerGateway = rollbackPlan.provider_gateway;
+    }
     if (inferenceProviderCreatedByApply) {
       inferenceProviderName = readRollbackInferenceProviderName(rollbackPlan!);
+    }
+    if (rollbackPlan?.inference_route_recovery !== undefined) {
+      if (!isInferenceRouteRecoveryReceipt(rollbackPlan.inference_route_recovery)) {
+        throw new Error("inference route recovery receipt is invalid");
+      }
+      inferenceRouteRecoveryReceipt = rollbackPlan.inference_route_recovery;
+      if (
+        providerGateway !== undefined &&
+        providerGateway !== inferenceRouteRecoveryReceipt.gateway
+      ) {
+        throw new Error("provider gateway receipt conflicts with route recovery receipt");
+      }
     }
     if (rollbackPlan?.identity !== undefined) {
       if (!isRuntimeIdentityReceipt(rollbackPlan.identity)) {
         throw new Error("identity ownership receipt is invalid");
       }
       runtimeIdentityReceipt = rollbackPlan.identity;
+      runtimeIdentityOwnedResources =
+        runtimeIdentityReceipt.provider_created || runtimeIdentityReceipt.attachment_created;
+    }
+    if (
+      (sandboxCreatedByApply ||
+        inferenceProviderCreatedByApply ||
+        inferenceRouteRecoveryReceipt !== undefined ||
+        runtimeIdentityOwnedResources) &&
+      providerGateway === undefined
+    ) {
+      throw new Error("provider gateway receipt is required for destructive rollback");
     }
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Cannot read rollback plan for run ${rid}: ${detail}`);
   }
 
-  if (runtimeIdentityReceipt) {
+  if (inferenceRouteRecoveryReceipt) {
+    progress(10, "Restoring the previous inference route");
+    await restoreInferenceRoute(inferenceRouteRecoveryReceipt);
+  }
+
+  if (runtimeIdentityReceipt && runtimeIdentityOwnedResources) {
     progress(20, `Removing runtime identity provider ${runtimeIdentityReceipt.provider_name}`);
-    await removeRuntimeIdentity(runtimeIdentityReceipt, sandboxName, runtimeIdentityCommandDeps());
+    await removeRuntimeIdentity(
+      runtimeIdentityReceipt,
+      sandboxName,
+      runtimeIdentityCommandDeps(providerGateway!),
+    );
   }
 
   if (sandboxCreatedByApply) {
     progress(30, `Stopping sandbox ${sandboxName}`);
-    const stop = await runCmd(["openshell", "sandbox", "stop", sandboxName], { reject: false });
+    const stop = await runCmd(
+      ["openshell", "sandbox", "stop", "-g", providerGateway!, sandboxName],
+      { reject: false },
+    );
 
     progress(60, `Removing sandbox ${sandboxName}`);
-    const remove = await runCmd(["openshell", "sandbox", "remove", sandboxName], {
-      reject: false,
-    });
+    const remove = await runCmd(
+      ["openshell", "sandbox", "remove", "-g", providerGateway!, sandboxName],
+      { reject: false },
+    );
     if (remove.exitCode !== 0 && !MISSING_SANDBOX_PATTERN.test(remove.stderr)) {
       const stopFailure =
         stop.exitCode !== 0 && !MISSING_SANDBOX_PATTERN.test(stop.stderr)
@@ -1722,7 +2272,7 @@ export async function actionRollback(rid: string): Promise<void> {
   if (inferenceProviderCreatedByApply) {
     progress(80, `Removing inference provider ${inferenceProviderName!}`);
     const removeProvider = await runCmd(
-      ["openshell", "provider", "delete", inferenceProviderName!],
+      providerDeleteArgs(inferenceProviderName!, providerGateway!),
       { reject: false },
     );
     if (
@@ -1736,7 +2286,10 @@ export async function actionRollback(rid: string): Promise<void> {
   }
 
   progress(90, "Cleaning up run state");
-  writeFileSync(join(stateDir, "rolled_back"), new Date().toISOString());
+  writeFileAtomically(
+    join(stateDir, "rolled_back"),
+    JSON.stringify({ state: "rolled_back", completed_at: new Date().toISOString() }),
+  );
 
   progress(100, "Rollback complete");
 }

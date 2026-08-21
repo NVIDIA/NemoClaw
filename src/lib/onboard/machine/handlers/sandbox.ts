@@ -500,6 +500,7 @@ function rebuildPolicyPresetsForCreateIntent(
   session: Session | null,
   sandboxName: string,
 ): Pick<SandboxCreateIntent, "rebuildPolicyPresets"> {
+  if (session?.policyAuthority === "externally-managed") return {};
   // A later `onboard --resume` no longer has the outer rebuild's in-memory
   // options. The matching recreate journal makes its filtered session value
   // the durable replacement target instead of the preserved source row.

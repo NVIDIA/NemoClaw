@@ -11,6 +11,7 @@ import {
 } from "../../sandbox-name-contract";
 import {
   buildGlobalPolicyGetFullJsonCommand,
+  buildGlobalPolicyListCommand,
   buildPolicyGetFullJsonCommand,
 } from "../../policy/commands";
 import { captureResolvedOpenshellCommand, type ResolvedOpenshellCaptureResult } from "./runtime";
@@ -92,10 +93,11 @@ function failInspection(subject: "sandbox" | "global", reason: string): never {
   );
 }
 
-function capturePolicyMetadata(
+function capturePolicyQuery(
   command: readonly string[],
   capture: PolicyAuthorityCapture,
   subject: "sandbox" | "global",
+  queryKind: "machine-readable policy" | "policy history",
 ): { readonly stdout: string; readonly stderr: string } {
   let result: ResolvedOpenshellCaptureResult;
   try {
@@ -104,7 +106,7 @@ function capturePolicyMetadata(
       timeout: POLICY_AUTHORITY_CAPTURE_TIMEOUT_MS,
     });
   } catch {
-    failInspection(subject, "the machine-readable policy query could not run");
+    failInspection(subject, `the ${queryKind} query could not run`);
   }
 
   if (
@@ -112,20 +114,20 @@ function capturePolicyMetadata(
     typeof result.stdout !== "string" ||
     (result.stderr !== undefined && typeof result.stderr !== "string")
   ) {
-    failInspection(subject, "the policy query returned an invalid capture result");
+    failInspection(subject, `the ${queryKind} query returned an invalid capture result`);
   }
   const stderr = result.stderr ?? "";
   if (
     Buffer.byteLength(result.stdout, "utf8") + Buffer.byteLength(stderr, "utf8") >
     POLICY_AUTHORITY_CAPTURE_MAX_BYTES
   ) {
-    failInspection(subject, "the machine-readable policy response exceeded the capture limit");
+    failInspection(subject, `the ${queryKind} response exceeded the capture limit`);
   }
   if (result.timedOut === true) {
-    failInspection(subject, "the machine-readable policy query timed out");
+    failInspection(subject, `the ${queryKind} query timed out`);
   }
   if (result.timedOut !== false || result.exitCode !== 0) {
-    failInspection(subject, "the machine-readable policy query did not complete successfully");
+    failInspection(subject, `the ${queryKind} query did not complete successfully`);
   }
   return { stdout: result.stdout, stderr };
 }
@@ -161,10 +163,11 @@ export function inspectSandboxPolicyAuthority({
     gatewayName === undefined
       ? undefined
       : validatePolicyAuthorityName(gatewayName, "gateway name");
-  const { stdout: raw } = capturePolicyMetadata(
+  const { stdout: raw } = capturePolicyQuery(
     buildPolicyGetFullJsonCommand(validatedSandboxName, validatedGatewayName),
     runCaptureEx,
     "sandbox",
+    "machine-readable policy",
   );
   if (raw.trim().length === 0) {
     failInspection("sandbox", "OpenShell returned empty policy metadata");
@@ -197,13 +200,23 @@ export function inspectGlobalPolicyAuthority({
     gatewayName === undefined
       ? undefined
       : validatePolicyAuthorityName(gatewayName, "gateway name");
-  const { stdout: raw } = capturePolicyMetadata(
+  const { stdout: history } = capturePolicyQuery(
+    buildGlobalPolicyListCommand(validatedGatewayName),
+    runCaptureEx,
+    "global",
+    "policy history",
+  );
+  if (history.trim().length === 0) {
+    return { authority: "nemoclaw-managed", effectivePolicy: {} };
+  }
+  const { stdout: raw } = capturePolicyQuery(
     buildGlobalPolicyGetFullJsonCommand(validatedGatewayName),
     runCaptureEx,
     "global",
+    "machine-readable policy",
   );
   if (raw.trim().length === 0) {
-    return { authority: "nemoclaw-managed", effectivePolicy: {} };
+    failInspection("global", "OpenShell returned empty policy metadata");
   }
   const metadata = parsePolicyMetadata(raw, "global");
   if (metadata.scope !== "global") {
@@ -215,8 +228,14 @@ export function inspectGlobalPolicyAuthority({
   if (metadata.policy_source !== undefined && metadata.policy_source !== "global") {
     failInspection("global", "OpenShell returned an unknown global policy source");
   }
+  if (metadata.status === "superseded") {
+    return { authority: "nemoclaw-managed", effectivePolicy: {} };
+  }
   if (metadata.status !== "loaded") {
-    failInspection("global", "OpenShell did not report a loaded global policy");
+    failInspection(
+      "global",
+      "OpenShell returned a global policy status that cannot determine authority",
+    );
   }
   return {
     authority: "externally-managed",

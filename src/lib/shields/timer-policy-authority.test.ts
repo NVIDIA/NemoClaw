@@ -15,6 +15,7 @@ const shieldsIndexMock = vi.hoisted(() => ({
   completeAutoRestoreTransition: vi.fn(() => true),
   lockAgentConfig: vi.fn() as unknown,
   prepareAutoRestoreTransitionTakeover: vi.fn(),
+  relockAgentConfigAfterPolicyAuthorityRefusal: vi.fn() as unknown,
   resolvePersistedAutoRestoreTarget: vi.fn() as unknown,
 }));
 
@@ -26,6 +27,9 @@ vi.mock("./index", () => ({
     return shieldsIndexMock.lockAgentConfig;
   },
   prepareAutoRestoreTransitionTakeover: shieldsIndexMock.prepareAutoRestoreTransitionTakeover,
+  get relockAgentConfigAfterPolicyAuthorityRefusal() {
+    return shieldsIndexMock.relockAgentConfigAfterPolicyAuthorityRefusal;
+  },
   get resolvePersistedAutoRestoreTarget() {
     return shieldsIndexMock.resolvePersistedAutoRestoreTarget;
   },
@@ -43,6 +47,10 @@ describe("Shields timer policy authority", () => {
     shieldsIndexMock.assertShieldsPolicyMutationAuthority.mockImplementation(() => undefined);
     shieldsIndexMock.completeAutoRestoreTransition.mockReturnValue(true);
     shieldsIndexMock.lockAgentConfig = vi.fn();
+    shieldsIndexMock.relockAgentConfigAfterPolicyAuthorityRefusal = vi.fn(() => ({
+      chattrApplied: true,
+      fileHashes: { "/sandbox/.openclaw/openclaw.json": "a".repeat(64) },
+    }));
     shieldsIndexMock.resolvePersistedAutoRestoreTarget = vi.fn(
       (_sandboxName: string, marker: { configPath?: string; configDir?: string }) =>
         marker.configPath && marker.configDir
@@ -110,9 +118,14 @@ describe("Shields timer policy authority", () => {
     return vi.spyOn(process, "exit").mockImplementation((() => undefined) as typeof process.exit);
   }
 
-  it("does not retry a final policy-authority refusal (#9833)", async () => {
+  it("relocks config without retrying a final policy-authority refusal (#9833)", async () => {
     const timer = await import("./timer");
-    const fixture = createFixture("external-authority", timer.parseTimerArgs);
+    const fixture = createFixture(
+      "external-authority",
+      timer.parseTimerArgs,
+      "/sandbox/.openclaw/openclaw.json",
+      "/sandbox/.openclaw",
+    );
     shieldsIndexMock.applyShieldsPolicySnapshot.mockImplementation(() => {
       throw new PolicyAuthorityRefusalError(
         "Refusing to restore the Shields policy snapshot: OpenShell policy is externally managed.",
@@ -127,8 +140,29 @@ describe("Shields timer policy authority", () => {
 
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(1);
+    expect(shieldsIndexMock.relockAgentConfigAfterPolicyAuthorityRefusal).toHaveBeenCalledOnce();
+    expect(shieldsIndexMock.relockAgentConfigAfterPolicyAuthorityRefusal).toHaveBeenCalledWith(
+      "external-authority",
+      expect.objectContaining({
+        configDir: "/sandbox/.openclaw",
+        configPath: "/sandbox/.openclaw/openclaw.json",
+      }),
+      PROCESS_TOKEN,
+      false,
+    );
+    expect(shieldsIndexMock.completeAutoRestoreTransition).not.toHaveBeenCalled();
+    expect(JSON.parse(fs.readFileSync(fixture.stateFile, "utf8"))).toEqual({
+      shieldsDown: true,
+    });
     expect(fs.existsSync(fixture.markerPath)).toBe(true);
     expect(fs.existsSync(fixture.containmentPath)).toBe(false);
+    const auditPath = path.join(tmpHome, ".nemoclaw", "state", "shields-audit.jsonl");
+    const audits = fs
+      .readFileSync(auditPath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { action: string });
+    expect(audits.some(({ action }) => action === "shields_auto_restore")).toBe(false);
   });
 
   it("stops after policy restore when policy authority changes (#9833)", async () => {

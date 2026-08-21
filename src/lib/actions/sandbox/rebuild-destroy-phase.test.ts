@@ -252,6 +252,57 @@ describe("rebuild destroy phase", () => {
     expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
   });
 
+  it("restores MCP and shields when the journaled delete-commit validation rejects (#9833)", async () => {
+    const secret = `nvapi-${"a".repeat(32)}`;
+    const log = vi.fn();
+    const recreateJournal = stubRecreateJournal();
+    const relockShieldsIfNeeded = vi.fn(() => true);
+    const validateBeforeDeleteCommit = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockRejectedValueOnce(new Error(`authority probe failed with ${secret}`));
+    mocks.prepareMcpForRebuild.mockResolvedValue({
+      entries: [{ server: "github" }],
+      detachedProviderEntries: [{ providerName: "nemoclaw-mcp-alpha-github" }],
+      scrubbedAdapterEntries: [{ server: "github" }],
+    });
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw" },
+        staleRecovery: false,
+        recreateJournal,
+        backupManifest: null,
+        log,
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
+        relockShieldsIfNeeded,
+        validateBeforeDeleteCommit,
+        onDeleted: vi.fn(),
+      }),
+    ).rejects.toThrow("Policy authority validation failed before sandbox deletion.");
+
+    expect(validateBeforeDeleteCommit).toHaveBeenCalledTimes(2);
+    expect(recreateJournal.markDeleting).toHaveBeenCalledOnce();
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
+      "alpha",
+      [{ providerName: "nemoclaw-mcp-alpha-github" }],
+      [{ server: "github" }],
+      undefined,
+    );
+    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+    expect(mocks.stopNimContainer).not.toHaveBeenCalled();
+    expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
+    expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
+    expectNoSandboxDelete(mocks.runOpenshell);
+    const diagnostics = log.mock.calls.flat().join("\n");
+    expect(diagnostics).toContain("Unexpected delete-commit validation failure");
+    expect(diagnostics).toContain("<REDACTED>");
+    expect(diagnostics).not.toContain(secret);
+  });
+
   it("revalidates authority after confirmed deletion before local completion effects (#9833)", async () => {
     const recreateJournal = stubRecreateJournal();
     const onDeleted = vi.fn();

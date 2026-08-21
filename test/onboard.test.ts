@@ -694,7 +694,11 @@ runner.runCapture = (command) => {
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
+registry.getSandbox = () => ({
+  name: "my-assistant",
+  toolDisclosure: "progressive",
+  policyAuthority: "nemoclaw-managed",
+});
 
 childProcess.spawn = (...args) => {
   const child = new EventEmitter();

@@ -693,9 +693,7 @@ describe("onboard command options", () => {
   ])(
     "restores every scoped command value before a handled-error exit when the provider is $providerState (#9035)",
     async ({ previousProvider }) => {
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-handled-error-environment-"),
-      );
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-handled-error-environment-"));
       const manifestPath = path.join(tmpDir, "agents.yaml");
       fs.writeFileSync(manifestPath, "agents: []\n");
       const env: NodeJS.ProcessEnv = {

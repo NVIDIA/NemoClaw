@@ -49,6 +49,7 @@ describe("connectSandbox route lifecycle", () => {
         "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
       registryEntry: {
         model: "claude-sonnet-4-20250514",
+        policyAuthority: "nemoclaw-managed",
         provider: "anthropic-prod",
       },
     });
@@ -84,6 +85,39 @@ describe("connectSandbox route lifecycle", () => {
     );
   });
 
+  it("refuses direct route reconciliation when live policy authority drifts before the write (#9833)", async () => {
+    const harness = createConnectHarness({
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+      registryEntry: {
+        model: "claude-sonnet-4-20250514",
+        policyAuthority: "nemoclaw-managed",
+        provider: "anthropic-prod",
+      },
+    });
+    const policyAuthority = requireDist(
+      "../../src/lib/adapters/openshell/policy-authority.js",
+    ) as typeof import("../../adapters/openshell/policy-authority");
+    vi.mocked(policyAuthority.inspectSandboxPolicyAuthority).mockReturnValue({
+      authority: "externally-managed",
+      effectivePolicy: {},
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["inference", "set"]),
+      expect.any(Object),
+    );
+    expect(
+      harness.errorSpy.mock.calls.some(([line]) =>
+        String(line).includes("OpenShell policy authority changed"),
+      ),
+    ).toBe(true);
+  });
+
   it("repairs a WSL Ollama route without requiring an auth proxy token", async () => {
     const harness = createConnectHarness({
       inferenceGetOutput: "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3:0.6b\n",
@@ -91,6 +125,7 @@ describe("connectSandbox route lifecycle", () => {
       isWsl: true,
       registryEntry: {
         model: "qwen3:0.6b",
+        policyAuthority: "nemoclaw-managed",
         provider: "ollama-local",
       },
     });
@@ -113,6 +148,7 @@ describe("connectSandbox route lifecycle", () => {
       registryEntry: {
         name: sandboxName,
         model: "claude-sonnet-4-20250514",
+        policyAuthority: "nemoclaw-managed",
         provider: "anthropic-prod",
       },
     });
@@ -135,6 +171,7 @@ describe("connectSandbox route lifecycle", () => {
         registryEntry: {
           model: "nvidia/nemotron-3-super-120b-a12b",
           openshellDriver: "vm",
+          policyAuthority: "nemoclaw-managed",
           provider: "nvidia-prod",
         },
       });
@@ -144,6 +181,7 @@ describe("connectSandbox route lifecycle", () => {
       expect(harness.applyVmDnsMonkeypatchSpy).toHaveBeenCalledWith(
         "alpha",
         expect.objectContaining({ openshellDriver: "vm" }),
+        expect.objectContaining({ revalidatePolicyAuthority: expect.any(Function) }),
       );
       expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
       expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
@@ -156,23 +194,70 @@ describe("connectSandbox route lifecycle", () => {
     }
   });
 
+  it("refuses connect VM repair when its recorded policy authority drifts (#9833)", async () => {
+    vi.stubEnv("NEMOCLAW_FORCE_VM_DNS_MONKEYPATCH", "1");
+    const harness = createConnectHarness({
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+      inferenceProbeResponses: ['BROKEN 503 {"error":"inference service unavailable"}'],
+      registryEntry: {
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        openshellDriver: "vm",
+        policyAuthority: "nemoclaw-managed",
+        provider: "nvidia-prod",
+      },
+    });
+    let authorityRefusal: unknown;
+    harness.applyVmDnsMonkeypatchSpy.mockImplementation(
+      (
+        _sandboxName: string,
+        _entry: unknown,
+        options?: { revalidatePolicyAuthority?: (operation: string) => void },
+      ) => {
+        harness.registryEntries[0]!.policyAuthority = "externally-managed";
+        try {
+          options?.revalidatePolicyAuthority?.("write VM resolver");
+        } catch (error) {
+          authorityRefusal = error;
+          throw error;
+        }
+        return { attempted: true, changed: true, ok: true, status: "applied" };
+      },
+    );
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(authorityRefusal).toMatchObject({
+      code: "NEMOCLAW_POLICY_AUTHORITY_REFUSAL",
+    });
+    const routeProbeCalls = harness.captureOpenshellSpy.mock.calls.filter((call) =>
+      JSON.stringify(call[0]).includes("inference.local/v1/models"),
+    );
+    expect(routeProbeCalls).toHaveLength(1);
+  });
+
   it.each([
     ["null", null, null],
     ["provider-only", "nvidia-prod", null],
     ["model-only", null, "nvidia/test"],
     ["blank-provider", "   ", "nvidia/test"],
     ["blank-model", "nvidia-prod", "   "],
-  ] as const)("skips inference reconciliation for %s registry entries (#5937)", async (_description, provider, model) => {
-    const harness = createConnectHarness({ registryEntry: { model, provider } });
+  ] as const)(
+    "skips inference reconciliation for %s registry entries (#5937)",
+    async (_description, provider, model) => {
+      const harness = createConnectHarness({ registryEntry: { model, provider } });
 
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+      await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
-    expect(harness.captureOpenshellSpy).not.toHaveBeenCalledWith(
-      ["inference", "get", "-g", "nemoclaw"],
-      expect.any(Object),
-    );
-    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
-  });
+      expect(harness.captureOpenshellSpy).not.toHaveBeenCalledWith(
+        ["inference", "get", "-g", "nemoclaw"],
+        expect.any(Object),
+      );
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not reset an inference route that already matches the sandbox", async () => {
     const harness = createConnectHarness({
@@ -230,6 +315,7 @@ describe("connectSandbox route lifecycle", () => {
       registryEntry: {
         model: "nvidia/nemotron-3-super-120b-a12b",
         openshellDriver: "kubernetes",
+        policyAuthority: "nemoclaw-managed",
         provider: "nvidia-prod",
       },
     });

@@ -127,6 +127,7 @@ function createConflictFixture() {
     dashboardPort: 18789,
     fromDockerfile: null,
     policies: [],
+    policyAuthority: "nemoclaw-managed",
     agent: null,
     messaging: { schemaVersion: 1, plan: teamsPlan(name, "shared-teams-hash") },
   });
@@ -162,6 +163,29 @@ function createConflictFixture() {
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
+if (a[0]==="policy" && a[1]==="list" && a.includes("--global")) {
+  process.exit(0);
+}
+if (a[0]==="policy" && a[1]==="get" && a.includes("--output") && a.includes("json")) {
+  if (a.includes("--global")) process.exit(64);
+  const sandbox = a.at(-1);
+  process.stdout.write(JSON.stringify({
+    scope: "sandbox",
+    sandbox,
+    status: "effective",
+    policy_source: "sandbox",
+    policy: {},
+  }) + "\\n");
+  process.exit(0);
+}
+if (a[0]==="policy" && a[1]==="get" && a.includes("--base")) {
+  process.stdout.write("version: 1\\nnetwork_policies: {}\\n");
+  process.exit(0);
+}
+if (a[0]==="sandbox" && a[1]==="get") {
+  process.stdout.write("Sandbox:\\n\\n  Id: fixture-rebuild-sandbox\\n  Name: my-assistant\\n  Phase: Ready\\n");
+  process.exit(0);
+}
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("my-assistant\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
@@ -234,22 +258,26 @@ function registryHasSandbox(nemoclawDir: string, name: string): boolean {
 }
 
 describe("rebuild messaging credential conflict preflight (#5954)", () => {
-  it("aborts BEFORE backup/delete when another sandbox shares the Teams credential", {
-    timeout: 90_000,
-  }, () => {
-    const f = createConflictFixture();
-    const result = runRebuild(f.tmpDir);
-    const output = `${result.stderr || ""}${result.stdout || ""}`;
+  it(
+    "aborts BEFORE backup/delete when another sandbox shares the Teams credential",
+    {
+      timeout: 90_000,
+    },
+    () => {
+      const f = createConflictFixture();
+      const result = runRebuild(f.tmpDir);
+      const output = `${result.stderr || ""}${result.stdout || ""}`;
 
-    // Aborted, with the actionable conflict explanation.
-    expect(result.status).not.toBe(0);
-    expect(output).toContain("uses the same teams credential");
-    expect(output).toContain("Aborting");
+      // Aborted, with the actionable conflict explanation.
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("uses the same teams credential");
+      expect(output).toContain("Aborting");
 
-    // Nothing destructive ran: the sandbox is untouched and still registered.
-    expect(output).not.toContain("Backing up sandbox state");
-    expect(output).not.toContain("Old sandbox deleted");
-    expect(output).not.toContain("must not run before the conflict preflight");
-    expect(registryHasSandbox(f.nemoclawDir, "my-assistant")).toBe(true);
-  });
+      // Nothing destructive ran: the sandbox is untouched and still registered.
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Old sandbox deleted");
+      expect(output).not.toContain("must not run before the conflict preflight");
+      expect(registryHasSandbox(f.nemoclawDir, "my-assistant")).toBe(true);
+    },
+  );
 });

@@ -97,7 +97,7 @@ vi.mock("../../policy", () => ({
   resolveAgentBaselinePolicy: vi.fn((agent: string) => ({
     agent,
     policyPath: "/repo/nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
-    content: "version: 1\nnetwork_policies: {}\n",
+    content: "version: 1\nnetwork_policies:\n  baseline: {}\n",
   })),
 }));
 

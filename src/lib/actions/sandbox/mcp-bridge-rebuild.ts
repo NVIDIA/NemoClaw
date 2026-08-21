@@ -170,7 +170,6 @@ export async function prepareMcpBridgesForRebuild(
       // `/sandbox` may be a retained PVC. Scrub before delete so a replacement
       // Hermes/agent cannot boot with a stale placeholder while its provider
       // is intentionally detached during recreate.
-      await revalidateBeforeMutation();
       scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry);
       scrubbedAdapters.push(entry);
     }
@@ -189,7 +188,6 @@ export async function prepareMcpBridgesForRebuild(
       // Keep the provider and its host-only credentials for the replacement
       // sandbox, but detach it before OpenShell deletes the old attachment.
       inspectExactMcpDestroyProvider(entry, { allowMissing: false });
-      await revalidateBeforeMutation();
       providerDetachAttempted = true;
       const detachOutcome = detachProvider(sandboxName, entry);
       if (detachOutcome === "unknown") {
@@ -204,29 +202,36 @@ export async function prepareMcpBridgesForRebuild(
       detached.push(entry);
     }
   } catch (error) {
-    if (error instanceof McpPolicyAuthorityRefusalError) throw error;
     const rollbackFailures: string[] = [];
     let runtimeRestored = false;
-    if (removedPolicies.length > 0 || providerDetachAttempted) {
+    let snapshotCurrent = true;
+    try {
+      assertMcpDestroySnapshotCurrent(sandboxName, entries);
+    } catch (snapshotError) {
+      snapshotCurrent = false;
+      rollbackFailures.push(
+        snapshotError instanceof Error ? snapshotError.message : String(snapshotError),
+      );
+    }
+    if (snapshotCurrent && scrubbedAdapters.length > 0) {
       try {
-        await revalidateBeforeMutation();
-        await restoreExistingMcpBridgeRuntime(
-          sandboxName,
-          removedPolicies.length > 0 ? removedPolicies : scrubbedAdapters,
-          {
-            lifecyclePhase: "teardown-rollback",
-            validateContainingPolicyReceipt,
-          },
-        );
+        await restoreExistingMcpBridgeRuntime(sandboxName, scrubbedAdapters, {
+          lifecyclePhase: "teardown-rollback",
+        });
         runtimeRestored = true;
       } catch (rollbackError) {
-        if (rollbackError instanceof McpPolicyAuthorityRefusalError) throw rollbackError;
         rollbackFailures.push(
           rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
         );
       }
     }
-    if (!runtimeRestored) {
+    if (
+      snapshotCurrent &&
+      !runtimeRestored &&
+      removedPolicies.length === 0 &&
+      !providerDetachAttempted &&
+      !(error instanceof McpPolicyAuthorityRefusalError)
+    ) {
       rollbackFailures.push(
         ...(await rollbackScrubbedMcpAdapters(
           sandboxName,
@@ -237,6 +242,13 @@ export async function prepareMcpBridgesForRebuild(
       );
     }
     const detail = error instanceof Error ? error.message : String(error);
+    if (error instanceof McpPolicyAuthorityRefusalError) {
+      throw new McpPolicyAuthorityRefusalError(
+        rollbackFailures.length > 0
+          ? `${detail}\nMCP rebuild compensation remains pending: ${rollbackFailures.join("; ")}`
+          : detail,
+      );
+    }
     throw new McpBridgeError(
       rollbackFailures.length > 0
         ? `${detail}\nMCP rebuild rollback could not reattach: ${rollbackFailures.join("; ")}`
@@ -257,7 +269,13 @@ export async function reattachMcpProvidersAfterRebuildAbort(
   validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<void> {
   if (entries.length === 0 && scrubbedAdapterEntries.length === 0) return;
-  await revalidateContainingMcpPolicyAuthority(validateContainingPolicyReceipt);
+  let authorityRefusal: McpPolicyAuthorityRefusalError | undefined;
+  try {
+    await revalidateContainingMcpPolicyAuthority(validateContainingPolicyReceipt);
+  } catch (error) {
+    if (!(error instanceof McpPolicyAuthorityRefusalError)) throw error;
+    authorityRefusal = error;
+  }
   await ensureSandboxGatewaySelected(sandboxName);
   const sandbox = getSandboxOrThrow(sandboxName);
   assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, [
@@ -271,15 +289,14 @@ export async function reattachMcpProvidersAfterRebuildAbort(
     try {
       await restoreExistingMcpBridgeRuntime(sandboxName, entries, {
         lifecyclePhase: "teardown-rollback",
-        validateContainingPolicyReceipt,
+        ...(authorityRefusal ? {} : { validateContainingPolicyReceipt }),
       });
       runtimeRestored = true;
     } catch (error) {
-      if (error instanceof McpPolicyAuthorityRefusalError) throw error;
       failures.push(error instanceof Error ? error.message : String(error));
     }
   }
-  if (!runtimeRestored) {
+  if (!runtimeRestored && !authorityRefusal) {
     failures.push(
       ...(await rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapterEntries, () =>
         revalidateContainingMcpPolicyAuthority(validateContainingPolicyReceipt),
@@ -287,8 +304,14 @@ export async function reattachMcpProvidersAfterRebuildAbort(
     );
   }
   if (failures.length > 0) {
+    if (authorityRefusal) {
+      throw new McpPolicyAuthorityRefusalError(
+        `${authorityRefusal.message}\nMCP rebuild-abort compensation remains pending: ${failures.join("; ")}`,
+      );
+    }
     throw new McpBridgeError(failures.join("; "));
   }
+  if (authorityRefusal) throw authorityRefusal;
 }
 
 export async function restoreMcpBridgesAfterRebuild(
@@ -303,8 +326,8 @@ export async function restoreMcpBridgesAfterRebuild(
   );
   // Persist the recovery contract before touching the gateway. If refresh
   // fails, `mcp restart` remains retryable after the operator fixes the cause.
-  await revalidateContainingMcpPolicyAuthority(validateContainingPolicyReceipt);
   setBridgeState(sandboxName, bridges);
+  await revalidateContainingMcpPolicyAuthority(validateContainingPolicyReceipt);
   await restoreExistingMcpBridgeRuntime(sandboxName, entries, {
     validateContainingPolicyReceipt,
   });

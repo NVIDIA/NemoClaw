@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import { createDockerRuntimeProviderBundle } from "../../onboard/runtime-provider/docker";
 import { dockerLlamaCppBindingSha256 } from "../../onboard/runtime-provider/docker-llama-cpp-operation";
+import { persistedEngineAuthorityPath } from "../../onboard/runtime-provider/persisted-engine-authority";
 import type {
   HostLocalInferenceOperation,
   HostLocalInferenceReceipt,
@@ -121,6 +122,14 @@ describe("managed llama.cpp policy authority", () => {
     harness.images.add(selected.recipe.spec.runtime.image);
     harness.images.add(selected.recipe.spec.readiness.probeImage);
     const managedLifecycle = lifecycle();
+    const revalidatePolicyRequirements = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new PolicyAuthorityRefusalError(
+          "External policy authority must supply the managed llama.cpp entry.",
+        );
+      });
 
     await expect(
       installManagedLlamaCpp(selected, {
@@ -130,16 +139,23 @@ describe("managed llama.cpp policy authority", () => {
         verifyGguf: vi.fn(async () => verifiedArtifact(selected, home)),
         checkPort: vi.fn(async () => ({ ok: true })),
         log: vi.fn(),
-        revalidatePolicyRequirements: () => {
-          throw new PolicyAuthorityRefusalError(
-            "External policy authority must supply the managed llama.cpp entry.",
-          );
-        },
+        revalidatePolicyRequirements,
       }),
     ).rejects.toBeInstanceOf(PolicyAuthorityRefusalError);
 
     const paths = managedLlamaCppStatePaths(home);
-    expect(fs.existsSync(paths.ownerPath)).toBe(true);
+    expect(revalidatePolicyRequirements).toHaveBeenNthCalledWith(
+      1,
+      "reserve the managed llama.cpp runtime",
+    );
+    expect(revalidatePolicyRequirements).toHaveBeenNthCalledWith(
+      2,
+      "activate the managed llama.cpp runtime",
+    );
+    expect(fs.existsSync(paths.ownerPath)).toBe(false);
+    expect(
+      fs.existsSync(persistedEngineAuthorityPath(paths.stateDir, "host-local-inference")),
+    ).toBe(false);
     expect(loadManagedLlamaCppApiKey(paths)).toBeNull();
     expect(managedLifecycle.recoverUnfinished).not.toHaveBeenCalled();
     expect(managedLifecycle.start).not.toHaveBeenCalled();
@@ -162,6 +178,14 @@ describe("managed llama.cpp policy authority", () => {
     harness.images.add(selected.recipe.spec.runtime.image);
     harness.images.add(selected.recipe.spec.readiness.probeImage);
     const managedLifecycle = lifecycle();
+    const revalidatePolicyRequirements = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new PolicyAuthorityRefusalError(
+          "External policy authority must supply the managed llama.cpp entry.",
+        );
+      });
 
     await expect(
       resumeManagedLlamaCppRuntime("spark-agent", {
@@ -169,14 +193,18 @@ describe("managed llama.cpp policy authority", () => {
         runtimeProvider: runtimeProvider(harness.engine, managedLifecycle),
         verifyGguf: vi.fn(async () => verifiedArtifact(selected, home)),
         checkPort: vi.fn(async () => ({ ok: true })),
-        revalidatePolicyRequirements: () => {
-          throw new PolicyAuthorityRefusalError(
-            "External policy authority must supply the managed llama.cpp entry.",
-          );
-        },
+        revalidatePolicyRequirements,
       }),
     ).rejects.toBeInstanceOf(PolicyAuthorityRefusalError);
 
+    expect(revalidatePolicyRequirements).toHaveBeenNthCalledWith(
+      1,
+      "inspect the managed llama.cpp runtime",
+    );
+    expect(revalidatePolicyRequirements).toHaveBeenNthCalledWith(
+      2,
+      "recover the managed llama.cpp runtime",
+    );
     expect(loadManagedLlamaCppApiKey(paths)).toBeNull();
     expect(managedLifecycle.recoverUnfinished).not.toHaveBeenCalled();
     expect(managedLifecycle.start).not.toHaveBeenCalled();

@@ -144,9 +144,9 @@ fi
 info "4b. Verify blueprint runner apply smoke test"
 # -------------------------------------------------------
 # Apply runs the full codepath (profile resolution, sandbox creation,
-# provider setup, state save) against a fixture CLI. Policy mutation reads must
-# return the same metadata + YAML shape as OpenShell 0.0.72; an empty successful
-# response is intentionally rejected by the runner.
+# provider setup, state save) against a fixture CLI. Global policy history uses
+# the OpenShell 0.0.106 absence shape. Sandbox policy reads return strict JSON,
+# and policy mutation reads return the OpenShell policy YAML shape.
 FAKE_OPENSHELL_BIN=$(mktemp -d)
 APPLY_OUTPUT=$(mktemp)
 cleanup_apply_fixture() {
@@ -158,12 +158,17 @@ cat >"$FAKE_OPENSHELL_BIN/openshell" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${1:-} ${2:-} ${3:-}" in
+  "policy list --global")
+    ;;
   "policy get --base")
     printf '%s\n' 'Policy for sandbox fixture' '---'
     cat /opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml
     ;;
+  "policy get openclaw")
+    printf '%s\n' '{"scope":"sandbox","sandbox":"openclaw","status":"effective","policy_source":"sandbox","policy":{}}'
+    ;;
   "policy get "*)
-    echo "unexpected policy read: expected policy get --base" >&2
+    echo "unexpected policy read" >&2
     exit 64
     ;;
 esac

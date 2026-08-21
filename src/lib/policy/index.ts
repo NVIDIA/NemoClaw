@@ -3233,7 +3233,13 @@ function applyPermissivePolicy(sandboxName: string): void {
   console.log("  Applying permissive policy...");
   assertOpenshellResolvable();
   setPolicyDocument(sandboxName, policyDocument, { gatewayName: authority.gatewayName });
-  if (!recheckNemoClawManagedPolicy(sandboxName, operation, authority)) return;
+  const observed = inspectPolicyAuthority(sandboxName, operation, authority.gatewayName, true);
+  policyAuthorityModule.assertRecordedPolicyAuthority(
+    authority.authority,
+    observed.authority,
+    operation,
+  );
+  assertNemoClawManagedPolicy(observed, operation);
   console.log("  Applied permissive policy.");
 }
 

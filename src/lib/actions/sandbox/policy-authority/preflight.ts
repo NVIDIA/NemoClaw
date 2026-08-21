@@ -11,6 +11,8 @@ import { isPresetPolicyMap, parseNetworkPolicies } from "../../../policy/preset-
 import * as registry from "../../../policy/policy-registry";
 import { getPersistedSandboxTargetGatewayName } from "../gateway-target";
 
+export { isPolicyAuthorityRefusalError } from "../../../adapters/openshell/policy-authority";
+
 interface SandboxPolicyAuthorityPreflightOptions {
   readonly externalPolicy: "verify" | "refuse";
   readonly operation: string;

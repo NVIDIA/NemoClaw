@@ -435,18 +435,17 @@ describe("sandbox policy authority ownership", () => {
     expect(mocks.updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("does not report permissive policy success when authority changes during set (#9833)", () => {
+  it("throws when permissive policy authority changes after the policy set (#9833)", () => {
     sandbox = { ...sandbox, policyAuthority: "nemoclaw-managed" };
     mocks.inspectSandboxPolicyAuthority
       .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
       .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
       .mockReturnValueOnce({ authority: "externally-managed", effectivePolicy: {} });
 
-    expect(applyPermissivePolicy(SANDBOX)).toBeUndefined();
+    expect(() => applyPermissivePolicy(SANDBOX)).toThrow(/policy authority changed/u);
 
     expect(mocks.run).toHaveBeenCalledOnce();
     expect(console.log).not.toHaveBeenCalledWith("  Applied permissive policy.");
-    expect(reportedErrors()).toContain("policy authority changed");
   });
 
   it("leaves authority absent when live inspection is unknown (#9833)", () => {

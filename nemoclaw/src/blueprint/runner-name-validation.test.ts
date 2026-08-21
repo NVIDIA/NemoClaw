@@ -17,6 +17,7 @@ import {
   resolvedEndpointFor,
 } from "./runner-mock-fixtures.js";
 import {
+  createInferenceRouteResult,
   minimalBlueprint,
   resultWithSandboxPolicyAuthority,
   successResult,
@@ -37,9 +38,14 @@ vi.mock("node:fs", async (importOriginal) => {
   const memory = inMemoryFsMethods(store, { spy: vi.fn });
   return {
     ...original,
+    closeSync: memory.closeSync,
     existsSync: memory.existsSync,
+    fsyncSync: memory.fsyncSync,
     mkdirSync: memory.mkdirSync,
+    openSync: memory.openSync,
     readFileSync: memory.readFileSync,
+    renameSync: memory.renameSync,
+    unlinkSync: memory.unlinkSync,
     writeFileSync: memory.writeFileSync,
     readdirSync: memory.readdirSync,
   };
@@ -147,6 +153,10 @@ describe("blueprint name validation (fail-closed integration)", () => {
       const bp = minimalBlueprint();
       const components = bp.components as BlueprintComponents;
       components.inference.profiles.default.provider_name = providerName;
+      const routeResult = createInferenceRouteResult("test-gateway", null);
+      mockExeca.mockImplementation(async (_command: string, args: string[]) =>
+        resultWithSandboxPolicyAuthority(args, routeResult(args, successResult())),
+      );
 
       await expect(actionApply("default", bp)).resolves.toBeUndefined();
       expect(mockExeca).toHaveBeenCalledWith(

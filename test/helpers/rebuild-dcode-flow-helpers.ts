@@ -25,6 +25,7 @@ export function makeDcodeSandboxEntry(): Record<string, unknown> {
     gpuEnabled: false,
     sandboxGpuEnabled: false,
     sandboxGpuMode: "0",
+    policyAuthority: "nemoclaw-managed",
   };
 }
 

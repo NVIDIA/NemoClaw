@@ -1,19 +1,37 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { createSession } from "../state/onboard-session";
+import { nemoclawStateRoot } from "../state/state-root";
 import { bindGatewayAuthorityToCheckpoint } from "./gateway-authority-checkpoint";
 import type { GatewayManagementDeclaration } from "./gateway-management";
 import { type GatewayOwner, resolveGatewayOwner } from "./gateway-ownership";
 import {
+  GatewayAuthorityError,
   resolveGatewayCredentialMutationAuthority,
   resolveGatewayRebuildAuthority,
   resolveGatewayTeardownAuthority,
 } from "./gateway-teardown-authority";
 
 const target = { gatewayName: "nemoclaw", gatewayPort: 8080 };
+
+function targetSessionFile(homeDir: string): string {
+  const stateDir = nemoclawStateRoot(homeDir, target.gatewayPort);
+  return path.join(stateDir, "onboard-session.json");
+}
+
+function writeTargetSession(homeDir: string, content: string): void {
+  const sessionFile = targetSessionFile(homeDir);
+  const stateDir = path.dirname(sessionFile);
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(sessionFile, content, { mode: 0o600 });
+}
 
 function declaration(
   kind: "systemd-system" | "systemd-user" = "systemd-system",
@@ -55,25 +73,25 @@ function checkpointSession(recordedOwner: GatewayOwner) {
 }
 
 describe("resolveGatewayTeardownAuthority", () => {
-  it.each([
-    "systemd-system",
-    "systemd-user",
-  ] as const)("returns the exact recorded %s authority when the declaration still matches (#6576)", (kind) => {
-    const currentDeclaration = declaration(kind);
-    const recordedOwner = owner(currentDeclaration);
+  it.each(["systemd-system", "systemd-user"] as const)(
+    "returns the exact recorded %s authority when the declaration still matches (#6576)",
+    (kind) => {
+      const currentDeclaration = declaration(kind);
+      const recordedOwner = owner(currentDeclaration);
 
-    expect(
-      resolveGatewayTeardownAuthority(target, {
-        hasPackagedService: () => false,
-        loadDeclaration: () => ({
-          ok: true,
-          declaration: currentDeclaration,
-          source: "profile",
+      expect(
+        resolveGatewayTeardownAuthority(target, {
+          hasPackagedService: () => false,
+          loadDeclaration: () => ({
+            ok: true,
+            declaration: currentDeclaration,
+            source: "profile",
+          }),
+          loadSession: () => checkpointSession(recordedOwner),
         }),
-        loadSession: () => checkpointSession(recordedOwner),
-      }),
-    ).toEqual(recordedOwner);
-  });
+      ).toEqual(recordedOwner);
+    },
+  );
 
   it("uses the current external declaration when no checkpoint exists (#6576)", () => {
     const currentDeclaration = declaration();
@@ -92,6 +110,157 @@ describe("resolveGatewayTeardownAuthority", () => {
       }).mode,
     ).toBe("externally-supervised");
   });
+
+  it.each([
+    ["the session file is absent", (_homeDir: string): void => undefined],
+    ["the checkpoint is absent", (homeDir: string) => writeTargetSession(homeDir, "{}")],
+    [
+      "the checkpoint uses a legacy schema",
+      (homeDir: string) =>
+        writeTargetSession(homeDir, JSON.stringify({ checkpoint: { schemaVersion: 3 } })),
+    ],
+  ] as const)("uses the current owner when %s (#9833)", (_case, setup) => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-teardown-authority-"));
+    const currentDeclaration = declaration("systemd-user");
+    setup(homeDir);
+
+    try {
+      expect(
+        resolveGatewayTeardownAuthority(target, {
+          env: { HOME: homeDir },
+          hasPackagedService: () => false,
+          loadDeclaration: () => ({
+            ok: true,
+            declaration: currentDeclaration,
+            source: "profile",
+          }),
+        }),
+      ).toEqual(owner(currentDeclaration));
+    } finally {
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses persisted gateway authority even when the unrelated policy authority is malformed (#9833)", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-teardown-authority-"));
+    const currentDeclaration = declaration();
+    const recordedOwner = owner(currentDeclaration);
+    const session = {
+      ...checkpointSession(recordedOwner),
+      policyAuthority: "global",
+    };
+    writeTargetSession(homeDir, JSON.stringify(session));
+
+    try {
+      expect(
+        resolveGatewayTeardownAuthority(target, {
+          env: { HOME: homeDir },
+          hasPackagedService: () => false,
+          loadDeclaration: () => ({
+            ok: true,
+            declaration: currentDeclaration,
+            source: "profile",
+          }),
+        }),
+      ).toEqual(recordedOwner);
+    } finally {
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not adopt a different current owner when policy authority is malformed (#9833)", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-teardown-authority-"));
+    const recordedOwner = owner(declaration("systemd-system"));
+    const session = {
+      ...checkpointSession(recordedOwner),
+      policyAuthority: "global",
+    };
+    writeTargetSession(homeDir, JSON.stringify(session));
+
+    try {
+      expect(() =>
+        resolveGatewayTeardownAuthority(target, {
+          env: { HOME: homeDir },
+          hasPackagedService: () => false,
+          loadDeclaration: () => ({
+            ok: true,
+            declaration: declaration("systemd-user"),
+            source: "profile",
+          }),
+        }),
+      ).toThrow(/authority changed since onboarding.*teardown will not perform gateway effects/);
+    } finally {
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      "unreadable",
+      (homeDir: string, _session: ReturnType<typeof checkpointSession>) =>
+        fs.mkdirSync(targetSessionFile(homeDir), { recursive: true }),
+      /onboarding session is unreadable/,
+    ],
+    [
+      "malformed JSON",
+      (homeDir: string, _session: ReturnType<typeof checkpointSession>) =>
+        writeTargetSession(homeDir, "{"),
+      /onboarding session is unreadable or is not valid JSON/,
+    ],
+    [
+      "corrupt while recording another owner",
+      (homeDir: string, session: ReturnType<typeof checkpointSession>) =>
+        writeTargetSession(
+          homeDir,
+          JSON.stringify({
+            ...session,
+            checkpoint: { ...session.checkpoint, machineState: "invalid" },
+          }),
+        ),
+      /onboarding checkpoint is corrupt/,
+    ],
+    [
+      "from a future schema while recording another owner",
+      (homeDir: string, session: ReturnType<typeof checkpointSession>) =>
+        writeTargetSession(
+          homeDir,
+          JSON.stringify({
+            ...session,
+            checkpoint: { ...session.checkpoint, schemaVersion: Number.MAX_SAFE_INTEGER },
+          }),
+        ),
+      /unsupported schema version 9007199254740991/,
+    ],
+  ] as const)(
+    "fails closed when persisted gateway authority is %s (#9833)",
+    (_case, setup, reason) => {
+      const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-teardown-authority-"));
+      const recordedOwner = owner(declaration("systemd-system"));
+      setup(homeDir, checkpointSession(recordedOwner));
+
+      try {
+        let refusal: unknown;
+        try {
+          resolveGatewayTeardownAuthority(target, {
+            env: { HOME: homeDir },
+            hasPackagedService: () => false,
+            loadDeclaration: () => ({
+              ok: true,
+              declaration: declaration("systemd-user"),
+              source: "profile",
+            }),
+          });
+        } catch (error) {
+          refusal = error;
+        }
+        expect(refusal).toBeInstanceOf(GatewayAuthorityError);
+        expect((refusal as Error).message).toMatch(reason);
+        expect((refusal as Error).message).not.toContain(homeDir);
+      } finally {
+        fs.rmSync(homeDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("does not inspect the default packaged service for a custom gateway port (#6903)", () => {
     const customTarget = { gatewayName: "nemoclaw-9123", gatewayPort: 9123 };

@@ -97,8 +97,10 @@ import {
   confirmSandboxRuntimeRestore,
   fingerprintSandboxLiveIdentity,
   inspectSnapshotCloneTargetPolicyAuthority,
+  isPolicyAuthorityRefusalError,
   type PreparedHostLocalInferenceAuthority,
   type PreparedSandboxRuntimeRestore,
+  PolicyAuthorityRefusalError,
   prepareHostLocalInferenceAuthority,
   prepareManagedSnapshotProfileRestore,
   prepareSandboxHostLocalInferenceDestroyAuthority,
@@ -1098,12 +1100,18 @@ async function runSnapshotPolicyAuthorityBoundOperation<T>(
   validatePolicyAuthority: () => Promise<void>,
   operation: () => T,
 ): Promise<T> {
-  await validatePolicyAuthority();
-  try {
-    return operation();
-  } finally {
-    await validatePolicyAuthority();
-  }
+  const validateBoundary = async (): Promise<void> => {
+    try {
+      await validatePolicyAuthority();
+    } catch (error) {
+      if (isPolicyAuthorityRefusalError(error)) throw error;
+      throw new PolicyAuthorityRefusalError(error instanceof Error ? error.message : String(error));
+    }
+  };
+  await validateBoundary();
+  const result = operation();
+  await validateBoundary();
+  return result;
 }
 
 async function reconcileSnapshotPolicyPresets(
@@ -1147,7 +1155,7 @@ async function reconcileSnapshotPolicyPresets(
         ),
     );
   } catch (error) {
-    await validatePolicyAuthority();
+    if (isPolicyAuthorityRefusalError(error)) throw error;
     const detail = error instanceof Error ? error.message : String(error);
     console.warn(
       `  Warning: could not verify custom ownership of '${OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET}' (${detail}); leaving live policy presets unchanged.`,
@@ -1283,7 +1291,7 @@ async function reconcileSnapshotPolicyPresets(
       )
         failed.push(`${preset} (remove failed)`);
     } catch (err) {
-      await validatePolicyAuthority();
+      if (isPolicyAuthorityRefusalError(err)) throw err;
       const message = err instanceof Error ? err.message : String(err);
       failed.push(`${preset} (remove: ${message})`);
     }
@@ -1297,7 +1305,7 @@ async function reconcileSnapshotPolicyPresets(
       )
         failed.push(`${preset} (apply failed)`);
     } catch (err) {
-      await validatePolicyAuthority();
+      if (isPolicyAuthorityRefusalError(err)) throw err;
       const message = err instanceof Error ? err.message : String(err);
       failed.push(`${preset} (apply: ${message})`);
     }
@@ -1348,7 +1356,7 @@ async function reconcileSnapshotCustomPolicies(
         failed.push(`${entry.name} (remove failed)`);
       }
     } catch (err) {
-      await validatePolicyAuthority();
+      if (isPolicyAuthorityRefusalError(err)) throw err;
       const message = err instanceof Error ? err.message : String(err);
       failed.push(`${entry.name} (remove: ${message})`);
     }
@@ -1377,7 +1385,7 @@ async function reconcileSnapshotCustomPolicies(
         failed.push(`${entry.name} (apply failed)`);
       }
     } catch (err) {
-      await validatePolicyAuthority();
+      if (isPolicyAuthorityRefusalError(err)) throw err;
       const message = err instanceof Error ? err.message : String(err);
       failed.push(`${entry.name} (apply: ${message})`);
     }

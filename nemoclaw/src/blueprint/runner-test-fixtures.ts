@@ -99,13 +99,85 @@ export function successResult(): {
   return { exitCode: 0, stdout: "", stderr: "" };
 }
 
-/** OpenShell v0.0.106 structural absence result when no global policy exists. */
+type CommandResult = { exitCode: number; stdout: string; stderr: string };
+
+/** Stateful gateway-route behavior layered over a suite's ordinary command result. */
+export function createInferenceRouteResult(
+  gateway: string,
+  initial: { provider: string; model: string; timeoutSeconds: number } | null = {
+    provider: "prior-provider",
+    model: "prior-model",
+    timeoutSeconds: 45,
+  },
+): (args: readonly string[], fallback: CommandResult) => CommandResult {
+  let active = initial === null ? null : { ...initial };
+  return (args, fallback) => {
+    if (args.join(" ") === `inference get -g ${gateway}`) {
+      return {
+        exitCode: 0,
+        stdout:
+          active === null
+            ? "Gateway inference:\n\n  Not configured\n"
+            : [
+                "Gateway inference:",
+                "",
+                `  Provider: ${active.provider}`,
+                `  Model: ${active.model}`,
+                `  Timeout: ${String(active.timeoutSeconds)}s`,
+                "",
+              ].join("\n"),
+        stderr: "",
+      };
+    }
+    if (
+      fallback.exitCode === 0 &&
+      args[0] === "inference" &&
+      args[1] === "set" &&
+      args[2] === "-g" &&
+      args[3] === gateway
+    ) {
+      const providerIndex = args.indexOf("--provider");
+      const modelIndex = args.indexOf("--model");
+      const timeoutIndex = args.indexOf("--timeout");
+      active = {
+        provider: args[providerIndex + 1] ?? "",
+        model: args[modelIndex + 1] ?? "",
+        timeoutSeconds: timeoutIndex < 0 ? 180 : Number(args[timeoutIndex + 1]),
+      };
+    }
+    if (
+      fallback.exitCode === 0 &&
+      args.join(" ") === `inference delete -g ${gateway}`
+    ) {
+      active = null;
+    }
+    return fallback;
+  };
+}
+
+/** Route-aware command result with the standard runner policy/status metadata. */
+export function createRunnerCommandResult() {
+  const inferenceResult = createInferenceRouteResult("test-gateway");
+  return (args: readonly string[], fallback: CommandResult): CommandResult =>
+    resultWithSandboxPolicyAuthority(args, inferenceResult(args, fallback));
+}
+
+/** OpenShell v0.0.106 global history result when no policy revision exists. */
 export function globalPolicyAbsentResult(): {
   exitCode: number;
   stdout: string;
   stderr: string;
 } {
   return { exitCode: 0, stdout: "", stderr: "" };
+}
+
+/** OpenShell v0.0.106 global history result when at least one revision exists. */
+export function globalPolicyHistoryResult(): {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+} {
+  return { exitCode: 0, stdout: "VERSION STATUS\n1 loaded\n", stderr: "" };
 }
 
 /** A failed command result carrying only stderr. */
@@ -115,6 +187,44 @@ export function failureResult(stderr: string): {
   stderr: string;
 } {
   return { exitCode: 1, stdout: "", stderr };
+}
+
+/** The connected gateway identity reported by `openshell status`. */
+export function gatewayStatusResult(gateway = "test-gateway"): {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+} {
+  return {
+    exitCode: 0,
+    stdout: ["Gateway Status", "", "  Status: Connected", `  Gateway: ${gateway}`, ""].join("\n"),
+    stderr: "",
+  };
+}
+
+/** Results for a successful route replacement after sandbox-create reports reuse. */
+export function reusedSandboxApplyResultQueue(provider: string, model: string) {
+  const routeResults = [
+    "Gateway inference:\n\n  Provider: prior-provider\n  Model: prior-model\n  Timeout: 45s\n",
+    "Gateway inference:\n\n  Provider: prior-provider\n  Model: prior-model\n  Timeout: 45s\n",
+    [
+      "Gateway inference:",
+      "",
+      `  Provider: ${provider}`,
+      `  Model: ${model}`,
+      "  Version: 1",
+      "  Timeout: 180s",
+      "",
+    ].join("\n"),
+  ].map((stdout) => ({ exitCode: 0, stdout, stderr: "" }));
+  return (args: readonly string[]) =>
+    args.join(" ") === "status"
+      ? gatewayStatusResult()
+      : args.slice(0, 4).join(" ") === "sandbox get -g test-gateway"
+        ? { exitCode: 0, stdout: `Name: ${args[4]}\nPhase: Ready`, stderr: "" }
+        : args.join(" ") === "inference get -g test-gateway"
+          ? (routeResults.shift() ?? failureResult("route response queue exhausted"))
+          : resultForCommandFailure(args, ["sandbox", "create"], "already exists");
 }
 
 /** Machine-readable effective policy metadata for one sandbox. */
@@ -154,21 +264,45 @@ export function globalPolicyAuthorityResult(networkPolicies: Record<string, unkn
   };
 }
 
+/** Machine-readable latest global policy metadata after policy deletion. */
+export function globalPolicySupersededResult(): {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+} {
+  return {
+    exitCode: 0,
+    stdout: JSON.stringify({
+      scope: "global",
+      status: "superseded",
+      policy_source: "global",
+    }),
+    stderr: "",
+  };
+}
+
 /** Replace a fallback result for a machine-readable sandbox policy query. */
 export function resultWithSandboxPolicyAuthority(
   args: readonly string[],
   fallback: { exitCode: number; stdout: string; stderr: string },
 ): { exitCode: number; stdout: string; stderr: string } {
-  return args.join(" ") === "policy get --global --full --output json"
-    ? globalPolicyAbsentResult()
-    : args[0] === "policy" &&
-        args[1] === "get" &&
-        !args[2].startsWith("--") &&
-        args[3] === "--full" &&
-        args[4] === "--output" &&
-        args[5] === "json"
-      ? sandboxPolicyAuthorityResult(args[2])
-      : fallback;
+  return args.join(" ") === "status"
+    ? gatewayStatusResult()
+    : args[0] === "sandbox" && args[1] === "get" && args[2] === "-g"
+      ? { exitCode: 0, stdout: `Name: ${args[4]}\nPhase: Ready`, stderr: "" }
+      : args.join(" ") === "policy list -g test-gateway --global --limit 1"
+        ? globalPolicyAbsentResult()
+        : args[0] === "policy" &&
+            args[1] === "get" &&
+            args[2] === "-g" &&
+            args[3] === "test-gateway" &&
+            args[4] === "--full" &&
+            args[5] === "--output" &&
+            args[6] === "json" &&
+            typeof args[7] === "string" &&
+            !args[7].startsWith("--")
+          ? sandboxPolicyAuthorityResult(args[7])
+          : fallback;
 }
 
 /** The `provider get` listing for the sandbox's matching runtime identity provider. */

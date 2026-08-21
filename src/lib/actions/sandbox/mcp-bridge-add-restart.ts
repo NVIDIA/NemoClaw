@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import crypto from "node:crypto";
-
 import type { AgentMcpAdapter } from "../../agent/defs";
 import * as policies from "../../policy";
 import {
@@ -257,12 +255,7 @@ async function addMcpBridgeUnlocked(
   }
   const providerName =
     envNames.length > 0
-      ? (existingEntry?.providerName ??
-        buildMcpBridgeProviderName(
-          sandboxName,
-          options.server,
-          crypto.randomBytes(8).toString("hex"),
-        ))
+      ? (existingEntry?.providerName ?? buildMcpBridgeProviderName(sandboxName, options.server))
       : undefined;
   const adapterEnvValues = resolveCredentialEnv(options.env);
   if (!existingEntry && !Object.hasOwn(adapterEnvValues, envNames[0])) {
@@ -320,6 +313,9 @@ async function addMcpBridgeUnlocked(
       requiredPolicyContents: [requiredPolicyContent],
       sandboxName,
     });
+  // Qualify the exact external policy requirement before recording a bridge.
+  // A later refusal keeps the prepared manifest as retry intent, but the first
+  // refusal must leave the registry unchanged.
   const policyAuthority = recheckPolicyAuthority();
   // Hermes config posture is host-visible, so reject before even the durable
   // prepared manifest is written. The in-sandbox helper repeats the check at
@@ -334,11 +330,13 @@ async function addMcpBridgeUnlocked(
       // Publish the durable MCP reservation under the same cross-command lock
       // used by credentials add. Neither command can pass its collision check
       // before the other records its credential-key reservation.
-      recheckPolicyAuthority();
       assertNoProviderCredentialCollisions(sandboxName, [entry]);
       writeBridgeEntry(sandboxName, entry);
     });
   }
+  // From this point onward the prepared manifest owns the generated provider
+  // name, so later refusals leave stable retry intent.
+  recheckPolicyAuthority();
   let providerCreated = false;
   let providerAttachAttempted = false;
   let policyApplied = false;
@@ -529,30 +527,36 @@ async function addMcpBridgeUnlocked(
     writeBridgeEntry(sandboxName, committedEntry);
     recheckPolicyAuthority();
   } catch (error) {
-    if (error instanceof McpPolicyAuthorityRefusalError) throw error;
     let rollbackProviderInspection: McpProviderInspection | undefined;
     if ((providerAttachAttempted || providerCreated) && entry.providerId) {
-      recheckPolicyAuthority();
       rollbackProviderInspection = inspectMcpProvider(providerName);
     }
     const rollbackProviderOwned =
       !!rollbackProviderInspection &&
       providerMatchesCredential(rollbackProviderInspection, entry.env[0], entry.providerId);
     if (adapterMutationAttempted) {
-      recheckPolicyAuthority();
       unregisterAgentAdapter(sandboxName, adapter, entry, {
         force: false,
         bestEffort: true,
         envValues: adapterEnvValues,
       });
     }
+    let rollbackAuthorityRefusal: McpPolicyAuthorityRefusalError | undefined;
     if (policyApplied) {
-      recheckPolicyAuthority();
-      removeGeneratedPolicy(sandboxName, entry, { bestEffort: true });
+      try {
+        // Policy authority gates only this live policy mutation. Adapter,
+        // provider, credential, and durable-state cleanup continues below.
+        removeGeneratedPolicy(sandboxName, entry, { bestEffort: true });
+      } catch (rollbackError) {
+        if (rollbackError instanceof McpPolicyAuthorityRefusalError) {
+          rollbackAuthorityRefusal = rollbackError;
+        } else {
+          throw rollbackError;
+        }
+      }
     }
     let detachOutcome: ReturnType<typeof detachProvider> = "absent";
     if (providerAttachAttempted) {
-      recheckPolicyAuthority();
       detachOutcome = detachProvider(sandboxName, entry, { bestEffort: true });
     }
     let reservationCleanupProved = !providerAttachAttempted;
@@ -565,16 +569,20 @@ async function addMcpBridgeUnlocked(
       }
     }
     if (providerCreated && rollbackProviderOwned && reservationCleanupProved) {
-      recheckPolicyAuthority();
       const beforeDelete = inspectMcpProvider(providerName);
       if (providerMatchesCredential(beforeDelete, entry.env[0], entry.providerId)) {
-        recheckPolicyAuthority();
         deleteProvider(entry, { allowMissing: true, bestEffort: true });
       }
     }
     // Exception rollback is best-effort and process death skips it entirely.
     // Keep the durable add manifest until a retry converges or `mcp remove`
     // proves and cleans each exact resource.
+    if (error instanceof McpPolicyAuthorityRefusalError) throw error;
+    if (rollbackAuthorityRefusal) {
+      throw new McpPolicyAuthorityRefusalError(
+        `${error instanceof Error ? error.message : String(error)}\n${rollbackAuthorityRefusal.message}`,
+      );
+    }
     throw error;
   }
 }

@@ -350,6 +350,41 @@ describe("finalization handlers", () => {
     expect(persistDashboardPort).toHaveBeenCalledWith("my-assistant", 18792);
   });
 
+  it("withholds dashboard-port persistence when authority drifts after forwarding (#9833)", async () => {
+    const persistDashboardPort = vi.fn();
+    const revalidatePolicyRequirements = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("policy authority changed");
+      });
+    const ensureAgentDashboardForward = vi.fn(
+      (_sandboxName, _agent, revalidate?: (operation: string) => void) => {
+        revalidate?.("start dashboard forward");
+        return 18792;
+      },
+    );
+    const { deps } = createDeps({
+      ensureAgentDashboardForward,
+      persistDashboardPort,
+      revalidatePolicyRequirements,
+    });
+
+    await expect(
+      handleFinalizationPhase({
+        ...baseOptions(deps),
+        agent: { name: "hermes" },
+      }),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(ensureAgentDashboardForward).toHaveBeenCalledWith(
+      "my-assistant",
+      { name: "hermes" },
+      revalidatePolicyRequirements,
+    );
+    expect(persistDashboardPort).not.toHaveBeenCalled();
+  });
+
   it("does not persist a zero dashboard port after final recovery (#8214)", async () => {
     const persistDashboardPort = vi.fn();
     const { deps } = createDeps({

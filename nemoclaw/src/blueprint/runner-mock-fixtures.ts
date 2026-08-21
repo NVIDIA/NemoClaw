@@ -66,9 +66,19 @@ export function inMemoryFsMethods(store: Map<string, RunnerFsEntry>, options?: I
       const entry = store.get(p);
       return entry?.type === "file" ? (entry.content ?? "") : missingEntry(p);
     },
+    openSync: spy((_p: string, _flags: string) => 42),
+    fsyncSync: spy((_descriptor: number) => undefined),
+    closeSync: spy((_descriptor: number) => undefined),
     writeFileSync: spy((p: string, data: string) => {
       store.set(p, { type: "file", content: String(data) });
     }),
+    renameSync: spy((from: string, to: string) => {
+      const entry = store.get(from);
+      if (!entry) missingEntry(from);
+      store.set(to, entry);
+      store.delete(from);
+    }),
+    unlinkSync: spy((p: string) => void store.delete(p)),
     readdirSync: (p: string) => {
       const prefix = p.endsWith("/") ? p : `${p}/`;
       const entries = new Set(

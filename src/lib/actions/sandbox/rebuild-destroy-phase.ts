@@ -497,7 +497,17 @@ export async function runRebuildDestroyPhase(
     return null;
   }
   if (validateBeforeDeleteCommit) {
-    const validation = await validateBeforeDeleteCommit();
+    let validation: RebuildDeleteValidationResult;
+    try {
+      validation = await validateBeforeDeleteCommit();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      log(`Unexpected delete-commit validation failure: ${redactFull(detail)}`);
+      validation = {
+        ok: false,
+        message: "Policy authority validation failed before sandbox deletion.",
+      };
+    }
     if (!validation.ok) {
       const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
         sandboxName,

@@ -242,6 +242,37 @@ describe("OpenShell VM DNS monkeypatch", () => {
     expect(revalidatePolicyAuthority).toHaveBeenCalledTimes(2);
   });
 
+  it("withholds VM DNS repair success when authority changes after both writes (#9833)", () => {
+    const stateDir = makeTempDir();
+    const rootfs = sandboxRootfs(stateDir);
+    writeRootfsFiles(rootfs, "nameserver 8.8.8.8\n");
+    const revalidatePolicyAuthority = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("policy authority changed");
+      });
+
+    expect(() =>
+      applyOpenShellVmDnsMonkeypatch(
+        "demo",
+        { openshellDriver: "vm" },
+        {
+          capture: () => ({ status: 0, output: "Id: abc\n" }),
+          platform: "darwin",
+          revalidatePolicyAuthority,
+          stateDir,
+        },
+      ),
+    ).toThrow("policy authority changed");
+
+    expect(revalidatePolicyAuthority).toHaveBeenNthCalledWith(
+      3,
+      "report successful VM DNS repair for sandbox 'demo'",
+    );
+  });
+
   it("is idempotent when resolver and init script are already patched", () => {
     const stateDir = makeTempDir();
     const rootfs = sandboxRootfs(stateDir);

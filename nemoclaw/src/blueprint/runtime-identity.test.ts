@@ -434,7 +434,7 @@ describe("runtime identity contract", () => {
     ]);
   });
 
-  it("rechecks policy authority immediately before configuring runtime identity refresh (#9833)", async () => {
+  it("deletes a created provider before propagating an authority refusal (#9833)", async () => {
     responses.set("provider get acme-okta-runtime", [missingProvider, matchingProviderResult]);
     deps.revalidatePolicyAuthority = vi
       .fn<() => Promise<void>>()
@@ -442,12 +442,37 @@ describe("runtime identity contract", () => {
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new BlueprintPolicyAuthorityRefusalError("policy authority changed"));
 
-    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/policy authority changed/u);
+    const error = await prepareRuntimeIdentity(config, deps).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(BlueprintPolicyAuthorityRefusalError);
+    expect((error as Error).message).toMatch(/policy authority changed/u);
 
     expect(calls.map(({ args }) => commandKey(args))).not.toContain(
       "provider refresh configure acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN --strategy oauth2-refresh-token --material client_id=client-id --secret-material-env refresh_token=OKTA_REFRESH_TOKEN --secret-material-env client_secret=OKTA_CLIENT_SECRET",
     );
-    expect(calls.map(({ args }) => commandKey(args))).not.toContain(
+    expect(calls.map(({ args }) => commandKey(args))).toContain(
+      "provider delete acme-okta-runtime",
+    );
+  });
+
+  it("preserves the typed authority refusal when provider cleanup fails (#9833)", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider, matchingProviderResult]);
+    responses.set("provider delete acme-okta-runtime", [
+      { exitCode: 1, stdout: "", stderr: "delete denied" },
+    ]);
+    deps.revalidatePolicyAuthority = vi
+      .fn<() => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new BlueprintPolicyAuthorityRefusalError("policy authority changed"));
+
+    const error = await prepareRuntimeIdentity(config, deps).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(BlueprintPolicyAuthorityRefusalError);
+    expect((error as Error).message).toMatch(
+      /policy authority changed[\s\S]*cleanup failed[\s\S]*delete denied/u,
+    );
+    expect(calls.map(({ args }) => commandKey(args))).toContain(
       "provider delete acme-okta-runtime",
     );
   });

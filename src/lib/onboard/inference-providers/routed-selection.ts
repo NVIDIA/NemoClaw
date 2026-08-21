@@ -12,6 +12,31 @@ type RoutedBlueprintProfile = {
   router?: { enabled?: boolean; credential_env?: string };
 };
 
+const EXACT_LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+function rewriteExactLoopbackEndpoint(endpointUrl: string, hostGatewayUrl: string): string {
+  const parsed = new URL(endpointUrl);
+  if (!EXACT_LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase())) return endpointUrl;
+
+  const schemeEnd = endpointUrl.indexOf("://") + 3;
+  const authorityEndOffset = endpointUrl.slice(schemeEnd).search(/[/?#]/u);
+  const authorityEnd = authorityEndOffset < 0 ? endpointUrl.length : schemeEnd + authorityEndOffset;
+  const authority = endpointUrl.slice(schemeEnd, authorityEnd);
+  const credentialEnd = authority.lastIndexOf("@") + 1;
+  const hostAndPort = authority.slice(credentialEnd);
+  const portSeparator = hostAndPort.indexOf(":");
+  const hostEnd = hostAndPort.startsWith("[")
+    ? hostAndPort.indexOf("]") + 1
+    : portSeparator < 0
+      ? hostAndPort.length
+      : portSeparator;
+  const exactHost = hostAndPort.slice(0, hostEnd);
+  if (!EXACT_LOOPBACK_HOSTS.has(exactHost.toLowerCase())) return endpointUrl;
+
+  const gatewayHost = new URL(hostGatewayUrl).hostname;
+  return `${endpointUrl.slice(0, schemeEnd + credentialEnd)}${gatewayHost}${hostAndPort.slice(hostEnd)}${endpointUrl.slice(authorityEnd)}`;
+}
+
 export type RoutedSelectionDeps = {
   loadBlueprintProfile(name: "routed"): RoutedBlueprintProfile | null;
   getHostGatewayUrl(): string;
@@ -21,7 +46,8 @@ export type RoutedSelectionDeps = {
   hydrateCredentialEnv(name: string): string | null;
   normalizeCredentialValue(value: unknown): string;
   saveCredential(name: string, value: string): void;
-  stageRouterProviderKeyBridge(name: string): void;
+  resolveRouterProviderKeyBridge(): string | null;
+  stageRouterProviderKeyBridge(name: string, resolvedProviderKey: string): void;
   resolveProviderCredential(name: string): string | null;
   ensureNamedCredential(
     name: string | null,
@@ -50,11 +76,9 @@ export function createRoutedSelectionHandler(deps: RoutedSelectionDeps) {
 
     state.provider = profile.provider_name || "nvidia-router";
     state.model = profile.model;
-    const endpointUrl = profile.endpoint || "";
-    state.endpointUrl = endpointUrl;
-    if (endpointUrl.match(/localhost|127\.0\.0\.1/u)) {
-      const url = new URL(endpointUrl);
-      state.endpointUrl = `${deps.getHostGatewayUrl()}:${url.port}${url.pathname}`;
+    state.endpointUrl = profile.endpoint || "";
+    if (state.endpointUrl) {
+      state.endpointUrl = rewriteExactLoopbackEndpoint(state.endpointUrl, deps.getHostGatewayUrl());
     }
     state.preferredInferenceApi = "openai-completions";
     state.assertRouteCompatible?.();
@@ -62,23 +86,19 @@ export function createRoutedSelectionHandler(deps: RoutedSelectionDeps) {
     const credentialEnv =
       profile.router?.credential_env || profile.credential_env || deps.defaultCredentialEnv;
     state.credentialEnv = credentialEnv;
-    const credential =
+    const configuredCredential =
       deps.hydrateCredentialEnv(credentialEnv) ||
       deps.normalizeCredentialValue(profile.credential_default || "");
-    if (credential) {
-      state.revalidatePolicyRequirements?.("save Model Router credential");
-      deps.saveCredential(credentialEnv, credential);
-    }
-    state.revalidatePolicyRequirements?.("stage Model Router provider credential");
-    deps.stageRouterProviderKeyBridge(credentialEnv);
-    if (deps.isNonInteractive()) {
-      if (!deps.resolveProviderCredential(credentialEnv)) {
+    const resolvedCredential =
+      configuredCredential || deps.resolveProviderCredential(credentialEnv);
+    const bridgedCredential = resolvedCredential ? null : deps.resolveRouterProviderKeyBridge();
+    if (!resolvedCredential && !bridgedCredential) {
+      if (deps.isNonInteractive()) {
         deps.error(
           `  ${credentialEnv} (or NEMOCLAW_PROVIDER_KEY) is required for Model Router in non-interactive mode.`,
         );
         deps.exitProcess(1);
       }
-    } else if (!deps.resolveProviderCredential(credentialEnv)) {
       deps.log("");
       deps.log("  Model Router accepts NVIDIA API keys (nvapi-...).");
       deps.log("  Get one at https://build.nvidia.com");
@@ -92,6 +112,16 @@ export function createRoutedSelectionHandler(deps: RoutedSelectionDeps) {
         state.revalidatePolicyRequirements,
       );
       if (deps.returningToProviderSelection(result)) return "retry-selection";
+      if (typeof result !== "string" || !deps.normalizeCredentialValue(result)) {
+        deps.error(`  ${credentialEnv} is required for Model Router.`);
+        return "retry-selection";
+      }
+    } else if (configuredCredential) {
+      state.revalidatePolicyRequirements?.("save Model Router credential");
+      deps.saveCredential(credentialEnv, configuredCredential);
+    } else if (bridgedCredential) {
+      state.revalidatePolicyRequirements?.("stage Model Router provider credential");
+      deps.stageRouterProviderKeyBridge(credentialEnv, bridgedCredential);
     }
 
     deps.log(`  ✓ Using Model Router: ${state.provider} / ${state.model}`);

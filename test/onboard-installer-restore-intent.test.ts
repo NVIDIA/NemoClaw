@@ -88,6 +88,7 @@ registry.getSandbox = () => ({
   name: "my-assistant",
   gpuEnabled: false,
   toolDisclosure: "progressive",
+  policyAuthority: "nemoclaw-managed",
 });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
@@ -287,6 +288,7 @@ const sourceEntry = {
   gpuEnabled: false,
   imageTag: "nemoclaw/my-assistant:1",
   toolDisclosure: "progressive",
+  policyAuthority: "nemoclaw-managed",
 };
 const racedEntry =
   process.env.NEMOCLAW_TEST_REGISTRY_RACE === "removed"
@@ -417,6 +419,7 @@ registry.getSandbox = () => ({
   name: "my-assistant",
   gpuEnabled: false,
   toolDisclosure: "progressive",
+  policyAuthority: "nemoclaw-managed",
 });
 sandboxState.getLatestBackup = () => {
   throw new Error("unexpected getLatestBackup without installer restore intent");

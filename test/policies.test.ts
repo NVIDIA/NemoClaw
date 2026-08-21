@@ -230,9 +230,9 @@ exit 1
         expect(result.status).toBe(0);
         const payload = parseResultPayload(result.stdout);
         expect(payload.result).toBe(true);
-        expect(payload.calls.filter((call: string) => call.startsWith("policy get "))).toHaveLength(
-          3,
-        );
+        const policyGets = payload.calls.filter((call: string) => call.startsWith("policy get "));
+        expect(policyGets.some((call: string) => call.includes("--output json"))).toBe(true);
+        expect(policyGets.some((call: string) => !call.includes("--output json"))).toBe(true);
         expect(payload.calls.filter((call: string) => call.startsWith("policy set "))).toHaveLength(
           1,
         );

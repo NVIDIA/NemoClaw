@@ -8,6 +8,7 @@ export interface DashboardForwardOptions {
   preserveSandboxPorts?: Array<number | string>;
   allowPortReallocation?: boolean;
   revalidatePolicyAuthority?: (operation: string) => void;
+  onForwardStarted?: (port: number) => void;
 }
 
 export function normalizeDashboardForwardOptions(options: DashboardForwardOptions = {}): {

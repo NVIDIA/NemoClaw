@@ -157,6 +157,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
         } as never)) as never);
 
   const runtime = requireDist("../../src/lib/adapters/openshell/runtime.js");
+  const policyAuthority = requireDist("../../src/lib/adapters/openshell/policy-authority.js");
   const resolve = requireDist("../../src/lib/adapters/openshell/resolve.js");
   const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
   const dns = requireDist("../../src/lib/actions/dns/index.js");
@@ -359,6 +360,10 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const applyVmDnsMonkeypatchSpy = vi
     .spyOn(vmDnsMonkeypatch, "applyOpenShellVmDnsMonkeypatch")
     .mockReturnValue({ attempted: true, changed: true, ok: true, status: "applied" });
+  vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
+    authority: "nemoclaw-managed",
+    effectivePolicy: {},
+  });
   vi.spyOn(runtime, "getOpenshellBinary").mockReturnValue("openshell");
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
   vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({

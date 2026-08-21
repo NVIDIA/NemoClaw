@@ -50,7 +50,6 @@ function ordinaryDeps() {
     scriptsDir: "/tmp/scripts",
     gatewayName: "nemoclaw",
     providerExistsInGateway: vi.fn(() => true),
-    runOpenshell: vi.fn(() => ({ status: 0 })),
     armCancelRollback: vi.fn(),
     dockerInfoFormat: vi.fn(() => "true"),
     runCapture: vi.fn(() => ""),
@@ -100,7 +99,7 @@ describe("created sandbox policy authority boundaries", () => {
     expect(deps.register).not.toHaveBeenCalled();
   });
 
-  it("refuses default, DNS, provider, and rollback mutations at completion entry (#9833)", () => {
+  it("refuses default, DNS, and rollback mutations at completion entry (#9833)", () => {
     const deps = ordinaryDeps();
     deps.revalidatePolicyAuthority.mockImplementation(() => {
       throw new Error("policy authority changed");
@@ -113,7 +112,6 @@ describe("created sandbox policy authority boundaries", () => {
           sandboxWasLiveDefault: true,
           runtimeFields: { openshellDriver: "kubernetes" } as SandboxEntry,
           messagingProviders: ["alpha-slack"],
-          inferenceProvider: "nvidia-prod",
           liveExists: false,
         },
         deps,
@@ -121,30 +119,7 @@ describe("created sandbox policy authority boundaries", () => {
     ).toThrow("policy authority changed");
     expect(deps.setDefault).not.toHaveBeenCalled();
     expect(deps.runFile).not.toHaveBeenCalled();
-    expect(deps.runOpenshell).not.toHaveBeenCalled();
     expect(deps.armCancelRollback).not.toHaveBeenCalled();
-  });
-
-  it("rechecks after completion work and before provider republish (#9833)", () => {
-    const deps = ordinaryDeps();
-    deps.revalidatePolicyAuthority.mockImplementation((operation) =>
-      operation.startsWith("updating provider") ? refuseAuthorityChange() : undefined,
-    );
-
-    expect(() =>
-      completeOrdinaryOnboardSandboxCreation(
-        {
-          sandboxName: "alpha",
-          sandboxWasLiveDefault: false,
-          runtimeFields: { openshellDriver: "docker" } as SandboxEntry,
-          messagingProviders: [],
-          inferenceProvider: "nvidia-prod",
-          liveExists: true,
-        },
-        deps,
-      ),
-    ).toThrow("policy authority changed");
-    expect(deps.runOpenshell).not.toHaveBeenCalled();
   });
 
   it("rechecks after the DNS proxy command before applying VM DNS settings (#9833)", () => {
@@ -160,7 +135,6 @@ describe("created sandbox policy authority boundaries", () => {
           sandboxWasLiveDefault: false,
           runtimeFields: { openshellDriver: "kubernetes" } as SandboxEntry,
           messagingProviders: [],
-          inferenceProvider: null,
           liveExists: true,
         },
         deps,
@@ -185,7 +159,6 @@ describe("created sandbox policy authority boundaries", () => {
           sandboxWasLiveDefault: true,
           runtimeFields: { openshellDriver: "kubernetes" } as SandboxEntry,
           messagingProviders: [],
-          inferenceProvider: null,
           liveExists: true,
         },
         deps,
@@ -197,7 +170,7 @@ describe("created sandbox policy authority boundaries", () => {
     expect(deps.applyVmDnsMonkeypatch).not.toHaveBeenCalled();
   });
 
-  it("rechecks after the final provider update before reporting creation success (#9833)", () => {
+  it("rechecks before reporting creation success (#9833)", () => {
     const deps = ordinaryDeps();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     deps.revalidatePolicyAuthority.mockImplementation((operation) =>
@@ -211,14 +184,12 @@ describe("created sandbox policy authority boundaries", () => {
           sandboxWasLiveDefault: false,
           runtimeFields: { openshellDriver: "docker" } as SandboxEntry,
           messagingProviders: [],
-          inferenceProvider: "nvidia-prod",
           liveExists: false,
         },
         deps,
       ),
     ).toThrow("policy authority changed");
 
-    expect(deps.runOpenshell).toHaveBeenCalledOnce();
     expect(log).not.toHaveBeenCalledWith("  ✓ Sandbox 'alpha' created");
     expect(deps.armCancelRollback).not.toHaveBeenCalled();
     log.mockRestore();

@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshell as defaultRunOpenshell } from "../../adapters/openshell/runtime";
-import { preflightSandboxPolicyAuthority } from "./policy-authority/preflight";
+import {
+  isPolicyAuthorityRefusalError,
+  preflightSandboxPolicyAuthority,
+} from "./policy-authority/preflight";
 
 type MessagingProviderTokenDefinition = {
   name: string;
@@ -47,6 +50,7 @@ type GooglechatWebhookProxy = Pick<
  * onboarding and rebuild modules at policy-channel import time.
  */
 export const policyChannelDependencies = {
+  isPolicyAuthorityRefusalError,
   preflightSandboxPolicyAuthority,
   runOpenshell: (...args: Parameters<typeof defaultRunOpenshell>) => defaultRunOpenshell(...args),
   upsertMessagingProviders(

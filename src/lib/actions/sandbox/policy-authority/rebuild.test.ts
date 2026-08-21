@@ -4,11 +4,21 @@
 import YAML from "yaml";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({
+  preflightMcpEntryTargets: vi.fn(),
+}));
+
+vi.mock("../mcp-bridge-provider", () => ({
+  preflightMcpEntryTargets: mocks.preflightMcpEntryTargets,
+}));
+
 import * as policies from "../../../policy";
 import * as onboardSession from "../../../state/onboard-session";
 import * as registry from "../../../state/registry";
+import { buildMcpBridgePolicyName } from "../mcp-bridge-policy";
 import type { RebuildSandboxEntry } from "../rebuild-flow-helpers";
-import { qualifyRebuildPolicyAuthority } from "./rebuild";
+import { makePreparedRecoveryManifest } from "../rebuild-flow-test-fixtures";
+import { qualifyRebuildPolicyAuthority, revalidateRebuildPolicyAuthority } from "./rebuild";
 
 const CUSTOM_POLICY = `
 network_policies:
@@ -51,6 +61,10 @@ function sandboxEntry(
 
 describe("rebuild policy authority preflight", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.preflightMcpEntryTargets.mockResolvedValue(
+      new Map([["github", { addresses: ["8.8.8.8"] }]]),
+    );
     vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue([]);
     vi.spyOn(registry, "getDisabledMessagingChannelsFromEntry").mockReturnValue([]);
@@ -71,6 +85,7 @@ describe("rebuild policy authority preflight", () => {
     const receipt = await qualifyRebuildPolicyAuthority(
       { sandboxName: "alpha", sandboxEntry: entry, manifest: null },
       {
+        observeSandboxPresence: vi.fn(() => "present" as const),
         inspectSandboxPolicyAuthority: vi.fn(() => inspection),
         inspectGlobalPolicyAuthority: vi.fn(() => inspection),
       },
@@ -93,6 +108,7 @@ describe("rebuild policy authority preflight", () => {
       qualifyRebuildPolicyAuthority(
         { sandboxName: "alpha", sandboxEntry: entry, manifest: null },
         {
+          observeSandboxPresence: vi.fn(() => "present" as const),
           inspectSandboxPolicyAuthority: vi.fn(() => inspection),
           inspectGlobalPolicyAuthority: vi.fn(() => inspection),
         },
@@ -115,6 +131,7 @@ describe("rebuild policy authority preflight", () => {
     const receipt = await qualifyRebuildPolicyAuthority(
       { sandboxName: "alpha", sandboxEntry: entry, manifest: null },
       {
+        observeSandboxPresence: vi.fn(() => "present" as const),
         inspectSandboxPolicyAuthority: vi.fn(() => inspection),
         inspectGlobalPolicyAuthority: vi.fn(() => inspection),
       },
@@ -125,5 +142,182 @@ describe("rebuild policy authority preflight", () => {
     });
     expect(entry.policyAuthority).toBe("externally-managed");
     expect(receipt.authority).toBe("externally-managed");
+  });
+
+  it("uses recorded global authority when the rebuild source is absent (#9833)", async () => {
+    const entry = sandboxEntry("externally-managed");
+    const inspection = {
+      authority: "externally-managed" as const,
+      effectivePolicy: externalEffectivePolicy(),
+    };
+    const inspectSandbox = vi.fn();
+
+    const receipt = await qualifyRebuildPolicyAuthority(
+      { sandboxName: "alpha", sandboxEntry: entry, manifest: null },
+      {
+        observeSandboxPresence: vi.fn(() => "missing" as const),
+        inspectSandboxPolicyAuthority: inspectSandbox,
+        inspectGlobalPolicyAuthority: vi.fn(() => inspection),
+      },
+    );
+
+    expect(receipt.authority).toBe("externally-managed");
+    expect(inspectSandbox).not.toHaveBeenCalled();
+  });
+
+  it("omits a validated MCP recovery preset while retaining its exact requirement (#9833)", async () => {
+    const entry = sandboxEntry("nemoclaw-managed");
+    const bridge = {
+      server: "github",
+      agent: "openclaw",
+      adapter: "mcporter",
+      url: "https://mcp.example.test/mcp",
+      env: ["GITHUB_TOKEN"],
+      providerName: "alpha-mcp-github",
+      providerId: "provider-1",
+      policyName: buildMcpBridgePolicyName("github"),
+      addedAt: "2026-08-20T00:00:00.000Z",
+    };
+    entry.mcp = { bridges: { github: bridge } };
+    const manifest = {
+      ...makePreparedRecoveryManifest(),
+      policyPresets: ["npm", bridge.policyName],
+      customPolicies: entry.customPolicies,
+    };
+    const inspection = {
+      authority: "nemoclaw-managed" as const,
+      effectivePolicy: {},
+    };
+
+    const receipt = await qualifyRebuildPolicyAuthority(
+      { sandboxName: "alpha", sandboxEntry: entry, manifest },
+      {
+        observeSandboxPresence: vi.fn(() => "present" as const),
+        inspectSandboxPolicyAuthority: vi.fn(() => inspection),
+        inspectGlobalPolicyAuthority: vi.fn(() => inspection),
+      },
+    );
+
+    expect(receipt.requiredPolicies).toHaveLength(3);
+    expect(receipt.requiredPolicies[0]).toMatchObject({
+      network_policies: { npm_yarn: expect.any(Object) },
+    });
+    expect(receipt.managedMcpPolicies).toHaveLength(1);
+    expect(receipt.requiredPolicies).toContainEqual(receipt.managedMcpPolicies[0]);
+    expect(receipt.managedMcpPolicies[0]).toMatchObject({
+      network_policies: {
+        mcp_bridge_github: {
+          endpoints: [
+            expect.objectContaining({
+              allowed_ips: ["8.8.8.8"],
+              credential_binding: { provider: "alpha-mcp-github" },
+            }),
+          ],
+        },
+      },
+    });
+  });
+
+  it("refuses an unknown non-MCP preset from a recovery manifest (#9833)", async () => {
+    const entry = sandboxEntry("nemoclaw-managed");
+    const inspectSandbox = vi.fn();
+    const inspectGlobal = vi.fn();
+
+    await expect(
+      qualifyRebuildPolicyAuthority(
+        {
+          sandboxName: "alpha",
+          sandboxEntry: entry,
+          manifest: {
+            ...makePreparedRecoveryManifest(),
+            policyPresets: ["retired-custom-policy"],
+          },
+        },
+        {
+          observeSandboxPresence: vi.fn(() => "present" as const),
+          inspectSandboxPolicyAuthority: inspectSandbox,
+          inspectGlobalPolicyAuthority: inspectGlobal,
+        },
+      ),
+    ).rejects.toThrow(
+      "recorded policy preset \"retired-custom-policy\" is neither a current built-in policy preset for 'openclaw' nor a validated managed MCP policy",
+    );
+    expect(inspectSandbox).not.toHaveBeenCalled();
+    expect(inspectGlobal).not.toHaveBeenCalled();
+  });
+
+  it("refuses an absent legacy source without recording current global authority (#9833)", async () => {
+    const entry = sandboxEntry(undefined);
+    const inspection = {
+      authority: "nemoclaw-managed" as const,
+      effectivePolicy: {},
+    };
+    const inspectSandbox = vi.fn();
+    const updateSandbox = vi.spyOn(registry, "updateSandbox");
+
+    await expect(
+      qualifyRebuildPolicyAuthority(
+        { sandboxName: "alpha", sandboxEntry: entry, manifest: null },
+        {
+          observeSandboxPresence: vi.fn(() => "missing" as const),
+          inspectSandboxPolicyAuthority: inspectSandbox,
+          inspectGlobalPolicyAuthority: vi.fn(() => inspection),
+        },
+      ),
+    ).rejects.toThrow(/sandbox is absent and its recorded policy authority is missing/);
+    expect(inspectSandbox).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("rejects missing external requirements while the rebuild source is absent (#9833)", async () => {
+    const entry = sandboxEntry("externally-managed");
+    const inspection = {
+      authority: "externally-managed" as const,
+      effectivePolicy: externalEffectivePolicy(false),
+    };
+    const inspectSandbox = vi.fn();
+
+    await expect(
+      qualifyRebuildPolicyAuthority(
+        { sandboxName: "alpha", sandboxEntry: entry, manifest: null },
+        {
+          observeSandboxPresence: vi.fn(() => "missing" as const),
+          inspectSandboxPolicyAuthority: inspectSandbox,
+          inspectGlobalPolicyAuthority: vi.fn(() => inspection),
+        },
+      ),
+    ).rejects.toThrow(/missing entries "custom-api"/);
+    expect(inspectSandbox).not.toHaveBeenCalled();
+  });
+
+  it("checks global authority after deletion and the replacement sandbox when it returns (#9833)", async () => {
+    const entry = sandboxEntry("externally-managed");
+    vi.spyOn(registry, "getSandbox").mockReturnValue(entry);
+    const inspection = {
+      authority: "externally-managed" as const,
+      effectivePolicy: externalEffectivePolicy(),
+    };
+    const presence = vi.fn<() => "present" | "missing">();
+    presence
+      .mockReturnValueOnce("present")
+      .mockReturnValueOnce("missing")
+      .mockReturnValue("present");
+    const inspectSandbox = vi.fn(() => inspection);
+    const deps = {
+      observeSandboxPresence: presence,
+      inspectSandboxPolicyAuthority: inspectSandbox,
+      inspectGlobalPolicyAuthority: vi.fn(() => inspection),
+    };
+
+    const receipt = await qualifyRebuildPolicyAuthority(
+      { sandboxName: "alpha", sandboxEntry: entry, manifest: null },
+      deps,
+    );
+    await revalidateRebuildPolicyAuthority(receipt, deps);
+    await revalidateRebuildPolicyAuthority(receipt, deps);
+
+    expect(presence).toHaveBeenCalledTimes(3);
+    expect(inspectSandbox).toHaveBeenCalledTimes(2);
+    expect(deps.inspectGlobalPolicyAuthority).toHaveBeenCalledTimes(3);
   });
 });

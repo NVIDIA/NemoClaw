@@ -54,10 +54,10 @@ function parseRequiredPolicy(content: string, operation: string): RequiredPolicy
   }
   const networkPolicies = (parsed as RequiredPolicy).network_policies;
   if (
-    networkPolicies !== undefined &&
-    (typeof networkPolicies !== "object" ||
-      networkPolicies === null ||
-      Array.isArray(networkPolicies))
+    typeof networkPolicies !== "object" ||
+    networkPolicies === null ||
+    Array.isArray(networkPolicies) ||
+    Object.keys(networkPolicies).length === 0
   ) {
     throw new Error(`Refusing to ${operation}: a required network policy document is invalid.`);
   }

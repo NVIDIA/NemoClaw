@@ -21,6 +21,7 @@ vi.mock("../../onboard/gateway-teardown-authority", async (importOriginal) => ({
 import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
+import { observeSandboxPresenceOnGateway } from "../../onboard/sandbox-recreate-probe";
 import * as registry from "../../state/registry";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import {
@@ -196,6 +197,40 @@ describe("rebuild replacement observation", () => {
       state: "missing",
       liveIdentityFingerprint: null,
     });
+  });
+
+  it("reports policy-preflight presence without requiring a lifecycle identity (#9833)", () => {
+    mocks.captureOpenshell.mockReturnValue({
+      status: 0,
+      output: "Name: alpha\nPhase: Pending\n",
+      stdout: "Name: alpha\nPhase: Pending\n",
+      stderr: "",
+    });
+
+    expect(observeSandboxPresenceOnGateway(NON_DEFAULT_TARGET)).toBe("present");
+  });
+
+  it("reports explicit policy-preflight absence on the recorded gateway (#9833)", () => {
+    mocks.captureOpenshell.mockReturnValue(absentProbe());
+
+    expect(observeSandboxPresenceOnGateway(NON_DEFAULT_TARGET)).toBe("missing");
+    expect(mocks.captureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "nemoclaw-9090", "alpha"],
+      expect.objectContaining({ ignoreError: true, includeStreams: true }),
+    );
+  });
+
+  it("refuses ambiguous policy-preflight presence output (#9833)", () => {
+    mocks.captureOpenshell.mockReturnValue({
+      status: 1,
+      output: "",
+      stdout: "",
+      stderr: "Error: connection refused",
+    });
+
+    expect(() => observeSandboxPresenceOnGateway(NON_DEFAULT_TARGET)).toThrow(
+      /reported neither presence nor explicit absence/,
+    );
   });
 
   it("hashes a live identity instead of recording it", () => {

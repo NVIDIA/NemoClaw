@@ -71,7 +71,7 @@ export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
 const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
 
-class InvalidPersistedPolicyAuthorityError extends Error {}
+export class InvalidPersistedPolicyAuthorityError extends Error {}
 
 // Session-specific aliases for the shared JSON types.
 type SessionJsonValue = JsonValue;
@@ -1688,7 +1688,9 @@ export function checkpointVllmInstallModel(modelId: string): Session {
   return updateSession((session) => {
     const providerStep = session.steps.provider_selection;
     if (providerStep?.status !== "in_progress") {
-      throw new Error("Managed vLLM install intent can only be checkpointed during provider selection.");
+      throw new Error(
+        "Managed vLLM install intent can only be checkpointed during provider selection.",
+      );
     }
     session.vllmInstallModel = model;
   });

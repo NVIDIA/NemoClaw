@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { isPolicyAuthorityRefusalError } from "../adapters/openshell/policy-authority";
 import {
   normalizeBaselineExclusions,
   normalizeBaselineExclusionTransition,
@@ -405,8 +406,19 @@ describe("sandbox registry normalization", () => {
     );
     expect(registry.updateSandbox("legacy", { policyAuthority: "nemoclaw-managed" })).toBe(true);
     expect(registry.updateSandbox("legacy", { policyAuthority: "nemoclaw-managed" })).toBe(true);
-    expect(registry.updateSandbox("legacy", { policyAuthority: "externally-managed" })).toBe(false);
-    expect(registry.updateSandbox("legacy", { policyAuthority: undefined })).toBe(false);
+    let conflict: unknown;
+    try {
+      registry.updateSandbox("legacy", { policyAuthority: "externally-managed" });
+    } catch (error) {
+      conflict = error;
+    }
+    expect(isPolicyAuthorityRefusalError(conflict)).toBe(true);
+    expect(conflict).toEqual(
+      expect.objectContaining({ message: expect.stringMatching(/changed/u) }),
+    );
+    expect(() => registry.updateSandbox("legacy", { policyAuthority: undefined })).toThrow(
+      /policy authority changed/u,
+    );
     expect(registry.getSandbox("legacy")?.policyAuthority).toBe("nemoclaw-managed");
 
     registry.registerSandbox({ name: "legacy" });

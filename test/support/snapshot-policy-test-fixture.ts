@@ -11,6 +11,6 @@ export function resolveTestAgentBaselinePolicy(
       resolvedAgent === "openclaw"
         ? "/repo/nemoclaw-blueprint/policies/openclaw-sandbox.yaml"
         : `/repo/agents/${resolvedAgent}/policy-additions.yaml`,
-    content: "version: 1\nnetwork_policies: {}\n",
+    content: "version: 1\nnetwork_policies:\n  baseline: {}\n",
   };
 }

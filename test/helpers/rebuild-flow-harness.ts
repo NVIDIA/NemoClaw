@@ -68,6 +68,9 @@ export const registry = requireDist("../../state/registry.js");
 export const registryPersistence = requireDist("../../state/registry/persistence.js");
 export const resolve = requireDist("../../adapters/openshell/resolve.js");
 export const sandboxList = requireDist("../../openshell-sandbox-list.js");
+export const sandboxRecreateProbe = requireDist(
+  "../../onboard/sandbox-recreate-probe.js",
+) as typeof import("../../src/lib/onboard/sandbox-recreate-probe");
 export const sandboxSession = requireDist("../../state/sandbox-session.js");
 export const sandboxState = requireDist("../../state/sandbox.js");
 export const sandboxVersion = requireDist("../../sandbox/version.js");

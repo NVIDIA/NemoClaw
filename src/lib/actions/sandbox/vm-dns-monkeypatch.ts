@@ -383,6 +383,8 @@ export function applyOpenShellVmDnsMonkeypatch(
       );
     }
 
+    revalidatePolicyAuthority(`report successful VM DNS repair for sandbox '${sandboxName}'`);
+
     return {
       attempted: true,
       changed,

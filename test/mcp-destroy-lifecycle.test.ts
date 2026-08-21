@@ -1212,7 +1212,7 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(sandbox?.customPolicies).toBeUndefined();
   });
 
-  it("restores policy, attachment, and adapter without rotating an exported host secret", async () => {
+  it("restores attachment and adapter without rotating a host secret or changing policy", async () => {
     process.env.GITHUB_TOKEN = "ambient-value-that-must-not-rotate";
     registry.registerSandbox({
       name: "alpha",
@@ -1235,7 +1235,8 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(
       testState.calls.some((call) => /^provider (create|update) .*--credential/.test(call)),
     ).toBe(false);
-    expect(testState.policyApplyCalls).toBe(2);
+    expect(testState.policyApplyCalls).toBe(0);
+    expect(testState.removedPolicyKeys).toContain("mcp_bridge_github");
     expect(testState.adapterCalls).toContain("command -v mcporter");
     expect(
       testState.adapterCalls.some((call) => call.includes("openshell:resolve:env:GITHUB_TOKEN")),
@@ -1258,13 +1259,14 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     registry.addCustomPolicy("alpha", ownedPolicy("github"));
 
     const preparation = await bridge.prepareMcpBridgesForDestroy("alpha");
-    testState.applyPresetContent.mockReturnValue(false);
+    testState.providers.delete("alpha-mcp-github");
     const error = await captureMessage(() =>
       bridge.restoreMcpBridgesAfterDestroyAbort("alpha", preparation),
     );
     const sandbox = registry.getSandbox("alpha");
 
-    expect(error).toMatch(/failed to activate generated MCP policy/i);
+    expect(error).toMatch(/is missing/i);
+    expect(testState.policyApplyCalls).toBe(0);
     expect(sandbox?.mcp?.bridges).toHaveProperty("github");
     expect(sandbox?.mcp?.managedServerNames).toEqual(["github", "retired"]);
     expect(sandbox?.mcp?.destroyPreparedAt).toBeTruthy();

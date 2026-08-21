@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isPolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import { MessagingSetupApplier, type SandboxMessagingPlan } from "../../messaging";
@@ -327,7 +326,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   }
   if (onboardFailed) {
     await validatePolicyAuthority();
-    if (isPolicyAuthorityRefusalError(onboardError)) throw onboardError;
+    if (rebuildOnboardDependencies.isPolicyAuthorityRefusalError(onboardError)) throw onboardError;
     try {
       markLastStartedStepFailed(onboardSession, "Rebuild recreate failed");
     } catch {

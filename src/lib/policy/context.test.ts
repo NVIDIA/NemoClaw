@@ -151,9 +151,14 @@ describe("buildPolicyContext", () => {
     expect(ctx.supportBoundaries.some((b) => b.capability === "host allowlist enforcement")).toBe(
       true,
     );
+    expect(ctx.supportBoundaries).toContainEqual({
+      capability: "shields toggle",
+      owner: "nemoclaw",
+      note: "shields up locks down mutable config",
+    });
   });
 
-  it("does not attribute a NemoClaw tier to externally managed policy (#9833)", () => {
+  it("attributes externally managed policy changes only to the external authority (#9833)", () => {
     resetMocks();
     mockBuiltinPresets();
     stubTier();
@@ -162,9 +167,51 @@ describe("buildPolicyContext", () => {
       policyTier: "balanced",
       policyAuthority: "externally-managed",
     });
+    vi.mocked(registry.getBaselineExclusions).mockReturnValue([
+      {
+        version: 1,
+        agent: "openclaw",
+        key: "nous_research",
+        digest: "digest-1",
+        acknowledgedAt: "2026-07-19T00:00:00.000Z",
+      },
+    ]);
+    vi.mocked(policies.getBaselineExclusionRuntimeStatus).mockReturnValue("excluded");
 
-    expect(buildPolicyContext(SANDBOX).tier).toBeNull();
+    const context = buildPolicyContext(SANDBOX);
+    const markdown = renderPolicyContextMarkdown(context);
+
+    expect(context.tier).toBeNull();
     expect(getTier).not.toHaveBeenCalled();
+    expect(context.supportBoundaries).toContainEqual({
+      capability: "preset selection",
+      owner: "external",
+      note: "the external policy authority must supply a changed entry",
+    });
+    expect(context.supportBoundaries).toContainEqual({
+      capability: "shields toggle",
+      owner: "external",
+      note: "the external authority controls live policy changes; restrictive NemoClaw-owned configuration protection and cleanup may still proceed",
+    });
+    expect(context.approvalPath).toEqual({
+      inspect: "nemoclaw alpha policy list",
+      add: "Ask the external policy authority to supply a changed entry.",
+      remove: "Ask the external policy authority to supply a changed entry.",
+      excludeBaseline: "nemoclaw alpha policy exclude <key> --dry-run",
+      restoreBaseline: "Ask the external policy authority to supply a changed entry.",
+      documentation: "docs/network-policy/customize-network-policy.mdx",
+    });
+    expect(markdown).toContain(
+      "restore: Ask the external policy authority to supply a changed entry.",
+    );
+    expect(markdown).toContain(
+      "- restore a baseline entry: Ask the external policy authority to supply a changed entry.",
+    );
+    expect(markdown).toContain(
+      "- shields toggle (owner: external) — the external authority controls live policy changes; restrictive NemoClaw-owned configuration protection and cleanup may still proceed",
+    );
+    expect(markdown).toContain("`nemoclaw alpha policy exclude <key> --dry-run`");
+    expect(markdown).not.toMatch(/nemoclaw alpha policy (?:add|remove|restore)(?:\s|`)/u);
   });
 
   it("marks active presets as `verified` when the gateway agrees and `registry-only` when it disagrees", () => {
