@@ -44,6 +44,7 @@ jobs:
       cuda_runtime_image: ${{ steps.manifest.outputs.cuda_runtime_image }}
       image: ${{ steps.manifest.outputs.image }}
       matrix: ${{ steps.manifest.outputs.matrix }}
+      request_guard_go_version: ${{ steps.manifest.outputs.request_guard_go_version }}
       publication_allowed_ref: ${{ steps.manifest.outputs.publication_allowed_ref }}
       publication_anonymous_exact_digest_pull: ${{ steps.manifest.outputs.publication_anonymous_exact_digest_pull }}
       publication_candidate_tag_template: ${{ steps.manifest.outputs.publication_candidate_tag_template }}
@@ -117,6 +118,8 @@ jobs:
           LLAMA_CPP_ARCHIVE_SHA256: ${{ needs.config.outputs.source_archive_sha256 }}
           LLAMA_CPP_REVISION: ${{ needs.config.outputs.source_revision }}
           NEMOCLAW_REVISION: ${{ github.sha }}
+          REQUEST_GUARD_GO_ARCHIVE_SHA256: ${{ matrix.request_guard_go_archive_sha256 }}
+          REQUEST_GUARD_GO_VERSION: ${{ needs.config.outputs.request_guard_go_version }}
           RUNTIME_GID: ${{ needs.config.outputs.runtime_gid }}
           RUNTIME_UID: ${{ needs.config.outputs.runtime_uid }}
           TARGETPLATFORM: ${{ matrix.platform }}
@@ -133,6 +136,8 @@ jobs:
             --build-arg "LLAMA_CPP_ARCHIVE_SHA256=${LLAMA_CPP_ARCHIVE_SHA256}" \
             --build-arg "LLAMA_CPP_REVISION=${LLAMA_CPP_REVISION}" \
             --build-arg "NEMOCLAW_REVISION=${NEMOCLAW_REVISION}" \
+            --build-arg "REQUEST_GUARD_GO_ARCHIVE_SHA256=${REQUEST_GUARD_GO_ARCHIVE_SHA256}" \
+            --build-arg "REQUEST_GUARD_GO_VERSION=${REQUEST_GUARD_GO_VERSION}" \
             --build-arg "RUNTIME_GID=${RUNTIME_GID}" \
             --build-arg "RUNTIME_UID=${RUNTIME_UID}" \
             --build-arg "TARGETPLATFORM=${TARGETPLATFORM}"
@@ -157,6 +162,8 @@ jobs:
             LLAMA_CPP_ARCHIVE_SHA256=${{ needs.config.outputs.source_archive_sha256 }}
             LLAMA_CPP_REVISION=${{ needs.config.outputs.source_revision }}
             NEMOCLAW_REVISION=${{ github.sha }}
+            REQUEST_GUARD_GO_ARCHIVE_SHA256=${{ matrix.request_guard_go_archive_sha256 }}
+            REQUEST_GUARD_GO_VERSION=${{ needs.config.outputs.request_guard_go_version }}
             RUNTIME_GID=${{ needs.config.outputs.runtime_gid }}
             RUNTIME_UID=${{ needs.config.outputs.runtime_uid }}
             TARGETPLATFORM=${{ matrix.platform }}
@@ -173,6 +180,8 @@ jobs:
           CUDA_RUNTIME_IMAGE: ${{ needs.config.outputs.cuda_runtime_image }}
           IMAGE: nemoclaw-llama-cpp-pr:${{ matrix.arch }}-${{ github.sha }}
           PLATFORM: ${{ matrix.platform }}
+          REQUEST_GUARD_GO_ARCHIVE_SHA256: ${{ matrix.request_guard_go_archive_sha256 }}
+          REQUEST_GUARD_GO_VERSION: ${{ needs.config.outputs.request_guard_go_version }}
           RUNTIME_FORBIDDEN_PATHS: ${{ needs.config.outputs.runtime_forbidden_paths }}
           RUNTIME_GID: ${{ needs.config.outputs.runtime_gid }}
           RUNTIME_REQUIRED_PATHS: ${{ needs.config.outputs.runtime_required_paths }}
@@ -188,6 +197,8 @@ jobs:
             --arg dev "$CUDA_DEV_IMAGE" \
             --arg gid "$RUNTIME_GID" \
             --arg platform "$PLATFORM" \
+            --arg requestGuardGoArchive "$REQUEST_GUARD_GO_ARCHIVE_SHA256" \
+            --arg requestGuardGoVersion "$REQUEST_GUARD_GO_VERSION" \
             --arg revision "$GITHUB_SHA" \
             --arg runtime "$CUDA_RUNTIME_IMAGE" \
             --arg uid "$RUNTIME_UID" \
@@ -201,6 +212,8 @@ jobs:
               and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.platform"] == $platform
               and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.upstream.revision"] == $upstream
               and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.upstream.archive-sha256"] == $archive
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.request-guard.go.version"] == $requestGuardGoVersion
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.request-guard.go.archive-sha256"] == $requestGuardGoArchive
               and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.cuda.development-base"] == $dev
               and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.cuda.runtime-base"] == $runtime
               and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.cuda.architectures"] == $architectures
@@ -352,6 +365,8 @@ jobs:
           LLAMA_CPP_ARCHIVE_SHA256: ${{ needs.config.outputs.source_archive_sha256 }}
           LLAMA_CPP_REVISION: ${{ needs.config.outputs.source_revision }}
           NEMOCLAW_REVISION: ${{ github.sha }}
+          REQUEST_GUARD_GO_ARCHIVE_SHA256: ${{ matrix.request_guard_go_archive_sha256 }}
+          REQUEST_GUARD_GO_VERSION: ${{ needs.config.outputs.request_guard_go_version }}
           RUNTIME_GID: ${{ needs.config.outputs.runtime_gid }}
           RUNTIME_UID: ${{ needs.config.outputs.runtime_uid }}
           TARGETPLATFORM: ${{ matrix.platform }}
@@ -368,6 +383,8 @@ jobs:
             --build-arg "LLAMA_CPP_ARCHIVE_SHA256=${LLAMA_CPP_ARCHIVE_SHA256}" \
             --build-arg "LLAMA_CPP_REVISION=${LLAMA_CPP_REVISION}" \
             --build-arg "NEMOCLAW_REVISION=${NEMOCLAW_REVISION}" \
+            --build-arg "REQUEST_GUARD_GO_ARCHIVE_SHA256=${REQUEST_GUARD_GO_ARCHIVE_SHA256}" \
+            --build-arg "REQUEST_GUARD_GO_VERSION=${REQUEST_GUARD_GO_VERSION}" \
             --build-arg "RUNTIME_GID=${RUNTIME_GID}" \
             --build-arg "RUNTIME_UID=${RUNTIME_UID}" \
             --build-arg "TARGETPLATFORM=${TARGETPLATFORM}"
@@ -391,6 +408,8 @@ jobs:
             LLAMA_CPP_ARCHIVE_SHA256=${{ needs.config.outputs.source_archive_sha256 }}
             LLAMA_CPP_REVISION=${{ needs.config.outputs.source_revision }}
             NEMOCLAW_REVISION=${{ github.sha }}
+            REQUEST_GUARD_GO_ARCHIVE_SHA256=${{ matrix.request_guard_go_archive_sha256 }}
+            REQUEST_GUARD_GO_VERSION=${{ needs.config.outputs.request_guard_go_version }}
             RUNTIME_GID=${{ needs.config.outputs.runtime_gid }}
             RUNTIME_UID=${{ needs.config.outputs.runtime_uid }}
             TARGETPLATFORM=${{ matrix.platform }}
