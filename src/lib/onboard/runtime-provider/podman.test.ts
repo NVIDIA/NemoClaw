@@ -13,7 +13,7 @@ import {
   type PodmanExecutableStat,
   type PodmanSocketAuthority,
 } from "../../adapters/podman";
-import type { SandboxEntry } from "../../state/registry/types";
+import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createPodmanRuntimeProviderBundle } from "./podman";
 import {
@@ -304,6 +304,44 @@ describe("dormant Podman runtime provider", () => {
       supported: false,
       reason: "Read-only host mounts are not qualified for the Podman runtime provider.",
     });
+  });
+
+  it("accepts only exact supported managed-image receipts", () => {
+    const runtime = providerHarness("openclaw");
+    const receipt: SandboxWorkloadReceipt = {
+      schemaVersion: 1,
+      kind: "managed-image",
+      reference: `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`,
+      platform: "linux/amd64",
+      release: "v0.0.113",
+      sourceRevision: "b".repeat(40),
+      sourceCohort: "ghrun-1-1",
+      startupProfileContractVersion: 1,
+      capabilityContractVersion: 1,
+      encodedProfile: "e30",
+      startupProfileSha256: "c".repeat(64),
+      credentialProxyReplayRequired: true,
+      shared: true,
+    };
+
+    expect(runtime.providers.podman?.workload.profile).toMatchObject({
+      support: {
+        exactDigestReferences: true,
+        platforms: ["linux/amd64", "linux/arm64"],
+      },
+      hostArchitectures: ["amd64", "arm64"],
+      managedImageSelectionPolicy: "require-managed",
+      legacyDockerfileBuilds: false,
+    });
+    expect(runtime.providers.podman?.workload.acceptsReceipt(receipt)).toBe(true);
+    expect(
+      runtime.providers.podman?.workload.acceptsReceipt({
+        schemaVersion: 1,
+        kind: "legacy-dockerfile",
+        reference: null,
+        shared: false,
+      }),
+    ).toBe(false);
   });
 
   it("fails host-local inference before probing either Podman operation scope", () => {

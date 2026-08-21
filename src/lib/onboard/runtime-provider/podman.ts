@@ -3,8 +3,14 @@
 
 import type { PodmanBoundContainerEngine, PodmanContainerEngine } from "../../adapters/podman";
 import {
+  MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+  MANAGED_IMAGE_PLATFORMS,
+  MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+} from "../managed-image/contract";
+import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
+  type RuntimeProviderCleanupInput,
   type RuntimeProviderLifecycleInput,
   type RuntimeProviderLifecycleResult,
   type RuntimeProviderWorkloadProfile,
@@ -54,12 +60,29 @@ export interface PodmanRuntimeProviderOptions {
   readonly stateMutation?: Omit<PodmanStateMutationSurfaceOptions, "engine">;
 }
 
-const DORMANT_WORKLOAD_PROFILE = {
-  support: null,
-  hostArchitectures: [],
+const QUALIFIED_MANAGED_WORKLOAD_PROFILE = {
+  support: {
+    exactDigestReferences: true,
+    platforms: MANAGED_IMAGE_PLATFORMS,
+    startupProfileContractVersions: [MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION],
+    capabilityContractVersions: [MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION],
+  },
+  hostArchitectures: ["amd64", "arm64"],
   managedImageSelectionPolicy: "require-managed",
   legacyDockerfileBuilds: false,
 } as const satisfies RuntimeProviderWorkloadProfile;
+
+function acceptsManagedWorkloadReceipt(
+  receipt: RuntimeProviderCleanupInput["sandbox"]["workload"],
+): boolean {
+  if (receipt?.kind !== "managed-image" || receipt.platform === undefined) return false;
+  const support = QUALIFIED_MANAGED_WORKLOAD_PROFILE.support;
+  return (
+    support.platforms.includes(receipt.platform) &&
+    support.capabilityContractVersions.includes(receipt.capabilityContractVersion) &&
+    support.startupProfileContractVersions.includes(receipt.startupProfileContractVersion)
+  );
+}
 
 export const PODMAN_READ_ONLY_HOST_MOUNT_UNSUPPORTED_REASON =
   "Read-only host mounts are not qualified for the Podman runtime provider.";
@@ -174,8 +197,8 @@ export function createPodmanRuntimeProviderBundle(
     workload: {
       providerId,
       supported: true,
-      profile: DORMANT_WORKLOAD_PROFILE,
-      acceptsReceipt: () => false,
+      profile: QUALIFIED_MANAGED_WORKLOAD_PROFILE,
+      acceptsReceipt: acceptsManagedWorkloadReceipt,
     },
     hostLocalInference:
       inferenceEngine !== undefined && inferenceOptions !== undefined
