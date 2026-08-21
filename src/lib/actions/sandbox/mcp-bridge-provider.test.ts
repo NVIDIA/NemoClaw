@@ -427,21 +427,23 @@ alpha-mcp-slack   generic  1                 0
         },
         { refreshAfterObservedAbsence },
       ),
-    ).toThrow(/did not synchronize the expected credential revision/);
+    ).toThrow(/last bounded observation: absent; post-policy refresh attempted: yes/);
     expect(refreshAfterObservedAbsence).toHaveBeenCalledTimes(1);
     expect(exec).toHaveBeenCalledTimes(2);
   });
 
   it.each([
-    ["unavailable", null],
-    ["malformed", { status: 0, stdout: "raw-secret", stderr: "" }],
-  ])("does not refresh when a credential observation is %s (#9764)", (_case, result) => {
+    ["unavailable", null, "transport-unavailable"],
+    ["malformed", { status: 0, stdout: "raw-secret", stderr: "" }, "invalid-bounded-output"],
+    ["rejected", { status: 1, stdout: "", stderr: "" }, "proof-command-exit-1"],
+  ])("does not refresh when a credential observation is %s (#9764)", (_case, result, diagnostic) => {
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
     vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue(result);
     vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
     const refreshAfterObservedAbsence = vi.fn();
 
-    expect(() =>
+    let failure: unknown;
+    try {
       waitForAttachedMcpCredential(
         "alpha",
         {
@@ -456,8 +458,15 @@ alpha-mcp-slack   generic  1                 0
           addedAt: "2026-06-01T00:00:00.000Z",
         },
         { refreshAfterObservedAbsence },
-      ),
-    ).toThrow(/did not synchronize the expected credential revision/);
+      );
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(
+      `last bounded observation: ${diagnostic}; post-policy refresh attempted: no`,
+    );
+    expect((failure as Error).message).not.toContain("raw-secret");
     expect(refreshAfterObservedAbsence).not.toHaveBeenCalled();
   });
 
@@ -516,7 +525,7 @@ alpha-mcp-slack   generic  1                 0
         },
         { previousRevision: "v11", refreshAfterObservedAbsence },
       ),
-    ).toThrow(/did not synchronize the expected credential revision/);
+    ).toThrow(/last bounded observation: v11; post-policy refresh attempted: yes/);
     expect(refreshAfterObservedAbsence).toHaveBeenCalledTimes(1);
     expect(exec).toHaveBeenCalledTimes(2);
   });

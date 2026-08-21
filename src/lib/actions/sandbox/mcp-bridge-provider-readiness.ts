@@ -16,6 +16,12 @@ const MCP_CREDENTIAL_REVISION_OBSERVATION_RE = /^(?:absent|canonical|v[0-9]{1,20
 
 export type McpCredentialRevisionObservation = "absent" | "canonical" | `v${number}`;
 
+type McpCredentialRevisionAttempt =
+  | { kind: "observation"; observation: McpCredentialRevisionObservation }
+  | { kind: "transport-unavailable" }
+  | { kind: "command-failed"; status: number }
+  | { kind: "invalid-output" };
+
 /**
  * Provider synchronization proofs must observe a fresh OpenShell-mediated exec
  * environment. A direct Docker exec does not receive OpenShell provider state
@@ -93,13 +99,30 @@ function parseMcpCredentialRevisionObservation(
 function tryObserveMcpCredentialRevision(
   sandboxName: string,
   envName: string,
-): McpCredentialRevisionObservation | null {
+): McpCredentialRevisionAttempt {
   const result = executeMcpCredentialProofCommand(
     sandboxName,
     buildMcpCredentialRevisionObservationCommand(envName),
   );
-  if (!result || result.status !== 0) return null;
-  return parseMcpCredentialRevisionObservation(result.stdout);
+  if (!result) return { kind: "transport-unavailable" };
+  if (result.status !== 0) return { kind: "command-failed", status: result.status };
+  const observation = parseMcpCredentialRevisionObservation(result.stdout);
+  return observation === null
+    ? { kind: "invalid-output" }
+    : { kind: "observation", observation };
+}
+
+function describeMcpCredentialRevisionAttempt(attempt: McpCredentialRevisionAttempt): string {
+  switch (attempt.kind) {
+    case "observation":
+      return attempt.observation;
+    case "transport-unavailable":
+      return "transport-unavailable";
+    case "command-failed":
+      return `proof-command-exit-${attempt.status}`;
+    case "invalid-output":
+      return "invalid-bounded-output";
+  }
 }
 
 export function observeMcpCredentialRevision(
@@ -107,13 +130,13 @@ export function observeMcpCredentialRevision(
   entry: McpBridgeEntry,
 ): McpCredentialRevisionObservation {
   assertAuthenticatedBridgeEntry(entry);
-  const observation = tryObserveMcpCredentialRevision(sandboxName, entry.env[0]);
-  if (observation === null) {
+  const attempt = tryObserveMcpCredentialRevision(sandboxName, entry.env[0]);
+  if (attempt.kind !== "observation") {
     throw new McpBridgeError(
       `Could not observe the current OpenShell credential revision for sandbox '${sandboxName}'.`,
     );
   }
-  return observation;
+  return attempt.observation;
 }
 
 export function waitForAttachedMcpCredential(
@@ -137,21 +160,26 @@ export function waitForAttachedMcpCredential(
     10,
   );
   let refreshedAfterObservedAbsence = false;
+  let lastAttempt: McpCredentialRevisionAttempt = { kind: "transport-unavailable" };
   const ready = waitUntil(
     () => {
       // Each exec is a fresh OpenShell process. Only the bounded placeholder
       // classification crosses back to the host, where the comparison cannot
       // be influenced by a same-UID sandbox process rewriting a snapshot file.
-      let observation = tryObserveMcpCredentialRevision(sandboxName, envName);
+      let attempt = tryObserveMcpCredentialRevision(sandboxName, envName);
+      lastAttempt = attempt;
       if (
-        observation === "absent" &&
+        attempt.kind === "observation" &&
+        attempt.observation === "absent" &&
         !refreshedAfterObservedAbsence &&
         options.refreshAfterObservedAbsence
       ) {
         refreshedAfterObservedAbsence = true;
         options.refreshAfterObservedAbsence();
-        observation = tryObserveMcpCredentialRevision(sandboxName, envName);
+        attempt = tryObserveMcpCredentialRevision(sandboxName, envName);
+        lastAttempt = attempt;
       }
+      const observation = attempt.kind === "observation" ? attempt.observation : null;
       return (
         observation !== null &&
         observation !== "absent" &&
@@ -163,7 +191,7 @@ export function waitForAttachedMcpCredential(
   );
   if (!ready) {
     throw new McpBridgeError(
-      `OpenShell did not synchronize the expected credential revision for placeholder '${envName}' into sandbox '${sandboxName}' after provider attachment or update.`,
+      `OpenShell did not synchronize the expected credential revision for placeholder '${envName}' into sandbox '${sandboxName}' after provider attachment or update (last bounded observation: ${describeMcpCredentialRevisionAttempt(lastAttempt)}; post-policy refresh attempted: ${refreshedAfterObservedAbsence ? "yes" : "no"}).`,
     );
   }
 }
