@@ -76,6 +76,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests(
       "test/hermes-dependency-review.test.ts",
       "test/hermes-share-mount-deps.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
       "test/sandbox-provisioning.test.ts",
     ),
   },
@@ -177,6 +178,13 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)scripts\/checks\/validate-managed-base-index\.sh$/,
     testsToRun: runTests("test/validate-managed-base-index.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/checks\/download-hermes-source-archive[.]sh$/,
+    testsToRun: runTests(
+      "test/hermes-share-mount-deps.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)scripts\/checks\/retry-docker-imagetools-inspect\.sh$/,
@@ -282,6 +290,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)ci\/platform-vitest-macos-requirements\.lock$/,
     testsToRun: runTests("test/platform-vitest-main-workflow.test.ts"),
+  },
+  {
+    pattern:
+      /(?:^|\/)\.agents\/skills\/(?:nemoclaw-maintainer-cut-release-tag\/SKILL\.md|nemoclaw-maintainer-evening\/SKILL\.md|nemoclaw-maintainer-release-notes\/SKILL\.md|nemoclaw-maintainer-policies\/references\/release-train\.md)$/,
+    testsToRun: runTests("test/release-post-tag-follow-through.test.ts"),
   },
 ];
 export function resolveVitestWatchTests(file: string): string[] {

@@ -121,18 +121,27 @@ Pass that exact Markdown to `release:cut` with `--message-file`. It becomes the 
 message and is the release evidence record. Do not create a separate exception file.
 
 Require the full confirmation phrase from the plan. After the script reads the remote tag back and
-confirms that it peels to the candidate, report the tag as cut and return.
+confirms that it peels to the candidate, report the tag as cut. Then continue the same task.
 
 ## Post-Tag States
 
-Moving `latest`, carrying labels forward, publishing public documentation, rebuilding and publishing release
-images, promoting `lkg`, and publishing the Announcement do not extend tag cutting. Some share a
-workflow or depend on another post-tag state. Report only already-known results and mark the rest
-pending or unknown; do not poll before returning the tag result.
+The tag event starts `Release / Latest Tag`, `Docs / Publish Public`, and `Images / Base Images`.
+Monitor the exact tag and candidate runs concurrently. Draft the Announcement while they run.
+
+Report the tag as cut before this follow-through. Post-tag results never change tag success. Verify
+the owned effects instead of relying only on workflow conclusions:
+
+- `latest` and release-label carry-forward;
+- the public documentation `publish` job; and
+- the production managed-image promotion job, with Pi candidate results reported separately.
+
+Read `lkg` after production image classification. Never move `lkg` automatically. When production
+promotion succeeds, ask for separate maintainer authorization. After an authorized move, monitor
+`Release / LKG Brev Image` and its returned downstream production-image run.
 
 Tag-triggered image publication performs a release rebuild and can fail after the tag exists. Repair
-and rerun that workflow independently. Do not describe it as promotion-only and do not move the
-semver tag.
+and rerun that workflow independently. Ask before a rerun. Do not describe it as promotion-only and
+do not move the semver tag.
 
 ## Carry Forward
 

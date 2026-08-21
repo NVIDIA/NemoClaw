@@ -14,6 +14,7 @@ import {
   parseSandboxInferenceRouteProbeResult,
 } from "../connect-inference-route-probe";
 import { areSandboxLaunchForwardsHealthy } from "../forward-recovery";
+import { runSandboxInferenceInvocationProbe } from "../inference-route-health";
 import { isSandboxGatewayRunningForStatus } from "../process-recovery";
 
 export type LaunchReadinessObservationCategory =
@@ -28,6 +29,8 @@ export type LaunchReadinessObservationCategory =
 
 export type LaunchReadinessCaptureResult = ReturnType<typeof captureOpenshell>;
 
+export type LaunchReadinessFailedCheck = "inference request";
+
 export interface LaunchReadinessHealthDeps {
   listAgents?: typeof listAgents;
   loadAgent?: typeof loadAgent;
@@ -40,10 +43,14 @@ export interface LaunchReadinessHealthDeps {
     agent: InferenceRouteProbeAgent,
     gatewayName: string,
   ) => ReturnType<typeof parseSandboxInferenceRouteProbeResult>;
+  inferenceInvocationProbe?: typeof runSandboxInferenceInvocationProbe;
 }
 
 export class LaunchReadinessObservationError extends Error {
-  constructor(readonly category: LaunchReadinessObservationCategory) {
+  constructor(
+    readonly category: LaunchReadinessObservationCategory,
+    readonly failedCheck?: LaunchReadinessFailedCheck,
+  ) {
     super(category);
   }
 }
@@ -113,7 +120,7 @@ export async function requireLaunchSemanticHealth(
   sandboxName: string,
   gatewayName: string,
   agentName: string,
-  _entry: SandboxEntry,
+  entry: SandboxEntry,
   agent: AgentDefinition,
   inferenceConfigured: boolean,
   deps: LaunchReadinessHealthDeps,
@@ -149,8 +156,28 @@ export async function requireLaunchSemanticHealth(
   }
   if (inferenceConfigured) {
     const inference = (deps.inferenceProbe ?? probeInferenceRoute)(sandboxName, agent, gatewayName);
-    const usable = inference.healthy && inference.httpStatus >= 200 && inference.httpStatus < 300;
-    if (usable) return;
+    const strictRouteHealth =
+      inference.healthy && inference.httpStatus >= 200 && inference.httpStatus < 300;
+    if (strictRouteHealth) return;
+    const openRouterDcodeModelsRouteUnsupported =
+      agentName === "langchain-deepagents-code" &&
+      entry.provider === "openrouter-api" &&
+      inference.healthy &&
+      inference.httpStatus === 404;
+    if (openRouterDcodeModelsRouteUnsupported) {
+      const provider = normalizedString(entry.provider);
+      const model = normalizedString(entry.model);
+      if (!provider || !model) throw new LaunchReadinessEvidenceError();
+      const invocation = (deps.inferenceInvocationProbe ?? runSandboxInferenceInvocationProbe)({
+        sandboxName,
+        gatewayName,
+        provider,
+        model,
+        preferredInferenceApi: normalizedString(entry.preferredInferenceApi),
+      });
+      if (invocation.ok) return;
+      throw new LaunchReadinessObservationError("health", "inference request");
+    }
     if (inference.broken || (inference.httpStatus >= 100 && inference.httpStatus < 600)) {
       throw new LaunchReadinessObservationError("health");
     }
