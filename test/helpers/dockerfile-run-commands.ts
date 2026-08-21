@@ -141,11 +141,12 @@ function normalizedInstructionBody(source: string): string {
     .replace(/^[ \t\r\n]+|[ \t\r\n]+$/gu, "");
 }
 
-export function requireSingleReviewedDockerfileRunCommand(
+export function requireReviewedDockerfileRunCommands(
   source: string,
   command: string,
   requiredArguments: readonly string[],
-): ReviewedDockerfileRunCommand {
+  expectedCount: number,
+): readonly ReviewedDockerfileRunCommand[] {
   const invocation = [command, ...requiredArguments].join(" ");
   const reviewedBodies = new Set([
     invocation,
@@ -186,8 +187,19 @@ export function requireSingleReviewedDockerfileRunCommand(
       `Expected '${invocation}' only as a direct RUN or the reviewed corporate CA guarded RUN; found ${unreviewedInstructions} unreviewed RUN instruction(s)`,
     );
   }
-  if (matches.length !== 1) {
-    throw new Error(`Expected one reviewed RUN command '${invocation}', found ${matches.length}`);
+  if (matches.length !== expectedCount) {
+    const expected = expectedCount === 1 ? "one" : String(expectedCount);
+    throw new Error(
+      `Expected ${expected} reviewed RUN command '${invocation}', found ${matches.length}`,
+    );
   }
-  return matches[0];
+  return matches;
+}
+
+export function requireSingleReviewedDockerfileRunCommand(
+  source: string,
+  command: string,
+  requiredArguments: readonly string[],
+): ReviewedDockerfileRunCommand {
+  return requireReviewedDockerfileRunCommands(source, command, requiredArguments, 1)[0]!;
 }
