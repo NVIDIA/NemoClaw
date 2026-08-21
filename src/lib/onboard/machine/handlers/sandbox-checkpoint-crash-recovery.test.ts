@@ -88,7 +88,7 @@ function fakeGatewayRunOpenshell() {
           ].join("\n"),
           stderr: "",
         }
-      : { status: 1, stdout: "", stderr: "not found" };
+      : { status: 1, stdout: "", stderr: `provider '${name}' not found` };
   };
 
   const handleCreate = (args: string[]): StubbedRunOpenshellResult => {

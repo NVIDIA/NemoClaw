@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  inspectGatewayCredentialOnlyProviderBinding,
   matchesGatewayCredentialOnlyProviderBinding,
   matchesGatewayProviderBinding,
   parseGatewayProviderMetadata,
@@ -228,5 +229,26 @@ describe("gateway provider metadata", () => {
     const runOpenshell = vi.fn(() => ({ status: 0, stdout: COMPLETE_OUTPUT }));
     expect(readGatewayProviderMetadata("../compatible-endpoint", runOpenshell)).toBeNull();
     expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "exact absence",
+      { status: 1, stderr: "provider 'alpha-telegram-bridge' not found" },
+      "missing",
+    ],
+    ["gateway failure", { status: 1, stderr: "gateway unavailable" }, "indeterminate"],
+    ["null status", { status: null, stderr: "transport closed" }, "indeterminate"],
+  ] as const)("classifies %s without authorizing a create (#9875)", (_label, result, kind) => {
+    expect(
+      inspectGatewayCredentialOnlyProviderBinding(
+        {
+          name: "alpha-telegram-bridge",
+          type: "nemoclaw-mcp-v1",
+          credentialKey: "TELEGRAM_BOT_TOKEN",
+        },
+        () => result,
+      ),
+    ).toEqual({ kind });
   });
 });

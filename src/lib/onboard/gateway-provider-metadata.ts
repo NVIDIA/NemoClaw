@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { reportsExactProviderNotFound } from "./extra-provider-diagnostic-parser";
+
 const MAX_PROVIDER_OUTPUT_BYTES = 16 * 1024;
 const MAX_PROVIDER_NAME_LENGTH = 128;
 const MAX_PROVIDER_TYPE_LENGTH = 64;
@@ -65,19 +67,25 @@ export function matchesGatewayCredentialOnlyProviderBinding(
 }
 
 type GatewayProviderCommandResult = {
-  status: number | null;
-  stdout?: string | Buffer | null;
-  stderr?: string | Buffer | null;
+  status?: number | null;
+  stdout?: unknown;
+  stderr?: unknown;
 };
 
 type GatewayProviderRunner = (
   args: string[],
   options: {
     ignoreError: true;
-    suppressOutput: true;
+    suppressOutput?: true;
     stdio: ["ignore", "pipe", "pipe"];
   },
 ) => GatewayProviderCommandResult;
+
+export type GatewayCredentialOnlyProviderInspection =
+  | { readonly kind: "collision" }
+  | { readonly kind: "exact" }
+  | { readonly kind: "indeterminate" }
+  | { readonly kind: "missing" };
 
 type ProviderField = "Name" | "Type" | "Credential keys" | "Config keys";
 
@@ -111,8 +119,9 @@ function parseProviderKeys(value: string): string[] | null {
   return keys;
 }
 
-function commandStreamText(value: string | Buffer | null | undefined): string {
-  return Buffer.isBuffer(value) ? value.toString("utf8") : (value ?? "");
+function commandStreamText(value: unknown): string {
+  if (Buffer.isBuffer(value)) return value.toString("utf8");
+  return typeof value === "string" ? value : "";
 }
 
 function hasUnsafeRawProviderFieldValue(rawLine: string): boolean {
@@ -168,6 +177,33 @@ export function parseGatewayProviderMetadata(output: string): GatewayProviderMet
   if (!credentialKeys || !configKeys) return null;
 
   return { name, type, credentialKeys, configKeys };
+}
+
+/** Distinguish an exact credential-only binding from absence and lookup failure. */
+export function inspectGatewayCredentialOnlyProviderBinding(
+  expected: GatewayCredentialOnlyProviderBinding,
+  runOpenshell: GatewayProviderRunner,
+): GatewayCredentialOnlyProviderInspection {
+  const result = runOpenshell(["provider", "get", expected.name], {
+    ignoreError: true,
+    suppressOutput: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const output = `${commandStreamText(result.stdout)}\n${commandStreamText(result.stderr)}`;
+  if (result.status !== 0) {
+    if (
+      result.status === 1 &&
+      reportsExactProviderNotFound(output, expected.name, MAX_PROVIDER_OUTPUT_BYTES)
+    ) {
+      return { kind: "missing" };
+    }
+    return { kind: "indeterminate" };
+  }
+
+  const metadata = parseGatewayProviderMetadata(output);
+  return matchesGatewayCredentialOnlyProviderBinding(metadata, expected)
+    ? { kind: "exact" }
+    : { kind: "collision" };
 }
 
 /** Read one exact provider identity without reading or exporting credential values. */

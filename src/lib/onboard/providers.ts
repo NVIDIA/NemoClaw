@@ -21,7 +21,10 @@ const {
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
 } = require("../inference/llama-cpp/contract");
-const { readGatewayProviderMetadata } = require("./gateway-provider-metadata");
+const {
+  inspectGatewayCredentialOnlyProviderBinding,
+  readGatewayProviderMetadata,
+} = require("./gateway-provider-metadata");
 const {
   ensureMessagingCredentialProviderProfile,
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
@@ -454,11 +457,11 @@ function providerExistsInGateway(name, _runOpenshell) {
  * @param {string|null} baseUrl - Optional base URL for the provider endpoint.
  * @param {Record<string, string>} env - Environment variables for the openshell command.
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean}} options - Optional replacement controls.
+ * @param {{replaceExisting?: boolean, knownExists?: boolean}} options - Optional replacement controls.
  * @returns {{ ok: boolean, status?: number, message?: string }}
  */
 function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
-  const exists = providerExistsInGateway(name, _runOpenshell);
+  const exists = options.knownExists ?? providerExistsInGateway(name, _runOpenshell);
   if (exists && options.replaceExisting) {
     const { deleteProviderWithRecovery } = require("./sandbox-provider-cleanup");
     const r = deleteProviderWithRecovery(name, { runOpenshell: _runOpenshell });
@@ -560,15 +563,46 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   const failures = [];
   for (const { name, envKey, token, providerType } of tokenDefs) {
     if (!token) continue;
-    const result = upsertProvider(
+    let knownExists;
+    let result;
+    if (providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE) {
+      const inspection = inspectGatewayCredentialOnlyProviderBinding(
+        { name, type: providerType, credentialKey: envKey },
+        _runOpenshell,
+      );
+      if (inspection.kind === "indeterminate") {
+        result = { ok: false, message: "Could not inspect the existing messaging provider." };
+      } else if (inspection.kind === "collision" && !options.replaceExisting) {
+        result = {
+          ok: false,
+          message: "Existing provider does not match the endpointless binding.",
+        };
+      } else {
+        knownExists = inspection.kind !== "missing";
+      }
+    }
+    result ??= upsertProvider(
       name,
       providerType || "generic",
       envKey,
       null,
       { [envKey]: token },
       _runOpenshell,
-      { replaceExisting: Boolean(options.replaceExisting) },
+      { replaceExisting: Boolean(options.replaceExisting), knownExists },
     );
+    if (result.ok && providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE) {
+      const verified = inspectGatewayCredentialOnlyProviderBinding(
+        { name, type: providerType, credentialKey: envKey },
+        _runOpenshell,
+      );
+      if (verified.kind !== "exact") {
+        result = {
+          ok: false,
+          status: 1,
+          message: `OpenShell did not confirm messaging provider '${name}' after mutation.`,
+        };
+      }
+    }
     if (!result.ok) {
       if (options.bestEffort) {
         failures.push(`${name}: ${result.message}`);

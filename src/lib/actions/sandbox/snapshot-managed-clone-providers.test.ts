@@ -318,6 +318,36 @@ describe("managed clone provider transaction", () => {
     expect(createIndex).toBeGreaterThan(importIndex);
   });
 
+  it("rejects stale clone authority before importing the messaging profile (#9875)", () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const source = entry("source", profile);
+    const runner = providerRunner();
+    const prepared = prepareManagedCloneProviderTransaction({
+      handoff: handoff(profile, source, messagingPlan("destination")),
+      destination: null,
+      environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
+      runOpenshell: runner.run,
+      transactionId: "8".repeat(32),
+    });
+
+    expect(() =>
+      provisionManagedCloneProviderTransaction(prepared, {
+        ...authorityDeps(source, null, {
+          ...CONTENT_AUTHORITY,
+          contentSha256: "d".repeat(64),
+        }),
+        environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
+        runOpenshell: runner.run,
+      }),
+    ).toThrow(ManagedCloneProviderTransactionError);
+    expect(
+      runner.commands.some((command) => command.startsWith("provider profile import --file ")),
+    ).toBe(false);
+    expect(runner.commands.some((command) => command.startsWith("provider create --name "))).toBe(
+      false,
+    );
+  });
+
   it("reuses an exact provider only with exact destination registry ownership", () => {
     const profile = managedStartupE2eProfile("openclaw");
     const source = entry("source", profile);

@@ -639,6 +639,7 @@ describe("onboard provider helpers", () => {
   it("imports the endpointless profile before creating a static messaging provider (#9875)", () => {
     const credential = "discord-credential-must-not-leak";
     const calls: Array<{ command: string[]; env?: Record<string, string | undefined> }> = [];
+    let created = false;
     const providers = upsertMessagingProviders(
       [
         {
@@ -650,9 +651,23 @@ describe("onboard provider helpers", () => {
       ],
       (command, options) => {
         calls.push({ command, env: options?.env });
-        return command[0] === "provider" && command[1] === "get"
-          ? { status: 1, stdout: "", stderr: "not found" }
-          : { status: 0, stdout: "", stderr: "" };
+        switch (command[1]) {
+          case "get":
+            return created
+              ? {
+                  status: 0,
+                  stdout:
+                    "Name: alpha-discord-bridge\nType: nemoclaw-mcp-v1\nCredential keys: DISCORD_BOT_TOKEN\nConfig keys: <none>\n",
+                }
+              : {
+                  status: 1,
+                  stdout: "",
+                  stderr: "provider 'alpha-discord-bridge' not found",
+                };
+          case "create":
+            created = true;
+        }
+        return { status: 0, stdout: "", stderr: "" };
       },
     );
 
@@ -661,9 +676,85 @@ describe("onboard provider helpers", () => {
       expect.stringMatching(/^provider profile import --file .*nemoclaw-mcp-v1\.yaml$/),
       "provider get alpha-discord-bridge",
       "provider create --name alpha-discord-bridge --type nemoclaw-mcp-v1 --credential DISCORD_BOT_TOKEN",
+      "provider get alpha-discord-bridge",
     ]);
     expect(calls[2]?.env).toEqual({ DISCORD_BOT_TOKEN: credential });
     expect(calls.flatMap(({ command }) => command)).not.toContain(credential);
+  });
+
+  it.each([
+    ["alpha-discord-bridge", "DISCORD_BOT_TOKEN"],
+    ["alpha-slack-bridge", "SLACK_BOT_TOKEN"],
+  ])("rejects a live legacy provider before updating %s (#9875)", (name, credentialKey) => {
+    const commands: string[] = [];
+
+    expect(() =>
+      upsertMessagingProviders(
+        [
+          {
+            name,
+            envKey: credentialKey,
+            token: "test-only-messaging-credential",
+            providerType: "nemoclaw-mcp-v1",
+          },
+        ],
+        (command) => {
+          commands.push(command.join(" "));
+          return command[1] === "profile"
+            ? { status: 0 }
+            : {
+                status: 0,
+                stdout: `Name: ${name}\nType: generic\nCredential keys: ${credentialKey}\nConfig keys: <none>\n`,
+              };
+        },
+        { bestEffort: true },
+      ),
+    ).toThrow(/Existing provider does not match the endpointless binding/);
+    expect(commands.some((command) => /provider (create|update)/u.test(command))).toBe(false);
+  });
+
+  it.each([
+    ["alpha-discord-bridge", "DISCORD_BOT_TOKEN"],
+    ["alpha-slack-bridge", "SLACK_BOT_TOKEN"],
+  ])("replaces a detached legacy provider before registering %s (#9875)", (name, credentialKey) => {
+    const commands: string[] = [];
+    let providerType = "generic";
+    const providers = upsertMessagingProviders(
+      [
+        {
+          name,
+          envKey: credentialKey,
+          token: "test-only-messaging-credential",
+          providerType: "nemoclaw-mcp-v1",
+        },
+      ],
+      (command) => {
+        commands.push(command.join(" "));
+        switch (command[1]) {
+          case "profile":
+          case "delete":
+            return { status: 0 };
+          case "create":
+            providerType = "nemoclaw-mcp-v1";
+            return { status: 0 };
+          default:
+            return {
+              status: 0,
+              stdout: `Name: ${name}\nType: ${providerType}\nCredential keys: ${credentialKey}\nConfig keys: <none>\n`,
+            };
+        }
+      },
+      { replaceExisting: true },
+    );
+
+    expect(providers).toEqual([name]);
+    expect(commands).toEqual([
+      expect.stringMatching(/^provider profile import --file /u),
+      `provider get ${name}`,
+      `provider delete ${name}`,
+      `provider create --name ${name} --type nemoclaw-mcp-v1 --credential ${credentialKey}`,
+      `provider get ${name}`,
+    ]);
   });
 
   it("updates an existing Brave Search provider in place on reuse paths", () => {

@@ -50,6 +50,58 @@ function normalizeCommand(command) {
   return (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
 }
 
+function createStatefulMessagingProviderRunner({
+  commands,
+  initialProviders = [],
+  readySandboxName = null,
+}) {
+  const providers = new Map(
+    initialProviders.map(([name, type, credential]) => [name, { type, credential }]),
+  );
+  return (command, options = {}) => {
+    const normalized = normalizeCommand(command);
+    const args = normalized.split(/\s+/);
+    const providerIndex = args.indexOf("provider");
+    commands.push({ command: normalized, env: options.env || null });
+
+    if (providerIndex >= 0 && args[providerIndex + 1] === "create") {
+      const name = args[args.indexOf("--name") + 1];
+      const type = args[args.indexOf("--type") + 1];
+      const credential = args[args.indexOf("--credential") + 1];
+      if (name && type && credential) providers.set(name, { type, credential });
+      return { status: 0 };
+    }
+    if (providerIndex >= 0 && args[providerIndex + 1] === "get") {
+      const name = args.at(-1);
+      const provider = providers.get(name);
+      return provider
+        ? {
+            status: 0,
+            stdout: [
+              `Name: ${name}`,
+              `Type: ${provider.type}`,
+              `Credential keys: ${provider.credential}`,
+              "Config keys: <none>",
+            ].join("\n"),
+          }
+        : { status: 1, stderr: `provider '${name}' not found` };
+    }
+    if (
+      readySandboxName &&
+      args.includes("sandbox") &&
+      args.includes("get") &&
+      args.includes(readySandboxName)
+    ) {
+      return {
+        status: 0,
+        stdout: Buffer.from(`Name: ${readySandboxName}\nId: sbx-4f2a91c0d7\n`),
+        stderr: Buffer.alloc(0),
+      };
+    }
+    return { status: 0 };
+  };
+}
+
 const OPENCLAW_SECURITY_INVENTORY_PROBE_PREFIX = Object.freeze([
   "run",
   "--rm",
@@ -246,6 +298,7 @@ function mockManagedImageFallback() {
 process.env.NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK === "1" && mockManagedImageFallback();
 
 module.exports = {
+  createStatefulMessagingProviderRunner,
   isOpenClawSecurityInventoryProbe,
   mockManagedImageFallback,
   mockOnboardRunCapture,

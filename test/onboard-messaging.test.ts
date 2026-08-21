@@ -84,12 +84,10 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 const commands = [];
-runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
-  // provider-get returns not-found so messaging providers are created fresh
-  if (_n(command).includes("provider get")) return { status: 1 };
-  return _n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
-};
+runner.run = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({
+  commands,
+  readySandboxName: "my-assistant",
+});
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
@@ -362,12 +360,10 @@ const nonSlackMessagingEnvKeys = [
 
 const commands = [];
 let registeredSandbox = null;
-runner.run = (command, opts = {}) => {
-  const normalized = _n(command);
-  commands.push({ command: normalized, env: opts.env || null });
-  if (normalized.includes("provider get")) return { status: 1 };
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
-};
+runner.run = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({
+  commands,
+  readySandboxName: "my-assistant",
+});
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
@@ -1243,10 +1239,14 @@ const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "")
 const registry = require(${registryPath});
 
 const commands = [];
-runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
-};
+runner.run = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({
+  commands,
+  initialProviders: [
+    ["my-assistant-discord-bridge", "nemoclaw-mcp-v1", "DISCORD_BOT_TOKEN"],
+    ["my-assistant-slack-bridge", "nemoclaw-mcp-v1", "SLACK_BOT_TOKEN"],
+    ["my-assistant-slack-app", "nemoclaw-mcp-v1", "SLACK_APP_TOKEN"],
+  ],
+});
 runner.runCapture = (command) => {
   // Existing sandbox that is ready
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "my-assistant";
@@ -1352,12 +1352,10 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
-runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
-  // provider-get returns not-found so messaging providers are created fresh
-  if (_n(command).includes("provider get")) return { status: 1 };
-  return _n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
-};
+runner.run = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({
+  commands,
+  readySandboxName: "my-assistant",
+});
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
