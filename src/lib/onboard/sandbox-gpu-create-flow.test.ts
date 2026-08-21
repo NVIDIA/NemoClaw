@@ -446,7 +446,12 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
             patch: createPatch(),
             recoverUnfinished: async () => null,
             prepareNetwork: async () => undefined,
-            runCreate: async (start) =>
+            runCreate: async <T>(
+              start: (held: {
+                readonly heldWorkloadArgv: readonly string[];
+                readonly bootstrapIdentity: string;
+              }) => Promise<{ readonly value: T }>,
+            ): Promise<T> =>
               (
                 await start({
                   heldWorkloadArgv: options.heldWorkloadArgv,
