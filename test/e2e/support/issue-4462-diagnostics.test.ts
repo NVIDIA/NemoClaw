@@ -7,13 +7,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
+import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
   buildIssue4462DiagnosticsCommand,
   captureIssue4462FailureDiagnostics,
+  trackIssue4462FailureDiagnostics,
 } from "../fixtures/issue-4462-diagnostics.ts";
 
 describe("pairing failure evidence", () => {
-  it("captures structured auto-pair and gateway diagnostics before cleanup (#9844)", async () => {
+  it("invokes structured auto-pair and gateway diagnostics with fixed arguments (#9844)", async () => {
     const exec = vi.fn(async () => ({ exitCode: 0 }));
 
     await captureIssue4462FailureDiagnostics({ exec } as never, {
@@ -24,13 +26,7 @@ describe("pairing failure evidence", () => {
 
     expect(exec).toHaveBeenCalledExactlyOnceWith(
       "issue-4462",
-      expect.arrayContaining([
-        "node",
-        "-e",
-        expect.any(String),
-        "/tmp/auto-pair.log",
-        "/tmp/gateway.log",
-      ]),
+      ["node", "-e", expect.any(String), "/tmp/auto-pair.log", "/tmp/gateway.log"],
       expect.objectContaining({
         artifactName: "failure-openclaw-pairing-diagnostics",
         redactionValues: ["secret-api-key"],
@@ -65,6 +61,8 @@ describe("pairing failure evidence", () => {
           `[auto-pair] stage=validation accepted request=request-secret reason=allowlisted-request\n` +
           `[auto-pair] stage=approval failed reason=command-failed secret=${secrets[8]}\n` +
           `[auto-pair] stage=approval failed reason=timeout token=${secrets[9]}\n` +
+          `[auto-pair] stage=watcher-execution failed error=RuntimeError\n` +
+          `[auto-pair] approve failed request=request-secret: [auto-pair] stage=validation rejected reason=malformed-request-id token=${secrets[9]}\n` +
           `unknown raw line secret=${secrets[8]}\n`,
       );
       writeFileSync(
@@ -93,6 +91,7 @@ describe("pairing failure evidence", () => {
             { stage: "validation", outcome: "accepted", reason: "allowlisted-request" },
             { stage: "approval", outcome: "failed", reason: "command-failed" },
             { stage: "approval", outcome: "failed", reason: "timeout" },
+            { stage: "watcher-execution", outcome: "failed" },
           ],
         },
         gateway: {
@@ -151,17 +150,27 @@ describe("pairing failure evidence", () => {
     expect(result.stderr).toBe("");
   });
 
-  it("preserves the primary failure when the sandbox is already unavailable (#9844)", async () => {
+  it("preserves the primary failure through unavailable diagnostic cleanup (#9844)", async () => {
+    const cleanup = new CleanupRegistry();
     const exec = vi.fn(async () => {
       throw new Error("sandbox not found");
     });
+    trackIssue4462FailureDiagnostics(cleanup, { exec } as never, "issue-4462", {}, []);
+    const primaryFailure = new Error("sentinel primary failure");
+    let observedFailure: unknown;
 
-    await expect(
-      captureIssue4462FailureDiagnostics({ exec } as never, {
-        env: {},
-        redactionValues: [],
-        sandboxName: "issue-4462",
-      }),
-    ).resolves.toBeUndefined();
+    try {
+      throw primaryFailure;
+    } catch (error) {
+      observedFailure = error;
+    } finally {
+      expect(await cleanup.runAll()).toEqual({
+        failures: [],
+        passed: ["capture OpenClaw pairing failure diagnostics"],
+      });
+    }
+
+    expect(observedFailure).toBe(primaryFailure);
+    expect(exec).toHaveBeenCalledOnce();
   });
 });

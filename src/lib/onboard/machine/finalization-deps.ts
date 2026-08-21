@@ -118,11 +118,14 @@ async function waitForPairingObservation(
         target.stateDirectory,
       );
       if (!samePairingTarget(target, deps.getTarget(name))) return { kind: "target-changed" };
+      if (deadline - deps.now() <= 0) return { kind: "timeout" };
       if (accept(value)) return { kind: "observed", value };
     } catch {
       // Pairing state can be absent or changing while the startup watcher runs.
     }
-    await deps.sleep(Math.min(OPENCLAW_ONBOARDING_PAIRING_POLL_MS, remaining));
+    const remainingAfterAttempt = deadline - deps.now();
+    if (remainingAfterAttempt <= 0) return { kind: "timeout" };
+    await deps.sleep(Math.min(OPENCLAW_ONBOARDING_PAIRING_POLL_MS, remainingAfterAttempt));
   }
 }
 

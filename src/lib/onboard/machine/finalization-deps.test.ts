@@ -1,10 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { VerifyDeploymentResult } from "../../verify-deployment";
 import type { OpenClawPairingSettlementObservation } from "../../actions/sandbox/launch-readiness/openclaw-pairing-qualification";
+import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
+import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import {
   finalizationHandlerDeps,
   finalizationHandlerRuntime,
@@ -147,6 +153,75 @@ describe("ordinary OpenClaw pairing settlement", () => {
     ]);
   });
 
+  it("blocks real lifecycle and route mutations until pairing settlement exits (#9844)", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-pairing-locks-"));
+    let currentTarget = PAIRING_TARGET;
+    let releaseApproval = () => {};
+    let reportApprovalStarted = () => {};
+    const approvalPending = new Promise<void>((resolve) => {
+      releaseApproval = resolve;
+    });
+    const approvalStarted = new Promise<void>((resolve) => {
+      reportApprovalStarted = resolve;
+    });
+    const mutationEvents: string[] = [];
+    const approvalTargets: string[] = [];
+    const lockOptions = { pollIntervalMs: 1, stateDir, timeoutMs: 5_000 };
+    let replacement: Promise<void> | undefined;
+    let routeReuse: Promise<void> | undefined;
+    try {
+      const scope = ordinaryPairingDeps({
+        getTarget: vi.fn(() => currentTarget),
+        observePairing: vi.fn().mockReturnValueOnce(PAIRING_ONLY).mockReturnValue(SETTLED),
+        runApproval: vi.fn(async (_name, gatewayName) => {
+          approvalTargets.push(`${currentTarget.lifecycleGeneration}:${gatewayName}`);
+          reportApprovalStarted();
+          await approvalPending;
+        }),
+        withSandboxLock: (name, operation) => withMcpLifecycleLock(name, operation, lockOptions),
+        withGatewayLock: (gatewayName, operation) =>
+          withGatewayRouteMutationLock(gatewayName, operation, lockOptions),
+      });
+
+      const settlement = settleOrdinaryOpenClawPairing("alpha", scope.deps);
+      await approvalStarted;
+      replacement = withMcpLifecycleLock(
+        "alpha",
+        () => {
+          mutationEvents.push("replacement-entered");
+          currentTarget = { ...PAIRING_TARGET, lifecycleGeneration: "generation-2" };
+        },
+        lockOptions,
+      );
+      routeReuse = withGatewayRouteMutationLock(
+        "nemoclaw",
+        () => {
+          mutationEvents.push("route-reuse-entered");
+        },
+        lockOptions,
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(mutationEvents).toEqual([]);
+      expect(approvalTargets).toEqual(["generation-1:nemoclaw"]);
+
+      releaseApproval();
+      await expect(settlement).resolves.toEqual({ kind: "settled" });
+      await Promise.all([replacement, routeReuse]);
+      expect(mutationEvents).toEqual(
+        expect.arrayContaining(["replacement-entered", "route-reuse-entered"]),
+      );
+      expect(currentTarget.lifecycleGeneration).toBe("generation-2");
+    } finally {
+      releaseApproval();
+      const pendingMutations = [replacement, routeReuse].filter(
+        (mutation): mutation is Promise<void> => mutation !== undefined,
+      );
+      await Promise.allSettled(pendingMutations);
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("reports unavailable when pairing lock acquisition fails (#9844)", async () => {
     const scope = ordinaryPairingDeps({
       withGatewayLock: vi.fn(async () => {
@@ -270,6 +345,25 @@ describe("ordinary OpenClaw pairing settlement", () => {
     expect(scope.deps.sleep).toHaveBeenCalledTimes(30);
     expect(scope.deps.runWarmup).toHaveBeenCalledOnce();
     expect(scope.deps.runApproval).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an observation that finishes after the shared deadline (#9844)", async () => {
+    let now = 0;
+    const scope = ordinaryPairingDeps({
+      now: vi.fn(() => now),
+      observePairing: vi.fn(() => {
+        now = 30_001;
+        return SETTLED;
+      }),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "pairing-unavailable",
+    });
+    expect(scope.deps.sleep).not.toHaveBeenCalled();
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+    expect(scope.deps.runApproval).not.toHaveBeenCalled();
   });
 
   it("performs no writes when a canonical CLI pairing never appears (#9844)", async () => {

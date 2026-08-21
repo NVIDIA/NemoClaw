@@ -1433,7 +1433,7 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
     });
     const pairedJson = JSON.stringify({
       pending: [],
-      paired: [{ clientId: "openclaw-control-ui", clientMode: "webchat" }],
+      paired: [{ clientId: "openclaw-control-ui", clientMode: "webchat" }, { clientId: "cli", clientMode: "cli" }],
     });
     fs.writeFileSync(
       fakeOpenclaw,

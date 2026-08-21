@@ -305,6 +305,7 @@ exit 2
       "quoted request id with trailing text",
       'pairing required: device is not approved yet requestId: "request" 1',
     ],
+    ["option-like request id", "pairing required: device is not approved yet requestId: --help"],
   ])(
     "rejects %s from gated-list errors before initial CLI approve (#6113)",
     (_name, listError) => {
@@ -346,6 +347,7 @@ exit 2
           ["p".repeat(128)]: { requestId: "p".repeat(128), ...validRequest },
           "request 1": { requestId: "request 1", ...validRequest },
           request: { requestId: "request", ...validRequest },
+          "--help": { requestId: "--help", ...validRequest },
         }),
       );
       fs.writeFileSync(
@@ -380,6 +382,7 @@ exit 2
 
         expect(run.status).toBe(0);
         expect(run.stdout).not.toContain("approved initial CLI pairing");
+        expect(run.stdout).not.toContain("--help");
         expect(fs.existsSync(approveLog)).toBe(false);
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -550,51 +553,49 @@ exit 2
   }, 40_000);
 
   it.each([
-    ["command failure", 1, "command-failed"],
-    ["timeout", 124, "timeout"],
-  ])("retries a transient initial CLI approve %s on the next gated-list poll (#6113)", (
-    _name,
-    firstExitCode,
-    failureReason,
-  ) => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-retry-"));
-    const fakeOpenclaw = path.join(tmpDir, "openclaw");
-    const stateDir = path.join(tmpDir, "state");
-    const devicesDir = path.join(stateDir, "devices");
-    const identityDir = path.join(stateDir, "identity");
-    const pendingFile = path.join(devicesDir, "pending.json");
-    const approveCount = path.join(tmpDir, "approve-count");
-    fs.mkdirSync(devicesDir, { recursive: true });
-    fs.mkdirSync(identityDir, { recursive: true });
-    const publicKey = "y3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8";
-    const deviceId = "04a4c561c730435e9f6a2e38d2e7b929bcbec2ea1c37d3dd053f3341ecce4e47";
-    fs.writeFileSync(
-      path.join(identityDir, "device.json"),
-      JSON.stringify({
-        deviceId,
-        publicKeyPem:
-          "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAy3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8=\n-----END PUBLIC KEY-----\n",
-      }),
-    );
-    fs.writeFileSync(
-      pendingFile,
-      JSON.stringify({
-        "request-1": {
-          requestId: "request-1",
+    ["command failure", 'echo "gateway restarting" >&2\n    exit 1', "command-failed", "10"],
+    ["timeout", "sleep 1", "timeout", "0.05"],
+  ])(
+    "retries a transient initial CLI approve %s on the next gated-list poll (#6113)",
+    (_name, firstAction, failureReason, runTimeoutSeconds) => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-retry-"));
+      const fakeOpenclaw = path.join(tmpDir, "openclaw");
+      const stateDir = path.join(tmpDir, "state");
+      const devicesDir = path.join(stateDir, "devices");
+      const identityDir = path.join(stateDir, "identity");
+      const pendingFile = path.join(devicesDir, "pending.json");
+      const approveCount = path.join(tmpDir, "approve-count");
+      fs.mkdirSync(devicesDir, { recursive: true });
+      fs.mkdirSync(identityDir, { recursive: true });
+      const publicKey = "y3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8";
+      const deviceId = "04a4c561c730435e9f6a2e38d2e7b929bcbec2ea1c37d3dd053f3341ecce4e47";
+      fs.writeFileSync(
+        path.join(identityDir, "device.json"),
+        JSON.stringify({
           deviceId,
-          publicKey,
-          clientId: "cli",
-          clientMode: "cli",
-          role: "operator",
-          roles: ["operator"],
-          scopes: ["operator.pairing"],
-          ts: 100,
-        },
-      }),
-    );
-    fs.writeFileSync(
-      fakeOpenclaw,
-      `#!/usr/bin/env bash
+          publicKeyPem:
+            "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAy3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8=\n-----END PUBLIC KEY-----\n",
+        }),
+      );
+      fs.writeFileSync(
+        pendingFile,
+        JSON.stringify({
+          "request-1": {
+            requestId: "request-1",
+            deviceId,
+            publicKey,
+            clientId: "cli",
+            clientMode: "cli",
+            role: "operator",
+            roles: ["operator"],
+            scopes: ["operator.pairing"],
+            ts: 100,
+          },
+        }),
+      );
+      fs.writeFileSync(
+        fakeOpenclaw,
+        `#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
   printf '%s\\n' '{"ok":false,"error":{"reason":"pairing required: device is not approved yet (requestId: request-1)"}}'
@@ -608,37 +609,39 @@ if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
   count=$((count + 1))
   printf '%s' "$count" > ${JSON.stringify(approveCount)}
   if [ "$count" -eq 1 ]; then
-    echo "gateway restarting" >&2
-    exit ${String(firstExitCode)}
+    ${firstAction}
   fi
   exit 0
 fi
 exit 2
 `,
-      { mode: 0o755 },
-    );
+        { mode: 0o755 },
+      );
 
-    try {
-      const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          OPENCLAW_BIN: fakeOpenclaw,
-          OPENCLAW_STATE_DIR: stateDir,
-          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "2",
-          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
-        },
-        timeout: 30_000,
-      });
+      try {
+        const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            OPENCLAW_BIN: fakeOpenclaw,
+            OPENCLAW_STATE_DIR: stateDir,
+            NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "2",
+            NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: runTimeoutSeconds,
+            NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+          },
+          timeout: 30_000,
+        });
 
-      expect(run.status).toBe(0);
-      expect(fs.readFileSync(approveCount, "utf-8")).toBe("2");
-      expect(run.stdout).toContain(`[auto-pair] stage=approval failed reason=${failureReason}`);
-      expect(run.stdout).toContain("[auto-pair] approved initial CLI pairing request=request-1");
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  }, 40_000);
+        expect(run.status).toBe(0);
+        expect(fs.readFileSync(approveCount, "utf-8")).toBe("2");
+        expect(run.stdout).toContain(`[auto-pair] stage=approval failed reason=${failureReason}`);
+        expect(run.stdout).toContain("[auto-pair] approved initial CLI pairing request=request-1");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+    40_000,
+  );
 
   it("drops a permanently-failing gated approve to slow-mode instead of 1s-looping to the deadline (#6113)", () => {
     // cv #6330 item 2: the fast->slow transition must be reached even when the
@@ -865,6 +868,179 @@ printf '%s\\n' ${JSON.stringify(response)}
       expect(run.status).toBe(0);
       expect(run.stdout).toContain("[auto-pair] stage=listing failed reason=invalid-response");
       expect(fs.existsSync(approvalMarker)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps forced CLI pairing until a validated paired CLI record appears (#9844)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-bootstrap-state-"));
+    const fakeOpenclaw = path.join(tmpDir, "openclaw");
+    const listCount = path.join(tmpDir, "list-count");
+    const listEnv = path.join(tmpDir, "list-env");
+    const approvalMarker = path.join(tmpDir, "approval-called");
+    fs.writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
+  count=0
+  if [ -f ${JSON.stringify(listCount)} ]; then count=$(cat ${JSON.stringify(listCount)}); fi
+  count=$((count + 1))
+  printf '%s' "$count" > ${JSON.stringify(listCount)}
+  printf '%s:%s\n' "\${NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING:-}" "\${OPENCLAW_GATEWAY_TOKEN:-}" >> ${JSON.stringify(listEnv)}
+  if [ "$count" -eq 1 ]; then
+    printf '%s\n' '{"pending":null,"paired":[]}'
+  elif [ "$count" -eq 2 ]; then
+    printf '%s\n' '{"pending":[{"requestId":"request-1","clientId":"cli","clientMode":"cli","role":"operator","roles":["operator"],"scopes":["operator.pairing"]}],"paired":[]}'
+  elif [ "$count" -eq 3 ]; then
+    printf '%s\n' '{"pending":[],"paired":[{"clientId":"not-cli","clientMode":"cli"}]}'
+  else
+    printf '%s\n' '{"pending":[],"paired":[{"clientId":"cli","clientMode":"cli"}]}'
+  fi
+  exit 0
+fi
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  touch ${JSON.stringify(approvalMarker)}
+  exit 0
+fi
+exit 2
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_BIN: fakeOpenclaw,
+          OPENCLAW_GATEWAY_TOKEN: "gateway-token",
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "2",
+          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+        },
+        timeout: 10_000,
+      });
+
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain("[auto-pair] stage=listing failed reason=invalid-response");
+      expect(run.stdout).toContain("[auto-pair] approved request=request-1 client=cli mode=cli");
+      expect(run.stdout).toContain("[auto-pair] loopback CLI pairing bootstrap completed");
+      expect(fs.existsSync(approvalMarker)).toBe(true);
+      const environments = fs.readFileSync(listEnv, "utf-8").trim().split("\n");
+      expect(environments.slice(0, 4)).toEqual([
+        "1:gateway-token",
+        "1:gateway-token",
+        "1:gateway-token",
+        "1:gateway-token",
+      ]);
+      expect(environments[4]).toBe(":");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["object", { value: "object-request-secret" }, "object-request-secret"],
+    ["array", ["array-request-secret"], "array-request-secret"],
+    ["number", 7, null],
+    ["newline", "line\nnewline-request-secret", "newline-request-secret"],
+    ["overlong", "x".repeat(129), "x".repeat(40)],
+    ["option-like", "--help", "--help"],
+  ])(
+    "rejects a malformed %s request ID without approval or disclosure (#9844)",
+    (_name, requestId, secretMarker) => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-request-id-"));
+      const fakeOpenclaw = path.join(tmpDir, "openclaw");
+      const approvalMarker = path.join(tmpDir, "approval-called");
+      const response = JSON.stringify({
+        pending: [
+          {
+            requestId,
+            clientId: "cli",
+            clientMode: "cli",
+            role: "operator",
+            roles: ["operator"],
+            scopes: ["operator.pairing"],
+          },
+        ],
+        paired: [],
+      });
+      fs.writeFileSync(
+        fakeOpenclaw,
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  touch ${JSON.stringify(approvalMarker)}
+fi
+printf '%s\n' ${JSON.stringify(response)}
+`,
+        { mode: 0o755 },
+      );
+
+      try {
+        const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            OPENCLAW_BIN: fakeOpenclaw,
+            NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
+            NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+          },
+          timeout: 10_000,
+        });
+
+        expect(run.status).toBe(0);
+        expect(run.stdout).toContain(
+          "[auto-pair] stage=validation rejected reason=malformed-request-id",
+        );
+        expect(run.stdout).not.toContain(secretMarker ?? "unused-control-marker");
+        expect(fs.existsSync(approvalMarker)).toBe(false);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("forgets request diagnostics after the gateway removes the request (#9844)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-request-prune-"));
+    const fakeOpenclaw = path.join(tmpDir, "openclaw");
+    const listCount = path.join(tmpDir, "list-count");
+    fs.writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+count=0
+if [ -f ${JSON.stringify(listCount)} ]; then count=$(cat ${JSON.stringify(listCount)}); fi
+count=$((count + 1))
+printf '%s' "$count" > ${JSON.stringify(listCount)}
+if [ "$count" -eq 1 ] || [ "$count" -eq 3 ]; then
+  printf '%s\n' '{"pending":[{"requestId":"reused-request","clientId":"unknown","clientMode":"unknown","role":"operator","roles":["operator"],"scopes":["operator.pairing"]}],"paired":[]}'
+else
+  printf '%s\n' '{"pending":[],"paired":[]}'
+fi
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_BIN: fakeOpenclaw,
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "2",
+          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+        },
+        timeout: 10_000,
+      });
+
+      expect(run.status).toBe(0);
+      expect(
+        run.stdout.match(/stage=request-creation observed request=reused-request/g),
+      ).toHaveLength(2);
+      expect(
+        run.stdout.match(/stage=validation rejected request=reused-request reason=unknown-client/g),
+      ).toHaveLength(2);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

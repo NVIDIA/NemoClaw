@@ -2735,6 +2735,7 @@ VALIDATED_REQUEST_IDS = set()
 LAST_LIST_FAILURE_REASON = None
 REQUEST_CREATION_WAITING_REPORTED = False
 PAIRING_BOOTSTRAPPED = False
+MALFORMED_REQUEST_ID_REPORTED = False
 # SECURITY NOTE: clientId/clientMode are client-supplied and spoofable
 # (the gateway stores connectParams.client.id verbatim). The policy requires
 # an explicit known clientId and never trusts an allowlisted mode by itself.
@@ -2868,7 +2869,7 @@ def is_pairing_required_list_failure(out, err):
     return 'pairing required' in message and 'device is not approved yet' in message
 
 
-REQUEST_ID_RE = re.compile(r'^[A-Za-z0-9._:-]{1,128}$')
+REQUEST_ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$')
 
 
 def _structured_request_ids(text):
@@ -3052,6 +3053,11 @@ while time.time() < DEADLINE:
             LAST_LIST_FAILURE_REASON = failure_reason
         initial_request_id = pairing_required_request_id(out, err)
         if initial_request_id and initial_request_id not in HANDLED:
+            live_request_ids = {initial_request_id}
+            HANDLED.intersection_update(live_request_ids)
+            OBSERVED_REQUEST_IDS.intersection_update(live_request_ids)
+            VALIDATED_REQUEST_IDS.intersection_update(live_request_ids)
+            FAST_REENTRY_BUMPED_REQUEST_IDS.intersection_update(live_request_ids)
             report_request_observed(initial_request_id)
             initial_request_allowed = initial_cli_request_is_allowlisted(initial_request_id)
             report_request_validation(
@@ -3080,9 +3086,6 @@ while time.time() < DEADLINE:
                 print(f'[auto-pair] initial CLI approve failed request={initial_request_id}: {failure}')
         sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
-    if not PAIRING_BOOTSTRAPPED:
-        PAIRING_BOOTSTRAPPED = True
-        print('[auto-pair] loopback CLI pairing bootstrap completed')
     try:
         data = json.loads(out)
     except Exception:
@@ -3106,7 +3109,30 @@ while time.time() < DEADLINE:
         sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
     LAST_LIST_FAILURE_REASON = None
+    has_cli_pairing = any(
+        d.get('clientId') == 'cli' and d.get('clientMode') == 'cli'
+        for d in paired
+        if isinstance(d, dict)
+    )
+    if not PAIRING_BOOTSTRAPPED and has_cli_pairing:
+        PAIRING_BOOTSTRAPPED = True
+        print('[auto-pair] loopback CLI pairing bootstrap completed')
     has_browser = any((d.get('clientId') == 'openclaw-control-ui') or (d.get('clientMode') == 'webchat') for d in paired if isinstance(d, dict))
+
+    normalized_pending = []
+    for device in pending:
+        request_id = device.get('requestId') if isinstance(device, dict) else None
+        if not isinstance(request_id, str) or REQUEST_ID_RE.fullmatch(request_id) is None:
+            if not MALFORMED_REQUEST_ID_REPORTED:
+                print('[auto-pair] stage=validation rejected reason=malformed-request-id')
+                MALFORMED_REQUEST_ID_REPORTED = True
+            continue
+        normalized_pending.append((request_id, device))
+    pending_request_ids = {request_id for request_id, _device in normalized_pending}
+    HANDLED.intersection_update(pending_request_ids)
+    OBSERVED_REQUEST_IDS.intersection_update(pending_request_ids)
+    VALIDATED_REQUEST_IDS.intersection_update(pending_request_ids)
+    FAST_REENTRY_BUMPED_REQUEST_IDS.intersection_update(pending_request_ids)
 
     if not pending and not paired and APPROVED == 0 and not REQUEST_CREATION_WAITING_REPORTED:
         print('[auto-pair] stage=request-creation waiting reason=no-request')
@@ -3115,14 +3141,7 @@ while time.time() < DEADLINE:
     if pending:
         QUIET_POLLS = 0
         attempted_request_ids = set()
-        pending_request_ids = set()
-        for device in pending:
-            if not isinstance(device, dict):
-                continue
-            request_id = device.get('requestId')
-            if not request_id:
-                continue
-            pending_request_ids.add(request_id)
+        for request_id, device in normalized_pending:
             if request_id in HANDLED:
                 continue
             report_request_observed(request_id)
@@ -3168,11 +3187,6 @@ while time.time() < DEADLINE:
                 failure = brief_child_error(aout, aerr)
                 if failure:
                     print(f'[auto-pair] approve failed request={request_id}: {failure}')
-        # Drop previously-bumped requestIds that the gateway no longer reports
-        # as pending so a future re-appearance of the same id (very unlikely,
-        # but kept robust) can bump again. The set is otherwise small and
-        # never crosses out of the watcher process.
-        FAST_REENTRY_BUMPED_REQUEST_IDS.intersection_update(pending_request_ids)
         # Fast-reentry is armed on the rising edge per requestId — once for
         # each freshly-observed allowlisted attempt. A sticky pending request
         # that fails approval repeatedly therefore stops bumping the counter

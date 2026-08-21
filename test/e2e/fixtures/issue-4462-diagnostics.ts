@@ -35,6 +35,7 @@ const SAFE_REASONS = new Set([
   "empty-output",
   "invalid-json",
   "invalid-response",
+  "malformed-request-id",
   "malformed-scopes",
   "no-request",
   "not-allowlisted",
@@ -74,7 +75,7 @@ function projectAutoPair(text) {
   const events = [];
   const seen = new Set();
   for (const line of text.split(/\r?\n/)) {
-    const stageMatch = line.match(/\[auto-pair\] stage=(request-creation|listing|validation|approval|watcher-execution) (observed|waiting|failed|accepted|rejected|attempting)\b/);
+    const stageMatch = line.match(/^\[auto-pair\] stage=(request-creation|listing|validation|approval|watcher-execution) (observed|waiting|failed|accepted|rejected|attempting)\b/);
     if (!stageMatch) continue;
     const stage = stageMatch[1];
     const outcome = stageMatch[2];
