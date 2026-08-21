@@ -841,6 +841,8 @@ NemoClaw-managed commands:
   dcode status      Show managed sandbox and dcode runtime identity
   dcode whoami      Alias for dcode status
   dcode identity    Alias for dcode status
+  dcode tools call-read-only TOOL --json
+                    Call one exact, coherently read-only MCP tool
 
 EOF
 }
@@ -880,8 +882,8 @@ case "${1:-}" in
     ;;
   tools)
     case "${2:-}" in
-      list | help | "" | -h | --help)
-        : # read-only inspection subcommands pass through
+      list | call-read-only | help | "" | -h | --help)
+        : # managed read-only subcommands pass through
         ;;
       *)
         reject_managed_override "managed tool set posture" "tools ${2:-}"
@@ -1002,5 +1004,14 @@ extra_args=(--sandbox none --no-mcp)
 # could consume it.
 # `--no-mcp` also keeps upstream auto-discovery fail-closed until the managed
 # entrypoint replaces it with the integrity-bound /proc/self/fd path.
+
+if [ "${1:-}" = "tools" ] && [ "${2:-}" = "call-read-only" ]; then
+  shift 2
+  unset PYTHONHOME PYTHONPATH
+  # The managed command returns one bounded JSON envelope on stdout. Suppress
+  # child MCP stderr so an untrusted server cannot create an unbounded or
+  # credential-bearing diagnostic channel outside that envelope.
+  exec /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/nemoclaw_read_only_mcp.py "$@" 2>/dev/null
+fi
 
 run_dcode "${extra_args[@]}" "$@"

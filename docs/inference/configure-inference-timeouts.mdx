@@ -19,7 +19,7 @@ Use the error location to select the correct setting.
 | Setting | Applies to | Default |
 |---|---|---|
 | `NEMOCLAW_AGENT_TIMEOUT` | OpenClaw per-request inference | `600` seconds |
-| `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | Ollama, vLLM, NIM, and compatible-endpoint validation during onboarding | `180` seconds |
+| `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | Ollama, vLLM, NIM, and compatible-endpoint onboarding validation paths that read this setting | `180` seconds |
 | `NEMOCLAW_SANDBOX_READY_TIMEOUT` | Image build, gateway upload, and in-sandbox boot after creation | `180` seconds |
 | `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | OpenShell command re-registration after policy application, plus gateway health and re-registration during managed OpenClaw or Hermes recovery | `30`, `90`, or `120` seconds, depending on the recovery phase |
 
@@ -74,8 +74,15 @@ Deep Agents does not consume the OpenClaw-only `NEMOCLAW_AGENT_TIMEOUT` setting.
 
 ## Increase the Local Validation Timeout
 
-Raise `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` when the inference-server validation probe needs more than 180 seconds.
+For validation paths that read `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT`, raise it when the inference-server validation request needs more than 180 seconds.
 Large prompts, cold local model loads, and slower hardware can require a larger budget.
+
+<AgentOnly variant="openclaw,hermes">
+
+Portable onboarding uses a fixed 120-second deadline for its receipt-owned Podman inference validation request.
+`NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` does not change this deadline.
+
+</AgentOnly>
 
 ```bash
 export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300

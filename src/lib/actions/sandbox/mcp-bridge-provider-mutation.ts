@@ -44,26 +44,88 @@ export {
   providerDetachChangedState,
 } from "./mcp-bridge-provider-attachments";
 
-function profileHasExpectedCredentialBoundary(output: string): boolean {
+const OPENAI_GATEWAY_PROVIDER_TYPE = "openai";
+
+function profileHasExpectedCredentialBoundary(
+  output: string,
+  expected: { id: string; inferenceCapable: boolean },
+): boolean {
   try {
     const parsed = JSON.parse(output) as Record<string, unknown>;
     return (
-      parsed.id === MCP_BRIDGE_PROVIDER_TYPE &&
+      parsed.id === expected.id &&
       Array.isArray(parsed.credentials) &&
       parsed.credentials.length === 0 &&
       Array.isArray(parsed.endpoints) &&
       parsed.endpoints.length === 0 &&
       Array.isArray(parsed.binaries) &&
       parsed.binaries.length === 0 &&
-      parsed.inference_capable === false
+      parsed.inference_capable === expected.inferenceCapable
     );
   } catch {
     return false;
   }
 }
 
+/**
+ * OpenShell 0.0.106 still accepts the legacy `openai` provider type without a
+ * declarative profile. Its static-credential resolver then emits the provider
+ * key without endpoint metadata, causing the supervisor to reject the whole
+ * provider environment as unclassified when an MCP provider is attached.
+ * Registering an endpointless profile makes the gateway-only inference key
+ * explicitly non-injectable while preserving OpenShell's inference route.
+ */
+function ensureOpenAiGatewayProviderProfile(): void {
+  const profilePath = path.resolve(
+    __dirname,
+    "../../../..",
+    "nemoclaw-blueprint",
+    "provider-profiles",
+    "openai.yaml",
+  );
+  const imported = runOpenshellProviderCommand(
+    ["provider", "profile", "import", "--file", profilePath],
+    {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  ) as OpenShellCommandResult;
+  if (imported.status === 0) return;
+
+  const importOutput = commandOutput(imported);
+  if (!/already exists/i.test(importOutput)) {
+    throw new McpBridgeError(
+      importOutput || "Could not import the OpenShell OpenAI gateway provider profile.",
+    );
+  }
+
+  const exported = runOpenshellProviderCommand(
+    ["provider", "profile", "export", OPENAI_GATEWAY_PROVIDER_TYPE, "--output", "json"],
+    {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  ) as OpenShellCommandResult;
+  if (exported.status !== 0) {
+    throw new McpBridgeError(
+      `OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' already exists but could not be exported for validation. Refusing to classify gateway inference credentials with it.`,
+    );
+  }
+  if (
+    !profileHasExpectedCredentialBoundary(String(exported.stdout), {
+      id: OPENAI_GATEWAY_PROVIDER_TYPE,
+      inferenceCapable: true,
+    })
+  ) {
+    throw new McpBridgeError(
+      `OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' already exists but does not match NemoClaw's gateway-only endpointless credential contract. Refusing to classify gateway inference credentials with it.`,
+    );
+  }
+}
+
 /** Ensure the endpointless profile required by OpenShell static credential binding. */
 export function ensureMcpBridgeProviderProfile(): void {
+  ensureOpenAiGatewayProviderProfile();
   const profilePath = path.resolve(
     __dirname,
     "../../../..",
@@ -94,7 +156,13 @@ export function ensureMcpBridgeProviderProfile(): void {
       stdio: ["ignore", "pipe", "pipe"],
     },
   ) as OpenShellCommandResult;
-  if (exported.status !== 0 || !profileHasExpectedCredentialBoundary(String(exported.stdout))) {
+  if (
+    exported.status !== 0 ||
+    !profileHasExpectedCredentialBoundary(String(exported.stdout), {
+      id: MCP_BRIDGE_PROVIDER_TYPE,
+      inferenceCapable: false,
+    })
+  ) {
     throw new McpBridgeError(
       `OpenShell provider profile '${MCP_BRIDGE_PROVIDER_TYPE}' already exists but does not match NemoClaw's endpointless credential contract. Refusing to attach MCP credentials to it.`,
     );
