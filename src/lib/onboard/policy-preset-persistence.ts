@@ -141,10 +141,22 @@ export function applyRecreatePolicyCarryForward(
   note: (message: string) => void,
 ): void {
   const previousEntry = registry.getSandbox(sandboxName);
+  const session = onboardSession.loadSession();
+  const journaledSessionPolicies =
+    session?.checkpoint?.sandboxRecreate?.sandboxName === sandboxName &&
+    Array.isArray(session.policyPresets)
+      ? [...session.policyPresets]
+      : null;
+  // A matching recreate journal owns the replacement target. In particular,
+  // rebuild can remove generated MCP policies before deleting the old sandbox
+  // while retaining their registry metadata for crash recovery. Re-reading the
+  // preserved source row here would replace the already-normalized target with
+  // a generated policy name whose definition is intentionally absent.
+  const previousPolicies = journaledSessionPolicies ?? previousEntry?.policies;
   const { policyPresets, overrideNote } = resolveRecreatePolicyPresets(
-    previousEntry?.policies,
-    previousEntry?.policyPresetsFinalized === true,
-    (previousEntry?.customPolicies?.length ?? 0) > 0,
+    previousPolicies,
+    journaledSessionPolicies !== null || previousEntry?.policyPresetsFinalized === true,
+    journaledSessionPolicies === null && (previousEntry?.customPolicies?.length ?? 0) > 0,
     process.env,
     nonInteractive,
   );
