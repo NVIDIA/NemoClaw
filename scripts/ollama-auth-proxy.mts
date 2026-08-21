@@ -202,10 +202,16 @@ function probeLinuxLoopbackBind(port: number): BackendProbeResult | null {
   try {
     v6Text = fs.readFileSync("/proc/net/tcp6", "utf8");
   } catch (err) {
-    // tcp6 may be absent on IPv6-disabled kernels; treat as empty. Any
-    // other failure (EACCES / EPERM) is treated the same: absence of IPv6
-    // data doesn't invalidate the IPv4 data we already read.
-    void err;
+    // tcp6 absent (ENOENT) means the kernel runs without IPv6, so there are
+    // no IPv6 listeners to classify; the IPv4 data alone is complete.
+    // Any other failure (EACCES / EPERM) means IPv6 listeners exist but are
+    // not visible here, and passing on IPv4 data alone would let a
+    // non-loopback IPv6-only listener through. Degrade to null so the
+    // caller falls back to `lsof`, which sees both address families.
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== "ENOENT") {
+      return null;
+    }
   }
   const listeners = [
     ...parseProcNetTcpListeners(v4Text, port),
