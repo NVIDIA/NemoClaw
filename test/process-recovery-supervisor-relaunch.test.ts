@@ -1281,6 +1281,10 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     const runOpenshell = vi
       .spyOn(openshellRuntime, "runOpenshell")
       .mockReturnValue({ status: 0 } as never);
+    const probeTiming = {
+      measure: <T>(_stage: "processes" | "forward", operation: () => T): T => operation(),
+      setForwardAction: vi.fn(),
+    };
 
     const result = checkAndRecoverSandboxProcesses("drifted-box", {
       quiet: true,
@@ -1289,6 +1293,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       requestPinnedGatewaySupervisorAction,
       relaunchManagedSupervisorSessionImpl,
       waitForRecreatedSandboxOpenShellReadyImpl,
+      probeTiming,
     });
 
     expect(result).toMatchObject({
@@ -1310,6 +1315,8 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       "replacement-container-id",
     );
     expect(finalize).toHaveBeenCalledWith(true);
+    expect(probeTiming.setForwardAction).toHaveBeenCalledOnce();
+    expect(probeTiming.setForwardAction).toHaveBeenCalledWith("failed");
     expect(runOpenshell).toHaveBeenCalledOnce();
     expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "drifted-box"], {
       ignoreError: true,

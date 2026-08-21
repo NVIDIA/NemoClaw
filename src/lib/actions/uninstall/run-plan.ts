@@ -317,6 +317,7 @@ const HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES: readonly string[] = [
 const OLLAMA_AUTH_PROXY_STATE_ENTRIES: readonly string[] = [
   "ollama-proxy-token",
   "ollama-backend",
+  "ollama-backend.json",
   "ollama-proxy-port",
   "ollama-auth-proxy.pid",
   "ollama-auth-proxy.status",

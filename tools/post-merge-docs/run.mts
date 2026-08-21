@@ -22,7 +22,7 @@ import {
   RESOLVER_MODEL_ID,
   resolverModelConfiguration,
 } from "../pr-merge-conflict-fixer/resolve.mts";
-import { allowedDocumentationPath, readBoundedFile } from "./contract.mts";
+import { allowedDocumentationPath, nextPatchReleaseTag, readBoundedFile } from "./contract.mts";
 
 const PATCH_FILE = "docs.patch";
 const MAX_PATCH_BYTES = 5_242_880;
@@ -54,6 +54,12 @@ function phase(env: NodeJS.ProcessEnv): Phase {
 function exactSha(value: string | undefined, name: string): string {
   const sha = required(value, name);
   return SHA.test(sha) ? sha : fail(`${name} must be a full commit SHA`);
+}
+
+function targetReleaseTag(rangeStartTag: string): string {
+  const match = /^v(\d+)[.](\d+)[.](\d+)$/u.exec(rangeStartTag);
+  if (!match) fail("RANGE_START_TAG cannot produce a release target");
+  return nextPatchReleaseTag(rangeStartTag, "RANGE_START_TAG cannot produce a release target");
 }
 
 function git(repository: string, args: readonly string[]): string {
@@ -331,8 +337,10 @@ function exportArtifact(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
       mainSha: exactSha(env.GITHUB_SHA, "GITHUB_SHA"),
       outcome: "approved",
       patchSha256: createHash("sha256").update(patch).digest("hex"),
+      rangeStartTag: required(env.RANGE_START_TAG, "RANGE_START_TAG"),
       repository: required(env.GITHUB_REPOSITORY, "GITHUB_REPOSITORY"),
-      version: 1,
+      targetReleaseTag: targetReleaseTag(required(env.RANGE_START_TAG, "RANGE_START_TAG")),
+      version: 2,
     })}\n`,
   );
 }
