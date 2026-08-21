@@ -540,7 +540,6 @@ describe("MessagingSetupApplier", () => {
       "telegram",
     ]);
     const calls: string[] = [];
-
     expect(() =>
       MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
         env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
@@ -604,6 +603,29 @@ describe("MessagingSetupApplier", () => {
         },
       }),
     ).toThrow("OpenShell did not confirm messaging provider 'demo-telegram-bridge' after create.");
+  });
+
+  it("does not mutate after a not-found message with an unavailable status (#9875)", async () => {
+    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" }, [
+      "telegram",
+    ]);
+    const calls: string[] = [];
+
+    expect(() =>
+      MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
+        env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
+        runOpenshell: (args) => {
+          calls.push(args.join(" "));
+          return args[1] === "profile"
+            ? { status: 0 }
+            : {
+                status: 1,
+                stderr: 'Error: status: Unavailable, message: "provider not found"',
+              };
+        },
+      }),
+    ).toThrow(/Could not inspect messaging provider/u);
+    expect(calls.some((command) => /provider (create|update)/u.test(command))).toBe(false);
   });
 
   it("applies agent config render plans into sandbox files through OpenShell", async () => {

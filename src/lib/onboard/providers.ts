@@ -571,11 +571,16 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
         _runOpenshell,
       );
       if (inspection.kind === "indeterminate") {
-        result = { ok: false, message: "Could not inspect the existing messaging provider." };
+        result = {
+          ok: false,
+          status: 1,
+          message: `Could not inspect messaging provider '${name}'; no provider mutation was attempted.`,
+        };
       } else if (inspection.kind === "collision" && !options.replaceExisting) {
         result = {
           ok: false,
-          message: "Existing provider does not match the endpointless binding.",
+          status: 1,
+          message: `Messaging provider '${name}' does not match the required endpointless credential binding.`,
         };
       } else {
         knownExists = inspection.kind !== "missing";

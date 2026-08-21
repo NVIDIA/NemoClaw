@@ -3,8 +3,22 @@
 
 import { describe, expect, it } from "vitest";
 
-type RunResult = { status: number; stdout?: string; stderr?: string };
-type RunOptions = { env?: Record<string, string | undefined> };
+type RunResult = {
+  error?: unknown;
+  output?: string;
+  signal?: unknown;
+  status: number;
+  stdout?: string;
+  stderr?: string;
+};
+type RunOptions = {
+  env?: Record<string, string | undefined>;
+  ignoreError?: boolean;
+  maxBuffer?: number;
+  stdio?: readonly unknown[];
+  suppressOutput?: boolean;
+  timeout?: number;
+};
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
 const {
@@ -67,7 +81,7 @@ const {
     baseUrl: string | null,
     env: Record<string, string | undefined>,
     runOpenshell: RunOpenshell,
-    options?: { replaceExisting?: boolean },
+    options?: { knownExists?: boolean; replaceExisting?: boolean },
   ) => { ok: boolean; status?: number; message?: string };
   upsertMessagingProviders: (
     tokenDefs: Array<{
@@ -709,8 +723,41 @@ describe("onboard provider helpers", () => {
         },
         { bestEffort: true },
       ),
-    ).toThrow(/Existing provider does not match the endpointless binding/);
+    ).toThrow(/does not match the required endpointless credential binding/);
     expect(commands.some((command) => /provider (create|update)/u.test(command))).toBe(false);
+  });
+
+  it("rejects an ambiguous messaging provider lookup before mutation (#9875)", () => {
+    const mutations: string[] = [];
+    const getResult = {
+      status: 1,
+      stdout: "",
+      stderr: 'Error: status: Unavailable, message: "provider not found"',
+    };
+    const profileResult = { status: 0, stdout: "", stderr: "" };
+
+    expect(() =>
+      upsertMessagingProviders(
+        [
+          {
+            name: "alpha-discord-bridge",
+            envKey: "DISCORD_BOT_TOKEN",
+            token: "credential",
+            providerType: "nemoclaw-mcp-v1",
+          },
+        ],
+        (command) => {
+          const joined = command.join(" ");
+          const result = joined.startsWith("provider profile import ")
+            ? profileResult
+            : new Map([["provider get alpha-discord-bridge", getResult]]).get(joined);
+          mutations.push(...(result ? [] : [joined]));
+          return result ?? profileResult;
+        },
+        { bestEffort: true },
+      ),
+    ).toThrow(/Could not inspect messaging provider/);
+    expect(mutations).toEqual([]);
   });
 
   it.each([

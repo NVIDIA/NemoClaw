@@ -92,6 +92,44 @@ describe("gateway provider metadata", () => {
     ).toBe(false);
   });
 
+  it("distinguishes exact, missing, incompatible, and indeterminate credential providers", () => {
+    const expected = {
+      name: "alpha-telegram-bridge",
+      type: "nemoclaw-mcp-v1",
+      credentialKey: "TELEGRAM_BOT_TOKEN",
+    };
+    const exact =
+      "Name: alpha-telegram-bridge\nType: nemoclaw-mcp-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n";
+
+    expect(
+      inspectGatewayCredentialOnlyProviderBinding(expected, () => ({ status: 0, stdout: exact })),
+    ).toEqual({ kind: "exact" });
+    expect(
+      inspectGatewayCredentialOnlyProviderBinding(expected, () => ({
+        status: 0,
+        stdout: exact.replace("Type: nemoclaw-mcp-v1", "Type: generic"),
+      })),
+    ).toEqual({ kind: "collision" });
+    expect(
+      inspectGatewayCredentialOnlyProviderBinding(expected, () => ({
+        status: 1,
+        stderr:
+          "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
+      })),
+    ).toEqual({ kind: "missing" });
+    expect(
+      inspectGatewayCredentialOnlyProviderBinding(expected, () => ({
+        status: 1,
+        stderr: 'Error: status: Unavailable, message: "provider not found"',
+      })),
+    ).toEqual({ kind: "indeterminate" });
+    expect(
+      inspectGatewayCredentialOnlyProviderBinding(expected, () => {
+        throw new Error("transport failure");
+      }),
+    ).toEqual({ kind: "indeterminate" });
+  });
+
   it("parses one complete ANSI-decorated provider identity", () => {
     expect(parseGatewayProviderMetadata(COMPLETE_OUTPUT)).toEqual({
       name: "compatible-endpoint",
