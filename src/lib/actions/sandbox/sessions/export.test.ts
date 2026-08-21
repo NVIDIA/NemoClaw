@@ -533,7 +533,35 @@ describe("exportSandboxSessions", () => {
       });
       expect(consoleWarnSpy).toHaveBeenCalledWith(
         expect.stringMatching(
-          /failed to remove in-sandbox staging tarball '\/sandbox\/\.nemoclaw-staging\/[^']+'.*sandbox 'alpha'.*exit 2/,
+          /failed to remove in-sandbox staging tarball '\/sandbox\/\.nemoclaw-staging\/[^']+'.*sandbox 'alpha'.*exit 2.*remove it manually with `[^`]+ sandbox exec --name alpha -- rm -f \/sandbox\/\.nemoclaw-staging\/[^`]+`/,
+        ),
+      );
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
+  });
+
+  // Both the tar step and the cleanup can fail in the same run. The tar failure
+  // is the primary rejection the caller must see; the cleanup warning is
+  // additive and must still name the leftover artefact and how to remove it.
+  it("keeps the tar failure as the primary rejection and still warns with the staging path, sandbox, exit status, and manual removal command when the cleanup also exits non-zero", async () => {
+    captureMock.mockReturnValueOnce(
+      makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
+    );
+    runMock.mockReturnValueOnce(makeRun(1)).mockReturnValueOnce(makeRun(3));
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await expect(
+        exportSandboxSessions({
+          sandboxName: "alpha",
+          out: "./out.tgz",
+          format: "tar",
+        }),
+      ).rejects.toThrow(/Failed to tar sessions/);
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /failed to remove in-sandbox staging tarball '\/sandbox\/\.nemoclaw-staging\/[^']+'.*sandbox 'alpha'.*exit 3.*remove it manually with `[^`]+ sandbox exec --name alpha -- rm -f \/sandbox\/\.nemoclaw-staging\/[^`]+`/,
         ),
       );
     } finally {

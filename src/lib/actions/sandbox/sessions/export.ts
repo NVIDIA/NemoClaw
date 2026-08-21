@@ -215,20 +215,13 @@ async function exportSandboxSessionsUnlocked(
     } finally {
       // Best-effort cleanup of the in-sandbox staging tarball. Runs even when
       // tar/download fail so a partial export cannot leave a bundle of session
-      // JSONL behind in the in-sandbox staging directory. `stdio: "ignore"`
-      // discards the `rm` diagnostics, so the exit status is the only signal
-      // left: capture it and warn, exactly as the hermes path below does.
-      // Without that, a failed cleanup reports a clean export while a mode-0600
-      // tarball of session JSONL survives in the sandbox.
-      const remoteCleanup = runOpenshell(
-        ["sandbox", "exec", "--name", opts.sandboxName, "--", "rm", "-f", tarballRemote],
-        { ignoreError: true, stdio: "ignore" },
-      );
-      if (remoteCleanup.status !== 0) {
-        console.warn(
-          `  Warning: failed to remove in-sandbox staging tarball '${tarballRemote}' from sandbox '${opts.sandboxName}' (exit ${remoteCleanup.status}). The tarball may still contain session JSONL with pasted secrets; remove it manually with \`${CLI_NAME} sandbox exec --name ${opts.sandboxName} -- rm -f ${tarballRemote}\`.`,
-        );
-      }
+      // JSONL behind in the in-sandbox staging directory.
+      removeRemoteStagingArtifact({
+        sandboxName: opts.sandboxName,
+        remotePath: tarballRemote,
+        artifactLabel: "staging tarball",
+        retainedDataNote: "The tarball may still contain session JSONL with pasted secrets",
+      });
       removeHostStagingDir(hostStagingDir);
     }
 
@@ -404,15 +397,12 @@ async function exportHermesSessions(opts: SessionsExportOptions): Promise<Sessio
     // Best-effort cleanup of the in-sandbox staging JSONL. The host throw (if
     // any) is already in flight, so a console.warn here cannot mask it — the
     // primary error still propagates once the `finally` block returns.
-    const remoteCleanup = runOpenshell(
-      ["sandbox", "exec", "--name", opts.sandboxName, "--", "rm", "-f", stagingRemote],
-      { ignoreError: true, stdio: "ignore" },
-    );
-    if (remoteCleanup.status !== 0) {
-      console.warn(
-        `  Warning: failed to remove in-sandbox staging file '${stagingRemote}' from sandbox '${opts.sandboxName}' (exit ${remoteCleanup.status}). The file may still contain a session JSONL with pasted secrets; remove it manually with \`${CLI_NAME} sandbox exec --name ${opts.sandboxName} -- rm -f ${stagingRemote}\`.`,
-      );
-    }
+    removeRemoteStagingArtifact({
+      sandboxName: opts.sandboxName,
+      remotePath: stagingRemote,
+      artifactLabel: "staging file",
+      retainedDataNote: "The file may still contain a session JSONL with pasted secrets",
+    });
     removeHostStagingDir(hostStagingDir);
   }
 
@@ -493,6 +483,31 @@ function hardenPermissions(target: string): void {
   } catch {
     console.error(
       `  Warning: could not restrict permissions on ${target}; treat it as sensitive — it may contain session secrets.`,
+    );
+  }
+}
+
+// Best-effort removal of the in-sandbox staging artefact left by an export.
+// Both export paths run the same `rm -f` under `stdio: "ignore"`, which
+// discards the `rm` diagnostics and leaves the exit status as the only signal,
+// so both must capture it and warn: otherwise a failed cleanup reports a clean
+// export while a mode-0600 artefact of session JSONL survives in the sandbox.
+// Warns instead of throwing so it cannot mask a primary error already in flight
+// from the caller's `try`. Each caller keeps its own `finally` placement and
+// supplies the wording for the artefact it staged.
+function removeRemoteStagingArtifact(input: {
+  sandboxName: string;
+  remotePath: string;
+  artifactLabel: string;
+  retainedDataNote: string;
+}): void {
+  const remoteCleanup = runOpenshell(
+    ["sandbox", "exec", "--name", input.sandboxName, "--", "rm", "-f", input.remotePath],
+    { ignoreError: true, stdio: "ignore" },
+  );
+  if (remoteCleanup.status !== 0) {
+    console.warn(
+      `  Warning: failed to remove in-sandbox ${input.artifactLabel} '${input.remotePath}' from sandbox '${input.sandboxName}' (exit ${remoteCleanup.status}). ${input.retainedDataNote}; remove it manually with \`${CLI_NAME} sandbox exec --name ${input.sandboxName} -- rm -f ${input.remotePath}\`.`,
     );
   }
 }
