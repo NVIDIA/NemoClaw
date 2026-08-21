@@ -3,6 +3,7 @@
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import type { IncomingMessage } from "node:http";
 import https from "node:https";
 import os from "node:os";
 import path from "node:path";
@@ -288,7 +289,7 @@ describe("authenticated MCP live fixtures", () => {
     }
   });
 
-  it("implements stateless Streamable HTTP and validates the tool challenge", async () => {
+  it("implements Streamable HTTP with an authenticated event channel", async () => {
     const secret = "fixture-secret";
     const challenge = "fixture-challenge";
     const resultToken = `MCP_AUTH_REWRITE_OK::${challenge}`;
@@ -352,11 +353,52 @@ describe("authenticated MCP live fixtures", () => {
     expect(initialize.json()).toMatchObject({
       result: { protocolVersion: "2025-06-18" },
     });
+    const sessionId = server.requests.at(-1)?.negotiatedSessionId ?? "";
+    expect(sessionId).toMatch(/^fake-session-\d+$/u);
     const initialized = await request("POST", {
       jsonrpc: "2.0",
       method: "notifications/initialized",
     });
     expect(initialized.status).toBe(202);
+
+    const openEventChannel = async (
+      eventHeaders: Record<string, string>,
+    ): Promise<IncomingMessage> =>
+      await new Promise((resolve, reject) => {
+        const eventRequest = https.request(
+          url,
+          {
+            method: "GET",
+            ca: fixtureTls.cert,
+            headers: eventHeaders,
+          },
+          resolve,
+        );
+        eventRequest.on("error", reject);
+        eventRequest.end();
+      });
+    const missingCredential = await openEventChannel({
+      authorization: "Bearer wrong-secret",
+      accept: "text/event-stream",
+    });
+    expect(missingCredential.statusCode).toBe(401);
+    missingCredential.resume();
+    const missingSession = await openEventChannel({
+      authorization: `Bearer ${secret}`,
+      accept: "text/event-stream",
+    });
+    expect(missingSession.statusCode).toBe(400);
+    missingSession.resume();
+    const eventChannel = await openEventChannel({
+      authorization: `Bearer ${secret}`,
+      accept: "text/event-stream",
+      "mcp-session-id": sessionId,
+      "mcp-protocol-version": "2025-06-18",
+    });
+    expect(eventChannel.statusCode).toBe(200);
+    expect(eventChannel.headers["content-type"]).toBe("text/event-stream");
+    expect(eventChannel.complete).toBe(false);
+    eventChannel.destroy();
 
     const list = await request("POST", {
       jsonrpc: "2.0",

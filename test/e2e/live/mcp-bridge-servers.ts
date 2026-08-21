@@ -656,6 +656,7 @@ export async function startFakeMcpHttpsServer(options: {
   let expectedSecret = options.secret;
   let nextSessionId = 1;
   const sessions = new Map<string, string>();
+  const serverEventStreams = new Set<http.ServerResponse>();
   const tls =
     options.tls ??
     (() => {
@@ -723,8 +724,29 @@ export async function startFakeMcpHttpsServer(options: {
       respondJson(404, { error: { message: "not found" } });
       return;
     }
-    if (req.method === "HEAD" || req.method === "GET") {
+    if (req.method === "HEAD") {
       respondEmpty(405, { Allow: "POST" });
+      return;
+    }
+    if (req.method === "GET") {
+      if (auth !== `Bearer ${expectedSecret}`) {
+        respondJson(401, { error: { message: "missing rewritten bearer credential" } });
+        return;
+      }
+      const negotiatedProtocolVersion = sessions.get(sessionId);
+      if (!negotiatedProtocolVersion || protocolVersion !== negotiatedProtocolVersion) {
+        respondJson(400, { error: { message: "missing negotiated MCP session metadata" } });
+        return;
+      }
+      if (recordedRequest) recordedRequest.responseStatus = 200;
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      });
+      res.flushHeaders();
+      serverEventStreams.add(res);
+      res.once("close", () => serverEventStreams.delete(res));
       return;
     }
     if (req.method !== "POST" && req.method !== "DELETE") {
@@ -873,6 +895,9 @@ export async function startFakeMcpHttpsServer(options: {
     setSecret: (secret: string) => {
       expectedSecret = secret;
     },
-    close: () => closeServer(server),
+    close: async () => {
+      for (const response of serverEventStreams) response.destroy();
+      await closeServer(server);
+    },
   };
 }
