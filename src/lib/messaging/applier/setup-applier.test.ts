@@ -386,7 +386,7 @@ describe("MessagingSetupApplier", () => {
     }
   });
 
-  it("upserts OpenShell generic providers from plan credential bindings", async () => {
+  it("upserts profile-backed OpenShell providers from plan credential bindings (#9875)", async () => {
     const plan = await buildOnboardPlan(
       {
         TELEGRAM_BOT_TOKEN: "123456:telegram-token",
@@ -402,7 +402,13 @@ describe("MessagingSetupApplier", () => {
     const runOpenshell: MessagingOpenShellRunner = (args, options) => {
       calls.push({ args, env: options?.env });
       if (args[0] === "provider" && args[1] === "get") {
-        return { status: args[2] === "demo-slack-bridge" ? 0 : 1 };
+        return args[2] === "demo-slack-bridge"
+          ? {
+              status: 0,
+              stdout:
+                "Name: demo-slack-bridge\nType: nemoclaw-mcp-v1\nCredential keys: SLACK_BOT_TOKEN\nConfig keys: <none>\n",
+            }
+          : { status: 1 };
       }
       return { status: 0 };
     };
@@ -417,6 +423,13 @@ describe("MessagingSetupApplier", () => {
     });
 
     expect(calls.map((call) => call.args)).toEqual([
+      [
+        "provider",
+        "profile",
+        "import",
+        "--file",
+        expect.stringMatching(/nemoclaw-mcp-v1\.yaml$/),
+      ],
       ["provider", "get", "demo-telegram-bridge"],
       [
         "provider",
@@ -424,7 +437,7 @@ describe("MessagingSetupApplier", () => {
         "--name",
         "demo-telegram-bridge",
         "--type",
-        "generic",
+        "nemoclaw-mcp-v1",
         "--credential",
         "TELEGRAM_BOT_TOKEN",
       ],
@@ -437,12 +450,12 @@ describe("MessagingSetupApplier", () => {
         "--name",
         "demo-slack-app",
         "--type",
-        "generic",
+        "nemoclaw-mcp-v1",
         "--credential",
         "SLACK_APP_TOKEN",
       ],
     ]);
-    expect(calls[1]?.env).toEqual({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" });
+    expect(calls[2]?.env).toEqual({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" });
     expect(result.upserted.map((entry) => `${entry.action}:${entry.providerName}`)).toEqual([
       "create:demo-telegram-bridge",
       "update:demo-slack-bridge",
@@ -460,16 +473,45 @@ describe("MessagingSetupApplier", () => {
     expect(JSON.stringify(result)).not.toContain("slack-token");
   });
 
+  it("rejects a legacy generic provider instead of reusing its credential (#9875)", async () => {
+    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" }, [
+      "telegram",
+    ]);
+    const calls: string[] = [];
+    const runOpenshell: MessagingOpenShellRunner = (args) => {
+      calls.push(args.join(" "));
+      return args[1] === "get"
+        ? {
+            status: 0,
+            stdout:
+              "Name: demo-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
+          }
+        : { status: 0 };
+    };
+
+    expect(() =>
+      MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
+        env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
+        runOpenshell,
+      }),
+    ).toThrow(/does not match the required endpointless credential binding/);
+    expect(calls.some((command) => /provider (create|update)/u.test(command))).toBe(false);
+  });
+
   it("redacts OpenShell provider failure output", async () => {
     const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "tokensecretvalue" }, ["telegram"]);
     const runOpenshell: MessagingOpenShellRunner = (args) => {
-      if (args[0] === "provider" && args[1] === "get") {
-        return { status: 1 };
+      switch (args[1]) {
+        case "profile":
+          return { status: 0 };
+        case "get":
+          return { status: 1 };
+        default:
+          return {
+            status: 1,
+            stderr: "provider rejected TELEGRAM_BOT_TOKEN=tokensecretvalue",
+          };
       }
-      return {
-        status: 1,
-        stderr: "provider rejected TELEGRAM_BOT_TOKEN=tokensecretvalue",
-      };
     };
 
     let message = "";

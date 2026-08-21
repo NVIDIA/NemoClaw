@@ -22,6 +22,10 @@ const {
   LLAMA_CPP_PROVIDER_NAME,
 } = require("../inference/llama-cpp/contract");
 const { readGatewayProviderMetadata } = require("./gateway-provider-metadata");
+const {
+  ensureMessagingCredentialProviderProfile,
+  MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+} = require("../messaging/provider-profile");
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -387,7 +391,7 @@ function getRequestedModelHint(nonInteractive, allowHostedInferenceStaging = tru
  * Build the argument array for an `openshell provider create` or `update` command.
  * @param {"create"|"update"} action - Whether to create or update.
  * @param {string} name - Provider name.
- * @param {string} type - Provider type (e.g. "openai", "anthropic", "generic").
+ * @param {string} type - Provider type (for example, "openai" or "nemoclaw-mcp-v1").
  * @param {string} credentialEnv - Credential environment variable name.
  * @param {string|null} baseUrl - Optional base URL for API-compatible endpoints.
  * @param {{ includeCredential?: boolean }} [opts] - When `includeCredential` is
@@ -439,13 +443,13 @@ function providerExistsInGateway(name, _runOpenshell) {
  * Checks whether the provider already exists via `openshell provider get`;
  * uses `create` for new providers and `update` for existing ones. When
  * `options.replaceExisting` is true an existing provider is deleted and
- * recreated instead of updated — required for provider-type changes that
+ * recreated instead of updated. This is required for provider-type changes that
  * `provider update` cannot apply (e.g. the Brave Search migration from the
  * legacy `generic` type to the `brave` profile). The caller must guarantee
  * the provider is detached from any live sandbox before opting in: OpenShell
  * rejects `provider delete` on attached providers.
  * @param {string} name - Provider name (e.g. "discord-bridge", "inference").
- * @param {string} type - Provider type ("openai", "anthropic", "generic", "brave").
+ * @param {string} type - Provider type (for example, "openai", "brave", or "nemoclaw-mcp-v1").
  * @param {string} credentialEnv - Environment variable name for the credential.
  * @param {string|null} baseUrl - Optional base URL for the provider endpoint.
  * @param {Record<string, string>} env - Environment variables for the openshell command.
@@ -518,7 +522,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   //     +----v-------------------------------------------------+
   //     |  for (tokenDef of tokenDefs)   <- THE LOOP           |
   //     |     upsertProvider(name, providerType || "generic")  |  bridge created
-  //     |       . slack       -> --type generic                |  with a sentinel
+  //     |       . slack       -> --type nemoclaw-mcp-v1        |  with a sentinel
   //     |       . googlechat  -> --type google-chat-bridge     |  token
   //     +----+-------------------------------------------------+
   //          |
@@ -529,6 +533,24 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   // channels/<channel>/provider-profile/<agent>.yaml (not a flag inside it); both
   // bracket steps self-gate when no bridge token def is present.
   const messagingBridgeProvider = require("./messaging-bridge-provider");
+  if (
+    tokenDefs.some(
+      ({ providerType, token }) =>
+        providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE && Boolean(token),
+    )
+  ) {
+    try {
+      ensureMessagingCredentialProviderProfile({
+        root: ROOT,
+        runOpenshell: _runOpenshell,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (options.bestEffort) throw new Error(message);
+      console.error(`\n  ✗ ${message}`);
+      process.exit(1);
+    }
+  }
   messagingBridgeProvider.ensureMessagingBridgeProfiles(tokenDefs, {
     root: ROOT,
     runOpenshell: _runOpenshell,

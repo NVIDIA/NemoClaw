@@ -1,8 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  matchesGatewayCredentialOnlyProviderBinding,
+  parseGatewayProviderMetadata,
+} from "../../onboard/gateway-provider-metadata";
+import { REPOSITORY_ROOT } from "../../core/repository-root";
 import { redact } from "../../security/redact";
 import type { SandboxMessagingCredentialBindingPlan, SandboxMessagingPlan } from "../manifest";
+import {
+  ensureMessagingCredentialProviderProfile,
+  MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+} from "../provider-profile";
 import type {
   MessagingCredentialApplyOptions,
   MessagingCredentialApplyResult,
@@ -27,11 +36,25 @@ export function applyCredentialsAtOpenShell(
   const upserted: MessagingCredentialApplyEntry[] = [];
   const reused: MessagingCredentialReuseEntry[] = [];
   const missing: MessagingMissingCredentialEntry[] = [];
+  const activeBindings = filterEnabledPlanEntries(plan, plan.credentialBindings);
 
-  for (const binding of filterEnabledPlanEntries(plan, plan.credentialBindings)) {
+  if (activeBindings.some((binding) => readCredentialEnv(env, binding.providerEnvKey))) {
+    ensureMessagingCredentialProviderProfile({
+      root: REPOSITORY_ROOT,
+      runOpenshell: (args, runOptions) => runOpenshell(args, runOptions),
+    });
+  }
+
+  for (const binding of activeBindings) {
     const credential = readCredentialEnv(env, binding.providerEnvKey);
+    const providerState = inspectProviderBinding(binding, runOpenshell);
+    if (providerState === "collision") {
+      throw new Error(
+        `Messaging provider '${binding.providerName}' does not match the required endpointless credential binding.`,
+      );
+    }
     if (!credential) {
-      if (providerExistsInGateway(binding.providerName, runOpenshell)) {
+      if (providerState === "exact") {
         reused.push(toReuseEntry(binding));
       } else {
         missing.push(toMissingEntry(binding));
@@ -39,9 +62,7 @@ export function applyCredentialsAtOpenShell(
       continue;
     }
 
-    const action = providerExistsInGateway(binding.providerName, runOpenshell)
-      ? "update"
-      : "create";
+    const action = providerState === "exact" ? "update" : "create";
     const result = runOpenshell(
       buildProviderArgs(action, binding.providerName, binding.providerEnvKey),
       {
@@ -89,15 +110,25 @@ function readCredentialEnv(env: NodeJS.ProcessEnv, envKey: string): string | nul
   return normalized || null;
 }
 
-function providerExistsInGateway(
-  providerName: string,
+function inspectProviderBinding(
+  binding: MessagingCredentialBindingLike,
   runOpenshell: MessagingOpenShellRunner,
-): boolean {
-  const result = runOpenshell(["provider", "get", providerName], {
+): "collision" | "exact" | "missing" {
+  const result = runOpenshell(["provider", "get", binding.providerName], {
     ignoreError: true,
-    stdio: ["ignore", "ignore", "ignore"],
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  return (result.status ?? 0) === 0;
+  if (result.status !== 0) return "missing";
+  const metadata = parseGatewayProviderMetadata(
+    `${String(result.stdout ?? "")}\n${String(result.stderr ?? "")}`,
+  );
+  return matchesGatewayCredentialOnlyProviderBinding(metadata, {
+    name: binding.providerName,
+    type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+    credentialKey: binding.providerEnvKey,
+  })
+    ? "exact"
+    : "collision";
 }
 
 function buildProviderArgs(
@@ -112,7 +143,7 @@ function buildProviderArgs(
         "--name",
         providerName,
         "--type",
-        "generic",
+        MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         "--credential",
         credentialEnv,
       ]

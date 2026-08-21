@@ -11,6 +11,7 @@ import {
 } from "../../../messaging";
 import { mergeSandboxMessagingPlans } from "../../../messaging/applier/host-state-applier";
 import type { MessagingAgentId, SandboxMessagingPlan } from "../../../messaging/manifest";
+import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../../../messaging/provider-profile";
 import {
   type RegistryMessagingAuthority,
   resolveMessagingPlanAuthority,
@@ -524,7 +525,7 @@ function missingCredentialNeedsValidation(
   if (validateMissingCredentials && !stagedProviderNames.has(binding.providerName)) return true;
   const providerMatches = deps.providerMatchesGatewayCredential(
     binding.providerName,
-    "generic",
+    MESSAGING_CREDENTIAL_PROVIDER_TYPE,
     binding.providerEnvKey,
   );
   return validateMissingCredentials && !providerMatches;

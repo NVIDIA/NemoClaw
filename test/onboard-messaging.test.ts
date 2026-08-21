@@ -545,9 +545,9 @@ registry.registerSandbox({
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  if (normalized.includes("provider get -g nemoclaw my-assistant-discord-bridge")) return { status: 0, stdout: "Name: my-assistant-discord-bridge\nType: generic\nCredential keys: DISCORD_BOT_TOKEN\nConfig keys: <none>\n" };
-  if (normalized.includes("provider get -g nemoclaw my-assistant-slack-bridge")) return { status: 0, stdout: "Name: my-assistant-slack-bridge\nType: generic\nCredential keys: SLACK_BOT_TOKEN\nConfig keys: <none>\n" };
-  if (normalized.includes("provider get -g nemoclaw my-assistant-slack-app")) return { status: 0, stdout: "Name: my-assistant-slack-app\nType: generic\nCredential keys: SLACK_APP_TOKEN\nConfig keys: <none>\n" };
+  if (normalized.includes("provider get -g nemoclaw my-assistant-discord-bridge")) return { status: 0, stdout: "Name: my-assistant-discord-bridge\nType: nemoclaw-mcp-v1\nCredential keys: DISCORD_BOT_TOKEN\nConfig keys: <none>\n" };
+  if (normalized.includes("provider get -g nemoclaw my-assistant-slack-bridge")) return { status: 0, stdout: "Name: my-assistant-slack-bridge\nType: nemoclaw-mcp-v1\nCredential keys: SLACK_BOT_TOKEN\nConfig keys: <none>\n" };
+  if (normalized.includes("provider get -g nemoclaw my-assistant-slack-app")) return { status: 0, stdout: "Name: my-assistant-slack-app\nType: nemoclaw-mcp-v1\nCredential keys: SLACK_APP_TOKEN\nConfig keys: <none>\n" };
   if (normalized.includes("provider get")) return { status: 1 };
   return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
@@ -712,7 +712,7 @@ registry.registerSandbox({
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0, stdout: "Name: my-assistant-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n" };
+  if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0, stdout: "Name: my-assistant-telegram-bridge\nType: nemoclaw-mcp-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n" };
   if (normalized.includes("provider get")) return { status: 1 };
   return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };

@@ -636,6 +636,36 @@ describe("onboard provider helpers", () => {
     );
   });
 
+  it("imports the endpointless profile before creating a static messaging provider (#9875)", () => {
+    const credential = "discord-credential-must-not-leak";
+    const calls: Array<{ command: string[]; env?: Record<string, string | undefined> }> = [];
+    const providers = upsertMessagingProviders(
+      [
+        {
+          name: "alpha-discord-bridge",
+          envKey: "DISCORD_BOT_TOKEN",
+          token: credential,
+          providerType: "nemoclaw-mcp-v1",
+        },
+      ],
+      (command, options) => {
+        calls.push({ command, env: options?.env });
+        return command[0] === "provider" && command[1] === "get"
+          ? { status: 1, stdout: "", stderr: "not found" }
+          : { status: 0, stdout: "", stderr: "" };
+      },
+    );
+
+    expect(providers).toEqual(["alpha-discord-bridge"]);
+    expect(calls.map(({ command }) => command.join(" "))).toEqual([
+      expect.stringMatching(/^provider profile import --file .*nemoclaw-mcp-v1\.yaml$/),
+      "provider get alpha-discord-bridge",
+      "provider create --name alpha-discord-bridge --type nemoclaw-mcp-v1 --credential DISCORD_BOT_TOKEN",
+    ]);
+    expect(calls[2]?.env).toEqual({ DISCORD_BOT_TOKEN: credential });
+    expect(calls.flatMap(({ command }) => command)).not.toContain(credential);
+  });
+
   it("updates an existing Brave Search provider in place on reuse paths", () => {
     const commands: string[] = [];
     const providers = upsertMessagingProviders(

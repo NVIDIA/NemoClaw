@@ -4,6 +4,7 @@
 import type { WebSearchConfig } from "../inference/web-search";
 import * as webSearch from "../inference/web-search";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
+import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { type ChannelDef, getChannelTokenKeys } from "../sandbox/channels";
 import * as braveProviderProfile from "./brave-provider-profile";
 import {
@@ -84,6 +85,7 @@ export function prepareCreateSandboxMessaging(
       name: credential.providerNameTemplate.replaceAll("{sandboxName}", input.sandboxName),
       envKey: credential.providerEnvKey,
       token: input.getValidatedMessagingTokenByEnvKey(input.channels, credential.providerEnvKey),
+      providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
     }))
     .filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey))
     .filter(({ envKey }) => !disabledEnvKeys.has(envKey));
@@ -173,7 +175,11 @@ export function prepareCreateSandboxMessaging(
       const channel = input.getMessagingChannelForEnvKey(envKey);
       if (!channel || !input.enabledChannels.includes(channel)) continue;
       const providerReusable = requiresExactOpenClawProviderBinding
-        ? input.providerMatchesGatewayCredential(name, "generic", envKey)
+        ? input.providerMatchesGatewayCredential(
+            name,
+            MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+            envKey,
+          )
         : input.providerExistsInGateway(name);
       if (!providerReusable) continue;
       reusableMessagingProviders.push(name);

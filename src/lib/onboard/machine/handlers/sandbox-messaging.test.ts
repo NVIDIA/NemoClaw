@@ -758,7 +758,7 @@ describe("reconcileSandboxMessaging plan authority", () => {
 
     expect(deps.providerMatchesGatewayCredential).toHaveBeenCalledWith(
       "alpha-slack-bridge",
-      "generic",
+      "nemoclaw-mcp-v1",
       "SLACK_BOT_TOKEN",
     );
     expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
@@ -1116,7 +1116,7 @@ describe("reconcileSandboxMessaging completed checkpoint credentials", () => {
 
     expect(deps.providerMatchesGatewayCredential).toHaveBeenCalledWith(
       "alpha-telegram-bridge",
-      "generic",
+      "nemoclaw-mcp-v1",
       "TELEGRAM_BOT_TOKEN",
     );
     expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
@@ -1138,7 +1138,7 @@ describe("reconcileSandboxMessaging completed checkpoint credentials", () => {
 
     expect(deps.providerMatchesGatewayCredential).toHaveBeenCalledWith(
       "alpha-telegram-bridge",
-      "generic",
+      "nemoclaw-mcp-v1",
       "TELEGRAM_BOT_TOKEN",
     );
     expect(deps.setupMessagingChannels).not.toHaveBeenCalled();

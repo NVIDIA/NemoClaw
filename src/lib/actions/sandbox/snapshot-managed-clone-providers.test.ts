@@ -161,6 +161,8 @@ function providerRunner(initial: readonly LiveBinding[] = []) {
   const run = vi.fn((args: string[]) => {
     commands.push(args.join(" "));
     switch (args.slice(0, 2).join(" ")) {
+      case "provider profile":
+        return { status: 0, stdout: "", stderr: "" };
       case "provider get": {
         const name = args[2] ?? "";
         const binding = live.get(name);
@@ -279,13 +281,41 @@ describe("managed clone provider transaction", () => {
       {
         binding: {
           providerName: "destination-telegram-bridge",
-          providerType: "generic",
+          providerType: "nemoclaw-mcp-v1",
           providerEnvKey: "TELEGRAM_BOT_TOKEN",
           source: "messaging",
         },
         action: "create",
       },
     ]);
+  });
+
+  it("imports the endpointless profile before creating a cloned messaging provider (#9875)", () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const source = entry("source", profile);
+    const runner = providerRunner();
+    const prepared = prepareManagedCloneProviderTransaction({
+      handoff: handoff(profile, source, messagingPlan("destination")),
+      destination: null,
+      environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
+      runOpenshell: runner.run,
+      transactionId: "9".repeat(32),
+    });
+
+    provisionManagedCloneProviderTransaction(prepared, {
+      ...authorityDeps(source),
+      environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
+      runOpenshell: runner.run,
+    });
+
+    const importIndex = runner.commands.findIndex((command) =>
+      command.startsWith("provider profile import --file "),
+    );
+    const createIndex = runner.commands.findIndex((command) =>
+      command.startsWith("provider create --name destination-telegram-bridge "),
+    );
+    expect(importIndex).toBeGreaterThanOrEqual(0);
+    expect(createIndex).toBeGreaterThan(importIndex);
   });
 
   it("reuses an exact provider only with exact destination registry ownership", () => {
@@ -295,7 +325,7 @@ describe("managed clone provider transaction", () => {
     const destination = entry("destination", profile, { messaging: { schemaVersion: 1, plan } });
     const liveBinding = {
       providerName: "destination-telegram-bridge",
-      providerType: "generic",
+      providerType: "nemoclaw-mcp-v1",
       providerEnvKey: "TELEGRAM_BOT_TOKEN",
     };
     const runner = providerRunner([liveBinding]);

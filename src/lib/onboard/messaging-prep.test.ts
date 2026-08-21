@@ -392,6 +392,33 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(providerMatchesGatewayCredential).not.toHaveBeenCalled();
   });
 
+  it("binds static messaging credentials to the endpointless provider profile (#9875)", () => {
+    const result = prepareCreateSandboxMessaging(
+      createInput({
+        enabledChannels: ["discord", "slack"],
+        getValidatedMessagingTokenByEnvKey: (_channels, envKey) => `${envKey}-value`,
+      }),
+    );
+
+    expect(result.messagingTokenDefs).toMatchObject([
+      {
+        name: "demo-discord-bridge",
+        envKey: "DISCORD_BOT_TOKEN",
+        providerType: "nemoclaw-mcp-v1",
+      },
+      {
+        name: "demo-slack-bridge",
+        envKey: "SLACK_BOT_TOKEN",
+        providerType: "nemoclaw-mcp-v1",
+      },
+      {
+        name: "demo-slack-app",
+        envKey: "SLACK_APP_TOKEN",
+        providerType: "nemoclaw-mcp-v1",
+      },
+    ]);
+  });
+
   it("uses BRAVE_API_KEY from host env when the credential store has no value", () => {
     const result = prepareCreateSandboxMessaging(
       createInput({
