@@ -50,6 +50,16 @@ const LINUX_VLLM_PROFILES = [
     minimumGpuMemoryBytes: 96_000_000_000,
   },
 ] as const;
+const STATION_LARGE_MODEL_PROFILES = [
+  {
+    presetId: "vllm.dgx-station-gb300.single.deepseek-v4-flash",
+    model: "deepseek-v4-flash",
+  },
+  {
+    presetId: "vllm.dgx-station-gb300.single.nemotron-3-ultra-550b-a55b-nvfp4",
+    model: "nemotron-3-ultra-550b-a55b",
+  },
+] as const;
 
 function shippedCatalog(): CompiledManagedInferenceCatalog {
   return structuredClone(loadManagedInferenceCatalog());
@@ -333,6 +343,42 @@ function catalogWithSecondProfile(options: {
 }
 
 describe("managed inference resolver", () => {
+  it.each(STATION_LARGE_MODEL_PROFILES)(
+    "selects the supported single-Station $model profile at physical GB300 HBM capacity (#9850)",
+    ({ presetId, model }) => {
+      const catalog = shippedCatalog();
+      const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
+      expect(preset).toBeDefined();
+      const base = readinessReport({}, preset!);
+      const physicalGb300MemoryBytes = 269_172_604_928;
+      const report = {
+        ...base,
+        observations: base.observations.map((observation) =>
+          observation.id === "host.gpu.memory_total_bytes" ||
+          observation.id === "host.gpu.memory_per_device_bytes"
+            ? { ...observation, value: physicalGb300MemoryBytes }
+            : observation,
+        ),
+      } as SystemReadinessReport;
+
+      expect(
+        resolveManagedInferenceServing(
+          {
+            readinessReports: [{ nodeId: "station", report }],
+            topologyQualifications: [],
+            intent: { provider: "vllm", vllmModel: model },
+            now: NOW,
+          },
+          catalog,
+        ),
+      ).toMatchObject({
+        outcome: "selected",
+        selection: "explicit",
+        preset: { metadata: { id: presetId } },
+      });
+    },
+  );
+
   it.each(LINUX_VLLM_PROFILES)(
     "selects the shipped Linux amd64 profile for direct model $model (#9673)",
     ({ presetId, recipeId, model }) => {
@@ -342,9 +388,7 @@ describe("managed inference resolver", () => {
 
       const result = resolveManagedInferenceServing(
         {
-          readinessReports: [
-            { nodeId: "linux-host", report: readinessReport({}, preset!) },
-          ],
+          readinessReports: [{ nodeId: "linux-host", report: readinessReport({}, preset!) }],
           topologyQualifications: [],
           intent: { provider: "vllm", vllmModel: model },
           now: NOW,
