@@ -318,6 +318,10 @@ function assertBackendBoundToLoopback(port: number): void {
   const labels = (result.nonLoopback || result.listeners || [])
     .map((l) => `${l.address}:${l.port}`)
     .join(", ");
+  // This stderr is not the user-facing message: the host spawns the proxy with
+  // stdio "ignore" and renders remediation from the status reason below, which
+  // knows whether the backend is Ollama or a compatible endpoint (#9730). Keep
+  // user-facing wording in that renderer, not here.
   console.error(
     `Ollama auth proxy: backend on port ${port} is NOT bound to loopback ` +
       `(found ${labels || "non-loopback listener"}). ` +
