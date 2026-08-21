@@ -187,32 +187,59 @@ function directoryAuthoritySha256(directory: string): string | null {
     for (const name of names) {
       const child = path.join(current, name);
       const childRelative = relative ? path.join(relative, name) : name;
-      const stat = fs.lstatSync(child, { bigint: true });
-      if (stat.isSymbolicLink() || stat.uid !== BigInt(uid)) {
-        throw new Error(`Hermes Portable uninstall authority entry is unsafe: ${child}`);
-      }
-      if (stat.isDirectory()) {
-        if ((stat.mode & 0o777n) !== 0o700n) {
-          throw new Error(`Hermes Portable uninstall authority directory is not private: ${child}`);
-        }
-        entries.push({ path: childRelative, kind: "directory", stat: statAuthority(stat) });
-        walk(child, childRelative);
-        continue;
-      }
-      if (
-        !stat.isFile() ||
-        stat.nlink !== 1n ||
-        (stat.mode & 0o777n) !== 0o600n ||
-        stat.size > BigInt(MAX_AUTHORITY_FILE_BYTES)
-      ) {
-        throw new Error(`Hermes Portable uninstall authority file is unsafe: ${child}`);
-      }
-      const descriptor = fs.openSync(child, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+      const descriptor = fs.openSync(
+        child,
+        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | (fs.constants.O_NONBLOCK ?? 0),
+      );
       try {
-        const before = fs.fstatSync(descriptor, { bigint: true });
+        const opened = fs.fstatSync(descriptor, { bigint: true });
+        const named = fs.lstatSync(child, { bigint: true });
+        if (
+          named.isSymbolicLink() ||
+          !isDeepStrictEqual(statAuthority(opened), statAuthority(named)) ||
+          opened.uid !== BigInt(uid)
+        ) {
+          throw new Error(`Hermes Portable uninstall authority entry is unsafe: ${child}`);
+        }
+        if (opened.isDirectory()) {
+          if ((opened.mode & 0o777n) !== 0o700n) {
+            throw new Error(
+              `Hermes Portable uninstall authority directory is not private: ${child}`,
+            );
+          }
+          entries.push({ path: childRelative, kind: "directory", stat: statAuthority(opened) });
+          walk(child, childRelative);
+          if (
+            !isDeepStrictEqual(
+              statAuthority(opened),
+              statAuthority(fs.fstatSync(descriptor, { bigint: true })),
+            ) ||
+            !isDeepStrictEqual(
+              statAuthority(opened),
+              statAuthority(fs.lstatSync(child, { bigint: true })),
+            )
+          ) {
+            throw new Error(`Hermes Portable uninstall authority directory changed: ${child}`);
+          }
+          continue;
+        }
+        if (
+          !opened.isFile() ||
+          opened.nlink !== 1n ||
+          (opened.mode & 0o777n) !== 0o600n ||
+          opened.size > BigInt(MAX_AUTHORITY_FILE_BYTES)
+        ) {
+          throw new Error(`Hermes Portable uninstall authority file is unsafe: ${child}`);
+        }
         const bytes = fs.readFileSync(descriptor);
         const after = fs.fstatSync(descriptor, { bigint: true });
-        if (!isDeepStrictEqual(statAuthority(before), statAuthority(after))) {
+        if (
+          !isDeepStrictEqual(statAuthority(opened), statAuthority(after)) ||
+          !isDeepStrictEqual(
+            statAuthority(opened),
+            statAuthority(fs.lstatSync(child, { bigint: true })),
+          )
+        ) {
           throw new Error(`Hermes Portable uninstall authority file changed: ${child}`);
         }
         entries.push({

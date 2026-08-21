@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { runPortableRuntimeCleanupTransaction } from "./portable-runtime-cleanup";
@@ -9,6 +11,7 @@ describe("Hermes Portable runtime uninstall cleanup", () => {
   it("orders schema-5 lifecycle locks before the process registry lock (#9608)", () => {
     const order: string[] = [];
     const continueLegacyOpenShell = vi.fn(() => true);
+    const homeDir = path.resolve("test", "fixtures", "hermes-portable-uninstall");
     let registryHeld = false;
 
     const result = runPortableRuntimeCleanupTransaction(
@@ -16,9 +19,9 @@ describe("Hermes Portable runtime uninstall cleanup", () => {
         env: {},
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
-        homeDir: "/tmp/hermes-portable-uninstall",
-        registryFile: "/tmp/hermes-portable-uninstall/.nemoclaw/sandboxes.json",
-        stateDir: "/tmp/hermes-portable-uninstall/.nemoclaw",
+        homeDir,
+        registryFile: path.join(homeDir, ".nemoclaw", "sandboxes.json"),
+        stateDir: path.join(homeDir, ".nemoclaw"),
       },
       continueLegacyOpenShell,
       {
