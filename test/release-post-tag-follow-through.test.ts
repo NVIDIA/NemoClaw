@@ -47,7 +47,7 @@ describe("release post-tag follow-through", () => {
   it("classifies production images and leaves lkg under maintainer control", () => {
     expect(cutTag).toContain("Promote complete multi-platform managed image cohort");
     expect(cutTag).toContain("Report Pi candidate failures separately");
-    expect(cutTag).toContain("supports failed-job\nreruns");
+    expect(cutTag).toMatch(/supports failed-job\s+reruns/u);
     expect(cutTag).toContain("This skill never moves `lkg`");
     expect(cutTag).toContain("returned downstream production-image run");
     expect(releaseTrain).toContain("Never move `lkg` automatically");
