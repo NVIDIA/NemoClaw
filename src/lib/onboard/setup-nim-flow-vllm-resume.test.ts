@@ -100,7 +100,7 @@ describe("createSetupNim vLLM resume", () => {
       .mockImplementationOnce(async (selected, options) => {
         options.checkpointInstallIntent?.(selected.defaultModel.id);
         options.beforeInstall?.(selected.defaultModel.servedModelId ?? selected.defaultModel.id);
-        return { ok: true };
+        return { ok: !("modelIntent" in options) };
       });
     const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
       state.provider = "vllm";
@@ -136,7 +136,6 @@ describe("createSetupNim vLLM resume", () => {
       provider: "vllm",
     });
     expect(checkpointVllmInstallModel).toHaveBeenCalledTimes(2);
-    expect(installVllm.mock.calls[1]?.[1]).not.toHaveProperty("modelIntent");
     expect(prompt).not.toHaveBeenCalled();
   });
 });
