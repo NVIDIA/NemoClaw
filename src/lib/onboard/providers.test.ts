@@ -704,6 +704,47 @@ describe("onboard provider helpers", () => {
     expect(calls.flatMap(({ command }) => command)).not.toContain(credential);
   });
 
+  it("rejects credential-free reuse when the messaging profile is incompatible (#9875)", () => {
+    const commands: string[] = [];
+    const profileResults: Record<string, RunResult> = {
+      import: { status: 1, stdout: "", stderr: "profile already exists" },
+      export: {
+        status: 0,
+        stdout: JSON.stringify({
+          id: "nemoclaw-mcp-v1",
+          credentials: [],
+          endpoints: [{ url: "https://foreign.example" }],
+          binaries: [],
+          inference_capable: false,
+        }),
+        stderr: "",
+      },
+    };
+
+    expect(() =>
+      upsertMessagingProviders(
+        [
+          {
+            name: "alpha-discord-bridge",
+            envKey: "DISCORD_BOT_TOKEN",
+            token: null,
+            providerType: "nemoclaw-mcp-v1",
+          },
+        ],
+        (command) => {
+          const joined = command.join(" ");
+          commands.push(joined);
+          return profileResults[command[2] ?? ""] ?? { status: 0, stdout: "", stderr: "" };
+        },
+        { bestEffort: true },
+      ),
+    ).toThrow(/does not match NemoClaw's endpointless messaging credential contract/u);
+    expect(commands).toEqual([
+      expect.stringMatching(/^provider profile import --file /u),
+      "provider profile export nemoclaw-mcp-v1 --output json",
+    ]);
+  });
+
   it.each([
     ["alpha-discord-bridge", "DISCORD_BOT_TOKEN"],
     ["alpha-slack-bridge", "SLACK_BOT_TOKEN"],

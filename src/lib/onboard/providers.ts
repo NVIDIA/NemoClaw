@@ -541,8 +541,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   const messagingBridgeProvider = require("./messaging-bridge-provider");
   if (
     tokenDefs.some(
-      ({ providerType, token }) =>
-        providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE && Boolean(token),
+      ({ providerType }) => providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE,
     )
   ) {
     try {
