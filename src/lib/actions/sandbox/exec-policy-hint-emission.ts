@@ -12,7 +12,7 @@ import { findRecentPolicyDenial, type PolicyDenialMatch } from "./exec-policy-hi
 import {
   buildPolicyDenialExecHint,
   buildScopeUpgradeExecHint,
-  findPendingScopeUpgradeRequestId,
+  hasPendingDeviceRequest,
   shouldProbePolicyDenial,
   shouldProbeScopeUpgrade,
 } from "./exec-policy-hint-rendering";
@@ -104,6 +104,12 @@ function defaultProbePendingDevices(sandboxName: string, gatewayName?: string): 
  * #5324 added `openclaw devices approve`; this names it at the point of failure
  * so the operator does not have to already know the command. Every dependency
  * is best-effort and never replaces the command's output or exit code.
+ *
+ * The probe is a presence check. NemoClaw cannot correlate a pending request
+ * with the failed command, the expected device, or an acceptable scope set, so
+ * no field of the payload reaches the hint and the approve line keeps its
+ * literal placeholder. Naming an id here would present an unrelated pending
+ * `operator.admin` request as this command's remedy.
  */
 export async function maybeEmitScopeUpgradeHint(
   cliName: string,
@@ -129,11 +135,10 @@ export async function maybeEmitScopeUpgradeHint(
     return null;
   }
 
-  const requestId = findPendingScopeUpgradeRequestId(devicesOutput);
-  if (!requestId) return null;
+  if (!hasPendingDeviceRequest(devicesOutput)) return null;
 
   try {
-    const hint = buildScopeUpgradeExecHint(cliName, sandboxName, requestId);
+    const hint = buildScopeUpgradeExecHint(cliName, sandboxName);
     (deps.writeStderr ?? ((line: string) => console.error(line)))(hint);
     return hint;
   } catch {

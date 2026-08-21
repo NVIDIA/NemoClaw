@@ -43,14 +43,15 @@ export function shouldProbePolicyDenial(
   return !suppress || suppress === "0" || suppress === "false";
 }
 
-/** Placeholder used when the pending request cannot be named exactly. */
+/**
+ * Literal placeholder for the request the operator must choose. NemoClaw cannot
+ * correlate a pending request with the failed command, the expected device, or
+ * an acceptable scope set, so it never resolves this to a concrete id: naming
+ * one would present an unrelated `operator.admin` request as this command's
+ * remedy and turn the operator into a confused deputy. The operator reads the
+ * id from `devices list` and decides.
+ */
 export const SCOPE_UPGRADE_REQUEST_PLACEHOLDER = "<requestId>";
-
-// Matches the request-id shape OpenClaw publishes in pending.json and echoes in
-// the failure text. Kept permissive on charset but strictly bounded so a hostile
-// devices-list payload cannot smuggle shell metacharacters into the printed
-// remedy line.
-const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 /** Whether the exec'd command was OpenClaw itself, the only scope-gated case. */
 export function execCommandTargetsOpenClaw(command: readonly string[]): boolean {
@@ -75,42 +76,35 @@ export function shouldProbeScopeUpgrade(
 }
 
 /**
- * Extract the single pending request id from `openclaw devices list --json`.
- * Returns the placeholder when a pending request exists but cannot be named
- * unambiguously, and null when nothing is pending.
+ * Whether `openclaw devices list --json` reports at least one pending request.
+ * This is a presence check only. No field of the payload is read, so nothing
+ * from the sandbox reaches the rendered hint.
  */
-export function findPendingScopeUpgradeRequestId(devicesListOutput: string): string | null {
+export function hasPendingDeviceRequest(devicesListOutput: string): boolean {
   let parsed: unknown;
   try {
     parsed = JSON.parse(devicesListOutput);
   } catch {
-    return null;
+    return false;
   }
-  if (typeof parsed !== "object" || parsed === null) return null;
+  if (typeof parsed !== "object" || parsed === null) return false;
   const pending = (parsed as { pending?: unknown }).pending;
-  if (!Array.isArray(pending) || pending.length === 0) return null;
-  if (pending.length > 1) return SCOPE_UPGRADE_REQUEST_PLACEHOLDER;
-  const entry = pending[0];
-  if (typeof entry !== "object" || entry === null) return SCOPE_UPGRADE_REQUEST_PLACEHOLDER;
-  const requestId = (entry as { requestId?: unknown }).requestId;
-  if (typeof requestId !== "string" || !REQUEST_ID_PATTERN.test(requestId)) {
-    return SCOPE_UPGRADE_REQUEST_PLACEHOLDER;
-  }
-  return requestId;
+  return Array.isArray(pending) && pending.length > 0;
 }
 
-/** Render the remedy stanza for a gateway scope upgrade waiting on approval. */
-export function buildScopeUpgradeExecHint(
-  cliName: string,
-  rawSandboxName: string,
-  requestId: string,
-): string {
+/**
+ * Render the review stanza for a gateway scope upgrade waiting on approval.
+ * The approve line carries the literal placeholder, never a resolved id; see
+ * SCOPE_UPGRADE_REQUEST_PLACEHOLDER.
+ */
+export function buildScopeUpgradeExecHint(cliName: string, rawSandboxName: string): string {
   const sandboxName = displaySandboxName(rawSandboxName);
   return [
     `${cliName}: a device scope upgrade is waiting for approval inside sandbox '${sandboxName}'.`,
     "  The OpenClaw gateway refused the command until the requested scopes are approved.",
     `  Review pending requests: ${cliName} ${sandboxName} exec -- openclaw devices list`,
-    `  Approve the request:     ${cliName} ${sandboxName} exec -- openclaw devices approve ${requestId}`,
+    `  Approve the one you recognize, after checking its device and requested scopes:`,
+    `                           ${cliName} ${sandboxName} exec -- openclaw devices approve ${SCOPE_UPGRADE_REQUEST_PLACEHOLDER}`,
     `  Silence this hint:       export ${POLICY_HINT_SUPPRESS_ENV}=1`,
   ].join("\n");
 }

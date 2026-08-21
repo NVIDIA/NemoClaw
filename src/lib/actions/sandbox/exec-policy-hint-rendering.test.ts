@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPolicyDenialExecHint,
   buildScopeUpgradeExecHint,
-  findPendingScopeUpgradeRequestId,
+  hasPendingDeviceRequest,
   POLICY_HINT_SUPPRESS_ENV,
   SCOPE_UPGRADE_REQUEST_PLACEHOLDER,
   shouldProbeScopeUpgrade,
@@ -62,7 +62,7 @@ describe("buildPolicyDenialExecHint (#5978)", () => {
     const hint = buildPolicyDenialExecHint("nemoclaw", unsafe, "example.com:443");
     expect(hint).toContain("nemoclaw <name> logs --tail 50");
     expect(hint).toContain("nemoclaw <name> policy add <preset>");
-    expect(buildScopeUpgradeExecHint("nemoclaw", unsafe, REQUEST_ID)).toContain(
+    expect(buildScopeUpgradeExecHint("nemoclaw", unsafe)).toContain(
       "nemoclaw <name> exec -- openclaw devices list",
     );
     expect(hint).not.toContain(unsafe);
@@ -71,51 +71,45 @@ describe("buildPolicyDenialExecHint (#5978)", () => {
 });
 
 describe("buildScopeUpgradeExecHint (#9744)", () => {
-  const hint = buildScopeUpgradeExecHint("nemoclaw", "my-assistant", REQUEST_ID);
+  const hint = buildScopeUpgradeExecHint("nemoclaw", "my-assistant");
 
   it.each([
     ["the sandbox name", "waiting for approval inside sandbox 'my-assistant'"],
     ["the devices-list review breadcrumb", "nemoclaw my-assistant exec -- openclaw devices list"],
     [
-      "the devices-approve remedy with the request id",
-      `nemoclaw my-assistant exec -- openclaw devices approve ${REQUEST_ID}`,
+      "the devices-approve remedy with the literal placeholder",
+      `nemoclaw my-assistant exec -- openclaw devices approve ${SCOPE_UPGRADE_REQUEST_PLACEHOLDER}`,
     ],
+    ["the review-before-approve instruction", "Approve the one you recognize"],
     ["the opt-out env", POLICY_HINT_SUPPRESS_ENV],
   ])("names %s", (_label, expected) => {
     expect(hint).toContain(expected);
   });
+
+  it("never resolves the placeholder to a concrete request id", () => {
+    expect(hint).not.toContain(REQUEST_ID);
+    expect(buildScopeUpgradeExecHint("nemoclaw", "my-assistant")).toBe(hint);
+  });
 });
 
-describe("findPendingScopeUpgradeRequestId (#9744)", () => {
+describe("hasPendingDeviceRequest (#9744)", () => {
   it.each([
-    ["one pending request", JSON.stringify({ pending: [{ requestId: REQUEST_ID }] }), REQUEST_ID],
-    ["no pending requests", JSON.stringify({ pending: [] }), null],
-    ["no pending key", JSON.stringify({ paired: [{ requestId: REQUEST_ID }] }), null],
-    ["a non-array pending value", JSON.stringify({ pending: { requestId: REQUEST_ID } }), null],
-    ["unparseable table output", "Pending (1)\nRequest  Device", null],
-    ["a non-object payload", JSON.stringify([{ requestId: REQUEST_ID }]), null],
+    ["one pending request", JSON.stringify({ pending: [{ requestId: REQUEST_ID }] }), true],
     [
-      "two pending requests",
-      JSON.stringify({ pending: [{ requestId: REQUEST_ID }, { requestId: "other-id" }] }),
-      SCOPE_UPGRADE_REQUEST_PLACEHOLDER,
+      "an unrelated admin-scope pending request",
+      JSON.stringify({
+        pending: [{ requestId: REQUEST_ID, device: "other", scopes: ["operator.admin"] }],
+      }),
+      true,
     ],
-    [
-      "a pending request with no id",
-      JSON.stringify({ pending: [{ device: "819086ffdb" }] }),
-      SCOPE_UPGRADE_REQUEST_PLACEHOLDER,
-    ],
-    [
-      "a pending request whose id carries shell metacharacters",
-      JSON.stringify({ pending: [{ requestId: "id; rm -rf /" }] }),
-      SCOPE_UPGRADE_REQUEST_PLACEHOLDER,
-    ],
-    [
-      "a pending request whose id is over-length",
-      JSON.stringify({ pending: [{ requestId: "a".repeat(129) }] }),
-      SCOPE_UPGRADE_REQUEST_PLACEHOLDER,
-    ],
-  ])("returns the expected id for %s", (_label, output, expected) => {
-    expect(findPendingScopeUpgradeRequestId(output)).toBe(expected);
+    ["several pending requests", JSON.stringify({ pending: [{}, {}] }), true],
+    ["no pending requests", JSON.stringify({ pending: [] }), false],
+    ["no pending key", JSON.stringify({ paired: [{ requestId: REQUEST_ID }] }), false],
+    ["a non-array pending value", JSON.stringify({ pending: { requestId: REQUEST_ID } }), false],
+    ["unparseable table output", "Pending (1)\nRequest  Device", false],
+    ["a non-object payload", JSON.stringify([{ requestId: REQUEST_ID }]), false],
+  ])("reports the expected presence for %s", (_label, output, expected) => {
+    expect(hasPendingDeviceRequest(output)).toBe(expected);
   });
 });
 

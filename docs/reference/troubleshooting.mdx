@@ -2279,22 +2279,24 @@ gateway connect failed: GatewayClientRequestError: scope upgrade pending approva
   (requestId: 4899d110-911f-4bc7-ac1a-85d76c7b366f)
 ```
 
-When you run an `openclaw` command through `$$nemoclaw <name> exec -- ...` and it exits non-zero, NemoClaw asks the sandbox for pending device requests.
-If it finds one, it appends the remedy to stderr after the command's own output:
+When you run an `openclaw` command through `$$nemoclaw <name> exec -- ...` and it exits non-zero, NemoClaw asks the sandbox whether any device request is pending.
+If one is, it appends the review path to stderr after the command's own output:
 
 ```text
 $$nemoclaw: a device scope upgrade is waiting for approval inside sandbox 'my-assistant'.
   The OpenClaw gateway refused the command until the requested scopes are approved.
   Review pending requests: $$nemoclaw my-assistant exec -- openclaw devices list
-  Approve the request:     $$nemoclaw my-assistant exec -- openclaw devices approve 4899d110-911f-4bc7-ac1a-85d76c7b366f
+  Approve the one you recognize, after checking its device and requested scopes:
+                           $$nemoclaw my-assistant exec -- openclaw devices approve <requestId>
   Silence this hint:       export NEMOCLAW_NO_POLICY_HINT=1
 ```
 
-Review the request before you approve it, then re-run the original command unchanged.
+Read `openclaw devices list`, confirm the requesting device and the requested scopes, approve that request by id, then re-run the original command unchanged.
+
+The hint never names a request id. NemoClaw cannot tell which pending request belongs to the failed command, so naming one would present an unrelated request — for example a different device asking for `operator.admin` — as this command's remedy. You make that decision from `devices list`.
 
 The probe runs only for a failed `openclaw` command. A command that succeeds, a non-`openclaw` command, and a transport failure all print no hint.
-If the probe fails, no hint is added.
-If more than one request is pending, or the reported request id is unsafe to echo, the hint shows `<requestId>` and you name the request from `openclaw devices list`.
+If the probe fails, or nothing is pending, no hint is added.
 An invalid sandbox name is shown as `<name>`.
 `NEMOCLAW_NO_POLICY_HINT` suppresses this hint on the same terms as the network-policy breadcrumb above.
 
