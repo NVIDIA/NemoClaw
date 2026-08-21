@@ -136,6 +136,15 @@ export function applyAbsentSandboxRebuildPolicyCarryForward(
   );
 }
 
+export function proveRecreateSourceBeforePolicyCarryForward<T>(input: {
+  readonly createRecreateRuntime: () => T;
+  readonly carryForward: () => void;
+}): T {
+  const runtime = input.createRecreateRuntime();
+  input.carryForward();
+  return runtime;
+}
+
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
   return async function createSandboxWithBaseImageResolution(
     baseImageResolutionContext: import("../base-image-resolution-flow").BaseImageResolutionContext,
@@ -372,27 +381,35 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           inspectSandboxForCreate,
           createIntent?.toolDisclosure ?? null,
         );
-    applyAbsentSandboxRebuildPolicyCarryForward(
-      {
-        sandboxName,
-        liveExists,
-        nonInteractive: isNonInteractive(),
-        note,
-        rebuildPolicyPresets: createIntent?.rebuildPolicyPresets,
-      },
-      policyPresetCarry.applyRecreatePolicyCarryForward,
-    );
+    // Prove the preserved source row before replacing its stale preset list.
+    // Policy carry-forward is an owned post-delete mutation, but applying it
+    // before recreate recovery makes the journal correctly reject that row as
+    // changed before the replacement can be created.
     let recreateRuntime:
       | import("../sandbox-recreate-transaction").SandboxRecreateRuntime
-      | OwnedSandboxRecreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(
-      onboardSession,
-      createIntent?.recreateTransaction,
-      sandboxName,
-      GATEWAY_NAME,
-      existingEntry,
-      getSandboxRecreateObservation,
-      note,
-    );
+      | OwnedSandboxRecreateRuntime = proveRecreateSourceBeforePolicyCarryForward({
+      createRecreateRuntime: () =>
+        sandboxRecreateTransaction.createSandboxRecreateRuntime(
+          onboardSession,
+          createIntent?.recreateTransaction,
+          sandboxName,
+          GATEWAY_NAME,
+          existingEntry,
+          getSandboxRecreateObservation,
+          note,
+        ),
+      carryForward: () =>
+        applyAbsentSandboxRebuildPolicyCarryForward(
+          {
+            sandboxName,
+            liveExists,
+            nonInteractive: isNonInteractive(),
+            note,
+            rebuildPolicyPresets: createIntent?.rebuildPolicyPresets,
+          },
+          policyPresetCarry.applyRecreatePolicyCarryForward,
+        ),
+    });
     const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
       await dashboardPortReservationScope.release();
       ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({

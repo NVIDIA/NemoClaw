@@ -484,8 +484,19 @@ function compatibleEndpointReasoningForCreateIntent(
 
 function rebuildPolicyPresetsForCreateIntent(
   value: readonly string[] | undefined,
+  session: Session | null,
+  sandboxName: string,
 ): Pick<SandboxCreateIntent, "rebuildPolicyPresets"> {
-  return Array.isArray(value) ? { rebuildPolicyPresets: [...value] } : {};
+  // A later `onboard --resume` no longer has the outer rebuild's in-memory
+  // options. The matching recreate journal makes its filtered session value
+  // the durable replacement target instead of the preserved source row.
+  const journaledValue =
+    session?.checkpoint?.sandboxRecreate?.sandboxName === sandboxName &&
+    Array.isArray(session.policyPresets)
+      ? session.policyPresets
+      : undefined;
+  const selectedValue = Array.isArray(value) ? value : journaledValue;
+  return Array.isArray(selectedValue) ? { rebuildPolicyPresets: [...selectedValue] } : {};
 }
 
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
@@ -1611,7 +1622,11 @@ class SandboxStateFlow<
       ...(this.options.rebuildPreservedEnv
         ? { rebuildPreservedEnv: this.options.rebuildPreservedEnv }
         : {}),
-      ...rebuildPolicyPresetsForCreateIntent(this.options.rebuildPolicyPresets),
+      ...rebuildPolicyPresetsForCreateIntent(
+        this.options.rebuildPolicyPresets,
+        state.session,
+        sandboxName,
+      ),
       extraProviders,
     };
   }
