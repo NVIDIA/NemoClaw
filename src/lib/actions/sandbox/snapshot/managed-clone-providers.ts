@@ -531,6 +531,8 @@ export function provisionManagedCloneProviderTransaction(
   const environment = input.environment ?? process.env;
   const confirmed: ManagedCloneProviderOwnershipReceipt[] = [];
   try {
+    // Fence every shared gateway mutation, including provider profile import.
+    revalidateManagedCloneMutationAuthority(prepared, input);
     if (
       prepared.providers.some(
         (provider) =>
@@ -543,10 +545,6 @@ export function provisionManagedCloneProviderTransaction(
         runOpenshell: input.runOpenshell,
       });
     }
-    // The transaction boundary must still fence a clone with no credential
-    // providers (for example DCode) before a later caller proceeds to sandbox
-    // or filesystem mutation.
-    revalidateManagedCloneMutationAuthority(prepared, input);
     for (const provider of prepared.providers) {
       revalidateManagedCloneMutationAuthority(prepared, input);
       const current = inspectProvider(provider.binding, input.runOpenshell);
