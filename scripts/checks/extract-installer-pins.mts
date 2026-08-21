@@ -89,7 +89,10 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       sha256: "4b75a7e3a7630eb8954d73ca828b394d5e0646adbaa4b087b2435329d53b61b3",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.72/openshell.rb",
     },
-    installerTemplateSha256: ["6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c"],
+    installerTemplateSha256: [
+      "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
+      "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+    ],
     manifests: [
       {
         asset: "openshell-checksums-sha256.txt",
@@ -129,7 +132,10 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       sha256: "fa54640184e22fa74500ab24f5b4372582616c7e12a1152cb6983bc0738c5a74",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.82/openshell.rb",
     },
-    installerTemplateSha256: ["6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c"],
+    installerTemplateSha256: [
+      "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
+      "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+    ],
     manifests: [
       {
         asset: "openshell-checksums-sha256.txt",
@@ -164,7 +170,10 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       sha256: "f53c62777fed23b42427822d231670451ee4358efeb2660c41a7a38919211b23",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.85/openshell.rb",
     },
-    installerTemplateSha256: ["6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c"],
+    installerTemplateSha256: [
+      "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
+      "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+    ],
     manifests: [
       {
         asset: "openshell-checksums-sha256.txt",
@@ -190,7 +199,10 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       sha256: "8dd34fc17ee9a30327664a18c9509c8a765cb010de38cda8e22841bddbe92713",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.99/openshell.rb",
     },
-    installerTemplateSha256: ["6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c"],
+    installerTemplateSha256: [
+      "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
+      "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+    ],
     manifests: [
       {
         asset: "openshell-checksums-sha256.txt",
@@ -233,6 +245,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     installerTemplateSha256: [
       "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
       "d3ee11fd805d84c0e0f760831e091c1f16632e61cf9c1af7e7856e0aafc9de54",
+      "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+      "741febd02f3a6b18c8aa5e34e42e23a200c8a4b09b41a7c0de045bf65b0a9bdd",
     ],
     manifests: [
       {
@@ -273,7 +287,10 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       sha256: "95a290f0e0e2f57d7d46ba9171fca6e99e5226875cd12e12391b7338f6c219f9",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.103/openshell.rb",
     },
-    installerTemplateSha256: ["6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c"],
+    installerTemplateSha256: [
+      "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
+      "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+    ],
     manifests: [
       {
         asset: "openshell-checksums-sha256.txt",
