@@ -220,7 +220,10 @@ exit 0
     source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
     info() { printf '[INFO] %s\\n' "$*"; }
     warn() { printf '[WARN] %s\\n' "$*"; }
-    require_no_competing_openshell_gateway_user_service() { :; }
+    require_no_competing_openshell_gateway_user_service() {
+      OPENSHELL_GATEWAY_CANONICAL_SERVICE_SET_IDENTITY=fixture
+      OPENSHELL_GATEWAY_CANONICAL_SERVICE_SET_IDENTITY_AVAILABLE=true
+    }
     _CLI_BIN=nemoclaw
     HOME="${home}"
     NEMOCLAW_SOURCE_ROOT="${currentSource}"
@@ -304,8 +307,10 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     "stops only the verified gateway process recorded in the owned runtime PID file",
     () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-legacy-gateway-stop-"));
+      const home = path.join(tmp, "home");
       const runtimeDir = path.join(tmp, "runtime");
-      const gatewayBin = path.join(tmp, "openshell-gateway");
+      const gatewayBin = path.join(home, ".local", "bin", "openshell-gateway");
+      fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
       fs.mkdirSync(runtimeDir, { recursive: true });
       fs.copyFileSync("/bin/sleep", gatewayBin);
       fs.chmodSync(gatewayBin, 0o755);
@@ -316,7 +321,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
           "-c",
           `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
 NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="${runtimeDir}"
-"${gatewayBin}" 60 &
+bash -c 'exec -a "openshell-gateway[nemoclaw=nemoclaw;port=8080]" "$1" 60' _ "${gatewayBin}" &
 gateway_pid=$!
 printf '%s\\n' "$gateway_pid" >"${runtimeDir}/openshell-gateway.pid"
 stop_legacy_openshell_gateway_process
@@ -324,7 +329,7 @@ wait "$gateway_pid" 2>/dev/null || true
 if kill -0 "$gateway_pid" 2>/dev/null; then exit 9; fi
 test ! -e "${runtimeDir}/openshell-gateway.pid"`,
         ],
-        { encoding: "utf-8" },
+        { encoding: "utf-8", env: { ...process.env, HOME: home } },
       );
 
       expect(result.status, result.stdout + result.stderr).toBe(0);
@@ -528,17 +533,14 @@ maybe_install_openshell_during_install force`,
       initialState: "exported",
       setup: "export NEMOCLAW_DEFER_OPENSHELL_INSTALL=exported",
     },
-  ])("restores an $initialState deferral variable after CLI backup preparation (#8800)", ({
-    expectedExported,
-    expectedSet,
-    expectedValue,
-    setup,
-  }) => {
-    const result = spawnSync(
-      "bash",
-      [
-        "-c",
-        `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+  ])(
+    "restores an $initialState deferral variable after CLI backup preparation (#8800)",
+    ({ expectedExported, expectedSet, expectedValue, setup }) => {
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
 info() { :; }
 install_nemoclaw() { [ "\${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}" = "1" ]; }
 verify_nemoclaw() { :; }
@@ -551,15 +553,16 @@ case "$(declare -p NEMOCLAW_DEFER_OPENSHELL_INSTALL 2>/dev/null || true)" in
   "declare -x "*) printf 'DEFER_EXPORTED=1\\n' ;;
   *) printf 'DEFER_EXPORTED=0\\n' ;;
 esac`,
-      ],
-      { encoding: "utf-8", env: process.env },
-    );
+        ],
+        { encoding: "utf-8", env: process.env },
+      );
 
-    expect(result.status, result.stdout + result.stderr).toBe(0);
-    expect(result.stdout).toContain(`DEFER_SET=${expectedSet}\n`);
-    expect(result.stdout).toContain(`DEFER_VALUE=${expectedValue}\n`);
-    expect(result.stdout).toContain(`DEFER_EXPORTED=${expectedExported}\n`);
-  });
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(result.stdout).toContain(`DEFER_SET=${expectedSet}\n`);
+      expect(result.stdout).toContain(`DEFER_VALUE=${expectedValue}\n`);
+      expect(result.stdout).toContain(`DEFER_EXPORTED=${expectedExported}\n`);
+    },
+  );
 
   it("aborts non-interactive legacy gateway upgrades without explicit opt-in", () => {
     const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard({
@@ -937,33 +940,36 @@ esac`,
       forbiddenRetry: "NEMOCLAW_GATEWAY_PORT=8080",
       name: "a selected non-default gateway port",
     },
-  ])("preserves prepared backups and $name when OpenShell installation fails (#8800)", (testCase) => {
-    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
-      { NON_INTERACTIVE: "1" },
-      {
-        currentMaxOpenshellVersion: "0.0.101",
-        currentMinOpenshellVersion: "0.0.101",
-        finishPreparedInstallSucceeds: false,
-        finishGatewayPort: testCase.finishGatewayPort,
-        finishInstallMode: "source",
-        gatewayDestroySucceeds: false,
-        gatewayProcessStopSucceeds: false,
-        gatewayServiceStopSucceeds: true,
-        hasOldCli: false,
-        openshellVersion: "0.0.85",
-        registryJson:
-          '{"sandboxes":{"alpha":{"name":"alpha","nemoclawVersion":"0.0.105","fromDockerfile":false}}}',
-      },
-    );
+  ])(
+    "preserves prepared backups and $name when OpenShell installation fails (#8800)",
+    (testCase) => {
+      const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+        { NON_INTERACTIVE: "1" },
+        {
+          currentMaxOpenshellVersion: "0.0.101",
+          currentMinOpenshellVersion: "0.0.101",
+          finishPreparedInstallSucceeds: false,
+          finishGatewayPort: testCase.finishGatewayPort,
+          finishInstallMode: "source",
+          gatewayDestroySucceeds: false,
+          gatewayProcessStopSucceeds: false,
+          gatewayServiceStopSucceeds: true,
+          hasOldCli: false,
+          openshellVersion: "0.0.85",
+          registryJson:
+            '{"sandboxes":{"alpha":{"name":"alpha","nemoclawVersion":"0.0.105","fromDockerfile":false}}}',
+        },
+      );
 
-    expect(result.status).not.toBe(0);
-    expect(result.stdout + result.stderr).toContain("preserved the sandbox backups");
-    expect(result.stdout + result.stderr).toContain("did not start recovery");
-    expect(result.stdout + result.stderr).toContain(testCase.expectedRetry);
-    expect(result.stdout + result.stderr).not.toContain(testCase.forbiddenRetry);
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
-    expect(openshellLog).toContain("openshell install-mode force defer=");
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.stdout + result.stderr).toContain("preserved the sandbox backups");
+      expect(result.stdout + result.stderr).toContain("did not start recovery");
+      expect(result.stdout + result.stderr).toContain(testCase.expectedRetry);
+      expect(result.stdout + result.stderr).not.toContain(testCase.forbiddenRetry);
+      expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+      expect(openshellLog).toContain("openshell install-mode force defer=");
+    },
+  );
 
   it("fails closed before gateway retirement when the supported range is invalid", () => {
     const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(

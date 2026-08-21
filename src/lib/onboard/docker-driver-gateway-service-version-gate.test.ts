@@ -13,19 +13,48 @@ import {
   resetUpstreamGatewayVersionWarning,
   startOpenShellGatewayUserService,
 } from "./docker-driver-gateway-service";
+import { serviceFileIdentityFixture } from "./__test-helpers__/docker-driver-gateway-service";
 
 const PACKAGE_UNIT = "/usr/lib/systemd/user/openshell-gateway.service";
 const PACKAGE_BINARY = "/usr/bin/openshell-gateway";
 const BOUNDS = { min: "0.0.85", max: "0.0.85" };
+let nextTrustedFileDescriptor = 10;
+const trustedFilePaths = new Map<number, string>();
+const trustedFileStat = (filePath: string) => ({
+  dev: 17,
+  ino: filePath.endsWith(".service") ? 23 : 24,
+  isFile: () => true,
+  isSymbolicLink: () => false,
+  uid: filePath.startsWith("/usr/") || filePath.startsWith("/lib/") ? 0 : 1000,
+});
 const UNIT_OWNER = {
+  closeSync: (fileDescriptor: number) => void trustedFilePaths.delete(fileDescriptor),
+  fstatSync: (fileDescriptor: number) =>
+    trustedFileStat(trustedFilePaths.get(fileDescriptor) ?? ""),
   getuid: () => 1000,
-  lstatSync: () => ({ isFile: () => true, isSymbolicLink: () => false, uid: 1000 }) as never,
+  inspectServiceFileIdentity: serviceFileIdentityFixture(
+    (filePath) => `${filePath}\n`,
+    (filePath) => trustedFileStat(filePath).uid,
+  ),
+  lstatSync: trustedFileStat as never,
+  openSync: (filePath: string) => {
+    const fileDescriptor = nextTrustedFileDescriptor++;
+    trustedFilePaths.set(fileDescriptor, filePath);
+    return fileDescriptor;
+  },
 };
 
 function trustedShowOutput(execPath = PACKAGE_BINARY): string {
   return [
     `FragmentPath=${PACKAGE_UNIT}`,
-    `ExecStart={ path=${execPath} ; argv[]=${execPath} ; }`,
+    `ExecStart={ path=${execPath} ; argv[]=${execPath} ; ignore_errors=no ; }`,
+    "DropInPaths=",
+    "ExecCondition=",
+    "ExecStartPre=",
+    "ExecStartPost=",
+    "ExecReload=",
+    "ExecStop=",
+    "ExecStopPost=",
   ].join("\n");
 }
 
@@ -36,6 +65,7 @@ function packageOnly(filePath: string): boolean {
 
 function resolveOptions(version: string, overrides: Record<string, unknown> = {}) {
   return {
+    ...UNIT_OWNER,
     platform: "linux" as const,
     existsSync: packageOnly,
     getUpstreamGatewayVersion: () => version,

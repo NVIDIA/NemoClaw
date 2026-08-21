@@ -11,6 +11,7 @@ import {
   buildDockerGatewayDebEnvFile,
   writeDockerGatewayDebEnvOverride,
 } from "./docker-driver-gateway-env";
+import { serviceFileIdentityFixture } from "./__test-helpers__/docker-driver-gateway-service";
 
 function homeEnv(home: string, xdgConfigHome = ""): NodeJS.ProcessEnv {
   return { HOME: home, XDG_CONFIG_HOME: xdgConfigHome } as NodeJS.ProcessEnv;
@@ -21,12 +22,23 @@ function trustedPackageServiceOptions(home: string) {
     env: homeEnv(home),
     getUpstreamGatewayVersion: () => "openshell-gateway 0.0.85",
     getUpstreamGatewayVersionBounds: () => ({ max: "0.0.85", min: "0.0.85" }),
+    inspectServiceFileIdentity: serviceFileIdentityFixture(
+      (filePath) => `${filePath}\n`,
+      () => 0,
+    ),
     platform: "linux" as const,
     spawnSyncImpl: () => ({
       status: 0,
       stdout: [
         "FragmentPath=/usr/lib/systemd/user/openshell-gateway.service",
-        "ExecStart={ path=/usr/bin/openshell-gateway ; argv[]=/usr/bin/openshell-gateway ; }",
+        "ExecStart={ path=/usr/bin/openshell-gateway ; argv[]=/usr/bin/openshell-gateway ; ignore_errors=no ; }",
+        "DropInPaths=",
+        "ExecCondition=",
+        "ExecStartPre=",
+        "ExecStartPost=",
+        "ExecReload=",
+        "ExecStop=",
+        "ExecStopPost=",
       ].join("\n"),
     }),
   };

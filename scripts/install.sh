@@ -1540,7 +1540,25 @@ NEMOCLAW_GATEWAY_SERVICE_NAME="nemoclaw-openshell-gateway"
 UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN=""
 UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR=""
 OPENSHELL_GATEWAY_SERVICE_IDENTITY_BIN=""
+OPENSHELL_GATEWAY_SERVICE_IDENTITY_DESCRIPTOR=""
+OPENSHELL_GATEWAY_SERVICE_IDENTITY_EXECUTABLE=""
 OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR=""
+OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_FRAGMENT_PATH=""
+OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START=""
+OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_DROP_IN_PATHS=""
+OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_CONDITION=""
+OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_PRE=""
+OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_POST=""
+OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_RELOAD=""
+OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP=""
+OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP_POST=""
+OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_ACTIVE_STATE=""
+OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_UNIT_FILE_STATE=""
+OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_ERROR=""
+OPENSHELL_GATEWAY_CANONICAL_UPSTREAM_IDENTITY=""
+OPENSHELL_GATEWAY_CANONICAL_NEMOCLAW_IDENTITY=""
+OPENSHELL_GATEWAY_CANONICAL_SERVICE_SET_IDENTITY=""
+OPENSHELL_GATEWAY_CANONICAL_SERVICE_SET_IDENTITY_AVAILABLE=false
 NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT=""
 NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR=""
 SYSTEMD_USER_SERVICE_ACTIVATION_PATHS=()
@@ -1579,6 +1597,158 @@ run_gateway_service_command() {
   env -i "${command_env[@]}" "$@"
 }
 
+trusted_gateway_service_file_identity() {
+  local file_path="${1:-}" expected_uid="${2:-}" marker="${3:-}" executable="${4:-false}"
+  local expected_template_path="${5:-}" expected_template_bin="${6:-}"
+  [[ "$file_path" == /* && "$expected_uid" =~ ^[0-9]+$ ]] || return 1
+  if [[ -n "$expected_template_path" || -n "$expected_template_bin" ]]; then
+    [[ "$expected_template_path" == /* && "$expected_template_bin" == /* ]] || return 1
+  fi
+  case "$executable" in
+    true | false) ;;
+    *) return 1 ;;
+  esac
+  # shellcheck disable=SC2016 # JavaScript template literals must reach node unchanged.
+  run_gateway_service_command node --input-type=commonjs --eval '
+    const { createHash } = require("node:crypto");
+    const fs = require("node:fs");
+    const [
+      filePath,
+      expectedUidText,
+      marker,
+      executableText,
+      expectedTemplatePath,
+      expectedTemplateBin,
+    ] = process.argv.slice(1);
+    const expectedUid = Number(expectedUidText);
+    const noFollow = fs.constants.O_NOFOLLOW;
+    const nonblock = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
+    if (typeof noFollow !== "number" || !Number.isSafeInteger(expectedUid) || expectedUid < 0) {
+      process.exit(1);
+    }
+    const validStat = (stat, owner) =>
+      stat.isFile() &&
+      !stat.isSymbolicLink() &&
+      stat.uid === BigInt(owner) &&
+      stat.dev >= 0n &&
+      stat.ino >= 0n &&
+      stat.nlink >= 1n &&
+      stat.size >= 0n &&
+      stat.mode >= 0n &&
+      stat.mtimeNs >= 0n &&
+      stat.ctimeNs >= 0n;
+    const sameStat = (first, second) =>
+      first.dev === second.dev &&
+      first.ino === second.ino &&
+      first.uid === second.uid &&
+      first.mode === second.mode &&
+      first.nlink === second.nlink &&
+      first.size === second.size &&
+      first.mtimeNs === second.mtimeNs &&
+      first.ctimeNs === second.ctimeNs;
+    const readDescriptor = (fileDescriptor, size, includeContents) => {
+      if (size < 0n || size > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+      if (includeContents && size > 64n * 1024n) return null;
+      const hash = createHash("sha256");
+      const chunks = [];
+      const buffer = Buffer.allocUnsafe(64 * 1024);
+      let position = 0;
+      let remaining = Number(size);
+      while (remaining > 0) {
+        const length = Math.min(remaining, buffer.length);
+        const count = fs.readSync(fileDescriptor, buffer, 0, length, position);
+        if (!Number.isSafeInteger(count) || count <= 0 || count > length) return null;
+        const bytes = buffer.subarray(0, count);
+        hash.update(bytes);
+        if (includeContents) chunks.push(Buffer.from(bytes));
+        position += count;
+        remaining -= count;
+      }
+      return {
+        contents: includeContents ? Buffer.concat(chunks).toString("utf8") : "",
+        digest: hash.digest("hex"),
+      };
+    };
+    const identity = (stat, digest) =>
+      [
+        stat.dev,
+        stat.ino,
+        stat.uid,
+        stat.mode,
+        stat.nlink,
+        stat.size,
+        stat.mtimeNs,
+        stat.ctimeNs,
+        digest,
+      ].join(":");
+    let descriptor;
+    let templateDescriptor;
+    try {
+      descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow | nonblock);
+      const first = fs.fstatSync(descriptor, { bigint: true });
+      const pathIdentity = fs.lstatSync(filePath, { bigint: true });
+      const inspected = readDescriptor(descriptor, first.size, Boolean(marker || expectedTemplatePath));
+      if (
+        !inspected ||
+        !validStat(first, expectedUid) ||
+        !validStat(pathIdentity, expectedUid) ||
+        !sameStat(first, pathIdentity) ||
+        (executableText === "true" &&
+          ((first.mode & 0o111n) === 0n || first.size === 0n))
+      ) {
+        process.exitCode = 1;
+      } else if (
+        marker &&
+        !inspected.contents.split(/\r?\n/u).includes(marker)
+      ) {
+        process.exitCode = 1;
+      } else if (expectedTemplatePath) {
+        templateDescriptor = fs.openSync(
+          expectedTemplatePath,
+          fs.constants.O_RDONLY | noFollow | nonblock,
+        );
+        const templateFirst = fs.fstatSync(templateDescriptor, { bigint: true });
+        const templateInspected = readDescriptor(templateDescriptor, templateFirst.size, true);
+        const templateSecond = fs.fstatSync(templateDescriptor, { bigint: true });
+        const templateCurrent = fs.lstatSync(expectedTemplatePath, { bigint: true });
+        if (
+          !templateInspected ||
+          !templateFirst.isFile() ||
+          templateFirst.isSymbolicLink() ||
+          !templateCurrent.isFile() ||
+          templateCurrent.isSymbolicLink() ||
+          !sameStat(templateFirst, templateSecond) ||
+          !sameStat(templateSecond, templateCurrent) ||
+          inspected.contents !==
+            templateInspected.contents.replaceAll("@OPENSHELL_GATEWAY_BIN@", expectedTemplateBin)
+        ) {
+          process.exitCode = 1;
+        }
+      }
+      if (!process.exitCode) {
+        const second = fs.fstatSync(descriptor, { bigint: true });
+        const current = fs.lstatSync(filePath, { bigint: true });
+        if (
+          !validStat(second, expectedUid) ||
+          !validStat(current, expectedUid) ||
+          !sameStat(first, second) ||
+          !sameStat(second, current)
+        ) {
+          process.exitCode = 1;
+        } else {
+          process.stdout.write(identity(second, inspected.digest));
+        }
+      }
+    } catch {
+      process.exitCode = 1;
+    } finally {
+      if (templateDescriptor !== undefined) fs.closeSync(templateDescriptor);
+      if (descriptor !== undefined) fs.closeSync(descriptor);
+    }
+  ' "$file_path" "$expected_uid" "$marker" "$executable" \
+    "$expected_template_path" "$expected_template_bin" 2>/dev/null
+}
+
 upstream_openshell_gateway_user_service_installed() {
   [[ "$(uname -s)" == "Linux" ]] || return 1
   [[ -f /usr/local/lib/systemd/user/openshell-gateway.service ]] \
@@ -1606,6 +1776,128 @@ systemd_user_manager_unavailable_diagnostic() {
   [[ "$recognized" -eq 1 ]]
 }
 
+read_openshell_gateway_user_service_snapshot() {
+  local service_name="${1:-}" include_state="${2:-false}"
+  local service_output service_status line
+  local fragment_count=0 exec_start_count=0 drop_in_count=0
+  local condition_count=0 start_pre_count=0 start_post_count=0 reload_count=0
+  local stop_count=0 stop_post_count=0
+  local active_state_count=0 unit_file_state_count=0
+  local -a snapshot_command=(
+    systemctl --user show "$service_name"
+    --property=FragmentPath --property=ExecStart --property=DropInPaths
+    --property=ExecCondition --property=ExecStartPre --property=ExecStartPost --property=ExecReload
+    --property=ExecStop --property=ExecStopPost
+  )
+  OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_FRAGMENT_PATH=""
+  OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START=""
+  OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_DROP_IN_PATHS=""
+  OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_CONDITION=""
+  OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_PRE=""
+  OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_POST=""
+  OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_RELOAD=""
+  OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP=""
+  OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP_POST=""
+  OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_ACTIVE_STATE=""
+  OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_UNIT_FILE_STATE=""
+  OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_ERROR=""
+
+  if [[ "$include_state" == "true" ]]; then
+    snapshot_command+=(--property=ActiveState --property=UnitFileState)
+  elif [[ "$include_state" != "false" ]]; then
+    OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_ERROR="The service snapshot request is invalid."
+    return 1
+  fi
+  if service_output="$(run_gateway_service_command "${snapshot_command[@]}" 2>&1)"; then
+    :
+  else
+    service_status=$?
+    if systemd_user_manager_unavailable_diagnostic "$service_output"; then
+      return 2
+    fi
+    if [[ "$service_output" == "Failed to connect to bus: Permission denied" ||
+      "$service_output" == "Failed to connect to bus: No medium found"$'\n'"Failed to connect to bus: Permission denied" ]]; then
+      OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_ERROR="Failed to connect to bus: Permission denied"
+    else
+      OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_ERROR="The service metadata query failed with status ${service_status}."
+    fi
+    return 1
+  fi
+
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    case "$line" in
+      FragmentPath=*)
+        OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_FRAGMENT_PATH="${line#FragmentPath=}"
+        fragment_count=$((fragment_count + 1))
+        ;;
+      ExecStart=*)
+        OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START="${line#ExecStart=}"
+        exec_start_count=$((exec_start_count + 1))
+        ;;
+      DropInPaths=*)
+        OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_DROP_IN_PATHS="${line#DropInPaths=}"
+        drop_in_count=$((drop_in_count + 1))
+        ;;
+      ExecCondition=*)
+        OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_CONDITION="${line#ExecCondition=}"
+        condition_count=$((condition_count + 1))
+        ;;
+      ExecStartPre=*)
+        OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_PRE="${line#ExecStartPre=}"
+        start_pre_count=$((start_pre_count + 1))
+        ;;
+      ExecStartPost=*)
+        OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_POST="${line#ExecStartPost=}"
+        start_post_count=$((start_post_count + 1))
+        ;;
+      ExecReload=*)
+        OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_RELOAD="${line#ExecReload=}"
+        reload_count=$((reload_count + 1))
+        ;;
+      ExecStop=*)
+        OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP="${line#ExecStop=}"
+        stop_count=$((stop_count + 1))
+        ;;
+      ExecStopPost=*)
+        OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP_POST="${line#ExecStopPost=}"
+        stop_post_count=$((stop_post_count + 1))
+        ;;
+      ActiveState=*)
+        OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_ACTIVE_STATE="${line#ActiveState=}"
+        active_state_count=$((active_state_count + 1))
+        ;;
+      UnitFileState=*)
+        OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_UNIT_FILE_STATE="${line#UnitFileState=}"
+        unit_file_state_count=$((unit_file_state_count + 1))
+        ;;
+      "") ;;
+      *)
+        OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_ERROR="The service metadata query returned unexpected data."
+        return 1
+        ;;
+    esac
+  done <<<"$service_output"
+
+  if [[ "$fragment_count" -ne 1 || "$exec_start_count" -ne 1 || "$drop_in_count" -ne 1 ||
+    "$condition_count" -ne 1 ||
+    "$start_pre_count" -ne 1 || "$start_post_count" -ne 1 || "$reload_count" -ne 1 ||
+    "$stop_count" -ne 1 || "$stop_post_count" -ne 1 ]]; then
+    OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_ERROR="The service metadata query returned an incomplete identity snapshot."
+    return 1
+  fi
+  if [[ "$include_state" == "true" &&
+    ("$active_state_count" -ne 1 || "$unit_file_state_count" -ne 1) ]]; then
+    OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_ERROR="The service metadata query returned incomplete state metadata."
+    return 1
+  fi
+  if [[ "$include_state" == "false" &&
+    ("$active_state_count" -ne 0 || "$unit_file_state_count" -ne 0) ]]; then
+    OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_ERROR="The service metadata query returned unexpected state metadata."
+    return 1
+  fi
+}
+
 trusted_upstream_openshell_gateway_unit_for_service() {
   case "${1:-}" in
     /usr/local/lib/systemd/user/openshell-gateway.service | \
@@ -1631,53 +1923,31 @@ trusted_upstream_openshell_gateway_bin_for_service() {
 }
 
 inspect_upstream_openshell_gateway_user_service() {
-  local service_output service_status line fragment_path="" exec_start=""
-  local fragment_count=0 exec_start_count=0
+  local inspect_status
   UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN=""
   UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR=""
 
-  if service_output="$(run_gateway_service_command systemctl --user show openshell-gateway.service \
-    --property=FragmentPath --property=ExecStart 2>&1)"; then
+  if read_openshell_gateway_user_service_snapshot openshell-gateway.service; then
     :
   else
-    service_status=$?
-    if systemd_user_manager_unavailable_diagnostic "$service_output"; then
+    inspect_status=$?
+    if [[ "$inspect_status" -eq 2 ]]; then
       return 2
     fi
-    if [[ "$service_output" == "Failed to connect to bus: Permission denied" ||
-      "$service_output" == "Failed to connect to bus: No medium found"$'\n'"Failed to connect to bus: Permission denied" ]]; then
-      UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="Failed to connect to bus: Permission denied"
-    else
-      UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway service metadata query failed with status ${service_status}."
-    fi
-    return 1
-  fi
-
-  while IFS= read -r line; do
-    line="${line%$'\r'}"
-    case "$line" in
-      FragmentPath=*)
-        fragment_path="${line#FragmentPath=}"
-        fragment_count=$((fragment_count + 1))
-        ;;
-      ExecStart=*)
-        exec_start="${line#ExecStart=}"
-        exec_start_count=$((exec_start_count + 1))
-        ;;
-      "") ;;
-      *)
-        UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway service returned unexpected metadata."
-        return 1
-        ;;
-    esac
-  done <<<"$service_output"
-
-  if [[ "$fragment_count" -ne 1 || "$exec_start_count" -ne 1 ]]; then
-    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway service did not return one FragmentPath and one ExecStart value."
+    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_ERROR"
     return 1
   fi
   if ! validate_openshell_gateway_user_service_identity \
-    openshell-gateway.service "$fragment_path" "$exec_start"; then
+    openshell-gateway.service \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_FRAGMENT_PATH" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_DROP_IN_PATHS" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_CONDITION" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_PRE" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_POST" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_RELOAD" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP_POST"; then
     UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway service ${OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR:-has invalid identity}."
     return 1
   fi
@@ -1696,7 +1966,7 @@ resolve_upstream_openshell_gateway_bin_for_service() {
 openshell_binary_version() {
   local binary="${1:-}" version_output
   [[ -x "$binary" ]] || return 1
-  version_output="$("$binary" --version 2>/dev/null)" || return 1
+  version_output="$(run_gateway_service_command "$binary" --version 2>/dev/null)" || return 1
   printf '%s\n' "$version_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
 }
 
@@ -1728,8 +1998,8 @@ require_compatible_upstream_openshell_gateway_service() {
 macos_openshell_homebrew_gateway_service_installed() {
   [[ "$(uname -s)" == "Darwin" ]] || return 1
   command -v brew >/dev/null 2>&1 || return 1
-  brew list --formula openshell >/dev/null 2>&1 || return 1
-  brew info --json=v2 openshell 2>/dev/null \
+  run_gateway_service_command brew list --formula openshell >/dev/null 2>&1 || return 1
+  run_gateway_service_command brew info --json=v2 openshell 2>/dev/null \
     | grep -Eq '"tap"[[:space:]]*:[[:space:]]*"nvidia/openshell"'
 }
 
@@ -1772,10 +2042,25 @@ trusted_openshell_gateway_bin_for_service() {
 
 validate_openshell_gateway_user_service_identity() {
   local service_name="${1:-}" fragment_path="${2:-}" exec_start="${3:-}"
-  local gateway_bin exec_argv expected_service_path user_gateway_bin
-  local -a gateway_bins=() exec_argv_records=()
+  local drop_in_paths="${4:-}" exec_condition="${5:-}" exec_start_pre="${6:-}"
+  local exec_start_post="${7:-}" exec_reload="${8:-}" exec_stop="${9:-}"
+  local exec_stop_post="${10:-}"
+  local gateway_bin exec_argv exec_ignore_errors expected_service_path expected_service_template
+  local user_gateway_bin expected_binary_uid pre_gateway_bin pre_exec_argv pre_ignore_errors
+  local expected_pre_exec_argv
+  local descriptor_identity executable_identity
+  local -a gateway_bins=() exec_argv_records=() exec_ignore_error_records=()
+  local -a pre_gateway_bins=() pre_exec_argv_records=() pre_ignore_error_records=()
   OPENSHELL_GATEWAY_SERVICE_IDENTITY_BIN=""
+  OPENSHELL_GATEWAY_SERVICE_IDENTITY_DESCRIPTOR=""
+  OPENSHELL_GATEWAY_SERVICE_IDENTITY_EXECUTABLE=""
   OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR=""
+
+  if [[ -n "$drop_in_paths" || -n "$exec_condition" || -n "$exec_start_post" ||
+    -n "$exec_reload" || -n "$exec_stop" || -n "$exec_stop_post" ]]; then
+    OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="uses drop-ins or executable lifecycle hooks"
+    return 1
+  fi
 
   while IFS= read -r gateway_bin; do
     gateway_bins+=("$gateway_bin")
@@ -1807,6 +2092,21 @@ validate_openshell_gateway_user_service_identity() {
     OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="returned unexpected executable arguments"
     return 1
   fi
+  while IFS= read -r exec_ignore_errors; do
+    exec_ignore_error_records+=("$exec_ignore_errors")
+  done < <(
+    printf '%s\n' "$exec_start" \
+      | grep -oE '(^|[ ;{])ignore_errors=[^ ;}]+' \
+      | sed -E 's/^[ ;{]*ignore_errors=//'
+  )
+  if [[ "${#exec_ignore_error_records[@]}" -ne 1 ]]; then
+    OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="returned an unsafe executable error policy"
+    return 1
+  fi
+  if [[ "${exec_ignore_error_records[0]}" != "no" ]]; then
+    OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="returned an unsafe executable error policy"
+    return 1
+  fi
   if [[ ! -x "$gateway_bin" ]]; then
     OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="uses an unavailable executable"
     return 1
@@ -1814,6 +2114,10 @@ validate_openshell_gateway_user_service_identity() {
 
   case "$service_name" in
     openshell-gateway.service)
+      if [[ -n "$exec_start_pre" ]]; then
+        OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="uses an unexpected executable lifecycle hook"
+        return 1
+      fi
       if ! trusted_upstream_openshell_gateway_unit_for_service "$fragment_path"; then
         OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="is not package-qualified"
         return 1
@@ -1822,14 +2126,19 @@ validate_openshell_gateway_user_service_identity() {
         OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="uses an untrusted executable"
         return 1
       fi
+      descriptor_identity="$(trusted_gateway_service_file_identity "$fragment_path" 0)" || {
+        OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="uses an untrusted package descriptor"
+        return 1
+      }
+      executable_identity="$(trusted_gateway_service_file_identity "$gateway_bin" 0 "" true)" || {
+        OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="uses an untrusted package executable"
+        return 1
+      }
       ;;
     "${NEMOCLAW_GATEWAY_SERVICE_NAME}.service")
       expected_service_path="$(openshell_user_config_home)/systemd/user/${service_name}"
-      if [[ "$fragment_path" != "$expected_service_path" ||
-        ! -f "$expected_service_path" ||
-        -L "$expected_service_path" ||
-        ! -O "$expected_service_path" ]] \
-        || ! is_nemoclaw_openshell_gateway_user_service "$expected_service_path"; then
+      expected_service_template="${NEMOCLAW_SOURCE_ROOT}/scripts/lib/openshell-gateway.service.in"
+      if [[ "$fragment_path" != "$expected_service_path" ]]; then
         OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="is not descriptor-bound"
         return 1
       fi
@@ -1837,11 +2146,58 @@ validate_openshell_gateway_user_service_identity() {
         OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="uses an untrusted executable"
         return 1
       fi
-      user_gateway_bin="$(openshell_gateway_user_bin_for_service)"
-      if [[ "$gateway_bin" == "$user_gateway_bin" && ! -O "$gateway_bin" ]]; then
-        OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="uses an unowned user executable"
+      descriptor_identity="$(trusted_gateway_service_file_identity \
+        "$expected_service_path" "$EUID" "$NEMOCLAW_GATEWAY_SERVICE_MARKER_LINE" false \
+        "$expected_service_template" "$gateway_bin")" || {
+        OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="is not descriptor-bound"
+        return 1
+      }
+      while IFS= read -r pre_gateway_bin; do
+        pre_gateway_bins+=("$pre_gateway_bin")
+      done < <(
+        printf '%s\n' "$exec_start_pre" \
+          | grep -oE '(^|[ ;{])path=[^ ;}]+' \
+          | sed -E 's/^[ ;{]*path=//'
+      )
+      while IFS= read -r pre_exec_argv; do
+        pre_exec_argv="${pre_exec_argv#"${pre_exec_argv%%[![:space:]]*}"}"
+        pre_exec_argv="${pre_exec_argv%"${pre_exec_argv##*[![:space:]]}"}"
+        pre_exec_argv_records+=("$pre_exec_argv")
+      done < <(
+        printf '%s\n' "$exec_start_pre" \
+          | grep -oE '(^|[ ;{])argv\[\]=[^;]+' \
+          | sed -E 's/^[ ;{]*argv\[\]=//'
+      )
+      while IFS= read -r pre_ignore_errors; do
+        pre_ignore_error_records+=("$pre_ignore_errors")
+      done < <(
+        printf '%s\n' "$exec_start_pre" \
+          | grep -oE '(^|[ ;{])ignore_errors=[^ ;}]+' \
+          | sed -E 's/^[ ;{]*ignore_errors=//'
+      )
+      expected_pre_exec_argv="${gateway_bin} generate-certs --output-dir \${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal"
+      if [[ "${#pre_gateway_bins[@]}" -ne 1 || "${#pre_exec_argv_records[@]}" -ne 1 ||
+        "${#pre_ignore_error_records[@]}" -ne 1 ]]; then
+        OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="uses an unexpected executable lifecycle hook"
         return 1
       fi
+      if [[ "${pre_gateway_bins[0]}" != "$gateway_bin" ||
+        "${pre_exec_argv_records[0]}" != "$expected_pre_exec_argv" ||
+        "${pre_ignore_error_records[0]}" != "no" ]]; then
+        OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="uses an unexpected executable lifecycle hook"
+        return 1
+      fi
+      user_gateway_bin="$(openshell_gateway_user_bin_for_service)"
+      if [[ "$gateway_bin" == "$user_gateway_bin" ]]; then
+        expected_binary_uid="$EUID"
+      else
+        expected_binary_uid=0
+      fi
+      executable_identity="$(trusted_gateway_service_file_identity \
+        "$gateway_bin" "$expected_binary_uid" "" true)" || {
+        OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="uses an untrusted executable identity"
+        return 1
+      }
       ;;
     *)
       OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="has an unexpected service name"
@@ -1850,6 +2206,8 @@ validate_openshell_gateway_user_service_identity() {
   esac
 
   OPENSHELL_GATEWAY_SERVICE_IDENTITY_BIN="$gateway_bin"
+  OPENSHELL_GATEWAY_SERVICE_IDENTITY_DESCRIPTOR="$descriptor_identity"
+  OPENSHELL_GATEWAY_SERVICE_IDENTITY_EXECUTABLE="$executable_identity"
 }
 
 systemd_user_service_active_state_valid() {
@@ -1877,9 +2235,7 @@ systemd_user_service_unit_file_state_valid() {
 
 qualify_canonical_openshell_gateway_user_service() {
   local service_name="${1:-}" selected_port="${2:-}" enabled_by_activation_path="${3:-false}"
-  local service_output service_status line fragment_path="" exec_start=""
-  local active_state="" unit_file_state="" classifier_metadata
-  local fragment_count=0 exec_start_count=0 active_state_count=0 unit_file_state_count=0
+  local inspect_status fragment_path exec_start active_state unit_file_state classifier_metadata
   NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT=""
   NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR=""
 
@@ -1898,58 +2254,35 @@ qualify_canonical_openshell_gateway_user_service() {
       ;;
   esac
 
-  if service_output="$(run_gateway_service_command systemctl --user show "$service_name" \
-    --property=FragmentPath --property=ExecStart \
-    --property=ActiveState --property=UnitFileState 2>&1)"; then
+  if read_openshell_gateway_user_service_snapshot "$service_name" true; then
     :
   else
-    service_status=$?
-    if systemd_user_manager_unavailable_diagnostic "$service_output"; then
+    inspect_status=$?
+    if [[ "$inspect_status" -eq 2 ]]; then
       return 2
     fi
-    NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The metadata query for ${service_name} failed with status ${service_status}."
+    NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The metadata query for ${service_name} failed."
     return 3
   fi
-
-  while IFS= read -r line; do
-    line="${line%$'\r'}"
-    case "$line" in
-      FragmentPath=*)
-        fragment_path="${line#FragmentPath=}"
-        fragment_count=$((fragment_count + 1))
-        ;;
-      ExecStart=*)
-        exec_start="${line#ExecStart=}"
-        exec_start_count=$((exec_start_count + 1))
-        ;;
-      ActiveState=*)
-        active_state="${line#ActiveState=}"
-        active_state_count=$((active_state_count + 1))
-        ;;
-      UnitFileState=*)
-        unit_file_state="${line#UnitFileState=}"
-        unit_file_state_count=$((unit_file_state_count + 1))
-        ;;
-      "") ;;
-      *)
-        NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. ${service_name} returned malformed metadata."
-        return 3
-        ;;
-    esac
-  done <<<"$service_output"
-
-  if [[ "$fragment_count" -ne 1 ||
-    "$exec_start_count" -ne 1 ||
-    "$active_state_count" -ne 1 ||
-    "$unit_file_state_count" -ne 1 ]] \
-    || ! systemd_user_service_active_state_valid "$active_state" \
+  fragment_path="$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_FRAGMENT_PATH"
+  exec_start="$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START"
+  active_state="$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_ACTIVE_STATE"
+  unit_file_state="$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_UNIT_FILE_STATE"
+  if ! systemd_user_service_active_state_valid "$active_state" \
     || ! systemd_user_service_unit_file_state_valid "$unit_file_state"; then
     NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. ${service_name} returned malformed metadata."
     return 3
   fi
 
   if validate_openshell_gateway_user_service_identity \
-    "$service_name" "$fragment_path" "$exec_start"; then
+    "$service_name" "$fragment_path" "$exec_start" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_DROP_IN_PATHS" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_CONDITION" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_PRE" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_POST" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_RELOAD" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP_POST"; then
     NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT="canonical-trusted"
     return 0
   fi
@@ -1966,6 +2299,37 @@ qualify_canonical_openshell_gateway_user_service() {
       set_competing_openshell_gateway_user_service_error "$service_name" "$selected_port"
       return 3
       ;;
+  esac
+}
+
+record_canonical_openshell_gateway_user_service_identity() {
+  local service_name="${1:-}" enabled_by_activation_path="${2:-false}" identity
+  printf -v identity '%q %q %q %q %q %q %q %q %q %q %q %q %q %q %q %q %q' \
+    "$service_name" \
+    "$enabled_by_activation_path" \
+    "$NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_FRAGMENT_PATH" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_DROP_IN_PATHS" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_CONDITION" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_PRE" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_POST" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_RELOAD" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP_POST" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_ACTIVE_STATE" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_UNIT_FILE_STATE" \
+    "$OPENSHELL_GATEWAY_SERVICE_IDENTITY_BIN" \
+    "$OPENSHELL_GATEWAY_SERVICE_IDENTITY_DESCRIPTOR" \
+    "$OPENSHELL_GATEWAY_SERVICE_IDENTITY_EXECUTABLE"
+  case "$service_name" in
+    openshell-gateway.service)
+      OPENSHELL_GATEWAY_CANONICAL_UPSTREAM_IDENTITY="$identity"
+      ;;
+    "${NEMOCLAW_GATEWAY_SERVICE_NAME}.service")
+      OPENSHELL_GATEWAY_CANONICAL_NEMOCLAW_IDENTITY="$identity"
+      ;;
+    *) return 1 ;;
   esac
 }
 
@@ -2072,6 +2436,10 @@ inspect_noncanonical_openshell_gateway_user_services() {
   local selected_port="${1:-}" active_output query_status line service_name activation_path
   local activation_service_name inspected_name already_inspected enabled_by_activation_path
   local -a service_names=() activation_service_names=() inspected_names=() row_columns=()
+  OPENSHELL_GATEWAY_CANONICAL_UPSTREAM_IDENTITY="absent"
+  OPENSHELL_GATEWAY_CANONICAL_NEMOCLAW_IDENTITY="absent"
+  OPENSHELL_GATEWAY_CANONICAL_SERVICE_SET_IDENTITY=""
+  OPENSHELL_GATEWAY_CANONICAL_SERVICE_SET_IDENTITY_AVAILABLE=false
   command_exists systemctl || return 2
 
   if active_output="$(run_gateway_service_command systemctl --user list-units --type=service \
@@ -2144,18 +2512,18 @@ inspect_noncanonical_openshell_gateway_user_services() {
         done
       fi
 
-      if [[ "$selected_port" == "8080" ]]; then
-        case "$service_name" in
-          openshell-gateway.service | "${NEMOCLAW_GATEWAY_SERVICE_NAME}.service")
-            if qualify_canonical_openshell_gateway_user_service \
-              "$service_name" "$selected_port" "$enabled_by_activation_path"; then
-              continue
-            else
-              return $?
-            fi
-            ;;
-        esac
-      fi
+      case "$service_name" in
+        openshell-gateway.service | "${NEMOCLAW_GATEWAY_SERVICE_NAME}.service")
+          if qualify_canonical_openshell_gateway_user_service \
+            "$service_name" "$selected_port" "$enabled_by_activation_path"; then
+            record_canonical_openshell_gateway_user_service_identity \
+              "$service_name" "$enabled_by_activation_path" || return 3
+            continue
+          else
+            return $?
+          fi
+          ;;
+      esac
 
       if classify_noncanonical_openshell_gateway_user_service \
         "$service_name" "$selected_port" "$enabled_by_activation_path"; then
@@ -2171,6 +2539,10 @@ inspect_noncanonical_openshell_gateway_user_services() {
       fi
     done
   fi
+  printf -v OPENSHELL_GATEWAY_CANONICAL_SERVICE_SET_IDENTITY '%q %q' \
+    "$OPENSHELL_GATEWAY_CANONICAL_UPSTREAM_IDENTITY" \
+    "$OPENSHELL_GATEWAY_CANONICAL_NEMOCLAW_IDENTITY"
+  OPENSHELL_GATEWAY_CANONICAL_SERVICE_SET_IDENTITY_AVAILABLE=true
   return 0
 }
 
@@ -2199,7 +2571,11 @@ render_diagnostic_path() {
 
 require_no_competing_openshell_gateway_user_service() {
   local gateway_port discovery_status activation_path rendered_activation_path activation_status=0
-  [[ "$(uname -s)" == "Linux" ]] || return 0
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    OPENSHELL_GATEWAY_CANONICAL_SERVICE_SET_IDENTITY="not-applicable"
+    OPENSHELL_GATEWAY_CANONICAL_SERVICE_SET_IDENTITY_AVAILABLE=true
+    return 0
+  fi
   gateway_port="${1:-$(resolve_nemoclaw_gateway_port)}"
   if inspect_noncanonical_openshell_gateway_user_services "$gateway_port"; then
     return 0
@@ -2222,6 +2598,17 @@ require_no_competing_openshell_gateway_user_service() {
   fi
   if [[ "$activation_status" -eq 2 ]]; then
     error "The systemd user manager is unavailable, and the installer could not inspect OpenShell gateway activation configuration. Restore the default unit search path and access to its configured locations, then rerun NemoClaw."
+  fi
+}
+
+revalidate_openshell_gateway_retirement_service_set() {
+  local expected_identity="${1-}" gateway_port="${2:-8080}"
+  require_no_competing_openshell_gateway_user_service "$gateway_port"
+  if [[ "$OPENSHELL_GATEWAY_CANONICAL_SERVICE_SET_IDENTITY_AVAILABLE" != "true" ]]; then
+    error "Refusing to retire the OpenShell gateway because the canonical service set could not be revalidated."
+  fi
+  if [[ "$OPENSHELL_GATEWAY_CANONICAL_SERVICE_SET_IDENTITY" != "$expected_identity" ]]; then
+    error "Refusing to retire the OpenShell gateway because the canonical service set changed before gateway retirement."
   fi
 }
 
@@ -3879,11 +4266,351 @@ EOF
   esac
 }
 
+LEGACY_GATEWAY_PROCESS_STATUS=""
+LEGACY_GATEWAY_PROCESS_PID=""
+LEGACY_GATEWAY_PID_FILE_IDENTITY=""
+LEGACY_GATEWAY_PROCESS_IDENTITY=""
+
+inspect_trusted_legacy_openshell_gateway_process() {
+  local pid_file="${1:-}" gateway_name="${2:-}" gateway_port="${3:-}"
+  local user_gateway_bin inspection_output
+  local -a inspection_records=()
+  LEGACY_GATEWAY_PROCESS_STATUS=""
+  LEGACY_GATEWAY_PROCESS_PID=""
+  LEGACY_GATEWAY_PID_FILE_IDENTITY=""
+  LEGACY_GATEWAY_PROCESS_IDENTITY=""
+  [[ "$pid_file" == /* && "$gateway_port" =~ ^[0-9]+$ ]] || return 1
+  user_gateway_bin="$(openshell_gateway_user_bin_for_service)" || return 1
+
+  # shellcheck disable=SC2016 # JavaScript template literals must reach node unchanged.
+  inspection_output="$(run_gateway_service_command node --input-type=commonjs --eval '
+    const { createHash } = require("node:crypto");
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const [
+      pidFile,
+      expectedUidText,
+      expectedGatewayName,
+      expectedGatewayPortText,
+      userGatewayBin,
+      systemLocalGatewayBin,
+      systemGatewayBin,
+    ] = process.argv.slice(1);
+    const expectedUid = Number(expectedUidText);
+    const expectedGatewayPort = Number(expectedGatewayPortText);
+    const expectedCanonicalName =
+      expectedGatewayPort === 8080 ? "nemoclaw" : `nemoclaw-${expectedGatewayPort}`;
+    const noFollow = fs.constants.O_NOFOLLOW;
+    const nonblock = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
+    if (
+      typeof noFollow !== "number" ||
+      !path.isAbsolute(pidFile) ||
+      !Number.isSafeInteger(expectedUid) ||
+      expectedUid < 0 ||
+      !Number.isSafeInteger(expectedGatewayPort) ||
+      expectedGatewayPort < 1 ||
+      expectedGatewayPort > 65535 ||
+      expectedGatewayName !== expectedCanonicalName
+    ) {
+      process.exit(1);
+    }
+
+    const validStat = (stat, owner) =>
+      stat.isFile() &&
+      !stat.isSymbolicLink() &&
+      stat.uid === BigInt(owner) &&
+      stat.dev >= 0n &&
+      stat.ino >= 0n &&
+      stat.nlink >= 1n &&
+      stat.size >= 0n &&
+      stat.mode >= 0n &&
+      stat.mtimeNs >= 0n &&
+      stat.ctimeNs >= 0n;
+    const sameStat = (first, second) =>
+      first.dev === second.dev &&
+      first.ino === second.ino &&
+      first.uid === second.uid &&
+      first.mode === second.mode &&
+      first.nlink === second.nlink &&
+      first.size === second.size &&
+      first.mtimeNs === second.mtimeNs &&
+      first.ctimeNs === second.ctimeNs;
+    const readAndHash = (fileDescriptor, size, includeContents) => {
+      if (size < 0n || size > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+      if (includeContents && size > 64n) return null;
+      const hash = createHash("sha256");
+      const chunks = [];
+      const buffer = Buffer.allocUnsafe(64 * 1024);
+      let position = 0;
+      let remaining = Number(size);
+      while (remaining > 0) {
+        const length = Math.min(remaining, buffer.length);
+        const count = fs.readSync(fileDescriptor, buffer, 0, length, position);
+        if (!Number.isSafeInteger(count) || count <= 0 || count > length) return null;
+        const bytes = buffer.subarray(0, count);
+        hash.update(bytes);
+        if (includeContents) chunks.push(Buffer.from(bytes));
+        position += count;
+        remaining -= count;
+      }
+      return {
+        contents: includeContents ? Buffer.concat(chunks).toString("utf8") : "",
+        digest: hash.digest("hex"),
+      };
+    };
+    const fileIdentity = (stat, digest) =>
+      [
+        stat.dev,
+        stat.ino,
+        stat.uid,
+        stat.mode,
+        stat.nlink,
+        stat.size,
+        stat.mtimeNs,
+        stat.ctimeNs,
+        digest,
+      ].join(":");
+    const inspectFile = (filePath, owner, executable, includeContents) => {
+      let descriptor;
+      try {
+        descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow | nonblock);
+        const before = fs.fstatSync(descriptor, { bigint: true });
+        const namedBefore = fs.lstatSync(filePath, { bigint: true });
+        const inspected = readAndHash(descriptor, before.size, includeContents);
+        const after = inspected ? fs.fstatSync(descriptor, { bigint: true }) : null;
+        const namedAfter = after ? fs.lstatSync(filePath, { bigint: true }) : null;
+        if (
+          !inspected ||
+          !after ||
+          !namedAfter ||
+          !validStat(before, owner) ||
+          !validStat(namedBefore, owner) ||
+          !validStat(after, owner) ||
+          !validStat(namedAfter, owner) ||
+          !sameStat(before, namedBefore) ||
+          !sameStat(before, after) ||
+          !sameStat(after, namedAfter) ||
+          (executable && (after.size === 0n || (after.mode & 0o111n) === 0n))
+        ) {
+          return null;
+        }
+        return {
+          contents: inspected.contents,
+          identity: fileIdentity(after, inspected.digest),
+        };
+      } catch {
+        return null;
+      } finally {
+        if (descriptor !== undefined) fs.closeSync(descriptor);
+      }
+    };
+    const inspectProcessExecutable = (filePath) => {
+      let descriptor;
+      try {
+        descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | nonblock);
+        const before = fs.fstatSync(descriptor, { bigint: true });
+        const inspected = readAndHash(descriptor, before.size, false);
+        const after = inspected ? fs.fstatSync(descriptor, { bigint: true }) : null;
+        if (
+          !inspected ||
+          !after ||
+          !before.isFile() ||
+          before.isSymbolicLink() ||
+          before.dev < 0n ||
+          before.ino < 0n ||
+          before.nlink < 1n ||
+          before.size <= 0n ||
+          before.mode < 0n ||
+          before.mtimeNs < 0n ||
+          before.ctimeNs < 0n ||
+          (before.mode & 0o111n) === 0n ||
+          !sameStat(before, after)
+        ) {
+          return null;
+        }
+        return fileIdentity(after, inspected.digest);
+      } catch {
+        return null;
+      } finally {
+        if (descriptor !== undefined) fs.closeSync(descriptor);
+      }
+    };
+    const processExists = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch (error) {
+        if (error && typeof error === "object" && error.code === "ESRCH") return false;
+        throw error;
+      }
+    };
+    const readProcessStat = (pid) => {
+      const contents = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+      const commandEnd = contents.lastIndexOf(")");
+      if (commandEnd < 0) return null;
+      const fields = contents.slice(commandEnd + 1).trim().split(/\s+/u);
+      const state = fields[0] ?? "";
+      const startTime = fields[19] ?? "";
+      return /^[A-Za-z]$/u.test(state) && /^[0-9]+$/u.test(startTime)
+        ? { startTime, state }
+        : null;
+    };
+    const flagValues = (tokens, flag) => {
+      const values = [];
+      for (let index = 1; index < tokens.length; index += 1) {
+        const token = tokens[index];
+        if (token === flag && tokens[index + 1] !== undefined) {
+          values.push(tokens[index + 1]);
+          index += 1;
+        } else if (token.startsWith(`${flag}=`) && token.length > flag.length + 1) {
+          values.push(token.slice(flag.length + 1));
+        }
+      }
+      return values;
+    };
+    const processTargetsGateway = (tokens) => {
+      const argv0 = tokens[0] ?? "";
+      const tagged = /^openshell-gateway\[nemoclaw=(nemoclaw(?:-[0-9]+)?);port=([0-9]+)\]$/u.exec(
+        path.basename(argv0),
+      );
+      if (tagged) {
+        return tagged[1] === expectedGatewayName && tagged[2] === String(expectedGatewayPort);
+      }
+      if (path.basename(argv0) !== "openshell-gateway") return false;
+      const ports = flagValues(tokens, "--port");
+      const names = flagValues(tokens, "--name");
+      return (
+        ports.length === 1 &&
+        ports[0] === String(expectedGatewayPort) &&
+        names.length <= 1 &&
+        (names.length === 0 || names[0] === expectedGatewayName)
+      );
+    };
+
+    const pidRecord = inspectFile(pidFile, expectedUid, false, true);
+    if (!pidRecord || (BigInt(pidRecord.identity.split(":")[3]) & 0o22n) !== 0n) process.exit(1);
+    const pidText = pidRecord.contents.endsWith("\n")
+      ? pidRecord.contents.slice(0, -1)
+      : pidRecord.contents;
+    if (!/^[1-9][0-9]*$/u.test(pidText)) process.exit(1);
+    const pid = Number(pidText);
+    if (!Number.isSafeInteger(pid) || pid <= 0) process.exit(1);
+    if (!processExists(pid)) {
+      process.stdout.write(`stale\n${pid}\n${pidRecord.identity}\n-`);
+      process.exit(0);
+    }
+
+    const processDirectory = fs.statSync(`/proc/${pid}`, { bigint: true });
+    const beforeProcessStat = readProcessStat(pid);
+    if (!beforeProcessStat || processDirectory.uid !== BigInt(expectedUid)) process.exit(1);
+    if (beforeProcessStat.state === "Z" || beforeProcessStat.state === "X") {
+      process.stdout.write(`stale\n${pid}\n${pidRecord.identity}\n-`);
+      process.exit(0);
+    }
+    const processExecutableLink = fs.readlinkSync(`/proc/${pid}/exe`);
+    if (processExecutableLink.endsWith(" (deleted)")) process.exit(1);
+    const processExecutableIdentity = inspectProcessExecutable(`/proc/${pid}/exe`);
+    if (!processExecutableIdentity) process.exit(1);
+    const allowedExecutables = [
+      { owner: expectedUid, path: userGatewayBin },
+      { owner: 0, path: systemLocalGatewayBin },
+      { owner: 0, path: systemGatewayBin },
+    ]
+      .map((entry) => ({ ...entry, record: inspectFile(entry.path, entry.owner, true, false) }))
+      .filter((entry) => entry.record !== null);
+    const allowedExecutable = allowedExecutables.find(
+      (entry) => entry.record.identity === processExecutableIdentity,
+    );
+    if (!allowedExecutable) process.exit(1);
+    const rawCommandLine = fs.readFileSync(`/proc/${pid}/cmdline`);
+    if (rawCommandLine.length === 0 || rawCommandLine.length > 64 * 1024) process.exit(1);
+    const commandLineTokens = rawCommandLine
+      .toString("utf8")
+      .split("\0")
+      .filter((token) => token.length > 0);
+    if (!processTargetsGateway(commandLineTokens)) process.exit(1);
+    const afterProcessStat = readProcessStat(pid);
+    const currentProcessDirectory = fs.statSync(`/proc/${pid}`, { bigint: true });
+    if (
+      !afterProcessStat ||
+      beforeProcessStat.startTime !== afterProcessStat.startTime ||
+      beforeProcessStat.state !== afterProcessStat.state ||
+      currentProcessDirectory.uid !== BigInt(expectedUid) ||
+      !processExists(pid)
+    ) {
+      process.exit(1);
+    }
+    const commandLineDigest = createHash("sha256").update(rawCommandLine).digest("hex");
+    const processIdentity = [
+      pid,
+      beforeProcessStat.startTime,
+      processExecutableIdentity,
+      commandLineDigest,
+    ].join(":");
+    process.stdout.write(`running\n${pid}\n${pidRecord.identity}\n${processIdentity}`);
+  ' "$pid_file" "$EUID" "$gateway_name" "$gateway_port" "$user_gateway_bin" \
+    "$OPENSHELL_GATEWAY_SYSTEM_LOCAL_BIN" "$OPENSHELL_GATEWAY_SYSTEM_BIN" 2>/dev/null)" || return 1
+
+  mapfile -t inspection_records <<<"$inspection_output"
+  [[ "${#inspection_records[@]}" -eq 4 ]] || return 1
+  case "${inspection_records[0]}" in
+    running | stale) ;;
+    *) return 1 ;;
+  esac
+  [[ "${inspection_records[1]}" =~ ^[1-9][0-9]*$ ]] || return 1
+  [[ "${inspection_records[2]}" =~ ^[0-9]+(:[0-9]+){7}:[0-9a-f]{64}$ ]] || return 1
+  if [[ "${inspection_records[0]}" == "running" ]]; then
+    [[ "${inspection_records[3]}" =~ ^[0-9]+:[0-9]+:[0-9]+(:[0-9]+){7}:[0-9a-f]{64}:[0-9a-f]{64}$ ]] \
+      || return 1
+  elif [[ "${inspection_records[3]}" != "-" ]]; then
+    return 1
+  fi
+  LEGACY_GATEWAY_PROCESS_STATUS="${inspection_records[0]}"
+  LEGACY_GATEWAY_PROCESS_PID="${inspection_records[1]}"
+  LEGACY_GATEWAY_PID_FILE_IDENTITY="${inspection_records[2]}"
+  LEGACY_GATEWAY_PROCESS_IDENTITY="${inspection_records[3]}"
+}
+
+remove_trusted_legacy_gateway_pid_file() {
+  local pid_file="${1:-}" expected_identity="${2:-}" current_identity
+  current_identity="$(trusted_gateway_service_file_identity "$pid_file" "$EUID")" \
+    || error "Refusing to remove the legacy OpenShell gateway PID file because its identity could not be revalidated."
+  if [[ "$current_identity" != "$expected_identity" ]]; then
+    error "Refusing to remove the legacy OpenShell gateway PID file because it changed during retirement."
+  fi
+  rm -f -- "$pid_file" \
+    || error "Could not remove the retired legacy OpenShell gateway PID file."
+  [[ ! -e "$pid_file" && ! -L "$pid_file" ]] \
+    || error "The retired legacy OpenShell gateway PID file remained after removal."
+}
+
+legacy_gateway_process_snapshot() {
+  printf '%s|%s|%s|%s' \
+    "$LEGACY_GATEWAY_PROCESS_STATUS" \
+    "$LEGACY_GATEWAY_PROCESS_PID" \
+    "$LEGACY_GATEWAY_PID_FILE_IDENTITY" \
+    "$LEGACY_GATEWAY_PROCESS_IDENTITY"
+}
+
+revalidate_trusted_legacy_openshell_gateway_process() {
+  local pid_file="${1:-}" gateway_name="${2:-}" gateway_port="${3:-}"
+  local expected_snapshot="${4:-}" current_snapshot
+  inspect_trusted_legacy_openshell_gateway_process \
+    "$pid_file" "$gateway_name" "$gateway_port" \
+    || error "Refusing to signal the legacy OpenShell gateway because its target identity could not be revalidated."
+  current_snapshot="$(legacy_gateway_process_snapshot)"
+  if [[ "$LEGACY_GATEWAY_PROCESS_STATUS" != "running" ||
+    "$current_snapshot" != "$expected_snapshot" ]]; then
+    error "Refusing to signal the legacy OpenShell gateway because its target identity changed during retirement."
+  fi
+}
+
 stop_legacy_openshell_gateway_process() {
   [ "$(uname -s)" = "Linux" ] || return 1
 
-  local gateway_port runtime_dir pid_file pid gateway_exe attempt
+  local gateway_name gateway_port runtime_dir pid_file pid pid_file_identity expected_snapshot attempt
   gateway_port="$(resolve_nemoclaw_gateway_port)" || return 2
+  gateway_name="$(nemoclaw_gateway_name)" || return 2
   if [ -n "${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-}" ]; then
     runtime_dir="${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR}"
   elif [ "$gateway_port" -eq 8080 ]; then
@@ -3892,23 +4619,19 @@ stop_legacy_openshell_gateway_process() {
     runtime_dir="${HOME}/.local/state/nemoclaw/openshell-docker-gateway-${gateway_port}"
   fi
   pid_file="${runtime_dir}/openshell-gateway.pid"
-  [ -f "$pid_file" ] || return 1
-  if [ -L "$pid_file" ] || ! [ -O "$pid_file" ]; then
-    error "Refusing to retire the legacy OpenShell gateway from an untrusted PID file: ${pid_file}"
-  fi
-
-  IFS= read -r pid <"$pid_file" || return 2
-  [[ "$pid" =~ ^[1-9][0-9]*$ ]] \
-    || error "Refusing to retire the legacy OpenShell gateway from an invalid PID file: ${pid_file}"
-  if ! kill -0 "$pid" 2>/dev/null; then
-    rm -f "$pid_file"
+  [[ -e "$pid_file" || -L "$pid_file" ]] || return 1
+  inspect_trusted_legacy_openshell_gateway_process \
+    "$pid_file" "$gateway_name" "$gateway_port" \
+    || error "Refusing to retire the legacy OpenShell gateway because its PID-file or process identity is not target-bound."
+  pid="$LEGACY_GATEWAY_PROCESS_PID"
+  pid_file_identity="$LEGACY_GATEWAY_PID_FILE_IDENTITY"
+  if [[ "$LEGACY_GATEWAY_PROCESS_STATUS" == "stale" ]]; then
+    remove_trusted_legacy_gateway_pid_file "$pid_file" "$pid_file_identity"
     return 0
   fi
-
-  gateway_exe="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
-  [ "${gateway_exe##*/}" = "openshell-gateway" ] \
-    || error "Refusing to stop PID ${pid}: the recorded process is not openshell-gateway."
-
+  expected_snapshot="$(legacy_gateway_process_snapshot)"
+  revalidate_trusted_legacy_openshell_gateway_process \
+    "$pid_file" "$gateway_name" "$gateway_port" "$expected_snapshot"
   kill "$pid" 2>/dev/null \
     || error "Could not stop the recorded legacy OpenShell gateway process ${pid}."
   for attempt in {1..50}; do
@@ -3916,6 +4639,8 @@ stop_legacy_openshell_gateway_process() {
     sleep 0.2
   done
   if kill -0 "$pid" 2>/dev/null; then
+    revalidate_trusted_legacy_openshell_gateway_process \
+      "$pid_file" "$gateway_name" "$gateway_port" "$expected_snapshot"
     kill -KILL "$pid" 2>/dev/null \
       || error "Could not terminate the recorded legacy OpenShell gateway process ${pid}."
     for attempt in {1..10}; do
@@ -3925,36 +4650,40 @@ stop_legacy_openshell_gateway_process() {
   fi
   kill -0 "$pid" 2>/dev/null \
     && error "The recorded legacy OpenShell gateway process ${pid} did not stop."
-  rm -f "$pid_file"
+  remove_trusted_legacy_gateway_pid_file "$pid_file" "$pid_file_identity"
 }
 
 stop_nemoclaw_openshell_gateway_user_service() {
   [ "$(uname -s)" = "Linux" ] || return 1
 
-  local gateway_port service_name service_path fragment_path exec_start
+  local gateway_port service_name service_path descriptor_before descriptor_after
+  local executable_after descriptor_current executable_current stop_output
+  local fragment_before exec_start_before drop_in_before condition_before
+  local start_pre_before start_post_before reload_before stop_before stop_post_before
   gateway_port="$(resolve_nemoclaw_gateway_port)" || return 1
   [ "$gateway_port" -eq 8080 ] || return 1
   command_exists systemctl || return 1
 
   service_name="${NEMOCLAW_GATEWAY_SERVICE_NAME}.service"
   service_path="$(openshell_user_config_home)/systemd/user/${service_name}"
-  [ -f "$service_path" ] || return 1
-  if [ -L "$service_path" ] || ! [ -O "$service_path" ]; then
-    error "Refusing to retire the OpenShell gateway from an untrusted user service: ${service_path}"
-  fi
-  is_nemoclaw_openshell_gateway_user_service "$service_path" \
-    || error "Refusing to retire the OpenShell gateway from a non-NemoClaw user service: ${service_path}"
   run_gateway_service_command systemctl --user is-active --quiet "$service_name" 2>/dev/null \
     || return 1
-
-  fragment_path="$(run_gateway_service_command systemctl --user show \
-    "$service_name" --property=FragmentPath --value 2>/dev/null)" \
-    || return 1
-  exec_start="$(run_gateway_service_command systemctl --user show \
-    "$service_name" --property=ExecStart --value 2>/dev/null)" \
-    || return 1
+  descriptor_before="$(trusted_gateway_service_file_identity \
+    "$service_path" "$EUID" "$NEMOCLAW_GATEWAY_SERVICE_MARKER_LINE")" \
+    || error "Refusing to retire the OpenShell gateway from an untrusted user service."
+  read_openshell_gateway_user_service_snapshot "$service_name" \
+    || error "Refusing to retire the OpenShell gateway because the active user service identity could not be read."
   if ! validate_openshell_gateway_user_service_identity \
-    "$service_name" "$fragment_path" "$exec_start"; then
+    "$service_name" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_FRAGMENT_PATH" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_DROP_IN_PATHS" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_CONDITION" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_PRE" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_POST" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_RELOAD" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP_POST"; then
     case "$OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR" in
       "is not descriptor-bound")
         error "Refusing to retire the OpenShell gateway because the active user service does not match the trusted lifecycle target descriptor."
@@ -3964,9 +4693,56 @@ stop_nemoclaw_openshell_gateway_user_service() {
         ;;
     esac
   fi
-
-  run_gateway_service_command systemctl --user stop "$service_name" \
+  descriptor_after="$OPENSHELL_GATEWAY_SERVICE_IDENTITY_DESCRIPTOR"
+  executable_after="$OPENSHELL_GATEWAY_SERVICE_IDENTITY_EXECUTABLE"
+  fragment_before="$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_FRAGMENT_PATH"
+  exec_start_before="$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START"
+  drop_in_before="$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_DROP_IN_PATHS"
+  condition_before="$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_CONDITION"
+  start_pre_before="$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_PRE"
+  start_post_before="$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_POST"
+  reload_before="$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_RELOAD"
+  stop_before="$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP"
+  stop_post_before="$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP_POST"
+  if [[ "$descriptor_before" != "$descriptor_after" ]]; then
+    error "Refusing to retire the OpenShell gateway because the lifecycle target changed during identity inspection."
+  fi
+  read_openshell_gateway_user_service_snapshot "$service_name" \
+    || error "Refusing to retire the OpenShell gateway because the effective service identity could not be revalidated before the stop command."
+  if [[ "$fragment_before" != "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_FRAGMENT_PATH" ||
+    "$exec_start_before" != "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START" ||
+    "$drop_in_before" != "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_DROP_IN_PATHS" ||
+    "$condition_before" != "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_CONDITION" ||
+    "$start_pre_before" != "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_PRE" ||
+    "$start_post_before" != "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_POST" ||
+    "$reload_before" != "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_RELOAD" ||
+    "$stop_before" != "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP" ||
+    "$stop_post_before" != "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP_POST" ]]; then
+    error "Refusing to retire the OpenShell gateway because the effective service identity changed before the stop command."
+  fi
+  if ! validate_openshell_gateway_user_service_identity \
+    "$service_name" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_FRAGMENT_PATH" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_DROP_IN_PATHS" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_CONDITION" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_PRE" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_START_POST" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_RELOAD" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP" \
+    "$OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_EXEC_STOP_POST"; then
+    error "Refusing to retire the OpenShell gateway because the lifecycle target changed before the stop command."
+  fi
+  descriptor_current="$OPENSHELL_GATEWAY_SERVICE_IDENTITY_DESCRIPTOR"
+  executable_current="$OPENSHELL_GATEWAY_SERVICE_IDENTITY_EXECUTABLE"
+  if [[ "$descriptor_after" != "$descriptor_current" ||
+    "$executable_after" != "$executable_current" ]]; then
+    error "Refusing to retire the OpenShell gateway because the lifecycle target changed before the stop command."
+  fi
+  stop_output="$(run_gateway_service_command systemctl --user stop "$service_name" 2>&1)" \
     || error "Could not stop the trusted NemoClaw OpenShell gateway user service. Run 'systemctl --user status ${service_name}' for details."
+  : "$stop_output"
+  unset stop_output
   run_gateway_service_command systemctl --user is-active --quiet "$service_name" 2>/dev/null \
     && error "The trusted NemoClaw OpenShell gateway user service remained active after the stop command."
   return 0
@@ -3975,7 +4751,7 @@ stop_nemoclaw_openshell_gateway_user_service() {
 preinstall_backup_and_retire_legacy_gateway() {
   require_stable_installer_gateway_management
   [[ "$_NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_MODE" == "external" ]] && return 0
-  local reg_file gateway_name
+  local reg_file gateway_name gateway_port retirement_service_set_identity
   reg_file="$(nemoclaw_state_dir)/sandboxes.json"
   if [ ! -f "$reg_file" ] && [ "$(resolve_nemoclaw_gateway_port)" -ne 8080 ]; then
     reg_file="${HOME}/.nemoclaw/sandboxes.json"
@@ -4048,20 +4824,50 @@ preinstall_backup_and_retire_legacy_gateway() {
   if ! version_gte "$old_openshell_version" "$min_openshell_version" \
     || ! version_gte "$max_openshell_version" "$old_openshell_version"; then
     require_stable_installer_gateway_management
-    require_no_competing_openshell_gateway_user_service
+    gateway_port="$(resolve_nemoclaw_gateway_port)" \
+      || error "Could not resolve the selected gateway port before gateway retirement."
+    require_no_competing_openshell_gateway_user_service "$gateway_port"
+    if [[ "$OPENSHELL_GATEWAY_CANONICAL_SERVICE_SET_IDENTITY_AVAILABLE" != "true" ]]; then
+      error "Refusing to retire the OpenShell gateway because the canonical service set could not be bound."
+    fi
+    retirement_service_set_identity="$OPENSHELL_GATEWAY_CANONICAL_SERVICE_SET_IDENTITY"
     info "Retiring OpenShell ${old_openshell_version} gateway before installing current OpenShell…"
     if [ "$gateway_name" = "nemoclaw" ]; then
-      openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
-        || openshell gateway destroy >/dev/null 2>&1 \
-        || { { stop_nemoclaw_openshell_gateway_user_service \
-          || stop_legacy_openshell_gateway_process; } \
+      {
+        revalidate_openshell_gateway_retirement_service_set \
+          "$retirement_service_set_identity" "$gateway_port"
+        openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1
+      } \
+        || {
+          revalidate_openshell_gateway_retirement_service_set \
+            "$retirement_service_set_identity" "$gateway_port"
+          openshell gateway destroy >/dev/null 2>&1
+        } \
+        || { { revalidate_openshell_gateway_retirement_service_set \
+          "$retirement_service_set_identity" "$gateway_port" \
+          && stop_nemoclaw_openshell_gateway_user_service \
+          || {
+            revalidate_openshell_gateway_retirement_service_set \
+              "$retirement_service_set_identity" "$gateway_port"
+            stop_legacy_openshell_gateway_process
+          }; } \
           && { openshell gateway remove "$gateway_name" >/dev/null 2>&1 \
             || warn "The legacy gateway process stopped, but its OpenShell registration could not be removed; onboarding will replace the stale registration."; }; } \
         || error "Could not retire the legacy OpenShell gateway after backup. Installed OpenShell lifecycle commands failed, and no trusted active user service or PID-file gateway could be stopped. The installer stopped with the sandbox backups preserved."
     else
-      openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
-        || { { stop_nemoclaw_openshell_gateway_user_service \
-          || stop_legacy_openshell_gateway_process; } \
+      {
+        revalidate_openshell_gateway_retirement_service_set \
+          "$retirement_service_set_identity" "$gateway_port"
+        openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1
+      } \
+        || { { revalidate_openshell_gateway_retirement_service_set \
+          "$retirement_service_set_identity" "$gateway_port" \
+          && stop_nemoclaw_openshell_gateway_user_service \
+          || {
+            revalidate_openshell_gateway_retirement_service_set \
+              "$retirement_service_set_identity" "$gateway_port"
+            stop_legacy_openshell_gateway_process
+          }; } \
           && { openshell gateway remove "$gateway_name" >/dev/null 2>&1 \
             || warn "Legacy gateway ${gateway_name} stopped, but its OpenShell registration could not be removed; onboarding will replace only that stale registration."; }; } \
         || error "Could not retire legacy gateway ${gateway_name} after backup. Installed OpenShell lifecycle commands failed, and no trusted active user service or PID-file gateway could be stopped. The installer stopped with the sandbox backups preserved."

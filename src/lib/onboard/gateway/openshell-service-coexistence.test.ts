@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { constants as fsConstants } from "node:fs";
+
 import { expect, it, type Mock, vi } from "vitest";
 
 import {
@@ -18,6 +20,10 @@ import {
   type SpawnSyncLike,
   type SpawnSyncLikeResult,
 } from "../docker-driver-gateway-service";
+import {
+  nemoclawGatewaySystemdUnitFixture,
+  serviceFileIdentityFixture,
+} from "../__test-helpers__/docker-driver-gateway-service";
 
 const TRUSTED_GATEWAY = "/usr/local/bin/openshell-gateway";
 const TRUSTED_GATEWAY_PATHS = [
@@ -25,6 +31,17 @@ const TRUSTED_GATEWAY_PATHS = [
   "/usr/bin/openshell-gateway",
   "/home/nvidia/.local/bin/openshell-gateway",
 ];
+const NEMOCLAW_UNIT = "/home/nvidia/.config/systemd/user/nemoclaw-openshell-gateway.service";
+const NEMOCLAW_GATEWAY = "/home/nvidia/.local/bin/openshell-gateway";
+const PACKAGE_UNIT = "/usr/lib/systemd/user/openshell-gateway.service";
+const PACKAGE_GATEWAY = "/usr/bin/openshell-gateway";
+const NEMOCLAW_PRE_START = `{ path=${NEMOCLAW_GATEWAY} ; argv[]=${NEMOCLAW_GATEWAY} generate-certs --output-dir \${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal ; ignore_errors=no ; }`;
+const SYSTEMD_FILE_IDENTITIES = new Map([
+  [NEMOCLAW_UNIT, { inode: 11, uid: 1000 }],
+  [NEMOCLAW_GATEWAY, { inode: 12, uid: 1000 }],
+  [PACKAGE_UNIT, { inode: 21, uid: 0 }],
+  [PACKAGE_GATEWAY, { inode: 22, uid: 0 }],
+]);
 
 it("does not trim a leading space from XDG_CONFIG_HOME (#9705)", () => {
   expect(getOpenShellUserConfigHome("/home/nvidia", { XDG_CONFIG_HOME: " /opt/config-home" })).toBe(
@@ -43,15 +60,56 @@ function showOutput(overrides: Partial<Record<string, string>> = {}): string {
 }
 
 function canonicalShowOutput(overrides: Partial<Record<string, string>> = {}): string {
+  const fragmentPath = overrides.FragmentPath ?? PACKAGE_UNIT;
   return [
-    `FragmentPath=${overrides.FragmentPath ?? "/usr/lib/systemd/user/openshell-gateway.service"}`,
+    `FragmentPath=${fragmentPath}`,
     showOutput({
       ...overrides,
       ExecStart:
         overrides.ExecStart ??
-        "{ path=/usr/bin/openshell-gateway ; argv[]=/usr/bin/openshell-gateway ; }",
+        `{ path=${PACKAGE_GATEWAY} ; argv[]=${PACKAGE_GATEWAY} ; ignore_errors=no ; }`,
     }),
+    `DropInPaths=${overrides.DropInPaths ?? ""}`,
+    `ExecCondition=${overrides.ExecCondition ?? ""}`,
+    `ExecStartPre=${overrides.ExecStartPre ?? (fragmentPath === NEMOCLAW_UNIT ? NEMOCLAW_PRE_START : "")}`,
+    `ExecStartPost=${overrides.ExecStartPost ?? ""}`,
+    `ExecReload=${overrides.ExecReload ?? ""}`,
+    `ExecStop=${overrides.ExecStop ?? ""}`,
+    `ExecStopPost=${overrides.ExecStopPost ?? ""}`,
   ].join("\n");
+}
+
+function systemdFileOptions(ownerOverrides: Record<string, number> = {}) {
+  const openedPaths = new Map<number, string>();
+  let nextFileDescriptor = 10;
+  const fileStat = (filePath: string) => {
+    const identity = SYSTEMD_FILE_IDENTITIES.get(filePath)!;
+    return {
+      dev: 1,
+      ino: identity.inode,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+      uid: ownerOverrides[filePath] ?? identity.uid,
+    };
+  };
+  return {
+    closeSync: (fileDescriptor: number) => void openedPaths.delete(fileDescriptor),
+    fstatSync: (fileDescriptor: number) => fileStat(openedPaths.get(fileDescriptor)!),
+    inspectServiceFileIdentity: serviceFileIdentityFixture(
+      (filePath) =>
+        filePath === NEMOCLAW_UNIT ? nemoclawGatewaySystemdUnitFixture(NEMOCLAW_GATEWAY) : "",
+      (filePath) => fileStat(filePath).uid,
+    ),
+    lstatSync: fileStat as never,
+    openSync: (filePath: string, flags: number) => {
+      expect(flags & fsConstants.O_NOFOLLOW).toBe(fsConstants.O_NOFOLLOW);
+      const fileDescriptor = nextFileDescriptor;
+      nextFileDescriptor += 1;
+      openedPaths.set(fileDescriptor, filePath);
+      return fileDescriptor;
+    },
+    readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+  };
 }
 
 function classify(
@@ -343,7 +401,7 @@ it.each([
       metadata: {
         [serviceName]: canonicalShowOutput({
           ActiveState: active ? "active" : "inactive",
-          ExecStart: `{ path=${executablePath} ; argv[]=${executablePath} ; }`,
+          ExecStart: `{ path=${executablePath} ; argv[]=${executablePath} ; ignore_errors=no ; }`,
           FragmentPath: fragmentPath,
           UnitFileState: active ? "disabled" : "static",
         }),
@@ -353,6 +411,7 @@ it.each([
     expect(() =>
       assertNoCompetingOpenShellGatewayUserService(8080, {
         ...activation.options,
+        ...systemdFileOptions(),
         commandExists: () => true,
         existsSync: (candidate) =>
           candidate === fragmentPath ||
@@ -360,13 +419,7 @@ it.each([
         getUpstreamGatewayVersion: () => "0.0.85",
         getUpstreamGatewayVersionBounds: () => ({ max: "0.0.85", min: "0.0.85" }),
         getuid: () => 1000,
-        lstatSync: (() => ({
-          isFile: () => true,
-          isSymbolicLink: () => false,
-          uid: 1000,
-        })) as never,
         platform: "linux",
-        readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
         spawnSyncImpl,
       }),
     ).not.toThrow();
@@ -396,12 +449,11 @@ it("blocks a canonical NemoClaw descriptor owned by another user (#9705)", () =>
   expect(() =>
     assertNoCompetingOpenShellGatewayUserService(8080, {
       ...activation.options,
+      ...systemdFileOptions({ [fragmentPath]: 2000 }),
       commandExists: () => true,
       existsSync: (candidate) => candidate === fragmentPath,
       getuid: () => 1000,
-      lstatSync: (() => ({ isFile: () => true, isSymbolicLink: () => false, uid: 2000 })) as never,
       platform: "linux",
-      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
       spawnSyncImpl,
     }),
   ).toThrow("ambiguous port configuration");

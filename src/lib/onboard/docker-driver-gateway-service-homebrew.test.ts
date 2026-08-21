@@ -11,7 +11,12 @@ import {
   startOpenShellGatewayUserService,
   startPackageManagedDockerDriverGateway,
   stopOpenShellGatewayUserService,
+  type OpenShellGatewayUserServiceOptions,
 } from "./docker-driver-gateway-service";
+import {
+  openShellHomebrewServicePlistFixture,
+  serviceFileIdentityFixture,
+} from "./__test-helpers__/docker-driver-gateway-service";
 
 const HOMEBREW_HOME = "/Users/nemoclaw";
 const HOMEBREW_FORMULA_PREFIX = "/opt/homebrew/opt/openshell";
@@ -19,6 +24,7 @@ const HOMEBREW_GATEWAY_BINARY = `${HOMEBREW_FORMULA_PREFIX}/bin/openshell-gatewa
 const HOMEBREW_SERVICE_COMMAND = `${HOMEBREW_FORMULA_PREFIX}/libexec/openshell-gateway-homebrew-service`;
 const HOMEBREW_FORMULA_PLIST = `${HOMEBREW_FORMULA_PREFIX}/homebrew.mxcl.openshell.plist`;
 const HOMEBREW_USER_PLIST = `${HOMEBREW_HOME}/Library/LaunchAgents/homebrew.mxcl.openshell.plist`;
+const HOMEBREW_PLIST = openShellHomebrewServicePlistFixture(HOMEBREW_FORMULA_PREFIX);
 const SECRET_SENTINEL = "sentinel-secret-not-for-child-processes-or-diagnostics";
 
 function spawnResult(status = 0, stderr = "", stdout = ""): SpawnSyncLikeResult {
@@ -87,6 +93,69 @@ function homebrewPathExists(candidate: string): boolean {
     HOMEBREW_SERVICE_COMMAND,
     HOMEBREW_USER_PLIST,
   ].includes(candidate);
+}
+
+function trustedHomebrewPlistFiles({ userPlistExists = false } = {}): Pick<
+  OpenShellGatewayUserServiceOptions,
+  | "closeSync"
+  | "fstatSync"
+  | "getuid"
+  | "inspectServiceFileIdentity"
+  | "lstatSync"
+  | "openSync"
+  | "readSync"
+  | "spawnSyncImpl"
+> {
+  let nextFileDescriptor = 10;
+  const paths = new Map<number, string>();
+  const offsets = new Map<number, number>();
+  const contents = new Map([
+    [HOMEBREW_FORMULA_PLIST, HOMEBREW_PLIST],
+    [HOMEBREW_USER_PLIST, HOMEBREW_PLIST],
+  ]);
+  const stat = (candidate: string) => ({
+    ctimeNs: 31,
+    dev: 17,
+    ino: candidate === HOMEBREW_FORMULA_PLIST ? 23 : 24,
+    isFile: () => true,
+    isSymbolicLink: () => false,
+    mode: 0o644,
+    mtimeNs: 29,
+    nlink: 1,
+    size: Buffer.byteLength(contents.get(candidate) ?? ""),
+    uid: 501,
+  });
+  const missing = (): never => {
+    throw Object.assign(new Error("missing launchd destination"), { code: "ENOENT" });
+  };
+  return {
+    closeSync: (fileDescriptor) => {
+      paths.delete(fileDescriptor);
+      offsets.delete(fileDescriptor);
+    },
+    fstatSync: (fileDescriptor) => stat(paths.get(fileDescriptor) ?? ""),
+    getuid: () => 501,
+    inspectServiceFileIdentity: serviceFileIdentityFixture(
+      () => "reviewed Homebrew executable\n",
+      () => 501,
+    ),
+    lstatSync: ((candidate: string) =>
+      candidate === HOMEBREW_USER_PLIST && !userPlistExists ? missing() : stat(candidate)) as never,
+    openSync: (filePath) => {
+      const fileDescriptor = nextFileDescriptor++;
+      paths.set(fileDescriptor, filePath);
+      return fileDescriptor;
+    },
+    readSync: (fileDescriptor, buffer, offset, length) => {
+      const content = Buffer.from(contents.get(paths.get(fileDescriptor) ?? "") ?? "");
+      const contentOffset = offsets.get(fileDescriptor) ?? 0;
+      const count = Math.max(0, Math.min(length, content.length - contentOffset));
+      content.copy(buffer, offset, contentOffset, contentOffset + count);
+      offsets.set(fileDescriptor, contentOffset + count);
+      return count;
+    },
+    spawnSyncImpl: (command) => (command === "/bin/launchctl" ? spawnResult(113) : spawnResult()),
+  };
 }
 
 function homebrewOperation(
@@ -241,9 +310,10 @@ describe("OpenShell Homebrew service boundary", () => {
     ["loaded_file", { loaded_file: "/tmp/homebrew.mxcl.openshell.plist" }],
     ["registered", { registered: false }],
   ] satisfies Array<[string, Partial<HomebrewServiceInfo>]>)(
-    "rejects an active Homebrew service with a foreign %s value (#9705)",
+    "does not inspect or trust a loaded launchd job with a reported %s (#9705)",
     (_field, change) => {
-      const operation = homebrewOperation(() => homebrewServiceInfo(change));
+      const events: string[] = [];
+      const operation = homebrewOperation(() => homebrewServiceInfo(change), events);
 
       expect(
         getTrustedActiveOpenShellGatewayUserServiceIdentity({
@@ -254,18 +324,20 @@ describe("OpenShell Homebrew service boundary", () => {
           platform: "darwin",
         }),
       ).toBeNull();
+      expect(events).not.toContain("services info openshell --json");
     },
   );
 
-  it("rechecks the Homebrew service definition after environment preparation and before stop (#9705)", () => {
+  it("rechecks the unloaded Homebrew service definition after environment preparation and before start (#9705)", () => {
     const events: string[] = [];
     let identityChanged = false;
-    const operation = homebrewOperation(
-      () => homebrewServiceInfo(identityChanged ? { command: "/tmp/foreign-gateway-service" } : {}),
-      events,
-    );
+    const operation = homebrewOperation(() => {
+      const change = identityChanged ? { command: "/tmp/foreign-gateway-service" } : {};
+      return stoppedHomebrewServiceInfo(change);
+    }, events);
 
     const result = startOpenShellGatewayUserService({
+      ...trustedHomebrewPlistFiles(),
       commandExists: (command) => command === "brew",
       existsSync: homebrewPathExists,
       home: HOMEBREW_HOME,
@@ -278,8 +350,11 @@ describe("OpenShell Homebrew service boundary", () => {
     });
 
     expect(result.started).toBe(false);
+    expect(events[events.indexOf("prepare environment") - 1]).toBe(
+      "services info openshell --json",
+    );
     expect(events).not.toContain("services stop openshell");
-    expect(events).not.toContain("services restart openshell");
+    expect(events).not.toContain("services start openshell");
     expect(
       events
         .slice(events.indexOf("prepare environment") + 1)
@@ -287,28 +362,20 @@ describe("OpenShell Homebrew service boundary", () => {
     ).toBe(true);
   });
 
-  it("rechecks the Homebrew service definition after stop and before restart (#9705)", () => {
+  it("rechecks the unloaded Homebrew service definition after port preparation and before start (#9705)", () => {
     const events: string[] = [];
     let identityChanged = false;
-    let serviceRunning = true;
     const operation = homebrewOperation(() => {
       const change = identityChanged ? { loaded_file: "/tmp/foreign.plist" } : {};
-      return serviceRunning ? homebrewServiceInfo(change) : stoppedHomebrewServiceInfo(change);
+      return stoppedHomebrewServiceInfo(change);
     }, events);
-    const trackedOperation = (args: string[]) => {
-      const result = operation(args);
-      serviceRunning =
-        args.join(" ") === "services stop openshell" && result.status === 0
-          ? false
-          : serviceRunning;
-      return result;
-    };
 
     const result = startOpenShellGatewayUserService({
+      ...trustedHomebrewPlistFiles(),
       commandExists: (command) => command === "brew",
       existsSync: homebrewPathExists,
       home: HOMEBREW_HOME,
-      homebrewFormulaOperation: trackedOperation,
+      homebrewFormulaOperation: operation,
       platform: "darwin",
       preparePortForServiceStart: () => {
         events.push("prepare port");
@@ -317,8 +384,9 @@ describe("OpenShell Homebrew service boundary", () => {
     });
 
     expect(result.started).toBe(false);
-    expect(events).toContain("services stop openshell");
-    expect(events).not.toContain("services restart openshell");
+    expect(events).not.toContain("services stop openshell");
+    expect(events[events.indexOf("prepare port") - 1]).toBe("services info openshell --json");
+    expect(events).not.toContain("services start openshell");
     expect(
       events
         .slice(events.indexOf("prepare port") + 1)
@@ -326,52 +394,47 @@ describe("OpenShell Homebrew service boundary", () => {
     ).toBe(true);
   });
 
-  it.each(["services stop openshell", "services restart openshell"])(
-    "does not expose child stderr when Homebrew lifecycle command %s fails (#9705)",
-    (failedCommand) => {
-      let serviceRunning = true;
-      const operation = homebrewOperation(
-        () => (serviceRunning ? homebrewServiceInfo() : stoppedHomebrewServiceInfo()),
+  it("does not expose child stderr when the Homebrew start command fails (#9705)", () => {
+    const result = startOpenShellGatewayUserService({
+      ...trustedHomebrewPlistFiles(),
+      commandExists: (command) => command === "brew",
+      existsSync: homebrewPathExists,
+      home: HOMEBREW_HOME,
+      homebrewFormulaOperation: homebrewOperation(
+        () => stoppedHomebrewServiceInfo(),
         [],
-        failedCommand,
-      );
-      const trackedOperation = (args: string[]) => {
-        const result = operation(args);
-        serviceRunning =
-          args.join(" ") === "services stop openshell" && result.status === 0
-            ? false
-            : serviceRunning;
-        return result;
-      };
+        "services start openshell",
+      ),
+      platform: "darwin",
+    });
 
-      const result = startOpenShellGatewayUserService({
-        commandExists: (command) => command === "brew",
-        existsSync: homebrewPathExists,
-        home: HOMEBREW_HOME,
-        homebrewFormulaOperation: trackedOperation,
-        platform: "darwin",
-      });
+    expect(result).toMatchObject({ attempted: true, started: false });
+    expect(result.reason).not.toContain(SECRET_SENTINEL);
+  });
 
-      expect(result).toMatchObject({ attempted: true, started: false });
-      expect(result.reason).not.toContain(SECRET_SENTINEL);
-    },
-  );
-
-  it("does not expose child stderr when Homebrew stop fails (#9705)", () => {
+  it("does not stop an unverified loaded Homebrew job (#9705)", () => {
+    const events: string[] = [];
     const result = stopOpenShellGatewayUserService({
+      ...trustedHomebrewPlistFiles({ userPlistExists: true }),
       commandExists: (command) => command === "brew",
       existsSync: homebrewPathExists,
       home: HOMEBREW_HOME,
       homebrewFormulaOperation: homebrewOperation(
         () => homebrewServiceInfo(),
-        [],
+        events,
         "services stop openshell",
       ),
       platform: "darwin",
     });
 
-    expect(result).toMatchObject({ attempted: true, stopped: false });
+    expect(result).toMatchObject({
+      attempted: true,
+      standaloneFallbackBlocked: true,
+      stopped: false,
+    });
+    expect(result.reason).toContain("brew services stop openshell");
     expect(result.reason).not.toContain(SECRET_SENTINEL);
+    expect(events).not.toContain("services stop openshell");
   });
 
   it("preserves required host variables without passing secrets to Homebrew child processes (#9705)", () => {
@@ -389,31 +452,29 @@ describe("OpenShell Homebrew service boundary", () => {
       OPENSHELL_GATEWAY_AUTH_TOKEN: SECRET_SENTINEL,
       XDG_API_TOKEN: SECRET_SENTINEL,
     };
-    let serviceRunning = true;
-    const spawnSyncImpl: SpawnSyncLike = vi.fn((_command, args, options) => {
+    const spawnSyncImpl: SpawnSyncLike = vi.fn((command, args, options) => {
       expect(options?.env).toMatchObject(requiredEnvironment);
       expect(options?.env).not.toHaveProperty("LC_CLIENT_SECRET");
       expect(options?.env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
       expect(options?.env).not.toHaveProperty("OPENSHELL_GATEWAY_AUTH_TOKEN");
       expect(options?.env).not.toHaveProperty("XDG_API_TOKEN");
       expect(Object.values(options?.env ?? {})).not.toContain(SECRET_SENTINEL);
-      const operation = extractHomebrewOperation(args);
-      const command = operation.join(" ");
+      const operation = command === "/bin/launchctl" ? [] : extractHomebrewOperation(args);
       const result =
-        operation[0] === "info"
-          ? officialFormulaInfo()
-          : operation[0] === "--prefix"
-            ? spawnResult(0, "", HOMEBREW_FORMULA_PREFIX)
-            : operation[0] === "services" && operation[1] === "info"
-              ? serviceRunning
-                ? homebrewServiceInfo()
-                : stoppedHomebrewServiceInfo()
-              : spawnResult();
-      serviceRunning = command === "services stop openshell" ? false : serviceRunning;
+        command === "/bin/launchctl"
+          ? spawnResult(113)
+          : operation[0] === "info"
+            ? officialFormulaInfo()
+            : operation[0] === "--prefix"
+              ? spawnResult(0, "", HOMEBREW_FORMULA_PREFIX)
+              : operation[0] === "services" && operation[1] === "info"
+                ? stoppedHomebrewServiceInfo()
+                : spawnResult();
       return result;
     });
 
     const result = startOpenShellGatewayUserService({
+      ...trustedHomebrewPlistFiles(),
       commandExists: (command) => command === "brew",
       env,
       existsSync: homebrewPathExists,
@@ -423,6 +484,9 @@ describe("OpenShell Homebrew service boundary", () => {
     });
 
     expect(result.started).toBe(true);
+    expect(result.logCommand).toBe(
+      'tail -n 200 "$(brew --prefix)/var/log/openshell/openshell-gateway.out.log" "$(brew --prefix)/var/log/openshell/openshell-gateway.err.log"',
+    );
     expect(spawnSyncImpl).toHaveBeenCalled();
   });
 });

@@ -15,6 +15,7 @@ import {
   startPackageManagedDockerDriverGatewayWithEnvOverride,
   writeDockerGatewayDebEnvOverride,
 } from "./docker-driver-gateway-env";
+import { serviceFileIdentityFixture } from "./__test-helpers__/docker-driver-gateway-service";
 import { PORTABLE_HOST_GATEWAY_IP } from "./experimental/portable-profile";
 
 function homeEnv(home: string, xdgConfigHome = ""): NodeJS.ProcessEnv {
@@ -22,16 +23,44 @@ function homeEnv(home: string, xdgConfigHome = ""): NodeJS.ProcessEnv {
 }
 
 function trustedPackageServiceOptions(home: string) {
+  const openedPaths = new Map<number, string>();
+  let nextFileDescriptor = 10;
+  const trustedFileStat = (filePath: string) => ({
+    dev: 17,
+    ino: filePath.endsWith(".service") ? 23 : 24,
+    isFile: () => true,
+    uid: 0,
+  });
   return {
+    closeSync: (fileDescriptor: number) => void openedPaths.delete(fileDescriptor),
     env: homeEnv(home),
+    fstatSync: (fileDescriptor: number) => trustedFileStat(openedPaths.get(fileDescriptor) ?? ""),
     getUpstreamGatewayVersion: () => "openshell-gateway 0.0.85",
     getUpstreamGatewayVersionBounds: () => ({ max: "0.0.85", min: "0.0.85" }),
+    inspectServiceFileIdentity: serviceFileIdentityFixture(
+      (filePath) => `${filePath}\n`,
+      (filePath) => trustedFileStat(filePath).uid,
+    ),
+    lstatSync: ((filePath: string) => trustedFileStat(filePath)) as unknown as typeof fs.lstatSync,
+    openSync: (filePath: string, flags: number) => {
+      expect(flags & fs.constants.O_NOFOLLOW).toBe(fs.constants.O_NOFOLLOW);
+      const fileDescriptor = nextFileDescriptor++;
+      openedPaths.set(fileDescriptor, filePath);
+      return fileDescriptor;
+    },
     platform: "linux" as const,
     spawnSyncImpl: () => ({
       status: 0,
       stdout: [
         "FragmentPath=/usr/lib/systemd/user/openshell-gateway.service",
-        "ExecStart={ path=/usr/bin/openshell-gateway ; argv[]=/usr/bin/openshell-gateway ; }",
+        "ExecStart={ path=/usr/bin/openshell-gateway ; argv[]=/usr/bin/openshell-gateway ; ignore_errors=no ; }",
+        "DropInPaths=",
+        "ExecCondition=",
+        "ExecStartPre=",
+        "ExecStartPost=",
+        "ExecReload=",
+        "ExecStop=",
+        "ExecStopPost=",
       ].join("\n"),
     }),
   };

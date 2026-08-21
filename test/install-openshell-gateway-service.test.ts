@@ -18,6 +18,24 @@ const SERVICE_TEMPLATE = path.join(
   "lib",
   "openshell-gateway.service.in",
 );
+const SYSTEMD_IDENTITY_PROPERTIES = [
+  "FragmentPath",
+  "ExecStart",
+  "DropInPaths",
+  "ExecCondition",
+  "ExecStartPre",
+  "ExecStartPost",
+  "ExecReload",
+  "ExecStop",
+  "ExecStopPost",
+] as const;
+const SYSTEMD_CANONICAL_PROPERTIES = [
+  ...SYSTEMD_IDENTITY_PROPERTIES,
+  "ActiveState",
+  "UnitFileState",
+] as const;
+const systemdPropertyArgs = (properties: readonly string[]) =>
+  properties.map((property) => `--property=${property}`).join(" ");
 const RUNNING_AS_ROOT = typeof process.getuid === "function" && process.getuid() === 0;
 const tempRoots: string[] = [];
 
@@ -96,7 +114,10 @@ function writeSystemctlStub(
   home: string,
   unitPath: string,
   gatewayBin: string,
-  options: { failedMetadataProperty?: "ExecStart" | "FragmentPath"; fragmentPath?: string } = {},
+  options: {
+    failedMetadataProperty?: "ExecStart" | "FragmentPath";
+    fragmentPath?: string;
+  } = {},
 ) {
   const bin = path.join(home, "systemctl-bin");
   const log = path.join(home, "systemctl.log");
@@ -107,20 +128,20 @@ function writeSystemctlStub(
     path.join(bin, "systemctl"),
     [
       "#!/usr/bin/env bash",
+      "OPENSHELL_LOCAL_TLS_DIR='${OPENSHELL_LOCAL_TLS_DIR}'",
       `printf '%s\\n' "$*" >> ${JSON.stringify(log)}`,
       'case "$*" in',
       '  "--user is-active --quiet nemoclaw-openshell-gateway.service")',
       `    test -f ${JSON.stringify(active)}`,
       "    ;;",
-      '  "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --value")',
-      options.failedMetadataProperty === "FragmentPath"
-        ? "    exit 98"
-        : `    printf '%s\\n' ${JSON.stringify(options.fragmentPath ?? unitPath)}`,
-      "    ;;",
-      '  "--user show nemoclaw-openshell-gateway.service --property=ExecStart --value")',
-      options.failedMetadataProperty === "ExecStart"
-        ? "    exit 98"
-        : `    printf '{ path=%s ; argv[]=%s ; ignore_errors=no ; }\\n' ${JSON.stringify(gatewayBin)} ${JSON.stringify(gatewayBin)}`,
+      `  "--user show nemoclaw-openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}")`,
+      ...(options.failedMetadataProperty
+        ? ["    exit 98"]
+        : [
+            `    printf 'FragmentPath=%s\\n' ${JSON.stringify(options.fragmentPath ?? unitPath)}`,
+            `    printf 'ExecStart={ path=%s ; argv[]=%s ; ignore_errors=no ; }\\n' ${JSON.stringify(gatewayBin)} ${JSON.stringify(gatewayBin)}`,
+            `    printf '%s\\n' 'DropInPaths=' 'ExecCondition=' ${JSON.stringify(`ExecStartPre={ path=${gatewayBin} ; argv[]=${gatewayBin} generate-certs --output-dir \${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal ; ignore_errors=no ; }`)} 'ExecStartPost=' 'ExecReload=' 'ExecStop=' 'ExecStopPost='`,
+          ]),
       "    ;;",
       '  "--user stop nemoclaw-openshell-gateway.service")',
       `    rm -f ${JSON.stringify(active)}`,
@@ -154,6 +175,7 @@ function writeUpstreamSystemctlStub(
           options.execStart === undefined
             ? `printf 'ExecStart={ path=%s ; argv[]=%s ; ignore_errors=no ; }\\n' ${JSON.stringify(options.gatewayBin ?? "")} ${JSON.stringify(options.gatewayBin ?? "")}`
             : `printf 'ExecStart=%s\\n' ${JSON.stringify(options.execStart)}`,
+          "printf '%s\\n' 'DropInPaths=' 'ExecCondition=' 'ExecStartPre=' 'ExecStartPost=' 'ExecReload=' 'ExecStop=' 'ExecStopPost='",
         ]
       : [
           ...(options.diagnostic ?? "systemctl failed")
@@ -173,13 +195,13 @@ function writeUpstreamSystemctlStub(
       'case "$*" in',
       '  "--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager")',
       "    ;;",
-      '  "--user show openshell-gateway.service --property=FragmentPath --property=ExecStart --property=ActiveState --property=UnitFileState")',
+      `  "--user show openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_CANONICAL_PROPERTIES)}")`,
       ...discoveryResponse.map((line) => `    ${line}`),
       "    ;;",
-      '  "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --property=ExecStart --property=ActiveState --property=UnitFileState")',
+      `  "--user show nemoclaw-openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_CANONICAL_PROPERTIES)}")`,
       ...discoveryResponse.map((line) => `    ${line}`),
       "    ;;",
-      '  "--user show openshell-gateway.service --property=FragmentPath --property=ExecStart")',
+      `  "--user show openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}")`,
       ...response.map((line) => `    ${line}`),
       "    ;;",
       "  *) exit 97 ;;",
@@ -988,6 +1010,7 @@ describe("install.sh OpenShell gateway service", () => {
       [
         `trusted_upstream_openshell_gateway_unit_for_service() { [[ "$1" == ${JSON.stringify(upstreamUnit)} ]]; }`,
         `trusted_upstream_openshell_gateway_bin_for_service() { [[ "$1" == ${JSON.stringify(overriddenGatewayBin)} ]]; }`,
+        "trusted_gateway_service_file_identity() { printf '7:1\\n'; }",
         "resolve_upstream_openshell_gateway_bin_for_service",
       ].join("\n"),
       { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
@@ -1021,6 +1044,7 @@ describe("install.sh OpenShell gateway service", () => {
       [
         `trusted_upstream_openshell_gateway_unit_for_service() { [[ "$1" == ${JSON.stringify(upstreamUnit)} ]]; }`,
         `trusted_upstream_openshell_gateway_bin_for_service() { [[ "$1" == ${JSON.stringify(gatewayBin)} ]]; }`,
+        "trusted_gateway_service_file_identity() { printf '7:1\\n'; }",
         'inspect_upstream_openshell_gateway_user_service || { printf "%s\\n" "$UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR" >&2; exit 1; }',
       ].join("\n"),
       { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
@@ -1052,7 +1076,7 @@ describe("install.sh OpenShell gateway service", () => {
     expect(fs.existsSync(servicePath(home))).toBe(false);
     expect(fs.readFileSync(systemctl.log, "utf-8").trim().split(/\r?\n/u)).toEqual([
       "--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager",
-      "--user show openshell-gateway.service --property=FragmentPath --property=ExecStart",
+      `--user show openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}`,
     ]);
   });
 
@@ -1292,7 +1316,7 @@ describe("install.sh OpenShell gateway service", () => {
     },
   );
 
-  it("stops an active trusted NemoClaw gateway user service during upgrade retirement (#8800)", () => {
+  it("uses complete atomic snapshots before stopping the trusted service (#9705)", () => {
     const home = makeTempRoot();
     const gatewayBin = userGatewayBin(home);
     const staged = stageService(home, gatewayBin);
@@ -1308,15 +1332,15 @@ describe("install.sh OpenShell gateway service", () => {
     expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(fs.readFileSync(systemctl.log, "utf-8").trim().split(/\r?\n/)).toEqual([
       "--user is-active --quiet nemoclaw-openshell-gateway.service",
-      "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --value",
-      "--user show nemoclaw-openshell-gateway.service --property=ExecStart --value",
+      `--user show nemoclaw-openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}`,
+      `--user show nemoclaw-openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}`,
       "--user stop nemoclaw-openshell-gateway.service",
       "--user is-active --quiet nemoclaw-openshell-gateway.service",
     ]);
   });
 
   it.each(["FragmentPath", "ExecStart"] as const)(
-    "returns control for the PID-file fallback when %s service metadata is unavailable (#8800)",
+    "fails closed when active-service %s metadata is unavailable (#9705)",
     (failedMetadataProperty) => {
       const home = makeTempRoot();
       const gatewayBin = userGatewayBin(home);
@@ -1327,18 +1351,16 @@ describe("install.sh OpenShell gateway service", () => {
 
       expect(staged.status, staged.stdout + staged.stderr).toBe(0);
 
-      const result = runInstallHelper(
-        home,
-        "stop_nemoclaw_openshell_gateway_user_service || printf 'pid-file-fallback\\n'",
-        { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
-      );
+      const result = runInstallHelper(home, "stop_nemoclaw_openshell_gateway_user_service", {
+        PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+      });
       const calls = fs.readFileSync(systemctl.log, "utf-8");
 
-      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("active user service identity could not be read");
       expect(calls).toContain(
-        `--user show nemoclaw-openshell-gateway.service --property=${failedMetadataProperty} --value`,
+        `--user show nemoclaw-openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}`,
       );
-      expect(result.stdout).toContain("pid-file-fallback");
       expect(calls).not.toContain("--user stop nemoclaw-openshell-gateway.service");
     },
   );
