@@ -226,6 +226,7 @@ let errSpy: MockInstance;
 let exitMock: MockInstance;
 let promptMock: MockInstance;
 let getCredentialMock: MockInstance;
+let saveCredentialMock: MockInstance;
 let updateSandboxMock: MockInstance;
 let upsertMock: MockInstance;
 let runOpenshellMock: MockInstance;
@@ -324,7 +325,7 @@ beforeEach(() => {
   // Credentials store: staged token (no real prompt) + controllable prompt.
   getCredentialMock = vi.spyOn(store, "getCredential").mockReturnValue(null);
   promptMock = vi.spyOn(store, "prompt").mockResolvedValue("");
-  vi.spyOn(store, "saveCredential").mockImplementation(() => undefined);
+  saveCredentialMock = vi.spyOn(store, "saveCredential").mockImplementation(() => undefined);
 
   // Agent gate: OpenClaw support is derived from channel manifests.
   vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("openclaw"));
@@ -571,6 +572,38 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     );
 
     expect(updateSandboxMock).not.toHaveBeenCalled();
+    expect(registry.getSandbox("alpha")).toBe(originalEntry);
+    expect(
+      runOpenshellMock.mock.calls
+        .map(([args]) => (args as string[]).join(" "))
+        .filter((command) => command.includes("provider detach") || command.includes("delete")),
+    ).toEqual([]);
+  });
+
+  it("does not persist a multi-provider add when identity preflight fails", async () => {
+    const originalEntry = makeEmptyEntry("alpha");
+    arrangeRegistry({ current: originalEntry });
+    const slackBot = "xoxb-alpha-slack-bot-token";
+    const slackApp = "xapp-alpha-slack-app-token";
+    getCredentialMock.mockImplementation((key: string) =>
+      key === "SLACK_BOT_TOKEN" ? slackBot : key === "SLACK_APP_TOKEN" ? slackApp : null,
+    );
+    upsertMock.mockImplementationOnce(() => {
+      throw Object.assign(new Error("alpha-slack-app does not match the required binding"), {
+        code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
+        mutatedProviderNames: [],
+      });
+    });
+
+    await expect(addSandboxChannel("alpha", { channel: "slack" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(upsertMock.mock.calls[0]?.[0]).toHaveLength(2);
+    expect(saveCredentialMock).not.toHaveBeenCalled();
+    expect(applyPresetMock).not.toHaveBeenCalled();
+    expect(updateSandboxMock).not.toHaveBeenCalled();
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
     expect(registry.getSandbox("alpha")).toBe(originalEntry);
     expect(
       runOpenshellMock.mock.calls

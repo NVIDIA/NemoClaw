@@ -527,6 +527,23 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
   return { ok: true };
 }
 
+function preflightMessagingProviderBindings(tokenDefs, _runOpenshell) {
+  const failures = [];
+  for (const { name, envKey, token, providerType } of tokenDefs) {
+    if (!token || !providerType || !providerExistsInGateway(name, _runOpenshell)) continue;
+    const matches = matchesGatewayCredentialOnlyProviderBinding(
+      readGatewayProviderMetadata(name, _runOpenshell),
+      { name, type: providerType, credentialKey: envKey },
+    );
+    if (matches) continue;
+    failures.push({
+      name,
+      message: `Existing provider '${name}' does not match the required '${providerType}' credential binding.`,
+    });
+  }
+  return failures;
+}
+
 /**
  * Upsert all messaging providers that have tokens configured.
  * Returns the list of provider names that were successfully created/updated.
@@ -563,6 +580,20 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   // A channel is a bridge by the PRESENCE of a co-located
   // channels/<channel>/provider-profile/<agent>.yaml (not a flag inside it); both
   // bracket steps self-gate when no bridge token def is present.
+  if (options.requireExactBindings && !options.replaceExisting) {
+    const bindingFailures = preflightMessagingProviderBindings(tokenDefs, _runOpenshell);
+    if (bindingFailures.length > 0) {
+      const message = bindingFailures
+        .map(({ name, message: failure }) => `${name}: ${failure}`)
+        .join("; ");
+      if (options.bestEffort) {
+        throw new MessagingProviderBindingConflictError(message);
+      }
+      console.error(`\n  ✗ Failed to create messaging provider: ${message}`);
+      process.exit(1);
+    }
+  }
+
   const messagingBridgeProvider = require("./messaging-bridge-provider");
   messagingBridgeProvider.ensureMessagingBridgeProfiles(tokenDefs, {
     root: ROOT,

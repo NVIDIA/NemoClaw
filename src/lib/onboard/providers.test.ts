@@ -820,6 +820,56 @@ describe("onboard provider helpers", () => {
     );
   });
 
+  it("preflights every exact binding before creating any messaging provider", () => {
+    const commands: string[] = [];
+
+    expect(() =>
+      upsertMessagingProviders(
+        [
+          {
+            name: "alpha-discord-bridge",
+            envKey: "DISCORD_BOT_TOKEN",
+            token: "alpha-discord-test",
+            providerType: "discord-hermes-static-v1",
+          },
+          {
+            name: "beta-discord-bridge",
+            envKey: "DISCORD_BOT_TOKEN",
+            token: "beta-discord-test",
+            providerType: "discord-hermes-static-v1",
+          },
+        ],
+        (command) => {
+          commands.push(command.join(" "));
+          return command[1] === "get" && command[2] === "alpha-discord-bridge"
+            ? { status: 1, stdout: "", stderr: "not found" }
+            : {
+                status: 0,
+                stdout: [
+                  "Name: beta-discord-bridge",
+                  "Type: generic",
+                  "Credential keys: DISCORD_BOT_TOKEN",
+                  "Config keys: <none>",
+                  "",
+                ].join("\n"),
+              };
+        },
+        { bestEffort: true, requireExactBindings: true },
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
+        mutatedProviderNames: [],
+      }),
+    );
+    expect(commands).not.toContain(
+      "provider create --name alpha-discord-bridge --type discord-hermes-static-v1 --credential DISCORD_BOT_TOKEN",
+    );
+    expect(commands.some((command) => command.includes("provider create"))).toBe(false);
+    expect(commands.some((command) => command.includes("provider update"))).toBe(false);
+    expect(commands.some((command) => command.includes("profile import"))).toBe(false);
+  });
+
   it("replaces existing providers when the caller opts in (post-sandbox-delete path)", () => {
     const commands: string[] = [];
     // replaceExisting: true is only safe after the sandbox holding the

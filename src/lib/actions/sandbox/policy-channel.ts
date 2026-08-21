@@ -1450,12 +1450,10 @@ async function addSandboxChannelUnlocked(
     const existing = getCredential(key);
     if (existing != null) priorCreds[key] = existing;
   }
-  persistChannelTokens(acquired);
-  // Push to the gateway and update the registry NOW so that answering
-  // "rebuild later" (or running non-interactively) does not silently
-  // discard the change. Pre-fix this was safe because saveCredential()
-  // wrote credentials.json; with env-only persistence, exiting before
-  // the rebuild used to drop the queued token.
+  // Register every provider before credentials or durable channel state are
+  // saved. Exact-binding preflight can then reject the complete set without
+  // leaving a partial add behind. Credentials still persist before the policy
+  // and rebuild steps, so choosing "rebuild later" keeps the queued token.
   const registeredBridge = await applyChannelAddToGatewayAndRegistry(
     sandboxName,
     canonical,
@@ -1464,6 +1462,7 @@ async function addSandboxChannelUnlocked(
   if (registeredBridge) {
     console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
   }
+  persistChannelTokens(acquired);
 
   if (
     !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
