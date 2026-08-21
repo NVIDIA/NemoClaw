@@ -431,8 +431,7 @@ function attemptStartOllamaAuthProxyWithTokenUnlocked(
   // Don't commit the selected backend yet — wait until setupInference confirms
   // the provider. A newly generated token remains in memory and is discarded
   // if the user backs out.
-  const resolvedBackendUrl = backendUrl || `http://127.0.0.1:${OLLAMA_PORT}`;
-  const pid = spawnOllamaAuthProxy(proxyToken, resolvedBackendUrl);
+  const pid = spawnOllamaAuthProxy(proxyToken, backendUrl || `http://127.0.0.1:${OLLAMA_PORT}`);
 
   // Poll for readiness with backoff. Three terminal outcomes:
   //   • proxy alive and listening → success
@@ -456,7 +455,7 @@ function attemptStartOllamaAuthProxyWithTokenUnlocked(
     //   2. Port conflict (EADDRINUSE race lost after pre-check)
     //   3. Generic "exited during startup" without a structured reason
     const status = readProxyExitStatus(PROXY_STATUS_PATH);
-    if (printProxyStartupReason(status, OLLAMA_PORT, resolvedBackendUrl)) {
+    if (printProxyStartupReason(status, OLLAMA_PORT, backendUrl)) {
       // Already rendered above.
     } else {
       const owners = inspectForeignProxyPortOwners("any");

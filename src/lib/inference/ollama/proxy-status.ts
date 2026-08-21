@@ -119,8 +119,10 @@ function describeBackend(backendUrl: string): { authority: string; portClause: s
  * backend is not always the Ollama daemon. Naming Ollama and OLLAMA_HOST for
  * a vLLM or llama-server backend sends the reader to a service they are not
  * running, on a port they are not using (#9730). The backend is the managed
- * Ollama daemon exactly when its URL is the default the caller substitutes
- * when no compatible endpoint was selected.
+ * Ollama daemon exactly when the caller selected no compatible endpoint, so
+ * only an absent `backendUrl` selects the Ollama text. A compatible endpoint
+ * can itself sit on the Ollama port, and `OLLAMA_PORT` is overridable, so URL
+ * equality cannot identify the daemon.
  */
 function printBackendNotLoopback(
   details: string | undefined,
@@ -128,7 +130,7 @@ function printBackendNotLoopback(
   backendUrl: string | undefined,
 ): void {
   const listeners = details || "see proxy log";
-  if (backendUrl === undefined || backendUrl === `http://127.0.0.1:${ollamaPort}`) {
+  if (backendUrl === undefined) {
     console.error("  Error: Ollama auth proxy refused to start.");
     console.error(
       `  Ollama is reachable on a non-loopback interface on the host (${listeners}), ` +
@@ -162,8 +164,8 @@ function printBackendNotLoopback(
  * specific actionable message. Otherwise return false so the caller falls
  * back to its existing owner-or-port remediation.
  *
- * `backendUrl` is the URL the caller handed the proxy, so the remediation can
- * name the service the reader actually runs.
+ * `backendUrl` is the compatible endpoint the caller selected, or undefined
+ * when the proxy fronts the managed Ollama daemon.
  */
 export function printProxyStartupReason(
   status: ProxyExitStatus | null,

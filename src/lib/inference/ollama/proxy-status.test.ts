@@ -19,11 +19,8 @@ beforeEach(() => {
 });
 
 describe("printProxyStartupReason backend-not-loopback remediation", () => {
-  test.each([
-    ["the Ollama backend URL", OLLAMA_BACKEND],
-    ["no backend URL", undefined],
-  ])("keeps the Ollama daemon remediation for %s", (_label, backendUrl) => {
-    printProxyStartupReason(NOT_LOOPBACK, OLLAMA_PORT, backendUrl);
+  test("keeps the Ollama daemon remediation when no compatible endpoint was selected", () => {
+    printProxyStartupReason(NOT_LOOPBACK, OLLAMA_PORT, undefined);
 
     expect(errors.join("\n")).toContain(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT}`);
     expect(errors[0]).toBe("  Error: Ollama auth proxy refused to start.");
@@ -33,6 +30,9 @@ describe("printProxyStartupReason backend-not-loopback remediation", () => {
     ["a vLLM endpoint", "http://localhost:8000", "localhost:8000", "only on port 8000"],
     ["a llama-server endpoint", "http://127.0.0.1:8080", "127.0.0.1:8080", "only on port 8080"],
     ["an IPv6 loopback endpoint", "http://[::1]:8000", "[::1]:8000", "only on port 8000"],
+    // A compatible endpoint may sit on the Ollama daemon's own port, so the URL
+    // cannot identify the daemon; only an absent selection can.
+    ["an endpoint on the Ollama port", OLLAMA_BACKEND, "127.0.0.1:11434", "only on port 11434"],
   ])(
     "names %s instead of Ollama when it fronts a compatible endpoint (#9730)",
     (_label, backendUrl, authority, portClause) => {
