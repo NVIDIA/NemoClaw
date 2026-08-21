@@ -45,7 +45,7 @@ const SENSITIVE_ENV_ASSIGNMENT_KEYS = [
   ...listMessagingCredentialMetadata().map((credential) => credential.providerEnvKey),
 ];
 
-const SENSITIVE_ENV_ASSIGNMENT_VALUE = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)`;
+const SENSITIVE_ENV_ASSIGNMENT_VALUE = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\\r\n])*(?=\r?\n|$)|'(?:\\.|[^'\\\r\n])*(?=\r?\n|$)|\S+)`;
 const SENSITIVE_ENV_ASSIGNMENT_PATTERN = new RegExp(
   `(${SENSITIVE_ENV_ASSIGNMENT_KEYS.map(escapeRegExp).join("|")})=${SENSITIVE_ENV_ASSIGNMENT_VALUE}`,
   "gi",
@@ -111,6 +111,8 @@ function quotedSecretAssignmentPatterns(keySource: string, flags: string): [RegE
   return [
     [new RegExp(`${prefix}"(?:\\\\.|[^"\\\\])*"`, flags), '$1"<REDACTED>"'],
     [new RegExp(`${prefix}'(?:\\\\.|[^'\\\\])*'`, flags), "$1'<REDACTED>'"],
+    [new RegExp(`${prefix}"(?:\\\\.|[^"\\\\\\r\\n])*(?=\\r?\\n|$)`, flags), '$1"<REDACTED>"'],
+    [new RegExp(`${prefix}'(?:\\\\.|[^'\\\\\\r\\n])*(?=\\r?\\n|$)`, flags), "$1'<REDACTED>'"],
   ];
 }
 

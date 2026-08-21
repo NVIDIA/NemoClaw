@@ -34,7 +34,7 @@ const CONTROL_CHARS_RE = new RegExp("[\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u0
 // is unbounded where the shared one requires ten or more characters.
 const AUTHORIZATION_PATTERN = /\b(authorization\s*:\s*bearer)\s+\S+/gi;
 const LOCAL_SECRET_ASSIGNMENT_PATTERN =
-  /\b(api[-_]?key|token|secret|password)(["']?\s*[=:]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/gi;
+  /\b(api[-_]?key|token|secret|password)(["']?\s*[=:]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\\r\n])*(?=\r?\n|$)|'(?:\\.|[^'\\\r\n])*(?=\r?\n|$)|\S+)/gi;
 const NVAPI_PATTERN = /\bnvapi-\S+/gi;
 
 export function sanitizeWedgeLogLine(line: string): string {

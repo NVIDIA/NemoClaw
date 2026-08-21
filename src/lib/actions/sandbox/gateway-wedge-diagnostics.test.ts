@@ -88,6 +88,19 @@ describe("sanitizeWedgeLogLine", () => {
     expect(sanitized).toContain("; safe diagnostic remains");
   });
 
+  it.each([
+    ["double-quoted", 'api_key="opaque first second'],
+    ["single-quoted", "token='opaque first second"],
+  ])(
+    "fails closed for an unterminated %s wedge-log secret assignment (#9863)",
+    (_case, assignment) => {
+      const sanitized = sanitizeWedgeLogLine(`gateway startup failed: ${assignment}`);
+
+      expect(sanitized).not.toContain("opaque first second");
+      expect(sanitized).toContain("REDACTED");
+    },
+  );
+
   it("leaves ordinary wedge lines untouched", () => {
     const line =
       "gateway startup failed: listen EADDRINUSE. Process will stay alive; fix the issue and restart.";

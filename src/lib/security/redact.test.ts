@@ -87,6 +87,24 @@ describe("redactForLog", () => {
     );
   });
 
+  it.each([
+    ["double-quoted", 'OPENAI_API_KEY="opaque first second\nsafe diagnostic'],
+    ["single-quoted", "OPENAI_API_KEY='opaque first second\nsafe diagnostic"],
+  ])(
+    "fails closed at line end for an unterminated %s environment assignment (#9863)",
+    (_case, assignment) => {
+      const full = redactFull(assignment);
+      const sensitive = redactSensitiveText(assignment);
+
+      expect(full).not.toContain("opaque first second");
+      expect(sensitive).not.toContain("opaque first second");
+      expect(full).toContain("<REDACTED>");
+      expect(sensitive).toContain("<REDACTED>");
+      expect(full).toContain("\nsafe diagnostic");
+      expect(sensitive).toContain("\nsafe diagnostic");
+    },
+  );
+
   it("preserves benign structured keys containing pass", () => {
     const benign = {
       compass: "north",
