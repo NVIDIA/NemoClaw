@@ -155,6 +155,52 @@ function assertHermesPortablePolicyAuthority(
   throw new Error("Hermes portable sandbox creation requires NemoClaw-managed policy authority.");
 }
 
+/** Publish Docker-visible providers before the sandbox resolves its startup credentials. */
+function publishAttachedProvidersBeforeDockerSandboxCreation(
+  input: {
+    readonly openshellDriver: SandboxEntry["openshellDriver"];
+    readonly inferenceProvider: string | null;
+    readonly messagingProviders: readonly string[];
+    readonly extraProviders: readonly string[];
+    readonly gatewayName: string;
+  },
+  deps: Pick<SandboxCreateOrchestrationRuntime, "providerExistsInGateway" | "runOpenshell"> & {
+    readonly cleanupCreateSources: () => void;
+    readonly revalidatePolicyAuthority: (operation: string) => void;
+  },
+): void {
+  if (input.openshellDriver !== "docker") return;
+  const providersRequiringExistenceProbe = new Set(
+    [input.inferenceProvider, ...input.messagingProviders].filter(
+      (provider): provider is string => Boolean(provider),
+    ),
+  );
+  const attachedProviders = new Set([
+    ...providersRequiringExistenceProbe,
+    ...input.extraProviders,
+  ]);
+  for (const attachedProvider of attachedProviders) {
+    if (
+      providersRequiringExistenceProbe.has(attachedProvider) &&
+      !deps.providerExistsInGateway(attachedProvider)
+    )
+      continue;
+    deps.revalidatePolicyAuthority(
+      `publishing provider '${attachedProvider}' before creating sandbox gateway '${input.gatewayName}'`,
+    );
+    const refreshed = deps.runOpenshell(
+      ["provider", "update", "-g", input.gatewayName, attachedProvider],
+      { ignoreError: true, suppressOutput: true },
+    );
+    if (refreshed.status !== 0) {
+      deps.cleanupCreateSources();
+      throw new Error(
+        `OpenShell did not publish attached provider '${attachedProvider}' before Docker sandbox creation.`,
+      );
+    }
+  }
+}
+
 function backfillExistingSandboxPolicyAuthority(input: {
   readonly sandboxName: string;
   readonly existingEntry: SandboxEntry | null;
@@ -1403,6 +1449,24 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
       cleanupBuildContext();
     } else {
+      publishAttachedProvidersBeforeDockerSandboxCreation(
+        {
+          openshellDriver: sandboxRuntimeFields.openshellDriver,
+          inferenceProvider: resolvedCreateIntent.inferenceProvider,
+          messagingProviders,
+          extraProviders: resolvedCreateIntent.extraProviders,
+          gatewayName: GATEWAY_NAME,
+        },
+        {
+          providerExistsInGateway,
+          runOpenshell,
+          cleanupCreateSources: () => {
+            cleanupInitialCreateSource();
+            cleanupBuildContext();
+          },
+          revalidatePolicyAuthority: (operation) => revalidatePolicyAuthority(false, operation),
+        },
+      );
       const created = await runCreateFlow(createArgv);
       cleanupInitialCreateSource();
       await completeCreatedSandboxRegistration(created, null);

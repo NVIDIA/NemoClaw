@@ -226,7 +226,6 @@ export function completeOrdinaryOnboardSandboxCreation(
     readonly sandboxWasLiveDefault: boolean;
     readonly runtimeFields: RegistrationSeed["runtimeFields"];
     readonly messagingProviders: readonly string[];
-    readonly inferenceProvider: string | null;
     readonly liveExists: boolean;
   },
   deps: {
@@ -235,14 +234,6 @@ export function completeOrdinaryOnboardSandboxCreation(
     readonly scriptsDir: string;
     readonly gatewayName: string;
     readonly providerExistsInGateway: (providerName: string) => boolean;
-    readonly runOpenshell: (
-      args: string[],
-      options: { ignoreError: true; suppressOutput: true },
-    ) => {
-      status: number | null;
-      stdout?: string | Buffer | null;
-      stderr?: string | Buffer | null;
-    };
     readonly armCancelRollback: (sandboxName: string) => void;
     readonly dockerInfoFormat: Parameters<typeof warnIfLandlockUnsupported>[0]["dockerInfoFormat"];
     readonly runCapture: Parameters<typeof warnIfLandlockUnsupported>[0]["runCapture"];
@@ -267,31 +258,6 @@ export function completeOrdinaryOnboardSandboxCreation(
     input.runtimeFields,
     { revalidatePolicyAuthority: deps.revalidatePolicyAuthority },
   );
-  if (input.runtimeFields.openshellDriver === "docker") {
-    const attachedProviders = new Set(
-      [input.inferenceProvider, ...input.messagingProviders].filter(
-        (provider): provider is string => Boolean(provider),
-      ),
-    );
-    for (const provider of attachedProviders) {
-      if (!deps.providerExistsInGateway(provider)) continue;
-      deps.revalidatePolicyAuthority(
-        `updating provider '${provider}' for sandbox '${input.sandboxName}'`,
-      );
-      const refreshed = deps.runOpenshell(
-        ["provider", "update", "-g", deps.gatewayName, provider],
-        {
-          ignoreError: true,
-          suppressOutput: true,
-        },
-      );
-      if (refreshed.status !== 0) {
-        throw new Error(
-          `OpenShell did not republish attached provider '${provider}' after Docker sandbox recreation.`,
-        );
-      }
-    }
-  }
   for (const provider of input.messagingProviders) {
     if (!deps.providerExistsInGateway(provider)) printMessagingProviderMissing(provider);
   }

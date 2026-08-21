@@ -69,6 +69,7 @@ import {
   listGatewayStateRoots,
   readGatewayRegistryFile,
   registryEntryGatewayPort,
+  withRegistryLockAt,
 } from "../../state/gateway-registry";
 import { stopHermesForwardWatchers } from "./hermes-forward-watcher-cleanup";
 import {
@@ -1414,53 +1415,46 @@ function pruneSelectedRowsFromRegistry(
   const home = path.dirname(sharedRoot);
   const registryFile = path.join(paths.nemoclawStateDir, "sandboxes.json");
   if (!pathEntryExists(registryFile, runtime) && expectedSelectedNames.length === 0) return true;
-  const lock = `${registryFile}.lock`;
-  let acquired = false;
   try {
-    assertGatewayStatePathSafe(home, lock);
-    fs.mkdirSync(lock, { mode: 0o700 });
-    acquired = true;
+    assertGatewayStatePathSafe(home, `${registryFile}.lock`);
+    // The canonical registry lock owns this directory: it writes an owner file,
+    // retries a live holder, and recovers a lock abandoned by an interrupted run.
+    return withRegistryLockAt(registryFile, () => {
+      const registry = readGatewayRegistryFile(home, registryFile);
+      if (!registry) throw new Error(`${registryFile} disappeared during scoped uninstall`);
+      const selectedNames = Object.entries(registry.sandboxes)
+        .filter(([, entry]) => registryEntryGatewayPort(entry) === GATEWAY_PORT)
+        .map(([name]) => name)
+        .sort();
+      if (JSON.stringify(selectedNames) !== JSON.stringify([...expectedSelectedNames].sort())) {
+        throw new Error(`${registryFile} changed during scoped uninstall`);
+      }
 
-    const registry = readGatewayRegistryFile(home, registryFile);
-    if (!registry) throw new Error(`${registryFile} disappeared during scoped uninstall`);
-    const selectedNames = Object.entries(registry.sandboxes)
-      .filter(([, entry]) => registryEntryGatewayPort(entry) === GATEWAY_PORT)
-      .map(([name]) => name)
-      .sort();
-    if (JSON.stringify(selectedNames) !== JSON.stringify([...expectedSelectedNames].sort())) {
-      throw new Error(`${registryFile} changed during scoped uninstall`);
-    }
-
-    if (selectedNames.length === 0) return true;
-    const remainingSandboxes = Object.fromEntries(
-      Object.entries(registry.sandboxes).filter(
-        ([, entry]) => registryEntryGatewayPort(entry) !== GATEWAY_PORT,
-      ),
-    );
-    const defaultSandbox =
-      registry.defaultSandbox && Object.hasOwn(remainingSandboxes, registry.defaultSandbox)
-        ? registry.defaultSandbox
-        : (Object.keys(remainingSandboxes).sort()[0] ?? null);
-    writeRegistryAtomic(home, registryFile, {
-      ...registry,
-      defaultSandbox,
-      sandboxes: remainingSandboxes,
+      if (selectedNames.length === 0) return true;
+      const remainingSandboxes = Object.fromEntries(
+        Object.entries(registry.sandboxes).filter(
+          ([, entry]) => registryEntryGatewayPort(entry) !== GATEWAY_PORT,
+        ),
+      );
+      const defaultSandbox =
+        registry.defaultSandbox && Object.hasOwn(remainingSandboxes, registry.defaultSandbox)
+          ? registry.defaultSandbox
+          : (Object.keys(remainingSandboxes).sort()[0] ?? null);
+      writeRegistryAtomic(home, registryFile, {
+        ...registry,
+        defaultSandbox,
+        sandboxes: remainingSandboxes,
+      });
+      runtime.log(
+        `Removed ${String(selectedNames.length)} selected-gateway row(s) from the sandbox registry.`,
+      );
+      return true;
     });
-    runtime.log(
-      `Removed ${String(selectedNames.length)} selected-gateway row(s) from the sandbox registry.`,
-    );
-    return true;
   } catch (error) {
-    const detail =
-      isErrnoException(error) && error.code === "EEXIST"
-        ? `another state operation owns ${lock}`
-        : error instanceof Error
-          ? error.message
-          : String(error);
-    runtime.warn(`Could not safely update the sandbox registry: ${detail}`);
+    runtime.warn(
+      `Could not safely update the sandbox registry: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return false;
-  } finally {
-    if (acquired) fs.rmSync(lock, { recursive: true, force: true });
   }
 }
 

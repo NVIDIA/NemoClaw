@@ -226,19 +226,6 @@ function samePull(left: Pull | undefined, right: Pull | undefined): boolean {
 function requireSamePull(expected: Pull | undefined, observed: Pull | undefined): void {
   if (!samePull(expected, observed)) fail("managed documentation PR changed during publication");
 }
-function requireAdvancedPull(previous: Pull, observed: Pull | undefined, commitSha: string): Pull {
-  if (
-    observed === undefined ||
-    observed.number !== previous.number ||
-    observed.body !== previous.body ||
-    observed.draft !== previous.draft ||
-    observed.head.ref !== previous.head.ref ||
-    observed.head.sha !== commitSha ||
-    observed.title !== previous.title
-  )
-    fail("managed documentation PR changed during publication");
-  return observed;
-}
 function pullTitle(target: string): string {
   return `docs: prepare ${target} documentation`;
 }
@@ -286,20 +273,33 @@ Updates documentation for merged changes through \`${mainSha}\`.
 
 ${SIGN_OFF}`;
 }
-function pullMetadataMode(
+async function legacyCoverageSha(
+  repository: string,
+  commit: Commit,
+  request: Request,
+): Promise<string | undefined> {
+  const firstParent = commit.parents?.[0]?.sha;
+  if (!firstParent) return undefined;
+  if (commit.parents?.length === 1) return firstParent;
+  if (commit.parents?.length !== 2) return undefined;
+  const previous = await managedCommit(repository, firstParent, request);
+  return previous.parents?.length === 1 ? previous.parents[0]?.sha : undefined;
+}
+async function pullMetadataMode(
   pull: Pull,
   commit: Commit,
+  repository: string,
   rangeStart: string,
   target: string,
-): "current" | "legacy" {
+  request: Request,
+): Promise<"current" | "legacy"> {
   if (pull.title === pullTitle(target) && pull.body === pullBody(rangeStart, target))
     return "current";
-  const firstParent = commit.parents?.[0]?.sha;
+  const coverageSha = await legacyCoverageSha(repository, commit, request);
   if (
-    commit.parents?.length === 1 &&
-    firstParent &&
+    coverageSha &&
     pull.title === "docs: catch up after merged changes" &&
-    pull.body === legacyPullBody(firstParent)
+    pull.body === legacyPullBody(coverageSha)
   )
     return "legacy";
   return fail("managed documentation PR metadata does not match the reviewed release target");
@@ -424,7 +424,7 @@ export async function publishDocumentation(input: {
   const { patch, rangeStartTag, targetReleaseTag: target } = approval;
   const body = pullBody(rangeStartTag, target);
   const title = pullTitle(target);
-  const active = await checkpoint(repository, mainSha, request);
+  let active = await checkpoint(repository, mainSha, request);
   const temporary = fs.mkdtempSync(path.join(tmpdir(), "nemoclaw-docs-publish-"));
   try {
     const destination = path.join(temporary, "repository");
@@ -435,19 +435,24 @@ export async function publishDocumentation(input: {
     const branch = active?.head.ref ?? `${PREFIX}${mainSha.slice(0, 12)}`;
     const refPath = `/repos/${repository}/git/ref/heads/${branch}`;
     const ref = (await request("GET", refPath)) as { object?: { sha?: string } } | null;
-    let metadataMode: "current" | "legacy" | undefined;
     if (active) {
       if (ref?.object?.sha !== active.head.sha)
         fail("managed documentation PR and branch point to different commits");
       const current = await managedCommit(repository, active.head.sha, request);
-      metadataMode = pullMetadataMode(active, current, rangeStartTag, target);
+      const metadataMode = await pullMetadataMode(
+        active,
+        current,
+        repository,
+        rangeStartTag,
+        target,
+        request,
+      );
+      if (metadataMode === "legacy") {
+        requireSamePull(active, await checkpoint(repository, mainSha, request));
+        active = await updatePullMetadata(active, repository, rangeStartTag, target, request);
+      }
       if (!prepared.changes.length || current.tree?.sha === prepared.finalTree) {
-        let pending = active;
-        if (metadataMode === "legacy") {
-          requireSamePull(active, await checkpoint(repository, mainSha, request));
-          pending = await updatePullMetadata(active, repository, rangeStartTag, target, request);
-        }
-        fail(`Documentation remains pending in ${pending.html_url}`);
+        fail(`Documentation remains pending in ${active.html_url}`);
       }
     } else if (ref !== null) {
       fail("an unmanaged documentation branch already exists for this main commit");
@@ -466,11 +471,7 @@ export async function publishDocumentation(input: {
 
     if (active) {
       await updateRef(repository, branch, commitSha, request);
-      let pull = requireAdvancedPull(active, (await managed(repository, request))[0], commitSha);
-      if (metadataMode === "legacy")
-        pull = await updatePullMetadata(pull, repository, rangeStartTag, target, request);
-      else checkedPull(pull, repository, branch, body, title);
-      fail(`Documentation remains pending in ${pull.html_url}`);
+      fail(`Documentation remains pending in ${active.html_url}`);
     }
 
     try {
