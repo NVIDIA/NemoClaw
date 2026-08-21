@@ -262,10 +262,16 @@ function completeBrief(plan: Record<string, string>): string {
     "",
     "- Release detail.",
     "",
-    "## Pi documentation evidence",
+    "## Documentation coverage",
     "",
-    `- Pi candidate: \`${plan.originMainCommit}\``,
-    "- Evidence: approved empty patch.",
+    "- Latest included cumulative docs PR: #100.",
+    `- Final PR commit and merge commit: \`${plan.originMainCommit}\``,
+    `- Final automated refresh coverage commit: \`${plan.originMainCommit}\``,
+    "- Later commits and merged PRs: Only the docs PR merge.",
+    "- Changed paths: Allowed documentation paths only.",
+    "- Review and checks: Approved and successful.",
+    "- Open managed docs PRs: None.",
+    "- Maintainer decision: Proceed with the candidate as shown.",
     "",
     "## Base and managed image evidence",
     "",
@@ -534,32 +540,32 @@ describe("release-latest-tag.sh", () => {
     expect(localTagObject(fixture, "v0.0.2")).toBe("");
   });
 
-  it.each([
-    ["Pi", "Pi candidate", "plan-bound Pi candidate"],
-    ["base image", "Base-image candidate", "plan-bound base-image candidate"],
-  ])("does not accept %s evidence copied from an earlier candidate", (_kind, field, error) => {
-    const fixture = createFixture();
-    pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const earlierCandidate = commit(fixture, "earlier release candidate");
-    const releaseCommit = commit(fixture, "planned release commit");
-    const planPath = path.join(fixture.root, "release", "plan.json");
-    const { plan } = createPlan(fixture, planPath, releaseCommit);
-    const staleBrief = completeBrief(plan).replace(
-      `- ${field}: \`${releaseCommit}\``,
-      `- ${field}: \`${earlierCandidate}\``,
-    );
+  it.each([["base image", "Base-image candidate", "plan-bound base-image candidate"]])(
+    "does not accept %s evidence copied from an earlier candidate",
+    (_kind, field, error) => {
+      const fixture = createFixture();
+      pushTag(fixture, "v0.0.1", fixture.firstCommit);
+      const earlierCandidate = commit(fixture, "earlier release candidate");
+      const releaseCommit = commit(fixture, "planned release commit");
+      const planPath = path.join(fixture.root, "release", "plan.json");
+      const { plan } = createPlan(fixture, planPath, releaseCommit);
+      const staleBrief = completeBrief(plan).replace(
+        `- ${field}: \`${releaseCommit}\``,
+        `- ${field}: \`${earlierCandidate}\``,
+      );
 
-    const result = cutFromPlan(
-      fixture,
-      planPath,
-      confirmationFor(plan),
-      writeBrief(fixture, staleBrief),
-    );
+      const result = cutFromPlan(
+        fixture,
+        planPath,
+        confirmationFor(plan),
+        writeBrief(fixture, staleBrief),
+      );
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(error);
-    expect(localTagObject(fixture, "v0.0.2")).toBe("");
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(error);
+      expect(localTagObject(fixture, "v0.0.2")).toBe("");
+    },
+  );
 
   it("orders canonical semver components without numeric precision loss", () => {
     const fixture = createFixture();
@@ -1283,15 +1289,22 @@ describe("release-latest-tag.sh", () => {
     ],
     [
       "another version",
-      (brief: string) =>
-        brief.replace(/^# NemoClaw.*$/mu, "# NemoClaw v0.0.3 release brief"),
+      (brief: string) => brief.replace(/^# NemoClaw.*$/mu, "# NemoClaw v0.0.3 release brief"),
       "heading does not match planned tag",
     ],
     [
       "another candidate",
-      (brief: string) =>
-        brief.replace(/^- Candidate:.*$/mu, `- Candidate: \`${"f".repeat(40)}\``),
+      (brief: string) => brief.replace(/^- Candidate:.*$/mu, `- Candidate: \`${"f".repeat(40)}\``),
       "candidate does not match",
+    ],
+    [
+      "no documentation proceed decision",
+      (brief: string) =>
+        brief.replace(
+          "- Maintainer decision: Proceed with the candidate as shown.",
+          "- Maintainer decision: Stop tagging.",
+        ),
+      "documentation proceed decision",
     ],
     [
       "no exception record",
@@ -1311,8 +1324,7 @@ describe("release-latest-tag.sh", () => {
     ],
     [
       "content after the exception record",
-      (brief: string) =>
-        brief.replace("Exceptions: None", "Exceptions: None\n\nTrailing content"),
+      (brief: string) => brief.replace("Exceptions: None", "Exceptions: None\n\nTrailing content"),
       "exactly one resolved Exceptions line",
     ],
   ])("rejects a release brief with %s", (_case, mutate, expectedError) => {

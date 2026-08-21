@@ -28,6 +28,10 @@ type ServerImageManifest = {
       cmake?: unknown;
       compiler?: unknown;
       packages?: unknown;
+      requestGuardToolchain?: {
+        archives?: { amd64?: unknown; arm64?: unknown };
+        version?: unknown;
+      };
       target?: unknown;
     };
     cuda?: { developmentBase?: unknown; runtimeBase?: unknown };
@@ -326,8 +330,18 @@ export function loadLlamaCppImageConfig(
     "cmake",
     "compiler",
     "packages",
+    "requestGuardToolchain",
     "target",
   ]);
+  assertExactKeys(manifest.spec?.build?.requestGuardToolchain, "request guard toolchain", [
+    "archives",
+    "version",
+  ]);
+  assertExactKeys(
+    manifest.spec?.build?.requestGuardToolchain?.archives,
+    "request guard toolchain archives",
+    ["amd64", "arm64"],
+  );
   assertExactKeys(manifest.spec?.cuda, "cuda", ["developmentBase", "runtimeBase"]);
   assertExactKeys(manifest.spec?.runtime, "runtime", [
     "entrypoint",
@@ -631,7 +645,6 @@ export function loadLlamaCppImageConfig(
     curl: "8.5.0-2ubuntu10.12",
     "g++-14": "14.2.0-4ubuntu2~24.04.1",
     "gcc-14": "14.2.0-4ubuntu2~24.04.1",
-    "golang-go": "2:1.22~2build1",
     "libcurl4-openssl-dev": "8.5.0-2ubuntu10.12",
     "libssl-dev": "3.0.13-0ubuntu3.12",
   };
@@ -644,12 +657,13 @@ export function loadLlamaCppImageConfig(
     "ca-certificates": "20260601~24.04.1",
     libcurl4t64: "8.5.0-2ubuntu10.12",
     libgomp1: "14.2.0-4ubuntu2~24.04.1",
+    libssl3t64: "3.0.13-0ubuntu3.12",
   };
   const expectedRequiredPaths = [
     "/opt/llama.cpp/lib/libggml-cuda.so",
     "/usr/local/bin/llama-server",
     "/usr/local/bin/nemoclaw-llama-cpp-request-guard",
-    "/usr/local/share/licenses/go/copyright",
+    "/usr/local/share/licenses/go/LICENSE",
     "/usr/local/share/licenses/llama.cpp/AUTHORS",
     "/usr/local/share/licenses/llama.cpp/LICENSE",
   ];
@@ -665,6 +679,25 @@ export function loadLlamaCppImageConfig(
     "/usr/bin/sh",
   ];
   const cmake = spec?.build?.cmake;
+  const requestGuardToolchain = spec?.build?.requestGuardToolchain;
+  const requestGuardToolchainArchives = requestGuardToolchain?.archives;
+  const requestGuardGoVersion = requiredString(
+    requestGuardToolchain?.version,
+    "request guard Go version",
+    /^1\.26\.6$/u,
+  );
+  const requestGuardGoArchives = {
+    amd64: requiredString(
+      requestGuardToolchainArchives?.amd64,
+      "amd64 request guard Go archive SHA-256",
+      /^sha256:708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89$/u,
+    ),
+    arm64: requiredString(
+      requestGuardToolchainArchives?.arm64,
+      "arm64 request guard Go archive SHA-256",
+      /^sha256:d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e$/u,
+    ),
+  };
   if (
     spec?.source?.repository !== "https://github.com/ggml-org/llama.cpp" ||
     spec?.build?.target !== "llama-server" ||
@@ -698,10 +731,12 @@ export function loadLlamaCppImageConfig(
       `CUDA architectures for ${platform}`,
       /^[0-9]+[a-z]?(?:-real)?(?:;[0-9]+[a-z]?(?:-real)?)*$/u,
     );
+    const arch = platform.slice("linux/".length) as "amd64" | "arm64";
     return {
-      arch: platform.slice("linux/".length),
+      arch,
       cuda_architectures: cudaArchitectures,
       platform,
+      request_guard_go_archive_sha256: requestGuardGoArchives[arch],
       runner: expectedRunner,
     };
   });
@@ -793,6 +828,7 @@ export function loadLlamaCppImageConfig(
       /^ghcr\.io\/nvidia\/nemoclaw\/llama-cpp-server$/u,
     ),
     matrix: JSON.stringify({ include }),
+    request_guard_go_version: requestGuardGoVersion,
     publication_allowed_ref: requiredString(
       publication.allowedRef,
       "publication allowed ref",

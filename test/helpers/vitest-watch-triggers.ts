@@ -22,6 +22,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/mcp-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-compatibility.test.ts",
   "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
+  "test/e2e/support/onboard-timeout-contract.test.ts",
   "test/e2e/support/openshell-gateway-auth-contract-workflow-boundary.test.ts",
   "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
   "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
@@ -53,6 +54,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     pattern:
       /(?:^|\/)(?:\.github\/workflows\/release-lkg-brev-image\.yaml|scripts\/release-lkg-brev-image\.sh)$/,
     testsToRun: runTests("test/release-lkg-brev-image.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)tools\/e2e\/brev-launchable-e2e\.sh$/,
+    testsToRun: runTests("test/brev-launchable-e2e.test.ts"),
   },
   {
     pattern: /(?:^|\/)managed-inference\/(?:models|presets|recipes|schemas)\/[^/]+\.(?:json|yaml)$/,

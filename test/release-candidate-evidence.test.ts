@@ -29,7 +29,21 @@ function bashBlockUnder(source: string, heading: string): string {
   );
 }
 
-const releaseEntryBlock = bashBlockUnder(evidence, "## Release Entry and Pi Result");
+function bashBlockContaining(source: string, marker: string): string {
+  const blocks = [...source.matchAll(/^```bash\n([\s\S]*?)^```\s*$/gmu)].map(
+    (match) => match[1] ?? "",
+  );
+  return (
+    blocks.find((block) => block.includes(marker)) ??
+    (() => {
+      throw new Error(`candidate-evidence.md is missing a bash block containing ${marker}`);
+    })()
+  );
+}
+
+const releaseEntryBlock = bashBlockUnder(evidence, "## Release Entry and Documentation Coverage");
+const docsPrSelectionBlock = bashBlockContaining(evidence, 'SELECTED_DOCS_PR="$EVIDENCE_DIR');
+const docsPrReadBlock = bashBlockContaining(evidence, 'DOCS_PR_COMMITS="$EVIDENCE_DIR');
 const temporaryDirectories: string[] = [];
 
 const shellHelpers = String.raw`
@@ -95,6 +109,111 @@ function runReleaseEntry(
   });
 }
 
+function selectionFixture() {
+  const input = fixture({ "docs/changelog/2026-08-17.mdx": "# Releases\n" });
+  const previousTagSha = input.candidate;
+  git(input.root, "commit", "--allow-empty", "-m", "docs: merge cumulative documentation");
+  const ancestorMergeSha = git(input.root, "rev-parse", "HEAD");
+  git(input.root, "commit", "--allow-empty", "-m", "feat: finish release candidate");
+  input.candidate = git(input.root, "rev-parse", "HEAD");
+  git(input.root, "checkout", "-b", "unrelated", previousTagSha);
+  git(input.root, "commit", "--allow-empty", "-m", "docs: unrelated documentation");
+  const nonAncestorMergeSha = git(input.root, "rev-parse", "HEAD");
+  git(input.root, "checkout", "main");
+  return { ancestorMergeSha, input, nonAncestorMergeSha, previousTagSha };
+}
+
+function docsCandidate(number: number, mergeSha: string): Record<string, unknown> {
+  return {
+    headRefName: `automation/post-merge-docs-${number}`,
+    headRefOid: String(number).padStart(40, "0"),
+    headRepository: { nameWithOwner: "NVIDIA/NemoClaw" },
+    mergeCommit: { oid: mergeSha },
+    mergedAt: "2026-08-20T12:00:00Z",
+    number,
+    reviewDecision: "APPROVED",
+    statusCheckRollup: [
+      {
+        __typename: "CheckRun",
+        conclusion: "SUCCESS",
+        name: "docs",
+        status: "COMPLETED",
+      },
+    ],
+    title: `docs: prepare v1.2.${number} documentation`,
+    url: `https://github.com/NVIDIA/NemoClaw/pull/${number}`,
+  };
+}
+
+function runDocsPrSelection(
+  selection: ReturnType<typeof selectionFixture>,
+  candidates: readonly Record<string, unknown>[],
+): ReturnType<typeof spawnSync> {
+  const { input, previousTagSha } = selection;
+  fs.writeFileSync(
+    path.join(input.evidenceDir, "managed-docs-pr-candidates.jsonl"),
+    candidates
+      .map((candidate) => JSON.stringify(candidate))
+      .concat("")
+      .join("\n"),
+  );
+  const bin = path.join(input.root, "bin");
+  fs.mkdirSync(bin);
+  const callLog = path.join(input.evidenceDir, "gh-calls.txt");
+  fs.writeFileSync(callLog, "");
+  const fakeGh = path.join(bin, "gh");
+  fs.writeFileSync(
+    fakeGh,
+    String.raw`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$GH_CALL_LOG"
+case "$*" in
+  *"/commits?"*) printf '%s\n' "$GH_COMMITS_JSON" ;;
+  *"/files?"*) printf '%s\n' "$GH_FILES_JSON" ;;
+  *) exit 99 ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  const commitMessage =
+    "docs: catch up after main\n\nSigned-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>";
+  return spawnSync("bash", ["-c", `${shellHelpers}\n${docsPrSelectionBlock}\n${docsPrReadBlock}`], {
+    cwd: input.root,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      CANDIDATE_SHA: input.candidate,
+      EVIDENCE_DIR: input.evidenceDir,
+      GH_CALL_LOG: callLog,
+      GH_COMMITS_JSON: JSON.stringify([
+        [
+          {
+            sha: "1".repeat(40),
+            commit: {
+              author: { email: "41898282+github-actions[bot]@users.noreply.github.com" },
+              message: "docs: earlier cumulative update",
+              verification: { verified: true },
+            },
+            parents: [{ sha: previousTagSha }],
+          },
+          {
+            sha: String(42).padStart(40, "0"),
+            commit: {
+              author: { email: "41898282+github-actions[bot]@users.noreply.github.com" },
+              message: commitMessage,
+              verification: { verified: true },
+            },
+            parents: [{ sha: previousTagSha }],
+          },
+        ],
+      ]),
+      GH_FILES_JSON: JSON.stringify([[{ filename: "docs/guide.mdx" }]]),
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      PREVIOUS_TAG_SHA: previousTagSha,
+    },
+  });
+}
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
@@ -102,6 +221,14 @@ afterEach(() => {
 });
 
 describe("release candidate evidence commands", () => {
+  it("uses maintainer-visible coverage instead of an empty-patch receipt", () => {
+    expect(evidence).toContain("1. Proceed with the candidate as shown.");
+    expect(evidence).toContain("2. Create or update a docs PR for the uncovered range.");
+    expect(evidence).toContain("- Maintainer decision: Proceed with the candidate as shown.");
+    expect(evidence).not.toContain("approved-empty");
+    expect(evidence).not.toContain("Final Documentation Recheck");
+  });
+
   it("extracts only the exact release H2 section from a multi-entry changelog", () => {
     const input = fixture({
       "docs/changelog/2026-08-17.mdx": [
@@ -156,5 +283,81 @@ describe("release candidate evidence commands", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("release-entry detail validation failed");
+  });
+
+  it("selects the first ancestor documentation PR and reads only that PR", () => {
+    const selection = selectionFixture();
+    const result = runDocsPrSelection(selection, [
+      docsCandidate(41, selection.nonAncestorMergeSha),
+      docsCandidate(42, selection.ancestorMergeSha),
+    ]);
+
+    expect(result.status, String(result.stderr)).toBe(0);
+    expect(
+      fs.readFileSync(
+        path.join(selection.input.evidenceDir, "selected-docs-pr-fields.tsv"),
+        "utf8",
+      ),
+    ).toContain("42\thttps://github.com/NVIDIA/NemoClaw/pull/42");
+    expect(
+      fs.readFileSync(path.join(selection.input.evidenceDir, "docs-coverage-sha"), "utf8").trim(),
+    ).toBe(selection.previousTagSha);
+    const calls = fs.readFileSync(path.join(selection.input.evidenceDir, "gh-calls.txt"), "utf8");
+    expect(calls).toContain("/pulls/42/commits");
+    expect(calls).toContain("/pulls/42/files");
+    expect(calls).not.toContain("/pulls/41/");
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(selection.input.evidenceDir, "docs-pr-checks.json"), "utf8"),
+      ),
+    ).toEqual([
+      {
+        __typename: "CheckRun",
+        conclusion: "SUCCESS",
+        name: "docs",
+        status: "COMPLETED",
+      },
+    ]);
+    expect(
+      fs.readFileSync(path.join(selection.input.evidenceDir, "docs-pr-final-sha"), "utf8").trim(),
+    ).toBe(String(42).padStart(40, "0"));
+  });
+
+  it("records None and skips selected-PR reads when there are no candidates", () => {
+    const selection = selectionFixture();
+    const result = runDocsPrSelection(selection, []);
+
+    expect(result.status, String(result.stderr)).toBe(0);
+    expect(
+      fs
+        .readFileSync(path.join(selection.input.evidenceDir, "selected-docs-pr-fields.tsv"), "utf8")
+        .trim(),
+    ).toBe("None\tNone\tNone\tNone\tNone");
+    expect(
+      fs.readFileSync(path.join(selection.input.evidenceDir, "docs-coverage-sha"), "utf8").trim(),
+    ).toBe(selection.previousTagSha);
+    expect(fs.readFileSync(path.join(selection.input.evidenceDir, "gh-calls.txt"), "utf8")).toBe(
+      "",
+    );
+  });
+
+  it("rejects a non-ancestor merged documentation PR without reading it", () => {
+    const selection = selectionFixture();
+    const result = runDocsPrSelection(selection, [
+      docsCandidate(41, selection.nonAncestorMergeSha),
+    ]);
+
+    expect(result.status, String(result.stderr)).toBe(0);
+    expect(
+      fs
+        .readFileSync(path.join(selection.input.evidenceDir, "selected-docs-pr-fields.tsv"), "utf8")
+        .trim(),
+    ).toBe("None\tNone\tNone\tNone\tNone");
+    expect(
+      fs.readFileSync(path.join(selection.input.evidenceDir, "docs-coverage-sha"), "utf8").trim(),
+    ).toBe(selection.previousTagSha);
+    expect(fs.readFileSync(path.join(selection.input.evidenceDir, "gh-calls.txt"), "utf8")).toBe(
+      "",
+    );
   });
 });

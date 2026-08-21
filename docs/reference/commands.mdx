@@ -108,9 +108,12 @@ dcode
 dcode -n "Summarize this repository"
 dcode -n "Summarize this repository" --json
 dcode status
+printf '%s\n' '{"worker":"worker-17"}' | dcode tools call-read-only worker_task_context --json
 ```
 
-For the JSON schema, status and exit behavior, and 1 MiB output limit, refer to [Run Deep Agents Code](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code).
+`dcode tools call-read-only TOOL --json` invokes one exact, coherently read-only managed MCP tool without model participation.
+It requires one JSON object on standard input and writes one bounded JSON result envelope.
+For the JSON schema, status and exit behavior, output limit, and read-only MCP call requirements, refer to [Run Deep Agents Code](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code).
 
 </AgentOnly>
 
@@ -1291,15 +1294,6 @@ When the probe returns a recognized broken result, `connect` attempts DNS or rou
 When the initial probe cannot return a trusted result, `connect` fails closed before health-driven repair and before opening SSH.
 It prints a bounded, redacted last-probe detail and points you to `$$nemoclaw <name> doctor`.
 If the sandbox is registered locally but missing from a healthy gateway, `connect` preserves the registry entry and points you to `rebuild --yes`, `onboard`, or `destroy` instead of deleting the metadata needed for recovery.
-
-<AgentOnly variant="deepagents">
-
-For a LangChain Deep Agents Code sandbox that uses OpenRouter, the adapter returns HTTP `404` for `https://inference.local/v1/models`.
-During final launch-readiness validation, `connect --probe-only` and `launch` send one inference request through the same route instead of treating that `404` as a failure.
-The command accepts the route only when the request returns a structurally valid response.
-If the request fails, `connect --probe-only` exits nonzero and identifies the inference request as the failed check.
-
-</AgentOnly>
 
 After a host reboot, the OpenShell gateway rotates its SSH host keys.
 `connect` detects the resulting identity drift, prunes stale `openshell-*` entries from `~/.ssh/known_hosts`, and retries automatically.
@@ -2517,6 +2511,8 @@ Pass `--cleanup-gateway` to force removal, or `--no-cleanup-gateway` to force pr
 These flags always override both `NEMOCLAW_CLEANUP_GATEWAY` and the platform default.
 If the pre-delete workspace wipe cannot run, use a different sandbox name for a clean start.
 Cleaning up the gateway after the last sandbox also purges the shared cluster volume that retains the per-name persistent volume.
+If NemoClaw detects active SSH sessions before destroy, it warns that destroy terminates them with a Broken pipe error and lists their process IDs.
+This warning prints before the confirmation prompt and when `--yes` or `--force` skips that prompt.
 If final gateway cleanup finds a live PID-file process whose command line does not prove it owns the target gateway, `destroy` exits non-zero after sandbox and registry deletion and skips gateway and volume removal.
 NemoClaw preserves the per-gateway PID file and runtime marker so you can inspect the process.
 Stop only the listener that matches the target gateway, then rerun `destroy` to converge cleanup.
@@ -3529,6 +3525,8 @@ Mismatched `--agent` plus canonical-key combinations are refused before any down
 Session keys that begin with `-` are rejected at the command boundary instead of being silently dropped.
 Session JSONL can contain pasted secrets, such as API keys or tokens, so exported files are written owner-only (`0600`).
 The in-sandbox staging artefact is additionally created with `umask 077` and removed after the host download completes.
+If the staging cleanup fails, the command warns with the retained path and a manual removal command.
+The retained artifact can contain session JSONL with pasted secrets.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -3555,6 +3553,8 @@ $$nemoclaw my-assistant sessions export --json
 
 Session JSONL can contain pasted secrets, such as API keys or tokens, so exported files are written owner-only (`0600`).
 The in-sandbox staging artefact is additionally created with `umask 077` and removed after the host download completes.
+If the staging cleanup fails, the command warns with the retained path and a manual removal command.
+The retained artifact can contain session JSONL with pasted secrets.
 
 </AgentOnly>
 
@@ -4888,7 +4888,7 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_INSTALL_TAG` | release tag | For internal installer commands: the release tag to install when `NEMOCLAW_INSTALL_REF` is unset or empty. Defaults to the admin-promoted `lkg` tag when unset. Overridden by the `--install-tag` flag. |
 | `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE` | `1` to enable | Enables the fixed vLLM local model profile. Requires `NEMOCLAW_LOCAL_MODEL_RUNTIME=vllm`. Direct `$$nemoclaw onboard` use also requires `NEMOCLAW_NON_INTERACTIVE=1`. The hosted installer makes onboarding non-interactive, disables Express selection, and sets this value automatically when it receives `--local-model-runtime=vllm`. |
 | `NEMOCLAW_LOCAL_MODEL_RUNTIME` | `vllm` | Selects the fixed vLLM local model profile. Requires `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1`; direct onboarding also requires `NEMOCLAW_NON_INTERACTIVE=1`. The hosted installer sets this value from `--local-model-runtime=vllm`. |
-| `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model ID | Selects the model the managed-vLLM install path serves and remains authoritative during DGX Station installer setup. Recognized slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `muse-glimmer-30b`, `nemotron-3-nano-4b`, `deepseek-v4-flash`, `nemotron-3-ultra-550b-a55b`, `deepseek-r1-distill-70b`. The `muse-glimmer-30b` profile remains Experimental after bounded verification of its pinned post-merge runtime image on one physical DGX Spark. NemoClaw does not enable vision or DFlash speculative decoding for this profile. Station Express selects `nemotron-3-ultra-550b-a55b`; a qualified reciprocal pair uses the distributed topology, while no qualifying pair retains the single-Station Ultra topology. Outside Station Express, unset uses the per-platform profile default. Gated models (for example, `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
+| `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model ID | Selects the model the managed-vLLM install path serves and remains authoritative during DGX Station installer setup. Slugs and full model IDs are case-insensitive. Recognized slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `muse-glimmer-30b`, `nemotron-3.5-lightning-30b`, `nemotron-3-nano-4b`, `deepseek-v4-flash`, `nemotron-3-ultra-550b-a55b`, `deepseek-r1-distill-70b`. The `muse-glimmer-30b` and `nemotron-3.5-lightning-30b` profiles are Experimental on DGX Spark and Linux x86_64 with a qualifying NVIDIA GPU. NemoClaw does not enable vision or DFlash speculative decoding for Muse Glimmer. Station Express selects `nemotron-3-ultra-550b-a55b`; a qualified reciprocal pair uses the distributed topology, while no qualifying pair retains the single-Station Ultra topology. Outside Station Express, unset uses the per-platform profile default. Gated models (for example, `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
 | `NEMOCLAW_DGX_STATION_PEER` | SSH host or `user@host` | Selects one exact, already-trusted DGX Station peer for Nemotron 3 Ultra pair qualification. The peer must match the reciprocal private `/30` rail and hardware checks; an explicit peer failure stops setup instead of falling back. NemoClaw does not enroll SSH trust or accept a port or SSH option in this value. When unset, DGX Station installer discovery checks only the two deterministic `/30` counterpart addresses. A peer cannot be combined with an explicit non-Ultra model; conflicting explicit selections fail before pair preparation. |
 | `NEMOCLAW_DGX_STATION_SSH_BINDING` | opaque installer-managed token | Carries the qualified peer endpoint and host-key binding from DGX Station pair preparation into the current managed-vLLM install. The installer creates and clears this token; operators should not set or persist it. Missing, changed, or mismatched binding state fails before peer SSH or Docker work. |
 | `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` | JSON array of non-blank strings | Appends advanced operator-owned tokens to the managed `vllm serve` command after NemoClaw's registry defaults. Example: `["--max-num-seqs","2"]`. Malformed JSON, non-string tokens, or blank tokens fail before Docker work starts. |

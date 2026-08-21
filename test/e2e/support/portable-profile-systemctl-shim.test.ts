@@ -1386,6 +1386,9 @@ describe("portable profile systemctl fixture", () => {
     expect(provision).toContain(
       'install -m 700 test/e2e/fixtures/portable-profile-systemctl-shim.sh "$shim_dir/systemctl"',
     );
+    expect(provision).toContain(
+      'sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" /run/nemoclaw',
+    );
     expect(provision).toContain("systemctl --user start podman.socket");
     const runtimeExportIndex = provision.indexOf("XDG_RUNTIME_DIR=%s");
     expect(runtimeExportIndex).toBeGreaterThanOrEqual(0);
@@ -1400,5 +1403,8 @@ describe("portable profile systemctl fixture", () => {
       'import { cleanupPortableProfileSystemctlFixture } from "./test/e2e/fixtures/portable-profile-systemctl.ts"; await cleanupPortableProfileSystemctlFixture(process.argv[1]);',
     );
     expect(cleanup.run).toContain('"$runtime_dir"');
+    expect(cleanup.run).toContain(
+      "rm -f -- /run/nemoclaw/portable-inference.json /run/nemoclaw/.portable-inference.json.tmp",
+    );
   });
 });
