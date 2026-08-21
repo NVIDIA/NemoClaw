@@ -66,6 +66,8 @@ export const WARMUP_POLL_LIST_TIMEOUT_S = 2;
 // interpolated so the cap is asserted on real values, not source text. OpenClaw
 // 2026.7.1 otherwise omits CLI device identity for loopback shared-token auth
 // before a stored device credential exists; force pairing only on the provoke.
+// The poll then drops shared gateway overrides and selects the paired CLI
+// device's pairing-only stored credential.
 export const WARMUP_SCRIPT = `
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
@@ -84,10 +86,21 @@ import subprocess
 import sys
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
+list_env = dict(os.environ)
+for key in (
+    'OPENCLAW_GATEWAY_URL',
+    'OPENCLAW_GATEWAY_PORT',
+    'OPENCLAW_GATEWAY_TOKEN',
+    'OPENCLAW_GATEWAY_PASSWORD',
+    'NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING',
+    'NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING',
+):
+    list_env.pop(key, None)
+list_env['NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT'] = '1'
 try:
     proc = subprocess.run(
         [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=${WARMUP_POLL_LIST_TIMEOUT_S},
+        capture_output=True, text=True, timeout=${WARMUP_POLL_LIST_TIMEOUT_S}, env=list_env,
     )
 except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
     sys.exit(1)
