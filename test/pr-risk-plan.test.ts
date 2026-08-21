@@ -722,10 +722,12 @@ describe("deterministic PR risk plan", () => {
     const changedFile = "tools/e2e/onboard-timeout-contract.mts";
     const result = plan(changedFile);
 
-    expect(riskPlanRequiredTargetIds(result)).toEqual([PR_E2E_TYPED_TARGET_IDS[1]]);
+    expect(riskPlanRequiredTargetIds(result)).toEqual([
+      "ubuntu-repo-docker-post-reboot-recovery",
+    ]);
     expect(result.requiredTargets).toEqual([
       expect.objectContaining({
-        id: PR_E2E_TYPED_TARGET_IDS[1],
+        id: "ubuntu-repo-docker-post-reboot-recovery",
         families: ["focused-e2e"],
         matchedFiles: [changedFile],
       }),
