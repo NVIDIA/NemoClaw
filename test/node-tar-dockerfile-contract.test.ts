@@ -70,6 +70,7 @@ const pinnedBaseDockerfiles = [
 const reviewedNodeBases = new Set<string>(NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH);
 
 interface ShellToken {
+  complete: boolean;
   end: number;
   value: string;
 }
@@ -88,14 +89,37 @@ function readShellToken(source: string, start: number): ShellToken | undefined {
   let cursor = start;
   while (cursor < source.length && isShellTokenBoundary(source[cursor]!)) cursor += 1;
   const tokenStart = cursor;
-  while (
-    cursor < source.length &&
-    !isShellTokenBoundary(source[cursor]!)
-  ) {
-    cursor += 1;
+  let quote: "'" | '"' | "`" | null = null;
+  let escaped = false;
+  token: while (cursor < source.length) {
+    const character = source[cursor]!;
+    switch (true) {
+      case escaped:
+        escaped = false;
+        cursor += 1;
+        continue;
+      case character === "\\" && quote !== "'":
+        escaped = true;
+        cursor += 1;
+        continue;
+      case quote !== null:
+        quote = character === quote ? null : quote;
+        cursor += 1;
+        continue;
+      case character === "'" || character === '"' || character === "`":
+        quote = character;
+        cursor += 1;
+        continue;
+      case isShellTokenBoundary(character):
+        break token;
+      default:
+        cursor += 1;
+    }
   }
   const value = source.slice(tokenStart, cursor);
-  return value.length === 0 ? undefined : { end: cursor, value };
+  return value.length === 0
+    ? undefined
+    : { complete: quote === null && !escaped, end: cursor, value };
 }
 
 type NpmSubcommand =
@@ -112,12 +136,17 @@ function npmSubcommand(source: string, start: number): NpmSubcommand {
         continue;
       case "--prefix": {
         const prefix = readShellToken(source, token.end);
-        switch (prefix?.value.startsWith("-")) {
-          case false:
-            token = readShellToken(source, prefix.end);
-            continue;
-          default:
+        switch (prefix) {
+          case undefined:
             return { kind: "unclassified" };
+          default:
+            switch (prefix.complete && !prefix.value.startsWith("-")) {
+              case true:
+                token = readShellToken(source, prefix.end);
+                continue;
+              default:
+                return { kind: "unclassified" };
+            }
         }
       }
       default: {
@@ -135,7 +164,11 @@ function npmSubcommand(source: string, start: number): NpmSubcommand {
       }
     }
   }
-  return token === undefined ? { kind: "none" } : { kind: "known", token };
+  return token === undefined
+    ? { kind: "none" }
+    : token.complete
+      ? { kind: "known", token }
+      : { kind: "unclassified" };
 }
 
 function npmConsumerPositions(source: string): number[] {
@@ -306,6 +339,10 @@ describe("reviewed npm image remediation contract", () => {
   it.each([
     ["a flag-only global option", "npm --silent ci"],
     ["mixed global options", "npm --prefix /work --silent install"],
+    ["repeated flag-only global options", "npm --silent --silent ci"],
+    ["a nonempty inline global option operand", "npm --prefix=/work install"],
+    ["a quoted global option operand", 'npm --prefix "/tmp/npm cache" ci'],
+    ["an escaped-space global option operand", "npm --prefix /tmp/npm\\ cache install"],
     ["a missing global option operand", "npm --prefix --silent ci"],
     ["an empty inline global option operand", "npm --prefix= --silent ci"],
     ["an unknown global option", "npm --future-option ci"],
@@ -315,7 +352,12 @@ describe("reviewed npm image remediation contract", () => {
     expect(npmConsumerPositions(source)).toEqual([source.indexOf("npm")]);
   });
 
-  it.each(["npm --silent view", "npm --prefix /work view"])(
+  it.each([
+    "npm --silent view",
+    "npm --prefix /work view",
+    "npm --silent --silent view",
+    "npm --prefix=/work view",
+  ])(
     "ignores a supported global option before a non-consumer subcommand in %s (#9933)",
     (body) => {
       expect(npmConsumerPositions(`RUN ${body}\n`)).toEqual([]);
@@ -335,6 +377,8 @@ describe("reviewed npm image remediation contract", () => {
     ["an escaped-space assignment value", "NPM_CONFIG_CACHE=/tmp/npm\\ cache npm install"],
     ["a flag-only global option", "npm --silent ci"],
     ["mixed global options", "npm --prefix /work --silent install"],
+    ["a quoted global option operand", 'npm --prefix "/tmp/npm cache" ci'],
+    ["an escaped-space global option operand", "npm --prefix /tmp/npm\\ cache install"],
   ])("detects npm consumers in %s before the final patch (#9933)", (_label, body) => {
     const source = [
       `RUN ${body}`,
