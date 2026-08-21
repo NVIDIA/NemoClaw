@@ -114,6 +114,19 @@ describe("live E2E target matrix", () => {
     expectExecutableTypedTargetCoverage();
   });
 
+  it("assigns a 160-minute job timeout only to post-reboot recovery (#9622)", () => {
+    expect(
+      Object.fromEntries(
+        buildLiveTargetMatrix().map((row) => [row.id, row.timeout_minutes]),
+      ),
+    ).toEqual({
+      "ubuntu-policy-custom-missing-presets-negative": 45,
+      "ubuntu-repo-cloud-langchain-deepagents-code": 45,
+      "ubuntu-repo-cloud-openclaw": 45,
+      "ubuntu-repo-docker-post-reboot-recovery": 160,
+    });
+  });
+
   it("prints a single-line JSON array of supported live E2E targets for --emit-live-matrix", () => {
     const result = runEmitLiveMatrix();
     expect(result.status, result.stderr).toBe(0);

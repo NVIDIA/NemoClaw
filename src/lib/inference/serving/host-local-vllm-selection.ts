@@ -195,11 +195,19 @@ export function resolveHostLocalVllmSelection(
       reason: "NEMOCLAW_SERVING_PRESET conflicts with NEMOCLAW_VLLM_MODEL",
     };
   }
-  if (String(env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
+  if (presetId && String(env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
     return {
       kind: "rejected",
-      reason: `${presetId ? "NEMOCLAW_SERVING_PRESET" : "NEMOCLAW_VLLM_MODEL"} conflicts with ${VLLM_EXTRA_ARGS_ENV}`,
+      reason: `NEMOCLAW_SERVING_PRESET conflicts with ${VLLM_EXTRA_ARGS_ENV}`,
     };
+  }
+  // Operator-owned serve arguments are intentionally outside the declarative
+  // catalog contract. Let the established single-host installer parse and
+  // apply them when no preset was requested; a fixed catalog recipe still
+  // rejects them after materialization. This also preserves the documented
+  // model-plus-extra-arguments path for non-fixed recipes.
+  if (String(env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
+    return { kind: "not-selected" };
   }
   const readinessReports =
     options.readinessReports ??
