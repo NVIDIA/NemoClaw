@@ -227,6 +227,29 @@ export function cleanupNativeGpuAttemptForFallback(
   };
 }
 
+/**
+ * Keep owner-managed runtimes out of the mutable-name cleanup path. A handoff
+ * means the provider deliberately retained the exact sandbox/runtime identity
+ * for recovery; OpenShell's name-only delete cannot consume that authority.
+ */
+export function cleanupNativeGpuFailureForFallback(
+  sandboxName: string,
+  failure: SandboxGpuCreateAttemptFailure,
+  deps: NativeGpuFallbackCleanupDeps,
+): NativeGpuFallbackCleanupResult {
+  if (failure.nativeCleanupHandoff) {
+    return {
+      safe: false,
+      reason:
+        "managed bootstrap owner cleanup is required for the exact sandbox and runtime identities",
+      deleteStatus: null,
+      sandboxPresent: null,
+      containerIds: [failure.nativeCleanupHandoff.runtimeId],
+    };
+  }
+  return cleanupNativeGpuAttemptForFallback(sandboxName, deps);
+}
+
 export type SandboxGpuCreatePlanDeps<T> = {
   runAttempt(route: SelectedDockerGpuRoute): Promise<SandboxGpuCreateAttemptResult<T>>;
   captureNativeFailure?(failure: SandboxGpuCreateAttemptFailure): void;

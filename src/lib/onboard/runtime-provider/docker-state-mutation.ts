@@ -216,6 +216,23 @@ pending = {}
 
 while True:
     names = sorted(os.listdir(session))
+    if "released" in names and "resumed" in names:
+        try:
+            expected = (transaction + "\n").encode("ascii")
+            if (private_file(os.path.join(session, "released")) == expected and
+                copied_file(os.path.join(session, "resumed")) == expected):
+                for name in ("released", "resumed", "ready", "broker.lock"):
+                    try:
+                        os.unlink(os.path.join(session, name))
+                    except FileNotFoundError:
+                        pass
+                try:
+                    os.rmdir(session)
+                except OSError:
+                    pass
+                raise SystemExit(0)
+        except (OSError, RuntimeError, UnicodeError, ValueError):
+            pass
     for name in names:
         incoming = INCOMING.fullmatch(name)
         if incoming is None:
@@ -280,13 +297,7 @@ while True:
                 except FileNotFoundError:
                     pass
             if successful_release:
-                try:
-                    os.unlink(os.path.join(session, "ready"))
-                    os.unlink(os.path.join(session, "broker.lock"))
-                    os.rmdir(session)
-                except OSError:
-                    pass
-                raise SystemExit(0)
+                atomic(os.path.join(session, "released"), (transaction + "\n").encode("ascii"))
         except (OSError, RuntimeError, UnicodeError, ValueError):
             pass
     time.sleep(0.05)
@@ -1427,6 +1438,36 @@ function ensureHelperTransportAuthorized(
   }
 }
 
+function finishReleasedHelperTransport(
+  options: ContainerStateMutationOwnerOptions,
+  bindingSha256: string,
+  transactionId: string,
+): void {
+  if (options.providerId !== DOCKER_PROVIDER_ID) return;
+  const capture: HelperTransportCapture = (command, timeoutMs) => {
+    requireCurrentEngineAuthority(options, bindingSha256);
+    const result = options.authority.engine.capture(command.args, timeoutMs);
+    requireCurrentEngineAuthority(options, bindingSha256);
+    return result;
+  };
+  if (!probeHelperTransport(capture, options, transactionId)) return;
+  withHelperTransportHostDirectory(options.hostTransportRoot, (temporary) => {
+    const resumed = path.join(temporary, "resumed");
+    writePrivateTransportFile(resumed, Buffer.from(`${transactionId}\n`, "ascii"));
+    requireCommandSuccess(
+      copyHelperTransportFile(
+        capture,
+        helperTransportCopyToCommand(
+          options.runtimeId,
+          resumed,
+          `${helperTransportSessionPath(transactionId)}/resumed`,
+        ),
+      ),
+      "root helper transport release finalization",
+    );
+  });
+}
+
 function parseHelperTransportResult(
   value: Buffer,
   action: HelperAction,
@@ -2424,6 +2465,7 @@ export function createContainerStateMutationOwner(
               completedLedgerSha256,
             )
           ) {
+            finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
             options.lifecycleStore.retire(record.transactionId, completedLedgerSha256);
             return;
           }
@@ -2442,6 +2484,7 @@ export function createContainerStateMutationOwner(
             completedLedgerSha256,
           );
         });
+        finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
         options.lifecycleStore.retire(record.transactionId, completedLedgerSha256);
         return;
       }
@@ -2489,6 +2532,7 @@ export function createContainerStateMutationOwner(
           );
         },
       );
+      finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
       options.lifecycleStore.retire(record.transactionId, completedLedgerSha256);
     },
 
@@ -2528,6 +2572,7 @@ export function createContainerStateMutationOwner(
             completed.resultSha256 as string,
           );
         });
+        finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
         options.lifecycleStore.retire(record.transactionId, record.resultSha256);
         return null;
       }

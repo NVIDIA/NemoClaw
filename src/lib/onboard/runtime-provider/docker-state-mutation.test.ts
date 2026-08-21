@@ -405,6 +405,30 @@ describe("Docker state mutation owner", () => {
     expect(runtime.helperActions.slice(-3)).toEqual(["release", "recover", "release"]);
   });
 
+  it("keeps recovery transport alive until a stopped supervisor is durably resumed", () => {
+    const runtime = harness({ failResumeOnce: true });
+    const fence = runtime.owner.acquire({ ...runtime.context, plan: plan() });
+    runtime.owner.rollback(runtime.context, fence);
+    const proof = runtime.owner.activate(runtime.context, fence);
+    const completedLedgerSha256 = "e".repeat(64);
+
+    expect(() =>
+      runtime.owner.release(runtime.context, fence, proof, completedLedgerSha256),
+    ).toThrow("Docker host supervisor resume did not complete successfully");
+    expect(runtime.state.supervisorStopped).toBe(true);
+    expect(runtime.transportBrokerActive()).toBe(true);
+    expect(runtime.lifecycleStore.listUnfinished()[0]).toMatchObject({
+      phase: "completed",
+      resultSha256: completedLedgerSha256,
+    });
+
+    expect(runtime.owner.recover(runtime.context)).toBeNull();
+    expect(runtime.supervisorSignals).toEqual(["SIGSTOP", "SIGCONT", "SIGCONT"]);
+    expect(runtime.state.supervisorStopped).toBe(false);
+    expect(runtime.transportBrokerActive()).toBe(false);
+    expect(runtime.lifecycleStore.listUnfinished()).toEqual([]);
+  });
+
   it("recovers a durable provider-release receipt without requiring the removed marker", () => {
     const runtime = harness();
     const fence = runtime.owner.acquire({ ...runtime.context, plan: plan() });

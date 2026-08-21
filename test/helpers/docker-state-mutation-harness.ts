@@ -144,6 +144,7 @@ export interface DockerStateMutationHarnessOptions {
   readonly deferAcquireOnce?: boolean;
   readonly failAcquire?: boolean;
   readonly failReleaseOnce?: boolean;
+  readonly failResumeOnce?: boolean;
   readonly lifecycleGeneration?: string;
   readonly loseAcquireResponseOnce?: boolean;
   readonly loseReleaseResponseOnce?: boolean;
@@ -193,11 +194,15 @@ function createContainerStateMutationHarness(
   let acquireDeferralsRemaining = options.deferAcquireOnce ? 1 : 0;
   let lostAcquireResponsesRemaining = options.loseAcquireResponseOnce ? 1 : 0;
   let releaseFailuresRemaining = options.failReleaseOnce ? 1 : 0;
+  let resumeFailuresRemaining = options.failResumeOnce ? 1 : 0;
   let lostReleaseResponsesRemaining = options.loseReleaseResponseOnce ? 1 : 0;
   let signalledHelpersRemaining = options.signalHelperOnce ? 1 : 0;
   let marker: Record<string, unknown> | null = null;
   let releasedMarker: Record<string, unknown> | null = null;
   let deferredAcquireRequest: string | null = null;
+  let brokerActive = false;
+  let brokerReleased = false;
+  let brokerTransactionId: string | null = null;
   const transportFiles = new Map<string, Buffer>();
 
   const acquireMarker = (request: Record<string, unknown>) => {
@@ -300,6 +305,10 @@ function createContainerStateMutationHarness(
       }
       const requestedSignal = command[3] as "SIGSTOP" | "SIGCONT";
       supervisorSignals.push(requestedSignal);
+      if (requestedSignal === "SIGCONT" && resumeFailuresRemaining > 0) {
+        resumeFailuresRemaining -= 1;
+        return { status: 1, stdout: "", stderr: "supervisor resume unavailable" };
+      }
       state.supervisorStopped = requestedSignal === "SIGSTOP";
       return { status: 0, stdout: `${DOCKER_STATE_MUTATION_RUNTIME_ID}\n`, stderr: "" };
     }
@@ -309,13 +318,20 @@ function createContainerStateMutationHarness(
       const containerPrefix = `${DOCKER_STATE_MUTATION_RUNTIME_ID}:`;
       if (destination.startsWith(containerPrefix)) {
         const containerPath = destination.slice(containerPrefix.length);
-        transportCopySourceModes.push(fs.statSync(source).mode & 0o777);
-        const payload = fs.readFileSync(source);
+        const descriptor = fs.openSync(source, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+        let payload: Buffer;
+        try {
+          transportCopySourceModes.push(fs.fstatSync(descriptor).mode & 0o777);
+          payload = fs.readFileSync(descriptor);
+        } finally {
+          fs.closeSync(descriptor);
+        }
         transportFiles.set(containerPath, payload);
         if (containerPath.endsWith(".incoming")) {
-          const incoming = /^([a-f0-9]{64})\.(acquire|assert|publish|recover|rollback|activate|release)\.incoming$/u.exec(
-            path.posix.basename(containerPath),
-          );
+          const incoming =
+            /^([a-f0-9]{64})\.(acquire|assert|publish|recover|rollback|activate|release)\.incoming$/u.exec(
+              path.posix.basename(containerPath),
+            );
           if (incoming) {
             const [, identity, action] = incoming;
             const request = payload;
@@ -374,9 +390,28 @@ function createContainerStateMutationHarness(
           }
         } else if (containerPath.endsWith(".ack")) {
           const base = containerPath.slice(0, -4);
+          const response = transportFiles.get(`${base}.response`);
+          if (response) {
+            const parsed = JSON.parse(response.toString("utf8")) as {
+              action?: string;
+              status?: number;
+            };
+            if (parsed.action === "release" && parsed.status === 0) brokerReleased = true;
+          }
           for (const suffix of [".response", ".ack"]) {
             transportFiles.delete(`${base}${suffix}`);
           }
+        } else if (
+          containerPath.endsWith("/resumed") &&
+          brokerReleased &&
+          brokerTransactionId !== null &&
+          payload.equals(Buffer.from(`${brokerTransactionId}\n`, "ascii"))
+        ) {
+          const session = path.posix.dirname(containerPath);
+          for (const file of [...transportFiles.keys()]) {
+            if (file === session || file.startsWith(`${session}/`)) transportFiles.delete(file);
+          }
+          brokerActive = false;
         }
         return { status: 0, stdout: "", stderr: "" };
       }
@@ -394,6 +429,9 @@ function createContainerStateMutationHarness(
     }
     if (command[2] === "--detach") {
       const transactionId = command.at(-1) ?? "";
+      brokerActive = true;
+      brokerReleased = false;
+      brokerTransactionId = transactionId;
       transportFiles.set(
         `/run/nemoclaw/runtime-state-mutation/${transactionId}/ready`,
         Buffer.from(`${transactionId}\n`, "ascii"),
@@ -584,6 +622,7 @@ function createContainerStateMutationHarness(
     engineAuthorityStore,
     helperActions,
     supervisorSignals,
+    transportBrokerActive: () => brokerActive,
     transportCopySourceModes,
     lifecycleStore,
     lifecycleGeneration,

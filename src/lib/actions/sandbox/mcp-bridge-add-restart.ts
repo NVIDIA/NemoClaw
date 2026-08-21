@@ -445,10 +445,6 @@ async function addMcpBridgeUnlocked(
         expectedProviderId: entry.providerId,
         requireExisting: true,
       });
-    } else {
-      // Hostless recovery cannot republish the credential, but still advances
-      // the provider revision after the bound policy becomes active.
-      refreshMcpProviderEnvironment(entry);
     }
     waitForAttachedMcpCredential(sandboxName, entry, {
       ...(providerResult.action === "updated"
@@ -456,6 +452,9 @@ async function addMcpBridgeUnlocked(
             previousRevision: previousCredentialRevision,
           }
         : {}),
+      // A no-field provider update advances only the provider resource version.
+      // If the credential remains available, republish it after observing an
+      // absence; otherwise, a hostless recovery advances the provider revision.
       refreshAfterObservedAbsence: () => {
         // invalidState: OpenShell 0.0.106 can coalesce a no-field provider
         // refresh without publishing the credential into fresh sandbox execs.

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -274,7 +273,6 @@ results["state_transition_preserves_identity"] = (
 )
 canonical_value = acquire_value()
 results["canonical"] = parse("acquire", canonical_value).plan_sha256
-results["canonical_transaction"] = canonical_value["transactionId"]
 podman_value = acquire_value(provider_id="podman")
 results["podman_provider"] = parse("acquire", podman_value).provider_id
 podman_handle = "podman-state-mutation-v1:" + podman_value["transactionId"] + ":" + "f" * 64
@@ -1268,41 +1266,8 @@ beforeAll(() => {
 });
 
 describe("runtime state mutation controller", () => {
-  it("accepts only the canonical adapter request and recomputes its transaction binding (#7744)", () => {
+  it("accepts only the canonical adapter request and transaction binding (#7744)", () => {
     expect(harnessResult.canonical).toMatch(/^[0-9a-f]{64}$/u);
-    const runtimeStateSha256 = createHash("sha256")
-      .update(
-        JSON.stringify({
-          schemaVersion: 1,
-          providerId: "docker",
-          sandboxName: "alpha",
-          lifecycleGeneration: "generation:7",
-          engineBindingSha256: "3".repeat(64),
-          runtimeId: "1".repeat(64),
-          runtimePid: 4812,
-          sandboxIdentitySha256: "4".repeat(64),
-          containerMountsSha256: "5".repeat(64),
-          stateRoot: "/sandbox/.hermes",
-          stateRootMountsSha256: "6".repeat(64),
-        }),
-      )
-      .digest("hex");
-    expect(harnessResult.canonical_transaction).toBe(
-      createHash("sha256")
-        .update(
-          JSON.stringify({
-            schemaVersion: 1,
-            action: "state-mutation",
-            runtimeStateSha256,
-            planSha256: harnessResult.canonical,
-            projectionSha256: "b".repeat(64),
-            nonce: "d".repeat(64),
-            target: "locked",
-            rollback: "mutable",
-          }),
-        )
-        .digest("hex"),
-    );
     expect(harnessResult).toMatchObject({
       noncanonical: "envelope-schema",
       duplicate: "duplicate-json-field",

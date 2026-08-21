@@ -19,8 +19,8 @@ vi.mock("../../adapters/openshell/provider-command", () => ({
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
 }));
 
-vi.mock("../../core/wait", () => ({
-  sleepMs: mocks.sleepMs,
+vi.mock("./mcp-bridge/timing", () => ({
+  sleepMcpBridgeRetry: mocks.sleepMs,
 }));
 
 import {

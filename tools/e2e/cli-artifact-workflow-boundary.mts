@@ -267,6 +267,9 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
 
     ".sourceRevision == $candidateSha",
     "candidate CLI build identity does not match the candidate commit SHA",
+    ".source.revision == $revision",
+    ".source.release == $release",
+    "managed-image catalog source identity does not match the candidate",
     "--sort=name",
     "--mtime=@0",
     "nemoclaw/dist/shared",

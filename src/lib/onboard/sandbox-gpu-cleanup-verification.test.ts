@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   cleanupNativeGpuAttemptForFallback,
+  cleanupNativeGpuFailureForFallback,
   type NativeGpuFallbackCleanupResult,
 } from "./sandbox-gpu-create-attempt";
 import {
@@ -59,6 +60,38 @@ function scenario({
 }
 
 describe("cleanupNativeGpuAttemptForFallback", () => {
+  it("never turns an exact owner-cleanup handoff into a mutable-name delete", () => {
+    const runOpenshell = vi.fn();
+
+    const result = cleanupNativeGpuFailureForFallback(
+      "alpha",
+      {
+        ok: false,
+        route: "native",
+        stage: "gpu-proof",
+        error: new Error("native GPU attachment absent"),
+        fallbackEligible: true,
+        nativeCleanupHandoff: {
+          kind: "openshell-owner-cleanup-required",
+          sandboxName: "alpha",
+          sandboxId: "sandbox-id-alpha",
+          runtimeId: "runtime-id-alpha",
+        },
+      },
+      { runOpenshell },
+    );
+
+    expect(result).toEqual({
+      safe: false,
+      reason:
+        "managed bootstrap owner cleanup is required for the exact sandbox and runtime identities",
+      deleteStatus: null,
+      sandboxPresent: null,
+      containerIds: ["runtime-id-alpha"],
+    });
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
   it("uses the documented fail-closed cleanup limits by default", () => {
     const { result, runOpenshell, sleep } = scenario({
       list: { status: 0, stdout: "alpha Ready" },

@@ -461,9 +461,14 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
       CANDIDATE_SHA: "${{ inputs.candidate_sha }}",
       MANAGED_IMAGE_CATALOG: "${{ inputs.managed_image_catalog }}",
     }) ||
-    !managedCatalogRun.includes("managed-image catalog revision mismatch") ||
+    !managedCatalogRun.includes(".source.revision == $revision") ||
+    !managedCatalogRun.includes(".source.release == $release") ||
+    !managedCatalogRun.includes(
+      "managed-image catalog source identity does not match the candidate",
+    ) ||
     !managedCatalogRun.includes("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG") ||
-    !managedCatalogRun.includes("NEMOCLAW_E2E_EXACT_RELEASE") ||
+    managedCatalogRun.includes("NEMOCLAW_E2E_EXACT_RELEASE") ||
+    managedCatalogRun.includes(".source.release = $release") ||
     workflowSteps.indexOf(managedCatalog ?? {}) !== workflowSteps.indexOf(restore ?? {}) + 1
   ) {
     errors.push(
