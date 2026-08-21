@@ -18,7 +18,7 @@ const python3Available =
 
 describe("ordinary auto-pair approval pass behaviour (#4616)", () => {
   it.runIf(python3Available)(
-    "approves allowlisted upgrades, skips unknown clients, and reports the count",
+    "drops shared gateway overrides so OpenClaw can select its stored CLI credential (#9844)",
     () => {
       const policy = readAutoPairApprovalPolicyModule();
       expect(policy).toBeTruthy();
@@ -29,6 +29,7 @@ describe("ordinary auto-pair approval pass behaviour (#4616)", () => {
       try {
         const approvalsFile = path.join(tmpDir, "approvals.log");
         const approveEnvFile = path.join(tmpDir, "approve-env.log");
+        const listEnvFile = path.join(tmpDir, "list-env.log");
         const pending = [
           {
             requestId: "ok-webchat",
@@ -80,6 +81,18 @@ describe("ordinary auto-pair approval pass behaviour (#4616)", () => {
 const fs = require("fs");
 const args = process.argv.slice(2);
 if (args[0] === "devices" && args[1] === "list") {
+  fs.appendFileSync(
+    ${JSON.stringify(listEnvFile)},
+    [
+      process.env.OPENCLAW_GATEWAY_URL || "unset",
+      process.env.OPENCLAW_GATEWAY_PORT || "unset",
+      process.env.OPENCLAW_GATEWAY_TOKEN || "unset",
+      process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING || "unset",
+      process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING || "unset",
+      process.env.OPENCLAW_STATE_DIR || "unset",
+      process.env.OPENCLAW_CONFIG_PATH || "unset",
+    ].join(":") + "\\n",
+  );
   process.stdout.write(${JSON.stringify(`${listResponse}\n`)});
   process.exit(0);
 }
@@ -91,6 +104,10 @@ if (args[0] === "devices" && args[1] === "approve") {
       process.env.OPENCLAW_GATEWAY_URL || "unset",
       process.env.OPENCLAW_GATEWAY_PORT || "unset",
       process.env.OPENCLAW_GATEWAY_TOKEN || "unset",
+      process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING || "unset",
+      process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING || "unset",
+      process.env.OPENCLAW_STATE_DIR || "unset",
+      process.env.OPENCLAW_CONFIG_PATH || "unset",
     ].join(":") + "\\n",
   );
   process.stdout.write("{}\\n");
@@ -109,6 +126,10 @@ process.exit(2);
             OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
             OPENCLAW_GATEWAY_PORT: "18789",
             OPENCLAW_GATEWAY_TOKEN: "secret-token",
+            NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING: "1",
+            NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING: "1",
+            OPENCLAW_STATE_DIR: "/sandbox/.openclaw",
+            OPENCLAW_CONFIG_PATH: "/sandbox/.openclaw/openclaw.json",
           },
           timeout: 10_000,
         });
@@ -119,10 +140,18 @@ process.exit(2);
         const approveEnv = fs.existsSync(approveEnvFile)
           ? fs.readFileSync(approveEnvFile, "utf-8").trim().split("\n").filter(Boolean)
           : [];
+        const listEnv = fs.existsSync(listEnvFile)
+          ? fs.readFileSync(listEnvFile, "utf-8").trim().split("\n").filter(Boolean)
+          : [];
 
         expect(approvals).toEqual(["ok-webchat", "ok-cli", "ok-agent-cli"]);
-        // Gateway env stripped on the approve subprocess (#4462 workaround).
-        expect(approveEnv).toEqual(["unset:unset:unset", "unset:unset:unset", "unset:unset:unset"]);
+        // Both children drop shared gateway and compatibility overrides while
+        // retaining the state/config paths OpenClaw needs to select its stored
+        // CLI device credential (#9844).
+        const expectedAuthEnv =
+          "unset:unset:unset:unset:unset:/sandbox/.openclaw:/sandbox/.openclaw/openclaw.json";
+        expect(listEnv).toEqual([expectedAuthEnv]);
+        expect(approveEnv).toEqual([expectedAuthEnv, expectedAuthEnv, expectedAuthEnv]);
         expect(result.stdout).toContain(`${SUMMARY_MARKER}=3`);
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
