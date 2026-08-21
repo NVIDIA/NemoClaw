@@ -20,7 +20,11 @@ describe("OpenShell MCP provider profile", () => {
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
     expect(() => ensureMcpBridgeProviderProfile()).not.toThrow();
-    expect(runOpenshell).toHaveBeenCalledOnce();
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["provider", "profile", "import", "--file", expect.stringMatching(/openai\.yaml$/)],
+      expect.any(Object),
+    );
     expect(runOpenshell).toHaveBeenCalledWith(
       ["provider", "profile", "import", "--file", expect.stringMatching(/nemoclaw-mcp-v1\.yaml$/)],
       expect.any(Object),
@@ -30,6 +34,7 @@ describe("OpenShell MCP provider profile", () => {
   it("accepts an existing profile only after proving the exact endpointless boundary", () => {
     const runOpenshell = vi
       .fn()
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "already exists" })
       .mockReturnValueOnce({ status: 1, stdout: "", stderr: "already exists" })
       .mockReturnValueOnce({
         status: 0,
@@ -55,6 +60,7 @@ describe("OpenShell MCP provider profile", () => {
     const runOpenshell = vi
       .fn()
       .mockReturnValueOnce({ status: 1, stdout: "", stderr: "already exists" })
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "already exists" })
       .mockReturnValueOnce({
         status: 0,
         stdout: JSON.stringify({
@@ -71,5 +77,13 @@ describe("OpenShell MCP provider profile", () => {
     expect(() => ensureMcpBridgeProviderProfile()).toThrow(
       /does not match NemoClaw's endpointless credential contract/,
     );
+  });
+
+  it("fails closed when the gateway-only OpenAI profile cannot be registered", () => {
+    const runOpenshell = vi.fn(() => ({ status: 1, stdout: "", stderr: "import rejected" }));
+    setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
+
+    expect(() => ensureMcpBridgeProviderProfile()).toThrow("import rejected");
+    expect(runOpenshell).toHaveBeenCalledOnce();
   });
 });

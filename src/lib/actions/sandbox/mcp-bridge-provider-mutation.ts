@@ -62,8 +62,38 @@ function profileHasExpectedCredentialBoundary(output: string): boolean {
   }
 }
 
+/**
+ * OpenShell 0.0.106 still accepts the legacy `openai` provider type without a
+ * declarative profile. Its static-credential resolver then emits the provider
+ * key without endpoint metadata, causing the supervisor to reject the whole
+ * provider environment as unclassified when an MCP provider is attached.
+ * Registering an endpointless profile makes the gateway-only inference key
+ * explicitly non-injectable while preserving OpenShell's inference route.
+ */
+function ensureOpenAiGatewayProviderProfile(): void {
+  const profilePath = path.resolve(
+    __dirname,
+    "../../../..",
+    "nemoclaw-blueprint",
+    "provider-profiles",
+    "openai.yaml",
+  );
+  const imported = runOpenshellProviderCommand(
+    ["provider", "profile", "import", "--file", profilePath],
+    {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  ) as OpenShellCommandResult;
+  if (imported.status === 0 || /already exists/i.test(commandOutput(imported))) return;
+  throw new McpBridgeError(
+    commandOutput(imported) || "Could not import the OpenShell OpenAI gateway provider profile.",
+  );
+}
+
 /** Ensure the endpointless profile required by OpenShell static credential binding. */
 export function ensureMcpBridgeProviderProfile(): void {
+  ensureOpenAiGatewayProviderProfile();
   const profilePath = path.resolve(
     __dirname,
     "../../../..",
