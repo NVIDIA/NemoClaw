@@ -263,7 +263,7 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
   if (command === "command -v mcporter") {
     return { status: 0, stdout: "/usr/local/bin/mcporter\n", stderr: "" };
   }
-  if (command.includes("config' 'add")) {
+  if (command.includes("config' 'add") || command.includes('"config", "add"')) {
     mark("adapter");
     if (crashAfter === "adapter") process.exit(86);
     return { status: 0, stdout: "", stderr: "" };

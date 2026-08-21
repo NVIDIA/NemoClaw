@@ -321,7 +321,7 @@ beforeEach(() => {
   testState.executeSandboxCommand.mockImplementation((_sandbox: string, command: string) => {
     testState.adapterCalls.push(command);
     switch (true) {
-      case command.includes("'config' 'add'"):
+      case command.includes("'config' 'add'") || command.includes('"config", "add"'):
         testState.adapterRegistered = true;
         return { status: 0, stdout: "", stderr: "" };
       case command.includes('"config", "--config"') && command.includes('"remove"'):
@@ -1243,7 +1243,7 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(testState.calls.some((call) => /^provider (create|update) .*--credential/.test(call))).toBe(false);
     expect(testState.policyApplyCalls).toBe(2);
     expect(testState.adapterCalls).toContain("command -v mcporter");
-    expect(testState.adapterCalls.some((call) => call.includes("openshell:resolve:env:GITHUB_TOKEN"))).toBe(true);
+    expect(testState.adapterCalls.join()).toMatch(/GITHUB_TOKEN[\s\S]*runtimePlaceholder/u);
     expect(sandbox?.mcp?.bridges).toHaveProperty("github");
     expect(sandbox?.mcp?.managedServerNames).toEqual(["github", "retired"]);
     expect(sandbox?.mcp?.destroyPreparedAt).toBeUndefined();
