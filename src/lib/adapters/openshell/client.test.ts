@@ -200,6 +200,7 @@ describe("openshell helpers", () => {
     runOpenshellCommand("openshell", ["status"], {
       timeout: 4321,
       killSignal: "SIGKILL",
+      maxBuffer: 65432,
       spawnSyncImpl,
     });
     captureOpenshellCommand("openshell", ["status"], {
@@ -209,7 +210,7 @@ describe("openshell helpers", () => {
     });
 
     expect(observedOptions).toEqual([
-      { timeout: 4321, killSignal: "SIGKILL", maxBuffer: undefined },
+      { timeout: 4321, killSignal: "SIGKILL", maxBuffer: 65432 },
       { timeout: 9876, killSignal: undefined, maxBuffer: 123456 },
     ]);
   });
