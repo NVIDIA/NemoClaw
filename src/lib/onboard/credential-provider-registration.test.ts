@@ -3,7 +3,9 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { Session } from "../state/onboard-session";
+import { requiredMessagingProviderBindings } from "./checkpoint-replay";
 import {
   type CredentialProviderRegistrationDeps,
   createCredentialProviderRegistration,
@@ -262,6 +264,101 @@ describe("credential provider registration", () => {
         "alpha-discord-bridge",
         "--type",
         "generic",
+        "--credential",
+        "DISCORD_BOT_TOKEN",
+      ],
+      expect.objectContaining({ env: { DISCORD_BOT_TOKEN: DISCORD_SECRET } }),
+    );
+  });
+
+  it("registers one static Hermes Discord provider from the checkpoint binding", async () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const missing = { status: 1, stdout: "", stderr: "not found" };
+    const success = { status: 0, stdout: "", stderr: "" };
+    const runOpenshell = vi.fn((args: string[]) =>
+      (args[0] === "provider" && args.includes("profile") && args.includes("export")) ||
+      (args[0] === "provider" && args[1] === "get")
+        ? missing
+        : success,
+    );
+    const registration = createCredentialProviderRegistration(
+      registrationDeps(runOpenshell, session),
+    );
+    const plan: SandboxMessagingPlan = {
+      schemaVersion: 1,
+      sandboxName: "alpha",
+      agent: "hermes",
+      workflow: "onboard",
+      channels: [
+        {
+          channelId: "discord",
+          displayName: "Discord",
+          authMode: "token-paste",
+          active: true,
+          selected: true,
+          configured: true,
+          disabled: false,
+          inputs: [],
+          hooks: [],
+        },
+      ],
+      disabledChannels: [],
+      credentialBindings: [
+        {
+          channelId: "discord",
+          credentialId: "discordBotToken",
+          sourceInput: "botToken",
+          providerName: "alpha-discord-bridge",
+          providerEnvKey: "DISCORD_BOT_TOKEN",
+          placeholder: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+          credentialAvailable: true,
+        },
+      ],
+      networkPolicy: { presets: [], entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    };
+    const required = requiredMessagingProviderBindings("alpha", plan);
+    const tokenDefs: MessagingTokenDef[] = [
+      {
+        name: "alpha-discord-bridge",
+        envKey: "DISCORD_BOT_TOKEN",
+        token: DISCORD_SECRET,
+        providerType: "discord-hermes-static-v1",
+      },
+    ];
+
+    const registered = await registration.stageSandboxCredentialProviders(
+      {
+        sandboxName: "alpha",
+        enabledChannels: ["discord"],
+        webSearchConfig: null,
+        agent: { name: "hermes" },
+        requiredBindings: required,
+      },
+      async () => ({ messagingTokenDefs: tokenDefs }),
+    );
+
+    expect(required).toEqual([
+      {
+        name: "alpha-discord-bridge",
+        type: "discord-hermes-static-v1",
+        credentialEnv: "DISCORD_BOT_TOKEN",
+      },
+    ]);
+    expect(registered).toEqual(required);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      [
+        "provider",
+        "create",
+        "-g",
+        "test-gateway",
+        "--name",
+        "alpha-discord-bridge",
+        "--type",
+        "discord-hermes-static-v1",
         "--credential",
         "DISCORD_BOT_TOKEN",
       ],
