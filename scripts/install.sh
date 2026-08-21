@@ -4139,9 +4139,9 @@ ensure_docker() {
             printf -v cmd '%s %q' "$cmd" "$arg"
           done
         fi
-        # Station Express saves its mode before this re-exec. It reaches express
-        # mode only while NEMOCLAW_PROVIDER is unset, so remove the derived value
-        # and let the child restore the saved mode.
+        # Station Express saves its mode before this re-exec. The child treats an
+        # inherited provider as explicit intent, so remove the derived value and
+        # let the child restore the saved mode.
         if [ "${_STATION_INSTALL_MODE:-}" = "express" ]; then
           unset NEMOCLAW_PROVIDER
         fi

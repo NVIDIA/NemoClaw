@@ -207,8 +207,10 @@ describeLinux("install.sh ensure_docker — #4414 non-interactive self re-exec",
   });
 });
 
+// The harness supplies Linux behavior and a fake sg, so these process-boundary
+// cases run on every host.
 describe("install.sh ensure_docker — Station intent across self re-exec", () => {
-  it("removes the derived provider before Station Express enters sg (#9900)", () => {
+  it("unsets the derived provider before the Station Express Docker-group re-exec (#9900)", () => {
     const outcome = runEnsureDocker(
       {
         NEMOCLAW_NON_INTERACTIVE: "1",
@@ -326,7 +328,7 @@ describe("install.sh ensure_docker — Station intent across self re-exec", () =
           NEMOCLAW_DASHBOARD_PORT: "18790",
           NEMOCLAW_VLLM_PORT: "18000",
         },
-        timeout: 15_000,
+        timeout: 10_000,
         killSignal: "SIGKILL",
       });
       const output = `${result.stdout}${result.stderr}`;
