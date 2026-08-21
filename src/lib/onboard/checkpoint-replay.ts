@@ -13,7 +13,11 @@ import type {
 import { HERMES_TAVILY_PROVIDER_PROFILE_ID } from "./brave-provider-profile";
 import type { OnboardMachineState } from "./machine/types";
 import { ONBOARD_MACHINE_STATES } from "./machine/types";
-import { listMessagingBridgeProfiles } from "./messaging-bridge-provider";
+import {
+  listMessagingBridgeProfiles,
+  messagingBridgeProfilesForAgent,
+  staticMessagingProviderTypeForChannel,
+} from "./messaging-bridge-provider";
 
 export interface CheckpointedMachineSession {
   readonly checkpoint: OnboardCheckpoint | null;
@@ -140,22 +144,29 @@ export function requiredMessagingProviderBindings(
 ): CheckpointProviderBinding[] {
   if (!plan) return [];
   const activeChannels = new Set(getActiveChannelIdsFromPlan(plan));
-  const bindings = plan.credentialBindings
-    .filter((binding) => activeChannels.has(binding.channelId))
-    .map((binding) => ({
+  const profiles = messagingBridgeProfilesForAgent(plan.agent, listMessagingBridgeProfiles());
+  const bindings = new Map<string, CheckpointProviderBinding>();
+  for (const binding of plan.credentialBindings) {
+    if (!activeChannels.has(binding.channelId)) continue;
+    bindings.set(binding.providerName, {
       name: binding.providerName,
-      type: "generic",
+      type:
+        staticMessagingProviderTypeForChannel(binding.channelId, plan.agent, profiles) ?? "generic",
       credentialEnv: binding.providerEnvKey,
-    }));
-  for (const profile of listMessagingBridgeProfiles()) {
-    if (profile.agent !== plan.agent || !activeChannels.has(profile.channelId)) continue;
-    bindings.push({
-      name: `${sandboxName}-${profile.channelId}-bridge`,
-      type: profile.profileId,
-      credentialEnv: profile.credentialKey,
     });
   }
-  return bindings;
+  for (const profile of profiles) {
+    if (!activeChannels.has(profile.channelId)) continue;
+    const name = `${sandboxName}-${profile.channelId}-bridge`;
+    const existing = bindings.get(name);
+    bindings.set(
+      name,
+      existing
+        ? { ...existing, type: profile.profileId }
+        : { name, type: profile.profileId, credentialEnv: profile.credentialKey },
+    );
+  }
+  return [...bindings.values()];
 }
 
 export interface SandboxCreateObservation {

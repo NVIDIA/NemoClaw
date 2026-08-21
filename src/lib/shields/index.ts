@@ -5096,6 +5096,7 @@ function shieldsDownWithoutHostLock(
         livePolicyYaml: policyYaml,
         managedMcpPolicies,
         readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
+        ...(target.agentName === "hermes" ? { sandboxName } : {}),
       });
       policyFileIsTemp = policyFile !== basePath;
     } else if (fs.existsSync(policyName)) {
