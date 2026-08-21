@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { loadAgent } from "../../agent/defs";
+import { assertHermesPortableUninstallCompleteForOnboarding } from "../../state/hermes-portable-uninstall/journal";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import {
   captureHermesPortablePolicySource,
@@ -109,6 +110,12 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(stateDir, { recursive: true, force: true }));
 
 describe("Hermes portable onboarding transaction", () => {
+  it("allows first onboarding when no uninstall state directory exists (#9608)", () => {
+    expect(() =>
+      assertHermesPortableUninstallCompleteForOnboarding(path.join(stateDir, "absent")),
+    ).not.toThrow();
+  });
+
   it("uses only the receipt-owned child environment and exact gateway observations (#9203)", () => {
     const runtimeAuthority = input().runtimeAuthority;
     const sourceEnv = {

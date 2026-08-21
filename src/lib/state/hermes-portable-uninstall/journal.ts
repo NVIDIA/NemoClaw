@@ -467,6 +467,17 @@ export function inspectHermesPortableUninstallJournal(
   return readJournalFile(stateDir);
 }
 
+/** Stop a new lifecycle from replacing authority that an interrupted uninstall still owns. */
+export function assertHermesPortableUninstallCompleteForOnboarding(stateDir: string): void {
+  if (readPortableAuthorityDirectory(stateDir, false).identity === null) return;
+  const journal = readJournalFile(stateDir);
+  if (journal && journal.phase !== "completed") {
+    throw new Error(
+      `Hermes Portable onboarding cannot replace lifecycle authority while the uninstall journal is at phase '${journal.phase}'; rerun uninstall before onboarding`,
+    );
+  }
+}
+
 export function hermesPortableUninstallJournalPath(stateDir: string): string {
   return journalPath(stateDir);
 }

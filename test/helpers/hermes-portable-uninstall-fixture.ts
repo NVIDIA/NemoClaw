@@ -168,6 +168,7 @@ function publishLifecycleReceipt(
   runtime: ReturnType<typeof runtimeAuthority>,
   socket: PodmanSocketAuthority,
   podmanAuthority: ReturnType<typeof captureHermesPortablePodmanExecutableAuthority>,
+  lifecycleGeneration: string,
 ): HermesPortableConfiguredReceipt {
   const policyPath = path.join(stateDir, "portable-uninstall-policy.yaml");
   fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
@@ -189,7 +190,7 @@ function publishLifecycleReceipt(
     createIntentSha256: "d".repeat(64),
     sandboxName: SANDBOX_NAME,
     gatewayName: GATEWAY_NAME,
-    lifecycleGeneration: LIFECYCLE_GENERATION,
+    lifecycleGeneration,
     runtimeAuthority: runtime,
     openshellExecutableAuthority: hermesPortableTestOpenShellAuthority(),
     podmanExecutableAuthority: podmanAuthority,
@@ -298,6 +299,7 @@ export async function createHermesPortableUninstallFixture(
     readonly shared?: boolean;
     readonly providerOnlyShared?: boolean;
     readonly interruptAfter?: HermesPortableUninstallPhase;
+    readonly lifecycleGeneration?: string;
   } = {},
 ): Promise<HermesPortableUninstallFixture> {
   const stateDir = path.join(homeDir, ".nemoclaw");
@@ -408,7 +410,14 @@ export async function createHermesPortableUninstallFixture(
     path.join(inferenceDirectory, "portable-inference.json"),
     "utf8",
   );
-  const lifecycleReceipt = publishLifecycleReceipt(stateDir, runtime, socket, podmanAuthority);
+  const lifecycleGeneration = options.lifecycleGeneration ?? LIFECYCLE_GENERATION;
+  const lifecycleReceipt = publishLifecycleReceipt(
+    stateDir,
+    runtime,
+    socket,
+    podmanAuthority,
+    lifecycleGeneration,
+  );
   const targetRow: SandboxEntry = {
     name: SANDBOX_NAME,
     agent: "hermes",
@@ -416,7 +425,7 @@ export async function createHermesPortableUninstallFixture(
     openshellVersion: lifecycleReceipt.openshellExecutableAuthority.version,
     gatewayName: GATEWAY_NAME,
     gatewayPort: 8080,
-    lifecycleGeneration: LIFECYCLE_GENERATION,
+    lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: fingerprintOpenShellSandboxLiveIdentity(LIVE_SANDBOX)!,
     provider: "ollama-local",
     model: "qwen3-vl:4b",

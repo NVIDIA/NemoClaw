@@ -214,6 +214,8 @@ After successful schema `5` Portable Ollama cleanup with `--destroy-user-data`, 
 Another same-user process can change the journal, so this protection assumes cooperative NemoClaw writers under that UID.
 The journal is credential-free.
 A completed journal remains as exact no-op evidence for a repeated uninstall.
+While the journal records an incomplete phase, Hermes Portable onboarding stops before it publishes replacement lifecycle authority.
+Rerun full uninstall to complete the recorded cleanup before you onboard again.
 If a later completed onboarding publishes a new schema `5` lifecycle, the next uninstall replaces the completed journal with that lifecycle's exact authority before mutation.
 </AgentOnly>
 

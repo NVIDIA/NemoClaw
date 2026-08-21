@@ -3,16 +3,24 @@
 
 import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readGatewayRegistryFile } from "../../state/gateway-registry";
+import { assertHermesPortableUninstallCompleteForOnboarding } from "../../state/hermes-portable-uninstall/journal";
+import { withPortableOnboardRetirementBoundary } from "../../onboard/portable-retirement-authority";
 import { readHermesPortableLifecycleReceipt } from "../../onboard/experimental/hermes-portable-receipt";
+import { runHermesPortableOnboardingTransaction } from "../../onboard/experimental/hermes-portable-onboarding";
 import {
   createHermesPortableUninstallFixture,
   hermesPortableUninstallFixtureConstants,
   type HermesPortableUninstallFixture,
 } from "../../../../test/helpers/hermes-portable-uninstall-fixture";
+import {
+  createHermesPortableTestInput,
+  createHermesPortableTransactionFixture,
+} from "../../../../test/helpers/hermes-portable-onboarding-fixture";
 import { runPortableRuntimeCleanupTransaction } from "./portable-runtime-cleanup";
 import { inspectHermesPortableUninstallJournal } from "./hermes-portable-uninstall-transaction";
 
@@ -82,6 +90,69 @@ describe("Hermes Portable schema-5 uninstall", () => {
       firstAuthority,
     );
     expect(fixture.sandboxDeleteCount()).toBe(1);
+  });
+
+  it("blocks replacement onboarding during receipts-retired recovery and later uninstalls a new generation (#9608)", async () => {
+    fixture = await createHermesPortableUninstallFixture(homeDir, {
+      interruptAfter: "receipts-retired",
+    });
+    expect(() => runCleanup(fixture!)).toThrow("interrupted after receipts-retired");
+
+    const blockedOperation = vi.fn();
+    await expect(
+      withPortableOnboardRetirementBoundary(
+        {
+          homeDir,
+          registryFile: fixture.registryFile,
+          sessionFile: path.join(fixture.stateDir, "onboard-session.json"),
+          stateDir: fixture.stateDir,
+        },
+        blockedOperation,
+        {
+          loadRegistry: () => ({ defaultSandbox: null, sandboxes: {} }),
+          withLifecycleLock: async (_sandboxName, operation) => await operation(),
+        },
+      ),
+    ).rejects.toThrow("uninstall journal is at phase 'receipts-retired'");
+    expect(blockedOperation).not.toHaveBeenCalled();
+
+    const baseInput = createHermesPortableTestInput(
+      fixture.stateDir,
+      path.join(fixture.stateDir, "replacement-policy.yaml"),
+    );
+    const replacementName = hermesPortableUninstallFixtureConstants.sandboxName;
+    const replaceName = (value: string) => value.replaceAll("alpha", replacementName);
+    const replacementInput = {
+      ...baseInput,
+      sandboxName: replacementName,
+      lifecycleGeneration: "generation-2",
+      createArgv: baseInput.createArgv.map(replaceName),
+      startup: {
+        ...baseInput.startup,
+        sandboxName: replacementName,
+        startupArgv: baseInput.startup.startupArgv.map(replaceName),
+      },
+    };
+    const replacementOnboarding = createHermesPortableTransactionFixture(replacementInput);
+    await expect(
+      runHermesPortableOnboardingTransaction(replacementInput, replacementOnboarding.value),
+    ).rejects.toThrow("uninstall journal is at phase 'receipts-retired'");
+    expect(replacementOnboarding.events).toEqual(["lock-enter", "lock-exit"]);
+    expect(replacementInput.buildContext.assertCurrentSource).not.toHaveBeenCalled();
+
+    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 0 });
+    expect(inspectHermesPortableUninstallJournal(fixture.stateDir)?.phase).toBe("completed");
+    expect(() =>
+      assertHermesPortableUninstallCompleteForOnboarding(fixture!.stateDir),
+    ).not.toThrow();
+
+    fixture.restore();
+    fixture = await createHermesPortableUninstallFixture(homeDir, {
+      lifecycleGeneration: "generation-2",
+    });
+    expect(fixture.targetRow.lifecycleGeneration).toBe("generation-2");
+    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 1 });
+    expect(inspectHermesPortableUninstallJournal(fixture.stateDir)?.phase).toBe("completed");
   });
 
   it("preserves a provider, inference runtime, and recovery evidence shared by a sibling (#9608)", async () => {
