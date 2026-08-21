@@ -58,6 +58,15 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
     expect(
       mcporterHeadersMatchExpected(
         {
+          Authorization: "Bearer openshell:resolve:env:v1442987827285932589_GITHUB_TOKEN",
+          accept: "application/json, text/event-stream",
+        },
+        expected,
+      ),
+    ).toBe(true);
+    expect(
+      mcporterHeadersMatchExpected(
+        {
           ...expected,
           accept: "application/json",
         },
@@ -83,6 +92,34 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
         expected,
       ),
     ).toBe(false);
+  });
+
+  it.each([
+    "Bearer openshell:resolve:env:v_GITHUB_TOKEN",
+    "Bearer openshell:resolve:env:v42_OTHER_TOKEN",
+    "Bearer openshell:resolve:env:v42x_GITHUB_TOKEN",
+    `Bearer openshell:resolve:env:v${"1".repeat(21)}_GITHUB_TOKEN`,
+  ])("rejects an unsafe revisioned mcporter Authorization header: %s", (authorization) => {
+    expect(
+      mcporterHeadersMatchExpected(
+        { Authorization: authorization },
+        { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
+      ),
+    ).toBe(false);
+  });
+
+  it("projects the live OpenShell credential revision into mcporter config", () => {
+    const command = buildOpenClawMcporterRegisterCommand(
+      baseEntry,
+      false,
+      OPENCLAW_MCPORTER_ROOT,
+      "v1442987827285932589",
+    );
+
+    expect(command).toContain(
+      "Authorization=Bearer openshell:resolve:env:v1442987827285932589_GITHUB_TOKEN",
+    );
+    expect(command).not.toContain("Authorization=Bearer openshell:resolve:env:GITHUB_TOKEN'");
   });
 
   it("registers, inspects, and removes the OpenClaw workspace project config", () => {

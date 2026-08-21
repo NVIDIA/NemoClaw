@@ -15,6 +15,7 @@ import { executeSandboxExecCommand } from "./process-recovery";
 const MCP_CREDENTIAL_REVISION_OBSERVATION_RE = /^(?:absent|canonical|v[0-9]{1,20})$/;
 
 export type McpCredentialRevisionObservation = "absent" | "canonical" | `v${number}`;
+export type McpAttachedCredentialRevision = Exclude<McpCredentialRevisionObservation, "absent">;
 
 type McpCredentialRevisionAttempt =
   | { kind: "observation"; observation: McpCredentialRevisionObservation }
@@ -146,7 +147,7 @@ export function waitForAttachedMcpCredential(
     previousRevision?: McpCredentialRevisionObservation;
     refreshAfterObservedAbsence?: () => void;
   } = {},
-): void {
+): McpAttachedCredentialRevision {
   assertAuthenticatedBridgeEntry(entry);
   const envName = entry.env[0];
   if (
@@ -161,6 +162,7 @@ export function waitForAttachedMcpCredential(
   );
   let refreshedAfterObservedAbsence = false;
   let lastAttempt: McpCredentialRevisionAttempt = { kind: "transport-unavailable" };
+  let attachedRevision: McpAttachedCredentialRevision | undefined;
   const ready = waitUntil(
     () => {
       // Each exec is a fresh OpenShell process. Only the bounded placeholder
@@ -180,11 +182,12 @@ export function waitForAttachedMcpCredential(
         lastAttempt = attempt;
       }
       const observation = attempt.kind === "observation" ? attempt.observation : null;
-      return (
+      const attached =
         observation !== null &&
         observation !== "absent" &&
-        (options.previousRevision === undefined || observation !== options.previousRevision)
-      );
+        (options.previousRevision === undefined || observation !== options.previousRevision);
+      if (attached) attachedRevision = observation;
+      return attached;
     },
     Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 30,
     1_000,
@@ -194,6 +197,12 @@ export function waitForAttachedMcpCredential(
       `OpenShell did not synchronize the expected credential revision for placeholder '${envName}' into sandbox '${sandboxName}' after provider attachment or update (last bounded observation: ${describeMcpCredentialRevisionAttempt(lastAttempt)}; post-policy refresh attempted: ${refreshedAfterObservedAbsence ? "yes" : "no"}).`,
     );
   }
+  if (attachedRevision === undefined) {
+    throw new McpBridgeError(
+      `OpenShell reported credential readiness without a usable revision for placeholder '${envName}' in sandbox '${sandboxName}'.`,
+    );
+  }
+  return attachedRevision;
 }
 
 export function buildMcpCredentialDetachedCommand(envName: string): string {

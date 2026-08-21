@@ -353,7 +353,7 @@ alpha-mcp-slack   generic  1                 0
     });
     const refreshAfterObservedAbsence = vi.fn();
 
-    waitForAttachedMcpCredential(
+    const revision = waitForAttachedMcpCredential(
       "alpha",
       {
         server: "github",
@@ -375,6 +375,7 @@ alpha-mcp-slack   generic  1                 0
     expect(proofCommand).toContain("GITHUB_TOKEN");
     expect(proofCommand).not.toContain("base64 -d");
     expect(refreshAfterObservedAbsence).not.toHaveBeenCalled();
+    expect(revision).toBe("canonical");
   });
 
   it("refreshes once after a fresh exec reports the credential absent (#9764)", () => {
@@ -395,10 +396,13 @@ alpha-mcp-slack   generic  1                 0
       .mockReturnValueOnce({ status: 0, stdout: "v12", stderr: "" });
     const refreshAfterObservedAbsence = vi.fn();
 
-    waitForAttachedMcpCredential("alpha", entry, { refreshAfterObservedAbsence });
+    const revision = waitForAttachedMcpCredential("alpha", entry, {
+      refreshAfterObservedAbsence,
+    });
 
     expect(refreshAfterObservedAbsence).toHaveBeenCalledTimes(1);
     expect(exec).toHaveBeenCalledTimes(2);
+    expect(revision).toBe("v12");
   });
 
   it("does not repeat the refresh when the credential remains absent (#9764)", () => {
@@ -575,7 +579,7 @@ alpha-mcp-slack   generic  1                 0
       stderr: "",
     });
 
-    waitForAttachedMcpCredential("alpha", entry, { previousRevision: "v11" });
+    expect(waitForAttachedMcpCredential("alpha", entry, { previousRevision: "v11" })).toBe("v12");
     expect(exec).toHaveBeenCalledTimes(1);
 
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
