@@ -73,7 +73,11 @@ export function validateAttachedMessagingProvidersBeforeSandboxCreation(
   try {
     ensureMessagingCredentialProviderProfile({
       root: REPOSITORY_ROOT,
-      runOpenshell: deps.runOpenshell,
+      runOpenshell: (args, options) =>
+        deps.runOpenshell(
+          [...args.slice(0, 2), "-g", input.gatewayName, ...args.slice(2)],
+          options,
+        ),
     });
   } catch (error) {
     deps.cleanupCreateSources();

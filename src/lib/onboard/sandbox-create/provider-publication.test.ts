@@ -44,7 +44,7 @@ function createHarness(
   const runOpenshell = vi.fn((args: string[]) => {
     switch (`${args[0]} ${args[1]}`) {
       case "provider profile":
-        return args[2] === "import" ? profileImportResult : profileExportResult;
+        return args.includes("import") ? profileImportResult : profileExportResult;
       case "provider get":
         return initialState
           ? {
@@ -111,7 +111,15 @@ describe("sandbox provider preparation", () => {
     prepareProviders(publicationInput(), harness.deps);
 
     expect(harness.runOpenshell.mock.calls.map(([args]) => args)).toEqual([
-      ["provider", "profile", "import", "--file", expect.stringContaining("nemoclaw-mcp-v1.yaml")],
+      [
+        "provider",
+        "profile",
+        "-g",
+        "nemoclaw",
+        "import",
+        "--file",
+        expect.stringContaining("nemoclaw-mcp-v1.yaml"),
+      ],
       ["provider", "get", "-g", "nemoclaw", providerName],
       ["provider", "update", "-g", "nemoclaw", providerName],
       ["provider", "get", "-g", "nemoclaw", providerName],
@@ -154,7 +162,15 @@ describe("sandbox provider preparation", () => {
       `OpenShell did not confirm messaging provider '${providerName}' after publication.`,
     );
     expect(harness.runOpenshell.mock.calls.map(([args]) => args)).toEqual([
-      ["provider", "profile", "import", "--file", expect.stringContaining("nemoclaw-mcp-v1.yaml")],
+      [
+        "provider",
+        "profile",
+        "-g",
+        "nemoclaw",
+        "import",
+        "--file",
+        expect.stringContaining("nemoclaw-mcp-v1.yaml"),
+      ],
       ["provider", "get", "-g", "nemoclaw", providerName],
       ["provider", "update", "-g", "nemoclaw", providerName],
       ["provider", "get", "-g", "nemoclaw", providerName],
@@ -216,8 +232,8 @@ describe("sandbox provider preparation", () => {
       validateAttachedMessagingProvidersBeforeSandboxCreation(publicationInput(), harness.deps),
     ).toThrowError(/does not match NemoClaw's endpointless messaging credential contract/u);
     expect(
-      harness.runOpenshell.mock.calls.some(
-        ([args]) => args.slice(0, 3).join(" ") === "provider profile import",
+      harness.runOpenshell.mock.calls.some(([args]) =>
+        args.join(" ").startsWith("provider profile -g nemoclaw import"),
       ),
     ).toBe(true);
     expect(
