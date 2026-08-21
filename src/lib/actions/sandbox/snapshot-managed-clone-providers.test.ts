@@ -353,7 +353,7 @@ describe("managed clone provider transaction", () => {
         environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
         runOpenshell: runner.run,
       }),
-    ).toThrow(ManagedCloneProviderTransactionError);
+    ).toThrow(/snapshot content changed before mutation/u);
     expect(
       runner.commands.some((command) => command.startsWith("provider profile import --file ")),
     ).toBe(false);

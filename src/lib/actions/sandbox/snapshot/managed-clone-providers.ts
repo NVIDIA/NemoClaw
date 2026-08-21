@@ -531,7 +531,7 @@ export function provisionManagedCloneProviderTransaction(
   const environment = input.environment ?? process.env;
   const confirmed: ManagedCloneProviderOwnershipReceipt[] = [];
   try {
-    // Fence the global profile import as well as every provider mutation.
+    // Fence every shared gateway mutation, including provider profile import.
     revalidateManagedCloneMutationAuthority(prepared, input);
     if (
       prepared.providers.some(

@@ -1297,9 +1297,7 @@ const { createSandbox } = require(${onboardPath});
         "should NOT delete sandbox when providers already exist in gateway",
       );
 
-      // Providers should still be upserted on reuse (credential refresh).
-      // Since the mock reports providers as existing (run returns status 0),
-      // upsertProvider issues 'update' rather than 'create'.
+      // Reuse refreshes credentials only after the mock returns the endpointless identity.
       const providerUpserts = payload.commands.filter((entry: CommandEntry) =>
         entry.command.includes("provider update"),
       );
