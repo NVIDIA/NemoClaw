@@ -98,16 +98,44 @@ function readShellToken(source: string, start: number): ShellToken | undefined {
   return value.length === 0 ? undefined : { end: cursor, value };
 }
 
-function npmSubcommand(source: string, start: number): ShellToken | undefined {
-  const token = readShellToken(source, start);
-  const prefix = token?.value === "--prefix" ? readShellToken(source, token.end) : undefined;
-  return token?.value === "--prefix"
-    ? prefix === undefined
-      ? undefined
-      : readShellToken(source, prefix.end)
-    : token?.value.startsWith("--prefix=") === true
-      ? readShellToken(source, token.end)
-      : token;
+type NpmSubcommand =
+  | { kind: "known"; token: ShellToken }
+  | { kind: "none" }
+  | { kind: "unclassified" };
+
+function npmSubcommand(source: string, start: number): NpmSubcommand {
+  let token = readShellToken(source, start);
+  while (token?.value.startsWith("-") === true) {
+    switch (token.value) {
+      case "--silent":
+        token = readShellToken(source, token.end);
+        continue;
+      case "--prefix": {
+        const prefix = readShellToken(source, token.end);
+        switch (prefix?.value.startsWith("-")) {
+          case false:
+            token = readShellToken(source, prefix.end);
+            continue;
+          default:
+            return { kind: "unclassified" };
+        }
+      }
+      default: {
+        const inlinePrefix = token.value.startsWith("--prefix=")
+          ? token.value.slice("--prefix=".length)
+          : undefined;
+        switch (inlinePrefix) {
+          case undefined:
+          case "":
+            return { kind: "unclassified" };
+          default:
+            token = readShellToken(source, token.end);
+            continue;
+        }
+      }
+    }
+  }
+  return token === undefined ? { kind: "none" } : { kind: "known", token };
 }
 
 function npmConsumerPositions(source: string): number[] {
@@ -115,9 +143,13 @@ function npmConsumerPositions(source: string): number[] {
     " ".repeat(continuation.length),
   );
   return dockerfileRunCommandPositions(source, "npm").filter((index) => {
-      const subcommand = npmSubcommand(executableSource, index + "npm".length);
-      return subcommand?.value === "ci" || subcommand?.value === "install";
-    });
+    const subcommand = npmSubcommand(executableSource, index + "npm".length);
+    return (
+      subcommand.kind === "unclassified" ||
+      (subcommand.kind === "known" &&
+        (subcommand.token.value === "ci" || subcommand.token.value === "install"))
+    );
+  });
 }
 
 function nodeBaseReferences(source: string): string[] {
@@ -272,6 +304,25 @@ describe("node-tar image remediation contract", () => {
 
 describe("reviewed npm image remediation contract", () => {
   it.each([
+    ["a flag-only global option", "npm --silent ci"],
+    ["mixed global options", "npm --prefix /work --silent install"],
+    ["a missing global option operand", "npm --prefix --silent ci"],
+    ["an empty inline global option operand", "npm --prefix= --silent ci"],
+    ["an unknown global option", "npm --future-option ci"],
+  ])("discovers npm consumers with %s (#9933)", (_label, body) => {
+    const source = `RUN ${body}\n`;
+
+    expect(npmConsumerPositions(source)).toEqual([source.indexOf("npm")]);
+  });
+
+  it.each(["npm --silent view", "npm --prefix /work view"])(
+    "ignores a supported global option before a non-consumer subcommand in %s (#9933)",
+    (body) => {
+      expect(npmConsumerPositions(`RUN ${body}\n`)).toEqual([]);
+    },
+  );
+
+  it.each([
     ["an if condition", "if npm ci; then true; fi"],
     ["an elif condition", "if false; then true; elif npm install; then true; fi"],
     ["a while condition", "while npm ci; do true; done"],
@@ -282,6 +333,8 @@ describe("reviewed npm image remediation contract", () => {
     ["a negated command", "! npm install"],
     ["a quoted assignment value", 'NPM_CONFIG_CACHE="/tmp/npm cache" npm ci'],
     ["an escaped-space assignment value", "NPM_CONFIG_CACHE=/tmp/npm\\ cache npm install"],
+    ["a flag-only global option", "npm --silent ci"],
+    ["mixed global options", "npm --prefix /work --silent install"],
   ])("detects npm consumers in %s before the final patch (#9933)", (_label, body) => {
     const source = [
       `RUN ${body}`,
