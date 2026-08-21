@@ -1403,7 +1403,9 @@ printf 'PROMPT_REACHED\n'
     expect(output).toContain("outside the recognized Station Express release-metadata boundary");
     expect(output).toContain("generic Ubuntu 24.04 ARM64");
     expect(output).toContain("OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0");
-    expect(output).toContain("no-OTA DGX OS 7.6.x GB300WS profile");
+    expect(output).toContain(
+      'no-OTA DGX OS 7.6.x profile with DGX_PRETTY_NAME="NVIDIA DGX GB300WS" or DGX_PRETTY_NAME="NVIDIA DGX Server"',
+    );
     expect(output).not.toContain("PROMPT_REACHED");
   });
 
