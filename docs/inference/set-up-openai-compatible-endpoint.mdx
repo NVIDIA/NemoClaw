@@ -22,16 +22,29 @@ Start the compatible server before onboarding.
 The following example starts vLLM on port `8000`.
 
 ```bash
-vllm serve meta-llama/Llama-3.1-8B-Instruct --host 0.0.0.0 --port 8000
+vllm serve meta-llama/Llama-3.1-8B-Instruct --host 127.0.0.1 --port 8000
 ```
 
-Port `8000` is one of NemoClaw's bundled host-gateway ports.
+Port `8000` is the default vLLM host-gateway port.
+Set `NEMOCLAW_VLLM_PORT` before onboarding to select a different port.
 
 <Warning>
-The examples on this page listen on every IPv4 interface so both host-side onboarding and a containerized gateway can reach the server.
-When the server does not require authentication, use a host firewall with default-deny inbound rules.
-Allow TCP port `8000` only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
-Do not expose the port to your LAN or the internet.
+For the no-authentication path on bundled host-gateway ports, bind the backend to loopback only.
+NemoClaw places a token-protected proxy in front of the endpoint.
+At startup, NemoClaw normally inspects the backend listeners.
+NemoClaw rejects an observed non-loopback listener because it would bypass the proxy token check.
+If listener inspection is unavailable, the proxy starts without verifying the backend bind.
+Onboarding does not display this degraded result.
+Before you continue, inspect the configured backend port:
+
+```bash
+backend_port=${NEMOCLAW_VLLM_PORT:-8000}
+lsof -nP -iTCP:"$backend_port" -sTCP:LISTEN
+```
+
+Continue only when every listener address is in `127.0.0.0/8`, is `::1`, or is an IPv4-mapped address in `::ffff:127.0.0.0/8`.
+Stop the server and correct its bind configuration if the output contains `*`, `0.0.0.0`, `::`, or another address.
+Endpoints configured with `COMPATIBLE_API_KEY` use a different authenticated path and do not use this loopback-only proxy requirement.
 </Warning>
 
 ## Run Onboarding
@@ -47,19 +60,22 @@ Enter the server base URL and the model ID reported by the server.
 
 Use a host-routable URL such as `http://localhost:8000/v1` when you want onboarding to verify the API, tool-calling, and streaming paths before gateway registration.
 To qualify for automatic rewriting, an HTTP endpoint URL must use the exact loopback host `localhost`, `127.0.0.1`, or `[::1]`.
-Automatic rewriting is limited to NemoClaw's bundled host-gateway ports: `8000`, `11434`, and `11435`.
+Automatic rewriting is limited to the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) and ports `11434` and `11435`.
 NemoClaw validates the entered URL from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
 Sandbox inference requests continue to use the base `inference.local` policy, so the managed compatible-endpoint route does not require adding the `local-inference` preset.
 NemoClaw leaves URLs without an explicit port, URLs on `:80` or another privileged port, and URLs on unsupported ports unchanged.
 Those URLs require a separately compatible runtime topology and network policy.
 This rewrite depends on an OpenShell topology that resolves `host.openshell.internal` inside the sandbox; if that bridge is unavailable, onboarding can still validate the host URL, but `$$nemoclaw <name> status` is the authoritative runtime check.
-Make sure the server listens on an address reachable from containers, such as `0.0.0.0`; a server bound only to `127.0.0.1` can still be unreachable from the sandbox route.
+For no-authentication endpoints on the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`, keep the server bound to loopback.
+NemoClaw's token-protected proxy makes the loopback service reachable from the sandbox without exposing the backend on other host interfaces.
+Port `11435` is the default proxy listener, so an endpoint using that port requires `COMPATIBLE_API_KEY` unless you configure `NEMOCLAW_OLLAMA_PROXY_PORT` to use a different free port before onboarding.
 
 If you manually enter a sandbox-internal alias such as `http://host.openshell.internal:8000/v1`, host-side endpoint probing is skipped during onboarding.
 Use a host-routable endpoint such as `localhost` when you need onboarding to verify the API, tool-calling, and streaming paths before gateway registration.
 Otherwise, verify the runtime route after onboarding with `$$nemoclaw <name> status` and a short agent request.
 
-For an HTTP URL using the exact host `localhost`, `127.0.0.1`, or `[::1]` and port `8000`, `11434`, or `11435`, the API key prompt says that pressing Enter selects no authentication.
+For an HTTP URL using the exact host `localhost`, `127.0.0.1`, or `[::1]` and the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`, the API key prompt says that pressing Enter selects no authentication.
+Port `11435` also supports this mode when `NEMOCLAW_OLLAMA_PROXY_PORT` uses a different free port before onboarding.
 Other URLs still require `COMPATIBLE_API_KEY`.
 
 Refer to [Choose a Compatible Inference API](choose-compatible-inference-api) for the probe order and runtime API selection.
@@ -215,7 +231,7 @@ The following example starts `llama-server` with a GGUF model.
 ```bash
 llama-server \
   -m /models/NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf \
-  --host 0.0.0.0 \
+  --host 127.0.0.1 \
   --port 8000 \
   -c 16384 \
   -ngl 999 \
@@ -262,7 +278,7 @@ NEMOCLAW_PROVIDER=custom \
 | `NEMOCLAW_PROVIDER` | Set to `custom`. |
 | `NEMOCLAW_ENDPOINT_URL` | Base URL of the server, without userinfo, query, or fragment components. |
 | `NEMOCLAW_MODEL` | Model ID reported by the server. |
-| `NEMOCLAW_COMPATIBLE_AUTH_MODE` | Set to `none` to explicitly select no authentication for an HTTP endpoint using `localhost`, `127.0.0.1`, or `[::1]` and port `8000`, `11434`, or `11435`. |
+| `NEMOCLAW_COMPATIBLE_AUTH_MODE` | Set to `none` to explicitly select no authentication for an HTTP endpoint using `localhost`, `127.0.0.1`, or `[::1]` and the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`. Port `11435` requires `NEMOCLAW_OLLAMA_PROXY_PORT` to use a different free port. |
 | `NEMOCLAW_REASONING` | Enables reasoning-only validation with the case-insensitive true values `true`, `1`, `yes`, and `y`. |
 | `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` | Optional comma-separated exact hostnames or IP literals for operator-owned private endpoints. Wildcards are not supported. |
 | `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | Inference-only compatibility alias for `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`. Inference onboarding combines entries from both variables. |

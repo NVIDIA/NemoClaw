@@ -37,6 +37,21 @@ const GC_PROFILE: MessagingBridgeProfile = {
   sourceSecretEnv: "GOOGLECHAT_SERVICE_ACCOUNT",
 };
 
+// Google Chat is the one channel shipping a profile per agent, so a sandbox must
+// pick exactly one. Hermes also needs pubsub on top of chat.bot: one token, both
+// scopes, because `:pull` 403s without it.
+const GC_HERMES_PROFILE: MessagingBridgeProfile = {
+  ...GC_PROFILE,
+  agent: "hermes",
+  profilePath: "/repo/src/lib/messaging/channels/googlechat/provider-profile/hermes.yaml",
+  profileId: "google-chat-bridge-hermes",
+};
+
+const GC_PUBSUB_SCOPES = [
+  "https://www.googleapis.com/auth/chat.bot",
+  "https://www.googleapis.com/auth/pubsub",
+];
+
 const BRIDGE_DEF = {
   name: "sbx-googlechat-bridge",
   providerType: GC_PROFILE.profileId,
@@ -48,6 +63,7 @@ function collectInput(
 ) {
   return {
     sandboxName: "sbx",
+    agent: GC_PROFILE.agent,
     getCredential: () => null,
     enabledChannels: ["googlechat"],
     disabledChannelNames: new Set<string>(),
@@ -91,6 +107,20 @@ describe("collectMessagingBridgeTokenDefs", () => {
         },
       ],
     );
+  });
+
+  it("emits only the profile whose agent matches the sandbox", () => {
+    // Both profiles carry the same channelId, so filtering on the channel alone
+    // would configure the OpenClaw bridge on a Hermes sandbox and the reverse.
+    const defs = collectMessagingBridgeTokenDefs(
+      collectInput({
+        agent: "hermes",
+        getCredential: () => SA_JSON,
+        profiles: [GC_PROFILE, GC_HERMES_PROFILE],
+      }),
+    );
+
+    expect(defs.map((def) => def.providerType)).toEqual([GC_HERMES_PROFILE.profileId]);
   });
 
   it("emits the bridge token def from an env-only secret (resolution parity)", () => {
@@ -192,6 +222,27 @@ describe("configureMessagingBridgeRefreshes", () => {
     const options = runOpenshell.mock.calls[0][1];
     expect(options.env).toEqual({ [secretEnvName]: "fake-test-private-key-material" });
     expect(process.env[secretEnvName]).toBe(parentSecret);
+  });
+
+  it("mints one token carrying every scope the profile declares", () => {
+    // Hermes reads Pub/Sub and writes Chat with the same minted token, so sending
+    // only the first scope leaves `:pull` rejected with 403 at runtime.
+    const runOpenshell = vi.fn((_args: string[], _opts: { env?: NodeJS.ProcessEnv }) => ({
+      status: 0,
+    }));
+
+    const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
+      runOpenshell,
+      redact,
+      getCredential: () => SA_JSON,
+      log: noLog,
+      profiles: [{ ...GC_PROFILE, scopes: GC_PUBSUB_SCOPES }],
+    });
+
+    expect(result).toEqual({ ok: true });
+    const args = runOpenshell.mock.calls[0][0];
+    expect(args).toContain(`scope=${GC_PUBSUB_SCOPES.join(" ")}`);
+    expect(args).not.toContain(`scope=${GC_PUBSUB_SCOPES[0]}`);
   });
 
   it("forces private_key off argv even when the profile omits it from secretMaterialKeys", () => {
