@@ -353,7 +353,6 @@ function journalFromEvidence(
   observed: ObservedBedrockRuntimeAdapterProcess | null,
   gatewayPort: number,
   adapterPort: number,
-  runtime: RuntimeAdapterCleanupRuntime,
 ): BedrockRuntimeAdapterUninstallJournal | null {
   const owner = currentProcessOwner();
   if (!owner) return null;
@@ -810,8 +809,7 @@ function stopBedrockRuntimeAdapterLocked(
     }
 
     const { evidence } = evidenceResult;
-    const adapterPort =
-      evidence.state?.adapterPort ?? resolveRuntimeAdapterPort(runtime, BEDROCK_RUNTIME_ADAPTER);
+    const adapterPort = resolveRuntimeAdapterPort(runtime, BEDROCK_RUNTIME_ADAPTER);
     const presence = bedrockRuntimeAdapterProcessPresence(evidence.pid, runtime);
     if (presence === "unknown") {
       return stopFailure(
@@ -839,11 +837,11 @@ function stopBedrockRuntimeAdapterLocked(
         evidence.pid,
       );
     }
-    journal = journalFromEvidence(evidence, observed, gatewayPort, adapterPort, runtime);
+    journal = journalFromEvidence(evidence, observed, gatewayPort, adapterPort);
     if (!journal) {
       return stopFailure(
         runtime,
-        "Bedrock Runtime adapter lifecycle state does not match the current user or process generation; no process was signaled.",
+        "Bedrock Runtime adapter lifecycle state does not match the configured adapter port, current user, process identity, or generation; no process was signaled.",
         evidence.pid,
       );
     }

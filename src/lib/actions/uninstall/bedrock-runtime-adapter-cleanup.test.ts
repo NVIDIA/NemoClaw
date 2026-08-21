@@ -273,7 +273,7 @@ describe("Bedrock Runtime adapter fail-closed uninstall cleanup (#9552)", () => 
         ok: false,
         fatal: true,
         pid: PID,
-        message: expect.stringContaining("PID-only"),
+        message: expect.stringContaining("cannot authorize a process signal"),
       });
       expect(kills).toEqual([]);
       expect(fs.existsSync(adapterPaths(home).pidPath)).toBe(true);
@@ -286,18 +286,17 @@ describe("Bedrock Runtime adapter fail-closed uninstall cleanup (#9552)", () => 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-stop-pid-only-race-"));
     const processes = new Map<number, AdapterProcess>();
     writePidOnlyEvidence(home);
-    const presenceChecks = [vi.fn(), vi.fn(() => processes.set(PID, managedProcess()))];
+    const presenceProbeEffects = new Map([
+      ["ps:pid=", [vi.fn(), vi.fn(() => processes.set(PID, managedProcess()))]],
+    ]);
     const { host, kills } = cleanupHost(home, processes, {
       onRun: (command, args) => {
-        expect(command).toBe("ps");
-        expect(args.at(-1)).toBe("pid=");
-        presenceChecks.shift()?.();
+        presenceProbeEffects.get(`${command}:${args.at(-1) ?? ""}`)?.shift()?.();
       },
     });
 
     try {
       expect(stop(home, host)).toMatchObject({ ok: false, fatal: true, pid: PID });
-      expect(presenceChecks).toEqual([]);
       expect(kills).toEqual([]);
       expect(fs.existsSync(adapterPaths(home).pidPath)).toBe(true);
     } finally {
@@ -380,6 +379,28 @@ describe("Bedrock Runtime adapter fail-closed uninstall cleanup (#9552)", () => 
       expect(stop(home, host)).toMatchObject({ ok: false, fatal: true });
       expect(kills).toEqual([]);
       expect(fs.existsSync(adapterPaths(home).statePath)).toBe(true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves absent lifecycle evidence whose adapter port differs from configuration", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-stop-port-mismatch-"));
+    writeEvidence(home, { ...adapterState(), adapterPort: 11_437 });
+    const { host, kills } = cleanupHost(home, new Map());
+
+    try {
+      expect(stop(home, host)).toMatchObject({
+        ok: false,
+        fatal: true,
+        pid: PID,
+        message: expect.stringContaining("configured adapter port"),
+      });
+      expect(kills).toEqual([]);
+      expect(fs.existsSync(adapterPaths(home).pidPath)).toBe(true);
+      expect(fs.existsSync(adapterPaths(home).tokenPath)).toBe(true);
+      expect(fs.existsSync(adapterPaths(home).statePath)).toBe(true);
+      expect(fs.existsSync(lifecyclePaths(home).journalPath)).toBe(false);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
