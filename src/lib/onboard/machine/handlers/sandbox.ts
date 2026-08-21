@@ -499,6 +499,24 @@ function rebuildPolicyPresetsForCreateIntent(
   return Array.isArray(selectedValue) ? { rebuildPolicyPresets: [...selectedValue] } : {};
 }
 
+/** Replace a resumed create-plan snapshot with the outer rebuild's normalized built-ins. */
+function applyAuthoritativeRebuildPolicyPresets(
+  intent: ResolvedSandboxCreateIntent,
+  rebuildPolicyPresets: readonly string[] | undefined,
+): ResolvedSandboxCreateIntent {
+  if (!Array.isArray(rebuildPolicyPresets)) return intent;
+  return {
+    ...intent,
+    policy: {
+      ...intent.policy,
+      options: {
+        ...intent.policy.options,
+        additionalPresets: [...rebuildPolicyPresets],
+      },
+    },
+  };
+}
+
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
 type CompleteSandboxCreateIntent = SandboxCreateIntent & {
   readonly resolved: ResolvedSandboxCreateIntent;
@@ -1576,25 +1594,33 @@ class SandboxStateFlow<
     hermesToolGateways: readonly string[],
   ): Promise<CompleteSandboxCreateIntent> {
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
-    const resolved = await this.deps.resolveSandboxCreateIntent({
+    const rebuildPolicyPresetSelection = rebuildPolicyPresetsForCreateIntent(
+      this.options.rebuildPolicyPresets,
+      state.session,
       sandboxName,
-      inferenceProvider: this.options.provider,
-      hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
-      enabledChannels: state.selectedMessagingChannels,
-      webSearchConfig: state.webSearchConfig,
-      agent: this.options.agent,
-      sandboxGpuConfig: this.options.sandboxGpuConfig,
-      resourceProfile,
-      hermesToolGateways,
-      extraProviders,
-      staleExtraProviders,
-      hostMounts: this.options.hostMounts,
-      baselineExclusions: baselineExclusionsForCreate(sandboxName),
-      ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
-      ...(this.options.authoritativePolicyTier !== undefined
-        ? { policyTier: this.options.authoritativePolicyTier }
-        : {}),
-    });
+    );
+    const resolved = applyAuthoritativeRebuildPolicyPresets(
+      await this.deps.resolveSandboxCreateIntent({
+        sandboxName,
+        inferenceProvider: this.options.provider,
+        hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
+        enabledChannels: state.selectedMessagingChannels,
+        webSearchConfig: state.webSearchConfig,
+        agent: this.options.agent,
+        sandboxGpuConfig: this.options.sandboxGpuConfig,
+        resourceProfile,
+        hermesToolGateways,
+        extraProviders,
+        staleExtraProviders,
+        hostMounts: this.options.hostMounts,
+        baselineExclusions: baselineExclusionsForCreate(sandboxName),
+        ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
+        ...(this.options.authoritativePolicyTier !== undefined
+          ? { policyTier: this.options.authoritativePolicyTier }
+          : {}),
+      }),
+      rebuildPolicyPresetSelection.rebuildPolicyPresets,
+    );
     return {
       resolved,
       recreate: requiresSandboxRecreation(decision, this.options.recreateSandbox(false)),
@@ -1622,11 +1648,7 @@ class SandboxStateFlow<
       ...(this.options.rebuildPreservedEnv
         ? { rebuildPreservedEnv: this.options.rebuildPreservedEnv }
         : {}),
-      ...rebuildPolicyPresetsForCreateIntent(
-        this.options.rebuildPolicyPresets,
-        state.session,
-        sandboxName,
-      ),
+      ...rebuildPolicyPresetSelection,
       extraProviders,
     };
   }

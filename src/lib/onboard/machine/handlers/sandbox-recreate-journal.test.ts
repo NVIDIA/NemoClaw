@@ -283,6 +283,9 @@ it("carries filtered presets through post-delete onboard resume", async () => {
     expect(createIntent).toMatchObject({
       recreate: true,
       rebuildPolicyPresets: ["github"],
+      resolved: {
+        policy: { options: { additionalPresets: ["github"] } },
+      },
       recreateTransaction: {
         id: transaction.id,
         targetGeneration: transaction.targetGeneration,
