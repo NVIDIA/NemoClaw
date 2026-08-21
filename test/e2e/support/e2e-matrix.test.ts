@@ -114,7 +114,7 @@ describe("live E2E target matrix", () => {
     expectExecutableTypedTargetCoverage();
   });
 
-  it("assigns a 75-minute job timeout only to post-reboot recovery (#9622)", () => {
+  it("assigns a 160-minute job timeout only to post-reboot recovery (#9622)", () => {
     expect(
       Object.fromEntries(
         buildLiveTargetMatrix().map((row) => [row.id, row.timeout_minutes]),
@@ -123,7 +123,7 @@ describe("live E2E target matrix", () => {
       "ubuntu-policy-custom-missing-presets-negative": 45,
       "ubuntu-repo-cloud-langchain-deepagents-code": 45,
       "ubuntu-repo-cloud-openclaw": 45,
-      "ubuntu-repo-docker-post-reboot-recovery": 75,
+      "ubuntu-repo-docker-post-reboot-recovery": 160,
     });
   });
 
