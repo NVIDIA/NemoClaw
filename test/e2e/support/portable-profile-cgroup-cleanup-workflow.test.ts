@@ -47,6 +47,7 @@ it("restores the portable user manager and linger state after refusing a changed
   );
 
   const cleanupRun = portableCleanupRun();
+  expect(cleanupRun).toContain('sudo rmdir -- "$directory" || cleanup_failed=1');
   const fixtureStart = cleanupRun.indexOf('uid="$(id -u)"');
   expect(fixtureStart).toBeGreaterThanOrEqual(0);
   const cleanupFixture = cleanupRun
@@ -67,6 +68,8 @@ it("restores the portable user manager and linger state after refusing a changed
         PATH: `${bin}:${process.env.PATH ?? ""}`,
         USER: "fixture-user",
       },
+      killSignal: "SIGKILL",
+      timeout: 15_000,
     });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Refusing changed Portable CPU-delegation fixture file");

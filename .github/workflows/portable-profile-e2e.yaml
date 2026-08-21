@@ -403,7 +403,7 @@ jobs:
           fi
           sudo systemctl daemon-reload || cleanup_failed=1
           for directory in "${directories[@]}"; do
-            sudo rmdir -- "$directory" || true
+            sudo rmdir -- "$directory" || cleanup_failed=1
           done
           if [ "$restore_manager" = "1" ]; then
             sudo systemctl start "user@${uid}.service" || cleanup_failed=1
