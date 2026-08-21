@@ -87,6 +87,76 @@ function makeWrapperFixture(
 }
 
 describe("LangChain Deep Agents Code managed entrypoints", () => {
+  it("exposes only the fixed deterministic read-only MCP command (#9889)", () => {
+    const wrapper = readAgentFile("dcode-wrapper.sh");
+    const command = readAgentFile("nemoclaw_read_only_mcp.py");
+    const validator = readAgentFile("validate-read-only-mcp-call.py");
+
+    expect(wrapper).toContain("list | call-read-only | help");
+    expect(wrapper).toContain("dcode tools call-read-only TOOL --json");
+    expect(wrapper).toContain(
+      'exec /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/nemoclaw_read_only_mcp.py "$@" 2>/dev/null',
+    );
+    expect(wrapper).not.toContain("call-mutating");
+    expect(command).toContain('_COMMAND = "tools call-read-only"');
+    expect(validator).toContain("from mcp.server.fastmcp import FastMCP");
+    expect(validator).toContain('"worker-broker_worker_task_context"');
+    expect(validator).toContain('"output_attestation"');
+    expect(validator).toContain('name="hanging"');
+    expect(validator).not.toContain("unittest.mock");
+  });
+
+  it("keeps deterministic read-only MCP parsing bounded and structured (#9889)", () => {
+    const commandPath = path.join(agentDir, "nemoclaw_read_only_mcp.py");
+    const invalid = spawnSync("python3", [commandPath, "bad/tool", "--json"], {
+      encoding: "utf8",
+      input: "{}",
+    });
+    const help = spawnSync("python3", [commandPath, "--help"], { encoding: "utf8" });
+    const oversized = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        'import importlib.util, sys; spec = importlib.util.spec_from_file_location("probe", sys.argv[1]); module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); value = {"content": [{"nested": {"value": "x" * (module._MAX_OUTPUT_BYTES * 8)}}]};\ntry: module._redact_result(value)\nexcept module._CallError as exc: print(exc.code)',
+        commandPath,
+      ],
+      { encoding: "utf8" },
+    );
+    const nonFinite = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        'import importlib.util, sys; spec = importlib.util.spec_from_file_location("probe", sys.argv[1]); module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); codes = []\nfor value in (float("nan"), float("inf"), float("-inf")):\n try: module._redact_result({"value": value})\n except module._CallError as exc: codes.append(exc.code)\nassert codes == ["malformed_result"] * 3\nmodule._write_envelope({"ok": True, "value": float("nan")}, exit_code=0)',
+        commandPath,
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(invalid.status, invalid.stderr).toBe(2);
+    expect(invalid.stderr).toBe("");
+    expect(JSON.parse(invalid.stdout)).toEqual({
+      schema_version: 1,
+      command: "tools call-read-only",
+      data: {
+        ok: false,
+        status: "error",
+        code: "invalid_tool_name",
+        message: "The MCP tool name is invalid.",
+      },
+    });
+    expect(Buffer.byteLength(invalid.stdout, "utf8")).toBeLessThanOrEqual(131_073);
+    expect(help.status, help.stderr).toBe(0);
+    expect(help.stderr).toBe("");
+    expect(help.stdout).toContain("usage: dcode tools call-read-only TOOL --json");
+    expect(oversized.status, oversized.stderr).toBe(0);
+    expect(oversized.stdout.trim()).toBe("result_too_large");
+    expect(nonFinite.status, nonFinite.stderr).toBe(1);
+    expect(nonFinite.stderr).toBe("");
+    expect(JSON.parse(nonFinite.stdout).data.code).toBe("malformed_result");
+  });
+
   it.each(["dcode-launcher.sh", "dcode-wrapper.sh", "start.sh"])(
     "uses trusted privileged-mode Bash for every image entry script [case %#]",
     (name) => {

@@ -337,6 +337,7 @@ export function createVllmInstallSpies(): VllmInstallSpies {
 export function resetVllmInstallEnv(): void {
   delete process.env.NEMOCLAW_VLLM_MODEL;
   delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;
+  delete process.env.NEMOCLAW_SERVING_PRESET;
   delete process.env.HF_TOKEN;
   delete process.env.HUGGING_FACE_HUB_TOKEN;
 }

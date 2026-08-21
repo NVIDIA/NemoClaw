@@ -132,9 +132,9 @@ require_brief_line_once() {
   [[ "$count" == "1" ]] || fail "Release brief must contain exactly one $label"
 }
 
-printf -v expected_pi_candidate -- "- Pi candidate: \`%s\`" "$target"
+expected_docs_decision="- Maintainer decision: Proceed with the candidate as shown."
 printf -v expected_base_candidate -- "- Base-image candidate: \`%s\`" "$target"
-require_brief_line_once "$expected_pi_candidate" "plan-bound Pi candidate"
+require_brief_line_once "$expected_docs_decision" "documentation proceed decision"
 require_brief_line_once "$expected_base_candidate" "plan-bound base-image candidate"
 if grep -Eq -- "TODO_RELEASE_BRIEF|Complete before confirmation" "$brief_snapshot"; then
   fail "Release brief still contains unresolved prompts"
