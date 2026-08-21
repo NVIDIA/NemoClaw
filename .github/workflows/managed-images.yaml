@@ -42,6 +42,7 @@ on:
       - "nemoclaw-blueprint/**"
       - "scripts/**"
       - "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json"
+      - "src/lib/actions/sandbox/mcp-bridge-*.ts"
       - "src/lib/core/json-types.ts"
       - "src/lib/core/ports.ts"
       - "src/lib/messaging/**"
@@ -832,12 +833,12 @@ jobs:
           }
           reference="${IMAGE}@${DIGEST}"
           raw="$RUNNER_TEMP/${AGENT}-published-manifest.raw"
+          scripts/checks/pull-public-exact-digest.sh "$reference" linux/amd64
           docker buildx imagetools inspect "$reference" --raw > "$raw"
           [[ "sha256:$(sha256sum "$raw" | awk '{print $1}')" == "$DIGEST" ]] || {
             echo "ERROR: published PR manifest bytes do not match the build digest" >&2
             exit 1
           }
-          scripts/checks/pull-public-exact-digest.sh "$reference" linux/amd64
           release="v$(node -p 'require("./package.json").version')"
           contract_dir="$RUNNER_TEMP/managed-pr-contract"
           mkdir -p "$contract_dir"
@@ -957,7 +958,7 @@ jobs:
           retention-days: 1
 
   pr-openclaw-mcp-discovery:
-    name: PR exact OpenClaw trusted-private MCP discovery (pass ${{ matrix.pass }})
+    name: PR exact OpenClaw managed-image MCP discovery (pass ${{ matrix.pass }})
     needs: pr-build-and-entrypoint
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
@@ -979,11 +980,12 @@ jobs:
       NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
       NEMOCLAW_E2E_SHARD: openclaw
       NEMOCLAW_MCP_BRIDGE_AGENT: openclaw
+      NEMOCLAW_MCP_BRIDGE_E2E_SCOPE: managed-image-discovery
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_SANDBOX_NAME: e2e-pr-exact-mcp-${{ matrix.pass }}
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01
     steps:
       - name: Checkout exact PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1056,7 +1058,7 @@ jobs:
           NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
         run: bash scripts/install-openshell.sh
 
-      - name: Run exact OpenClaw trusted-private MCP discovery
+      - name: Run exact OpenClaw managed-image MCP discovery
         shell: bash
         run: |
           set -euo pipefail

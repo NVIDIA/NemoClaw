@@ -134,8 +134,15 @@ class FakeGitHub {
   readonly commitSha = "c".repeat(40);
   readonly existingSha = "b".repeat(40);
   readonly initialParent = "a".repeat(40);
+  readonly partialSha = "d".repeat(40);
   readonly commits = new Map<string, Record<string, unknown>>();
   afterWrite = (): void => undefined;
+  projectPullHead = (headSha: string): void => {
+    this.openPulls = this.openPulls.map((pull) => ({
+      ...pull,
+      head: { ...pull.head, sha: headSha },
+    }));
+  };
   constructor(readonly value: Fixture) {
     this.branch = `automation/post-merge-docs-${value.mainSha.slice(0, 12)}`;
     this.liveSha = value.mainSha;
@@ -183,11 +190,31 @@ class FakeGitHub {
         : this.pull(managedBody, this.existingSha, managedTitle),
     ];
   }
+  installPartiallyPublishedLegacy(tree = "f".repeat(40)) {
+    this.installActive("e".repeat(40), undefined, true);
+    this.commits.set(this.partialSha, {
+      author: { email: "41898282+github-actions[bot]@users.noreply.github.com" },
+      message: `docs: catch up after main\n\n${signOff}`,
+      parents: [{ sha: this.existingSha }, { sha: this.initialParent }],
+      sha: this.partialSha,
+      tree: { sha: tree },
+      verification: { verified: true },
+    });
+    this.branchRef = {
+      object: { sha: this.partialSha },
+      ref: `refs/heads/${this.branch}`,
+    };
+    this.openPulls = this.openPulls.map((pull) => ({
+      ...pull,
+      head: { ...pull.head, sha: this.partialSha },
+    }));
+  }
   readonly request = vi.fn<Request>(async (method, url, body) => {
     const key = `${method} ${url}`;
     switch (key) {
       case `GET /repos/${repository}/git/commits/${this.existingSha}`:
       case `GET /repos/${repository}/git/commits/${this.commitSha}`:
+      case `GET /repos/${repository}/git/commits/${this.partialSha}`:
         return this.commits.get(url.slice(url.lastIndexOf("/") + 1));
       case `GET /repos/${repository}/git/ref/heads/main`:
         return { object: { sha: this.liveSha } };
@@ -229,10 +256,7 @@ class FakeGitHub {
         expect(body).toEqual({ force: false, sha: this.commitSha });
         const ref = { object: { sha: this.commitSha }, ref: `refs/heads/${this.branch}` };
         this.branchRef = ref;
-        this.openPulls = this.openPulls.map((pull) => ({
-          ...pull,
-          head: { ...pull.head, sha: this.commitSha },
-        }));
+        this.projectPullHead(this.commitSha);
         this.afterWrite();
         return ref;
       }
@@ -477,6 +501,16 @@ describe("post-merge documentation publisher", () => {
     expect(requestCount(api, "PATCH", `/git/refs/heads/${api.branch}`)).toBe(1);
     expect(requestCount(api, "POST", "/pulls")).toBe(0);
   });
+  it("accepts a confirmed fast-forward before the PR head projection catches up", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.installActive();
+    api.projectPullHead = () => undefined;
+    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    expect(api.branchRef?.object.sha).toBe(api.commitSha);
+    expect(api.openPulls[0]?.head.sha).toBe(api.existingSha);
+    expect(requestCount(api, "PATCH", `/git/refs/heads/${api.branch}`)).toBe(1);
+  });
   it("updates exact legacy metadata for the active managed PR", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
@@ -485,6 +519,44 @@ describe("post-merge documentation publisher", () => {
     expect(api.openPulls[0]?.title).toBe(managedTitle);
     expect(api.openPulls[0]?.body).toBe(managedBody);
     expect(requestCount(api, "PATCH", "/pulls/42")).toBe(1);
+  });
+  it("recovers legacy metadata after a previous fast-forward completed", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.installPartiallyPublishedLegacy(value.finalTree);
+    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    expect(api.openPulls[0]?.title).toBe(managedTitle);
+    expect(api.openPulls[0]?.body).toBe(managedBody);
+    expect(api.branchRef?.object.sha).toBe(api.partialSha);
+    expect(requestCount(api, "PATCH", "/pulls/42")).toBe(1);
+    expect(requestCount(api, "PATCH", `/git/refs/heads/${api.branch}`)).toBe(0);
+  });
+  it("migrates recovered legacy metadata before the next fast-forward", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.installPartiallyPublishedLegacy();
+    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    expect(api.commitBodies[0]).toMatchObject({
+      parents: [api.partialSha, value.mainSha],
+      tree: value.finalTree,
+    });
+    const metadataUpdate = api.request.mock.calls.findIndex(
+      ([method, url]) => method === "PATCH" && url.endsWith("/pulls/42"),
+    );
+    const refUpdate = api.request.mock.calls.findIndex(
+      ([method, url]) => method === "PATCH" && url.endsWith(`/git/refs/heads/${api.branch}`),
+    );
+    expect(metadataUpdate).toBeGreaterThan(-1);
+    expect(refUpdate).toBeGreaterThan(metadataUpdate);
+  });
+  it("rejects a partially published legacy PR without a verified legacy parent", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.installPartiallyPublishedLegacy();
+    const previous = api.commits.get(api.existingSha)!;
+    previous.verification = { verified: false };
+    await expect(publish(value, api)).rejects.toThrow("not created by the workflow");
+    expect(writeCount(api)).toBe(0);
   });
   it("reconciles a lost legacy metadata update without retrying", async () => {
     const value = fixture();

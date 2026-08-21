@@ -26,6 +26,7 @@ import {
   registerOpenClawAdapter,
   unregisterOpenClawAdapter,
 } from "./mcp-bridge-adapter-openclaw";
+import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 
 export {
   buildDeepAgentsMcpRegisterCommand,
@@ -125,11 +126,21 @@ export function registerAgentAdapter(
   adapter: AgentMcpAdapter,
   entry: McpBridgeEntry,
   envValues: Record<string, string> = {},
-  options: { replaceExisting?: boolean; teardownRollback?: boolean } = {},
+  options: {
+    replaceExisting?: boolean;
+    teardownRollback?: boolean;
+    credentialRevision?: McpAttachedCredentialRevision;
+  } = {},
 ): void {
   switch (adapter) {
     case "mcporter":
-      registerOpenClawAdapter(sandboxName, entry, envValues, options.replaceExisting === true);
+      registerOpenClawAdapter(
+        sandboxName,
+        entry,
+        envValues,
+        options.replaceExisting === true,
+        options.credentialRevision,
+      );
       return;
     case "hermes-config":
       registerHermesAdapter(sandboxName, entry, envValues, options.replaceExisting === true);
