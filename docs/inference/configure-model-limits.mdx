@@ -3,18 +3,28 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Configure Model Limits"
 sidebar-title: "Configure Model Limits"
-description: "Set the context-window and output-token limits baked into a NemoClaw-managed sandbox."
-description-agent: "Configures model context and output limits. Use when changing the context window or maximum output tokens."
+description: "Context-window and output-token limits for a NemoClaw-managed sandbox."
+description-agent: "Explains which agent runtimes accept NemoClaw model-limit overrides and how to set them. Use when checking or changing a context window or maximum output tokens."
 keywords: ["nemoclaw context window", "nemoclaw max tokens", "model limits"]
 content:
   type: "how_to"
 ---
+<AgentOnly variant="openclaw,hermes">
+
 Configure explicit model limits before onboarding so NemoClaw can bake them into the sandbox image.
 Changing an explicit build-time model limit on an existing sandbox requires fresh recreation.
 
-## Set OpenClaw Limits
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+NemoClaw does not configure context-window or output-token limits for LangChain Deep Agents Code.
+
+</AgentOnly>
 
 <AgentOnly variant="openclaw">
+
+## Set OpenClaw Limits
 
 OpenClaw accepts an explicit context window and maximum output-token count.
 
@@ -35,9 +45,9 @@ NemoClaw ignores invalid values and uses the default instead.
 
 </AgentOnly>
 
-## Set the Hermes Context Window
-
 <AgentOnly variant="hermes">
+
+## Set the Hermes Context Window
 
 Hermes accepts `NEMOCLAW_CONTEXT_WINDOW` as its model-limit override.
 
@@ -66,9 +76,9 @@ Setting `NEMOCLAW_CONTEXT_WINDOW` does not raise the model's native context wind
 
 </AgentOnly>
 
-## Use Detected Local Limits
-
 <AgentOnly variant="openclaw,hermes">
+
+## Use Detected Local Limits
 
 When `NEMOCLAW_CONTEXT_WINDOW` is unset, NemoClaw can use a context length reported by the selected local server.
 Local Ollama reports the loaded model's runtime context length.
@@ -78,6 +88,18 @@ Set `NEMOCLAW_CONTEXT_WINDOW` when you need to override the detected value.
 
 </AgentOnly>
 
+<AgentOnly variant="deepagents">
+
+## Deep Agents Code Model Limits
+
+OpenClaw onboarding reads `NEMOCLAW_CONTEXT_WINDOW` and `NEMOCLAW_MAX_TOKENS`, and Hermes onboarding reads `NEMOCLAW_CONTEXT_WINDOW`.
+Deep Agents Code onboarding reads neither variable, and the Deep Agents Code image bakes no context-window or output-token limit.
+The agent runtime, the selected model, and the inference endpoint determine the limits that apply instead.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
+
 ## Recreate an Existing Sandbox
 
 Model limits are build-time settings.
@@ -86,10 +108,6 @@ Recreate the named sandbox after changing a supported value.
 ```bash
 $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
-
-<AgentOnly variant="deepagents">
-
-Use this recreation path for Deep Agents context-window or maximum-token changes so the managed runtime configuration and OpenShell route stay aligned.
 
 </AgentOnly>
 

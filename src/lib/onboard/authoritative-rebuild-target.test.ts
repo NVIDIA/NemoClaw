@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  authoritativeRebuildSandboxFlowOptions,
   authoritativeRebuildRuntimePreflightOptions,
   type AuthoritativeRebuildTargetDeps,
   type AuthoritativeRebuildPreflightOptions,
@@ -25,6 +26,31 @@ const target = {
   controlUiPort: 18789,
 };
 const originalGateway = process.env.OPENSHELL_GATEWAY;
+
+describe("authoritative rebuild sandbox flow options", () => {
+  it("clones authoritative policy state and ignores non-authoritative injection", () => {
+    const rebuildPolicyPresets = ["github"];
+    const projected = authoritativeRebuildSandboxFlowOptions({
+      authoritativeResumeConfig: true,
+      policyTier: "balanced",
+      rebuildPolicyPresets,
+    });
+
+    expect(projected).toEqual({
+      authoritativeResumeConfig: true,
+      authoritativePolicyTier: "balanced",
+      rebuildPolicyPresets: ["github"],
+    });
+    expect(projected.rebuildPolicyPresets).not.toBe(rebuildPolicyPresets);
+    expect(
+      authoritativeRebuildSandboxFlowOptions({
+        authoritativeResumeConfig: false,
+        policyTier: "balanced",
+        rebuildPolicyPresets: ["mcp-bridge-fake"],
+      }),
+    ).toEqual({ authoritativeResumeConfig: false });
+  });
+});
 
 describe("authoritative rebuild runtime preflight options", () => {
   it("carries only target GPU state and recorded N1x preview intent (#9292)", () => {

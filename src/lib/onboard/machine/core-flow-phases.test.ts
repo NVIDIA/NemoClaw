@@ -516,7 +516,7 @@ describe("core onboard flow phases", () => {
     });
   });
 
-  it("carries rebuild-preserved environment assignments into sandbox creation (#7803)", async () => {
+  it("carries authoritative rebuild state into sandbox creation (#7803)", async () => {
     const createSandbox = vi.fn(async () => "created-sandbox");
     const rebuildPreservedEnv = [
       {
@@ -524,8 +524,9 @@ describe("core onboard flow phases", () => {
         assignments: ["SLACK_HOME_CHANNEL=C0123"],
       },
     ];
+    const rebuildPolicyPresets = ["github"];
     const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
-      sandboxOptions: { rebuildPreservedEnv },
+      sandboxOptions: { rebuildPreservedEnv, rebuildPolicyPresets },
       sandboxDeps: { createSandbox },
     });
 
@@ -534,6 +535,7 @@ describe("core onboard flow phases", () => {
 
     expect(createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
       rebuildPreservedEnv,
+      rebuildPolicyPresets,
     });
   });
 

@@ -216,8 +216,9 @@ it.each([
   expect(retireReplacedSandboxWorkload).toHaveBeenCalledOnce();
 });
 
-it("continues an outer rebuild journal after the outer rebuild deletes the source sandbox", async () => {
+it("carries filtered presets through post-delete onboard resume", async () => {
   const session = createSession({ sandboxName: "saved", agent: "openclaw" });
+  session.policyPresets = ["github"];
   session.steps.sandbox.status = "complete";
   session.machine.state = "agent_setup";
   session.checkpoint = {
@@ -246,6 +247,8 @@ it("continues an outer rebuild journal after the outer rebuild deletes the sourc
     hermesAuthMethod: null,
     gatewayName: "nemoclaw",
     gatewayPort: 8080,
+    policies: ["github", "mcp-bridge-fake"],
+    policyPresetsFinalized: true,
   };
   const targetIntentFingerprint = fingerprintSandboxRecreateValue({
     sandboxName: "saved",
@@ -280,6 +283,10 @@ it("continues an outer rebuild journal after the outer rebuild deletes the sourc
     expect(createIntent).toMatchObject({
       recreate: true,
       recreateJournalTargetIntentFingerprint: targetIntentFingerprint,
+      rebuildPolicyPresets: ["github"],
+      resolved: {
+        policy: { options: { additionalPresets: ["github"] } },
+      },
       recreateTransaction: {
         id: transaction.id,
         targetGeneration: transaction.targetGeneration,

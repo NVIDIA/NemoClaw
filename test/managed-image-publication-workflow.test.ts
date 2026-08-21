@@ -597,12 +597,16 @@ describe("complete managed-image publication workflow", () => {
     expect(exportContract.if).toBe(sameRepository);
     expect(uploadContract.if).toBe(sameRepository);
     expect(steps.indexOf(logout)).toBeLessThan(steps.indexOf(exportContract));
-    expect(exportContract.run).toContain("scripts/checks/pull-public-exact-digest.sh");
+    const exportContractRun = exportContract.run ?? "";
+    expect(exportContractRun).toContain("scripts/checks/pull-public-exact-digest.sh");
+    expect(exportContractRun.indexOf("scripts/checks/pull-public-exact-digest.sh")).toBeLessThan(
+      exportContractRun.indexOf('docker buildx imagetools inspect "$reference" --raw'),
+    );
     expect(exportContract.env?.RELEASE).toBe("${{ steps.release.outputs.value }}");
-    expect(exportContract.run).toContain("org.opencontainers.image.version");
-    expect(exportContract.run).toContain('--arg release "$RELEASE"');
-    expect(exportContract.run).not.toContain("git describe --tags");
-    expect(exportContract.run).toContain("revision: $revision");
+    expect(exportContractRun).toContain("org.opencontainers.image.version");
+    expect(exportContractRun).toContain('--arg release "$RELEASE"');
+    expect(exportContractRun).not.toContain("git describe --tags");
+    expect(exportContractRun).toContain("revision: $revision");
     expect(JSON.stringify(prBuilder).match(/secrets\.GITHUB_TOKEN/gu)).toHaveLength(1);
     expect(JSON.stringify(prBuilder)).not.toContain("github.token");
   });
@@ -643,9 +647,13 @@ describe("complete managed-image publication workflow", () => {
     expect(steps.map(({ name }) => name)).toContain("Upload managed runtime activation evidence");
   });
 
-  it("passes the reported OpenClaw trusted-private MCP discovery twice on one exact PR cohort (#8746)", () => {
+  it("passes the reported OpenClaw managed-image MCP discovery twice on one exact PR cohort (#8746)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const discovery = managedPrOpenClawMcpDiscovery(workflow);
+    const stableMcp = required(
+      readWorkflow("e2e.yaml").jobs?.["mcp-bridge"],
+      "unified E2E workflow is missing its stable MCP job",
+    );
     expect(discovery.needs).toBe("pr-build-and-entrypoint");
     expect(discovery.if).toContain(
       "github.event.pull_request.head.repo.full_name == github.repository",
@@ -659,9 +667,19 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(discovery.env?.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG).toContain("managed-pr-catalog.json");
     expect(discovery.env?.NEMOCLAW_MCP_BRIDGE_AGENT).toBe("openclaw");
+    expect(discovery.env?.NEMOCLAW_MCP_BRIDGE_E2E_SCOPE).toBe("managed-image-discovery");
     expect(discovery.env?.NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST).toBe("1");
     expect(discovery.env?.NEMOCLAW_E2E_SHARD).toBe("openclaw");
     expect(discovery.env?.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
+    const stableSupervisorImage = required(
+      stableMcp.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
+      "stable MCP job is missing OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
+    );
+    const discoverySupervisorImage = required(
+      discovery.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
+      "OpenClaw MCP discovery is missing OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
+    );
+    expect(discoverySupervisorImage).toBe(stableSupervisorImage);
     expect(discovery.env).not.toHaveProperty("E2E_MANAGED_IMAGE_REVISION");
     expect(JSON.stringify(discovery)).not.toContain("secrets.");
     expect(JSON.stringify(discovery)).not.toContain("github.token");
@@ -673,7 +691,7 @@ describe("complete managed-image publication workflow", () => {
     expect(assemble).toMatch(
       /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
     );
-    const run = step(discovery, "Run exact OpenClaw trusted-private MCP discovery").run ?? "";
+    const run = step(discovery, "Run exact OpenClaw managed-image MCP discovery").run ?? "";
     expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
     expect(JSON.stringify(discovery)).not.toContain("jq ");
     expect(run).toMatch(/npx --no-install tsx[\s\S]*test\/e2e\/live\/mcp-bridge\.test\.ts/u);

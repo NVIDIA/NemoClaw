@@ -132,11 +132,40 @@ function hasPreservedManagedMcpRebuildHandoff(
   return Boolean(preservedMcpState) && hasManagedMcpRebuildHandoff(createIntent);
 }
 
-function applyRecreatePolicyCarryForwardUnlessManagedMcpHandoff(
-  managedMcpRebuildHandoff: boolean,
-  apply: () => void,
+type ApplyRecreatePolicyCarryForward = (
+  sandboxName: string,
+  nonInteractive: boolean,
+  note: (message: string) => void,
+  rebuildPolicyPresets?: readonly string[],
+) => void;
+
+/** Reseed an outer rebuild after its owned delete leaves no live source branch. */
+export function applyAbsentSandboxRebuildPolicyCarryForward(
+  input: {
+    readonly sandboxName: string;
+    readonly liveExists: boolean;
+    readonly nonInteractive: boolean;
+    readonly note: (message: string) => void;
+    readonly rebuildPolicyPresets?: readonly string[];
+  },
+  applyRecreatePolicyCarryForward: ApplyRecreatePolicyCarryForward,
 ): void {
-  if (!managedMcpRebuildHandoff) apply();
+  if (input.liveExists || !Array.isArray(input.rebuildPolicyPresets)) return;
+  applyRecreatePolicyCarryForward(
+    input.sandboxName,
+    input.nonInteractive,
+    input.note,
+    input.rebuildPolicyPresets,
+  );
+}
+
+export function proveRecreateSourceBeforePolicyCarryForward<T>(input: {
+  readonly createRecreateRuntime: () => T;
+  readonly carryForward: () => void;
+}): T {
+  const runtime = input.createRecreateRuntime();
+  input.carryForward();
+  return runtime;
 }
 
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
@@ -375,17 +404,35 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           inspectSandboxForCreate,
           createIntent?.toolDisclosure ?? null,
         );
+    // Prove the preserved source row before replacing its stale preset list.
+    // Policy carry-forward is an owned post-delete mutation, but applying it
+    // before recreate recovery makes the journal correctly reject that row as
+    // changed before the replacement can be created.
     let recreateRuntime:
       | import("../sandbox-recreate-transaction").SandboxRecreateRuntime
-      | OwnedSandboxRecreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(
-      onboardSession,
-      createIntent?.recreateTransaction,
-      sandboxName,
-      GATEWAY_NAME,
-      existingEntry,
-      getSandboxRecreateObservation,
-      note,
-    );
+      | OwnedSandboxRecreateRuntime = proveRecreateSourceBeforePolicyCarryForward({
+      createRecreateRuntime: () =>
+        sandboxRecreateTransaction.createSandboxRecreateRuntime(
+          onboardSession,
+          createIntent?.recreateTransaction,
+          sandboxName,
+          GATEWAY_NAME,
+          existingEntry,
+          getSandboxRecreateObservation,
+          note,
+        ),
+      carryForward: () =>
+        applyAbsentSandboxRebuildPolicyCarryForward(
+          {
+            sandboxName,
+            liveExists,
+            nonInteractive: isNonInteractive(),
+            note,
+            rebuildPolicyPresets: createIntent?.rebuildPolicyPresets,
+          },
+          policyPresetCarry.applyRecreatePolicyCarryForward,
+        ),
+    });
     const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
       await dashboardPortReservationScope.release();
       ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({
@@ -793,18 +840,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         baseImageResolutionContext,
         previousEntry?.imageTag,
       );
-      // A journal-bound outer rebuild already seeded the exact policy selection
-      // after excluding generated MCP presets. Re-reading the preserved source
-      // row here would reintroduce those intentionally removed names before the
-      // dedicated post-rebuild MCP restore owns them again.
-      applyRecreatePolicyCarryForwardUnlessManagedMcpHandoff(
-        managedMcpRebuildHandoff,
-        () =>
-          policyPresetCarry.applyRecreatePolicyCarryForward(
-            sandboxName,
-            isNonInteractive(),
-            note,
-          ),
+      policyPresetCarry.applyRecreatePolicyCarryForward(
+        sandboxName,
+        isNonInteractive(),
+        note,
+        createIntent?.rebuildPolicyPresets,
       );
 
       const noRestorePending =

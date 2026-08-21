@@ -68,33 +68,52 @@ describe("MCP bridge onboarding environment", () => {
     expect(env.UNRELATED_PARENT_VALUE).toBeUndefined();
   });
 
-  it("activates and proves the exact managed image during MCP qualification", () => {
-    const catalogPath = "/tmp/managed-pr-catalog.json";
-    expect(
-      buildMcpBridgeOnboardArgs({ NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath }),
-    ).toEqual([
-      "onboard",
-      "--temp-managed-runtime",
-      "--temp-managed-runtime-catalog",
-      catalogPath,
-      "--non-interactive",
-      "--yes",
-      "--yes-i-accept-third-party-software",
-    ]);
+  it("rejects a Dockerfile workload in managed-image MCP qualification", () => {
     expect(() =>
       assertMcpBridgeManagedImageReceipt({
         environment: {
           NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
-          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/tmp/managed-pr-catalog.json",
         },
         workload: { kind: "dockerfile" },
       }),
     ).toThrow("must use the exact managed image instead of a Dockerfile build");
+  });
+
+  it("rejects a managed image from a different candidate revision", () => {
     expect(() =>
       assertMcpBridgeManagedImageReceipt({
         environment: {
           NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
-          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/tmp/managed-pr-catalog.json",
+        },
+        workload: { kind: "managed-image", sourceRevision: "b".repeat(40) },
+      }),
+    ).toThrow("must use the exact managed image instead of a Dockerfile build");
+  });
+
+  it("activates the exact managed runtime when the qualification catalog is present", () => {
+    expect(
+      buildMcpBridgeOnboardArgs({
+        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/tmp/managed-pr-catalog.json",
+      }),
+    ).toEqual([
+      "onboard",
+      "--temp-managed-runtime",
+      "--temp-managed-runtime-catalog",
+      "/tmp/managed-pr-catalog.json",
+      "--non-interactive",
+      "--yes",
+      "--yes-i-accept-third-party-software",
+    ]);
+  });
+
+  it("accepts the exact managed image candidate revision", () => {
+    expect(() =>
+      assertMcpBridgeManagedImageReceipt({
+        environment: {
+          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/tmp/managed-pr-catalog.json",
         },
         workload: { kind: "managed-image", sourceRevision: "a".repeat(40) },
       }),

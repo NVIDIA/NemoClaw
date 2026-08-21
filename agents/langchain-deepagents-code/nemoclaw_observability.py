@@ -279,6 +279,11 @@ def _scrub_secret_values(
     return scrubbed
 
 
+def redact_secret_values(value: str) -> str:
+    """Apply the managed credential-shape policy to an unbounded value."""
+    return _scrub_secret_values(value)
+
+
 def _bounded_string(
     value: str,
     budget: _CaptureBudget | None = None,

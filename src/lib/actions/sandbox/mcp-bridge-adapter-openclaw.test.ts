@@ -18,6 +18,7 @@ import {
   OPENCLAW_MCPORTER_ROOT,
 } from "./mcp-bridge-adapter-openclaw";
 import {
+  entryHeaders,
   buildOpenClawMcporterInspectCommand,
   mcporterHeadersMatchExpected,
   openClawMcporterRoot,
@@ -58,7 +59,7 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
     expect(
       mcporterHeadersMatchExpected(
         {
-          Authorization: "Bearer openshell:resolve:env:v42_GITHUB_TOKEN",
+          Authorization: "Bearer openshell:resolve:env:v1442987827285932589_GITHUB_TOKEN",
           accept: "application/json, text/event-stream",
         },
         expected,
@@ -108,6 +109,51 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
           accept: "application/json, text/event-stream",
         },
         expected,
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    "Bearer openshell:resolve:env:v_GITHUB_TOKEN",
+    "Bearer openshell:resolve:env:v42_OTHER_TOKEN",
+    "Bearer openshell:resolve:env:v42x_GITHUB_TOKEN",
+    `Bearer openshell:resolve:env:v${"1".repeat(21)}_GITHUB_TOKEN`,
+  ])("rejects an unsafe revisioned mcporter Authorization header: %s", (authorization) => {
+    expect(
+      mcporterHeadersMatchExpected(
+        { Authorization: authorization },
+        { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
+      ),
+    ).toBe(false);
+  });
+
+  it("projects the live OpenShell credential revision into mcporter config", () => {
+    const command = buildOpenClawMcporterRegisterCommand(
+      baseEntry,
+      false,
+      OPENCLAW_MCPORTER_ROOT,
+      "v1442987827285932589",
+    );
+
+    expect(command).toContain(
+      "Authorization=Bearer openshell:resolve:env:v1442987827285932589_GITHUB_TOKEN",
+    );
+    expect(command).not.toContain("Authorization=Bearer openshell:resolve:env:GITHUB_TOKEN'");
+  });
+
+  it("matches the exact readiness-proven revision during post-write inspection", () => {
+    const expectedV12 = entryHeaders(baseEntry, "v12");
+
+    expect(
+      mcporterHeadersMatchExpected(
+        { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
+        expectedV12,
+      ),
+    ).toBe(true);
+    expect(
+      mcporterHeadersMatchExpected(
+        { Authorization: "Bearer openshell:resolve:env:v11_GITHUB_TOKEN" },
+        expectedV12,
       ),
     ).toBe(false);
   });
@@ -178,7 +224,7 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
         ].join("\n"),
         { mode: 0o755 },
       );
-      const run = (command: string, credential = "openshell:resolve:env:v42_GITHUB_TOKEN") =>
+      const run = (command: string) =>
         spawnSync("/bin/sh", ["-c", command], {
           encoding: "utf8",
           env: {
@@ -190,7 +236,6 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
             FAKE_MCPORTER_HOME_CONFIG: homeConfigState,
             FAKE_MCPORTER_LEGACY_CONFIG: legacyConfigState,
             FAKE_MCPORTER_REMOVE_MARKER: removeMarker,
-            GITHUB_TOKEN: credential,
           },
         });
       const runWithoutXdg = (command: string) => {
@@ -203,7 +248,6 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
           FAKE_MCPORTER_HOME_CONFIG: defaultXdgConfigState,
           FAKE_MCPORTER_LEGACY_CONFIG: legacyConfigState,
           FAKE_MCPORTER_REMOVE_MARKER: removeMarker,
-          GITHUB_TOKEN: "openshell:resolve:env:v42_GITHUB_TOKEN",
         };
         delete env.XDG_CONFIG_HOME;
         return spawnSync("/bin/sh", ["-c", command], {
@@ -212,7 +256,7 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
         });
       };
       const normalizedHeaders = {
-        Authorization: "Bearer openshell:resolve:env:v42_GITHUB_TOKEN",
+        Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN",
         accept: "application/json, text/event-stream",
       };
       const expectFileAbsent = (filePath: string) =>
@@ -220,23 +264,14 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
       const expectFilePresent = (filePath: string) =>
         expect(fs.readFileSync(filePath, "utf8")).not.toBe("");
 
-      const registerCommand = buildOpenClawMcporterRegisterCommand(baseEntry);
-      const invalidCredential = run(registerCommand, "raw-secret-must-not-persist");
-      expect(invalidCredential.status).toBe(3);
-      expect(invalidCredential.stderr).toContain(
-        "Fresh OpenShell credential placeholder for 'GITHUB_TOKEN' is unavailable.",
-      );
-      expect(invalidCredential.stderr).not.toContain("raw-secret-must-not-persist");
-      expectFileAbsent(configState);
-
-      const register = run(registerCommand);
+      const register = run(buildOpenClawMcporterRegisterCommand(baseEntry));
       expect(register.status).toBe(0);
       expect(JSON.parse(fs.readFileSync(configState, "utf8"))).toEqual({
         name: "github",
         transport: "http",
         baseUrl: "https://api.githubcopilot.com/mcp/",
         headers: {
-          Authorization: "Bearer openshell:resolve:env:v42_GITHUB_TOKEN",
+          Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN",
         },
       });
 
@@ -407,7 +442,7 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
         "--url",
         "https://api.githubcopilot.com/mcp/",
         "--header",
-        "Authorization=Bearer openshell:resolve:env:v42_GITHUB_TOKEN",
+        "Authorization=Bearer openshell:resolve:env:GITHUB_TOKEN",
         "--scope",
         "project",
       ]);
@@ -474,9 +509,8 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
       env: [],
     });
 
-    expect(command).toContain('\\"envName\\":\\"\\"');
-    expect(command).toContain("if (payload.envName)");
-    expect(command).toContain("https://api.githubcopilot.com/mcp/");
+    expect(command).not.toContain("Authorization=");
+    expect(command).toContain("'--url' 'https://api.githubcopilot.com/mcp/'");
   });
 
   it("targets a custom OpenClaw workspace for every mcporter lifecycle command", () => {

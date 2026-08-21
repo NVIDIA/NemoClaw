@@ -5,8 +5,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry } from "../../state/registry";
 import {
+  applyAbsentSandboxRebuildPolicyCarryForward,
   completeHermesPortableSandboxRegistration,
   hasManagedMcpRebuildHandoff,
+  proveRecreateSourceBeforePolicyCarryForward,
   readManagedDcodeCreateSelectionDrift,
 } from "./orchestration";
 
@@ -43,6 +45,71 @@ describe("managed MCP rebuild handoff", () => {
         recreateTransaction,
       }),
     ).toBe(false);
+  });
+});
+
+describe("authoritative rebuild policy carry-forward", () => {
+  it("proves the journaled source before mutating its preserved policy row (#9792)", () => {
+    const events: string[] = [];
+    const runtime = { acceptedTarget: false };
+
+    expect(
+      proveRecreateSourceBeforePolicyCarryForward({
+        createRecreateRuntime: () => {
+          events.push("prove-source");
+          return runtime;
+        },
+        carryForward: () => events.push("carry-forward"),
+      }),
+    ).toBe(runtime);
+    expect(events).toEqual(["prove-source", "carry-forward"]);
+  });
+
+  it("replaces stale resumed presets after the outer rebuild deletes the source sandbox (#9792)", () => {
+    const note = vi.fn();
+    const applyRecreatePolicyCarryForward = vi.fn();
+    const filteredPolicyPresets = ["github"];
+
+    applyAbsentSandboxRebuildPolicyCarryForward(
+      {
+        sandboxName: "alpha",
+        liveExists: false,
+        nonInteractive: true,
+        note,
+        rebuildPolicyPresets: filteredPolicyPresets,
+      },
+      applyRecreatePolicyCarryForward,
+    );
+
+    expect(applyRecreatePolicyCarryForward).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      true,
+      note,
+      filteredPolicyPresets,
+    );
+  });
+
+  it("preserves an intentionally empty preset selection after the outer delete (#9792)", () => {
+    const note = vi.fn();
+    const applyRecreatePolicyCarryForward = vi.fn();
+
+    applyAbsentSandboxRebuildPolicyCarryForward(
+      {
+        sandboxName: "alpha",
+        liveExists: false,
+        nonInteractive: true,
+        note,
+        rebuildPolicyPresets: [],
+      },
+      applyRecreatePolicyCarryForward,
+    );
+
+    expect(applyRecreatePolicyCarryForward).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      true,
+      note,
+      [],
+    );
   });
 });
 

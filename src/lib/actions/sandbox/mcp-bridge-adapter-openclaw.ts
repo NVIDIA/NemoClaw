@@ -8,6 +8,7 @@ import {
   inspectAdapterRegistrationCommand,
 } from "./mcp-bridge-adapter-inspection";
 import {
+  authorizationValue,
   buildOpenClawMcporterInspectCommand,
   DEFAULT_OPENCLAW_CONFIG_DIR,
   entryHeaders,
@@ -18,11 +19,18 @@ import {
 } from "./mcp-bridge-adapter-status";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
+import { quoteMcpBridgeShellArg } from "./mcp-bridge-runtime-command";
 import { getAgentConfigDir } from "./mcp-bridge-state";
 import { executeSandboxCommand } from "./process-recovery";
 
 export const MCPORTER_VERSION = "0.7.3";
 export { OPENCLAW_MCPORTER_ROOT } from "./mcp-bridge-adapter-status";
+
+/** Build a Mcporter argument vector bound to one project root. */
+function mcporterArgs(root: string, ...args: string[]): string[] {
+  return ["mcporter", "--root", root, ...args];
+}
 
 /** Resolve the Mcporter project root owned by an MCP bridge entry's agent. */
 function mcporterRootForEntry(entry: McpBridgeEntry): string {
@@ -43,45 +51,23 @@ export function buildOpenClawMcporterRegisterCommand(
   entry: McpBridgeEntry,
   replaceExisting = false,
   root = OPENCLAW_MCPORTER_ROOT,
+  credentialRevision?: McpAttachedCredentialRevision,
 ): string {
-  const payload = {
-    root,
-    server: entry.server,
-    url: entry.url,
-    envName: entry.env[0] ?? "",
-    replaceExisting,
-  };
+  const args = mcporterArgs(root, "config", "add", entry.server, "--url", entry.url);
+  const authorization = authorizationValue(entry, credentialRevision);
+  if (authorization) args.push("--header", `Authorization=${authorization}`);
+  args.push("--scope", "project");
+  const addCommand = args.map(quoteMcpBridgeShellArg).join(" ");
+  if (replaceExisting) return addCommand;
+  const getCommand = mcporterArgs(root, "config", "get", entry.server, "--json")
+    .map(quoteMcpBridgeShellArg)
+    .join(" ");
   return [
-    "node - <<'NODE'",
-    'const { spawnSync } = require("node:child_process");',
-    `const payload = JSON.parse(${pythonJsonLiteral(payload)});`,
-    'const run = (args) => spawnSync("mcporter", args, { encoding: "utf8" });',
-    "if (!payload.replaceExisting) {",
-    '  const existing = run(["--root", payload.root, "config", "get", payload.server, "--json"]);',
-    "  if (existing.error) { console.error(existing.error.message); process.exit(3); }",
-    "  if (existing.status === 0) {",
-    '    console.error("MCP server \'" + payload.server + "\' already exists in mcporter config and is not managed by NemoClaw.");',
-    "    process.exit(2);",
-    "  }",
-    "}",
-    'const args = ["--root", payload.root, "config", "add", payload.server, "--url", payload.url];',
-    "if (payload.envName) {",
-    '  const runtimePlaceholder = process.env[payload.envName] || "";',
-    '  const escapedEnvName = payload.envName.replace(/[.*+?^${}()|[\\]\\\\]/gu, "\\\\$&");',
-    '  const expected = new RegExp(`^openshell:resolve:env:(?:v[0-9]{1,20}_)?${escapedEnvName}$`, "u");',
-    "  if (!expected.test(runtimePlaceholder)) {",
-    '    console.error("Fresh OpenShell credential placeholder for \'" + payload.envName + "\' is unavailable.");',
-    "    process.exit(3);",
-    "  }",
-    '  args.push("--header", `Authorization=Bearer ${runtimePlaceholder}`);',
-    "}",
-    'args.push("--scope", "project");',
-    "const added = run(args);",
-    "if (added.stdout) process.stdout.write(added.stdout);",
-    "if (added.stderr) process.stderr.write(added.stderr);",
-    "if (added.error) { console.error(added.error.message); process.exit(3); }",
-    "process.exit(added.status === null ? 3 : added.status);",
-    "NODE",
+    `if ${getCommand} >/dev/null 2>&1; then`,
+    `  echo ${quoteMcpBridgeShellArg(`MCP server '${entry.server}' already exists in mcporter config and is not managed by NemoClaw.`)} >&2`,
+    "  exit 2",
+    "fi",
+    addCommand,
   ].join("\n");
 }
 
@@ -158,12 +144,13 @@ export function registerOpenClawAdapter(
   entry: McpBridgeEntry,
   envValues: Record<string, string> = {},
   replaceExisting = false,
+  credentialRevision?: McpAttachedCredentialRevision,
 ): void {
   ensureMcporter(sandboxName);
   const root = mcporterRootForEntry(entry);
   const result = executeSandboxCommand(
     sandboxName,
-    buildOpenClawMcporterRegisterCommand(entry, replaceExisting, root),
+    buildOpenClawMcporterRegisterCommand(entry, replaceExisting, root, credentialRevision),
   );
   const output = redactBridgeSecretsForDisplay(
     [result?.stdout, result?.stderr].filter(Boolean).join("\n").trim(),
@@ -180,7 +167,7 @@ export function registerOpenClawAdapter(
   // from the URL and opaque OpenShell placeholder NemoClaw intended.
   const verification = executeSandboxCommand(
     sandboxName,
-    buildOpenClawMcporterInspectCommand(entry, true, root),
+    buildOpenClawMcporterInspectCommand(entry, true, root, credentialRevision),
   );
   const verificationOutput = redactBridgeSecretsForDisplay(
     [verification?.stdout, verification?.stderr].filter(Boolean).join("\n").trim(),
