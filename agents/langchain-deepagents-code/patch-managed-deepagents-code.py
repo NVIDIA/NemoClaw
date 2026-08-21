@@ -10,8 +10,9 @@
 # sourceBoundary: deepagents-code owns those Python entrypoints and child env;
 # langgraph-cli owns the analytics opt-out; NemoClaw owns the sandbox image
 # posture and therefore validates every patched symbol before build.
-# whyNotSourceFix: upstream 0.1.55 has no single managed-runtime hook that can
-# enforce these constraints across CLI, UI, headless, server, and restart paths.
+# whyNotSourceFix: upstream 0.1.55 has no single managed-runtime hook for these
+# constraints and no deterministic read-only MCP invocation command across CLI,
+# UI, headless, server, and restart paths.
 # regressionTest: the exact version plus AST symbol/method gates fail the image
 # build on drift, while hostile analytics values exercise patched entrypoints and
 # the server start/restart override paths.
@@ -32,6 +33,7 @@ TOOL_DISCLOSURE_PATCH_MARKER = "NemoClaw-managed progressive tool disclosure."
 OBSERVABILITY_PATCH_MARKER = "NemoClaw-managed backend-neutral observability."
 MIDDLEWARE_MODULE = "progressive_tool_disclosure.py"
 OBSERVABILITY_MODULE = "nemoclaw_observability.py"
+READ_ONLY_MCP_MODULE = "nemoclaw_read_only_mcp.py"
 MANAGED_RUNTIME_SOURCE_PATH = Path(__file__).with_name("managed-dcode-runtime.py")
 
 MAIN_MARKER = "    args = parser.parse_args()\n"
@@ -1898,6 +1900,12 @@ def main() -> None:
     observability_destination_path, observability_source = _load_managed_module(
         root, OBSERVABILITY_MODULE, "observability", "observability module"
     )
+    read_only_mcp_destination_path, read_only_mcp_source = _load_managed_module(
+        root,
+        READ_ONLY_MCP_MODULE,
+        "read-only MCP command",
+        "read-only MCP command module",
+    )
 
     marker_states = {PATCH_MARKER in text for text in texts.values()}
     helper_path = root / "_nemoclaw_managed.py"
@@ -1937,6 +1945,10 @@ def main() -> None:
         if not observability_destination_path.is_file():
             raise RuntimeError(
                 "Managed package patch is partial: observability module is missing"
+            )
+        if not read_only_mcp_destination_path.is_file():
+            raise RuntimeError(
+                "Managed package patch is partial: read-only MCP command is missing"
             )
         for marker, boundary in (
             (TOOL_DISCLOSURE_PATCH_MARKER, "progressive-disclosure"),
@@ -2284,6 +2296,11 @@ def main() -> None:
     if not observability_destination_path.exists():
         observability_destination_path.write_text(
             observability_source,
+            encoding="utf-8",
+        )
+    if not read_only_mcp_destination_path.exists():
+        read_only_mcp_destination_path.write_text(
+            read_only_mcp_source,
             encoding="utf-8",
         )
 
