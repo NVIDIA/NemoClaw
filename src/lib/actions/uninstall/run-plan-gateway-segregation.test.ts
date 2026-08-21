@@ -205,6 +205,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
 
   it("does not use legacy gateway destroy when external registration removal is unsupported (#6576)", () => {
     const calls: Array<{ args: string[]; command: string }> = [];
+    const logs: string[] = [];
+    const rmSync = vi.fn();
+    const warnings: string[] = [];
     const responses = new Map<string, RunResult>([
       ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
       [
@@ -233,7 +236,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
           requiredCapabilities: [],
         }),
-        rmSync: vi.fn(),
+        error: (line) => warnings.push(line),
+        log: (line) => logs.push(line),
+        rmSync,
         run: (command, args) => {
           calls.push({ args, command });
           return responses.get([command, ...args].join(" ")) ?? ok();
@@ -242,12 +247,18 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       },
     );
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(1);
     const openshellCalls = calls
       .filter(({ command }) => command === "openshell")
       .map(({ args }) => args);
     expect(openshellCalls).toContainEqual(["gateway", "remove", "nemoclaw"]);
     expect(openshellCalls).not.toContainEqual(["gateway", "destroy", "-g", "nemoclaw"]);
+    expect(warnings).toContain(
+      "Could not remove local registration for externally supervised gateway 'nemoclaw'. NemoClaw will not use the legacy gateway destroy command for an externally supervised gateway.",
+    );
+    expect(rmSync).not.toHaveBeenCalled();
+    expect(logs).not.toContain("[3/6] NemoClaw CLI");
+    expect(logs).not.toContain("Claws retracted. Until next time.");
   });
 
   it("fails before uninstall effects when gateway authority revalidation fails (#6576)", () => {
@@ -311,6 +322,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
 
   it("does not hide a current gateway remove failure behind the legacy verb", () => {
     const calls: Array<{ args: string[]; command: string }> = [];
+    const logs: string[] = [];
+    const rmSync = vi.fn();
     const warnings: string[] = [];
     const responses = new Map<string, RunResult>([
       ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
@@ -323,7 +336,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
-        rmSync: vi.fn(),
+        log: (line) => logs.push(line),
+        rmSync,
         run: (command, args) => {
           calls.push({ args, command });
           return responses.get([command, ...args].join(" ")) ?? ok();
@@ -333,13 +347,73 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       },
     );
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(1);
     const openshellCalls = calls
       .filter(({ command }) => command === "openshell")
       .map(({ args }) => args);
     expect(openshellCalls).toContainEqual(["gateway", "remove", "nemoclaw"]);
     expect(openshellCalls.some((args) => args[1] === "destroy")).toBe(false);
-    expect(warnings.join("\n")).toContain("Gateway 'nemoclaw' already removed or unreachable");
+    expect(warnings).toContain(
+      "Could not remove gateway registration 'nemoclaw': openshell gateway remove failed (exit 1).",
+    );
+    expect(warnings).not.toContain("Gateway 'nemoclaw' already removed or unreachable");
+    expect(rmSync).not.toHaveBeenCalled();
+    expect(logs).not.toContain("[3/6] NemoClaw CLI");
+    expect(logs).not.toContain("Claws retracted. Until next time.");
+  });
+
+  it("fails closed when the legacy gateway destroy command fails", () => {
+    const calls: Array<{ args: string[]; command: string }> = [];
+    const logs: string[] = [];
+    const rmSync = vi.fn();
+    const warnings: string[] = [];
+    const responses = new Map<string, RunResult>([
+      ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
+      [
+        "openshell gateway remove nemoclaw",
+        { status: 2, stdout: "", stderr: "unrecognized subcommand 'remove'" },
+      ],
+      [
+        "openshell gateway destroy -g nemoclaw",
+        {
+          status: 1,
+          stdout: "",
+          stderr: "connection refused; OPENAI_API_KEY=must-not-be-logged",
+        },
+      ],
+    ]);
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command !== "docker" && command !== "pgrep",
+        env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+        error: (line) => warnings.push(line),
+        existsSync: () => false,
+        isTty: false,
+        log: (line) => logs.push(line),
+        rmSync,
+        run: (command, args) => {
+          calls.push({ args, command });
+          return responses.get([command, ...args].join(" ")) ?? ok();
+        },
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    const openshellCalls = calls
+      .filter(({ command }) => command === "openshell")
+      .map(({ args }) => args);
+    expect(openshellCalls).toContainEqual(["gateway", "remove", "nemoclaw"]);
+    expect(openshellCalls).toContainEqual(["gateway", "destroy", "-g", "nemoclaw"]);
+    expect(warnings).toContain(
+      "Could not remove gateway registration 'nemoclaw': openshell gateway destroy failed (connection refused; exit 1).",
+    );
+    expect(warnings.join("\n")).not.toContain("must-not-be-logged");
+    expect(warnings).not.toContain("Gateway 'nemoclaw' already removed or unreachable");
+    expect(rmSync).not.toHaveBeenCalled();
+    expect(logs).not.toContain("[3/6] NemoClaw CLI");
+    expect(logs).not.toContain("Claws retracted. Until next time.");
   });
 
   it("preserves the gateways/ subtree so uninstalling one environment leaves the others", () => {
