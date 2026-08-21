@@ -256,11 +256,11 @@ dgx_station_release_profile() {
     return 0
   fi
 
-  # Stock DGX OS 7.6 uses stable workstation lineage fields without DGX_OTA_*
-  # metadata. Qualify that release family and leave its build date diagnostic;
-  # the factory-runtime path still proves GB300, driver, ECC, Docker, CDI, and
-  # container GPU capability before onboarding. Other no-OTA factory images
-  # remain exact profiles because they carry separately qualified stacks.
+  # Stock DGX OS 7.6 omits DGX_OTA_* metadata. Reviewed builds use two exact
+  # DGX_PRETTY_NAME values. The factory-runtime path still proves GB300, driver,
+  # ECC, Docker, CDI, and container GPU capability before onboarding. Other
+  # no-OTA factory images remain exact profiles because they carry separately
+  # qualified stacks.
   for ota_key in DGX_OTA_PRETTY_NAME DGX_OTA_VERSION DGX_OTA_DATE; do
     dgx_station_release_value "$path" "$ota_key" >/dev/null 2>&1 && return 1
   done
@@ -268,7 +268,7 @@ dgx_station_release_profile() {
   version="$(dgx_station_release_value "$path" DGX_SWBUILD_VERSION)" || return 1
   build_date="$(dgx_station_release_value "$path" DGX_SWBUILD_DATE)" || return 1
 
-  if [[ "$pretty" == "NVIDIA DGX GB300WS" ]] \
+  if [[ "$pretty" == "NVIDIA DGX GB300WS" || "$pretty" == "NVIDIA DGX Server" ]] \
     && dgx_station_no_ota_stock_version_is_supported "$version"; then
     printf '%s' supported-dgx-os
     return 0

@@ -65,6 +65,7 @@ describe("DGX Station documentation ownership", () => {
       "OTA-form qualification uses the latest `DGX_OTA_VERSION`",
     );
     expect(stationPreparation).toContain("`DGX_PRETTY_NAME` must equal `NVIDIA DGX GB300WS`");
+    expect(stationPreparation).toContain("`DGX_PRETTY_NAME=NVIDIA DGX Server`");
     expect(stationPreparation).toContain("recognized GB300 hardware");
     expect(stationPreparation).not.toMatch(/\b(?:0x)?31c[23]\b/i);
     expect(stationPreparation).toContain("does not match the date against an exact build");
