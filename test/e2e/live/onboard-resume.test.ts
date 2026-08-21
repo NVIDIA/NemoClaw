@@ -407,9 +407,9 @@ test(
     });
     expect(sandboxAfterInterrupt.exitCode, sandboxAfterInterrupt.stderr).toBe(0);
     expect(
-      parseSandboxPhase(resultText(sandboxAfterInterrupt)),
-      resultText(sandboxAfterInterrupt),
-    ).toBe("Ready");
+      parseSandboxPhase(resultText(sandboxAfterInterrupt)) === "Ready",
+      "OpenShell sandbox did not report Ready after the intended onboarding interruption. Inspect the phase-2-openshell-sandbox-get artifact.",
+    ).toBe(true);
 
     // Exercise the configured route through the sandbox. The OpenShell gateway
     // must inject the stored compatible-endpoint credential upstream; this POST
