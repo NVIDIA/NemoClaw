@@ -110,6 +110,14 @@ describe("sanitizeWedgeLogLine", () => {
     },
   );
 
+  it("preserves a carriage-return boundary until redaction completes", () => {
+    expect(
+      sanitizeWedgeLogLine(
+        'gateway startup failed: CUSTOM_TOKEN="opaque secret\rsafe diagnostic"',
+      ),
+    ).toBe('gateway startup failed: CUSTOM_TOKEN="<REDACTED>"safe diagnostic"');
+  });
+
   it("leaves ordinary wedge lines untouched", () => {
     const line =
       "gateway startup failed: listen EADDRINUSE. Process will stay alive; fix the issue and restart.";

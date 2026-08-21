@@ -38,7 +38,7 @@ const LOCAL_SECRET_ASSIGNMENT_PATTERN =
 const NVAPI_PATTERN = /\bnvapi-\S+/gi;
 
 export function sanitizeWedgeLogLine(line: string): string {
-  let sanitized = line.replace(CONTROL_CHARS_RE, "");
+  let sanitized = line.replace(CONTROL_CHARS_RE, (char) => (char === "\r" ? char : ""));
   sanitized = redactFull(sanitized);
   sanitized = sanitized.replace(AUTHORIZATION_PATTERN, "$1 [REDACTED]");
   sanitized = sanitized.replace(
@@ -49,7 +49,7 @@ export function sanitizeWedgeLogLine(line: string): string {
     },
   );
   sanitized = sanitized.replace(NVAPI_PATTERN, "[REDACTED]");
-  return sanitized.trim();
+  return sanitized.replace(/\r/g, "").trim();
 }
 
 /**
