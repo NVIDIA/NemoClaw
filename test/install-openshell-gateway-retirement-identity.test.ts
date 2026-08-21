@@ -40,9 +40,37 @@ async function spawnTaggedGateway(home: string, gatewayPort: number, args: strin
   fs.chmodSync(gatewayBin, 0o755);
   const gatewayName = gatewayPort === 8080 ? "nemoclaw" : `nemoclaw-${gatewayPort}`;
   const taggedArgv0 = `openshell-gateway[nemoclaw=${gatewayName};port=${gatewayPort}]`;
-  const supervisor = spawn(gatewayBin, args, { argv0: taggedArgv0, stdio: "ignore" });
+  const supervisor = spawn(
+    "bash",
+    [
+      "-c",
+      [
+        "set -euo pipefail",
+        'coproc GATEWAY_PROCESS { exec -a "$TAGGED_ARGV0" "$GATEWAY_BIN" "$@"; }',
+        'gateway_pid="$GATEWAY_PROCESS_PID"',
+        'gateway_output_fd="${GATEWAY_PROCESS[0]}"',
+        'IFS= read -r _gateway_ready <&"$gateway_output_fd"',
+        'cat <&"$gateway_output_fd" >/dev/null &',
+        'drain_pid="$!"',
+        'printf "%s\\n" "$gateway_pid"',
+        "set +e",
+        'wait "$gateway_pid"',
+        'gateway_status="$?"',
+        'wait "$drain_pid" 2>/dev/null || true',
+        'exit "$gateway_status"',
+      ].join("\n"),
+      "gateway-test-supervisor",
+      ...args,
+    ],
+    {
+      env: { ...process.env, GATEWAY_BIN: gatewayBin, TAGGED_ARGV0: taggedArgv0 },
+      stdio: ["ignore", "pipe", "ignore"],
+    },
+  );
   await once(supervisor, "spawn");
-  const pid = supervisor.pid;
+  assert(supervisor.stdout !== null, "gateway supervisor returned no output stream");
+  const [pidOutput] = await once(supervisor.stdout, "data");
+  const pid = Number(String(pidOutput).trim());
   assert(pid !== undefined && Number.isSafeInteger(pid) && pid > 0, "gateway returned no PID");
   return { gatewayBin, pid, supervisor };
 }
@@ -251,7 +279,7 @@ it.skipIf(process.platform !== "linux")(
     const home = path.join(root, "home");
     const runtimeDir = path.join(root, "runtime");
     fs.mkdirSync(runtimeDir, { recursive: true });
-    const gateway = await spawnTaggedGateway(home, 8080, ["--port", "9090"]);
+    const gateway = await spawnTaggedGateway(home, 8080, ["unexpected"]);
     const pidFile = path.join(runtimeDir, "openshell-gateway.pid");
     fs.writeFileSync(pidFile, `${String(gateway.pid)}\n`);
 
