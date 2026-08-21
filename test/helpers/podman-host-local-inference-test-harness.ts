@@ -122,6 +122,8 @@ export interface PodmanHostLocalInferenceHarness {
     probeRunLostAcknowledgement: boolean;
     probeRunAcknowledgementText: string | null;
     probePostCreateNameLookupTimeout: boolean;
+    probePostCreateInspectFailuresRemaining: number;
+    probePostCreateInspectTimeoutsRemaining: number;
     probeInspectRuntimeIdMismatchAt: number | null;
     probeForbiddenActions: Array<"logs" | "rm" | "wait">;
     probeWaitTimeouts: number[];
@@ -424,6 +426,8 @@ export function createPodmanHostLocalInferenceTestHarness(
     probeRunLostAcknowledgement: false,
     probeRunAcknowledgementText: null as string | null,
     probePostCreateNameLookupTimeout: false,
+    probePostCreateInspectFailuresRemaining: 0,
+    probePostCreateInspectTimeoutsRemaining: 0,
     probeInspectRuntimeIdMismatchAt: null as number | null,
     probeForbiddenActions: [] as Array<"logs" | "rm" | "wait">,
     probeWaitTimeouts: [] as number[],
@@ -584,6 +588,18 @@ export function createPodmanHostLocalInferenceTestHarness(
         if (currentContainer?.id === args[2]) return result(0, inspectPayload(currentContainer));
         if (currentProbe?.id === args[2]) {
           probeInspectCount += 1;
+          if (state.probePostCreateInspectFailuresRemaining > 0) {
+            state.probePostCreateInspectFailuresRemaining -= 1;
+            const error = Object.assign(new Error("permission denied"), { code: "EACCES" });
+            return result(1, "", "permission denied", error);
+          }
+          if (state.probePostCreateInspectTimeoutsRemaining > 0) {
+            state.probePostCreateInspectTimeoutsRemaining -= 1;
+            const error = Object.assign(new Error("spawnSync /usr/local/bin/podman ETIMEDOUT"), {
+              code: "ETIMEDOUT",
+            });
+            return result(1, "", "spawnSync /usr/local/bin/podman ETIMEDOUT", error);
+          }
           const inspectedProbe =
             state.probeInspectRuntimeIdMismatchAt === probeInspectCount
               ? { ...currentProbe, id: REUSED_PROBE_CONTAINER_ID }
