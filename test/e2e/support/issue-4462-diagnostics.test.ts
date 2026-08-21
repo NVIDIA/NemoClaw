@@ -13,7 +13,7 @@ import {
 } from "../fixtures/issue-4462-diagnostics.ts";
 
 describe("pairing failure evidence", () => {
-  it("captures redacted auto-pair and gateway logs before cleanup (#9844)", async () => {
+  it("captures structured auto-pair and gateway diagnostics before cleanup (#9844)", async () => {
     const exec = vi.fn(async () => ({ exitCode: 0 }));
 
     await captureIssue4462FailureDiagnostics({ exec } as never, {
@@ -28,7 +28,6 @@ describe("pairing failure evidence", () => {
         "node",
         "-e",
         expect.any(String),
-        "/sandbox/.openclaw/openclaw.json",
         "/tmp/auto-pair.log",
         "/tmp/gateway.log",
       ]),
@@ -39,70 +38,113 @@ describe("pairing failure evidence", () => {
     );
   });
 
-  it("redacts runtime and patterned secrets before emitting log content (#9844)", () => {
+  it("emits only structured allowlisted diagnostics from secret-bearing logs (#9844)", () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-issue4462-diagnostics-"));
-    const configPath = join(fixtureRoot, "openclaw.json");
     const autoPairPath = join(fixtureRoot, "auto-pair.log");
     const gatewayPath = join(fixtureRoot, "gateway.log");
-    const gatewayToken = "runtime-generated-gateway-token";
-    const inferenceKey = "nvapi-secret-value";
-    const jsonAuthorization = "opaque-runtime-secret-value";
-    const privateMessage = "private operator message";
+    const secrets = [
+      "runtime-generated-gateway-token",
+      "nvapi-secret-value",
+      "opaque-runtime-secret-value",
+      "private-operator-message",
+      "cookie-session-secret",
+      "set-cookie-auth-secret",
+      "generic-query-key-secret",
+      "plain-password-secret",
+      "plain-secret-value",
+      "plain-token-secret",
+      "github_pat_secret-value",
+      "private-key-shaped-secret",
+    ];
 
     try {
-      writeFileSync(configPath, JSON.stringify({ gateway: { auth: { token: gatewayToken } } }));
       writeFileSync(
         autoPairPath,
-        `[auto-pair] stage=request-creation waiting reason=no-request token=${gatewayToken}\n`,
+        `[auto-pair] stage=request-creation waiting reason=no-request token=${secrets[0]}\n` +
+          `[auto-pair] stage=listing failed reason=invalid-response password=${secrets[7]}\n` +
+          `[auto-pair] stage=validation accepted request=request-secret reason=allowlisted-request\n` +
+          `unknown raw line secret=${secrets[8]}\n`,
       );
       writeFileSync(
         gatewayPath,
-        `Authorization: Bearer ${gatewayToken}\nx-api-key=${inferenceKey}\n` +
-          `${JSON.stringify({ Authorization: jsonAuthorization, message: privateMessage })}\n`,
+        `pairing required Authorization: Bearer ${secrets[0]}\n` +
+          `scope upgrade pending approval x-api-key=${secrets[1]}\n` +
+          `${JSON.stringify({ Authorization: secrets[2], message: secrets[3] })}\n` +
+          `Cookie: session=${secrets[4]}\nSet-Cookie: auth=${secrets[5]}\n` +
+          `https://example.invalid/?key=${secrets[6]} password=${secrets[7]}\n` +
+          `secret=${secrets[8]} token=${secrets[9]} ${secrets[10]}\n` +
+          `${JSON.stringify({ privateKey: secrets[11] })}\n` +
+          `device pairing approval denied\ngateway unavailable\n`,
       );
-      const [command, ...args] = buildIssue4462DiagnosticsCommand(configPath, [
-        autoPairPath,
-        gatewayPath,
-      ]);
+      const [command, ...args] = buildIssue4462DiagnosticsCommand([autoPairPath, gatewayPath]);
       const result = spawnSync(command, args, { encoding: "utf8" });
 
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
-      expect(result.stdout).toContain("stage=request-creation waiting reason=no-request");
-      expect(result.stdout).toContain("[REDACTED_OPENCLAW_GATEWAY_TOKEN]");
-      expect(result.stdout).toContain("[REDACTED_NVIDIA_INFERENCE_API_KEY]");
-      expect(result.stdout).toContain('"Authorization":"[REDACTED_AUTHORIZATION]"');
-      expect(result.stdout).toContain('"message":"[REDACTED_TEXT]"');
-      expect(result.stdout).not.toContain(gatewayToken);
-      expect(result.stdout).not.toContain(inferenceKey);
-      expect(result.stdout).not.toContain(jsonAuthorization);
-      expect(result.stdout).not.toContain(privateMessage);
+      expect(JSON.parse(result.stdout)).toEqual({
+        schemaVersion: 1,
+        autoPair: {
+          readable: true,
+          events: [
+            { stage: "request-creation", outcome: "waiting", reason: "no-request" },
+            { stage: "listing", outcome: "failed", reason: "invalid-response" },
+            { stage: "validation", outcome: "accepted", reason: "allowlisted-request" },
+          ],
+        },
+        gateway: {
+          readable: true,
+          signals: {
+            pairingRequired: 1,
+            scopeUpgradePending: 1,
+            pairingApprovalDenied: 1,
+            gatewayUnavailable: 1,
+          },
+        },
+      });
+      expect(secrets.some((secret) => result.stdout.includes(secret))).toBe(false);
     } finally {
       rmSync(fixtureRoot, { recursive: true, force: true });
     }
   });
 
-  it("emits no log content when gateway-token redaction cannot be established (#9844)", () => {
+  it("marks missing logs unreadable without emitting their paths (#9844)", () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-issue4462-diagnostics-"));
-    const configPath = join(fixtureRoot, "openclaw.json");
     const autoPairPath = join(fixtureRoot, "auto-pair.log");
-    const secret = "must-not-escape";
+    const gatewayPath = join(fixtureRoot, "gateway.log");
 
     try {
-      writeFileSync(configPath, "{}");
-      writeFileSync(autoPairPath, `raw secret ${secret}\n`);
-      const [command, ...args] = buildIssue4462DiagnosticsCommand(configPath, [autoPairPath]);
+      const [command, ...args] = buildIssue4462DiagnosticsCommand([autoPairPath, gatewayPath]);
       const result = spawnSync(command, args, { encoding: "utf8" });
 
-      expect(result.status).toBe(1);
-      expect(result.stdout).toBe(
-        "pairing diagnostics unavailable: redaction prerequisites failed\n",
-      );
-      expect(result.stdout).not.toContain(secret);
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        schemaVersion: 1,
+        autoPair: { readable: false, events: [] },
+        gateway: {
+          readable: false,
+          signals: {
+            pairingRequired: 0,
+            scopeUpgradePending: 0,
+            pairingApprovalDenied: 0,
+            gatewayUnavailable: 0,
+          },
+        },
+      });
+      expect(result.stdout).not.toContain(autoPairPath);
+      expect(result.stdout).not.toContain(gatewayPath);
       expect(result.stderr).toBe("");
     } finally {
       rmSync(fixtureRoot, { recursive: true, force: true });
     }
+  });
+
+  it("fails closed with a fixed record when diagnostics inputs are invalid (#9844)", () => {
+    const [command, ...args] = buildIssue4462DiagnosticsCommand([]);
+    const result = spawnSync(command, args, { encoding: "utf8" });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('{"schemaVersion":1,"status":"unavailable"}\n');
+    expect(result.stderr).toBe("");
   });
 
   it("preserves the primary failure when the sandbox is already unavailable (#9844)", async () => {

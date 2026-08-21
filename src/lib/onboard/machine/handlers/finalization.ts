@@ -5,6 +5,7 @@ import { CLI_NAME } from "../../../cli/branding";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
 import type { WebSearchVerifyProvider } from "../../web-search-verify";
 import type { PortableOpenClawPairingSettlementResult } from "../../../actions/sandbox/launch-readiness";
+import type { OrdinaryOpenClawPairingSettlementResult } from "../finalization-deps";
 import {
   advanceTo,
   completeOnboardMachine,
@@ -42,19 +43,15 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     removeLegacyCredentialsFile(): void;
     cleanupStaleHostFiles(): void;
     checkAndRecoverSandboxProcesses(sandboxName: string, options: { quiet: boolean }): void;
-    settleOrdinaryOpenClawPairing(sandboxName: string): Promise<
-      | { readonly kind: "settled" }
-      | {
-          readonly kind: "incomplete";
-          readonly reason:
-            | "runtime-identity-invalid"
-            | "pairing-unavailable"
-            | "scope-upgrade-incomplete";
-        }
-    >;
+    settleOrdinaryOpenClawPairing(
+      sandboxName: string,
+    ): Promise<OrdinaryOpenClawPairingSettlementResult>;
     ordinaryOpenClawPairingIncompleteMessage(
       sandboxName: string,
-      reason: "runtime-identity-invalid" | "pairing-unavailable" | "scope-upgrade-incomplete",
+      reason: Extract<
+        OrdinaryOpenClawPairingSettlementResult,
+        { kind: "incomplete" }
+      >["reason"],
     ): string;
     readRegistryAgent(sandboxName: string): string | null;
     settlePortablePairing(

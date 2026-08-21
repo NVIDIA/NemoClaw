@@ -3089,6 +3089,12 @@ while time.time() < DEADLINE:
             LAST_LIST_FAILURE_REASON = 'invalid-json'
         sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
+    if not isinstance(data, dict):
+        if LAST_LIST_FAILURE_REASON != 'invalid-response':
+            print('[auto-pair] stage=listing failed reason=invalid-response')
+            LAST_LIST_FAILURE_REASON = 'invalid-response'
+        sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
+        continue
     LAST_LIST_FAILURE_REASON = None
 
     pending = data.get('pending') or []

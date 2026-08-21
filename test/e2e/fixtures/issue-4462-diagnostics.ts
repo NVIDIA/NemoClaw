@@ -10,14 +10,37 @@ interface Issue4462FailureDiagnosticsOptions {
   sandboxName: string;
 }
 
-const OPENCLAW_CONFIG_PATH = "/sandbox/.openclaw/openclaw.json";
 const PAIRING_LOG_PATHS = ["/tmp/auto-pair.log", "/tmp/gateway.log"] as const;
 
-const REDACT_PAIRING_DIAGNOSTICS_PROGRAM = String.raw`
+const PROJECT_PAIRING_DIAGNOSTICS_PROGRAM = String.raw`
 "use strict";
 const fs = require("node:fs");
-const [configPath, ...logPaths] = process.argv.slice(1);
+const logPaths = process.argv.slice(1);
 const MAX_LOG_BYTES = 384 * 1024;
+const SAFE_STAGE_OUTCOMES = new Set([
+  "request-creation:observed",
+  "request-creation:waiting",
+  "listing:failed",
+  "validation:accepted",
+  "validation:rejected",
+  "approval:attempting",
+  "watcher-execution:failed",
+]);
+const SAFE_REASONS = new Set([
+  "allowlisted-initial-cli",
+  "allowlisted-request",
+  "command-failed",
+  "disallowed-scopes",
+  "empty-output",
+  "invalid-json",
+  "invalid-response",
+  "malformed-scopes",
+  "no-request",
+  "not-allowlisted",
+  "pairing-required",
+  "timeout",
+  "unknown-client",
+]);
 
 function readTail(logPath) {
   const fd = fs.openSync(logPath, "r");
@@ -37,48 +60,70 @@ function readTail(logPath) {
   }
 }
 
-function redact(text, gatewayToken) {
-  return text
-    .split(gatewayToken).join("[REDACTED_OPENCLAW_GATEWAY_TOKEN]")
-    .replace(/nvapi-[A-Za-z0-9._-]+/g, "[REDACTED_NVIDIA_INFERENCE_API_KEY]")
-    .replace(/gh[pousr]_[A-Za-z0-9_]+/g, "[REDACTED_GITHUB_TOKEN]")
-    .replace(/((?:Authorization|Proxy-Authorization)\s*[:=]\s*)(?:Bearer\s+)?[A-Za-z0-9._~+/=:-]+/gi, "$1[REDACTED_AUTHORIZATION]")
-    .replace(/(\"(?:Authorization|Proxy-Authorization)\"\s*:\s*\")(?:(?:Bearer)\s+)?(?:\\.|[^\"\\])*(\")/gi, "$1[REDACTED_AUTHORIZATION]$2")
-    .replace(/((?:x-)?api[-_]?key\s*[:=]\s*)[A-Za-z0-9._-]+/gi, "$1[REDACTED_API_KEY]")
-    .replace(/(\"(?:x-)?api[-_]?key\"\s*:\s*\")(?:\\.|[^\"\\])*(\")/gi, "$1[REDACTED_API_KEY]$2")
-    .replace(/([?&](?:token|auth_token|gateway_token|gatewayAuthToken|access_token)=)[^ \t\r\n&\"'<>]+/gi, "$1[REDACTED_TOKEN]")
-    .replace(/(\"(?:token|auth_token|gateway_token|gatewayAuthToken|access_token)\"\s*:\s*\")(?:\\.|[^\"\\])*(\")/gi, "$1[REDACTED_TOKEN]$2")
-    .replace(/((?:prompt|content|message|text)\s*[:=]\s*)(\"[^\"]*\"|'[^']*'|[^\r\n]+)/gi, "$1[REDACTED_TEXT]")
-    .replace(/(\"(?:prompt|content|message|text)\"\s*:\s*\")(?:\\.|[^\"\\])*(\")/gi, "$1[REDACTED_TEXT]$2");
+function readAvailableTail(logPath) {
+  try {
+    return readTail(logPath);
+  } catch {
+    return null;
+  }
+}
+
+function projectAutoPair(text) {
+  if (text === null) return { readable: false, events: [] };
+  const events = [];
+  const seen = new Set();
+  for (const line of text.split(/\r?\n/)) {
+    const stageMatch = line.match(/\[auto-pair\] stage=(request-creation|listing|validation|approval|watcher-execution) (observed|waiting|failed|accepted|rejected|attempting)\b/);
+    if (!stageMatch) continue;
+    const stage = stageMatch[1];
+    const outcome = stageMatch[2];
+    if (!SAFE_STAGE_OUTCOMES.has(stage + ":" + outcome)) continue;
+    const reasonMatch = line.match(/\breason=([a-z-]+)\b/);
+    const reason = reasonMatch && SAFE_REASONS.has(reasonMatch[1]) ? reasonMatch[1] : undefined;
+    const key = stage + ":" + outcome + ":" + (reason || "");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    events.push(reason ? { stage, outcome, reason } : { stage, outcome });
+    if (events.length >= 100) break;
+  }
+  return { readable: true, events };
+}
+
+function signalCount(text, pattern) {
+  return text === null ? 0 : (text.match(pattern) || []).length;
+}
+
+function projectGateway(text) {
+  return {
+    readable: text !== null,
+    signals: {
+      pairingRequired: signalCount(text, /\bpairing required\b/gi),
+      scopeUpgradePending: signalCount(text, /\bscope upgrade pending approval\b/gi),
+      pairingApprovalDenied: signalCount(text, /\bdevice pairing approval denied\b/gi),
+      gatewayUnavailable: signalCount(text, /\bgateway unavailable\b/gi),
+    },
+  };
 }
 
 try {
-  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  const gatewayToken = config?.gateway?.auth?.token || config?.gateway?.authToken;
-  if (typeof gatewayToken !== "string" || gatewayToken.length === 0) {
-    throw new Error("gateway token unavailable");
-  }
-  const sections = logPaths.map((logPath) => {
-    let content;
-    try {
-      content = readTail(logPath);
-    } catch {
-      content = "unavailable";
-    }
-    return "== " + logPath + " ==\n" + redact(content, gatewayToken);
-  });
-  process.stdout.write(sections.join("\n") + "\n");
+  if (logPaths.length !== 2) throw new Error("invalid diagnostics inputs");
+  const autoPair = readAvailableTail(logPaths[0]);
+  const gateway = readAvailableTail(logPaths[1]);
+  process.stdout.write(JSON.stringify({
+    schemaVersion: 1,
+    autoPair: projectAutoPair(autoPair),
+    gateway: projectGateway(gateway),
+  }) + "\n");
 } catch {
-  process.stdout.write("pairing diagnostics unavailable: redaction prerequisites failed\n");
+  process.stdout.write(JSON.stringify({ schemaVersion: 1, status: "unavailable" }) + "\n");
   process.exitCode = 1;
 }
 `;
 
 export function buildIssue4462DiagnosticsCommand(
-  configPath = OPENCLAW_CONFIG_PATH,
   logPaths: readonly string[] = PAIRING_LOG_PATHS,
 ): string[] {
-  return ["node", "-e", REDACT_PAIRING_DIAGNOSTICS_PROGRAM, configPath, ...logPaths];
+  return ["node", "-e", PROJECT_PAIRING_DIAGNOSTICS_PROGRAM, ...logPaths];
 }
 
 /** Preserve startup pairing evidence without replacing the scenario's primary failure. */

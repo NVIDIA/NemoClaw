@@ -820,6 +820,42 @@ printf '%s\\n' '{"pending":[],"paired":[]}'
     }
   });
 
+  it("rejects a valid JSON response with the wrong top-level shape (#9844)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-shape-"));
+    const fakeOpenclaw = path.join(tmpDir, "openclaw");
+    const approvalMarker = path.join(tmpDir, "approval-called");
+    fs.writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  touch ${JSON.stringify(approvalMarker)}
+fi
+printf '%s\\n' '[]'
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_BIN: fakeOpenclaw,
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
+          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
+          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+        },
+        timeout: 10_000,
+      });
+
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain("[auto-pair] stage=listing failed reason=invalid-response");
+      expect(fs.existsSync(approvalMarker)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("reports a fixed watcher-execution stage without raw exception details (#9844)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-exception-"));
     const writablePolicy = path.join(tmpDir, "openclaw_device_approval_policy.py");
