@@ -58,8 +58,35 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
     expect(
       mcporterHeadersMatchExpected(
         {
+          Authorization: "Bearer openshell:resolve:env:v42_GITHUB_TOKEN",
+          accept: "application/json, text/event-stream",
+        },
+        expected,
+      ),
+    ).toBe(true);
+    expect(
+      mcporterHeadersMatchExpected(
+        {
           ...expected,
           accept: "application/json",
+        },
+        expected,
+      ),
+    ).toBe(false);
+    expect(
+      mcporterHeadersMatchExpected(
+        {
+          Authorization: "Bearer openshell:resolve:env:v42_OTHER_TOKEN",
+          accept: "application/json, text/event-stream",
+        },
+        expected,
+      ),
+    ).toBe(false);
+    expect(
+      mcporterHeadersMatchExpected(
+        {
+          Authorization: `Bearer openshell:resolve:env:v${"1".repeat(21)}_GITHUB_TOKEN`,
+          accept: "application/json, text/event-stream",
         },
         expected,
       ),
@@ -151,7 +178,10 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
         ].join("\n"),
         { mode: 0o755 },
       );
-      const run = (command: string) =>
+      const run = (
+        command: string,
+        credential = "openshell:resolve:env:v42_GITHUB_TOKEN",
+      ) =>
         spawnSync("/bin/sh", ["-c", command], {
           encoding: "utf8",
           env: {
@@ -163,6 +193,7 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
             FAKE_MCPORTER_HOME_CONFIG: homeConfigState,
             FAKE_MCPORTER_LEGACY_CONFIG: legacyConfigState,
             FAKE_MCPORTER_REMOVE_MARKER: removeMarker,
+            GITHUB_TOKEN: credential,
           },
         });
       const runWithoutXdg = (command: string) => {
@@ -175,6 +206,7 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
           FAKE_MCPORTER_HOME_CONFIG: defaultXdgConfigState,
           FAKE_MCPORTER_LEGACY_CONFIG: legacyConfigState,
           FAKE_MCPORTER_REMOVE_MARKER: removeMarker,
+          GITHUB_TOKEN: "openshell:resolve:env:v42_GITHUB_TOKEN",
         };
         delete env.XDG_CONFIG_HOME;
         return spawnSync("/bin/sh", ["-c", command], {
@@ -183,7 +215,7 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
         });
       };
       const normalizedHeaders = {
-        Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN",
+        Authorization: "Bearer openshell:resolve:env:v42_GITHUB_TOKEN",
         accept: "application/json, text/event-stream",
       };
       const expectFileAbsent = (filePath: string) =>
@@ -191,14 +223,23 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
       const expectFilePresent = (filePath: string) =>
         expect(fs.readFileSync(filePath, "utf8")).not.toBe("");
 
-      const register = run(buildOpenClawMcporterRegisterCommand(baseEntry));
+      const registerCommand = buildOpenClawMcporterRegisterCommand(baseEntry);
+      const invalidCredential = run(registerCommand, "raw-secret-must-not-persist");
+      expect(invalidCredential.status).toBe(3);
+      expect(invalidCredential.stderr).toContain(
+        "Fresh OpenShell credential placeholder for 'GITHUB_TOKEN' is unavailable.",
+      );
+      expect(invalidCredential.stderr).not.toContain("raw-secret-must-not-persist");
+      expect(fs.existsSync(configState)).toBe(false);
+
+      const register = run(registerCommand);
       expect(register.status).toBe(0);
       expect(JSON.parse(fs.readFileSync(configState, "utf8"))).toEqual({
         name: "github",
         transport: "http",
         baseUrl: "https://api.githubcopilot.com/mcp/",
         headers: {
-          Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN",
+          Authorization: "Bearer openshell:resolve:env:v42_GITHUB_TOKEN",
         },
       });
 
@@ -369,7 +410,7 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
         "--url",
         "https://api.githubcopilot.com/mcp/",
         "--header",
-        "Authorization=Bearer openshell:resolve:env:GITHUB_TOKEN",
+        "Authorization=Bearer openshell:resolve:env:v42_GITHUB_TOKEN",
         "--scope",
         "project",
       ]);
@@ -436,8 +477,9 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
       env: [],
     });
 
-    expect(command).not.toContain("Authorization=");
-    expect(command).toContain("'--url' 'https://api.githubcopilot.com/mcp/'");
+    expect(command).toContain('\\"envName\\":\\"\\"');
+    expect(command).toContain("if (payload.envName)");
+    expect(command).toContain("https://api.githubcopilot.com/mcp/");
   });
 
   it("targets a custom OpenClaw workspace for every mcporter lifecycle command", () => {

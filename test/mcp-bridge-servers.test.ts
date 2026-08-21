@@ -71,6 +71,26 @@ const fixtureTls = {
   key: fs.readFileSync(path.join(tlsDir, "server.key")),
 };
 
+async function* readSseData(response: IncomingMessage): AsyncGenerator<string> {
+  response.setEncoding("utf8");
+  let buffer = "";
+  for await (const chunk of response) {
+    buffer += String(chunk);
+    let eventBoundary = buffer.indexOf("\n\n");
+    while (eventBoundary !== -1) {
+      const event = buffer.slice(0, eventBoundary);
+      buffer = buffer.slice(eventBoundary + 2);
+      const data = event
+        .split("\n")
+        .filter((line) => line.startsWith("data: "))
+        .map((line) => line.slice("data: ".length))
+        .join("\n");
+      yield data;
+      eventBoundary = buffer.indexOf("\n\n");
+    }
+  }
+}
+
 afterAll(() => {
   fs.rmSync(tlsDir, { recursive: true, force: true });
 });
@@ -402,22 +422,123 @@ describe("authenticated MCP live fixtures", () => {
     expect(eventChannel.complete).toBe(false);
     eventChannel.destroy();
 
-    const legacyEventChannel = await openEventChannel({
-      authorization: `Bearer ${secret}`,
-      accept: "text/event-stream",
-    });
-    expect(legacyEventChannel.statusCode).toBe(200);
-    legacyEventChannel.setEncoding("utf8");
-    const [legacyEndpointChunk] = await once(legacyEventChannel, "data", {
-      signal: AbortSignal.timeout(1_000),
-    });
-    const endpointPath = String(legacyEndpointChunk).match(
-      /data: (\/mcp\?legacySessionId=\S+)/u,
-    )?.[1];
-    expect(endpointPath).toMatch(/^\/mcp\?legacySessionId=legacy-session-\d+$/u);
-    const legacyEndpoint = new URL(endpointPath ?? "", url).href;
-    const legacyInitializeEvent = once(legacyEventChannel, "data", {
-      signal: AbortSignal.timeout(1_000),
+    const openLegacySession = async (): Promise<{
+      channel: IncomingMessage;
+      endpoint: string;
+      reader: AsyncGenerator<string>;
+      sessionId: string;
+    }> => {
+      const channel = await openEventChannel({
+        authorization: `Bearer ${secret}`,
+        accept: "text/event-stream",
+      });
+      expect(channel.statusCode).toBe(200);
+      const reader = readSseData(channel);
+      const endpointEvent = await reader.next();
+      expect(endpointEvent.done).toBe(false);
+      const endpoint = new URL(endpointEvent.value ?? "", url);
+      const opaqueSessionId = endpoint.searchParams.get("legacySessionId") ?? "";
+      expect(endpoint.pathname).toBe("/mcp");
+      expect(opaqueSessionId).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+      return {
+        channel,
+        endpoint: endpoint.href,
+        reader,
+        sessionId: opaqueSessionId,
+      };
+    };
+    const initializeLegacySession = async (
+      legacy: Awaited<ReturnType<typeof openLegacySession>>,
+      id: string | number,
+    ): Promise<void> => {
+      const initializeEvent = legacy.reader.next();
+      expect(
+        (
+          await request(
+            "POST",
+            {
+              jsonrpc: "2.0",
+              id,
+              method: "initialize",
+              params: { protocolVersion: "2025-06-18" },
+            },
+            legacy.endpoint,
+          )
+        ).status,
+      ).toBe(202);
+      expect(JSON.parse((await initializeEvent).value ?? "")).toMatchObject({
+        id,
+        result: { protocolVersion: "2025-06-18" },
+      });
+      expect(
+        (
+          await request(
+            "POST",
+            { jsonrpc: "2.0", method: "notifications/initialized" },
+            legacy.endpoint,
+            { "mcp-protocol-version": "2025-06-18" },
+          )
+        ).status,
+      ).toBe(202);
+    };
+
+    const legacy = await openLegacySession();
+    expect(server.activeLegacySessionCount()).toBe(1);
+    const guessedEndpoint = new URL(legacy.endpoint);
+    guessedEndpoint.searchParams.set("legacySessionId", "A".repeat(43));
+    expect(
+      (
+        await request(
+          "POST",
+          { jsonrpc: "2.0", id: 9, method: "tools/list" },
+          guessedEndpoint.href,
+          { "mcp-protocol-version": "2025-06-18" },
+        )
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await request(
+          "POST",
+          { jsonrpc: "2.0", id: 9, method: "tools/list" },
+          legacy.endpoint,
+        )
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await request(
+          "POST",
+          {
+            jsonrpc: "2.0",
+            id: 9,
+            method: "initialize",
+            params: { protocolVersion: "2025-06-18" },
+          },
+          legacy.endpoint,
+          { "mcp-protocol-version": "2025-06-18" },
+        )
+      ).status,
+    ).toBe(400);
+
+    const legacyInitializeEvent = legacy.reader.next();
+    expect(
+      (
+        await request(
+          "POST",
+          {
+            jsonrpc: "2.0",
+            id: 10,
+            method: "initialize",
+            params: { protocolVersion: "2025-06-18" },
+          },
+          legacy.endpoint,
+        )
+      ).status,
+    ).toBe(202);
+    expect(JSON.parse((await legacyInitializeEvent).value ?? "")).toMatchObject({
+      id: 10,
+      result: { protocolVersion: "2025-06-18" },
     });
     expect(
       (
@@ -429,38 +550,160 @@ describe("authenticated MCP live fixtures", () => {
             method: "initialize",
             params: { protocolVersion: "2025-06-18" },
           },
-          legacyEndpoint,
+          legacy.endpoint,
         )
       ).status,
-    ).toBe(202);
-    const [legacyInitializeChunk] = await legacyInitializeEvent;
-    expect(String(legacyInitializeChunk)).toContain('"protocolVersion":"2025-06-18"');
+    ).toBe(409);
     expect(
       (
         await request(
           "POST",
           { jsonrpc: "2.0", method: "notifications/initialized" },
-          legacyEndpoint,
+          legacy.endpoint,
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await request(
+          "POST",
+          { jsonrpc: "2.0", method: "notifications/initialized" },
+          legacy.endpoint,
+          { "mcp-protocol-version": "2025-03-26" },
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await request(
+          "POST",
+          { jsonrpc: "2.0", method: "notifications/initialized" },
+          legacy.endpoint,
           { "mcp-protocol-version": "2025-06-18" },
         )
       ).status,
     ).toBe(202);
-    const legacyListEvent = once(legacyEventChannel, "data", {
-      signal: AbortSignal.timeout(1_000),
-    });
     expect(
       (
         await request(
           "POST",
           { jsonrpc: "2.0", id: 11, method: "tools/list" },
-          legacyEndpoint,
+          legacy.endpoint,
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await request(
+          "POST",
+          { jsonrpc: "2.0", id: 11, method: "tools/list" },
+          legacy.endpoint,
+          { "mcp-protocol-version": "2025-03-26" },
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await request(
+          "POST",
+          { jsonrpc: "2.0", id: 11, method: "tools/list" },
+          legacy.endpoint,
+          {
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "fake-session-cross-route",
+          },
+        )
+      ).status,
+    ).toBe(400);
+    const legacyListEvent = legacy.reader.next();
+    expect(
+      (
+        await request(
+          "POST",
+          { jsonrpc: "2.0", id: 11, method: "tools/list" },
+          legacy.endpoint,
           { "mcp-protocol-version": "2025-06-18" },
         )
       ).status,
     ).toBe(202);
-    const [legacyListChunk] = await legacyListEvent;
-    expect(String(legacyListChunk)).toContain('"name":"fake_echo"');
-    legacyEventChannel.destroy();
+    expect(JSON.parse((await legacyListEvent).value ?? "")).toMatchObject({
+      id: 11,
+      result: { tools: [{ name: "fake_echo" }] },
+    });
+
+    const secondLegacy = await openLegacySession();
+    expect(secondLegacy.sessionId).not.toBe(legacy.sessionId);
+    await initializeLegacySession(secondLegacy, "second-init");
+    expect(server.activeLegacySessionCount()).toBe(2);
+
+    const firstStreamEvent = legacy.reader.next();
+    const secondStreamEvent = secondLegacy.reader.next();
+    expect(
+      await Promise.all([
+        request(
+          "POST",
+          { jsonrpc: "2.0", id: "first-stream", method: "tools/list" },
+          legacy.endpoint,
+          { "mcp-protocol-version": "2025-06-18" },
+        ),
+        request(
+          "POST",
+          { jsonrpc: "2.0", id: "second-stream", method: "tools/list" },
+          secondLegacy.endpoint,
+          { "mcp-protocol-version": "2025-06-18" },
+        ),
+      ]).then((responses) => responses.map((response) => response.status)),
+    ).toEqual([202, 202]);
+    expect(JSON.parse((await firstStreamEvent).value ?? "")).toMatchObject({ id: "first-stream" });
+    expect(JSON.parse((await secondStreamEvent).value ?? "")).toMatchObject({
+      id: "second-stream",
+    });
+
+    const requestOffset = server.requests.length;
+    const orderedEvents = [legacy.reader.next(), legacy.reader.next()];
+    const concurrentResponses = await Promise.all([
+      request(
+        "POST",
+        { jsonrpc: "2.0", id: 30, method: "tools/list" },
+        legacy.endpoint,
+        { "mcp-protocol-version": "2025-06-18" },
+      ),
+      request(
+        "POST",
+        { jsonrpc: "2.0", id: 31, method: "tools/list" },
+        legacy.endpoint,
+        { "mcp-protocol-version": "2025-06-18" },
+      ),
+    ]);
+    expect(concurrentResponses.map((response) => response.status)).toEqual([202, 202]);
+    const wireIds = await Promise.all(
+      orderedEvents.map(async (event) => (JSON.parse((await event).value ?? "") as { id: number }).id),
+    );
+    const recordedResponses = server.requests
+      .slice(requestOffset)
+      .filter((record) => record.legacySessionId === legacy.sessionId)
+      .sort(
+        (left, right) =>
+          (left.legacyResponseSequence ?? Number.MAX_SAFE_INTEGER) -
+          (right.legacyResponseSequence ?? Number.MAX_SAFE_INTEGER),
+      );
+    expect(recordedResponses.map((record) => record.rpcId)).toEqual(wireIds);
+    expect(recordedResponses.map((record) => record.legacyResponseSequence)).toEqual([4, 5]);
+
+    legacy.channel.destroy();
+    await expect.poll(() => server.activeLegacySessionCount()).toBe(1);
+    expect(
+      (
+        await request(
+          "POST",
+          { jsonrpc: "2.0", id: 40, method: "tools/list" },
+          legacy.endpoint,
+          { "mcp-protocol-version": "2025-06-18" },
+        )
+      ).status,
+    ).toBe(404);
+    secondLegacy.channel.destroy();
+    await expect.poll(() => server.activeLegacySessionCount()).toBe(0);
 
     const list = await request("POST", {
       jsonrpc: "2.0",

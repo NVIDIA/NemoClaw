@@ -59,7 +59,26 @@ export function mcporterHeadersMatchExpected(
   }
   const actualHeaders = actual as Record<string, unknown>;
   for (const [name, value] of Object.entries(expected)) {
-    if (actualHeaders[name] !== value) return false;
+    if (actualHeaders[name] === value) continue;
+    const canonicalPrefix = "Bearer openshell:resolve:env:";
+    const envName = value.startsWith(canonicalPrefix) ? value.slice(canonicalPrefix.length) : "";
+    const actualValue = actualHeaders[name];
+    if (
+      name.toLowerCase() !== "authorization" ||
+      !/^[A-Z][A-Z0-9_]{0,127}$/u.test(envName) ||
+      typeof actualValue !== "string"
+    ) {
+      return false;
+    }
+    const escapedEnvName = envName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    if (
+      !new RegExp(
+        `^${canonicalPrefix.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}v[0-9]{1,20}_${escapedEnvName}$`,
+        "u",
+      ).test(actualValue)
+    ) {
+      return false;
+    }
   }
   const extraNames = Object.keys(actualHeaders).filter((name) => !Object.hasOwn(expected, name));
   if (extraNames.length === 0) return true;

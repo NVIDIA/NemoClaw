@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
@@ -40,11 +41,17 @@ export interface FakeMcpRequest {
   responseHasResult?: boolean;
   negotiatedSessionId?: string;
   negotiatedProtocolVersion?: string;
+  legacySessionId?: string;
+  negotiatedLegacySessionId?: string;
+  legacyPhase?: LegacyMcpSessionPhase;
+  legacyResponseSequence?: number;
+  rpcId?: string | number | null;
 }
 
 export interface FakeMcpHttpsServer extends StartedHttpServer {
   setSecret(secret: string): void;
   requests: FakeMcpRequest[];
+  activeLegacySessionCount(): number;
 }
 
 export interface StartedPublicMcpTunnel {
@@ -61,6 +68,23 @@ interface McpRequestPayload {
   params?: { name?: unknown; arguments?: { challenge?: unknown }; cursor?: unknown };
 }
 
+export type LegacyMcpSessionPhase = "opened" | "awaiting-initialized" | "ready" | "closed";
+
+interface LegacyMcpSession {
+  id: string;
+  response: http.ServerResponse;
+  phase: LegacyMcpSessionPhase;
+  protocolVersion?: string;
+  pendingRequestIds: Set<string>;
+  queuedBytes: number;
+  responseSequence: number;
+  writeChain: Promise<void>;
+}
+
+type LegacyQueueResult =
+  | { ok: true; sequence: number }
+  | { ok: false; status: number; message: string };
+
 const MCP_NOTIFICATION_METHODS = new Set([
   "notifications/initialized",
   "notifications/cancelled",
@@ -68,6 +92,9 @@ const MCP_NOTIFICATION_METHODS = new Set([
   "notifications/roots/list_changed",
   "notifications/elicitation/complete",
 ]);
+
+const LEGACY_MCP_SESSION_BYTES = 32;
+const LEGACY_MCP_MAX_QUEUED_BYTES = 64 * 1024;
 
 const TRYCLOUDFLARE_ORIGIN_PATTERN = /https:\/\/[a-z0-9-]+\.trycloudflare\.com(?=$|[\s"'\\/])/i;
 const QUICK_TUNNEL_ATTEMPTS = 3;
@@ -133,6 +160,89 @@ function requireTcpPort(server: TestServer, label: string): number {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function jsonRpcId(value: unknown): string | number | null | undefined {
+  if (value === null || typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  return undefined;
+}
+
+function jsonRpcIdKey(value: string | number | null): string {
+  return `${value === null ? "null" : typeof value}:${String(value)}`;
+}
+
+function waitForLegacyMcpDrain(response: http.ServerResponse): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const cleanup = (): void => {
+      response.off("drain", onDrain);
+      response.off("close", onClose);
+      response.off("error", onError);
+    };
+    const onDrain = (): void => {
+      cleanup();
+      resolve();
+    };
+    const onClose = (): void => {
+      cleanup();
+      reject(new Error("legacy MCP event stream closed during backpressure"));
+    };
+    const onError = (error: Error): void => {
+      cleanup();
+      reject(error);
+    };
+    response.once("drain", onDrain);
+    response.once("close", onClose);
+    response.once("error", onError);
+  });
+}
+
+function queueLegacyMcpResponse(
+  session: LegacyMcpSession,
+  requestId: string | number | null,
+  payload: unknown,
+): LegacyQueueResult {
+  if (
+    session.phase === "closed" ||
+    session.response.destroyed ||
+    session.response.writableEnded
+  ) {
+    return { ok: false, status: 410, message: "legacy MCP event stream is closed" };
+  }
+  const requestIdKey = jsonRpcIdKey(requestId);
+  if (session.pendingRequestIds.has(requestIdKey)) {
+    return { ok: false, status: 409, message: "legacy MCP request ID is already pending" };
+  }
+  const event = `data: ${JSON.stringify(payload)}\n\n`;
+  const eventBytes = Buffer.byteLength(event);
+  if (session.queuedBytes + eventBytes > LEGACY_MCP_MAX_QUEUED_BYTES) {
+    return { ok: false, status: 429, message: "legacy MCP response queue is full" };
+  }
+
+  session.pendingRequestIds.add(requestIdKey);
+  session.queuedBytes += eventBytes;
+  session.responseSequence += 1;
+  const sequence = session.responseSequence;
+  session.writeChain = session.writeChain
+    .then(async () => {
+      if (
+        session.phase === "closed" ||
+        session.response.destroyed ||
+        session.response.writableEnded
+      ) {
+        throw new Error("legacy MCP event stream closed before response delivery");
+      }
+      if (!session.response.write(event)) await waitForLegacyMcpDrain(session.response);
+    })
+    .catch(() => {
+      session.phase = "closed";
+      session.response.destroy();
+    })
+    .finally(() => {
+      session.pendingRequestIds.delete(requestIdKey);
+      session.queuedBytes -= eventBytes;
+    });
+  return { ok: true, sequence };
 }
 
 function buildCloudflaredSubprocessEnv(): Record<string, string> {
@@ -656,7 +766,7 @@ export async function startFakeMcpHttpsServer(options: {
   let expectedSecret = options.secret;
   let nextSessionId = 1;
   const sessions = new Map<string, string>();
-  const legacyEventStreams = new Map<string, http.ServerResponse>();
+  const legacySessions = new Map<string, LegacyMcpSession>();
   const serverEventStreams = new Set<http.ServerResponse>();
   const tls =
     options.tls ??
@@ -675,6 +785,7 @@ export async function startFakeMcpHttpsServer(options: {
     const requestUrl = new URL(req.url ?? "/", "https://fake-mcp.local");
     const requestPath = requestUrl.pathname;
     const legacySessionId = requestUrl.searchParams.get("legacySessionId") ?? "";
+    const legacySession = legacySessionId ? legacySessions.get(legacySessionId) : undefined;
     const body = await readRequestBody(req);
     const auth = Array.isArray(req.headers.authorization)
       ? req.headers.authorization.join(",")
@@ -696,6 +807,7 @@ export async function startFakeMcpHttpsServer(options: {
     // assertions continue to measure only attempted MCP traffic.
     let recordedRequest: FakeMcpRequest | undefined;
     if (req.method !== "HEAD") {
+      const requestId = jsonRpcId(parsedPayload?.id);
       recordedRequest = {
         method: req.method ?? "",
         path: requestPath,
@@ -703,6 +815,9 @@ export async function startFakeMcpHttpsServer(options: {
         body,
         sessionId,
         protocolVersion,
+        ...(legacySessionId ? { legacySessionId } : {}),
+        ...(legacySession ? { legacyPhase: legacySession.phase } : {}),
+        ...(requestId !== undefined ? { rpcId: requestId } : {}),
         ...(typeof parsedPayload?.method === "string" ? { rpcMethod: parsedPayload.method } : {}),
       };
       requests.push(recordedRequest);
@@ -723,18 +838,24 @@ export async function startFakeMcpHttpsServer(options: {
       res.writeHead(status, headers);
       res.end();
     };
-    const respondRpc = (payload: unknown): void => {
+    const respondRpc = (requestId: string | number | null, payload: unknown): void => {
       if (!legacySessionId) {
         respondJson(200, payload);
         return;
       }
-      const eventStream = legacyEventStreams.get(legacySessionId);
-      if (!eventStream) {
+      const activeLegacySession = legacySessions.get(legacySessionId);
+      if (!activeLegacySession) {
         respondJson(404, { error: { message: "legacy MCP event stream is unavailable" } });
+        return;
+      }
+      const queued = queueLegacyMcpResponse(activeLegacySession, requestId, payload);
+      if (!queued.ok) {
+        respondJson(queued.status, { error: { message: queued.message } });
         return;
       }
       if (recordedRequest) {
         recordedRequest.responseStatus = 202;
+        recordedRequest.legacyResponseSequence = queued.sequence;
         recordedRequest.responseHasResult =
           typeof payload === "object" &&
           payload !== null &&
@@ -743,7 +864,6 @@ export async function startFakeMcpHttpsServer(options: {
       }
       res.writeHead(202);
       res.end();
-      eventStream.write(`data: ${JSON.stringify(payload)}\n\n`);
     };
     if (requestPath !== "/mcp") {
       respondJson(404, { error: { message: "not found" } });
@@ -759,19 +879,35 @@ export async function startFakeMcpHttpsServer(options: {
         return;
       }
       if (sessionId === "" && protocolVersion === "") {
-        const eventSessionId = `legacy-session-${nextSessionId}`;
-        nextSessionId += 1;
-        if (recordedRequest) recordedRequest.responseStatus = 200;
+        let eventSessionId: string;
+        do {
+          eventSessionId = randomBytes(LEGACY_MCP_SESSION_BYTES).toString("base64url");
+        } while (legacySessions.has(eventSessionId));
+        const eventSession: LegacyMcpSession = {
+          id: eventSessionId,
+          response: res,
+          phase: "opened",
+          pendingRequestIds: new Set(),
+          queuedBytes: 0,
+          responseSequence: 0,
+          writeChain: Promise.resolve(),
+        };
+        legacySessions.set(eventSessionId, eventSession);
+        if (recordedRequest) {
+          recordedRequest.responseStatus = 200;
+          recordedRequest.negotiatedLegacySessionId = eventSessionId;
+          recordedRequest.legacyPhase = eventSession.phase;
+        }
         res.writeHead(200, {
           "content-type": "text/event-stream",
           "cache-control": "no-cache",
           connection: "keep-alive",
         });
         res.write(`event: endpoint\ndata: /mcp?legacySessionId=${eventSessionId}\n\n`);
-        legacyEventStreams.set(eventSessionId, res);
         serverEventStreams.add(res);
         res.once("close", () => {
-          legacyEventStreams.delete(eventSessionId);
+          eventSession.phase = "closed";
+          legacySessions.delete(eventSessionId);
           serverEventStreams.delete(res);
         });
         return;
@@ -801,6 +937,10 @@ export async function startFakeMcpHttpsServer(options: {
       return;
     }
     if (req.method === "DELETE") {
+      if (legacySessionId) {
+        respondJson(405, { error: { message: "legacy MCP sessions close with the event stream" } });
+        return;
+      }
       const negotiatedProtocolVersion = sessions.get(sessionId);
       if (!negotiatedProtocolVersion || protocolVersion !== negotiatedProtocolVersion) {
         respondJson(400, { error: { message: "missing negotiated MCP session metadata" } });
@@ -815,10 +955,59 @@ export async function startFakeMcpHttpsServer(options: {
       respondJson(400, { error: { message: "invalid json" } });
       return;
     }
-    if (legacySessionId && !legacyEventStreams.has(legacySessionId)) {
+    if (legacySessionId && !legacySession) {
       respondJson(404, { error: { message: "legacy MCP event stream is unavailable" } });
       return;
     }
+    if (
+      legacySession &&
+      (legacySession.phase === "closed" || !legacySessions.has(legacySessionId))
+    ) {
+      respondJson(410, { error: { message: "legacy MCP event stream is closed" } });
+      return;
+    }
+    const requestId = jsonRpcId(parsedPayload.id);
+    const isNotification =
+      typeof parsedPayload.method === "string" && MCP_NOTIFICATION_METHODS.has(parsedPayload.method);
+    if (legacySession) {
+      if (sessionId !== "") {
+        respondJson(400, { error: { message: "legacy MCP requests must not mix session headers" } });
+        return;
+      }
+      if (parsedPayload.method === "initialize") {
+        if (legacySession.phase !== "opened") {
+          respondJson(409, { error: { message: "legacy MCP session is already initialized" } });
+          return;
+        }
+        if (protocolVersion !== "") {
+          respondJson(400, { error: { message: "legacy MCP initialize sent premature metadata" } });
+          return;
+        }
+      } else {
+        if (legacySession.phase === "opened") {
+          respondJson(409, { error: { message: "legacy MCP session is not initialized" } });
+          return;
+        }
+        if (!legacySession.protocolVersion || protocolVersion !== legacySession.protocolVersion) {
+          respondJson(400, { error: { message: "missing negotiated legacy MCP metadata" } });
+          return;
+        }
+        if (parsedPayload.method === "notifications/initialized") {
+          if (legacySession.phase !== "awaiting-initialized") {
+            respondJson(409, { error: { message: "legacy MCP initialization phase is invalid" } });
+            return;
+          }
+        } else if (legacySession.phase !== "ready") {
+          respondJson(409, { error: { message: "legacy MCP session is not ready" } });
+          return;
+        }
+      }
+      if (!isNotification && requestId === undefined) {
+        respondJson(400, { error: { message: "legacy MCP request ID is required" } });
+        return;
+      }
+    }
+    const responseId = requestId === undefined ? 1 : requestId;
     // This shared fixture also serves intentional stateless policy probes.
     // Validate any supplied session metadata as an all-or-nothing pair; the
     // focused discovery assertion separately requires the negotiated pair on
@@ -834,10 +1023,11 @@ export async function startFakeMcpHttpsServer(options: {
         return;
       }
     }
-    if (
-      typeof parsedPayload.method === "string" &&
-      MCP_NOTIFICATION_METHODS.has(parsedPayload.method)
-    ) {
+    if (isNotification) {
+      if (legacySession && parsedPayload.method === "notifications/initialized") {
+        legacySession.phase = "ready";
+        if (recordedRequest) recordedRequest.legacyPhase = legacySession.phase;
+      }
       respondEmpty(202);
       return;
     }
@@ -847,7 +1037,14 @@ export async function startFakeMcpHttpsServer(options: {
         params?: { protocolVersion?: string };
       };
       const negotiatedProtocolVersion = request.params?.protocolVersion ?? "2025-03-26";
-      if (!legacySessionId) {
+      if (legacySession) {
+        legacySession.protocolVersion = negotiatedProtocolVersion;
+        legacySession.phase = "awaiting-initialized";
+        if (recordedRequest) {
+          recordedRequest.negotiatedProtocolVersion = negotiatedProtocolVersion;
+          recordedRequest.legacyPhase = legacySession.phase;
+        }
+      } else {
         const negotiatedSessionId = `fake-session-${nextSessionId}`;
         nextSessionId += 1;
         sessions.set(negotiatedSessionId, negotiatedProtocolVersion);
@@ -892,9 +1089,9 @@ export async function startFakeMcpHttpsServer(options: {
           ],
         };
       } else {
-        respondRpc({
+        respondRpc(responseId, {
           jsonrpc: "2.0",
-          id: parsedPayload.id ?? 1,
+          id: responseId,
           error: { code: -32602, message: "invalid tools/list cursor" },
         });
         return;
@@ -905,9 +1102,9 @@ export async function startFakeMcpHttpsServer(options: {
         parsedPayload.params?.name !== "fake_echo" ||
         (options.challenge !== undefined && challenge !== options.challenge)
       ) {
-        respondRpc({
+        respondRpc(responseId, {
           jsonrpc: "2.0",
-          id: parsedPayload.id ?? 1,
+          id: responseId,
           error: { code: -32602, message: "invalid fake_echo challenge" },
         });
         return;
@@ -927,16 +1124,16 @@ export async function startFakeMcpHttpsServer(options: {
     ) {
       result = MCP_EMPTY_RESULT_BY_METHOD[parsedPayload.method];
     } else {
-      respondRpc({
+      respondRpc(responseId, {
         jsonrpc: "2.0",
-        id: parsedPayload.id ?? 1,
+        id: responseId,
         error: { code: -32601, message: "method not found" },
       });
       return;
     }
-    respondRpc({
+    respondRpc(responseId, {
       jsonrpc: "2.0",
-      id: parsedPayload.id ?? 1,
+      id: responseId,
       result,
     });
   });
@@ -945,12 +1142,15 @@ export async function startFakeMcpHttpsServer(options: {
   return {
     port: requireTcpPort(server, "fake MCP endpoint"),
     requests,
+    activeLegacySessionCount: () => legacySessions.size,
     setSecret: (secret: string) => {
       expectedSecret = secret;
     },
     close: async () => {
       for (const response of serverEventStreams) response.destroy();
       await closeServer(server);
+      for (const session of legacySessions.values()) session.phase = "closed";
+      legacySessions.clear();
     },
   };
 }
