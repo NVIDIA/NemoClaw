@@ -554,7 +554,7 @@ describe("post-merge documentation publisher", () => {
     const api = new FakeGitHub(value);
     api.installPartiallyPublishedLegacy();
     const previous = api.commits.get(api.existingSha)!;
-    previous.author = { email: "maintainer@example.com" };
+    previous.verification = { verified: false };
     await expect(publish(value, api)).rejects.toThrow("not created by the workflow");
     expect(writeCount(api)).toBe(0);
   });
