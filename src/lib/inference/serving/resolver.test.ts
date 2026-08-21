@@ -36,6 +36,7 @@ import type {
 
 const NOW = new Date("2026-08-02T18:00:00.000Z");
 const SOURCE_REVISION = "a".repeat(40);
+const N1X_VLLM_PRESET_ID = "vllm.n1x.single.qwen3-6-35b-a3b-nvfp4";
 const LINUX_VLLM_PROFILES = [
   {
     presetId: "vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4",
@@ -256,6 +257,69 @@ function storageRemediableReadinessReport(
     ],
     status: "incompatible",
     exitCode: 2,
+  };
+}
+
+function deferredN1xReadinessReport(
+  extraFindings: SystemReadinessReport["findings"] = [],
+  n1xState: "present" | "absent" = "present",
+): SystemReadinessReport {
+  const catalog = shippedCatalog();
+  const preset = catalog.presets.find(({ metadata }) => metadata.id === N1X_VLLM_PRESET_ID);
+  expect(preset).toBeDefined();
+  const report = readinessReport({}, preset!);
+  return {
+    ...report,
+    capabilities: [
+      ...report.capabilities.map((capability) =>
+        capability.id === "host.platform.n1x"
+          ? { ...capability, state: n1xState }
+          : capability,
+      ),
+      { id: "host.platform.supported", state: "absent" as const },
+    ],
+    findings: [
+      {
+        id: "host.platform.n1x_validation_pending",
+        severity: "blocking",
+        summary: "N1x platform validation is pending a physical NemoClaw Express E2E run.",
+        capabilityIds: ["host.platform.n1x", "host.platform.supported"],
+      },
+      ...extraFindings,
+    ],
+    status: "incompatible",
+    exitCode: 2,
+  };
+}
+
+function deferredN1xWithRemediableStorageReport(
+  extraFindings: SystemReadinessReport["findings"] = [],
+): SystemReadinessReport {
+  const report = deferredN1xReadinessReport([
+    {
+      id: "host.docker.storage_incompatible",
+      severity: "blocking",
+      summary: "The Docker storage configuration requires lifecycle remediation.",
+      capabilityIds: ["host.docker.storage_compatible"],
+    },
+    ...extraFindings,
+  ]);
+  return {
+    ...report,
+    capabilities: [
+      ...report.capabilities.map((capability) =>
+        capability.id === "host.docker.storage_compatible"
+          ? { ...capability, state: "absent" as const }
+          : capability.id === "host.docker.storage_remediation_available"
+            ? { ...capability, state: "present" as const }
+            : capability,
+      ),
+      ...(report.capabilities.some(
+        ({ id }) => id === "host.docker.storage_remediation_available",
+      )
+        ? []
+        : [{ id: "host.docker.storage_remediation_available", state: "present" as const }]),
+    ],
   };
 }
 
@@ -1121,6 +1185,82 @@ describe("managed inference resolver", () => {
     );
 
     expect(result).toMatchObject({ outcome: "selected", selection: "explicit" });
+  });
+
+  it("selects the N1x managed-vLLM preset with explicit Deferred preview intent (#9902)", () => {
+    expect(
+      resolveManagedInferenceServing({
+        readinessReports: [{ nodeId: "n1x-host", report: deferredN1xReadinessReport() }],
+        topologyQualifications: [],
+        intent: { provider: "vllm" },
+        now: NOW,
+      }),
+    ).toMatchObject({
+      outcome: "selected",
+      preset: { metadata: { id: N1X_VLLM_PRESET_ID } },
+    });
+  });
+
+  it("selects the N1x managed-vLLM preset when Docker storage is remediable (#9902)", () => {
+    expect(
+      resolveManagedInferenceServing({
+        readinessReports: [
+          { nodeId: "n1x-host", report: deferredN1xWithRemediableStorageReport() },
+        ],
+        topologyQualifications: [],
+        intent: { provider: "vllm" },
+        now: NOW,
+      }),
+    ).toMatchObject({
+      outcome: "selected",
+      preset: { metadata: { id: N1X_VLLM_PRESET_ID } },
+    });
+  });
+
+  it.each([
+    {
+      condition: "managed-vLLM intent is absent",
+      intent: undefined,
+      report: deferredN1xReadinessReport(),
+    },
+    {
+      condition: "N1x identity is absent",
+      intent: { provider: "vllm" },
+      report: deferredN1xReadinessReport([], "absent"),
+    },
+    {
+      condition: "another blocking finding remains",
+      intent: { provider: "vllm" },
+      report: deferredN1xReadinessReport([
+        {
+          id: "host.gpu.container_toolkit_missing",
+          severity: "blocking",
+          summary: "NVIDIA Container Toolkit is missing.",
+          capabilityIds: ["host.gpu.container_toolkit_available"],
+        },
+      ]),
+    },
+    {
+      condition: "another blocking finding remains with remediable storage",
+      intent: { provider: "vllm" },
+      report: deferredN1xWithRemediableStorageReport([
+        {
+          id: "host.gpu.container_toolkit_missing",
+          severity: "blocking",
+          summary: "NVIDIA Container Toolkit is missing.",
+          capabilityIds: ["host.gpu.container_toolkit_available"],
+        },
+      ]),
+    },
+  ])("rejects Deferred N1x readiness when $condition (#9902)", ({ intent, report }) => {
+    expect(
+      resolveManagedInferenceServing({
+        readinessReports: [{ nodeId: "n1x-host", report }],
+        topologyQualifications: [],
+        intent,
+        now: NOW,
+      }),
+    ).toMatchObject({ outcome: "rejected", code: "invalid-readiness" });
   });
 
   it("rejects remediation when another blocking finding remains (#8246)", () => {
