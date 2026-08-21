@@ -28,7 +28,7 @@ describe("destroy confirmation", () => {
     await expect(confirmSandboxDestroy("test-sb", { yes: true })).resolves.toBe(true);
 
     const output = log.mock.calls.flat().join("\n");
-    expect(output).toContain("Active SSH session detected (1 connection)");
+    expect(output).toContain("Active SSH session detected (1 connection, PID 4242)");
     expect(output).toContain("terminate the active session with a Broken pipe error");
     expect(prompt).not.toHaveBeenCalled();
   });
@@ -40,7 +40,7 @@ describe("destroy confirmation", () => {
     await expect(confirmSandboxDestroy("test-sb", { force: true })).resolves.toBe(true);
 
     const output = log.mock.calls.flat().join("\n");
-    expect(output).toContain("Active SSH sessions detected (2 connections)");
+    expect(output).toContain("Active SSH sessions detected (2 connections, PIDs 4242, 4243)");
     expect(output).toContain("terminate all active sessions with a Broken pipe error");
   });
 
@@ -65,7 +65,7 @@ describe("destroy confirmation", () => {
     await expect(confirmSandboxDestroy("test-sb", {})).resolves.toBe(false);
 
     const output = log.mock.calls.flat().join("\n");
-    expect(output).toContain("Active SSH session detected (1 connection)");
+    expect(output).toContain("Active SSH session detected (1 connection, PID 4242)");
     expect(output.indexOf("Active SSH session detected")).toBeLessThan(
       output.indexOf("This cannot be undone."),
     );
