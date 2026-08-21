@@ -107,6 +107,8 @@ describe("installer build-dependency preflight (#4415)", { timeout: 30_000 }, ()
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-no-sha-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
+    const executionMarker = path.join(tmp, "nvm-installer-executed");
+    const downloadPathRecord = path.join(tmp, "nvm-download-path");
     writeExecutable(
       path.join(fakeBin, "curl"),
       `#!/usr/bin/env bash
@@ -114,7 +116,8 @@ out=""
 while [ "$#" -gt 0 ]; do
   [ "$1" = "-o" ] && { out="$2"; shift 2; } || shift
 done
-printf '#!/usr/bin/env bash\\necho "not the pinned nvm installer"\\n' > "$out"`,
+printf '%s\\n' "$out" > ${JSON.stringify(downloadPathRecord)}
+printf '#!/usr/bin/env bash\\n: > %s\\necho "not the pinned nvm installer"\\n' ${JSON.stringify(executionMarker)} > "$out"`,
     );
 
     const result = spawnSync("bash", ["-c", `source "${INSTALLER}" 2>/dev/null; install_nodejs`], {
@@ -128,8 +131,12 @@ printf '#!/usr/bin/env bash\\necho "not the pinned nvm installer"\\n' > "$out"`,
     });
 
     const output = `${result.stdout}${result.stderr}`;
+    const downloadedFile = fs.readFileSync(downloadPathRecord, "utf-8").trim();
     expect(result.status).not.toBe(0);
     expect(output).toContain("No SHA-256 tool available (sha256sum/shasum)");
     expect(output).not.toMatch(/nvm installer integrity verified/);
+    expect(downloadedFile).not.toBe("");
+    expect(fs.existsSync(executionMarker)).toBe(false);
+    expect(fs.existsSync(downloadedFile)).toBe(false);
   });
 });
