@@ -433,14 +433,29 @@ describe("credential provider registration", () => {
 
   it("registers one static Hermes Discord provider from the checkpoint binding", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
-    const missing = { status: 1, stdout: "", stderr: "not found" };
+    const missing = {
+      status: 1,
+      stdout: "",
+      stderr: "provider 'alpha-discord-bridge' not found",
+    };
     const success = { status: 0, stdout: "", stderr: "" };
-    const runOpenshell = vi.fn((args: string[]) =>
-      (args[0] === "provider" && args.includes("profile") && args.includes("export")) ||
-      (args[0] === "provider" && args[1] === "get")
-        ? missing
-        : success,
-    );
+    let providerCreated = false;
+    const runOpenshell = vi.fn((args: string[]) => {
+      if (args[0] === "provider" && args.includes("profile") && args.includes("export")) {
+        return missing;
+      }
+      if (args[0] === "provider" && args[1] === "get") {
+        return providerCreated
+          ? providerMetadata(
+              "alpha-discord-bridge",
+              "discord-hermes-static-v1",
+              "DISCORD_BOT_TOKEN",
+            )
+          : missing;
+      }
+      if (args[0] === "provider" && args[1] === "create") providerCreated = true;
+      return success;
+    });
     const registration = createCredentialProviderRegistration(
       registrationDeps(runOpenshell, session),
     );

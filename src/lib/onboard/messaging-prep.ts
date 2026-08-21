@@ -4,6 +4,7 @@
 import type { WebSearchConfig } from "../inference/web-search";
 import * as webSearch from "../inference/web-search";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
+import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { type ChannelDef, getChannelTokenKeys } from "../sandbox/channels";
 import * as braveProviderProfile from "./brave-provider-profile";
 import {
@@ -82,19 +83,17 @@ export function prepareCreateSandboxMessaging(
   const messagingProviderProfiles = messagingBridgeProfilesForAgent(input.agentName);
 
   const messagingTokenDefs: MessagingTokenDef[] = listMessagingCredentialMetadata()
-    .map((credential) => {
-      const providerType = staticMessagingProviderTypeForChannel(
-        credential.channelId,
-        input.agentName,
-        messagingProviderProfiles,
-      );
-      return {
-        name: credential.providerNameTemplate.replaceAll("{sandboxName}", input.sandboxName),
-        envKey: credential.providerEnvKey,
-        token: input.getValidatedMessagingTokenByEnvKey(input.channels, credential.providerEnvKey),
-        ...(providerType ? { providerType } : {}),
-      };
-    })
+    .map((credential) => ({
+      name: credential.providerNameTemplate.replaceAll("{sandboxName}", input.sandboxName),
+      envKey: credential.providerEnvKey,
+      token: input.getValidatedMessagingTokenByEnvKey(input.channels, credential.providerEnvKey),
+      providerType:
+        staticMessagingProviderTypeForChannel(
+          credential.channelId,
+          input.agentName,
+          messagingProviderProfiles,
+        ) ?? MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+    }))
     .filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey))
     .filter(({ envKey }) => !disabledEnvKeys.has(envKey));
 
@@ -183,10 +182,11 @@ export function prepareCreateSandboxMessaging(
       if (token) continue;
       const channel = input.getMessagingChannelForEnvKey(envKey);
       if (!channel || !input.enabledChannels.includes(channel)) continue;
-      const providerReusable = providerType
-        ? input.providerMatchesGatewayCredential(name, providerType, envKey)
-        : requiresExactOpenClawProviderBinding
-          ? input.providerMatchesGatewayCredential(name, "generic", envKey)
+      const providerReusable =
+        providerType &&
+        (providerType !== MESSAGING_CREDENTIAL_PROVIDER_TYPE ||
+          requiresExactOpenClawProviderBinding)
+          ? input.providerMatchesGatewayCredential(name, providerType, envKey)
           : input.providerExistsInGateway(name);
       if (!providerReusable) continue;
       reusableMessagingProviders.push(name);
