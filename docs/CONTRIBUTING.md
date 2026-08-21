@@ -185,6 +185,8 @@ Update `docs/index.yml` when navigation, slugs, or page placement changes.
 If content differs by behavior, setup flow, state layout, or agent-specific wording, keep using `<AgentOnly>` blocks for that content.
 Treat `<AgentOnly>` as a build-time directive rather than a React component, and do not import it from `AgentGuide.tsx`.
 Put each opening and closing tag at the first column on its own line, and do not nest the blocks.
+Keep a section heading inside the `<AgentOnly>` block that holds its body, or the heading renders in every variant with nothing beneath it.
+The sync command fails when a generated variant leaves a heading without content.
 The generated pages must contain only statically resolved content, with no `AgentGuide` imports or runtime agent components.
 
 Before review, render every guide variant that uses a changed shared page.
