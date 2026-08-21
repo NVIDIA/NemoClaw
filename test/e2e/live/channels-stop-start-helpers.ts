@@ -10,6 +10,7 @@ import {
   type OpenClawChannelConfigState,
   openClawChannelIsActive,
   openClawChannelIsInert,
+  openClawChannelStateProbeScript,
 } from "./channels-stop-start-config-state.ts";
 import { startChannelsStopStartProgress } from "./channels-stop-start-progress.ts";
 import { assertChannelsStopStartSandboxName } from "./channels-stop-start-safety.ts";
@@ -309,41 +310,13 @@ function expectChannelInputs(env: NodeJS.ProcessEnv): void {
   }
 }
 
-function openClawChannelKey(channel: string): string {
-  if (channel === "wechat") return "openclaw-weixin";
-  if (channel === "teams") return "msteams";
-  return channel;
-}
-
 async function readOpenClawChannelState(
   sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
   channel: string,
   context: string,
   redactions: string[],
 ): Promise<OpenClawChannelConfigState> {
-  const script = `
-import json
-key = ${JSON.stringify(openClawChannelKey(channel))}
-cfg = json.load(open('/sandbox/.openclaw/openclaw.json'))
-channels = cfg.get('channels', {})
-plugins = cfg.get('plugins', {}).get('entries', {})
-channel_present = key in channels
-plugin_present = key in plugins
-channel = channels.get(key)
-plugin = plugins.get(key)
-channel_obj = channel if isinstance(channel, dict) else None
-plugin_obj = plugin if isinstance(plugin, dict) else None
-print(json.dumps({
-  'channelPresent': channel_present,
-  'channelEnabled': channel_obj is not None and channel_obj.get('enabled') is True,
-  'channelDisabled': channel_obj is not None and channel_obj.get('enabled') is False,
-  'channelHasSettings': channel_present and (channel_obj is None or any(field != 'enabled' for field in channel_obj)),
-  'pluginPresent': plugin_present,
-  'pluginEnabled': plugin_obj is not None and plugin_obj.get('enabled') is True,
-  'pluginDisabled': plugin_obj is not None and plugin_obj.get('enabled') is False,
-  'pluginHasSettings': plugin_present and (plugin_obj is None or any(field != 'enabled' for field in plugin_obj)),
-}, separators=(',', ':')))
-`.trim();
+  const script = openClawChannelStateProbeScript(channel);
   const result = await sandboxSh(sandbox, SANDBOX_NAME, `python3 -c ${shellQuote(script)}`, {
     artifactName: `config-channel-${AGENT}-${channel}-${context}`,
     redactionValues: redactions,
