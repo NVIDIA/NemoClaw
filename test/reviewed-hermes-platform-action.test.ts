@@ -19,6 +19,7 @@ const ACTION_PATH = path.join(
 );
 const REVIEWED_INDEX = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"9".repeat(64)}`;
 const NATIVE_DIGEST = `sha256:${"2".repeat(64)}`;
+const ARM64_NATIVE_DIGEST = `sha256:${"4".repeat(64)}`;
 
 type CompositeAction = {
   inputs?: Record<string, { required?: boolean }>;
@@ -71,6 +72,7 @@ printf '%s\n' "$ref" >> ${JSON.stringify(dockerLog)}
 case "$ref" in
   '${REVIEWED_INDEX}') printf '%s\n' ${JSON.stringify(indexJson)} ;;
   'ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${NATIVE_DIGEST}') printf '%s\n' '{"kind":"native"}' ;;
+  'ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${ARM64_NATIVE_DIGEST}') printf '%s\n' '{"kind":"native"}' ;;
   *) exit 97 ;;
 esac
 `,
@@ -131,6 +133,33 @@ describe("reviewed Hermes platform resolver action", () => {
     ]);
   });
 
+  it("selects and verifies the Arm64 descriptor from a multi-platform index", () => {
+    const { dockerCalls, output, result } = runAction({
+      checksumDigest: ARM64_NATIVE_DIGEST,
+      indexJson: JSON.stringify({
+        manifests: [
+          {
+            digest: NATIVE_DIGEST,
+            platform: { architecture: "amd64", os: "linux" },
+          },
+          {
+            digest: ARM64_NATIVE_DIGEST,
+            platform: { architecture: "arm64", os: "linux" },
+          },
+        ],
+        mediaType: "application/vnd.oci.image.index.v1+json",
+      }),
+      platform: "linux/arm64",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(output).toBe(`digest=${ARM64_NATIVE_DIGEST}\n`);
+    expect(dockerCalls).toEqual([
+      REVIEWED_INDEX,
+      `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${ARM64_NATIVE_DIGEST}`,
+    ]);
+  });
+
   it.each([
     ["missing index", "FROM scratch\n"],
     ["mutable index", "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest\n"],
@@ -175,6 +204,32 @@ describe("reviewed Hermes platform resolver action", () => {
   ])("fails closed when the reviewed index contains %s", (_case, indexJson) => {
     const { result } = runAction({ indexJson });
     expect(result.status).not.toBe(0);
+  });
+
+  it("rejects duplicate Arm64 descriptors from a multi-platform index", () => {
+    const { dockerCalls, result } = runAction({
+      indexJson: JSON.stringify({
+        manifests: [
+          {
+            digest: NATIVE_DIGEST,
+            platform: { architecture: "amd64", os: "linux" },
+          },
+          {
+            digest: ARM64_NATIVE_DIGEST,
+            platform: { architecture: "arm64", os: "linux" },
+          },
+          {
+            digest: `sha256:${"6".repeat(64)}`,
+            platform: { architecture: "arm64", os: "linux" },
+          },
+        ],
+        mediaType: "application/vnd.oci.image.index.v1+json",
+      }),
+      platform: "linux/arm64",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(dockerCalls).toEqual([REVIEWED_INDEX]);
   });
 
   it("rejects native manifest bytes that do not match the selected digest", () => {
