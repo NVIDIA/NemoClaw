@@ -1,0 +1,193 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: setup-native-podman-e2e
+description: Install the reviewed Podman toolchain artifact and start its rootless API service for E2E.
+
+inputs:
+  enabled:
+    description: Prepare Podman when the E2E dispatch selected the native Podman gateway runtime.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - id: artifact
+      name: Resolve native Podman toolchain artifact
+      if: ${{ inputs.enabled == 'true' }}
+      shell: bash
+      env:
+        RUNNER_ARCH_KIND: ${{ runner.arch }}
+      run: |
+        set -euo pipefail
+        case "$RUNNER_ARCH_KIND" in
+          X64) architecture=amd64 ;;
+          ARM64) architecture=arm64 ;;
+          *)
+            echo "::error::Native Podman E2E requires a Linux amd64 or arm64 runner" >&2
+            exit 1
+            ;;
+        esac
+        printf 'architecture=%s\n' "$architecture" >>"$GITHUB_OUTPUT"
+        printf 'name=native-podman-e2e-toolchain-%s\n' "$architecture" >>"$GITHUB_OUTPUT"
+
+    - name: Download native Podman toolchain
+      if: ${{ inputs.enabled == 'true' }}
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        name: ${{ steps.artifact.outputs.name }}
+        path: ${{ runner.temp }}/native-podman-e2e-toolchain
+
+    - name: Start native Podman runtime
+      if: ${{ inputs.enabled == 'true' }}
+      shell: bash
+      env:
+        EXPECTED_ARCHITECTURE: ${{ steps.artifact.outputs.architecture }}
+        TOOLCHAIN_DIRECTORY: ${{ runner.temp }}/native-podman-e2e-toolchain
+      run: |
+        set -euo pipefail
+        [[ "$RUNNER_OS" == "Linux" ]]
+        [[ -d "$TOOLCHAIN_DIRECTORY" && ! -L "$TOOLCHAIN_DIRECTORY" ]]
+        [[ -z "$(find -P "$TOOLCHAIN_DIRECTORY" -type l -print -quit)" ]]
+        mapfile -t actual_files < <(
+          cd "$TOOLCHAIN_DIRECTORY"
+          find . -type f -print | LC_ALL=C sort
+        )
+        expected_files=(
+          ./SHA256SUMS
+          ./bin/pasta
+          ./bin/podman
+          ./libexec/podman/aardvark-dns
+          ./libexec/podman/netavark
+          ./libexec/podman/rootlessport
+          ./manifest.json
+          ./share/containers/containers.conf
+        )
+        [[ "${actual_files[*]}" == "${expected_files[*]}" ]]
+        (
+          cd "$TOOLCHAIN_DIRECTORY"
+          sha256sum --check --strict SHA256SUMS
+        )
+        jq -e --arg architecture "$EXPECTED_ARCHITECTURE" '
+          .schemaVersion == 1 and
+          .kind == "nemoclaw-native-podman-toolchain-v1" and
+          .architecture == $architecture and
+          .podmanVersion == "6.1.0" and
+          .podmanSourceSha == "cade97a52ebdf9dbf9e81de8009015776837a074" and
+          .netavarkVersion == "2.1.0" and
+          .netavarkSourceSha == "8e91ad1d947ed325327b638f0cb906bea1f7d0ab" and
+          .aardvarkDnsVersion == "2.1.0" and
+          .aardvarkDnsSourceSha == "cd7417681229219059939bdd9f0b3bd9ac9abb08" and
+          .pastaVersion == "2026_07_28.f8df3f1" and
+          .pastaSourceArchiveSha256 == "54fc6a3b39b0fcb13182078662886a629032852e186e47a371fd9d7fd20d3958" and
+          .pastaSourceSha == "f8df3f1b228fe19a74a269334fdfe6cc7d0605ce" and
+          .goVersion == "1.25.9" and
+          .rustVersion == "1.88.0"
+        ' "$TOOLCHAIN_DIRECTORY/manifest.json" >/dev/null
+
+        sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
+        sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install \
+          --yes --no-install-recommends \
+          apparmor btrfs-progs conmon fuse-overlayfs \
+          golang-github-containers-common iptables nftables runc slirp4netns uidmap
+
+        sudo install --owner=root --group=root --mode=0755 \
+          "$TOOLCHAIN_DIRECTORY/bin/podman" /usr/local/bin/podman
+        sudo install --owner=root --group=root --mode=0755 \
+          "$TOOLCHAIN_DIRECTORY/bin/pasta" /usr/local/bin/pasta
+        for helper in aardvark-dns netavark rootlessport; do
+          sudo install -D --owner=root --group=root --mode=0755 \
+            "$TOOLCHAIN_DIRECTORY/libexec/podman/$helper" \
+            "/usr/local/libexec/podman/$helper"
+        done
+        sudo install --owner=root --group=root --mode=0644 \
+          "$TOOLCHAIN_DIRECTORY/share/containers/containers.conf" \
+          /usr/share/containers/containers.conf
+        [[ "$(podman --version)" == "podman version 6.1.0" ]]
+
+        execution_user="$(id -un)"
+        ensure_subordinate_range() {
+          local file="$1"
+          local option="$2"
+          local range_start=100000
+          local range_end
+          local conflict_end
+          if awk -F: -v account="$execution_user" '
+            $1 == account && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $3 >= 65536 { found = 1 }
+            END { exit found ? 0 : 1 }
+          ' "$file"; then
+            return
+          fi
+          while :; do
+            ((range_start <= 4294901760))
+            range_end=$((range_start + 65535))
+            conflict_end="$(awk -F: -v start="$range_start" -v end="$range_end" '
+              $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ {
+                current_end = $2 + $3 - 1
+                if ($2 <= end && current_end >= start && current_end > maximum) maximum = current_end
+              }
+              END { if (maximum != "") print maximum }
+            ' "$file")"
+            [[ -n "$conflict_end" ]] || break
+            range_start=$((conflict_end + 1))
+          done
+          range_end=$((range_start + 65535))
+          sudo usermod "$option" "${range_start}-${range_end}" "$execution_user"
+        }
+        ensure_subordinate_range /etc/subuid --add-subuids
+        ensure_subordinate_range /etc/subgid --add-subgids
+
+        if [[ -r /sys/module/apparmor/parameters/enabled ]] && grep -q '^Y' /sys/module/apparmor/parameters/enabled; then
+          profile="$RUNNER_TEMP/nemoclaw-native-podman-e2e.apparmor"
+          pasta_profile="$RUNNER_TEMP/nemoclaw-native-pasta-e2e.apparmor"
+          printf '%s\n' \
+            'abi <abi/4.0>,' \
+            'include <tunables/global>' \
+            '' \
+            'profile nemoclaw-native-podman-e2e /usr/local/bin/podman flags=(unconfined) {' \
+            '  userns,' \
+            '}' >"$profile"
+          sudo apparmor_parser -r "$profile"
+          printf '%s\n' \
+            'abi <abi/4.0>,' \
+            'include <tunables/global>' \
+            '' \
+            'profile nemoclaw-native-pasta-e2e /usr/local/bin/pasta flags=(unconfined) {' \
+            '  userns,' \
+            '}' >"$pasta_profile"
+          sudo apparmor_parser -r "$pasta_profile"
+        fi
+
+        uid="$(id -u)"
+        gid="$(id -g)"
+        runtime_directory="/run/user/$uid"
+        socket_path="$runtime_directory/podman/podman.sock"
+        if [[ ! -d "$runtime_directory" ]]; then
+          sudo install -d --owner="$uid" --group="$gid" --mode=0700 "$runtime_directory"
+        fi
+        install -d -m 0700 "$runtime_directory/podman"
+        service_log="$RUNNER_TEMP/native-podman-e2e-service.log"
+        podman system service --time=0 "unix://$socket_path" >"$service_log" 2>&1 &
+        service_pid="$!"
+        for attempt in $(seq 1 30); do
+          if podman --url "unix://$socket_path" info --format json \
+            >"$RUNNER_TEMP/native-podman-e2e-info.json" 2>>"$service_log"; then
+            break
+          fi
+          [[ "$attempt" -lt 30 ]]
+          sleep 1
+        done
+        [[ -S "$socket_path" ]]
+        jq -e '
+          (.host.security.rootless // .Host.Security.Rootless) == true and
+          ((.host.cgroupVersion // .Host.CgroupVersion) | ascii_downcase) == "v2"
+        ' "$RUNNER_TEMP/native-podman-e2e-info.json" >/dev/null
+
+        sudo ip address replace 169.254.2.2/32 dev lo
+        {
+          printf 'DOCKER_HOST=unix://%s\n' "$socket_path"
+          printf 'NEMOCLAW_NATIVE_PODMAN_SERVICE_PID=%s\n' "$service_pid"
+          printf 'OPENSHELL_PODMAN_SOCKET=%s\n' "$socket_path"
+          printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_directory"
+        } >>"$GITHUB_ENV"
