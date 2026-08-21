@@ -116,17 +116,22 @@ function publishAttachedProvidersBeforeDockerSandboxCreation(
   extraProviders: readonly string[],
   gatewayName: string,
   deps: Pick<SandboxCreateOrchestrationRuntime, "providerExistsInGateway" | "runOpenshell"> & {
-    readonly cleanupInitialCreateSource: () => void;
+    readonly cleanupCreateSources: () => void;
   },
 ): void {
   if (openshellDriver === "docker") {
-    const attachedProviders = new Set(
-      [inferenceProvider, ...messagingProviders, ...extraProviders].filter(
-        (provider): provider is string => Boolean(provider),
+    const providersRequiringExistenceProbe = new Set(
+      [inferenceProvider, ...messagingProviders].filter((provider): provider is string =>
+        Boolean(provider),
       ),
     );
+    const attachedProviders = new Set([...providersRequiringExistenceProbe, ...extraProviders]);
     for (const attachedProvider of attachedProviders) {
-      if (!deps.providerExistsInGateway(attachedProvider)) continue;
+      if (
+        providersRequiringExistenceProbe.has(attachedProvider) &&
+        !deps.providerExistsInGateway(attachedProvider)
+      )
+        continue;
       const refreshed = deps.runOpenshell(
         ["provider", "update", "-g", gatewayName, attachedProvider],
         {
@@ -135,7 +140,7 @@ function publishAttachedProvidersBeforeDockerSandboxCreation(
         },
       );
       if (refreshed.status !== 0) {
-        deps.cleanupInitialCreateSource();
+        deps.cleanupCreateSources();
         throw new Error(
           `OpenShell did not publish attached provider '${attachedProvider}' before Docker sandbox creation.`,
         );
@@ -1220,7 +1225,14 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         messagingProviders,
         resolvedCreateIntent.extraProviders,
         GATEWAY_NAME,
-        { providerExistsInGateway, runOpenshell, cleanupInitialCreateSource },
+        {
+          providerExistsInGateway,
+          runOpenshell,
+          cleanupCreateSources: () => {
+            cleanupInitialCreateSource();
+            cleanupBuildContext();
+          },
+        },
       );
       const created = await runCreateFlow(createArgv);
       cleanupInitialCreateSource();

@@ -25,6 +25,8 @@ type CommandEntry = {
   policyReadError?: string;
   dockerfileContent?: string;
   dockerfileReadError?: string;
+  providerRevisions?: Record<string, number | undefined> | null;
+  rawCredentialInEnv?: boolean;
 };
 
 function parseStdoutJson<T = Record<string, any>>(stdout: string): T {
@@ -500,7 +502,7 @@ const { createSandbox } = require(${onboardPath});
   );
 
   it(
-    "publishes attached provider placeholders before a messaging recreate starts (#9770)",
+    "publishes attached OpenShell provider state before a messaging recreate starts (#9770)",
     { timeout: 60_000 },
     async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-recreate-"));
@@ -524,27 +526,21 @@ const { createSandbox } = require(${onboardPath});
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin, { readySandboxGet: true });
       const script = String.raw`
-const runner = require(${runnerPath}), registry = require(${registryPath});
+const runner = require(${runnerPath}), registry = require(${registryPath}), preflight = require(${preflightPath}), credentials = require(${credentialsPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-const preflight = require(${preflightPath}), credentials = require(${credentialsPath});
 const childProcess = require("node:child_process"), { EventEmitter } = require("node:events");
-const commands = [], credentialKeys = ${JSON.stringify(providerCredentialKeys)};
-let registered = null;
+const commands = [], credentialKeys = ${JSON.stringify(providerCredentialKeys)}; let registered = null;
 const providers = Object.keys(credentialKeys), revisions = new Map(providers.map((name) => [name, 1]));
 const rawGatewayCredential = ${JSON.stringify(rawGatewayCredential)}, gatewaySecrets = new Map(providers.map((name) => [name, rawGatewayCredential]));
-registry.registerSandbox({
-  name: "my-assistant",
-  messaging: { schemaVersion: 1, plan: ${messagingPlanLiteral(["slack", "telegram", "whatsapp"])} },
-});
-registry.addExtraProvider("my-assistant-extra-telegram-bot-token-agent-a");
-registry.addExtraProvider("my-assistant-extra-telegram-bot-token-agent-b");
+registry.registerSandbox({ name: "my-assistant", messaging: { schemaVersion: 1, plan: ${messagingPlanLiteral(["slack", "telegram", "whatsapp"])} } });
+registry.addExtraProvider("my-assistant-extra-telegram-bot-token-agent-a"); registry.addExtraProvider("my-assistant-extra-telegram-bot-token-agent-b");
 runner.run = (command) => {
   const normalized = _n(command);
   commands.push({ command: normalized });
   const providerGet = normalized.match(/provider get -g nemoclaw ([^ ]+)$/)?.[1];
   if (providerGet && revisions.has(providerGet)) return { status: 0, stdout: "Name: " + providerGet + "\nType: " + (providerGet === "compatible-endpoint" ? "openai" : "generic") + "\nCredential keys: " + credentialKeys[providerGet] + "\nConfig keys: " + (providerGet === "compatible-endpoint" ? "OPENAI_BASE_URL" : "<none>") + "\n" };
   const refresh = normalized.match(/provider update -g nemoclaw ([^ ]+)$/)?.[1];
-  if (refresh && gatewaySecrets.has(refresh)) { revisions.set(refresh, revisions.get(refresh) + 1); return { status: 0 }; }
+  if (refresh && gatewaySecrets.has(refresh)) { if (refresh === process.env.NEMOCLAW_TEST_FAIL_PROVIDER) return { status: 1 }; revisions.set(refresh, revisions.get(refresh) + 1); return { status: 0 }; }
   if (normalized.includes("provider get")) return { status: 1 };
   return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
@@ -556,109 +552,110 @@ runner.runCapture = (command) => {
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
 };
-registry.registerSandbox = (entry) => { registered = entry; return true; };
-registry.updateSandbox = () => true; registry.setDefault = () => true; registry.removeSandbox = () => true;
+registry.registerSandbox = (entry) => { registered = entry; return true; }; registry.updateSandbox = () => true; registry.setDefault = () => true; registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true }); credentials.prompt = async () => "";
 childProcess.spawn = (...args) => {
-  const child = new EventEmitter();
-  child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
-  child.unref = () => {}; child.pid = 4242;
-  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-  const attachedProviders = [...command.matchAll(/--provider ([^ ]+)/g)].map((match) => match[1]);
-  commands.push({
-    command,
-    providerRevisions: command.includes("sandbox create")
-      ? Object.fromEntries(attachedProviders.map((name) => [name, revisions.get(name)]))
-      : null,
-    rawCredentialInEnv: Object.values(args[2]?.env || {}).includes(rawGatewayCredential),
-  });
+  const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.unref = () => {}; child.pid = 4242;
+  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]); const attachedProviders = [...command.matchAll(/--provider ([^ ]+)/g)].map((match) => match[1]);
+  commands.push({ command, providerRevisions: command.includes("sandbox create") ? Object.fromEntries(attachedProviders.map((name) => [name, revisions.get(name)])) : null, rawCredentialInEnv: Object.values(args[2]?.env || {}).includes(rawGatewayCredential) });
   process.nextTick(() => { child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n")); child.emit("close", 0); });
   return child;
 };
 const { createSandbox } = require(${onboardPath});
 (async () => {
-  process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  process.env.NEMOCLAW_EXTRA_PLACEHOLDER_KEYS = "TELEGRAM_BOT_TOKEN_AGENT_A,TELEGRAM_BOT_TOKEN_AGENT_B,GITHUB_TOKEN";
+  process.env.OPENSHELL_GATEWAY = "nemoclaw"; process.env.NEMOCLAW_EXTRA_PLACEHOLDER_KEYS = "TELEGRAM_BOT_TOKEN_AGENT_A,TELEGRAM_BOT_TOKEN_AGENT_B,GITHUB_TOKEN";
   process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(${messagingPlanLiteral(["slack", "telegram", "whatsapp"])})).toString("base64");
   Object.values(credentialKeys).forEach((key) => delete process.env[key]); delete process.env.GITHUB_TOKEN;
   const sandboxName = await createSandbox(null, "custom/model", "compatible-endpoint", null, "my-assistant", null, ["slack", "telegram", "whatsapp"]);
   console.log(JSON.stringify({ sandboxName, commands, registered }));
-})().catch((error) => { console.error(error); process.exit(1); });
+})().catch((error) => { const temporaryCreateSources = require("node:fs").readdirSync(process.env.TMPDIR).filter((entry) => entry.startsWith("nemoclaw-initial-policy-") || entry.startsWith("nemoclaw-build-")); console.log(JSON.stringify({ commands, registered, error: String(error), providerRevisions: Object.fromEntries(revisions), temporaryCreateSources })); console.error(error); process.exit(1); });
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-          NEMOCLAW_NON_INTERACTIVE: "1",
-          ...Object.fromEntries(
-            [...Object.values(providerCredentialKeys), "GITHUB_TOKEN"].map((key) => [key, ""]),
-          ),
-        },
-      });
+      const runScenario = (failedProvider?: string) =>
+        spawnSync(process.execPath, [scriptPath], {
+          cwd: repoRoot,
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            HOME: tmpDir,
+            PATH: `${fakeBin}:${process.env.PATH || ""}`,
+            TMPDIR: tmpDir,
+            NEMOCLAW_NON_INTERACTIVE: "1",
+            NEMOCLAW_TEST_FAIL_PROVIDER: failedProvider || "",
+            ...Object.fromEntries(
+              [...Object.values(providerCredentialKeys), "GITHUB_TOKEN"].map((key) => [key, ""]),
+            ),
+          },
+        });
+      const result = runScenario();
       assert.equal(result.status, 0, result.stderr);
       const payload = parseStdoutJson(result.stdout);
-      const createIndex = payload.commands.findIndex((entry: CommandEntry) =>
-        entry.command.includes("sandbox create"),
-      );
+      const commands = payload.commands as CommandEntry[];
+      const createIndex = commands.findIndex(({ command }) => command.includes("sandbox create"));
       assert.notEqual(createIndex, -1, "expected sandbox create command");
-      const createCommand = payload.commands[createIndex];
-      const providerRefreshes = payload.commands
-        .map((entry: CommandEntry, index: number) => ({ entry, index }))
-        .filter(({ entry }: { entry: CommandEntry }) =>
-          /\bprovider update -g nemoclaw ([^ ]+)$/.test(entry.command),
-        );
+      const createCommand = commands[createIndex];
+      const providerRefreshes = commands
+        .map((entry, index) => ({ entry, index }))
+        .filter(({ entry }) => /\bprovider update -g nemoclaw ([^ ]+)$/.test(entry.command));
+      const providerName = (command: string) =>
+        command.match(/\bprovider update -g nemoclaw ([^ ]+)$/)?.[1];
+      const refreshedProviders = providerRefreshes
+        .map(({ entry }: { entry: CommandEntry }) => providerName(entry.command))
+        .sort();
+      const denied = runScenario("my-assistant-extra-telegram-bot-token-agent-b");
+      assert.equal(denied.status, 1);
+      const deniedPayload = parseStdoutJson(denied.stdout);
+      const deniedCommands = (deniedPayload.commands as CommandEntry[]).map(
+        ({ command }) => command,
+      );
+      const deniedRefreshes = deniedCommands.map(providerName).filter(Boolean);
+      const publishedBeforeCreate = providerRefreshes.every(
+        ({ entry, index }) => index < createIndex && !entry.command.includes("--credential"),
+      );
+      const extraPlaceholderKeys = createCommand.command
+        .match(/NEMOCLAW_EXTRA_PLACEHOLDER_KEYS=([^ ]+)/)?.[1]
+        ?.split(",")
+        .sort();
+      const registeredChannels = payload.registered?.messaging?.plan?.channels.map(
+        (channel: { channelId: string }) => channel.channelId,
+      );
+      assert.deepEqual(refreshedProviders, expectedProviders);
+      assert.equal(
+        commands.some(({ command }) => command.includes("provider create")),
+        false,
+      );
+      assert.equal(publishedBeforeCreate, true);
       assert.deepEqual(
-        providerRefreshes
-          .map(({ entry }: { entry: CommandEntry }) =>
-            entry.command.match(/\bprovider update -g nemoclaw ([^ ]+)$/)?.[1],
-          )
-          .sort(),
-        expectedProviders,
-        "recreate must refresh every attached provider without credential flags",
-      );
-      assert.ok(
-        !payload.commands.some((entry: CommandEntry) => /\bprovider create\b/.test(entry.command)),
-      );
-      assert.ok(
-        providerRefreshes.every(({ entry, index }: { entry: CommandEntry; index: number }) => {
-          return index < createIndex && !entry.command.includes("--credential");
-        }),
-        "attached providers must be published before replacement startup",
-      );
-      assert.deepEqual(
-        [...createCommand.command.matchAll(/--provider ([^ ]+)/g)]
-          .map((match) => match[1])
-          .sort(),
+        [...createCommand.command.matchAll(/--provider ([^ ]+)/g)].map((match) => match[1]).sort(),
         expectedProviders,
       );
       assert.deepEqual(
         createCommand.providerRevisions,
         Object.fromEntries(expectedProviders.map((provider) => [provider, 2])),
       );
-      assert.deepEqual(
-        createCommand.command
-          .match(/NEMOCLAW_EXTRA_PLACEHOLDER_KEYS=([^ ]+)/)?.[1]
-          ?.split(",")
-          .sort(),
-        ["TELEGRAM_BOT_TOKEN_AGENT_A", "TELEGRAM_BOT_TOKEN_AGENT_B"],
-      );
-      assert.ok(!createCommand.command.includes("GITHUB_TOKEN"));
+      assert.deepEqual(extraPlaceholderKeys, [
+        "TELEGRAM_BOT_TOKEN_AGENT_A",
+        "TELEGRAM_BOT_TOKEN_AGENT_B",
+      ]);
+      assert.equal(createCommand.command.includes("GITHUB_TOKEN"), false);
       assert.equal(createCommand.rawCredentialInEnv, false);
-      assert.deepEqual(
-        payload.registered?.messaging?.plan?.channels.map(
-          (channel: { channelId: string }) => channel.channelId,
-        ),
-        ["slack", "telegram", "whatsapp"],
-      );
+      assert.deepEqual(registeredChannels, ["slack", "telegram", "whatsapp"]);
+      assert.deepEqual(deniedRefreshes.sort(), expectedProviders);
       assert.equal(
-        `${JSON.stringify(payload)}\n${result.stdout}\n${result.stderr}`.includes(
-          rawGatewayCredential,
-        ),
+        Object.values(deniedPayload.providerRevisions).filter((revision) => revision === 2).length,
+        expectedProviders.length - 1,
+      );
+      assert.ok(deniedCommands.every((command) => !command.includes("sandbox create")));
+      assert.equal(deniedPayload.registered, null);
+      assert.deepEqual(deniedPayload.temporaryCreateSources, []);
+      assert.match(
+        deniedPayload.error,
+        /did not publish attached provider 'my-assistant-extra-telegram-bot-token-agent-b' before Docker sandbox creation/,
+      );
+      const combinedOutput = result.stdout + result.stderr + denied.stdout + denied.stderr;
+      assert.equal(
+        (JSON.stringify([payload, deniedPayload]) + combinedOutput).includes(rawGatewayCredential),
         false,
       );
     },
