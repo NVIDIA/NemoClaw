@@ -41,7 +41,7 @@ type FixtureOptions = {
   provenanceTimestamps?: unknown[];
   repository?: string;
   sbomDigest?: string;
-  sbomStatementType?: string;
+  sbomStatementTypes?: { amd64?: string; arm64?: string };
   scanHigh?: "amd64" | "arm64";
   signatureDigest?: string;
   signatureReference?: string;
@@ -96,8 +96,8 @@ function runEvidence(options: FixtureOptions = {}) {
   });
   const amd64Sbom = spdx("amd64");
   const arm64Sbom = options.identicalSbomDocuments ? amd64Sbom : spdx("arm64");
-  const sbomStatement = (predicate: ReturnType<typeof spdx>) => ({
-    _type: options.sbomStatementType ?? "https://in-toto.io/Statement/v0.1",
+  const sbomStatement = (predicate: ReturnType<typeof spdx>, statementType?: string) => ({
+    _type: statementType ?? "https://in-toto.io/Statement/v0.1",
     predicateType: "https://spdx.dev/Document",
     subject: [
       {
@@ -111,11 +111,18 @@ function runEvidence(options: FixtureOptions = {}) {
   });
   const sbomVerification = [
     {
-      payload: Buffer.from(JSON.stringify(sbomStatement(amd64Sbom))).toString("base64"),
+      payload: Buffer.from(
+        JSON.stringify(sbomStatement(amd64Sbom, options.sbomStatementTypes?.amd64)),
+      ).toString("base64"),
     },
     {
       payload: Buffer.from(
-        JSON.stringify(sbomStatement(options.duplicateSbom ? amd64Sbom : arm64Sbom)),
+        JSON.stringify(
+          sbomStatement(
+            options.duplicateSbom ? amd64Sbom : arm64Sbom,
+            options.sbomStatementTypes?.arm64,
+          ),
+        ),
       ).toString("base64"),
     },
   ];
@@ -364,7 +371,10 @@ describe("llama.cpp image publication evidence verifier", () => {
     ["duplicate SBOM predicate", { duplicateSbom: true }],
     ["identical platform SBOM documents", { identicalSbomDocuments: true }],
     ["SBOM subject mismatch", { sbomDigest: "0".repeat(64) }],
-    ["SBOM statement type mismatch", { sbomStatementType: "https://in-toto.io/Statement/v1" }],
+    [
+      "one SBOM statement type mismatch",
+      { sbomStatementTypes: { arm64: "https://in-toto.io/Statement/v1" } },
+    ],
     ["provenance subject mismatch", { provenanceDigest: "0".repeat(64) }],
     ["missing provenance transparency evidence", { provenanceTimestamps: [] }],
     ["signature subject mismatch", { signatureDigest: `sha256:${"0".repeat(64)}` }],
