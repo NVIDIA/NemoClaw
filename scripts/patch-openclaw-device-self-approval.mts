@@ -20,6 +20,8 @@
  * approval in OpenClaw instead: for the exact bounded CLI mismatch, continue
  * only into OpenClaw's pairing gate. For the resulting same-device scope
  * transition, use OpenClaw's stored device credential with operator.pairing.
+ * NemoClaw's settlement list uses the same pairing-only stored credential so
+ * it can observe that transition without a shared gateway credential.
  * A restored clone whose paired server state exists before its client-auth
  * store converges instead opts into one narrower path: its pairing state and
  * signed identity are loaded only from inherited clone-file descriptors, the
@@ -51,6 +53,7 @@ const CLI_APPROVE_MARKER =
 const CLI_SCOPE_MARKER = "nemoclaw: reach gateway for bounded same-device scope approval";
 const CLI_RETRY_MARKER = "nemoclaw: keep bounded device auth fail closed";
 const CLI_LIST_MARKER = "nemoclaw: preflight bounded stored device auth before live pairing list";
+const CLI_SETTLEMENT_LIST_MARKER = "nemoclaw: use stored device auth for pairing settlement list";
 const CLI_PAIRED_TOKEN_MARKER = "nemoclaw: preflight bounded paired token before live pairing list";
 const CALL_FORCE_IDENTITY_MARKER = "nemoclaw: force device identity for loopback pairing bootstrap";
 const CALL_STORED_IDENTITY_MARKER =
@@ -67,6 +70,7 @@ const CLI_APPLIED_MARKERS = [
   CLI_SCOPE_MARKER,
   CLI_RETRY_MARKER,
   CLI_LIST_MARKER,
+  CLI_SETTLEMENT_LIST_MARKER,
   CLI_PAIRED_TOKEN_MARKER,
 ] as const;
 const AUTH_SCOPE_UPGRADE_MARKER =
@@ -468,8 +472,17 @@ const CLI_CALL_GATEWAY_REPLACEMENT = [
 ].join("\n");
 
 const CLI_LIST_SIGNATURE_TARGET = "async function listPairingWithFallback(opts) {";
-const CLI_LIST_SIGNATURE_REPLACEMENT =
+const CLI_LIST_SIGNATURE_LEGACY_REPLACEMENT =
   "async function listPairingWithFallback(opts, callOpts) { // nemoclaw: preflight bounded stored device auth before live pairing list (#4462)";
+const CLI_LIST_SIGNATURE_REPLACEMENT = [
+  CLI_LIST_SIGNATURE_LEGACY_REPLACEMENT,
+  '\tconst nemoclawSettlementListCallOpts = process.env.NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT === "1" ? {',
+  "\t\tscopes: [PAIRING_SCOPE],",
+  "\t\tuseStoredDeviceAuth: true,",
+  "\t\trequiredStoredDeviceAuthScopes: [PAIRING_SCOPE]",
+  `\t} : void 0; // ${CLI_SETTLEMENT_LIST_MARKER} (#9844)`,
+  "\tcallOpts ??= nemoclawSettlementListCallOpts;",
+].join("\n");
 const CLI_LIST_CALL_TARGET =
   '\t\treturn parseDevicePairingList(await callGatewayCli("device.pair.list", opts, {}));';
 const CLI_LIST_CALL_REPLACEMENT =
@@ -1244,22 +1257,44 @@ const FILE_SPECS: FileSpec[] = [
         countOccurrences(source, marker),
       );
       if (appliedMarkerCounts.some((count) => count > 0)) {
-        if (appliedMarkerCounts.every((count) => count === 1)) {
+        const settlementMarkerIndex = CLI_APPLIED_MARKERS.indexOf(CLI_SETTLEMENT_LIST_MARKER);
+        const settlementMarkerCount = appliedMarkerCounts[settlementMarkerIndex];
+        const priorMarkerCounts = appliedMarkerCounts.filter(
+          (_count, index) => index !== settlementMarkerIndex,
+        );
+        if (priorMarkerCounts.every((count) => count === 1) && settlementMarkerCount! <= 1) {
+          let upgradedSource = source;
+          let changed = false;
           const legacyModeLine =
             '\tconst nemoclawPairedTokenRequested = process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1";';
-          if (source.includes(legacyModeLine)) {
+          if (upgradedSource.includes(legacyModeLine)) {
             const result = replaceExactlyOnce(
-              source,
+              upgradedSource,
               legacyModeLine,
               '\tconst nemoclawPairedTokenRequested = process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING === "1";',
               "restored-clone paired-token mode target",
               file,
             );
-            return result.error
-              ? { source, status: "no-match", error: result.error }
-              : { source: result.source, status: "would-apply" };
+            if (result.error) return { source, status: "no-match", error: result.error };
+            upgradedSource = result.source;
+            changed = true;
           }
-          return { source, status: "already-applied" };
+          if (settlementMarkerCount === 0) {
+            const result = replaceExactlyOnce(
+              upgradedSource,
+              CLI_LIST_SIGNATURE_LEGACY_REPLACEMENT,
+              CLI_LIST_SIGNATURE_REPLACEMENT,
+              "devices CLI pairing-settlement list target",
+              file,
+            );
+            if (result.error) return { source, status: "no-match", error: result.error };
+            upgradedSource = result.source;
+            changed = true;
+          }
+          return {
+            source: upgradedSource,
+            status: changed ? "would-apply" : "already-applied",
+          };
         }
         return {
           source,

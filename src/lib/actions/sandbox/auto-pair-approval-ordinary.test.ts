@@ -18,7 +18,7 @@ const python3Available =
 
 describe("ordinary auto-pair approval pass behaviour (#4616)", () => {
   it.runIf(python3Available)(
-    "drops shared gateway overrides so OpenClaw can select its stored CLI credential (#9844)",
+    "marks pairing-only list auth and drops shared overrides from both children (#9844)",
     () => {
       const policy = readAutoPairApprovalPolicyModule();
       expect(policy).toBeTruthy();
@@ -88,6 +88,7 @@ if (args[0] === "devices" && args[1] === "list") {
       process.env.OPENCLAW_GATEWAY_PORT || "unset",
       process.env.OPENCLAW_GATEWAY_TOKEN || "unset",
       process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING || "unset",
+      process.env.NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT || "unset",
       process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING || "unset",
       process.env.OPENCLAW_STATE_DIR || "unset",
       process.env.OPENCLAW_CONFIG_PATH || "unset",
@@ -105,6 +106,7 @@ if (args[0] === "devices" && args[1] === "approve") {
       process.env.OPENCLAW_GATEWAY_PORT || "unset",
       process.env.OPENCLAW_GATEWAY_TOKEN || "unset",
       process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING || "unset",
+      process.env.NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT || "unset",
       process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING || "unset",
       process.env.OPENCLAW_STATE_DIR || "unset",
       process.env.OPENCLAW_CONFIG_PATH || "unset",
@@ -127,6 +129,7 @@ process.exit(2);
             OPENCLAW_GATEWAY_PORT: "18789",
             OPENCLAW_GATEWAY_TOKEN: "secret-token",
             NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING: "1",
+            NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT: "ambient-settlement-marker",
             NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING: "1",
             OPENCLAW_STATE_DIR: "/sandbox/.openclaw",
             OPENCLAW_CONFIG_PATH: "/sandbox/.openclaw/openclaw.json",
@@ -145,13 +148,15 @@ process.exit(2);
           : [];
 
         expect(approvals).toEqual(["ok-webchat", "ok-cli", "ok-agent-cli"]);
-        // Both children drop shared gateway and compatibility overrides while
-        // retaining the state/config paths OpenClaw needs to select its stored
-        // CLI device credential (#9844).
-        const expectedAuthEnv =
-          "unset:unset:unset:unset:unset:/sandbox/.openclaw:/sandbox/.openclaw/openclaw.json";
-        expect(listEnv).toEqual([expectedAuthEnv]);
-        expect(approveEnv).toEqual([expectedAuthEnv, expectedAuthEnv, expectedAuthEnv]);
+        // The list child carries one fixed pairing-settlement marker. Both
+        // children drop shared gateway and compatibility overrides while
+        // retaining the state/config paths for the stored CLI credential.
+        const expectedListEnv =
+          "unset:unset:unset:unset:1:unset:/sandbox/.openclaw:/sandbox/.openclaw/openclaw.json";
+        const expectedApproveEnv =
+          "unset:unset:unset:unset:unset:unset:/sandbox/.openclaw:/sandbox/.openclaw/openclaw.json";
+        expect(listEnv).toEqual([expectedListEnv]);
+        expect(approveEnv).toEqual([expectedApproveEnv, expectedApproveEnv, expectedApproveEnv]);
         expect(result.stdout).toContain(`${SUMMARY_MARKER}=3`);
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });

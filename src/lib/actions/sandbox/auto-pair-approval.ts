@@ -293,6 +293,7 @@ def exit_with_receipt(receipt):
         approve_env['NODE_DISABLE_COMPILE_CACHE'] = '1'
         approve_env['OPENCLAW_NO_RESPAWN'] = '1'
         approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+        approve_env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)
         approve_env['NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING'] = '1'
         approve_env['NEMOCLAW_OPENCLAW_PINNED_GATEWAY_URL'] = pinned_gateway_url
         approve_env['NEMOCLAW_OPENCLAW_EXPECTED_DEVICE_ID'] = local_device_id
@@ -307,9 +308,11 @@ def exit_with_receipt(receipt):
         )
     else:
         approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+        approve_env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)
         approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)`
     : `approve_env = gateway_approval_env(os.environ)
     approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+    approve_env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)
     approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)`;
   const pairedTokenSuccess = options.localDeviceOnly
     ? `            if local_approval_auth_mode == 'paired-token':
@@ -557,6 +560,7 @@ pending = list(local_pending_by_id.values())
 list_env = gateway_approval_env(os.environ)
 list_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
 list_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)
+list_env['NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT'] = '1'
 try:
     proc = subprocess.run(
         [OPENCLAW, 'devices', 'list', '--json'],
@@ -1329,6 +1333,7 @@ if (
 
 approve_env = gateway_approval_env(os.environ)
 approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+approve_env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)
 approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)
 try:
     approved = subprocess.run(

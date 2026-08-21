@@ -2976,11 +2976,12 @@ def list_failure_reason(rc, out, err):
 # runtime environment, so its first list call resolves the live gateway through
 # local loopback and retains the shared token plus a private child marker. The
 # reviewed 2026.7.1 dist patch uses that marker to retain CLI identity before a
-# stored device credential exists. Once OpenClaw issues that credential, the
-# patch retains identity for ordinary loopback CLI calls automatically. Later
-# list and approval calls drop the gateway env triplet and use the stored device
-# credential. Remove both pieces when upstream supports that flow.
-def run(*args, strip_gateway_env=False, force_device_pairing=False):
+# stored device credential exists. Once OpenClaw issues that credential, later
+# list calls drop the gateway env triplet and use the reviewed settlement marker
+# to select pairing-only stored-device auth. Approval calls keep their separate
+# bounded credential selection. Remove these pieces when upstream supports that
+# flow.
+def run(*args, strip_gateway_env=False, force_device_pairing=False, pairing_settlement=False):
     # Bound every openclaw CLI invocation so a wedged child cannot pin
     # the watcher beyond DEADLINE (CodeRabbit #4292): subprocess.run with
     # no timeout would hold a hung `openclaw devices list/approve` past
@@ -2988,8 +2989,12 @@ def run(*args, strip_gateway_env=False, force_device_pairing=False):
     env = None
     if strip_gateway_env:
         env = gateway_approval_env(os.environ)
+        env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)
+        if pairing_settlement:
+            env['NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT'] = '1'
     elif force_device_pairing:
         env = dict(os.environ)
+        env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)
         env['NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING'] = '1'
     try:
         proc = subprocess.run(
@@ -3045,6 +3050,7 @@ while time.time() < DEADLINE:
         '--json',
         strip_gateway_env=PAIRING_BOOTSTRAPPED,
         force_device_pairing=not PAIRING_BOOTSTRAPPED,
+        pairing_settlement=PAIRING_BOOTSTRAPPED,
     )
     if rc != 0 or not out:
         failure_reason = list_failure_reason(rc, out, err)

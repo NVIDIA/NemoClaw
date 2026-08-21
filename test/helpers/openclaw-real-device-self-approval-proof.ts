@@ -245,6 +245,11 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
     [
       "async function listPairingWithFallback(opts, callOpts)",
       "nemoclaw: preflight bounded stored device auth before live pairing list",
+      "NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT",
+      "useStoredDeviceAuth: true",
+      "requiredStoredDeviceAuthScopes: [PAIRING_SCOPE]",
+      "nemoclaw: use stored device auth for pairing settlement list",
+      "callOpts ??= nemoclawSettlementListCallOpts",
       'callGatewayCli("device.pair.list", opts, {}, callOpts)',
       "const nemoclawLocalList = nemoclawPairedTokenRequested ? readNemoClawPinnedPairingSnapshot() : await listDevicePairing();",
       "nemoclawLocalStoredAuthCandidate = !nemoclawPairedTokenRequested && nemoclawLocalContext.useStoredDeviceAuth;",
@@ -1125,11 +1130,11 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
     OPENCLAW_STATE_DIR: stateDir,
     PATH: `${proofBin}:${inheritedEnv.PATH ?? ""}`,
   };
-  const runCli = (args: string[]) =>
+  const runCli = (args: string[], envOverrides: NodeJS.ProcessEnv = {}) =>
     spawnSync(options.nodeExecutable, [openclawEntry, ...args], {
       cwd: packageDir,
       encoding: "utf8",
-      env,
+      env: { ...env, ...envOverrides },
       timeout: Math.min(options.timeoutMs, 60_000),
     });
 
@@ -1204,12 +1209,109 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
       "bootstrap paired operator token scopes",
     );
 
+    proofPhase = "pairing-settlement-list-gateway-restart";
     await stopChild(gateway);
-    proofPhase = "scope-upgrade-trigger";
     writeGatewayConfig({ mode: "token" });
     gateway = startGateway({ ...env, OPENCLAW_GATEWAY_TOKEN: gatewayToken }, true);
     await waitForGatewayReady(gateway, port, options.timeoutMs);
 
+    proofPhase = "pairing-settlement-list";
+    const pendingBeforeSettlementList = fs.readFileSync(pendingPath, "utf8");
+    const pairedBeforeSettlementList = fs.readFileSync(pairedPath, "utf8");
+    const settlementList = runCli(["devices", "list", "--json"], {
+      NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT: "1",
+    });
+    proofPhase = `pairing-settlement-list-exit-${settlementList.status ?? "signal"}`;
+    requireSuccess(settlementList, "list paired state with pairing-only stored device auth");
+    proofPhase = "pairing-settlement-list-server-state";
+    const pendingAfterSettlementList = fs.readFileSync(pendingPath, "utf8");
+    const pairedAfterSettlementList = readJsonObject(
+      pairedPath,
+      "real paired state after pairing settlement list",
+    );
+    const pairedDeviceAfterSettlementList = asRecord(
+      pairedAfterSettlementList[String(identity.deviceId)],
+    );
+    requireLiveProof(
+      pairedDeviceAfterSettlementList,
+      "pairing settlement list removed the exact paired CLI device",
+    );
+    proofPhase = "pairing-settlement-list-pending-state";
+    requireLiveProof(
+      pendingAfterSettlementList === pendingBeforeSettlementList,
+      "pairing settlement list changed canonical pending state bytes",
+    );
+    const pairedBeforeAuthentication = JSON.parse(pairedBeforeSettlementList) as Record<
+      string,
+      unknown
+    >;
+    const pairedAfterAuthentication = JSON.parse(
+      JSON.stringify(pairedAfterSettlementList),
+    ) as Record<string, unknown>;
+    const pairedDeviceBeforeAuthentication = asRecord(
+      pairedBeforeAuthentication[String(identity.deviceId)],
+    );
+    const pairedDeviceAfterAuthentication = asRecord(
+      pairedAfterAuthentication[String(identity.deviceId)],
+    );
+    const pairedOperatorBeforeAuthentication = asRecord(
+      asRecord(pairedDeviceBeforeAuthentication?.tokens)?.operator,
+    );
+    const pairedOperatorAfterAuthentication = asRecord(
+      asRecord(pairedDeviceAfterAuthentication?.tokens)?.operator,
+    );
+    const deviceAuthenticationActivityChanged =
+      pairedDeviceAfterAuthentication?.lastSeenAtMs !==
+        pairedDeviceBeforeAuthentication?.lastSeenAtMs ||
+      pairedDeviceAfterAuthentication?.lastSeenReason !==
+        pairedDeviceBeforeAuthentication?.lastSeenReason;
+    const tokenAuthenticationActivityChanged =
+      pairedOperatorAfterAuthentication?.lastUsedAtMs !==
+      pairedOperatorBeforeAuthentication?.lastUsedAtMs;
+    proofPhase = "pairing-settlement-list-authentication-state-shape";
+    requireLiveProof(
+      pairedDeviceBeforeAuthentication &&
+        pairedDeviceAfterAuthentication &&
+        pairedOperatorBeforeAuthentication &&
+        pairedOperatorAfterAuthentication,
+      "pairing settlement list changed the paired authentication state shape",
+    );
+    proofPhase = "pairing-settlement-list-device-authentication-activity";
+    requireLiveProof(
+      !deviceAuthenticationActivityChanged ||
+        ((pairedDeviceAfterAuthentication.lastSeenReason === "device-token-auth" ||
+          pairedDeviceAfterAuthentication.lastSeenReason === "connect") &&
+          typeof pairedDeviceAfterAuthentication.lastSeenAtMs === "number"),
+      "pairing settlement list recorded invalid device authentication activity",
+    );
+    proofPhase = "pairing-settlement-list-token-authentication-activity";
+    requireLiveProof(
+      !tokenAuthenticationActivityChanged ||
+        typeof pairedOperatorAfterAuthentication.lastUsedAtMs === "number",
+      "pairing settlement list recorded invalid token authentication activity",
+    );
+    // Stored-device authentication can update only the gateway's last-seen
+    // audit fields. Normalize those three optional writes, then require every
+    // device, token, scope, and remaining metadata field to match the exact
+    // before-image.
+    pairedDeviceAfterAuthentication.lastSeenAtMs = pairedDeviceBeforeAuthentication.lastSeenAtMs;
+    pairedDeviceAfterAuthentication.lastSeenReason =
+      pairedDeviceBeforeAuthentication.lastSeenReason;
+    pairedOperatorAfterAuthentication.lastUsedAtMs =
+      pairedOperatorBeforeAuthentication.lastUsedAtMs;
+    proofPhase = "pairing-settlement-list-authorization-state";
+    requireJsonEqual(
+      pairedAfterAuthentication,
+      pairedBeforeAuthentication,
+      "pairing settlement list authorization state",
+    );
+    // The remaining restored-clone proof pins inherited /proc/self/fd
+    // descriptors. Linux CI exercises that boundary; other hosts stop after
+    // the real stored-auth settlement list and exact authorization-state check
+    // above.
+    if (process.platform !== "linux") return;
+
+    proofPhase = "scope-upgrade-trigger";
     const createSession = runCli([
       "gateway",
       "call",
@@ -1309,6 +1411,14 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
         fs.readFileSync(pairedPath, "utf8") === clonePairedBefore,
       "restored-clone matching credential setup changed another clone state file",
     );
+    // The ordinary settlement list above must read the clone's stored device
+    // credential. Baseline both sentinels after that allowed read so the
+    // descriptor-only restored-clone approval still proves it performs no
+    // later pathname-backed auth read.
+    const cloneAuthReadBaseline = "ordinary-settlement-list-clone-baseline\n";
+    const primaryAuthReadBaseline = "ordinary-settlement-list-primary-baseline\n";
+    fs.writeFileSync(proofCloneAuthReadMarker, cloneAuthReadBaseline);
+    fs.writeFileSync(proofPrimaryAuthReadMarker, primaryAuthReadBaseline);
     proofPhase = "paired-token-repair-approval-process";
     const approval = spawnSync("sh", ["-c", pairedTokenApprovalScript], {
       cwd: packageDir,
@@ -1324,18 +1434,26 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
       timeout: CONNECT_AUTO_PAIR_TIMEOUT_MS,
     });
     requireLiveProof(approval.status === 0, "restored-clone paired-token approval process failed");
-    proofPhase = "paired-token-repair-default-state-race";
-    requireLiveProof(
-      fs.existsSync(proofDefaultStateRaceMarker) &&
-        !fs.existsSync(proofCloneAuthReadMarker) &&
-        !fs.existsSync(proofPrimaryAuthReadMarker),
-      "forced clone approval used a pathname-backed default or stored-auth credential",
-    );
     const approvalReceipt = parseAutoPairApprovalReceipt(approval.stdout);
     proofPhase = `paired-token-repair-approval-receipt-${approvalReceipt ?? "invalid"}`;
     requireLiveProof(
       approvalReceipt === "approved-one",
       "restored-clone paired-token approval returned a fixed non-success classification",
+    );
+    const defaultStateRaceObserved = fs.existsSync(proofDefaultStateRaceMarker);
+    const cloneAuthSentinelUnchanged =
+      fs.readFileSync(proofCloneAuthReadMarker, "utf8") === cloneAuthReadBaseline;
+    const primaryAuthSentinelUnchanged =
+      fs.readFileSync(proofPrimaryAuthReadMarker, "utf8") === primaryAuthReadBaseline;
+    proofPhase = [
+      "paired-token-repair-default-state-race",
+      `default-${defaultStateRaceObserved}`,
+      `clone-${cloneAuthSentinelUnchanged}`,
+      `primary-${primaryAuthSentinelUnchanged}`,
+    ].join("-");
+    requireLiveProof(
+      defaultStateRaceObserved && cloneAuthSentinelUnchanged && primaryAuthSentinelUnchanged,
+      "forced clone approval used a pathname-backed default or stored-auth credential",
     );
     proofPhase = "paired-token-repair-approval-stdout-shape";
     requireLiveProof(

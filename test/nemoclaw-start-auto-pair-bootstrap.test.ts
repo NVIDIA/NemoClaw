@@ -878,6 +878,7 @@ printf '%s\\n' ${JSON.stringify(response)}
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const listCount = path.join(tmpDir, "list-count");
     const listEnv = path.join(tmpDir, "list-env");
+    const approveEnv = path.join(tmpDir, "approve-env");
     const approvalMarker = path.join(tmpDir, "approval-called");
     fs.writeFileSync(
       fakeOpenclaw,
@@ -888,7 +889,7 @@ if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
   if [ -f ${JSON.stringify(listCount)} ]; then count=$(cat ${JSON.stringify(listCount)}); fi
   count=$((count + 1))
   printf '%s' "$count" > ${JSON.stringify(listCount)}
-  printf '%s:%s\n' "\${NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING:-}" "\${OPENCLAW_GATEWAY_TOKEN:-}" >> ${JSON.stringify(listEnv)}
+  printf '%s:%s:%s\n' "\${NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING:-}" "\${OPENCLAW_GATEWAY_TOKEN:-}" "\${NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT:-}" >> ${JSON.stringify(listEnv)}
   if [ "$count" -eq 1 ]; then
     printf '%s\n' '{"pending":null,"paired":[]}'
   elif [ "$count" -eq 2 ]; then
@@ -901,6 +902,7 @@ if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
   exit 0
 fi
 if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  printf '%s:%s:%s\n' "\${NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING:-}" "\${OPENCLAW_GATEWAY_TOKEN:-}" "\${NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT:-}" >> ${JSON.stringify(approveEnv)}
   touch ${JSON.stringify(approvalMarker)}
   exit 0
 fi
@@ -929,12 +931,13 @@ exit 2
       expect(fs.existsSync(approvalMarker)).toBe(true);
       const environments = fs.readFileSync(listEnv, "utf-8").trim().split("\n");
       expect(environments.slice(0, 4)).toEqual([
-        "1:gateway-token",
-        "1:gateway-token",
-        "1:gateway-token",
-        "1:gateway-token",
+        "1:gateway-token:",
+        "1:gateway-token:",
+        "1:gateway-token:",
+        "1:gateway-token:",
       ]);
-      expect(environments[4]).toBe(":");
+      expect(environments[4]).toBe("::1");
+      expect(fs.readFileSync(approveEnv, "utf-8").trim()).toBe("::");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

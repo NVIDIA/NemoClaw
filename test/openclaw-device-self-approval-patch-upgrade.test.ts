@@ -10,6 +10,36 @@ import { describe, expect, it } from "vitest";
 import { runPatch, writeFixtureDist } from "./helpers/openclaw-device-self-approval-patch-harness";
 
 describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
+  it("adds pairing-only stored auth to an earlier patched settlement list (#9844)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-list-upgrade-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const file = path.join(dist, "devices-cli.runtime-fixture.js");
+      const current = [
+        "async function listPairingWithFallback(opts, callOpts) { // nemoclaw: preflight bounded stored device auth before live pairing list (#4462)",
+        '\tconst nemoclawSettlementListCallOpts = process.env.NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT === "1" ? {',
+        "\t\tscopes: [PAIRING_SCOPE],",
+        "\t\tuseStoredDeviceAuth: true,",
+        "\t\trequiredStoredDeviceAuthScopes: [PAIRING_SCOPE]",
+        "\t} : void 0; // nemoclaw: use stored device auth for pairing settlement list (#9844)",
+        "\tcallOpts ??= nemoclawSettlementListCallOpts;",
+      ].join("\n");
+      const legacy = current.split("\n")[0] as string;
+      const source = fs.readFileSync(file, "utf8");
+      expect(source).toContain(current);
+      fs.writeFileSync(file, source.replace(current, legacy));
+
+      expect(runPatch(dist).status).toBe(0);
+      expect(fs.readFileSync(file, "utf8")).toContain(current);
+      expect(runPatch(dist).status).toBe(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("migrates the restored-clone mode from the force flag", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-clone-mode-upgrade-"));
     const dist = path.join(tmp, "dist");
