@@ -103,6 +103,8 @@ const DEFAULT_HOST_DEPENDENCY_SCRIPT_PATH = join(
   "scripts",
   "host-dependency-setup.sh",
 );
+const REVIEWED_HERMES_PLATFORM_ACTION =
+  "./.github/actions/resolve-reviewed-hermes-platform";
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -1127,6 +1129,16 @@ function requireFullShaAction(
   }
 }
 
+function isReviewedLocalHermesPlatformAction(jobName: string, step: WorkflowStep): boolean {
+  return (
+    step.uses === REVIEWED_HERMES_PLATFORM_ACTION &&
+    ((jobName === "managed-image-multiarch-startup" &&
+      step.name === "Resolve reviewed Hermes platform base image") ||
+      (jobName === "managed-image-protected-runtime" &&
+        step.name === "Resolve reviewed Hermes runtime base image"))
+  );
+}
+
 function requireNoDispatchInputInterpolation(
   errors: string[],
   steps: readonly WorkflowStep[],
@@ -1224,7 +1236,7 @@ function validateFreeStandingInventoryBoundary(
     const steps = asSteps(job.steps);
     requireNoDispatchInputInterpolation(errors, steps);
     for (const step of steps) {
-      if (step.uses) {
+      if (step.uses && !isReviewedLocalHermesPlatformAction(jobName, step)) {
         requireFullShaAction(errors, step, `${jobName} step '${step.name ?? step.uses}'`);
       }
       if (/\$\{\{\s*secrets\./.test(stringValue(step.run))) {
