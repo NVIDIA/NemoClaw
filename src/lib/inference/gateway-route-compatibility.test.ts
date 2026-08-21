@@ -104,6 +104,19 @@ describe("shared gateway inference route compatibility", () => {
     expect(check(route("nvidia-prod", "nvidia/model-a"), [pending])).toEqual({ ok: true });
   });
 
+  it("keeps route-only reservations in shared gateway compatibility (#6315)", () => {
+    const reservation = sandbox("reserved-peer", {
+      provider: "openai",
+      model: "reserved-model",
+      pendingRouteReservation: true,
+    });
+
+    expect(check(route("nvidia-prod", "nvidia/model-a"), [reservation])).toMatchObject({
+      ok: false,
+      conflicts: [{ sandboxName: "reserved-peer", reason: "provider-model" }],
+    });
+  });
+
   it("constrains custom discovery to the durable endpoint and API family (#6315)", () => {
     expect(
       discover(discoveryRoute("compatible-endpoint"), [
