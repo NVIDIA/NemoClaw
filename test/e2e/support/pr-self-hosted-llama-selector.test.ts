@@ -22,6 +22,22 @@ function genericGpuJobSteps() {
   return workflow.jobs["llama-cpp-generic-gpu"]?.steps ?? [];
 }
 
+function genericGpuManagerAndLiveScript() {
+  const selectedStepNames = new Set([
+    "Bind systemd user manager when available",
+    "Run llama.cpp generic NVIDIA GPU live test",
+  ]);
+  return genericGpuJobSteps()
+    .filter((step) => selectedStepNames.has(step.name ?? ""))
+    .map(
+      (step) => `${step.run ?? ""}
+set -a
+[ ! -s "$GITHUB_ENV" ] || . "$GITHUB_ENV"
+set +a`,
+    )
+    .join("\n");
+}
+
 function fail(message: string): never {
   throw new Error(message);
 }
@@ -165,19 +181,7 @@ printf '%s\\n' "$CHILD_OUTPUT_SENTINEL" >&2`,
       `printf 'live:%s:%s\\n' "\${DBUS_SESSION_BUS_ADDRESS-unset}" "\${XDG_RUNTIME_DIR-unset}" >>"$COMMAND_LOG"`,
     );
 
-    const selectedStepNames = new Set([
-      "Bind existing systemd user manager",
-      "Run llama.cpp generic NVIDIA GPU live test",
-    ]);
-    const sourceScript = genericGpuJobSteps()
-      .filter((step) => selectedStepNames.has(step.name ?? ""))
-      .map(
-        (step) => `${step.run ?? ""}
-set -a
-[ ! -s "$GITHUB_ENV" ] || . "$GITHUB_ENV"
-set +a`,
-      )
-      .join("\n");
+    const sourceScript = genericGpuManagerAndLiveScript();
     const runtimeBoundScript = replaceRequired(
       sourceScript,
       'runtime_dir="/run/user/${uid}"',
@@ -227,6 +231,67 @@ set +a`,
       ]);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("preserves standalone qualification when the user manager runtime is absent (#9705)", () => {
+    const directory = mkdtempSync("/tmp/nemoclaw-gpu-manager-absent-");
+    const binDirectory = join(directory, "bin");
+    const runtimeDirectory = join(directory, "missing-runtime");
+    const commandLog = join(directory, "commands.log");
+    const githubEnv = join(directory, "github-env");
+    mkdirSync(binDirectory);
+    writeFileSync(commandLog, "");
+    writeFileSync(githubEnv, "");
+
+    const idCommand = writeCommand(
+      binDirectory,
+      "id",
+      `case "$1" in
+  -u) printf '2000\\n' ;;
+  -g) printf '2000\\n' ;;
+  *) exit 97 ;;
+esac`,
+    );
+    writeCommand(binDirectory, "openshell", `printf 'openshell:%s\\n' "$*" >>"$COMMAND_LOG"`);
+    writeCommand(
+      binDirectory,
+      "npx",
+      `printf 'live:%s:%s\\n' "\${DBUS_SESSION_BUS_ADDRESS-unset}" "\${XDG_RUNTIME_DIR-unset}" >>"$COMMAND_LOG"`,
+    );
+
+    const runtimeBoundScript = replaceRequired(
+      genericGpuManagerAndLiveScript(),
+      'runtime_dir="/run/user/${uid}"',
+      `runtime_dir=${JSON.stringify(runtimeDirectory)}`,
+    );
+    const commandBoundScript = replaceRequired(runtimeBoundScript, "/usr/bin/id", idCommand);
+
+    try {
+      const result = spawnSync(
+        "/bin/bash",
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", commandBoundScript],
+        {
+          encoding: "utf8",
+          env: {
+            COMMAND_LOG: commandLog,
+            DBUS_SESSION_BUS_ADDRESS: "inherited-secret-address",
+            GITHUB_ENV: githubEnv,
+            HOME: directory,
+            PATH: binDirectory,
+            XDG_RUNTIME_DIR: "/untrusted/ambient/runtime",
+          },
+        },
+      );
+
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(readFileSync(githubEnv, "utf8")).toBe("XDG_RUNTIME_DIR=\n");
+      expect(readFileSync(commandLog, "utf8").trim().split("\n")).toEqual([
+        "openshell:--version",
+        "live:unset:unset",
+      ]);
+    } finally {
       rmSync(directory, { force: true, recursive: true });
     }
   });

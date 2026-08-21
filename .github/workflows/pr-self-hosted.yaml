@@ -124,7 +124,7 @@ jobs:
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
 
-      - name: Bind existing systemd user manager
+      - name: Bind systemd user manager when available
         shell: bash
         run: |
           set -euo pipefail
@@ -135,44 +135,49 @@ jobs:
             exit 1
           }
           runtime_dir="/run/user/${uid}"
-          [[ -d "$runtime_dir" && ! -L "$runtime_dir" ]] || {
-            echo "::error::Runner systemd runtime directory is missing or invalid" >&2
-            exit 1
-          }
-          [[ "$(/usr/bin/stat -c '%u:%g:%a' -- "$runtime_dir")" == "${uid}:${gid}:700" ]] || {
-            echo "::error::Runner systemd runtime directory has an invalid identity or mode" >&2
-            exit 1
-          }
-          bus_socket="${runtime_dir}/bus"
-          [[ -S "$bus_socket" && ! -L "$bus_socket" ]] || {
-            echo "::error::Runner systemd user bus is missing or invalid" >&2
-            exit 1
-          }
-          [[ "$(/usr/bin/stat -c '%u' -- "$bus_socket")" == "$uid" ]] || {
-            echo "::error::Runner systemd user bus has an invalid owner" >&2
-            exit 1
-          }
-          /usr/bin/env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="$runtime_dir" \
-            /usr/bin/systemctl --user list-units --type=service \
-              --state=active,activating,reloading,deactivating \
-              --no-legend --plain --no-pager >/dev/null 2>&1 || {
-            echo "::error::Runner systemd user manager could not enumerate active services" >&2
-            exit 1
-          }
-          /usr/bin/env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="$runtime_dir" \
-            /usr/bin/busctl --user --json=short get-property \
-              org.freedesktop.systemd1 /org/freedesktop/systemd1 \
-              org.freedesktop.systemd1.Manager UnitPath >/dev/null 2>&1 || {
-            echo "::error::Runner systemd user manager could not report its unit path" >&2
-            exit 1
-          }
-          printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir" >>"$GITHUB_ENV"
+          if [[ ! -e "$runtime_dir" && ! -L "$runtime_dir" ]]; then
+            printf 'XDG_RUNTIME_DIR=\n' >>"$GITHUB_ENV"
+          else
+            [[ -d "$runtime_dir" && ! -L "$runtime_dir" ]] || {
+              echo "::error::Runner systemd runtime directory is invalid" >&2
+              exit 1
+            }
+            [[ "$(/usr/bin/stat -c '%u:%g:%a' -- "$runtime_dir")" == "${uid}:${gid}:700" ]] || {
+              echo "::error::Runner systemd runtime directory has an invalid identity or mode" >&2
+              exit 1
+            }
+            bus_socket="${runtime_dir}/bus"
+            [[ -S "$bus_socket" && ! -L "$bus_socket" ]] || {
+              echo "::error::Runner systemd user bus is missing or invalid" >&2
+              exit 1
+            }
+            [[ "$(/usr/bin/stat -c '%u' -- "$bus_socket")" == "$uid" ]] || {
+              echo "::error::Runner systemd user bus has an invalid owner" >&2
+              exit 1
+            }
+            /usr/bin/env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="$runtime_dir" \
+              /usr/bin/systemctl --user list-units --type=service \
+                --state=active,activating,reloading,deactivating \
+                --no-legend --plain --no-pager >/dev/null 2>&1 || {
+              echo "::error::Runner systemd user manager could not enumerate active services" >&2
+              exit 1
+            }
+            /usr/bin/env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="$runtime_dir" \
+              /usr/bin/busctl --user --json=short get-property \
+                org.freedesktop.systemd1 /org/freedesktop/systemd1 \
+                org.freedesktop.systemd1.Manager UnitPath >/dev/null 2>&1 || {
+              echo "::error::Runner systemd user manager could not report its unit path" >&2
+              exit 1
+            }
+            printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir" >>"$GITHUB_ENV"
+          fi
 
       - name: Run llama.cpp generic NVIDIA GPU live test
         shell: bash
         run: |
           set -euo pipefail
           unset DBUS_SESSION_BUS_ADDRESS
+          [[ -n "${XDG_RUNTIME_DIR:-}" ]] || unset XDG_RUNTIME_DIR
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           OPENSHELL_BIN="$(command -v openshell)"
           export OPENSHELL_BIN
