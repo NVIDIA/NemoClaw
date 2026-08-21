@@ -50,6 +50,7 @@ const OPAQUE_INPUTS = [
   "managed-inference/recipes/vllm.example.managed-cluster.v1.yaml",
   "internal/security-reviews/hermes-0.19.0-dependency-review.md",
   ".github/actions/resolve-hermes-base-image/action.yaml",
+  ".github/actions/resolve-reviewed-hermes-platform/action.yaml",
   "Dockerfile",
   "agents/hermes/Dockerfile.base",
   "agents/hermes/Dockerfile",
@@ -130,6 +131,13 @@ describe("Vitest opaque-input watch triggers", () => {
     ).toEqual(["test/hermes-dependency-review.test.ts"]);
     expect(triggeredBy(".github/actions/resolve-hermes-base-image/action.yaml")).toEqual([
       "test/base-image-resolver-helper.test.ts",
+    ]);
+    expect(
+      triggeredBy(".github/actions/resolve-reviewed-hermes-platform/action.yaml"),
+    ).toEqual([
+      "test/reviewed-hermes-platform-action.test.ts",
+      "test/protected-managed-image-contract.test.ts",
+      "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
     ]);
     expect(triggeredBy("Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",

@@ -3952,6 +3952,13 @@ jobs:
           }
           install -d -m 0700 "$E2E_ARTIFACT_DIR"
 
+      - id: hermes-base
+        name: Resolve reviewed Hermes platform base image
+        uses: ./.github/actions/resolve-reviewed-hermes-platform
+        with:
+          dockerfile-path: agents/hermes/Dockerfile
+          platform: ${{ matrix.platform }}
+
       - id: bases
         name: Resolve exact platform base images
         env:
@@ -4000,18 +4007,6 @@ jobs:
           resolve_base openclaw \
             ghcr.io/nvidia/nemoclaw/sandbox-base:latest \
             ghcr.io/nvidia/nemoclaw/sandbox-base
-          hermes_index="$(
-            sed -nE \
-              's|^ARG BASE_IMAGE=(ghcr\.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[0-9a-f]{64})$|\1|p' \
-              agents/hermes/Dockerfile
-          )"
-          [[ "$hermes_index" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ]] || {
-            echo "::error::Hermes Dockerfile must select one immutable reviewed base index" >&2
-            exit 1
-          }
-          resolve_base hermes \
-            "$hermes_index" \
-            ghcr.io/nvidia/nemoclaw/hermes-sandbox-base
           resolve_base dcode \
             ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest \
             ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
@@ -4046,7 +4041,7 @@ jobs:
       - name: Build exact all-agent protected managed images
         env:
           BASE_DCODE: ${{ steps.bases.outputs.dcode }}
-          BASE_HERMES: ${{ steps.bases.outputs.hermes }}
+          BASE_HERMES: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.hermes-base.outputs.digest }}
           BASE_OPENCLAW: ${{ steps.bases.outputs.openclaw }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
         shell: bash
@@ -4597,6 +4592,13 @@ jobs:
           }
           install -d -m 0700 "$E2E_ARTIFACT_DIR"
 
+      - id: runtime-hermes-base
+        name: Resolve reviewed Hermes runtime base image
+        uses: ./.github/actions/resolve-reviewed-hermes-platform
+        with:
+          dockerfile-path: agents/hermes/Dockerfile
+          platform: linux/amd64
+
       - id: runtime-bases
         name: Resolve exact amd64 runtime base images
         shell: bash
@@ -4642,18 +4644,6 @@ jobs:
           resolve_base openclaw \
             ghcr.io/nvidia/nemoclaw/sandbox-base:latest \
             ghcr.io/nvidia/nemoclaw/sandbox-base
-          hermes_index="$(
-            sed -nE \
-              's|^ARG BASE_IMAGE=(ghcr\.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[0-9a-f]{64})$|\1|p' \
-              agents/hermes/Dockerfile
-          )"
-          [[ "$hermes_index" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ]] || {
-            echo "::error::Hermes Dockerfile must select one immutable reviewed base index" >&2
-            exit 1
-          }
-          resolve_base hermes \
-            "$hermes_index" \
-            ghcr.io/nvidia/nemoclaw/hermes-sandbox-base
           resolve_base dcode \
             ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest \
             ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
@@ -4688,7 +4678,7 @@ jobs:
       - name: Build exact all-agent protected runtime images
         env:
           BASE_DCODE: ${{ steps.runtime-bases.outputs.dcode }}
-          BASE_HERMES: ${{ steps.runtime-bases.outputs.hermes }}
+          BASE_HERMES: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}
           BASE_OPENCLAW: ${{ steps.runtime-bases.outputs.openclaw }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
         shell: bash

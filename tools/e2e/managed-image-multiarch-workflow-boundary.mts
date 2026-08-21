@@ -34,6 +34,8 @@ const ACTIVATION_PATH = PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH;
 const DIRECT_TEST_PATH = "test/e2e/live/managed-image-multiarch-startup.test.ts";
 const REGISTRY_IMAGE =
   "docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373";
+const REVIEWED_HERMES_PLATFORM_ACTION =
+  "./.github/actions/resolve-reviewed-hermes-platform";
 
 function record(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -224,6 +226,19 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     '.platforms == ["linux/amd64", "linux/arm64"]',
   ]);
 
+  const hermesBase = requireStep(
+    errors,
+    steps,
+    "Resolve reviewed Hermes platform base image",
+  );
+  if (hermesBase?.uses !== REVIEWED_HERMES_PLATFORM_ACTION) {
+    errors.push(`${JOB_ID} must use the shared reviewed Hermes platform resolver`);
+  }
+  requireValues(errors, `${JOB_ID} Hermes platform resolver`, record(hermesBase?.with), {
+    "dockerfile-path": "agents/hermes/Dockerfile",
+    platform: "${{ matrix.platform }}",
+  });
+
   const bases = requireStep(errors, steps, "Resolve exact platform base images");
   requireFragments(errors, bases, [
     'arch="${PLATFORM#linux/}"',
@@ -232,9 +247,6 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     'reference="${repository}@${digest}"',
     '"sha256:$(sha256sum "$exact_raw" | awk \'{print $1}\')" == "$digest"',
     "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
-    "agents/hermes/Dockerfile",
-    '[[ "$hermes_index" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ]]',
-    'resolve_base hermes \\\n  "$hermes_index"',
     "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest",
   ]);
   if (text(bases?.run).includes("ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest")) {
@@ -262,6 +274,10 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     '--hermes-base "$BASE_HERMES"',
     '--dcode-base "$BASE_DCODE"',
   ]);
+  requireValues(errors, `${JOB_ID} protected build bases`, record(build?.env), {
+    BASE_HERMES:
+      "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.hermes-base.outputs.digest }}",
+  });
 
   const direct = requireStep(errors, steps, "Run every exact managed-image contract directly");
   requireFragments(errors, direct, [
@@ -320,6 +336,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   requireOrderedSteps(errors, steps, [
     "Validate protected exact-head dispatch",
     "Validate candidate activation contract",
+    "Resolve reviewed Hermes platform base image",
     "Resolve exact platform base images",
     "Start isolated protected managed-image registry",
     "Build exact all-agent protected managed images",

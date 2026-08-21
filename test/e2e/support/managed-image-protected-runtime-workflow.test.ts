@@ -59,25 +59,32 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toEqual([]);
   });
 
-  // source-shape-contract: security -- The trusted workflow validator must reject mutable Hermes base provenance in both protected build jobs
+  // source-shape-contract: security -- Both protected jobs must use the shared reviewed Hermes base resolver
   it.each([
     [
       "managed-image-multiarch-startup",
-      "Resolve exact platform base images",
+      "Resolve reviewed Hermes platform base image",
       validateManagedImageMultiarchWorkflow,
     ],
     [
       "managed-image-protected-runtime",
-      "Resolve exact amd64 runtime base images",
+      "Resolve reviewed Hermes runtime base image",
       validateManagedImageProtectedRuntimeWorkflow,
     ],
   ] as const)("rejects mutable Hermes base selection in %s", (jobId, stepName, validate) => {
     const value = workflow();
     const step = namedJobStep(value, jobId, stepName);
-    step.run = `${String(step.run)}\nghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest`;
+    step.uses = "./.github/actions/resolve-hermes-base-image";
 
     expect(validate(value)).toContain(
-      `${jobId} must resolve Hermes from the immutable reviewed Dockerfile index`,
+      `${jobId} must use the shared reviewed Hermes platform resolver`,
+    );
+
+    const changedInput = workflow();
+    const changedInputStep = namedJobStep(changedInput, jobId, stepName);
+    (changedInputStep.with as Record<string, unknown>)["dockerfile-path"] = "Dockerfile";
+    expect(validate(changedInput)).toContain(
+      `${jobId} Hermes platform resolver must bind dockerfile-path to agents/hermes/Dockerfile`,
     );
   });
 

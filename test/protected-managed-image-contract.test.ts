@@ -175,13 +175,12 @@ describe("protected managed-image build contract", () => {
   it.each([
     ["managed-image-multiarch-startup", "Resolve exact platform base images"],
     ["managed-image-protected-runtime", "Resolve exact amd64 runtime base images"],
-  ])("%s resolves Hermes from the reviewed Dockerfile index", (jobId, stepName) => {
+  ])("%s keeps non-Hermes base resolution separate", (jobId, stepName) => {
     const { result, output } = runBaseResolution(jobId, stepName);
     expect(result.status, result.stderr).toBe(0);
     expect(Object.fromEntries(output.trim().split("\n").map((line) => line.split("=")))).toEqual(
       {
         dcode: `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@${PLATFORM_DIGESTS.dcode}`,
-        hermes: `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${PLATFORM_DIGESTS.hermes}`,
         openclaw: `ghcr.io/nvidia/nemoclaw/sandbox-base@${PLATFORM_DIGESTS.openclaw}`,
       },
     );
