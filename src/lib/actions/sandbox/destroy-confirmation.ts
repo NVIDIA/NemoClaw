@@ -22,6 +22,17 @@ function countActiveSandboxSessions(sandboxName: string): number {
   }
 }
 
+function printActiveSessionWarning(activeSessionCount: number): void {
+  if (activeSessionCount < 1) return;
+  const plural = activeSessionCount > 1 ? "sessions" : "session";
+  console.log(
+    `  ${YW}⚠  Active SSH ${plural} detected (${activeSessionCount} connection${activeSessionCount > 1 ? "s" : ""})${R}`,
+  );
+  console.log(
+    `  Destroying will terminate ${activeSessionCount === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`,
+  );
+}
+
 export function assertSandboxDestroyCommandAvailable(sandboxName: string): void {
   assertHermesPortableCommandUnavailable(sandboxName, "sandbox:destroy");
 }
@@ -30,21 +41,18 @@ export async function confirmSandboxDestroy(
   sandboxName: string,
   options: DestroySandboxOptions,
 ): Promise<boolean> {
-  // Preserve the existing best-effort session probe even for pre-confirmed
-  // destroys; callers historically performed it before checking --yes/--force.
   const activeSessionCount = countActiveSandboxSessions(sandboxName);
-  if (options.yes === true || options.force === true) return true;
+  // #9855: --yes/--force waives the confirmation prompt, not the notice that
+  // this destroy is about to break somebody else's live SSH session. Without
+  // this the operator sees no warning and the connected terminal just gets a
+  // Broken pipe.
+  if (options.yes === true || options.force === true) {
+    printActiveSessionWarning(activeSessionCount);
+    return true;
+  }
 
   console.log(`  ${YW}Destroy sandbox '${sandboxName}'?${R}`);
-  if (activeSessionCount > 0) {
-    const plural = activeSessionCount > 1 ? "sessions" : "session";
-    console.log(
-      `  ${YW}⚠  Active SSH ${plural} detected (${activeSessionCount} connection${activeSessionCount > 1 ? "s" : ""})${R}`,
-    );
-    console.log(
-      `  Destroying will terminate ${activeSessionCount === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`,
-    );
-  }
+  printActiveSessionWarning(activeSessionCount);
   console.log("  This will permanently delete the sandbox and all workspace files inside it.");
   console.log("  This cannot be undone.");
   const answer = await askPrompt("  Type 'yes' to confirm, or press Enter to cancel [y/N]: ");
