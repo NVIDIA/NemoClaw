@@ -56,6 +56,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/release-lkg-brev-image.test.ts"),
   },
   {
+    pattern: /(?:^|\/)tools\/e2e\/brev-launchable-e2e\.sh$/,
+    testsToRun: runTests("test/brev-launchable-e2e.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)managed-inference\/(?:models|presets|recipes|schemas)\/[^/]+\.(?:json|yaml)$/,
     testsToRun: runTests(
       "src/lib/inference/serving/catalog.test.ts",
