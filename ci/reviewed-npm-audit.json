@@ -5,6 +5,7 @@
   "severityThreshold": "high",
   "exceptionFile": "ci/npm-audit-exceptions.json",
   "archiveGraphId": "reviewed-archive-graph",
+  "archiveTarVersion": "7.5.21",
   "artifactDirectory": "coverage/reviewed-npm-audit",
   "archivePackages": [
     {

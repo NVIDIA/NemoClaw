@@ -29,13 +29,22 @@ NemoClaw derives that lock from the SRI-verified `openclaw@2026.7.1` archive
 after applying the reviewed dependency remediation.
 The committed `nemoclaw/package-lock.json` has SHA-256
 `66bef669196bb1c61385871e369542d3c321c277adb0f0e2e9f0ad972106b163`.
-Its protected-image cache seed binds that same lock digest and the exact
-`tar@7.5.21` archive.
+The protected managed-image build's locked npm cache seed binds that same lock
+digest and the exact `tar@7.5.21` archive.
 The remediation replaces `brace-expansion@5.0.7` with `5.0.9`.
 It also replaces `fast-uri@3.1.2` with `3.1.5` and `ip-address@10.2.0` with
 `10.3.1` in the OpenClaw core graph.
 It replaces `tar@7.5.19` with `7.5.21` in the core manifest and shrinkwrap,
 including the `@openclaw/fs-safe@0.4.1` optional dependency edge.
+The combined reviewed-archive install also applies the exact root override
+`tar@7.5.21`. Without that install boundary, npm follows the published
+`@openclaw/fs-safe@0.4.1` manifest and recreates nested `tar@7.5.19` even when
+the remediated OpenClaw archive's own manifest and shrinkwrap are corrected.
+The reviewed `npm@11.18.0` archive also contains a private `tar@7.5.19` tree.
+Image builds retain the existing pre-upgrade tar repair before npm installs the
+reviewed npm archive. They then apply the same exact `tar@7.5.21` repair after
+the npm upgrade. Each completed image reasserts the idempotent repair at its
+final filesystem boundary.
 The same reviewed `undici@8.10.0` replacement applies to the OpenClaw core
 dependency and the Discord manifest, shrinkwrap, and bundled package tree.
 The committed mcporter lock also selects `fast-uri@3.1.5` and
@@ -80,7 +89,7 @@ whose amd64 config reports Node `22.23.1`.
   - `https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz`
 - `@tencent-weixin/openclaw-weixin@2.4.3`
   - `sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==`
-- `tar@7.5.21` (OpenClaw remediation and NemoClaw plugin direct dependency)
+- `tar@7.5.21` (OpenClaw, NemoClaw plugin, and npm-private remediation)
   - `sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==`
   - `https://registry.npmjs.org/tar/-/tar-7.5.21.tgz`
   - `BlueOak-1.0.0`; Node `>=18`
@@ -121,7 +130,7 @@ committed mcporter runtime lock.
 The August 21 registry-backed checks used Node `22.23.2` and npm `10.9.4`.
 Their exact current results are:
 
-- Reviewed archive graph: `info=0`, `low=0`, `moderate=3`, `high=0`,
+- Reviewed archive graph: `info=0`, `low=0`, `moderate=1`, `high=0`,
   `critical=0`, `clean`.
 - OpenClaw locked runtime: `info=0`, `low=0`, `moderate=2`, `high=0`,
   `critical=0`, `clean`.
@@ -139,6 +148,13 @@ threshold.
 
 The independently installed `nemoclaw/` plugin graph reports `0`
 vulnerabilities after resolving its direct `tar` dependency to `7.5.21`.
+
+The npm-private remediation rejects affected `tar@7.5.19` and `7.5.20`,
+downloads the same exact `tar@7.5.21` archive over HTTPS, verifies its SRI,
+and replaces the complete private package tree transactionally. Dockerfile
+contract tests require this repair both before and after the complete
+`npm@11.18.0` upgrade in every shipped base-image composition and require the
+final-image repair before any `npm ci` or `npm install` command.
 
 The separately locked `mcporter@0.7.3` runtime graph originally resolved
 `@hono/node-server@1.19.14`, affected by `GHSA-frvp-7c67-39w9`. Its former
