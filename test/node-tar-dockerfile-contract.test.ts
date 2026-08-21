@@ -48,7 +48,7 @@ const dockerfiles = [
   {
     file: "agents/pi/Dockerfile.base",
     installsPatchDownloader: true,
-    installsWithNpm: false,
+    installsWithNpm: true,
     patchCount: 2,
   },
   {
@@ -64,8 +64,18 @@ const pinnedBaseDockerfiles = [
   "Dockerfile.base",
   "agents/hermes/Dockerfile.base",
   "agents/langchain-deepagents-code/Dockerfile.base",
+  "agents/pi/Dockerfile.base",
 ] as const;
 const reviewedNodeBases = new Set<string>(NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH);
+const npmConsumerPattern =
+  /\bnpm\s+(?:--?[\w-]+(?:=\S+)?\s+(?:\S+\s+)?)*(?:ci|install)\b/gu;
+
+function npmConsumerPositions(source: string): number[] {
+  const executableSource = source.replace(/^\s*#.*$/gmu, (comment) =>
+    " ".repeat(comment.length),
+  );
+  return [...executableSource.matchAll(npmConsumerPattern)].map((match) => match.index);
+}
 
 function nodeBaseReferences(source: string): string[] {
   return [
@@ -207,12 +217,7 @@ describe("node-tar image remediation contract", () => {
           aptInstallCleanup < firstPatchRun,
         file,
       ).toBe(installsPatchDownloader);
-      const executableSource = source.replace(/^\s*#.*$/gmu, (comment) =>
-        " ".repeat(comment.length),
-      );
-      const npmConsumers = [...executableSource.matchAll(/\bnpm\s+(?:ci|install)\b/gu)].map(
-        (match) => match.index,
-      );
+      const npmConsumers = npmConsumerPositions(source);
       expect(npmConsumers.length > 0, file).toBe(installsWithNpm);
       expect(
         npmConsumers.every((index) => index > lastPatchRun),
@@ -227,7 +232,7 @@ describe("reviewed npm image remediation contract", () => {
     { file: "Dockerfile.base", installsWithNpm: true },
     { file: "agents/hermes/Dockerfile.base", installsWithNpm: true },
     { file: "agents/langchain-deepagents-code/Dockerfile.base", installsWithNpm: false },
-    { file: "agents/pi/Dockerfile.base", installsWithNpm: false },
+    { file: "agents/pi/Dockerfile.base", installsWithNpm: true },
   ])(
     "patches tar before and after upgrading the complete npm tree in $file",
     ({ file, installsWithNpm }) => {
@@ -252,12 +257,7 @@ describe("reviewed npm image remediation contract", () => {
       expect(upgradeRun, file).toBeGreaterThan(patchRuns[0]!.commandStart);
       expect(patchRuns[1]!.commandStart, file).toBeGreaterThan(upgradeRun);
 
-      const executableSource = source.replace(/^\s*#.*$/gmu, (comment) =>
-        " ".repeat(comment.length),
-      );
-      const npmConsumers = [...executableSource.matchAll(/\bnpm\s+(?:ci|install)\b/gu)].map(
-        (match) => match.index,
-      );
+      const npmConsumers = npmConsumerPositions(source);
       expect(npmConsumers.length > 0, file).toBe(installsWithNpm);
       expect(
         npmConsumers.every((index) => index > patchRuns[1]!.commandStart),
