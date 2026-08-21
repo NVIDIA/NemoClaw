@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   getTrustedActiveOpenShellGatewayUserServiceIdentity,
   hasOpenShellGatewayUserService,
+  OPENSHELL_GATEWAY_HOMEBREW_FORMULA_SHA256,
   type SpawnSyncLike,
   type SpawnSyncLikeResult,
   startOpenShellGatewayUserService,
@@ -176,7 +177,7 @@ describe("OpenShell Homebrew service boundary", () => {
       "bash",
       expect.arrayContaining([
         "--homebrew-formula-operation",
-        "f0f86519e227b3b326431410058ba690b1a7b83e5af7384014e4b96283d3a642",
+        OPENSHELL_GATEWAY_HOMEBREW_FORMULA_SHA256,
         "--",
         "brew",
         "list",
