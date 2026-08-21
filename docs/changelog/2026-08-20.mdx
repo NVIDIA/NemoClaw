@@ -24,11 +24,13 @@ It also changes the Google Gemini default, strengthens managed image publication
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), [Troubleshooting](/user-guide/openclaw/reference/troubleshooting), and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
   Related changes: [PR #9238](https://github.com/NVIDIA/NemoClaw/pull/9238), [PR #9751](https://github.com/NVIDIA/NemoClaw/pull/9751), [PR #9593](https://github.com/NVIDIA/NemoClaw/pull/9593), [PR #9749](https://github.com/NVIDIA/NemoClaw/pull/9749), and [PR #9576](https://github.com/NVIDIA/NemoClaw/pull/9576).
 - No-authentication OpenAI-compatible endpoint examples now bind the backend to loopback behind NemoClaw's token-protected proxy.
-  Linux Ollama service repair proves the systemd user, executable, and ELF interpreter before restart and limits automatic mode repair to the installer-owned executable.
+  For more information, refer to [Set Up an OpenAI-Compatible Endpoint](/user-guide/openclaw/inference/custom-endpoints/set-up-openai-compatible-endpoint).
+  Related change: [PR #9759](https://github.com/NVIDIA/NemoClaw/pull/9759).
+- Linux Ollama service repair proves the systemd user, executable, and ELF interpreter before restart and limits automatic mode repair to the installer-owned executable.
   LangChain Deep Agents Code launch readiness accepts OpenRouter's HTTP 404 response for `/v1/models` only after an inference request for the recorded model succeeds.
   Fixed-profile vLLM installation accepts a model selector only when the serving catalog resolves it to the matching recipe.
-  For more information, refer to [Set Up an OpenAI-Compatible Endpoint](/user-guide/openclaw/inference/custom-endpoints/set-up-openai-compatible-endpoint), [Use Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama), [Recover and Rebuild Sandboxes](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), and [Use vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm).
-  Related changes: [PR #9759](https://github.com/NVIDIA/NemoClaw/pull/9759), [PR #9735](https://github.com/NVIDIA/NemoClaw/pull/9735), [PR #9838](https://github.com/NVIDIA/NemoClaw/pull/9838), and [PR #9839](https://github.com/NVIDIA/NemoClaw/pull/9839).
+  For more information, refer to [Use Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama), [Recover and Rebuild Sandboxes](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), and [Use vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm).
+  Related changes: [PR #9735](https://github.com/NVIDIA/NemoClaw/pull/9735), [PR #9838](https://github.com/NVIDIA/NemoClaw/pull/9838), and [PR #9839](https://github.com/NVIDIA/NemoClaw/pull/9839).
 - Google Gemini onboarding now offers and defaults to `gemini-3.6-flash` while retaining manual model entry.
   Failed Bedrock Runtime adapter startup now removes its process and stale state.
   Managed MCP add operations republish the credential-free provider revision after delayed credential absence and require a fresh projected revision before commit.
