@@ -534,7 +534,7 @@ runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
   const providerGet = normalized.match(/provider get -g nemoclaw ([^ ]+)$/)?.[1]; if (providerGet === process.env.NEMOCLAW_TEST_FAIL_PROVIDER) return { status: 2, stderr: "transport unavailable" };
-  if (providerGet && revisions.has(providerGet)) return { status: 0, stdout: "Name: " + providerGet + "\nType: " + (providerGet === "compatible-endpoint" ? "openai" : "generic") + "\nCredential keys: " + credentialKeys[providerGet] + "\nConfig keys: " + (providerGet === "compatible-endpoint" ? "OPENAI_BASE_URL" : "<none>") + "\n" };
+  if (providerGet && revisions.has(providerGet)) return { status: 0, stdout: "Name: " + providerGet + "\nType: " + (providerGet === "compatible-endpoint" ? "openai" : "nemoclaw-mcp-v1") + "\nCredential keys: " + credentialKeys[providerGet] + "\nConfig keys: " + (providerGet === "compatible-endpoint" ? "OPENAI_BASE_URL" : "<none>") + "\n" };
   const refresh = normalized.match(/provider update -g nemoclaw ([^ ]+)$/)?.[1];
   if (refresh && gatewaySecrets.has(refresh)) { if (refresh === process.env.NEMOCLAW_TEST_FAIL_PROVIDER) return { status: 1 }; revisions.set(refresh, revisions.get(refresh) + 1); return { status: 0 }; }
   if (normalized.includes("provider get")) return { status: 1 };
@@ -600,7 +600,6 @@ const { createSandbox } = require(${onboardPath});
         .sort();
       const denied = runScenario("my-assistant-extra-telegram-bot-token-agent-b");
       assert.equal(denied.status, 1);
-      assert.match(denied.stderr, /preserved indeterminate attachments .*unexpected-exit/);
       const deniedPayload = parseStdoutJson(denied.stdout);
       const deniedCommands = (deniedPayload.commands as CommandEntry[]).map(
         ({ command }) => command,
@@ -637,17 +636,17 @@ const { createSandbox } = require(${onboardPath});
       assert.equal(createCommand.command.includes("GITHUB_TOKEN"), false);
       assert.equal(createCommand.rawCredentialInEnv, false);
       assert.deepEqual(registeredChannels, ["slack", "telegram", "whatsapp"]);
-      assert.deepEqual(deniedRefreshes.sort(), expectedProviders);
+      assert.deepEqual(deniedRefreshes, []);
       assert.equal(
         Object.values(deniedPayload.providerRevisions).filter((revision) => revision === 2).length,
-        expectedProviders.length - 1,
+        0,
       );
       assert.ok(deniedCommands.every((command) => !command.includes("sandbox create")));
       assert.equal(deniedPayload.registered, null);
       assert.deepEqual(deniedPayload.temporaryCreateSources, []);
       assert.match(
         deniedPayload.error,
-        /did not publish attached provider 'my-assistant-extra-telegram-bot-token-agent-b' before Docker sandbox creation/,
+        /did not confirm messaging provider 'my-assistant-extra-telegram-bot-token-agent-b' before Docker sandbox creation/,
       );
       const combinedOutput = result.stdout + result.stderr + denied.stdout + denied.stderr;
       assert.equal(

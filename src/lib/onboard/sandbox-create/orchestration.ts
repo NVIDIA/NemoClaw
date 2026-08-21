@@ -15,6 +15,7 @@ import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../types";
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
+import { publishAttachedProvidersBeforeDockerSandboxCreation } from "./provider-publication";
 
 type SandboxRecreateReasonInput = {
   sandboxName: string;
@@ -107,51 +108,6 @@ export async function completeHermesPortableSandboxRegistration(input: {
     throw new Error("Hermes portable sandbox registration returned no authority.");
   }
   return registered;
-}
-
-function publishAttachedProvidersBeforeDockerSandboxCreation(
-  input: {
-    readonly openshellDriver: SandboxEntry["openshellDriver"];
-    readonly inferenceProvider: string | null;
-    readonly messagingProviders: readonly string[];
-    readonly extraProviders: readonly string[];
-    readonly gatewayName: string;
-  },
-  deps: Pick<SandboxCreateOrchestrationRuntime, "providerExistsInGateway" | "runOpenshell"> & {
-    readonly cleanupCreateSources: () => void;
-  },
-): void {
-  if (input.openshellDriver === "docker") {
-    const providersRequiringExistenceProbe = new Set(
-      [input.inferenceProvider, ...input.messagingProviders].filter(
-        (provider): provider is string => Boolean(provider),
-      ),
-    );
-    const attachedProviders = new Set([
-      ...providersRequiringExistenceProbe,
-      ...input.extraProviders,
-    ]);
-    for (const attachedProvider of attachedProviders) {
-      if (
-        providersRequiringExistenceProbe.has(attachedProvider) &&
-        !deps.providerExistsInGateway(attachedProvider)
-      )
-        continue;
-      const refreshed = deps.runOpenshell(
-        ["provider", "update", "-g", input.gatewayName, attachedProvider],
-        {
-          ignoreError: true,
-          suppressOutput: true,
-        },
-      );
-      if (refreshed.status !== 0) {
-        deps.cleanupCreateSources();
-        throw new Error(
-          `OpenShell did not publish attached provider '${attachedProvider}' before Docker sandbox creation.`,
-        );
-      }
-    }
-  }
 }
 
 type ApplyRecreatePolicyCarryForward = (
@@ -1288,6 +1244,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           openshellDriver: sandboxRuntimeFields.openshellDriver,
           inferenceProvider: resolvedCreateIntent.inferenceProvider,
           messagingProviders,
+          messagingProviderRequests: resolvedCreateIntent.messagingProviderRequests,
           extraProviders: resolvedCreateIntent.extraProviders,
           gatewayName: GATEWAY_NAME,
         },
