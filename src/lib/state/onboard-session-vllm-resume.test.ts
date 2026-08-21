@@ -71,4 +71,17 @@ describe("managed vLLM resume checkpoint persistence", () => {
     );
     expect(requireLoadedSession().vllmInstallModel).toBeNull();
   });
+
+  it("clears the checkpoint when provider selection is rejected", () => {
+    session.saveSession(session.createSession({ mode: "non-interactive" }));
+    session.markStepStarted("provider_selection");
+    session.checkpointVllmInstallModel("example/model");
+
+    const rejected = session.markStepRejected("provider_selection");
+
+    expect(rejected.vllmInstallModel).toBeNull();
+    expect(rejected.steps.provider_selection?.status).toBe("skipped");
+    expect(rejected.resumable).toBe(false);
+    expect(requireLoadedSession().vllmInstallModel).toBeNull();
+  });
 });

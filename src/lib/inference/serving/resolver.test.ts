@@ -363,7 +363,7 @@ describe("managed inference resolver", () => {
 
   it.each([
     "MUSE-GLIMMER-30B",
-    "inferact/muse-glimmer-30b-nvfp4-w4a4",
+    "INFERACT/MUSE-GLIMMER-30B-NVFP4-W4A4",
   ])("matches documented model aliases case-insensitively: %s", (model) => {
     const catalog = shippedCatalog();
     const { presetId, recipeId } = LINUX_VLLM_PROFILES[0];

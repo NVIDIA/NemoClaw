@@ -1613,6 +1613,7 @@ export function markStepRejected(stepName: string): Session {
     if (stepName === "provider_selection") {
       session.provider = null;
       session.model = null;
+      session.vllmInstallModel = null;
       session.endpointUrl = null;
       session.credentialEnv = null;
       session.hermesAuthMethod = null;
