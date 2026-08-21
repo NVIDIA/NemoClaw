@@ -20,6 +20,7 @@ const managedInputPaths = [
   "nemoclaw/**",
   "nemoclaw-blueprint/**",
   "scripts/**",
+  "src/lib/actions/sandbox/mcp-bridge-*.ts",
   "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
   "src/lib/core/json-types.ts",
   "src/lib/core/ports.ts",

@@ -88,12 +88,16 @@ import {
 
 type SelectedHostLocalVllm = Extract<HostLocalVllmSelectionResult, { kind: "selected" }>;
 
-async function resolveMuseGlimmerSelection(profile: VllmProfile): Promise<SelectedHostLocalVllm> {
-  const readinessReports = vllmInstallTestReadiness(profile);
+async function resolveActualHostLocalSelection(
+  profile: VllmProfile,
+  env: NodeJS.ProcessEnv = process.env,
+  modelIntent = String(env.NEMOCLAW_VLLM_MODEL ?? "").trim(),
+): Promise<SelectedHostLocalVllm> {
+  const readinessReports = vllmInstallTestReadiness(profile, modelIntent);
   const actualSelection = await vi.importActual<
     typeof import("./serving/host-local-vllm-selection")
   >("./serving/host-local-vllm-selection");
-  const selection = actualSelection.resolveHostLocalVllmSelection(profile, process.env, {
+  const selection = actualSelection.resolveHostLocalVllmSelection(profile, env, {
     automatic: true,
     readinessReports,
   });
@@ -149,11 +153,56 @@ describe("fixed catalog vLLM installs", () => {
     process.env = { ...originalEnv };
   });
 
-  it("installs a fixed catalog recipe selected by NEMOCLAW_VLLM_MODEL", async () => {
-    process.env.NEMOCLAW_VLLM_MODEL = "muse-glimmer-30b";
+  it.each([
+    { platform: "spark", model: "muse-glimmer-30b" },
+    { platform: "linux", model: "inferact/muse-glimmer-30b-nvfp4-w4a4" },
+    { platform: "spark", model: "NEMOTRON-3.5-LIGHTNING-30B" },
+    {
+      platform: "linux",
+      model: "nvidia/nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4",
+    },
+  ] as const)(
+    "installs the fixed $model catalog recipe on $platform",
+    async ({ platform, model }) => {
+      process.env.NEMOCLAW_VLLM_MODEL = model;
+      const detectedProfile = detectVllmProfile({ platform, type: "nvidia" })!;
+      const profile =
+        platform === "linux"
+          ? { ...detectedProfile, architecture: "x64" as const }
+          : detectedProfile;
+      const selection = await resolveActualHostLocalSelection(profile);
+      const readinessReports = vllmInstallTestReadiness(profile);
+      mocks.resolveHostLocalVllmSelection.mockReturnValue(selection);
+      mockSuccessfulVllmInstall(mocks, selection.profile.containerName);
+      mockSuccessfulAuthenticatedReadiness(selection.model.servedModelId ?? selection.model.id);
+
+      const result = await installVllm(profile, {
+        hasImage: true,
+        nonInteractive: true,
+        promptFn: vi.fn(),
+        readinessReports,
+        resolveManagedBridgeHost: () => "172.18.0.1",
+      });
+
+      expect(spies.errSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining("does not accept NEMOCLAW_VLLM_MODEL"),
+      );
+      expect(result).toEqual({ ok: true });
+      expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("installs an explicitly selected fixed serving preset", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    const selection = await resolveMuseGlimmerSelection(profile);
-    const readinessReports = vllmInstallTestReadiness(profile);
+    const modelIntent = "muse-glimmer-30b";
+    const selectedByModel = await resolveActualHostLocalSelection(
+      profile,
+      { NEMOCLAW_VLLM_MODEL: modelIntent },
+      modelIntent,
+    );
+    process.env.NEMOCLAW_SERVING_PRESET = selectedByModel.presetId;
+    const selection = await resolveActualHostLocalSelection(profile, process.env, modelIntent);
+    const readinessReports = vllmInstallTestReadiness(profile, modelIntent);
     mocks.resolveHostLocalVllmSelection.mockReturnValue(selection);
     mockSuccessfulVllmInstall(mocks, selection.profile.containerName);
     mockSuccessfulAuthenticatedReadiness(selection.model.servedModelId ?? selection.model.id);
@@ -166,19 +215,77 @@ describe("fixed catalog vLLM installs", () => {
       resolveManagedBridgeHost: () => "172.18.0.1",
     });
 
-    expect(spies.errSpy).not.toHaveBeenCalledWith(
-      expect.stringContaining("does not accept NEMOCLAW_VLLM_MODEL"),
-    );
     expect(result).toEqual({ ok: true });
     expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
   });
 
+  it("defers non-interactive custom arguments to the established installer", async () => {
+    process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-35b-a3b-nvfp4";
+    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = '["--max-model-len","32768"]';
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const actualSelection = await vi.importActual<
+      typeof import("./serving/host-local-vllm-selection")
+    >("./serving/host-local-vllm-selection");
+    const deferred = actualSelection.resolveHostLocalVllmSelection(profile, process.env, {
+      automatic: true,
+    });
+    expect(deferred).toEqual({ kind: "not-selected" });
+    mocks.resolveHostLocalVllmSelection.mockReturnValue(deferred);
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: true });
+    const [runArgs] = mocks.dockerRunDetached.mock.calls[0] as [string[]];
+    expect(runArgs.at(-1)).toContain("--max-model-len");
+    expect(runArgs.at(-1)).toContain("32768");
+  });
+
+  it("replays and refreshes a checkpointed model before Docker work", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const checkpointInstallIntent = vi.fn();
+    mocks.resolveHostLocalVllmSelection.mockReturnValue({ kind: "not-selected" });
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      modelIntent: "QWEN3.6-35B-A3B-NVFP4",
+      checkpointInstallIntent,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(mocks.resolveHostLocalVllmSelection).toHaveBeenCalledWith(
+      profile,
+      expect.objectContaining({ NEMOCLAW_VLLM_MODEL: "QWEN3.6-35B-A3B-NVFP4" }),
+      expect.objectContaining({ automatic: true }),
+    );
+    expect(checkpointInstallIntent).toHaveBeenCalledWith("QWEN3.6-35B-A3B-NVFP4");
+    expect(checkpointInstallIntent.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.runCapture.mock.invocationCallOrder[0],
+    );
+  });
+
   it("still rejects extra serve arguments for a fixed catalog recipe", async () => {
     process.env.NEMOCLAW_VLLM_MODEL = "muse-glimmer-30b";
+    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify([
+      "--max-model-len",
+      "4096",
+    ]);
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    const selection = await resolveMuseGlimmerSelection(profile);
-    mocks.resolveHostLocalVllmSelection.mockReturnValue(selection);
-    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify(["--max-model-len", "4096"]);
+    const actualSelection = await vi.importActual<
+      typeof import("./serving/host-local-vllm-selection")
+    >("./serving/host-local-vllm-selection");
+    const deferred = actualSelection.resolveHostLocalVllmSelection(profile, process.env, {
+      automatic: true,
+    });
+    expect(deferred).toEqual({ kind: "not-selected" });
+    mocks.resolveHostLocalVllmSelection.mockReturnValue(deferred);
 
     const result = await installVllm(profile, {
       hasImage: true,
@@ -189,9 +296,7 @@ describe("fixed catalog vLLM installs", () => {
 
     expect(result).toEqual({ ok: false });
     expect(spies.errSpy).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "does not accept NEMOCLAW_VLLM_MODEL or NEMOCLAW_VLLM_EXTRA_ARGS_JSON",
-      ),
+      expect.stringContaining("does not accept NEMOCLAW_VLLM_EXTRA_ARGS_JSON"),
     );
     expect(mocks.runCapture).not.toHaveBeenCalled();
     expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
