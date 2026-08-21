@@ -97,6 +97,23 @@ describe("messaging channel policy presets", () => {
     ).toBe(content);
   });
 
+  it("rejects policy content with an unresolved sandbox placeholder", () => {
+    const content = [
+      "preset:",
+      "  name: discord",
+      "network_policies:",
+      "  discord:",
+      "    credential_binding:",
+      '      provider: "{sandboxName}-discord-bridge"',
+      "",
+    ].join("\n");
+    const policy = createPolicyWithFixtures([{ channelId: "discord", presetName: "discord" }], {
+      discord: content,
+    });
+
+    expect(policy.loadMessagingChannelPolicyPreset("discord")).toBeNull();
+  });
+
   it("ships a policy file for every manifest-supported agent and preset", () => {
     const missing = listBuiltInMessagingChannelManifests().flatMap((manifest) =>
       manifest.supportedAgents.flatMap((agent) =>

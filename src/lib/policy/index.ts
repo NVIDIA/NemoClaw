@@ -95,6 +95,7 @@ type SelectionOptions = {
 
 type PresetLoadOptions = {
   agent?: string | null;
+  sandboxName?: string;
 };
 
 type PresetListOptions = {
@@ -103,6 +104,7 @@ type PresetListOptions = {
 
 type MergePresetNamesOptions = {
   agent?: string | null;
+  sandboxName?: string;
   excludedBaselineKeys?: readonly string[];
 };
 
@@ -164,7 +166,10 @@ function loadCentralPreset(name: string, options: { reportMissing?: boolean } = 
 }
 
 function loadPresetForAgent(name: string, options: PresetLoadOptions = {}): string | null {
-  const channelPreset = loadMessagingChannelPolicyPreset(name, { agent: options.agent });
+  const channelPreset = loadMessagingChannelPolicyPreset(name, {
+    agent: options.agent,
+    sandboxName: options.sandboxName,
+  });
   if (channelPreset) return channelPreset;
   if (isMessagingChannelPolicyPreset(name)) return null;
   return loadCentralPreset(name);
@@ -1143,7 +1148,10 @@ function mergePresetNamesIntoPolicy(
   const missingPresets: string[] = [];
 
   for (const presetName of [...new Set(presetNames)]) {
-    const presetContent = loadPresetForAgent(presetName, { agent: options.agent });
+    const presetContent = loadPresetForAgent(presetName, {
+      agent: options.agent,
+      sandboxName: options.sandboxName,
+    });
     const presetEntries = extractPresetEntries(presetContent);
     if (!presetEntries) {
       missingPresets.push(presetName);

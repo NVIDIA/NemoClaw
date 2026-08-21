@@ -27,6 +27,7 @@ type PolicyEndpoint = {
   tls?: string;
   allowed_ips?: string[];
   request_body_credential_rewrite?: boolean;
+  credential_binding?: { provider?: string };
   rules?: PolicyRule[];
 };
 
@@ -213,6 +214,7 @@ describe("initial sandbox policy real preset merge", () => {
     const prepared = prepareInitialSandboxCreatePolicy(
       repoPath("agents", "hermes", "policy-additions.yaml"),
       ["discord", "slack"],
+      { sandboxName: "hermes-channel" },
     );
     const policy = readPreparedPolicy(prepared);
 
@@ -351,6 +353,39 @@ describe("initial sandbox policy real preset merge", () => {
       protocol: "rest",
       request_body_credential_rewrite: true,
     });
+  });
+
+  it("materializes Hermes Discord credential bindings from the target sandbox name", () => {
+    const sandboxName = "hermes-discord-e2e";
+    const effective = readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(
+        repoPath("agents", "hermes", "policy-additions.yaml"),
+        ["discord"],
+        { agentName: "hermes", sandboxName },
+      ),
+    );
+    const endpoints = effective.network_policies?.discord?.endpoints ?? [];
+    const credentialEndpoints = endpoints.filter((endpoint) =>
+      ["discord.com", "gateway.discord.gg", "*.discord.gg"].includes(endpoint.host ?? ""),
+    );
+
+    expect(credentialEndpoints).toHaveLength(3);
+    expect(credentialEndpoints.map((endpoint) => endpoint.credential_binding?.provider)).toEqual([
+      `${sandboxName}-discord-bridge`,
+      `${sandboxName}-discord-bridge`,
+      `${sandboxName}-discord-bridge`,
+    ]);
+    expect(JSON.stringify(effective)).not.toContain("{sandboxName}");
+  });
+
+  it("rejects a Hermes Discord create policy without a target sandbox name", () => {
+    expect(() =>
+      prepareInitialSandboxCreatePolicy(
+        repoPath("agents", "hermes", "policy-additions.yaml"),
+        ["discord"],
+        { agentName: "hermes" },
+      ),
+    ).toThrow("Cannot prepare sandbox create policy; missing policy preset(s): discord");
   });
 
   it.each(shippingPolicyCases.slice(0, 3).concat(shippingPolicyCases.slice(4)))(

@@ -137,8 +137,8 @@ export function createMessagingChannelPolicyResolver(
     const content = deps.readFileSync(file, "utf-8");
     const header = readPresetHeader(content);
     if (header?.name !== presetName) return null;
-    if (!content.includes("{sandboxName}") || options.sandboxName === undefined) return content;
-    if (!isValidName(options.sandboxName)) return null;
+    if (!content.includes("{sandboxName}")) return content;
+    if (options.sandboxName === undefined || !isValidName(options.sandboxName)) return null;
     return content.replaceAll("{sandboxName}", options.sandboxName);
   }
 
