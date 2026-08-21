@@ -435,8 +435,9 @@ RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}" \
 # RUN so their bytes never enter a published image layer.
 COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch
 COPY agents/hermes/whatsapp-proxy.patch /tmp/hermes-whatsapp-proxy.patch
+COPY scripts/checks/download-hermes-source-archive.sh /tmp/nemoclaw-download-hermes-source-archive.sh
 RUN mkdir -p /opt/hermes \
-    && curl -fsSL "https://github.com/NousResearch/hermes-agent/archive/refs/tags/${HERMES_VERSION}.tar.gz" -o /tmp/hermes.tar.gz \
+    && bash /tmp/nemoclaw-download-hermes-source-archive.sh "${HERMES_VERSION}" /tmp/hermes.tar.gz \
     && printf '%s  /tmp/hermes.tar.gz\n' "${HERMES_TARBALL_SHA256}" > /tmp/hermes.tar.gz.sha256 \
     && sha256sum -c /tmp/hermes.tar.gz.sha256 \
     && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 \
@@ -446,7 +447,8 @@ RUN mkdir -p /opt/hermes \
     && git -C /opt/hermes apply --check /tmp/hermes-whatsapp-proxy.patch \
     && git -C /opt/hermes apply /tmp/hermes-whatsapp-proxy.patch \
     && rm /tmp/hermes.tar.gz /tmp/hermes.tar.gz.sha256 \
-        /tmp/hermes-security-dependencies.patch /tmp/hermes-whatsapp-proxy.patch
+        /tmp/hermes-security-dependencies.patch /tmp/hermes-whatsapp-proxy.patch \
+        /tmp/nemoclaw-download-hermes-source-archive.sh
 
 # Cross-check the pinned release against two independent sources before
 # installing anything from it: the extracted tarball must declare
