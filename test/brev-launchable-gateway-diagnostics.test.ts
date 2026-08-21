@@ -131,6 +131,10 @@ describe("focused staging Brev Launchable failure diagnostics", () => {
     const created = fixture({ e2eFails: true });
     const result = run(created.env);
     expect(result.status, result.stderr).not.toBe(0);
+    expect(
+      fs.existsSync(created.gatewayLifecycleCommand),
+      "the failing Launchable lane did not capture the OpenShell gateway diagnostic command",
+    ).toBe(true);
     lifecycleCommand = fs.readFileSync(created.gatewayLifecycleCommand, "utf8");
     cleanupFixtures();
   });
