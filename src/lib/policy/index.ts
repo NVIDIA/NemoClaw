@@ -23,6 +23,7 @@ import {
   listMessagingChannelPolicyPresets,
   listMessagingPolicyPresetMetadata,
   loadMessagingChannelPolicyPreset,
+  materializeMessagingPolicySandboxName,
 } from "../messaging/channels";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
@@ -2919,10 +2920,19 @@ function applyPermissivePolicy(sandboxName: string): void {
   if (!fs.existsSync(policyPath)) {
     throw new Error(`Permissive policy not found: ${policyPath}`);
   }
+  const policyDocument = fs.readFileSync(policyPath, "utf-8");
+  const materializedPolicy = materializeMessagingPolicySandboxName(policyDocument, sandboxName);
+  if (materializedPolicy === null) {
+    throw new Error("Cannot materialize the permissive policy credential provider binding");
+  }
 
   console.log("  Applying permissive policy...");
   assertOpenshellResolvable();
-  run(buildPolicySetCommand(policyPath, sandboxName));
+  if (materializedPolicy === policyDocument) {
+    run(buildPolicySetCommand(policyPath, sandboxName));
+  } else {
+    setPolicyDocument(sandboxName, materializedPolicy);
+  }
   console.log("  Applied permissive policy.");
 }
 
