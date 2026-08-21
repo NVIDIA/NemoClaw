@@ -774,12 +774,16 @@ function stopBedrockRuntimeAdapterLocked(
   scanOrphans: boolean,
 ): BedrockRuntimeAdapterStopResult {
   const evidencePaths = bedrockEvidencePaths(paths.nemoclawStateDir);
+  const adapterPort = resolveRuntimeAdapterPort(runtime, BEDROCK_RUNTIME_ADAPTER);
   const journalExists = runtime.existsSync(journalPath);
   let journal = journalExists ? readBedrockRuntimeAdapterUninstallJournal(journalPath) : null;
-  if (journalExists && (!journal || journal.gatewayPort !== gatewayPort)) {
+  if (
+    journalExists &&
+    (!journal || journal.gatewayPort !== gatewayPort || journal.adapterPort !== adapterPort)
+  ) {
     return stopFailure(
       runtime,
-      "Bedrock Runtime adapter uninstall journal is unsafe or malformed; lifecycle evidence was preserved.",
+      "Bedrock Runtime adapter uninstall journal is unsafe, malformed, or does not match the selected gateway and configured adapter port; lifecycle evidence was preserved.",
     );
   }
 
@@ -809,7 +813,6 @@ function stopBedrockRuntimeAdapterLocked(
     }
 
     const { evidence } = evidenceResult;
-    const adapterPort = resolveRuntimeAdapterPort(runtime, BEDROCK_RUNTIME_ADAPTER);
     const presence = bedrockRuntimeAdapterProcessPresence(evidence.pid, runtime);
     if (presence === "unknown") {
       return stopFailure(

@@ -607,6 +607,30 @@ describe("Bedrock Runtime adapter fail-closed uninstall cleanup (#9552)", () => 
     }
   });
 
+  it("preserves a resumed journal after the configured adapter port drifts", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-stop-resume-port-"));
+    writeEvidence(home);
+    writeJournal(home, "term-sent");
+    const journalBefore = fs.readFileSync(lifecyclePaths(home).journalPath, "utf8");
+    const { host, kills } = cleanupHost(home, new Map([[PID, managedProcess()]]));
+    host.env.NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT = "11437";
+
+    try {
+      expect(stop(home, host)).toMatchObject({
+        ok: false,
+        fatal: true,
+        message: expect.stringContaining("configured adapter port"),
+      });
+      expect(kills).toEqual([]);
+      expect(fs.existsSync(adapterPaths(home).pidPath)).toBe(true);
+      expect(fs.existsSync(adapterPaths(home).tokenPath)).toBe(true);
+      expect(fs.existsSync(adapterPaths(home).statePath)).toBe(true);
+      expect(fs.readFileSync(lifecyclePaths(home).journalPath, "utf8")).toBe(journalBefore);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ["prepared", "SIGTERM", true],
     ["term-sent", "SIGTERM", true],
