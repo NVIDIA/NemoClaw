@@ -148,7 +148,7 @@ function socketAuthority(): PodmanSocketAuthority {
 
 function openshellExecutableAuthority(): HermesPortableOpenShellExecutableAuthority {
   return {
-    version: "0.0.101",
+    version: "0.0.106",
     executable: {
       executablePath: "/usr/bin/openshell",
       device: "1",
@@ -397,6 +397,21 @@ describe("Hermes portable receipt authority", () => {
     const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
 
     expect(() => publish(wrongVersion as never)).toThrow("invalid Podman executable authority");
+    expect(fs.existsSync(path.join(directory, "pending.json"))).toBe(false);
+  });
+
+  it("rejects an OpenShell 0.0.101 receipt before writing a stage (#9211)", () => {
+    const receipt = pending();
+    const staleVersion = {
+      ...receipt,
+      openshellExecutableAuthority: {
+        ...receipt.openshellExecutableAuthority,
+        version: "0.0.101",
+      },
+    };
+    const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
+
+    expect(() => publish(staleVersion as never)).toThrow("invalid OpenShell executable authority");
     expect(fs.existsSync(path.join(directory, "pending.json"))).toBe(false);
   });
 

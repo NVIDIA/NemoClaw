@@ -236,6 +236,35 @@ describe("ensureOllamaLoopbackSystemdOverride non-interactive sudo (#5716)", () 
     }
   });
 
+  it("stops before every override command when the service-user execution proof fails (#9728)", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exit = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit ${code}`);
+    }) as never);
+    const runShellImpl = vi.fn();
+    try {
+      expect(() =>
+        ensureOllamaLoopbackSystemdOverride({
+          platformImpl: () => "linux",
+          hasOllamaSystemdUnitImpl: () => true,
+          isNonInteractive: () => true,
+          hasPasswordlessSudoImpl: () => true,
+          proveOllamaServiceExecutableImpl: () => ({
+            classification: "repair-outside-authority",
+            message: "service user exited 126",
+            ok: false,
+          }),
+          runShellImpl,
+        }),
+      ).toThrow("exit 1");
+      expect(runShellImpl).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("repair-outside-authority"));
+    } finally {
+      exit.mockRestore();
+      error.mockRestore();
+    }
+  });
+
   // Ultra advisor PRA-4 / CR follow-up: pin every branch of the new gate
   // via the pure `shouldSkipOllamaLoopbackForMissingSudo` decision so the
   // happy path is covered without falling through into the real systemd

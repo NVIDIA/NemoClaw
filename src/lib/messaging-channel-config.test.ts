@@ -36,6 +36,8 @@ describe("messaging channel config", () => {
       "GOOGLECHAT_AUDIENCE",
       "GOOGLECHAT_APP_PRINCIPAL",
       "GOOGLECHAT_ALLOWED_USERS",
+      "GOOGLE_CHAT_PROJECT_ID",
+      "GOOGLE_CHAT_SUBSCRIPTION_NAME",
     ]);
   });
 

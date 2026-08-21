@@ -47,8 +47,8 @@ export function registerIncompleteOnboardExitFailureHandler(
   processLike: OnboardExitFailureProcessLike = process,
   portable = isPortableExperimentalProfile(),
 ): void {
-  const failIncompleteStep = (): void => {
-    if (isComplete()) return;
+  const failIncompleteStep = (force = false): void => {
+    if (!force && isComplete()) return;
     // A non-null return means a step was in progress, so surface the
     // profile-appropriate recovery command for exit paths that don't print
     // their own guidance (#6003, #8873). When an explicit cancel has already
@@ -80,7 +80,7 @@ export function registerIncompleteOnboardExitFailureHandler(
     setImmediate(() => {
       removeListener("SIGINT", onSigint);
       removeListener("SIGTERM", onSigterm);
-      failIncompleteStep();
+      failIncompleteStep(true);
       kill(pid, signal);
     });
   };

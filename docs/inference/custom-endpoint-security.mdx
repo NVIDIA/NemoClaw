@@ -18,7 +18,8 @@ OpenShell forwards the traffic and injects the provider credential at egress.
 The sandbox does not receive the raw API key.
 
 Use `COMPATIBLE_API_KEY` for an OpenAI-compatible endpoint that requires authentication.
-For an HTTP endpoint on `localhost`, `127.0.0.1`, or `[::1]` and port `8000`, `11434`, or `11435`, you can select no authentication.
+For an HTTP endpoint on `localhost`, `127.0.0.1`, or `[::1]`, you can select no authentication on the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`.
+Port `11435` supports no authentication only when `NEMOCLAW_OLLAMA_PROXY_PORT` uses a different free port.
 For non-interactive onboarding of that OpenAI-compatible endpoint, set `NEMOCLAW_COMPATIBLE_AUTH_MODE=none`.
 Use `COMPATIBLE_ANTHROPIC_API_KEY` for a custom Anthropic-compatible endpoint.
 Anthropic-compatible onboarding requires a non-empty value even when the upstream server does not authenticate requests.

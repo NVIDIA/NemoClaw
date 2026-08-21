@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as portableAgentLifecycle from "../../lib/onboard/experimental/portable-agent-lifecycle";
@@ -414,39 +415,121 @@ describe("sandbox oclif command adapters", () => {
     await ShieldsStatusCommand.run(["alpha"], rootDir);
 
     expect(mocks.runSandboxDoctor).toHaveBeenCalledWith("alpha", ["--json"], { quietJson: true });
-    expect(mocks.shieldsDown).toHaveBeenCalledWith("alpha", {
-      timeout: "5m",
-      reason: "debugging",
-      policy: "permissive",
-      throwOnError: true,
+    expect(mocks.shieldsDown).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        timeout: "5m",
+        reason: "debugging",
+        policy: "permissive",
+        throwOnError: true,
+        assertCommandAvailable: expect.any(Function),
+      }),
+    );
+    expect(mocks.shieldsUp).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        throwOnError: true,
+        assertCommandAvailable: expect.any(Function),
+      }),
+    );
+    expect(mocks.shieldsStatus).toHaveBeenCalledWith("alpha", true, {
+      assertCommandAvailable: expect.any(Function),
     });
-    expect(mocks.shieldsUp).toHaveBeenCalledWith("alpha", { throwOnError: true });
-    expect(mocks.shieldsStatus).toHaveBeenCalledWith("alpha");
   });
 
-  it("rejects schema-5 shields commands inside their command lifecycle fence (#9203)", async ({
+  it("dispatches Shields commands to their lifecycle deadline gate after timer expiry (#9738)", async () => {
+    fs.writeFileSync(
+      path.join(stateDir, "shields-timer-alpha.json"),
+      JSON.stringify({
+        pid: 2_147_483_647,
+        sandboxName: "alpha",
+        snapshotPath: path.join(stateDir, "snapshot.yaml"),
+        restoreAt: new Date(Date.now() - 60_000).toISOString(),
+        processToken: "a".repeat(32),
+      }),
+    );
+    let monotonicNow = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => {
+      monotonicNow += 30 * 60_000 + 1;
+      return monotonicNow;
+    });
+
+    await expect(ShieldsStatusCommand.run(["alpha"], rootDir)).resolves.toBeUndefined();
+    await expect(ShieldsUpCommand.run(["alpha"], rootDir)).resolves.toBeUndefined();
+    await expect(ShieldsDownCommand.run(["alpha"], rootDir)).resolves.toBeUndefined();
+
+    expect(mocks.shieldsStatus).toHaveBeenCalledOnce();
+    expect(mocks.shieldsUp).toHaveBeenCalledOnce();
+    expect(mocks.shieldsDown).toHaveBeenCalledOnce();
+  });
+
+  it("rejects schema-5 Shields commands through their owned lifecycle fence (#9203)", async ({
     onTestFinished,
   }) => {
-    const guard = vi
-      .spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable")
-      .mockImplementation((_sandboxName, commandId) => {
-        throw new Error(`rejected ${commandId}`);
-      });
-    onTestFinished(() => guard.mockRestore());
+    fs.writeFileSync(
+      path.join(stateDir, "shields-timer-alpha.json"),
+      JSON.stringify({
+        pid: 2_147_483_647,
+        sandboxName: "alpha",
+        snapshotPath: path.join(stateDir, "snapshot.yaml"),
+        restoreAt: new Date(Date.now() - 60_000).toISOString(),
+        processToken: "a".repeat(32),
+      }),
+    );
+    vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue({
+      kind: "hermes",
+      snapshot: {
+        receipt: {
+          phase: "active",
+          gatewayName: "nemoclaw",
+          lifecycleGeneration: "generation-1",
+          container: { sandboxId: "sandbox-id" },
+        },
+      } as never,
+    });
+    const mutation = vi.fn();
+    mocks.shieldsDown.mockImplementation(
+      (_sandboxName: string, options: { assertCommandAvailable?: () => void }) => {
+        options.assertCommandAvailable?.();
+        mutation();
+      },
+    );
+    mocks.shieldsUp.mockImplementation(
+      (_sandboxName: string, options: { assertCommandAvailable?: () => void }) => {
+        options.assertCommandAvailable?.();
+        mutation();
+      },
+    );
+    mocks.shieldsStatus.mockImplementation(
+      (
+        _sandboxName: string,
+        _allowInlineRecovery: boolean,
+        options: { assertCommandAvailable?: () => void },
+      ) => {
+        options.assertCommandAvailable?.();
+        mutation();
+      },
+    );
+    onTestFinished(() => {
+      mocks.shieldsDown.mockReset();
+      mocks.shieldsUp.mockReset();
+      mocks.shieldsStatus.mockReset();
+    });
 
     await expect(ShieldsDownCommand.run(["alpha"], rootDir)).rejects.toThrow(
-      "rejected sandbox:shields:down",
+      "not supported for an experimental Hermes portable sandbox",
     );
     await expect(ShieldsUpCommand.run(["alpha"], rootDir)).rejects.toThrow(
-      "rejected sandbox:shields:up",
+      "not supported for an experimental Hermes portable sandbox",
     );
     await expect(ShieldsStatusCommand.run(["alpha"], rootDir)).rejects.toThrow(
-      "rejected sandbox:shields:status",
+      "not supported for an experimental Hermes portable sandbox",
     );
 
-    expect(mocks.shieldsDown).not.toHaveBeenCalled();
-    expect(mocks.shieldsUp).not.toHaveBeenCalled();
-    expect(mocks.shieldsStatus).not.toHaveBeenCalled();
+    expect(mocks.shieldsDown).toHaveBeenCalledOnce();
+    expect(mocks.shieldsUp).toHaveBeenCalledOnce();
+    expect(mocks.shieldsStatus).toHaveBeenCalledOnce();
+    expect(mutation).not.toHaveBeenCalled();
   });
 
   it("translates shields exit sentinels into exit codes without a traceback (#7382)", async () => {
