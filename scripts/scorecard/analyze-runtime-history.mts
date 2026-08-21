@@ -14,6 +14,12 @@ import {
   formatFirstTurnLatencyRecurrence,
   normalizeFirstTurnLatencySample,
 } from "./analyze-first-turn-latency.mts";
+import {
+  evaluateSandboxPhaseTailRecurrence,
+  formatSandboxPhaseTailRecurrence,
+  normalizeSandboxPhaseTailSample,
+  type SandboxPhaseTailSample,
+} from "./analyze-sandbox-phase-tail.mts";
 import { readValidatedArtifactZipEntry } from "./read-artifact-zip.mts";
 
 export const RUNTIME_SUMMARY_ARTIFACT = "e2e-runtime-summary";
@@ -22,7 +28,8 @@ export const RUNTIME_REGRESSION_MIN_DELTA_MS = 30_000;
 export const RUNTIME_REGRESSION_MIN_PERCENT = 20;
 
 const LEGACY_RUNTIME_SUMMARY_SCHEMA = "nemoclaw.e2e_runtime_summary.v1";
-const RUNTIME_SUMMARY_SCHEMA = "nemoclaw.e2e_runtime_summary.v2";
+const PREVIOUS_RUNTIME_SUMMARY_SCHEMA = "nemoclaw.e2e_runtime_summary.v2";
+const RUNTIME_SUMMARY_SCHEMA = "nemoclaw.e2e_runtime_summary.v3";
 const WORKFLOW_FILE = "e2e.yaml";
 const HISTORY_RUN_LIMIT = 30;
 const HISTORY_QUERY_LIMIT = 30;
@@ -43,17 +50,27 @@ type GitHubDeps = {
 };
 
 export interface RuntimeSummaryArtifact {
-  schemaVersion: typeof LEGACY_RUNTIME_SUMMARY_SCHEMA | typeof RUNTIME_SUMMARY_SCHEMA;
+  schemaVersion:
+    | typeof LEGACY_RUNTIME_SUMMARY_SCHEMA
+    | typeof PREVIOUS_RUNTIME_SUMMARY_SCHEMA
+    | typeof RUNTIME_SUMMARY_SCHEMA;
   runId: number;
   createdAt: string;
   firstTurnLatency: FirstTurnLatencySample | null;
+  sandboxPhaseTail: SandboxPhaseTailSample | null;
   rows: RuntimeHistorySample[];
 }
 
 type RuntimeHistoryServices = {
   currentFirstTurnLatency?: FirstTurnLatencySample | null;
-  loadPriorPushSummaries: (deps: GitHubDeps) => Promise<RuntimeSummaryArtifact[]>;
+  currentSandboxPhaseTail?: SandboxPhaseTailSample | null;
+  loadPriorPushHistory: (deps: GitHubDeps) => Promise<PriorPushHistory>;
 };
+
+export interface PriorPushHistory {
+  summaries: RuntimeSummaryArtifact[];
+  unavailableRuns: number;
+}
 
 function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
   return Object.keys(value).sort().join("\0") === [...expected].sort().join("\0");
@@ -138,14 +155,18 @@ export function normalizeRuntimeSummary(value: unknown): RuntimeSummaryArtifact 
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const summary = value as Record<string, unknown>;
   const legacy = summary.schemaVersion === LEGACY_RUNTIME_SUMMARY_SCHEMA;
+  const previous = summary.schemaVersion === PREVIOUS_RUNTIME_SUMMARY_SCHEMA;
+  const current = summary.schemaVersion === RUNTIME_SUMMARY_SCHEMA;
   if (
+    (!legacy && !previous && !current) ||
     !hasExactKeys(
       summary,
       legacy
         ? ["schemaVersion", "runId", "createdAt", "rows"]
-        : ["schemaVersion", "runId", "createdAt", "firstTurnLatency", "rows"],
+        : previous
+          ? ["schemaVersion", "runId", "createdAt", "firstTurnLatency", "rows"]
+          : ["schemaVersion", "runId", "createdAt", "firstTurnLatency", "sandboxPhaseTail", "rows"],
     ) ||
-    (!legacy && summary.schemaVersion !== RUNTIME_SUMMARY_SCHEMA) ||
     !Number.isSafeInteger(summary.runId) ||
     (summary.runId as number) < 1 ||
     !isCanonicalTimestamp(summary.createdAt) ||
@@ -164,11 +185,21 @@ export function normalizeRuntimeSummary(value: unknown): RuntimeSummaryArtifact 
       ? null
       : normalizeFirstTurnLatencySample(summary.firstTurnLatency);
   if (!legacy && summary.firstTurnLatency !== null && firstTurnLatency === null) return null;
+  const sandboxPhaseTail =
+    current && summary.sandboxPhaseTail !== null
+      ? normalizeSandboxPhaseTailSample(summary.sandboxPhaseTail)
+      : null;
+  if (current && summary.sandboxPhaseTail !== null && sandboxPhaseTail === null) return null;
   return {
-    schemaVersion: legacy ? LEGACY_RUNTIME_SUMMARY_SCHEMA : RUNTIME_SUMMARY_SCHEMA,
+    schemaVersion: legacy
+      ? LEGACY_RUNTIME_SUMMARY_SCHEMA
+      : previous
+        ? PREVIOUS_RUNTIME_SUMMARY_SCHEMA
+        : RUNTIME_SUMMARY_SCHEMA,
     runId: summary.runId as number,
     createdAt: summary.createdAt,
     firstTurnLatency,
+    sandboxPhaseTail,
     rows: normalizedRows,
   };
 }
@@ -178,12 +209,14 @@ export function createRuntimeSummary(
   createdAt: string,
   rows: readonly RuntimeHistorySample[],
   firstTurnLatency: FirstTurnLatencySample | null = null,
+  sandboxPhaseTail: SandboxPhaseTailSample | null = null,
 ): RuntimeSummaryArtifact {
   const summary = normalizeRuntimeSummary({
     schemaVersion: RUNTIME_SUMMARY_SCHEMA,
     runId,
     createdAt,
     firstTurnLatency,
+    sandboxPhaseTail,
     rows,
   });
   if (summary === null) throw new Error("invalid current E2E runtime summary");
@@ -225,9 +258,7 @@ async function readRuntimeSummaryFromRun(
   return summary?.runId === runId ? summary : null;
 }
 
-export async function loadPriorPushSummaries(
-  deps: GitHubDeps,
-): Promise<RuntimeSummaryArtifact[]> {
+export async function loadPriorPushHistory(deps: GitHubDeps): Promise<PriorPushHistory> {
   const { github, context, core } = deps;
   const response = await github.rest.actions.listWorkflowRuns({
     owner: context.repo.owner,
@@ -239,19 +270,26 @@ export async function loadPriorPushSummaries(
   });
   const runs = response.data.workflow_runs as Array<{ id: number }>;
   const summaries: RuntimeSummaryArtifact[] = [];
+  let unavailableRuns = 0;
   for (const run of runs) {
     if (run.id === context.runId) continue;
     try {
       const summary = await readRuntimeSummaryFromRun(deps, run.id);
-      if (summary !== null) summaries.push(summary);
+      if (summary === null) unavailableRuns += 1;
+      else summaries.push(summary);
     } catch {
+      unavailableRuns += 1;
       core?.warning?.(
         "One prior push runtime summary was unavailable; continuing with less history.",
       );
     }
     if (summaries.length === HISTORY_RUN_LIMIT) break;
   }
-  return summaries;
+  return { summaries, unavailableRuns };
+}
+
+export async function loadPriorPushSummaries(deps: GitHubDeps): Promise<RuntimeSummaryArtifact[]> {
+  return (await loadPriorPushHistory(deps)).summaries;
 }
 
 function percentile(sorted: readonly number[], fraction: number): number {
@@ -460,9 +498,7 @@ export function formatRuntimeHistory(
     return `${lines.join("\n")}\n`;
   }
   if (sortedPrior.length === 0) {
-    lines.push(
-      "No prior push runtime summaries are available yet; this run starts the history.",
-    );
+    lines.push("No prior push runtime summaries are available yet; this run starts the history.");
     return `${lines.join("\n")}\n`;
   }
 
@@ -497,11 +533,16 @@ export async function buildRuntimeHistory(
   deps: GitHubDeps,
   currentRows: readonly RuntimeHistorySample[],
   outputPath: string,
-  services: RuntimeHistoryServices = { loadPriorPushSummaries },
+  services: RuntimeHistoryServices = { loadPriorPushHistory },
   now = new Date(),
 ): Promise<string> {
   const hasFirstTurnLatency = Object.hasOwn(services, "currentFirstTurnLatency");
+  const hasSandboxPhaseTail = Object.hasOwn(services, "currentSandboxPhaseTail");
   const currentFirstTurnLatency = services.currentFirstTurnLatency ?? null;
+  const fullE2EPassed = currentRows.some(
+    (row) => row.target === "full-e2e" && row.outcome === "passed",
+  );
+  const currentSandboxPhaseTail = fullE2EPassed ? (services.currentSandboxPhaseTail ?? null) : null;
   let current: RuntimeSummaryArtifact;
   try {
     current = createRuntimeSummary(
@@ -509,6 +550,7 @@ export async function buildRuntimeHistory(
       now.toISOString(),
       currentRows,
       currentFirstTurnLatency,
+      currentSandboxPhaseTail,
     );
     const serialized = `${JSON.stringify(current, null, 2)}\n`;
     if (Buffer.byteLength(serialized) > MAX_SUMMARY_BYTES) {
@@ -519,23 +561,49 @@ export async function buildRuntimeHistory(
     deps.core?.warning?.(
       "Current E2E runtime summary was invalid or could not be saved; push history is unavailable.",
     );
+    if (currentSandboxPhaseTail?.anomaly) {
+      deps.core?.setFailed?.(
+        "Current sandbox phase anomaly could not be saved for recurrence enforcement.",
+      );
+    }
     return formatRuntimeHistory([], []);
   }
   try {
-    const prior = await services.loadPriorPushSummaries(deps);
+    const priorHistory = await services.loadPriorPushHistory(deps);
+    const prior = priorHistory.summaries;
     const runtimeHistory = formatRuntimeHistory(current.rows, prior);
-    if (!hasFirstTurnLatency) return runtimeHistory;
-    const recurrence = evaluateFirstTurnLatencyRecurrence(current.firstTurnLatency, prior);
-    if (!recurrence.passed && recurrence.message) deps.core?.setFailed?.(recurrence.message);
-    return `${runtimeHistory}\n${formatFirstTurnLatencyRecurrence(recurrence)}`;
+    const sections = [runtimeHistory];
+    if (hasFirstTurnLatency) {
+      const recurrence = evaluateFirstTurnLatencyRecurrence(current.firstTurnLatency, prior);
+      if (!recurrence.passed && recurrence.message) deps.core?.setFailed?.(recurrence.message);
+      sections.push(formatFirstTurnLatencyRecurrence(recurrence));
+    }
+    if (hasSandboxPhaseTail) {
+      const recurrence = evaluateSandboxPhaseTailRecurrence(
+        current.sandboxPhaseTail,
+        prior,
+        priorHistory.unavailableRuns === 0,
+      );
+      if (!recurrence.passed && recurrence.message) deps.core?.setFailed?.(recurrence.message);
+      sections.push(formatSandboxPhaseTailRecurrence(recurrence));
+    }
+    return sections.join("\n");
   } catch {
-    deps.core?.warning?.(
-      "Push E2E runtime history unavailable; current summary was still saved.",
-    );
+    deps.core?.warning?.("Push E2E runtime history unavailable; current summary was still saved.");
     const runtimeHistory = formatRuntimeHistory(current.rows, []);
-    if (!hasFirstTurnLatency) return runtimeHistory;
-    return `${runtimeHistory}\n${formatFirstTurnLatencyRecurrence(
-      evaluateFirstTurnLatencyRecurrence(current.firstTurnLatency, []),
-    )}`;
+    const sections = [runtimeHistory];
+    if (hasFirstTurnLatency) {
+      sections.push(
+        formatFirstTurnLatencyRecurrence(
+          evaluateFirstTurnLatencyRecurrence(current.firstTurnLatency, []),
+        ),
+      );
+    }
+    if (hasSandboxPhaseTail) {
+      const recurrence = evaluateSandboxPhaseTailRecurrence(current.sandboxPhaseTail, [], false);
+      if (!recurrence.passed && recurrence.message) deps.core?.setFailed?.(recurrence.message);
+      sections.push(formatSandboxPhaseTailRecurrence(recurrence));
+    }
+    return sections.join("\n");
   }
 }

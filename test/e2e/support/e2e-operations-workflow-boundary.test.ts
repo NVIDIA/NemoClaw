@@ -32,6 +32,19 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
     expect(validateE2eOperationsWorkflowBoundary()).toEqual([]);
   });
 
+  it("requires the live job to upload cold-onboard performance evidence (#6660)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const upload = workflow.jobs.live.steps!.find((step) => step.name === "Upload E2E artifacts")!;
+    upload.with!.path = String(upload.with!.path)
+      .split("\n")
+      .filter((line) => !line.includes("onboard-progress-budget.json"))
+      .join("\n");
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "live E2E must upload cold-onboard performance evidence",
+    );
+  });
+
   it("requires the scorecard to wait for every reporting dependency", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.jobs.scorecard.needs = [...(workflow.jobs.scorecard.needs as string[])];
@@ -1144,15 +1157,19 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       buildRuntimeHistory: vi
         .fn()
         .mockResolvedValue("## E2E Push Runtime Trend\n\n| Target | Prior median |"),
-      loadPriorPushSummaries: vi.fn(),
+      loadPriorPushHistory: vi.fn(),
     };
     const firstTurnLatency = {
       readCurrentFirstTurnLatencySample: vi.fn().mockReturnValue(null),
+    };
+    const sandboxPhaseTail = {
+      readCurrentSandboxPhaseTailSample: vi.fn().mockReturnValue(null),
     };
     const runtimeModules = new Map<string, unknown>([
       ["path", { join: (...parts: string[]) => parts.join("/") }],
       ["/workspace/scripts/audit-test-runtime.mts", runtimeAudit],
       ["/workspace/scripts/scorecard/analyze-first-turn-latency.mts", firstTurnLatency],
+      ["/workspace/scripts/scorecard/analyze-sandbox-phase-tail.mts", sandboxPhaseTail],
       ["/workspace/scripts/scorecard/analyze-runtime-history.mts", runtimeHistory],
       ["/workspace/scripts/scorecard/coordinate-scorecard.mts", coordinator],
       ["/workspace/scripts/scorecard/analyze-trace-timing.mts", traceTiming],
@@ -1202,10 +1219,14 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "/runner/e2e-runtime-summary.json",
       {
         currentFirstTurnLatency: null,
-        loadPriorPushSummaries: runtimeHistory.loadPriorPushSummaries,
+        currentSandboxPhaseTail: null,
+        loadPriorPushHistory: runtimeHistory.loadPriorPushHistory,
       },
     );
     expect(firstTurnLatency.readCurrentFirstTurnLatencySample).toHaveBeenCalledWith(
+      "/runner/e2e-runtime-audit",
+    );
+    expect(sandboxPhaseTail.readCurrentSandboxPhaseTailSample).toHaveBeenCalledWith(
       "/runner/e2e-runtime-audit",
     );
     expect(runtimeAudit.auditTestRuntime.mock.invocationCallOrder[0]).toBeLessThan(
@@ -1253,10 +1274,12 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     };
     const runtimeHistory = { buildRuntimeHistory: vi.fn() };
     const firstTurnLatency = { readCurrentFirstTurnLatencySample: vi.fn() };
+    const sandboxPhaseTail = { readCurrentSandboxPhaseTailSample: vi.fn() };
     const runtimeModules = new Map<string, unknown>([
       ["path", { join: (...parts: string[]) => parts.join("/") }],
       ["/workspace/scripts/audit-test-runtime.mts", runtimeAudit],
       ["/workspace/scripts/scorecard/analyze-first-turn-latency.mts", firstTurnLatency],
+      ["/workspace/scripts/scorecard/analyze-sandbox-phase-tail.mts", sandboxPhaseTail],
       ["/workspace/scripts/scorecard/analyze-runtime-history.mts", runtimeHistory],
       [
         "/workspace/scripts/scorecard/coordinate-scorecard.mts",
@@ -1321,6 +1344,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     expect(runtimeAudit.formatRuntimeAuditSummary).not.toHaveBeenCalled();
     expect(runtimeAudit.collectRuntimeHistorySamples).not.toHaveBeenCalled();
     expect(firstTurnLatency.readCurrentFirstTurnLatencySample).not.toHaveBeenCalled();
+    expect(sandboxPhaseTail.readCurrentSandboxPhaseTailSample).not.toHaveBeenCalled();
     expect(runtimeHistory.buildRuntimeHistory).not.toHaveBeenCalled();
     expect(summary.addRaw).toHaveBeenCalledWith(
       expect.stringMatching(

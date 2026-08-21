@@ -684,6 +684,9 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   ) {
     errors.push("live DCode must record its immutable base contract before E2E execution");
   }
+  if (!String(upload.with?.path ?? "").includes("onboard-progress-budget.json")) {
+    errors.push("live E2E must upload cold-onboard performance evidence");
+  }
   if (!sameMembers(needs(workflow.jobs["staging-brev-launchable"] ?? {}), ["generate-matrix"])) {
     errors.push("staging-brev-launchable must wait only for generate-matrix");
   }
@@ -1045,7 +1048,10 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     "scripts/scorecard/analyze-first-turn-latency.mts",
     "firstTurnLatency.readCurrentFirstTurnLatencySample",
     "currentFirstTurnLatency",
-    "runtimeHistory.loadPriorPushSummaries",
+    "scripts/scorecard/analyze-sandbox-phase-tail.mts",
+    "sandboxPhaseTail.readCurrentSandboxPhaseTailSample",
+    "currentSandboxPhaseTail",
+    "runtimeHistory.loadPriorPushHistory",
     "core.summary",
     "scorecardData",
     "slackData",
