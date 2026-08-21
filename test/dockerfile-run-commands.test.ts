@@ -33,6 +33,8 @@ describe("Dockerfile RUN command discovery", () => {
       "RUN { npm install --prefix /group; }",
       "RUN case value in value) npm ci --prefix /case ;; esac",
       "RUN ! npm install --prefix /negated",
+      'RUN NPM_CONFIG_CACHE="/tmp/npm cache" npm ci --prefix /quoted-assignment',
+      "RUN NPM_CONFIG_CACHE=/tmp/npm\\ cache npm install --prefix /escaped-assignment",
       "",
     ].join("\n");
 
@@ -48,6 +50,8 @@ describe("Dockerfile RUN command discovery", () => {
       source.indexOf("npm install --prefix /group"),
       source.indexOf("npm ci --prefix /case"),
       source.indexOf("npm install --prefix /negated"),
+      source.indexOf("npm ci --prefix /quoted-assignment"),
+      source.indexOf("npm install --prefix /escaped-assignment"),
     ]);
   });
 

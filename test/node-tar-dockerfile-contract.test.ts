@@ -280,6 +280,8 @@ describe("reviewed npm image remediation contract", () => {
     ["a brace group", "{ npm install; }"],
     ["a case branch", "case value in value) npm ci ;; esac"],
     ["a negated command", "! npm install"],
+    ["a quoted assignment value", 'NPM_CONFIG_CACHE="/tmp/npm cache" npm ci'],
+    ["an escaped-space assignment value", "NPM_CONFIG_CACHE=/tmp/npm\\ cache npm install"],
   ])("detects npm consumers in %s before the final patch (#9933)", (_label, body) => {
     const source = [
       `RUN ${body}`,
@@ -293,7 +295,7 @@ describe("reviewed npm image remediation contract", () => {
     );
     const npmConsumers = npmConsumerPositions(source);
 
-    expect(npmConsumers).toEqual([source.indexOf("npm")]);
+    expect(npmConsumers).toEqual([source.indexOf(" npm") + 1]);
     expect(npmConsumers.every((index) => index > patchRun.commandStart)).toBe(false);
   });
 

@@ -135,25 +135,72 @@ function unquotedTextIndexes(source: string, text: string): number[] {
   return indexes;
 }
 
-function followsShellCommandSeparator(source: string, index: number): boolean {
-  let wordStart = index;
-  while (wordStart > 0) {
-    let cursor = wordStart - 1;
-    while (cursor >= 0 && /[ \t\r]/u.test(source[cursor]!)) cursor -= 1;
-    if (cursor < 0 || source[cursor] === "\n" || ";&|({)".includes(source[cursor]!)) {
-      return true;
-    }
+function shellCommandPrefixWords(source: string, end: number): string[] {
+  const words: string[] = [];
+  let wordStart: number | undefined;
+  let quote: "'" | '"' | "`" | null = null;
+  let comment = false;
 
-    const wordEnd = cursor + 1;
-    while (cursor >= 0 && !/[ \t\r\n;&|]/u.test(source[cursor]!)) cursor -= 1;
-    const previousWord = source.slice(cursor + 1, wordEnd);
-    const continuesCommandPrefix =
-      ["!", "do", "elif", "else", "if", "then", "until", "while"].includes(previousWord) ||
-      /^[A-Za-z_][A-Za-z0-9_]*=.*$/u.test(previousWord);
-    if (!continuesCommandPrefix) return false;
-    wordStart = cursor + 1;
+  const finishWord = (wordEnd: number): void => {
+    if (wordStart === undefined) return;
+    words.push(source.slice(wordStart, wordEnd));
+    wordStart = undefined;
+  };
+
+  for (let index = 0; index < end; index += 1) {
+    const character = source[index]!;
+    if (comment) {
+      if (character === "\n") {
+        comment = false;
+        words.length = 0;
+      }
+      continue;
+    }
+    if (quote !== null) {
+      if (character === "\\" && quote !== "'") {
+        index += 1;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      wordStart ??= index;
+      quote = character;
+      continue;
+    }
+    if (character === "\\") {
+      wordStart ??= index;
+      index += 1;
+      continue;
+    }
+    if (character === "#" && (index === 0 || /[\s;&|(){}]/u.test(source[index - 1]!))) {
+      finishWord(index);
+      comment = true;
+      continue;
+    }
+    if (/[ \t\r]/u.test(character)) {
+      finishWord(index);
+      continue;
+    }
+    if (character === "\n" || ";&|({)".includes(character)) {
+      finishWord(index);
+      words.length = 0;
+      continue;
+    }
+    wordStart ??= index;
   }
-  return true;
+
+  finishWord(end);
+  return words;
+}
+
+function followsShellCommandSeparator(source: string, index: number): boolean {
+  return shellCommandPrefixWords(source, index).every(
+    (word) =>
+      ["!", "do", "elif", "else", "if", "then", "until", "while"].includes(word) ||
+      /^[A-Za-z_][A-Za-z0-9_]*=.*$/u.test(word),
+  );
 }
 
 export function dockerfileRunCommandPositions(source: string, command: string): number[] {
