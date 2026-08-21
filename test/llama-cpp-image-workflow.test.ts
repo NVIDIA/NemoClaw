@@ -597,18 +597,26 @@ describe("llama.cpp image PR workflow", () => {
       "llama-cpp-sbom-arm64.spdx.json",
     ]);
     expect(sbomSteps.map((step) => step.with?.["upload-artifact"])).toEqual([false, false]);
-    for (const arch of ["amd64", "arm64"]) {
-      const uploadSbom = namedStep(attest, `Upload ${arch} SPDX SBOM`);
-      expect(uploadSbom.uses).toBe(
-        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
-      );
-      expect(uploadSbom.with).toEqual({
-        name: `llama-cpp-sbom-${arch}-\${{ needs.validate-inputs.outputs.candidate_tag }}`,
-        path: `llama-cpp-sbom-${arch}.spdx.json`,
-        "if-no-files-found": "error",
-        "retention-days": "${{ needs.validate-inputs.outputs.retention_days }}",
-      });
-    }
+    const uploadAmd64Sbom = namedStep(attest, "Upload amd64 SPDX SBOM");
+    const uploadArm64Sbom = namedStep(attest, "Upload arm64 SPDX SBOM");
+    expect(uploadAmd64Sbom.uses).toBe(
+      "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    );
+    expect(uploadAmd64Sbom.with).toEqual({
+      name: "llama-cpp-sbom-amd64-${{ needs.validate-inputs.outputs.candidate_tag }}",
+      path: "llama-cpp-sbom-amd64.spdx.json",
+      "if-no-files-found": "error",
+      "retention-days": "${{ needs.validate-inputs.outputs.retention_days }}",
+    });
+    expect(uploadArm64Sbom.uses).toBe(
+      "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    );
+    expect(uploadArm64Sbom.with).toEqual({
+      name: "llama-cpp-sbom-arm64-${{ needs.validate-inputs.outputs.candidate_tag }}",
+      path: "llama-cpp-sbom-arm64.spdx.json",
+      "if-no-files-found": "error",
+      "retention-days": "${{ needs.validate-inputs.outputs.retention_days }}",
+    });
     expect(namedStep(attest, "Attest SLSA build provenance").uses).toBe(
       "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8",
     );
