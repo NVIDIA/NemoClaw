@@ -17,14 +17,14 @@ export default async function refresh_locked_npm_cache_seed(input: {
   target?: { os: string; cpu: string; libc: string };
   chunkBytes?: Integer;
   generator?: string;
-  generate?: { code: Integer; stdout: string; stderr: string; truncated: boolean };
+  generate?: { code: Integer; diagnostic: string; truncated: boolean };
   chunk?: {
     archiveCount: Integer;
     lockSha256: string;
     entries: Integer;
     chunked: { name: string; bytes: Integer; parts: Integer }[];
   };
-  install?: { code: Integer; stdout: string; stderr: string; truncated: boolean };
+  install?: { code: Integer; diagnostic: string; truncated: boolean };
   replaced: boolean;
 }> {
   const dryRun = input.dryRun ?? true;
@@ -50,10 +50,16 @@ export default async function refresh_locked_npm_cache_seed(input: {
   };
   const requireSuccess = async (command, description, timeoutMs = 30_000) => {
     const result = await execute(command, description, timeoutMs);
-    if (result.exitCode !== 0)
-      throw new Error(
-        description + " failed.\n" + (result.stdout.text + "\n" + result.stderr.text).trim(),
-      );
+    if (result.exitCode !== 0) {
+      const projected = await tools.project_diagnostic_text({
+        lines: [result.stdout.text, result.stderr.text],
+        maxLines: 20,
+        maxCharacters: 4000,
+        maxLineCharacters: 500,
+        sourceTruncated: result.stdout.truncated || result.stderr.truncated,
+      });
+      throw new Error(description + " failed.\n" + projected.text);
+    }
     if (result.stdout.truncated || result.stderr.truncated)
       throw new Error(description + " exceeded the bounded command output");
     return result;
@@ -111,11 +117,17 @@ export default async function refresh_locked_npm_cache_seed(input: {
       "Generate lock-pinned npm cache seed",
       300_000,
     );
+    const generateDiagnostic = await tools.project_diagnostic_text({
+      lines: [generateResult.stdout.text, generateResult.stderr.text],
+      maxLines: 20,
+      maxCharacters: 4000,
+      maxLineCharacters: 500,
+      sourceTruncated: generateResult.stdout.truncated || generateResult.stderr.truncated,
+    });
     generate = {
       code: generateResult.exitCode ?? -1,
-      stdout: generateResult.stdout.text,
-      stderr: generateResult.stderr.text,
-      truncated: generateResult.stdout.truncated || generateResult.stderr.truncated,
+      diagnostic: generateDiagnostic.text,
+      truncated: generateDiagnostic.truncated,
     };
     if (generate.code !== 0) return { dryRun: false, generate, replaced: false };
     const chunkScript =
@@ -134,11 +146,17 @@ export default async function refresh_locked_npm_cache_seed(input: {
       "mv " + q(output) + " " + q(destination),
       "Install refreshed npm cache seed",
     );
+    const installDiagnostic = await tools.project_diagnostic_text({
+      lines: [installResult.stdout.text, installResult.stderr.text],
+      maxLines: 20,
+      maxCharacters: 4000,
+      maxLineCharacters: 500,
+      sourceTruncated: installResult.stdout.truncated || installResult.stderr.truncated,
+    });
     const install = {
       code: installResult.exitCode ?? -1,
-      stdout: installResult.stdout.text,
-      stderr: installResult.stderr.text,
-      truncated: installResult.stdout.truncated || installResult.stderr.truncated,
+      diagnostic: installDiagnostic.text,
+      truncated: installDiagnostic.truncated,
     };
     if (install.code !== 0) {
       await requireSuccess(

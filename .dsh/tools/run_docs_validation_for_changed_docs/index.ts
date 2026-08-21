@@ -20,7 +20,7 @@ export default async function run_docs_validation_for_changed_docs(input: {
     stderrTail: string;
     truncated: boolean;
   }[];
-  status: string;
+  clean: boolean | null;
 }> {
   const baseRef = input.baseRef ?? "origin/main",
     dryRun = input.dryRun ?? true;
@@ -75,11 +75,11 @@ export default async function run_docs_validation_for_changed_docs(input: {
       });
       if ((r.exitCode ?? -1) !== 0) break;
     }
-  const s = await tools.bash({
-    command: "git status --short --branch",
+  const identity = await tools.read_git_checkout({
     workdir: input.workdir,
-    description: "Inspect documentation worktree status",
-    timeoutMs: 30000,
+    includeRoot: false,
+    includeBranch: false,
+    includeStatus: true,
   });
   return {
     ok: steps.every((x) => x.code === 0),
@@ -89,6 +89,6 @@ export default async function run_docs_validation_for_changed_docs(input: {
     docsChanged,
     planned,
     steps,
-    status: s.kind === "foreground" ? s.stdout.text : "",
+    clean: identity.clean,
   };
 }
