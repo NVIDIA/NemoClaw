@@ -148,8 +148,14 @@ function getSandboxHealthProbeUrl(sandboxName: string): string {
 export function executeSandboxCommand(
   sandboxName: string,
   command: string,
+  timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
 ): SandboxCommandResult | null {
-  return executeSandboxCommandTransport(commandTransportDependencies(), sandboxName, command);
+  return executeSandboxCommandTransport(
+    commandTransportDependencies(),
+    sandboxName,
+    command,
+    timeout,
+  );
 }
 
 /** Run one root controller argv against the registry-pinned direct container. */
