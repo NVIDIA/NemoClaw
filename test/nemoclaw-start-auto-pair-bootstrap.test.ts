@@ -943,7 +943,7 @@ exit 2
   it.each([
     ["object", { value: "object-request-secret" }, "object-request-secret"],
     ["array", ["array-request-secret"], "array-request-secret"],
-    ["number", 7, null],
+    ["number", 927461835, "927461835"],
     ["newline", "line\nnewline-request-secret", "newline-request-secret"],
     ["overlong", "x".repeat(129), "x".repeat(40)],
     ["option-like", "--help", "--help"],
@@ -993,13 +993,55 @@ printf '%s\n' ${JSON.stringify(response)}
         expect(run.stdout).toContain(
           "[auto-pair] stage=validation rejected reason=malformed-request-id",
         );
-        expect(run.stdout).not.toContain(secretMarker ?? "unused-control-marker");
+        expect(run.stdout).not.toContain(secretMarker);
         expect(fs.existsSync(approvalMarker)).toBe(false);
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
     },
   );
+
+  it("enters slow mode for a paired CLI record when all pending request IDs are malformed (#9844)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-malformed-pending-"));
+    const fakeOpenclaw = path.join(tmpDir, "openclaw");
+    const approvalMarker = path.join(tmpDir, "approval-called");
+    fs.writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  touch ${JSON.stringify(approvalMarker)}
+fi
+printf '%s\n' '{"pending":[{"requestId":"--help","clientId":"cli","clientMode":"cli"}],"paired":[{"clientId":"cli","clientMode":"cli"}]}'
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_BIN: fakeOpenclaw,
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
+          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+        },
+        timeout: 10_000,
+      });
+
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain(
+        "[auto-pair] stage=validation rejected reason=malformed-request-id",
+      );
+      expect(run.stdout).toContain("[auto-pair] loopback CLI pairing bootstrap completed");
+      expect(run.stdout).toContain(
+        "[auto-pair] devices paired (1); entering slow-mode approvals=0",
+      );
+      expect(run.stdout).not.toContain("--help");
+      expect(fs.existsSync(approvalMarker)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 
   it("forgets request diagnostics after the gateway removes the request (#9844)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-request-prune-"));
@@ -1014,7 +1056,7 @@ if [ -f ${JSON.stringify(listCount)} ]; then count=$(cat ${JSON.stringify(listCo
 count=$((count + 1))
 printf '%s' "$count" > ${JSON.stringify(listCount)}
 if [ "$count" -eq 1 ] || [ "$count" -eq 3 ]; then
-  printf '%s\n' '{"pending":[{"requestId":"reused-request","clientId":"unknown","clientMode":"unknown","role":"operator","roles":["operator"],"scopes":["operator.pairing"]}],"paired":[]}'
+  printf '%s\n' '{"pending":[{"requestId":"reused-request","clientId":"unknown","clientMode":"unknown","role":"operator","roles":["operator"],"scopes":["operator.pairing"]},{"requestId":{"secret":"malformed-request-secret"},"clientId":"cli","clientMode":"cli"}],"paired":[]}'
 else
   printf '%s\n' '{"pending":[],"paired":[]}'
 fi
@@ -1041,6 +1083,10 @@ fi
       expect(
         run.stdout.match(/stage=validation rejected request=reused-request reason=unknown-client/g),
       ).toHaveLength(2);
+      expect(
+        run.stdout.match(/stage=validation rejected reason=malformed-request-id/g),
+      ).toHaveLength(2);
+      expect(run.stdout).not.toContain("malformed-request-secret");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

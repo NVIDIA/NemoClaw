@@ -3120,14 +3120,18 @@ while time.time() < DEADLINE:
     has_browser = any((d.get('clientId') == 'openclaw-control-ui') or (d.get('clientMode') == 'webchat') for d in paired if isinstance(d, dict))
 
     normalized_pending = []
+    saw_malformed_request_id = False
     for device in pending:
         request_id = device.get('requestId') if isinstance(device, dict) else None
         if not isinstance(request_id, str) or REQUEST_ID_RE.fullmatch(request_id) is None:
+            saw_malformed_request_id = True
             if not MALFORMED_REQUEST_ID_REPORTED:
                 print('[auto-pair] stage=validation rejected reason=malformed-request-id')
                 MALFORMED_REQUEST_ID_REPORTED = True
             continue
         normalized_pending.append((request_id, device))
+    if not saw_malformed_request_id:
+        MALFORMED_REQUEST_ID_REPORTED = False
     pending_request_ids = {request_id for request_id, _device in normalized_pending}
     HANDLED.intersection_update(pending_request_ids)
     OBSERVED_REQUEST_IDS.intersection_update(pending_request_ids)
@@ -3138,7 +3142,7 @@ while time.time() < DEADLINE:
         print('[auto-pair] stage=request-creation waiting reason=no-request')
         REQUEST_CREATION_WAITING_REPORTED = True
 
-    if pending:
+    if normalized_pending:
         QUIET_POLLS = 0
         attempted_request_ids = set()
         for request_id, device in normalized_pending:
