@@ -41,8 +41,11 @@ type FixtureOptions = {
   provenanceTimestamps?: unknown[];
   repository?: string;
   sbomDigest?: string;
+  sbomStatementTypes?: { amd64?: string; arm64?: string };
   scanHigh?: "amd64" | "arm64";
   signatureDigest?: string;
+  signatureReference?: string;
+  signatureType?: string;
 };
 
 function spdx(namespace: string) {
@@ -93,8 +96,8 @@ function runEvidence(options: FixtureOptions = {}) {
   });
   const amd64Sbom = spdx("amd64");
   const arm64Sbom = options.identicalSbomDocuments ? amd64Sbom : spdx("arm64");
-  const sbomStatement = (predicate: ReturnType<typeof spdx>) => ({
-    _type: "https://in-toto.io/Statement/v1",
+  const sbomStatement = (predicate: ReturnType<typeof spdx>, statementType?: string) => ({
+    _type: statementType ?? "https://in-toto.io/Statement/v0.1",
     predicateType: "https://spdx.dev/Document",
     subject: [
       {
@@ -108,11 +111,18 @@ function runEvidence(options: FixtureOptions = {}) {
   });
   const sbomVerification = [
     {
-      payload: Buffer.from(JSON.stringify(sbomStatement(amd64Sbom))).toString("base64"),
+      payload: Buffer.from(
+        JSON.stringify(sbomStatement(amd64Sbom, options.sbomStatementTypes?.amd64)),
+      ).toString("base64"),
     },
     {
       payload: Buffer.from(
-        JSON.stringify(sbomStatement(options.duplicateSbom ? amd64Sbom : arm64Sbom)),
+        JSON.stringify(
+          sbomStatement(
+            options.duplicateSbom ? amd64Sbom : arm64Sbom,
+            options.sbomStatementTypes?.arm64,
+          ),
+        ),
       ).toString("base64"),
     },
   ];
@@ -143,13 +153,23 @@ function runEvidence(options: FixtureOptions = {}) {
   const signatureVerification = [
     {
       critical: {
-        identity: { "docker-reference": image },
+        identity: { "docker-reference": reference },
+        image: {
+          "docker-manifest-digest": candidateDigest,
+        },
+        type: "https://spdx.dev/Document",
+      },
+      optional: {},
+    },
+    {
+      critical: {
+        identity: { "docker-reference": options.signatureReference ?? reference },
         image: {
           "docker-manifest-digest": options.signatureDigest ?? candidateDigest,
         },
-        type: "cosign container image signature",
+        type: options.signatureType ?? "https://sigstore.dev/cosign/sign/v1",
       },
-      optional: null,
+      optional: {},
     },
   ];
   const scan = (arch: "amd64" | "arm64", digest: string) => ({
@@ -351,9 +371,15 @@ describe("llama.cpp image publication evidence verifier", () => {
     ["duplicate SBOM predicate", { duplicateSbom: true }],
     ["identical platform SBOM documents", { identicalSbomDocuments: true }],
     ["SBOM subject mismatch", { sbomDigest: "0".repeat(64) }],
+    [
+      "one SBOM statement type mismatch",
+      { sbomStatementTypes: { arm64: "https://in-toto.io/Statement/v1" } },
+    ],
     ["provenance subject mismatch", { provenanceDigest: "0".repeat(64) }],
     ["missing provenance transparency evidence", { provenanceTimestamps: [] }],
     ["signature subject mismatch", { signatureDigest: `sha256:${"0".repeat(64)}` }],
+    ["signature reference mismatch", { signatureReference: image }],
+    ["signature type mismatch", { signatureType: "cosign container image signature" }],
     ["source repository mismatch", { repository: "attacker/repository" }],
     ["high-severity vulnerability with an available fix", { scanHigh: "arm64" as const }],
   ])("rejects %s", (_name, options) => {

@@ -26,6 +26,8 @@ const OPEN_READ_FLAGS =
   fs.constants.O_RDONLY |
   (typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0) |
   (typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0);
+const SOURCE_DOCKERFILE_RELATIVE_PATH = "agents/hermes/Dockerfile" as const;
+const CONTEXT_DOCKERFILE_RELATIVE_PATH = "Dockerfile" as const;
 
 const LOCAL_COPY_SOURCES = [
   "agents/hermes/build-mcp-digest.py",
@@ -128,7 +130,7 @@ type DirectoryEvidence = {
 export interface HermesPortableBuildContextAuthority {
   readonly schemaVersion: typeof CONTEXT_SCHEMA_VERSION;
   readonly sourceRevision: string;
-  readonly dockerfileRelativePath: "agents/hermes/Dockerfile";
+  readonly dockerfileRelativePath: typeof CONTEXT_DOCKERFILE_RELATIVE_PATH;
   readonly sourceManifestSha256: string;
   readonly contextManifestSha256: string;
 }
@@ -640,7 +642,7 @@ function captureSourceEntries(
     entries.push(entry);
   };
 
-  visit("agents/hermes/Dockerfile");
+  visit(SOURCE_DOCKERFILE_RELATIVE_PATH);
   for (const token of LOCAL_COPY_SOURCES) {
     if (token.endsWith("/")) {
       visit(token.slice(0, -1));
@@ -676,7 +678,7 @@ function sourceAuthority(
   });
   const contextManifestSha256 = canonicalDigest({
     schemaVersion: CONTEXT_SCHEMA_VERSION,
-    dockerfileRelativePath: "agents/hermes/Dockerfile",
+    dockerfileRelativePath: CONTEXT_DOCKERFILE_RELATIVE_PATH,
     entries: contextEntries.map((entry) => ({
       kind: entry.kind,
       relativePath: entry.relativePath,
@@ -687,7 +689,7 @@ function sourceAuthority(
   return {
     schemaVersion: CONTEXT_SCHEMA_VERSION,
     sourceRevision: revision.revision,
-    dockerfileRelativePath: "agents/hermes/Dockerfile",
+    dockerfileRelativePath: CONTEXT_DOCKERFILE_RELATIVE_PATH,
     sourceManifestSha256,
     contextManifestSha256,
   };
@@ -698,12 +700,20 @@ function renderContextEntries(
   settings: HermesPortableBuildContextSettings,
 ): readonly SourceEntry[] {
   return sourceEntries.map((entry) => {
-    if (entry.kind !== "file" || entry.relativePath !== "agents/hermes/Dockerfile") return entry;
+    if (entry.kind !== "file" || entry.relativePath !== SOURCE_DOCKERFILE_RELATIVE_PATH) {
+      return entry;
+    }
     const bytes = Buffer.from(
       renderHermesPortableDockerfileBuildSettings(UTF8.decode(entry.bytes!), settings),
       "utf8",
     );
-    return { ...entry, bytes, size: bytes.byteLength, sha256: digest(bytes) };
+    return {
+      ...entry,
+      relativePath: CONTEXT_DOCKERFILE_RELATIVE_PATH,
+      bytes,
+      size: bytes.byteLength,
+      sha256: digest(bytes),
+    };
   });
 }
 
@@ -724,7 +734,7 @@ function capture(
   );
   const sourceEntries = captureSourceEntries(rootPath, tracked);
   const dockerfile = sourceEntries.find(
-    (entry) => entry.relativePath === "agents/hermes/Dockerfile",
+    (entry) => entry.relativePath === SOURCE_DOCKERFILE_RELATIVE_PATH,
   );
   if (dockerfile?.kind !== "file" || !dockerfile.bytes) fail("Dockerfile source is unavailable");
   parseDockerfileSources(dockerfile.bytes);
@@ -1375,7 +1385,7 @@ export function createHermesPortableBuildContextPlan(
   };
   return {
     authority: captured.authority,
-    sourceDockerfilePath: path.join(rootPath, captured.authority.dockerfileRelativePath),
+    sourceDockerfilePath: path.join(rootPath, SOURCE_DOCKERFILE_RELATIVE_PATH),
     assertCurrentSource,
     materialize: (input) => {
       assertCurrentSource();

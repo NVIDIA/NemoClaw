@@ -107,13 +107,18 @@ test("discovers tools from case-variant SSE response media types (#7726)", async
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   const deadlineSignal = AbortSignal.timeout(MCP_TOOL_DISCOVERY_LIMITS.maxTotalTimeMs);
+  const authorization = buildMcpToolDiscoveryAuthorizationPlaceholder(
+    "EXAMPLE_MCP_TOKEN",
+    "openshell:resolve:env:v42_EXAMPLE_MCP_TOKEN",
+  );
+  assert.ok(authorization);
   const transport = new StreamableHTTPClientTransport(
     new URL(`http://127.0.0.1:${address.port}/mcp`),
     {
       fetch: createBoundedMcpFetch(globalThis.fetch, deadlineSignal),
       requestInit: {
         headers: {
-          authorization: buildMcpToolDiscoveryAuthorizationPlaceholder("EXAMPLE_MCP_TOKEN"),
+          authorization,
         },
         redirect: "manual",
       },
@@ -162,7 +167,7 @@ test("discovers tools from case-variant SSE response media types (#7726)", async
   });
   const initialize = observed.find((request) => request.rpcMethod === "initialize");
   assert.equal(initialize?.accept, "application/json, text/event-stream");
-  assert.equal(initialize?.authorization, "Bearer openshell:resolve:env:EXAMPLE_MCP_TOKEN");
+  assert.equal(initialize?.authorization, "Bearer openshell:resolve:env:v42_EXAMPLE_MCP_TOKEN");
   const toolsList = observed.find((request) => request.rpcMethod === "tools/list");
   assert.equal(toolsList?.sessionId, sessionId);
   const initialized = observed.find((request) => request.rpcMethod === "notifications/initialized");
