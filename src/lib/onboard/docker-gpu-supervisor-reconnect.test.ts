@@ -47,6 +47,21 @@ describe("Docker GPU final lifecycle release", () => {
     ).toBe(false);
     expect(runOpenshell).toHaveBeenCalledTimes(2);
   });
+
+  it.each([
+    ["a failed probe", { status: 1, stderr: "gateway unavailable" }],
+    ["a probe without an exit status", { status: null, stderr: "timed out" }],
+  ])("rejects %s as a release receipt (#9531)", (_case, result) => {
+    const runOpenshell = vi.fn(() => result);
+
+    expect(
+      waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
+        runOpenshell,
+        sleep: vi.fn(),
+      }),
+    ).toBe(false);
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+  });
 });
 
 // The Docker GPU patch supervisor-reconnect wait must absorb a transient

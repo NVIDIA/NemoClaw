@@ -77,6 +77,7 @@ function composedRelaunchTransaction(
     .fn()
     .mockReturnValueOnce("old-container-id")
     .mockReturnValue("replacement-container-id");
+  const runOpenshell = vi.fn(() => ({ status: 0, stdout: "No sandboxes found.\n" }));
   const relaunchManagedSupervisorSessionImpl = vi.fn(
     (sandboxName: string, options: Parameters<typeof relaunchManagedSupervisorSession>[1]) =>
       relaunchManagedSupervisorSession(sandboxName, {
@@ -109,7 +110,7 @@ function composedRelaunchTransaction(
             };
           }),
           removeBackup: vi.fn(() => true),
-          runOpenshell: vi.fn(() => ({ status: 0, stdout: "No sandboxes found.\n" })),
+          runOpenshell,
           recreate: vi.fn(() => ({
             applied: true as const,
             oldContainerId: "old-container-id",
@@ -128,7 +129,7 @@ function composedRelaunchTransaction(
         },
       }),
   );
-  return { finalizeTransaction, relaunchManagedSupervisorSessionImpl };
+  return { finalizeTransaction, relaunchManagedSupervisorSessionImpl, runOpenshell };
 }
 
 function scriptedPinnedGatewayRecovery(
@@ -402,7 +403,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     mockOpenClawSandbox("recovered-box");
     setImmediateRecoveryPolling();
     const order: string[] = [];
-    const { finalizeTransaction, relaunchManagedSupervisorSessionImpl } =
+    const { finalizeTransaction, relaunchManagedSupervisorSessionImpl, runOpenshell } =
       composedRelaunchTransaction(order);
     const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
       action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
@@ -457,7 +458,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         sandboxName: "recovered-box",
         supervisorReady: true,
       }),
-      { runOpenshell: expect.any(Function) },
+      { runOpenshell },
     );
   });
 
