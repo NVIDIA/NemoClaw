@@ -22,17 +22,44 @@ export function getChangedFiles(base: string, head: string): string[] {
 }
 
 export function getDiff(base: string, head: string): string {
-  const stdout = gitOutput(
-    [
-      ["diff", "--find-renames", "--find-copies", "--unified=80", `${base}...${head}`],
-      ["diff", "--find-renames", "--find-copies", "--unified=80", `${base}..${head}`],
-    ],
-    Number.POSITIVE_INFINITY,
-  );
+  const stdout = getDiffOutput(base, head);
   if (stdout === undefined) {
     throw new Error(`failed to read complete diff ${base}..${head}; ensure both refs are fetched`);
   }
   return stdout;
+}
+
+export function getFileDiff(base: string, head: string, file: string): string {
+  const stdout = getDiffOutput(base, head, file);
+  if (stdout === undefined) {
+    throw new Error(`failed to read diff for ${file}; ensure both refs are fetched`);
+  }
+  return stdout;
+}
+
+function getDiffOutput(base: string, head: string, file?: string): string | undefined {
+  const pathspec = file === undefined ? [] : ["--", `:(literal)${file}`];
+  return gitOutput(
+    [
+      [
+        "diff",
+        "--find-renames",
+        "--find-copies",
+        "--unified=80",
+        `${base}...${head}`,
+        ...pathspec,
+      ],
+      [
+        "diff",
+        "--find-renames",
+        "--find-copies",
+        "--unified=80",
+        `${base}..${head}`,
+        ...pathspec,
+      ],
+    ],
+    Number.POSITIVE_INFINITY,
+  );
 }
 
 export function getDiffStat(base: string, head: string): string {

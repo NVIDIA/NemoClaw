@@ -210,13 +210,13 @@ describe("MCP tool discovery image contract", () => {
     );
     const expectedHashes = {
       "managed-startup-image-runtime.bundle":
-        "ab594715dba89ee23924c731c142e1c4d851f8a4526fd7ff8dadbb8c8a9c739b",
+        "296a54f8d7d2ff63ba82254d83797891bd18e7dc7724acd0f2d7deb92435d43a",
       "mcp-tool-discovery/BUNDLED_PACKAGES.json":
         "df5dc8f167101085a8e73c444aa56854b2a4716a0bb7de9886fec4e50f402601",
       "mcp-tool-discovery/THIRD_PARTY_LICENSES.txt":
         "ae0820debd0e33a10baa3a9c6c7ea831e8ad32a43f8500d52c7dc961ba5513a5",
       "mcp-tool-discovery/mcp-tool-discovery.bundle":
-        "defdba693829bfdfad16ce2edaad6b0a454388a32f15113854850e652a950012",
+        "64a2e6ce691f272213337c87a3fa0a4b37fac9a3d550e23acfac4f49ad29e363",
     } as const;
 
     Object.entries(expectedHashes).forEach(([relativePath, expectedHash]) => {

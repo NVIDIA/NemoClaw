@@ -40,6 +40,8 @@ export type AdvisorPromptTurn = {
   requireToolsBeforeText?: string[];
   /** Fail the turn when it completes without non-whitespace assistant analysis. */
   requireAssistantText?: boolean;
+  /** Opt into one concise continuation after empty or output-limited required analysis. */
+  assistantTextRepairPrompt?: string;
   /**
    * Atomic tool that must produce one successful terminal commit.
    * Failed, non-mutating attempts may precede that commit; nothing may follow it.
@@ -131,6 +133,11 @@ export function resolveAdvisorTurnTools(
   if (terminalSubmitRepairToolNames.length > 0 && !terminalSubmitToolName) {
     throw new Error(
       `Advisor turn ${turn.name} terminal submit repair tools require a terminal submit tool`,
+    );
+  }
+  if (turn.assistantTextRepairPrompt?.trim() && turn.requireAssistantText !== true) {
+    throw new Error(
+      `Advisor turn ${turn.name} assistant text repair requires a required assistant-text contract`,
     );
   }
   if (

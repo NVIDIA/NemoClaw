@@ -43,7 +43,9 @@ import {
   reopenHermesMcpMaintenanceWindow,
 } from "./mcp-bridge-hermes-lifecycle.ts";
 import {
+  assertMcpBridgeManagedImageReceipt,
   buildMcpBridgeExactMainEnv,
+  buildMcpBridgeOnboardArgs,
   buildMcpBridgeOnboardEnv,
   requireMcpBridgeTlsCaCert,
 } from "./mcp-bridge-onboard-env.ts";
@@ -94,6 +96,16 @@ function mcpBridgeShardTest(shard: McpBridgeShard) {
 }
 const test = mcpBridgeShardTest("openclaw");
 type McpAgent = "openclaw" | "hermes" | "langchain-deepagents-code";
+
+function expectManagedImageQualificationReceipt(sandboxName: string): void {
+  const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
+    sandboxes?: Record<string, { workload?: Record<string, unknown> }>;
+  };
+  assertMcpBridgeManagedImageReceipt({
+    workload: registry.sandboxes?.[sandboxName]?.workload,
+  });
+}
+
 async function onboardAgent(
   host: HostCliClient,
   cleanup: CleanupRegistry,
@@ -115,7 +127,7 @@ async function onboardAgent(
     timeoutMs: 15 * 60_000,
   });
   const result = await host.nemoclaw(
-    ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
+    buildMcpBridgeOnboardArgs(),
     {
       artifactName: options.artifactName,
       env: buildMcpBridgeOnboardEnv({
@@ -132,6 +144,7 @@ async function onboardAgent(
     },
   );
   expectExitZero(result, `onboard ${options.agent} sandbox for MCP bridge`);
+  expectManagedImageQualificationReceipt(options.sandboxName);
 }
 async function assertSecretAbsentFromSandbox(
   sandbox: SandboxClient,

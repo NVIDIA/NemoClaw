@@ -41,7 +41,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 2. Prepares the target PR as inert analysis data and executes the trusted Advisor entrypoint from the workflow checkout.
 3. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
 4. Opens one Pi session per model lane and performs exactly two normal turns.
-5. The `investigate` turn has repo-confined `read`, `grep`, `find`, and `ls` tools, deterministic PR context tools, and trusted terminology tracing. It examines scope, architecture and simplicity, terminology, correctness, acceptance, source-of-truth behavior, all security categories, tests, CI and operations, E2E coverage, positives, and limitations in one coherent pass.
+5. The `investigate` turn has repo-confined `read`, `grep`, `find`, and `ls` tools, bounded per-file diff pages, deterministic PR context tools, and trusted terminology tracing. It examines scope, architecture and simplicity, terminology, correctness, acceptance, source-of-truth behavior, all security categories, tests, CI and operations, E2E coverage, positives, and limitations in one coherent pass. If the provider returns no receipt or reaches its output limit after loading the required context, the session permits one concise continuation without replaying fixed context.
 6. The `challenge-and-record` turn keeps repository reads and adds `record_findings`, `record_review_receipt`, `recommend_e2e`, and `submit_review`. The first three replace complete in-memory draft sections. They do not update canonical state.
 7. `submit_review` validates the complete draft, deterministic E2E floors and allowlists, terminology trace bindings, finding references, and the public result schema. A successful call validates and assembles pending state, then ends the turn. The session runner atomically commits that state only after accepting the complete terminal flow. Failed validation does not mutate canonical state. The `challenge-and-record` turn permits one bounded repair: it accepts one failed call followed by one successful call in the same SDK response, or, if the failed call settles the response, one tool-only continuation. Omission, provider failure, unsettled calls, extra attempts, or activity after success fail closed and discard pending state.
 8. Trusted code writes the session transcript, result, and summary artifacts. The trusted publisher posts only validated artifacts for the same pull request commit.
@@ -54,7 +54,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 cleanup sequence. It uses the shared lifecycle and credential-boundary helpers in
 `tools/openshell-agent/runtime.mts`, which are also used by the merge-conflict fixer.
 
-Provider failures, timeouts, and invalid or missing atomic submission fail closed and leave canonical state unchanged. Failure results retain the reason, and workflow logs retain orchestration diagnostics.
+Provider failures, timeouts, an unsuccessful investigation continuation, and invalid or missing atomic submission fail closed and leave canonical state unchanged. Failure results retain the reason, and workflow logs retain orchestration diagnostics.
 
 The workflow is advisory and must not be configured as an E2E-required status check. Its combined
 comment lists trusted E2E recommendations, but does not dispatch or report pass/fail for E2E jobs.

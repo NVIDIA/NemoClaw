@@ -4,7 +4,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assertMcpBridgeManagedImageReceipt,
   buildMcpBridgeExactMainEnv,
+  buildMcpBridgeOnboardArgs,
   buildMcpBridgeOnboardEnv,
   requireMcpBridgeTlsCaCert,
 } from "../live/mcp-bridge-onboard-env.ts";
@@ -40,6 +42,63 @@ describe("MCP bridge onboarding environment", () => {
       NEMOCLAW_OPENSHELL_GATEWAY_BIN: "/usr/local/bin/openshell-gateway",
       NEMOCLAW_OPENSHELL_SANDBOX_BIN: "/usr/local/bin/openshell-sandbox",
     });
+  });
+
+  it("passes managed-image qualification inputs to MCP child commands", () => {
+    const env = buildMcpBridgeExactMainEnv({
+      baseEnv: {
+        GITHUB_ACTIONS: "true",
+        HOME: "/tmp/home",
+        PATH: "/usr/bin",
+        NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/tmp/managed-pr-catalog.json",
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+        OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor@sha256:test",
+        UNRELATED_PARENT_VALUE: "must-not-leak",
+      },
+    });
+
+    expect(env).toMatchObject({
+      GITHUB_ACTIONS: "true",
+      NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/tmp/managed-pr-catalog.json",
+      NEMOCLAW_RUN_LIVE_E2E: "1",
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor@sha256:test",
+    });
+    expect(env.UNRELATED_PARENT_VALUE).toBeUndefined();
+  });
+
+  it("activates and proves the exact managed image during MCP qualification", () => {
+    const catalogPath = "/tmp/managed-pr-catalog.json";
+    expect(
+      buildMcpBridgeOnboardArgs({ NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath }),
+    ).toEqual([
+      "onboard",
+      "--temp-managed-runtime",
+      "--temp-managed-runtime-catalog",
+      catalogPath,
+      "--non-interactive",
+      "--yes",
+      "--yes-i-accept-third-party-software",
+    ]);
+    expect(() =>
+      assertMcpBridgeManagedImageReceipt({
+        environment: {
+          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+        },
+        workload: { kind: "dockerfile" },
+      }),
+    ).toThrow("must use the exact managed image instead of a Dockerfile build");
+    expect(() =>
+      assertMcpBridgeManagedImageReceipt({
+        environment: {
+          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+        },
+        workload: { kind: "managed-image", sourceRevision: "a".repeat(40) },
+      }),
+    ).not.toThrow();
   });
 
   it("passes only exact-main OpenShell overrides after fixed onboarding values", () => {

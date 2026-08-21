@@ -186,6 +186,20 @@ describe("advisor session context tool flow", () => {
     ).toThrow("atomic terminal tool must be the turn's only active and required tool");
   });
 
+  it("requires assistant text before enabling its repair continuation", () => {
+    expect(() =>
+      resolveAdvisorTurnTools(
+        {
+          name: "invalid-repair",
+          prompt: "review",
+          assistantTextRepairPrompt: "continue",
+        },
+        [],
+        new Set(),
+      ),
+    ).toThrow("assistant text repair requires a required assistant-text contract");
+  });
+
   it.each(invalidFinalMutationFlows)(
     "rejects %s for an atomic mutation tool (#6446)",
     (_case, events, expectedError) => {

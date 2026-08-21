@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const sdk = vi.hoisted(() => {
   type Listener = (event: unknown) => void;
   type TerminalResponse = "omit" | "fail-once" | "fail-twice" | "fail-then-success" | "success";
+  type AnalysisResponse = "empty" | "length" | "success";
   const terminalPlans: Record<TerminalResponse, { failureCount: number; succeeds: boolean }> = {
     omit: { failureCount: 0, succeeds: false },
     "fail-once": { failureCount: 1, succeeds: false },
@@ -32,6 +33,7 @@ const sdk = vi.hoisted(() => {
   const state = {
     omitContextTool: false,
     activeToolCalls: [] as string[][],
+    analysisResponses: [] as AnalysisResponse[],
     contextContents: [] as string[],
     customTools: [] as MockTool[],
     emitAnalysisError: false,
@@ -46,6 +48,7 @@ const sdk = vi.hoisted(() => {
   const reset = (): void => {
     state.omitContextTool = false;
     state.activeToolCalls = [];
+    state.analysisResponses = [];
     state.contextContents = [];
     state.customTools = [];
     state.emitAnalysisError = false;
@@ -118,6 +121,9 @@ const sdk = vi.hoisted(() => {
           : "omit";
         const terminalPlan = terminalPlans[terminalResponse];
         const retryResponse = terminalTool ? undefined : state.retryResponses.shift();
+        const analysisResponse = terminalTool
+          ? "success"
+          : (state.analysisResponses.shift() ?? (state.omitAnalysis ? "empty" : "success"));
         await (contextTool && !state.omitContextTool
           ? executeContextTool(contextTool, emit)
           : Promise.resolve());
@@ -158,7 +164,7 @@ const sdk = vi.hoisted(() => {
         };
         retryPlans[retryResponse ?? "none"].forEach(emit);
         const shouldEmitText =
-          !state.omitAnalysis &&
+          analysisResponse === "success" &&
           retryResponse !== "exhausted" &&
           (!prompt.includes("Emit no prose before or after") ||
             (state.emitCommitProse && !isRepairPrompt) ||
@@ -180,6 +186,11 @@ const sdk = vi.hoisted(() => {
               error: { errorMessage: "analysis stream failed" },
               reason: "error",
             },
+          });
+        analysisResponse === "length" &&
+          emit({
+            type: "message_end",
+            message: { role: "assistant", stopReason: "length" },
           });
         emit({ type: "agent_end" });
       },
@@ -250,6 +261,7 @@ function analysisTurn(name: string): AdvisorPromptTurn {
   return {
     ...turn(name, '{"repair":true}'),
     requireAssistantText: true,
+    assistantTextRepairPrompt: "Continue with concise required analysis.",
   };
 }
 
@@ -520,7 +532,41 @@ describe("advisor session runner", () => {
     expect(result.turnErrors).toEqual([
       expect.stringContaining("only-analysis omitted required analysis"),
     ]);
-    expect(sdk.state.prompts).toHaveLength(1);
+    expect(result.raw).toContain("assistant_text_repair_start only-analysis");
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("continues once when required analysis is initially empty", async () => {
+    sdk.state.analysisResponses = ["empty", "success"];
+    const result = await run([analysisTurn("only-analysis")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).toContain("assistant_text_repair_start only-analysis");
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("continues once when required analysis reaches the model output limit", async () => {
+    sdk.state.analysisResponses = ["length", "success"];
+    const result = await run([analysisTurn("only-analysis")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).toContain("assistant_text_repair_start only-analysis");
+    expect(result.raw).toContain("assistant response reached the model output limit");
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("fails when an output-limited analysis continuation adds no receipt", async () => {
+    sdk.state.analysisResponses = ["length", "empty"];
+    const result = await run([analysisTurn("only-analysis")]);
+
+    expect(result.fatalError).toContain("analysis repair omitted required analysis");
+    expect(result.turnErrors).toEqual([
+      expect.stringContaining("analysis repair omitted required analysis"),
+    ]);
+    expect(result.raw).toContain("assistant_text_repair_start only-analysis");
+    expect(sdk.state.prompts).toHaveLength(2);
   });
 
   it("stops before the commit turn when the SDK reports an analysis error (#6446)", async () => {
@@ -551,6 +597,16 @@ describe("advisor session runner", () => {
     await expect(
       contextTool?.execute("after-turn", {}, undefined, undefined, undefined as never),
     ).rejects.toThrow("not active");
+  });
+
+  it("does not repair empty analysis when required context is missing", async () => {
+    sdk.state.omitAnalysis = true;
+    sdk.state.omitContextTool = true;
+    const result = await run([analysisTurn("only-analysis")]);
+
+    expect(result.fatalError).toContain("omitted required tool result(s): review_context");
+    expect(result.raw).not.toContain("assistant_text_repair_start");
+    expect(sdk.state.prompts).toHaveLength(1);
   });
 
   it("scopes context and extra active tools to each turn, then resets them (#6446)", async () => {

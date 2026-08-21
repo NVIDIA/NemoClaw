@@ -69,7 +69,6 @@ describe("PR review advisor turn trace", () => {
     };
     const turns = buildPromptTurns({
       metadata: metadata(changedFiles, riskPlan),
-      diff: "diff --git a/x b/x",
     });
     const riskBytes = turns
       .flatMap((turn) => turn.contextToolResults ?? [])

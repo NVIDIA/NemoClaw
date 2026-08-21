@@ -83,7 +83,6 @@ describe("PR Review Advisor writing guide", () => {
         preparePromptArtifacts({
           artifacts: artifactPaths(outDir),
           metadata,
-          diff: "",
         }),
       ).toThrow("Security rubric unavailable");
       readSpy.mockRestore();
@@ -155,7 +154,6 @@ describe("PR Review Advisor writing guide", () => {
         preparePromptArtifacts({
           artifacts: artifactPaths(outDir),
           metadata,
-          diff: "",
         }),
       ).toThrow("Writing guide unavailable");
       readSpy.mockRestore();

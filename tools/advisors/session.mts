@@ -66,6 +66,8 @@ export {
 } from "./turn-protocol.mts";
 
 const ADVISOR_BASE_URL_ENV = "PR_REVIEW_ADVISOR_BASE_URL";
+const ADVISOR_OUTPUT_LIMIT_ERROR = "assistant response reached the model output limit";
+const ADVISOR_TEXT_REPAIR_ERROR = "assistant analysis repair omitted required analysis";
 
 export function advisorRetrySettings(modelId: string) {
   return {
@@ -576,6 +578,41 @@ export async function runReadOnlyAdvisor(
             await Promise.race([agentEndPromise, timeoutPromise]);
           };
           await promptAndWait(promptWithRequiredContextTools(turn.prompt, contextToolNames));
+          const missingBeforeTextRepair = missingRequiredAdvisorToolNames(
+            tools.requiredToolNames,
+            successfulToolNames,
+          );
+          const shouldRepairAssistantText =
+            Boolean(turn.assistantTextRepairPrompt) &&
+            missingBeforeTextRepair.length === 0 &&
+            (currentTurnError === ADVISOR_OUTPUT_LIMIT_ERROR ||
+              !currentTurnText?.toString().trim());
+          if (shouldRepairAssistantText) {
+            const wasOutputLimited = currentTurnError === ADVISOR_OUTPUT_LIMIT_ERROR;
+            contextTools.deactivate();
+            session.setActiveToolsByName([
+              ...new Set([
+                ...READ_ONLY_TOOLS,
+                ...tools.activeToolNames.filter(
+                  (toolName) => !contextToolNames.includes(toolName),
+                ),
+              ]),
+            ]);
+            if (wasOutputLimited) currentTurnError = undefined;
+            const repairFlowStart = currentTurnFlow.length;
+            raw.append(`\n[${options.logPrefix}] assistant_text_repair_start ${turn.name}\n`);
+            options.logProgress(`Advisor SDK repairing required analysis for ${turn.name}`);
+            await promptAndWait(turn.assistantTextRepairPrompt!);
+            if (
+              wasOutputLimited &&
+              !currentTurnFlow
+                .slice(repairFlowStart)
+                .some((event) => event.type === "text" && event.text.trim())
+            ) {
+              captureTurnError("assistant_text_repair_error", ADVISOR_TEXT_REPAIR_ERROR);
+            }
+            raw.append(`[${options.logPrefix}] assistant_text_repair_end ${turn.name}\n`);
+          }
           const originalFlow = currentTurnFlow;
           const repairToolName = repairableAtomicTerminalToolName(
             turn,
@@ -739,6 +776,7 @@ function assistantMessageError(message: unknown): string | undefined {
   if (!message || typeof message !== "object") return undefined;
   const record = message as { role?: unknown; stopReason?: unknown; errorMessage?: unknown };
   if (record.role !== "assistant") return undefined;
+  if (record.stopReason === "length") return ADVISOR_OUTPUT_LIMIT_ERROR;
   if (record.stopReason !== "error" && record.stopReason !== "aborted") return undefined;
   return typeof record.errorMessage === "string" && record.errorMessage.trim()
     ? record.errorMessage
@@ -765,6 +803,10 @@ function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTu
     requiredToolNames: normalizedToolNames(turn.requiredToolNames),
     requireToolsBeforeText: normalizedToolNames(turn.requireToolsBeforeText),
     requireAssistantText: turn.requireAssistantText === true,
+    assistantTextRepairPrompt:
+      typeof turn.assistantTextRepairPrompt === "string" && turn.assistantTextRepairPrompt.trim()
+        ? turn.assistantTextRepairPrompt.trim()
+        : undefined,
     atomicTerminalToolName: normalizedToolNames(
       turn.atomicTerminalToolName ? [turn.atomicTerminalToolName] : undefined,
     )[0],

@@ -41,6 +41,7 @@ import {
   collectDeterministicContext,
   type DeterministicReviewContext,
 } from "./deterministic-context.mts";
+import { createGitDiffToolController } from "./git-diff-tool.mts";
 import { buildInvestigateTurn } from "./investigate-turn.mts";
 import { renderSummary } from "./render-result.mts";
 import {
@@ -332,7 +333,6 @@ async function main(): Promise<void> {
   const { systemPrompt, promptTurns, securityCategoryNames } = preparePromptArtifacts({
     artifacts,
     metadata,
-    diff,
   });
 
   const writeFailure = (reason: string): void => writeFailureArtifacts(artifacts, metadata, reason);
@@ -363,6 +363,7 @@ async function main(): Promise<void> {
       logPrefix: "pr-review-advisor",
       baseRef,
       headRef,
+      diff,
       metadata,
       schema,
       securityCategoryNames,
@@ -415,16 +416,14 @@ export function persistSuccessfulReview(
 export function preparePromptArtifacts({
   artifacts,
   metadata,
-  diff,
 }: {
   artifacts: ArtifactPaths;
   metadata: ReviewMetadata;
-  diff: string;
 }): { systemPrompt: string; promptTurns: AdvisorPromptTurn[]; securityCategoryNames: string[] } {
   try {
     const securityRubric = readParsedTrustedSecurityRubric();
     const systemPrompt = buildSystemPrompt(securityRubric);
-    const promptTurns = buildPromptTurns({ metadata, diff });
+    const promptTurns = buildPromptTurns({ metadata });
     return { systemPrompt, promptTurns, securityCategoryNames: securityRubric.categories };
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -471,6 +470,7 @@ type AdvisorConversationOptions = {
   logPrefix: string;
   baseRef: string;
   headRef: string;
+  diff: string;
   metadata: ReviewMetadata;
   schema: Record<string, unknown>;
   securityCategoryNames: readonly string[];
@@ -487,6 +487,12 @@ async function runAdvisorConversation(
   const terminologyTools = createTerminologyToolController({
     baseRef: options.baseRef,
     headRef: options.headRef,
+  });
+  const diffTools = createGitDiffToolController({
+    baseRef: options.baseRef,
+    headRef: options.headRef,
+    changedFiles: options.metadata.changedFiles,
+    totalDiffCharacters: options.diff.length,
   });
   const submission = createReviewSubmissionController({
     metadata: {
@@ -521,7 +527,7 @@ async function runAdvisorConversation(
     credentialEnv: ADVISOR_CREDENTIAL_ENV,
     logPrefix: options.logPrefix,
     logProgress,
-    customTools: [...submission.tools, ...terminologyTools.tools],
+    customTools: [...submission.tools, ...terminologyTools.tools, ...diffTools.tools],
     onTurnComplete: (turn) => applyReviewSubmissionTurn(submission, turn),
   });
   return { run: result, submission };
@@ -555,17 +561,14 @@ export async function collectGitHubContext(
 
 export function buildPromptTurns({
   metadata,
-  diff,
 }: {
   metadata: ReviewMetadata;
-  diff: string;
 }): AdvisorPromptTurn[] {
   const context = metadata.deterministic;
   return [
     buildInvestigateTurn({
       metadata: metadataFields(metadata),
       scopeRisk: buildScopeRiskTurnContext(context),
-      diff,
       controlledWords: readTrustedControlledWords(),
       terminology: {
         issueReferenceLines: context.github?.issueReferenceLines ?? [],
