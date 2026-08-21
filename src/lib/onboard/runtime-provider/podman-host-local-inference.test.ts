@@ -190,7 +190,7 @@ describe("Podman host-local inference lifecycle", () => {
       expect(run).toContain("--detach");
       expect(run).toContain("--read-only");
       expect(run).toContain("--ipc private");
-      expect(run).toContain("--http-proxy false");
+      expect(run).toContain("--http-proxy=false");
       expect(run).not.toContain(" --rm");
       expect(run).not.toContain("--publish");
       expect(run).not.toContain("--device");
@@ -526,7 +526,9 @@ describe("Podman host-local inference lifecycle", () => {
 
     expect(PROVIDER_FAILURE_SECRETS.every((secret) => !thrown.includes(secret))).toBe(true);
     const failureEvidence = harness.failures.map(({ message }) => message).join("\n");
-    expect(PROVIDER_FAILURE_SECRETS.every((secret) => !failureEvidence.includes(secret))).toBe(true);
+    expect(PROVIDER_FAILURE_SECRETS.every((secret) => !failureEvidence.includes(secret))).toBe(
+      true,
+    );
 
     expect(harness.routeAuthorityStore.load("ollama")).toBeNull();
     expect(harness.written).toHaveLength(0);
@@ -658,7 +660,9 @@ describe("Podman host-local inference lifecycle", () => {
 
     expect(PROVIDER_FAILURE_SECRETS.every((secret) => !thrown.includes(secret))).toBe(true);
     const failureEvidence = harness.failures.map(({ message }) => message).join("\n");
-    expect(PROVIDER_FAILURE_SECRETS.every((secret) => !failureEvidence.includes(secret))).toBe(true);
+    expect(PROVIDER_FAILURE_SECRETS.every((secret) => !failureEvidence.includes(secret))).toBe(
+      true,
+    );
 
     expect(harness.probe()).toBeNull();
   });
@@ -867,7 +871,7 @@ describe("Podman host-local inference lifecycle", () => {
       message: expect.stringContaining("transport closed after create"),
     });
     const runIndex = harness.events.findIndex((event) =>
-      event.startsWith("podman:run --http-proxy false --detach"),
+      event.startsWith("podman:run --http-proxy=false --detach"),
     );
     const evidenceIndex = harness.events.indexOf("evidence:start");
     const readyIndex = harness.events.findIndex((event) => event.includes("/v1/health/ready"));
@@ -1289,7 +1293,7 @@ describe("Podman host-local inference lifecycle", () => {
 
     const runEvents = harness.events.filter((event) => event.startsWith("podman:run "));
     expect(runEvents.length).toBeGreaterThan(2);
-    expect(runEvents.every((event) => event.startsWith("podman:run --http-proxy false "))).toBe(
+    expect(runEvents.every((event) => event.startsWith("podman:run --http-proxy=false "))).toBe(
       true,
     );
     expect(JSON.stringify(prepared.receipt)).not.toContain(proxySecret);

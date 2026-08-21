@@ -110,18 +110,27 @@ function jobPermissionValues(workflowValue: Workflow): string[] {
 function runAnonymousPull(step: Step, result: "denied" | "success") {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "llama-cpp-anonymous-pull-"));
   const fakeBin = path.join(temporaryRoot, "bin");
-  const invocationLog = path.join(temporaryRoot, "docker-invocation");
+  const invocationLog = path.join(temporaryRoot, "docker-invocations");
   const configLog = path.join(temporaryRoot, "docker-config");
   fs.mkdirSync(fakeBin);
   fs.writeFileSync(
     path.join(fakeBin, "docker"),
     `#!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$*" > "$INVOCATION_LOG"
-printf '%s\n' "$DOCKER_CONFIG" > "$CONFIG_LOG"
-[ -z "\${DOCKER_AUTH_CONFIG+x}" ] || exit 91
-if [ "$RESULT" = "denied" ]; then
-  exit 37
+printf '%s\n' "$*" >> "$INVOCATION_LOG"
+if [ "$1" = "pull" ]; then
+  printf '%s\n' "$DOCKER_CONFIG" > "$CONFIG_LOG"
+  [ -z "\${DOCKER_AUTH_CONFIG+x}" ] || exit 91
+  if [ "$RESULT" = "denied" ]; then
+    exit 37
+  fi
+  exit 0
+elif [ "$*" = "image inspect --format {{.Id}} ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"a".repeat(64)}" ]; then
+  printf 'sha256:%s\n' '${"b".repeat(64)}'
+elif [ "$*" = "image inspect --format {{.Id}} sha256:${"b".repeat(64)}" ]; then
+  printf 'sha256:%s\n' '${"b".repeat(64)}'
+else
+  exit 92
 fi
 `,
     { mode: 0o755 },
@@ -133,6 +142,7 @@ fi
       encoding: "utf8",
       env: {
         ...process.env,
+        ARCH: "arm64",
         CONFIG_LOG: configLog,
         DIGEST: `sha256:${"a".repeat(64)}`,
         DOCKER_AUTH_CONFIG: "must-not-reach-docker",
@@ -145,10 +155,18 @@ fi
       },
     });
     const anonymousConfig = fs.readFileSync(configLog, "utf8").trim();
+    const evidencePath = path.join(
+      temporaryRoot,
+      "llama-cpp-anonymous-pulls",
+      "anonymous-pull-arm64.json",
+    );
     return {
       ...commandResult,
       anonymousConfigWasRemoved: !fs.existsSync(anonymousConfig),
-      invocation: fs.readFileSync(invocationLog, "utf8").trim(),
+      evidence: fs.existsSync(evidencePath)
+        ? (JSON.parse(fs.readFileSync(evidencePath, "utf8")) as Record<string, unknown>)
+        : null,
+      invocations: fs.readFileSync(invocationLog, "utf8").trim().split("\n"),
     };
   } finally {
     fs.rmSync(temporaryRoot, { force: true, recursive: true });
@@ -157,9 +175,10 @@ fi
 
 function candidateIndexFilter(step: Step): string {
   const source = required(step.run, "candidate assembly script is missing");
-  const match = /--arg arm64 [^\n]+ '\n(?<filter>[\s\S]*?)\n\s+' "\$RUNNER_TEMP\/llama-cpp-candidate\/candidate-index\.json"/u.exec(
-    source,
-  );
+  const match =
+    /--arg arm64 [^\n]+ '\n(?<filter>[\s\S]*?)\n\s+' "\$RUNNER_TEMP\/llama-cpp-candidate\/candidate-index\.json"/u.exec(
+      source,
+    );
   return required(match?.groups?.filter, "candidate index jq filter is missing");
 }
 
@@ -221,6 +240,7 @@ describe("llama.cpp image PR workflow", () => {
       cuda_runtime_image: "${{ steps.manifest.outputs.cuda_runtime_image }}",
       image: "${{ steps.manifest.outputs.image }}",
       matrix: "${{ steps.manifest.outputs.matrix }}",
+      request_guard_go_version: "${{ steps.manifest.outputs.request_guard_go_version }}",
       runtime_forbidden_paths: "${{ steps.manifest.outputs.runtime_forbidden_paths }}",
       runtime_gid: "${{ steps.manifest.outputs.runtime_gid }}",
       runtime_required_paths: "${{ steps.manifest.outputs.runtime_required_paths }}",
@@ -228,27 +248,31 @@ describe("llama.cpp image PR workflow", () => {
       source_archive_sha256: "${{ steps.manifest.outputs.source_archive_sha256 }}",
       source_revision: "${{ steps.manifest.outputs.source_revision }}",
     });
-    expect([
-          "publication_allowed_ref",
-          "publication_anonymous_exact_digest_pull",
-          "publication_candidate_tag_template",
-          "publication_enabled",
-          "publication_platforms",
-          "publication_provenance_predicate_type",
-          "publication_qualification",
-          "publication_receipt_retention_days",
-          "publication_receipt_schema_version",
-          "publication_repository",
-          "publication_sbom_format",
-          "publication_signature_identity",
-          "publication_signature_issuer",
-          "publication_signature_mode",
-          "publication_signature_transparency_log",
-          "publication_trigger",
-          "publication_vulnerability_only_fixed",
-          "publication_vulnerability_scanner",
-          "publication_vulnerability_severity_cutoff",
-        ].every((output) => Object.is(config.outputs?.[output], `\${{ steps.manifest.outputs.${output} }}`))).toBe(true);
+    expect(
+      [
+        "publication_allowed_ref",
+        "publication_anonymous_exact_digest_pull",
+        "publication_candidate_tag_template",
+        "publication_enabled",
+        "publication_platforms",
+        "publication_provenance_predicate_type",
+        "publication_qualification",
+        "publication_receipt_retention_days",
+        "publication_receipt_schema_version",
+        "publication_repository",
+        "publication_sbom_format",
+        "publication_signature_identity",
+        "publication_signature_issuer",
+        "publication_signature_mode",
+        "publication_signature_transparency_log",
+        "publication_trigger",
+        "publication_vulnerability_only_fixed",
+        "publication_vulnerability_scanner",
+        "publication_vulnerability_severity_cutoff",
+      ].every((output) =>
+        Object.is(config.outputs?.[output], `\${{ steps.manifest.outputs.${output} }}`),
+      ),
+    ).toBe(true);
     expect(namedStep(config, "Compile image manifest").run).toBe(
       "node --experimental-strip-types --no-warnings scripts/checks/export-llama-cpp-image-config.mts",
     );
@@ -257,19 +281,31 @@ describe("llama.cpp image PR workflow", () => {
     expect(build.strategy?.matrix).toBe("${{ fromJSON(needs.config.outputs.matrix) }}");
 
     const args = String(buildStep.with?.["build-args"] ?? "");
-    expect([
-          "backend_directory",
-          "compiler_c",
-          "compiler_cuda_host_cxx",
-          "compiler_cxx",
-          "cuda_dev_image",
-          "cuda_runtime_image",
-          "runtime_gid",
-          "runtime_uid",
-          "source_archive_sha256",
-          "source_revision",
-        ].every((output) => args.includes(`needs.config.outputs.${output}`))).toBe(true);
+    expect(
+      [
+        "backend_directory",
+        "compiler_c",
+        "compiler_cuda_host_cxx",
+        "compiler_cxx",
+        "cuda_dev_image",
+        "cuda_runtime_image",
+        "request_guard_go_version",
+        "runtime_gid",
+        "runtime_uid",
+        "source_archive_sha256",
+        "source_revision",
+      ].every((output) => args.includes(`needs.config.outputs.${output}`)),
+    ).toBe(true);
     expect(args).toContain("CUDA_ARCHITECTURES=${{ matrix.cuda_architectures }}");
+    expect(args).toContain(
+      "REQUEST_GUARD_GO_ARCHIVE_SHA256=${{ matrix.request_guard_go_archive_sha256 }}",
+    );
+    expect(validate.run).toContain(
+      'Labels["io.nvidia.nemoclaw.inference-server.request-guard.go.version"] == $requestGuardGoVersion',
+    );
+    expect(validate.run).toContain(
+      'Labels["io.nvidia.nemoclaw.inference-server.request-guard.go.archive-sha256"] == $requestGuardGoArchive',
+    );
     expect(args).toContain("TARGETPLATFORM=${{ matrix.platform }}");
     expect(args).not.toMatch(/sha256:[0-9a-f]{64}/u);
     expect(args).not.toMatch(/[0-9a-f]{40}/u);
@@ -293,6 +329,7 @@ describe("llama.cpp image PR workflow", () => {
     const exportDigest = namedStep(publish, "Export validated platform digest");
     const logout = namedStep(publish, "Remove GHCR publication credentials");
     const anonymousPull = namedStep(publish, "Verify anonymous exact platform pull");
+    const uploadAnonymousPull = namedStep(publish, "Upload anonymous pull evidence");
     const uploadDigest = namedStep(publish, "Upload platform digest");
     const assemble = required(
       workflow.jobs?.["assemble-candidate"],
@@ -304,15 +341,9 @@ describe("llama.cpp image PR workflow", () => {
     expect(gate.if).toContain("inputs.publish == true");
     expect(gate.permissions).toEqual({});
     const gateStep = namedStep(gate, "Enforce declarative publication boundary");
-    expect(gateStep.run).toContain(
-      'PUBLICATION_ENABLED" != "true"',
-    );
-    expect(gateStep.run).toContain(
-      'GITHUB_REPOSITORY" != "NVIDIA/NemoClaw"',
-    );
-    expect(gateStep.run).toContain(
-      'GITHUB_REF" != "$ALLOWED_REF"',
-    );
+    expect(gateStep.run).toContain('PUBLICATION_ENABLED" != "true"');
+    expect(gateStep.run).toContain('GITHUB_REPOSITORY" != "NVIDIA/NemoClaw"');
+    expect(gateStep.run).toContain('GITHUB_REF" != "$ALLOWED_REF"');
     expect(gateStep.run).toContain(
       `and .probes == ${JSON.stringify(
         required(
@@ -345,6 +376,7 @@ describe("llama.cpp image PR workflow", () => {
       contents: "read",
       packages: "write",
     });
+    expect(publish["runs-on"]).toBe("${{ matrix.runner }}");
     expect(publish.strategy?.matrix).toBe("${{ fromJSON(needs.config.outputs.matrix) }}");
     expect(publishBuild.with?.outputs).toBe(
       "type=image,name=${{ needs.config.outputs.publication_repository }},push-by-digest=true,name-canonical=true,push=true",
@@ -353,6 +385,12 @@ describe("llama.cpp image PR workflow", () => {
     expect(publishBuild.with?.provenance).toBe(false);
     expect(publishBuild.with?.sbom).toBe(false);
     const publishArgs = String(publishBuild.with?.["build-args"] ?? "");
+    expect(publishArgs).toContain(
+      "REQUEST_GUARD_GO_ARCHIVE_SHA256=${{ matrix.request_guard_go_archive_sha256 }}",
+    );
+    expect(publishArgs).toContain(
+      "REQUEST_GUARD_GO_VERSION=${{ needs.config.outputs.request_guard_go_version }}",
+    );
     const publishArgNames = [...publishArgs.matchAll(/^([A-Z0-9_]+)=/gmu)].map((match) => match[1]);
     const guardedArgNames = [
       ...(publishGuard.run ?? "").matchAll(/--build-arg "([A-Z0-9_]+)=/gu),
@@ -373,8 +411,16 @@ describe("llama.cpp image PR workflow", () => {
       publish.steps?.indexOf(anonymousPull) ?? Number.POSITIVE_INFINITY,
     );
     expect(publish.steps?.indexOf(anonymousPull)).toBeLessThan(
+      publish.steps?.indexOf(uploadAnonymousPull) ?? Number.POSITIVE_INFINITY,
+    );
+    expect(publish.steps?.indexOf(uploadAnonymousPull)).toBeLessThan(
       publish.steps?.indexOf(uploadDigest) ?? Number.POSITIVE_INFINITY,
     );
+    expect(uploadAnonymousPull.with).toMatchObject({
+      name: "llama-cpp-anonymous-pull-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}",
+      path: "${{ runner.temp }}/llama-cpp-anonymous-pulls/anonymous-pull-${{ matrix.arch }}.json",
+      "if-no-files-found": "error",
+    });
     expect(assemble.needs).toEqual(["config", "publication-gate", "publish-platform"]);
     expect(assembleStep.run).toContain(
       'docker buildx imagetools create --tag "$IMAGE:$CANDIDATE_TAG" "${sources[@]}"',
@@ -429,9 +475,17 @@ describe("llama.cpp image PR workflow", () => {
 
     const accepted = runAnonymousPull(anonymousPull, "success");
     expect(accepted.status, accepted.stderr).toBe(0);
-    expect(accepted.invocation).toBe(
+    expect(accepted.invocations).toEqual([
       `pull --platform linux/arm64 ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"a".repeat(64)}`,
-    );
+      `image inspect --format {{.Id}} ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"a".repeat(64)}`,
+      `image inspect --format {{.Id}} sha256:${"b".repeat(64)}`,
+    ]);
+    expect(accepted.evidence).toEqual({
+      imageId: `sha256:${"b".repeat(64)}`,
+      platform: "linux/arm64",
+      platformDigest: `sha256:${"a".repeat(64)}`,
+      reference: `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"a".repeat(64)}`,
+    });
     expect(accepted.anonymousConfigWasRemoved).toBe(true);
 
     const rejected = runAnonymousPull(anonymousPull, "denied");
@@ -447,8 +501,10 @@ describe("llama.cpp image PR workflow", () => {
     const attest = required(workflow.jobs?.["attest-candidate"], "attestation job is missing");
     const verify = required(workflow.jobs?.["verify-candidate"], "verification job is missing");
     const scanStep = namedStep(scan, "Scan exact platform digest");
+    const downloadSboms = namedStep(verify, "Download SPDX SBOMs");
     const crypto = namedStep(verify, "Verify cryptographic evidence");
     const receipt = namedStep(verify, "Verify publication evidence and create receipt");
+    const downloadAnonymousPull = namedStep(verify, "Download anonymous pull evidence");
 
     expect(scan.needs).toEqual(["config", "publication-gate", "assemble-candidate"]);
     expect(scanStep.uses).toBe("anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2");
@@ -486,7 +542,21 @@ describe("llama.cpp image PR workflow", () => {
     expect(crypto.run).toContain("--signer-workflow");
     expect(crypto.run).toContain('--source-ref "$EXPECTED_REF"');
     expect(crypto.run).toContain('--source-digest "$EXPECTED_REVISION"');
+    expect(downloadSboms.with).toEqual({
+      pattern: "llama-cpp-sbom-*-${{ needs.assemble-candidate.outputs.candidate_tag }}",
+      path: "${{ runner.temp }}/llama-cpp-evidence",
+      "merge-multiple": true,
+    });
+    expect(downloadAnonymousPull.with).toEqual({
+      pattern: "llama-cpp-anonymous-pull-${{ github.run_id }}-${{ github.run_attempt }}-*",
+      path: "${{ runner.temp }}/llama-cpp-evidence",
+      "merge-multiple": true,
+    });
     expect(receipt.run).toContain("scripts/checks/verify-llama-cpp-image-publication-evidence.sh");
+    expect(receipt.run).toContain('--sbom-amd64 "$evidence/llama-cpp-sbom-amd64.spdx.json"');
+    expect(receipt.run).toContain('--sbom-arm64 "$evidence/llama-cpp-sbom-arm64.spdx.json"');
+    expect(receipt.run).toContain('--anonymous-pull-amd64 "$evidence/anonymous-pull-amd64.json"');
+    expect(receipt.run).toContain('--anonymous-pull-arm64 "$evidence/anonymous-pull-arm64.json"');
     const publicationJobs = [
       "publish-platform",
       "assemble-candidate",
@@ -558,6 +628,35 @@ describe("llama.cpp image PR workflow", () => {
       "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
       "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
     ]);
+    expect(sbomSteps.map((step) => step.with?.["artifact-name"])).toEqual([
+      "llama-cpp-sbom-amd64-${{ needs.validate-inputs.outputs.candidate_tag }}",
+      "llama-cpp-sbom-arm64-${{ needs.validate-inputs.outputs.candidate_tag }}",
+    ]);
+    expect(sbomSteps.map((step) => step.with?.["output-file"])).toEqual([
+      "llama-cpp-sbom-amd64.spdx.json",
+      "llama-cpp-sbom-arm64.spdx.json",
+    ]);
+    expect(sbomSteps.map((step) => step.with?.["upload-artifact"])).toEqual([false, false]);
+    const uploadAmd64Sbom = namedStep(attest, "Upload amd64 SPDX SBOM");
+    const uploadArm64Sbom = namedStep(attest, "Upload arm64 SPDX SBOM");
+    expect(uploadAmd64Sbom.uses).toBe(
+      "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    );
+    expect(uploadAmd64Sbom.with).toEqual({
+      name: "llama-cpp-sbom-amd64-${{ needs.validate-inputs.outputs.candidate_tag }}",
+      path: "llama-cpp-sbom-amd64.spdx.json",
+      "if-no-files-found": "error",
+      "retention-days": "${{ needs.validate-inputs.outputs.retention_days }}",
+    });
+    expect(uploadArm64Sbom.uses).toBe(
+      "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    );
+    expect(uploadArm64Sbom.with).toEqual({
+      name: "llama-cpp-sbom-arm64-${{ needs.validate-inputs.outputs.candidate_tag }}",
+      path: "llama-cpp-sbom-arm64.spdx.json",
+      "if-no-files-found": "error",
+      "retention-days": "${{ needs.validate-inputs.outputs.retention_days }}",
+    });
     expect(namedStep(attest, "Attest SLSA build provenance").uses).toBe(
       "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8",
     );
@@ -567,9 +666,10 @@ describe("llama.cpp image PR workflow", () => {
     expect(JSON.stringify(attestationWorkflow)).not.toContain("secrets.");
     (attest.steps ?? [])
       .map((step) => step.uses)
-      .filter((uses): uses is string => uses !== undefined).forEach((action) => {
-      expect(action).toMatch(fullShaAction);
-    });
+      .filter((uses): uses is string => uses !== undefined)
+      .forEach((action) => {
+        expect(action).toMatch(fullShaAction);
+      });
   });
 
   it("pins actions and validates the native non-root read-only image (#8231)", () => {

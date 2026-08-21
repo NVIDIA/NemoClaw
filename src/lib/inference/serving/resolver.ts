@@ -77,10 +77,12 @@ function recipeMatchesModelIntent(
   recipe: ManagedInferenceRuntimeServingRecipe,
   model: string,
 ): boolean {
+  const normalizedModel = model.toLowerCase();
   return (
-    model === recipe.spec.model.id ||
-    model === recipe.spec.model.servedName ||
-    ("environmentValue" in recipe.spec.model && model === recipe.spec.model.environmentValue)
+    normalizedModel === recipe.spec.model.id.toLowerCase() ||
+    normalizedModel === recipe.spec.model.servedName.toLowerCase() ||
+    ("environmentValue" in recipe.spec.model &&
+      normalizedModel === recipe.spec.model.environmentValue.toLowerCase())
   );
 }
 

@@ -4,7 +4,10 @@
 import { R, YW } from "../../cli/terminal-style";
 import { redact } from "../../security/redact";
 import { executeSandboxCommand } from "./process-recovery";
-import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash-command";
+import {
+  buildRefreshMutableOpenClawConfigHashCommand,
+  buildVerifyMutableOpenClawConfigHashCommand,
+} from "./rebuild-config-hash-command";
 
 export { buildRefreshMutableOpenClawConfigHashCommand };
 
@@ -22,5 +25,24 @@ export function refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
     ? [result.stderr, result.stdout].filter(Boolean).join("; ") || `exit ${result.status}`
     : "could not obtain sandbox SSH config";
   console.error(`  ${YW}⚠${R} Mutable OpenClaw config hash was not refreshed: ${redact(detail)}`);
+  return false;
+}
+
+export function verifyFinalMutableOpenClawConfigHash(
+  sandboxName: string,
+  log: (msg: string) => void,
+): boolean {
+  const result = executeSandboxCommand(sandboxName, buildVerifyMutableOpenClawConfigHashCommand());
+  if (result && result.status === 0) {
+    log("Final mutable OpenClaw config hash verified after post-restore finalization");
+    return true;
+  }
+
+  const detail = result
+    ? [result.stderr, result.stdout].filter(Boolean).join("; ") || `exit ${result.status}`
+    : "could not obtain sandbox SSH config";
+  console.error(
+    `  ${YW}⚠${R} Final mutable OpenClaw config hash was not verified: ${redact(detail)}`,
+  );
   return false;
 }

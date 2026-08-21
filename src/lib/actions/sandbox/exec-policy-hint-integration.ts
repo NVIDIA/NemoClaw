@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { maybeEmitPolicyDenialHint, type PolicyDenialHintDeps } from "./exec-policy-hint";
+import {
+  maybeEmitPolicyDenialHint,
+  maybeEmitScopeUpgradeHint,
+  type PolicyDenialHintDeps,
+} from "./exec-policy-hint";
 
 export type ExecPolicyHintDeps = PolicyDenialHintDeps & {
   now?: () => number;
@@ -20,6 +24,7 @@ type ExecPolicyDenialHintCompletion = {
 export function preparePolicyHint(
   cliName: string,
   sandboxName: string,
+  command: readonly string[],
   deps: ExecPolicyHintDeps = {},
   gatewayName?: string,
 ): (completion: ExecPolicyDenialHintCompletion) => Promise<void> {
@@ -32,6 +37,15 @@ export function preparePolicyHint(
       completion.commandCode,
       Boolean(completion.invocationError),
       commandStartedAtMs,
+      hintDeps,
+      gatewayName,
+    );
+    await maybeEmitScopeUpgradeHint(
+      cliName,
+      sandboxName,
+      completion.commandCode,
+      Boolean(completion.invocationError),
+      command,
       hintDeps,
       gatewayName,
     );
