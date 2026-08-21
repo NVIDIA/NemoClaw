@@ -361,6 +361,33 @@ describe("managed inference resolver", () => {
     },
   );
 
+  it.each([
+    "MUSE-GLIMMER-30B",
+    "inferact/muse-glimmer-30b-nvfp4-w4a4",
+  ])("matches documented model aliases case-insensitively: %s", (model) => {
+    const catalog = shippedCatalog();
+    const { presetId, recipeId } = LINUX_VLLM_PROFILES[0];
+    const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
+    expect(preset).toBeDefined();
+
+    expect(
+      resolveManagedInferenceServing(
+        {
+          readinessReports: [{ nodeId: "linux-host", report: readinessReport({}, preset!) }],
+          topologyQualifications: [],
+          intent: { provider: "vllm", vllmModel: model },
+          now: NOW,
+        },
+        catalog,
+      ),
+    ).toMatchObject({
+      outcome: "selected",
+      selection: "explicit",
+      preset: { metadata: { id: presetId } },
+      recipe: { metadata: { id: recipeId } },
+    });
+  });
+
   it.each(LINUX_VLLM_PROFILES)(
     "enforces the Linux amd64 $model GPU memory boundary (#9673)",
     ({ presetId, model, minimumGpuMemoryBytes }) => {
