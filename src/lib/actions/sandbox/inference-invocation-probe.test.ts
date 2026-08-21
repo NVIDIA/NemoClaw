@@ -91,7 +91,7 @@ describe("sandbox inference invocation probe", () => {
       "dcode-workspace",
       expect.any(String),
       expect.any(Number),
-      { gatewayName: "recorded-gateway" },
+      { gatewayName: "recorded-gateway", allowLocalDockerFallback: false },
     );
   });
 

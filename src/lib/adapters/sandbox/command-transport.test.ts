@@ -190,6 +190,22 @@ describe("sandbox command transport privileged execution lease", () => {
     ]);
   });
 
+  it("does not use local Docker fallback for gateway-pinned exec (#9834)", () => {
+    const deps = createDependencies({
+      extractSandboxExecCommandStdout: vi.fn(() => null),
+    });
+    mocks.spawnSync.mockReturnValue(spawnResult("untrusted-output", { status: 1 }));
+
+    expect(
+      executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {
+        gatewayName: "recorded-gateway",
+        allowLocalDockerFallback: false,
+      }),
+    ).toBeNull();
+    expect(deps.privilegedSandboxExecArgv).not.toHaveBeenCalled();
+    expect(deps.dockerSpawnSync).not.toHaveBeenCalled();
+  });
+
   it("holds one lease across OpenShell failure and the complete local fallback", () => {
     const events: string[] = [];
     let leaseHeld = false;

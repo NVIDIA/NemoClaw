@@ -115,11 +115,14 @@ export function probeSandboxInferenceInvocation(
   timeoutMs: number = REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS,
 ): SandboxInferenceInvocationResult {
   const execute = deps.execute ?? executeSandboxExecCommand;
+  const execOptions: SandboxExecCommandOptions = input.gatewayName
+    ? { gatewayName: input.gatewayName, allowLocalDockerFallback: false }
+    : {};
   const result = execute(
     input.sandboxName,
     buildSandboxInferenceInvocationCommand(input),
     timeoutMs,
-    { gatewayName: input.gatewayName },
+    execOptions,
   );
   if (!result) {
     return {
