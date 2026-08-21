@@ -16,6 +16,9 @@ const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } =
 const { ensureSandboxPortForwardForPort } = requireSource(
   "../src/lib/actions/sandbox/forward-recovery.ts",
 ) as typeof import("../src/lib/actions/sandbox/forward-recovery.js");
+const { createProbeTimingRecorder } = requireSource(
+  "../src/lib/actions/sandbox/probe/timing.ts",
+) as typeof import("../src/lib/actions/sandbox/probe/timing.js");
 
 function checkAndRecoverSandboxProcesses(
   sandboxName: string,
@@ -123,6 +126,8 @@ beta  127.0.0.1  18789  12345  dead`;
 beta  127.0.0.1  18789  12345  running`;
     let forwardStarted = false;
     let postStartListCalls = 0;
+    const timingLines: string[] = [];
+    const probeTiming = createProbeTimingRecorder({ write: (line) => timingLines.push(line) });
 
     vi.spyOn(childProcess, "spawnSync").mockImplementation(
       (_command: unknown, rawArgs: unknown) => {
@@ -166,7 +171,9 @@ beta  127.0.0.1  18789  12345  running`;
       });
 
     expect(
-      withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("beta", { quiet: true })),
+      withFakeOpenshellBinary(() =>
+        checkAndRecoverSandboxProcesses("beta", { probeTiming, quiet: true }),
+      ),
     ).toEqual({
       checked: true,
       wasRunning: true,
@@ -183,6 +190,9 @@ beta  127.0.0.1  18789  12345  running`;
           Array.isArray(args) && args[0] === "forward" && args[1] === "stop" && args.length === 3,
       ),
     ).toBe(false);
+    probeTiming.finish("ready");
+    expect(timingLines[0]).toContain("forwardAction=restored");
+    expect(timingLines[0]).toContain("result=ready");
   });
 
   it.each([
@@ -311,6 +321,8 @@ beta  127.0.0.1  18789  12345  running`;
     const childProcess = requireSource("node:child_process");
     const dashboardForward = `SANDBOX  BIND  PORT  PID  STATUS
 beta  127.0.0.1  18789  12345  running`;
+    const timingLines: string[] = [];
+    const probeTiming = createProbeTimingRecorder({ write: (line) => timingLines.push(line) });
     const dashboardAndTeamsForwards = `${dashboardForward}
 beta  127.0.0.1  3978  12346  running`;
     let teamsForwardStarted = false;
@@ -349,7 +361,9 @@ beta  127.0.0.1  3978  12346  running`;
       });
 
     expect(
-      withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("beta", { quiet: true })),
+      withFakeOpenshellBinary(() =>
+        checkAndRecoverSandboxProcesses("beta", { probeTiming, quiet: true }),
+      ),
     ).toEqual({
       checked: true,
       wasRunning: true,
@@ -365,6 +379,9 @@ beta  127.0.0.1  3978  12346  running`;
       ["forward", "start", "--background", "3978", "beta"],
       { ignoreError: true, stdio: "ignore" },
     );
+    probeTiming.finish("ready");
+    expect(timingLines[0]).toContain("forwardAction=restored");
+    expect(timingLines[0]).toContain("result=ready");
   });
 
   it("checkAndRecoverSandboxProcesses reports messaging webhook recovery failure without claiming forwardRecovered", () => {
@@ -375,6 +392,8 @@ beta  127.0.0.1  3978  12346  running`;
     const childProcess = requireSource("node:child_process");
     const dashboardForward = `SANDBOX  BIND  PORT  PID  STATUS
 beta  127.0.0.1  18789  12345  running`;
+    const timingLines: string[] = [];
+    const probeTiming = createProbeTimingRecorder({ write: (line) => timingLines.push(line) });
 
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
@@ -405,7 +424,9 @@ beta  127.0.0.1  18789  12345  running`;
       });
 
     expect(
-      withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("beta", { quiet: true })),
+      withFakeOpenshellBinary(() =>
+        checkAndRecoverSandboxProcesses("beta", { probeTiming, quiet: true }),
+      ),
     ).toEqual({
       checked: true,
       wasRunning: true,
@@ -419,6 +440,9 @@ beta  127.0.0.1  18789  12345  running`;
       ["forward", "start", "--background", "3978", "beta"],
       { ignoreError: true, stdio: "ignore" },
     );
+    probeTiming.finish("failed", "forward");
+    expect(timingLines[0]).toContain("forwardAction=failed");
+    expect(timingLines[0]).toContain("result=failed failedStage=forward");
   });
 
   it("waits for stopped Hermes recovery after managed OpenShell control succeeds", () => {

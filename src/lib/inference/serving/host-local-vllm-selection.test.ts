@@ -183,6 +183,22 @@ describe("host-local vLLM selection", () => {
   });
 
   it.each([
+    [{ NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '["--max-num-seqs","2"]' }],
+    [
+      {
+        NEMOCLAW_VLLM_MODEL: "qwen3.6-35b-a3b-nvfp4",
+        NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '["--max-model-len","32768"]',
+      },
+    ],
+    [{ NEMOCLAW_VLLM_EXTRA_ARGS_JSON: "[]" }],
+  ])("defers operator-owned serve arguments to the established installer", (env) => {
+    expect(
+      resolveHostLocalVllmSelection(baseProfile(), env, { automatic: true }),
+    ).toEqual({ kind: "not-selected" });
+    expect(mocks.resolveManagedInferenceServing).not.toHaveBeenCalled();
+  });
+
+  it.each([
     ["NEMOCLAW_VLLM_MODEL", "another-model"],
     ["NEMOCLAW_VLLM_EXTRA_ARGS_JSON", '["--max-model-len","4096"]'],
   ] as const)(
