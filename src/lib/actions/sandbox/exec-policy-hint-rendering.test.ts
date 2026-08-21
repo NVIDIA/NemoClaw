@@ -2,7 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { buildPolicyDenialExecHint, POLICY_HINT_SUPPRESS_ENV } from "./exec-policy-hint";
+import {
+  buildPolicyDenialExecHint,
+  buildScopeUpgradeExecHint,
+  findPendingScopeUpgradeRequestId,
+  POLICY_HINT_SUPPRESS_ENV,
+  SCOPE_UPGRADE_REQUEST_PLACEHOLDER,
+  shouldProbeScopeUpgrade,
+} from "./exec-policy-hint";
+
+const REQUEST_ID = "4899d110-911f-4bc7-ac1a-85d76c7b366f";
 
 describe("buildPolicyDenialExecHint (#5978)", () => {
   const hint = buildPolicyDenialExecHint("nemoclaw", "oc-fresh", "example.com:443");
@@ -53,7 +62,80 @@ describe("buildPolicyDenialExecHint (#5978)", () => {
     const hint = buildPolicyDenialExecHint("nemoclaw", unsafe, "example.com:443");
     expect(hint).toContain("nemoclaw <name> logs --tail 50");
     expect(hint).toContain("nemoclaw <name> policy add <preset>");
+    expect(buildScopeUpgradeExecHint("nemoclaw", unsafe, REQUEST_ID)).toContain(
+      "nemoclaw <name> exec -- openclaw devices list",
+    );
     expect(hint).not.toContain(unsafe);
     expect(hint).not.toContain("");
+  });
+});
+
+describe("buildScopeUpgradeExecHint (#9744)", () => {
+  const hint = buildScopeUpgradeExecHint("nemoclaw", "my-assistant", REQUEST_ID);
+
+  it.each([
+    ["the sandbox name", "waiting for approval inside sandbox 'my-assistant'"],
+    ["the devices-list review breadcrumb", "nemoclaw my-assistant exec -- openclaw devices list"],
+    [
+      "the devices-approve remedy with the request id",
+      `nemoclaw my-assistant exec -- openclaw devices approve ${REQUEST_ID}`,
+    ],
+    ["the opt-out env", POLICY_HINT_SUPPRESS_ENV],
+  ])("names %s", (_label, expected) => {
+    expect(hint).toContain(expected);
+  });
+});
+
+describe("findPendingScopeUpgradeRequestId (#9744)", () => {
+  it.each([
+    ["one pending request", JSON.stringify({ pending: [{ requestId: REQUEST_ID }] }), REQUEST_ID],
+    ["no pending requests", JSON.stringify({ pending: [] }), null],
+    ["no pending key", JSON.stringify({ paired: [{ requestId: REQUEST_ID }] }), null],
+    ["a non-array pending value", JSON.stringify({ pending: { requestId: REQUEST_ID } }), null],
+    ["unparseable table output", "Pending (1)\nRequest  Device", null],
+    ["a non-object payload", JSON.stringify([{ requestId: REQUEST_ID }]), null],
+    [
+      "two pending requests",
+      JSON.stringify({ pending: [{ requestId: REQUEST_ID }, { requestId: "other-id" }] }),
+      SCOPE_UPGRADE_REQUEST_PLACEHOLDER,
+    ],
+    [
+      "a pending request with no id",
+      JSON.stringify({ pending: [{ device: "819086ffdb" }] }),
+      SCOPE_UPGRADE_REQUEST_PLACEHOLDER,
+    ],
+    [
+      "a pending request whose id carries shell metacharacters",
+      JSON.stringify({ pending: [{ requestId: "id; rm -rf /" }] }),
+      SCOPE_UPGRADE_REQUEST_PLACEHOLDER,
+    ],
+    [
+      "a pending request whose id is over-length",
+      JSON.stringify({ pending: [{ requestId: "a".repeat(129) }] }),
+      SCOPE_UPGRADE_REQUEST_PLACEHOLDER,
+    ],
+  ])("returns the expected id for %s", (_label, output, expected) => {
+    expect(findPendingScopeUpgradeRequestId(output)).toBe(expected);
+  });
+});
+
+describe("shouldProbeScopeUpgrade (#9744)", () => {
+  it.each([
+    ["a failed openclaw command", 1, false, ["openclaw", "cron", "add"], {}, true],
+    ["an absolute openclaw path", 1, false, ["/usr/bin/openclaw", "agent"], {}, true],
+    ["a successful openclaw command", 0, false, ["openclaw", "cron", "add"], {}, false],
+    ["a failed non-openclaw command", 1, false, ["curl", "example.com"], {}, false],
+    ["an empty command", 1, false, [], {}, false],
+    ["a transport invocation error", 1, true, ["openclaw", "cron", "add"], {}, false],
+    [
+      "a suppressed hint",
+      1,
+      false,
+      ["openclaw", "cron", "add"],
+      { [POLICY_HINT_SUPPRESS_ENV]: "1" },
+      false,
+    ],
+  ])("decides %s", (_label, code, invocationError, command, env, expected) => {
+    expect(shouldProbeScopeUpgrade(code, invocationError, command, env)).toBe(expected);
   });
 });

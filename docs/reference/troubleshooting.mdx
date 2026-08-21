@@ -2267,6 +2267,39 @@ nemo-deepagents <name> policy add --from-file ./my-preset.yaml --yes
 Replace `<preset>` with a real preset name such as `github`, `pypi`, or `npm`.
 Run `$$nemoclaw <name> policy add` with no preset to list the available presets.
 
+<AgentOnly variant="openclaw">
+
+### An `openclaw` command inside the sandbox fails with `scope upgrade pending approval`
+
+The OpenClaw gateway refuses a command when the device asks for more scopes than are currently approved.
+The failure names the request id but not the command that clears it:
+
+```text
+gateway connect failed: GatewayClientRequestError: scope upgrade pending approval
+  (requestId: 4899d110-911f-4bc7-ac1a-85d76c7b366f)
+```
+
+When you run an `openclaw` command through `$$nemoclaw <name> exec -- ...` and it exits non-zero, NemoClaw asks the sandbox for pending device requests.
+If it finds one, it appends the remedy to stderr after the command's own output:
+
+```text
+$$nemoclaw: a device scope upgrade is waiting for approval inside sandbox 'my-assistant'.
+  The OpenClaw gateway refused the command until the requested scopes are approved.
+  Review pending requests: $$nemoclaw my-assistant exec -- openclaw devices list
+  Approve the request:     $$nemoclaw my-assistant exec -- openclaw devices approve 4899d110-911f-4bc7-ac1a-85d76c7b366f
+  Silence this hint:       export NEMOCLAW_NO_POLICY_HINT=1
+```
+
+Review the request before you approve it, then re-run the original command unchanged.
+
+The probe runs only for a failed `openclaw` command. A command that succeeds, a non-`openclaw` command, and a transport failure all print no hint.
+If the probe fails, no hint is added.
+If more than one request is pending, or the reported request id is unsafe to echo, the hint shows `<requestId>` and you name the request from `openclaw devices list`.
+An invalid sandbox name is shown as `<name>`.
+`NEMOCLAW_NO_POLICY_HINT` suppresses this hint on the same terms as the network-policy breadcrumb above.
+
+</AgentOnly>
+
 ### Sandbox creation reports a TLS certificate mismatch
 
 If sandbox creation reports a TLS or certificate mismatch, the OpenShell gateway certificate may have changed since the CLI last registered it.

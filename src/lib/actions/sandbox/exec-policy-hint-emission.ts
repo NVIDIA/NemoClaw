@@ -9,7 +9,13 @@ import {
   getLogsProbeTimeoutMs,
 } from "../../domain/sandbox/logs";
 import { findRecentPolicyDenial, type PolicyDenialMatch } from "./exec-policy-hint-detection";
-import { buildPolicyDenialExecHint, shouldProbePolicyDenial } from "./exec-policy-hint-rendering";
+import {
+  buildPolicyDenialExecHint,
+  buildScopeUpgradeExecHint,
+  findPendingScopeUpgradeRequestId,
+  shouldProbePolicyDenial,
+  shouldProbeScopeUpgrade,
+} from "./exec-policy-hint-rendering";
 
 /** Number of recent log lines to scan for a denial event. */
 export const POLICY_HINT_TAIL_LINES = 200;
@@ -23,8 +29,11 @@ export const POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS = 1_000;
 export type PolicyDenialLogProbe = (sandboxName: string, gatewayName?: string) => string;
 export type PolicyDenialAuditEnabler = (sandboxName: string, gatewayName?: string) => void;
 
+export type PendingDeviceProbe = (sandboxName: string, gatewayName?: string) => string;
+
 export type PolicyDenialHintDeps = {
   probeLogs?: PolicyDenialLogProbe;
+  probePendingDevices?: PendingDeviceProbe;
   enableAudit?: PolicyDenialAuditEnabler;
   env?: NodeJS.ProcessEnv;
   writeStderr?: (line: string) => void;
@@ -71,6 +80,65 @@ function defaultProbeLogs(sandboxName: string, gatewayName?: string): string {
     throw result.error ?? new Error(`failed to read audit logs (exit ${result.status})`);
   }
   return String(result.output ?? "");
+}
+
+function defaultProbePendingDevices(sandboxName: string, gatewayName?: string): string {
+  // Built inline rather than through buildOpenshellExecArgs so this optional
+  // probe does not create an emission -> exec import cycle.
+  const argv = ["sandbox", "exec", "--name", sandboxName];
+  if (gatewayName) argv.push("-g", gatewayName);
+  argv.push("--no-tty", "--", "openclaw", "devices", "list", "--json");
+  const result = captureOpenshell(argv, {
+    ignoreError: true,
+    includeStderr: false,
+    timeout: runtimeTimeoutMs(),
+  });
+  if (result.error || result.status !== 0) {
+    throw result.error ?? new Error(`failed to list pending devices (exit ${result.status})`);
+  }
+  return String(result.output ?? "");
+}
+
+/**
+ * Emit the scope-upgrade remedy after a failed in-sandbox OpenClaw command.
+ * #5324 added `openclaw devices approve`; this names it at the point of failure
+ * so the operator does not have to already know the command. Every dependency
+ * is best-effort and never replaces the command's output or exit code.
+ */
+export async function maybeEmitScopeUpgradeHint(
+  cliName: string,
+  sandboxName: string,
+  commandCode: number,
+  hadInvocationError: boolean,
+  command: readonly string[],
+  deps: PolicyDenialHintDeps = {},
+  gatewayName?: string,
+): Promise<string | null> {
+  const env = deps.env ?? process.env;
+  if (!shouldProbeScopeUpgrade(commandCode, hadInvocationError, command, env)) return null;
+
+  let devicesOutput: string;
+  try {
+    devicesOutput = (deps.probePendingDevices ?? defaultProbePendingDevices)(
+      sandboxName,
+      gatewayName,
+    );
+  } catch {
+    // Deliberately silent: a failed optional probe must not append host
+    // diagnostics to the child's error output.
+    return null;
+  }
+
+  const requestId = findPendingScopeUpgradeRequestId(devicesOutput);
+  if (!requestId) return null;
+
+  try {
+    const hint = buildScopeUpgradeExecHint(cliName, sandboxName, requestId);
+    (deps.writeStderr ?? ((line: string) => console.error(line)))(hint);
+    return hint;
+  } catch {
+    return null;
+  }
 }
 
 /**
