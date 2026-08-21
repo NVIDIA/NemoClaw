@@ -150,7 +150,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
     }
   });
 
-  it("forces device pairing only for the provoke command on OpenClaw 2026.7.1", () => {
+  it("scopes forced device pairing to the provoke command on OpenClaw 2026.7.1", () => {
     const [provoke, poll] = WARMUP_SCRIPT.split("command -v python3", 2);
     expect(WARMUP_SCRIPT).toContain(
       'NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \\\n  openclaw agent --agent main -m "ping" \\',

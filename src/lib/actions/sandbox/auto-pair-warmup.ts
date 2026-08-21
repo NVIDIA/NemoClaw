@@ -66,8 +66,6 @@ export const WARMUP_POLL_LIST_TIMEOUT_S = 2;
 // interpolated so the cap is asserted on real values, not source text. OpenClaw
 // 2026.7.1 otherwise omits CLI device identity for loopback shared-token auth
 // before a stored device credential exists; force pairing only on the provoke.
-// The poll then drops shared gateway overrides and selects the paired CLI
-// device's pairing-only stored credential.
 export const WARMUP_SCRIPT = `
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
@@ -86,6 +84,9 @@ import subprocess
 import sys
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
+# The proxy environment is shared gateway routing. Settlement must instead use
+# the paired CLI identity with its current pairing-only credential so the list
+# call can observe the write-scope request that the provoke command just made.
 list_env = dict(os.environ)
 for key in (
     'OPENCLAW_GATEWAY_URL',
