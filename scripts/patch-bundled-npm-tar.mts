@@ -28,11 +28,11 @@ import {
   requireRealDirectory as realDirectory,
 } from "./lib/bundled-npm-package.mts";
 
-export const FIXED_TAR_VERSION = "7.5.20";
+export const FIXED_TAR_VERSION = "7.5.21";
 export const FIXED_TAR_INTEGRITY =
-  "sha512-9FcyK4PA6+WbzlTM9WhQm6vB5W7cP7dUiPsv1g7YDwEQnQ1CGpK3MGlKk/ITVWMk05kHZuBhmVhiv8LZoy/PFQ==";
-export const FIXED_TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.20.tgz";
-export const MINIMUM_SAFE_TAR_VERSION = "7.5.19";
+  "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==";
+export const FIXED_TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz";
+export const MINIMUM_SAFE_TAR_VERSION = "7.5.21";
 
 /**
  * Source boundary for this private npm-tree remediation. The pinned upstream
