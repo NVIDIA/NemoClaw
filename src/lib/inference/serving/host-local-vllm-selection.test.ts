@@ -12,6 +12,10 @@ import {
   HOST_LOCAL_VLLM_MATERIALIZER_REF,
   VLLM_FIXED_AUTHENTICATED_INSTALL_POLICY_REF,
 } from "./adapter-registry.js";
+import {
+  hostLocalVllmGpuMemoryUtilization,
+  hostLocalVllmModelArguments,
+} from "./host-local-vllm-materialization.js";
 import { resolveHostLocalVllmSelection } from "./host-local-vllm-selection.js";
 import { fixtureManagedClusterSelection } from "./managed-cluster-fixture.test-support.js";
 import type {
@@ -78,6 +82,61 @@ function baseProfile(): VllmProfile {
     loadTimeoutSec: 1,
   };
 }
+
+function recipeWithGpuMemoryUtilization(
+  ...values: Array<string | number | boolean>
+): HostLocalInferenceServingRecipe {
+  const recipe = hostLocalSelection().recipe;
+  return {
+    ...recipe,
+    spec: {
+      ...recipe.spec,
+      serve: {
+        ...recipe.spec.serve,
+        arguments: [
+          ...recipe.spec.serve.arguments.filter(
+            ({ name }) => name !== "--gpu-memory-utilization",
+          ),
+          ...values.map((value) => ({ name: "--gpu-memory-utilization", value })),
+        ],
+      },
+    },
+  };
+}
+
+describe("host-local vLLM GPU memory materialization", () => {
+  it.each([
+    [0.75, 0.75],
+    ["0.75", 0.75],
+    ["1.0", 1],
+  ])("accepts the decimal value %s", (value, expected) => {
+    const recipe = recipeWithGpuMemoryUtilization(value);
+    expect(hostLocalVllmGpuMemoryUtilization(recipe)).toBe(expected);
+    expect(hostLocalVllmModelArguments(recipe)).toContain(String(expected));
+  });
+
+  it.each([
+    ["boolean", true],
+    ["hexadecimal string", "0x1"],
+    ["non-canonical decimal string", ".75"],
+    ["zero", 0],
+    ["out-of-range value", 1.01],
+  ])("rejects a %s", (_label, value) => {
+    const recipe = recipeWithGpuMemoryUtilization(value);
+    expect(() => hostLocalVllmGpuMemoryUtilization(recipe)).toThrow(
+      "has no valid --gpu-memory-utilization",
+    );
+    expect(() => hostLocalVllmModelArguments(recipe)).toThrow(
+      "has no valid --gpu-memory-utilization",
+    );
+  });
+
+  it("rejects duplicate utilization arguments", () => {
+    expect(() =>
+      hostLocalVllmGpuMemoryUtilization(recipeWithGpuMemoryUtilization(0.75, 0.8)),
+    ).toThrow("has no valid --gpu-memory-utilization");
+  });
+});
 
 describe("host-local vLLM selection", () => {
   beforeEach(() => mocks.resolveManagedInferenceServing.mockReset());

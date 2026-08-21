@@ -262,7 +262,7 @@ describe("managed vLLM GPU memory preflight", () => {
     process.env = { ...originalEnv };
   });
 
-  it("stops before downloads when the selected GPU cannot satisfy the recipe reservation", async () => {
+  it("stops before downloads when the selected GPU lacks required memory", async () => {
     const detected = detectVllmProfile({ type: "nvidia" });
     expect(detected).not.toBeNull();
     const profile = { ...detected!, architecture: "x64" as const };
