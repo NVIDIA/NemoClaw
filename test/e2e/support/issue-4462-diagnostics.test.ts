@@ -63,6 +63,8 @@ describe("pairing failure evidence", () => {
         `[auto-pair] stage=request-creation waiting reason=no-request token=${secrets[0]}\n` +
           `[auto-pair] stage=listing failed reason=invalid-response password=${secrets[7]}\n` +
           `[auto-pair] stage=validation accepted request=request-secret reason=allowlisted-request\n` +
+          `[auto-pair] stage=approval failed reason=command-failed secret=${secrets[8]}\n` +
+          `[auto-pair] stage=approval failed reason=timeout token=${secrets[9]}\n` +
           `unknown raw line secret=${secrets[8]}\n`,
       );
       writeFileSync(
@@ -89,6 +91,8 @@ describe("pairing failure evidence", () => {
             { stage: "request-creation", outcome: "waiting", reason: "no-request" },
             { stage: "listing", outcome: "failed", reason: "invalid-response" },
             { stage: "validation", outcome: "accepted", reason: "allowlisted-request" },
+            { stage: "approval", outcome: "failed", reason: "command-failed" },
+            { stage: "approval", outcome: "failed", reason: "timeout" },
           ],
         },
         gateway: {

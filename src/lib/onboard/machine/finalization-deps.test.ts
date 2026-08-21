@@ -163,6 +163,32 @@ describe("ordinary OpenClaw pairing settlement", () => {
     expect(scope.deps.runApproval).not.toHaveBeenCalled();
   });
 
+  it("does not enter settlement when lifecycle lock acquisition fails (#9844)", async () => {
+    const scope = ordinaryPairingDeps({
+      withSandboxLock: vi.fn(async () => {
+        throw new Error("lock timeout");
+      }),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "pairing-lock-unavailable",
+    });
+    expect(scope.deps.getTarget).not.toHaveBeenCalled();
+    expect(scope.deps.withGatewayLock).not.toHaveBeenCalled();
+  });
+
+  it("does not relabel a settlement-body failure as lock acquisition (#9844)", async () => {
+    const failure = new Error("registry read failed");
+    const scope = ordinaryPairingDeps({
+      getTarget: vi.fn(() => {
+        throw failure;
+      }),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).rejects.toBe(failure);
+  });
+
   it("stops before approval when the runtime changes during warm-up (#9844)", async () => {
     let currentTarget = PAIRING_TARGET;
     let reportWarmupStarted: () => void = () => {};
@@ -191,6 +217,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       kind: "incomplete",
       reason: "runtime-identity-invalid",
     });
+    expect(scope.deps.runWarmup).toHaveBeenCalledOnce();
     expect(scope.deps.runApproval).not.toHaveBeenCalled();
     expect(scope.deps.observePairing).toHaveBeenCalledOnce();
   });
@@ -223,7 +250,26 @@ describe("ordinary OpenClaw pairing settlement", () => {
       kind: "incomplete",
       reason: "runtime-identity-invalid",
     });
+    expect(scope.deps.runApproval).toHaveBeenCalledOnce();
     expect(scope.deps.observePairing).toHaveBeenCalledOnce();
+  });
+
+  it("shares one bounded deadline across baseline and final observations (#9844)", async () => {
+    let attempts = 0;
+    const unavailable = () => {
+      throw new Error("not published");
+    };
+    const scope = ordinaryPairingDeps({
+      observePairing: vi.fn(() => (attempts++ < 10 ? unavailable() : PAIRING_ONLY)),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "scope-upgrade-incomplete",
+    });
+    expect(scope.deps.sleep).toHaveBeenCalledTimes(30);
+    expect(scope.deps.runWarmup).toHaveBeenCalledOnce();
+    expect(scope.deps.runApproval).toHaveBeenCalledOnce();
   });
 
   it("performs no writes when a canonical CLI pairing never appears (#9844)", async () => {

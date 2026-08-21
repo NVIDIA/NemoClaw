@@ -24,6 +24,7 @@ const SAFE_STAGE_OUTCOMES = new Set([
   "validation:accepted",
   "validation:rejected",
   "approval:attempting",
+  "approval:failed",
   "watcher-execution:failed",
 ]);
 const SAFE_REASONS = new Set([

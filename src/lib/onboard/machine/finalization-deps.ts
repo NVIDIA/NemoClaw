@@ -29,6 +29,22 @@ export type OrdinaryOpenClawPairingSettlementResult =
         | "scope-upgrade-incomplete";
     };
 
+type OrdinaryOpenClawPairingIncompleteReason = Extract<
+  OrdinaryOpenClawPairingSettlementResult,
+  { kind: "incomplete" }
+>["reason"];
+
+const ORDINARY_OPENCLAW_PAIRING_INCOMPLETE_CAUSES: Record<
+  OrdinaryOpenClawPairingIncompleteReason,
+  string
+> = {
+  "runtime-identity-invalid": "its recorded OpenClaw runtime identity changed or is invalid",
+  "pairing-lock-unavailable": "NemoClaw could not acquire the pairing settlement locks",
+  "pairing-unavailable": "its canonical CLI device pairing did not appear",
+  "scope-upgrade-incomplete":
+    "its canonical CLI device did not receive the required baseline scopes",
+};
+
 interface OrdinaryOpenClawPairingSettlementDeps {
   getTarget(name: string): OpenClawPairingSettlementTarget | null;
   observePairing(
@@ -86,11 +102,13 @@ type PairingWaitResult =
 async function waitForPairingObservation(
   name: string,
   target: OpenClawPairingSettlementTarget,
+  deadline: number,
   accept: (value: OpenClawPairingSettlementObservation) => boolean,
   deps: OrdinaryOpenClawPairingSettlementDeps,
 ): Promise<PairingWaitResult> {
-  const deadline = deps.now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS;
   while (true) {
+    const remaining = deadline - deps.now();
+    if (remaining <= 0) return { kind: "timeout" };
     if (!samePairingTarget(target, deps.getTarget(name))) return { kind: "target-changed" };
     try {
       const value = deps.observePairing(
@@ -104,8 +122,6 @@ async function waitForPairingObservation(
     } catch {
       // Pairing state can be absent or changing while the startup watcher runs.
     }
-    const remaining = deadline - deps.now();
-    if (remaining <= 0) return { kind: "timeout" };
     await deps.sleep(Math.min(OPENCLAW_ONBOARDING_PAIRING_POLL_MS, remaining));
   }
 }
@@ -153,88 +169,102 @@ export async function settleOrdinaryOpenClawPairing(
   name: string,
   deps: OrdinaryOpenClawPairingSettlementDeps = defaultPairingSettlementDeps(),
 ): Promise<OrdinaryOpenClawPairingSettlementResult> {
+  let sandboxBodyEntered = false;
   try {
     return await deps.withSandboxLock(name, async () => {
+      sandboxBodyEntered = true;
       const firstTarget = deps.getTarget(name);
       if (!firstTarget) return { kind: "incomplete", reason: "runtime-identity-invalid" };
 
-      return deps.withGatewayLock(firstTarget.gatewayName, async () => {
-        const target = deps.getTarget(name);
-        if (!samePairingTarget(firstTarget, target)) {
-          return { kind: "incomplete", reason: "runtime-identity-invalid" };
-        }
+      let gatewayBodyEntered = false;
+      try {
+        return await deps.withGatewayLock(firstTarget.gatewayName, async () => {
+          gatewayBodyEntered = true;
+          const target = deps.getTarget(name);
+          if (!samePairingTarget(firstTarget, target)) {
+            return { kind: "incomplete", reason: "runtime-identity-invalid" };
+          }
+          const deadline = deps.now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS;
 
-        const baseline = await waitForPairingObservation(name, target, () => true, deps);
-        if (baseline.kind === "target-changed") {
-          return { kind: "incomplete", reason: "runtime-identity-invalid" };
-        }
-        if (baseline.kind === "timeout") {
-          return { kind: "incomplete", reason: "pairing-unavailable" };
-        }
-        if (baseline.value.state === "settled") return { kind: "settled" };
-        if (!samePairingTarget(target, deps.getTarget(name))) {
-          return { kind: "incomplete", reason: "runtime-identity-invalid" };
-        }
+          const baseline = await waitForPairingObservation(
+            name,
+            target,
+            deadline,
+            () => true,
+            deps,
+          );
+          if (baseline.kind === "target-changed") {
+            return { kind: "incomplete", reason: "runtime-identity-invalid" };
+          }
+          if (baseline.kind === "timeout") {
+            return { kind: "incomplete", reason: "pairing-unavailable" };
+          }
+          if (baseline.value.state === "settled") return { kind: "settled" };
+          if (!samePairingTarget(target, deps.getTarget(name))) {
+            return { kind: "incomplete", reason: "runtime-identity-invalid" };
+          }
+          if (deps.now() >= deadline) {
+            return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
+          }
 
-        let warmupFailed = false;
-        try {
-          await deps.runWarmup(name);
-        } catch {
-          warmupFailed = true;
-        }
-        if (!samePairingTarget(target, deps.getTarget(name))) {
-          return { kind: "incomplete", reason: "runtime-identity-invalid" };
-        }
-        if (warmupFailed) {
-          return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
-        }
+          let warmupFailed = false;
+          try {
+            await deps.runWarmup(name);
+          } catch {
+            warmupFailed = true;
+          }
+          if (!samePairingTarget(target, deps.getTarget(name))) {
+            return { kind: "incomplete", reason: "runtime-identity-invalid" };
+          }
+          if (warmupFailed || deps.now() >= deadline) {
+            return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
+          }
 
-        let approvalFailed = false;
-        try {
-          await deps.runApproval(name, target.gatewayName);
-        } catch {
-          approvalFailed = true;
-        }
-        if (!samePairingTarget(target, deps.getTarget(name))) {
-          return { kind: "incomplete", reason: "runtime-identity-invalid" };
-        }
-        if (approvalFailed) {
-          return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
-        }
+          let approvalFailed = false;
+          try {
+            await deps.runApproval(name, target.gatewayName);
+          } catch {
+            approvalFailed = true;
+          }
+          if (!samePairingTarget(target, deps.getTarget(name))) {
+            return { kind: "incomplete", reason: "runtime-identity-invalid" };
+          }
+          if (approvalFailed) {
+            return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
+          }
 
-        const final = await waitForPairingObservation(
-          name,
-          target,
-          (value) =>
-            value.state === "settled" &&
-            value.deviceIdentitySha256 === baseline.value.deviceIdentitySha256,
-          deps,
-        );
-        if (final.kind === "target-changed") {
-          return { kind: "incomplete", reason: "runtime-identity-invalid" };
-        }
-        return final.kind === "observed"
-          ? { kind: "settled" }
-          : { kind: "incomplete", reason: "scope-upgrade-incomplete" };
-      });
+          const final = await waitForPairingObservation(
+            name,
+            target,
+            deadline,
+            (value) =>
+              value.state === "settled" &&
+              value.deviceIdentitySha256 === baseline.value.deviceIdentitySha256,
+            deps,
+          );
+          if (final.kind === "target-changed") {
+            return { kind: "incomplete", reason: "runtime-identity-invalid" };
+          }
+          return final.kind === "observed"
+            ? { kind: "settled" }
+            : { kind: "incomplete", reason: "scope-upgrade-incomplete" };
+        });
+      } catch (error) {
+        if (gatewayBodyEntered) throw error;
+        return { kind: "incomplete", reason: "pairing-lock-unavailable" };
+      }
     });
-  } catch {
+  } catch (error) {
+    if (sandboxBodyEntered) throw error;
     return { kind: "incomplete", reason: "pairing-lock-unavailable" };
   }
 }
 
 export function ordinaryOpenClawPairingIncompleteMessage(
   name: string,
-  reason: Extract<OrdinaryOpenClawPairingSettlementResult, { kind: "incomplete" }>["reason"],
+  reason: OrdinaryOpenClawPairingIncompleteReason,
 ): string {
-  const cause =
-    reason === "runtime-identity-invalid"
-      ? "its recorded OpenClaw runtime identity changed or is invalid"
-      : reason === "pairing-lock-unavailable"
-        ? "NemoClaw could not acquire the pairing settlement locks"
-        : reason === "pairing-unavailable"
-          ? "its canonical CLI device pairing did not appear"
-          : "its canonical CLI device did not receive the required baseline scopes";
+  const cause = ORDINARY_OPENCLAW_PAIRING_INCOMPLETE_CAUSES[reason];
   return `OpenClaw onboarding for '${name}' is incomplete because ${cause}. Resume or rerun onboarding.`;
 }
 

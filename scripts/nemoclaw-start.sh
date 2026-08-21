@@ -3073,6 +3073,8 @@ while time.time() < DEADLINE:
                 FAST_REENTRY_REMAINING = max(FAST_REENTRY_REMAINING, FAST_REENTRY_POLLS)
                 sleep_for_next_poll(FAST_REENTRY_INTERVAL)
                 continue
+            approval_failure_reason = 'timeout' if arc == 124 else 'command-failed'
+            print(f'[auto-pair] stage=approval failed reason={approval_failure_reason}')
             failure = brief_child_error(aout, aerr)
             if arc != 124 and failure:
                 print(f'[auto-pair] initial CLI approve failed request={initial_request_id}: {failure}')
@@ -3095,10 +3097,15 @@ while time.time() < DEADLINE:
             LAST_LIST_FAILURE_REASON = 'invalid-response'
         sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
+    pending = data.get('pending')
+    paired = data.get('paired')
+    if not isinstance(pending, list) or not isinstance(paired, list):
+        if LAST_LIST_FAILURE_REASON != 'invalid-response':
+            print('[auto-pair] stage=listing failed reason=invalid-response')
+            LAST_LIST_FAILURE_REASON = 'invalid-response'
+        sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
+        continue
     LAST_LIST_FAILURE_REASON = None
-
-    pending = data.get('pending') or []
-    paired = data.get('paired') or []
     has_browser = any((d.get('clientId') == 'openclaw-control-ui') or (d.get('clientMode') == 'webchat') for d in paired if isinstance(d, dict))
 
     if not pending and not paired and APPROVED == 0 and not REQUEST_CREATION_WAITING_REPORTED:
@@ -3150,12 +3157,14 @@ while time.time() < DEADLINE:
             # retryable too; only intentionally rejected unknown clients
             # and confirmed successful approvals are marked handled.
             if arc == 124:
+                print('[auto-pair] stage=approval failed reason=timeout')
                 continue
             if arc == 0:
                 HANDLED.add(request_id)
                 APPROVED += 1
                 print(f'[auto-pair] approved request={request_id} client={client_id} mode={client_mode}')
             else:
+                print('[auto-pair] stage=approval failed reason=command-failed')
                 failure = brief_child_error(aout, aerr)
                 if failure:
                     print(f'[auto-pair] approve failed request={request_id}: {failure}')

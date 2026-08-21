@@ -549,7 +549,14 @@ exit 2
     }
   }, 40_000);
 
-  it("retries a transient initial CLI approve failure on the next gated-list poll (#6113)", () => {
+  it.each([
+    ["command failure", 1, "command-failed"],
+    ["timeout", 124, "timeout"],
+  ])("retries a transient initial CLI approve %s on the next gated-list poll (#6113)", (
+    _name,
+    firstExitCode,
+    failureReason,
+  ) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-retry-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateDir = path.join(tmpDir, "state");
@@ -602,7 +609,7 @@ if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
   printf '%s' "$count" > ${JSON.stringify(approveCount)}
   if [ "$count" -eq 1 ]; then
     echo "gateway restarting" >&2
-    exit 1
+    exit ${String(firstExitCode)}
   fi
   exit 0
 fi
@@ -626,9 +633,7 @@ exit 2
 
       expect(run.status).toBe(0);
       expect(fs.readFileSync(approveCount, "utf-8")).toBe("2");
-      expect(run.stdout).toContain(
-        "[auto-pair] initial CLI approve failed request=request-1: gateway restarting",
-      );
+      expect(run.stdout).toContain(`[auto-pair] stage=approval failed reason=${failureReason}`);
       expect(run.stdout).toContain("[auto-pair] approved initial CLI pairing request=request-1");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -715,6 +720,7 @@ exit 2
       expect(run.stdout).toContain(
         "[auto-pair] initial CLI approve failed request=request-1: gateway permanently unavailable",
       );
+      expect(run.stdout).toContain("[auto-pair] stage=approval failed reason=command-failed");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -820,7 +826,15 @@ printf '%s\\n' '{"pending":[],"paired":[]}'
     }
   });
 
-  it("rejects a valid JSON response with the wrong top-level shape (#9844)", () => {
+  it.each([
+    ["top-level array", "[]"],
+    ["non-array pending", '{"pending":{},"paired":[]}'],
+    ["non-array paired", '{"pending":[],"paired":"device"}'],
+    ["null pending", '{"pending":null,"paired":[]}'],
+    ["null paired", '{"pending":[],"paired":null}'],
+    ["missing pending", '{"paired":[]}'],
+    ["missing paired", '{"pending":[]}'],
+  ])("rejects a valid JSON response with %s (#9844)", (_name, response) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-shape-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const approvalMarker = path.join(tmpDir, "approval-called");
@@ -830,7 +844,7 @@ printf '%s\\n' '{"pending":[],"paired":[]}'
 if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
   touch ${JSON.stringify(approvalMarker)}
 fi
-printf '%s\\n' '[]'
+printf '%s\\n' ${JSON.stringify(response)}
 `,
       { mode: 0o755 },
     );
