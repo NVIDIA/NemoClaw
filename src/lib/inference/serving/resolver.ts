@@ -11,6 +11,7 @@ import {
   hasRemediableStorageConflict,
   STORAGE_COMPATIBLE_CAPABILITY,
 } from "../../readiness/storage-remediation.js";
+import type { SystemReadinessReport } from "../../readiness/types.js";
 import {
   getManagedInferenceMaterializerDescriptor,
   getManagedInferenceRecipeRegistrationError,
@@ -100,6 +101,41 @@ function hasManagedVllmIntent(
   return presets.length === 1 && presets[0]!.spec.plan.backend === "vllm";
 }
 
+function hasRemediableStorageFinding(report: SystemReadinessReport): boolean {
+  const storageFindings = report.findings.filter(
+    ({ id, severity }) =>
+      id === ONBOARD_READINESS_FINDING_IDS.storageIncompatible && severity === "blocking",
+  );
+  return (
+    storageFindings.length === 1 &&
+    hasRemediableStorageConflict({ ...report, findings: storageFindings })
+  );
+}
+
+function hasAdmittedReadinessException(
+  report: SystemReadinessReport,
+  allowDeferredN1xManagedVllm: boolean,
+): boolean {
+  if (report.status !== "incompatible" || report.exitCode !== 2) return false;
+  const remediableStorage = hasRemediableStorageFinding(report);
+  const admission = evaluateOnboardReadinessAdmission(report, {
+    explicitlyOptedOutGpuPassthrough: false,
+    allowUnsupportedRuntime: false,
+    allowStorageRemediation: remediableStorage,
+    allowDeferredN1xManagedVllm,
+  });
+  if (!admission.admitted || admission.waivedFindingIds.length === 0) return false;
+  const waivedFindingIds = new Set(admission.waivedFindingIds);
+  if (waivedFindingIds.size !== admission.waivedFindingIds.length) return false;
+  const allowedFindingIds = new Set<string>([
+    ONBOARD_READINESS_FINDING_IDS.storageIncompatible,
+    ...(allowDeferredN1xManagedVllm
+      ? [ONBOARD_READINESS_FINDING_IDS.n1xValidationPending]
+      : []),
+  ]);
+  return admission.waivedFindingIds.every((id) => allowedFindingIds.has(id));
+}
+
 function readinessError(
   source: ManagedInferenceReadinessSource,
   nowMs: number,
@@ -124,22 +160,10 @@ function readinessError(
   }
   const referenceErrors = getSystemReadinessReferenceErrors(report);
   if (referenceErrors.length > 0) return `${nodeId}: ${referenceErrors[0]}`;
-  const remediableStorage = hasRemediableStorageConflict(report);
-  const n1xAdmission = allowDeferredN1xManagedVllm
-    ? evaluateOnboardReadinessAdmission(report, {
-        explicitlyOptedOutGpuPassthrough: false,
-        allowUnsupportedRuntime: false,
-        allowStorageRemediation: false,
-        allowDeferredN1xManagedVllm: true,
-      })
-    : undefined;
-  const deferredN1xManagedVllm =
-    report.status === "incompatible" &&
-    report.exitCode === 2 &&
-    n1xAdmission?.admitted === true &&
-    n1xAdmission.waivedFindingIds.length === 1 &&
-    n1xAdmission.waivedFindingIds[0] === ONBOARD_READINESS_FINDING_IDS.n1xValidationPending;
-  const admittedReadinessException = remediableStorage || deferredN1xManagedVllm;
+  const admittedReadinessException = hasAdmittedReadinessException(
+    report,
+    allowDeferredN1xManagedVllm,
+  );
   if ((report.status !== "supported" || report.exitCode !== 0) && !admittedReadinessException) {
     return `${nodeId}: readiness status is ${report.status}`;
   }
@@ -273,7 +297,7 @@ function readinessRequirementMatches(
       requirement.kind === "capability" &&
       requirement.id === STORAGE_COMPATIBLE_CAPABILITY &&
       requirement.state === "present" &&
-      hasRemediableStorageConflict(report)
+      hasRemediableStorageFinding(report)
     );
   });
 }

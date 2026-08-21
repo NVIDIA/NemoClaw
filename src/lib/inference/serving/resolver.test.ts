@@ -292,6 +292,37 @@ function deferredN1xReadinessReport(
   };
 }
 
+function deferredN1xWithRemediableStorageReport(
+  extraFindings: SystemReadinessReport["findings"] = [],
+): SystemReadinessReport {
+  const report = deferredN1xReadinessReport([
+    {
+      id: "host.docker.storage_incompatible",
+      severity: "blocking",
+      summary: "The Docker storage configuration requires lifecycle remediation.",
+      capabilityIds: ["host.docker.storage_compatible"],
+    },
+    ...extraFindings,
+  ]);
+  return {
+    ...report,
+    capabilities: [
+      ...report.capabilities.map((capability) =>
+        capability.id === "host.docker.storage_compatible"
+          ? { ...capability, state: "absent" as const }
+          : capability.id === "host.docker.storage_remediation_available"
+            ? { ...capability, state: "present" as const }
+            : capability,
+      ),
+      ...(report.capabilities.some(
+        ({ id }) => id === "host.docker.storage_remediation_available",
+      )
+        ? []
+        : [{ id: "host.docker.storage_remediation_available", state: "present" as const }]),
+    ],
+  };
+}
+
 function topology(
   overrides: Partial<ManagedInferenceTopologyQualification<ManagedClusterTopologyOutput>> = {},
 ): ManagedInferenceTopologyQualification<ManagedClusterTopologyOutput> {
@@ -1170,6 +1201,22 @@ describe("managed inference resolver", () => {
     });
   });
 
+  it("selects the N1x managed-vLLM preset when Docker storage is remediable (#9902)", () => {
+    expect(
+      resolveManagedInferenceServing({
+        readinessReports: [
+          { nodeId: "n1x-host", report: deferredN1xWithRemediableStorageReport() },
+        ],
+        topologyQualifications: [],
+        intent: { provider: "vllm" },
+        now: NOW,
+      }),
+    ).toMatchObject({
+      outcome: "selected",
+      preset: { metadata: { id: N1X_VLLM_PRESET_ID } },
+    });
+  });
+
   it.each([
     {
       condition: "managed-vLLM intent is absent",
@@ -1185,6 +1232,18 @@ describe("managed inference resolver", () => {
       condition: "another blocking finding remains",
       intent: { provider: "vllm" },
       report: deferredN1xReadinessReport([
+        {
+          id: "host.gpu.container_toolkit_missing",
+          severity: "blocking",
+          summary: "NVIDIA Container Toolkit is missing.",
+          capabilityIds: ["host.gpu.container_toolkit_available"],
+        },
+      ]),
+    },
+    {
+      condition: "another blocking finding remains with remediable storage",
+      intent: { provider: "vllm" },
+      report: deferredN1xWithRemediableStorageReport([
         {
           id: "host.gpu.container_toolkit_missing",
           severity: "blocking",
