@@ -255,6 +255,11 @@ interface ProbeSpec {
   readonly launchArguments: readonly string[];
 }
 
+interface ProbeSpecSet {
+  readonly current: ProbeSpec;
+  readonly legacy: ProbeSpec;
+}
+
 interface OllamaModelPlacementAuthority {
   readonly modelDigest: string;
 }
@@ -1632,81 +1637,109 @@ function createProbeSpec(
   parent: ProbeParentAuthority,
   request: readonly string[],
   authority: PodmanInferenceAuthorityReceipt,
-): ProbeSpec {
+): ProbeSpecSet {
   const curlMaxTimeSeconds =
     phase === "inference" ? INFERENCE_PROBE_CURL_MAX_TIME_SECONDS : PROBE_CURL_MAX_TIME_SECONDS;
   const normalizedImage = normalizeHostLocalInferenceImageRef(probeImageRef);
+  const normalizedRequest = normalizedArguments(request, "Podman inference probe request");
+  const transactionId = exactText(
+    parent.transactionId,
+    SHA256,
+    "Podman inference probe transaction",
+  );
+  const receiptTargetSha256 = exactText(
+    parent.receiptTargetSha256,
+    SHA256,
+    "Podman inference probe receipt target",
+  );
+  const parentAuthoritySha256 = exactText(
+    parent.parentAuthoritySha256,
+    SHA256,
+    "Podman inference probe parent authority",
+  );
+  const legacyCanonical = Object.freeze({
+    providerId: PROVIDER_ID,
+    service,
+    phase,
+    endpoint,
+    probeImageRef: normalizedImage,
+    transactionId,
+    receiptTargetSha256,
+    parentAuthoritySha256,
+    request: normalizedRequest,
+  });
   const canonical = Object.freeze({
     providerId: PROVIDER_ID,
     service,
     phase,
     endpoint,
     probeImageRef: normalizedImage,
-    transactionId: exactText(parent.transactionId, SHA256, "Podman inference probe transaction"),
-    receiptTargetSha256: exactText(
-      parent.receiptTargetSha256,
-      SHA256,
-      "Podman inference probe receipt target",
-    ),
-    parentAuthoritySha256: exactText(
-      parent.parentAuthoritySha256,
-      SHA256,
-      "Podman inference probe parent authority",
-    ),
-    request: normalizedArguments(request, "Podman inference probe request"),
+    transactionId,
+    receiptTargetSha256,
+    parentAuthoritySha256,
+    curlMaxTimeSeconds,
+    request: normalizedRequest,
   });
-  const specSha256 = digest(canonical);
-  const name = `nemoclaw-inference-probe-${phase}-${specSha256.slice(0, 16)}`;
-  const source = Object.freeze([
-    "run",
-    "--detach",
-    "--pull=never",
-    "--name",
-    name,
-    "--label",
-    `${PODMAN_INFERENCE_PROBE_MANAGED_LABEL}=true`,
-    "--label",
-    `${PODMAN_INFERENCE_PROVIDER_LABEL}=${PROVIDER_ID}`,
-    "--label",
-    `${PODMAN_INFERENCE_SERVICE_LABEL}=${service}`,
-    "--label",
-    `${PODMAN_INFERENCE_AUTHORITY_LABEL}=${canonical.parentAuthoritySha256}`,
-    "--label",
-    `${PODMAN_INFERENCE_TRANSACTION_LABEL}=${canonical.transactionId}`,
-    "--label",
-    `${PODMAN_INFERENCE_RECEIPT_TARGET_LABEL}=${canonical.receiptTargetSha256}`,
-    "--label",
-    `${PODMAN_INFERENCE_PROBE_PHASE_LABEL}=${phase}`,
-    "--label",
-    `${PODMAN_INFERENCE_PROBE_SPEC_LABEL}=${specSha256}`,
-    "--network",
-    endpoint.networkName,
-    "--read-only",
-    "--ipc",
-    "private",
-    normalizedImage,
-    "--fail-with-body",
-    "--silent",
-    "--show-error",
-    "--connect-timeout",
-    "3",
-    "--max-time",
-    String(curlMaxTimeSeconds),
-    ...canonical.request,
-  ]);
-  const launchArguments = translatePodmanLocalInferenceArgs(source, authority);
+  const buildSpec = (
+    identity: typeof canonical | typeof legacyCanonical,
+    maxTimeSeconds: number,
+  ): ProbeSpec => {
+    const specSha256 = digest(identity);
+    const name = `nemoclaw-inference-probe-${phase}-${specSha256.slice(0, 16)}`;
+    const source = Object.freeze([
+      "run",
+      "--detach",
+      "--pull=never",
+      "--name",
+      name,
+      "--label",
+      `${PODMAN_INFERENCE_PROBE_MANAGED_LABEL}=true`,
+      "--label",
+      `${PODMAN_INFERENCE_PROVIDER_LABEL}=${PROVIDER_ID}`,
+      "--label",
+      `${PODMAN_INFERENCE_SERVICE_LABEL}=${service}`,
+      "--label",
+      `${PODMAN_INFERENCE_AUTHORITY_LABEL}=${identity.parentAuthoritySha256}`,
+      "--label",
+      `${PODMAN_INFERENCE_TRANSACTION_LABEL}=${identity.transactionId}`,
+      "--label",
+      `${PODMAN_INFERENCE_RECEIPT_TARGET_LABEL}=${identity.receiptTargetSha256}`,
+      "--label",
+      `${PODMAN_INFERENCE_PROBE_PHASE_LABEL}=${phase}`,
+      "--label",
+      `${PODMAN_INFERENCE_PROBE_SPEC_LABEL}=${specSha256}`,
+      "--network",
+      endpoint.networkName,
+      "--read-only",
+      "--ipc",
+      "private",
+      normalizedImage,
+      "--fail-with-body",
+      "--silent",
+      "--show-error",
+      "--connect-timeout",
+      "3",
+      "--max-time",
+      String(maxTimeSeconds),
+      ...identity.request,
+    ]);
+    return Object.freeze({
+      service,
+      phase,
+      endpoint,
+      probeImageRef: normalizedImage,
+      transactionId: identity.transactionId,
+      receiptTargetSha256: identity.receiptTargetSha256,
+      parentAuthoritySha256: identity.parentAuthoritySha256,
+      request: identity.request,
+      name,
+      specSha256,
+      launchArguments: translatePodmanLocalInferenceArgs(source, authority),
+    });
+  };
   return Object.freeze({
-    service,
-    phase,
-    endpoint,
-    probeImageRef: normalizedImage,
-    transactionId: canonical.transactionId,
-    receiptTargetSha256: canonical.receiptTargetSha256,
-    parentAuthoritySha256: canonical.parentAuthoritySha256,
-    request: canonical.request,
-    name,
-    specSha256,
-    launchArguments,
+    current: buildSpec(canonical, curlMaxTimeSeconds),
+    legacy: buildSpec(legacyCanonical, PROBE_CURL_MAX_TIME_SECONDS),
   });
 }
 
@@ -1764,11 +1797,12 @@ function requireProbeIdentity(
 
 function cleanupExactProbe(
   engine: ContainerEngine,
-  container: ProbeContainer,
+  container: Pick<ProbeContainer, "runtimeId">,
   spec: ProbeSpec,
   phase: PodmanInferenceFailureEvidence["phase"],
   onFailureEvidence: (evidence: PodmanInferenceFailureEvidence) => void,
   redactor: PodmanInferenceRedactor,
+  mode: "owned" | "retained-legacy" = "owned",
 ): void {
   let current: ProbeContainer;
   try {
@@ -1777,6 +1811,9 @@ function cleanupExactProbe(
       spec,
       container.runtimeId,
     );
+    if (mode === "retained-legacy" && (current.running || !AT_REST_STATES.has(current.status))) {
+      throw new Error("retained legacy probe is not in an exact at-rest state");
+    }
   } catch (error) {
     emitProviderFailure(
       phase,
@@ -1788,7 +1825,10 @@ function cleanupExactProbe(
       `Podman inference probe cleanup lost exact identity: ${errorEvidence(redactor, error)}`,
     );
   }
-  const removal = engine.capture(["rm", "--force", current.runtimeId], MUTATION_TIMEOUT_MS);
+  const removal = engine.capture(
+    mode === "owned" ? ["rm", "--force", current.runtimeId] : ["rm", current.runtimeId],
+    MUTATION_TIMEOUT_MS,
+  );
   if (removal.status !== 0 || removal.error) {
     emitProviderFailure(
       phase,
@@ -1824,16 +1864,38 @@ function executeExactProbe(
   engine: ContainerEngine,
   authority: PodmanInferenceAuthorityReceipt,
   assertAuthority: () => void,
-  spec: ProbeSpec,
+  specs: ProbeSpecSet,
   timeoutMs: number,
   validateOutput: (output: string) => void,
   onFailureEvidence: (evidence: PodmanInferenceFailureEvidence) => void,
   redactor: PodmanInferenceRedactor,
 ): string {
+  const spec = specs.current;
   const phase = spec.phase;
   const captureFailure = (error: unknown) =>
     emitProviderFailure(phase, errorEvidence(redactor, error), onFailureEvidence, redactor);
   assertAuthority();
+  let legacyId: string | null;
+  try {
+    legacyId = lookupContainerId(engine, specs.legacy.name);
+  } catch (error) {
+    captureFailure(error);
+    throw new PodmanInferenceIndeterminateCleanupError(
+      "Podman inference legacy probe name lookup is indeterminate.",
+    );
+  }
+  if (legacyId !== null) {
+    cleanupExactProbe(
+      engine,
+      { runtimeId: legacyId },
+      specs.legacy,
+      phase,
+      onFailureEvidence,
+      redactor,
+      "retained-legacy",
+    );
+    assertAuthority();
+  }
   let existingId: string | null;
   try {
     existingId = lookupContainerId(engine, spec.name);
