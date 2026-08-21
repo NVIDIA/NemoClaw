@@ -107,14 +107,13 @@ describe("base-image publication workflow boundary (#7372)", () => {
   });
 
   it.each([
-    ["push to main", "push", "", "refs/heads/main", "1", "0"],
-    ["manual main", "workflow_dispatch", "", "refs/heads/main", "1", "0"],
+    ["push to main", "push", "", "refs/heads/main", "1"],
+    ["manual main", "workflow_dispatch", "", "refs/heads/main", "1"],
     [
       "controller-selected PR",
       "workflow_dispatch",
       "a".repeat(40),
       "refs/heads/candidate",
-      "0",
       "1",
     ],
     [
@@ -122,12 +121,11 @@ describe("base-image publication workflow boundary (#7372)", () => {
       "workflow_dispatch",
       "a4f9b59aa64f88532a3e64e949dd1b4068aa1f1e",
       "refs/heads/candidate",
-      "0",
       "1",
     ],
   ])(
     "classifies %s without executing untrusted code (#7372)",
-    (_case, eventName, checkoutSha, ref, required, reuse) => {
+    (_case, eventName, checkoutSha, ref, required) => {
       expect(
         runClassifier({
           checkoutSha,
@@ -135,7 +133,7 @@ describe("base-image publication workflow boundary (#7372)", () => {
           ref,
           repository: "NVIDIA/NemoClaw",
         }),
-      ).toEqual({ output: `required=${required}\nreuse=${reuse}\n`, status: 0 });
+      ).toEqual({ output: `required=${required}\n`, status: 0 });
     },
   );
 

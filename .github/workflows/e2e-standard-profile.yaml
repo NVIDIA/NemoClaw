@@ -393,7 +393,7 @@ jobs:
           provenance-json: ${{ inputs.cli_artifact_provenance }}
 
       - name: Materialize temporary managed-image catalog
-        if: ${{ inputs.managed_image_catalog != '' }}
+        if: ${{ inputs.restore_cli && inputs.managed_image_catalog != '' }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}

@@ -455,7 +455,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   );
   const managedCatalogRun = String(managedCatalog?.run ?? "");
   if (
-    managedCatalog?.if !== "${{ inputs.managed_image_catalog != '' }}" ||
+    managedCatalog?.if !== "${{ inputs.restore_cli && inputs.managed_image_catalog != '' }}" ||
     managedCatalog.shell !== EXECUTION_PLAN_SHELL ||
     !isDeepStrictEqual(record(managedCatalog.env), {
       CANDIDATE_SHA: "${{ inputs.candidate_sha }}",
