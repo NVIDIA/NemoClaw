@@ -119,17 +119,18 @@ export default async function summarize_pr_readiness(input: {
       }),
     };
   }
-  const unresolved = threadSnapshot.threads
+  const unresolvedComments = threadSnapshot.threads
     .filter((thread) => !thread.isResolved)
-    .flatMap((thread) => thread.comments)
-    .slice(0, 2000)
-    .map((comment) => ({
-      user: comment.author,
-      path: comment.path,
-      line: comment.line,
-      body: comment.body,
-      url: comment.url,
-    }));
+    .flatMap((thread) => thread.comments);
+  if (unresolvedComments.length > 2000)
+    throw new Error("Pull request readiness supports at most 2000 unresolved review comments");
+  const unresolved = unresolvedComments.map((comment) => ({
+    user: comment.author,
+    path: comment.path,
+    line: comment.line,
+    body: comment.body,
+    url: comment.url,
+  }));
   const discussion = input.includeComments
     ? s.discussionComments.slice(-8).map((c) => ({ user: c.user, body: c.body, url: c.url }))
     : [];

@@ -344,6 +344,7 @@ export default async function triage_nemoclaw_ci_failure(input: {
         )
           throw new Error("Artifact result entry listing is ambiguous");
         const fileResults = [];
+        let filesRead = 0;
         let measuredOutput = 0;
         let cumulativeLimitExceeded = false;
         for (let index = 0; index < resultEntries.length; index += 1) {
@@ -352,70 +353,71 @@ export default async function triage_nemoclaw_ci_failure(input: {
           const declaredBytes = Number(resultEntries[index].slice(separator + 1));
           if (separator < 1 || !Number.isSafeInteger(declaredBytes) || declaredBytes < 0)
             throw new Error("Artifact result entry listing is ambiguous");
-          if (declaredBytes > 1000000) continue;
-          const resultPath = dir + "/result-" + index;
-          try {
-            const streamed = await run(
-              `archive=${q(archive)}; entry=${q(relativePath)}; output=${q(resultPath)}; metadata=${q(resultPath + ".stream")}; umask 077; set +e; set -o pipefail; unzip -p "$archive" "$entry" | { : > "$output" || exit 1; dd bs=65536 count=15 iflag=fullblock status=none >> "$output"; full_status=$?; dd bs=1 count=16960 iflag=fullblock status=none >> "$output"; remainder_status=$?; extra=$(dd bs=1 count=1 iflag=fullblock status=none | base64 -w0); bytes=$(stat -c %s -- "$output") || exit 1; state=ok; if [ -n "$extra" ]; then state=limit; elif [ "$full_status" -ne 0 ] || [ "$remainder_status" -ne 0 ]; then state=reader; fi; printf '%s %s\n' "$state" "$bytes" > "$metadata"; }; statuses=("\${PIPESTATUS[@]}"); read -r state bytes < "$metadata" || state=reader; rm -f -- "$metadata"; printf '%s %s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$state" "$bytes"`,
-              "Stream bounded test result artifact",
+          if (declaredBytes > 1000000)
+            throw new Error(
+              `Artifact result entry ${relativePath} exceeds the 1,000,000-byte limit`,
             );
-            const [unzipStatus, readerStatus, streamState, byteText] = streamed.stdout.text
-              .trim()
-              .split(/\s+/, 4);
-            if (streamState === "limit")
-              throw new Error(
-                `Artifact result entry ${relativePath} exceeds the 1,000,000-byte limit`,
-              );
-            const resultBytes = Number(byteText);
-            if (
-              streamed.exitCode !== 0 ||
-              readerStatus !== "0" ||
-              unzipStatus !== "0" ||
-              streamState !== "ok" ||
-              !Number.isSafeInteger(resultBytes) ||
-              resultBytes < 0
-            )
-              throw new Error(`Could not stream artifact result entry ${relativePath}`);
-            if (resultBytes > 1000000)
-              throw new Error(
-                `Artifact result entry ${relativePath} exceeds the 1,000,000-byte limit`,
-              );
-            if (resultBytes !== declaredBytes)
-              throw new Error(
-                `Artifact result entry ${relativePath} differs from its declared size`,
-              );
-            measuredOutput += resultBytes;
-            if (measuredOutput > 100000000) {
-              cumulativeLimitExceeded = true;
-              break;
-            }
-            const file = await tools.read({ file_path: resultPath, limit: 2000 });
-            if (file.totalLines > 2000) continue;
-            const value = JSON.parse(file.lines.map((line) => line.text).join("\n"));
-            if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-            const exitCode = Number.isInteger(value.exitCode) ? value.exitCode : null;
-            const signal = value.signal ? String(value.signal).slice(0, 100) : null;
-            const timedOut = Boolean(value.timedOut);
-            const error = value.error
-              ? (await project(String(value.error), 1000, 1000)).text || null
-              : null;
-            const command =
-              value.command == null
-                ? null
-                : (await project(String(value.command), 2000, 1000)).text || null;
-            if (exitCode === 0 && !signal && !error && !timedOut) continue;
-            if (exitCode === null && !signal && !error && !timedOut && !value.command) continue;
-            fileResults.push({
-              path: relativePath.slice(0, 1000),
-              exitCode,
-              signal,
-              timedOut,
-              error,
-              command,
-            });
-          } catch {
-            continue;
+          const resultPath = dir + "/result-" + index;
+          const streamed = await run(
+            `archive=${q(archive)}; entry=${q(relativePath)}; output=${q(resultPath)}; metadata=${q(resultPath + ".stream")}; umask 077; set +e; set -o pipefail; unzip -p "$archive" "$entry" | { : > "$output" || exit 1; dd bs=65536 count=15 iflag=fullblock status=none >> "$output"; full_status=$?; dd bs=1 count=16960 iflag=fullblock status=none >> "$output"; remainder_status=$?; extra=$(dd bs=1 count=1 iflag=fullblock status=none | base64 -w0); bytes=$(stat -c %s -- "$output") || exit 1; state=ok; if [ -n "$extra" ]; then state=limit; elif [ "$full_status" -ne 0 ] || [ "$remainder_status" -ne 0 ]; then state=reader; fi; printf '%s %s\n' "$state" "$bytes" > "$metadata"; }; statuses=("\${PIPESTATUS[@]}"); read -r state bytes < "$metadata" || state=reader; rm -f -- "$metadata"; printf '%s %s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$state" "$bytes"`,
+            "Stream bounded test result artifact",
+          );
+          const [unzipStatus, readerStatus, streamState, byteText] = streamed.stdout.text
+            .trim()
+            .split(/\s+/, 4);
+          if (streamState === "limit")
+            throw new Error(
+              `Artifact result entry ${relativePath} exceeds the 1,000,000-byte limit`,
+            );
+          const resultBytes = Number(byteText);
+          if (
+            streamed.exitCode !== 0 ||
+            readerStatus !== "0" ||
+            unzipStatus !== "0" ||
+            streamState !== "ok" ||
+            !Number.isSafeInteger(resultBytes) ||
+            resultBytes < 0
+          )
+            throw new Error(`Could not stream artifact result entry ${relativePath}`);
+          if (resultBytes > 1000000)
+            throw new Error(
+              `Artifact result entry ${relativePath} exceeds the 1,000,000-byte limit`,
+            );
+          if (resultBytes !== declaredBytes)
+            throw new Error(`Artifact result entry ${relativePath} differs from its declared size`);
+          measuredOutput += resultBytes;
+          if (measuredOutput > 100000000) {
+            cumulativeLimitExceeded = true;
+            break;
           }
+          const file = await tools.read({ file_path: resultPath, limit: 2000 });
+          if (file.totalLines > 2000)
+            throw new Error(
+              `Artifact result entry ${relativePath} exceeds the 2,000-line read limit`,
+            );
+          const value = JSON.parse(file.lines.map((line) => line.text).join("\n"));
+          filesRead += 1;
+          if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+          const exitCode = Number.isInteger(value.exitCode) ? value.exitCode : null;
+          const signal = value.signal ? String(value.signal).slice(0, 100) : null;
+          const timedOut = Boolean(value.timedOut);
+          const error = value.error
+            ? (await project(String(value.error), 1000, 1000)).text || null
+            : null;
+          const command =
+            value.command == null
+              ? null
+              : (await project(String(value.command), 2000, 1000)).text || null;
+          if (exitCode === 0 && !signal && !error && !timedOut) continue;
+          if (exitCode === null && !signal && !error && !timedOut && !value.command) continue;
+          fileResults.push({
+            path: relativePath.slice(0, 1000),
+            exitCode,
+            signal,
+            timedOut,
+            error,
+            command,
+          });
         }
         if (cumulativeLimitExceeded)
           throw new Error("Artifact streamed output exceeds the 100,000,000-byte limit");
@@ -424,8 +426,8 @@ export default async function triage_nemoclaw_ci_failure(input: {
           name: artifactName,
           sizeBytes,
           inventoryTruncated: false,
-          filesRead: Math.min(resultEntries.length, 100),
-          filesTruncated: resultEntries.length > 100,
+          filesRead,
+          filesTruncated: filesRead < resultEntries.length,
           failures: failures.slice(0, 20),
           failuresTruncated: failures.length > 20,
         };

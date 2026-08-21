@@ -27,7 +27,7 @@ export default async function run_independent_documentation_writer_review(input:
     "resolve base commit and AGENTS.md blob",
     "bound changed files to 500 and diff to 1.5 MB",
     "run one foreground read-only subagent only with apply:true",
-    "require PASS/BLOCKED and documentation receipt markers",
+    "require a consistent verdict and commit-bound documentation receipt",
     "verify HEAD and worktree unchanged",
   ];
   if (
@@ -237,6 +237,8 @@ export default async function run_independent_documentation_writer_review(input:
     ).exec(normalizedOutput)?.[1];
   const receiptResult = value("Result", "docs-updated|no-docs-needed|blocked");
   const verdict = value("Verdict", "PASS|BLOCKED");
+  const reviewedCommit = value("Reviewed commit", "[0-9a-f]{40}");
+  const receiptAgentsBlobSha = value("AGENTS\.md blob", "[0-9a-f]{40}");
   if (!receiptResult)
     throw new Error(
       "Independent reviewer did not return a recognized Documentation Writer Review result. Output tail:\n" +
@@ -261,6 +263,13 @@ export default async function run_independent_documentation_writer_review(input:
           })
         ).text,
     );
+  const resultPassed = receiptResult === "docs-updated" || receiptResult === "no-docs-needed";
+  if ((verdict === "PASS") !== resultPassed)
+    throw new Error("Independent reviewer returned an inconsistent Verdict and Result");
+  if (verdict === "PASS" && reviewedCommit !== input.expectedHeadSha)
+    throw new Error("Independent reviewer PASS does not identify the expected commit");
+  if (verdict === "PASS" && receiptAgentsBlobSha !== agentsBlobSha)
+    throw new Error("Independent reviewer PASS does not identify the reviewed AGENTS.md blob");
   return {
     applied: true,
     mode: "read-only",
@@ -282,6 +291,8 @@ export default async function run_independent_documentation_writer_review(input:
       agent: "DSH subagent",
       verdict,
       receiptResult,
+      reviewedCommit,
+      receiptAgentsBlobSha,
       output,
     }),
   };

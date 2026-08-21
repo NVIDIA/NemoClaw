@@ -55,9 +55,22 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
   const run = async (command, description, allow = false) => {
     const r = await tools.bash({ command, workdir: input.workdir, description, timeoutMs: 60000 });
     if (r.kind !== "foreground") throw new Error(description + " did not finish");
+    if (r.stdout.truncated || r.stderr.truncated) {
+      const diagnostic = await tools.project_diagnostic_text({
+        lines: (r.stderr.text || r.stdout.text).split(/\r?\n/),
+        maxLines: 20,
+        maxCharacters: 4000,
+        sourceTruncated: true,
+      });
+      throw new Error(
+        description +
+          " exceeded the bounded command output" +
+          (diagnostic.text ? ".\n" + diagnostic.text : ""),
+      );
+    }
     if (r.exitCode !== 0 && !allow) {
       const diagnostic = await tools.project_diagnostic_text({
-        lines: r.stderr.text.split(/\r?\n/),
+        lines: (r.stderr.text || r.stdout.text).split(/\r?\n/),
         maxLines: 20,
         maxCharacters: 4000,
       });

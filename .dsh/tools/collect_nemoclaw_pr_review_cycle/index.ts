@@ -67,6 +67,7 @@ export default async function collect_nemoclaw_pr_review_cycle(input: {
     repo,
     kind: "review-cycle",
     truncated:
+      s.checks.length > limit ||
       s.reviews.length > limit ||
       s.inlineComments.length > limit ||
       s.discussionComments.length > limit,
