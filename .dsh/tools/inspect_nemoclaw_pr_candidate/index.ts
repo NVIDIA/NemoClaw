@@ -147,7 +147,9 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
       args: ["repo", "view", repo, "--json", "viewerPermission", "--jq", ".viewerPermission"],
     })
   ).stdout.trim();
-  const existingResult = await tools.run_github_cli({
+  let existing = [];
+  if (branch) {
+    const existingResult = await tools.run_github_cli({
       workdir: input.workdir,
       args: [
         "pr",
@@ -163,8 +165,9 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
         "--limit",
         "2",
       ],
-    }),
+    });
     existing = JSON.parse(existingResult.stdout || "[]");
+  }
   const docs = changedFiles.filter((f) => /^(docs|fern)\//.test(f)),
     codeFiles = changedFiles.filter((f) => !/^(docs|fern)\//.test(f)),
     sensitivePaths = changedFiles.filter((f) =>

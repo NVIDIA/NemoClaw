@@ -31,6 +31,14 @@ export default async function publish_nemoclaw_pr_branch(input: {
     !/^[0-9a-f]{40}$/.test(input.expectedHeadSha)
   )
     throw new Error("workdir and expectedHeadSha are required");
+  if (
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) ||
+    !/^[A-Za-z0-9_.-]+$/.test(remote) ||
+    remote.startsWith("-") ||
+    !/^[A-Za-z0-9_./-]+$/.test(baseBranch) ||
+    baseBranch.startsWith("-")
+  )
+    throw new Error("repository, remote, or baseBranch is invalid");
   const run = async (command, description, allow = false) => {
     const r = await tools.bash({ command, workdir: input.workdir, description, timeoutMs: 120000 });
     if (r.kind !== "foreground") throw new Error(description + " did not finish");

@@ -50,6 +50,7 @@ export default async function summarize_nemoclaw_planning_items(input: {
     "^(#{1,4} )|dependency|depends|sequence|scope|acceptance|blocked|owner|state|agent|runtime|onboard|lifecycle|manifest|file|layout|PR |#[0-9]+";
   if (pattern.length < 1 || pattern.length > 500)
     throw new Error("relevantPattern must contain 1 to 500 characters");
+  if (/\)[+*{]/u.test(pattern)) throw new Error("relevantPattern must not quantify groups");
   let regex;
   try {
     regex = new RegExp(pattern, "i");
@@ -71,6 +72,41 @@ export default async function summarize_nemoclaw_planning_items(input: {
       timeoutMs: 60000,
     });
     const x = JSON.parse(result.stdout);
+    const bodyMatches = String(x.body ?? "")
+      .split(/\r?\n/)
+      .map((text, i) => ({ line: i + 1, text: text.slice(0, 240) }))
+      .filter((v) => regex.test(v.text))
+      .slice(0, maxBodyMatches);
+    const relevantBodyLines = await Promise.all(
+      bodyMatches.map(async (match) => ({
+        line: match.line,
+        text: (
+          await tools.project_diagnostic_text({
+            lines: [match.text],
+            clipMode: "head",
+            maxLines: 1,
+            maxCharacters: 240,
+            maxLineCharacters: 240,
+          })
+        ).text,
+      })),
+    );
+    const recentComments = await Promise.all(
+      (maxComments === 0 ? [] : (x.comments ?? []).slice(-maxComments)).map(async (c) => ({
+        author: c.author?.login ?? null,
+        createdAt: c.createdAt ?? "",
+        hasMarker: marker !== "" && String(c.body ?? "").includes(marker),
+        preview: (
+          await tools.project_diagnostic_text({
+            lines: [String(c.body ?? "")],
+            clipMode: "head",
+            maxLines: 1,
+            maxCharacters: 240,
+            maxLineCharacters: 240,
+          })
+        ).text,
+      })),
+    );
     return {
       number: x.number,
       title: x.title ?? "",
@@ -81,19 +117,8 @@ export default async function summarize_nemoclaw_planning_items(input: {
       headRefName: x.headRefName ?? null,
       baseRefName: x.baseRefName ?? null,
       isDraft: typeof x.isDraft === "boolean" ? x.isDraft : null,
-      relevantBodyLines: String(x.body ?? "")
-        .split(/\r?\n/)
-        .map((text, i) => ({ line: i + 1, text: text.slice(0, 240) }))
-        .filter((v) => regex.test(v.text))
-        .slice(0, maxBodyMatches),
-      recentComments: (maxComments === 0 ? [] : (x.comments ?? []).slice(-maxComments)).map(
-        (c) => ({
-          author: c.author?.login ?? null,
-          createdAt: c.createdAt ?? "",
-          hasMarker: marker !== "" && String(c.body ?? "").includes(marker),
-          preview: String(c.body ?? "").slice(0, 240),
-        }),
-      ),
+      relevantBodyLines,
+      recentComments,
     };
   };
   const items = await Promise.all([

@@ -38,14 +38,22 @@ export default async function summarize_changes_requested_pull_requests(input: {
       repo,
       "--state",
       "open",
+      "--search",
+      "review:changes-requested",
       "--limit",
       String(limit + 1),
       "--json",
       "number,title,url,author,isDraft,reviewDecision,updatedAt",
     ],
   });
-  const all = JSON.parse(r.stdout),
-    items = all.filter((p) => p.reviewDecision === "CHANGES_REQUESTED").slice(0, limit);
+  let all;
+  try {
+    all = JSON.parse(r.stdout);
+  } catch {
+    throw new Error("GitHub returned malformed pull request data");
+  }
+  if (!Array.isArray(all)) throw new Error("GitHub pull request data must be an array");
+  const items = all.slice(0, limit);
   return {
     repo,
     kind: "changes-requested-pull-requests",

@@ -55,9 +55,10 @@ export default async function run_independent_documentation_writer_review(input:
     typeof baseRef !== "string" ||
     !baseRef.trim() ||
     baseRef.length > 4096 ||
+    baseRef.startsWith("-") ||
     /[\0\r\n]/.test(baseRef)
   )
-    throw new Error("baseRef must be a non-empty single-line Git revision");
+    throw new Error("baseRef must be a non-empty single-line Git revision that is not option-like");
   if (
     input.model !== undefined &&
     (typeof input.model !== "string" ||

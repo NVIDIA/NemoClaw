@@ -10,6 +10,7 @@ export default async function refresh_locked_npm_cache_seed(input: {
   libc: string;
   chunkBytes?: Integer;
   dryRun?: boolean;
+  apply?: true;
 }): Promise<{
   dryRun: boolean;
   lockfile?: string;
@@ -28,6 +29,8 @@ export default async function refresh_locked_npm_cache_seed(input: {
   replaced: boolean;
 }> {
   const dryRun = input.dryRun ?? true;
+  if (!dryRun && input.apply !== true)
+    throw new Error("Replacing the npm cache seed requires dryRun:false and apply:true");
   const chunkBytes = input.chunkBytes ?? 1_900_000;
   if (!Number.isInteger(chunkBytes) || chunkBytes < 65_536 || chunkBytes > 2_000_000) {
     throw new Error("chunkBytes must be an integer from 65536 to 2000000");

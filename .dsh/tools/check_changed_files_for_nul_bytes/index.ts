@@ -31,7 +31,7 @@ export default async function check_changed_files_for_nul_bytes(input: {
     if (remainingMs <= 0) throw new Error("Could not scan changed files");
     const result = await tools.bash({
       command:
-        "if [ ! -f " +
+        "set -o pipefail; if [ ! -f " +
         quote(file) +
         " ]; then exit 3; fi; LC_ALL=C od -An -v -t u1 -- " +
         quote(file) +

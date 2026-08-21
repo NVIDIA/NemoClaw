@@ -218,16 +218,21 @@ export default async function summarize_nemoclaw_merge_queue(input: {
           ],
           "Read pull request review threads",
         ),
-        run(
-          ["api", "repos/" + repo + "/issues/" + c.number + "/comments?per_page=100"],
-          "Read pull request advisor comment",
-        ),
+        tools.read_github_pages({
+          workdir: input.workdir,
+          repository: repo,
+          path: "issues/" + c.number + "/comments?sort=created&direction=asc",
+          pageSize: 100,
+          pageLimit: 20,
+        }),
       ]);
+      if (comments.truncated)
+        throw new Error("Pull request advisor comments exceeded the bounded pagination limit");
       const d = JSON.parse(detail),
         cs = JSON.parse(checks || "[]"),
         pr = JSON.parse(threads).data?.repository?.pullRequest,
         body = String(
-          [...JSON.parse(comments)]
+          [...comments.items]
             .reverse()
             .find((x) => String(x.body ?? "").includes("nemoclaw-pr-review-advisor"))?.body ?? "",
         ),
