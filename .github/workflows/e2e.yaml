@@ -33,6 +33,14 @@ on:
           - mock
           - internal-nvidia
           - public-nvidia
+      gateway_runtime:
+        description: "Gateway container runtime for candidate E2E execution. Podman restores the explicit NEMOCLAW_GATEWAY_RUNTIME=podman diagnostic path."
+        required: false
+        default: "docker"
+        type: choice
+        options:
+          - docker
+          - podman
       allow_jetson_dispatch:
         description: "Set true for a manual jetson-nvmap-gpu run. Main pushes dispatch it automatically. The operator-owned dispatch backend must be available, and JETSON_DISPATCH_URL must contain its verified HTTPS origin. Refer to test/e2e/docs/jetson-dispatch.md."
         required: false
@@ -93,6 +101,7 @@ env:
   NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
   NEMOCLAW_E2E_CORRELATION_ID: ${{ inputs.correlation_id }}
   NEMOCLAW_E2E_SHARD: default
+  NEMOCLAW_GATEWAY_RUNTIME: ${{ inputs.gateway_runtime || 'docker' }}
 
 jobs:
   base-image-publication:
@@ -649,6 +658,12 @@ jobs:
       - name: Prepare E2E workspace
         if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+
+      - name: Stage immutable native Podman E2E toolchains
+        uses: NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@1a0f53d5d7e5420556be72b50d79ed5a333d637d
+        with:
+          enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
+          github-token: ${{ github.token }}
 
       - id: package_cli_artifact
         name: Package exact-commit CLI
@@ -2525,6 +2540,11 @@ jobs:
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        with:
+          enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
+
       - name: Verify retired selector replacements
         env:
           JOBS: ${{ inputs.jobs }}
@@ -2709,6 +2729,11 @@ jobs:
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        with:
+          enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
+
       # invalidState: a profile plugin installed with --no-deps can import even
       # when an incomplete base image omitted its required upstream packages.
       # sourceBoundary: this trusted workflow scopes the repo-owned stripped-base
@@ -2874,6 +2899,11 @@ jobs:
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        with:
+          enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
+
       - name: Run tagged credential-free test
         env:
           TEST_FILE: ${{ matrix.file }}
@@ -2900,6 +2930,7 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      gateway_runtime: ${{ inputs.gateway_runtime || 'docker' }}
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
@@ -2940,6 +2971,7 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      gateway_runtime: ${{ inputs.gateway_runtime || 'docker' }}
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
@@ -2981,6 +3013,7 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      gateway_runtime: ${{ inputs.gateway_runtime || 'docker' }}
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
@@ -3022,6 +3055,7 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      gateway_runtime: ${{ inputs.gateway_runtime || 'docker' }}
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
@@ -3063,6 +3097,7 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      gateway_runtime: ${{ inputs.gateway_runtime || 'docker' }}
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
@@ -3129,6 +3164,11 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        with:
+          enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
       - name: Install OpenShell CLI
         run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
@@ -3429,6 +3469,11 @@ jobs:
         shell: bash
         run: npx tsx tools/e2e/runner-comparison.mts initialize
 
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        with:
+          enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
+
       - name: Install and verify cloudflared prerequisite
         # Update posture: maintainers review upstream cloudflared releases and
         # update the version and reviewed SHA256 together in both explicit MCP
@@ -3557,6 +3602,11 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        with:
+          enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
       - name: Install and verify cloudflared prerequisite
         env:
@@ -3812,6 +3862,11 @@ jobs:
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        with:
+          enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
+
       - name: Install and verify cloudflared prerequisite
         # Update posture: keep this dev compatibility lane on the same reviewed
         # version/SHA256 pair as the stable lane; workflow-contract tests fail
@@ -3978,6 +4033,11 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
+
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        with:
+          enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
       - name: Validate candidate activation contract
         env:
@@ -4620,6 +4680,11 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        with:
+          enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
+
       - name: Validate protected runtime activation contract
         env:
           CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
@@ -4883,6 +4948,11 @@ jobs:
         shell: bash
         run: npx tsx tools/e2e/runner-comparison.mts initialize
 
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        with:
+          enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
+
       - name: Run Hermes live Vitest test
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
@@ -5043,6 +5113,11 @@ jobs:
           NODE_OPTIONS: ""
         with:
           node-version: "22"
+
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        with:
+          enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
       - name: Run Hermes GPU startup live Vitest test
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
@@ -5287,6 +5362,11 @@ jobs:
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        with:
+          enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
+
       - name: Materialize cloud-onboard managed-image catalog
         if: ${{ needs.generate-matrix.outputs.managed_image_catalog != '' }}
         env:
@@ -5411,6 +5491,11 @@ jobs:
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        with:
+          enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
+
       - name: Run messaging providers live Vitest test
         # The test keeps
         # the legacy fake-token defaults, optional _REAL secret overrides,
@@ -5490,6 +5575,11 @@ jobs:
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        with:
+          enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
+
       - name: Run OpenClaw custom-plugin release baseline live test
         run: |
           set -euo pipefail
@@ -5565,6 +5655,11 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        with:
+          enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
       - name: Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test
         run: |

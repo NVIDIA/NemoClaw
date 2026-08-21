@@ -79,12 +79,7 @@ const PROFILE_JOBS = {
     job: "catalogue-brave-nvidia-inference",
     matrix: "catalogue_brave_nvidia_inference_matrix",
     credentialBoundary: "Brave and NVIDIA inference API keys",
-    secrets: [
-      "BRAVE_API_KEY",
-      "DOCKERHUB_TOKEN",
-      "DOCKERHUB_USERNAME",
-      "NVIDIA_INFERENCE_API_KEY",
-    ],
+    secrets: ["BRAVE_API_KEY", "DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_INFERENCE_API_KEY"],
     githubToken: false,
     maxParallel: 2,
   },
@@ -153,6 +148,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     for (const [name, expected] of Object.entries({
       candidate_repository: "${{ inputs.checkout_repository || github.repository }}",
       candidate_sha: "${{ inputs.checkout_sha || github.sha }}",
+      gateway_runtime: "${{ inputs.gateway_runtime || 'docker' }}",
       risk_signal_expected_sha:
         "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}",
       risk_signal_correlation_id:
@@ -203,6 +199,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const requiredInputs = {
     candidate_repository: "string",
     candidate_sha: "string",
+    gateway_runtime: "string",
     risk_signal_expected_sha: "string",
     risk_signal_correlation_id: "string",
     cli_artifact_provenance: "string",
@@ -280,6 +277,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.risk_signal_correlation_id }}",
     NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA: "${{ inputs.risk_signal_expected_sha }}",
     NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: "${{ inputs.candidate_sha }}",
+    NEMOCLAW_GATEWAY_RUNTIME: "${{ inputs.gateway_runtime }}",
   };
   if (Object.keys(jobEnv).sort().join(",") !== Object.keys(expectedJobEnv).sort().join(",")) {
     errors.push("standard E2E profile must expose only its reviewed job environment");
@@ -297,6 +295,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Install target host dependencies",
     "Prepare E2E workspace",
     "Restore exact-commit CLI artifact",
+    "Prepare native Podman E2E runtime",
     "Materialize temporary managed-image catalog",
     "Install reviewed cloudflared",
     "Add swap for Hermes image rebuild",
@@ -448,6 +447,20 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   ) {
     errors.push("standard E2E profile must restore the planned exact-commit CLI artifact");
   }
+  const nativePodmanRuntime = requireStep(
+    errors,
+    workflowSteps,
+    "Prepare native Podman E2E runtime",
+  );
+  if (
+    nativePodmanRuntime?.uses !== E2E_ACTION_PROVENANCE.nativePodmanRuntime.reference ||
+    record(nativePodmanRuntime?.with).enabled !==
+      "${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}" ||
+    !restore ||
+    workflowSteps.indexOf(nativePodmanRuntime ?? {}) !== workflowSteps.indexOf(restore) + 1
+  ) {
+    errors.push("standard E2E profile must prepare the selected native Podman runtime");
+  }
   const managedCatalog = requireStep(
     errors,
     workflowSteps,
@@ -469,7 +482,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     !managedCatalogRun.includes("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG") ||
     managedCatalogRun.includes("NEMOCLAW_E2E_EXACT_RELEASE") ||
     managedCatalogRun.includes(".source.release = $release") ||
-    workflowSteps.indexOf(managedCatalog ?? {}) !== workflowSteps.indexOf(restore ?? {}) + 1
+    workflowSteps.indexOf(managedCatalog ?? {}) !==
+      workflowSteps.indexOf(nativePodmanRuntime ?? {}) + 1
   ) {
     errors.push(
       "standard E2E profile must materialize only the exact-candidate managed-image catalog",
@@ -482,11 +496,10 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     cloudflared.shell !== EXECUTION_PLAN_SHELL ||
     !isDeepStrictEqual(record(cloudflared.env), {
       CLOUDFLARED_VERSION: "2026.6.1",
-      CLOUDFLARED_DEB_SHA256:
-        "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526",
+      CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526",
     }) ||
     !cloudflaredRun.includes(
-      'https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb',
+      "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb",
     ) ||
     !cloudflaredRun.includes("sha256sum -c -") ||
     !cloudflaredRun.includes('dpkg-deb -f "${cloudflared_deb}" Package') ||
@@ -589,8 +602,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
       "${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
     executeEnv.COMPATIBLE_API_KEY !==
       "${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
-    executeEnv.BRAVE_API_KEY !==
-      "${{ inputs.trusted_main && secrets.BRAVE_API_KEY || '' }}" ||
+    executeEnv.BRAVE_API_KEY !== "${{ inputs.trusted_main && secrets.BRAVE_API_KEY || '' }}" ||
     executeEnv.GITHUB_TOKEN !==
       "${{ inputs.github_token && inputs.trusted_main && github.token || '' }}"
   ) {

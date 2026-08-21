@@ -422,6 +422,19 @@ describe("report-backed runtime readiness (#7411)", () => {
       expect(exit).not.toHaveBeenCalled();
     },
   );
+
+  it.skipIf(!isLinuxDockerDriverGatewayEnabled())(
+    "allows Podman when the native gateway runtime is explicit",
+    () => {
+      vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+      const exit = vi.fn();
+      assertOnboardHostReadiness(hostWithRuntime("podman"), null, {
+        explicitlyOptedOutGpuPassthrough: false,
+        exitProcess: exit as never,
+      });
+      expect(exit).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("runFatalOnboardRuntimePreflight", () => {

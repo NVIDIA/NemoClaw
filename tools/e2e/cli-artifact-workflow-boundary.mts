@@ -31,6 +31,7 @@ export const CLI_ARTIFACT_RESTORE_ACTION = E2E_ACTION_PROVENANCE.restoreCliArtif
 export const CLI_ARTIFACT_PACKAGE_STEP = "Package exact-commit CLI";
 export const CLI_ARTIFACT_PUBLISH_STEP = "Publish content-addressed CLI artifact";
 export const CLI_ARTIFACT_RESTORE_STEP = "Restore exact-commit CLI artifact";
+const NATIVE_PODMAN_TOOLCHAIN_STAGE_STEP = "Stage immutable native Podman E2E toolchains";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_RESTORE_ACTION_PATH = join(
@@ -228,6 +229,9 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
   const provenanceSteps = producerSteps.filter(
     (step) => step.name === CLI_ARTIFACT_PROVENANCE_STEP,
   );
+  const nativePodmanToolchainStages = producerSteps.filter(
+    (step) => step.name === NATIVE_PODMAN_TOOLCHAIN_STAGE_STEP,
+  );
   if (packageSteps.length !== 1) {
     errors.push(`${CLI_ARTIFACT_PRODUCER_JOB} must package the CLI artifact exactly once`);
   }
@@ -237,10 +241,25 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
   if (provenanceSteps.length !== 1) {
     errors.push(`${CLI_ARTIFACT_PRODUCER_JOB} must record CLI artifact provenance exactly once`);
   }
+  if (nativePodmanToolchainStages.length !== 1) {
+    errors.push(`${CLI_ARTIFACT_PRODUCER_JOB} must stage native Podman toolchains exactly once`);
+  }
   const packageStep = packageSteps[0];
   const uploadStep = uploadSteps[0];
   const provenanceStep = provenanceSteps[0];
-  if (!packageStep || !uploadStep || !provenanceStep) return;
+  const nativePodmanToolchainStage = nativePodmanToolchainStages[0];
+  if (!packageStep || !uploadStep || !provenanceStep || !nativePodmanToolchainStage) return;
+
+  if (
+    nativePodmanToolchainStage.uses !==
+      E2E_ACTION_PROVENANCE.stageNativePodmanToolchains.reference ||
+    !isDeepStrictEqual(record(nativePodmanToolchainStage.with), {
+      enabled: "${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}",
+      "github-token": "${{ github.token }}",
+    })
+  ) {
+    errors.push("native Podman toolchains must use the reviewed immutable staging action");
+  }
 
   if (packageStep.id !== "package_cli_artifact" || packageStep.shell !== "bash") {
     errors.push("CLI artifact package step must use id package_cli_artifact and the Bash shell");
@@ -326,12 +345,15 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
   ]);
 
   const prepareIndex = producerSteps.findIndex((step) => step.uses === PREPARE_E2E_ACTION);
+  const nativePodmanToolchainStageIndex = producerSteps.indexOf(nativePodmanToolchainStage);
   const packageIndex = producerSteps.indexOf(packageStep);
   const uploadIndex = producerSteps.indexOf(uploadStep);
   const provenanceIndex = producerSteps.indexOf(provenanceStep);
   if (
     !(
       prepareIndex >= 0 &&
+      prepareIndex < nativePodmanToolchainStageIndex &&
+      nativePodmanToolchainStageIndex < packageIndex &&
       prepareIndex < packageIndex &&
       packageIndex < uploadIndex &&
       uploadIndex < provenanceIndex
@@ -349,9 +371,7 @@ function validateConsumer(
 ): void {
   if (jobName === "mcp-bridge-dev") {
     const { steps: _jobSteps, ...jobExecutionContext } = job;
-    if (
-      contentSha256(jobExecutionContext) !== MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256
-    ) {
+    if (contentSha256(jobExecutionContext) !== MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256) {
       errors.push(
         "mcp-bridge-dev must preserve its reviewed job execution context before candidate activation",
       );
@@ -400,10 +420,7 @@ function validateConsumer(
         ? trustedInstallIndex
         : jobSteps.length - 1
       : restoreIndex;
-  const stepsThroughSecurityBoundary = jobSteps.slice(
-    0,
-    securityBoundaryIndex + 1,
-  );
+  const stepsThroughSecurityBoundary = jobSteps.slice(0, securityBoundaryIndex + 1);
   const jobEnv = record(job.env);
   const defaultShell = record(record(job.defaults).run).shell;
   const unsafePreRestoreStep = stepsThroughSecurityBoundary.some(
@@ -449,9 +466,7 @@ function validateConsumer(
       contentSha256(jobSteps.slice(0, trustedInstallIndex + 1)) !==
         MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256)
   ) {
-    errors.push(
-      "mcp-bridge-dev must preserve every reviewed step through trusted installation",
-    );
+    errors.push("mcp-bridge-dev must preserve every reviewed step through trusted installation");
   }
   if (
     jobName === "mcp-bridge-dev" &&
@@ -483,13 +498,8 @@ function validateConsumer(
   const stepsBeforeRestore = jobSteps
     .slice(reviewedStepsStart, restoreIndex)
     .map((step) => step.name);
-  if (
-    prepareIndex >= 0 &&
-    !isDeepStrictEqual(stepsBeforeRestore, reviewedStepsBeforeRestore)
-  ) {
-    errors.push(
-      `${jobName} must preserve its reviewed steps through CLI artifact restore`,
-    );
+  if (prepareIndex >= 0 && !isDeepStrictEqual(stepsBeforeRestore, reviewedStepsBeforeRestore)) {
+    errors.push(`${jobName} must preserve its reviewed steps through CLI artifact restore`);
   }
 }
 

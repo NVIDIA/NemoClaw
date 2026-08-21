@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import YAML from "yaml";
 import { CLI_ARTIFACT_RESTORE_STEP } from "./cli-artifact-workflow-boundary.mts";
+import { E2E_ACTION_PROVENANCE } from "./workflow-boundary-policy.mts";
 
 /**
  * SOURCE_OF_TRUTH_REVIEW
@@ -44,6 +45,8 @@ type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
   name?: string;
   run?: string;
+  uses?: string;
+  with?: WorkflowRecord;
 };
 
 function asRecord(value: unknown): WorkflowRecord {
@@ -275,17 +278,22 @@ if ! @run restore`;
   const restoreI = steps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
   const ni = steps.findIndex((step) => step.name === "Reassert trusted Node runtime");
   const node = steps[ni];
+  const nativePodmanRuntime = steps[ni + 1];
   if (
     runStep.shell !== BASH ||
     !trustedEnv(runStep) ||
     pi < 0 ||
     restoreI <= pi ||
     ni !== restoreI + 1 ||
-    ni + 1 !== steps.indexOf(runStep) ||
+    ni + 2 !== steps.indexOf(runStep) ||
     node?.uses !== "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" ||
     asRecord(node?.with)["node-version"] !== "22" ||
     !trustedEnv(node) ||
     asRecord(node?.env).NODE_OPTIONS !== "" ||
+    nativePodmanRuntime?.name !== "Prepare native Podman E2E runtime" ||
+    nativePodmanRuntime?.uses !== E2E_ACTION_PROVENANCE.nativePodmanRuntime.reference ||
+    asRecord(nativePodmanRuntime?.with).enabled !==
+      "${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}" ||
     run.includes(SOURCE) ||
     !hasProof(
       runStep.run,

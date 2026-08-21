@@ -12,6 +12,9 @@ on:
       candidate_sha:
         required: true
         type: string
+      gateway_runtime:
+        required: true
+        type: string
       risk_signal_expected_sha:
         required: true
         type: string
@@ -112,6 +115,7 @@ jobs:
       NEMOCLAW_E2E_CORRELATION_ID: ${{ inputs.risk_signal_correlation_id }}
       NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA: ${{ inputs.risk_signal_expected_sha }}
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ inputs.candidate_sha }}
+      NEMOCLAW_GATEWAY_RUNTIME: ${{ inputs.gateway_runtime }}
     steps:
       - id: execution_plan
         name: Validate catalogue execution plan
@@ -391,6 +395,11 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
         with:
           provenance-json: ${{ inputs.cli_artifact_provenance }}
+
+      - name: Prepare native Podman E2E runtime
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        with:
+          enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
       - name: Materialize temporary managed-image catalog
         if: ${{ inputs.managed_image_catalog != '' }}

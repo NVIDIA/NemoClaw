@@ -29,6 +29,7 @@ import {
 import { HOST_GATEWAY_PGREP_PATTERN } from "./host-gateway-process";
 import * as dockerDriverGatewayRuntimeMarker from "./docker-driver-gateway-runtime-marker";
 import { isPortableExperimentalProfile } from "./docker-driver-platform";
+import { isPodmanGatewayRuntimeEnabled } from "./gateway-runtime-selection";
 import * as gatewayBinding from "./gateway-binding";
 import {
   gatewayProcessCmdlineMatches,
@@ -248,7 +249,9 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   ): Record<string, string> {
     const dockerHost = process.env.DOCKER_HOST;
     let podmanSocketPath: string | undefined;
-    if (isPortableExperimentalProfile()) {
+    const portable = isPortableExperimentalProfile();
+    const nativePodman = !portable && isPodmanGatewayRuntimeEnabled();
+    if (portable) {
       const candidate = dockerHost?.trim();
       if (!candidate || !isSupportedGatewayDockerHost(dockerHost)) {
         throw new Error(
@@ -256,6 +259,25 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
         );
       }
       podmanSocketPath = candidate.slice("unix://".length);
+    } else if (nativePodman) {
+      if (platform !== "linux") {
+        throw new Error("Native Podman gateway runtime is supported only on Linux.");
+      }
+      const explicitSocket = process.env.OPENSHELL_PODMAN_SOCKET;
+      if (explicitSocket !== undefined) {
+        podmanSocketPath = explicitSocket;
+      } else if (dockerHost !== undefined) {
+        if (!isSupportedGatewayDockerHost(dockerHost)) {
+          throw new Error(
+            "Native Podman gateway requires an absolute unix:// DOCKER_HOST or OPENSHELL_PODMAN_SOCKET.",
+          );
+        }
+        podmanSocketPath = dockerHost.trim().slice("unix://".length);
+      } else {
+        const uid = process.getuid?.() ?? os.userInfo().uid;
+        const runtimeDirectory = process.env.XDG_RUNTIME_DIR?.trim() || `/run/user/${String(uid)}`;
+        podmanSocketPath = path.join(runtimeDirectory, "podman", "podman.sock");
+      }
     }
     const gatewayEnv = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
       platform,

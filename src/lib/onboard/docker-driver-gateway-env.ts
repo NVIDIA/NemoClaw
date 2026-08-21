@@ -20,6 +20,7 @@ import {
   prepareDockerDriverGatewayConfigEnv,
 } from "./docker-driver-gateway-config";
 import { buildDockerDriverGatewayLocalTlsEnv } from "./docker-driver-gateway-local-tls";
+import { isPodmanGatewayRuntimeEnabled } from "./gateway-runtime-selection";
 import {
   getOpenShellGatewayManagedServiceLogCommand,
   getOpenShellUserConfigHome,
@@ -78,6 +79,10 @@ export interface BuildDockerDriverGatewayEnvOptions {
   enableBindMounts?: boolean;
 }
 
+function usesPodmanGatewayRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isPortableExperimentalProfile(env) || isPodmanGatewayRuntimeEnabled(env);
+}
+
 export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<
   PackageManagedDockerDriverGatewayOptions,
   "prepareOpenShellGatewayUserServiceEnv"
@@ -89,16 +94,16 @@ export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<
 
 export function getGatewayPortCheckOptions(): { host: string } {
   return {
-    host: isPortableExperimentalProfile() ? WILDCARD_GATEWAY_BIND_ADDRESS : GATEWAY_BIND_ADDRESS,
+    host: usesPodmanGatewayRuntime() ? WILDCARD_GATEWAY_BIND_ADDRESS : GATEWAY_BIND_ADDRESS,
   };
 }
 
 export function getGatewayStartNetworkEnv(
   gatewayPort: number = GATEWAY_PORT,
 ): Record<string, string> {
-  const portable = isPortableExperimentalProfile();
+  const podman = usesPodmanGatewayRuntime();
   return {
-    OPENSHELL_BIND_ADDRESS: portable ? WILDCARD_GATEWAY_BIND_ADDRESS : GATEWAY_BIND_ADDRESS,
+    OPENSHELL_BIND_ADDRESS: podman ? WILDCARD_GATEWAY_BIND_ADDRESS : GATEWAY_BIND_ADDRESS,
     OPENSHELL_SERVER_PORT: String(gatewayPort),
     OPENSHELL_SSH_GATEWAY_HOST: getGatewayConnectHost(),
     OPENSHELL_SSH_GATEWAY_PORT: String(gatewayPort),
@@ -243,21 +248,22 @@ export function buildDockerDriverGatewayEnv({
   enableBindMounts = false,
 }: BuildDockerDriverGatewayEnvOptions): Record<string, string> {
   const portable = isPortableExperimentalProfile();
+  const podman = portable || isPodmanGatewayRuntimeEnabled();
   const resolvedDockerNetworkName = dockerNetworkName ?? resolveDockerDriverNetworkName();
   const env: Record<string, string> = {
-    OPENSHELL_DRIVERS: portable ? "podman" : "docker",
+    OPENSHELL_DRIVERS: podman ? "podman" : "docker",
     ...getGatewayStartNetworkEnv(gatewayPort),
     ...buildDockerDriverGatewayLocalTlsEnv(stateDir),
     OPENSHELL_DB_URL: `sqlite:${path.join(stateDir, "openshell.db")}`,
-    OPENSHELL_GRPC_ENDPOINT: portable
+    OPENSHELL_GRPC_ENDPOINT: podman
       ? `https://${PORTABLE_HOST_GATEWAY_IP}:${gatewayPort}`
       : getDockerDriverGatewayEndpoint(gatewayPort),
     OPENSHELL_DOCKER_NETWORK_NAME: resolvedDockerNetworkName,
     OPENSHELL_DOCKER_SUPERVISOR_IMAGE: getDockerSupervisorImage(),
   };
   if (enableBindMounts) env.NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS = "1";
-  if (portable) {
-    env.NETAVARK_FW = "iptables";
+  if (podman) {
+    if (portable) env.NETAVARK_FW = "iptables";
     if (podmanSocketPath !== undefined) {
       const rawSocketPath = String(podmanSocketPath);
       const normalizedSocketPath = rawSocketPath.trim();
@@ -272,8 +278,10 @@ export function buildDockerDriverGatewayEnv({
       }
       env.OPENSHELL_PODMAN_SOCKET = normalizedSocketPath;
     }
-    const containersConf = process.env.CONTAINERS_CONF?.trim();
-    if (containersConf) env.CONTAINERS_CONF = containersConf;
+    if (portable) {
+      const containersConf = process.env.CONTAINERS_CONF?.trim();
+      if (containersConf) env.CONTAINERS_CONF = containersConf;
+    }
   }
   if (platform === "linux") {
     const sandboxBin = resolveSandboxBin();

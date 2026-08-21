@@ -29,6 +29,7 @@ import {
   isLinuxDockerDriverGatewayEnabled,
   isPortableExperimentalProfile,
 } from "./docker-driver-platform";
+import { isPodmanGatewayRuntimeEnabled } from "./gateway-runtime-selection";
 import { warnIfHostProxyMissesLoopback } from "./http-proxy-preflight";
 import { assessHost, type HostAssessment, planHostAdvisories } from "./preflight";
 import {
@@ -165,7 +166,9 @@ export function assertOnboardSystemReadiness(
   const admission = evaluateOnboardReadinessAdmission(readinessReport, {
     explicitlyOptedOutGpuPassthrough: options.explicitlyOptedOutGpuPassthrough,
     allowUnsupportedRuntime:
-      isPortableExperimentalProfile() || !isLinuxDockerDriverGatewayEnabled(),
+      isPortableExperimentalProfile() ||
+      isPodmanGatewayRuntimeEnabled() ||
+      !isLinuxDockerDriverGatewayEnabled(),
     allowStorageRemediation: options.allowStorageRemediation === true,
     allowPortableHostPreparation: options.allowPortableHostPreparation,
     allowDeferredN1xManagedVllm:

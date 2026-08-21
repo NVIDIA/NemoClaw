@@ -134,7 +134,15 @@ test(
     });
     expect(doctor.detail).toContain("rootless server 5.");
     expect(bundle.identity.id).toBe("podman");
-    expect(bundle.workload.profile.support).toBeNull();
+    expect(bundle.workload.profile).toMatchObject({
+      support: {
+        exactDigestReferences: true,
+        platforms: ["linux/amd64", "linux/arm64"],
+      },
+      hostArchitectures: ["amd64", "arm64"],
+      managedImageSelectionPolicy: "require-managed",
+      legacyDockerfileBuilds: false,
+    });
     expect(bundle.capabilities.hostLocalInference).toBe(false);
 
     const openshellBin = executableOnPath("openshell");
