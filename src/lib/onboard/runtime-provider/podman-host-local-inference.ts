@@ -1657,6 +1657,8 @@ function createProbeSpec(
     SHA256,
     "Podman inference probe parent authority",
   );
+  // Temporary compatibility for retained probes from pre-fix PR #9906 qualification runs.
+  // Remove when no preserved qualification host can resume a pre-timeout probe.
   const legacyCanonical = Object.freeze({
     providerId: PROVIDER_ID,
     service,
@@ -1680,10 +1682,9 @@ function createProbeSpec(
     curlMaxTimeSeconds,
     request: normalizedRequest,
   });
-  const buildSpec = (
-    identity: typeof canonical | typeof legacyCanonical,
-    maxTimeSeconds: number,
-  ): ProbeSpec => {
+  const buildSpec = (identity: typeof canonical | typeof legacyCanonical): ProbeSpec => {
+    const maxTimeSeconds =
+      "curlMaxTimeSeconds" in identity ? identity.curlMaxTimeSeconds : PROBE_CURL_MAX_TIME_SECONDS;
     const specSha256 = digest(identity);
     const name = `nemoclaw-inference-probe-${phase}-${specSha256.slice(0, 16)}`;
     const source = Object.freeze([
@@ -1738,8 +1739,8 @@ function createProbeSpec(
     });
   };
   return Object.freeze({
-    current: buildSpec(canonical, curlMaxTimeSeconds),
-    legacy: buildSpec(legacyCanonical, PROBE_CURL_MAX_TIME_SECONDS),
+    current: buildSpec(canonical),
+    legacy: buildSpec(legacyCanonical),
   });
 }
 
