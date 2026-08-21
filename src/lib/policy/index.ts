@@ -333,6 +333,7 @@ function loadPresetForSandbox(sandboxName: string, presetName: string): string |
 
   const channelPresetContent = loadMessagingChannelPolicyPreset(presetName, {
     agent: sandboxAgent,
+    sandboxName,
   });
   if (channelPresetContent) return channelPresetContent;
   if (isMessagingChannelPolicyPreset(presetName)) return null;
