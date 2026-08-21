@@ -116,6 +116,26 @@ def _write_envelope(data: Mapping[str, Any], *, exit_code: int) -> NoReturn:
     raise SystemExit(exit_code)
 
 
+def _redact_result(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Redact credential-shaped result values without changing JSON structure."""
+    from deepagents_code.nemoclaw_observability import redact_secret_values
+
+    try:
+        encoded = json.dumps(data, ensure_ascii=True, separators=(",", ":"))
+        redacted = json.loads(redact_secret_values(encoded))
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise _CallError(
+            "malformed_result",
+            "The MCP tool returned an unsupported result.",
+        ) from exc
+    if not isinstance(redacted, dict):
+        raise _CallError(
+            "malformed_result",
+            "The MCP tool returned an unsupported result.",
+        )
+    return redacted
+
+
 async def _call_read_only_tool(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """Resolve and invoke one exact managed MCP tool."""
     from langchain_core.messages import ToolMessage
@@ -186,7 +206,7 @@ async def _call_read_only_tool(tool_name: str, arguments: dict[str, Any]) -> dic
                     "The MCP tool returned an unsupported result.",
                 )
             data["structured_content"] = dict(result.artifact["structured_content"])
-        return data
+        return _redact_result(data)
     finally:
         if manager is not None:
             await manager.cleanup()

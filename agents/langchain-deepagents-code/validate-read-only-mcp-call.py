@@ -19,6 +19,7 @@ _COMMAND = "/usr/local/lib/nemoclaw/dcode-wrapper.sh"
 _CONFIG = Path("/sandbox/.deepagents/.nemoclaw-mcp.json")
 _MAX_BYTES = 131_072
 _TOOL = "worker-broker_worker_task_context"
+_REFLECTED_CREDENTIAL = "Bearer sk-proj-validation-credential-value"
 _ATTESTATION = {
     "algorithm": "sha256",
     "digest": "3d872ea8299fc2d4663469b2e6e81c56e9bfc3dcab53779fc19b0588915d0f9e",
@@ -80,6 +81,14 @@ def _serve(mode: str, host: str, port: int, cert: Path, key: Path, marker: Path)
             qualification=Qualification(output_attestation=_ATTESTATION),
             task_context={"nonce": nonce, "worker": worker},
         )
+
+    @server.tool(name="credential_reflection", annotations=read_only)
+    def credential_reflection() -> dict[str, Any]:
+        _record(marker, "credential_reflection")
+        return {
+            "authorization": _REFLECTED_CREDENTIAL,
+            "nested": {"credential": _REFLECTED_CREDENTIAL},
+        }
 
     @server.tool(name="unannotated")
     def unannotated() -> str:
@@ -371,6 +380,20 @@ def _validate(
     if _marker_values(marker) != ["worker_task_context"]:
         raise RuntimeError("managed MCP command did not invoke the exact tool once")
 
+    reflected = _invoke(
+        "worker-broker_credential_reflection",
+        {},
+        cert=cert,
+        host=host,
+        expected_status=0,
+    )
+    encoded_reflection = json.dumps(reflected, separators=(",", ":"))
+    if (
+        _REFLECTED_CREDENTIAL in encoded_reflection
+        or encoded_reflection.count("<redacted-secret>") < 2
+    ):
+        raise RuntimeError("managed MCP command exposed a credential-bearing result")
+
     rejected = (
         ("worker-broker_unannotated", "tool_not_read_only"),
         ("worker-broker_mutating", "tool_not_read_only"),
@@ -379,7 +402,7 @@ def _validate(
     )
     for tool, code in rejected:
         _expect_error(tool, code, cert=cert, host=host)
-    if _marker_values(marker) != ["worker_task_context"]:
+    if _marker_values(marker) != ["worker_task_context", "credential_reflection"]:
         raise RuntimeError("managed MCP command invoked a rejected tool")
 
     _expect_error(
@@ -396,7 +419,7 @@ def _validate(
         host=host,
         raw_input="x" * (_MAX_BYTES + 1),
     )
-    if _marker_values(marker) != ["worker_task_context"]:
+    if _marker_values(marker) != ["worker_task_context", "credential_reflection"]:
         raise RuntimeError("managed MCP command accepted invalid input")
 
     for tool, code in (
@@ -417,6 +440,7 @@ def _validate(
     _expect_error("a_b_c", "ambiguous_tool", cert=cert, host=host)
     if _marker_values(marker) != [
         "worker_task_context",
+        "credential_reflection",
         "failing",
         "oversized",
         "malformed_result",
