@@ -18,6 +18,7 @@ _MAX_INPUT_BYTES = 131_072
 _MAX_OUTPUT_BYTES = 131_072
 _CALL_TIMEOUT_SECONDS = 15
 _CLEANUP_TIMEOUT_SECONDS = 3
+_MAX_RESULT_DEPTH = 64
 _TOOL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _TOOL_CALL_ID = "nemoclaw-read-only-mcp"
 
@@ -116,8 +117,85 @@ def _write_envelope(data: Mapping[str, Any], *, exit_code: int) -> NoReturn:
     raise SystemExit(exit_code)
 
 
+def _consume_bytes(remaining: int, amount: int) -> int:
+    if amount > remaining:
+        raise _CallError(
+            "result_too_large",
+            "The MCP tool result exceeds the managed size limit.",
+        )
+    return remaining - amount
+
+
+def _consume_string(value: str, remaining: int) -> int:
+    remaining = _consume_bytes(remaining, 2)
+    for character in value:
+        codepoint = ord(character)
+        if character in {'"', "\\"} or character in "\b\f\n\r\t":
+            width = 2
+        elif codepoint < 0x20 or 0x80 <= codepoint <= 0xFFFF:
+            width = 6
+        elif codepoint > 0xFFFF:
+            width = 12
+        else:
+            width = 1
+        remaining = _consume_bytes(remaining, width)
+    return remaining
+
+
+def _consume_json(
+    value: Any,
+    remaining: int,
+    active: set[int],
+    depth: int,
+) -> int:
+    if value is None:
+        return _consume_bytes(remaining, 4)
+    if type(value) is bool:
+        return _consume_bytes(remaining, 4 if value else 5)
+    if type(value) in (int, float):
+        return _consume_bytes(
+            remaining,
+            len(json.dumps(value, separators=(",", ":")).encode("utf-8")),
+        )
+    if type(value) is str:
+        return _consume_string(value, remaining)
+    if depth >= _MAX_RESULT_DEPTH or not isinstance(value, (Mapping, list, tuple)):
+        raise _CallError(
+            "malformed_result",
+            "The MCP tool returned an unsupported result.",
+        )
+
+    identity = id(value)
+    if identity in active:
+        raise _CallError(
+            "malformed_result",
+            "The MCP tool returned an unsupported result.",
+        )
+    active.add(identity)
+    try:
+        remaining = _consume_bytes(remaining, 2)
+        entries = value.items() if isinstance(value, Mapping) else enumerate(value)
+        for index, (key, item) in enumerate(entries):
+            if index:
+                remaining = _consume_bytes(remaining, 1)
+            if isinstance(value, Mapping):
+                if type(key) is not str:
+                    raise _CallError(
+                        "malformed_result",
+                        "The MCP tool returned an unsupported result.",
+                    )
+                remaining = _consume_string(key, remaining)
+                remaining = _consume_bytes(remaining, 1)
+            remaining = _consume_json(item, remaining, active, depth + 1)
+        return remaining
+    finally:
+        active.remove(identity)
+
+
 def _redact_result(data: Mapping[str, Any]) -> dict[str, Any]:
     """Redact credential-shaped result values without changing JSON structure."""
+    _consume_json(data, _MAX_OUTPUT_BYTES, set(), 0)
+
     from deepagents_code.nemoclaw_observability import redact_secret_values
 
     try:

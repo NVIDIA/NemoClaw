@@ -113,6 +113,16 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
       input: "{}",
     });
     const help = spawnSync("python3", [commandPath, "--help"], { encoding: "utf8" });
+    const oversized = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        'import importlib.util, sys; spec = importlib.util.spec_from_file_location("probe", sys.argv[1]); module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); value = {"content": [{"nested": {"value": "x" * (module._MAX_OUTPUT_BYTES * 8)}}]};\ntry: module._redact_result(value)\nexcept module._CallError as exc: print(exc.code)',
+        commandPath,
+      ],
+      { encoding: "utf8" },
+    );
 
     expect(invalid.status, invalid.stderr).toBe(2);
     expect(invalid.stderr).toBe("");
@@ -130,6 +140,8 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     expect(help.status, help.stderr).toBe(0);
     expect(help.stderr).toBe("");
     expect(help.stdout).toContain("usage: dcode tools call-read-only TOOL --json");
+    expect(oversized.status, oversized.stderr).toBe(0);
+    expect(oversized.stdout.trim()).toBe("result_too_large");
   });
 
   it.each(["dcode-launcher.sh", "dcode-wrapper.sh", "start.sh"])(

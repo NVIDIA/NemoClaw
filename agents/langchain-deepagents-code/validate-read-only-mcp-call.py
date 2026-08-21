@@ -132,9 +132,11 @@ def _serve(mode: str, host: str, port: int, cert: Path, key: Path, marker: Path)
         raise ToolError("untrusted failure detail")
 
     @server.tool(name="oversized", annotations=read_only)
-    def oversized() -> dict[str, str]:
+    def oversized() -> dict[str, Any]:
         _record(marker, "oversized")
-        return {"value": "x" * (_MAX_BYTES + 1)}
+        return {
+            "nested": [{"value": "x" * (_MAX_BYTES * 8)}],
+        }
 
     @server.tool(name="malformed_result", annotations=read_only)
     def malformed_result() -> CallToolResult:
@@ -424,10 +426,19 @@ def _validate(
 
     for tool, code in (
         ("worker-broker_failing", "tool_failed"),
-        ("worker-broker_oversized", "result_too_large"),
         ("worker-broker_malformed_result", "runtime_failure"),
     ):
         _expect_error(tool, code, cert=cert, host=host)
+
+    oversized_started = time.monotonic()
+    _expect_error(
+        "worker-broker_oversized",
+        "result_too_large",
+        cert=cert,
+        host=host,
+    )
+    if time.monotonic() - oversized_started >= 15:
+        raise RuntimeError("managed MCP command did not bound an oversized result")
 
     started = time.monotonic()
     _expect_error("worker-broker_hanging", "timeout", cert=cert, host=host)
@@ -442,8 +453,8 @@ def _validate(
         "worker_task_context",
         "credential_reflection",
         "failing",
-        "oversized",
         "malformed_result",
+        "oversized",
         "hanging",
     ]:
         raise RuntimeError("managed MCP command invoked an unselected tool")
