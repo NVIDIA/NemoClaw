@@ -134,6 +134,20 @@ function receipt(
     reviewCompleteness: { limitations: [], requiresHumanReview: true },
   };
 }
+function terminologyDecision(traceId: string) {
+  return {
+    term: "review receipt",
+    change: "introduced",
+    disposition: "justified",
+    meaning: "The complete structured review sections.",
+    contrast: "Unlike drafts, this is complete.",
+    existingTerm: null,
+    semanticImpact: "evidence",
+    recommendation: "Keep the contrast explicit.",
+    traceId,
+    source: { file: "tools/pr-review-advisor/review-submission.mts", line: 9 },
+  };
+}
 function e2e() {
   return {
     coverage: {
@@ -1069,6 +1083,41 @@ describe("PR review advisor submission tools", () => {
     expect(submission.result()).toBeNull();
   });
 
+  it("reports draft errors together before one submit repair", async () => {
+    let returnInvalidE2e = true;
+    const submission = controller(new Map(), (draft) =>
+      returnInvalidE2e ? { ...draft, coverage: null } : draft,
+    );
+    const draft = receipt({
+      decisions: [terminologyDecision("missing-trace")],
+      noChangesReason: null,
+    });
+    draft.acceptanceCoverage[0].findingId = "F-001";
+    draft.securityCategories[0].findingId = "F-001";
+    await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
+    await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft);
+    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
+
+    const failure = await execute(submission, SUBMIT_REVIEW_TOOL, {}).then(
+      () => null,
+      (error: unknown) => error as Error,
+    );
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure?.message).toContain("acceptanceCoverage[1] does not report a concern");
+    expect(failure?.message).toContain("securityCategories[1] does not report a concern");
+    expect(failure?.message).toContain("normalized E2E failed schema validation");
+    expect(failure?.message).toContain("Unknown terminology trace missing-trace");
+    expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
+    expect(submission.terminologySnapshot()).toMatchObject({ revision: 0 });
+    expect(submission.result()).toBeNull();
+
+    returnInvalidE2e = false;
+    await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, receipt());
+    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.toMatchObject({
+      terminate: true,
+    });
+  });
+
   it.each([
     ["null", null, 7],
     ["blank", "   ", 7],
@@ -1277,20 +1326,7 @@ describe("PR review advisor submission tools", () => {
       submission,
       RECORD_REVIEW_RECEIPT_TOOL,
       receipt({
-        decisions: [
-          {
-            term: trace.term,
-            change: "introduced",
-            disposition: "justified",
-            meaning: "The complete structured review sections.",
-            contrast: "Unlike drafts, this is complete.",
-            existingTerm: null,
-            semanticImpact: "evidence",
-            recommendation: "Keep the contrast explicit.",
-            traceId: trace.id,
-            source: { file: "tools/pr-review-advisor/review-submission.mts", line: 9 },
-          },
-        ],
+        decisions: [terminologyDecision(trace.id)],
         noChangesReason: null,
       }),
     );
@@ -1324,20 +1360,7 @@ describe("PR review advisor submission tools", () => {
       submission,
       RECORD_REVIEW_RECEIPT_TOOL,
       receipt({
-        decisions: [
-          {
-            term: "review receipt",
-            change: "introduced",
-            disposition: "justified",
-            meaning: "The complete structured review sections.",
-            contrast: "Unlike drafts, this is complete.",
-            existingTerm: null,
-            semanticImpact: "evidence",
-            recommendation: "Keep the contrast explicit.",
-            traceId: trace.id,
-            source: { file: "tools/pr-review-advisor/review-submission.mts", line: 9 },
-          },
-        ],
+        decisions: [terminologyDecision(trace.id)],
         noChangesReason: null,
       }),
     );
