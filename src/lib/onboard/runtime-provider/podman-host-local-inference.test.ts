@@ -239,31 +239,46 @@ describe("Podman host-local inference lifecycle", () => {
     ).toBe(true);
   });
 
+  it("uses a valid full container ID when probe name lookup would time out (#9211)", () => {
+    const harness = createPodmanHostLocalInferenceTestHarness();
+    harness.state.probePostCreateNameLookupTimeout = true;
+    expect(() =>
+      operationRuntime(harness).startManaged(harness.input, harness.writer),
+    ).not.toThrow();
+  });
+
+  it("captures a malformed disposable-probe create acknowledgement and removes all residue", () => {
+    const harness = createPodmanHostLocalInferenceTestHarness();
+    harness.state.probeRunAcknowledgementText = "not-a-full-container-id";
+    const runtime = operationRuntime(harness);
+
+    expect(() => runtime.startManaged(harness.input, harness.writer)).toThrow(
+      "must be a full immutable ID",
+    );
+    expect(
+      harness.failures.some(
+        ({ phase, message }) =>
+          phase === "ready" && message.includes("must be a full immutable ID"),
+      ),
+    ).toBe(true);
+    expect(harness.failureProbeIds[0]).toBe("c".repeat(64));
+    expect(harness.probe()).toBeNull();
+    expect(harness.container()).toBeNull();
+  });
+
   it.each([
-    ["malformed", "not-a-full-container-id", "must be a full immutable ID"],
-    ["a different full ID", `${"d".repeat(64)}\n`, "disagrees with exact name inspection"],
+    ["after create", 1, ["wait", "logs", "rm"], "probe identity is indeterminate after create"],
+    ["during cleanup", 3, ["rm"], "probe cleanup lost exact identity"],
   ] as const)(
-    "captures %s successful disposable-probe create acknowledgement and removes all residue",
-    (_label, acknowledgement, expectedFailure) => {
+    "rejects a Podman inspect result whose container ID differs from the queried ID %s (#9211)",
+    (_stage, at, forbiddenActions, expectedFailure) => {
       const harness = createPodmanHostLocalInferenceTestHarness();
-      harness.state.probeRunAcknowledgementText = acknowledgement;
+      harness.state.probeInspectRuntimeIdMismatchAt = at;
+      harness.state.probeForbiddenActions = [...forbiddenActions];
       const runtime = operationRuntime(harness);
 
       expect(() => runtime.startManaged(harness.input, harness.writer)).toThrow(expectedFailure);
-      expect(
-        harness.failures.some(
-          ({ phase, message }) => phase === "ready" && message.includes(expectedFailure),
-        ),
-      ).toBe(true);
-      const evidenceIndex = harness.events.indexOf("evidence:ready");
-      const removeIndex = harness.events.findIndex((event) =>
-        event.includes(`podman:rm --force ${"c".repeat(64)}`),
-      );
-      expect(evidenceIndex).toBeGreaterThanOrEqual(0);
-      expect(removeIndex).toBeGreaterThan(evidenceIndex);
-      expect(harness.probe()).toBeNull();
-      expect(harness.container()).toBeNull();
-      expect(harness.written).toHaveLength(0);
+      expect(harness.probe()).toMatchObject({ id: "c".repeat(64) });
     },
   );
 

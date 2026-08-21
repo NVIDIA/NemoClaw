@@ -34,30 +34,41 @@ describe("shared MCP tool discovery runtime", () => {
           "arbitrary-format-secret-that-the-server-would-echo",
         ]),
       ).toThrow("invalid arguments");
-      [
-        "EXAMPLE_MCP_TOKEN",
-        "lowercase_token",
-        "_TOKEN",
-        `A${"a".repeat(127)}`,
-      ].forEach((credentialEnv) => {
-        expect(() => validateMcpCredentialEnvName(credentialEnv)).not.toThrow();
-        expect(
-          parseMcpToolDiscoveryArguments([
-            "--url",
-            "https://example.test/mcp",
-            "--credential-env",
+      ["EXAMPLE_MCP_TOKEN", "lowercase_token", "_TOKEN", `A${"a".repeat(127)}`].forEach(
+        (credentialEnv) => {
+          expect(() => validateMcpCredentialEnvName(credentialEnv)).not.toThrow();
+          expect(
+            parseMcpToolDiscoveryArguments([
+              "--url",
+              "https://example.test/mcp",
+              "--credential-env",
+              credentialEnv,
+            ]),
+          ).toEqual({
+            url: new URL("https://example.test/mcp"),
             credentialEnv,
-          ]),
-        ).toEqual({
-          url: new URL("https://example.test/mcp"),
-          credentialEnv,
-        });
-      });
-      expect(buildMcpToolDiscoveryAuthorizationPlaceholder("EXAMPLE_MCP_TOKEN")).toBe(
-        "Bearer openshell:resolve:env:EXAMPLE_MCP_TOKEN",
+          });
+        },
       );
-
+      expect(
+        buildMcpToolDiscoveryAuthorizationPlaceholder(
+          "EXAMPLE_MCP_TOKEN",
+          "openshell:resolve:env:EXAMPLE_MCP_TOKEN",
+        ),
+      ).toBe("Bearer openshell:resolve:env:EXAMPLE_MCP_TOKEN");
+      expect(
+        buildMcpToolDiscoveryAuthorizationPlaceholder(
+          "EXAMPLE_MCP_TOKEN",
+          "openshell:resolve:env:v14429878272859325890_EXAMPLE_MCP_TOKEN",
+        ),
+      ).toBe("Bearer openshell:resolve:env:v14429878272859325890_EXAMPLE_MCP_TOKEN");
       expect(() => validateMcpCredentialEnvName(credentialEnv)).toThrow();
+      expect(
+        buildMcpToolDiscoveryAuthorizationPlaceholder(
+          credentialEnv,
+          `openshell:resolve:env:${credentialEnv}`,
+        ),
+      ).toBeNull();
       expect(() =>
         parseMcpToolDiscoveryArguments([
           "--url",
@@ -68,6 +79,19 @@ describe("shared MCP tool discovery runtime", () => {
       ).toThrow("invalid arguments");
     },
   );
+
+  it.each([
+    undefined,
+    "raw-secret",
+    "openshell:resolve:env:v42_OTHER_MCP_TOKEN",
+    "openshell:resolve:env:vbad_EXAMPLE_MCP_TOKEN",
+    "openshell:resolve:env:v144298782728593258901_EXAMPLE_MCP_TOKEN",
+    "openshell:resolve:env:v42_EXAMPLE_MCP_TOKEN\nAuthorization: Bearer raw-secret",
+  ])("rejects unsafe live credential values [case %#]", (runtimeValue) => {
+    expect(
+      buildMcpToolDiscoveryAuthorizationPlaceholder("EXAMPLE_MCP_TOKEN", runtimeValue),
+    ).toBeNull();
+  });
 
   it("enumerates every page and returns deterministic names only", async () => {
     const loadPage = vi

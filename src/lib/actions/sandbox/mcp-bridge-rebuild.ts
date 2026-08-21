@@ -144,7 +144,11 @@ export async function prepareMcpBridgesForRebuild(
       scrubbedAdapters.push(entry);
     }
     for (const entry of entries) {
-      removeGeneratedPolicy(sandboxName, entry);
+      // The same-name replacement journal fingerprints this source row before
+      // MCP teardown. Keep exact generated-policy ownership in that preserved
+      // row while removing only the live policy; inner onboarding excludes the
+      // generated name and post-rebuild restoration reuses this ownership.
+      removeGeneratedPolicy(sandboxName, entry, { preserveRegistryOwnership: true });
       removedPolicies.push(entry);
     }
     for (const entry of entries) {

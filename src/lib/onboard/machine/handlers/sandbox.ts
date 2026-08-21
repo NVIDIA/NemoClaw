@@ -201,6 +201,7 @@ export interface SandboxStateOptions<
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
   rebuildPreservedEnv?: readonly import("../../../state/preserved-env").PreservedEnvFile[];
+  rebuildPolicyPresets?: readonly string[];
   hostMounts?: readonly import("../../../state/registry/types").SandboxHostMount[];
   recreateSandbox: (requested?: boolean) => boolean;
   gatewayName: string;
@@ -479,6 +480,41 @@ function compatibleEndpointReasoningForCreateIntent(
   value: string | null,
 ): Pick<SandboxCreateIntent, "compatibleEndpointReasoning"> {
   return value === "true" || value === "false" ? { compatibleEndpointReasoning: value } : {};
+}
+
+function rebuildPolicyPresetsForCreateIntent(
+  value: readonly string[] | undefined,
+  session: Session | null,
+  sandboxName: string,
+): Pick<SandboxCreateIntent, "rebuildPolicyPresets"> {
+  // A later `onboard --resume` no longer has the outer rebuild's in-memory
+  // options. The matching recreate journal makes its filtered session value
+  // the durable replacement target instead of the preserved source row.
+  const journaledValue =
+    session?.checkpoint?.sandboxRecreate?.sandboxName === sandboxName &&
+    Array.isArray(session.policyPresets)
+      ? session.policyPresets
+      : undefined;
+  const selectedValue = Array.isArray(value) ? value : journaledValue;
+  return Array.isArray(selectedValue) ? { rebuildPolicyPresets: [...selectedValue] } : {};
+}
+
+/** Replace a resumed create-plan snapshot with the outer rebuild's normalized built-ins. */
+function applyAuthoritativeRebuildPolicyPresets(
+  intent: ResolvedSandboxCreateIntent,
+  rebuildPolicyPresets: readonly string[] | undefined,
+): ResolvedSandboxCreateIntent {
+  if (!Array.isArray(rebuildPolicyPresets)) return intent;
+  return {
+    ...intent,
+    policy: {
+      ...intent.policy,
+      options: {
+        ...intent.policy.options,
+        additionalPresets: [...rebuildPolicyPresets],
+      },
+    },
+  };
 }
 
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
@@ -1558,25 +1594,33 @@ class SandboxStateFlow<
     hermesToolGateways: readonly string[],
   ): Promise<CompleteSandboxCreateIntent> {
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
-    const resolved = await this.deps.resolveSandboxCreateIntent({
+    const rebuildPolicyPresetSelection = rebuildPolicyPresetsForCreateIntent(
+      this.options.rebuildPolicyPresets,
+      state.session,
       sandboxName,
-      inferenceProvider: this.options.provider,
-      hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
-      enabledChannels: state.selectedMessagingChannels,
-      webSearchConfig: state.webSearchConfig,
-      agent: this.options.agent,
-      sandboxGpuConfig: this.options.sandboxGpuConfig,
-      resourceProfile,
-      hermesToolGateways,
-      extraProviders,
-      staleExtraProviders,
-      hostMounts: this.options.hostMounts,
-      baselineExclusions: baselineExclusionsForCreate(sandboxName),
-      ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
-      ...(this.options.authoritativePolicyTier !== undefined
-        ? { policyTier: this.options.authoritativePolicyTier }
-        : {}),
-    });
+    );
+    const resolved = applyAuthoritativeRebuildPolicyPresets(
+      await this.deps.resolveSandboxCreateIntent({
+        sandboxName,
+        inferenceProvider: this.options.provider,
+        hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
+        enabledChannels: state.selectedMessagingChannels,
+        webSearchConfig: state.webSearchConfig,
+        agent: this.options.agent,
+        sandboxGpuConfig: this.options.sandboxGpuConfig,
+        resourceProfile,
+        hermesToolGateways,
+        extraProviders,
+        staleExtraProviders,
+        hostMounts: this.options.hostMounts,
+        baselineExclusions: baselineExclusionsForCreate(sandboxName),
+        ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
+        ...(this.options.authoritativePolicyTier !== undefined
+          ? { policyTier: this.options.authoritativePolicyTier }
+          : {}),
+      }),
+      rebuildPolicyPresetSelection.rebuildPolicyPresets,
+    );
     return {
       resolved,
       recreate: requiresSandboxRecreation(decision, this.options.recreateSandbox(false)),
@@ -1604,6 +1648,7 @@ class SandboxStateFlow<
       ...(this.options.rebuildPreservedEnv
         ? { rebuildPreservedEnv: this.options.rebuildPreservedEnv }
         : {}),
+      ...rebuildPolicyPresetSelection,
       extraProviders,
     };
   }

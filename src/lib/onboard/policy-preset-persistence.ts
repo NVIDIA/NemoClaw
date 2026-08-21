@@ -133,19 +133,42 @@ export function seedReusedSandboxPolicyPresets(
 /**
  * Recreate path: seed the session from the previous entry's recorded selection
  * (carrying forward, or honoring a finalized empty set), then print any env
- * override note. See resolveRecreatePolicyPresets.
+ * override note. An explicit outer-rebuild selection is already normalized and
+ * cannot be replaced by the preserved source row or ambient environment.
+ * See resolveRecreatePolicyPresets.
  */
 export function applyRecreatePolicyCarryForward(
   sandboxName: string,
   nonInteractive: boolean,
   note: (message: string) => void,
+  rebuildPolicyPresets?: readonly string[],
 ): void {
   const previousEntry = registry.getSandbox(sandboxName);
+  const session = onboardSession.loadSession();
+  const journaledSessionPolicies =
+    session?.checkpoint?.sandboxRecreate?.sandboxName === sandboxName &&
+    Array.isArray(session.policyPresets)
+      ? [...session.policyPresets]
+      : null;
+  const authoritativeRebuildPolicies = Array.isArray(rebuildPolicyPresets)
+    ? [...rebuildPolicyPresets]
+    : null;
+  // A matching recreate journal owns the replacement target. In particular,
+  // rebuild can remove generated MCP policies before deleting the old sandbox
+  // while retaining their registry metadata for crash recovery. Re-reading the
+  // preserved source row here would replace the already-normalized target with
+  // a generated policy name whose definition is intentionally absent.
+  const previousPolicies =
+    authoritativeRebuildPolicies ?? journaledSessionPolicies ?? previousEntry?.policies;
   const { policyPresets, overrideNote } = resolveRecreatePolicyPresets(
-    previousEntry?.policies,
-    previousEntry?.policyPresetsFinalized === true,
-    (previousEntry?.customPolicies?.length ?? 0) > 0,
-    process.env,
+    previousPolicies,
+    authoritativeRebuildPolicies !== null ||
+      journaledSessionPolicies !== null ||
+      previousEntry?.policyPresetsFinalized === true,
+    authoritativeRebuildPolicies === null &&
+      journaledSessionPolicies === null &&
+      (previousEntry?.customPolicies?.length ?? 0) > 0,
+    authoritativeRebuildPolicies === null ? process.env : {},
     nonInteractive,
   );
   onboardSession.updateSession((current: Session) => {
