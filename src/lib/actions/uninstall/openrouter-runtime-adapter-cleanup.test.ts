@@ -289,7 +289,7 @@ describe("runtime adapter uninstall cleanup", () => {
 
       expect(result.exitCode).toBe(1);
       expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
-      expect(scannedPorts).toEqual(expect.arrayContaining([":11438", ":4000"]));
+      expect(scannedPorts).toEqual([":11435", ":11437", ":11438", ":4000"]);
       expect(logs.some((line) => line.endsWith("State and binaries"))).toBe(false);
       expect(fs.existsSync(path.join(tmpHome, ".nemoclaw", "bedrock-runtime-adapter.pid"))).toBe(
         true,
