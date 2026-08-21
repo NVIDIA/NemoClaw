@@ -84,6 +84,12 @@ const fs = require("node:fs");
 const net = require("node:net");
 const args = process.argv.slice(2);
 if (args[0] === "info") {
+  if (args.includes("{{.Host.CgroupManager}}")) {
+    const source = fs.readFileSync(process.env.CONTAINERS_CONF, "utf8");
+    const configured = source.match(/^cgroup_manager = "([^"]+)"$/m)?.[1] ?? "";
+    process.stdout.write((process.env.FAKE_PODMAN_CGROUP_MANAGER ?? configured) + "\\n");
+    process.exit(0);
+  }
   process.stdout.write(process.env.FAKE_PODMAN_SOCKET + "\\n");
   process.exit(0);
 }
@@ -471,15 +477,6 @@ function portableLaunchStep(name: string): WorkflowStep {
   );
   expect(step).toBeDefined();
   return step!;
-}
-
-function portableLaunchShellFunction(stepName: string, functionName: string): string {
-  const run = portableLaunchStep(stepName).run ?? "";
-  const start = run.indexOf(`${functionName}() {\n`);
-  expect(start).toBeGreaterThanOrEqual(0);
-  const end = run.slice(start).search(/^\}\n/mu);
-  expect(end).toBeGreaterThanOrEqual(0);
-  return run.slice(start, start + end + 2);
 }
 
 describe("portable profile systemctl fixture", () => {
@@ -1397,13 +1394,11 @@ describe("portable profile systemctl fixture", () => {
     const provision = portableLaunchStep("Provision restricted rootless Linux runtime").run ?? "";
     expect(provision).not.toContain("portable-profile-systemctl-shim.sh");
     expect(provision).toContain('sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" /run/nemoclaw');
-    expect(provision).toContain(
-      "/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf",
-    );
+    expect(provision).toContain('containers_conf="/run/nemoclaw/portable-containers.conf"');
+    expect(provision).toContain("podman.service.d/90-nemoclaw-cgroup-manager.conf");
+    expect(provision).toContain("user@.service.d/90-nemoclaw-cpu-delegation.conf");
     expect(provision).toContain("/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf");
-    expect(provision).toContain(
-      "/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf",
-    );
+    expect(provision).toContain("user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf");
     expect(provision).toContain("Delegate=cpu memory pids");
     expect(provision.match(/CPUWeight=100/gu)).toHaveLength(2);
     expect(provision).toContain('sudo systemctl stop "user@${uid}.service"');
@@ -1411,7 +1406,11 @@ describe("portable profile systemctl fixture", () => {
     expect(provision).toContain('sudo systemctl start "user@${uid}.service"');
     expect(provision).toContain("/usr/bin/systemctl --user start podman.socket");
     expect(provision).toContain("inspectPortableCpuDelegation");
-    expect(provision).toContain('test "$cgroup_manager" = "systemd"');
+    const podmanConfigIndex = provision.indexOf('cgroup_manager = "systemd"');
+    expect(podmanConfigIndex).toBeGreaterThanOrEqual(0);
+    expect(podmanConfigIndex).toBeLessThan(
+      provision.indexOf('sudo systemctl start "user@${uid}.service"'),
+    );
     const runtimeExportIndex = provision.indexOf("XDG_RUNTIME_DIR=%s");
     expect(runtimeExportIndex).toBeGreaterThanOrEqual(0);
     expect(runtimeExportIndex).toBeLessThan(
@@ -1429,7 +1428,8 @@ describe("portable profile systemctl fixture", () => {
     const cleanupRun = cleanup.run ?? "";
     expect(cleanup.if).toBe("always()");
     expect(cleanupRun).toContain('docker buildx rm "$builder_name"');
-    expect(cleanupRun).toContain("cleanup_fixture_drop_in");
+    expect(cleanupRun).toContain("Delegate=cpu memory pids\\n'");
+    expect(cleanupRun).toContain("CPUWeight=100\\n'");
     expect(cleanupRun).toContain("sudo systemctl daemon-reload");
     expect(cleanupRun.indexOf('docker buildx rm "$builder_name"')).toBeLessThan(
       cleanupRun.indexOf("podman system reset"),
@@ -1439,49 +1439,62 @@ describe("portable profile systemctl fixture", () => {
     );
   });
 
-  it("removes only byte-identical CPU-delegation drop-ins with terminal newlines", () => {
-    const root = fs.mkdtempSync("/tmp/portable-cpu-delegation-cleanup-");
-    const bin = path.join(root, "bin");
-    const exact = path.join(root, "exact.conf");
-    const changed = path.join(root, "changed.conf");
-    const expected = "[Service]\nDelegate=cpu memory pids\n";
-    fs.mkdirSync(bin, { mode: 0o700 });
-    writeExecutable(path.join(bin, "sudo"), '#!/usr/bin/env bash\nexec "$@"\n');
-    fs.writeFileSync(exact, expected);
-    fs.writeFileSync(changed, `${expected}unexpected\n`);
-    const cleanupFunction = portableLaunchShellFunction(
-      "Clean up portable runtime",
-      "cleanup_fixture_drop_in",
-    );
-    const runCleanup = (target: string) =>
-      spawnSync(
+  it("creates the Portable Podman configuration and rejects a non-systemd cgroup manager", async () => {
+    const scope = createFixture();
+    const provision = portableLaunchStep("Provision restricted rootless Linux runtime").run ?? "";
+    const configStart = provision.indexOf('if test -e "$containers_conf"');
+    const configEnd = provision.indexOf("\n\ninstall_fixture_drop_in", configStart);
+    const managerStart = provision.indexOf('cgroup_manager="$(podman info');
+    const managerEnd = provision.indexOf("\npodman --version", managerStart);
+    expect([configStart, configEnd, managerStart, managerEnd]).not.toContain(-1);
+    const containersConf = path.join(scope.directory, "portable-containers.conf");
+    const receipt = path.join(scope.directory, "receipt");
+    try {
+      const configure = spawnSync(
         "bash",
         [
           "-c",
-          `${cleanupFunction}\ncleanup_fixture_drop_in \"$1\" \"$2\"`,
-          "cleanup",
-          target,
-          expected,
+          `set -euo pipefail\ncontainers_conf="$1"\nreceipt="$2"\n${provision.slice(configStart, configEnd)}`,
+          "configure-podman",
+          containersConf,
+          receipt,
         ],
-        {
+        { encoding: "utf8", env: scope.env },
+      );
+      expect(configure.status, configure.stderr).toBe(0);
+      expect(fs.readFileSync(containersConf, "utf8")).toBe(
+        '[engine]\ncgroup_manager = "systemd"\n',
+      );
+      expect(fs.statSync(containersConf).mode & 0o777).toBe(0o600);
+      expect(fs.readFileSync(receipt, "utf8")).toBe(`file\tpodman-config\t${containersConf}\n`);
+      expect(
+        systemctl(scope, [
+          "--user",
+          "set-environment",
+          "NETAVARK_FW=iptables",
+          `CONTAINERS_CONF=${containersConf}`,
+        ]).status,
+      ).toBe(0);
+      expect(systemctl(scope, ["--user", "start", "podman.socket"]).status).toBe(0);
+      expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
+      const managerCheck = provision.slice(managerStart, managerEnd);
+      const runManagerCheck = (manager?: string) =>
+        spawnSync("bash", ["-c", `set -euo pipefail\n${managerCheck}`], {
           encoding: "utf8",
-          env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
-        },
+          env: {
+            ...scope.env,
+            CONTAINERS_CONF: containersConf,
+            FAKE_PODMAN_CGROUP_MANAGER: manager,
+          },
+        });
+      expect(runManagerCheck().status).toBe(0);
+      const rejected = runManagerCheck("cgroupfs");
+      expect(rejected.status).not.toBe(0);
+      expect(rejected.stderr).toContain(
+        "Portable Podman must use the systemd cgroup manager; observed: cgroupfs",
       );
-
-    try {
-      const exactCleanup = runCleanup(exact);
-      expect(exactCleanup.status, exactCleanup.stderr).toBe(0);
-      expect(fs.existsSync(exact)).toBe(false);
-
-      const changedCleanup = runCleanup(changed);
-      expect(changedCleanup.status).not.toBe(0);
-      expect(changedCleanup.stderr).toContain(
-        "Refusing changed Portable CPU-delegation fixture file",
-      );
-      expect(fs.readFileSync(changed, "utf8")).toBe(`${expected}unexpected\n`);
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      await cleanFixture(scope);
     }
   });
 });

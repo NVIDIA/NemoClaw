@@ -158,7 +158,9 @@ function writeCurrentCoreFixture(
         version: "2026.7.1",
         dependencies: {
           "@modelcontextprotocol/sdk": "1.29.0",
+          "@openclaw/fs-safe": "0.4.1",
           minimatch: "10.2.5",
+          tar: "7.5.19",
           undici: undiciVersion,
         },
       },
@@ -179,9 +181,20 @@ function writeCurrentCoreFixture(
             version: "2026.7.1",
             dependencies: {
               "@modelcontextprotocol/sdk": "1.29.0",
+              "@openclaw/fs-safe": "0.4.1",
               minimatch: "10.2.5",
+              tar: "7.5.19",
               undici: undiciVersion,
             },
+          },
+          "node_modules/@openclaw/fs-safe": {
+            version: "0.4.1",
+            resolved: "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.4.1.tgz",
+            integrity:
+              "sha512-hQi+BxO10KdRFlYUot1syC+hTaUnGeQNdqX5kwkKJig8CFq1tKsYJLPm+zkiiGsSKOprPAquQl/txejEhpKPgg==",
+            license: "MIT",
+            engines: { node: ">=22" },
+            optionalDependencies: { jszip: "^3.10.1", tar: "7.5.19" },
           },
           "node_modules/ajv": {
             version: "8.20.0",
@@ -203,6 +216,21 @@ function writeCurrentCoreFixture(
           "node_modules/minimatch": {
             version: "10.2.5",
             dependencies: { "brace-expansion": "^5.0.5" },
+          },
+          "node_modules/tar": {
+            version: "7.5.19",
+            resolved: "https://registry.npmjs.org/tar/-/tar-7.5.19.tgz",
+            integrity:
+              "sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==",
+            license: "BlueOak-1.0.0",
+            dependencies: {
+              "@isaacs/fs-minipass": "^4.0.0",
+              chownr: "^3.0.0",
+              minipass: "^7.1.2",
+              minizlib: "^3.1.0",
+              yallist: "^5.0.0",
+            },
+            engines: { node: ">=18" },
           },
           "node_modules/express-rate-limit": {
             version: "8.5.2",
@@ -504,7 +532,16 @@ describe("OpenClaw npm remediation", () => {
     patchCurrentOpenClawCorePackageGraph(directory);
 
     const shrinkwrap = readJson<{
-      packages: Record<string, { integrity?: string; resolved?: string; version?: string }>;
+      packages: Record<
+        string,
+        {
+          dependencies?: Record<string, string>;
+          integrity?: string;
+          optionalDependencies?: Record<string, string>;
+          resolved?: string;
+          version?: string;
+        }
+      >;
     }>(path.join(directory, "npm-shrinkwrap.json"));
     expect(shrinkwrap.packages["node_modules/brace-expansion"]).toMatchObject({
       version: "5.0.9",
@@ -530,9 +567,64 @@ describe("OpenClaw npm remediation", () => {
       integrity:
         "sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==",
     });
+    expect(shrinkwrap.packages["node_modules/tar"]).toMatchObject({
+      version: "7.5.21",
+      resolved: "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz",
+      integrity:
+        "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==",
+    });
+    expect(shrinkwrap.packages["node_modules/@openclaw/fs-safe"].optionalDependencies).toEqual({
+      jszip: "^3.10.1",
+      tar: "7.5.21",
+    });
+    expect(shrinkwrap.packages[""].dependencies).toMatchObject({ tar: "7.5.21" });
     expect(
       readJson<{ dependencies: Record<string, string> }>(path.join(directory, "package.json")),
-    ).toMatchObject({ dependencies: { undici: "8.10.0" } });
+    ).toMatchObject({ dependencies: { tar: "7.5.21", undici: "8.10.0" } });
+  });
+
+  it("rejects a current OpenClaw manifest with a changed tar dependency", () => {
+    const directory = writeCurrentCoreFixture();
+    const packageJsonPath = path.join(directory, "package.json");
+    const packageJson = readJson<{ dependencies: Record<string, string> }>(packageJsonPath);
+    packageJson.dependencies.tar = "7.5.20";
+    writeJson(packageJsonPath, packageJson);
+
+    expect(() => patchCurrentOpenClawCorePackageGraph(directory)).toThrow(
+      "dependency boundary changed after review",
+    );
+  });
+
+  it("rejects a current OpenClaw fs-safe edge with a changed tar dependency", () => {
+    const directory = writeCurrentCoreFixture();
+    const shrinkwrapPath = path.join(directory, "npm-shrinkwrap.json");
+    const shrinkwrap = readJson<{
+      packages: Record<string, { optionalDependencies: Record<string, string> }>;
+    }>(shrinkwrapPath);
+    shrinkwrap.packages["node_modules/@openclaw/fs-safe"].optionalDependencies.tar = "7.5.20";
+    writeJson(shrinkwrapPath, shrinkwrap);
+
+    expect(() => patchCurrentOpenClawCorePackageGraph(directory)).toThrow(
+      "@openclaw/fs-safe tar layout changed after review",
+    );
+  });
+
+  it.each([
+    ["version", "7.5.20"],
+    ["resolved", "https://registry.npmjs.org/tar/-/tar-7.5.20.tgz"],
+    ["integrity", "sha512-deliberate-mismatch"],
+  ])("rejects a current OpenClaw tar shrinkwrap with changed %s", (field, value) => {
+    const directory = writeCurrentCoreFixture();
+    const shrinkwrapPath = path.join(directory, "npm-shrinkwrap.json");
+    const shrinkwrap = readJson<{
+      packages: Record<string, Record<string, unknown>>;
+    }>(shrinkwrapPath);
+    shrinkwrap.packages["node_modules/tar"][field] = value;
+    writeJson(shrinkwrapPath, shrinkwrap);
+
+    expect(() => patchCurrentOpenClawCorePackageGraph(directory)).toThrow(
+      "tar layout changed after review",
+    );
   });
 
   it.each([
