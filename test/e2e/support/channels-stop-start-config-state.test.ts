@@ -67,6 +67,17 @@ describe("channels stop/start OpenClaw configuration state", () => {
     expect(openClawChannelIsActive(state)).toBe(false);
   });
 
+  it("treats an enabled plugin without channel configuration as inert (#9820)", () => {
+    const state = {
+      ...ABSENT,
+      pluginPresent: true,
+      pluginEnabled: true,
+    };
+
+    expect(openClawChannelIsActive(state)).toBe(false);
+    expect(openClawChannelIsInert(state)).toBe(true);
+  });
+
   it("treats an enabled channel and plugin as active (#9820)", () => {
     const state = {
       ...MANAGED_IMAGE_DISABLED,
@@ -116,36 +127,25 @@ describe("channels stop/start OpenClaw configuration state", () => {
     },
   );
 
-  it.each([
-    ["channel", { channelEnabled: true, channelDisabled: false }],
-    ["plugin", { pluginEnabled: true, pluginDisabled: false }],
-  ])("rejects one-sided %s activation as active or inert (#9820)", (_case, overrides) => {
+  it("rejects channel activation without an enabled plugin as active or inert (#9820)", () => {
+    const overrides = { channelEnabled: true, channelDisabled: false };
     const state = { ...MANAGED_IMAGE_DISABLED, ...overrides };
 
     expect(openClawChannelIsActive(state)).toBe(false);
     expect(openClawChannelIsInert(state)).toBe(false);
   });
 
-  it.each([
-    ["channel", { channelHasSettings: true }],
-    ["plugin", { pluginHasSettings: true }],
-  ])("rejects disabled %s settings as inert (#9820)", (_case, overrides) => {
-    const state = { ...MANAGED_IMAGE_DISABLED, ...overrides };
+  it("rejects disabled channel settings as inert (#9820)", () => {
+    const state = { ...MANAGED_IMAGE_DISABLED, channelHasSettings: true };
 
     expect(openClawChannelIsActive(state)).toBe(false);
     expect(openClawChannelIsInert(state)).toBe(false);
   });
 
-  it.each([
-    ["channel", { channelDisabled: false }],
-    ["plugin", { pluginDisabled: false }],
-  ])(
-    "rejects a present %s entry without an explicit state as inert (#9820)",
-    (_case, overrides) => {
-      const state = { ...MANAGED_IMAGE_DISABLED, ...overrides };
+  it("rejects a present channel entry without an explicit state as inert (#9820)", () => {
+    const state = { ...MANAGED_IMAGE_DISABLED, channelDisabled: false };
 
-      expect(openClawChannelIsActive(state)).toBe(false);
-      expect(openClawChannelIsInert(state)).toBe(false);
-    },
-  );
+    expect(openClawChannelIsActive(state)).toBe(false);
+    expect(openClawChannelIsInert(state)).toBe(false);
+  });
 });

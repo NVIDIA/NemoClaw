@@ -33,15 +33,8 @@ export function openClawChannelIsActive(state: OpenClawChannelConfigState): bool
 export function openClawChannelIsInert(state: OpenClawChannelConfigState): boolean {
   const channelIsInert =
     !state.channelPresent || (state.channelDisabled && !state.channelHasSettings);
-  const pluginIsInert = !state.pluginPresent || (state.pluginDisabled && !state.pluginHasSettings);
 
-  return (
-    !state.channelEnabled &&
-    !state.channelHasEnabledAccount &&
-    !state.pluginEnabled &&
-    channelIsInert &&
-    pluginIsInert
-  );
+  return !state.channelEnabled && !state.channelHasEnabledAccount && channelIsInert;
 }
 
 export function openClawChannelStateProbeScript(
