@@ -1243,9 +1243,11 @@ const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "")
 const registry = require(${registryPath});
 
 const commands = [];
+const providerBindings = { "my-assistant-discord-bridge": "DISCORD_BOT_TOKEN", "my-assistant-slack-bridge": "SLACK_BOT_TOKEN", "my-assistant-slack-app": "SLACK_APP_TOKEN" };
 runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
+  const normalized = _n(command), providerName = String(Array.isArray(command) ? command.at(-1) : ""), credentialKey = providerBindings[providerName];
+  commands.push({ command: normalized, env: opts.env || null });
+  return normalized.includes(" provider get ") ? { status: 0, stdout: "Name: " + providerName + "\nType: nemoclaw-mcp-v1\nCredential keys: " + credentialKey + "\nConfig keys: <none>\n", stderr: "" } : { status: 0 };
 };
 runner.runCapture = (command) => {
   // Existing sandbox that is ready
@@ -1297,9 +1299,7 @@ const { createSandbox } = require(${onboardPath});
         "should NOT delete sandbox when providers already exist in gateway",
       );
 
-      // Providers should still be upserted on reuse (credential refresh).
-      // Since the mock reports providers as existing (run returns status 0),
-      // upsertProvider issues 'update' rather than 'create'.
+      // Reuse refreshes credentials only after the mock returns the endpointless identity.
       const providerUpserts = payload.commands.filter((entry: CommandEntry) =>
         entry.command.includes("provider update"),
       );
