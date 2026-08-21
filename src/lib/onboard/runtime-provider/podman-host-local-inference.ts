@@ -93,7 +93,10 @@ const RESERVED_NETWORK_NAMES = new Set([
 ]);
 const AT_REST_STATES = new Set(["configured", "created", "dead", "exited", "stopped"]);
 const PROBE_TIMEOUT_MS = 30_000;
+const INFERENCE_PROBE_TIMEOUT_MS = 150_000;
 const READY_PROBE_TIMEOUT_MS = 240_000;
+const PROBE_CURL_MAX_TIME_SECONDS = 20;
+const INFERENCE_PROBE_CURL_MAX_TIME_SECONDS = 120;
 const MUTATION_TIMEOUT_MS = 60_000;
 const OLLAMA_MODEL_PULL_TIMEOUT_MS = 30 * 60_000;
 const STOP_GRACE_SECONDS = 30;
@@ -1630,6 +1633,8 @@ function createProbeSpec(
   request: readonly string[],
   authority: PodmanInferenceAuthorityReceipt,
 ): ProbeSpec {
+  const curlMaxTimeSeconds =
+    phase === "inference" ? INFERENCE_PROBE_CURL_MAX_TIME_SECONDS : PROBE_CURL_MAX_TIME_SECONDS;
   const normalizedImage = normalizeHostLocalInferenceImageRef(probeImageRef);
   const canonical = Object.freeze({
     providerId: PROVIDER_ID,
@@ -1686,7 +1691,7 @@ function createProbeSpec(
     "--connect-timeout",
     "3",
     "--max-time",
-    "20",
+    String(curlMaxTimeSeconds),
     ...canonical.request,
   ]);
   const launchArguments = translatePodmanLocalInferenceArgs(source, authority);
@@ -2301,7 +2306,7 @@ function probeOpenAiInference(
     authorityReceipt,
     assertAuthority,
     probe,
-    PROBE_TIMEOUT_MS,
+    INFERENCE_PROBE_TIMEOUT_MS,
     (output) => {
       const response = parseJsonResponse(output, `${service} inference proof`);
       if (response.model !== model) {

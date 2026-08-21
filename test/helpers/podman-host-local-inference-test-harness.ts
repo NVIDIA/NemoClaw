@@ -122,6 +122,7 @@ export interface PodmanHostLocalInferenceHarness {
     probePostCreateNameLookupTimeout: boolean;
     probeInspectRuntimeIdMismatchAt: number | null;
     probeForbiddenActions: Array<"logs" | "rm" | "wait">;
+    probeWaitTimeouts: number[];
     probeWaitFailure: boolean;
     probeRemoveLostAcknowledgement: boolean;
     probeRemoveLeavesContainer: boolean;
@@ -399,6 +400,7 @@ export function createPodmanHostLocalInferenceTestHarness(
     probePostCreateNameLookupTimeout: false,
     probeInspectRuntimeIdMismatchAt: null as number | null,
     probeForbiddenActions: [] as Array<"logs" | "rm" | "wait">,
+    probeWaitTimeouts: [] as number[],
     probeWaitFailure: false,
     probeRemoveLostAcknowledgement: false,
     probeRemoveLeavesContainer: false,
@@ -467,7 +469,7 @@ export function createPodmanHostLocalInferenceTestHarness(
     displayName: "Podman",
     authorityId: options.authorityId ?? "test:podman-inference",
     endpointAuthorityId: options.authorityId ?? "test:podman-inference",
-    capture: (args) => {
+    capture: (args, timeoutMs) => {
       const probeAction =
         args[0] === "logs" || args[0] === "rm" || args[0] === "wait" ? args[0] : null;
       const probeActionId = probeAction === "rm" ? args[2] : args[1];
@@ -606,6 +608,7 @@ export function createPodmanHostLocalInferenceTestHarness(
           : result(0, state.runAcknowledgementText ?? `${CONTAINER_ID}\n`);
       }
       if (args[0] === "wait") {
+        state.probeWaitTimeouts.push(timeoutMs ?? 0);
         if (!currentProbe || currentProbe.id !== args[1]) return result(125, "", "missing probe");
         return completeProbeWait(currentProbe, currentContainer, state);
       }

@@ -31,6 +31,13 @@ The readiness timeout does not govern inference requests or provider validation.
 A valid value overrides the internal budget for the current recovery phase.
 An unset, blank, invalid, or negative value uses 30 seconds for OpenClaw gateway health, 90 seconds for Hermes gateway health, and 120 seconds for recreated-sandbox OpenShell registration when the recovery path does not supply another budget.
 
+<AgentOnly variant="openclaw,hermes">
+
+Portable onboarding gives its receipt-owned Podman inference validation request 120 seconds.
+`NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` does not change this fixed deadline.
+
+</AgentOnly>
+
 ## Increase the OpenClaw Request Timeout
 
 <AgentOnly variant="openclaw">
