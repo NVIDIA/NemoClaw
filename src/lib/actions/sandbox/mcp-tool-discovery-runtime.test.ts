@@ -59,9 +59,9 @@ describe("shared MCP tool discovery runtime", () => {
       expect(
         buildMcpToolDiscoveryAuthorizationPlaceholder(
           "EXAMPLE_MCP_TOKEN",
-          "openshell:resolve:env:v1442987827285932589_EXAMPLE_MCP_TOKEN",
+          "openshell:resolve:env:v14429878272859325890_EXAMPLE_MCP_TOKEN",
         ),
-      ).toBe("Bearer openshell:resolve:env:v1442987827285932589_EXAMPLE_MCP_TOKEN");
+      ).toBe("Bearer openshell:resolve:env:v14429878272859325890_EXAMPLE_MCP_TOKEN");
       expect(() => validateMcpCredentialEnvName(credentialEnv)).toThrow();
       expect(
         buildMcpToolDiscoveryAuthorizationPlaceholder(
@@ -85,6 +85,7 @@ describe("shared MCP tool discovery runtime", () => {
     "raw-secret",
     "openshell:resolve:env:v42_OTHER_MCP_TOKEN",
     "openshell:resolve:env:vbad_EXAMPLE_MCP_TOKEN",
+    "openshell:resolve:env:v144298782728593258901_EXAMPLE_MCP_TOKEN",
     "openshell:resolve:env:v42_EXAMPLE_MCP_TOKEN\nAuthorization: Bearer raw-secret",
   ])("rejects unsafe live credential values [case %#]", (runtimeValue) => {
     expect(

@@ -58,7 +58,7 @@ export function buildMcpToolDiscoveryAuthorizationPlaceholder(
   }
   const escapedCredentialEnv = credentialEnv.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const placeholderPattern = new RegExp(
-    `^openshell:resolve:env:(?:v[0-9]+_)?${escapedCredentialEnv}$`,
+    `^openshell:resolve:env:(?:v[0-9]{1,20}_)?${escapedCredentialEnv}$`,
     "u",
   );
   return placeholderPattern.test(runtimeValue) ? `Bearer ${runtimeValue}` : null;
