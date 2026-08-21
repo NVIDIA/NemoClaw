@@ -11,6 +11,7 @@ import {
   configureMessagingBridgeRefreshes,
   ensureMessagingBridgeProfiles,
   listMessagingBridgeProfiles,
+  matchesRegisteredStaticMessagingProfile,
   MESSAGING_BRIDGE_PENDING_VALUE,
   type MessagingBridgeProfile,
 } from "./messaging-bridge-provider";
@@ -481,6 +482,60 @@ describe("ensureMessagingBridgeProfiles", () => {
     const exit = vi.fn(() => undefined as never);
     ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
     expect(exit).toHaveBeenCalled();
+  });
+});
+
+describe("matchesRegisteredStaticMessagingProfile", () => {
+  it("accepts only the checked-in static credential boundary", () => {
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: JSON.stringify(DISCORD_PROFILE_DOC),
+    }));
+
+    expect(
+      matchesRegisteredStaticMessagingProfile(DISCORD_PROFILE.profileId, {
+        root: "/repo",
+        profiles: [DISCORD_PROFILE],
+        readFileSync: () => YAML.stringify(DISCORD_PROFILE_DOC),
+        runOpenshell,
+      }),
+    ).toBe(true);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["provider", "profile", "export", DISCORD_PROFILE.profileId, "--output", "json"],
+      expect.objectContaining({ suppressOutput: true }),
+    );
+  });
+
+  it("rejects a registered static profile with endpoint authority", () => {
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: JSON.stringify({
+        ...DISCORD_PROFILE_DOC,
+        endpoints: [{ host: "gateway.discord.gg", port: 443 }],
+      }),
+    }));
+
+    expect(
+      matchesRegisteredStaticMessagingProfile(DISCORD_PROFILE.profileId, {
+        root: "/repo",
+        profiles: [DISCORD_PROFILE],
+        readFileSync: () => YAML.stringify(DISCORD_PROFILE_DOC),
+        runOpenshell,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not apply the static-profile check to other provider types", () => {
+    const runOpenshell = vi.fn();
+
+    expect(
+      matchesRegisteredStaticMessagingProfile("generic", {
+        root: "/repo",
+        profiles: [DISCORD_PROFILE],
+        runOpenshell,
+      }),
+    ).toBeNull();
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 });
 

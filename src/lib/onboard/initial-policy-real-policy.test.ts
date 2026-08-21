@@ -369,7 +369,11 @@ describe("initial sandbox policy real preset merge", () => {
       ["discord.com", "gateway.discord.gg", "*.discord.gg"].includes(endpoint.host ?? ""),
     );
 
-    expect(credentialEndpoints).toHaveLength(3);
+    expect(credentialEndpoints.map((endpoint) => endpoint.host).sort()).toEqual([
+      "*.discord.gg",
+      "discord.com",
+      "gateway.discord.gg",
+    ]);
     expect(credentialEndpoints.map((endpoint) => endpoint.credential_binding?.provider)).toEqual([
       `${sandboxName}-discord-bridge`,
       `${sandboxName}-discord-bridge`,
@@ -385,7 +389,7 @@ describe("initial sandbox policy real preset merge", () => {
         ["discord"],
         { agentName: "hermes" },
       ),
-    ).toThrow("Cannot prepare sandbox create policy; missing policy preset(s): discord");
+    ).toThrow("missing policy preset(s): discord");
   });
 
   it.each(shippingPolicyCases.slice(0, 3).concat(shippingPolicyCases.slice(4)))(
