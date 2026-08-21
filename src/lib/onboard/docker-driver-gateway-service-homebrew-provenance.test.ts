@@ -10,90 +10,21 @@ import {
   type SpawnSyncLikeResult,
   startOpenShellGatewayUserService,
 } from "./docker-driver-gateway-service";
-import { openShellHomebrewServicePlistFixture } from "./__test-helpers__/docker-driver-gateway-service-test-fixture";
+import {
+  HOMEBREW_GATEWAY_FIXTURE,
+  homebrewFixturePathExists,
+  homebrewFormulaOperationFixture,
+  homebrewLaunchdPlistFileFixture,
+  homebrewServiceInfoFixture as serviceInfo,
+  launchctlAbsentResultFixture as launchctlAbsentResult,
+  spawnSyncResultFixture as spawnResult,
+} from "./__test-helpers__/docker-driver-gateway-service-test-fixture";
 
-const HOME = "/Users/nemoclaw";
-const FORMULA_PREFIX = "/opt/homebrew/opt/openshell";
-const GATEWAY_BINARY = `${FORMULA_PREFIX}/bin/openshell-gateway`;
-const SERVICE_COMMAND = `${FORMULA_PREFIX}/libexec/openshell-gateway-homebrew-service`;
-const FORMULA_PLIST = `${FORMULA_PREFIX}/homebrew.mxcl.openshell.plist`;
-const USER_PLIST = `${HOME}/Library/LaunchAgents/homebrew.mxcl.openshell.plist`;
-const PLIST_CONTENTS = openShellHomebrewServicePlistFixture(FORMULA_PREFIX);
-
-function spawnResult(status = 0, stderr = "", stdout = ""): SpawnSyncLikeResult {
-  return { status, stderr, stdout };
-}
-
-function launchctlAbsentResult(): SpawnSyncLikeResult {
-  return { signal: null, status: 113, stderr: null, stdout: null };
-}
-
-function serviceInfo(): SpawnSyncLikeResult {
-  return spawnResult(
-    0,
-    "",
-    JSON.stringify([
-      {
-        command: SERVICE_COMMAND,
-        file: FORMULA_PLIST,
-        loaded: false,
-        loaded_file: null,
-        name: "openshell",
-        pid: null,
-        registered: false,
-        running: false,
-        service_name: "homebrew.mxcl.openshell",
-      },
-    ]),
-  );
-}
-
-function launchdPlistSeams(): Pick<
-  OpenShellGatewayUserServiceOptions,
-  "closeSync" | "fstatSync" | "getuid" | "lstatSync" | "openSync" | "readSync"
-> {
-  let nextFileDescriptor = 10;
-  const paths = new Map<number, string>();
-  const offsets = new Map<number, number>();
-  const stat = (candidate: string) => ({
-    ctimeNs: 31,
-    dev: 17,
-    ino: candidate === FORMULA_PLIST ? 23 : 24,
-    isFile: () => true,
-    isSymbolicLink: () => false,
-    mode: 0o644,
-    mtimeNs: 29,
-    nlink: 1,
-    size: Buffer.byteLength(PLIST_CONTENTS),
-    uid: 501,
-  });
-  const missingUserPlist = (): never => {
-    throw Object.assign(new Error("missing launchd destination"), { code: "ENOENT" });
-  };
-  return {
-    closeSync: (fileDescriptor) => {
-      paths.delete(fileDescriptor);
-      offsets.delete(fileDescriptor);
-    },
-    fstatSync: (fileDescriptor) => stat(paths.get(fileDescriptor) ?? FORMULA_PLIST),
-    getuid: () => 501,
-    lstatSync: ((candidate: string) =>
-      candidate === USER_PLIST ? missingUserPlist() : stat(candidate)) as never,
-    openSync: (filePath) => {
-      const fileDescriptor = nextFileDescriptor++;
-      paths.set(fileDescriptor, filePath);
-      return fileDescriptor;
-    },
-    readSync: (fileDescriptor, buffer, offset, length) => {
-      const contents = Buffer.from(PLIST_CONTENTS);
-      const contentOffset = offsets.get(fileDescriptor) ?? 0;
-      const count = Math.max(0, Math.min(length, contents.length - contentOffset));
-      contents.copy(buffer, offset, contentOffset, contentOffset + count);
-      offsets.set(fileDescriptor, contentOffset + count);
-      return count;
-    },
-  };
-}
+const {
+  gatewayBinary: GATEWAY_BINARY,
+  home: HOME,
+  serviceCommand: SERVICE_COMMAND,
+} = HOMEBREW_GATEWAY_FIXTURE;
 
 type ServiceFileCondition = {
   changedTimeNanoseconds?: string;
@@ -141,27 +72,12 @@ function homebrewOptions(
   inspectServiceFileIdentity = serviceFileIdentitySeam(),
 ): OpenShellGatewayUserServiceOptions {
   return {
-    ...launchdPlistSeams(),
+    ...homebrewLaunchdPlistFileFixture(),
     commandExists: () => true,
     env: { HOME },
-    existsSync: (candidate) =>
-      [FORMULA_PLIST, GATEWAY_BINARY, SERVICE_COMMAND, USER_PLIST].includes(candidate),
+    existsSync: homebrewFixturePathExists,
     home: HOME,
-    homebrewFormulaOperation: (args) => {
-      const operation = args.join(" ");
-      events.push(operation);
-      return args[0] === "info"
-        ? spawnResult(
-            0,
-            "",
-            JSON.stringify({ formulae: [{ name: "openshell", tap: "nvidia/openshell" }] }),
-          )
-        : args[0] === "--prefix"
-          ? spawnResult(0, "", FORMULA_PREFIX)
-          : args[0] === "services" && args[1] === "info"
-            ? serviceInfo()
-            : spawnResult();
-    },
+    homebrewFormulaOperation: homebrewFormulaOperationFixture({ events, serviceInfo }),
     inspectServiceFileIdentity,
     platform: "darwin",
     spawnSyncImpl: (command) =>

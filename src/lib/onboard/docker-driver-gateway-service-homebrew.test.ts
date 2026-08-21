@@ -14,89 +14,43 @@ import {
   type OpenShellGatewayUserServiceOptions,
 } from "./docker-driver-gateway-service";
 import {
-  openShellHomebrewServicePlistFixture,
+  HOMEBREW_GATEWAY_FIXTURE,
+  type HomebrewServiceInfoFixture,
+  homebrewFixturePathExists as homebrewPathExists,
+  homebrewFormulaInfoFixture as officialFormulaInfo,
+  homebrewFormulaOperationFixture,
+  homebrewLaunchdPlistFileFixture,
+  homebrewServiceInfoFixture,
+  launchctlAbsentResultFixture as launchctlAbsentResult,
   serviceFileIdentityFixture,
+  spawnSyncResultFixture as spawnResult,
 } from "./__test-helpers__/docker-driver-gateway-service-test-fixture";
 
-const HOMEBREW_HOME = "/Users/nemoclaw";
-const HOMEBREW_FORMULA_PREFIX = "/opt/homebrew/opt/openshell";
-const HOMEBREW_GATEWAY_BINARY = `${HOMEBREW_FORMULA_PREFIX}/bin/openshell-gateway`;
-const HOMEBREW_SERVICE_COMMAND = `${HOMEBREW_FORMULA_PREFIX}/libexec/openshell-gateway-homebrew-service`;
-const HOMEBREW_FORMULA_PLIST = `${HOMEBREW_FORMULA_PREFIX}/homebrew.mxcl.openshell.plist`;
-const HOMEBREW_USER_PLIST = `${HOMEBREW_HOME}/Library/LaunchAgents/homebrew.mxcl.openshell.plist`;
-const HOMEBREW_PLIST = openShellHomebrewServicePlistFixture(HOMEBREW_FORMULA_PREFIX);
+const {
+  formulaPrefix: HOMEBREW_FORMULA_PREFIX,
+  home: HOMEBREW_HOME,
+  userPlist: HOMEBREW_USER_PLIST,
+} = HOMEBREW_GATEWAY_FIXTURE;
 const SECRET_SENTINEL = "sentinel-secret-not-for-child-processes-or-diagnostics";
 
-function spawnResult(status = 0, stderr = "", stdout = ""): SpawnSyncLikeResult {
-  return { status, stderr, stdout };
-}
-
-function launchctlAbsentResult(): SpawnSyncLikeResult {
-  return { signal: null, status: 113, stderr: null, stdout: null };
-}
-
-function officialFormulaInfo(): SpawnSyncLikeResult {
-  return spawnResult(
-    0,
-    "",
-    JSON.stringify({ formulae: [{ name: "openshell", tap: "nvidia/openshell" }] }),
-  );
-}
-
-type HomebrewServiceInfo = {
-  command: string;
-  file: string;
-  loaded: boolean;
-  loaded_file: string | null;
-  name: string;
-  pid: number | null;
-  registered: boolean;
-  running: boolean;
-  service_name: string;
-};
-
-function homebrewServiceInfo(overrides: Partial<HomebrewServiceInfo> = {}): SpawnSyncLikeResult {
-  return spawnResult(
-    0,
-    "",
-    JSON.stringify([
-      {
-        command: HOMEBREW_SERVICE_COMMAND,
-        file: HOMEBREW_USER_PLIST,
-        loaded: true,
-        loaded_file: HOMEBREW_USER_PLIST,
-        name: "openshell",
-        pid: 4242,
-        registered: true,
-        running: true,
-        service_name: "homebrew.mxcl.openshell",
-        ...overrides,
-      },
-    ]),
-  );
-}
-
-function stoppedHomebrewServiceInfo(
-  overrides: Partial<HomebrewServiceInfo> = {},
+function homebrewServiceInfo(
+  overrides: Partial<HomebrewServiceInfoFixture> = {},
 ): SpawnSyncLikeResult {
-  return homebrewServiceInfo({
-    file: HOMEBREW_FORMULA_PLIST,
-    loaded: false,
-    loaded_file: null,
-    pid: null,
-    registered: false,
-    running: false,
+  return homebrewServiceInfoFixture({
+    file: HOMEBREW_USER_PLIST,
+    loaded: true,
+    loaded_file: HOMEBREW_USER_PLIST,
+    pid: 4242,
+    registered: true,
+    running: true,
     ...overrides,
   });
 }
 
-function homebrewPathExists(candidate: string): boolean {
-  return [
-    HOMEBREW_FORMULA_PLIST,
-    HOMEBREW_GATEWAY_BINARY,
-    HOMEBREW_SERVICE_COMMAND,
-    HOMEBREW_USER_PLIST,
-  ].includes(candidate);
+function stoppedHomebrewServiceInfo(
+  overrides: Partial<HomebrewServiceInfoFixture> = {},
+): SpawnSyncLikeResult {
+  return homebrewServiceInfoFixture(overrides);
 }
 
 function trustedHomebrewPlistFiles({ userPlistExists = false } = {}): Pick<
@@ -110,54 +64,14 @@ function trustedHomebrewPlistFiles({ userPlistExists = false } = {}): Pick<
   | "readSync"
   | "spawnSyncImpl"
 > {
-  let nextFileDescriptor = 10;
-  const paths = new Map<number, string>();
-  const offsets = new Map<number, number>();
-  const contents = new Map([
-    [HOMEBREW_FORMULA_PLIST, HOMEBREW_PLIST],
-    [HOMEBREW_USER_PLIST, HOMEBREW_PLIST],
-  ]);
-  const stat = (candidate: string) => ({
-    ctimeNs: 31,
-    dev: 17,
-    ino: candidate === HOMEBREW_FORMULA_PLIST ? 23 : 24,
-    isFile: () => true,
-    isSymbolicLink: () => false,
-    mode: 0o644,
-    mtimeNs: 29,
-    nlink: 1,
-    size: Buffer.byteLength(contents.get(candidate) ?? ""),
-    uid: 501,
-  });
-  const missing = (): never => {
-    throw Object.assign(new Error("missing launchd destination"), { code: "ENOENT" });
-  };
   return {
-    closeSync: (fileDescriptor) => {
-      paths.delete(fileDescriptor);
-      offsets.delete(fileDescriptor);
-    },
-    fstatSync: (fileDescriptor) => stat(paths.get(fileDescriptor) ?? ""),
-    getuid: () => 501,
+    ...homebrewLaunchdPlistFileFixture({
+      destinationState: () => (userPlistExists ? "regular" : "absent"),
+    }),
     inspectServiceFileIdentity: serviceFileIdentityFixture(
       () => "reviewed Homebrew executable\n",
       () => 501,
     ),
-    lstatSync: ((candidate: string) =>
-      candidate === HOMEBREW_USER_PLIST && !userPlistExists ? missing() : stat(candidate)) as never,
-    openSync: (filePath) => {
-      const fileDescriptor = nextFileDescriptor++;
-      paths.set(fileDescriptor, filePath);
-      return fileDescriptor;
-    },
-    readSync: (fileDescriptor, buffer, offset, length) => {
-      const content = Buffer.from(contents.get(paths.get(fileDescriptor) ?? "") ?? "");
-      const contentOffset = offsets.get(fileDescriptor) ?? 0;
-      const count = Math.max(0, Math.min(length, content.length - contentOffset));
-      content.copy(buffer, offset, contentOffset, contentOffset + count);
-      offsets.set(fileDescriptor, contentOffset + count);
-      return count;
-    },
     spawnSyncImpl: (command) =>
       command === "/bin/launchctl" ? launchctlAbsentResult() : spawnResult(),
   };
@@ -168,19 +82,12 @@ function homebrewOperation(
   events: string[] = [],
   failCommand?: string,
 ): (args: string[]) => SpawnSyncLikeResult {
-  return (args) => {
-    const command = args.join(" ");
-    events.push(command);
-    return command === failCommand
-      ? spawnResult(1, SECRET_SENTINEL)
-      : args[0] === "info"
-        ? officialFormulaInfo()
-        : args[0] === "--prefix"
-          ? spawnResult(0, "", HOMEBREW_FORMULA_PREFIX)
-          : args[0] === "services" && args[1] === "info"
-            ? serviceInfo()
-            : spawnResult();
-  };
+  return homebrewFormulaOperationFixture({
+    events,
+    failCommand,
+    failDiagnostic: SECRET_SENTINEL,
+    serviceInfo,
+  });
 }
 
 function extractHomebrewOperation(args: string[]): string[] {
@@ -315,7 +222,7 @@ describe("OpenShell Homebrew service boundary", () => {
     ["file", { file: "/tmp/homebrew.mxcl.openshell.plist" }],
     ["loaded_file", { loaded_file: "/tmp/homebrew.mxcl.openshell.plist" }],
     ["registered", { registered: false }],
-  ] satisfies Array<[string, Partial<HomebrewServiceInfo>]>)(
+  ] satisfies Array<[string, Partial<HomebrewServiceInfoFixture>]>)(
     "does not inspect or trust a loaded launchd job with a reported %s (#9705)",
     (_field, change) => {
       const events: string[] = [];

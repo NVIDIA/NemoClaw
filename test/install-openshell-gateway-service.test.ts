@@ -1,41 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+  makeInstallerGatewayTempRoot,
+  renderManagedGatewayUnit,
+  runInstallerGatewayServiceBody as runInstallHelper,
+  SYSTEMD_CANONICAL_PROPERTIES,
+  SYSTEMD_IDENTITY_PROPERTIES,
+  systemdPropertyArgs,
+} from "./helpers/installer-gateway-service-fixture";
 import { TEST_SYSTEM_PATH, writeExecutable } from "./helpers/installer-sourced-env";
 
-const INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
-const SERVICE_TEMPLATE = path.join(
-  import.meta.dirname,
-  "..",
-  "scripts",
-  "lib",
-  "openshell-gateway.service.in",
-);
-const SYSTEMD_IDENTITY_PROPERTIES = [
-  "FragmentPath",
-  "ExecStart",
-  "DropInPaths",
-  "ExecCondition",
-  "ExecStartPre",
-  "ExecStartPost",
-  "ExecReload",
-  "ExecStop",
-  "ExecStopPost",
-] as const;
-const SYSTEMD_CANONICAL_PROPERTIES = [
-  ...SYSTEMD_IDENTITY_PROPERTIES,
-  "ActiveState",
-  "UnitFileState",
-] as const;
-const systemdPropertyArgs = (properties: readonly string[]) =>
-  properties.map((property) => `--property=${property}`).join(" ");
 const RUNNING_AS_ROOT = typeof process.getuid === "function" && process.getuid() === 0;
 const tempRoots: string[] = [];
 
@@ -44,7 +24,7 @@ afterEach(() => {
 });
 
 function makeTempRoot(): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-gateway-service-"));
+  const root = makeInstallerGatewayTempRoot("nemoclaw-install-gateway-service-");
   tempRoots.push(root);
   return root;
 }
@@ -58,43 +38,6 @@ function userGatewayBin(home: string): string {
   fs.mkdirSync(path.dirname(binary), { recursive: true });
   writeExecutable(binary, "#!/usr/bin/env bash\nexit 0\n");
   return binary;
-}
-
-function runInstallHelper(home: string, body: string, env: NodeJS.ProcessEnv = {}) {
-  const platformBin = path.join(home, "test-platform-bin");
-  fs.mkdirSync(platformBin, { recursive: true });
-  writeExecutable(path.join(platformBin, "uname"), "#!/usr/bin/env bash\nprintf 'Linux\\n'\n");
-  const { PATH: injectedPath, ...injectedEnv } = env;
-  return spawnSync(
-    "bash",
-    [
-      "-c",
-      [
-        "set -euo pipefail",
-        `source ${JSON.stringify(INSTALLER)}`,
-        "systemd_user_service_system_unit_roots() { :; }",
-        body,
-      ].join("\n"),
-    ],
-    {
-      cwd: home,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: home,
-        PATH: `${platformBin}:${injectedPath ?? `${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`}`,
-        XDG_CONFIG_HOME: "",
-        XDG_CONFIG_DIRS: path.join(home, "empty-xdg-config-dirs"),
-        XDG_DATA_DIRS: path.join(home, "empty-xdg-data-dirs"),
-        XDG_DATA_HOME: "",
-        XDG_RUNTIME_DIR: path.join(home, "runtime"),
-        SYSTEMD_UNIT_PATH: "",
-        NEMOCLAW_REPO_ROOT: path.dirname(INSTALLER),
-        ...injectedEnv,
-      },
-      timeout: 30_000,
-    },
-  );
 }
 
 function stageService(home: string, gatewayBin: string, env: NodeJS.ProcessEnv = {}) {
@@ -366,11 +309,7 @@ describe("install.sh OpenShell gateway service", () => {
       const unit = fs.readFileSync(servicePath(home, configHome), "utf-8");
 
       expect(result.status).toBe(0);
-      expect(unit).toBe(
-        fs
-          .readFileSync(SERVICE_TEMPLATE, "utf-8")
-          .replaceAll("@OPENSHELL_GATEWAY_BIN@", gatewayBin),
-      );
+      expect(unit).toBe(renderManagedGatewayUnit(gatewayBin));
       expect(unit).toContain("# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1");
       expect(unit).toContain("Environment=OPENSHELL_LOCAL_TLS_DIR=%S/openshell/tls");
       expect(unit).toContain(`ExecStart=${gatewayBin}`);

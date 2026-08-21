@@ -10,53 +10,19 @@ import {
   stopOpenShellGatewayUserService,
 } from "./docker-driver-gateway-service";
 import {
-  openShellHomebrewServicePlistFixture,
+  HOMEBREW_GATEWAY_FIXTURE,
+  type HomebrewLaunchdDestinationState,
+  homebrewFixturePathExists,
+  homebrewFormulaOperationFixture,
+  homebrewLaunchdPlistFileFixture,
+  homebrewServiceInfoFixture as serviceInfo,
+  launchctlAbsentResultFixture as launchctlAbsentResult,
   serviceFileIdentityFixture,
+  spawnSyncResultFixture as spawnResult,
 } from "./__test-helpers__/docker-driver-gateway-service-test-fixture";
 
-const HOME = "/Users/nemoclaw";
-const FORMULA_PREFIX = "/opt/homebrew/opt/openshell";
-const SERVICE_LABEL = "homebrew.mxcl.openshell";
-const SERVICE_COMMAND = `${FORMULA_PREFIX}/libexec/openshell-gateway-homebrew-service`;
-const GATEWAY_BINARY = `${FORMULA_PREFIX}/bin/openshell-gateway`;
-const FORMULA_PLIST = `${FORMULA_PREFIX}/${SERVICE_LABEL}.plist`;
-const USER_PLIST = `${HOME}/Library/LaunchAgents/${SERVICE_LABEL}.plist`;
-const PLIST_CONTENTS = openShellHomebrewServicePlistFixture(FORMULA_PREFIX);
+const { home: HOME, label: SERVICE_LABEL, userPlist: USER_PLIST } = HOMEBREW_GATEWAY_FIXTURE;
 const SECRET = "launchctl-secret-output";
-
-function spawnResult(
-  status: number | null = 0,
-  stderr = "",
-  stdout = "",
-  error?: Error,
-): SpawnSyncLikeResult {
-  return { ...(error ? { error } : {}), status, stderr, stdout };
-}
-
-function launchctlAbsentResult(overrides: Partial<SpawnSyncLikeResult> = {}): SpawnSyncLikeResult {
-  return { signal: null, status: 113, stderr: null, stdout: null, ...overrides };
-}
-
-function serviceInfo(overrides: Record<string, unknown> = {}): SpawnSyncLikeResult {
-  return spawnResult(
-    0,
-    "",
-    JSON.stringify([
-      {
-        command: SERVICE_COMMAND,
-        file: FORMULA_PLIST,
-        loaded: false,
-        loaded_file: null,
-        name: "openshell",
-        pid: null,
-        registered: false,
-        running: false,
-        service_name: SERVICE_LABEL,
-        ...overrides,
-      },
-    ]),
-  );
-}
 
 function loadedServiceInfo(running: boolean): SpawnSyncLikeResult {
   return serviceInfo({
@@ -69,10 +35,8 @@ function loadedServiceInfo(running: boolean): SpawnSyncLikeResult {
   });
 }
 
-type DestinationState = "absent" | "broken-symlink" | "inaccessible" | "regular";
-
 interface HomebrewTestOptions {
-  destinationState?: () => DestinationState;
+  destinationState?: () => HomebrewLaunchdDestinationState;
   events?: string[];
   launchctl?: (domain: string, options: Record<string, unknown>) => SpawnSyncLikeResult;
   serviceInfo?: () => SpawnSyncLikeResult;
@@ -84,79 +48,21 @@ function trustedHomebrewOptions({
   launchctl = () => launchctlAbsentResult(),
   serviceInfo: readServiceInfo = () => serviceInfo(),
 }: HomebrewTestOptions = {}): OpenShellGatewayUserServiceOptions {
-  let nextFileDescriptor = 10;
-  const paths = new Map<number, string>();
-  const offsets = new Map<number, number>();
-  const stat = (candidate: string, symbolicLink = false) => ({
-    ctimeNs: 31,
-    dev: 17,
-    ino: candidate === FORMULA_PLIST ? 23 : 24,
-    isFile: () => true,
-    isSymbolicLink: () => symbolicLink,
-    mode: 0o644,
-    mtimeNs: 29,
-    nlink: 1,
-    size: Buffer.byteLength(PLIST_CONTENTS),
-    uid: 501,
-  });
-  const missing = (code: string): never => {
-    throw Object.assign(new Error("launchd destination inspection failed"), { code });
-  };
   return {
-    closeSync: (fileDescriptor) => {
-      paths.delete(fileDescriptor);
-      offsets.delete(fileDescriptor);
-    },
+    ...homebrewLaunchdPlistFileFixture({ destinationState }),
     commandExists: (command) => command === "brew",
     env: { HOME },
-    existsSync: (candidate) =>
-      [FORMULA_PLIST, USER_PLIST, SERVICE_COMMAND, GATEWAY_BINARY].includes(candidate),
-    fstatSync: (fileDescriptor) => stat(paths.get(fileDescriptor) ?? FORMULA_PLIST),
-    getuid: () => 501,
+    existsSync: homebrewFixturePathExists,
     home: HOME,
-    homebrewFormulaOperation: (args) => {
-      const operation = args.join(" ");
-      events.push(operation);
-      return args[0] === "info"
-        ? spawnResult(
-            0,
-            "",
-            JSON.stringify({ formulae: [{ name: "openshell", tap: "nvidia/openshell" }] }),
-          )
-        : args[0] === "--prefix"
-          ? spawnResult(0, "", FORMULA_PREFIX)
-          : args[0] === "services" && args[1] === "info"
-            ? readServiceInfo()
-            : spawnResult();
-    },
+    homebrewFormulaOperation: homebrewFormulaOperationFixture({
+      events,
+      serviceInfo: readServiceInfo,
+    }),
     inspectServiceFileIdentity: serviceFileIdentityFixture(
       () => "reviewed Homebrew executable\n",
       () => 501,
     ),
-    lstatSync: ((candidate: string) => {
-      const state = destinationState();
-      return candidate !== USER_PLIST
-        ? stat(candidate)
-        : state === "absent"
-          ? missing("ENOENT")
-          : state === "inaccessible"
-            ? missing("EACCES")
-            : stat(candidate, state === "broken-symlink");
-    }) as never,
-    openSync: (filePath) => {
-      const fileDescriptor = nextFileDescriptor++;
-      paths.set(fileDescriptor, filePath);
-      return fileDescriptor;
-    },
     platform: "darwin",
-    readSync: (fileDescriptor, buffer, offset, length) => {
-      const contents = Buffer.from(PLIST_CONTENTS);
-      const contentOffset = offsets.get(fileDescriptor) ?? 0;
-      const count = Math.max(0, Math.min(length, contents.length - contentOffset));
-      contents.copy(buffer, offset, contentOffset, contentOffset + count);
-      offsets.set(fileDescriptor, contentOffset + count);
-      return count;
-    },
     spawnSyncImpl: (command, args, options) =>
       command === "/bin/launchctl"
         ? launchctl(args[1] ?? "", (options ?? {}) as Record<string, unknown>)
@@ -361,7 +267,7 @@ describe("Homebrew launchd lifecycle state", () => {
 
   it("rejects a destination plist that appears after port preparation (#9705)", () => {
     const events: string[] = [];
-    let destination: DestinationState = "absent";
+    let destination: HomebrewLaunchdDestinationState = "absent";
     const result = startOpenShellGatewayUserService({
       ...trustedHomebrewOptions({ destinationState: () => destination, events }),
       preparePortForServiceStart: () => {
