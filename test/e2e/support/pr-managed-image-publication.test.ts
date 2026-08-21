@@ -85,6 +85,12 @@ describe("exact PR managed-image publication (#8746, #9464)", () => {
     expect(
       managedImagePublicationRequired(["tools/mcp-tool-discovery-runtime/server.mts"], patterns),
     ).toBe(true);
+    expect(
+      managedImagePublicationRequired(
+        ["src/lib/actions/sandbox/mcp-bridge-adapter-openclaw.ts"],
+        patterns,
+      ),
+    ).toBe(true);
     expect(managedImagePublicationRequired(["docs/My Guide.md"], patterns)).toBe(false);
     expect(() =>
       managedImagePublicationRequired(["src/lib/onboard/file.ts\nother"], patterns),
