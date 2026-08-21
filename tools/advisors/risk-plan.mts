@@ -132,6 +132,7 @@ const MANAGED_IMAGE_MULTIARCH_INPUT_PREFIXES = [
   "nemoclaw/",
   "nemoclaw-blueprint/",
   "scripts/",
+  "src/lib/actions/sandbox/mcp-bridge-",
   "src/lib/messaging/",
   "src/lib/onboard/managed-startup/",
   "tools/mcp-tool-discovery-runtime/",

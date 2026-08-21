@@ -36,13 +36,28 @@ async function main(): Promise<void> {
 
   const deadlineSignal = AbortSignal.timeout(MCP_TOOL_DISCOVERY_LIMITS.maxTotalTimeMs);
   const boundedFetch = createBoundedMcpFetch(globalThis.fetch, deadlineSignal);
+  // check-direct-credential-env-ignore -- this boundary accepts only the exact
+  // key-bound OpenShell placeholder syntax below; raw credentials fail closed
+  // and are never placed in argv, output, or a network request.
+  const authorization = buildMcpToolDiscoveryAuthorizationPlaceholder(
+    runtimeArguments.credentialEnv,
+    process.env[runtimeArguments.credentialEnv],
+  );
+  if (!authorization) {
+    writeResult({
+      ok: false,
+      count: 0,
+      tools: [],
+      truncated: false,
+      detail: "managed MCP credential placeholder is unavailable",
+    });
+    return;
+  }
   const transport = new StreamableHTTPClientTransport(runtimeArguments.url, {
     fetch: boundedFetch,
     requestInit: {
       headers: {
-        authorization: buildMcpToolDiscoveryAuthorizationPlaceholder(
-          runtimeArguments.credentialEnv,
-        ),
+        authorization,
       },
       redirect: "manual",
     },

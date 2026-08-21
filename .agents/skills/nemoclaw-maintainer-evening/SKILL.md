@@ -43,10 +43,9 @@ the release and one canonical dated entry headed `## vX.Y.Z`. Follow
 documentation writer review. Do not create a separate release-entry PR when the active cumulative
 docs PR can carry it.
 
-Merge the documentation PR before selecting the tag candidate. Then wait for the resulting exact
-commit's `Docs / Post-Merge Catch-Up` run. The `Publish documentation catch-up` job must succeed,
-which records an independently approved empty Pi result for that commit. A release entry without
-this result is not complete.
+Merge the documentation PR before selecting the tag candidate. A docs-only merge does not start
+another `Docs / Post-Merge Catch-Up` run. Preserve the merged PR, its final commit, its merge commit,
+and the final automated refresh coverage commit for the tag session.
 
 If another product merge lands before candidate selection, decide whether it belongs in this
 release. When it does, update the cumulative documentation change first. When it does not, the tag
@@ -63,7 +62,7 @@ Show:
 - merged work in `vX.Y.Z`;
 - open PRs and issues still carrying `vX.Y.Z`;
 - the canonical release entry;
-- the exact Pi documentation run and job URL;
+- the cumulative docs PR, coverage commit, later commits and PRs, review state, and check state;
 - known image-publication state; and
 - the newest full E2E status, SHA, age, and URLs.
 
@@ -75,7 +74,7 @@ move to the next target, but do not perform label writes here.
 Load `nemoclaw-maintainer-cut-release-tag` and pass the exact version. That skill owns:
 
 - the exact-version plan and candidate;
-- nonwaivable documentation and image evidence;
+- the required release entry, documentation coverage decision, and image evidence;
 - the maintainer's focused, full, or proceed E2E choice;
 - `../nemoclaw-release-vX.Y.Z/release-brief.md`;
 - the exact confirmation phrase; and
@@ -90,7 +89,7 @@ After tag readback, report:
 
 - tag and candidate commit;
 - plan and release-brief paths;
-- documentation and image evidence URLs;
+- documentation coverage, maintainer decision, and image evidence URLs; and
 - E2E decision and exception reason, if any.
 
 Then let `nemoclaw-maintainer-cut-release-tag` monitor the automatic post-tag workflows, draft the
@@ -99,6 +98,6 @@ Announcement, and report `lkg` state. A post-tag failure does not change tag suc
 ## Hard Rules
 
 - Never cut a tag without the maintainer's exact confirmation phrase.
-- Never bypass the release entry, approved-empty Pi result, or applicable GHCR evidence.
+- Never bypass the release entry, documentation coverage decision, or applicable GHCR evidence.
 - Never make a different candidate stale merely because `main` advanced or a later documentation PR opened.
 - Never delay the tag-cut report for post-tag work. Continue the same task after that report.

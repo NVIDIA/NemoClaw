@@ -70,9 +70,9 @@ export function buildMcpToolDiscoveryCommand(
 ): McpToolDiscoveryCommand | null {
   const credentialEnv = entry.env[0];
   if (!credentialEnv) return null;
-  // The runtime receives only the validated provider key name and constructs
-  // the OpenShell placeholder itself. OpenShell injects the real credential
-  // below this command boundary when the request crosses the policy boundary.
+  // The runtime receives only the validated provider key name. It reads the
+  // current revisioned OpenShell placeholder from its fresh process environment
+  // and rejects anything else before a request crosses the policy boundary.
   // Under the approved trusted-configured-endpoint contract, advertised names
   // remain untrusted and bounded display text, but may be credential-derived;
   // parser validation is not a confidentiality proof for a malicious server.

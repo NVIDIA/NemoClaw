@@ -113,6 +113,32 @@ describe("MCP OpenShell policy", () => {
     expect(removePreset).not.toHaveBeenCalled();
   });
 
+  it("can remove the live policy while preserving rebuild journal ownership (#9792)", () => {
+    const entry = githubBridgeEntry();
+    const registration = {
+      name: entry.policyName,
+      content: "network_policies:\n  mcp_bridge_github: {}\n",
+      sourcePath: MCP_BRIDGE_POLICY_SOURCE,
+    };
+    vi.spyOn(registry, "getCustomPolicies").mockReturnValue([registration]);
+    vi.spyOn(policies, "getPresetContentGatewayState")
+      .mockReturnValueOnce("match")
+      .mockReturnValueOnce("absent");
+    const removePreset = vi.spyOn(policies, "removePreset").mockReturnValue(true);
+    const removeOwnership = vi.spyOn(registry, "removeCustomPolicyByName");
+
+    expect(() =>
+      removeGeneratedPolicy("alpha", entry, { preserveRegistryOwnership: true }),
+    ).not.toThrow();
+
+    expect(removePreset).toHaveBeenCalledWith(
+      "alpha",
+      entry.policyName,
+      expect.objectContaining({ skipRegistryUpdate: true }),
+    );
+    expect(removeOwnership).not.toHaveBeenCalled();
+  });
+
   it("pins DNS answers while constraining the generic mcporter Node grant", () => {
     const policyName = buildMcpBridgePolicyName("GitHub_Server");
     const policy = YAML.parse(
