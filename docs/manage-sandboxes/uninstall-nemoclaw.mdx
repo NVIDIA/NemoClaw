@@ -50,7 +50,7 @@ Do not use `--gateway` to select another instance; when supplied for compatibili
 The selected gateway can use a host-local Amazon Bedrock Runtime adapter.
 Before it removes the selected state root, uninstall stops only the adapter bound to that state.
 
-Before each signal, uninstall revalidates the canonical PID, current user, stable process start identity, lifecycle generation, executable path, and launcher path.
+Before each signal, uninstall revalidates the canonical PID, current user, stable process start identity, lifecycle generation, executable path, launcher path, and adapter port.
 Before it deletes lifecycle evidence, uninstall revalidates process absence, the state generation, the PID, and the local bearer-token hash.
 If the adapter remains after `SIGTERM` and `SIGKILL`, uninstall exits nonzero before state-root cleanup.
 It preserves the selected gateway's PID, bearer token, any lifecycle state that was published, and prepared uninstall journal for a retry.

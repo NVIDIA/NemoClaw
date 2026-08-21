@@ -14,7 +14,6 @@ const runCaptureMock = vi.hoisted(() => vi.fn(() => ""));
 // exercises keeps its real implementation.
 vi.mock("./local-adapter-lifecycle", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./local-adapter-lifecycle")>()),
-  cleanupFailedLocalAdapterStartup: vi.fn(),
   killLocalAdapterPid: vi.fn(),
   loadLocalAdapterPid: vi.fn(() => null),
   persistLocalAdapterPid: vi.fn(),
@@ -28,6 +27,11 @@ vi.mock("./local-adapter-lifecycle", async (importOriginal) => ({
 
 vi.mock("./bedrock-runtime/lifecycle", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./bedrock-runtime/lifecycle")>()),
+  bedrockRuntimeAdapterProcessPresence: vi.fn(() => "absent"),
+  observeBedrockRuntimeAdapterProcess: vi.fn((_pid, _runtime, expected) =>
+    expected ? { ...expected } : null,
+  ),
+  removeDurableBedrockRuntimeFile: vi.fn(),
   resolveBedrockRuntimeAdapterLifecyclePaths: vi.fn(() => ({
     directory: "/__nemoclaw_test__/bedrock-runtime-adapter/8080",
     journalPath: "/__nemoclaw_test__/bedrock-runtime-adapter/8080/uninstall.json",
@@ -36,6 +40,7 @@ vi.mock("./bedrock-runtime/lifecycle", async (importOriginal) => ({
     lockStateDir: "/__nemoclaw_test__/bedrock-runtime-adapter-locks",
   })),
   withBedrockRuntimeAdapterLifecycleLockAsync: vi.fn(async (_lifecycle, operation) => operation()),
+  stopExactBedrockRuntimeAdapterProcess: vi.fn(() => ({ ok: true, status: "stopped" })),
   writeDurablePrivateBedrockRuntimeJson: vi.fn(),
 }));
 
@@ -60,13 +65,16 @@ import {
 } from "./bedrock-runtime-adapter";
 import {
   BEDROCK_RUNTIME_ADAPTER_GENERATION_ENV,
+  observeBedrockRuntimeAdapterProcess,
+  removeDurableBedrockRuntimeFile,
+  stopExactBedrockRuntimeAdapterProcess,
   writeDurablePrivateBedrockRuntimeJson,
 } from "./bedrock-runtime/lifecycle";
 import {
-  cleanupFailedLocalAdapterStartup,
   isLocalAdapterProcess,
   killLocalAdapterPid,
   persistLocalAdapterPid,
+  probeLocalAdapterHealth,
   readLocalAdapterJsonFile,
   readLocalAdapterTextFile,
   spawnDetachedNodeAdapter,
@@ -452,25 +460,25 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     expect(body.error.message).toContain("Could not load credentials");
   });
 
-  it("kills the spawned child and clears adapter state when startup never becomes healthy", async () => {
+  it("stops the exact spawned generation when startup never becomes healthy", async () => {
     vi.mocked(killLocalAdapterPid).mockClear();
-    vi.mocked(cleanupFailedLocalAdapterStartup).mockClear();
 
     await expect(
       ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
     ).rejects.toThrow("did not become healthy");
 
-    // A pre-existing live process now requires fail-closed uninstall. Tearing this new child down
-    // is the shared cleanup's job, and it must target this adapter's own files and spawned pid.
     expect(vi.mocked(killLocalAdapterPid).mock.calls).toHaveLength(0);
-    const [cleanup] = vi.mocked(cleanupFailedLocalAdapterStartup).mock.calls;
-    expect(cleanup?.[0].pidPath.endsWith("bedrock-runtime-adapter.pid")).toBe(true);
-    expect(cleanup?.[0].statePath.endsWith("bedrock-runtime-adapter.json")).toBe(true);
-    expect(cleanup?.[1]).toBe(4242);
+    expect(stopExactBedrockRuntimeAdapterProcess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pid: 4242,
+        processStart: "linux:test-boot:4242",
+        generation: expect.stringMatching(/^[a-f0-9]{32}$/u),
+      }),
+      expect.any(Object),
+    );
   });
 
-  it("hands the spawned child to cleanup when its pid file cannot be persisted", async () => {
-    vi.mocked(cleanupFailedLocalAdapterStartup).mockClear();
+  it("uses the in-memory process identity when its PID file cannot be persisted", async () => {
     vi.mocked(persistLocalAdapterPid).mockImplementationOnce(() => {
       throw new Error("ENOSPC: no space left on device");
     });
@@ -479,11 +487,10 @@ describe("Bedrock Runtime OpenAI adapter", () => {
       ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
     ).rejects.toThrow("ENOSPC");
 
-    // The pid file the cleanup would otherwise reload was never written, so 4242 — the pid the
-    // mocked spawn returned — is the only remaining handle on the orphaned child.
-    const [cleanup] = vi.mocked(cleanupFailedLocalAdapterStartup).mock.calls;
-    expect(cleanup?.[0].pidPath.endsWith("bedrock-runtime-adapter.pid")).toBe(true);
-    expect(cleanup?.[1]).toBe(4242);
+    expect(stopExactBedrockRuntimeAdapterProcess).toHaveBeenCalledWith(
+      expect.objectContaining({ pid: 4242, processStart: "linux:test-boot:4242" }),
+      expect.any(Object),
+    );
   });
 
   it("persists the exact Bedrock process generation after startup becomes healthy", async () => {
@@ -516,7 +523,6 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     const existsSync = vi
       .spyOn(fs, "existsSync")
       .mockImplementation((target) => (String(target) === journalPath ? journalPublished : false));
-    vi.mocked(waitForLocalAdapterHealth).mockResolvedValueOnce(true);
     vi.mocked(writeDurablePrivateBedrockRuntimeJson)
       .mockImplementationOnce(() => {
         throw new Error("EIO: lifecycle state write failed");
@@ -533,7 +539,7 @@ describe("Bedrock Runtime OpenAI adapter", () => {
       const [tokenPath, token] = vi.mocked(writeLocalAdapterSecretFile).mock.calls.at(-1) ?? [];
       expect(tokenPath).toMatch(/bedrock-runtime-adapter-token$/u);
       expect(token).toMatch(/^[a-f0-9]{48}$/u);
-      expect(cleanupFailedLocalAdapterStartup).not.toHaveBeenCalled();
+      expect(stopExactBedrockRuntimeAdapterProcess).not.toHaveBeenCalled();
       expect(vi.mocked(writeDurablePrivateBedrockRuntimeJson).mock.calls).toEqual([
         [
           expect.stringMatching(/bedrock-runtime-adapter\.json$/u),
@@ -566,6 +572,60 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     } finally {
       existsSync.mockRestore();
     }
+  });
+
+  it("stops and retires the exact generation when state and journal publication both fail", async () => {
+    vi.mocked(writeDurablePrivateBedrockRuntimeJson)
+      .mockImplementationOnce(() => {
+        throw new Error("EIO: lifecycle state write failed");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("EIO: uninstall journal write failed");
+      });
+
+    await expect(
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+    ).rejects.toThrow("state and uninstall journal could not be published");
+
+    expect(stopExactBedrockRuntimeAdapterProcess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pid: 4242,
+        processStart: "linux:test-boot:4242",
+        generation: expect.stringMatching(/^[a-f0-9]{32}$/u),
+        executablePath: process.execPath,
+        adapterPort: 11_436,
+      }),
+      expect.any(Object),
+    );
+    expect(removeDurableBedrockRuntimeFile).not.toHaveBeenCalled();
+
+    vi.mocked(writeDurablePrivateBedrockRuntimeJson).mockReset();
+    vi.mocked(waitForLocalAdapterHealth).mockResolvedValueOnce(true);
+    await expect(
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+    ).resolves.toMatchObject({ region: "us-east-1" });
+  });
+
+  it("preserves available evidence when publication and exact stop both fail", async () => {
+    vi.mocked(writeDurablePrivateBedrockRuntimeJson)
+      .mockImplementationOnce(() => {
+        throw new Error("EIO: lifecycle state write failed");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("EIO: uninstall journal write failed");
+      });
+    vi.mocked(stopExactBedrockRuntimeAdapterProcess).mockReturnValueOnce({
+      ok: false,
+      reason: "unresolved",
+    });
+
+    await expect(
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+    ).rejects.toThrow(
+      "exact spawned process could not be stopped; lifecycle evidence was preserved",
+    );
+
+    expect(removeDurableBedrockRuntimeFile).not.toHaveBeenCalled();
   });
 
   it("does not replace a running PID whose stable identity disagrees with lifecycle state", async () => {
@@ -632,6 +692,89 @@ describe("Bedrock Runtime OpenAI adapter", () => {
 
     expect(killLocalAdapterPid).not.toHaveBeenCalled();
     expect(spawnDetachedNodeAdapter).not.toHaveBeenCalled();
+  });
+
+  it("retries a transient reuse probe and revalidates identity before returning", async () => {
+    const token = "prior-token";
+    const priorState = {
+      version: 2,
+      generation: "11111111111111111111111111111111",
+      pid: 4242,
+      processStart: "linux:test-boot:4242",
+      user: os.userInfo().username,
+      uid: process.getuid?.() ?? 501,
+      executablePath: process.execPath,
+      scriptPath: __test.getAdapterScriptPath(),
+      adapterPort: 11_436,
+      tokenHash: crypto.createHash("sha256").update(token).digest("hex"),
+      endpointUrl: US_EAST_1_CLASSIFICATION.endpointUrl,
+      region: US_EAST_1_CLASSIFICATION.region,
+      credentialHash: __test.adapterCredentialHash({
+        endpointUrl: US_EAST_1_CLASSIFICATION.endpointUrl,
+        region: US_EAST_1_CLASSIFICATION.region,
+        compatibleCredential: null,
+      }),
+      updatedAt: "2026-08-20T00:00:00.000Z",
+    };
+    vi.mocked(readLocalAdapterJsonFile).mockReturnValueOnce(priorState);
+    vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce("4242");
+    runCaptureMock.mockReturnValueOnce(
+      `${process.execPath} --experimental-strip-types --no-warnings ${__test.getAdapterScriptPath()}`,
+    );
+    vi.mocked(probeLocalAdapterHealth).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    vi.mocked(waitForLocalAdapterHealth).mockImplementationOnce(async (probe, options) => {
+      expect(options).toEqual({ attempts: 3, intervalMs: 100 });
+      expect(await probe()).toBe(false);
+      return probe();
+    });
+
+    await expect(
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+    ).resolves.toMatchObject({ token, region: "us-east-1" });
+
+    expect(observeBedrockRuntimeAdapterProcess).toHaveBeenCalledWith(
+      4242,
+      expect.any(Object),
+      priorState,
+    );
+    expect(spawnDetachedNodeAdapter).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse a process replaced after the health probe", async () => {
+    const token = "prior-token";
+    vi.mocked(readLocalAdapterJsonFile).mockReturnValueOnce({
+      version: 2,
+      generation: "11111111111111111111111111111111",
+      pid: 4242,
+      processStart: "linux:test-boot:4242",
+      user: os.userInfo().username,
+      uid: process.getuid?.() ?? 501,
+      executablePath: process.execPath,
+      scriptPath: __test.getAdapterScriptPath(),
+      adapterPort: 11_436,
+      tokenHash: crypto.createHash("sha256").update(token).digest("hex"),
+      endpointUrl: US_EAST_1_CLASSIFICATION.endpointUrl,
+      region: US_EAST_1_CLASSIFICATION.region,
+      credentialHash: __test.adapterCredentialHash({
+        endpointUrl: US_EAST_1_CLASSIFICATION.endpointUrl,
+        region: US_EAST_1_CLASSIFICATION.region,
+        compatibleCredential: null,
+      }),
+      updatedAt: "2026-08-20T00:00:00.000Z",
+    });
+    vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce("4242");
+    runCaptureMock.mockReturnValueOnce(
+      `${process.execPath} --experimental-strip-types --no-warnings ${__test.getAdapterScriptPath()}`,
+    );
+    vi.mocked(waitForLocalAdapterHealth).mockResolvedValueOnce(true);
+    vi.mocked(observeBedrockRuntimeAdapterProcess).mockReturnValueOnce(null);
+
+    await expect(
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+    ).rejects.toThrow("running generation cannot be reused");
+
+    expect(spawnDetachedNodeAdapter).not.toHaveBeenCalled();
+    expect(stopExactBedrockRuntimeAdapterProcess).not.toHaveBeenCalled();
   });
 
   it("spawns the typed .mts launcher entrypoint", () => {

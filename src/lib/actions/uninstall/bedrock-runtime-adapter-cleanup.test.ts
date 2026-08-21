@@ -152,6 +152,7 @@ function cleanupHost(
   processes: Map<number, AdapterProcess>,
   options: {
     lsofPids?: readonly number[];
+    lsofStatus?: number;
     onKill?: (pid: number, signal: NodeJS.Signals | number | undefined) => void;
   } = {},
 ) {
@@ -175,9 +176,12 @@ function cleanupHost(
       readProcessEnvironment: (pid: number): Record<string, string> | null => {
         const generation = processes.get(pid)?.generation;
         return generation
-          ? { NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_GENERATION: generation }
+          ? {
+              NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_GENERATION: generation,
+              NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT: "11436",
+            }
           : generation === null
-            ? {}
+            ? { NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT: "11436" }
             : null;
       },
       readProcessIdentity: (pid: number) => processes.get(pid)?.processStart ?? null,
@@ -186,7 +190,7 @@ function cleanupHost(
           case "lsof":
             lsofPorts.push(args[1] ?? "");
             return {
-              status: 0,
+              status: options.lsofStatus ?? 0,
               stdout: `${(options.lsofPids ?? []).map(String).join("\n")}${options.lsofPids?.length ? "\n" : ""}`,
               stderr: "",
             };
@@ -331,10 +335,12 @@ describe("Bedrock Runtime adapter fail-closed uninstall cleanup (#9552)", () => 
 
   it.each([
     {
+      expectedWarning: false,
       label: "another user",
       process: managedProcess({ uid: CURRENT_UID + 1, user: "foreignuser" }),
     },
     {
+      expectedWarning: true,
       label: "another canonical launcher path",
       process: managedProcess({
         argv: [
@@ -345,13 +351,38 @@ describe("Bedrock Runtime adapter fail-closed uninstall cleanup (#9552)", () => 
         ],
       }),
     },
-  ])("does not signal an exact-basename listener owned by $label", ({ process }) => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-stop-foreign-"));
-    const { host, kills } = cleanupHost(home, new Map([[PID, process]]), { lsofPids: [PID] });
+  ])(
+    "does not signal an exact-basename listener owned by $label",
+    ({ expectedWarning, process }) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-stop-foreign-"));
+      const { host, kills, logs, warnings } = cleanupHost(home, new Map([[PID, process]]), {
+        lsofPids: [PID],
+      });
+
+      try {
+        expect(stop(home, host)).toMatchObject({ ok: true });
+        expect(kills).toEqual([]);
+        expect(warnings.some((message) => message.includes("unbound Bedrock"))).toBe(
+          expectedWarning,
+        );
+        expect(logs.includes("No Bedrock Runtime adapter processes found")).toBe(!expectedWarning);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("reports an unavailable full-uninstall orphan scan without claiming absence", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-stop-lsof-error-"));
+    const { host, kills, logs, warnings } = cleanupHost(home, new Map(), { lsofStatus: 2 });
 
     try {
-      expect(stop(home, host)).toMatchObject({ ok: true });
+      expect(stop(home, host)).toMatchObject({ ok: true, status: "absent" });
       expect(kills).toEqual([]);
+      expect(warnings).toContain(
+        "Bedrock Runtime adapter orphan scan could not inspect the configured port; no process was signaled.",
+      );
+      expect(logs).not.toContain("No Bedrock Runtime adapter processes found");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
@@ -618,11 +649,18 @@ describe("Bedrock Runtime adapter fail-closed uninstall cleanup (#9552)", () => 
       lsofPids: [REPLACEMENT_PID],
       onKill: (pid) => processes.delete(pid),
     });
+    let siblingInspected = false;
+    const originalExistsSync = host.existsSync;
+    host.existsSync = (target) => {
+      siblingInspected ||= String(target).startsWith(siblingDir);
+      return originalExistsSync(target);
+    };
 
     try {
       expect(stop(home, host, false)).toMatchObject({ ok: true, status: "stopped", pid: PID });
       expect(kills).toEqual([{ pid: PID, signal: "SIGTERM" }]);
       expect(lsofPorts).toEqual([]);
+      expect(siblingInspected).toBe(false);
       expect(fs.existsSync(path.join(siblingDir, "bedrock-runtime-adapter.json"))).toBe(true);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });

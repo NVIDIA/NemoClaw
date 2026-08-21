@@ -214,6 +214,7 @@ describe("runtime adapter uninstall cleanup", () => {
             readProcessExecutable: () => "/usr/bin/node",
             readProcessEnvironment: () => ({
               NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_GENERATION: BEDROCK_TEST_GENERATION,
+              NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT: "11436",
             }),
             readProcessIdentity: () => BEDROCK_TEST_PROCESS_START,
             rmSync: fs.rmSync,
@@ -246,6 +247,7 @@ describe("runtime adapter uninstall cleanup", () => {
     );
     const logs: string[] = [];
     const signals: Array<NodeJS.Signals | number | undefined> = [];
+    const scannedPorts: string[] = [];
     writeBedrockEvidence(tmpHome, 45_552, BEDROCK_RUNTIME_ADAPTER_CMDLINE);
 
     try {
@@ -265,10 +267,15 @@ describe("runtime adapter uninstall cleanup", () => {
           readProcessExecutable: () => "/usr/bin/node",
           readProcessEnvironment: () => ({
             NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_GENERATION: BEDROCK_TEST_GENERATION,
+            NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT: "11436",
           }),
           readProcessIdentity: () => BEDROCK_TEST_PROCESS_START,
           rmSync: fs.rmSync,
           run: runStub({
+            lsof: (args) => {
+              scannedPorts.push(args[1] ?? "");
+              return ok();
+            },
             ps: psStub("45552", {
               cmdline: BEDROCK_RUNTIME_ADAPTER_CMDLINE,
               exited: new Set(),
@@ -282,6 +289,7 @@ describe("runtime adapter uninstall cleanup", () => {
 
       expect(result.exitCode).toBe(1);
       expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+      expect(scannedPorts).toEqual(expect.arrayContaining([":11438", ":4000"]));
       expect(logs.some((line) => line.endsWith("State and binaries"))).toBe(false);
       expect(fs.existsSync(path.join(tmpHome, ".nemoclaw", "bedrock-runtime-adapter.pid"))).toBe(
         true,

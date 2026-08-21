@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import crypto from "node:crypto";
+import type { SpawnSyncOptions } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { ensureLocalAdapterStateDir } from "../local-adapter-lifecycle";
@@ -12,6 +12,7 @@ import {
   withMcpLifecycleLockSync,
 } from "../../state/mcp-lifecycle-lock-acquisition";
 import { getMcpLifecycleLockPath } from "../../state/mcp-lifecycle-lock-storage";
+import { readMcpLockProcessIdentity } from "../../state/mcp-lifecycle-lock-identity";
 
 export const BEDROCK_RUNTIME_ADAPTER_STATE_VERSION = 2;
 export const BEDROCK_RUNTIME_ADAPTER_UNINSTALL_JOURNAL_VERSION = 1;
@@ -67,12 +68,64 @@ export interface BedrockRuntimeAdapterLifecyclePaths {
   lockStateDir: string;
 }
 
+export interface BedrockRuntimeAdapterProcessIdentity {
+  generation: string;
+  pid: number;
+  processStart: string;
+  user: string;
+  uid: number;
+  executablePath: string;
+  scriptPath: string;
+  adapterPort: number;
+  tokenHash: string;
+}
+
+export interface BedrockRuntimeAdapterProcessRuntime {
+  env: NodeJS.ProcessEnv;
+  kill: (pid: number, signal?: NodeJS.Signals | number) => boolean;
+  readProcessArgv?: (pid: number) => readonly string[] | null;
+  readProcessExecutable?: (pid: number) => string | null;
+  readProcessEnvironment?: (pid: number) => Record<string, string> | null;
+  readProcessIdentity?: (pid: number, fresh?: boolean) => string | null;
+  run: (
+    command: string,
+    args: string[],
+    options?: SpawnSyncOptions,
+  ) => { status: number | null; stdout: string; stderr: string };
+  sleep?: (milliseconds: number) => void;
+}
+
+export type BedrockRuntimeAdapterProcessPresence = "absent" | "present" | "unknown";
+
+export interface ObservedBedrockRuntimeAdapterProcess {
+  adapterPort: number | null;
+  executablePath: string;
+  generation: string | null;
+  processStart: string;
+  scriptPath: string;
+  uid: number;
+  user: string;
+}
+
+export type BedrockRuntimeAdapterProcessStopResult =
+  | { ok: true; status: "absent" | "stopped" }
+  | { ok: false; reason: "authority-drift" | "unresolved" };
+
 const GENERATION = /^[a-f0-9]{32}$/u;
 const LEGACY_GENERATION = /^legacy:[a-f0-9]{64}$/u;
 const PROCESS_START = /^[^\u0000\r\n]{1,512}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const USER = /^[^\s\u0000]{1,256}$/u;
 const MAX_PRIVATE_FILE_BYTES = 16 * 1024;
+const PROCESS_EXIT_TIMEOUT_MS = 1_000;
+const PROCESS_EXIT_POLL_MS = 50;
+const PROCESS_EXIT_WAIT_BUFFER = new Int32Array(
+  new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT),
+);
+
+function sleepForProcessExit(milliseconds: number): void {
+  Atomics.wait(PROCESS_EXIT_WAIT_BUFFER, 0, 0, milliseconds);
+}
 
 function isSafePort(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= 65_535;
@@ -174,6 +227,212 @@ export function canonicalPath(target: string): string {
   }
 }
 
+export function bedrockRuntimeAdapterProcessPresence(
+  pid: number,
+  runtime: BedrockRuntimeAdapterProcessRuntime,
+): BedrockRuntimeAdapterProcessPresence {
+  const result = runtime.run("ps", ["-p", String(pid), "-o", "pid="], { env: runtime.env });
+  if (result.status === 1) return "absent";
+  if (result.status !== 0 || result.stdout.trim() !== String(pid)) return "unknown";
+  return "present";
+}
+
+function readProcArgv(pid: number): readonly string[] | null {
+  try {
+    const argv = fs
+      .readFileSync(`/proc/${String(pid)}/cmdline`)
+      .toString("utf8")
+      .split("\0");
+    if (argv.at(-1) === "") argv.pop();
+    return argv.length > 0 ? argv : null;
+  } catch {
+    return null;
+  }
+}
+
+function readProcessArgv(
+  pid: number,
+  runtime: BedrockRuntimeAdapterProcessRuntime,
+): readonly string[] | null {
+  if (runtime.readProcessArgv) return runtime.readProcessArgv(pid);
+  const procArgv = readProcArgv(pid);
+  if (procArgv) return procArgv;
+  const result = runtime.run("ps", ["-ww", "-p", String(pid), "-o", "args="], {
+    env: runtime.env,
+  });
+  const commandLine = result.status === 0 ? result.stdout.trim() : "";
+  return commandLine ? commandLine.split(/\s+/u) : null;
+}
+
+function isBedrockLauncherPath(target: string): boolean {
+  return (
+    path.basename(target) === "bedrock-runtime-adapter.mts" ||
+    path.basename(target) === "bedrock-runtime-adapter.js"
+  );
+}
+
+function observedScriptPath(argv: readonly string[], expectedPath?: string): string | null {
+  const candidates = argv.filter((argument) => path.isAbsolute(argument));
+  if (expectedPath) {
+    const expected = canonicalPath(expectedPath);
+    return candidates.some((candidate) => canonicalPath(candidate) === expected) ? expected : null;
+  }
+  const launchers = candidates.filter(isBedrockLauncherPath).map(canonicalPath);
+  return launchers.length === 1 ? launchers[0]! : null;
+}
+
+function observedExecutablePath(
+  pid: number,
+  argv: readonly string[],
+  runtime: BedrockRuntimeAdapterProcessRuntime,
+): string | null {
+  const injected = runtime.readProcessExecutable?.(pid);
+  if (injected) return canonicalPath(injected);
+  try {
+    return fs.realpathSync.native(`/proc/${String(pid)}/exe`);
+  } catch {
+    const first = argv[0];
+    return first && path.isAbsolute(first) ? canonicalPath(first) : null;
+  }
+}
+
+function readProcessEnvironment(
+  pid: number,
+  runtime: BedrockRuntimeAdapterProcessRuntime,
+): Record<string, string> | null | undefined {
+  if (runtime.readProcessEnvironment) return runtime.readProcessEnvironment(pid);
+  try {
+    return Object.fromEntries(
+      fs
+        .readFileSync(`/proc/${String(pid)}/environ`, "utf8")
+        .split("\0")
+        .filter(Boolean)
+        .map((entry) => {
+          const separator = entry.indexOf("=");
+          return [entry.slice(0, separator), entry.slice(separator + 1)];
+        }),
+    );
+  } catch {
+    const result = runtime.run("ps", ["eww", "-p", String(pid), "-o", "command="], {
+      env: runtime.env,
+    });
+    if (result.status !== 0) return undefined;
+    const environment: Record<string, string> = {};
+    for (const name of [
+      BEDROCK_RUNTIME_ADAPTER_GENERATION_ENV,
+      "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
+    ]) {
+      const match = new RegExp(`(?:^|\\s)${name}=([^\\s]+)(?:\\s|$)`, "u").exec(result.stdout);
+      if (match?.[1]) environment[name] = match[1];
+    }
+    return environment;
+  }
+}
+
+function observedProcessOwner(
+  pid: number,
+  runtime: BedrockRuntimeAdapterProcessRuntime,
+): { uid: number; user: string } | null {
+  const uidResult = runtime.run("ps", ["-p", String(pid), "-o", "uid="], { env: runtime.env });
+  const userResult = runtime.run("ps", ["-p", String(pid), "-o", "user="], {
+    env: runtime.env,
+  });
+  const uidText = uidResult.status === 0 ? uidResult.stdout.trim() : "";
+  const uid = /^[0-9]{1,15}$/u.test(uidText) ? Number(uidText) : Number.NaN;
+  const user = userResult.status === 0 ? userResult.stdout.trim() : "";
+  return Number.isSafeInteger(uid) && uid >= 0 && user ? { uid, user } : null;
+}
+
+export function observeBedrockRuntimeAdapterProcess(
+  pid: number,
+  runtime: BedrockRuntimeAdapterProcessRuntime,
+  expected?: Pick<
+    BedrockRuntimeAdapterProcessIdentity,
+    "adapterPort" | "executablePath" | "generation" | "processStart" | "scriptPath" | "uid" | "user"
+  >,
+): ObservedBedrockRuntimeAdapterProcess | null {
+  if (bedrockRuntimeAdapterProcessPresence(pid, runtime) !== "present") return null;
+  const readIdentity = runtime.readProcessIdentity ?? readMcpLockProcessIdentity;
+  const firstIdentity = readIdentity(pid, true);
+  const argv = readProcessArgv(pid, runtime);
+  const owner = observedProcessOwner(pid, runtime);
+  if (!firstIdentity || !argv || !owner) return null;
+  const scriptPath = observedScriptPath(argv, expected?.scriptPath);
+  const executablePath = observedExecutablePath(pid, argv, runtime);
+  const environment = readProcessEnvironment(pid, runtime);
+  const generation = environment?.[BEDROCK_RUNTIME_ADAPTER_GENERATION_ENV] ?? null;
+  const portText = environment?.NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT;
+  const adapterPort = portText && /^[0-9]{1,5}$/u.test(portText) ? Number(portText) : null;
+  const secondIdentity = readIdentity(pid, true);
+  if (
+    !scriptPath ||
+    !executablePath ||
+    environment === undefined ||
+    secondIdentity !== firstIdentity ||
+    bedrockRuntimeAdapterProcessPresence(pid, runtime) !== "present"
+  ) {
+    return null;
+  }
+  const observed = {
+    adapterPort,
+    executablePath,
+    generation,
+    processStart: firstIdentity,
+    scriptPath,
+    uid: owner.uid,
+    user: owner.user,
+  };
+  if (!expected) return observed;
+  return observed.adapterPort === expected.adapterPort &&
+    observed.executablePath === canonicalPath(expected.executablePath) &&
+    observed.generation === expected.generation &&
+    observed.processStart === expected.processStart &&
+    observed.scriptPath === canonicalPath(expected.scriptPath) &&
+    observed.uid === expected.uid &&
+    observed.user === expected.user
+    ? observed
+    : null;
+}
+
+function waitForBedrockRuntimeAdapterExit(
+  pid: number,
+  runtime: BedrockRuntimeAdapterProcessRuntime,
+): boolean | null {
+  const deadline = Date.now() + PROCESS_EXIT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const presence = bedrockRuntimeAdapterProcessPresence(pid, runtime);
+    if (presence === "absent") return true;
+    if (presence === "unknown") return null;
+    (runtime.sleep ?? sleepForProcessExit)(PROCESS_EXIT_POLL_MS);
+  }
+  const presence = bedrockRuntimeAdapterProcessPresence(pid, runtime);
+  return presence === "unknown" ? null : presence === "absent";
+}
+
+export function stopExactBedrockRuntimeAdapterProcess(
+  expected: BedrockRuntimeAdapterProcessIdentity,
+  runtime: BedrockRuntimeAdapterProcessRuntime,
+): BedrockRuntimeAdapterProcessStopResult {
+  const initialPresence = bedrockRuntimeAdapterProcessPresence(expected.pid, runtime);
+  if (initialPresence === "absent") return { ok: true, status: "absent" };
+  if (
+    initialPresence !== "present" ||
+    !observeBedrockRuntimeAdapterProcess(expected.pid, runtime, expected)
+  ) {
+    return { ok: false, reason: "authority-drift" };
+  }
+  runtime.kill(expected.pid, "SIGTERM");
+  const termExit = waitForBedrockRuntimeAdapterExit(expected.pid, runtime);
+  if (termExit) return { ok: true, status: "stopped" };
+  if (termExit === null || !observeBedrockRuntimeAdapterProcess(expected.pid, runtime, expected)) {
+    return { ok: false, reason: "authority-drift" };
+  }
+  runtime.kill(expected.pid, "SIGKILL");
+  return waitForBedrockRuntimeAdapterExit(expected.pid, runtime)
+    ? { ok: true, status: "stopped" }
+    : { ok: false, reason: "unresolved" };
+}
+
 export function legacyBedrockRuntimeGeneration(
   stateText: string,
   pid: number,
@@ -196,18 +455,10 @@ export function resolveBedrockRuntimeAdapterLifecyclePaths(
   if (!isSafePort(gatewayPort)) {
     throw new Error("Bedrock Runtime adapter lifecycle gateway port is invalid.");
   }
-  const directory = path.join(
-    home,
-    ".local",
-    "state",
-    "nemoclaw-bedrock-runtime-adapter",
-    String(gatewayPort),
-  );
+  const lifecycleRoot = path.join(home, ".local", "state", "nemoclaw-bedrock-runtime-adapter");
+  const directory = path.join(lifecycleRoot, String(gatewayPort));
   const homeIdentity = crypto.createHash("sha256").update(path.resolve(home)).digest("hex");
-  const lockRoot = path.join(
-    os.tmpdir(),
-    `nemoclaw-bedrock-runtime-adapter-locks-${String(process.getuid?.() ?? "unknown")}`,
-  );
+  const lockRoot = path.join(lifecycleRoot, "locks");
   const lockName = `bedrock-runtime-adapter-${homeIdentity}-${String(gatewayPort)}`;
   return {
     directory,
@@ -216,6 +467,17 @@ export function resolveBedrockRuntimeAdapterLifecyclePaths(
     lockPath: getMcpLifecycleLockPath(lockName, lockRoot),
     lockStateDir: lockRoot,
   };
+}
+
+function ensureOwnedPrivateBedrockRuntimeDirectory(directory: string): void {
+  ensureLocalAdapterStateDir(directory);
+  const stat = fs.lstatSync(directory);
+  const uid = process.getuid?.();
+  if (uid !== undefined && stat.uid !== uid) {
+    throw new Error(
+      `Refusing to use Bedrock Runtime adapter lifecycle directory owned by another user: ${directory}`,
+    );
+  }
 }
 
 export function readPrivateBedrockRuntimeFile(target: string): string | null {
@@ -289,7 +551,7 @@ function fsyncDirectory(directory: string): void {
 
 export function writeDurablePrivateBedrockRuntimeJson(target: string, value: unknown): void {
   const directory = path.dirname(target);
-  ensureLocalAdapterStateDir(directory);
+  ensureOwnedPrivateBedrockRuntimeDirectory(directory);
   const temporary = path.join(
     directory,
     `.${path.basename(target)}.tmp.${String(process.pid)}.${crypto.randomUUID()}`,
@@ -334,9 +596,9 @@ export function removeDurableBedrockRuntimeFile(target: string): void {
 
 export function withBedrockRuntimeAdapterLifecycleLock<T>(
   lifecycle: BedrockRuntimeAdapterLifecyclePaths,
-  operation: () => T,
+  operation: () => T & (T extends PromiseLike<unknown> ? never : unknown),
 ): T {
-  ensureLocalAdapterStateDir(lifecycle.lockStateDir);
+  ensureOwnedPrivateBedrockRuntimeDirectory(lifecycle.lockStateDir);
   return withMcpLifecycleLockSync(lifecycle.lockName, operation, {
     stateDir: lifecycle.lockStateDir,
   });
@@ -346,7 +608,7 @@ export async function withBedrockRuntimeAdapterLifecycleLockAsync<T>(
   lifecycle: BedrockRuntimeAdapterLifecyclePaths,
   operation: () => Promise<T>,
 ): Promise<T> {
-  ensureLocalAdapterStateDir(lifecycle.lockStateDir);
+  ensureOwnedPrivateBedrockRuntimeDirectory(lifecycle.lockStateDir);
   return withMcpLifecycleLock(lifecycle.lockName, operation, {
     stateDir: lifecycle.lockStateDir,
   });

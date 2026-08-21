@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SpawnSyncOptions } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -10,14 +9,17 @@ import path from "node:path";
 import { sleepMs } from "../../core/wait";
 import type { UninstallPaths } from "../../domain/uninstall/paths";
 import {
-  BEDROCK_RUNTIME_ADAPTER_GENERATION_ENV,
+  type BedrockRuntimeAdapterProcessRuntime,
   type BedrockRuntimeAdapterState,
   type BedrockRuntimeAdapterUninstallJournal,
   type BedrockRuntimeAdapterUninstallPhase,
+  type ObservedBedrockRuntimeAdapterProcess,
+  bedrockRuntimeAdapterProcessPresence,
   canonicalPath,
   canonicalPid,
   isBedrockRuntimeAdapterState,
   legacyBedrockRuntimeGeneration,
+  observeBedrockRuntimeAdapterProcess,
   readBedrockRuntimeAdapterUninstallJournal,
   readPrivateBedrockRuntimeFile,
   removeDurableBedrockRuntimeFile,
@@ -26,26 +28,11 @@ import {
   writeDurablePrivateBedrockRuntimeJson,
 } from "../../inference/bedrock-runtime/lifecycle";
 import { BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER } from "../../inference/bedrock-runtime";
-import { readMcpLockProcessIdentity } from "../../state/mcp-lifecycle-lock-identity";
 
-interface RunResult {
-  status: number | null;
-  stdout: string;
-  stderr: string;
-}
-
-interface RuntimeAdapterCleanupRuntime {
+interface RuntimeAdapterCleanupRuntime extends BedrockRuntimeAdapterProcessRuntime {
   commandExists: (command: string) => boolean;
-  env: NodeJS.ProcessEnv;
   existsSync: (target: string) => boolean;
-  kill: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   log: (message: string) => void;
-  readProcessArgv?: (pid: number) => readonly string[] | null;
-  readProcessExecutable?: (pid: number) => string | null;
-  readProcessEnvironment?: (pid: number) => Record<string, string> | null;
-  readProcessIdentity?: (pid: number, fresh?: boolean) => string | null;
-  run: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
-  sleep?: (milliseconds: number) => void;
   warn: (message: string) => void;
 }
 
@@ -69,7 +56,6 @@ const BEDROCK_RUNTIME_ADAPTER: RuntimeAdapterDescriptor = {
   pidFile: "bedrock-runtime-adapter.pid",
 };
 
-const BEDROCK_PID_FILE = "bedrock-runtime-adapter.pid";
 const BEDROCK_STATE_FILE = "bedrock-runtime-adapter.json";
 const BEDROCK_TOKEN_FILE = "bedrock-runtime-adapter-token";
 const PROCESS_EXIT_TIMEOUT_MS = 1_000;
@@ -228,20 +214,9 @@ interface BedrockEvidence {
   tokenHash: string;
 }
 
-type ProcessPresence = "absent" | "present" | "unknown";
-
-interface ObservedBedrockProcess {
-  executablePath: string;
-  generation: string | null;
-  processStart: string;
-  scriptPath: string;
-  uid: number;
-  user: string;
-}
-
 function bedrockEvidencePaths(stateDir: string): BedrockEvidencePaths {
   return {
-    pidPath: path.join(stateDir, BEDROCK_PID_FILE),
+    pidPath: path.join(stateDir, BEDROCK_RUNTIME_ADAPTER.pidFile),
     statePath: path.join(stateDir, BEDROCK_STATE_FILE),
     tokenPath: path.join(stateDir, BEDROCK_TOKEN_FILE),
   };
@@ -355,171 +330,6 @@ function readBedrockEvidence(
   };
 }
 
-function processPresence(pid: number, runtime: RuntimeAdapterCleanupRuntime): ProcessPresence {
-  const result = runtime.run("ps", ["-p", String(pid), "-o", "pid="], { env: runtime.env });
-  if (result.status === 1) return "absent";
-  if (result.status !== 0 || result.stdout.trim() !== String(pid)) return "unknown";
-  return "present";
-}
-
-function readProcArgv(pid: number): readonly string[] | null {
-  try {
-    const argv = fs
-      .readFileSync(`/proc/${String(pid)}/cmdline`)
-      .toString("utf8")
-      .split("\0");
-    if (argv.at(-1) === "") argv.pop();
-    return argv.length > 0 ? argv : null;
-  } catch {
-    return null;
-  }
-}
-
-function readProcessArgv(
-  pid: number,
-  runtime: RuntimeAdapterCleanupRuntime,
-): readonly string[] | null {
-  if (runtime.readProcessArgv) return runtime.readProcessArgv(pid);
-  const procArgv = readProcArgv(pid);
-  if (procArgv) return procArgv;
-  const result = runtime.run("ps", ["-ww", "-p", String(pid), "-o", "args="], {
-    env: runtime.env,
-  });
-  const commandLine = result.status === 0 ? result.stdout.trim() : "";
-  return commandLine ? commandLine.split(/\s+/u) : null;
-}
-
-function isBedrockLauncherPath(target: string): boolean {
-  return (
-    path.basename(target) === "bedrock-runtime-adapter.mts" ||
-    path.basename(target) === "bedrock-runtime-adapter.js"
-  );
-}
-
-function observedScriptPath(argv: readonly string[], expectedPath?: string): string | null {
-  const candidates = argv.filter((argument) => path.isAbsolute(argument));
-  if (expectedPath) {
-    const expected = canonicalPath(expectedPath);
-    return candidates.some((candidate) => canonicalPath(candidate) === expected) ? expected : null;
-  }
-  const launchers = candidates.filter(isBedrockLauncherPath).map(canonicalPath);
-  return launchers.length === 1 ? launchers[0]! : null;
-}
-
-function observedExecutablePath(
-  pid: number,
-  argv: readonly string[],
-  runtime: RuntimeAdapterCleanupRuntime,
-): string | null {
-  const injected = runtime.readProcessExecutable?.(pid);
-  if (injected) return canonicalPath(injected);
-  try {
-    return fs.realpathSync.native(`/proc/${String(pid)}/exe`);
-  } catch {
-    const first = argv[0];
-    return first && path.isAbsolute(first) ? canonicalPath(first) : null;
-  }
-}
-
-function readProcessGeneration(
-  pid: number,
-  runtime: RuntimeAdapterCleanupRuntime,
-): string | null | undefined {
-  let environment: Record<string, string> | null = null;
-  if (runtime.readProcessEnvironment) {
-    environment = runtime.readProcessEnvironment(pid);
-  } else {
-    try {
-      environment = Object.fromEntries(
-        fs
-          .readFileSync(`/proc/${String(pid)}/environ`, "utf8")
-          .split("\0")
-          .filter(Boolean)
-          .map((entry) => {
-            const separator = entry.indexOf("=");
-            return [entry.slice(0, separator), entry.slice(separator + 1)];
-          }),
-      );
-    } catch {
-      const result = runtime.run("ps", ["eww", "-p", String(pid), "-o", "command="], {
-        env: runtime.env,
-      });
-      if (result.status !== 0) return undefined;
-      const match = new RegExp(
-        `(?:^|\\s)${BEDROCK_RUNTIME_ADAPTER_GENERATION_ENV}=([a-f0-9]{32})(?:\\s|$)`,
-        "u",
-      ).exec(result.stdout);
-      return match?.[1] ?? null;
-    }
-  }
-  if (environment === null) return undefined;
-  return environment[BEDROCK_RUNTIME_ADAPTER_GENERATION_ENV] ?? null;
-}
-
-function observedProcessUser(
-  pid: number,
-  runtime: RuntimeAdapterCleanupRuntime,
-): { uid: number; user: string } | null {
-  const uidResult = runtime.run("ps", ["-p", String(pid), "-o", "uid="], { env: runtime.env });
-  const userResult = runtime.run("ps", ["-p", String(pid), "-o", "user="], {
-    env: runtime.env,
-  });
-  const uidText = uidResult.status === 0 ? uidResult.stdout.trim() : "";
-  const uid = /^[0-9]{1,15}$/u.test(uidText) ? Number(uidText) : Number.NaN;
-  const user = userResult.status === 0 ? userResult.stdout.trim() : "";
-  return Number.isSafeInteger(uid) && uid >= 0 && user ? { uid, user } : null;
-}
-
-function processIdentity(pid: number, runtime: RuntimeAdapterCleanupRuntime): string | null {
-  return (runtime.readProcessIdentity ?? readMcpLockProcessIdentity)(pid, true);
-}
-
-function observeBedrockProcess(
-  pid: number,
-  runtime: RuntimeAdapterCleanupRuntime,
-  expected?: Pick<
-    BedrockRuntimeAdapterUninstallJournal,
-    "executablePath" | "generation" | "processStart" | "scriptPath" | "uid" | "user"
-  >,
-): ObservedBedrockProcess | null {
-  if (processPresence(pid, runtime) !== "present") return null;
-  const firstIdentity = processIdentity(pid, runtime);
-  const argv = readProcessArgv(pid, runtime);
-  const owner = observedProcessUser(pid, runtime);
-  if (!firstIdentity || !argv || !owner) return null;
-  const scriptPath = observedScriptPath(argv, expected?.scriptPath);
-  const executablePath = observedExecutablePath(pid, argv, runtime);
-  const generation = readProcessGeneration(pid, runtime);
-  const secondIdentity = processIdentity(pid, runtime);
-  if (
-    !scriptPath ||
-    !executablePath ||
-    generation === undefined ||
-    secondIdentity !== firstIdentity ||
-    processPresence(pid, runtime) !== "present"
-  ) {
-    return null;
-  }
-  const observed = {
-    executablePath,
-    generation,
-    processStart: firstIdentity,
-    scriptPath,
-    uid: owner.uid,
-    user: owner.user,
-  };
-  if (!expected) return observed;
-  const expectedGeneration = expected.generation.startsWith("legacy:") ? null : expected.generation;
-  return observed.executablePath === canonicalPath(expected.executablePath) &&
-    observed.generation === expectedGeneration &&
-    observed.processStart === expected.processStart &&
-    observed.scriptPath === canonicalPath(expected.scriptPath) &&
-    observed.uid === expected.uid &&
-    observed.user === expected.user
-    ? observed
-    : null;
-}
-
 function currentProcessOwner(): { uid: number; user: string } | null {
   const uid = process.getuid?.();
   const user = os.userInfo().username;
@@ -528,7 +338,7 @@ function currentProcessOwner(): { uid: number; user: string } | null {
 
 function journalFromEvidence(
   evidence: BedrockEvidence,
-  observed: ObservedBedrockProcess | null,
+  observed: ObservedBedrockRuntimeAdapterProcess | null,
   gatewayPort: number,
   adapterPort: number,
   runtime: RuntimeAdapterCleanupRuntime,
@@ -542,7 +352,8 @@ function journalFromEvidence(
       state.user !== owner.user ||
       state.adapterPort !== adapterPort ||
       (observed !== null &&
-        (observed.executablePath !== canonicalPath(state.executablePath) ||
+        (observed.adapterPort !== state.adapterPort ||
+          observed.executablePath !== canonicalPath(state.executablePath) ||
           observed.generation !== state.generation ||
           observed.processStart !== state.processStart ||
           observed.scriptPath !== canonicalPath(state.scriptPath) ||
@@ -553,7 +364,10 @@ function journalFromEvidence(
     }
   } else if (
     observed !== null &&
-    (observed.generation !== null || observed.uid !== owner.uid || observed.user !== owner.user)
+    (observed.adapterPort !== adapterPort ||
+      observed.generation !== null ||
+      observed.uid !== owner.uid ||
+      observed.user !== owner.user)
   ) {
     return null;
   }
@@ -614,12 +428,12 @@ function waitForRecordedProcessExit(
 ): boolean | null {
   const deadline = Date.now() + PROCESS_EXIT_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const presence = processPresence(journal.pid, runtime);
+    const presence = bedrockRuntimeAdapterProcessPresence(journal.pid, runtime);
     if (presence === "absent") return true;
     if (presence === "unknown") return null;
     (runtime.sleep ?? sleepMs)(PROCESS_EXIT_POLL_MS);
   }
-  const presence = processPresence(journal.pid, runtime);
+  const presence = bedrockRuntimeAdapterProcessPresence(journal.pid, runtime);
   return presence === "unknown" ? null : presence === "absent";
 }
 
@@ -631,7 +445,7 @@ function signalRecordedProcess(
   runtime: RuntimeAdapterCleanupRuntime,
 ): { journal: BedrockRuntimeAdapterUninstallJournal; exited: boolean | null } | null {
   const next = advanceBedrockJournal(journalPath, journal, phase);
-  if (!observeBedrockProcess(next.pid, runtime, next)) return null;
+  if (!observeBedrockRuntimeAdapterProcess(next.pid, runtime, next)) return null;
   runtime.kill(next.pid, signal);
   return { journal: next, exited: waitForRecordedProcessExit(next, runtime) };
 }
@@ -644,7 +458,7 @@ function runBedrockStopPhases(
   | { kind: "failure"; message: string; journal: BedrockRuntimeAdapterUninstallJournal }
   | { kind: "ready"; journal: BedrockRuntimeAdapterUninstallJournal } {
   let journal = initial;
-  const initialPresence = processPresence(journal.pid, runtime);
+  const initialPresence = bedrockRuntimeAdapterProcessPresence(journal.pid, runtime);
   if (initialPresence === "unknown") {
     return {
       kind: "failure",
@@ -775,7 +589,7 @@ function retireBedrockEvidence(
   evidencePaths: BedrockEvidencePaths,
   runtime: RuntimeAdapterCleanupRuntime,
 ): BedrockRuntimeAdapterStopResult {
-  if (processPresence(initial.pid, runtime) !== "absent") {
+  if (bedrockRuntimeAdapterProcessPresence(initial.pid, runtime) !== "absent") {
     return stopFailure(
       runtime,
       "Bedrock Runtime adapter process absence could not be revalidated before evidence deletion.",
@@ -808,7 +622,7 @@ function retireBedrockEvidence(
   let journal = advanceBedrockJournal(journalPath, initial, "evidence-retiring");
   for (const target of ["pidPath", "tokenPath", "statePath"] as const) {
     if (!runtime.existsSync(evidencePaths[target])) continue;
-    if (processPresence(journal.pid, runtime) !== "absent") {
+    if (bedrockRuntimeAdapterProcessPresence(journal.pid, runtime) !== "absent") {
       return stopFailure(
         runtime,
         "Bedrock Runtime adapter PID was reused during evidence deletion; remaining evidence and journal were preserved.",
@@ -839,19 +653,23 @@ function discoverUnboundBedrockListeners(
     return;
   }
   const lsof = runtime.run("lsof", ["-ti", `:${String(adapterPort)}`], { env: runtime.env });
+  if (lsof.status !== 0 && lsof.status !== 1) {
+    runtime.warn(
+      "Bedrock Runtime adapter orphan scan could not inspect the configured port; no process was signaled.",
+    );
+    return;
+  }
   const pids = splitNonEmptyLines(lsof.stdout)
     .map((raw) => canonicalPid(`${raw}\n`))
     .filter((pid): pid is number => pid !== null);
   const owner = currentProcessOwner();
   const candidates = owner
     ? pids.filter((pid) => {
-        const observedOwner = observedProcessUser(pid, runtime);
-        const argv = readProcessArgv(pid, runtime);
+        const observed = observeBedrockRuntimeAdapterProcess(pid, runtime);
         return (
-          observedOwner?.uid === owner.uid &&
-          observedOwner.user === owner.user &&
-          argv !== null &&
-          observedScriptPath(argv) !== null
+          observed?.uid === owner.uid &&
+          observed.user === owner.user &&
+          observed.adapterPort === adapterPort
         );
       })
     : [];
@@ -913,7 +731,7 @@ function stopBedrockRuntimeAdapterLocked(
     const { evidence } = evidenceResult;
     const adapterPort =
       evidence.state?.adapterPort ?? resolveRuntimeAdapterPort(runtime, BEDROCK_RUNTIME_ADAPTER);
-    const presence = processPresence(evidence.pid, runtime);
+    const presence = bedrockRuntimeAdapterProcessPresence(evidence.pid, runtime);
     if (presence === "unknown") {
       return stopFailure(
         runtime,
@@ -931,7 +749,8 @@ function stopBedrockRuntimeAdapterLocked(
         );
       }
     }
-    const observed = presence === "present" ? observeBedrockProcess(evidence.pid, runtime) : null;
+    const observed =
+      presence === "present" ? observeBedrockRuntimeAdapterProcess(evidence.pid, runtime) : null;
     if (presence === "present" && !observed) {
       return stopFailure(
         runtime,

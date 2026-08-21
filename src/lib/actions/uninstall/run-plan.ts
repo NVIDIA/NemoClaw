@@ -2906,13 +2906,13 @@ function executePlan(
       stopOpenRouterRuntimeAdapter(paths, runtime, {
         scanOrphans: !scopedToSelectedGateway,
       });
-      stopBedrockRuntimeAdapterForUninstall(paths, runtime, scopedToSelectedGateway);
       if (scopedToSelectedGateway) {
         runtime.log("Sibling gateways remain; kept the shared HTTPS Pin Runtime adapter.");
       } else {
         stopHttpsPinRuntimeAdapter(paths, runtime);
       }
       stopModelRouter(paths, runtime, !scopedToSelectedGateway);
+      stopBedrockRuntimeAdapterForUninstall(paths, runtime, scopedToSelectedGateway);
     } else if (step.name === "OpenShell resources") {
       if (
         !executeOpenShellResourceCleanup(
