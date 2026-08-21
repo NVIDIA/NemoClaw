@@ -106,6 +106,14 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     expect(validator).not.toContain("unittest.mock");
   });
 
+  it("keeps installed MCP validation independent of BuildKit routing", () => {
+    const validator = readAgentFile("validate-read-only-mcp-call.py");
+
+    expect(validator).toContain('_VALIDATION_HOST = "localhost"');
+    expect(validator).not.toContain("10.255.255.254");
+    expect(validator).not.toContain("SOCK_DGRAM");
+  });
+
   it("keeps deterministic read-only MCP parsing bounded and structured (#9889)", () => {
     const commandPath = path.join(agentDir, "nemoclaw_read_only_mcp.py");
     const invalid = spawnSync("python3", [commandPath, "bad/tool", "--json"], {

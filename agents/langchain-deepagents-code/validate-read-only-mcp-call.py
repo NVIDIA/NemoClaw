@@ -3,7 +3,6 @@
 """Validate deterministic read-only MCP calls against the installed package."""
 
 import datetime
-import ipaddress
 import json
 import signal
 import socket
@@ -19,6 +18,10 @@ _COMMAND = "/usr/local/lib/nemoclaw/dcode-wrapper.sh"
 _CONFIG = Path("/sandbox/.deepagents/.nemoclaw-mcp.json")
 _MAX_BYTES = 131_072
 _TOOL = "worker-broker_worker_task_context"
+# The build-only TLS servers and the managed wrapper share one network namespace.
+# A loopback hostname keeps validation available when BuildKit has no route while
+# still exercising the managed runtime's host-preflight DNS-name contract.
+_VALIDATION_HOST = "localhost"
 _REFLECTED_CREDENTIAL = "Bearer sk-proj-validation-credential-value"
 _ATTESTATION = {
     "algorithm": "sha256",
@@ -183,16 +186,6 @@ def _serve(mode: str, host: str, port: int, cert: Path, key: Path, marker: Path)
     )
 
 
-def _container_address() -> str:
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-        probe.connect(("10.255.255.254", 1))
-        address = probe.getsockname()[0]
-    parsed = ipaddress.ip_address(address)
-    if parsed.version != 4 or parsed.is_loopback or parsed.is_link_local:
-        raise RuntimeError("validation server did not resolve a routed IPv4 address")
-    return address
-
-
 def _free_port(host: str) -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind((host, 0))
@@ -217,7 +210,7 @@ def _write_certificate(directory: Path, host: str) -> tuple[Path, Path]:
         .not_valid_before(now - datetime.timedelta(minutes=1))
         .not_valid_after(now + datetime.timedelta(minutes=10))
         .add_extension(
-            x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address(host))]),
+            x509.SubjectAlternativeName([x509.DNSName(host)]),
             critical=False,
         )
         .sign(key, hashes.SHA256())
@@ -493,7 +486,7 @@ def main() -> None:
     if len(sys.argv) != 1:
         raise RuntimeError("invalid validation command")
 
-    host = _container_address()
+    host = _VALIDATION_HOST
     port = _free_port(host)
     malformed_port = _free_port(host)
     while malformed_port == port:
