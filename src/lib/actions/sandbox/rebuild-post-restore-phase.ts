@@ -252,11 +252,6 @@ export async function runRebuildPostRestorePhase(
     reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log);
 
     await reapplyMessagingManifestAfterOpenClawDoctor(sandboxName, messagingPlan, log);
-    log("Refreshing mutable OpenClaw config hash after post-restore config writes");
-    if (!refreshMutableOpenClawConfigHashAfterPostRestoreWrites(sandboxName, log)) {
-      mutableConfigHashRefreshUnverified = true;
-    }
-
     log("Restoring mutable OpenClaw config permissions after post-restore config writes");
     let permRepair: ReturnType<typeof shields.repairMutableConfigPerms> | null = null;
     try {
@@ -392,6 +387,17 @@ export async function runRebuildPostRestorePhase(
   log(
     `Registry updated: agentVersion=${agentDef.expectedVersion}, policies=[${restoredBuiltinPresets.join(",")}], policyPresetsFinalized=${String(policyPresetsFinalized === true)}`,
   );
+
+  // Keep the mutable-mode refresh after gateway and MCP finalization so any
+  // expected post-restore writes that settle after doctor are included. Shields
+  // relock then establishes the trust boundary, and the final read-only verifier
+  // detects any later change.
+  if (targetAgentName === "openclaw") {
+    log("Refreshing mutable OpenClaw config hash after post-restore config writes");
+    if (!refreshMutableOpenClawConfigHashAfterPostRestoreWrites(sandboxName, log)) {
+      mutableConfigHashRefreshUnverified = true;
+    }
+  }
 
   if (!relockShieldsIfNeeded(true)) {
     bail("Failed to re-apply shields lockdown.");

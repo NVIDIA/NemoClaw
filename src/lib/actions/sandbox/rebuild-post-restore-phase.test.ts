@@ -122,7 +122,7 @@ describe("rebuild post-restore phase", () => {
     };
   }
 
-  it("reconciles OpenClaw sessions after doctor and before later config writes (#7102)", async () => {
+  it("reconciles OpenClaw sessions after doctor and refreshes the hash after later work (#7102)", async () => {
     await runRebuildPostRestorePhase(input());
 
     expect(order).toEqual(["doctor", "reconcile", "messaging", "config-hash", "config-hash-final"]);
@@ -150,7 +150,38 @@ describe("rebuild post-restore phase", () => {
     );
   });
 
-  it("fails when finalization invalidates the OpenClaw config hash after the early refresh (#9530)", async () => {
+  it("includes config writes that settle during gateway and MCP finalization in the refreshed hash (#9530)", async () => {
+    let configHashValid = true;
+    vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockImplementation(async () => {
+      configHashValid = false;
+      return true;
+    });
+    vi.mocked(
+      rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
+    ).mockImplementation(() => {
+      configHashValid = true;
+      return true;
+    });
+    vi.mocked(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).mockImplementation(
+      () => configHashValid,
+    );
+    const args = input();
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(
+      vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites).mock
+        .invocationCallOrder[0] ?? 0,
+    );
+    expect(args.bail).not.toHaveBeenCalled();
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).toContain(
+      "rebuilt successfully",
+    );
+  });
+
+  it("fails when finalization invalidates the OpenClaw config hash after the final refresh (#9530)", async () => {
     let configHashValid = true;
     vi.mocked(
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
@@ -588,7 +619,7 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).toHaveBeenCalledWith("Failed to re-apply shields lockdown.");
   });
 
-  it("reconciles the registry, relocks shields, then verifies host forwarding in that order (#8283)", async () => {
+  it("reconciles the registry, refreshes the hash, relocks shields, then verifies host forwarding (#8283)", async () => {
     const observed: string[] = [];
     vi.mocked(registry.updateSandbox).mockImplementation(() => {
       observed.push("registry");
@@ -605,10 +636,16 @@ describe("rebuild post-restore phase", () => {
       observed.push("relock");
       return true;
     });
+    vi.mocked(
+      rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
+    ).mockImplementation(() => {
+      observed.push("config-hash");
+      return true;
+    });
 
     await runRebuildPostRestorePhase(args);
 
-    expect(observed).toEqual(["registry", "relock", "forward"]);
+    expect(observed).toEqual(["registry", "config-hash", "relock", "forward"]);
     expect(args.bail).not.toHaveBeenCalled();
   });
 
