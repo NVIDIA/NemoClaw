@@ -26,6 +26,8 @@ it("restores the portable user manager and linger state after refusing a changed
   const root = fs.mkdtempSync("/tmp/portable-cpu-delegation-restoration-");
   const bin = path.join(root, "bin");
   const changed = path.join(root, "changed.conf");
+  const podmanConfig = path.join(root, "portable-containers.conf");
+  const podmanService = path.join(root, "podman-service.conf");
   const receipt = path.join(root, "receipt");
   const commandLog = path.join(root, "commands.log");
   const expected = "[Service]\nDelegate=cpu memory pids\n";
@@ -40,10 +42,17 @@ it("restores the portable user manager and linger state after refusing a changed
     '#!/usr/bin/env bash\nprintf "loginctl\\t%s\\n" "$*" >>"$FAKE_CLEANUP_LOG"\n',
   );
   fs.writeFileSync(changed, `${expected}unexpected\n`);
+  fs.writeFileSync(podmanConfig, '[engine]\ncgroup_manager = "systemd"\n');
+  fs.writeFileSync(podmanService, `[Service]\nEnvironment=CONTAINERS_CONF=${podmanConfig}\n`);
   fs.writeFileSync(
     receipt,
-    [`file\tdelegation\t${changed}`, "manager-active\t501\t", "linger\tfixture-user\t"].join("\n") +
-      "\n",
+    [
+      `file\tpodman-config\t${podmanConfig}`,
+      `file\tpodman-service\t${podmanService}`,
+      `file\tdelegation\t${changed}`,
+      "manager-active\t501\t",
+      "linger\tfixture-user\t",
+    ].join("\n") + "\n",
   );
 
   const cleanupRun = portableCleanupRun();
@@ -56,6 +65,14 @@ it("restores the portable user manager and linger state after refusing a changed
     .replace(
       'delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"',
       `delegation_drop_in=${JSON.stringify(changed)}`,
+    )
+    .replace(
+      'containers_conf="/run/nemoclaw/portable-containers.conf"',
+      `containers_conf=${JSON.stringify(podmanConfig)}`,
+    )
+    .replace(
+      'podman_service_drop_in="/etc/systemd/user/podman.service.d/90-nemoclaw-cgroup-manager.conf"',
+      `podman_service_drop_in=${JSON.stringify(podmanService)}`,
     );
 
   try {
@@ -83,6 +100,8 @@ it("restores the portable user manager and linger state after refusing a changed
       "loginctl\tdisable-linger fixture-user",
     ]);
     expect(fs.readFileSync(changed, "utf8")).toBe(`${expected}unexpected\n`);
+    expect(fs.existsSync(podmanConfig)).toBe(false);
+    expect(fs.existsSync(podmanService)).toBe(false);
     expect(fs.existsSync(receipt)).toBe(false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
