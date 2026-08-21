@@ -236,7 +236,7 @@ navigation:
                     path: _build/agent-variants/manage-sandboxes/set-up-slack.openclaw.generated.mdx
                     slug: set-up-slack
                   - page: "Set Up Google Chat"
-                    path: manage-sandboxes/set-up-google-chat.mdx
+                    path: _build/agent-variants/manage-sandboxes/set-up-google-chat.openclaw.generated.mdx
                     slug: set-up-google-chat
                   - page: "Set Up WeChat"
                     path: _build/agent-variants/manage-sandboxes/set-up-wechat.openclaw.generated.mdx
@@ -978,6 +978,9 @@ navigation:
                   - page: "Set Up Slack"
                     path: _build/agent-variants/manage-sandboxes/set-up-slack.hermes.generated.mdx
                     slug: set-up-slack
+                  - page: "Set Up Google Chat"
+                    path: _build/agent-variants/manage-sandboxes/set-up-google-chat.hermes.generated.mdx
+                    slug: set-up-google-chat
                   - page: "Set Up WeChat"
                     path: _build/agent-variants/manage-sandboxes/set-up-wechat.hermes.generated.mdx
                     slug: set-up-wechat

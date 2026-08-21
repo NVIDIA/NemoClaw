@@ -546,13 +546,28 @@ jobs:
             exit 1
           fi
           reference="$IMAGE@$digest"
-          scripts/checks/validate-managed-base-index.sh \
-            "$reference" \
-            "${platform_digests[linux/amd64]}" \
-            "${platform_digests[linux/arm64]}"
           install -d -m 0700 "$RUNNER_TEMP/llama-cpp-candidate"
           docker buildx imagetools inspect "$reference" --raw \
             > "$RUNNER_TEMP/llama-cpp-candidate/candidate-index.json"
+          if ! jq -e \
+            --arg amd64 "${platform_digests[linux/amd64]}" \
+            --arg arm64 "${platform_digests[linux/arm64]}" '
+              (keys | sort) == ["manifests", "mediaType", "schemaVersion"]
+              and .schemaVersion == 2
+              and .mediaType == "application/vnd.oci.image.index.v1+json"
+              and (.manifests | type == "array" and length == 2)
+              and all(.manifests[];
+                (keys | sort) == ["digest", "mediaType", "platform", "size"]
+                and .mediaType == "application/vnd.oci.image.manifest.v1+json"
+                and (.size | type == "number" and . > 0 and floor == .)
+                and (.platform | keys | sort) == ["architecture", "os"]
+              )
+              and ([.manifests[] | select(.platform == {os:"linux", architecture:"amd64"} and .digest == $amd64)] | length) == 1
+              and ([.manifests[] | select(.platform == {os:"linux", architecture:"arm64"} and .digest == $arm64)] | length) == 1
+            ' "$RUNNER_TEMP/llama-cpp-candidate/candidate-index.json" >/dev/null; then
+            echo "ERROR: candidate index does not match the exact platform digests." >&2
+            exit 1
+          fi
           actual_digest="sha256:$(sha256sum "$RUNNER_TEMP/llama-cpp-candidate/candidate-index.json" | awk '{print $1}')"
           if [ "$actual_digest" != "$digest" ]; then
             echo "ERROR: candidate index bytes do not match its registry digest." >&2

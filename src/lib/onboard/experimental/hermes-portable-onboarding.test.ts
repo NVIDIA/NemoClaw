@@ -823,11 +823,14 @@ describe("Hermes portable onboarding transaction", () => {
       gatewayName: "nemoclaw",
       lifecycleGeneration: "generation-1",
       openshellDriver: "docker",
-      openshellVersion: "0.0.101",
+      openshellVersion: "0.0.106",
     };
 
     expect(classifyHermesPortableRegistry(receipt, null)).toEqual({ kind: "missing" });
     expect(classifyHermesPortableRegistry(receipt, matching)).toMatchObject({ kind: "matching" });
+    expect(
+      classifyHermesPortableRegistry(receipt, { ...matching, openshellVersion: "0.0.101" }),
+    ).toMatchObject({ kind: "conflict" });
     expect(
       classifyHermesPortableRegistry(receipt, { ...matching, lifecycleGeneration: "other" }),
     ).toMatchObject({ kind: "conflict" });

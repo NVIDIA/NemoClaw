@@ -2818,8 +2818,9 @@ function presetContentMatchesGateway(sandboxName: string, presetContent: string)
 /**
  * Interactive preset picker for the `policy add` command. Prints the
  * presets on stderr (● applied, ○ not applied), prompts for a number, and
- * resolves to the chosen preset name or `null` on cancel. Rejects with
- * `code: "EOF"` when stdin closes before an answer (see `askPreset`).
+ * resolves to the chosen preset name or `null` on cancel. Invalid input
+ * returns `null` with process exit status 1. Rejects with `code: "EOF"` when
+ * stdin closes before an answer (see `askPreset`).
  */
 async function selectFromList(
   items: PresetInfo[],
@@ -2838,13 +2839,10 @@ async function selectFromList(
   const trimmed = (await askPreset(question)).trim();
   const effectiveInput = trimmed || (defaultNum ? String(defaultNum) : "");
   if (!effectiveInput) return null;
-  if (!/^\d+$/.test(effectiveInput)) {
-    process.stderr.write("\n  Invalid preset number.\n");
-    return null;
-  }
-  const item = items[Number(effectiveInput) - 1];
+  const item = /^\d+$/.test(effectiveInput) ? items[Number(effectiveInput) - 1] : undefined;
   if (!item) {
     process.stderr.write("\n  Invalid preset number.\n");
+    process.exitCode = 1;
     return null;
   }
   if (applied.includes(item.name)) {

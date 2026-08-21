@@ -72,6 +72,7 @@ import {
 } from "../../state/gateway-registry";
 import { stopHermesForwardWatchers } from "./hermes-forward-watcher-cleanup";
 import {
+  stopBedrockRuntimeAdapter,
   stopHttpsPinRuntimeAdapter,
   stopOpenRouterRuntimeAdapter,
 } from "./openrouter-runtime-adapter-cleanup";
@@ -2890,6 +2891,9 @@ function executePlan(
       }
       stopOllamaAuthProxy(paths, runtime, !scopedToSelectedGateway);
       stopOpenRouterRuntimeAdapter(paths, runtime, {
+        scanOrphans: !scopedToSelectedGateway,
+      });
+      stopBedrockRuntimeAdapter(paths, runtime, {
         scanOrphans: !scopedToSelectedGateway,
       });
       if (scopedToSelectedGateway) {

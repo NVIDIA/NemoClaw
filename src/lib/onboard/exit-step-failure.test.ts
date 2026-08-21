@@ -286,6 +286,44 @@ describe("incomplete-onboard --resume backstop (#6003)", () => {
     errorSpy.mockRestore();
   });
 
+  it("records signals as terminal after validation preservation is latched (#9732)", async () => {
+    const signalListeners = new Map<"SIGINT" | "SIGTERM", () => void>();
+    const kill = vi.fn();
+    const processLike = {
+      once: vi.fn(),
+      on: (signal: "SIGINT" | "SIGTERM", listener: () => void) => {
+        signalListeners.set(signal, listener);
+      },
+      removeListener: (signal: "SIGINT" | "SIGTERM", listener: () => void) => {
+        expect(signalListeners.get(signal)).toBe(listener);
+        signalListeners.delete(signal);
+      },
+      kill,
+      pid: 4242,
+    };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    session.saveSession(session.createSession({ lastStepStarted: "preflight" }));
+
+    try {
+      registerIncompleteOnboardExitFailureHandler(
+        session,
+        () => true,
+        "Onboarding exited before the step completed.",
+        processLike,
+      );
+      signalListeners.get("SIGTERM")?.();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      const loaded = requireLoadedSession();
+      expect(loaded.status).toBe("failed");
+      expect(loaded.failure).toMatchObject({ step: "preflight", interrupted: true });
+      expect(loaded.machine.state).toBe("failed");
+      expect(kill).toHaveBeenCalledWith(4242, "SIGTERM");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it.skipIf(process.platform === "win32")(
     "prints the resume hint before re-raising SIGINT in a real subprocess",
     async () => {
