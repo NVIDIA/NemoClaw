@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { McpBridgeEntry } from "../../state/registry";
+import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import {
   DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS,
   DEEPAGENTS_STRICT_JSON_HELPERS,
@@ -21,18 +22,30 @@ export const OPENCLAW_MCPORTER_ROOT = openClawMcporterRoot();
 const DEFAULT_AUTH_HEADER = "Authorization";
 const DEFAULT_AUTH_SCHEME = "Bearer";
 
-function authPlaceholder(entry: Pick<McpBridgeEntry, "env">): string | null {
+function authPlaceholder(
+  entry: Pick<McpBridgeEntry, "env">,
+  credentialRevision?: McpAttachedCredentialRevision,
+): string | null {
   const envName = entry.env[0];
-  return envName ? `openshell:resolve:env:${envName}` : null;
+  if (!envName) return null;
+  const revision =
+    credentialRevision && credentialRevision !== "canonical" ? `${credentialRevision}_` : "";
+  return `openshell:resolve:env:${revision}${envName}`;
 }
 
-export function authorizationValue(entry: Pick<McpBridgeEntry, "env">): string | null {
-  const placeholder = authPlaceholder(entry);
+export function authorizationValue(
+  entry: Pick<McpBridgeEntry, "env">,
+  credentialRevision?: McpAttachedCredentialRevision,
+): string | null {
+  const placeholder = authPlaceholder(entry, credentialRevision);
   return placeholder ? `${DEFAULT_AUTH_SCHEME} ${placeholder}` : null;
 }
 
-export function entryHeaders(entry: Pick<McpBridgeEntry, "env">): Record<string, string> {
-  const authorization = authorizationValue(entry);
+export function entryHeaders(
+  entry: Pick<McpBridgeEntry, "env">,
+  credentialRevision?: McpAttachedCredentialRevision,
+): Record<string, string> {
+  const authorization = authorizationValue(entry, credentialRevision);
   return authorization ? { [DEFAULT_AUTH_HEADER]: authorization } : {};
 }
 
@@ -45,7 +58,9 @@ export function pythonJsonLiteral(value: unknown): string {
  * `config get --json` with an `accept: application/json, text/event-stream`
  * header, even when that header is absent from the persisted config. Treat
  * only that synthesized header as equivalent; every persisted/other header
- * remains part of the ownership fingerprint.
+ * remains part of the ownership fingerprint. When the expected placeholder is
+ * canonical, a strictly bounded revisioned form of the same credential is also
+ * equivalent. A revisioned expectation remains exact.
  *
  * This function is also serialized into the in-sandbox inspection commands,
  * so keep it self-contained (no references to module-scope values).
@@ -59,7 +74,23 @@ export function mcporterHeadersMatchExpected(
   }
   const actualHeaders = actual as Record<string, unknown>;
   for (const [name, value] of Object.entries(expected)) {
-    if (actualHeaders[name] !== value) return false;
+    const actualValue = actualHeaders[name];
+    if (actualValue === value) continue;
+    if (name.toLowerCase() !== "authorization") return false;
+    const prefix = "Bearer openshell:resolve:env:";
+    if (
+      typeof actualValue !== "string" ||
+      !value.startsWith(prefix) ||
+      !actualValue.startsWith(prefix)
+    ) {
+      return false;
+    }
+    const envName = value.slice(prefix.length);
+    const versioned = actualValue.slice(prefix.length);
+    const suffix = `_${envName}`;
+    if (!versioned.startsWith("v") || !versioned.endsWith(suffix)) return false;
+    const revision = versioned.slice(1, -suffix.length);
+    if (!/^[0-9]{1,20}$/u.test(revision)) return false;
   }
   const extraNames = Object.keys(actualHeaders).filter((name) => !Object.hasOwn(expected, name));
   if (extraNames.length === 0) return true;
@@ -164,11 +195,12 @@ export function buildOpenClawMcporterInspectCommand(
   entry: McpBridgeEntry,
   failOnMismatch: boolean,
   root = OPENCLAW_MCPORTER_ROOT,
+  credentialRevision?: McpAttachedCredentialRevision,
 ): string {
   const payload = {
     server: entry.server,
     url: entry.url,
-    headers: entryHeaders(entry),
+    headers: entryHeaders(entry, credentialRevision),
     failOnMismatch,
     root,
   };

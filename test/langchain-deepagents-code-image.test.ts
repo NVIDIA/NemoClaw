@@ -490,7 +490,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
         "managed-dcode-runtime.py",
         "dcode-session-supervisor.py",
         "nemoclaw_observability.py",
+        "nemoclaw_read_only_mcp.py",
         "patch-managed-deepagents-code.py",
+        "validate-read-only-mcp-call.py",
         "validate-nemotron-ultra-profile.py",
         "DEEPAGENTS_CODE_LANGSMITH_TRACING=false",
         "LANGSMITH_TRACING=false",
@@ -510,6 +512,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
         "find /opt/nemoclaw-deepagents-profile-plugin -type f -print | LC_ALL=C sort",
         "/opt/venv/bin/pip3 check",
         "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py",
+        "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py",
       ].every((s) => dockerfile.includes(s)),
     ).toBe(true);
     expect(
@@ -534,6 +537,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     );
     expect(dockerfile).toContain(
       "rm -f /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py",
+    );
+    expect(dockerfile).toContain(
+      "rm -f /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py",
     );
     expect(dockerfile).not.toContain("patch-nemotron-ultra-profile.py");
     expect(dockerfile).not.toContain("nemotron-ultra-harness-profile.py");

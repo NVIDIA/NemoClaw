@@ -117,6 +117,55 @@ describe("sandbox create intent machine boundary", () => {
     expect(resolvedIntents[2]).toEqual(resolvedIntents[0]);
   });
 
+  it("replaces a stale resumed create-intent policy with the authoritative rebuild selection (#9792)", async () => {
+    const session = createSession({
+      sandboxName: "saved",
+      policyPresets: ["github"],
+    });
+    const { deps, calls } = createDeps();
+    calls.resolveCreateIntent.mockResolvedValue({
+      sandboxName: "saved",
+      inferenceProvider: "provider",
+      activeMessagingChannels: [],
+      messagingProviderRequests: [],
+      reusableMessagingProviders: [],
+      extraProviders: [],
+      staleExtraProviders: [],
+      hermesToolGateways: [],
+      policy: {
+        basePolicyPath: "/repo/policy.yaml",
+        activeMessagingChannels: [],
+        options: {
+          directGpu: false,
+          additionalPresets: ["mcp-bridge-fake"],
+          policyTier: null,
+          baselineExclusions: [],
+        },
+      },
+      gpuCreateArgs: [],
+      resourceCreateArgs: [],
+      gpuRoutePlan: "none",
+      sandboxGpuLogMessage: null,
+      disabledChannelNames: [],
+      extraPlaceholderKeys: [],
+    } as never);
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      authoritativeResumeConfig: true,
+      rebuildPolicyPresets: ["github"],
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+      rebuildPolicyPresets: ["github"],
+      resolved: {
+        policy: { options: { additionalPresets: ["github"] } },
+      },
+    });
+  });
+
   it("carries an explicit recreate request through a fresh sandbox decision (#8847)", async () => {
     const session = createSession({ sandboxName: "same-sandbox" });
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
