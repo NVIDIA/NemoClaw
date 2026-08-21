@@ -345,6 +345,7 @@ jobs:
           user_slice_drop_in="/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf"
           disable_linger=0
           restore_manager=0
+          cleanup_failed=0
           directories=()
           sudo systemctl stop "user@${uid}.service" || true
 
@@ -370,14 +371,14 @@ jobs:
               if [ "$kind" = "file" ]; then
                 case "$name:$target" in
                   "delegation:$delegation_drop_in")
-                    cleanup_fixture_drop_in "$target" $'[Service]\nDelegate=cpu memory pids'
+                    cleanup_fixture_drop_in "$target" $'[Service]\nDelegate=cpu memory pids' || cleanup_failed=1
                     ;;
                   "app-slice:$app_slice_drop_in"|"user-slice:$user_slice_drop_in")
-                    cleanup_fixture_drop_in "$target" $'[Slice]\nCPUWeight=100'
+                    cleanup_fixture_drop_in "$target" $'[Slice]\nCPUWeight=100' || cleanup_failed=1
                     ;;
                   *)
                     printf 'Refusing unexpected Portable CPU-delegation receipt: %s:%s\n' "$name" "$target" >&2
-                    exit 1
+                    cleanup_failed=1
                     ;;
                 esac
               elif [ "$kind" = "linger" ] && [ "$name" = "$USER" ] && [ -z "${target:-}" ]; then
@@ -391,23 +392,27 @@ jobs:
                     ;;
                   *)
                     printf 'Refusing unexpected Portable CPU-delegation directory receipt: %s\n' "$name" >&2
-                    exit 1
+                    cleanup_failed=1
                     ;;
                 esac
               else
                 printf 'Refusing malformed Portable CPU-delegation receipt.\n' >&2
-                exit 1
+                cleanup_failed=1
               fi
             done <"$receipt"
           fi
-          sudo systemctl daemon-reload
+          sudo systemctl daemon-reload || cleanup_failed=1
           for directory in "${directories[@]}"; do
             sudo rmdir -- "$directory" || true
           done
           if [ "$restore_manager" = "1" ]; then
-            sudo systemctl start "user@${uid}.service"
+            sudo systemctl start "user@${uid}.service" || cleanup_failed=1
           fi
           if [ "$disable_linger" = "1" ]; then
-            sudo loginctl disable-linger "$USER"
+            sudo loginctl disable-linger "$USER" || cleanup_failed=1
           fi
-          rm -f -- "$receipt"
+          rm -f -- "$receipt" || cleanup_failed=1
+          if [ "$cleanup_failed" = "1" ]; then
+            printf 'Portable CPU-delegation cleanup detected invalid fixture state or a cleanup command failed.\n' >&2
+            exit 1
+          fi
