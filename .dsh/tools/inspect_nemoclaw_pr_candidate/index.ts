@@ -15,7 +15,6 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
   branch: string;
   headSha: string;
   clean: boolean | null;
-  statusEntries: string[];
   commits: {
     sha: string;
     subject: string;
@@ -73,10 +72,6 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
     baseSha = (
       await run("git rev-parse " + q(remote + "/" + baseBranch), "Read trusted base commit")
     ).stdout.text.trim(),
-    statusEntries = Buffer.from(checkout.statusBase64 ?? "", "base64")
-      .toString("utf8")
-      .split("\0")
-      .filter(Boolean),
     range = remote + "/" + baseBranch + "..HEAD";
   const log = (
       await run(
@@ -204,7 +199,6 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
     branch,
     headSha,
     clean: checkout.clean,
-    statusEntries,
     commits,
     changedFiles,
     aheadCount: commits.length,
