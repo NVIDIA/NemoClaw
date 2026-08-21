@@ -1397,13 +1397,13 @@ describe("portable profile systemctl fixture", () => {
     const provision = portableLaunchStep("Provision restricted rootless Linux runtime").run ?? "";
     expect(provision).not.toContain("portable-profile-systemctl-shim.sh");
     expect(provision).toContain('sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" /run/nemoclaw');
-    expect(provision).toContain(
-      "/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf",
-    );
+    expect(provision).toContain('containers_conf="/run/nemoclaw/portable-containers.conf"');
+    expect(provision).toContain("podman.service.d/90-nemoclaw-cgroup-manager.conf");
+    expect(provision).toContain('cgroup_manager = "systemd"');
+    expect(provision).toContain("Environment=CONTAINERS_CONF=${containers_conf}");
+    expect(provision).toContain("user@.service.d/90-nemoclaw-cpu-delegation.conf");
     expect(provision).toContain("/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf");
-    expect(provision).toContain(
-      "/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf",
-    );
+    expect(provision).toContain("user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf");
     expect(provision).toContain("Delegate=cpu memory pids");
     expect(provision.match(/CPUWeight=100/gu)).toHaveLength(2);
     expect(provision).toContain('sudo systemctl stop "user@${uid}.service"');
@@ -1411,7 +1411,13 @@ describe("portable profile systemctl fixture", () => {
     expect(provision).toContain('sudo systemctl start "user@${uid}.service"');
     expect(provision).toContain("/usr/bin/systemctl --user start podman.socket");
     expect(provision).toContain("inspectPortableCpuDelegation");
-    expect(provision).toContain('test "$cgroup_manager" = "systemd"');
+    expect(provision).toContain('if [ "$cgroup_manager" != "systemd" ]; then');
+    expect(provision).toContain("Portable Podman must use the systemd cgroup manager");
+    const podmanConfigIndex = provision.indexOf('cgroup_manager = "systemd"');
+    expect(podmanConfigIndex).toBeGreaterThanOrEqual(0);
+    expect(podmanConfigIndex).toBeLessThan(
+      provision.indexOf('sudo systemctl start "user@${uid}.service"'),
+    );
     const runtimeExportIndex = provision.indexOf("XDG_RUNTIME_DIR=%s");
     expect(runtimeExportIndex).toBeGreaterThanOrEqual(0);
     expect(runtimeExportIndex).toBeLessThan(
@@ -1429,7 +1435,10 @@ describe("portable profile systemctl fixture", () => {
     const cleanupRun = cleanup.run ?? "";
     expect(cleanup.if).toBe("always()");
     expect(cleanupRun).toContain('docker buildx rm "$builder_name"');
-    expect(cleanupRun).toContain("cleanup_fixture_drop_in");
+    expect(cleanupRun).toContain("Delegate=cpu memory pids\\n'");
+    expect(cleanupRun).toContain("CPUWeight=100\\n'");
+    expect(cleanupRun).toContain('"podman-service:$podman_service_drop_in"');
+    expect(cleanupRun).toContain('"podman-config:$containers_conf"');
     expect(cleanupRun).toContain("sudo systemctl daemon-reload");
     expect(cleanupRun.indexOf('docker buildx rm "$builder_name"')).toBeLessThan(
       cleanupRun.indexOf("podman system reset"),
