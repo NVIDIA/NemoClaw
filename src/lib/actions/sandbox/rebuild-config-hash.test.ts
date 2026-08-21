@@ -108,7 +108,7 @@ describe.skipIf(process.platform !== "linux")("OpenClaw rebuild config hash refr
   it.each([
     {
       title: "rejects a missing final config without changing the config hash (#9530)",
-      arrange: (configDir: string, hashPath: string) => {
+      arrange: (_configDir: string, hashPath: string) => {
         fs.writeFileSync(hashPath, "stale  openclaw.json\n");
       },
       expectedStatus: 17,
