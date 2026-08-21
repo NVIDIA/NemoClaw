@@ -1,5 +1,5 @@
 /**
- * Summarize open NemoClaw pull requests and exclude candidates that lack required-check, review, or merge data. The heterogeneous readiness rows are intentionally represented as an open output object.
+ * Summarize open NemoClaw pull requests and exclude candidates that lack required-check, review, or merge data. Return closed readiness rows for the NemoClaw merge queue.
  */
 export default async function summarize_nemoclaw_merge_queue(input: {
   workdir: string;
@@ -8,7 +8,132 @@ export default async function summarize_nemoclaw_merge_queue(input: {
   base?: string;
   includeStacked?: boolean;
   enrichLimit?: Integer;
-}): Promise<Open<{}>> {
+}): Promise<{
+  checkedAt: string;
+  repo: string;
+  filters: { limit: Integer; base: string | null; includeStacked: boolean; enrichLimit: Integer };
+  counts: {
+    approvedGreen: Integer;
+    enriched: Integer;
+    unenriched: Integer;
+    strictReady: Integer;
+    directNearMisses: Integer;
+    stackedReady: Integer;
+    stackedNearMisses: Integer;
+    reviewQueue: Integer;
+  };
+  strictReady: {
+    number: Integer;
+    title: string;
+    author: string | null;
+    base: string;
+    head: string;
+    mergeable: string;
+    reviewDecision: string;
+    updatedAt: string;
+    url: string;
+    headSha: string;
+    mergeableState: string;
+    checksExitCode: Integer;
+    failedChecks: string[];
+    pendingChecks: string[];
+    unresolvedThreadCount: Integer;
+    threadsTruncated: boolean;
+    advisor: string | null;
+    advisorCurrent: boolean;
+    advisorFindings: string | null;
+    enrichmentError: string | null;
+  }[];
+  directNearMisses: {
+    number: Integer;
+    title: string;
+    author: string | null;
+    base: string;
+    head: string;
+    mergeable: string;
+    reviewDecision: string;
+    updatedAt: string;
+    url: string;
+    headSha: string;
+    mergeableState: string;
+    checksExitCode: Integer;
+    failedChecks: string[];
+    pendingChecks: string[];
+    unresolvedThreadCount: Integer;
+    threadsTruncated: boolean;
+    advisor: string | null;
+    advisorCurrent: boolean;
+    advisorFindings: string | null;
+    enrichmentError: string | null;
+  }[];
+  stackedReady: {
+    number: Integer;
+    title: string;
+    author: string | null;
+    base: string;
+    head: string;
+    mergeable: string;
+    reviewDecision: string;
+    updatedAt: string;
+    url: string;
+    headSha: string;
+    mergeableState: string;
+    checksExitCode: Integer;
+    failedChecks: string[];
+    pendingChecks: string[];
+    unresolvedThreadCount: Integer;
+    threadsTruncated: boolean;
+    advisor: string | null;
+    advisorCurrent: boolean;
+    advisorFindings: string | null;
+    enrichmentError: string | null;
+  }[];
+  stackedNearMisses: {
+    number: Integer;
+    title: string;
+    author: string | null;
+    base: string;
+    head: string;
+    mergeable: string;
+    reviewDecision: string;
+    updatedAt: string;
+    url: string;
+    headSha: string;
+    mergeableState: string;
+    checksExitCode: Integer;
+    failedChecks: string[];
+    pendingChecks: string[];
+    unresolvedThreadCount: Integer;
+    threadsTruncated: boolean;
+    advisor: string | null;
+    advisorCurrent: boolean;
+    advisorFindings: string | null;
+    enrichmentError: string | null;
+  }[];
+  unenriched: {
+    number: Integer;
+    title: string;
+    author: string | null;
+    base: string;
+    head: string;
+    mergeable: string;
+    reviewDecision: string;
+    updatedAt: string;
+    url: string;
+    readiness: "not-inspected";
+  }[];
+  reviewQueue: {
+    number: Integer;
+    title: string;
+    author: string | null;
+    base: string;
+    head: string;
+    mergeable: string;
+    reviewDecision: string;
+    updatedAt: string;
+    url: string;
+  }[];
+}> {
   const repo = input.repo ?? "NVIDIA/NemoClaw";
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("repo must be owner/name");
   const limit = Math.max(1, Math.min(100, input.limit ?? 50)),
@@ -124,6 +249,7 @@ export default async function summarize_nemoclaw_merge_queue(input: {
         advisor: body.match(/recommendation: ([^;\n]+)/)?.[1]?.trim() ?? null,
         advisorCurrent: Boolean(advisorHead && advisorHead === head),
         advisorFindings: body.match(/\*\*Findings:\*\*[^\n]*/)?.[0] ?? null,
+        enrichmentError: null,
       });
     } catch (e) {
       const projected = await tools.project_diagnostic_text({
@@ -133,7 +259,20 @@ export default async function summarize_nemoclaw_merge_queue(input: {
         maxCharacters: 1000,
         maxLineCharacters: 1000,
       });
-      enriched.push({ ...c, enrichmentError: projected.text });
+      enriched.push({
+        ...c,
+        headSha: "",
+        mergeableState: "unknown",
+        checksExitCode: 1,
+        failedChecks: [],
+        pendingChecks: [],
+        unresolvedThreadCount: 0,
+        threadsTruncated: false,
+        advisor: null,
+        advisorCurrent: false,
+        advisorFindings: null,
+        enrichmentError: projected.text,
+      });
     }
   }
   const ids = new Set(enriched.map((p) => p.number)),

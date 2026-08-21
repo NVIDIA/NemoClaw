@@ -16,7 +16,55 @@ export default async function run_nemoclaw_focused_repair_validation(input: {
   docs?: boolean;
   timeoutMs?: Integer;
   dryRun?: boolean;
-}): Promise<Open<{}>> {
+}): Promise<{
+  ok: boolean;
+  dryRun: boolean;
+  baseRef: string;
+  files: string[];
+  tests: string[];
+  projects: string[];
+  inferred: {
+    baseRef: string;
+    files: string[];
+    branchFiles: string[];
+    workingTreeFiles: string[];
+    untrackedFiles: string[];
+    projects: string[];
+    targetedFiles: string[];
+    commands: string[];
+    notes: string[];
+  };
+  planned: { name: string; command: string; mutates?: boolean }[];
+  steps: {
+    name: string;
+    command: string;
+    code: Integer;
+    stdoutTail: string;
+    stderrTail: string;
+    truncated: boolean;
+  }[];
+  failed: {
+    name: string;
+    command: string;
+    code: Integer;
+    stdoutTail: string;
+    stderrTail: string;
+    truncated: boolean;
+  }[];
+  nul: null | {
+    ok: boolean;
+    checked: Integer;
+    files: string[];
+    findings: { file: string; count: Integer }[];
+    changed: {
+      baseRef: string;
+      files: string[];
+      branchFiles: string[];
+      workingTreeFiles: string[];
+      untrackedFiles: string[];
+    };
+  };
+}> {
   const baseRef = input.baseRef ?? "origin/main",
     dryRun = input.dryRun ?? true,
     timeoutMs = Math.max(30000, Math.min(300000, input.timeoutMs ?? 180000));

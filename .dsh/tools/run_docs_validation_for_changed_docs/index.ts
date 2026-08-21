@@ -6,7 +6,22 @@ export default async function run_docs_validation_for_changed_docs(input: {
   baseRef?: string;
   runDocs?: boolean;
   dryRun?: boolean;
-}): Promise<Open<{}>> {
+}): Promise<{
+  ok: boolean;
+  dryRun: boolean;
+  baseRef: string;
+  changed: string[];
+  docsChanged: string[];
+  planned: string[];
+  steps: {
+    name: string;
+    code: Integer;
+    stdoutTail: string;
+    stderrTail: string;
+    truncated: boolean;
+  }[];
+  status: string;
+}> {
   const baseRef = input.baseRef ?? "origin/main",
     dryRun = input.dryRun ?? true;
   if (baseRef.startsWith("-") || !/^[A-Za-z0-9_./-]{1,200}$/.test(baseRef))

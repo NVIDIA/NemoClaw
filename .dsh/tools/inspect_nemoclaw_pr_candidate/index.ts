@@ -7,7 +7,35 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
   remote?: string;
   baseBranch?: string;
   refreshBase?: boolean;
-}): Promise<Open<{}>> {
+}): Promise<{
+  repository: string;
+  remote: string;
+  baseBranch: string;
+  baseSha: string;
+  branch: string;
+  headSha: string;
+  clean: boolean | null;
+  statusEntries: string[];
+  commits: {
+    sha: string;
+    subject: string;
+    signedOffBy: boolean;
+    githubVerification: string;
+    verificationReason: string | null;
+  }[];
+  changedFiles: string[];
+  aheadCount: Integer;
+  permissions: { viewerPermission: string; canAssignSelf: boolean };
+  existingPullRequest: { number: Integer; state: string; url: string } | null;
+  inferred: {
+    issueNumbers: Integer[];
+    typeOfChange: string;
+    sensitivePaths: string[];
+    dgxStationEvidenceRequired: boolean;
+  };
+  blockers: { code: string; message: string }[];
+  warnings: { code: string; message: string }[];
+}> {
   const q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'";
   const repo = input.repository ?? "NVIDIA/NemoClaw",
     remote = input.remote ?? "origin",
@@ -21,7 +49,14 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
   const run = async (command, description, allow = false) => {
     const r = await tools.bash({ command, workdir: input.workdir, description, timeoutMs: 60000 });
     if (r.kind !== "foreground") throw new Error(description + " did not finish");
-    if (r.exitCode !== 0 && !allow) throw new Error(r.stderr.text || description + " failed");
+    if (r.exitCode !== 0 && !allow) {
+      const diagnostic = await tools.project_diagnostic_text({
+        lines: r.stderr.text.split(/\r?\n/),
+        maxLines: 20,
+        maxCharacters: 4000,
+      });
+      throw new Error(diagnostic.text || description + " failed");
+    }
     return r;
   };
   if (input.refreshBase !== false)
@@ -45,7 +80,10 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
     range = remote + "/" + baseBranch + "..HEAD";
   const log = (
       await run(
-        "git log --reverse --format=" + q("%H%x09%s") + " " + q(range),
+        "git log --reverse --format=" +
+          q("%H%x09%s%x09%(trailers:key=Signed-off-by,valueonly,separator=%x1f)") +
+          " " +
+          q(range),
         "Read candidate commits",
       )
     ).stdout.text
@@ -53,7 +91,7 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
       .filter(Boolean),
     commits = [];
   for (const row of log) {
-    const [sha, subject] = row.split("\t");
+    const [sha, subject, signedOffByTrailer = ""] = row.split("\t");
     const vr = await tools.run_github_cli({
       workdir: input.workdir,
       args: [
@@ -72,7 +110,13 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
       verificationReason = reason || null;
     } else if (!/404|Not Found|422|No commit found for SHA/i.test(vr.stderr + vr.stdout))
       throw new Error("GitHub verification read failed; stop and restore access");
-    commits.push({ sha, subject, githubVerification, verificationReason });
+    commits.push({
+      sha,
+      subject,
+      signedOffBy: signedOffByTrailer.trim().length > 0,
+      githubVerification,
+      verificationReason,
+    });
   }
   const changedFiles = (
     await run(
@@ -82,16 +126,12 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
   ).stdout.text
     .split(/\r?\n/)
     .filter(Boolean);
-  const name = (
-      await run("git config user.name", "Read contributor name", true)
-    ).stdout.text.trim(),
-    email = (await run("git config user.email", "Read contributor email", true)).stdout.text.trim(),
-    permission = (
-      await tools.run_github_cli({
-        workdir: input.workdir,
-        args: ["repo", "view", repo, "--json", "viewerPermission", "--jq", ".viewerPermission"],
-      })
-    ).stdout.trim();
+  const permission = (
+    await tools.run_github_cli({
+      workdir: input.workdir,
+      args: ["repo", "view", repo, "--json", "viewerPermission", "--jq", ".viewerPermission"],
+    })
+  ).stdout.trim();
   const existingResult = await tools.run_github_cli({
       workdir: input.workdir,
       args: [
@@ -136,10 +176,10 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
       code: "no-commits",
       message: "The candidate has no commits ahead of the trusted base.",
     });
-  if (!name || !email)
+  if (commits.some((c) => !c.signedOffBy))
     blockers.push({
-      code: "missing-identity",
-      message: "Git contributor name or email is missing.",
+      code: "missing-sign-off",
+      message: "One or more candidate commits lack a Signed-off-by trailer.",
     });
   if (commits.some((c) => c.githubVerification === "unverified"))
     blockers.push({
@@ -168,11 +208,6 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
     commits,
     changedFiles,
     aheadCount: commits.length,
-    identity: {
-      name,
-      email,
-      dcoDeclaration: name && email ? "Signed-off-by: " + name + " <" + email + ">" : "",
-    },
     permissions: {
       viewerPermission: permission,
       canAssignSelf: ["TRIAGE", "WRITE", "MAINTAIN", "ADMIN"].includes(permission),

@@ -19,17 +19,16 @@ export default async function refresh_pr_body_evidence(input: {
   ok: boolean;
   apply: boolean;
   mutated: boolean;
-  wouldUpdate?: boolean;
+  wouldUpdate: boolean;
   number: Integer;
   repo: string;
-  workdir: string;
-  prState?: string;
+  prState: string;
   headSha: string;
   agentsBlob: string;
-  bodyChanged?: boolean;
+  bodyChanged: boolean;
   polls: Integer;
   waitedMs: Integer;
-  updatedAt?: string | null;
+  updatedAt: string | null;
 }> {
   const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
   const repo = input.repo ?? "NVIDIA/NemoClaw";
@@ -66,6 +65,15 @@ export default async function refresh_pr_body_evidence(input: {
   if (input.broadGate) oneLine("Broad gate evidence", input.broadGate.evidence);
   const accessFailure =
     /authentication|authorization|forbidden|not authorized|HTTP 40[13]|resource not accessible|SSO/i;
+  const diagnostic = async (lines, sourceTruncated = false) =>
+    (
+      await tools.project_diagnostic_text({
+        lines,
+        maxLines: 20,
+        maxCharacters: 4000,
+        sourceTruncated,
+      })
+    ).text;
   const run = async (command, description) => {
     const result = await tools.bash({
       command,
@@ -74,17 +82,29 @@ export default async function refresh_pr_body_evidence(input: {
       timeoutMs: 30000,
     });
     if (result.kind !== "foreground") throw new Error(description + " did not finish");
-    const detail = result.stdout.text + "\n" + result.stderr.text;
+    const rawDetail = result.stderr.text || result.stdout.text;
     if (result.exitCode !== 0) {
-      if (accessFailure.test(detail))
+      const detail = await diagnostic(
+        rawDetail.split(/\r?\n/),
+        result.stderr.truncated || result.stdout.truncated,
+      );
+      if (accessFailure.test(rawDetail))
         throw new Error(
-          "GitHub access failed; correct authentication or authorization before retrying.\n" +
-            detail.trim(),
+          "GitHub access failed; correct authentication or authorization before retrying." +
+            (detail ? "\n" + detail : ""),
         );
-      throw new Error(description + " failed.\n" + detail.trim());
+      throw new Error(detail || description + " failed");
     }
     if (result.stdout.truncated) throw new Error(description + " exceeded the bounded read");
     return result.stdout.text.trim();
+  };
+  const github = async (options) => {
+    try {
+      return await tools.run_github_cli(options);
+    } catch (error) {
+      const detail = await diagnostic([String(error?.message ?? error)]);
+      throw new Error(detail || "GitHub operation failed");
+    }
   };
   const checkout = await tools.read_git_checkout({
     workdir: input.workdir,
@@ -101,18 +121,25 @@ export default async function refresh_pr_body_evidence(input: {
       "Checkout commit changed: expected " + input.expectedHeadSha + ", found " + localHead,
     );
   const readPr = async () => {
-    const [pr, detailResult] = await Promise.all([
-      tools.read_nemoclaw_pr({
-        workdir: input.workdir,
-        number: input.number,
-        repository: repo,
-      }),
-      tools.run_github_cli({
-        workdir: input.workdir,
-        args: ["api", "repos/" + repo + "/pulls/" + input.number],
-        timeoutMs: 30000,
-      }),
-    ]);
+    let pr;
+    let detailResult;
+    try {
+      [pr, detailResult] = await Promise.all([
+        tools.read_nemoclaw_pr({
+          workdir: input.workdir,
+          number: input.number,
+          repository: repo,
+        }),
+        github({
+          workdir: input.workdir,
+          args: ["api", "repos/" + repo + "/pulls/" + input.number],
+          timeoutMs: 30000,
+        }),
+      ]);
+    } catch (error) {
+      const detail = await diagnostic([String(error?.message ?? error)]);
+      throw new Error(detail || "Could not read pull request");
+    }
     const detail = JSON.parse(detailResult.stdout);
     return {
       state: String(pr.state).toLowerCase(),
@@ -209,13 +236,13 @@ export default async function refresh_pr_body_evidence(input: {
       wouldUpdate: pr.state === "open" && previewBody !== pr.body,
       number: input.number,
       repo,
-      workdir: input.workdir,
       prState: pr.state,
       headSha: localHead,
       agentsBlob,
       bodyChanged: previewBody !== pr.body,
       polls,
       waitedMs,
+      updatedAt: null,
     };
   if (pr.state !== "open")
     throw new Error(
@@ -237,7 +264,7 @@ export default async function refresh_pr_body_evidence(input: {
   let updated;
   try {
     await tools.write({ file_path: temporary, content: body });
-    const updateResult = await tools.run_github_cli({
+    const updateResult = await github({
       workdir: input.workdir,
       args: [
         "api",
@@ -260,9 +287,11 @@ export default async function refresh_pr_body_evidence(input: {
     mutated: true,
     number: input.number,
     repo,
-    workdir: input.workdir,
+    prState: finalPr.state,
     headSha: localHead,
     agentsBlob,
+    wouldUpdate: body !== finalPr.body,
+    bodyChanged: body !== finalPr.body,
     polls,
     waitedMs,
     updatedAt: updated.updated_at ?? null,

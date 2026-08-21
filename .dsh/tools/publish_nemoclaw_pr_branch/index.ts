@@ -8,7 +8,19 @@ export default async function publish_nemoclaw_pr_branch(input: {
   baseBranch?: string;
   expectedHeadSha: string;
   apply?: true;
-}): Promise<Open<{}>> {
+}): Promise<{
+  apply: boolean;
+  mutated: boolean;
+  pushed: boolean;
+  repository: string;
+  remote: string;
+  baseBranch: string;
+  branch: string;
+  headSha: string;
+  commits: { sha: string; verified: boolean; reason: string | null }[];
+  allVerified: boolean;
+  blocker: string | null;
+}> {
   const q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'";
   const repo = input.repository ?? "NVIDIA/NemoClaw",
     remote = input.remote ?? "origin",
@@ -22,7 +34,14 @@ export default async function publish_nemoclaw_pr_branch(input: {
   const run = async (command, description, allow = false) => {
     const r = await tools.bash({ command, workdir: input.workdir, description, timeoutMs: 120000 });
     if (r.kind !== "foreground") throw new Error(description + " did not finish");
-    if (r.exitCode !== 0 && !allow) throw new Error(r.stderr.text || description + " failed");
+    if (r.exitCode !== 0 && !allow) {
+      const diagnostic = await tools.project_diagnostic_text({
+        lines: r.stderr.text.split(/\r?\n/),
+        maxLines: 20,
+        maxCharacters: 4000,
+      });
+      throw new Error(diagnostic.text || description + " failed");
+    }
     return r;
   };
   const checkout = await tools.read_git_checkout({

@@ -26,7 +26,53 @@ export default async function prepare_nemoclaw_pr_candidate(input: {
     dco: { commitsVerified: boolean; name: string; email: string };
     noSecrets: boolean;
   };
-}): Promise<Open<{}>> {
+}): Promise<{
+  preflight: {
+    repository: string;
+    remote: string;
+    baseBranch: string;
+    baseSha: string;
+    branch: string;
+    headSha: string;
+    clean: boolean | null;
+    statusEntries: string[];
+    commits: {
+      sha: string;
+      subject: string;
+      signedOffBy: boolean;
+      githubVerification: string;
+      verificationReason: string | null;
+    }[];
+    changedFiles: string[];
+    aheadCount: Integer;
+    permissions: { viewerPermission: string; canAssignSelf: boolean };
+    existingPullRequest: { number: Integer; state: string; url: string } | null;
+    inferred: {
+      issueNumbers: Integer[];
+      typeOfChange: string;
+      sensitivePaths: string[];
+      dgxStationEvidenceRequired: boolean;
+    };
+    blockers: { code: string; message: string }[];
+    warnings: { code: string; message: string }[];
+  };
+  validation: {
+    baseRef: string;
+    files: string[];
+    branchFiles: string[];
+    workingTreeFiles: string[];
+    untrackedFiles: string[];
+    projects: string[];
+    targetedFiles: string[];
+    commands: string[];
+    notes: string[];
+  };
+  body: string | null;
+  templateSha: string | null;
+  readyToPublish: boolean;
+  blockers: { code: string; message: string }[];
+  warnings: { code: string; message: string }[];
+}> {
   const preflight = await tools.inspect_nemoclaw_pr_candidate({
     workdir: input.workdir,
     ...(input.repository ? { repository: input.repository } : {}),

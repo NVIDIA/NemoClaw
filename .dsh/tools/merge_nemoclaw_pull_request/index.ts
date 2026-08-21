@@ -14,16 +14,28 @@ export default async function merge_nemoclaw_pull_request(input: {
   mutated: boolean;
   repo: string;
   number: Integer;
-  url: string | null;
   disposition: "would-merge" | "merged" | "stale" | "blocked" | "not-merged" | "inconclusive";
   expectedHeadSha: string;
   observedHeadSha: string | null;
   expectedBaseRef: string;
   observedBaseRef: string | null;
-  method: string;
+  method: "merge" | "squash" | "rebase";
   mergeCommit: string | null;
   blockers: string[];
-  checks: Open<{}>;
+  checks: {
+    state: string;
+    isDraft: boolean;
+    mergeable: string | null;
+    mergeStateStatus: string | null;
+    reviewDecision: string;
+    requiredChecks: {
+      name: string;
+      matches: { name: string; state: string; bucket: string }[];
+    }[];
+    selectedMethodPermitted: boolean;
+    reviewThreads: { pages: Integer; total: Integer; unresolved: Integer; complete: boolean };
+    effectiveRuleCount: Integer;
+  };
   detail: string | null;
 }> {
   const repo = input.repo ?? "NVIDIA/NemoClaw";
@@ -33,14 +45,46 @@ export default async function merge_nemoclaw_pull_request(input: {
     throw new Error("number must be a positive integer");
   if (!/^[0-9a-f]{40}$/.test(input.expectedHeadSha))
     throw new Error("expectedHeadSha must be a complete lowercase commit SHA");
-  if (!/^[A-Za-z0-9._/-]+$/.test(input.expectedBaseRef) || input.expectedBaseRef.length > 255)
+  if (typeof input.expectedBaseRef !== "string" || input.expectedBaseRef.length > 255)
     throw new Error("expectedBaseRef contains an unsupported branch name");
-  const readPr = async () =>
-    tools.read_nemoclaw_pr({
-      workdir: input.workdir,
-      number: input.number,
-      repository: repo,
-    });
+  const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
+  const branchCheck = await tools.bash({
+    command: "git check-ref-format --branch " + quote(input.expectedBaseRef),
+    workdir: input.workdir,
+    description: "Validate expected base branch",
+    timeoutMs: 30000,
+  });
+  if (branchCheck.kind !== "foreground" || branchCheck.exitCode !== 0)
+    throw new Error("expectedBaseRef contains an unsupported branch name");
+  const diagnostic = async (lines, sourceTruncated = false) =>
+    (
+      await tools.project_diagnostic_text({
+        lines,
+        maxLines: 20,
+        maxCharacters: 4000,
+        sourceTruncated,
+      })
+    ).text;
+  const github = async (options) => {
+    try {
+      return await tools.run_github_cli(options);
+    } catch (error) {
+      const detail = await diagnostic([String(error?.message ?? error)]);
+      throw new Error(detail || "GitHub operation failed");
+    }
+  };
+  const readPr = async () => {
+    try {
+      return await tools.read_nemoclaw_pr({
+        workdir: input.workdir,
+        number: input.number,
+        repository: repo,
+      });
+    } catch (error) {
+      const detail = await diagnostic([String(error?.message ?? error)]);
+      throw new Error(detail || "Could not read pull request");
+    }
+  };
   const readThreads = async () => {
     const [owner, name] = repo.split("/");
     const query =
@@ -63,7 +107,7 @@ export default async function merge_nemoclaw_pull_request(input: {
         "query=" + query,
       ];
       if (cursor) args.push("-f", "cursor=" + cursor);
-      const result = await tools.run_github_cli({ workdir: input.workdir, args });
+      const result = await github({ workdir: input.workdir, args });
       const connection = JSON.parse(result.stdout).data?.repository?.pullRequest?.reviewThreads;
       if (!connection || !Array.isArray(connection.nodes))
         throw new Error("GitHub returned no review thread connection for PR #" + input.number);
@@ -79,15 +123,15 @@ export default async function merge_nemoclaw_pull_request(input: {
   const observedHeadSha = pr.headRefOid;
   const observedBaseRef = pr.baseRefName;
   const [baseResult, rulesResult, checksResult, threads] = await Promise.all([
-    tools.run_github_cli({ workdir: input.workdir, args: ["api", "repos/" + repo] }),
-    tools.run_github_cli({
+    github({ workdir: input.workdir, args: ["api", "repos/" + repo] }),
+    github({
       workdir: input.workdir,
       args: [
         "api",
         "repos/" + repo + "/rules/branches/" + encodeURIComponent(input.expectedBaseRef),
       ],
     }),
-    tools.run_github_cli({
+    github({
       workdir: input.workdir,
       args: [
         "pr",
@@ -116,7 +160,13 @@ export default async function merge_nemoclaw_pull_request(input: {
   ];
   const requiredChecks = requiredNames.map((name) => ({
     name,
-    matches: allChecks.filter((entry) => entry.name === name),
+    matches: allChecks
+      .filter((entry) => entry.name === name)
+      .map((entry) => ({
+        name: String(entry.name ?? ""),
+        state: String(entry.state ?? ""),
+        bucket: String(entry.bucket ?? ""),
+      })),
   }));
   const blockers = [];
   if (pr.state !== "OPEN") blockers.push("PR is not open");
@@ -161,7 +211,6 @@ export default async function merge_nemoclaw_pull_request(input: {
     mutated: false,
     repo,
     number: input.number,
-    url: pr.url ?? null,
     expectedHeadSha: input.expectedHeadSha,
     observedHeadSha,
     expectedBaseRef: input.expectedBaseRef,
@@ -178,7 +227,7 @@ export default async function merge_nemoclaw_pull_request(input: {
   if (!input.apply) return { ...base, disposition: "would-merge" };
   const flag =
     input.method === "merge" ? "--merge" : input.method === "squash" ? "--squash" : "--rebase";
-  const mergeResult = await tools.run_github_cli({
+  const mergeResult = await github({
     workdir: input.workdir,
     args: [
       "pr",
@@ -201,13 +250,15 @@ export default async function merge_nemoclaw_pull_request(input: {
     return {
       ...base,
       disposition: "inconclusive",
-      detail: mergeResult.stderr || mergeResult.stdout || String(error?.message ?? error),
+      detail: await diagnostic([
+        mergeResult.stderr || mergeResult.stdout || String(error?.message ?? error),
+      ]),
     };
   }
   const afterHead = after.headRefOid ?? null;
   let mergeCommit = null;
   if (after.state === "MERGED") {
-    const merged = await tools.run_github_cli({
+    const merged = await github({
       workdir: input.workdir,
       args: ["api", "repos/" + repo + "/pulls/" + input.number],
     });
@@ -222,7 +273,7 @@ export default async function merge_nemoclaw_pull_request(input: {
       mergeCommit,
       blockers: [],
       disposition: "merged",
-      detail: mergeSucceeded ? null : mergeResult.stderr || mergeResult.stdout,
+      detail: mergeSucceeded ? null : await diagnostic([mergeResult.stderr || mergeResult.stdout]),
     };
   if (afterHead !== input.expectedHeadSha || after.baseRefName !== input.expectedBaseRef)
     return {
@@ -230,10 +281,17 @@ export default async function merge_nemoclaw_pull_request(input: {
       observedHeadSha: afterHead,
       observedBaseRef: after.baseRefName ?? null,
       disposition: "stale",
-      detail: mergeResult.stderr || mergeResult.stdout || null,
+      detail:
+        mergeResult.stderr || mergeResult.stdout
+          ? await diagnostic([mergeResult.stderr || mergeResult.stdout])
+          : null,
     };
   if (!mergeSucceeded)
-    return { ...base, disposition: "not-merged", detail: mergeResult.stderr || mergeResult.stdout };
+    return {
+      ...base,
+      disposition: "not-merged",
+      detail: await diagnostic([mergeResult.stderr || mergeResult.stdout]),
+    };
   return {
     ...base,
     disposition: "inconclusive",

@@ -37,7 +37,11 @@ export default async function create_nemoclaw_pr(input: {
   if (
     typeof input.workdir !== "string" ||
     !input.workdir.trim() ||
-    !/^[0-9a-f]{40}$/.test(input.expectedHeadSha)
+    !/^[0-9a-f]{40}$/.test(input.expectedHeadSha) ||
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) ||
+    !/^[A-Za-z0-9_.-]+$/.test(remote) ||
+    baseBranch.startsWith("-") ||
+    !/^[A-Za-z0-9._/-]+$/.test(baseBranch)
   )
     throw new Error("workdir and expectedHeadSha are required");
   if (
@@ -47,22 +51,11 @@ export default async function create_nemoclaw_pr(input: {
     throw new Error("title must use the allowed Conventional Commits format");
   if (typeof input.body !== "string" || !input.body.trim() || input.body.length > 100000)
     throw new Error("body is invalid");
-  const run = async (command, description, allow = false) => {
-    const r = await tools.bash({ command, workdir: input.workdir, description, timeoutMs: 60000 });
-    if (r.kind !== "foreground") throw new Error(description + " did not finish");
-    if (r.exitCode !== 0 && !allow) throw new Error(r.stderr.text || description + " failed");
-    return r;
-  };
-  const name = (await run("git config user.name", "Read contributor name")).stdout.text.trim(),
-    email = (await run("git config user.email", "Read contributor email")).stdout.text.trim(),
-    declaration = "Signed-off-by: " + name + " <" + email + ">";
   if (
-    !name ||
-    !email ||
-    !input.body.includes(declaration) ||
+    !/^Signed-off-by:\s+.+\s+<[^<>\s]+@[^<>\s]+>\s*$/im.test(input.body) ||
     input.body.includes("Your Name <your-email@example.com>")
   )
-    throw new Error("PR body must include the configured contributor DCO declaration");
+    throw new Error("PR body must include a completed Signed-off-by declaration");
   const checkout = await tools.read_git_checkout({
       workdir: input.workdir,
       includeRoot: false,
@@ -76,6 +69,30 @@ export default async function create_nemoclaw_pr(input: {
     throw new Error("Local commit does not match expectedHeadSha");
   if (input.headBranch && input.headBranch !== branch)
     throw new Error("Current branch does not match headBranch");
+  const trailerResult = await tools.bash({
+    command:
+      "git log --format=" +
+      q("%H%x09%(trailers:key=Signed-off-by,valueonly,separator=%x1f)") +
+      " " +
+      q(remote + "/" + baseBranch + "..HEAD"),
+    workdir: input.workdir,
+    description: "Read commit sign-off trailers",
+    timeoutMs: 60000,
+  });
+  if (trailerResult.kind !== "foreground" || trailerResult.exitCode !== 0) {
+    const diagnostic = await tools.project_diagnostic_text({
+      lines:
+        trailerResult.kind === "foreground"
+          ? trailerResult.stderr.text.split(/\r?\n/)
+          : ["Git log did not finish"],
+      maxLines: 20,
+      maxCharacters: 4000,
+    });
+    throw new Error(diagnostic.text || "Could not read commit sign-off trailers");
+  }
+  const trailerRows = trailerResult.stdout.text.split(/\r?\n/).filter(Boolean);
+  if (!trailerRows.length || trailerRows.some((row) => !row.includes("\t")))
+    throw new Error("Every candidate commit must contain a Signed-off-by trailer");
   let assignee = null;
   if (input.assignee !== false) {
     const permission = (
@@ -140,21 +157,30 @@ export default async function create_nemoclaw_pr(input: {
   });
   if (current.head !== input.expectedHeadSha)
     throw new Error("Candidate commit changed after publication");
-  let command =
-    "gh pr create --repo " +
-    q(repo) +
-    " --base " +
-    q(baseBranch) +
-    " --head " +
-    q(branch) +
-    " --title " +
-    q(input.title) +
-    " --body " +
-    q(input.body);
-  if (input.draft) command += " --draft";
-  if (assignee) command += " --assignee @me";
-  const created = await run(command, "Create GitHub pull request", true);
-  if (created.exitCode !== 0) {
+  const createArgs = [
+    "pr",
+    "create",
+    "--repo",
+    repo,
+    "--base",
+    baseBranch,
+    "--head",
+    branch,
+    "--title",
+    input.title,
+    "--body",
+    input.body,
+  ];
+  if (input.draft) createArgs.push("--draft");
+  if (assignee) createArgs.push("--assignee", "@me");
+  const created = await tools.run_github_cli({
+    workdir: input.workdir,
+    args: createArgs,
+    acceptedExitCodes: [0, 1],
+    timeoutMs: 120000,
+    apply: true,
+  });
+  if (created.code !== 0) {
     const lookup = await tools.run_github_cli({
       workdir: input.workdir,
       args: [
@@ -191,9 +217,13 @@ export default async function create_nemoclaw_pr(input: {
         url: lookup.stdout.trim(),
         unverified: [],
       };
+    const diagnostic = await tools.project_diagnostic_text({
+      lines: created.stderr.split(/\r?\n/),
+      maxLines: 20,
+      maxCharacters: 4000,
+    });
     throw new Error(
-      "Pull request creation failed; no pull request exists for the branch.\n" +
-        created.stderr.text,
+      "Pull request creation failed; no pull request exists for the branch.\n" + diagnostic.text,
     );
   }
   return {
@@ -209,7 +239,7 @@ export default async function create_nemoclaw_pr(input: {
     assignee,
     commitCount,
     verificationPending: false,
-    url: created.stdout.text.trim(),
+    url: created.stdout.trim(),
     unverified: [],
   };
 }

@@ -11,7 +11,33 @@ export default async function monitor_pr_until_actionable(input: {
   ignoreChecks?: string[];
   ignoreReviewIds?: Integer[];
   ignoreCommentIds?: Integer[];
-}): Promise<Open<{}>> {
+}): Promise<{
+  done: boolean;
+  actionable: boolean;
+  timedOut: boolean;
+  stale: boolean;
+  expectedHeadSha: string;
+  currentHeadSha: string;
+  pendingChecks: { name: string; state: string; link: string }[];
+  failedChecks: { name: string; state: string; link: string }[];
+  findings: {
+    type: string;
+    id: Integer;
+    state?: string;
+    user?: string;
+    path?: string;
+    line?: Integer | null;
+    body?: string;
+    url?: string;
+  }[];
+  snapshots: {
+    headSha: string;
+    checkCount: Integer;
+    pendingCount: Integer;
+    failedCount: Integer;
+    findingCount: Integer;
+  }[];
+}> {
   if (
     !Number.isSafeInteger(input.pullNumber) ||
     input.pullNumber < 1 ||
@@ -80,13 +106,24 @@ export default async function monitor_pr_until_actionable(input: {
           ) && !ignoredChecks.has(c.name),
       )
       .map((c) => ({ name: c.name, state: c.state, link: c.link }));
-    const findings = cycle.items.filter(
-      (x) =>
-        (x.type === "review" &&
-          x.state === "CHANGES_REQUESTED" &&
-          !ignoredReviews.has(Number(x.id))) ||
-        (x.type === "inline-comment" && !ignoredComments.has(Number(x.id))),
-    );
+    const findings = cycle.items
+      .filter(
+        (x) =>
+          (x.type === "review" &&
+            x.state === "CHANGES_REQUESTED" &&
+            !ignoredReviews.has(Number(x.id))) ||
+          (x.type === "inline-comment" && !ignoredComments.has(Number(x.id))),
+      )
+      .map((x) => ({
+        type: String(x.type),
+        id: Number(x.id),
+        ...(typeof x.state === "string" ? { state: x.state } : {}),
+        ...(typeof x.user === "string" ? { user: x.user } : {}),
+        ...(typeof x.path === "string" ? { path: x.path } : {}),
+        ...(typeof x.line === "number" || x.line === null ? { line: x.line } : {}),
+        ...(typeof x.body === "string" ? { body: x.body } : {}),
+        ...(typeof x.url === "string" ? { url: x.url } : {}),
+      }));
     lastPendingChecks = pendingChecks;
     lastFailedChecks = failedChecks;
     lastFindings = findings;

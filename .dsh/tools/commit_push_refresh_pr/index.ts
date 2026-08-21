@@ -62,18 +62,38 @@ export default async function commit_push_refresh_pr(input: {
     throw new Error("Updating PR evidence requires a documentation writer receipt");
   if ((input.broadGatePassed === undefined) !== (input.broadGateEvidence === undefined))
     throw new Error("broadGatePassed and broadGateEvidence must be provided together");
+  const diagnostic = async (lines, sourceTruncated = false) =>
+    (
+      await tools.project_diagnostic_text({
+        lines,
+        maxLines: 20,
+        maxCharacters: 4000,
+        sourceTruncated,
+      })
+    ).text;
   const run = async (command, description, timeoutMs = 60000) => {
     const result = await tools.bash({ command, workdir: input.workdir, description, timeoutMs });
     if (result.kind !== "foreground")
       throw new Error(description + " did not finish in the foreground");
-    if (result.exitCode !== 0)
-      throw new Error(
-        description + " failed.\n" + (result.stdout.text + "\n" + result.stderr.text).trim(),
+    if (result.exitCode !== 0) {
+      const detail = await diagnostic(
+        (result.stderr.text || result.stdout.text).split(/\r?\n/),
+        result.stderr.truncated || result.stdout.truncated,
       );
+      throw new Error(detail || description + " failed");
+    }
     if (result.stdout.truncated) throw new Error(description + " exceeded its bounded output");
     return result.stdout.text;
   };
-  const prRead = await tools.run_github_cli({
+  const github = async (options) => {
+    try {
+      return await tools.run_github_cli(options);
+    } catch (error) {
+      const detail = await diagnostic([String(error?.message ?? error)]);
+      throw new Error(detail || "GitHub operation failed");
+    }
+  };
+  const prRead = await github({
     workdir: input.workdir,
     args: [
       "pr",
@@ -88,12 +108,15 @@ export default async function commit_push_refresh_pr(input: {
   const pr = JSON.parse(prRead.stdout);
   if (pr.state !== "OPEN") throw new Error("PR #" + input.pullNumber + " is not open");
   const branch = input.branch ?? pr.headRefName;
-  if (
-    typeof branch !== "string" ||
-    !branch ||
-    branch.startsWith("-") ||
-    !/^[A-Za-z0-9._\/-]+$/.test(branch)
-  )
+  if (typeof branch !== "string" || !branch || branch.startsWith("-"))
+    throw new Error("Could not resolve a valid PR source branch");
+  const branchCheck = await tools.bash({
+    command: "git check-ref-format --branch " + quote(branch),
+    workdir: input.workdir,
+    description: "Validate pull request branch name",
+    timeoutMs: 30000,
+  });
+  if (branchCheck.kind !== "foreground" || branchCheck.exitCode !== 0)
     throw new Error("Could not resolve a valid PR source branch");
   if (branch !== pr.headRefName)
     throw new Error("branch must match the PR source branch " + pr.headRefName);
@@ -129,7 +152,7 @@ export default async function commit_push_refresh_pr(input: {
     const unexpected = stagedBefore.filter((file) => !requested.has(file));
     if (unexpected.length)
       throw new Error(
-        "Index already contains files outside the requested commit:\n" + unexpected.join("\n"),
+        "Index already contains " + unexpected.length + " file(s) outside the requested commit",
       );
   }
   const plan = [
@@ -155,11 +178,10 @@ export default async function commit_push_refresh_pr(input: {
         "Read-only guards passed. No index, commit, push, cache, or GitHub write was performed.",
       ],
       resultJson: JSON.stringify({
-        pr,
-        branch,
+        pullNumber: input.pullNumber,
         localHead: localHeadBefore,
-        stagedBefore,
-        requestedFiles: [...requested],
+        stagedFileCount: stagedBefore.length,
+        requestedFileCount: requested.size,
         willPush,
         willRefresh,
       }),
@@ -176,11 +198,10 @@ export default async function commit_push_refresh_pr(input: {
     if (unexpected.length) {
       await run("git read-tree " + quote(indexTreeBefore), "Restore index after rejected staging");
       throw new Error(
-        "Refusing to commit files outside the requested set:\n" + unexpected.join("\n"),
+        "Refusing to commit " + unexpected.length + " file(s) outside the requested set",
       );
     }
   }
-  const staged = await run("git diff --cached --name-status", "Read staged change summary");
   await run("git commit -s -m " + quote(input.message.trim()), "Create signed-off commit", 120000);
   const localHead = (
     await tools.read_git_checkout({
@@ -195,7 +216,7 @@ export default async function commit_push_refresh_pr(input: {
   let readiness = null;
   let monitored = null;
   if (willPush) {
-    const beforePushRead = await tools.run_github_cli({
+    const beforePushRead = await github({
       workdir: input.workdir,
       args: [
         "pr",
@@ -221,11 +242,17 @@ export default async function commit_push_refresh_pr(input: {
     );
     let remoteHead = "";
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      const viewed = await tools.read_nemoclaw_pr({
-        workdir: input.workdir,
-        number: input.pullNumber,
-        repository: repo,
-      });
+      let viewed;
+      try {
+        viewed = await tools.read_nemoclaw_pr({
+          workdir: input.workdir,
+          number: input.pullNumber,
+          repository: repo,
+        });
+      } catch (error) {
+        const detail = await diagnostic([String(error?.message ?? error)]);
+        throw new Error(detail || "Could not read pull request");
+      }
       remoteHead = viewed.state === "OPEN" ? (viewed.headRefOid ?? "") : "";
       if (remoteHead === localHead) break;
       if (attempt < 4) await run("sleep 1", "Wait for pull request commit");
@@ -269,10 +296,12 @@ export default async function commit_push_refresh_pr(input: {
       timeoutMs: 300000,
       intervalMs: 20000,
     });
-  const [after, log] = await Promise.all([
-    run("git status --short --branch", "Read final working tree status"),
-    run("git log --oneline --decorate --max-count=5", "Read recent commit log"),
-  ]);
+  const finalCheckout = await tools.read_git_checkout({
+    workdir: input.workdir,
+    includeRoot: false,
+    includeBranch: false,
+    includeStatus: false,
+  });
   return {
     applied: true,
     mode: "apply",
@@ -280,17 +309,14 @@ export default async function commit_push_refresh_pr(input: {
     notes: [],
     resultJson: JSON.stringify({
       ok: true,
-      pr,
-      branch,
+      pullNumber: input.pullNumber,
       localHead,
-      stagedFiles,
-      staged,
-      push: pushResult,
-      receipt,
-      readiness,
-      monitor: monitored,
-      after,
-      log,
+      finalHead: finalCheckout.head,
+      stagedFileCount: stagedFiles.length,
+      pushed: willPush && pushResult !== null,
+      evidenceRefreshed: receipt !== null,
+      readinessChecked: readiness !== null,
+      monitored: monitored !== null,
     }),
   };
 }

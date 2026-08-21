@@ -10,7 +10,23 @@ export default async function refresh_locked_npm_cache_seed(input: {
   libc: string;
   chunkBytes?: Integer;
   dryRun?: boolean;
-}): Promise<Open<{}>> {
+}): Promise<{
+  dryRun: boolean;
+  lockfile?: string;
+  destination?: string;
+  target?: { os: string; cpu: string; libc: string };
+  chunkBytes?: Integer;
+  generator?: string;
+  generate?: { code: Integer; stdout: string; stderr: string; truncated: boolean };
+  chunk?: {
+    archiveCount: Integer;
+    lockSha256: string;
+    entries: Integer;
+    chunked: { name: string; bytes: Integer; parts: Integer }[];
+  };
+  install?: { code: Integer; stdout: string; stderr: string; truncated: boolean };
+  replaced: boolean;
+}> {
   const dryRun = input.dryRun ?? true;
   const chunkBytes = input.chunkBytes ?? 1_900_000;
   if (!Number.isInteger(chunkBytes) || chunkBytes < 65_536 || chunkBytes > 2_000_000) {
@@ -90,8 +106,18 @@ export default async function refresh_locked_npm_cache_seed(input: {
     ]
       .map(q)
       .join(" ");
-    generate = await execute(generateCommand, "Generate lock-pinned npm cache seed", 300_000);
-    if (generate.exitCode !== 0) return { dryRun: false, generate, replaced: false };
+    const generateResult = await execute(
+      generateCommand,
+      "Generate lock-pinned npm cache seed",
+      300_000,
+    );
+    generate = {
+      code: generateResult.exitCode ?? -1,
+      stdout: generateResult.stdout.text,
+      stderr: generateResult.stderr.text,
+      truncated: generateResult.stdout.truncated || generateResult.stderr.truncated,
+    };
+    if (generate.code !== 0) return { dryRun: false, generate, replaced: false };
     const chunkScript =
       'const fs=require("node:fs"),path=require("node:path");const [directory,chunkText]=process.argv.slice(1);const limit=Number(chunkText),chunked=[];for(const name of fs.readdirSync(directory)){if(!name.endsWith(".tgz"))continue;const file=path.join(directory,name),bytes=fs.readFileSync(file);if(bytes.length<=limit)continue;for(let offset=0,index=0;offset<bytes.length;offset+=limit,index+=1){fs.writeFileSync(file+".part-"+String(index).padStart(3,"0"),bytes.subarray(offset,offset+limit),{mode:0o644,flag:"wx"});}fs.unlinkSync(file);chunked.push({name,bytes:bytes.length,parts:Math.ceil(bytes.length/limit)});}const manifestPath=path.join(directory,"manifest.json");fs.chmodSync(manifestPath,0o644);const manifest=JSON.parse(fs.readFileSync(manifestPath,"utf8"));console.log(JSON.stringify({archiveCount:manifest.archiveCount,lockSha256:manifest.lockSha256,entries:fs.readdirSync(directory).length,chunked}));';
     const chunkResult = await requireSuccess(
@@ -104,11 +130,17 @@ export default async function refresh_locked_npm_cache_seed(input: {
       "Back up current npm cache seed",
     );
     destinationMoved = true;
-    const install = await execute(
+    const installResult = await execute(
       "mv " + q(output) + " " + q(destination),
       "Install refreshed npm cache seed",
     );
-    if (install.exitCode !== 0) {
+    const install = {
+      code: installResult.exitCode ?? -1,
+      stdout: installResult.stdout.text,
+      stderr: installResult.stderr.text,
+      truncated: installResult.stdout.truncated || installResult.stderr.truncated,
+    };
+    if (install.code !== 0) {
       await requireSuccess(
         "mv " + q(backup) + " " + q(destination),
         "Restore previous npm cache seed",
