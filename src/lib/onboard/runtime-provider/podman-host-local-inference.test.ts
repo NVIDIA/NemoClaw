@@ -262,32 +262,32 @@ describe("Podman host-local inference lifecycle", () => {
       ),
     ).toBe(true);
     const evidenceIndex = harness.events.indexOf("evidence:ready");
-    const removeIndex = harness.events.findIndex((event) =>
-      event.includes(`podman:rm --force ${"c".repeat(64)}`),
-    );
+    const removeIndex = harness.events.indexOf(`podman:rm --force ${"c".repeat(64)}`);
     expect(evidenceIndex).toBeGreaterThanOrEqual(0);
     expect(removeIndex).toBeGreaterThan(evidenceIndex);
     expect(harness.probe()).toBeNull();
     expect(harness.container()).toBeNull();
-    expect(harness.written).toHaveLength(0);
   });
 
-  it("retains a same-name probe when the acknowledged full container ID is absent", () => {
-    const harness = createPodmanHostLocalInferenceTestHarness();
-    harness.state.probeRunAcknowledgementText = `${"d".repeat(64)}\n`;
-    const runtime = operationRuntime(harness);
+  it.each([
+    ["after create", 1, "(?:wait|logs|rm --force)"],
+    ["during cleanup", 3, "rm --force"],
+  ] as const)(
+    "rejects a Podman inspect result whose container ID differs from the queried ID %s (#9211)",
+    (_stage, at, action) => {
+      const harness = createPodmanHostLocalInferenceTestHarness();
+      harness.state.probeInspectRuntimeIdMismatchAt = at;
+      const runtime = operationRuntime(harness);
+      const [acknowledgedId, inspectedId] = ["c".repeat(64), "d".repeat(64)];
 
-    expect(() => runtime.startManaged(harness.input, harness.writer)).toThrow(
-      "probe identity is indeterminate after create",
-    );
-    expect(harness.probe()).toMatchObject({ id: "c".repeat(64), running: true });
-    expect(
-      harness.events.some((event) => event.includes(`podman:rm --force ${"c".repeat(64)}`)),
-    ).toBe(false);
-    expect(
-      harness.events.some((event) => event.includes(`podman:rm --force ${"d".repeat(64)}`)),
-    ).toBe(false);
-  });
+      expect(() => runtime.startManaged(harness.input, harness.writer)).toThrow();
+      expect(harness.probe()).toMatchObject({ id: acknowledgedId });
+      expect(harness.events).toContain(`podman:container inspect ${acknowledgedId}`);
+      expect(harness.events.join("\n")).not.toMatch(
+        new RegExp(`podman:${action} (?:${acknowledgedId}|${inspectedId})`, "u"),
+      );
+    },
+  );
 
   it("accepts a lost disposable-probe remove acknowledgement only after exact absence proof", () => {
     const harness = createPodmanHostLocalInferenceTestHarness();

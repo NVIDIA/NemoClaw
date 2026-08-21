@@ -1718,7 +1718,16 @@ function probeLabels(spec: ProbeSpec): Readonly<Record<string, string>> {
   });
 }
 
-function requireProbeIdentity(container: ProbeContainer, spec: ProbeSpec): ProbeContainer {
+function requireProbeIdentity(
+  container: ProbeContainer,
+  spec: ProbeSpec,
+  expectedRuntimeId: string,
+): ProbeContainer {
+  if (container.runtimeId !== expectedRuntimeId) {
+    throw new Error(
+      "Podman inference probe inspect returned a container ID other than the queried full container ID.",
+    );
+  }
   const expectedLabels = probeLabels(spec);
   const actualControlledLabels = Object.fromEntries(
     Object.entries(container.labels).filter(([key]) =>
@@ -1758,7 +1767,11 @@ function cleanupExactProbe(
 ): void {
   let current: ProbeContainer;
   try {
-    current = requireProbeIdentity(inspectProbeContainer(engine, container.runtimeId), spec);
+    current = requireProbeIdentity(
+      inspectProbeContainer(engine, container.runtimeId),
+      spec,
+      container.runtimeId,
+    );
   } catch (error) {
     emitProviderFailure(
       phase,
@@ -1827,7 +1840,7 @@ function executeExactProbe(
   }
   if (existingId !== null) {
     try {
-      requireProbeIdentity(inspectProbeContainer(engine, existingId), spec);
+      requireProbeIdentity(inspectProbeContainer(engine, existingId), spec, existingId);
     } catch (error) {
       captureFailure(error);
       throw new PodmanInferenceIndeterminateCleanupError(
@@ -1876,7 +1889,7 @@ function executeExactProbe(
   }
   let container: ProbeContainer;
   try {
-    container = requireProbeIdentity(inspectProbeContainer(engine, runtimeId), spec);
+    container = requireProbeIdentity(inspectProbeContainer(engine, runtimeId), spec, runtimeId);
   } catch (error) {
     captureFailure(error);
     throw new PodmanInferenceIndeterminateCleanupError(
@@ -1903,7 +1916,11 @@ function executeExactProbe(
     );
     captureFailure(failure);
     try {
-      container = requireProbeIdentity(inspectProbeContainer(engine, container.runtimeId), spec);
+      container = requireProbeIdentity(
+        inspectProbeContainer(engine, container.runtimeId),
+        spec,
+        container.runtimeId,
+      );
       if (container.running) {
         const stop = engine.capture(
           ["stop", "--time", String(STOP_GRACE_SECONDS), container.runtimeId],
@@ -1914,7 +1931,11 @@ function executeExactProbe(
             `Podman inference probe stop returned exit ${String(stop.status)}: ${redactedCommandEvidence(redactor, stop)}`,
           );
         }
-        container = requireProbeIdentity(inspectProbeContainer(engine, container.runtimeId), spec);
+        container = requireProbeIdentity(
+          inspectProbeContainer(engine, container.runtimeId),
+          spec,
+          container.runtimeId,
+        );
         if (container.running || !AT_REST_STATES.has(container.status)) {
           throw new Error("probe stop did not prove an exact at-rest state");
         }
@@ -1932,7 +1953,11 @@ function executeExactProbe(
       captureFailure(failure);
     }
     try {
-      container = requireProbeIdentity(inspectProbeContainer(engine, container.runtimeId), spec);
+      container = requireProbeIdentity(
+        inspectProbeContainer(engine, container.runtimeId),
+        spec,
+        container.runtimeId,
+      );
       if (
         container.running ||
         !AT_REST_STATES.has(container.status) ||

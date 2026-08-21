@@ -119,6 +119,7 @@ export interface PodmanHostLocalInferenceHarness {
     probeRunLostAcknowledgement: boolean;
     probeRunAcknowledgementText: string | null;
     probePostCreateNameLookupTimeout: boolean;
+    probeInspectRuntimeIdMismatchAt: number | null;
     probeWaitFailure: boolean;
     probeRemoveLostAcknowledgement: boolean;
     probeRemoveLeavesContainer: boolean;
@@ -393,6 +394,7 @@ export function createPodmanHostLocalInferenceTestHarness(
     probeRunLostAcknowledgement: false,
     probeRunAcknowledgementText: null as string | null,
     probePostCreateNameLookupTimeout: false,
+    probeInspectRuntimeIdMismatchAt: null as number | null,
     probeWaitFailure: false,
     probeRemoveLostAcknowledgement: false,
     probeRemoveLeavesContainer: false,
@@ -408,6 +410,7 @@ export function createPodmanHostLocalInferenceTestHarness(
   };
   let currentContainer: TestContainer | null = null;
   let currentProbe: TestProbeContainer | null = null;
+  let probeInspectCount = 0;
   let networkEngineAuthoritySha256 = "";
   let persistedAuthority: PersistedEngineAuthority | null = null;
   let routeAuthority: HostLocalInferenceRouteAuthority | null = null;
@@ -526,7 +529,14 @@ export function createPodmanHostLocalInferenceTestHarness(
       }
       if (args[0] === "container" && args[1] === "inspect") {
         if (currentContainer?.id === args[2]) return result(0, inspectPayload(currentContainer));
-        if (currentProbe?.id === args[2]) return result(0, probeInspectPayload(currentProbe));
+        if (currentProbe?.id === args[2]) {
+          probeInspectCount += 1;
+          const inspectedProbe =
+            state.probeInspectRuntimeIdMismatchAt === probeInspectCount
+              ? { ...currentProbe, id: REUSED_PROBE_CONTAINER_ID }
+              : currentProbe;
+          return result(0, probeInspectPayload(inspectedProbe));
+        }
         return result(125, "", "no such container");
       }
       if (args[0] === "container" && args[1] === "exists") {
