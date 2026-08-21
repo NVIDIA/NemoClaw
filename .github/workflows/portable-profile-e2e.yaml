@@ -182,19 +182,120 @@ jobs:
             sudo usermod --add-subgids 100000-165535 "$USER"
           fi
 
-          shim_dir="${RUNNER_TEMP}/nemoclaw-portable-bin"
-          install -d -m 700 "$shim_dir"
-          install -m 700 test/e2e/fixtures/portable-profile-systemctl-shim.sh "$shim_dir/systemctl"
+          uid="$(id -u)"
+          receipt="${RUNNER_TEMP}/nemoclaw-portable-cpu-delegation.receipt"
+          delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+          app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
+          user_slice_drop_in="/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf"
+          : >"$receipt"
 
-          export PATH="$shim_dir:$PATH"
+          install_fixture_drop_in() {
+            local receipt_name="$1"
+            local target="$2"
+            local content="$3"
+            local target_dir
+            target_dir="$(dirname "$target")"
+            if sudo test -e "$target" || sudo test -L "$target"; then
+              printf 'Refusing existing Portable CPU-delegation fixture path: %s\n' "$target" >&2
+              return 1
+            fi
+            if sudo test -L "$target_dir" || \
+              { sudo test -e "$target_dir" && ! sudo test -d "$target_dir"; }; then
+              printf 'Refusing unexpected Portable CPU-delegation fixture directory: %s\n' "$target_dir" >&2
+              return 1
+            fi
+            if sudo test -d "$target_dir"; then
+              if [ "$(sudo stat -Lc '%U:%G %a' -- "$target_dir")" != "root:root 755" ]; then
+                printf 'Refusing Portable CPU-delegation fixture directory owner or mode: %s\n' "$target_dir" >&2
+                return 1
+              fi
+            else
+              printf 'directory\t%s\n' "$target_dir" >>"$receipt"
+              sudo install -d -m 0755 -o root -g root "$target_dir"
+            fi
+            printf 'file\t%s\t%s\n' "$receipt_name" "$target" >>"$receipt"
+            printf '%s' "$content" | sudo tee "$target" >/dev/null
+            sudo chown root:root "$target"
+            sudo chmod 0644 "$target"
+          }
+
+          install_fixture_drop_in \
+            user-slice \
+            "$user_slice_drop_in" \
+            $'[Slice]\nCPUWeight=100\n'
+          install_fixture_drop_in \
+            app-slice \
+            "$app_slice_drop_in" \
+            $'[Slice]\nCPUWeight=100\n'
+          install_fixture_drop_in \
+            delegation \
+            "$delegation_drop_in" \
+            $'[Service]\nDelegate=cpu memory pids\n'
+
+          if sudo systemctl is-active --quiet "user@${uid}.service"; then
+            printf 'manager-active\t%s\n' "$uid" >>"$receipt"
+          fi
+          if [ "$(loginctl show-user "$USER" --property=Linger --value 2>/dev/null || true)" != "yes" ]; then
+            printf 'linger\t%s\n' "$USER" >>"$receipt"
+            sudo loginctl enable-linger "$USER"
+          fi
+
+          sudo systemctl stop "user@${uid}.service"
+          sudo systemctl daemon-reload
+          sudo systemctl start "user@${uid}.service"
+
           export XDG_RUNTIME_DIR="$runtime_dir"
-          printf '%s\n' "$shim_dir" >>"$GITHUB_PATH"
-          printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir" >>"$GITHUB_ENV"
-          printf 'DOCKER_HOST=unix://%s/podman/podman.sock\n' "$runtime_dir" >>"$GITHUB_ENV"
-          systemctl --user start podman.socket
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=${runtime_dir}/bus"
+          export DOCKER_HOST="unix://${runtime_dir}/podman/podman.sock"
+          {
+            printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir"
+            printf 'DBUS_SESSION_BUS_ADDRESS=%s\n' "$DBUS_SESSION_BUS_ADDRESS"
+            printf 'DOCKER_HOST=%s\n' "$DOCKER_HOST"
+            printf 'E2E_PORTABLE_CPU_DELEGATION_RECEIPT=%s\n' "$receipt"
+          } >>"$GITHUB_ENV"
+
+          /usr/bin/systemctl --user start podman.socket
+          /usr/bin/systemctl --user is-active --quiet podman.socket
+          node --experimental-strip-types --no-warnings --input-type=module --eval '
+            const { inspectPortableCpuDelegation } = await import(
+              "./src/lib/onboard/experimental/portable-cpu-delegation-preflight.ts"
+            );
+            const result = inspectPortableCpuDelegation();
+            if (!result.ok) throw new Error(result.detail);
+            process.stdout.write(result.detail + "\n");
+          '
+          cgroup_manager="$(podman info --format '{{.Host.CgroupManager}}')"
+          test "$cgroup_manager" = "systemd"
           podman --version
           docker --version
-          docker --host "unix://$runtime_dir/podman/podman.sock" info
+          docker --host "$DOCKER_HOST" info
+
+      - name: Prove nested BuildKit on the portable Podman socket
+        shell: bash
+        run: |
+          set -euo pipefail
+          builder_name="nemoclaw-portable-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          build_context="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-portable-buildx.XXXXXX")"
+          build_output="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-portable-buildx-output.XXXXXX")"
+          {
+            printf 'E2E_PORTABLE_BUILDX_BUILDER=%s\n' "$builder_name"
+            printf 'E2E_PORTABLE_BUILDX_CONTEXT=%s\n' "$build_context"
+            printf 'E2E_PORTABLE_BUILDX_OUTPUT=%s\n' "$build_output"
+          } >>"$GITHUB_ENV"
+          printf 'FROM scratch\nCOPY proof.txt /proof.txt\n' >"$build_context/Dockerfile"
+          printf 'portable-buildkit-cgroup-proof\n' >"$build_context/proof.txt"
+
+          docker buildx create \
+            --name "$builder_name" \
+            --driver docker-container \
+            "$DOCKER_HOST"
+          docker buildx inspect "$builder_name" --bootstrap
+          docker buildx build \
+            --builder "$builder_name" \
+            --progress=plain \
+            --output "type=local,dest=$build_output" \
+            "$build_context"
+          grep -Fx 'portable-buildkit-cgroup-proof' "$build_output/proof.txt"
 
       - name: Exercise a portable launch through chat and permission restoration
         env:
@@ -218,9 +319,100 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          builder_name="${E2E_PORTABLE_BUILDX_BUILDER:-}"
+          if [[ "$builder_name" =~ ^nemoclaw-portable-[0-9]+-[0-9]+$ ]]; then
+            docker buildx rm "$builder_name" || true
+          fi
+          for temporary in \
+            "${E2E_PORTABLE_BUILDX_CONTEXT:-}" \
+            "${E2E_PORTABLE_BUILDX_OUTPUT:-}"
+          do
+            if [[ "$temporary" == "${RUNNER_TEMP}/nemoclaw-portable-buildx."* ]] || \
+              [[ "$temporary" == "${RUNNER_TEMP}/nemoclaw-portable-buildx-output."* ]]; then
+              rm -rf -- "$temporary"
+            fi
+          done
+
           rm -f -- /run/nemoclaw/portable-inference.json /run/nemoclaw/.portable-inference.json.tmp
+          /usr/bin/systemctl --user stop nemoclaw-openshell-gateway.service || true
+          /usr/bin/systemctl --user stop podman.socket podman.service || true
           podman system reset --force || true
-          runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-          node --experimental-strip-types --no-warnings --input-type=module \
-            --eval 'import { cleanupPortableProfileSystemctlFixture } from "./test/e2e/fixtures/portable-profile-systemctl.ts"; await cleanupPortableProfileSystemctlFixture(process.argv[1]);' \
-            "$runtime_dir"
+
+          uid="$(id -u)"
+          receipt="${E2E_PORTABLE_CPU_DELEGATION_RECEIPT:-${RUNNER_TEMP}/nemoclaw-portable-cpu-delegation.receipt}"
+          delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+          app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
+          user_slice_drop_in="/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf"
+          disable_linger=0
+          restore_manager=0
+          cleanup_failed=0
+          directories=()
+          sudo systemctl stop "user@${uid}.service" || true
+
+          cleanup_fixture_drop_in() {
+            local target="$1"
+            local expected="$2"
+            if ! sudo test -e "$target" && ! sudo test -L "$target"; then
+              return 0
+            fi
+            if sudo test -L "$target" || ! sudo test -f "$target"; then
+              printf 'Refusing unexpected Portable CPU-delegation fixture path: %s\n' "$target" >&2
+              return 1
+            fi
+            if ! printf '%s' "$expected" | sudo cmp -s -- "$target" -; then
+              printf 'Refusing changed Portable CPU-delegation fixture file: %s\n' "$target" >&2
+              return 1
+            fi
+            sudo rm -f -- "$target"
+          }
+
+          if [ -f "$receipt" ]; then
+            while IFS=$'\t' read -r kind name target; do
+              if [ "$kind" = "file" ]; then
+                case "$name:$target" in
+                  "delegation:$delegation_drop_in")
+                    cleanup_fixture_drop_in "$target" $'[Service]\nDelegate=cpu memory pids' || cleanup_failed=1
+                    ;;
+                  "app-slice:$app_slice_drop_in"|"user-slice:$user_slice_drop_in")
+                    cleanup_fixture_drop_in "$target" $'[Slice]\nCPUWeight=100' || cleanup_failed=1
+                    ;;
+                  *)
+                    printf 'Refusing unexpected Portable CPU-delegation receipt: %s:%s\n' "$name" "$target" >&2
+                    cleanup_failed=1
+                    ;;
+                esac
+              elif [ "$kind" = "linger" ] && [ "$name" = "$USER" ] && [ -z "${target:-}" ]; then
+                disable_linger=1
+              elif [ "$kind" = "manager-active" ] && [ "$name" = "$uid" ] && [ -z "${target:-}" ]; then
+                restore_manager=1
+              elif [ "$kind" = "directory" ] && [ -z "${target:-}" ]; then
+                case "$name" in
+                  /etc/systemd/system/user@.service.d|/etc/systemd/user/app.slice.d|"/etc/systemd/system/user-${uid}.slice.d")
+                    directories+=("$name")
+                    ;;
+                  *)
+                    printf 'Refusing unexpected Portable CPU-delegation directory receipt: %s\n' "$name" >&2
+                    cleanup_failed=1
+                    ;;
+                esac
+              else
+                printf 'Refusing malformed Portable CPU-delegation receipt.\n' >&2
+                cleanup_failed=1
+              fi
+            done <"$receipt"
+          fi
+          sudo systemctl daemon-reload || cleanup_failed=1
+          for directory in "${directories[@]}"; do
+            sudo rmdir -- "$directory" || cleanup_failed=1
+          done
+          if [ "$restore_manager" = "1" ]; then
+            sudo systemctl start "user@${uid}.service" || cleanup_failed=1
+          fi
+          if [ "$disable_linger" = "1" ]; then
+            sudo loginctl disable-linger "$USER" || cleanup_failed=1
+          fi
+          rm -f -- "$receipt" || cleanup_failed=1
+          if [ "$cleanup_failed" = "1" ]; then
+            printf 'Portable CPU-delegation cleanup detected invalid fixture state or a cleanup command failed.\n' >&2
+            exit 1
+          fi

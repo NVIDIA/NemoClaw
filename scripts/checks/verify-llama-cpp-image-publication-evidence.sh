@@ -312,7 +312,7 @@ for ((index = 0; index < sbom_attestation_count; index += 1)); do
   statement="$temporary_root/sbom-statement-$index.json"
   printf '%s' "$payload" | openssl base64 -d -A >"$statement"
   if ! jq -e --arg digest "${reference_digest#sha256:}" '
-    ._type == "https://in-toto.io/Statement/v1"
+    ._type == "https://in-toto.io/Statement/v0.1"
     and .predicateType == "https://spdx.dev/Document"
     and (.subject | length) == 1
     and .subject[0].digest == {sha256:$digest}
@@ -345,11 +345,11 @@ if ! jq -e --arg digest "${reference_digest#sha256:}" '
   exit 1
 fi
 
-if ! jq -e --arg digest "$reference_digest" --arg image "$image" '
+if ! jq -e --arg digest "$reference_digest" --arg reference "$reference" '
   type == "array" and length >= 1
-  and all(.[].critical;
-    .type == "cosign container image signature"
-    and .identity["docker-reference"] == $image
+  and any(.[].critical;
+    .type == "https://sigstore.dev/cosign/sign/v1"
+    and .identity["docker-reference"] == $reference
     and .image["docker-manifest-digest"] == $digest
   )
 ' "$signature_verification" >/dev/null; then
