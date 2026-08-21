@@ -31,6 +31,10 @@ function spawnResult(status = 0, stderr = "", stdout = ""): SpawnSyncLikeResult 
   return { status, stderr, stdout };
 }
 
+function launchctlAbsentResult(): SpawnSyncLikeResult {
+  return { signal: null, status: 113, stderr: null, stdout: null };
+}
+
 function officialFormulaInfo(): SpawnSyncLikeResult {
   return spawnResult(
     0,
@@ -154,7 +158,8 @@ function trustedHomebrewPlistFiles({ userPlistExists = false } = {}): Pick<
       offsets.set(fileDescriptor, contentOffset + count);
       return count;
     },
-    spawnSyncImpl: (command) => (command === "/bin/launchctl" ? spawnResult(113) : spawnResult()),
+    spawnSyncImpl: (command) =>
+      command === "/bin/launchctl" ? launchctlAbsentResult() : spawnResult(),
   };
 }
 
@@ -264,6 +269,7 @@ describe("OpenShell Homebrew service boundary", () => {
       "bash",
       expect.arrayContaining([
         "--homebrew-formula-operation",
+        "f0f86519e227b3b326431410058ba690b1a7b83e5af7384014e4b96283d3a642",
         "--",
         "brew",
         "list",
@@ -462,7 +468,7 @@ describe("OpenShell Homebrew service boundary", () => {
       const operation = command === "/bin/launchctl" ? [] : extractHomebrewOperation(args);
       const result =
         command === "/bin/launchctl"
-          ? spawnResult(113)
+          ? launchctlAbsentResult()
           : operation[0] === "info"
             ? officialFormulaInfo()
             : operation[0] === "--prefix"

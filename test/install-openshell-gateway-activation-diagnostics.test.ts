@@ -705,6 +705,28 @@ it.each([
   expect(result.status, result.stdout + result.stderr).toBe(0);
 });
 
+it.each([
+  ["a group-writable descriptor", false, 0o664],
+  ["a group-writable executable", true, 0o775],
+] as const)("rejects %s during service identity binding (#9705)", (_case, executable, mode) => {
+  const home = makeTempRoot();
+  const candidate = path.join(home, executable ? "gateway-target" : "service-target");
+  const marker = executable ? "" : "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1";
+  writeExecutable(candidate, executable ? "#!/usr/bin/env bash\nexit 0\n" : `${marker}\n`);
+  fs.chmodSync(candidate, mode);
+
+  const result = runInstallHelper(
+    home,
+    [
+      `if trusted_gateway_service_file_identity ${JSON.stringify(candidate)} "$EUID" ${JSON.stringify(marker)} ${executable ? "true" : "false"}; then`,
+      "  exit 90",
+      "fi",
+    ].join("\n"),
+  );
+
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+});
+
 it("changes a service executable identity after same-inode content replacement (#9705)", () => {
   const home = makeTempRoot();
   const executablePath = path.join(home, "openshell-gateway");

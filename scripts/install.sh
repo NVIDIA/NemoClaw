@@ -1600,12 +1600,22 @@ run_gateway_service_command() {
 trusted_gateway_service_file_identity() {
   local file_path="${1:-}" expected_uid="${2:-}" marker="${3:-}" executable="${4:-false}"
   local expected_template_path="${5:-}" expected_template_bin="${6:-}"
+  local operation="${7:-inspect}" expected_identity="${8:-}"
   [[ "$file_path" == /* && "$expected_uid" =~ ^[0-9]+$ ]] || return 1
   if [[ -n "$expected_template_path" || -n "$expected_template_bin" ]]; then
     [[ "$expected_template_path" == /* && "$expected_template_bin" == /* ]] || return 1
   fi
   case "$executable" in
     true | false) ;;
+    *) return 1 ;;
+  esac
+  case "$operation" in
+    inspect) [[ -z "$expected_identity" ]] || return 1 ;;
+    remove)
+      [[ -z "$marker" && "$executable" == "false" && -z "$expected_template_path" &&
+        -z "$expected_template_bin" ]] || return 1
+      [[ "$expected_identity" =~ ^[0-9]+(:[0-9]+){7}:[0-9a-f]{64}$ ]] || return 1
+      ;;
     *) return 1 ;;
   esac
   # shellcheck disable=SC2016 # JavaScript template literals must reach node unchanged.
@@ -1619,6 +1629,8 @@ trusted_gateway_service_file_identity() {
       executableText,
       expectedTemplatePath,
       expectedTemplateBin,
+      operation,
+      expectedIdentity,
     ] = process.argv.slice(1);
     const expectedUid = Number(expectedUidText);
     const noFollow = fs.constants.O_NOFOLLOW;
@@ -1630,6 +1642,7 @@ trusted_gateway_service_file_identity() {
       stat.isFile() &&
       !stat.isSymbolicLink() &&
       stat.uid === BigInt(owner) &&
+      (stat.mode & 0o22n) === 0n &&
       stat.dev >= 0n &&
       stat.ino >= 0n &&
       stat.nlink >= 1n &&
@@ -1646,6 +1659,14 @@ trusted_gateway_service_file_identity() {
       first.size === second.size &&
       first.mtimeNs === second.mtimeNs &&
       first.ctimeNs === second.ctimeNs;
+    const sameStatAfterMove = (first, second) =>
+      first.dev === second.dev &&
+      first.ino === second.ino &&
+      first.uid === second.uid &&
+      first.mode === second.mode &&
+      first.nlink === second.nlink &&
+      first.size === second.size &&
+      first.mtimeNs === second.mtimeNs;
     const readDescriptor = (fileDescriptor, size, includeContents) => {
       if (size < 0n || size > BigInt(Number.MAX_SAFE_INTEGER)) return null;
       if (includeContents && size > 64n * 1024n) return null;
@@ -1683,6 +1704,20 @@ trusted_gateway_service_file_identity() {
       ].join(":");
     let descriptor;
     let templateDescriptor;
+    let quarantineDirectory;
+    let quarantinePath;
+    let moved = false;
+    const restoreMovedFile = () => {
+      if (!moved || !quarantinePath) return;
+      try {
+        fs.linkSync(quarantinePath, filePath);
+        fs.unlinkSync(quarantinePath);
+        moved = false;
+        fs.rmdirSync(quarantineDirectory);
+      } catch {
+        // Keep both names when another file already occupies the original path.
+      }
+    };
     try {
       descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow | nonblock);
       const first = fs.fstatSync(descriptor, { bigint: true });
@@ -1736,17 +1771,85 @@ trusted_gateway_service_file_identity() {
         ) {
           process.exitCode = 1;
         } else {
-          process.stdout.write(identity(second, inspected.digest));
+          const inspectedIdentity = identity(second, inspected.digest);
+          if (operation === "inspect") {
+            process.stdout.write(inspectedIdentity);
+          } else if (operation !== "remove" || inspectedIdentity !== expectedIdentity) {
+            process.exitCode = 1;
+          } else {
+            const path = require("node:path");
+            quarantineDirectory = fs.mkdtempSync(
+              path.join(path.dirname(filePath), `.${path.basename(filePath)}.retire-`),
+            );
+            fs.chmodSync(quarantineDirectory, 0o700);
+            quarantinePath = path.join(quarantineDirectory, "pid");
+            try {
+              fs.lstatSync(quarantinePath);
+              process.exitCode = 1;
+            } catch (error) {
+              if (!error || typeof error !== "object" || error.code !== "ENOENT") throw error;
+            }
+            if (!process.exitCode) {
+              fs.renameSync(filePath, quarantinePath);
+              moved = true;
+              const movedBefore = fs.fstatSync(descriptor, { bigint: true });
+              const movedNamedBefore = fs.lstatSync(quarantinePath, { bigint: true });
+              const movedContents = readDescriptor(descriptor, movedBefore.size, false);
+              const movedAfter = movedContents
+                ? fs.fstatSync(descriptor, { bigint: true })
+                : null;
+              const movedNamedAfter = movedAfter
+                ? fs.lstatSync(quarantinePath, { bigint: true })
+                : null;
+              if (
+                !movedContents ||
+                !movedAfter ||
+                !movedNamedAfter ||
+                !validStat(movedBefore, expectedUid) ||
+                !validStat(movedNamedBefore, expectedUid) ||
+                !validStat(movedAfter, expectedUid) ||
+                !validStat(movedNamedAfter, expectedUid) ||
+                !sameStatAfterMove(second, movedBefore) ||
+                !sameStat(movedBefore, movedNamedBefore) ||
+                !sameStat(movedBefore, movedAfter) ||
+                !sameStat(movedAfter, movedNamedAfter) ||
+                movedContents.digest !== inspected.digest
+              ) {
+                restoreMovedFile();
+                process.exitCode = 1;
+              } else {
+                fs.unlinkSync(quarantinePath);
+                moved = false;
+                fs.rmdirSync(quarantineDirectory);
+                quarantineDirectory = undefined;
+                try {
+                  fs.lstatSync(filePath);
+                  process.exitCode = 1;
+                } catch (error) {
+                  if (!error || typeof error !== "object" || error.code !== "ENOENT") throw error;
+                }
+              }
+            }
+          }
         }
       }
     } catch {
+      restoreMovedFile();
       process.exitCode = 1;
     } finally {
+      if (!moved && quarantineDirectory !== undefined) {
+        try {
+          fs.rmdirSync(quarantineDirectory);
+        } catch {
+          process.exitCode = 1;
+        }
+      }
       if (templateDescriptor !== undefined) fs.closeSync(templateDescriptor);
       if (descriptor !== undefined) fs.closeSync(descriptor);
     }
   ' "$file_path" "$expected_uid" "$marker" "$executable" \
-    "$expected_template_path" "$expected_template_bin" 2>/dev/null
+    "$expected_template_path" "$expected_template_bin" "$operation" \
+    "$expected_identity" 2>/dev/null
 }
 
 upstream_openshell_gateway_user_service_installed() {
@@ -4319,6 +4422,7 @@ inspect_trusted_legacy_openshell_gateway_process() {
       stat.isFile() &&
       !stat.isSymbolicLink() &&
       stat.uid === BigInt(owner) &&
+      (stat.mode & 0o22n) === 0n &&
       stat.dev >= 0n &&
       stat.ino >= 0n &&
       stat.nlink >= 1n &&
@@ -4474,7 +4578,11 @@ inspect_trusted_legacy_openshell_gateway_process() {
         path.basename(argv0),
       );
       if (tagged) {
-        return tagged[1] === expectedGatewayName && tagged[2] === String(expectedGatewayPort);
+        return (
+          tokens.length === 1 &&
+          tagged[1] === expectedGatewayName &&
+          tagged[2] === String(expectedGatewayPort)
+        );
       }
       if (path.basename(argv0) !== "openshell-gateway") return false;
       const ports = flagValues(tokens, "--port");
@@ -4488,7 +4596,7 @@ inspect_trusted_legacy_openshell_gateway_process() {
     };
 
     const pidRecord = inspectFile(pidFile, expectedUid, false, true);
-    if (!pidRecord || (BigInt(pidRecord.identity.split(":")[3]) & 0o22n) !== 0n) process.exit(1);
+    if (!pidRecord) process.exit(1);
     const pidText = pidRecord.contents.endsWith("\n")
       ? pidRecord.contents.slice(0, -1)
       : pidRecord.contents;
@@ -4572,16 +4680,10 @@ inspect_trusted_legacy_openshell_gateway_process() {
 }
 
 remove_trusted_legacy_gateway_pid_file() {
-  local pid_file="${1:-}" expected_identity="${2:-}" current_identity
-  current_identity="$(trusted_gateway_service_file_identity "$pid_file" "$EUID")" \
-    || error "Refusing to remove the legacy OpenShell gateway PID file because its identity could not be revalidated."
-  if [[ "$current_identity" != "$expected_identity" ]]; then
-    error "Refusing to remove the legacy OpenShell gateway PID file because it changed during retirement."
-  fi
-  rm -f -- "$pid_file" \
-    || error "Could not remove the retired legacy OpenShell gateway PID file."
-  [[ ! -e "$pid_file" && ! -L "$pid_file" ]] \
-    || error "The retired legacy OpenShell gateway PID file remained after removal."
+  local pid_file="${1:-}" expected_identity="${2:-}"
+  trusted_gateway_service_file_identity \
+    "$pid_file" "$EUID" "" false "" "" remove "$expected_identity" \
+    || error "Refusing to remove the legacy OpenShell gateway PID file because it changed during retirement. A replacement was preserved."
 }
 
 legacy_gateway_process_snapshot() {

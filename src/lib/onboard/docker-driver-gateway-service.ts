@@ -43,7 +43,7 @@ export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE = "nemoclaw-openshell-gatew
 export const OPENSHELL_GATEWAY_HOMEBREW_SERVICE = "openshell";
 export const OPENSHELL_GATEWAY_HOMEBREW_TAP = "nvidia/openshell";
 export const OPENSHELL_GATEWAY_HOMEBREW_FORMULA_SHA256 =
-  "87fadc7b0c854aa44f71d5b3a206865070117cd27825d59c61da252a99f402a2";
+  "f0f86519e227b3b326431410058ba690b1a7b83e5af7384014e4b96283d3a642";
 export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER =
   "NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1";
 export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE = `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}`;
@@ -129,6 +129,7 @@ export class OpenShellGatewayServiceTrustError extends Error {
 
 export interface SpawnSyncLikeResult {
   error?: Error;
+  signal?: NodeJS.Signals | null;
   status: number | null;
   stderr?: Buffer | string | null;
   stdout?: Buffer | string | null;
@@ -579,7 +580,15 @@ function isHomebrewLaunchdJobAbsent(
         stdio: "ignore",
         timeout: LAUNCHCTL_INSPECTION_TIMEOUT_MS,
       });
-      if (result.error || result.status !== LAUNCHCTL_SERVICE_ABSENT_STATUS) return false;
+      if (
+        result.error !== undefined ||
+        result.status !== LAUNCHCTL_SERVICE_ABSENT_STATUS ||
+        result.signal !== null ||
+        result.stdout !== null ||
+        result.stderr !== null
+      ) {
+        return false;
+      }
     } catch {
       return false;
     }
@@ -608,15 +617,13 @@ function isHomebrewLifecycleUnloaded(
   home: string,
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">> &
     Pick<OpenShellGatewayUserServiceOptions, "getuid" | "lstatSync">,
-  requireDestinationAbsent: boolean,
 ): boolean {
   return (
     isHomebrewLaunchdJobAbsent(serviceName, opts) &&
-    (!requireDestinationAbsent ||
-      isPathAbsentByLstat(
-        getHomebrewLaunchdUserPlistPath(home, serviceName),
-        opts.lstatSync ?? fs.lstatSync,
-      ))
+    isPathAbsentByLstat(
+      getHomebrewLaunchdUserPlistPath(home, serviceName),
+      opts.lstatSync ?? fs.lstatSync,
+    )
   );
 }
 
@@ -2214,7 +2221,7 @@ export function startOpenShellGatewayUserService(
   if (
     baselineIdentity.manager === "homebrew" &&
     (baselineIdentity.plistIdentity.effective.source !== "formula" ||
-      !isHomebrewLifecycleUnloaded(service.serviceName, home, identityOptions, true))
+      !isHomebrewLifecycleUnloaded(service.serviceName, home, identityOptions))
   ) {
     return serviceFailure(service, unverifiedHomebrewLaunchdJobGuidance(service.serviceName), true);
   }
@@ -2226,7 +2233,7 @@ export function startOpenShellGatewayUserService(
     if (
       current.identity.manager === "homebrew" &&
       (current.identity.plistIdentity.effective.source !== "formula" ||
-        !isHomebrewLifecycleUnloaded(service.serviceName, home, identityOptions, true))
+        !isHomebrewLifecycleUnloaded(service.serviceName, home, identityOptions))
     ) {
       return serviceFailure(
         service,
@@ -2492,7 +2499,7 @@ export function stopOpenShellGatewayUserService(
   if (
     baselineIdentity.manager === "homebrew" &&
     (baselineIdentity.plistIdentity.effective.source !== "formula" ||
-      !isHomebrewLifecycleUnloaded(service.serviceName, home, identityOptions, false))
+      !isHomebrewLifecycleUnloaded(service.serviceName, home, identityOptions))
   ) {
     return describe(false, unverifiedHomebrewLaunchdJobGuidance(service.serviceName), true);
   }
@@ -2524,7 +2531,7 @@ export function stopOpenShellGatewayUserService(
   if (
     currentIdentityResult.identity.manager === "homebrew" &&
     (currentIdentityResult.identity.plistIdentity.effective.source !== "formula" ||
-      !isHomebrewLifecycleUnloaded(service.serviceName, home, identityOptions, false))
+      !isHomebrewLifecycleUnloaded(service.serviceName, home, identityOptions))
   ) {
     return describe(false, unverifiedHomebrewLaunchdJobGuidance(service.serviceName), true);
   }

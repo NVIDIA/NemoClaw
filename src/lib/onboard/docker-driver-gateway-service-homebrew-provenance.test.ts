@@ -24,6 +24,10 @@ function spawnResult(status = 0, stderr = "", stdout = ""): SpawnSyncLikeResult 
   return { status, stderr, stdout };
 }
 
+function launchctlAbsentResult(): SpawnSyncLikeResult {
+  return { signal: null, status: 113, stderr: null, stdout: null };
+}
+
 function serviceInfo(running: boolean): SpawnSyncLikeResult {
   return spawnResult(
     0,
@@ -109,6 +113,7 @@ function serviceFileIdentitySeam(
     const rejected =
       condition.symbolicLink === true ||
       owner !== options.expectedUid ||
+      (mode & 0o022) !== 0 ||
       ((options.requiredModeBits ?? 0) & mode) !== (options.requiredModeBits ?? 0);
     const contents = Buffer.from(`${options.filePath}\n`);
     return rejected
@@ -159,7 +164,8 @@ function homebrewOptions(
     },
     inspectServiceFileIdentity,
     platform: "darwin",
-    spawnSyncImpl: (command) => (command === "/bin/launchctl" ? spawnResult(113) : spawnResult()),
+    spawnSyncImpl: (command) =>
+      command === "/bin/launchctl" ? launchctlAbsentResult() : spawnResult(),
   };
 }
 
@@ -192,8 +198,10 @@ describe("Homebrew gateway executable provenance", () => {
   it.each([
     ["service wrapper is a symbolic link", SERVICE_COMMAND, { symbolicLink: true }],
     ["service wrapper has a different owner", SERVICE_COMMAND, { owner: 0 }],
+    ["service wrapper is group-writable", SERVICE_COMMAND, { mode: 0o775 }],
     ["gateway executable is a symbolic link", GATEWAY_BINARY, { symbolicLink: true }],
     ["gateway executable has a different owner", GATEWAY_BINARY, { owner: 0 }],
+    ["gateway executable is world-writable", GATEWAY_BINARY, { mode: 0o757 }],
   ] as const)("rejects a Homebrew service whose %s (#9705)", (_case, hostilePath, condition) => {
     const events: string[] = [];
     const inspectServiceFileIdentity = serviceFileIdentitySeam((candidate) =>

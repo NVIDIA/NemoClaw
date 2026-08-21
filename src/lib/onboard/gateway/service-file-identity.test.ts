@@ -266,6 +266,23 @@ describe("service file identity", () => {
     ).toBeNull();
   });
 
+  it.each([
+    ["group-writable", 0o775],
+    ["world-writable", 0o757],
+  ])("rejects a %s regular file (#9705)", (_case, mode) => {
+    const filePath = path.join(directory, "openshell-gateway");
+    fs.writeFileSync(filePath, "reviewed executable\n", { mode });
+    fs.chmodSync(filePath, mode);
+
+    expect(
+      inspectServiceFileIdentity({
+        expectedUid: CURRENT_UID,
+        filePath,
+        requiredModeBits: 0o100,
+      }),
+    ).toBeNull();
+  });
+
   it("rejects an empty file when executable mode is required (#9705)", () => {
     const filePath = path.join(directory, "openshell-gateway");
     fs.writeFileSync(filePath, "", { mode: 0o755 });

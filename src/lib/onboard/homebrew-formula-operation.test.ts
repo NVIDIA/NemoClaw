@@ -46,7 +46,7 @@ case "$*" in
     fi
     exit "\${NEMOCLAW_TEST_UNTRUST_STATUS:-0}"
     ;;
-  "list --formula openshell"|"info --json=v2 openshell"|"services restart openshell"|"services stop openshell")
+  "list --formula openshell"|"info --json=v2 openshell"|"services start openshell"|"services stop openshell")
     exit "\${NEMOCLAW_TEST_OPERATION_STATUS:-0}"
     ;;
 esac
@@ -86,7 +86,7 @@ function brewEvents(): string[] {
 describe("OpenShell Homebrew formula operation boundary", () => {
   it.each([
     ["inspection", ["info", "--json=v2", "openshell"]],
-    ["start", ["services", "restart", "openshell"]],
+    ["start", ["services", "start", "openshell"]],
     ["stop", ["services", "stop", "openshell"]],
   ])("scopes formula trust to each %s operation (#7707)", (_case, args) => {
     const result = runOperation(args);

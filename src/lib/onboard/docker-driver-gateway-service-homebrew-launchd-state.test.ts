@@ -33,6 +33,10 @@ function spawnResult(
   return { ...(error ? { error } : {}), status, stderr, stdout };
 }
 
+function launchctlAbsentResult(overrides: Partial<SpawnSyncLikeResult> = {}): SpawnSyncLikeResult {
+  return { signal: null, status: 113, stderr: null, stdout: null, ...overrides };
+}
+
 function serviceInfo(overrides: Record<string, unknown> = {}): SpawnSyncLikeResult {
   return spawnResult(
     0,
@@ -77,7 +81,7 @@ interface HomebrewTestOptions {
 function trustedHomebrewOptions({
   destinationState = () => "absent",
   events = [],
-  launchctl = () => spawnResult(113),
+  launchctl = () => launchctlAbsentResult(),
   serviceInfo: readServiceInfo = () => serviceInfo(),
 }: HomebrewTestOptions = {}): OpenShellGatewayUserServiceOptions {
   let nextFileDescriptor = 10;
@@ -172,7 +176,7 @@ describe("Homebrew launchd lifecycle state", () => {
         events,
         launchctl: (domain, options) => {
           probeCalls.push({ domain, options });
-          return spawnResult(113, SECRET, SECRET);
+          return launchctlAbsentResult();
         },
       }),
     );
@@ -263,10 +267,14 @@ describe("Homebrew launchd lifecycle state", () => {
 
   it.each([
     ["GUI job", [spawnResult(0, SECRET, SECRET)]],
-    ["user job", [spawnResult(113), spawnResult(0, SECRET, SECRET)]],
-    ["unexpected status", [spawnResult(113), spawnResult(7, SECRET, SECRET)]],
-    ["missing status", [spawnResult(113), spawnResult(null, SECRET, SECRET)]],
-    ["spawn error", [spawnResult(113), spawnResult(113, SECRET, SECRET, new Error(SECRET))]],
+    ["user job", [launchctlAbsentResult(), spawnResult(0, SECRET, SECRET)]],
+    ["unexpected status", [launchctlAbsentResult(), spawnResult(7, SECRET, SECRET)]],
+    ["missing status", [launchctlAbsentResult(), spawnResult(null, SECRET, SECRET)]],
+    ["spawn error", [launchctlAbsentResult(), launchctlAbsentResult({ error: new Error(SECRET) })]],
+    ["stdout output", [launchctlAbsentResult(), launchctlAbsentResult({ stdout: SECRET })]],
+    ["stderr output", [launchctlAbsentResult(), launchctlAbsentResult({ stderr: SECRET })]],
+    ["termination signal", [launchctlAbsentResult(), launchctlAbsentResult({ signal: "SIGTERM" })]],
+    ["incomplete result", [launchctlAbsentResult(), { status: 113 }]],
   ] satisfies Array<[string, SpawnSyncLikeResult[]]>)(
     "rejects a launchctl probe that reports a %s (#9705)",
     (_case, probeResults) => {
@@ -276,7 +284,7 @@ describe("Homebrew launchd lifecycle state", () => {
       const result = startOpenShellGatewayUserService({
         ...trustedHomebrewOptions({
           events,
-          launchctl: () => probeResults[probeIndex++] ?? spawnResult(113),
+          launchctl: () => probeResults[probeIndex++] ?? launchctlAbsentResult(),
         }),
         prepareServiceEnv,
       });
@@ -318,6 +326,19 @@ describe("Homebrew launchd lifecycle state", () => {
     },
   );
 
+  it.each(["regular", "broken-symlink", "inaccessible"] as const)(
+    "rejects a %s Homebrew destination plist before reporting a stop (#9705)",
+    (destination) => {
+      const events: string[] = [];
+      const result = stopOpenShellGatewayUserService(
+        trustedHomebrewOptions({ destinationState: () => destination, events }),
+      );
+
+      expect(result).toMatchObject({ reason: FIXED_GUIDANCE, stopped: false });
+      expect(events).not.toContain("services stop openshell");
+    },
+  );
+
   it("rejects a launchd job that appears after environment preparation (#9705)", () => {
     const events: string[] = [];
     let loaded = false;
@@ -325,7 +346,7 @@ describe("Homebrew launchd lifecycle state", () => {
     const result = startOpenShellGatewayUserService({
       ...trustedHomebrewOptions({
         events,
-        launchctl: () => spawnResult(loaded ? 0 : 113),
+        launchctl: () => (loaded ? spawnResult(0) : launchctlAbsentResult()),
       }),
       preparePortForServiceStart,
       prepareServiceEnv: () => {

@@ -86,6 +86,7 @@ function validStat(stat: ServiceFileStat, expectedUid: number): boolean {
     stat.nlink >= 1n &&
     stat.size >= 0n &&
     stat.mode >= 0n &&
+    (stat.mode & 0o022n) === 0n &&
     stat.mtimeNs >= 0n &&
     stat.ctimeNs >= 0n
   );

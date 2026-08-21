@@ -33,33 +33,17 @@ function runInstallerBody(home: string, body: string, env: NodeJS.ProcessEnv = {
   });
 }
 
-async function spawnTaggedGateway(home: string, gatewayPort: number) {
+async function spawnTaggedGateway(home: string, gatewayPort: number, args: string[] = []) {
   const gatewayBin = path.join(home, ".local", "bin", "openshell-gateway");
   fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
-  fs.copyFileSync("/bin/sleep", gatewayBin);
+  fs.copyFileSync("/usr/bin/yes", gatewayBin);
   fs.chmodSync(gatewayBin, 0o755);
   const gatewayName = gatewayPort === 8080 ? "nemoclaw" : `nemoclaw-${gatewayPort}`;
   const taggedArgv0 = `openshell-gateway[nemoclaw=${gatewayName};port=${gatewayPort}]`;
-  const supervisor = spawn(
-    "bash",
-    [
-      "-c",
-      [
-        `bash -c 'exec -a "$1" "$2" 60' _ "$1" "$2" &`,
-        "gateway_pid=$!",
-        `printf '%s\\n' "$gateway_pid"`,
-        'wait "$gateway_pid"',
-      ].join("\n"),
-      "_",
-      taggedArgv0,
-      gatewayBin,
-    ],
-    { stdio: ["ignore", "pipe", "ignore"] },
-  );
+  const supervisor = spawn(gatewayBin, args, { argv0: taggedArgv0, stdio: "ignore" });
   await once(supervisor, "spawn");
-  const [pidChunk] = (await once(supervisor.stdout!, "data")) as [Buffer];
-  const pid = Number(pidChunk.toString("utf8").trim());
-  assert(Number.isSafeInteger(pid) && pid > 0, "gateway supervisor returned no PID");
+  const pid = supervisor.pid;
+  assert(pid !== undefined && Number.isSafeInteger(pid) && pid > 0, "gateway returned no PID");
   return { gatewayBin, pid, supervisor };
 }
 
@@ -260,6 +244,73 @@ it.skipIf(process.platform !== "linux")(
 );
 
 it.skipIf(process.platform !== "linux")(
+  "keeps a tagged gateway that has arguments outside the owned launch contract (#9705)",
+  async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-retirement-pid-arguments-"));
+    tempRoots.push(root);
+    const home = path.join(root, "home");
+    const runtimeDir = path.join(root, "runtime");
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    const gateway = await spawnTaggedGateway(home, 8080, ["--port", "9090"]);
+    const pidFile = path.join(runtimeDir, "openshell-gateway.pid");
+    fs.writeFileSync(pidFile, `${String(gateway.pid)}\n`);
+
+    try {
+      const result = runInstallerBody(home, "stop_legacy_openshell_gateway_process", {
+        NEMOCLAW_GATEWAY_PORT: "8080",
+        NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: runtimeDir,
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("PID-file or process identity is not target-bound");
+      expect(fs.existsSync(pidFile)).toBe(true);
+      expect(processExists(gateway.pid)).toBe(true);
+    } finally {
+      try {
+        process.kill(gateway.pid, "SIGKILL");
+      } catch {
+        // The assertion above reports an unexpected early exit.
+      }
+      gateway.supervisor.kill("SIGKILL");
+    }
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "keeps a target-bound gateway whose executable is group writable (#9705)",
+  async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-retirement-pid-mode-"));
+    tempRoots.push(root);
+    const home = path.join(root, "home");
+    const runtimeDir = path.join(root, "runtime");
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    const gateway = await spawnTaggedGateway(home, 8080);
+    const pidFile = path.join(runtimeDir, "openshell-gateway.pid");
+    fs.writeFileSync(pidFile, `${String(gateway.pid)}\n`);
+    fs.chmodSync(gateway.gatewayBin, 0o775);
+
+    try {
+      const result = runInstallerBody(home, "stop_legacy_openshell_gateway_process", {
+        NEMOCLAW_GATEWAY_PORT: "8080",
+        NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: runtimeDir,
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("PID-file or process identity is not target-bound");
+      expect(fs.existsSync(pidFile)).toBe(true);
+      expect(processExists(gateway.pid)).toBe(true);
+    } finally {
+      try {
+        process.kill(gateway.pid, "SIGKILL");
+      } catch {
+        // The assertion above reports an unexpected early exit.
+      }
+      gateway.supervisor.kill("SIGKILL");
+    }
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
   "keeps a selected-port gateway after its trusted binary path is replaced (#9705)",
   async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-retirement-pid-binary-"));
@@ -319,4 +370,73 @@ it("does not remove a replaced legacy gateway PID file (#9705)", () => {
   expect(result.status).toBe(1);
   expect(result.stderr).toContain("changed during retirement");
   expect(fs.readFileSync(pidFile, "utf-8")).toBe("replacement\n");
+});
+
+it("preserves PID files that replace the trusted path during removal (#9705)", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-retirement-pid-move-"));
+  tempRoots.push(root);
+  const home = path.join(root, "home");
+  const bin = path.join(root, "bin");
+  const pidFile = path.join(root, "openshell-gateway.pid");
+  const originalFile = path.join(root, "original-openshell-gateway.pid");
+  const preload = path.join(root, "replace-before-pid-move.cjs");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(pidFile, "12345\n", { mode: 0o600 });
+  const identity = runInstallerBody(
+    home,
+    `trusted_gateway_service_file_identity ${JSON.stringify(pidFile)} "$EUID"`,
+  );
+  expect(identity.status, identity.stdout + identity.stderr).toBe(0);
+
+  fs.writeFileSync(
+    preload,
+    [
+      'const fs = require("node:fs");',
+      `const pidFile = ${JSON.stringify(pidFile)};`,
+      `const originalFile = ${JSON.stringify(originalFile)};`,
+      "const renameSync = fs.renameSync.bind(fs);",
+      "let replaced = false;",
+      "fs.renameSync = (source, destination) => {",
+      '  if (!replaced && source === pidFile && destination.endsWith("/pid")) {',
+      "    replaced = true;",
+      "    renameSync(source, originalFile);",
+      '    fs.writeFileSync(source, "replacement-before-move\\n", { mode: 0o600 });',
+      "    renameSync(source, destination);",
+      '    fs.writeFileSync(source, "replacement-after-move\\n", { mode: 0o600 });',
+      "    return;",
+      "  }",
+      "  return renameSync(source, destination);",
+      "};",
+      "",
+    ].join("\n"),
+  );
+  writeExecutable(
+    path.join(bin, "node"),
+    [
+      "#!/usr/bin/env bash",
+      `export NODE_OPTIONS=${JSON.stringify(`--require=${preload}`)}`,
+      `exec ${JSON.stringify(process.execPath)} "$@"`,
+      "",
+    ].join("\n"),
+  );
+
+  const result = runInstallerBody(
+    home,
+    `remove_trusted_legacy_gateway_pid_file ${JSON.stringify(pidFile)} ${JSON.stringify(identity.stdout)}`,
+    { PATH: `${bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+  );
+  const quarantineDirectories = fs
+    .readdirSync(root, { withFileTypes: true })
+    .filter(
+      (entry) => entry.isDirectory() && entry.name.startsWith(".openshell-gateway.pid.retire-"),
+    );
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("A replacement was preserved");
+  expect(fs.readFileSync(originalFile, "utf-8")).toBe("12345\n");
+  expect(fs.readFileSync(pidFile, "utf-8")).toBe("replacement-after-move\n");
+  expect(quarantineDirectories).toHaveLength(1);
+  expect(fs.readFileSync(path.join(root, quarantineDirectories[0].name, "pid"), "utf-8")).toBe(
+    "replacement-before-move\n",
+  );
 });
