@@ -115,9 +115,10 @@ describe("Vitest opaque-input watch triggers", () => {
     },
   );
 
-  it("maps the Launchable host harness to its integration contract (#6409)", () => {
+  it("maps the Launchable host harness to its integration tests (#6409)", () => {
     expect(triggeredBy("tools/e2e/brev-launchable-e2e.sh")).toEqual([
       "test/brev-launchable-e2e.test.ts",
+      "test/brev-launchable-gateway-diagnostics.test.ts",
     ]);
   });
 
@@ -137,9 +138,9 @@ describe("Vitest opaque-input watch triggers", () => {
       "src/lib/inference/serving/resolver.test.ts",
       "test/managed-inference-catalog-compiler.test.ts",
     ]);
-    expect(
-      triggeredBy("internal/security-reviews/hermes-0.19.0-dependency-review.md"),
-    ).toEqual(["test/hermes-dependency-review.test.ts"]);
+    expect(triggeredBy("internal/security-reviews/hermes-0.19.0-dependency-review.md")).toEqual([
+      "test/hermes-dependency-review.test.ts",
+    ]);
     expect(triggeredBy(".github/actions/resolve-hermes-base-image/action.yaml")).toEqual([
       "test/base-image-resolver-helper.test.ts",
     ]);

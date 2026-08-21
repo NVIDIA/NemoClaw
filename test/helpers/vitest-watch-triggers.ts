@@ -57,7 +57,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)tools\/e2e\/brev-launchable-e2e\.sh$/,
-    testsToRun: runTests("test/brev-launchable-e2e.test.ts"),
+    testsToRun: runTests(
+      "test/brev-launchable-e2e.test.ts",
+      "test/brev-launchable-gateway-diagnostics.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)managed-inference\/(?:models|presets|recipes|schemas)\/[^/]+\.(?:json|yaml)$/,
@@ -68,8 +71,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
-    pattern:
-      /(?:^|\/)internal\/security-reviews\/hermes-0\.19\.0-dependency-review\.md$/,
+    pattern: /(?:^|\/)internal\/security-reviews\/hermes-0\.19\.0-dependency-review\.md$/,
     testsToRun: runTests("test/hermes-dependency-review.test.ts"),
   },
   {
@@ -235,9 +237,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)test\/e2e\/live\/portable-profile-rootless-linux\.test\.ts$/,
-    testsToRun: runTests(
-      "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
-    ),
+    testsToRun: runTests("test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"),
   },
   {
     pattern: /(?:^|\/)test\/e2e\/fixtures\/portable-profile-systemctl-shim\.sh$/,
