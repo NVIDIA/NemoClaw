@@ -553,18 +553,10 @@ describe("llama.cpp image PR workflow", () => {
       "merge-multiple": true,
     });
     expect(receipt.run).toContain("scripts/checks/verify-llama-cpp-image-publication-evidence.sh");
-    expect(receipt.run).toContain(
-      '--sbom-amd64 "$evidence/llama-cpp-sbom-amd64.spdx.json"',
-    );
-    expect(receipt.run).toContain(
-      '--sbom-arm64 "$evidence/llama-cpp-sbom-arm64.spdx.json"',
-    );
-    expect(receipt.run).toContain(
-      '--anonymous-pull-amd64 "$evidence/anonymous-pull-amd64.json"',
-    );
-    expect(receipt.run).toContain(
-      '--anonymous-pull-arm64 "$evidence/anonymous-pull-arm64.json"',
-    );
+    expect(receipt.run).toContain('--sbom-amd64 "$evidence/llama-cpp-sbom-amd64.spdx.json"');
+    expect(receipt.run).toContain('--sbom-arm64 "$evidence/llama-cpp-sbom-arm64.spdx.json"');
+    expect(receipt.run).toContain('--anonymous-pull-amd64 "$evidence/anonymous-pull-amd64.json"');
+    expect(receipt.run).toContain('--anonymous-pull-arm64 "$evidence/anonymous-pull-arm64.json"');
     const publicationJobs = [
       "publish-platform",
       "assemble-candidate",
