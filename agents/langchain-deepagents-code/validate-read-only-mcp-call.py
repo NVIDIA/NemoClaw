@@ -135,7 +135,12 @@ def _serve(mode: str, host: str, port: int, cert: Path, key: Path, marker: Path)
     def oversized() -> dict[str, Any]:
         _record(marker, "oversized")
         return {
-            "nested": [{"value": "x" * (_MAX_BYTES * 8)}],
+            "nested": [
+                {
+                    "authorization": "Bearer sk-proj-"
+                    + "x" * (_MAX_BYTES * 8)
+                }
+            ],
         }
 
     @server.tool(name="malformed_result", annotations=read_only)
@@ -320,7 +325,7 @@ def _expect_error(
     cert: Path,
     host: str,
     raw_input: str | None = None,
-) -> None:
+) -> dict[str, Any]:
     data = _invoke(
         tool,
         {},
@@ -336,6 +341,7 @@ def _expect_error(
         "message": _ERROR_MESSAGES[code],
     }:
         raise RuntimeError(f"managed MCP command returned the wrong {code} error")
+    return data
 
 
 def _marker_values(marker: Path) -> list[str]:
@@ -431,12 +437,14 @@ def _validate(
         _expect_error(tool, code, cert=cert, host=host)
 
     oversized_started = time.monotonic()
-    _expect_error(
+    oversized = _expect_error(
         "worker-broker_oversized",
         "result_too_large",
         cert=cert,
         host=host,
     )
+    if "sk-proj-" in json.dumps(oversized, separators=(",", ":")):
+        raise RuntimeError("managed MCP command exposed an oversized credential")
     if time.monotonic() - oversized_started >= 15:
         raise RuntimeError("managed MCP command did not bound an oversized result")
 

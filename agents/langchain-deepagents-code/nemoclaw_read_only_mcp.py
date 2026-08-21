@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import re
 import sys
 from collections.abc import Mapping
@@ -83,6 +84,7 @@ def _write_envelope(data: Mapping[str, Any], *, exit_code: int) -> NoReturn:
     try:
         encoded = json.dumps(
             envelope,
+            allow_nan=False,
             ensure_ascii=True,
             separators=(",", ":"),
         ).encode("utf-8")
@@ -96,6 +98,7 @@ def _write_envelope(data: Mapping[str, Any], *, exit_code: int) -> NoReturn:
                     "The MCP tool returned an unsupported result.",
                 ),
             },
+            allow_nan=False,
             separators=(",", ":"),
         ).encode("utf-8")
         exit_code = 1
@@ -109,6 +112,7 @@ def _write_envelope(data: Mapping[str, Any], *, exit_code: int) -> NoReturn:
                     "The MCP tool result exceeds the managed size limit.",
                 ),
             },
+            allow_nan=False,
             separators=(",", ":"),
         ).encode("utf-8")
         exit_code = 1
@@ -152,6 +156,11 @@ def _consume_json(
         return _consume_bytes(remaining, 4)
     if type(value) is bool:
         return _consume_bytes(remaining, 4 if value else 5)
+    if type(value) is float and not math.isfinite(value):
+        raise _CallError(
+            "malformed_result",
+            "The MCP tool returned an unsupported result.",
+        )
     if type(value) in (int, float):
         return _consume_bytes(
             remaining,
@@ -199,7 +208,12 @@ def _redact_result(data: Mapping[str, Any]) -> dict[str, Any]:
     from deepagents_code.nemoclaw_observability import redact_secret_values
 
     try:
-        encoded = json.dumps(data, ensure_ascii=True, separators=(",", ":"))
+        encoded = json.dumps(
+            data,
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
         redacted = json.loads(redact_secret_values(encoded))
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise _CallError(

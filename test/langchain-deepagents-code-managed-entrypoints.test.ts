@@ -123,6 +123,16 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
       ],
       { encoding: "utf8" },
     );
+    const nonFinite = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        'import importlib.util, sys; spec = importlib.util.spec_from_file_location("probe", sys.argv[1]); module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); codes = []\nfor value in (float("nan"), float("inf"), float("-inf")):\n try: module._redact_result({"value": value})\n except module._CallError as exc: codes.append(exc.code)\nassert codes == ["malformed_result"] * 3\nmodule._write_envelope({"ok": True, "value": float("nan")}, exit_code=0)',
+        commandPath,
+      ],
+      { encoding: "utf8" },
+    );
 
     expect(invalid.status, invalid.stderr).toBe(2);
     expect(invalid.stderr).toBe("");
@@ -142,6 +152,9 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     expect(help.stdout).toContain("usage: dcode tools call-read-only TOOL --json");
     expect(oversized.status, oversized.stderr).toBe(0);
     expect(oversized.stdout.trim()).toBe("result_too_large");
+    expect(nonFinite.status, nonFinite.stderr).toBe(1);
+    expect(nonFinite.stderr).toBe("");
+    expect(JSON.parse(nonFinite.stdout).data.code).toBe("malformed_result");
   });
 
   it.each(["dcode-launcher.sh", "dcode-wrapper.sh", "start.sh"])(
