@@ -1292,6 +1292,15 @@ When the initial probe cannot return a trusted result, `connect` fails closed be
 It prints a bounded, redacted last-probe detail and points you to `$$nemoclaw <name> doctor`.
 If the sandbox is registered locally but missing from a healthy gateway, `connect` preserves the registry entry and points you to `rebuild --yes`, `onboard`, or `destroy` instead of deleting the metadata needed for recovery.
 
+<AgentOnly variant="deepagents">
+
+For a LangChain Deep Agents Code sandbox that uses OpenRouter, the adapter returns HTTP `404` for `https://inference.local/v1/models`.
+During final launch-readiness validation, `connect --probe-only` and `launch` send one inference request through the same route instead of treating that `404` as a failure.
+The command accepts the route only when the request returns a structurally valid response.
+If the request fails, `connect --probe-only` exits nonzero and identifies the inference request as the failed check.
+
+</AgentOnly>
+
 After a host reboot, the OpenShell gateway rotates its SSH host keys.
 `connect` detects the resulting identity drift, prunes stale `openshell-*` entries from `~/.ssh/known_hosts`, and retries automatically.
 You no longer need to re-run `$$nemoclaw onboard` after a reboot in this case.
