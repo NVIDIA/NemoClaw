@@ -43,6 +43,7 @@ import {
   PORTABLE_OLLAMA_IMAGE,
   PORTABLE_PROBE_IMAGE,
 } from "./hermes-portable-ollama-authority";
+import { prepareHermesPortableOllamaProviderRetirement } from "./hermes-portable-ollama-gateway-transaction";
 import { createHermesPortableOllamaInferenceResolver } from "./hermes-portable-ollama-inference";
 import { PORTABLE_HOST_GATEWAY_IP } from "./portable-profile";
 
@@ -262,6 +263,25 @@ function inferenceReceiptPath(fixture: ReturnType<typeof createRuntimeFixture>):
   return path.join(path.dirname(gatewayJournalPath(fixture)), "portable-inference.json");
 }
 
+async function publishPortableInference(fixture: ReturnType<typeof createRuntimeFixture>) {
+  const selection = fixture.resolve()!;
+  const route = prepareManagedRoute(fixture, selection);
+  route.prepared.validateBeforeCommit();
+  const mutation = await selection.prepareGatewayMutation(gatewayMutationInput);
+  createExactGatewayProvider(mutation);
+  await mutation.commit();
+  route.prepared.commit();
+  return JSON.parse(fs.readFileSync(gatewayJournalPath(fixture), "utf8")) as {
+    intent: {
+      transactionId: string;
+      targetSha256: string;
+      sandboxName: string;
+      model: string;
+      credentialEnv: string;
+    };
+  };
+}
+
 afterEach(() => {
   for (const restore of environmentRestorers.splice(0).reverse()) restore();
   vi.unstubAllEnvs();
@@ -271,6 +291,74 @@ afterEach(() => {
 });
 
 describe("Hermes Portable Ollama inference activation", () => {
+  it("retires the exact committed provider and reconciles a repeated absence (#9608)", async () => {
+    const fixture = createRuntimeFixture();
+    const journal = await publishPortableInference(fixture);
+    const options = {
+      directory: path.dirname(gatewayJournalPath(fixture)),
+      ...journal.intent,
+      runGatewayOpenshell: fixture.gatewayProvider.run,
+    };
+
+    const prepared = prepareHermesPortableOllamaProviderRetirement(options);
+    expect(prepared.present).toBe(true);
+    expect(prepared.authority).toMatchObject({
+      id: "portable-ollama-provider",
+      resourceVersion: 1,
+    });
+    prepared.removeAndVerify();
+    expect(fixture.gatewayProvider.isPresent()).toBe(false);
+
+    const retry = prepareHermesPortableOllamaProviderRetirement({
+      ...options,
+      allowAbsent: true,
+    });
+    expect(retry.present).toBe(false);
+    retry.removeAndVerify();
+    retry.verifyAbsent();
+    expect(
+      fixture.gatewayProvider
+        .calls()
+        .filter(({ args }) => args[0] === "provider" && args[1] === "delete"),
+    ).toHaveLength(1);
+  });
+
+  it("rejects provider revision drift and delimiter-spoofed profile output before delete (#9608)", async () => {
+    const generationFixture = createRuntimeFixture();
+    const generationJournal = await publishPortableInference(generationFixture);
+    generationFixture.gatewayProvider.bumpResourceVersion();
+    expect(() =>
+      prepareHermesPortableOllamaProviderRetirement({
+        directory: path.dirname(gatewayJournalPath(generationFixture)),
+        ...generationJournal.intent,
+        runGatewayOpenshell: generationFixture.gatewayProvider.run,
+      }),
+    ).toThrow("provider authority changed");
+    expect(
+      generationFixture.gatewayProvider
+        .calls()
+        .some(({ args }) => args[0] === "provider" && args[1] === "delete"),
+    ).toBe(false);
+
+    const delimiterFixture = createRuntimeFixture();
+    const delimiterJournal = await publishPortableInference(delimiterFixture);
+    delimiterFixture.gatewayProvider.setCredentialEnv(
+      `${delimiterFixture.gatewayProvider.credentialEnv()},SPOOFED_ENV`,
+    );
+    expect(() =>
+      prepareHermesPortableOllamaProviderRetirement({
+        directory: path.dirname(gatewayJournalPath(delimiterFixture)),
+        ...delimiterJournal.intent,
+        runGatewayOpenshell: delimiterFixture.gatewayProvider.run,
+      }),
+    ).toThrow("ambiguous gateway provider authority");
+    expect(
+      delimiterFixture.gatewayProvider
+        .calls()
+        .some(({ args }) => args[0] === "provider" && args[1] === "delete"),
+    ).toBe(false);
+  });
+
   it("rejects ambiguous Portable registry authority before selection (#9596)", () => {
     const capture = createPortablePodmanCapture([], {
       networkId: NETWORK_ID,

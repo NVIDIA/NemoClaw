@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { capturePodmanSocketAuthority, type PodmanSocketAuthority } from "../../adapters/podman";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
+import type { RuntimeProviderBundle } from "../runtime-provider/contract";
 import type { HostLocalInferenceRouteAuthorityStore } from "../runtime-provider/host-local-inference";
 import type {
   HostLocalInferenceStartupSelection,
@@ -29,6 +30,8 @@ import {
   HERMES_PORTABLE_PODMAN_VERSION,
   type HermesPortablePodmanAuthorityDeps,
 } from "./hermes-portable-podman-authority";
+import { buildHermesPortablePodmanEnvironment } from "./hermes-portable-container";
+import type { HermesPortableConfiguredReceipt } from "./hermes-portable-receipt";
 import {
   captureCurrentCdiDevices,
   captureCurrentGpuDevices,
@@ -98,6 +101,82 @@ function createUnusedRouteAuthorityStore(): HostLocalInferenceRouteAuthorityStor
       throw new Error("Managed Hermes Portable Ollama cannot publish host-process authority.");
     },
   });
+}
+
+export interface HermesPortableOllamaRuntimeAuthority {
+  readonly bundle: RuntimeProviderBundle;
+  readonly inferenceStateDir: string;
+  readonly network: ReturnType<typeof capturePortableNetworkAuthority>;
+  readonly assertCurrent: () => void;
+}
+
+/** Reconstruct the exact schema-5 Podman inference owner without acquiring images. */
+export function createHermesPortableOllamaRuntimeAuthority(options: {
+  readonly receipt: HermesPortableConfiguredReceipt;
+  readonly stateDir: string;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly podmanAuthorityDeps?: HermesPortablePodmanAuthorityDeps;
+  readonly captureGpuDevices?: () => readonly string[];
+  readonly captureCdiDevices?: () => readonly string[];
+}): HermesPortableOllamaRuntimeAuthority {
+  const sourceEnv = {
+    ...(options.env ?? process.env),
+    ...buildHermesPortablePodmanEnvironment(
+      options.receipt.runtimeAuthority,
+      options.env ?? process.env,
+    ),
+  };
+  const engines = createHermesPortablePodmanOperationEngines(
+    options.receipt.podmanExecutableAuthority,
+    options.receipt.socketAuthority,
+    options.receipt.runtimeAuthority,
+    sourceEnv,
+    options.podmanAuthorityDeps,
+  );
+  const captureGpuDevices = () =>
+    captureQualifiedGpuDevices(
+      options.captureGpuDevices ?? captureCurrentGpuDevices,
+      options.captureCdiDevices ?? captureCurrentCdiDevices,
+    );
+  const qualification = Object.freeze({
+    expectedVersion: HERMES_PORTABLE_PODMAN_VERSION,
+    captureCurrentCdiDevices: () => captureGpuDevices(),
+    assertCurrentAuthority: engines.assertCurrent,
+  });
+  const authority = qualifyPodmanInferenceAuthority(engines.hostLocalInference, qualification);
+  const network = capturePortableNetworkAuthority(engines.hostLocalInference);
+  const assertCurrent = (): void => {
+    engines.assertCurrent();
+    network.assertCurrent();
+    revalidatePodmanInferenceAuthority(engines.hostLocalInference, authority, qualification);
+  };
+  const inferenceStateDir = path.join(
+    options.stateDir,
+    "portable-inference",
+    digest({ sandboxName: options.receipt.sandboxName }),
+  );
+  const bundle = createPodmanRuntimeProviderBundle({
+    engines: {
+      hostDoctor: engines.hostDoctor,
+      hostLocalInference: engines.hostLocalInference,
+      sandboxLifecycle: engines.sandboxLifecycle,
+    },
+    hostLocalInference: {
+      authority,
+      authorityQualification: qualification,
+      authorityStore: createFilePersistedEngineAuthorityStore(inferenceStateDir),
+      routeAuthorityStore: createUnusedRouteAuthorityStore(),
+      externalNetwork: network,
+      onFailureEvidence: (evidence) => {
+        const message = redactOnboardDiagnosticText(evidence.message);
+        if (message) console.error(`  Podman inference ${evidence.phase}: ${message}`);
+      },
+      redactSensitive: redactOnboardDiagnosticText,
+    },
+    preflight: { platform: "linux", architecture: "x64" },
+  });
+  assertCurrent();
+  return Object.freeze({ bundle, inferenceStateDir, network, assertCurrent });
 }
 
 export function createHermesPortableOllamaInferenceResolver(

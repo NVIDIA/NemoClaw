@@ -86,7 +86,7 @@ import {
   type UninstallPlan,
 } from "./plan";
 import {
-  assertHermesPortableUninstallAvailable,
+  HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE,
   hasPortableRuntimeCleanup,
   PORTABLE_RETIREMENT_STATE_ENTRIES,
   portableRetirementPreservationEntries,
@@ -1730,8 +1730,7 @@ function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): v
     const versionDir = path.join(nodeVersionsDir, version.name);
     const modulesDir = path.join(versionDir, "lib", "node_modules");
     const packageEntry = dirEntries(modulesDir).find(
-      (entry) =>
-        (entry.isDirectory() || entry.isSymbolicLink()) && entry.name === "nemoclaw",
+      (entry) => (entry.isDirectory() || entry.isSymbolicLink()) && entry.name === "nemoclaw",
     );
     const packageDir = packageEntry ? path.join(modulesDir, packageEntry.name) : null;
     const packageBins = packageDir ? nvmPackageBinTargets(packageDir) : new Map<string, string>();
@@ -2308,7 +2307,9 @@ function removeHostModelStores(
   preserveForFailedLlamaCleanup: boolean,
 ): boolean {
   if (preserveForFailedLlamaCleanup) {
-    runtime.log("Managed llama.cpp cleanup did not complete. NemoClaw kept model stores for retry.");
+    runtime.log(
+      "Managed llama.cpp cleanup did not complete. NemoClaw kept model stores for retry.",
+    );
     return true;
   }
   if (scopedToSelectedGateway) {
@@ -2792,7 +2793,9 @@ function executePlan(
         "portable-demo-lifecycle",
         "sandboxes.json",
         "sandboxes.json.lock",
+        "portable-inference",
         "state",
+        HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE,
         ...PORTABLE_RETIREMENT_STATE_ENTRIES,
         ...portableRetirementEntries.stateRoot,
       ]
@@ -3089,7 +3092,7 @@ function completePortablePlan(
   )
     return { ok: false };
   runtime.log(
-    "Kept ~/.nemoclaw/portable-uninstall-retirement.json until a later completed onboarding; it contains dictionary-testable pseudonymous fingerprints, not raw sandbox names or configuration, and another process running as this user can change it.",
+    "Kept secret-free portable cleanup evidence for exact retry and lifecycle reconciliation.",
   );
   return { ok };
 }
@@ -3276,7 +3279,6 @@ export async function runUninstallPlanProduction(
   const home = env.HOME || os.homedir();
   try {
     return await (deps.withPortableHostFence ?? withPortableHostFence)(home, () => {
-      assertHermesPortableUninstallAvailable(env);
       return runUninstallPlan(options, { ...deps, env });
     });
   } catch (error) {

@@ -1,0 +1,236 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import os from "node:os";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { readGatewayRegistryFile } from "../../state/gateway-registry";
+import { readHermesPortableLifecycleReceipt } from "../../onboard/experimental/hermes-portable-receipt";
+import {
+  createHermesPortableUninstallFixture,
+  hermesPortableUninstallFixtureConstants,
+  type HermesPortableUninstallFixture,
+} from "../../../../test/helpers/hermes-portable-uninstall-fixture";
+import { runPortableRuntimeCleanupTransaction } from "./portable-runtime-cleanup";
+import { inspectHermesPortableUninstallJournal } from "./hermes-portable-uninstall-transaction";
+
+let homeDir: string;
+let fixture: HermesPortableUninstallFixture | undefined;
+
+function runCleanup(target: HermesPortableUninstallFixture) {
+  const legacyOpenShell = vi.fn(() => true);
+  const result = runPortableRuntimeCleanupTransaction(target.cleanupInput, legacyOpenShell, {
+    hermesPortable: target.deps,
+    withRegistryLock: (_registryFile, operation) => operation(),
+  });
+  expect(legacyOpenShell).not.toHaveBeenCalled();
+  return result;
+}
+
+beforeEach(() => {
+  homeDir = fs.mkdtempSync(`${os.tmpdir()}/nemoclaw-hermes-portable-uninstall-`);
+});
+
+afterEach(() => {
+  fixture?.restore();
+  fixture = undefined;
+  fs.rmSync(homeDir, { force: true, recursive: true });
+  vi.restoreAllMocks();
+});
+
+describe("Hermes Portable schema-5 uninstall", () => {
+  it("retires exact owned resources, preserves unrelated state, and completes a second no-op (#9608)", async () => {
+    fixture = await createHermesPortableUninstallFixture(homeDir);
+    const image = hermesPortableUninstallFixtureConstants.inferenceImage;
+
+    expect(runCleanup(fixture)).toMatchObject({
+      sandboxContainersRemoved: 1,
+      selectorsRemoved: [],
+    });
+    expect(fixture.sandboxPresent()).toBe(false);
+    expect(fixture.sandboxDeleteCount()).toBe(1);
+    expect(fixture.gatewayProvider.isPresent()).toBe(false);
+    expect(fixture.harness.container()).toBeNull();
+    expect(fixture.authorityState.images?.has(image)).toBe(true);
+    expect(fs.existsSync(fixture.unrelatedFile)).toBe(true);
+    expect(fs.readdirSync(fixture.lifecycleReceiptRoot)).toEqual([]);
+    expect(
+      readGatewayRegistryFile(homeDir, fixture.registryFile)?.sandboxes[
+        hermesPortableUninstallFixtureConstants.sandboxName
+      ],
+    ).toBeUndefined();
+    expect(inspectHermesPortableUninstallJournal(fixture.stateDir)?.phase).toBe("completed");
+
+    const eventCount = fixture.operationEvents.length;
+    const providerCallCount = fixture.gatewayProvider.calls().length;
+    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 0 });
+    expect(fixture.operationEvents).toHaveLength(eventCount);
+    expect(fixture.gatewayProvider.calls()).toHaveLength(providerCallCount);
+    expect(fixture.sandboxDeleteCount()).toBe(1);
+  });
+
+  it("preserves a provider, inference runtime, and recovery evidence shared by a sibling (#9608)", async () => {
+    fixture = await createHermesPortableUninstallFixture(homeDir, { shared: true });
+
+    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 1 });
+    expect(fixture.gatewayProvider.isPresent()).toBe(true);
+    expect(fixture.harness.container()).not.toBeNull();
+    expect(fs.existsSync(fixture.inferenceDirectory)).toBe(true);
+    expect(fs.readdirSync(fixture.lifecycleReceiptRoot)).toEqual([]);
+    expect(fs.existsSync(fixture.unrelatedFile)).toBe(true);
+    expect(Object.keys(readGatewayRegistryFile(homeDir, fixture.registryFile)!.sandboxes)).toEqual([
+      "portable-sibling",
+    ]);
+
+    const eventCount = fixture.operationEvents.length;
+    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 0 });
+    expect(fixture.operationEvents).toHaveLength(eventCount);
+    expect(fixture.gatewayProvider.isPresent()).toBe(true);
+    expect(fixture.harness.container()).not.toBeNull();
+  });
+
+  it("preserves a shared provider while retiring an exclusive inference runtime (#9608)", async () => {
+    fixture = await createHermesPortableUninstallFixture(homeDir, {
+      providerOnlyShared: true,
+    });
+
+    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 1 });
+    expect(fixture.gatewayProvider.isPresent()).toBe(true);
+    expect(fixture.harness.container()).toBeNull();
+    expect(fs.existsSync(fixture.inferenceDirectory)).toBe(true);
+    expect(Object.keys(readGatewayRegistryFile(homeDir, fixture.registryFile)!.sandboxes)).toEqual([
+      "provider-sibling",
+    ]);
+
+    const eventCount = fixture.operationEvents.length;
+    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 0 });
+    expect(fixture.operationEvents).toHaveLength(eventCount);
+    expect(fixture.gatewayProvider.isPresent()).toBe(true);
+    expect(fixture.harness.container()).toBeNull();
+  });
+
+  it.each([
+    "prepared",
+    "sandboxes-retired",
+    "providers-retired",
+    "inference-retired",
+    "resources-absent",
+    "registry-retired",
+    "receipts-retired",
+  ] as const)("resumes the real transaction after the %s action (#9608)", async (phase) => {
+    fixture = await createHermesPortableUninstallFixture(homeDir, { interruptAfter: phase });
+
+    expect(() => runCleanup(fixture!)).toThrow(`interrupted after ${phase}`);
+    expect(inspectHermesPortableUninstallJournal(fixture.stateDir)?.phase).toBe(phase);
+    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 0 });
+    expect(inspectHermesPortableUninstallJournal(fixture.stateDir)?.phase).toBe("completed");
+
+    const eventCount = fixture.operationEvents.length;
+    expect(runCleanup(fixture)).toMatchObject({ sandboxContainersRemoved: 0 });
+    expect(fixture.operationEvents).toHaveLength(eventCount);
+    expect(fixture.sandboxDeleteCount()).toBe(1);
+    expect(
+      fixture.gatewayProvider
+        .calls()
+        .filter(({ args }) => args[0] === "provider" && args[1] === "delete"),
+    ).toHaveLength(1);
+  });
+
+  it("rejects provider profile, socket, and stale-readiness drift before mutation (#9608)", async () => {
+    fixture = await createHermesPortableUninstallFixture(homeDir);
+    fixture.gatewayProvider.setCredentialEnv(
+      `${fixture.gatewayProvider.credentialEnv()},SPOOFED_PROFILE`,
+    );
+
+    expect(() => runCleanup(fixture!)).toThrow("ambiguous gateway provider authority");
+    expect(fixture.sandboxDeleteCount()).toBe(0);
+    expect(fixture.gatewayProvider.isPresent()).toBe(true);
+    expect(fixture.harness.container()).not.toBeNull();
+    expect(inspectHermesPortableUninstallJournal(fixture.stateDir)).toBeNull();
+
+    fixture.restore();
+    fs.rmSync(homeDir, { force: true, recursive: true });
+    homeDir = fs.mkdtempSync(`${os.tmpdir()}/nemoclaw-hermes-portable-uninstall-`);
+    fixture = await createHermesPortableUninstallFixture(homeDir);
+    fixture.setSocketDrift();
+    expect(() => runCleanup(fixture!)).toThrow("socket authority drift");
+    expect(fixture.sandboxDeleteCount()).toBe(0);
+    expect(inspectHermesPortableUninstallJournal(fixture.stateDir)).toBeNull();
+
+    fixture.restore();
+    fs.rmSync(homeDir, { force: true, recursive: true });
+    homeDir = fs.mkdtempSync(`${os.tmpdir()}/nemoclaw-hermes-portable-uninstall-`);
+    fixture = await createHermesPortableUninstallFixture(homeDir);
+    fixture.setSandboxPhase("Creating");
+    expect(() => runCleanup(fixture!)).toThrow("OpenShell sandbox identity disagrees");
+    expect(fixture.sandboxDeleteCount()).toBe(0);
+    expect(inspectHermesPortableUninstallJournal(fixture.stateDir)).toBeNull();
+  });
+
+  it("rejects a same-name sandbox replacement during retry before later mutation (#9608)", async () => {
+    fixture = await createHermesPortableUninstallFixture(homeDir, {
+      interruptAfter: "prepared",
+    });
+
+    expect(() => runCleanup(fixture!)).toThrow("interrupted after prepared");
+    fixture.replaceSandbox();
+    expect(() => runCleanup(fixture!)).toThrow("OpenShell sandbox identity disagrees");
+    expect(fixture.sandboxDeleteCount()).toBe(1);
+    expect(fixture.gatewayProvider.isPresent()).toBe(true);
+    expect(fixture.harness.container()).not.toBeNull();
+    expect(readHermesPortableLifecycleReceipt("portable-hermes", fixture.stateDir)).not.toBeNull();
+  });
+
+  it.each([
+    ["sandbox container ID", "setSandboxContainerIdDrift"],
+    ["sandbox label delimiter", "setSandboxLabelDelimiterDrift"],
+    ["registry lifecycle generation", "setRegistryGenerationDrift"],
+    ["inference network", "setNetworkDrift"],
+  ] as const)("rejects %s drift before mutation (#9608)", async (_authority, mutate) => {
+    fixture = await createHermesPortableUninstallFixture(homeDir);
+    fixture[mutate]();
+
+    expect(() => runCleanup(fixture!)).toThrow();
+    expect(fixture.sandboxDeleteCount()).toBe(0);
+    expect(fixture.gatewayProvider.isPresent()).toBe(true);
+    expect(fixture.harness.container()).not.toBeNull();
+    expect(inspectHermesPortableUninstallJournal(fixture.stateDir)).toBeNull();
+    expect(readHermesPortableLifecycleReceipt("portable-hermes", fixture.stateDir)).not.toBeNull();
+    expect(fs.existsSync(fixture.unrelatedFile)).toBe(true);
+  });
+
+  it("rejects provider absence that the prepared phase cannot justify (#9608)", async () => {
+    fixture = await createHermesPortableUninstallFixture(homeDir, {
+      interruptAfter: "prepared",
+    });
+
+    expect(() => runCleanup(fixture!)).toThrow("interrupted after prepared");
+    fixture.gatewayProvider.setPresent(false);
+    expect(() => runCleanup(fixture!)).toThrow(
+      "gateway provider disappeared before uninstall journaled it",
+    );
+    expect(inspectHermesPortableUninstallJournal(fixture.stateDir)?.phase).toBe("prepared");
+    expect(fixture.harness.container()).not.toBeNull();
+    expect(readHermesPortableLifecycleReceipt("portable-hermes", fixture.stateDir)).not.toBeNull();
+  });
+
+  it.each(["prepared", "sandboxes-retired"] as const)(
+    "rejects inference absence that the %s phase cannot justify (#9608)",
+    async (phase) => {
+      fixture = await createHermesPortableUninstallFixture(homeDir, { interruptAfter: phase });
+
+      expect(() => runCleanup(fixture!)).toThrow(`interrupted after ${phase}`);
+      const containerId = fixture.harness.container()!.id;
+      expect(fixture.harness.engine.capture(["rm", "--force", containerId], 1_000).status).toBe(0);
+      expect(() => runCleanup(fixture!)).toThrow(
+        "Podman host-local inference container inspection failed",
+      );
+      expect(inspectHermesPortableUninstallJournal(fixture.stateDir)?.phase).toBe(phase);
+      expect(
+        readHermesPortableLifecycleReceipt("portable-hermes", fixture.stateDir),
+      ).not.toBeNull();
+    },
+  );
+});

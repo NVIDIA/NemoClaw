@@ -9,6 +9,7 @@ import {
   fingerprintOpenShellSandboxLiveIdentity,
   parseOpenShellSandboxId,
 } from "../../adapters/openshell/sandbox-identity";
+import { assertPodmanSocketAuthority } from "../../adapters/podman";
 import {
   assertHermesPortableOpenShellExecutableAuthority,
   buildOpenShellSubprocessEnv,
@@ -17,6 +18,12 @@ import {
 } from "../../adapters/openshell/resolve-shared";
 import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock-acquisition";
 import type { SandboxEntry } from "../../state/registry/types";
+import {
+  PODMAN_MANAGED_LABEL,
+  PODMAN_SANDBOX_NAME_LABEL,
+  PODMAN_SANDBOX_WORKSPACE,
+  PODMAN_SANDBOX_WORKSPACE_LABEL,
+} from "../runtime-provider/podman-lifecycle";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import {
   assertCurrentHermesPortableContainer,
@@ -94,6 +101,7 @@ interface QualifiedHermesPortableLifecycle {
   readonly receipt: HermesPortableConfiguredReceipt;
   readonly containerDeps: HermesPortableContainerDeps;
   readonly container: HermesPortableContainerInspection;
+  readonly capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]>;
 }
 
 function fail(message: string): never {
@@ -240,7 +248,12 @@ function observeOpenShellIdentity(
   const output = commandOutput(current.stdout, "sandbox identity output");
   const sandboxId = parseOpenShellSandboxId(output);
   const liveIdentityFingerprint = fingerprintOpenShellSandboxLiveIdentity(output);
-  if (!sandboxId || !liveIdentityFingerprint || sandboxId !== receipt.container.sandboxId) {
+  if (
+    !/^Phase:\s*Ready\s*$/mu.test(output) ||
+    !sandboxId ||
+    !liveIdentityFingerprint ||
+    sandboxId !== receipt.container.sandboxId
+  ) {
     fail("OpenShell sandbox identity disagrees with the receipt container");
   }
   return { sandboxId, liveIdentityFingerprint };
@@ -351,6 +364,7 @@ function qualify(
     receipt,
     containerDeps,
     container,
+    capture,
   };
 }
 
@@ -472,6 +486,229 @@ export function assertHermesPortableSandboxLifecycleAuthority(
     fail("authenticated health is not ready");
   }
   qualify(sandboxName, context, deps, qualified.snapshot);
+}
+
+export interface PreparedHermesPortableSandboxRemoval {
+  readonly present: boolean;
+  readonly receipt: HermesPortableConfiguredReceipt;
+  readonly snapshot: HermesPortableReceiptSnapshot;
+  readonly removeAndVerify: () => void;
+  readonly verifyAbsent: () => void;
+}
+
+function explicitSandboxAbsence(
+  result: HermesPortableLifecycleCommandResult,
+  sandboxName: string,
+): boolean {
+  if (result.status === 0 || result.error) return false;
+  const clean = `${commandOutput(result.stdout, "sandbox absence output")}\n${commandOutput(
+    result.stderr,
+    "sandbox absence diagnostic",
+  )}`
+    .replace(/\x1b\[[0-9;]*m|\r/gu, "")
+    .trim();
+  const escaped = sandboxName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const named = `(?:['\"]${escaped}['\"]|${escaped})`;
+  return (
+    /^(?:error:\s*)?(?:×\s*)?code:\s*["']Some requested entity was not found["']\s*,\s*message:\s*["']sandbox not found["']$/iu.test(
+      clean,
+    ) ||
+    new RegExp(
+      `^(?:error:\\s*)?sandbox\\s+${named}\\s+(?:(?:is\\s+)?not\\s+(?:found|present)|does\\s+not\\s+exist)[.!]?$`,
+      "iu",
+    ).test(clean) ||
+    new RegExp(`^(?:error:\\s*)?no\\s+such\\s+sandbox\\s+${named}[.!]?$`, "iu").test(clean)
+  );
+}
+
+function missingPodmanContainer(result: HermesPortablePodmanResult): boolean {
+  if (result.status === 0 || result.error) return false;
+  return /\b(?:no such (?:object|container)|no container with (?:name|id)|container .* not found)\b/iu.test(
+    `${result.stdout}\n${result.stderr}`,
+  );
+}
+
+function requireNoContainerLookupResult(result: HermesPortablePodmanResult, label: string): void {
+  if (result.status !== 0 || result.error) fail(`cannot prove ${label} absence`);
+  const values = result.stdout
+    .split(/\r?\n/u)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (values.some((value) => !/^[a-f0-9]{64}$/u.test(value))) {
+    fail(`${label} lookup returned malformed identity`);
+  }
+  if (values.length !== 0) fail(`${label} replacement exists`);
+}
+
+function assertHermesPortableContainerAbsent(
+  receipt: HermesPortableConfiguredReceipt,
+  deps: HermesPortableContainerDeps,
+): void {
+  (deps.assertSocketAuthority ?? assertPodmanSocketAuthority)(
+    receipt.socketAuthority,
+    deps.socketAuthority,
+  );
+  const exact = deps.podman(
+    ["container", "inspect", receipt.container.containerId],
+    COMMAND_TIMEOUT_MS,
+  );
+  if (!missingPodmanContainer(exact)) {
+    if (exact.status !== 0 || exact.error) fail("cannot prove exact container absence");
+    fail("exact container remained after sandbox removal");
+  }
+  const common = ["ps", "--all", "--no-trunc"] as const;
+  requireNoContainerLookupResult(
+    deps.podman(
+      [
+        ...common,
+        "--filter",
+        `label=${PODMAN_MANAGED_LABEL}=true`,
+        "--filter",
+        `label=${PODMAN_SANDBOX_NAME_LABEL}=${receipt.sandboxName}`,
+        "--filter",
+        `label=${PODMAN_SANDBOX_WORKSPACE_LABEL}=${PODMAN_SANDBOX_WORKSPACE}`,
+        "--format",
+        "{{.ID}}",
+      ],
+      COMMAND_TIMEOUT_MS,
+    ),
+    "managed same-name container",
+  );
+  requireNoContainerLookupResult(
+    deps.podman(
+      [...common, "--filter", `name=^${receipt.container.name}$`, "--format", "{{.ID}}"],
+      COMMAND_TIMEOUT_MS,
+    ),
+    "same-name container",
+  );
+  (deps.assertSocketAuthority ?? assertPodmanSocketAuthority)(
+    receipt.socketAuthority,
+    deps.socketAuthority,
+  );
+}
+
+function requireStaticRegistry(
+  receipt: HermesPortableConfiguredReceipt,
+  deps: HermesPortableLifecycleDeps,
+): void {
+  const entry = deps.readRegistry?.(receipt.sandboxName);
+  if (
+    !entry ||
+    entry.name !== receipt.sandboxName ||
+    entry.agent !== "hermes" ||
+    entry.openshellDriver !== "docker" ||
+    entry.gatewayName !== receipt.gatewayName ||
+    entry.lifecycleGeneration !== receipt.lifecycleGeneration ||
+    entry.openshellVersion !== HERMES_PORTABLE_OPENSHELL_VERSION ||
+    typeof entry.lifecycleLiveIdentityFingerprint !== "string"
+  ) {
+    fail("registry authority disagrees with the active receipt");
+  }
+}
+
+/** Prepare exact sandbox deletion, admitting absence only after a durable uninstall journal exists. */
+export function prepareHermesPortableSandboxRemoval(
+  sandboxName: string,
+  context: PortableDemoLifecycleContext,
+  deps: HermesPortableLifecycleDeps = {},
+  options: {
+    readonly allowAbsent?: boolean;
+    readonly expectedReceiptSha256?: string;
+  } = {},
+): PreparedHermesPortableSandboxRemoval {
+  const commandEnv = deps.env ?? process.env;
+  assertNoOpenShellGatewayEndpointOverride(commandEnv);
+  const stateDir = deps.stateDir ?? defaultPortableDemoStateDir(commandEnv);
+  if (!isMcpLifecycleLockHeld(sandboxName, path.join(stateDir, "state"))) {
+    fail("mutation requires the sandbox lifecycle lock");
+  }
+  const expectedSnapshot = readHermesPortableLifecycleReceipt(sandboxName, stateDir);
+  if (!expectedSnapshot || expectedSnapshot.receipt.phase !== "active") {
+    fail("active receipt authority disappeared");
+  }
+  if (
+    options.expectedReceiptSha256 !== undefined &&
+    expectedSnapshot.sha256 !== options.expectedReceiptSha256
+  ) {
+    fail("receipt authority changed");
+  }
+  const receipt = expectedSnapshot.receipt;
+  if (!contextMatches(receipt, context)) fail("registry context disagrees with the active receipt");
+
+  const inspect = (): {
+    readonly present: boolean;
+    readonly qualified?: QualifiedHermesPortableLifecycle;
+    readonly capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]>;
+    readonly containerDeps: HermesPortableContainerDeps;
+  } => {
+    const snapshot = readHermesPortableLifecycleReceipt(sandboxName, stateDir);
+    if (!snapshot || !sameSnapshot(snapshot, expectedSnapshot)) fail("receipt authority changed");
+    assertCurrentHermesPortableStoredStartupContract(receipt.startup, sandboxName);
+    assertHermesPortableDurablePolicyAuthority(receipt.policy);
+    requireStaticRegistry(receipt, deps);
+    const assertExecutable =
+      deps.assertOpenShellExecutableAuthority ?? assertHermesPortableOpenShellExecutableAuthority;
+    const commandAuthority = buildHermesPortableOpenShellCommandAuthority(
+      receipt,
+      commandEnv,
+      assertExecutable,
+    );
+    const rawCapture =
+      deps.captureOpenShell ??
+      defaultCaptureOpenShell(
+        commandAuthority.executablePath,
+        commandEnv,
+        receipt.runtimeAuthority,
+      );
+    const capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]> = (
+      args,
+      timeoutMs,
+    ) => {
+      buildHermesPortableOpenShellCommandAuthority(receipt, commandEnv, assertExecutable);
+      return rawCapture(args, timeoutMs);
+    };
+    const current = capture(
+      ["sandbox", "get", "-g", receipt.gatewayName, receipt.sandboxName],
+      COMMAND_TIMEOUT_MS,
+    );
+    const containerDeps =
+      typeof deps.container === "function"
+        ? deps.container(receipt)
+        : (deps.container ?? createContainerDeps(receipt, commandEnv, deps.podmanAuthorityDeps));
+    if (explicitSandboxAbsence(current, sandboxName)) {
+      if (!options.allowAbsent) fail("sandbox disappeared before uninstall journal publication");
+      assertHermesPortableContainerAbsent(receipt, containerDeps);
+      return { present: false, capture, containerDeps };
+    }
+    if (current.status !== 0 || current.error) fail("cannot prove the current OpenShell sandbox");
+    const qualified = qualify(sandboxName, context, deps, expectedSnapshot);
+    return { present: true, qualified, capture, containerDeps: qualified.containerDeps };
+  };
+
+  const initial = inspect();
+  const verifyAbsent = (): void => {
+    const current = inspect();
+    if (current.present) fail("OpenShell sandbox remained after deletion");
+  };
+  return Object.freeze({
+    present: initial.present,
+    receipt,
+    snapshot: expectedSnapshot,
+    removeAndVerify() {
+      const current = inspect();
+      if (!current.present) return;
+      const removed = current.capture(
+        ["sandbox", "delete", "-g", receipt.gatewayName, receipt.sandboxName],
+        40_000,
+      );
+      const after = inspect();
+      if (after.present) {
+        if (removed.status !== 0 || removed.error) fail("exact sandbox deletion failed");
+        fail("exact sandbox remained after deletion");
+      }
+    },
+    verifyAbsent,
+  });
 }
 
 /** Stop only the exact schema-5 full ID after revalidating after the callback. */
