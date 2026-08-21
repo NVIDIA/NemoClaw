@@ -50,6 +50,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const finalizeBackup = vi.fn(() => ({
       backupRemoved: true,
       rolledBack: false,
+      lifecycleReleaseObserved: true,
       replacementRestarted: true,
     }));
     const capturePreRollbackDiagnostics = vi.fn(() => null);

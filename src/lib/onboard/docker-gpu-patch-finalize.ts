@@ -37,12 +37,17 @@ export {
   rollbackToBackupContainer,
 } from "./docker-gpu-patch-rollback";
 
-export type DockerGpuPatchFinalizeOptions = {
-  result: DockerGpuPatchResult;
-  supervisorReady: boolean;
-  sandboxName?: string;
-  lifecycleReleaseTimeoutSecs?: number;
-};
+export type DockerGpuPatchFinalizeOptions =
+  | {
+      result: DockerGpuPatchResult;
+      supervisorReady: false;
+    }
+  | {
+      result: DockerGpuPatchResult;
+      supervisorReady: true;
+      sandboxName: string;
+      lifecycleReleaseTimeoutSecs: number;
+    };
 
 export type DockerGpuPatchFinalizeOutcome = {
   backupRemoved: boolean;
@@ -85,26 +90,37 @@ export function finalizeDockerGpuPatchBackup(
     }
     const rmResult = resolved.dockerRm(options.result.backupContainerName, containerOpts);
     const backupRemoved = hasZeroDockerExitStatus(rmResult);
-    if (backupRemoved && options.sandboxName && options.lifecycleReleaseTimeoutSecs) {
+    const sandboxName = options.sandboxName;
+    const lifecycleReleaseTimeoutSecs = options.lifecycleReleaseTimeoutSecs;
+    const hasLifecycleContext =
+      sandboxName.length > 0 &&
+      Number.isFinite(lifecycleReleaseTimeoutSecs) &&
+      lifecycleReleaseTimeoutSecs > 0;
+    if (backupRemoved && hasLifecycleContext) {
       console.log(
-        `  Waiting for OpenShell to retire the previous lifecycle record before restarting the replacement (up to ${options.lifecycleReleaseTimeoutSecs}s)...`,
+        `  Waiting for OpenShell to retire the previous lifecycle record before restarting the replacement (up to ${lifecycleReleaseTimeoutSecs}s)...`,
       );
     }
     const lifecycleReleaseObserved =
-      backupRemoved && options.sandboxName && options.lifecycleReleaseTimeoutSecs
-        ? waitForOpenShellSandboxLifecycleRelease(
-            options.sandboxName,
-            options.lifecycleReleaseTimeoutSecs,
-            deps,
-          )
-        : undefined;
+      backupRemoved && hasLifecycleContext
+        ? waitForOpenShellSandboxLifecycleRelease(sandboxName, lifecycleReleaseTimeoutSecs, deps)
+        : false;
+    if (!lifecycleReleaseObserved) {
+      return {
+        backupRemoved,
+        rolledBack: false,
+        replacementStoppedForCommit: true,
+        replacementRestarted: false,
+        lifecycleReleaseObserved: false,
+      };
+    }
     const startResult = resolved.dockerStart(options.result.newContainerId, containerOpts);
     return {
       backupRemoved,
       rolledBack: false,
       replacementStoppedForCommit: true,
       replacementRestarted: hasZeroDockerExitStatus(startResult),
-      ...(lifecycleReleaseObserved === undefined ? {} : { lifecycleReleaseObserved }),
+      lifecycleReleaseObserved: true,
     };
   }
   const rollback = rollbackToBackupContainer(

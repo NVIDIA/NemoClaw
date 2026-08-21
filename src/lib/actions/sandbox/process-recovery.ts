@@ -10,6 +10,7 @@ import {
   captureSandboxSshConfig,
   getOpenshellBinary,
   isCommandTimeout,
+  runOpenshell,
 } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import {
@@ -748,6 +749,7 @@ function recoverSandboxProcesses(
       const relaunch = relaunchManagedSupervisorSessionImpl(sandboxName, {
         quiet,
         deps: {
+          runOpenshell,
           confirmMissingSupervisor: (containerId) =>
             isExactlyMissingManagedSupervisor(
               requestPinnedGatewaySupervisorAction(sandboxName, "probe", 210000, containerId),

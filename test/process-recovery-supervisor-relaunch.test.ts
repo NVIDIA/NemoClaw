@@ -109,6 +109,7 @@ function composedRelaunchTransaction(
             };
           }),
           removeBackup: vi.fn(() => true),
+          runOpenshell: vi.fn(() => ({ status: 0, stdout: "No sandboxes found.\n" })),
           recreate: vi.fn(() => ({
             applied: true as const,
             oldContainerId: "old-container-id",
@@ -451,7 +452,12 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(order).toEqual(["restore-state", "post-restore-restart", "commit-container"]);
     expect(finalizeTransaction).toHaveBeenCalledOnce();
     expect(finalizeTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({ supervisorReady: true }),
+      expect.objectContaining({
+        lifecycleReleaseTimeoutSecs: 900,
+        sandboxName: "recovered-box",
+        supervisorReady: true,
+      }),
+      expect.objectContaining({ runOpenshell: expect.any(Function), sleep: expect.any(Function) }),
     );
   });
 
@@ -464,8 +470,10 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     const dockerRm = vi.fn(() => ({ status: 0 }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
     const finalizeTransaction = vi.fn(
-      (options: Parameters<typeof finalizeDockerGpuPatchBackup>[0]) =>
-        finalizeDockerGpuPatchBackup(options, { dockerStop, dockerRm, dockerStart }),
+      (
+        options: Parameters<typeof finalizeDockerGpuPatchBackup>[0],
+        deps: Parameters<typeof finalizeDockerGpuPatchBackup>[1],
+      ) => finalizeDockerGpuPatchBackup(options, { ...deps, dockerStop, dockerRm, dockerStart }),
     );
     const { relaunchManagedSupervisorSessionImpl } = composedRelaunchTransaction(
       order,

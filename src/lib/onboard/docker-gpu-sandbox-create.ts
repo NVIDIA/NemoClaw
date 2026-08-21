@@ -491,7 +491,7 @@ export function createDockerGpuSandboxCreatePatch(
         if (
           finalizeOutcome.backupRemoved &&
           finalizeOutcome.replacementRestarted &&
-          finalizeOutcome.lifecycleReleaseObserved !== false
+          finalizeOutcome.lifecycleReleaseObserved === true
         ) {
           const remainingReconnectTimeoutSecs = Math.max(
             0,

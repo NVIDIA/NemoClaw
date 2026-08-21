@@ -105,11 +105,13 @@ export function waitForOpenShellSandboxLifecycleRelease(
   const deadline = Date.now() + boundedTimeoutSecs * 1000;
   const maxAttempts = Math.max(1, Math.ceil(boundedTimeoutSecs / 2) + 1);
 
-  for (let attempt = 1; attempt <= maxAttempts && Date.now() <= deadline; attempt += 1) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const remainingBeforeProbeMs = deadline - Date.now();
+    if (remainingBeforeProbeMs <= 0) break;
     const result = deps.runOpenshell(["sandbox", "list"], {
       ignoreError: true,
       suppressOutput: true,
-      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+      timeout: Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, remainingBeforeProbeMs),
     });
     if (hasZeroDockerExitStatus(result)) {
       const output = String(result.stdout ?? "").trim();
@@ -128,7 +130,10 @@ export function waitForOpenShellSandboxLifecycleRelease(
         return true;
       }
     }
-    if (attempt < maxAttempts && Date.now() <= deadline) sleep(2);
+    const remainingBeforeSleepMs = deadline - Date.now();
+    if (attempt < maxAttempts && remainingBeforeSleepMs > 0) {
+      sleep(Math.min(2, remainingBeforeSleepMs / 1000));
+    }
   }
   return false;
 }

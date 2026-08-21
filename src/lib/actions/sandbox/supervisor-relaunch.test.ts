@@ -74,6 +74,7 @@ function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
       failedFiles: [],
     })),
     removeBackup: vi.fn(() => true),
+    runOpenshell: vi.fn(() => ({ status: 0, stdout: "No sandboxes found.\n" })),
     recreate: vi.fn(() => patchResult()),
     finalize: vi.fn(({ supervisorReady }) =>
       supervisorReady
@@ -153,10 +154,15 @@ describe("relaunchManagedSupervisorSession", () => {
     });
     expect(deps.restoreState).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
     expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
-    expect(deps.finalize).toHaveBeenCalledWith({
-      result: expect.objectContaining({ newContainerId: "new-container-id" }),
-      supervisorReady: true,
-    });
+    expect(deps.finalize).toHaveBeenCalledWith(
+      {
+        lifecycleReleaseTimeoutSecs: 900,
+        result: expect.objectContaining({ newContainerId: "new-container-id" }),
+        sandboxName: "alpha",
+        supervisorReady: true,
+      },
+      expect.objectContaining({ runOpenshell: deps.runOpenshell, sleep: expect.any(Function) }),
+    );
   });
 
   it("retries only transport-level state backup failures after a container restart", () => {
@@ -381,10 +387,15 @@ describe("relaunchManagedSupervisorSession", () => {
     });
     expect(order).toEqual(["restore-state", "restart-restored-gateway", "commit-container"]);
     expect(deps.restartRestoredManagedGateway).toHaveBeenCalledWith("new-container-id");
-    expect(deps.finalize).toHaveBeenCalledWith({
-      result: expect.objectContaining({ newContainerId: "new-container-id" }),
-      supervisorReady: true,
-    });
+    expect(deps.finalize).toHaveBeenCalledWith(
+      {
+        lifecycleReleaseTimeoutSecs: 900,
+        result: expect.objectContaining({ newContainerId: "new-container-id" }),
+        sandboxName: "alpha",
+        supervisorReady: true,
+      },
+      expect.objectContaining({ runOpenshell: deps.runOpenshell, sleep: expect.any(Function) }),
+    );
   });
 
   it("rolls back when managed health fails after state restore", () => {
