@@ -30,6 +30,7 @@ import {
   rollbackToBackupContainer,
 } from "./docker-gpu-patch-rollback";
 import type { DockerGpuPatchDeps, DockerGpuPatchResult } from "./docker-gpu-patch-types";
+import { waitForOpenShellSandboxLifecycleRelease } from "./docker-gpu-supervisor-reconnect";
 
 export {
   restoreDockerGpuPatchBackupAfterRecreateFailure as rollbackDockerGpuPatchOnRecreateFailure,
@@ -39,6 +40,8 @@ export {
 export type DockerGpuPatchFinalizeOptions = {
   result: DockerGpuPatchResult;
   supervisorReady: boolean;
+  sandboxName?: string;
+  lifecycleReleaseTimeoutSecs?: number;
 };
 
 export type DockerGpuPatchFinalizeOutcome = {
@@ -46,6 +49,7 @@ export type DockerGpuPatchFinalizeOutcome = {
   rolledBack: boolean;
   replacementStoppedForCommit?: boolean;
   replacementRestarted?: boolean;
+  lifecycleReleaseObserved?: boolean;
   replacementStopConfirmed?: boolean;
   replacementRemovalConfirmed?: boolean;
   replacementPresence?: "absent" | "present" | "unknown";
@@ -81,12 +85,26 @@ export function finalizeDockerGpuPatchBackup(
     }
     const rmResult = resolved.dockerRm(options.result.backupContainerName, containerOpts);
     const backupRemoved = hasZeroDockerExitStatus(rmResult);
+    if (backupRemoved && options.sandboxName && options.lifecycleReleaseTimeoutSecs) {
+      console.log(
+        `  Waiting for OpenShell to retire the previous lifecycle record before restarting the replacement (up to ${options.lifecycleReleaseTimeoutSecs}s)...`,
+      );
+    }
+    const lifecycleReleaseObserved =
+      backupRemoved && options.sandboxName && options.lifecycleReleaseTimeoutSecs
+        ? waitForOpenShellSandboxLifecycleRelease(
+            options.sandboxName,
+            options.lifecycleReleaseTimeoutSecs,
+            deps,
+          )
+        : undefined;
     const startResult = resolved.dockerStart(options.result.newContainerId, containerOpts);
     return {
       backupRemoved,
       rolledBack: false,
       replacementStoppedForCommit: true,
       replacementRestarted: hasZeroDockerExitStatus(startResult),
+      ...(lifecycleReleaseObserved === undefined ? {} : { lifecycleReleaseObserved }),
     };
   }
   const rollback = rollbackToBackupContainer(

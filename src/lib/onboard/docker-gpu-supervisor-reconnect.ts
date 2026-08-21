@@ -23,6 +23,7 @@
  * recovers to Ready is the runtime evidence required.
  */
 
+import { parseLiveSandboxEntries } from "../runtime-recovery";
 import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import { envInt } from "./env";
@@ -71,6 +72,42 @@ export type DockerGpuSupervisorReconnectDeps = {
   sleep?: (seconds: number) => void;
   errorPhaseDebouncePolls?: number;
 };
+
+/**
+ * Wait for OpenShell to retire the previous lifecycle record before Docker
+ * restarts the exact replacement container. A successful list command that
+ * omits the exact sandbox name is the authority; Docker state alone cannot
+ * release the OpenShell lifecycle record.
+ */
+export function waitForOpenShellSandboxLifecycleRelease(
+  sandboxName: string,
+  timeoutSecs: number,
+  deps: Pick<DockerGpuSupervisorReconnectDeps, "runOpenshell" | "sleep">,
+): boolean {
+  if (!deps.runOpenshell) return false;
+  const sleep = deps.sleep ?? defaultSleep;
+  const boundedTimeoutSecs = Math.max(1, Math.round(timeoutSecs));
+  const deadline = Date.now() + boundedTimeoutSecs * 1000;
+  const maxAttempts = Math.max(1, Math.ceil(boundedTimeoutSecs / 2) + 1);
+
+  for (let attempt = 1; attempt <= maxAttempts && Date.now() <= deadline; attempt += 1) {
+    const result = deps.runOpenshell(["sandbox", "list"], {
+      ignoreError: true,
+      suppressOutput: true,
+      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+    });
+    if (hasZeroDockerExitStatus(result)) {
+      const output = String(result.stdout ?? "").trim();
+      const entries = parseLiveSandboxEntries(output);
+      const sandboxPresent = entries.some((entry) => entry.name === sandboxName);
+      const hasPhaseBearingEntry = entries.some((entry) => entry.phase !== null);
+      const explicitEmptyList = output === "No sandboxes found" || output === "No sandboxes found.";
+      if (explicitEmptyList || (hasPhaseBearingEntry && !sandboxPresent)) return true;
+    }
+    if (attempt < maxAttempts && Date.now() <= deadline) sleep(2);
+  }
+  return false;
+}
 
 function defaultSleep(seconds: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, seconds) * 1000);

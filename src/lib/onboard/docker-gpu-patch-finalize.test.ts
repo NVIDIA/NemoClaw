@@ -68,14 +68,25 @@ describe("finalizeDockerGpuPatchBackup", () => {
     const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
     const outcome = finalizeDockerGpuPatchBackup(
-      { result: deferredCreateResult(), supervisorReady: true },
-      { dockerStop, dockerRm, dockerStart },
+      {
+        result: deferredCreateResult(),
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 60,
+      },
+      {
+        dockerStop,
+        dockerRm,
+        dockerStart,
+        runOpenshell: vi.fn(() => ({ status: 0, stdout: "No sandboxes found.\n" })),
+      },
     );
     expect(outcome).toEqual({
       backupRemoved: true,
       rolledBack: false,
       replacementStoppedForCommit: true,
       replacementRestarted: true,
+      lifecycleReleaseObserved: true,
     });
     expect(dockerStop).toHaveBeenCalledWith(
       "new-container-id",
@@ -128,7 +139,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
         supervisorReady: true,
         sandboxName: "alpha",
         lifecycleReleaseTimeoutSecs: 60,
-      } as Parameters<typeof finalizeDockerGpuPatchBackup>[0],
+      },
       { dockerStop, dockerRm, dockerStart, runOpenshell, sleep: vi.fn() },
     );
 
@@ -144,6 +155,38 @@ describe("finalizeDockerGpuPatchBackup", () => {
       "observe absent",
       "start replacement",
     ]);
+  });
+
+  it("does not treat failed lifecycle probes as a release receipt (#9531)", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "Error: gateway unavailable" })
+      .mockReturnValueOnce({ status: 1, stderr: "gateway unavailable" });
+    const dockerStart = vi.fn(() => ({ status: 0 }));
+
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result: deferredCreateResult(),
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 1,
+      },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerStart,
+        runOpenshell,
+        sleep: vi.fn(),
+      },
+    );
+
+    expect(outcome).toMatchObject({
+      backupRemoved: true,
+      lifecycleReleaseObserved: false,
+      replacementRestarted: true,
+    });
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(dockerStart).toHaveBeenCalledOnce();
   });
 
   it("rolls back to the backup container when supervisor reconnect failed", () => {

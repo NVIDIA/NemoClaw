@@ -91,7 +91,15 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
 
     await patch.commitAfterReady();
     expect(finalizeBackup).toHaveBeenCalledTimes(1);
-    expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: true }, deps);
+    expect(finalizeBackup).toHaveBeenCalledWith(
+      {
+        result,
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 900,
+      },
+      deps,
+    );
     expect(waitForSupervisor).toHaveBeenCalledTimes(2);
     expect(capturePreRollbackDiagnostics).not.toHaveBeenCalled();
     expect(onPatchFailureExit).not.toHaveBeenCalled();
@@ -124,7 +132,15 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     patch.waitForSupervisorReconnectIfNeeded();
     await expect(patch.commitAfterReady()).resolves.toBeUndefined();
 
-    expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: true }, deps);
+    expect(finalizeBackup).toHaveBeenCalledWith(
+      {
+        result,
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 900,
+      },
+      deps,
+    );
     expect(waitForSupervisor).toHaveBeenCalledTimes(1);
     expect(onPatchFailureExit).not.toHaveBeenCalled();
   });
@@ -154,6 +170,38 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     patch.maybeApplyDuringCreate();
     patch.waitForSupervisorReconnectIfNeeded();
     await expect(patch.commitAfterReady()).rejects.toThrow("final runtime handoff");
+    expect(onPatchFailureExit).toHaveBeenCalledOnce();
+  });
+
+  it("rejects final handoff when OpenShell never releases the deleting lifecycle record (#9531)", async () => {
+    const deps = makeDeps();
+    const result = deferredCreateResult();
+    const waitForSupervisor = vi.fn(() => true);
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        waitForSupervisor,
+        finalizeBackup: vi.fn(() => ({
+          backupRemoved: true,
+          rolledBack: false,
+          lifecycleReleaseObserved: false,
+          replacementRestarted: true,
+        })),
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    patch.waitForSupervisorReconnectIfNeeded();
+    await expect(patch.commitAfterReady()).rejects.toThrow("final runtime handoff");
+
+    expect(waitForSupervisor).toHaveBeenCalledOnce();
     expect(onPatchFailureExit).toHaveBeenCalledOnce();
   });
 
