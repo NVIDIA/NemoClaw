@@ -312,7 +312,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
       const gatewayBin = path.join(home, ".local", "bin", "openshell-gateway");
       fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
       fs.mkdirSync(runtimeDir, { recursive: true });
-      fs.copyFileSync("/bin/sleep", gatewayBin);
+      fs.copyFileSync("/usr/bin/yes", gatewayBin);
       fs.chmodSync(gatewayBin, 0o755);
 
       const result = spawnSync(
@@ -321,7 +321,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
           "-c",
           `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
 NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="${runtimeDir}"
-bash -c 'exec -a "openshell-gateway[nemoclaw=nemoclaw;port=8080]" "$1" 60' _ "${gatewayBin}" &
+bash -c 'exec -a "openshell-gateway[nemoclaw=nemoclaw;port=8080]" "$1" >/dev/null' _ "${gatewayBin}" &
 gateway_pid=$!
 printf '%s\\n' "$gateway_pid" >"${runtimeDir}/openshell-gateway.pid"
 stop_legacy_openshell_gateway_process

@@ -292,6 +292,8 @@ inspect_noncanonical_openshell_gateway_user_services() {
     NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="A competing OpenShell gateway service is active."
     return 3
   fi
+  OPENSHELL_GATEWAY_CANONICAL_SERVICE_SET_IDENTITY=fixture
+  OPENSHELL_GATEWAY_CANONICAL_SERVICE_SET_IDENTITY_AVAILABLE=true
   return 0
 }
 collect_systemd_user_service_activation_paths() {
@@ -448,11 +450,12 @@ describe("installer external gateway supervision", () => {
     expect(fixture.output).toContain("competing OpenShell gateway service");
   });
 
-  it("keeps legacy retirement when the user manager is initially unavailable (#9705)", () => {
+  it("preserves the backup when the initial user-manager query cannot bind service identity (#9705)", () => {
     const fixture = runLegacyGatewayRetirement("nemoclaw-managed", undefined, false, true);
 
-    expect(fixture.result.status, fixture.output).toBe(0);
-    expect(fixture.effects).toEqual(["backup-all", "openshell gateway destroy -g nemoclaw"]);
+    expect(fixture.result.status, fixture.output).toBe(1);
+    expect(fixture.effects).toEqual(["backup-all"]);
+    expect(fixture.output).toContain("canonical service set could not be bound");
   });
 
   it.each([

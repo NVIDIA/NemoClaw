@@ -336,9 +336,23 @@ describe("CLI dispatch", () => {
       fs.mkdirSync(localBin, { recursive: true });
       fs.mkdirSync(registryDir, { recursive: true });
       fs.mkdirSync(unitDir, { recursive: true });
+      fs.mkdirSync(binHome, { recursive: true });
+      fs.writeFileSync(gatewayBin, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
       fs.writeFileSync(
         unitPath,
-        ["[Unit]", "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1", "[Service]"].join("\n"),
+        fs
+          .readFileSync(
+            path.resolve(
+              import.meta.dirname,
+              "..",
+              "..",
+              "scripts",
+              "lib",
+              "openshell-gateway.service.in",
+            ),
+            "utf-8",
+          )
+          .replaceAll("@OPENSHELL_GATEWAY_BIN@", gatewayBin),
       );
       fs.writeFileSync(
         path.join(registryDir, "sandboxes.json"),
@@ -378,7 +392,14 @@ describe("CLI dispatch", () => {
           'printf \'%s\\n\' "$*" >> "$log_file"',
           'if [ "$2" = "show" ]; then',
           `  printf 'FragmentPath=%s\\n' ${JSON.stringify(unitPath)}`,
-          `  printf 'ExecStart={ path=%s ; argv[]=%s ; }\\n' ${JSON.stringify(gatewayBin)} ${JSON.stringify(gatewayBin)}`,
+          `  printf 'ExecStart={ path=%s ; argv[]=%s ; ignore_errors=no ; }\\n' ${JSON.stringify(gatewayBin)} ${JSON.stringify(gatewayBin)}`,
+          "  printf 'DropInPaths=\\n'",
+          "  printf 'ExecCondition=\\n'",
+          `  printf 'ExecStartPre={ path=%s ; argv[]=%s generate-certs --output-dir \${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal ; ignore_errors=no ; }\\n' ${JSON.stringify(gatewayBin)} ${JSON.stringify(gatewayBin)}`,
+          "  printf 'ExecStartPost=\\n'",
+          "  printf 'ExecReload=\\n'",
+          "  printf 'ExecStop=\\n'",
+          "  printf 'ExecStopPost=\\n'",
           "fi",
           "exit 0",
         ].join("\n"),
