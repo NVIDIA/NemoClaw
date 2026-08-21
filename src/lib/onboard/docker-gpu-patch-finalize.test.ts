@@ -97,6 +97,55 @@ describe("finalizeDockerGpuPatchBackup", () => {
     );
   });
 
+  it("waits for the deleting lifecycle record to clear before restarting the replacement (#9531)", () => {
+    const events: string[] = [];
+    const dockerStop = vi.fn(() => {
+      events.push("stop replacement");
+      return { status: 0 };
+    });
+    const dockerRm = vi.fn(() => {
+      events.push("remove backup");
+      return { status: 0 };
+    });
+    const dockerStart = vi.fn(() => {
+      events.push("start replacement");
+      return { status: 0 };
+    });
+    const runOpenshell = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        events.push("observe deleting");
+        return { status: 0, stdout: "alpha  2026-08-21 05:53:16  Deleting\n" };
+      })
+      .mockImplementationOnce(() => {
+        events.push("observe absent");
+        return { status: 0, stdout: "No sandboxes found.\n" };
+      });
+
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result: deferredCreateResult(),
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 60,
+      } as Parameters<typeof finalizeDockerGpuPatchBackup>[0],
+      { dockerStop, dockerRm, dockerStart, runOpenshell, sleep: vi.fn() },
+    );
+
+    expect(outcome).toMatchObject({
+      backupRemoved: true,
+      lifecycleReleaseObserved: true,
+      replacementRestarted: true,
+    });
+    expect(events).toEqual([
+      "stop replacement",
+      "remove backup",
+      "observe deleting",
+      "observe absent",
+      "start replacement",
+    ]);
+  });
+
   it("rolls back to the backup container when supervisor reconnect failed", () => {
     const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
