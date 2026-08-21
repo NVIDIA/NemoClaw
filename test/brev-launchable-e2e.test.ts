@@ -28,6 +28,8 @@ function fixture(
     deleteFails?: boolean;
     e2eDiagnosticTimesOut?: boolean;
     e2eFails?: boolean;
+    gatewayExecStart?: string;
+    gatewayListenerPids?: string;
     imageRepositorySha?: string;
     listenerOutput?: string;
     missingProvisionReceipt?: boolean;
@@ -118,6 +120,45 @@ exec "$@"
     `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$FAKE_LISTENER_OUTPUT"
+`,
+  );
+  executable(
+    path.join(bin, "systemctl"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  *"--property=Restart --value openshell-gateway.service"*) printf 'always\n' ;;
+  *"--property=ExecStart --value openshell-gateway.service"*) printf '%s\n' "$FAKE_GATEWAY_EXEC_START" ;;
+  *"--property=FragmentPath --value openshell-gateway.service"*)
+    printf '/etc/systemd/system/openshell-gateway.service\n' ;;
+  *"--property=DropInPaths --value openshell-gateway.service"*) printf '\n' ;;
+  *"--property=ControlGroup --value openshell-gateway.service"*)
+    printf '/system.slice/openshell-gateway.service\n' ;;
+  *ExecMainCode*openshell-gateway.service*)
+    printf 'Id=openshell-gateway.service\nLoadState=loaded\nUnitFileState=enabled\n'
+    printf 'ActiveState=inactive\nSubState=dead\nResult=success\n'
+    printf 'ExecMainCode=1\nExecMainStatus=0\nNRestarts=0\n'
+    printf 'ActiveEnterTimestampMonotonic=1234\nActiveExitTimestampMonotonic=0\n'
+    printf 'InactiveEnterTimestampMonotonic=5678\nInactiveExitTimestampMonotonic=0\n' ;;
+  *) exit 2 ;;
+esac
+`,
+  );
+  executable(
+    path.join(bin, "cat"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == /proc/*/cgroup ]]; then
+  pid="\${1#/proc/}"
+  pid="\${pid%/cgroup}"
+  if [[ " $FAKE_GATEWAY_LISTENER_PIDS " == *" $pid "* ]]; then
+    printf '0::/system.slice/openshell-gateway.service\n'
+  else
+    printf '0::/system.slice/unrelated.service\n'
+  fi
+  exit 0
+fi
+exec /bin/cat "$@"
 `,
   );
   executable(
@@ -279,14 +320,8 @@ case "$remote" in
   *ExecMainCode*openshell-gateway.service*)
     probe_options_present "$@"
     printf 'ssh full-e2e diagnostic gateway state\n' >> "$FAKE_CALLS"
-    printf 'Id : openshell-gateway.service\nLoadState : loaded\nUnitFileState : enabled\n'
-    printf 'ActiveState : inactive\nSubState : dead\nResult : success\n'
-    printf 'ExecMainCode : 1\nExecMainStatus : 0\nNRestarts : 0\n'
-    printf 'active-enter-us: 1234\ninactive-enter-us: 5678\n'
-    printf 'restart-policy is always: true\n'
-    printf 'exec-start matches packaged gateway service: true\n'
-    printf 'fragment-path is packaged unit path: true\ndrop-ins: absent\n'
-    exit 0 ;;
+    bash -c "$remote"
+    exit $? ;;
   *"gateway service requires Docker service"*)
     probe_options_present "$@"
     printf 'ssh full-e2e diagnostic platform state\n' >> "$FAKE_CALLS"
@@ -363,6 +398,10 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_DIAGNOSTIC_PHASE: diagnosticPhase,
     FAKE_E2E_DIAGNOSTIC_TIMES_OUT: options.e2eDiagnosticTimesOut ? "1" : "0",
     FAKE_E2E_FAILS: options.e2eFails ? "1" : "0",
+    FAKE_GATEWAY_EXEC_START:
+      options.gatewayExecStart ??
+      "{ path=/usr/local/bin/nemoclaw-openshell-gateway-service ; argv[]=/usr/local/bin/nemoclaw-openshell-gateway-service ; ignore_errors=no ; }",
+    FAKE_GATEWAY_LISTENER_PIDS: options.gatewayListenerPids ?? "98",
     FAKE_IMAGE_REPOSITORY_SHA: options.imageRepositorySha ?? "b".repeat(40),
     FAKE_LISTENER_OUTPUT:
       options.listenerOutput ??
@@ -920,11 +959,12 @@ describe("focused staging Brev Launchable lane", () => {
   });
 
   it.each([
-    ["absent", "", "listener presence: absent"],
+    ["absent", "", ["listener presence: absent"], "98"],
     [
       "expected owner",
       'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3))',
-      "listener owner: openshell-gateway",
+      ["listener presence: present", "listener owner: openshell-gateway"],
+      "98",
     ],
     [
       "mixed owners",
@@ -932,21 +972,59 @@ describe("focused staging Brev Launchable lane", () => {
         'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3))',
         'LISTEN 0 4096 172.18.0.1:8080 0.0.0.0:* users:(("s3cr3t",pid=99,fd=4))',
       ].join("\n"),
-      "listener owner: mixed",
+      ["listener presence: present", "listener owner: mixed"],
+      "98",
+    ],
+    [
+      "mixed owners in one socket record",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3),("s3cr3t",pid=99,fd=4))',
+      ["listener presence: present", "listener owner: mixed"],
+      "98",
+    ],
+    [
+      "unexpected owner",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gatew",pid=99,fd=3))',
+      ["listener presence: present", "listener owner: unexpected"],
+      "98",
     ],
     [
       "owner unavailable",
       "LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:*",
-      "listener owner: unavailable",
+      ["listener presence: present", "listener owner: unavailable"],
+      "98",
     ],
-  ])("classifies port 8080 listener evidence with %s (#6409)", (_name, listenerOutput, expected) => {
-    const { env, workDir } = fixture({ e2eFails: true, listenerOutput });
+  ])(
+    "classifies port 8080 listener evidence with %s (#6409)",
+    (_name, listenerOutput, expectedEvidence, gatewayListenerPids) => {
+      const { env, workDir } = fixture({
+        e2eFails: true,
+        gatewayListenerPids,
+        listenerOutput,
+      });
+      const result = run(env);
+
+      expect(result.status).not.toBe(0);
+      const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
+      expectedEvidence.forEach((entry) => expect(laneLog).toContain(entry));
+      expect(laneLog).not.toContain("s3cr3t");
+      expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject(
+        { status: "ABSENT" },
+      );
+    },
+  );
+
+  it("rejects a near-match gateway ExecStart before retaining its configuration result (#6409)", () => {
+    const { env, workDir } = fixture({
+      e2eFails: true,
+      gatewayExecStart:
+        "{ path=/usr/local/bin/nemoclaw-openshell-gateway-service-wrapper ; argv[]=/usr/local/bin/nemoclaw-openshell-gateway-service-wrapper ; ignore_errors=no ; }",
+    });
     const result = run(env);
 
     expect(result.status).not.toBe(0);
     const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
-    expect(laneLog).toContain(expected);
-    expect(laneLog).not.toContain("s3cr3t");
+    expect(laneLog).toContain("exec-start matches packaged gateway service: false");
+    expect(laneLog).not.toContain("nemoclaw-openshell-gateway-service-wrapper");
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
     });
