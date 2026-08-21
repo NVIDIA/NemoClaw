@@ -20,7 +20,7 @@ const MANAGED_MCP_VALIDATOR_INVOCATION = [
   ')"',
 ].join("\n");
 
-const DEEPAGENTS_CODE_EXEC = "exec /opt/venv/bin/python3 -I -m deepagents_code";
+const DEEPAGENTS_CODE_EXEC = 'exec /opt/venv/bin/python3 -I -m deepagents_code "$@"';
 
 function stubManagedMcpValidator(source: string): string {
   expect(source).not.toContain(MANAGED_MCP_VALIDATOR_INVOCATION);
