@@ -28,6 +28,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   webSearchEnabled: boolean;
   webSearchProvider: WebSearchVerifyProvider | null;
   portableProfileSelected?: boolean;
+  recreateJournalHandoff?: boolean;
   deps: {
     ensureAgentDashboardForward(sandboxName: string, agent: Agent): Promise<number> | number;
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
@@ -48,10 +49,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     ): Promise<OrdinaryOpenClawPairingSettlementResult>;
     ordinaryOpenClawPairingIncompleteMessage(
       sandboxName: string,
-      reason: Extract<
-        OrdinaryOpenClawPairingSettlementResult,
-        { kind: "incomplete" }
-      >["reason"],
+      reason: Extract<OrdinaryOpenClawPairingSettlementResult, { kind: "incomplete" }>["reason"],
     ): string;
     readRegistryAgent(sandboxName: string): string | null;
     settlePortablePairing(
@@ -180,6 +178,7 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   sandboxName,
   agent,
   portableProfileSelected,
+  recreateJournalHandoff,
   stagedLegacyKeys,
   migratedLegacyKeys,
   deps,
@@ -195,7 +194,10 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     portableProfileSelected,
     deps.readRegistryAgent,
   );
-  const ordinaryOpenClaw = portableAgent === "ordinary" && selectedAgentName(agent) === "openclaw";
+  const ordinaryOpenClawPairingRequired =
+    portableAgent === "ordinary" &&
+    selectedAgentName(agent) === "openclaw" &&
+    recreateJournalHandoff !== true;
 
   // Reaching finalization means the policy-preset step was confirmed, so it is
   // now safe to register this sandbox as the default (#4614).
@@ -222,7 +224,7 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
   }
 
-  if (manageDashboard && !ordinaryOpenClaw) {
+  if (manageDashboard && !ordinaryOpenClawPairingRequired) {
     // Recheck the gateway and forward before verification, restarting only when needed.
     deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
     // Reconcile after the final recovery because any restart above can
@@ -250,6 +252,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   webSearchEnabled,
   webSearchProvider,
   portableProfileSelected,
+  recreateJournalHandoff,
   deps,
 }: FinalizationStateOptions<
   Agent,
@@ -263,7 +266,10 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     portableProfileSelected,
     deps.readRegistryAgent,
   );
-  const ordinaryOpenClaw = portableAgent === "ordinary" && selectedAgentName(agent) === "openclaw";
+  const ordinaryOpenClawPairingRequired =
+    portableAgent === "ordinary" &&
+    selectedAgentName(agent) === "openclaw" &&
+    recreateJournalHandoff !== true;
 
   let verificationDiagnostics: string[] = [];
   let deploymentHealthy = true;
@@ -300,7 +306,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
       };
     }
   }
-  if (ordinaryOpenClaw) {
+  if (ordinaryOpenClawPairingRequired) {
     const pairing = await deps.settleOrdinaryOpenClawPairing(sandboxName);
     if (pairing.kind !== "settled") {
       const message = deps.ordinaryOpenClawPairingIncompleteMessage(sandboxName, pairing.reason);
