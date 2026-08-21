@@ -1154,6 +1154,17 @@ function mergePresetNamesIntoPolicy(
     });
     const presetEntries = extractPresetEntries(presetContent);
     if (!presetEntries) {
+      const materializesWithSandboxName =
+        isMessagingChannelPolicyPreset(presetName) &&
+        loadMessagingChannelPolicyPreset(presetName, {
+          agent: options.agent,
+          sandboxName: "policy-probe",
+        }) !== null;
+      if (materializesWithSandboxName) {
+        throw new Error(
+          `Cannot compose messaging policy preset '${presetName}': a valid sandbox name is required to materialize credential bindings.`,
+        );
+      }
       missingPresets.push(presetName);
       continue;
     }

@@ -382,14 +382,17 @@ describe("initial sandbox policy real preset merge", () => {
     expect(JSON.stringify(effective)).not.toContain("{sandboxName}");
   });
 
-  it("rejects a Hermes Discord create policy without a target sandbox name", () => {
+  it.each([
+    ["missing", undefined],
+    ["unsafe", "bad:provider"],
+  ])("rejects a Hermes Discord create policy with a %s target sandbox name", (_case, sandboxName) => {
     expect(() =>
       prepareInitialSandboxCreatePolicy(
         repoPath("agents", "hermes", "policy-additions.yaml"),
         ["discord"],
-        { agentName: "hermes" },
+        { agentName: "hermes", sandboxName },
       ),
-    ).toThrow("missing policy preset(s): discord");
+    ).toThrow("a valid sandbox name is required to materialize credential bindings");
   });
 
   it.each(shippingPolicyCases.slice(0, 3).concat(shippingPolicyCases.slice(4)))(
