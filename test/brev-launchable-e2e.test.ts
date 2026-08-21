@@ -29,7 +29,6 @@ function fixture(
     e2eDiagnosticTimesOut?: boolean;
     e2eFails?: boolean;
     gatewayExecStart?: string;
-    gatewayListenerPids?: string;
     imageRepositorySha?: string;
     listenerOutput?: string;
     missingProvisionReceipt?: boolean;
@@ -151,11 +150,14 @@ set -euo pipefail
 if [[ "\${1:-}" == /proc/*/cgroup ]]; then
   pid="\${1#/proc/}"
   pid="\${pid%/cgroup}"
-  if [[ " $FAKE_GATEWAY_LISTENER_PIDS " == *" $pid "* ]]; then
-    printf '0::/system.slice/openshell-gateway.service\n'
-  else
-    printf '0::/system.slice/unrelated.service\n'
-  fi
+  case "$pid" in
+    98) printf '0::/system.slice/openshell-gateway.service\n' ;;
+    97) printf '0::/system.slice/openshell-gateway.service/delegated\n' ;;
+    96) printf '2:cpu,cpuacct:/system.slice/openshell-gateway.service\n' ;;
+    95) printf '2:cpu,cpuacct:/system.slice/openshell-gateway.service/delegated\n' ;;
+    94) printf '0::/system.slice/openshell-gateway.service-other\n' ;;
+    *) printf '0::/system.slice/unrelated.service\n' ;;
+  esac
   exit 0
 fi
 exec /bin/cat "$@"
@@ -401,7 +403,6 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_GATEWAY_EXEC_START:
       options.gatewayExecStart ??
       "{ path=/usr/local/bin/nemoclaw-openshell-gateway-service ; argv[]=/usr/local/bin/nemoclaw-openshell-gateway-service ; ignore_errors=no ; }",
-    FAKE_GATEWAY_LISTENER_PIDS: options.gatewayListenerPids ?? "98",
     FAKE_IMAGE_REPOSITORY_SHA: options.imageRepositorySha ?? "b".repeat(40),
     FAKE_LISTENER_OUTPUT:
       options.listenerOutput ??
@@ -959,12 +960,26 @@ describe("focused staging Brev Launchable lane", () => {
   });
 
   it.each([
-    ["absent", "", ["listener presence: absent"], "98"],
+    ["absent", "", ["listener presence: absent"]],
     [
       "expected owner",
       'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3))',
       ["listener presence: present", "listener owner: openshell-gateway"],
-      "98",
+    ],
+    [
+      "expected owner in a v2 descendant cgroup",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=97,fd=3))',
+      ["listener presence: present", "listener owner: openshell-gateway"],
+    ],
+    [
+      "expected owner in an exact v1 cgroup",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=96,fd=3))',
+      ["listener presence: present", "listener owner: openshell-gateway"],
+    ],
+    [
+      "expected owner in a v1 descendant cgroup",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=95,fd=3))',
+      ["listener presence: present", "listener owner: openshell-gateway"],
     ],
     [
       "mixed owners",
@@ -973,32 +988,50 @@ describe("focused staging Brev Launchable lane", () => {
         'LISTEN 0 4096 172.18.0.1:8080 0.0.0.0:* users:(("s3cr3t",pid=99,fd=4))',
       ].join("\n"),
       ["listener presence: present", "listener owner: mixed"],
-      "98",
     ],
     [
       "mixed owners in one socket record",
       'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3),("s3cr3t",pid=99,fd=4))',
       ["listener presence: present", "listener owner: mixed"],
-      "98",
     ],
     [
       "unexpected owner",
-      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gatew",pid=99,fd=3))',
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gatew",pid=94,fd=3))',
       ["listener presence: present", "listener owner: unexpected"],
-      "98",
+    ],
+    [
+      "unrelated cgroup",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("other-process",pid=93,fd=3))',
+      ["listener presence: present", "listener owner: unexpected"],
     ],
     [
       "owner unavailable",
       "LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:*",
       ["listener presence: present", "listener owner: unavailable"],
-      "98",
+    ],
+    [
+      "PID-like text inside a process label",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("s3cr3t,pid=7,fd=8",pid=98,fd=3))',
+      ["listener presence: present", "listener owner: openshell-gateway"],
+    ],
+    [
+      "an injected owner tuple inside a process label",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("s3cr3t",pid=98,fd=3",pid=99,fd=4))',
+      ["listener presence: present", "listener owner: unavailable"],
+    ],
+    [
+      "one socket record without owner metadata",
+      [
+        'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3))',
+        "LISTEN 0 4096 172.18.0.1:8080 0.0.0.0:*",
+      ].join("\n"),
+      ["listener presence: present", "listener owner: unavailable"],
     ],
   ])(
     "classifies port 8080 listener evidence with %s (#6409)",
-    (_name, listenerOutput, expectedEvidence, gatewayListenerPids) => {
+    (_name, listenerOutput, expectedEvidence) => {
       const { env, workDir } = fixture({
         e2eFails: true,
-        gatewayListenerPids,
         listenerOutput,
       });
       const result = run(env);
@@ -1013,18 +1046,30 @@ describe("focused staging Brev Launchable lane", () => {
     },
   );
 
-  it("rejects a near-match gateway ExecStart before retaining its configuration result (#6409)", () => {
-    const { env, workDir } = fixture({
-      e2eFails: true,
-      gatewayExecStart:
-        "{ path=/usr/local/bin/nemoclaw-openshell-gateway-service-wrapper ; argv[]=/usr/local/bin/nemoclaw-openshell-gateway-service-wrapper ; ignore_errors=no ; }",
-    });
+  it.each([
+    [
+      "a similarly prefixed executable",
+      "{ path=/usr/local/bin/nemoclaw-openshell-gateway-service-wrapper ; argv[]=/usr/local/bin/nemoclaw-openshell-gateway-service-wrapper ; ignore_errors=no ; }",
+      "nemoclaw-openshell-gateway-service-wrapper",
+    ],
+    [
+      "an extra argument",
+      "{ path=/usr/local/bin/nemoclaw-openshell-gateway-service ; argv[]=/usr/local/bin/nemoclaw-openshell-gateway-service --extra ; ignore_errors=no ; }",
+      "--extra",
+    ],
+    [
+      "a second serialized command",
+      "{ path=/usr/local/bin/nemoclaw-openshell-gateway-service ; argv[]=/usr/local/bin/nemoclaw-openshell-gateway-service ; ignore_errors=no ; } { path=/usr/bin/true ; argv[]=/usr/bin/true ; ignore_errors=no ; }",
+      "/usr/bin/true",
+    ],
+  ])("rejects gateway ExecStart with %s (#6409)", (_name, gatewayExecStart, rawValue) => {
+    const { env, workDir } = fixture({ e2eFails: true, gatewayExecStart });
     const result = run(env);
 
     expect(result.status).not.toBe(0);
     const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
     expect(laneLog).toContain("exec-start matches packaged gateway service: false");
-    expect(laneLog).not.toContain("nemoclaw-openshell-gateway-service-wrapper");
+    expect(laneLog).not.toContain(rawValue);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
     });
