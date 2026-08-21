@@ -9,7 +9,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const SCRIPT = path.join(REPO_ROOT, "tools", "e2e", "brev-launchable-e2e.sh");
+const REAL_CUT = spawnSync("which", ["cut"], { encoding: "utf8" }).stdout.trim();
 const REAL_PYTHON3 = spawnSync("which", ["python3"], { encoding: "utf8" }).stdout.trim();
+const REAL_STAT = spawnSync("which", ["stat"], { encoding: "utf8" }).stdout.trim();
 const candidateSha = "a".repeat(40);
 const roots: string[] = [];
 
@@ -112,7 +114,36 @@ exec "$@"
   );
   executable(
     path.join(bin, "sudo"),
-    '#!/usr/bin/env bash\nset -euo pipefail\n[ "${1:-}" != -n ] || shift\nexec "$@"\n',
+    `#!/usr/bin/env bash
+set -euo pipefail
+[ "\${1:-}" != -n ] || shift
+exec "$@"
+`,
+  );
+  executable(
+    path.join(bin, "cut"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$*" = "-d. -f1 /proc/uptime" ]; then
+  printf '180\n'
+  exit 0
+fi
+exec ${JSON.stringify(REAL_CUT)} "$@"
+`,
+  );
+  executable(
+    path.join(bin, "stat"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+expected='--printf=gateway-state-dir type=%F uid=%u gid=%g mode=%a\\n'
+if [ "\${*: -1}" = /var/lib/brev/openshell-gateway ]; then
+  [ "$#" -eq 2 ]
+  [ "$1" = "$expected" ]
+  printf 'gateway-state-dir type=directory uid=1000 gid=1000 mode=750\n'
+  exit 0
+fi
+exec ${JSON.stringify(REAL_STAT)} "$@"
+`,
   );
   executable(
     path.join(bin, "ss"),
@@ -126,6 +157,24 @@ printf '%s\n' "$FAKE_LISTENER_OUTPUT"
     `#!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
+  "show --no-pager --property=Id --property=ActiveState --property=SubState --property=Result --property=NRestarts --property=ActiveEnterTimestampMonotonic docker.service docker.socket")
+    if [ "$FAKE_PLATFORM_DIAGNOSTIC_FAILS" = 1 ]; then
+      printf 'platform api_key=brev-test-secret Authorization: Bearer github-test-token\n' >&2
+      printf '%s%s\n' '-----BEGIN PRIVATE ' 'KEY-----' >&2
+      printf '%s\n' 'private-key-material' >&2
+      printf '%s%s\n' '-----END PRIVATE ' 'KEY-----' >&2
+      printf '%05000d\n' 0 >&2
+      printf '\\033[31mplatform diagnostic safe detail\\033[0m password=journal-test-secret nvapi-test-value 203.0.113.20 workspace.hidden.internal\n' >&2
+      exit 42
+    fi
+    printf 'Id=docker.service\nActiveState=active\nSubState=running\nResult=success\n'
+    printf 'NRestarts=0\nActiveEnterTimestampMonotonic=1000\n\n'
+    printf 'Id=docker.socket\nActiveState=active\nSubState=running\nResult=success\n'
+    printf 'NRestarts=0\nActiveEnterTimestampMonotonic=1000\n' ;;
+  "show --no-pager --property=Requires --value openshell-gateway.service") printf 'docker.service\n' ;;
+  "show --no-pager --property=After --value openshell-gateway.service")
+    printf 'docker.service network.target\n' ;;
+  "show --no-pager --property=Wants --value docker.service") printf 'openshell-gateway.service\n' ;;
   *"--property=Restart --value openshell-gateway.service"*) printf 'always\n' ;;
   *"--property=ExecStart --value openshell-gateway.service"*) printf '%s\n' "$FAKE_GATEWAY_EXEC_START" ;;
   *"--property=FragmentPath --value openshell-gateway.service"*)
@@ -133,12 +182,42 @@ case "$*" in
   *"--property=DropInPaths --value openshell-gateway.service"*) printf '\n' ;;
   *"--property=ControlGroup --value openshell-gateway.service"*)
     printf '/system.slice/openshell-gateway.service\n' ;;
+  "show --no-pager --property=Id --property=LoadState --property=ActiveState --property=SubState --property=Result --property=ExecMainCode --property=ExecMainStatus --property=ActiveEnterTimestampMonotonic --property=InactiveEnterTimestampMonotonic cloud-final.service")
+    printf 'Id=cloud-final.service\nLoadState=loaded\nActiveState=active\nSubState=exited\n'
+    printf 'Result=success\nExecMainCode=1\nExecMainStatus=0\n'
+    printf 'ActiveEnterTimestampMonotonic=1200\nInactiveEnterTimestampMonotonic=0\n' ;;
   *ExecMainCode*openshell-gateway.service*)
     printf 'Id=openshell-gateway.service\nLoadState=loaded\nUnitFileState=enabled\n'
     printf 'ActiveState=inactive\nSubState=dead\nResult=success\n'
     printf 'ExecMainCode=1\nExecMainStatus=0\nNRestarts=0\n'
     printf 'ActiveEnterTimestampMonotonic=1234\nActiveExitTimestampMonotonic=0\n'
     printf 'InactiveEnterTimestampMonotonic=5678\nInactiveExitTimestampMonotonic=0\n' ;;
+  *) exit 2 ;;
+esac
+`,
+  );
+  executable(
+    path.join(bin, "journalctl"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "--boot _PID=1 --unit=openshell-gateway.service --no-pager --lines=80 --output=json")
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1000","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Starting OpenShell gateway"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1100","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Started OpenShell gateway"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1200","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"guest s3cr3t password=journal-test-secret 203.0.113.20"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1300","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Start request repeated too quickly"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1400","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Scheduled restart job, restart counter is at 1"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1500","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Main process exited, code=exited, status=1/FAILURE"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1600","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Failed with result exit-code"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1700","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Dependency failed for OpenShell gateway"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"2200","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Stopping OpenShell gateway"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"2300","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Deactivated successfully"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"2400","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Stopped OpenShell gateway"}' ;;
+  "--boot _PID=1 --unit=docker.service --unit=docker.socket --no-pager --lines=80 --output=json")
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"900","_SYSTEMD_UNIT":"docker.service","MESSAGE":"Starting Docker Application Container Engine"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"950","_SYSTEMD_UNIT":"docker.service","MESSAGE":"Started Docker Application Container Engine"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"960","UNIT":"docker.socket","_SYSTEMD_UNIT":"systemd.service","MESSAGE":"Started Docker Socket"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"970","_SYSTEMD_UNIT":"containerd.service","MESSAGE":"Container runtime event"}' ;;
   *) exit 2 ;;
 esac
 `,
@@ -327,39 +406,23 @@ case "$remote" in
   *"gateway service requires Docker service"*)
     probe_options_present "$@"
     printf 'ssh full-e2e diagnostic platform state\n' >> "$FAKE_CALLS"
-    if [ "$FAKE_PLATFORM_DIAGNOSTIC_FAILS" = 1 ]; then
-      printf 'platform api_key=brev-test-secret Authorization: Bearer github-test-token\n' >&2
-      printf '%s%s\n' '-----BEGIN PRIVATE ' 'KEY-----' >&2
-      printf '%s\n' 'private-key-material' >&2
-      printf '%s%s\n' '-----END PRIVATE ' 'KEY-----' >&2
-      printf '%05000d\n' 0 >&2
-      printf '\\033[31mplatform diagnostic safe detail\\033[0m password=journal-test-secret nvapi-test-value 203.0.113.20 workspace.hidden.internal\n' >&2
-      exit 42
-    fi
-    printf 'Id : docker.service\nActiveState : active\nSubState : running\nResult : success\nNRestarts : 0\nactive-enter-us: 1000\n'
-    printf 'Id : docker.socket\nActiveState : active\nSubState : running\nResult : success\nNRestarts : 0\nactive-enter-us: 1000\n'
-    printf 'gateway service requires Docker service: present\n'
-    printf 'gateway service ordered after Docker service: present\n'
-    printf 'Docker service wants gateway service: present\n'
-    printf 'boot-uptime-seconds 180\n'
-    printf 'gateway-state-dir type=directory uid=1000 gid=1000 mode=750\n'
-    exit 0 ;;
+    bash -c "$remote"
+    exit $? ;;
   *journalctl*openshell-gateway.service*)
     probe_options_present "$@"
     printf 'ssh full-e2e diagnostic gateway lifecycle\n' >> "$FAKE_CALLS"
-    printf '1000 starting\n1100 started\n2200 stopping\n2300 deactivated\n2400 stopped\n'
-    exit 0 ;;
+    bash -c "$remote"
+    exit $? ;;
   *journalctl*docker.service*)
     probe_options_present "$@"
     printf 'ssh full-e2e diagnostic Docker lifecycle\n' >> "$FAKE_CALLS"
-    printf '900 docker-service starting\n950 docker-service started\n'
-    exit 0 ;;
+    bash -c "$remote"
+    exit $? ;;
   *ActiveEnterTimestampMonotonic*cloud-final.service*)
     probe_options_present "$@"
     printf 'ssh full-e2e diagnostic cloud-final state\n' >> "$FAKE_CALLS"
-    printf 'Id : cloud-final.service\nActiveState : active\nSubState : exited\nResult : success\n'
-    printf 'active-enter-us: 1200\ninactive-enter-us: 0\n'
-    exit 0 ;;
+    bash -c "$remote"
+    exit $? ;;
   *"ss -H -ltnp"*)
     probe_options_present "$@"
     printf 'ssh full-e2e diagnostic port 8080 listener\n' >> "$FAKE_CALLS"
@@ -863,15 +926,33 @@ describe("focused staging Brev Launchable lane", () => {
     expect(laneLog).toContain("fragment-path is packaged unit path: true");
     expect(laneLog).toContain("drop-ins: absent");
     expect(laneLog).toContain("Full E2E failure diagnostic platform state: status 0; output:");
+    expect(laneLog).toContain("gateway service requires Docker service: present");
+    expect(laneLog).toContain("gateway service ordered after Docker service: present");
     expect(laneLog).toContain("Docker service wants gateway service: present");
     expect(laneLog).not.toContain("boot-id-prefix");
+    expect(laneLog).toContain("boot-uptime-seconds 180");
     expect(laneLog).toContain("gateway-state-dir type=directory uid=1000 gid=1000 mode=750");
     expect(laneLog).toContain("Full E2E failure diagnostic gateway lifecycle: status 0; output:");
+    expect(laneLog).toContain("1000 starting");
+    expect(laneLog).toContain("1100 started");
+    expect(laneLog).toContain("1200 other-systemd-event");
+    expect(laneLog).toContain("1300 start-limit-hit");
+    expect(laneLog).toContain("1400 restart-scheduled");
+    expect(laneLog).toContain("1500 main-exited");
+    expect(laneLog).toContain("1600 failed-result");
+    expect(laneLog).toContain("1700 dependency-failed");
+    expect(laneLog).toContain("2200 stopping");
     expect(laneLog).toContain("2300 deactivated");
+    expect(laneLog).toContain("2400 stopped");
     expect(laneLog).toContain("Full E2E failure diagnostic Docker lifecycle: status 0; output:");
+    expect(laneLog).toContain("900 docker-service starting");
     expect(laneLog).toContain("950 docker-service started");
+    expect(laneLog).toContain("960 docker-socket started");
+    expect(laneLog).toContain("970 docker-unit other-systemd-event");
     expect(laneLog).toContain("Full E2E failure diagnostic cloud-final state: status 0; output:");
     expect(laneLog).toContain("SubState : exited");
+    expect(laneLog).toContain("active-enter-us: 1200");
+    expect(laneLog).toContain("inactive-enter-us: 0");
     expect(laneLog).toContain("listener presence: present");
     expect(laneLog).toContain("listener owner: unexpected");
     expect(laneLog).not.toContain("s3cr3t");
