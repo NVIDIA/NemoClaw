@@ -178,10 +178,7 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
         ].join("\n"),
         { mode: 0o755 },
       );
-      const run = (
-        command: string,
-        credential = "openshell:resolve:env:v42_GITHUB_TOKEN",
-      ) =>
+      const run = (command: string, credential = "openshell:resolve:env:v42_GITHUB_TOKEN") =>
         spawnSync("/bin/sh", ["-c", command], {
           encoding: "utf8",
           env: {
@@ -230,7 +227,7 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
         "Fresh OpenShell credential placeholder for 'GITHUB_TOKEN' is unavailable.",
       );
       expect(invalidCredential.stderr).not.toContain("raw-secret-must-not-persist");
-      expect(fs.existsSync(configState)).toBe(false);
+      expectFileAbsent(configState);
 
       const register = run(registerCommand);
       expect(register.status).toBe(0);
