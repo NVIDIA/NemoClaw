@@ -17,6 +17,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 import { compactText } from "../core/url-utils";
@@ -111,6 +112,7 @@ export interface EnsureMessagingBridgeProfilesDeps {
   readonly log?: (message?: string) => void;
   readonly exit?: (code?: number) => never;
   readonly profiles?: readonly MessagingBridgeProfile[];
+  readonly readFileSync?: (file: string) => string;
 }
 
 export interface ConfigureMessagingBridgeRefreshesDeps extends MessagingBridgeSecretResolveDeps {
@@ -130,6 +132,65 @@ function bufferOrStringToText(value: string | Buffer | null | undefined): string
   if (value && typeof (value as Buffer).toString === "function")
     return (value as Buffer).toString();
   return "";
+}
+
+function credentialBoundary(doc: Record<string, unknown>): Record<string, unknown> | null {
+  if (
+    typeof doc.id !== "string" ||
+    !Array.isArray(doc.credentials) ||
+    !Array.isArray(doc.endpoints) ||
+    !Array.isArray(doc.binaries) ||
+    typeof doc.inference_capable !== "boolean"
+  ) {
+    return null;
+  }
+  const credentials = doc.credentials.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const credential = entry as Record<string, unknown>;
+    return {
+      name: credential.name,
+      env_vars: credential.env_vars,
+      required: credential.required,
+      auth_style: credential.auth_style,
+      header_name: credential.header_name,
+      query_param: credential.query_param,
+      refresh: credential.refresh ?? null,
+    };
+  });
+  if (credentials.some((entry) => entry === null)) return null;
+  return {
+    id: doc.id,
+    credentials,
+    endpoints: doc.endpoints,
+    binaries: doc.binaries,
+    inference_capable: doc.inference_capable,
+  };
+}
+
+function staticProfileMatchesCheckedInBoundary(
+  profile: MessagingBridgeProfile,
+  exported: string,
+  readFileSync: (file: string) => string,
+): boolean {
+  try {
+    const actual = JSON.parse(exported) as Record<string, unknown>;
+    const expected = YAML.parse(readFileSync(profile.profilePath)) as Record<string, unknown>;
+    const actualBoundary = credentialBoundary(actual);
+    const expectedBoundary = credentialBoundary(expected);
+    return (
+      actualBoundary !== null &&
+      expectedBoundary !== null &&
+      expectedBoundary.id === profile.profileId &&
+      Array.isArray(expectedBoundary.endpoints) &&
+      expectedBoundary.endpoints.length === 0 &&
+      Array.isArray(expectedBoundary.binaries) &&
+      expectedBoundary.binaries.length === 0 &&
+      expectedBoundary.inference_capable === false &&
+      isDeepStrictEqual(actualBoundary, expectedBoundary)
+    );
+  } catch {
+    return false;
+  }
 }
 
 function isSafeChannelId(value: string): boolean {
@@ -369,6 +430,15 @@ export function ensureMessagingBridgeProfiles(
 
   const errorLog = deps.log ?? console.error;
   const exit = deps.exit ?? ((code?: number) => process.exit(code));
+  const readFileSync = deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8"));
+
+  const rejectMismatchedStaticProfile = (profile: MessagingBridgeProfile): void => {
+    errorLog(
+      `\n  ✗ OpenShell provider profile '${profile.profileId}' does not match NemoClaw's endpointless ${profile.channelId} credential contract.`,
+    );
+    errorLog("    Remove the conflicting profile and re-run onboarding.");
+    exit(1);
+  };
 
   for (const profile of active) {
     // Onboard registers each bridge provider twice: once up front so an
@@ -378,10 +448,23 @@ export function ensureMessagingBridgeProfiles(
     // "not found" that suppressOutput hides — only the exit status says whether
     // the profile already exists.
     const alreadyRegistered = deps.runOpenshell(
-      ["provider", "profile", "export", profile.profileId],
+      ["provider", "profile", "export", profile.profileId, "--output", "json"],
       { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
     );
-    if (alreadyRegistered.status === 0) continue;
+    if (alreadyRegistered.status === 0) {
+      if (
+        profile.strategy === null &&
+        !staticProfileMatchesCheckedInBoundary(
+          profile,
+          bufferOrStringToText(alreadyRegistered.stdout),
+          readFileSync,
+        )
+      ) {
+        rejectMismatchedStaticProfile(profile);
+        return;
+      }
+      continue;
+    }
     // Probe failed for something other than "not found" (gateway down, auth, …):
     // surface it instead of masking a real problem.
     const probeDiagnostic = `${bufferOrStringToText(alreadyRegistered.stderr)} ${bufferOrStringToText(
@@ -399,9 +482,27 @@ export function ensureMessagingBridgeProfiles(
     );
     if (result.status === 0) continue;
 
-    // Tolerate a lost race: the probe saw no profile but a concurrent import made it.
+    // Reconcile a lost race: the probe saw no profile but a concurrent import made it.
     const rawDiagnostic = `${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`;
-    if (/already exists/i.test(rawDiagnostic)) continue;
+    if (/already exists/i.test(rawDiagnostic)) {
+      if (profile.strategy !== null) continue;
+      const racedProfile = deps.runOpenshell(
+        ["provider", "profile", "export", profile.profileId, "--output", "json"],
+        { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      if (
+        racedProfile.status !== 0 ||
+        !staticProfileMatchesCheckedInBoundary(
+          profile,
+          bufferOrStringToText(racedProfile.stdout),
+          readFileSync,
+        )
+      ) {
+        rejectMismatchedStaticProfile(profile);
+        return;
+      }
+      continue;
+    }
 
     const diagnostic = compactText(deps.redact(rawDiagnostic));
     errorLog(
