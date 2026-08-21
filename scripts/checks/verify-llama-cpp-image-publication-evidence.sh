@@ -5,13 +5,15 @@
 set -euo pipefail
 
 usage() {
-  printf '%s\n' "Usage: $0 --reference IMAGE@DIGEST --candidate-index PATH --platform-digests PATH --sbom-amd64 PATH --sbom-arm64 PATH --sbom-verification PATH --provenance-verification PATH --signature-verification PATH --scan-amd64 PATH --scan-arm64 PATH --repository OWNER/REPOSITORY --revision GIT_SHA --source-revision GIT_SHA --source-archive-sha256 DIGEST --cuda-development-base IMAGE@DIGEST --cuda-runtime-base IMAGE@DIGEST --run-id ID --run-attempt ATTEMPT --certificate-identity IDENTITY --certificate-oidc-issuer ISSUER --output PATH" >&2
+  printf '%s\n' "Usage: $0 --reference IMAGE@DIGEST --candidate-index PATH --platform-digests PATH --anonymous-pull-amd64 PATH --anonymous-pull-arm64 PATH --sbom-amd64 PATH --sbom-arm64 PATH --sbom-verification PATH --provenance-verification PATH --signature-verification PATH --scan-amd64 PATH --scan-arm64 PATH --repository OWNER/REPOSITORY --revision GIT_SHA --source-revision GIT_SHA --source-archive-sha256 DIGEST --cuda-development-base IMAGE@DIGEST --cuda-runtime-base IMAGE@DIGEST --run-id ID --run-attempt ATTEMPT --certificate-identity IDENTITY --certificate-oidc-issuer ISSUER --output PATH" >&2
   exit 64
 }
 
 reference=""
 candidate_index=""
 platform_digests=""
+anonymous_pull_amd64=""
+anonymous_pull_arm64=""
 sbom_amd64=""
 sbom_arm64=""
 sbom_verification=""
@@ -43,6 +45,14 @@ while [ "$#" -gt 0 ]; do
       ;;
     --platform-digests)
       platform_digests="${2:-}"
+      shift 2
+      ;;
+    --anonymous-pull-amd64)
+      anonymous_pull_amd64="${2:-}"
+      shift 2
+      ;;
+    --anonymous-pull-arm64)
+      anonymous_pull_arm64="${2:-}"
       shift 2
       ;;
     --sbom-amd64)
@@ -145,6 +155,8 @@ fi
 for evidence_file in \
   "$candidate_index" \
   "$platform_digests" \
+  "$anonymous_pull_amd64" \
+  "$anonymous_pull_arm64" \
   "$sbom_amd64" \
   "$sbom_arm64" \
   "$sbom_verification" \
@@ -234,25 +246,33 @@ if ! cmp -s "$candidate_index" "$anonymous_index"; then
   exit 1
 fi
 
-anonymous_pull_summary="$temporary_root/anonymous-pull-summary.jsonl"
-: >"$anonymous_pull_summary"
+anonymous_pull_summary="$temporary_root/anonymous-pull-summary.json"
+printf '[]\n' >"$anonymous_pull_summary"
 for arch in amd64 arm64; do
   platform="linux/$arch"
-  if ! DOCKER_CONFIG="$temporary_root/docker-config" \
-    docker pull --platform "$platform" "$reference"; then
-    echo "ERROR: anonymous exact-digest pull failed for $platform." >&2
-    exit 1
+  expected="$(jq -er --arg platform "$platform" '.[$platform]' "$platform_digests")"
+  if [ "$arch" = "amd64" ]; then
+    anonymous_pull="$anonymous_pull_amd64"
+  else
+    anonymous_pull="$anonymous_pull_arm64"
   fi
-  image_id="$(docker image inspect --format '{{.Id}}' "$reference")"
-  if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] \
-    || [ "$(docker image inspect --format '{{.Id}}' "$image_id")" != "$image_id" ]; then
-    echo "ERROR: anonymous $platform pull did not resolve to one immutable local image ID." >&2
-    exit 1
-  fi
-  jq -cn \
-    --arg imageId "$image_id" \
+  if ! jq -e \
+    --arg digest "$expected" \
     --arg platform "$platform" \
-    '{platform:$platform,imageId:$imageId}' >>"$anonymous_pull_summary"
+    --arg reference "$image@$expected" '
+      (keys | sort) == ["imageId", "platform", "platformDigest", "reference"]
+      and .platform == $platform
+      and .platformDigest == $digest
+      and .reference == $reference
+      and (.imageId | type == "string" and test("^sha256:[0-9a-f]{64}$"))
+    ' "$anonymous_pull" >/dev/null; then
+    echo "ERROR: isolated anonymous pull evidence does not match $platform." >&2
+    exit 1
+  fi
+  jq -cS --slurpfile pull "$anonymous_pull" \
+    '. + [{platform:$pull[0].platform,imageId:$pull[0].imageId}]' \
+    "$anonymous_pull_summary" >"$anonymous_pull_summary.next"
+  mv "$anonymous_pull_summary.next" "$anonymous_pull_summary"
 done
 
 for sbom in "$sbom_amd64" "$sbom_arm64"; do
@@ -428,7 +448,7 @@ jq -nS \
         exactDigest:true,
         reference:$reference,
         indexSha256:$digest,
-        platforms:$anonymousPlatforms
+        platforms:$anonymousPlatforms[0]
       }
     }
   }' >"$temporary_output"

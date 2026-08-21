@@ -450,6 +450,7 @@ jobs:
       - name: Verify anonymous exact platform pull
         shell: bash
         env:
+          ARCH: ${{ matrix.arch }}
           DIGEST: ${{ steps.build.outputs.digest }}
           IMAGE: ${{ needs.config.outputs.publication_repository }}
           PLATFORM: ${{ matrix.platform }}
@@ -464,6 +465,28 @@ jobs:
             echo "::error::Anonymous exact-digest pull failed for ${reference}. The GHCR package ${IMAGE} must be public before candidate assembly."
             exit 1
           fi
+          image_id="$(docker image inspect --format '{{.Id}}' "$reference")"
+          if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || [ "$(docker image inspect --format '{{.Id}}' "$image_id")" != "$image_id" ]; then
+            echo "ERROR: anonymous $PLATFORM pull did not resolve to one immutable local image ID." >&2
+            exit 1
+          fi
+          install -d -m 0700 "$RUNNER_TEMP/llama-cpp-anonymous-pulls"
+          jq -cnS \
+            --arg imageId "$image_id" \
+            --arg platform "$PLATFORM" \
+            --arg platformDigest "$DIGEST" \
+            --arg reference "$reference" \
+            '{imageId:$imageId,platform:$platform,platformDigest:$platformDigest,reference:$reference}' \
+            > "$RUNNER_TEMP/llama-cpp-anonymous-pulls/anonymous-pull-${ARCH}.json"
+
+      - name: Upload anonymous pull evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: llama-cpp-anonymous-pull-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/llama-cpp-anonymous-pulls/anonymous-pull-${{ matrix.arch }}.json
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.config.outputs.publication_receipt_retention_days) }}
 
       - name: Upload platform digest
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -736,6 +759,13 @@ jobs:
           path: ${{ runner.temp }}/llama-cpp-evidence
           merge-multiple: true
 
+      - name: Download anonymous pull evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: llama-cpp-anonymous-pull-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}/llama-cpp-evidence
+          merge-multiple: true
+
       - name: Download SPDX SBOMs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -800,6 +830,8 @@ jobs:
             --reference "$REFERENCE" \
             --candidate-index "$evidence/candidate-index.json" \
             --platform-digests "$evidence/platform-digests.json" \
+            --anonymous-pull-amd64 "$evidence/anonymous-pull-amd64.json" \
+            --anonymous-pull-arm64 "$evidence/anonymous-pull-arm64.json" \
             --sbom-amd64 "$evidence/llama-cpp-sbom-amd64.spdx.json" \
             --sbom-arm64 "$evidence/llama-cpp-sbom-arm64.spdx.json" \
             --sbom-verification "$evidence/sbom-verification.json" \

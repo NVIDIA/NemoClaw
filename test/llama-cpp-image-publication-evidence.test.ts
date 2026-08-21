@@ -32,8 +32,8 @@ const certificateOidcIssuer = "https://token.actions.githubusercontent.com";
 const sha256 = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 
 type FixtureOptions = {
+  anonymousEvidenceMismatch?: "amd64" | "arm64";
   anonymousMismatch?: boolean;
-  anonymousPullFailure?: "amd64" | "arm64";
   duplicateSbom?: boolean;
   identicalSbomDocuments?: boolean;
   indexArm64Digest?: string;
@@ -84,6 +84,13 @@ function runEvidence(options: FixtureOptions = {}) {
   });
   const candidateDigest = sha256(candidate);
   const reference = `${image}@${candidateDigest}`;
+  const anonymousPull = (arch: "amd64" | "arm64", digest: string, imageId: string) => ({
+    imageId,
+    platform: `linux/${arch}`,
+    platformDigest:
+      options.anonymousEvidenceMismatch === arch ? `sha256:${"0".repeat(64)}` : digest,
+    reference: `${image}@${digest}`,
+  });
   const amd64Sbom = spdx("amd64");
   const arm64Sbom = options.identicalSbomDocuments ? amd64Sbom : spdx("arm64");
   const sbomStatement = (predicate: ReturnType<typeof spdx>) => ({
@@ -169,6 +176,12 @@ function runEvidence(options: FixtureOptions = {}) {
       "linux/amd64": amd64Digest,
       "linux/arm64": arm64Digest,
     }),
+    "anonymous-pull-amd64.json": JSON.stringify(
+      anonymousPull("amd64", amd64Digest, `sha256:${"3".repeat(64)}`),
+    ),
+    "anonymous-pull-arm64.json": JSON.stringify(
+      anonymousPull("arm64", arm64Digest, `sha256:${"4".repeat(64)}`),
+    ),
     "sbom-amd64.json": JSON.stringify(amd64Sbom),
     "sbom-arm64.json": JSON.stringify(arm64Sbom),
     "sbom-verification.json": JSON.stringify(sbomVerification),
@@ -184,23 +197,9 @@ function runEvidence(options: FixtureOptions = {}) {
     path.join(bin, "docker"),
     `#!/usr/bin/env bash
 set -euo pipefail
+printf '%s\n' "$*" >> "$FIXTURE_ROOT/docker-invocations"
 if [ "$*" = "buildx imagetools inspect ${reference} --raw" ]; then
   cp "$FIXTURE_ROOT/evidence/anonymous-index.json" /dev/stdout
-elif [ "$1" = "pull" ] && [ "$2" = "--platform" ]; then
-  platform="$3"
-  if [ "$platform" = "linux/${options.anonymousPullFailure ?? "none"}" ]; then
-    exit 91
-  fi
-  printf '%s\n' "$platform" > "$FIXTURE_ROOT/last-pulled-platform"
-elif [ "$*" = "image inspect --format {{.Id}} ${reference}" ]; then
-  case "$(cat "$FIXTURE_ROOT/last-pulled-platform")" in
-    linux/amd64) printf 'sha256:%s\n' '${"3".repeat(64)}' ;;
-    linux/arm64) printf 'sha256:%s\n' '${"4".repeat(64)}' ;;
-    *) exit 92 ;;
-  esac
-elif [ "$1" = "image" ] && [ "$2" = "inspect" ] \
-  && [ "$3" = "--format" ] && [[ "$5" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-  printf '%s\n' "$5"
 else
   printf 'unexpected docker invocation: %s\n' "$*" >&2
   exit 90
@@ -208,6 +207,8 @@ fi
 `,
     { mode: 0o755 },
   );
+  const sharedDaemonReference = path.join(root, "pre-existing-daemon-reference");
+  fs.writeFileSync(sharedDaemonReference, "owned-by-another-process\n");
 
   const result = spawnSync(
     "bash",
@@ -219,6 +220,10 @@ fi
       path.join(evidence, "candidate-index.json"),
       "--platform-digests",
       path.join(evidence, "platform-digests.json"),
+      "--anonymous-pull-amd64",
+      path.join(evidence, "anonymous-pull-amd64.json"),
+      "--anonymous-pull-arm64",
+      path.join(evidence, "anonymous-pull-arm64.json"),
       "--sbom-amd64",
       path.join(evidence, "sbom-amd64.json"),
       "--sbom-arm64",
@@ -269,15 +274,31 @@ fi
   const receipt = fs.existsSync(receiptPath)
     ? (JSON.parse(fs.readFileSync(receiptPath, "utf8")) as Record<string, unknown>)
     : null;
+  const dockerInvocationPath = path.join(root, "docker-invocations");
+  const dockerInvocations = fs.existsSync(dockerInvocationPath)
+    ? fs.readFileSync(dockerInvocationPath, "utf8").trim()
+    : "";
+  const sharedDaemonReferenceWasPreserved =
+    fs.readFileSync(sharedDaemonReference, "utf8") === "owned-by-another-process\n";
   fs.rmSync(root, { recursive: true, force: true });
-  return { candidateDigest, receipt, result };
+  return {
+    candidateDigest,
+    dockerInvocations,
+    receipt,
+    result,
+    sharedDaemonReferenceWasPreserved,
+  };
 }
 
 describe("llama.cpp image publication evidence verifier", () => {
-  it("binds the exact index, platforms, supply-chain evidence, scans, and anonymous pull (#8250)", () => {
+  it("binds isolated anonymous pulls without touching shared Docker image state (#8250)", () => {
     const fixture = runEvidence();
 
     expect(fixture.result.status, fixture.result.stderr).toBe(0);
+    expect(fixture.dockerInvocations).toBe(
+      `buildx imagetools inspect ${image}@${fixture.candidateDigest} --raw`,
+    );
+    expect(fixture.sharedDaemonReferenceWasPreserved).toBe(true);
     expect(fixture.receipt).toMatchObject({
       schemaVersion: 1,
       image: {
@@ -326,7 +347,7 @@ describe("llama.cpp image publication evidence verifier", () => {
   it.each([
     ["substituted platform descriptor", { indexArm64Digest: `sha256:${"f".repeat(64)}` }],
     ["anonymous bytes mismatch", { anonymousMismatch: true }],
-    ["anonymous arm64 pull failure", { anonymousPullFailure: "arm64" as const }],
+    ["anonymous arm64 pull evidence mismatch", { anonymousEvidenceMismatch: "arm64" as const }],
     ["duplicate SBOM predicate", { duplicateSbom: true }],
     ["identical platform SBOM documents", { identicalSbomDocuments: true }],
     ["SBOM subject mismatch", { sbomDigest: "0".repeat(64) }],
