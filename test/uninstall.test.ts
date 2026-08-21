@@ -130,6 +130,8 @@ exit 0
         ...sanitizedParentEnv(),
         HOME: tmp,
         PATH: `${path.join(tmp, "bin")}:/usr/bin:/bin`,
+        XDG_BIN_HOME: path.join(tmp, ".local", "bin"),
+        XDG_CONFIG_HOME: path.join(tmp, ".config"),
         NEMOCLAW_NODE: process.execPath,
         TMPDIR: tmp,
         ...extraEnv,
