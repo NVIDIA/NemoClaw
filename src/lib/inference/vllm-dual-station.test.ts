@@ -133,14 +133,26 @@ function plan(): DualStationVllmPlan {
       home: "/home/nvidia",
       uid: 1000,
       gid: 1000,
-      gpu: { index: 0, name: "NVIDIA GB300", uuid: "GPU-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
+      gpu: {
+        index: 0,
+        name: "NVIDIA GB300",
+        uuid: "GPU-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        totalMemoryMiB: 100_000,
+        freeMemoryMiB: 95_000,
+      },
     },
     peer: {
       hostname: "station-b",
       home: "/home/nvidia",
       uid: 1000,
       gid: 1000,
-      gpu: { index: 0, name: "NVIDIA GB300", uuid: "GPU-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" },
+      gpu: {
+        index: 0,
+        name: "NVIDIA GB300",
+        uuid: "GPU-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        totalMemoryMiB: 100_000,
+        freeMemoryMiB: 95_000,
+      },
     },
     rails: [
       {
@@ -533,6 +545,29 @@ describe("dual DGX Station vLLM install orchestration", () => {
     expect(mocks.dockerSpawn.mock.calls[0][1].env.VLLM_API_KEY).toBeUndefined();
     expect(mocks.dockerSpawn.mock.calls[0][1].env.DOCKER_CONTEXT).toBe("default");
     expect(mocks.dockerImageInspectFormat.mock.calls[0][2].env.DOCKER_CONTEXT).toBe("default");
+  });
+
+  it("rejects a busy selected Station GPU before pulls, staging, or startup", async () => {
+    const clusterPlan = plan();
+    clusterPlan.peer.gpu.freeMemoryMiB = 89_000;
+    mocks.probeCapability.mockReturnValue({
+      kind: "ready",
+      plan: clusterPlan,
+      peerModelSnapshot: "staging-required",
+    });
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
+
+    await expect(
+      installVllm(profile!, { hasImage: true, nonInteractive: true, promptFn: vi.fn() }),
+    ).resolves.toEqual({ ok: false });
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("station-b"));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("GPU-bbbbbbbb"));
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.preflightGpuRuntime).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    expect(mocks.stageModelSnapshot).not.toHaveBeenCalled();
+    expect(mocks.startManaged).not.toHaveBeenCalled();
   });
 
   it("rolls back a newly started pair when durable rollback state cannot be written", async () => {

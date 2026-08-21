@@ -24,6 +24,21 @@ export function hostLocalVllmModelArguments(recipe: HostLocalInferenceServingRec
   });
 }
 
+export function hostLocalVllmGpuMemoryUtilization(
+  recipe: HostLocalInferenceServingRecipe,
+): number {
+  const matches = recipe.spec.serve.arguments.filter(
+    (argument) => argument.name === "--gpu-memory-utilization",
+  );
+  const utilization = matches.length === 1 ? Number(matches[0]!.value) : Number.NaN;
+  if (!Number.isFinite(utilization) || utilization <= 0 || utilization > 1) {
+    throw new Error(
+      `Managed vLLM recipe ${recipe.metadata.id} has no valid --gpu-memory-utilization.`,
+    );
+  }
+  return utilization;
+}
+
 export function hostLocalVllmDockerRunArguments(recipe: HostLocalInferenceServingRecipe): string[] {
   const { devices, gpuRequest, ipcMode, sharedMemoryBytes, temporaryFilesystems, ulimits } =
     recipe.spec.runtime;
