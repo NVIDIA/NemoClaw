@@ -15,6 +15,7 @@ const releaseNotes = read(".agents/skills/nemoclaw-maintainer-release-notes/SKIL
 const releaseTrain = read(
   ".agents/skills/nemoclaw-maintainer-policies/references/release-train.md",
 );
+const compactCutTag = cutTag.replace(/\s+/gu, " ");
 
 describe("release post-tag follow-through", () => {
   it("continues the same task after remote tag readback", () => {
@@ -42,6 +43,16 @@ describe("release post-tag follow-through", () => {
     expect(cutTag).toContain("release-note-draft.md");
     expect(releaseNotes).toContain("Return the draft path to the calling release workflow");
     expect(cutTag).toContain("Never create a GitHub Discussion");
+  });
+
+  it("requires every owned effect before the final response", () => {
+    expect(compactCutTag).toContain("verify that `latest` identifies the release tag");
+    expect(compactCutTag).toContain("Verify label carry-forward and released-label deletion");
+    expect(compactCutTag).toContain("require the `publish` job to succeed");
+    expect(compactCutTag).toContain(
+      "all three automatic workflows are terminal and their effects are classified",
+    );
+    expect(compactCutTag).toContain("`lkg` already identifies the release");
   });
 
   it("classifies production images and leaves lkg under maintainer control", () => {
