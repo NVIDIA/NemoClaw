@@ -92,10 +92,20 @@ describe("installer Homebrew formula reuse trust", () => {
     ["formula repair", TRUSTED_V00106_TEMPLATE_DIGESTS[2], INSTALLER_SOURCE],
   ] as const;
 
-  it.each(templates)("accepts the %s template with digest %s", (_label, _digest, source) => {
+  it.each(templates)("accepts the %s template with digest %s", (_label, digest, source) => {
     const result = runTrustCheck(source);
 
     expect(result.status, result.stderr).toBe(0);
+    const records = JSON.parse(result.stdout) as Array<{
+      operationalTemplateSha256: string;
+      source: string;
+    }>;
+    const installerTemplateDigests = new Set(
+      records
+        .filter((record) => record.source === "installer")
+        .map((record) => record.operationalTemplateSha256),
+    );
+    expect(installerTemplateDigests).toEqual(new Set([digest]));
   });
 
   it("rejects an unlisted template", () => {

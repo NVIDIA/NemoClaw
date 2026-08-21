@@ -1195,7 +1195,7 @@ function assertTrustedTemplate(
   selectorPatterns: readonly RegExp[],
   expectedSha256: readonly string[],
   label: string,
-): void {
+): string {
   const normalized = normalizeTrustedInstallerTemplate(
     source,
     functionNames,
@@ -1209,6 +1209,7 @@ function assertTrustedTemplate(
         `expected_sha256=[${expectedSha256.join(", ")}], actual_sha256=${actualSha256}`,
     );
   }
+  return actualSha256;
 }
 
 function skipSeparators(tokens: Token[], start: number): number {
@@ -1511,7 +1512,7 @@ function runCli(): void {
     );
   const supervisorManifestPins = extractSupervisorManifestPins(supervisorRuntimeSource, supervisor);
   assertTrustedSupervisorManifestPins(supervisorManifestPins, release);
-  assertTrustedTemplate(
+  const installerTemplateSha256 = assertTrustedTemplate(
     installerSource,
     ["openshell_pinned_sha256", "pinned_sandbox_build_version"],
     [
@@ -1522,7 +1523,7 @@ function runCli(): void {
     release.installerTemplateSha256,
     "installer",
   );
-  assertTrustedTemplate(
+  const brevTemplateSha256 = assertTrustedTemplate(
     brevInstallerSource,
     ["openshell_cli_pinned_sha256"],
     [/^\s*stable\s*\|\s*auto\)\s*OPENSHELL_VERSION="v([0-9]+\.[0-9]+\.[0-9]+)"\s*;;\s*$/gm],
@@ -1541,7 +1542,15 @@ function runCli(): void {
     }
   }
   if (options.format === "json") {
-    process.stdout.write(`${JSON.stringify(pins)}\n`);
+    process.stdout.write(
+      `${JSON.stringify(
+        pins.map((pin) => ({
+          ...pin,
+          operationalTemplateSha256:
+            pin.source === "installer" ? installerTemplateSha256 : brevTemplateSha256,
+        })),
+      )}\n`,
+    );
     return;
   }
   if (options.format === "release-tsv") {
