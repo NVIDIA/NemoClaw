@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { checkSystemReadinessSchemaVersion } from "../../readiness/compatibility.js";
+import {
+  evaluateOnboardReadinessAdmission,
+  ONBOARD_READINESS_FINDING_IDS,
+} from "../../readiness/onboard-admission.js";
 import { getSystemReadinessReferenceErrors } from "../../readiness/references.js";
 import {
   hasRemediableStorageConflict,
@@ -86,10 +90,21 @@ function recipeMatchesModelIntent(
   );
 }
 
+function hasManagedVllmIntent(
+  intent: ManagedInferenceSelectionIntent,
+  catalog: CompiledManagedInferenceCatalog,
+): boolean {
+  if (intent.provider === "vllm" || hasText(intent.vllmModel)) return true;
+  if (!hasText(intent.preset)) return false;
+  const presets = catalog.presets.filter(({ metadata }) => metadata.id === intent.preset);
+  return presets.length === 1 && presets[0]!.spec.plan.backend === "vllm";
+}
+
 function readinessError(
   source: ManagedInferenceReadinessSource,
   nowMs: number,
   maxAgeMs: number,
+  allowDeferredN1xManagedVllm: boolean,
 ): string | undefined {
   const { nodeId, report } = source;
   if (!hasText(nodeId)) return "readiness node ID is empty";
@@ -110,12 +125,27 @@ function readinessError(
   const referenceErrors = getSystemReadinessReferenceErrors(report);
   if (referenceErrors.length > 0) return `${nodeId}: ${referenceErrors[0]}`;
   const remediableStorage = hasRemediableStorageConflict(report);
-  if ((report.status !== "supported" || report.exitCode !== 0) && !remediableStorage) {
+  const n1xAdmission = allowDeferredN1xManagedVllm
+    ? evaluateOnboardReadinessAdmission(report, {
+        explicitlyOptedOutGpuPassthrough: false,
+        allowUnsupportedRuntime: false,
+        allowStorageRemediation: false,
+        allowDeferredN1xManagedVllm: true,
+      })
+    : undefined;
+  const deferredN1xManagedVllm =
+    report.status === "incompatible" &&
+    report.exitCode === 2 &&
+    n1xAdmission?.admitted === true &&
+    n1xAdmission.waivedFindingIds.length === 1 &&
+    n1xAdmission.waivedFindingIds[0] === ONBOARD_READINESS_FINDING_IDS.n1xValidationPending;
+  const admittedReadinessException = remediableStorage || deferredN1xManagedVllm;
+  if ((report.status !== "supported" || report.exitCode !== 0) && !admittedReadinessException) {
     return `${nodeId}: readiness status is ${report.status}`;
   }
   if (
     report.findings.some(({ severity }) => severity === "fatal" || severity === "blocking") &&
-    !remediableStorage
+    !admittedReadinessException
   ) {
     return `${nodeId}: readiness report contains a blocking finding`;
   }
@@ -126,13 +156,14 @@ function readinessReportsError(
   sources: readonly ManagedInferenceReadinessSource[],
   nowMs: number,
   maxAgeMs: number,
+  allowDeferredN1xManagedVllm: boolean,
 ): string | undefined {
   const nodeIds = sources.map(({ nodeId }) => nodeId);
   if (new Set(nodeIds).size !== nodeIds.length) {
     return "readiness reports contain duplicate node IDs";
   }
   for (const source of sources) {
-    const error = readinessError(source, nowMs, maxAgeMs);
+    const error = readinessError(source, nowMs, maxAgeMs, allowDeferredN1xManagedVllm);
     if (error) return error;
   }
   return undefined;
@@ -556,7 +587,12 @@ export function resolveManagedInferenceServing<TOutput>(
       message: "Readiness freshness policy is invalid.",
     };
   }
-  const reportsError = readinessReportsError(input.readinessReports, nowMs, maxAgeMs);
+  const reportsError = readinessReportsError(
+    input.readinessReports,
+    nowMs,
+    maxAgeMs,
+    hasManagedVllmIntent(intent, catalog),
+  );
   if (reportsError) {
     return {
       outcome: "rejected",
