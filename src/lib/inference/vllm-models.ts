@@ -34,6 +34,7 @@ import { managedInferenceDigest } from "./serving/catalog-integrity.js";
 import { loadManagedInferenceCatalog } from "./serving/catalog-loader.js";
 import {
   hostLocalVllmDockerRunArguments,
+  hostLocalVllmGpuMemoryUtilization,
   hostLocalVllmModelArguments,
 } from "./serving/host-local-vllm-materialization.js";
 import type {
@@ -77,6 +78,8 @@ export interface VllmRuntimeOverride {
   minComputeCapability?: number;
   /** Minimum GPU or unified-memory capacity declared by the recipe. */
   minGpuMemoryBytes?: number;
+  /** Fraction of one selected GPU that vLLM reserves during startup. */
+  gpuMemoryUtilization?: number;
   /** Catalog identity that produced this runtime. */
   servingCatalog?: VllmServingCatalogIdentity;
   /** Catalog preset that declared this runtime, independent of receipt ownership. */
@@ -222,6 +225,7 @@ function catalogModelVariant(
   if (!Number.isSafeInteger(maxModelLen) || maxModelLen <= 0) {
     throw new Error(`Managed vLLM recipe ${recipe.metadata.id} has no valid --max-model-len.`);
   }
+  const gpuMemoryUtilization = hostLocalVllmGpuMemoryUtilization(recipe);
   const platform = preset.spec.plan.platform;
   if (!platform) {
     throw new Error(`Managed vLLM preset ${preset.metadata.id} has no platform.`);
@@ -268,6 +272,7 @@ function catalogModelVariant(
           ? recipe.spec.runtime.minimumComputeCapability
           : undefined,
       minGpuMemoryBytes: recipe.spec.runtime.minimumGpuMemoryBytes,
+      gpuMemoryUtilization,
       dockerRunArgs: hostLocalVllmDockerRunArguments(recipe),
       dockerRunArgsMode: "replace",
       modelArgs: hostLocalVllmModelArguments(recipe),
@@ -363,6 +368,7 @@ export function vllmModelsFromCatalog(
               pullTimeoutSec: base.variant.pullTimeoutSec,
               minComputeCapability: base.variant.minComputeCapability,
               minGpuMemoryBytes: base.variant.minGpuMemoryBytes,
+              gpuMemoryUtilization: base.variant.gpuMemoryUtilization,
               orchestrationRef: base.variant.orchestrationRef,
               stationPair: base.variant.stationPair,
             }

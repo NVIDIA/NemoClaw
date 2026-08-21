@@ -84,6 +84,11 @@ describe("host-local vLLM selection", () => {
 
   it("resolves an explicit preset into the catalog-derived Spark profile", () => {
     const selection = hostLocalSelection();
+    const gpuMemoryUtilization = Number(
+      selection.recipe.spec.serve.arguments.find(
+        ({ name }) => name === "--gpu-memory-utilization",
+      )?.value,
+    );
     mocks.resolveManagedInferenceServing.mockReturnValue(selection);
 
     const result = resolveHostLocalVllmSelection(baseProfile(), {
@@ -98,6 +103,7 @@ describe("host-local vLLM selection", () => {
         image: selection.recipe.spec.runtime.image,
         minComputeCapability: selection.recipe.spec.runtime.minimumComputeCapability,
         minGpuMemoryBytes: selection.recipe.spec.runtime.minimumGpuMemoryBytes,
+        gpuMemoryUtilization,
         servingCatalog: {
           presetDigest: selection.presetDigest,
           recipeDigest: selection.recipeDigest,
@@ -108,6 +114,7 @@ describe("host-local vLLM selection", () => {
         runtime: {
           minComputeCapability: selection.recipe.spec.runtime.minimumComputeCapability,
           minGpuMemoryBytes: selection.recipe.spec.runtime.minimumGpuMemoryBytes,
+          gpuMemoryUtilization,
         },
       },
     });

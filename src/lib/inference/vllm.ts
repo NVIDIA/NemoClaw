@@ -8,7 +8,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { isDeepStrictEqual } from "node:util";
+import { isDeepStrictEqual, stripVTControlCharacters } from "node:util";
 import {
   dockerCapture,
   dockerForceRm,
@@ -27,7 +27,7 @@ import { markPhaseActivity } from "../core/phase-activity";
 import { VLLM_PORT } from "../core/vllm-port";
 import { shellQuote } from "../core/shell-quote";
 import { isAffirmativeAnswer } from "../onboard/prompt-helpers";
-import { runCapture } from "../runner";
+import { redact, redactFull, runCapture } from "../runner";
 import { isSafeModelId } from "../validation";
 import {
   acquireHuggingFaceModel,
@@ -156,6 +156,8 @@ export interface VllmProfile {
   minComputeCapability?: number;
   /** Minimum GPU or unified-memory capacity selected by the runtime recipe. */
   minGpuMemoryBytes?: number;
+  /** Fraction of one selected GPU that vLLM reserves during startup. */
+  gpuMemoryUtilization?: number;
   servingCatalog?: {
     catalogDigest: string;
     presetId: string;
@@ -451,6 +453,111 @@ export function computeCapabilityPreflight(
   };
 }
 
+export interface GpuMemoryDevice {
+  index: number;
+  uuid: string;
+  totalBytes: bigint;
+  freeBytes: bigint;
+}
+
+export function readGpuMemoryDevices(): GpuMemoryDevice[] {
+  const out = captureNvidiaSmi(
+    ["--query-gpu=index,uuid,memory.total,memory.free", "--format=csv,noheader,nounits"],
+    { runCaptureImpl: runCapture },
+  );
+  if (!out) return [];
+  const devices: GpuMemoryDevice[] = [];
+  for (const line of out.split("\n")) {
+    const fields = line.split(",").map((field) => field.trim());
+    if (fields.length !== 4) continue;
+    const [indexRaw, uuid, totalMiBRaw, freeMiBRaw] = fields;
+    const index = Number(indexRaw);
+    const totalMiB = Number(totalMiBRaw);
+    const freeMiB = Number(freeMiBRaw);
+    if (
+      !Number.isSafeInteger(index) ||
+      index < 0 ||
+      !uuid ||
+      !Number.isSafeInteger(totalMiB) ||
+      totalMiB <= 0 ||
+      !Number.isSafeInteger(freeMiB) ||
+      freeMiB < 0 ||
+      freeMiB > totalMiB
+    ) {
+      continue;
+    }
+    devices.push({
+      index,
+      uuid,
+      totalBytes: BigInt(totalMiB) * 1024n * 1024n,
+      freeBytes: BigInt(freeMiB) * 1024n * 1024n,
+    });
+  }
+  return devices;
+}
+
+function profileGpuRequest(profile: VllmProfile): string | null {
+  let flags: readonly string[];
+  try {
+    flags = profile.buildDockerRunFlags ? profile.buildDockerRunFlags() : profile.dockerRunFlags;
+  } catch {
+    return null;
+  }
+  const index = flags.indexOf("--gpus");
+  if (index < 0 || index === flags.length - 1) return null;
+  const value = flags[index + 1]!;
+  return value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value;
+}
+
+function selectedGpuMemoryDevice(
+  profile: VllmProfile,
+  devices: readonly GpuMemoryDevice[],
+): GpuMemoryDevice | null {
+  const request = profileGpuRequest(profile);
+  if (!request) return null;
+  // Fixed host-local recipes use one tensor-parallel worker, so vLLM starts
+  // on the first visible device even when Docker exposes every GPU.
+  if (request === "all" || request === "device=all") {
+    return devices.find((device) => device.index === 0) ?? devices[0] ?? null;
+  }
+  if (!request.startsWith("device=")) return null;
+  const selector = request.slice("device=".length).split(",")[0]?.trim();
+  if (!selector) return null;
+  return (
+    devices.find((device) => String(device.index) === selector || device.uuid === selector) ?? null
+  );
+}
+
+export function gpuMemoryPreflight(
+  model: VllmModelDef,
+  profile: VllmProfile,
+  devices: readonly GpuMemoryDevice[] = readGpuMemoryDevices(),
+): { ok: true } | { ok: false; reason: string } {
+  const utilization = profile.gpuMemoryUtilization;
+  if (utilization === undefined || devices.length === 0) return { ok: true };
+  const device = selectedGpuMemoryDevice(profile, devices);
+  if (!device) return { ok: true };
+  const requiredBytes = BigInt(Math.ceil(Number(device.totalBytes) * utilization));
+  if (device.freeBytes >= requiredBytes) return { ok: true };
+  const missingBytes = requiredBytes - device.freeBytes;
+  return {
+    ok: false,
+    reason:
+      `${model.label} sets --gpu-memory-utilization=${String(utilization)}, which requires about ` +
+      `${formatStorageBytes(requiredBytes)} free on GPU ${String(device.index)}, but only ` +
+      `${formatStorageBytes(device.freeBytes)} of ${formatStorageBytes(device.totalBytes)} is free. ` +
+      `Stop other GPU workloads to free at least ${formatStorageBytes(missingBytes)}, then resume onboarding.`,
+  };
+}
+
+function installGpuMemoryPreflight(
+  model: VllmModelDef,
+  profile: VllmProfile,
+  dualStationPlan: DualStationVllmPlan | null,
+): ReturnType<typeof gpuMemoryPreflight> {
+  return dualStationPlan ? { ok: true } : gpuMemoryPreflight(model, profile);
+}
+
 export async function pullImage(
   profile: VllmProfile,
   dockerEnv: Record<string, string> = buildVllmDockerEnv(),
@@ -670,6 +777,7 @@ function applyVllmRuntimeProfile(
       pullTimeoutSec: runtime.pullTimeoutSec ?? profile.pullTimeoutSec,
       minComputeCapability: runtime.minComputeCapability ?? model.minComputeCapability,
       minGpuMemoryBytes: runtime.minGpuMemoryBytes,
+      gpuMemoryUtilization: runtime.gpuMemoryUtilization,
       servingCatalog: runtime.servingCatalog ?? profile.servingCatalog,
     };
   }
@@ -1133,9 +1241,11 @@ function readContainerLogTail(
   const output = dockerCapture(["logs", "--tail", String(lineCount), profile.containerName], {
     env: dockerEnv,
     ignoreError: true,
+    includeStderr: true,
   }).trim();
   if (!output) return [];
-  return output.split(/\r?\n/).slice(-lineCount);
+  const safeOutput = redact(redactFull(stripVTControlCharacters(output)));
+  return safeOutput.split(/\r?\n/).slice(-lineCount);
 }
 
 function printContainerLogTail(
@@ -2041,6 +2151,12 @@ async function runVllmInstall(
   );
   if (!capability.ok) {
     console.error(`  vLLM install failed: ${capability.reason}`);
+    return { ok: false };
+  }
+
+  const memory = installGpuMemoryPreflight(model, runtimeProfile, dualStationPlan);
+  if (!memory.ok) {
+    console.error(`  vLLM install failed: ${memory.reason}`);
     return { ok: false };
   }
 
