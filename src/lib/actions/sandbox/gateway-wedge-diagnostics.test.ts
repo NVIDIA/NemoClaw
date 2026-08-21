@@ -89,15 +89,24 @@ describe("sanitizeWedgeLogLine", () => {
   });
 
   it.each([
-    ["double-quoted", 'api_key="opaque first second'],
-    ["single-quoted", "token='opaque first second"],
+    ["double-quoted", 'api_key="opaque first second', 'api_key="[REDACTED]"'],
+    ["single-quoted", "token='opaque first second", "token='[REDACTED]'"],
+    [
+      "double-quoted with a dangling backslash",
+      'api_key="opaque first second\\',
+      'api_key="[REDACTED]"',
+    ],
+    [
+      "single-quoted with a dangling backslash",
+      "token='opaque first second\\",
+      "token='[REDACTED]'",
+    ],
   ])(
     "fails closed for an unterminated %s wedge-log secret assignment (#9863)",
-    (_case, assignment) => {
+    (_case, assignment, expected) => {
       const sanitized = sanitizeWedgeLogLine(`gateway startup failed: ${assignment}`);
 
-      expect(sanitized).not.toContain("opaque first second");
-      expect(sanitized).toContain("REDACTED");
+      expect(sanitized).toBe(`gateway startup failed: ${expected}`);
     },
   );
 

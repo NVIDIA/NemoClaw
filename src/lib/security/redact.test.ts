@@ -88,20 +88,34 @@ describe("redactForLog", () => {
   });
 
   it.each([
-    ["double-quoted", 'OPENAI_API_KEY="opaque first second\nsafe diagnostic'],
-    ["single-quoted", "OPENAI_API_KEY='opaque first second\nsafe diagnostic"],
+    [
+      "double-quoted",
+      'OPENAI_API_KEY="opaque first second\nsafe diagnostic',
+      'OPENAI_API_KEY="<REDACTED>"\nsafe diagnostic',
+    ],
+    [
+      "single-quoted",
+      "OPENAI_API_KEY='opaque first second\nsafe diagnostic",
+      "OPENAI_API_KEY='<REDACTED>'\nsafe diagnostic",
+    ],
+    [
+      "double-quoted with a dangling backslash",
+      'OPENAI_API_KEY="opaque first second\\\nsafe diagnostic',
+      'OPENAI_API_KEY="<REDACTED>"\nsafe diagnostic',
+    ],
+    [
+      "single-quoted with a dangling backslash",
+      "OPENAI_API_KEY='opaque first second\\\nsafe diagnostic",
+      "OPENAI_API_KEY='<REDACTED>'\nsafe diagnostic",
+    ],
   ])(
     "fails closed at line end for an unterminated %s environment assignment (#9863)",
-    (_case, assignment) => {
+    (_case, assignment, expectedFull) => {
       const full = redactFull(assignment);
       const sensitive = redactSensitiveText(assignment);
 
-      expect(full).not.toContain("opaque first second");
-      expect(sensitive).not.toContain("opaque first second");
-      expect(full).toContain("<REDACTED>");
-      expect(sensitive).toContain("<REDACTED>");
-      expect(full).toContain("\nsafe diagnostic");
-      expect(sensitive).toContain("\nsafe diagnostic");
+      expect(full).toBe(expectedFull);
+      expect(sensitive).toBe("OPENAI_API_KEY=<REDACTED>\nsafe diagnostic");
     },
   );
 

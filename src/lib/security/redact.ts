@@ -45,7 +45,9 @@ const SENSITIVE_ENV_ASSIGNMENT_KEYS = [
   ...listMessagingCredentialMetadata().map((credential) => credential.providerEnvKey),
 ];
 
-const SENSITIVE_ENV_ASSIGNMENT_VALUE = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\\r\n])*(?=\r?\n|$)|'(?:\\.|[^'\\\r\n])*(?=\r?\n|$)|\S+)`;
+const DOUBLE_QUOTED_SECRET_ASSIGNMENT_VALUE = String.raw`"(?:\\.|[^"\\\r\n])*(?:"|(?:\\)?(?=\r?\n|$))`;
+const SINGLE_QUOTED_SECRET_ASSIGNMENT_VALUE = String.raw`'(?:\\.|[^'\\\r\n])*(?:'|(?:\\)?(?=\r?\n|$))`;
+const SENSITIVE_ENV_ASSIGNMENT_VALUE = `(?:${DOUBLE_QUOTED_SECRET_ASSIGNMENT_VALUE}|${SINGLE_QUOTED_SECRET_ASSIGNMENT_VALUE}|\\S+)`;
 const SENSITIVE_ENV_ASSIGNMENT_PATTERN = new RegExp(
   `(${SENSITIVE_ENV_ASSIGNMENT_KEYS.map(escapeRegExp).join("|")})=${SENSITIVE_ENV_ASSIGNMENT_VALUE}`,
   "gi",
@@ -109,10 +111,8 @@ const CAMEL_SECRET_ASSIGNMENT_KEY_SOURCE =
 function quotedSecretAssignmentPatterns(keySource: string, flags: string): [RegExp, string][] {
   const prefix = `((?:^|[^A-Za-z0-9])${keySource}["']?(?:[ \\t]{0,32}[=:][ \\t]{0,32}|[ \\t]{1,32}))`;
   return [
-    [new RegExp(`${prefix}"(?:\\\\.|[^"\\\\])*"`, flags), '$1"<REDACTED>"'],
-    [new RegExp(`${prefix}'(?:\\\\.|[^'\\\\])*'`, flags), "$1'<REDACTED>'"],
-    [new RegExp(`${prefix}"(?:\\\\.|[^"\\\\\\r\\n])*(?=\\r?\\n|$)`, flags), '$1"<REDACTED>"'],
-    [new RegExp(`${prefix}'(?:\\\\.|[^'\\\\\\r\\n])*(?=\\r?\\n|$)`, flags), "$1'<REDACTED>'"],
+    [new RegExp(`${prefix}${DOUBLE_QUOTED_SECRET_ASSIGNMENT_VALUE}`, flags), '$1"<REDACTED>"'],
+    [new RegExp(`${prefix}${SINGLE_QUOTED_SECRET_ASSIGNMENT_VALUE}`, flags), "$1'<REDACTED>'"],
   ];
 }
 
