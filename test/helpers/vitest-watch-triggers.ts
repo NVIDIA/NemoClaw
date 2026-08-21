@@ -278,6 +278,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     pattern: /(?:^|\/)ci\/platform-vitest-macos-requirements\.lock$/,
     testsToRun: runTests("test/platform-vitest-main-workflow.test.ts"),
   },
+  {
+    pattern:
+      /(?:^|\/)\.agents\/skills\/(?:nemoclaw-maintainer-cut-release-tag\/SKILL\.md|nemoclaw-maintainer-evening\/SKILL\.md|nemoclaw-maintainer-release-notes\/SKILL\.md|nemoclaw-maintainer-policies\/references\/release-train\.md)$/,
+    testsToRun: runTests("test/release-post-tag-follow-through.test.ts"),
+  },
 ];
 export function resolveVitestWatchTests(file: string): string[] {
   const normalized = file.replaceAll("\\", "/");
