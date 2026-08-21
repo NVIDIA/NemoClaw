@@ -3,20 +3,31 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Set Up Google Chat"
 sidebar-title: "Set Up Google Chat"
-description: "Configure the experimental Google Chat webhook, service account, access controls, and OpenShell credential boundary for OpenClaw."
-description-agent: "Explains the experimental OpenClaw-only Google Chat setup, including its interactive public webhook flow, service-account key, audience, DM allowlist, personal-account principal discovery, and gateway-minted outbound token. Use before enabling Google Chat."
+description: "Configure experimental Google Chat delivery, access controls, and OpenShell credentials for OpenClaw or Hermes."
+description-agent: "Explains experimental Google Chat setup for OpenClaw webhooks and Hermes Pub/Sub REST pull, including service-account custody, access controls, agent-specific inputs, and gateway-minted tokens. Use before enabling Google Chat."
 keywords: ["nemoclaw google chat", "google chat api bot", "google chat webhook", "google chat service account"]
 content:
   type: "how_to"
-agent-variants: ["openclaw"]
+agent-variants: ["openclaw", "hermes"]
 ---
-Google Chat support is experimental and available only for OpenClaw sandboxes.
-It receives events at `/googlechat` on the OpenClaw dashboard port and sends replies through the Google Chat API.
+Google Chat support is experimental for OpenClaw and Hermes sandboxes.
 
+<AgentOnly variant="openclaw">
+OpenClaw receives events at `/googlechat` on its dashboard port.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+Hermes pulls events from a Google Cloud Pub/Sub subscription over REST.
+</AgentOnly>
+
+Both agents send replies through the Google Chat API.
+
+<AgentOnly variant="openclaw">
 <Warning title="Webhook Only">
 The automatic public endpoint accepts only `POST /googlechat` and denies dashboard, health, WebSocket, and other control paths.
 Continue to open the Control UI through `http://127.0.0.1:18789`; the Google Chat URL is not a dashboard URL.
 </Warning>
+</AgentOnly>
 
 ## Prepare the Google Cloud Configuration
 
@@ -26,10 +37,12 @@ Prepare the Google Cloud resources before you enable the channel.
 - Create a service account and download a JSON key. The JSON must contain
   non-empty `client_email` and `private_key` string fields.
 - Minify the service-account JSON to one line before you paste it at the `GOOGLECHAT_SERVICE_ACCOUNT` prompt.
-- Choose an HTTP endpoint connection in **Google Chat API** > **Configuration** > **Connection settings**.
 
 Keep the JSON key available on the trusted host during enrollment.
-Do not copy it into the sandbox or its OpenClaw configuration.
+Do not copy it into the sandbox or the agent configuration.
+
+<AgentOnly variant="openclaw">
+Choose an HTTP endpoint connection in **Google Chat API** > **Configuration** > **Connection settings**.
 
 ## Prepare the Public Webhook
 
@@ -122,24 +135,50 @@ Google Chat email addresses do not match this ID-based allowlist.
 
 Google Workspace accounts do not need `GOOGLECHAT_APP_PRINCIPAL`.
 Leave that prompt empty unless you use a personal or standalone Google account.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+## Prepare Pub/Sub Delivery
+
+Create or select a Pub/Sub topic for Google Chat events and bind a pull subscription to that topic.
+Record the Google Cloud project ID and the complete subscription name in the form `projects/<project>/subscriptions/<subscription>`.
+The service account must be authorized to pull and acknowledge messages from the subscription.
+
+Grant the Chat app's publisher principal the `roles/pubsub.publisher` role on the topic.
+Use the principal that matches the app type:
+
+- Interactive features: `service-<projectNumber>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com`
+- Classic bot: `chat-api-push@system.gserviceaccount.com`
+
+Google Chat shows the applicable connection in **Google Chat API** > **Configuration** > **Connection settings**.
+A missing publisher grant can leave the channel connected without delivering events.
+
+## Configure Hermes Access
+
+Set `GOOGLECHAT_ALLOWED_USERS` to a comma-separated list of Google account email addresses that may message the bot.
+Hermes ignores OpenClaw-style `users/NNN` identifiers.
+</AgentOnly>
 
 ## Enable Google Chat
 
-For a new sandbox, run `nemoclaw onboard` and select Google Chat in the messaging picker.
-For an existing OpenClaw sandbox, run:
+For a new sandbox, run `$$nemoclaw onboard` and select Google Chat in the messaging picker.
+For an existing sandbox, run:
 
 ```bash
-nemoclaw my-assistant channels add googlechat
+$$nemoclaw my-assistant channels add googlechat
 ```
 
-Follow the prompts to confirm the public endpoint, paste the service-account JSON, configure access, and rebuild the sandbox.
+Paste the service-account JSON, configure the agent-specific inputs, and rebuild the sandbox.
 NemoClaw applies the `googlechat` network policy preset and registers a sandbox-scoped `<sandbox>-googlechat-bridge` provider with OpenShell.
 
-OpenShell uses the service-account key as gateway-side refresh material to mint short-lived tokens with the `chat.bot` scope.
+OpenShell uses the service-account key as gateway-side refresh material to mint short-lived tokens.
 NemoClaw passes the private key to the OpenShell command through an ephemeral child-process environment value, not through a command-line argument.
-The service-account private key does not enter the sandbox, and the OpenShell proxy inserts the minted bearer token into allowed requests to `chat.googleapis.com`.
+The service-account private key does not enter the sandbox, and the OpenShell proxy inserts the minted bearer token into approved Google API requests.
 The Google Chat policy does not rewrite request bodies with credentials.
 
+<AgentOnly variant="openclaw">
+Follow the prompts to confirm the public endpoint and configure the optional app principal.
+OpenShell mints the token with the `chat.bot` scope.
 The channel policy permits Node.js to read the Google Chat REST API and to create, update, or delete messages under the `/v1/spaces/` tree.
 It also permits Node.js GET requests to any path on `www.googleapis.com` because the Google authentication library controls the public certificate URL used to verify inbound event tokens.
 
@@ -186,6 +225,20 @@ If no owning managed gateway is registered, NemoClaw does not attempt activation
 Do not submit the pairing code again unless OpenClaw reports that it was not accepted.
 
 If the webhook returns an error, verify that the public endpoint still ends in `/googlechat`, the dedicated tunnel and webhook proxy are running, and the Google Chat API configuration contains the exact same URL.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+Follow the prompts for the Google Cloud project ID, complete Pub/Sub subscription name, and email sender allowlist.
+Hermes does not create or require a public webhook endpoint.
+OpenShell mints one token with the `chat.bot` and `pubsub` scopes and inserts it into approved requests to `chat.googleapis.com` and `pubsub.googleapis.com`.
+The policy permits only Pub/Sub `pull` and `acknowledge` operations for the configured transport, plus the Google Chat REST operations used for replies.
+
+## Verify the Channel
+
+After the rebuild, send a direct message from an email address in `GOOGLECHAT_ALLOWED_USERS` and confirm that Hermes replies.
+If no event arrives, inspect the sandbox logs and confirm the project ID, complete subscription name, subscription access, and topic publisher grant.
+Hermes retries transient REST pull failures, and Pub/Sub redelivers a message when Hermes does not acknowledge it.
+</AgentOnly>
 
 Refer to [Manage Messaging Channels](manage-messaging-channels) to stop, start, or remove Google Chat after setup.
-That page explains how each command affects the bridge provider, service-account refresh material, and dedicated public endpoint.
+That page explains how each command affects the bridge provider, service-account refresh material, and agent-specific inbound path.

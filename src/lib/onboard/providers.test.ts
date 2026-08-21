@@ -34,6 +34,7 @@ const {
       providerName: string;
       providerType: string;
       credentialEnv: string;
+      defaultModel: string;
     }
   >;
   buildProviderArgs: (
@@ -122,6 +123,10 @@ function withProviderEnv(next: Record<string, string | undefined>, testBody: () 
 }
 
 describe("onboard provider helpers", () => {
+  it("uses Gemini 3.6 Flash as the onboarding default (#9298)", () => {
+    expect(REMOTE_PROVIDER_CONFIG.gemini.defaultModel).toBe("gemini-3.6-flash");
+  });
+
   it("keeps managed llama.cpp as a public non-interactive provider selector (#8433)", () => {
     expect(NON_INTERACTIVE_PROVIDER_KEYS.has("install-llama-cpp")).toBe(true);
     withProviderEnv({ NEMOCLAW_PROVIDER: "install-llama-cpp" }, () => {
