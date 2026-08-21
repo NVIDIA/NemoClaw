@@ -151,9 +151,20 @@ describe("credential exposure in process arguments", () => {
 
       withLocalNoProxy(env);
 
-      expect(env.NO_PROXY).toBe(
-        "upper.internal,lower.internal,localhost,127.0.0.1,host.docker.internal,host.containers.internal,::1,0.0.0.0,inference.local",
-      );
+      const expectedExclusions = new Set([
+        "upper.internal",
+        "lower.internal",
+        "localhost",
+        "127.0.0.1",
+        "host.docker.internal",
+        "host.containers.internal",
+        "::1",
+        "0.0.0.0",
+        "inference.local",
+      ]);
+      const actualExclusions = env.NO_PROXY.split(",");
+      expect(new Set(actualExclusions)).toEqual(expectedExclusions);
+      expect(actualExclusions).toHaveLength(expectedExclusions.size);
       expect(env.no_proxy).toBe(env.NO_PROXY);
     },
   );
