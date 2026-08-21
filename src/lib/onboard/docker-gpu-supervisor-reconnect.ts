@@ -74,10 +74,21 @@ export type DockerGpuSupervisorReconnectDeps = {
 };
 
 /**
- * Wait for OpenShell to retire the previous lifecycle record before Docker
- * restarts the exact replacement container. A successful list command that
- * omits the exact sandbox name is the authority; Docker state alone cannot
- * release the OpenShell lifecycle record.
+ * Workaround contract for the OpenShell lifecycle race in #9531:
+ *
+ * - Removing the rollback backup can strand the exact sandbox in `Deleting`
+ *   while its replacement container is healthy.
+ * - `openshell sandbox list` owns lifecycle authority. Docker health cannot
+ *   prove that OpenShell retired the previous record.
+ * - This layer waits after backup removal and before replacement restart so
+ *   OpenShell processes the stale deletion before the new registration.
+ * - `waits for the deleting lifecycle record to clear before restarting the
+ *   replacement (#9531)` protects the event order. `rejects final handoff when
+ *   OpenShell never releases the deleting lifecycle record (#9531)` protects
+ *   the composed failure path.
+ *
+ * Remove this wait only when OpenShell binds deletion to the removed container
+ * identity or provides an identity-bound lifecycle-release receipt.
  */
 export function waitForOpenShellSandboxLifecycleRelease(
   sandboxName: string,
