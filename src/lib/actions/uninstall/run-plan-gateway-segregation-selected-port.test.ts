@@ -257,7 +257,8 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
 
   it("prunes selected rows after recovering an abandoned registry lock", async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-stale-lock-"));
-    const port = 9124;
+    const port = 8080;
+    const siblingPort = 9125;
     try {
       vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
       vi.resetModules();
@@ -265,16 +266,8 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
         (await import("./run-plan")).runUninstallPlan,
       );
       const shared = path.join(tmpHome, ".nemoclaw");
-      const selected = path.join(shared, "gateways", String(port));
-      fs.mkdirSync(selected, { recursive: true });
-      fs.writeFileSync(
-        path.join(shared, "sandboxes.json"),
-        JSON.stringify({
-          defaultSandbox: "default-box",
-          sandboxes: { "default-box": { name: "default-box" } },
-        }),
-      );
-      const selectedRegistry = path.join(selected, "sandboxes.json");
+      fs.mkdirSync(path.join(shared, "gateways", String(siblingPort)), { recursive: true });
+      const selectedRegistry = path.join(shared, "sandboxes.json");
       fs.writeFileSync(
         selectedRegistry,
         JSON.stringify({
@@ -282,8 +275,13 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           sandboxes: {
             "port-box": {
               name: "port-box",
-              gatewayName: `nemoclaw-${String(port)}`,
+              gatewayName: "nemoclaw",
               gatewayPort: port,
+            },
+            "sibling-box": {
+              name: "sibling-box",
+              gatewayName: `nemoclaw-${String(siblingPort)}`,
+              gatewayPort: siblingPort,
             },
           },
         }),
@@ -301,7 +299,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           assumeYes: true,
           deleteModels: false,
           destroyUserData: false,
-          gatewayName: `nemoclaw-${String(port)}`,
+          gatewayName: "nemoclaw",
           keepOpenShell: true,
         },
         {
@@ -311,19 +309,34 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
           log: vi.fn(),
-          run: () => ok(),
+          run: (_command, args) =>
+            args[0] === "gateway" && args[1] === "list"
+              ? ok(
+                  JSON.stringify([
+                    { name: "nemoclaw" },
+                    { name: `nemoclaw-${String(siblingPort)}` },
+                  ]),
+                )
+              : ok(),
           runDocker: () => ok(""),
         },
       );
 
       expect(result.exitCode).toBe(0);
       expect(fs.existsSync(abandonedLock)).toBe(false);
-      expect(
-        Object.keys(
-          (JSON.parse(fs.readFileSync(selectedRegistry, "utf8")) as { sandboxes: object })
-            .sandboxes,
-        ),
-      ).toEqual([]);
+      expect(JSON.parse(fs.readFileSync(selectedRegistry, "utf8"))).toMatchObject({
+        defaultSandbox: "sibling-box",
+        sandboxes: {
+          "sibling-box": {
+            name: "sibling-box",
+            gatewayName: `nemoclaw-${String(siblingPort)}`,
+            gatewayPort: siblingPort,
+          },
+        },
+      });
+      expect(JSON.parse(fs.readFileSync(selectedRegistry, "utf8"))).not.toHaveProperty(
+        "sandboxes.port-box",
+      );
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
