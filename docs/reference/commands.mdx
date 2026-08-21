@@ -108,9 +108,12 @@ dcode
 dcode -n "Summarize this repository"
 dcode -n "Summarize this repository" --json
 dcode status
+printf '%s\n' '{"worker":"worker-17"}' | dcode tools call-read-only worker_task_context --json
 ```
 
-For the JSON schema, status and exit behavior, and 1 MiB output limit, refer to [Run Deep Agents Code](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code).
+`dcode tools call-read-only TOOL --json` invokes one exact, coherently read-only managed MCP tool without model participation.
+It requires one JSON object on standard input and writes one bounded JSON result envelope.
+For the JSON schema, status and exit behavior, output limit, and read-only MCP call requirements, refer to [Run Deep Agents Code](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code).
 
 </AgentOnly>
 
@@ -2508,6 +2511,8 @@ Pass `--cleanup-gateway` to force removal, or `--no-cleanup-gateway` to force pr
 These flags always override both `NEMOCLAW_CLEANUP_GATEWAY` and the platform default.
 If the pre-delete workspace wipe cannot run, use a different sandbox name for a clean start.
 Cleaning up the gateway after the last sandbox also purges the shared cluster volume that retains the per-name persistent volume.
+If NemoClaw detects active SSH sessions before destroy, it warns that destroy terminates them with a Broken pipe error and lists their process IDs.
+This warning prints before the confirmation prompt and when `--yes` or `--force` skips that prompt.
 If final gateway cleanup finds a live PID-file process whose command line does not prove it owns the target gateway, `destroy` exits non-zero after sandbox and registry deletion and skips gateway and volume removal.
 NemoClaw preserves the per-gateway PID file and runtime marker so you can inspect the process.
 Stop only the listener that matches the target gateway, then rerun `destroy` to converge cleanup.
@@ -3520,6 +3525,8 @@ Mismatched `--agent` plus canonical-key combinations are refused before any down
 Session keys that begin with `-` are rejected at the command boundary instead of being silently dropped.
 Session JSONL can contain pasted secrets, such as API keys or tokens, so exported files are written owner-only (`0600`).
 The in-sandbox staging artefact is additionally created with `umask 077` and removed after the host download completes.
+If the staging cleanup fails, the command warns with the retained path and a manual removal command.
+The retained artifact can contain session JSONL with pasted secrets.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -3546,6 +3553,8 @@ $$nemoclaw my-assistant sessions export --json
 
 Session JSONL can contain pasted secrets, such as API keys or tokens, so exported files are written owner-only (`0600`).
 The in-sandbox staging artefact is additionally created with `umask 077` and removed after the host download completes.
+If the staging cleanup fails, the command warns with the retained path and a manual removal command.
+The retained artifact can contain session JSONL with pasted secrets.
 
 </AgentOnly>
 
