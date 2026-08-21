@@ -47,6 +47,7 @@ describe("runUpdateAction", () => {
     expect(spawnSyncImpl).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Current NemoClaw version: 0.1.0"));
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Latest maintained version: 0.2.0"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining(NEMOCLAW_UPDATE_COMMAND));
   });
 
   it("renders NemoHermes branding and installer guidance for --check when the Hermes alias is active", async () => {
@@ -68,7 +69,7 @@ describe("runUpdateAction", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Current NemoHermes version: 0.1.0"));
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining(
-        "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash",
+        "curl -fsSL --proto '=https' --proto-redir '=https' https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash",
       ),
     );
   });
@@ -94,7 +95,7 @@ describe("runUpdateAction", () => {
     );
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining(
-        "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code bash",
+        "curl -fsSL --proto '=https' --proto-redir '=https' https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code bash",
       ),
     );
   });
@@ -201,7 +202,7 @@ describe("runUpdateAction", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("reinstalling anyway (--fresh)"));
   });
 
-  it("runs the maintained installer fetch with HTTPS pinned across redirects", async () => {
+  it("restricts the maintained installer fetch and redirects to HTTPS", async () => {
     const spawnSyncImpl = vi.fn(
       () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
     );
@@ -374,29 +375,32 @@ describe("runUpdateAction", () => {
     ["1.0.0", "01.0.0", "maintained release component"],
     ["1.0.0-01", "1.0.0-1", "installed prerelease identifier"],
     ["1.0.0-1", "1.0.0-01", "maintained prerelease identifier"],
-  ])("fails closed on --fresh for a leading zero in the %s (%s; %s) (#8306)", async (currentVersion, latestVersion) => {
-    const spawnSyncImpl = vi.fn();
-    const error = vi.fn();
+  ])(
+    "fails closed on --fresh for a leading zero in the %s (%s; %s) (#8306)",
+    async (currentVersion, latestVersion) => {
+      const spawnSyncImpl = vi.fn();
+      const error = vi.fn();
 
-    const result = await runUpdateAction(
-      { fresh: true, yes: true },
-      {
-        currentVersion: () => currentVersion,
-        error,
-        getMaintainedTarget: () => maintainedTarget(latestVersion),
-        isSourceCheckout: () => false,
-        log: vi.fn(),
-        spawnSyncImpl,
-      },
-    );
+      const result = await runUpdateAction(
+        { fresh: true, yes: true },
+        {
+          currentVersion: () => currentVersion,
+          error,
+          getMaintainedTarget: () => maintainedTarget(latestVersion),
+          isSourceCheckout: () => false,
+          log: vi.fn(),
+          spawnSyncImpl,
+        },
+      );
 
-    expect(result.ranInstaller).toBe(false);
-    expect(result.status).toBe(1);
-    expect(result.updateAvailable).toBeNull();
-    expect(spawnSyncImpl).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Cannot order"));
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("--allow-downgrade"));
-  });
+      expect(result.ranInstaller).toBe(false);
+      expect(result.status).toBe(1);
+      expect(result.updateAvailable).toBeNull();
+      expect(spawnSyncImpl).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("Cannot order"));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("--allow-downgrade"));
+    },
+  );
 
   it("fails closed on --fresh when the maintained tag cannot be resolved (#8306)", async () => {
     const spawnSyncImpl = vi.fn();
