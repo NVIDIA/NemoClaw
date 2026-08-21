@@ -107,6 +107,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
         nonInteractive: true,
         recreateSandbox: true,
         authoritativeResumeConfig: true,
+        rebuildPolicyPresets: ["npm", "bad", "throw"],
         autoYes: true,
       }),
     );

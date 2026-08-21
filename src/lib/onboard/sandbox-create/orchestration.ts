@@ -753,7 +753,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         baseImageResolutionContext,
         previousEntry?.imageTag,
       );
-      policyPresetCarry.applyRecreatePolicyCarryForward(sandboxName, isNonInteractive(), note);
+      policyPresetCarry.applyRecreatePolicyCarryForward(
+        sandboxName,
+        isNonInteractive(),
+        note,
+        createIntent?.rebuildPolicyPresets,
+      );
 
       const noRestorePending =
         pendingStateRestore === null && pendingStateRestoreBackupPath === null;

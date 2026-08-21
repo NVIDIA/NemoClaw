@@ -288,6 +288,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     await rebuildOnboardDependencies.onboard({
       ...recreateOptions,
       rebuildGatewayAuthority,
+      ...(Array.isArray(recreatePolicyPresets) ? { rebuildPolicyPresets: recreatePolicyPresets } : {}),
       ...(rebuildsHermesSandbox && backupManifest?.preservedEnv
         ? { rebuildPreservedEnv: backupManifest.preservedEnv }
         : {}),

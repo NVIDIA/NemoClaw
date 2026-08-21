@@ -201,6 +201,7 @@ export interface SandboxStateOptions<
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
   rebuildPreservedEnv?: readonly import("../../../state/preserved-env").PreservedEnvFile[];
+  rebuildPolicyPresets?: readonly string[];
   hostMounts?: readonly import("../../../state/registry/types").SandboxHostMount[];
   recreateSandbox: (requested?: boolean) => boolean;
   gatewayName: string;
@@ -479,6 +480,12 @@ function compatibleEndpointReasoningForCreateIntent(
   value: string | null,
 ): Pick<SandboxCreateIntent, "compatibleEndpointReasoning"> {
   return value === "true" || value === "false" ? { compatibleEndpointReasoning: value } : {};
+}
+
+function rebuildPolicyPresetsForCreateIntent(
+  value: readonly string[] | undefined,
+): Pick<SandboxCreateIntent, "rebuildPolicyPresets"> {
+  return Array.isArray(value) ? { rebuildPolicyPresets: [...value] } : {};
 }
 
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
@@ -1604,6 +1611,7 @@ class SandboxStateFlow<
       ...(this.options.rebuildPreservedEnv
         ? { rebuildPreservedEnv: this.options.rebuildPreservedEnv }
         : {}),
+      ...rebuildPolicyPresetsForCreateIntent(this.options.rebuildPolicyPresets),
       extraProviders,
     };
   }
