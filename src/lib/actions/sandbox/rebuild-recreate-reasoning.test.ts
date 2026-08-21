@@ -124,6 +124,7 @@ function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildR
     mcpEntries: [],
     rebuildShieldsWindow: { relocked: false, wasLocked: false },
     relockShieldsIfNeeded: vi.fn(() => true),
+    validatePolicyAuthority: vi.fn(async () => undefined),
     onCreated: vi.fn(),
     log: vi.fn(),
     bail: vi.fn((message: string): never => {

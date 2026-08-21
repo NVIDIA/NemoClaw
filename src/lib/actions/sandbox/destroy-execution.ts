@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { R, YW } from "../../cli/terminal-style";
+import {
+  isPolicyAuthorityRefusalError,
+  PolicyAuthorityRefusalError,
+} from "../../adapters/openshell/policy-authority";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import { removePortableDemoSandboxLifecycleReceipt } from "../../onboard/experimental/portable-demo-lifecycle";
 import {
@@ -35,9 +39,11 @@ import type { DestroyRunOpenshell } from "./destroy-gateway";
 import {
   finalizeMcpBridgesAfterSandboxDelete,
   McpBridgeError,
+  McpPolicyAuthorityRefusalError,
   type McpDestroyPreparation,
   prepareMcpBridgesForAbsentSandboxDestroy,
   prepareMcpBridgesForDestroy,
+  revalidateMcpDestroyAbortPolicyAuthority,
   restoreMcpBridgesAfterDestroyAbort,
 } from "./mcp-bridge";
 import { wipeSandboxState } from "./wipe-state";
@@ -64,6 +70,7 @@ type SandboxDestroyExecutionInput = {
   // container observed by the pre-destroy guard.
   expectedContainerIdentity?: SandboxNameLabeledContainer | null;
   stopInferenceResources: () => void;
+  validateMcpPolicyAuthorityReceipt?: () => Promise<void>;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   deps?: {
     hostLocalInferenceLifecycleOptions?: HostLocalInferenceLifecycleOptions;
@@ -117,13 +124,16 @@ async function prepareMcpDestroy(
   sandbox: SandboxEntry | null,
   sandboxConfirmedAbsent: boolean,
   force: boolean,
+  validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<McpDestroyPreparation> {
   if (Object.keys(sandbox?.mcp?.bridges ?? {}).length === 0) {
     return emptyMcpDestroyPreparation();
   }
   const preparation = sandboxConfirmedAbsent
     ? await prepareMcpBridgesForAbsentSandboxDestroy(sandboxName, { force })
-    : await prepareMcpBridgesForDestroy(sandboxName);
+    : validateContainingPolicyReceipt
+      ? await prepareMcpBridgesForDestroy(sandboxName, validateContainingPolicyReceipt)
+      : await prepareMcpBridgesForDestroy(sandboxName);
   if (sandboxConfirmedAbsent && preparation.entries.length > 0) {
     console.warn(
       `  ${YW}⚠${R} Sandbox '${sandboxName}' is already absent, so its retained-volume MCP adapter entry cannot be scrubbed in place. Exact OpenShell providers will be deleted so any stale credential placeholder cannot authenticate; same-name onboarding may need to replace stale MCP adapter config.`,
@@ -209,10 +219,19 @@ async function restoreMcpAfterDeleteAbort(
   sandboxName: string,
   preparation: McpDestroyPreparation,
   hardened: HardenedDeleteState,
+  validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<string | undefined> {
   let recoveryFailure: string | undefined;
+  let authorityRefusal: unknown;
   let openedRollbackWindow = false;
   try {
+    await (validateContainingPolicyReceipt
+      ? revalidateMcpDestroyAbortPolicyAuthority(
+          sandboxName,
+          preparation,
+          validateContainingPolicyReceipt,
+        )
+      : revalidateMcpDestroyAbortPolicyAuthority(sandboxName, preparation));
     if (hardened.hardenedForDelete && preparation.entries.length > 0) {
       if (!hardened.timerProcessToken) {
         throw new Error(
@@ -230,9 +249,17 @@ async function restoreMcpAfterDeleteAbort(
       });
       openedRollbackWindow = true;
     }
-    await restoreMcpBridgesAfterDestroyAbort(sandboxName, preparation);
+    await (validateContainingPolicyReceipt
+      ? restoreMcpBridgesAfterDestroyAbort(
+          sandboxName,
+          preparation,
+          validateContainingPolicyReceipt,
+        )
+      : restoreMcpBridgesAfterDestroyAbort(sandboxName, preparation));
   } catch (error) {
-    recoveryFailure = redactDestroyError(error);
+    if (error instanceof McpPolicyAuthorityRefusalError || isPolicyAuthorityRefusalError(error)) {
+      authorityRefusal = error;
+    } else recoveryFailure = redactDestroyError(error);
   } finally {
     if (openedRollbackWindow) {
       try {
@@ -243,12 +270,29 @@ async function restoreMcpAfterDeleteAbort(
         });
       } catch (error) {
         const detail = redactDestroyError(error);
-        recoveryFailure = recoveryFailure
-          ? `${recoveryFailure}; shields re-lock failed: ${detail}`
-          : `shields re-lock failed: ${detail}`;
+        const relockFailure = `shields re-lock failed: ${detail}`;
+        if (isPolicyAuthorityRefusalError(error)) {
+          authorityRefusal = new PolicyAuthorityRefusalError(
+            [authorityRefusal, recoveryFailure, relockFailure]
+              .filter((value) => value !== undefined)
+              .map((value) => (typeof value === "string" ? value : redactDestroyError(value)))
+              .join("; "),
+          );
+        } else if (authorityRefusal !== undefined) {
+          const message = `${redactDestroyError(authorityRefusal)}; ${relockFailure}`;
+          authorityRefusal =
+            authorityRefusal instanceof McpPolicyAuthorityRefusalError
+              ? new McpPolicyAuthorityRefusalError(message)
+              : new PolicyAuthorityRefusalError(message);
+        } else {
+          recoveryFailure = recoveryFailure
+            ? `${recoveryFailure}; ${relockFailure}`
+            : relockFailure;
+        }
       }
     }
   }
+  if (authorityRefusal !== undefined) throw authorityRefusal;
   return recoveryFailure;
 }
 
@@ -282,6 +326,7 @@ export async function executeSandboxDestroy({
   sandboxName,
   expectedContainerIdentity,
   stopInferenceResources,
+  validateMcpPolicyAuthorityReceipt,
   runtimeProviders = CURRENT_RUNTIME_PROVIDER_BUNDLES,
   deps = {},
 }: SandboxDestroyExecutionInput): Promise<SandboxDestroyExecutionResult> {
@@ -370,7 +415,13 @@ export async function executeSandboxDestroy({
     }
     let mcpPreparation: McpDestroyPreparation;
     try {
-      mcpPreparation = await prepareMcpDestroy(sandboxName, sandbox, sandboxConfirmedAbsent, force);
+      mcpPreparation = await prepareMcpDestroy(
+        sandboxName,
+        sandbox,
+        sandboxConfirmedAbsent,
+        force,
+        validateMcpPolicyAuthorityReceipt,
+      );
     } catch (error) {
       if (error instanceof McpBridgeError) {
         return {
@@ -398,7 +449,12 @@ export async function executeSandboxDestroy({
     ): Promise<string | undefined> =>
       sandboxConfirmedAbsent
         ? undefined
-        : await restoreMcpAfterDeleteAbort(sandboxName, mcpPreparation, hardenedState);
+        : await restoreMcpAfterDeleteAbort(
+            sandboxName,
+            mcpPreparation,
+            hardenedState,
+            validateMcpPolicyAuthorityReceipt,
+          );
     const preparedContinuity = inspectIdentityContinuity();
     if (preparedContinuity.status !== "match") {
       const mcpRecoveryFailure = await restoreMcpForAbort(notHardened);
@@ -500,7 +556,12 @@ export async function executeSandboxDestroy({
     if (deleteResult.status !== 0 && !alreadyGone && !forcedLocalCleanup) {
       const mcpRecoveryFailure = sandboxConfirmedAbsent
         ? undefined
-        : await restoreMcpAfterDeleteAbort(sandboxName, mcpPreparation, hardened);
+        : await restoreMcpAfterDeleteAbort(
+            sandboxName,
+            mcpPreparation,
+            hardened,
+            validateMcpPolicyAuthorityReceipt,
+          );
       return {
         ok: false as const,
         deleteOutput,

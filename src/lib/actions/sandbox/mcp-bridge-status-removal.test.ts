@@ -36,6 +36,8 @@ const agentDefs = require("./src/lib/agent/defs.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
+const mcpPolicy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+const policyAuthority = require("./src/lib/actions/sandbox/policy-authority/preflight.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 agentDefs.loadAgent = () => { throw new Error("current agent must not be consulted"); };
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
@@ -56,6 +58,8 @@ providerCommands.runOpenshellProviderCommand = (args) => {
 };
 policies.removePreset = () => true;
 policies.getPresetContentGatewayState = () => "absent";
+mcpPolicy.preflightMcpPolicyAuthority = () => "nemoclaw-managed";
+policyAuthority.preflightSandboxPolicyAuthority = () => "nemoclaw-managed";
 processRecovery.executeSandboxCommand = () => ({ status: 0, stdout: "", stderr: "" });
 processRecovery.executeSandboxExecCommand = () => ({ status: 0, stdout: "", stderr: "" });
 registry.registerSandbox({
@@ -115,6 +119,8 @@ const agentDefs = require("./src/lib/agent/defs.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
+const mcpPolicy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+const policyAuthority = require("./src/lib/actions/sandbox/policy-authority/preflight.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 agentDefs.loadAgent = () => { throw new Error("current agent must not be consulted"); };
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
@@ -135,6 +141,8 @@ providerCommands.runOpenshellProviderCommand = (args) => {
 };
 policies.removePreset = () => false;
 policies.getPresetContentGatewayState = () => "match";
+mcpPolicy.preflightMcpPolicyAuthority = () => "nemoclaw-managed";
+policyAuthority.preflightSandboxPolicyAuthority = () => "nemoclaw-managed";
 processRecovery.executeSandboxCommand = () => ({ status: 0, stdout: "", stderr: "" });
 processRecovery.executeSandboxExecCommand = () => ({ status: 0, stdout: "", stderr: "" });
 registry.registerSandbox({

@@ -7,6 +7,7 @@ export interface DashboardForwardOptions {
   rollbackSandboxOnFailure?: boolean;
   preserveSandboxPorts?: Array<number | string>;
   allowPortReallocation?: boolean;
+  revalidatePolicyAuthority?: (operation: string) => void;
 }
 
 export function normalizeDashboardForwardOptions(options: DashboardForwardOptions = {}): {
@@ -25,6 +26,7 @@ export function createSandboxForwardStopper(deps: {
   runOpenshell: Parameters<typeof bestEffortForwardStopForSandbox>[0];
   runCaptureOpenshell: (args: string[], opts?: Record<string, unknown>) => string | null;
   sandboxName: string;
+  revalidatePolicyAuthority?: (operation: string) => void;
 }): (port: string | number) => ReturnType<typeof bestEffortForwardStopForSandbox> | null {
   const stoppedPorts = new Set<string>();
   return (port: string | number) => {
@@ -35,6 +37,10 @@ export function createSandboxForwardStopper(deps: {
       (args, opts) => deps.runCaptureOpenshell(args, opts),
       port,
       deps.sandboxName,
+      () =>
+        deps.revalidatePolicyAuthority?.(
+          `stop dashboard forward ${String(port)} for sandbox '${deps.sandboxName}'`,
+        ),
     );
     if (result === "stopped" || result === "no-entry") {
       stoppedPorts.add(portKey);

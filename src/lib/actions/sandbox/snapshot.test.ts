@@ -764,6 +764,7 @@ describe("runSandboxSnapshot", () => {
   it("reconciles snapshot policies after restore and warns without failing on repair misses", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    f.getSandboxMock.mockReturnValue({ name: "alpha" });
     f.getLatestBackupMock.mockReturnValue({
       backupPath: "/tmp/alpha/v2",
       timestamp: "2026-06-02T00:00:00.000Z",

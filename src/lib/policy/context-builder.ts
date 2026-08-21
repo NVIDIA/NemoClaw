@@ -191,7 +191,11 @@ function partitionPresets(
     // would record the preset as operator-applied (#9079). Sibling base additions
     // with no catalog entry are never iterated here, so this only corrects the
     // incidental name-collision case.
-    if (!isApplied && verification === "gateway-only" && isAgentBasePreset(sandboxName, info.name)) {
+    if (
+      !isApplied &&
+      verification === "gateway-only" &&
+      isAgentBasePreset(sandboxName, info.name)
+    ) {
       verification = "agent-base";
     }
     const enforcedNotApplied =
@@ -363,7 +367,8 @@ export function buildPolicyContext(
   options: BuildPolicyContextOptions = {},
 ): PolicyContext {
   const sandbox = registry.getSandbox(sandboxName);
-  const tierName = sandbox?.policyTier ?? null;
+  const tierName =
+    sandbox?.policyAuthority === "externally-managed" ? null : (sandbox?.policyTier ?? null);
   const tierDef = tierName ? getTier(tierName) : null;
   const tier: PolicyContextTier | null = tierDef
     ? { name: tierDef.name, label: tierDef.label, description: tierDef.description }

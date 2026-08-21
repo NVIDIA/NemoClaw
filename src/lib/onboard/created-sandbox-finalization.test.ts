@@ -54,6 +54,7 @@ describe("ordinary sandbox completion", () => {
           armCancelRollback: vi.fn(),
           dockerInfoFormat: vi.fn(() => "true"),
           runCapture: vi.fn(() => ""),
+          revalidatePolicyAuthority: vi.fn(),
         },
       ),
     ).toBe("alpha");

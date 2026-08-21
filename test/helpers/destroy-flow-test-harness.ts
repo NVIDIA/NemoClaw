@@ -33,6 +33,7 @@ export type DestroyHarness = {
   logSpy: MockInstance;
   prepareMcpBridgesForAbsentSandboxDestroySpy: MockInstance;
   prepareMcpBridgesForDestroySpy: MockInstance;
+  revalidateMcpDestroyAbortPolicyAuthoritySpy: MockInstance;
   promptSpy: MockInstance;
   removeManagedHermesStateVolumeSpy: MockInstance;
   removeSandboxSpy: MockInstance;
@@ -78,6 +79,7 @@ type DestroyHarnessOptions = {
   liveListOutput?: string;
   managedHermesStateVolumeCleanupResult?: ManagedHermesStateVolumeCleanupResult;
   mcpAddState?: "prepared";
+  mcpAbortPreflightError?: string;
   mcpServers?: string[];
   openshellDriver?: string;
   portableCommandError?: string;
@@ -88,10 +90,13 @@ type DestroyHarnessOptions = {
   replaceSessionAfterRegistryRemoval?: boolean;
   removeSandboxResult?: boolean;
   restoreMcpError?: string;
+  restoreMcpPolicyAuthorityRefusal?: string;
   sandboxPresent?: boolean;
   sessionRouterPid?: number;
   shieldsDown?: boolean;
+  shieldsDownError?: Error;
   shieldsUpError?: Error;
+  shieldsUpErrors?: Array<Error | undefined>;
   stopInferenceError?: string;
   workload?: SandboxWorkloadReceipt;
 };
@@ -440,17 +445,21 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
         }
       : null,
   );
+  const shieldsUpErrors = [...(options.shieldsUpErrors ?? [])];
   vi.spyOn(shields, "shieldsUp").mockImplementation(() => {
     events.push("harden");
-    options.shieldsUpError === undefined
+    const shieldsUpError =
+      shieldsUpErrors.length > 0 ? shieldsUpErrors.shift() : options.shieldsUpError;
+    shieldsUpError === undefined
       ? undefined
       : (() => {
-          throw options.shieldsUpError;
+          throw shieldsUpError;
         })();
   });
   vi.spyOn(shields, "isShieldsDown").mockReturnValue(options.shieldsDown ?? true);
   const shieldsDownSpy = vi.spyOn(shields, "shieldsDown").mockImplementation(() => {
     events.push("unlock");
+    if (options.shieldsDownError) throw options.shieldsDownError;
   });
   const killTimerSpy = vi.spyOn(timerControl, "killTimer").mockImplementation(() => {
     events.push("timer-cleanup");
@@ -487,9 +496,24 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     .spyOn(mcpBridge, "restoreMcpBridgesAfterDestroyAbort")
     .mockImplementation(async () => {
       events.push("mcp-restore");
+      if (options.restoreMcpPolicyAuthorityRefusal !== undefined) {
+        throw new mcpBridge.McpPolicyAuthorityRefusalError(
+          options.restoreMcpPolicyAuthorityRefusal,
+        );
+      }
       return options.restoreMcpError === undefined
         ? undefined
         : Promise.reject(new Error(options.restoreMcpError));
+    });
+  const revalidateMcpDestroyAbortPolicyAuthoritySpy = vi
+    .spyOn(mcpBridge, "revalidateMcpDestroyAbortPolicyAuthority")
+    .mockImplementation(async (...args: unknown[]) => {
+      const preparation = args[1] as { entries: unknown[] };
+      if (preparation.entries.length === 0) return;
+      events.push("mcp-restore-preflight");
+      if (options.mcpAbortPreflightError !== undefined) {
+        throw new mcpBridge.McpPolicyAuthorityRefusalError(options.mcpAbortPreflightError);
+      }
     });
   const finalizeMcpBridgesAfterSandboxDeleteSpy = vi
     .spyOn(mcpBridge, "finalizeMcpBridgesAfterSandboxDelete")
@@ -522,6 +546,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     logSpy,
     prepareMcpBridgesForAbsentSandboxDestroySpy,
     prepareMcpBridgesForDestroySpy,
+    revalidateMcpDestroyAbortPolicyAuthoritySpy,
     promptSpy,
     removeManagedHermesStateVolumeSpy,
     removeSandboxSpy,

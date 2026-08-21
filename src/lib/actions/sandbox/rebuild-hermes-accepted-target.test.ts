@@ -12,6 +12,7 @@ const phaseMocks = vi.hoisted(() => ({
   runPostRestore: vi.fn(),
   runPreflight: vi.fn(),
   runShields: vi.fn(),
+  revalidateAuthority: vi.fn(),
 }));
 
 const gatewayAuthority = {
@@ -25,6 +26,15 @@ const gatewayAuthority = {
   requiredCapabilities: [],
 } as const;
 
+const policyAuthorityReceipt = {
+  authority: "nemoclaw-managed",
+  gatewayName: "nemoclaw",
+  managedMcpPolicies: [],
+  operation: "rebuild sandbox 'alpha'",
+  requiredPolicies: [],
+  sandboxName: "alpha",
+} as const;
+
 vi.mock("./rebuild-recreate-journal", () => ({
   fingerprintRebuildRecreateTargetIntent: () => "intent-1",
   openRebuildRecreateJournal: phaseMocks.openRecreateJournal,
@@ -36,6 +46,7 @@ vi.mock("./rebuild-backup-phase", () => ({
 
 vi.mock("./rebuild-preflight-phase", () => ({
   finalizePreparedRebuildImageMessagingPlan: vi.fn(),
+  revalidateRebuildPolicyAuthority: phaseMocks.revalidateAuthority,
   runHermesCronRestoreBackupPreflight: () => ({ plan: null }),
   runRebuildPreflightPhase: phaseMocks.runPreflight,
 }));
@@ -70,6 +81,7 @@ describe("Hermes accepted replacement recovery", () => {
     vi.clearAllMocks();
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
+    phaseMocks.revalidateAuthority.mockResolvedValue(undefined);
     phaseMocks.recoverCronRestore.mockReturnValue("dispatch-reactivated");
     phaseMocks.runPreflight.mockResolvedValue({
       sandboxEntry: { name: "alpha", customPolicies: [] },
@@ -104,6 +116,7 @@ describe("Hermes accepted replacement recovery", () => {
         revalidateBeforeDelete: vi.fn(async () => true),
       },
       preparedImage: null,
+      policyAuthorityReceipt,
       routePreflightReceipt: {},
       releaseOnboardLock,
       log,

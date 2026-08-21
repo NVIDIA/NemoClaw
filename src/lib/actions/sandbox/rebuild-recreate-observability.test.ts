@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { restoreEnv } from "../../../../test/helpers/env-test-helpers";
+import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import * as shields from "../../shields";
 import { decisionSelected } from "../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
@@ -162,6 +163,7 @@ function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildR
     mcpEntries: [],
     rebuildShieldsWindow: { relocked: false, wasLocked: false },
     relockShieldsIfNeeded: vi.fn(() => true),
+    validatePolicyAuthority: vi.fn(async () => undefined),
     onCreated: vi.fn(),
     log: vi.fn(),
     bail: vi.fn((message: string): never => {
@@ -510,6 +512,20 @@ describe("runRebuildRecreatePhase handoff", () => {
     expect(input.relockShieldsIfNeeded).toHaveBeenCalledWith(false);
     expect(input.onCreated).not.toHaveBeenCalled();
     expect(input.bail).toHaveBeenCalledWith("Recreate failed (stale-sandbox recovery).", 1);
+  });
+
+  it("does not run recreate recovery after an inner policy authority refusal (#9833)", async () => {
+    const refusal = new PolicyAuthorityRefusalError("policy authority changed during recreate");
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockRejectedValue(refusal);
+    const input = makeInput({ recoveryRecreate: true });
+
+    await expect(runRebuildRecreatePhase(input)).rejects.toBe(refusal);
+
+    expect(input.validatePolicyAuthority).toHaveBeenCalledOnce();
+    expect(input.registryRollback.restoreForRetry).not.toHaveBeenCalled();
+    expect(input.relockShieldsIfNeeded).not.toHaveBeenCalled();
+    expect(input.onCreated).not.toHaveBeenCalled();
+    expect(input.bail).not.toHaveBeenCalled();
   });
 });
 

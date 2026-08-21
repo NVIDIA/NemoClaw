@@ -3,7 +3,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { runOpenshell } from "../../adapters/openshell/runtime";
 import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { isNonInteractiveEnv, isNonInteractiveSession } from "../../core/non-interactive";
@@ -83,6 +82,8 @@ import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 
 const isNonInteractive = () => isNonInteractiveSession();
+const runOpenshell = (...args: Parameters<typeof policyChannelDependencies.runOpenshell>) =>
+  policyChannelDependencies.runOpenshell(...args);
 
 /**
  * Report that `NEMOCLAW_NON_INTERACTIVE=1` leaves no interactive picker, and
@@ -428,8 +429,7 @@ async function addSandboxPolicyUnlocked(
   if (!policies.applyPreset(sandboxName, answer, { suppressDisclosure: true })) {
     process.exit(1);
   }
-  syncSessionPolicyPresetsWithRegistry(sandboxName, answer, "add");
-  refreshSandboxPolicyContextFile(sandboxName);
+  syncManagedPolicyAttribution(sandboxName, answer);
 }
 
 /**
@@ -506,10 +506,7 @@ async function applyExternalPreset(
       suppressDisclosure: true,
     });
     if (result !== false) {
-      // Custom presets share the registry slot with built-ins (customPolicies
-      // in policy/index.ts:684), so they need the same session-sync.
-      syncSessionPolicyPresetsWithRegistry(sandboxName, loaded.presetName, "add");
-      refreshSandboxPolicyContextFile(sandboxName);
+      syncManagedPolicyAttribution(sandboxName, loaded.presetName);
     }
     return result !== false;
   } catch (err: unknown) {
@@ -846,6 +843,7 @@ async function applyChannelAddToGatewayAndRegistry(
   sandboxName: string,
   channelName: string,
   acquired: Record<string, string>,
+  prepareMutation?: () => void,
 ): Promise<boolean> {
   const tokenDefs: MessagingTokenDef[] = Object.entries(acquired).map(([envKey, token]) => ({
     name: bridgeProviderName(sandboxName, channelName, envKey),
@@ -894,21 +892,31 @@ async function applyChannelAddToGatewayAndRegistry(
     console.error(`  ${gatewayStartGuidance(gatewayName)}`);
     process.exit(1);
   }
+  prepareMutation?.();
+  persistChannelTokens(acquired);
   try {
     // bestEffort: failures throw (instead of process.exit inside the helper)
     // so a partial add can be torn down below before exiting.
-    policyChannelDependencies.upsertMessagingProviders(tokenDefs, { bestEffort: true });
+    policyChannelDependencies.upsertMessagingProviders(tokenDefs, {
+      bestEffort: true,
+      revalidatePolicyRequirements: () => prepareMutation?.(),
+    });
   } catch (err) {
     console.error(
       `  ✗ Failed to register '${channelName}' providers with the gateway: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );
+    prepareMutation?.();
     const teardown = await applyChannelRemoveToGatewayAndRegistry(
       sandboxName,
       channelName,
       Object.keys(acquired),
-      { bestEffort: true },
+      {
+        bestEffort: true,
+        prepareMutation,
+        revalidatePolicyRequirements: prepareMutation,
+      },
     );
     if (!teardown.ok) {
       console.error(
@@ -926,7 +934,11 @@ async function applyChannelRemoveToGatewayAndRegistry(
   sandboxName: string,
   channelName: string,
   channelTokenKeys: string[],
-  options: { bestEffort?: boolean } = {},
+  options: {
+    bestEffort?: boolean;
+    prepareMutation?: () => void;
+    revalidatePolicyRequirements?: () => void;
+  } = {},
 ): Promise<{ ok: boolean; residual: string[] }> {
   const bestEffort = Boolean(options.bestEffort);
   const residual: string[] = [];
@@ -966,8 +978,10 @@ async function applyChannelRemoveToGatewayAndRegistry(
   // previous run may have already detached, or the channel may have been
   // configured for a sandbox that is no longer alive.
   const detachFailures: Array<{ name: string; output: string }> = [];
+  options.prepareMutation?.();
   if (gatewayReachable) {
     for (const name of providerNames) {
+      options.revalidatePolicyRequirements?.();
       const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],
@@ -1005,6 +1019,7 @@ async function applyChannelRemoveToGatewayAndRegistry(
     const detachFailedSet = new Set(detachFailures.map((f) => f.name));
     for (const name of providerNames) {
       if (!bestEffort && detachFailedSet.has(name)) continue;
+      options.revalidatePolicyRequirements?.();
       const result = runOpenshell(["provider", "delete", name], {
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],
@@ -1034,7 +1049,11 @@ async function applyChannelRemoveToGatewayAndRegistry(
   return { ok: residual.length === 0, residual };
 }
 
-async function promptAndRebuild(sandboxName: string, actionDesc: string): Promise<boolean> {
+async function promptAndRebuild(
+  sandboxName: string,
+  actionDesc: string,
+  prepareRebuild?: () => void,
+): Promise<boolean> {
   if (isNonInteractive()) {
     console.log("");
     console.log(
@@ -1051,6 +1070,7 @@ async function promptAndRebuild(sandboxName: string, actionDesc: string): Promis
     );
     return false;
   }
+  prepareRebuild?.();
   await policyChannelDependencies.rebuildSandbox(sandboxName, ["--yes"]);
   return true;
 }
@@ -1106,6 +1126,7 @@ async function planSandboxChannelAdd(
   channelId: string,
   agent: AgentDefinition,
   dependencies: AddSandboxChannelDependencies,
+  prepareCredentialPersistence: () => void,
 ): Promise<SandboxMessagingPlan> {
   const planner = new MessagingWorkflowPlanner(
     messagingManifestRegistry,
@@ -1115,6 +1136,11 @@ async function planSandboxChannelAdd(
           nonInteractiveAudienceCapability: dependencies.googlechatNonInteractiveAudienceCapability,
         },
         tunnelRuntime: policyChannelDependencies.googlechatTunnelRuntime(sandboxName),
+      },
+      wechat: {
+        ilinkLogin: {
+          beforePersist: prepareCredentialPersistence,
+        },
       },
     }),
     createBuiltInRenderTemplateResolver(),
@@ -1147,6 +1173,7 @@ export async function persistManifestChannelDisabledPlan(
   sandboxName: string,
   channelId: string,
   disabled: boolean,
+  beforePersist?: () => void,
 ): Promise<SandboxMessagingPlan | null> {
   const entry = registry.getSandbox(sandboxName);
   if (!entry?.messaging?.plan) return null;
@@ -1169,12 +1196,14 @@ export async function persistManifestChannelDisabledPlan(
     ? await planner.buildChannelStopPlanFromSandboxEntry(context)
     : await planner.buildChannelStartPlanFromSandboxEntry(context);
   if (!plan) return null;
+  beforePersist?.();
   return MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan) ? plan : null;
 }
 
 export async function persistManifestChannelRemovePlan(
   sandboxName: string,
   channelId: string,
+  beforePersist?: () => void,
 ): Promise<boolean> {
   const entry = registry.getSandbox(sandboxName);
   if (!entry) return false;
@@ -1182,6 +1211,7 @@ export async function persistManifestChannelRemovePlan(
   const agentId = tryGetMessagingAgentId(agent, messagingManifestRegistry.list());
   if (agentId === null) {
     if (entry.messaging?.plan) {
+      beforePersist?.();
       return registry.updateSandbox(sandboxName, { messaging: undefined });
     }
     return true;
@@ -1199,6 +1229,7 @@ export async function persistManifestChannelRemovePlan(
     supportedChannelIds: availableManifestChannelsForAgent(agent).map((manifest) => manifest.id),
   });
   if (!plan) return !entry.messaging?.plan;
+  beforePersist?.();
   return MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
 }
 
@@ -1289,7 +1320,7 @@ function loadValidateAndDiscloseChannelPreset(
   sandboxName: string,
   channelName: string,
   verb: "add" | "start",
-): policies.PresetPolicyState | null {
+): { content: string; disclosedState: policies.PresetPolicyState | null } {
   const presetContent = policies.loadPresetForSandbox(sandboxName, channelName);
   const presetPolicyKeys =
     presetContent === null ? [] : policies.parsePresetPolicyKeys(presetContent);
@@ -1306,7 +1337,42 @@ function loadValidateAndDiscloseChannelPreset(
     );
     process.exit(1);
   }
-  return discloseChannelPresetScope(sandboxName, channelName, presetContent);
+  return {
+    content: presetContent,
+    disclosedState: discloseChannelPresetScope(sandboxName, channelName, presetContent),
+  };
+}
+
+function preflightChannelPolicyAuthority(
+  sandboxName: string,
+  channelName: string,
+  operation: "add" | "start",
+  presetContent: string,
+): void {
+  try {
+    policyChannelDependencies.preflightSandboxPolicyAuthority({
+      externalPolicy: "verify",
+      operation: `${operation} channel '${channelName}'`,
+      requiredPolicyContents: [presetContent],
+      sandboxName,
+    });
+  } catch (error) {
+    console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+}
+
+function preflightChannelRemovalPolicyAuthority(sandboxName: string, channelName: string): void {
+  try {
+    policyChannelDependencies.preflightSandboxPolicyAuthority({
+      externalPolicy: "refuse",
+      operation: `remove channel '${channelName}'`,
+      sandboxName,
+    });
+  } catch (error) {
+    console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
 }
 
 function safeLoadOnboardSession(): ReturnType<typeof onboardSession.loadSession> {
@@ -1365,14 +1431,18 @@ async function addSandboxChannelUnlocked(
 
   // Disclose before credential collection, conflict prompts, or any gateway /
   // registry mutation. The core apply path rechecks immediately before set.
-  const disclosedPresetState = loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "add");
+  const presetPreflight = loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "add");
 
   if (dryRun) {
     console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);
     return;
   }
 
-  const plan = await planSandboxChannelAdd(sandboxName, canonical, agent, dependencies);
+  preflightChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content);
+
+  const plan = await planSandboxChannelAdd(sandboxName, canonical, agent, dependencies, () =>
+    preflightChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content),
+  );
   const acquired = collectManifestCredentials(manifest);
   if (!(await checkChannelAddConflict(sandboxName, canonical, acquired, force))) {
     return; // user aborted; nothing registered or widened
@@ -1388,18 +1458,23 @@ async function addSandboxChannelUnlocked(
   // host-side credential to acquire; register the bridge now and let the
   // operator complete pairing after rebuild.
   if (manifest.auth.mode === "in-sandbox-qr") {
+    preflightChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content);
     if (
       !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
-        disclosedPresetState,
+        disclosedPresetState: presetPreflight.disclosedState,
       })
     ) {
       process.exit(1);
     }
-    await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, {});
+    await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, {}, () =>
+      preflightChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content),
+    );
+    preflightChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content);
     if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan)) {
       console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
       process.exit(1);
     }
+    preflightChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content);
     console.log("");
     const help = manifest.enrollmentHelp ?? manifest.inputs[0]?.prompt?.help;
     if (help) console.log(`  ${help}`);
@@ -1412,9 +1487,13 @@ async function addSandboxChannelUnlocked(
     for (const line of manifest.enrollmentNotes ?? []) {
       console.log(`  ${line}`);
     }
-    const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
+    const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`, () =>
+      preflightChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content),
+    );
     if (rebuilt) {
+      preflightChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content);
       ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+      preflightChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content);
       await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
     }
     return;
@@ -1435,33 +1514,44 @@ async function addSandboxChannelUnlocked(
     const existing = getCredential(key);
     if (existing != null) priorCreds[key] = existing;
   }
-  persistChannelTokens(acquired);
-  // Push to the gateway and update the registry NOW so that answering
-  // "rebuild later" (or running non-interactively) does not silently
-  // discard the change. Pre-fix this was safe because saveCredential()
-  // wrote credentials.json; with env-only persistence, exiting before
-  // the rebuild used to drop the queued token.
+  preflightChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content);
+  // After gateway recovery, recheck authority and persist credentials at the
+  // same boundary as provider mutation.
   const registeredBridge = await applyChannelAddToGatewayAndRegistry(
     sandboxName,
     canonical,
     acquired,
+    () => {
+      preflightChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content);
+    },
   );
   if (registeredBridge) {
+    preflightChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content);
     console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
   }
 
   if (
     !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
-      disclosedPresetState,
+      disclosedPresetState: presetPreflight.disclosedState,
     })
   ) {
-    await rollbackChannelAdd(sandboxName, channelDef, canonical, {
-      wasAlreadyEnabled,
-      priorCreds,
-    });
+    const revalidatePolicyRequirements = () =>
+      preflightChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content);
+    revalidatePolicyRequirements();
+    await rollbackChannelAdd(
+      sandboxName,
+      channelDef,
+      canonical,
+      {
+        wasAlreadyEnabled,
+        priorCreds,
+      },
+      revalidatePolicyRequirements,
+    );
     process.exit(1);
   }
 
+  preflightChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content);
   if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan)) {
     console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
     console.error(
@@ -1470,9 +1560,13 @@ async function addSandboxChannelUnlocked(
     process.exit(1);
   }
 
-  const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
+  const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`, () =>
+    preflightChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content),
+  );
   if (rebuilt) {
+    preflightChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content);
     ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+    preflightChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content);
     await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
   }
 }
@@ -1485,13 +1579,16 @@ async function rollbackChannelAdd(
     wasAlreadyEnabled: boolean;
     priorCreds: Record<string, string>;
   },
+  revalidatePolicyRequirements: () => void,
 ): Promise<{ ok: boolean; residual: string[] }> {
   if (snapshot.wasAlreadyEnabled) {
     console.error(
       `  ${YW}⚠${R} Restoring prior '${canonical}' configuration; new token rotation aborted.`,
     );
+    revalidatePolicyRequirements();
     clearChannelTokens(channel);
     if (Object.keys(snapshot.priorCreds).length > 0) {
+      revalidatePolicyRequirements();
       persistChannelTokens(snapshot.priorCreds);
     }
     const residual: string[] = ["gateway-providers"];
@@ -1512,8 +1609,10 @@ async function rollbackChannelAdd(
           envKey,
           token,
         }));
+        revalidatePolicyRequirements();
         policyChannelDependencies.upsertMessagingProviders(priorTokenDefs, {
           bestEffort: true,
+          revalidatePolicyRequirements,
         });
       } catch (err) {
         console.error(
@@ -1529,12 +1628,17 @@ async function rollbackChannelAdd(
   console.error(
     `  ${YW}⚠${R} Rolling back '${canonical}' bridge registration to keep messaging plan and policy state aligned.`,
   );
+  revalidatePolicyRequirements();
   clearChannelTokens(channel);
   const result = await applyChannelRemoveToGatewayAndRegistry(
     sandboxName,
     canonical,
     getChannelTokenKeys(channel),
-    { bestEffort: true },
+    {
+      bestEffort: true,
+      prepareMutation: revalidatePolicyRequirements,
+      revalidatePolicyRequirements,
+    },
   );
   if (!result.ok) {
     console.error(
@@ -1565,8 +1669,7 @@ export function applyChannelPresetIfAvailable(
       );
       return false;
     }
-    syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "add");
-    refreshSandboxPolicyContextFile(sandboxName);
+    syncManagedPolicyAttribution(sandboxName, channelName);
     return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1689,6 +1792,12 @@ function syncSessionPolicyPresetsWithRegistry(
   }
 }
 
+function syncManagedPolicyAttribution(sandboxName: string, presetName: string): void {
+  if (registry.getSandbox(sandboxName)?.policyAuthority === "externally-managed") return;
+  syncSessionPolicyPresetsWithRegistry(sandboxName, presetName, "add");
+  refreshSandboxPolicyContextFile(sandboxName);
+}
+
 // Mirror of applyChannelPresetIfAvailable. When the channel-named built-in
 // preset is currently applied to the sandbox, un-apply it so `policy-list`
 // no longer reports it active and the L7 proxy stops allow-listing the
@@ -1766,6 +1875,7 @@ async function removeSandboxChannelUnlocked(
   const isQrChannel = channelUsesInSandboxQrPairing(channel);
 
   const registryEntry = registry.getSandbox(sandboxName);
+  preflightChannelRemovalPolicyAuthority(sandboxName, canonical);
   let sessionForSandbox: ReturnType<typeof onboardSession.loadSession> = null;
   try {
     sessionForSandbox = onboardSession.loadSession();
@@ -1781,6 +1891,7 @@ async function removeSandboxChannelUnlocked(
     (registryEntry?.policies || []).includes(canonical) ||
     sessionPolicyPresets.includes(canonical) ||
     policies.getAppliedPresets(sandboxName).includes(canonical);
+  preflightChannelRemovalPolicyAuthority(sandboxName, canonical);
 
   // The public Google Chat endpoint must stop before credentials, providers,
   // policy, or durable plan state change. Otherwise a partial teardown leaves
@@ -1808,30 +1919,37 @@ async function removeSandboxChannelUnlocked(
   // when the registry/policy show no residue — `channels remove` on a
   // never-configured/already-clean sandbox must remain a quiet no-op even
   // when the sandbox is stopped (#4001 review).
-  if (
-    isQrChannel &&
-    hasChannelResidue &&
-    !clearSandboxChannelDurableState(sandboxName, canonical)
-  ) {
-    console.error(
-      `  Refusing to proceed: '${canonical}' session state is still inside the sandbox.`,
-    );
-    console.error(
-      `    Start the sandbox, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
-    );
-    process.exit(1);
-  }
-
-  clearChannelTokens(channel);
-  await applyChannelRemoveToGatewayAndRegistry(sandboxName, canonical, tokenKeys);
-  if (tokenKeys.length > 0) {
-    console.log(`  ${G}✓${R} Removed ${canonical} bridge from the OpenShell gateway.`);
-  } else {
-    console.log(`  ${G}✓${R} Removed ${canonical} channel.`);
-  }
-
+  const prepareRemovalMutation = (): void => {
+    preflightChannelRemovalPolicyAuthority(sandboxName, canonical);
+    if (
+      isQrChannel &&
+      hasChannelResidue &&
+      !clearSandboxChannelDurableState(sandboxName, canonical)
+    ) {
+      console.error(
+        `  Refusing to proceed: '${canonical}' session state is still inside the sandbox.`,
+      );
+      console.error(
+        `    Start the sandbox, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
+      );
+      process.exit(1);
+    }
+    preflightChannelRemovalPolicyAuthority(sandboxName, canonical);
+    clearChannelTokens(channel);
+  };
+  const revalidateRemovalAuthority = (): void =>
+    preflightChannelRemovalPolicyAuthority(sandboxName, canonical);
+  await applyChannelRemoveToGatewayAndRegistry(sandboxName, canonical, tokenKeys, {
+    prepareMutation: prepareRemovalMutation,
+    revalidatePolicyRequirements: revalidateRemovalAuthority,
+  });
+  revalidateRemovalAuthority();
   removeChannelPresetIfPresent(sandboxName, canonical);
-  if (!(await persistManifestChannelRemovePlan(sandboxName, canonical))) {
+  if (
+    !(await persistManifestChannelRemovePlan(sandboxName, canonical, () =>
+      preflightChannelRemovalPolicyAuthority(sandboxName, canonical),
+    ))
+  ) {
     console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
     process.exit(1);
   }
@@ -1840,10 +1958,18 @@ async function removeSandboxChannelUnlocked(
   // revocation already prevents the bot from authenticating, so a
   // failure here is a warning, not a bail.
   if (!isQrChannel) {
+    preflightChannelRemovalPolicyAuthority(sandboxName, canonical);
     clearSandboxChannelDurableState(sandboxName, canonical);
   }
 
-  await promptAndRebuild(sandboxName, `remove '${canonical}'`);
+  revalidateRemovalAuthority();
+  if (tokenKeys.length > 0) {
+    console.log(`  ${G}✓${R} Removed ${canonical} bridge from the OpenShell gateway.`);
+  } else {
+    console.log(`  ${G}✓${R} Removed ${canonical} channel.`);
+  }
+
+  await promptAndRebuild(sandboxName, `remove '${canonical}'`, revalidateRemovalAuthority);
 }
 
 async function sandboxChannelsSetEnabled(
@@ -1902,7 +2028,7 @@ async function sandboxChannelsSetEnabled(
     return;
   }
 
-  const disclosedPresetState = disabled
+  const presetPreflight = disabled
     ? undefined
     : loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "start");
 
@@ -1911,7 +2037,19 @@ async function sandboxChannelsSetEnabled(
     return;
   }
 
-  const plan = await persistManifestChannelDisabledPlan(sandboxName, canonical, disabled);
+  if (presetPreflight) {
+    preflightChannelPolicyAuthority(sandboxName, canonical, "start", presetPreflight.content);
+  }
+
+  const plan = await persistManifestChannelDisabledPlan(
+    sandboxName,
+    canonical,
+    disabled,
+    presetPreflight
+      ? () =>
+          preflightChannelPolicyAuthority(sandboxName, canonical, "start", presetPreflight.content)
+      : undefined,
+  );
   if (!plan) {
     console.error(`  Could not persist messaging plan for '${sandboxName}'.`);
     process.exit(1);
@@ -1924,10 +2062,12 @@ async function sandboxChannelsSetEnabled(
   if (
     !disabled &&
     !applyChannelPresetIfAvailable(sandboxName, canonical, "start", {
-      disclosedPresetState,
+      disclosedPresetState: presetPreflight?.disclosedState,
     })
   ) {
-    const rolledBack = await persistManifestChannelDisabledPlan(sandboxName, canonical, true);
+    const rolledBack = await persistManifestChannelDisabledPlan(sandboxName, canonical, true, () =>
+      preflightChannelPolicyAuthority(sandboxName, canonical, "start", presetPreflight!.content),
+    );
     if (!rolledBack) {
       console.error(
         `  ${YW}⚠${R} Could not restore '${canonical}' to disabled state after its policy preset failed to apply.`,
@@ -1937,9 +2077,22 @@ async function sandboxChannelsSetEnabled(
     process.exit(1);
   }
   const state = disabled ? "disabled" : "enabled";
+  const revalidateChannelTransition = (): void => {
+    if (disabled) {
+      preflightChannelRemovalPolicyAuthority(sandboxName, canonical);
+      return;
+    }
+    preflightChannelPolicyAuthority(sandboxName, canonical, "start", presetPreflight!.content);
+  };
+  revalidateChannelTransition();
   console.log(`  ${G}✓${R} Marked ${canonical} ${state} for '${sandboxName}'.`);
-  const rebuilt = await promptAndRebuild(sandboxName, `${verb} '${canonical}'`);
+  const rebuilt = await promptAndRebuild(
+    sandboxName,
+    `${verb} '${canonical}'`,
+    revalidateChannelTransition,
+  );
   if (rebuilt && !disabled) {
+    preflightChannelPolicyAuthority(sandboxName, canonical, "start", presetPreflight!.content);
     ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
   }
 }

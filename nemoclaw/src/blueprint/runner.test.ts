@@ -14,13 +14,12 @@ import {
 } from "./runner-mock-fixtures.js";
 import {
   blueprintWithPolicyAdditions,
-  failureResult,
   minimalBlueprint,
   resultForCommandFailure,
+  resultWithSandboxPolicyAuthority,
   routedBlueprint,
+  sandboxPolicyAuthorityResult,
 } from "./runner-test-fixtures.js";
-
-// ── In-memory filesystem ────────────────────────────────────────
 
 const { store, addFile, addDir } = createRunnerFsStore();
 
@@ -64,8 +63,6 @@ const mockedValidateEndpoint = vi.mocked(validateEndpointUrl);
 const { emitRunId, loadBlueprint, actionPlan, actionApply, actionStatus, actionRollback, main } =
   await import("./runner.js");
 
-// ── Helpers ─────────────────────────────────────────────────────
-
 const stdoutCapture = createStdoutCapture();
 const stdoutText = stdoutCapture.text;
 const capturedJsonOutput = stdoutCapture.jsonOutput;
@@ -79,20 +76,15 @@ function seedBlueprintFile(bp?: Record<string, unknown>): void {
 }
 
 function mockCurrentPolicy(stdout: string): void {
-  mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
-    if (
-      args[0] === "policy" &&
-      args[1] === "get" &&
-      args[2] === "--base" &&
-      args[3] === "test-sandbox"
-    ) {
-      return { exitCode: 0, stdout, stderr: "" };
-    }
-    return { exitCode: 0, stdout: "", stderr: "" };
-  });
+  mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+    resultWithSandboxPolicyAuthority(
+      args,
+      args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
+        ? { exitCode: 0, stdout, stderr: "" }
+        : { exitCode: 0, stdout: "", stderr: "" },
+    ),
+  );
 }
-
-// ── Tests ───────────────────────────────────────────────────────
 
 describe("runner", () => {
   beforeEach(() => {
@@ -409,17 +401,15 @@ describe("runner", () => {
       expect(plan.dry_run).toBe(false);
     });
 
-    it.each(
-      [
-          "credential_env",
-          "credential_default",
-          "SECRET_KEY",
-          "default-secret-value",
-          "real-secret-value",
-          "future-token-value",
-          "future-authorization",
-        ],
-    )(
+    it.each([
+      "credential_env",
+      "credential_default",
+      "SECRET_KEY",
+      "default-secret-value",
+      "real-secret-value",
+      "future-token-value",
+      "future-authorization",
+    ])(
       "does not expose credential field names or secret values in public plan output [%s]",
       async (leaked) => {
         captureStdout();
@@ -535,8 +525,9 @@ describe("runner", () => {
   describe("actionApply", () => {
     beforeEach(() => {
       captureStdout();
-      // Default: all subprocess calls succeed
-      mockExeca.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        resultWithSandboxPolicyAuthority(args, { exitCode: 0, stdout: "", stderr: "" }),
+      );
     });
 
     it("creates sandbox with correct arguments", async () => {
@@ -654,32 +645,29 @@ describe("runner", () => {
           },
         },
       });
-      mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
-        if (
-          args[0] === "policy" &&
-          args[1] === "get" &&
-          args[2] === "--base" &&
-          args[3] === "test-sandbox"
-        ) {
-          return {
-            exitCode: 0,
-            stdout: [
-              "Version: 1",
-              "Hash: sha256:test",
-              "---",
-              "version: 1",
-              "network_policies:",
-              "  existing_service:",
-              "    mode: allow",
-              "    endpoints:",
-              "      - https://api.example.com",
-              "",
-            ].join("\n"),
-            stderr: "",
-          };
-        }
-        return { exitCode: 0, stdout: "", stderr: "" };
-      });
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        resultWithSandboxPolicyAuthority(
+          args,
+          args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
+            ? {
+                exitCode: 0,
+                stdout: [
+                  "Version: 1",
+                  "Hash: sha256:test",
+                  "---",
+                  "version: 1",
+                  "network_policies:",
+                  "  existing_service:",
+                  "    mode: allow",
+                  "    endpoints:",
+                  "      - https://api.example.com",
+                  "",
+                ].join("\n"),
+                stderr: "",
+              }
+            : { exitCode: 0, stdout: "", stderr: "" },
+        ),
+      );
 
       await actionApply("default", bp);
 
@@ -707,6 +695,62 @@ describe("runner", () => {
       };
       expect(merged.network_policies).toHaveProperty("existing_service");
       expect(merged.network_policies).toHaveProperty("nim_service");
+    });
+
+    it("uses exact externally managed additions without mutating policy (#9833)", async () => {
+      const additions = {
+        nim_service: {
+          name: "nim_service",
+          endpoints: [{ host: "integrate.api.nvidia.com", port: 443, access: "full" as const }],
+        },
+      };
+      const bp = blueprintWithPolicyAdditions(additions);
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        args.join(" ") === "policy get test-sandbox --full --output json"
+          ? sandboxPolicyAuthorityResult("test-sandbox", "externally-managed", additions)
+          : args[0] === "policy" && args.includes("--global")
+            ? {
+                exitCode: 0,
+                stdout: JSON.stringify({
+                  scope: "global",
+                  status: "loaded",
+                  policy_source: "global",
+                  policy: { version: 1, network_policies: additions },
+                }),
+                stderr: "",
+              }
+            : { exitCode: 0, stdout: "", stderr: "" },
+      );
+
+      await actionApply("default", bp);
+
+      const policyCalls = mockExeca.mock.calls.filter(
+        (call) => Array.isArray(call[1]) && call[1][0] === "policy",
+      );
+      expect(policyCalls).toHaveLength(7);
+      expect(policyCalls.filter((call) => call[1].includes("--global"))).toHaveLength(2);
+      expect(policyCalls.filter((call) => call[1].includes("test-sandbox"))).toHaveLength(5);
+      expect(policyCalls.every((call) => call[1].includes("--output"))).toBe(true);
+      expect(policyCalls.some((call) => call[1][1] === "set")).toBe(false);
+    });
+
+    it("records authority before rejecting a missing external addition without resource mutation (#9833)", async () => {
+      const bp = blueprintWithPolicyAdditions({ nim_service: { name: "nim_service" } });
+      mockExeca.mockResolvedValue({
+        exitCode: 0,
+        stdout: JSON.stringify({
+          scope: "global",
+          status: "loaded",
+          policy_source: "global",
+          policy: { version: 1, network_policies: {} },
+        }),
+        stderr: "",
+      });
+
+      await expect(actionApply("default", bp)).rejects.toThrow(/missing entries "nim_service"/);
+
+      expect(mockExeca).toHaveBeenCalledTimes(1);
+      expect([...store.keys()].some((key) => key.endsWith("/plan.json"))).toBe(true);
     });
 
     it("fails closed when the live policy cannot be parsed", async () => {
@@ -790,25 +834,27 @@ describe("runner", () => {
       expect(policySetCalls).toEqual([]);
     });
 
-    it("skips policy commands when policy additions are empty", async () => {
+    it("skips policy mutation when policy additions are empty (#9833)", async () => {
       await actionApply("default", minimalBlueprint());
       const policyCalls = mockExeca.mock.calls.filter(
         (c) => Array.isArray(c[1]) && c[1][0] === "policy",
       );
-      expect(policyCalls).toEqual([]);
+      expect(policyCalls.some((call) => call[1][1] === "set")).toBe(false);
     });
 
     it("reuses sandbox when 'already exists' error", async () => {
-      mockExeca.mockResolvedValueOnce(failureResult("already exists"));
-      // Subsequent calls succeed
-      mockExeca.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        resultForCommandFailure(args, ["sandbox", "create"], "already exists"),
+      );
 
       await actionApply("default", minimalBlueprint());
       expect(stdoutText()).toContain("already exists, reusing");
     });
 
     it("throws when sandbox creation fails with other error", async () => {
-      mockExeca.mockResolvedValueOnce(failureResult("disk full"));
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        resultForCommandFailure(args, ["sandbox", "create"], "disk full"),
+      );
 
       await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
         /Failed to create sandbox.*disk full/,
@@ -897,6 +943,7 @@ describe("runner", () => {
         [
           "inference",
           "inference_provider_created_by_apply",
+          "policy_authority",
           "policy_additions",
           "profile",
           "run_id",
@@ -1377,7 +1424,9 @@ describe("runner", () => {
   describe("main (CLI)", () => {
     beforeEach(() => {
       captureStdout();
-      mockExeca.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        resultWithSandboxPolicyAuthority(args, { exitCode: 0, stdout: "", stderr: "" }),
+      );
       seedBlueprintFile();
     });
 

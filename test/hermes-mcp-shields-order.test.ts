@@ -20,6 +20,8 @@ const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const shields = require("./src/lib/shields/index.js");
+const generated = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+generated.preflightMcpPolicyAuthority = () => "nemoclaw-managed";
 
 const mutations = [];
 const providerId = "11111111-2222-4333-8444-555555555555";

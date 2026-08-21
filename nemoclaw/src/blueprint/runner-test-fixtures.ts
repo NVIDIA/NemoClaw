@@ -82,13 +82,25 @@ export function resultForCommandFailure(
   command: readonly [string, string],
   stderr: string,
 ): { exitCode: number; stdout: string; stderr: string } {
-  return args[0] === command[0] && args[1] === command[1]
-    ? { exitCode: 1, stdout: "", stderr }
-    : { exitCode: 0, stdout: "", stderr: "" };
+  return resultWithSandboxPolicyAuthority(
+    args,
+    args[0] === command[0] && args[1] === command[1]
+      ? { exitCode: 1, stdout: "", stderr }
+      : { exitCode: 0, stdout: "", stderr: "" },
+  );
 }
 
 /** An empty successful command result. */
 export function successResult(): {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+} {
+  return { exitCode: 0, stdout: "", stderr: "" };
+}
+
+/** OpenShell v0.0.106 structural absence result when no global policy exists. */
+export function globalPolicyAbsentResult(): {
   exitCode: number;
   stdout: string;
   stderr: string;
@@ -103,6 +115,60 @@ export function failureResult(stderr: string): {
   stderr: string;
 } {
   return { exitCode: 1, stdout: "", stderr };
+}
+
+/** Machine-readable effective policy metadata for one sandbox. */
+export function sandboxPolicyAuthorityResult(
+  sandboxName: string,
+  authority: "nemoclaw-managed" | "externally-managed" = "nemoclaw-managed",
+  networkPolicies: Record<string, unknown> = {},
+): { exitCode: number; stdout: string; stderr: string } {
+  return {
+    exitCode: 0,
+    stdout: JSON.stringify({
+      scope: "sandbox",
+      sandbox: sandboxName,
+      status: "effective",
+      policy_source: authority === "nemoclaw-managed" ? "sandbox" : "global",
+      policy: { version: 1, network_policies: networkPolicies },
+    }),
+    stderr: "",
+  };
+}
+
+/** Machine-readable external global policy metadata. */
+export function globalPolicyAuthorityResult(networkPolicies: Record<string, unknown> = {}): {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+} {
+  return {
+    exitCode: 0,
+    stdout: JSON.stringify({
+      scope: "global",
+      status: "loaded",
+      policy_source: "global",
+      policy: { version: 1, network_policies: networkPolicies },
+    }),
+    stderr: "",
+  };
+}
+
+/** Replace a fallback result for a machine-readable sandbox policy query. */
+export function resultWithSandboxPolicyAuthority(
+  args: readonly string[],
+  fallback: { exitCode: number; stdout: string; stderr: string },
+): { exitCode: number; stdout: string; stderr: string } {
+  return args.join(" ") === "policy get --global --full --output json"
+    ? globalPolicyAbsentResult()
+    : args[0] === "policy" &&
+        args[1] === "get" &&
+        !args[2].startsWith("--") &&
+        args[3] === "--full" &&
+        args[4] === "--output" &&
+        args[5] === "json"
+      ? sandboxPolicyAuthorityResult(args[2])
+      : fallback;
 }
 
 /** The `provider get` listing for the sandbox's matching runtime identity provider. */

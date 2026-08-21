@@ -30,7 +30,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
       return { ok: true as const };
     });
 
-    await establishRestoredSandboxGatewayPairing("beta", {
+    await establishRestoredSandboxGatewayPairing("beta", async () => undefined, {
       restartRestoredSandboxGateway,
       warmupScopeUpgrade,
       approveRestoredClonePairing,
@@ -47,13 +47,36 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     expect(order).toEqual(["restart", "warmup", "approve", "restart", "verify"]);
   });
 
+  it("stops pairing when policy authority changes during gateway restart (#9833)", async () => {
+    const validatePolicyAuthority = vi
+      .fn<() => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("policy authority changed"));
+    const warmupScopeUpgrade = vi.fn();
+    const approveRestoredClonePairing = vi.fn();
+    const verifyGatewayPairing = vi.fn(() => ({ ok: true as const }));
+
+    await expect(
+      establishRestoredSandboxGatewayPairing("beta", validatePolicyAuthority, {
+        restartRestoredSandboxGateway: vi.fn(),
+        warmupScopeUpgrade,
+        approveRestoredClonePairing,
+        verifyGatewayPairing,
+      }),
+    ).rejects.toThrow();
+
+    expect(warmupScopeUpgrade).not.toHaveBeenCalled();
+    expect(approveRestoredClonePairing).not.toHaveBeenCalled();
+    expect(verifyGatewayPairing).not.toHaveBeenCalled();
+  });
+
   it("keeps the ordinary verifier as the sole success condition (#7431)", async () => {
     const restartRestoredSandboxGateway = vi.fn();
     const warmupScopeUpgrade = vi.fn();
     const approveRestoredClonePairing = vi.fn(() => "approve-failed" as const);
     const verifyGatewayPairing = vi.fn(() => ({ ok: true as const }));
 
-    await establishRestoredSandboxGatewayPairing("beta", {
+    await establishRestoredSandboxGatewayPairing("beta", async () => undefined, {
       restartRestoredSandboxGateway,
       warmupScopeUpgrade,
       approveRestoredClonePairing,
@@ -92,7 +115,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
         };
       });
 
-    await establishRestoredSandboxGatewayPairing("beta", {
+    await establishRestoredSandboxGatewayPairing("beta", async () => undefined, {
       restartRestoredSandboxGateway,
       warmupScopeUpgrade,
       approveRestoredClonePairing,
@@ -119,14 +142,18 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     const approveRestoredClonePairing = vi.fn();
     const verifyGatewayPairing = vi.fn(() => ({ ok: true as const }));
 
-    const failure = await establishRestoredSandboxGatewayPairing("beta", {
+    const failure = await establishRestoredSandboxGatewayPairing(
+      "beta",
+      async () => undefined,
+      {
       restartRestoredSandboxGateway: vi.fn(() => {
         throw new Error("raw gateway output must stay private");
       }),
       warmupScopeUpgrade,
       approveRestoredClonePairing,
       verifyGatewayPairing,
-    }).catch((err: unknown) => err);
+      },
+    ).catch((err: unknown) => err);
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toContain("unexpected-failure");
     expect((failure as Error).message).not.toContain("raw gateway output");
@@ -153,7 +180,10 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     const approveRestoredClonePairing = vi.fn();
     const verifyGatewayPairing = vi.fn(() => ({ ok: true as const }));
 
-    const failure = await establishRestoredSandboxGatewayPairing("beta", {
+    const failure = await establishRestoredSandboxGatewayPairing(
+      "beta",
+      async () => undefined,
+      {
       restartRestoredSandboxGateway: (sandboxName) =>
         restartRestoredSandboxGateway(sandboxName, {
           restartSandboxGateway,
@@ -162,7 +192,8 @@ describe("establishRestoredSandboxGatewayPairing", () => {
       warmupScopeUpgrade,
       approveRestoredClonePairing,
       verifyGatewayPairing,
-    }).catch((err: unknown) => err);
+      },
+    ).catch((err: unknown) => err);
 
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toContain("health timeout");
@@ -193,7 +224,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     });
 
     await expect(
-      establishRestoredSandboxGatewayPairing("beta", {
+      establishRestoredSandboxGatewayPairing("beta", async () => undefined, {
         restartRestoredSandboxGateway,
         warmupScopeUpgrade,
         approveRestoredClonePairing,
@@ -213,7 +244,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     const verifyGatewayPairing = vi.fn(() => ({ ok: true as const }));
 
     await expect(
-      establishRestoredSandboxGatewayPairing("beta", {
+      establishRestoredSandboxGatewayPairing("beta", async () => undefined, {
         restartRestoredSandboxGateway: vi.fn(() => {}),
         warmupScopeUpgrade,
         approveRestoredClonePairing,
@@ -234,7 +265,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     }));
 
     await expect(
-      establishRestoredSandboxGatewayPairing("beta", {
+      establishRestoredSandboxGatewayPairing("beta", async () => undefined, {
         restartRestoredSandboxGateway,
         warmupScopeUpgrade,
         approveRestoredClonePairing,
@@ -259,7 +290,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     }));
 
     await expect(
-      establishRestoredSandboxGatewayPairing("beta", {
+      establishRestoredSandboxGatewayPairing("beta", async () => undefined, {
         restartRestoredSandboxGateway,
         warmupScopeUpgrade,
         approveRestoredClonePairing,
@@ -284,7 +315,7 @@ describe("establishRestoredSandboxGatewayPairing", () => {
     }));
 
     await expect(
-      establishRestoredSandboxGatewayPairing("beta", {
+      establishRestoredSandboxGatewayPairing("beta", async () => undefined, {
         restartRestoredSandboxGateway,
         warmupScopeUpgrade,
         approveRestoredClonePairing,

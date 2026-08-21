@@ -12,6 +12,9 @@ import type { MessagingTokenDef } from "./messaging-prep";
 
 const BRAVE_SECRET = "brv-resume-secret";
 const DISCORD_SECRET = "discord-resume-secret";
+const refuseAuthorityChange = (): never => {
+  throw new Error("authority changed");
+};
 
 function providerMetadata(
   name: string,
@@ -513,5 +516,220 @@ describe("credential provider registration", () => {
 
     expect(runOpenshell).not.toHaveBeenCalled();
     expect(deps.updateSession).not.toHaveBeenCalled();
+  });
+
+  it("refuses authority drift after credential-provider planning without side effects (#9833)", async () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn();
+    const deps = registrationDeps(runOpenshell, session);
+    const registration = createCredentialProviderRegistration(deps);
+    const tokenDef: MessagingTokenDef = {
+      name: "alpha-discord-bridge",
+      envKey: "DISCORD_BOT_TOKEN",
+      token: DISCORD_SECRET,
+    };
+    const prepare = vi.fn(async () => ({ messagingTokenDefs: [tokenDef] }));
+
+    await expect(
+      registration.stageSandboxCredentialProviders(
+        {
+          ...sandboxInput(requiredBindings([tokenDef])),
+          revalidatePolicyRequirements: () => {
+            throw new Error("authority changed");
+          },
+        },
+        prepare,
+      ),
+    ).rejects.toThrow("authority changed");
+
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(deps.updateSession).not.toHaveBeenCalled();
+    expect(session.stagedCredentialProviders).toEqual([]);
+  });
+
+  it("stops provider registration when authority changes after the first provider (#9833)", async () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn((args: string[]) =>
+      args[1] === "get"
+        ? { status: 1, stdout: "", stderr: "not found" }
+        : { status: 0, stdout: "", stderr: "" },
+    );
+    const deps = registrationDeps(runOpenshell, session);
+    const registration = createCredentialProviderRegistration(deps);
+    const tokenDefs: MessagingTokenDef[] = [
+      { name: "alpha-first", envKey: "FIRST_TOKEN", token: "first-secret" },
+      { name: "alpha-second", envKey: "SECOND_TOKEN", token: "second-secret" },
+    ];
+    const revalidatePolicyRequirements = vi.fn((operation: string) =>
+      operation === 'inspect or change provider "alpha-second"'
+        ? refuseAuthorityChange()
+        : undefined,
+    );
+
+    await expect(
+      registration.stageSandboxCredentialProviders(
+        {
+          ...sandboxInput(requiredBindings(tokenDefs)),
+          revalidatePolicyRequirements,
+        },
+        async () => ({ messagingTokenDefs: tokenDefs }),
+      ),
+    ).rejects.toThrow("authority changed");
+
+    expect(
+      runOpenshell.mock.calls
+        .map(([args]) => args)
+        .filter((args) => args[0] === "provider" && args[1] === "create"),
+    ).toHaveLength(1);
+    expect(session.stagedCredentialProviders).toEqual([]);
+  });
+
+  it("rechecks before each web-search provider profile import (#9833)", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn((_args: string[]) => ({ status: 0, stdout: "", stderr: "" }));
+    const registration = createCredentialProviderRegistration(
+      registrationDeps(runOpenshell, session),
+    );
+    const revalidatePolicyRequirements = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(refuseAuthorityChange);
+
+    expect(() =>
+      registration.upsertMessagingProviders(
+        [
+          {
+            name: "alpha-tavily",
+            envKey: "TAVILY_API_KEY",
+            token: "tavily",
+            providerType: "tavily",
+          },
+          { name: "alpha-brave", envKey: "BRAVE_API_KEY", token: "brave", providerType: "brave" },
+        ],
+        { revalidatePolicyRequirements },
+      ),
+    ).toThrow("authority changed");
+
+    expect(runOpenshell).toHaveBeenCalledOnce();
+    expect(runOpenshell.mock.calls[0]?.[0]).toEqual(expect.arrayContaining(["profile", "import"]));
+  });
+
+  it("rechecks after a bridge profile probe and before importing it (#9833)", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn((_args: string[]) => ({
+      status: 1,
+      stdout: "",
+      stderr: "not found",
+    }));
+    const registration = createCredentialProviderRegistration(
+      registrationDeps(runOpenshell, session),
+    );
+    const revalidatePolicyRequirements = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(refuseAuthorityChange);
+
+    expect(() =>
+      registration.upsertMessagingProviders(
+        [
+          {
+            name: "alpha-googlechat-bridge",
+            envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+            token: "sentinel",
+            providerType: "google-chat-bridge",
+          },
+        ],
+        { revalidatePolicyRequirements },
+      ),
+    ).toThrow("authority changed");
+
+    expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      expect.arrayContaining(["profile", "export", "google-chat-bridge"]),
+    ]);
+  });
+
+  it("rechecks before every messaging bridge refresh command (#9833)", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn((_args: string[]) => ({ status: 0, stdout: "", stderr: "" }));
+    const deps = registrationDeps(runOpenshell, session);
+    const registration = createCredentialProviderRegistration(deps);
+    const revalidatePolicyRequirements = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(refuseAuthorityChange);
+
+    vi.stubEnv(
+      "GOOGLECHAT_SERVICE_ACCOUNT",
+      JSON.stringify({ client_email: "bridge@example.test", private_key: "private" }),
+    );
+    try {
+      expect(() =>
+        registration.upsertMessagingProviders(
+          [
+            {
+              name: "alpha-googlechat-bridge",
+              envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+              token: "sentinel",
+              providerType: "google-chat-bridge",
+            },
+            {
+              name: "alpha-googlechat-hermes-bridge",
+              envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+              token: "sentinel",
+              providerType: "google-chat-hermes-bridge",
+            },
+          ],
+          { revalidatePolicyRequirements },
+        ),
+      ).toThrow("authority changed");
+
+      expect(
+        runOpenshell.mock.calls.filter(
+          ([args]) => args.includes("refresh") && args.includes("configure"),
+        ),
+      ).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("rechecks before persisting migrated messaging credentials (#9833)", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn((args: string[]) =>
+      args[1] === "get"
+        ? { status: 1, stdout: "", stderr: "not found" }
+        : { status: 0, stdout: "", stderr: "" },
+    );
+    const deps = registrationDeps(runOpenshell, session);
+    deps.stagedLegacyValues = new Map([["DISCORD_BOT_TOKEN", DISCORD_SECRET]]);
+    const registration = createCredentialProviderRegistration(deps);
+    const revalidatePolicyRequirements = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(refuseAuthorityChange);
+
+    expect(() =>
+      registration.upsertMessagingProviders(
+        [
+          {
+            name: "alpha-discord-bridge",
+            envKey: "DISCORD_BOT_TOKEN",
+            token: DISCORD_SECRET,
+          },
+        ],
+        { revalidatePolicyRequirements },
+      ),
+    ).toThrow("authority changed");
+
+    expect(deps.migratedLegacyKeys).toEqual(new Set());
+    expect(deps.persistMigratedLegacyKeys).not.toHaveBeenCalled();
   });
 });

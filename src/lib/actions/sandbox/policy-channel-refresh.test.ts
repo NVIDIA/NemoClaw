@@ -52,6 +52,7 @@ let applyPresetMock: MockInstance;
 let removePresetMock: MockInstance;
 let applyPresetContentMock: MockInstance;
 let loadPresetFromFileMock: MockInstance;
+let updateSessionMock: MockInstance;
 
 async function captureExit(action: () => Promise<void>): Promise<number | undefined> {
   try {
@@ -85,9 +86,9 @@ beforeEach(() => {
   vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
 
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
-  vi.spyOn(onboardSession, "updateSession").mockReturnValue(
-    undefined as unknown as onboardSession.Session,
-  );
+  updateSessionMock = vi
+    .spyOn(onboardSession, "updateSession")
+    .mockReturnValue(undefined as unknown as onboardSession.Session);
 
   vi.spyOn(policies, "listPresets").mockReturnValue(POLICY_PRESETS);
   vi.spyOn(policies, "listCustomPresets").mockReturnValue([]);
@@ -165,6 +166,22 @@ describe("addSandboxPolicy refresh contract", () => {
     expect(refreshSpy).not.toHaveBeenCalled();
   });
 
+  it("does not attribute an externally managed built-in policy (#9833)", async () => {
+    vi.mocked(registry.getSandbox).mockReturnValue({
+      name: "alpha",
+      agent: null,
+      policies: [],
+      policyAuthority: "externally-managed",
+    });
+
+    await addSandboxPolicy("alpha", { preset: "pypi", yes: true });
+
+    expect(applyPresetMock).toHaveBeenCalledOnce();
+    expect(updateSessionMock).not.toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+    expect(registry.getSandbox("alpha")?.policies).toEqual([]);
+  });
+
   it("does not refresh when the preset name is unknown", async () => {
     await expect(
       captureExit(() => addSandboxPolicy("alpha", { preset: "nonexistent", yes: true })),
@@ -207,6 +224,23 @@ describe("applyExternalPreset refresh contract (--from-file)", () => {
 
     expect(applyPresetContentMock).toHaveBeenCalled();
     expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not attribute an externally managed custom policy (#9833)", async () => {
+    vi.mocked(registry.getSandbox).mockReturnValue({
+      name: "alpha",
+      agent: null,
+      policies: [],
+      customPolicies: [],
+      policyAuthority: "externally-managed",
+    });
+
+    await addSandboxPolicy("alpha", { fromFile: tempFile, yes: true });
+
+    expect(applyPresetContentMock).toHaveBeenCalledOnce();
+    expect(updateSessionMock).not.toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+    expect(registry.getSandbox("alpha")?.customPolicies).toEqual([]);
   });
 
   it("does not refresh on --dry-run with --from-file", async () => {

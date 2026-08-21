@@ -7,6 +7,7 @@ import type { SandboxEntry } from "../../state/registry";
 import {
   completeHermesPortableSandboxRegistration,
   readManagedDcodeCreateSelectionDrift,
+  runSandboxCreateWithPolicyAuthorityChecks,
 } from "./orchestration";
 
 describe("managed DCode sandbox create selection", () => {
@@ -83,5 +84,38 @@ describe("Hermes portable registration adapter", () => {
     ).rejects.toThrow("Hermes portable sandbox registration returned no authority");
     expect(completeRegistration).toHaveBeenCalledOnce();
     expect(readRegistry).toHaveBeenCalledExactlyOnceWith("alpha");
+  });
+});
+
+describe("sandbox create policy authority checks", () => {
+  it("refuses sandbox creation before mutation when the final check fails (#9833)", async () => {
+    const create = vi.fn(async () => "created");
+
+    await expect(
+      runSandboxCreateWithPolicyAuthorityChecks({
+        sandboxName: "alpha",
+        revalidate: () => {
+          throw new Error("external policy authority must supply the selected route");
+        },
+        create,
+      }),
+    ).rejects.toThrow(/external policy authority must supply/u);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("checks the named Ready sandbox before registration can continue (#9833)", async () => {
+    const events: string[] = [];
+    const result = await runSandboxCreateWithPolicyAuthorityChecks({
+      sandboxName: "alpha",
+      revalidate: (sandboxIsLive) => events.push(sandboxIsLive ? "ready-check" : "create-check"),
+      create: async () => {
+        events.push("create");
+        return "created";
+      },
+    });
+    events.push("register");
+
+    expect(result).toBe("created");
+    expect(events).toEqual(["create-check", "create", "ready-check", "register"]);
   });
 });

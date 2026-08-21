@@ -16,6 +16,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { execa } from "execa";
 import YAML from "yaml";
@@ -27,10 +28,12 @@ import * as importedOpenShellPolicyBoundary from "../shared/openshell-policy-bou
 import * as importedSandboxName from "../shared/sandbox-name.cjs";
 import {
   attachRuntimeIdentity,
+  BlueprintPolicyAuthorityRefusalError,
   buildRuntimeIdentityPlan,
   compensateRuntimeIdentityApply,
   isRuntimeIdentityConfig,
   isRuntimeIdentityReceipt,
+  isBlueprintPolicyAuthorityRefusalError,
   mintRuntimeIdentityCredential,
   parseRuntimeIdentityProviderMetadata,
   prepareRuntimeIdentity,
@@ -71,6 +74,7 @@ type RollbackPlanSource = {
   inference_provider_created_by_apply?: unknown;
   inference?: unknown;
   identity?: unknown;
+  policy_authority?: unknown;
 };
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
 type RestProtocol = "rest";
@@ -101,6 +105,17 @@ interface PolicyAddition {
 
 type PolicyAdditions = { [name: string]: PolicyAddition };
 
+type BlueprintPolicyAuthorityInspection = {
+  authority: "nemoclaw-managed" | "externally-managed";
+  effectivePolicy: UnknownRecord;
+};
+
+type BlueprintPolicyAuthorityReceipt = {
+  authority: BlueprintPolicyAuthorityInspection["authority"];
+  scope: "global" | "sandbox";
+  sandbox_name?: string;
+};
+
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 const REST_PROTOCOLS = new Set(["rest"]);
 const ENDPOINT_ENFORCEMENT_MODES = new Set(["enforce", "audit"]);
@@ -110,6 +125,8 @@ const MISSING_SANDBOX_INSPECTION_PATTERN =
   /(?:\bsandbox\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bsandbox\b)/i;
 const MISSING_PROVIDER_INSPECTION_PATTERN =
   /(?:\bprovider\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bprovider\b|\bunknown provider\b)/i;
+const POLICY_AUTHORITY_MAX_BYTES = 1024 * 1024;
+const POLICY_AUTHORITY_TIMEOUT_MS = 30_000;
 
 interface InferenceRouteBinding {
   provider: string;
@@ -538,20 +555,162 @@ export function loadBlueprint(): Blueprint {
 
 async function runCmd(
   args: string[],
-  options?: { reject?: boolean },
+  options?: {
+    maxBuffer?: number;
+    omitSandboxPolicy?: boolean;
+    reject?: boolean;
+    timeout?: number;
+  },
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const env = buildSubprocessEnv();
+  if (options?.omitSandboxPolicy) {
+    delete env.OPENSHELL_SANDBOX_POLICY;
+  }
   const result = await execa(args[0], args.slice(1), {
     reject: options?.reject ?? true,
     stdout: "pipe",
     stderr: "pipe",
-    env: buildSubprocessEnv(),
+    env,
     extendEnv: false,
+    ...(options?.maxBuffer !== undefined ? { maxBuffer: options.maxBuffer } : {}),
+    ...(options?.timeout !== undefined ? { timeout: options.timeout } : {}),
   });
   return {
     exitCode: result.exitCode ?? 1,
     stdout: result.stdout,
-    stderr: result.stderr,
+    stderr: typeof result.stderr === "string" ? result.stderr : "",
   };
+}
+
+async function inspectBlueprintPolicyAuthority(
+  sandboxName?: string,
+): Promise<BlueprintPolicyAuthorityInspection> {
+  const subject = sandboxName === undefined ? "global" : "sandbox";
+  const command =
+    sandboxName === undefined
+      ? ["openshell", "policy", "get", "--global", "--full", "--output", "json"]
+      : ["openshell", "policy", "get", sandboxName, "--full", "--output", "json"];
+  let result: Awaited<ReturnType<typeof runCmd>>;
+  try {
+    result = await runCmd(command, {
+      maxBuffer: POLICY_AUTHORITY_MAX_BYTES,
+      reject: false,
+      timeout: POLICY_AUTHORITY_TIMEOUT_MS,
+    });
+  } catch {
+    throw new BlueprintPolicyAuthorityRefusalError(
+      `OpenShell ${subject} policy authority inspection failed. Policy-dependent operations must stop.`,
+    );
+  }
+  if (
+    result.exitCode !== 0 ||
+    Buffer.byteLength(result.stdout, "utf8") + Buffer.byteLength(result.stderr, "utf8") >
+      POLICY_AUTHORITY_MAX_BYTES
+  ) {
+    throw new BlueprintPolicyAuthorityRefusalError(
+      `OpenShell ${subject} policy authority inspection failed. Policy-dependent operations must stop.`,
+    );
+  }
+  if (result.stdout.trim().length === 0) {
+    if (sandboxName === undefined) {
+      return { authority: "nemoclaw-managed", effectivePolicy: {} };
+    }
+    throw new BlueprintPolicyAuthorityRefusalError(
+      `OpenShell returned empty ${subject} policy authority metadata. Policy-dependent operations must stop.`,
+    );
+  }
+
+  let metadata: unknown;
+  try {
+    metadata = JSON.parse(result.stdout);
+  } catch {
+    throw new BlueprintPolicyAuthorityRefusalError(
+      `OpenShell returned malformed ${subject} policy authority metadata. Policy-dependent operations must stop.`,
+    );
+  }
+  if (!isPlainObject(metadata) || !isPlainObject(metadata.policy)) {
+    throw new BlueprintPolicyAuthorityRefusalError(
+      `OpenShell returned invalid ${subject} policy authority metadata. Policy-dependent operations must stop.`,
+    );
+  }
+  if (sandboxName === undefined) {
+    if (
+      metadata.scope !== "global" ||
+      metadata.status !== "loaded" ||
+      (metadata.policy_source !== undefined && metadata.policy_source !== "global") ||
+      Object.hasOwn(metadata, "sandbox")
+    ) {
+      throw new BlueprintPolicyAuthorityRefusalError(
+        "OpenShell returned invalid global policy authority metadata. Policy-dependent operations must stop.",
+      );
+    }
+    return { authority: "externally-managed", effectivePolicy: metadata.policy };
+  }
+  if (
+    metadata.scope !== "sandbox" ||
+    metadata.sandbox !== sandboxName ||
+    metadata.status !== "effective" ||
+    (metadata.policy_source !== "sandbox" && metadata.policy_source !== "global")
+  ) {
+    throw new BlueprintPolicyAuthorityRefusalError(
+      "OpenShell returned invalid sandbox policy authority metadata. Policy-dependent operations must stop.",
+    );
+  }
+  return {
+    authority: metadata.policy_source === "sandbox" ? "nemoclaw-managed" : "externally-managed",
+    effectivePolicy: metadata.policy,
+  };
+}
+
+function assertBlueprintPolicyAuthorityUnchanged(
+  recorded: BlueprintPolicyAuthorityInspection,
+  observed: BlueprintPolicyAuthorityInspection,
+  additions: PolicyAdditions,
+): void {
+  assertBlueprintPolicyAuthorityMatches(recorded, observed);
+  assertBlueprintExternalPolicyRequirements(observed, additions);
+}
+
+function assertBlueprintPolicyAuthorityMatches(
+  recorded: BlueprintPolicyAuthorityInspection,
+  observed: BlueprintPolicyAuthorityInspection,
+): void {
+  if (observed.authority !== recorded.authority) {
+    throw new BlueprintPolicyAuthorityRefusalError(
+      "Refusing to apply blueprint policy additions because OpenShell policy authority changed during the operation.",
+    );
+  }
+}
+
+function assertBlueprintExternalPolicyRequirements(
+  inspection: BlueprintPolicyAuthorityInspection,
+  additions: PolicyAdditions,
+): void {
+  if (inspection.authority !== "externally-managed") return;
+  const observed = inspection.effectivePolicy.network_policies;
+  const observedPolicies = isPlainObject(observed) ? observed : null;
+  const missing: string[] = [];
+  const drifted: string[] = [];
+  for (const key of Object.keys(additions).sort()) {
+    if (!observedPolicies || !Object.hasOwn(observedPolicies, key)) {
+      missing.push(key);
+    } else if (!isDeepStrictEqual(observedPolicies[key], additions[key])) {
+      drifted.push(key);
+    }
+  }
+  if (missing.length === 0 && drifted.length === 0) return;
+
+  const differences = [
+    ...(missing.length > 0
+      ? [`missing entries ${missing.map((key) => JSON.stringify(key)).join(", ")}`]
+      : []),
+    ...(drifted.length > 0
+      ? [`drifted entries ${drifted.map((key) => JSON.stringify(key)).join(", ")}`]
+      : []),
+  ].join("; ");
+  throw new BlueprintPolicyAuthorityRefusalError(
+    `Refusing to apply the blueprint: the externally managed policy has ${differences}. Ask the external policy authority to supply the exact required entries.`,
+  );
 }
 
 async function runRuntimeIdentityCommand(
@@ -581,12 +740,14 @@ function runtimeIdentityCommandDeps(): RuntimeIdentityCommandDeps {
 
 function runtimeIdentityDeps(
   persistReceipt: (receipt: RuntimeIdentityReceipt) => void,
+  revalidatePolicyAuthority: () => Promise<void>,
   profilePolicy?: RuntimeIdentityProfilePolicy,
 ): RuntimeIdentityDeps {
   return {
     ...runtimeIdentityCommandDeps(),
     validateEndpointUrl,
     persistReceipt,
+    revalidatePolicyAuthority,
     blueprintPath: process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".",
     env: process.env,
     profilePolicy,
@@ -696,6 +857,7 @@ interface PersistedRunPlan {
   policy_additions: PolicyAdditions;
   inference: SafeInferencePlan;
   identity?: RuntimeIdentityReceipt;
+  policy_authority?: BlueprintPolicyAuthorityReceipt;
   timestamp: string;
 }
 
@@ -713,6 +875,7 @@ type StatusRunPlan = {
   policy_additions?: PolicyAdditions;
   inference?: SafeInferencePlan;
   identity?: RuntimeIdentityReceipt;
+  policy_authority?: BlueprintPolicyAuthorityReceipt;
   router?: {
     enabled?: boolean;
     port?: number;
@@ -724,6 +887,27 @@ type StatusRunPlan = {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function isBlueprintPolicyAuthorityReceipt(
+  value: unknown,
+): value is BlueprintPolicyAuthorityReceipt {
+  if (!isPlainObject(value)) return false;
+  const keys = Object.keys(value).sort();
+  const authorityIsValid =
+    value.authority === "nemoclaw-managed" || value.authority === "externally-managed";
+  if (!authorityIsValid) return false;
+  if (value.scope === "global") {
+    return keys.length === 2 && keys[0] === "authority" && keys[1] === "scope";
+  }
+  return (
+    value.scope === "sandbox" &&
+    typeof value.sandbox_name === "string" &&
+    keys.length === 3 &&
+    keys[0] === "authority" &&
+    keys[1] === "sandbox_name" &&
+    keys[2] === "scope"
+  );
 }
 
 function buildSafeInferencePlan(source: InferenceProfile | UnknownRecord): SafeInferencePlan {
@@ -779,6 +963,7 @@ function buildPersistedRunPlan(args: {
   inferenceProviderCreatedByApply: boolean;
   policyAdditions: PolicyAdditions;
   inferenceCfg: InferenceProfile;
+  policyAuthorityReceipt?: BlueprintPolicyAuthorityReceipt;
   runtimeIdentityReceipt?: RuntimeIdentityReceipt;
   timestamp: string;
 }): PersistedRunPlan {
@@ -794,6 +979,9 @@ function buildPersistedRunPlan(args: {
   };
   if (args.runtimeIdentityReceipt) {
     plan.identity = args.runtimeIdentityReceipt;
+  }
+  if (args.policyAuthorityReceipt) {
+    plan.policy_authority = args.policyAuthorityReceipt;
   }
   return plan;
 }
@@ -854,6 +1042,9 @@ function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPl
 
   if (isRuntimeIdentityReceipt(source.identity)) {
     safePlan.identity = source.identity;
+  }
+  if (isBlueprintPolicyAuthorityReceipt(source.policy_authority)) {
+    safePlan.policy_authority = source.policy_authority;
   }
 
   if (isPlainObject(source.router)) {
@@ -949,6 +1140,7 @@ export async function actionApply(
   const sandboxImage = sandboxCfg.image ?? "openclaw";
   const forwardPorts = sandboxCfg.forward_ports ?? [DASHBOARD_PORT];
   const policyAdditions = blueprint.components?.policy?.additions ?? {};
+  const hasPolicyAdditions = Object.keys(policyAdditions).length > 0;
   const runtimeIdentityConfig = blueprint.components?.identity;
   const providerName = inferenceCfg.provider_name ?? "default";
   const providerType = inferenceCfg.provider_type ?? "openai";
@@ -960,12 +1152,25 @@ export async function actionApply(
   if (credentialEnv) {
     credential = process.env[credentialEnv] ?? credentialDefault;
   }
+  const initialPolicyAuthority = await inspectBlueprintPolicyAuthority();
   const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
   mkdirSync(stateDir, { recursive: true });
 
   let runtimeIdentityReceipt: RuntimeIdentityReceipt | undefined;
+  let policyAuthorityReceipt: BlueprintPolicyAuthorityReceipt = {
+    authority: initialPolicyAuthority.authority,
+    scope: "global",
+  };
+  let sandboxPolicyAuthority: BlueprintPolicyAuthorityInspection | null = null;
   let sandboxCreatedByApply = false;
   let inferenceProviderCreatedByApply = false;
+  const revalidatePolicyAuthority = async (): Promise<void> => {
+    const recorded = sandboxPolicyAuthority ?? initialPolicyAuthority;
+    const observed = await inspectBlueprintPolicyAuthority(
+      sandboxPolicyAuthority ? sandboxName : undefined,
+    );
+    assertBlueprintPolicyAuthorityUnchanged(recorded, observed, policyAdditions);
+  };
   const persistRunPlan = (): void => {
     writeFileSync(
       join(stateDir, "plan.json"),
@@ -978,6 +1183,7 @@ export async function actionApply(
           inferenceProviderCreatedByApply,
           policyAdditions,
           inferenceCfg,
+          policyAuthorityReceipt,
           runtimeIdentityReceipt,
           timestamp: new Date().toISOString(),
         }),
@@ -986,10 +1192,16 @@ export async function actionApply(
       ),
     );
   };
-  const identityDeps = runtimeIdentityDeps((receipt) => {
-    runtimeIdentityReceipt = receipt;
-    persistRunPlan();
-  }, options?.runtimeIdentityProfilePolicy);
+  const identityDeps = runtimeIdentityDeps(
+    (receipt) => {
+      runtimeIdentityReceipt = receipt;
+      persistRunPlan();
+    },
+    revalidatePolicyAuthority,
+    options?.runtimeIdentityProfilePolicy,
+  );
+  persistRunPlan();
+  assertBlueprintExternalPolicyRequirements(initialPolicyAuthority, policyAdditions);
 
   try {
     let reuseExistingSandbox = false;
@@ -1050,10 +1262,22 @@ export async function actionApply(
             activeRoute.timeoutSeconds === inferenceCfg.timeout_secs);
       }
 
+      if (reuseExistingSandbox) {
+        sandboxPolicyAuthority = await inspectBlueprintPolicyAuthority(sandboxName);
+        policyAuthorityReceipt = {
+          authority: sandboxPolicyAuthority.authority,
+          scope: "sandbox",
+          sandbox_name: sandboxName,
+        };
+        persistRunPlan();
+        assertBlueprintExternalPolicyRequirements(sandboxPolicyAuthority, policyAdditions);
+      }
+
       progress(10, "Configuring runtime identity");
       // Establish durable state before the first identity mutation, then update
       // the receipt after each acquired resource.
       persistRunPlan();
+      await revalidatePolicyAuthority();
       runtimeIdentityReceipt = await prepareRuntimeIdentity(runtimeIdentityConfig, identityDeps);
       persistRunPlan();
     }
@@ -1062,6 +1286,12 @@ export async function actionApply(
     if (reuseExistingSandbox) {
       log(`Sandbox '${sandboxName}' already exists, reusing.`);
     } else {
+      const currentGlobalPolicyAuthority = await inspectBlueprintPolicyAuthority();
+      assertBlueprintPolicyAuthorityUnchanged(
+        initialPolicyAuthority,
+        currentGlobalPolicyAuthority,
+        policyAdditions,
+      );
       const createArgs = [
         "openshell",
         "sandbox",
@@ -1075,7 +1305,10 @@ export async function actionApply(
         createArgs.push("--forward", String(port));
       }
 
-      const createResult = await runCmd(createArgs, { reject: false });
+      const createResult = await runCmd(createArgs, {
+        omitSandboxPolicy: initialPolicyAuthority.authority === "externally-managed",
+        reject: false,
+      });
       sandboxCreatedByApply = createResult.exitCode === 0;
       if (sandboxCreatedByApply) {
         // Persist ownership immediately so a later-process rollback stays safe
@@ -1084,6 +1317,7 @@ export async function actionApply(
       }
       if (createResult.exitCode !== 0) {
         if (createResult.stderr.includes("already exists")) {
+          reuseExistingSandbox = true;
           if (runtimeIdentityConfig) {
             const racedSandbox = await runCmd(["openshell", "sandbox", "get", sandboxName], {
               reject: false,
@@ -1100,6 +1334,26 @@ export async function actionApply(
           throw new Error(`Failed to create sandbox: ${createResult.stderr}`);
         }
       }
+    }
+
+    {
+      const currentSandboxPolicyAuthority = await inspectBlueprintPolicyAuthority(sandboxName);
+      const recordedPolicyAuthority =
+        sandboxPolicyAuthority ?? (sandboxCreatedByApply ? initialPolicyAuthority : null);
+      if (recordedPolicyAuthority) {
+        assertBlueprintPolicyAuthorityMatches(
+          recordedPolicyAuthority,
+          currentSandboxPolicyAuthority,
+        );
+      }
+      sandboxPolicyAuthority = currentSandboxPolicyAuthority;
+      policyAuthorityReceipt = {
+        authority: currentSandboxPolicyAuthority.authority,
+        scope: "sandbox",
+        sandbox_name: sandboxName,
+      };
+      persistRunPlan();
+      assertBlueprintExternalPolicyRequirements(currentSandboxPolicyAuthority, policyAdditions);
     }
 
     // Keep runtime credentials unattached until OpenShell accepts the
@@ -1128,6 +1382,7 @@ export async function actionApply(
         providerArgs.push("--config", `OPENAI_BASE_URL=${endpoint}`);
       }
 
+      await revalidatePolicyAuthority();
       const providerResult = await execa(providerArgs[0], providerArgs.slice(1), {
         reject: false,
         stdout: "pipe",
@@ -1188,6 +1443,7 @@ export async function actionApply(
       if (inferenceCfg.timeout_secs !== undefined) {
         inferenceArgs.push("--timeout", String(inferenceCfg.timeout_secs));
       }
+      await revalidatePolicyAuthority();
       const inferenceResult = await runCmd(inferenceArgs, { reject: false });
       // Another required mutation: without a routed provider the sandbox cannot
       // perform inference, so a non-zero result must abort the apply. (#6703)
@@ -1208,6 +1464,7 @@ export async function actionApply(
         );
       }
       assertReusableRuntimeIdentitySandbox(attachmentSandbox.stdout, sandboxName);
+      await revalidatePolicyAuthority();
       const attachmentCreated = await attachRuntimeIdentity(
         runtimeIdentityReceipt,
         sandboxName,
@@ -1218,10 +1475,20 @@ export async function actionApply(
         attachment_created: attachmentCreated,
       };
       persistRunPlan();
+      await revalidatePolicyAuthority();
       await mintRuntimeIdentityCredential(runtimeIdentityReceipt, identityDeps);
     }
 
-    if (Object.keys(policyAdditions).length > 0) {
+    if (hasPolicyAdditions && sandboxPolicyAuthority) {
+      const currentPolicyAuthority = await inspectBlueprintPolicyAuthority(sandboxName);
+      assertBlueprintPolicyAuthorityUnchanged(
+        sandboxPolicyAuthority,
+        currentPolicyAuthority,
+        policyAdditions,
+      );
+    }
+
+    if (hasPolicyAdditions && sandboxPolicyAuthority?.authority === "nemoclaw-managed") {
       progress(78, "Applying policy additions");
       const currentPolicy = await runCmd(["openshell", "policy", "get", "--base", sandboxName], {
         reject: false,
@@ -1238,6 +1505,13 @@ export async function actionApply(
         mode: 0o600,
       });
 
+      const currentPolicyAuthority = await inspectBlueprintPolicyAuthority(sandboxName);
+      assertBlueprintPolicyAuthorityUnchanged(
+        sandboxPolicyAuthority,
+        currentPolicyAuthority,
+        policyAdditions,
+      );
+
       const policySet = await runCmd(
         ["openshell", "policy", "set", "--policy", mergedPolicyFile, "--wait", sandboxName],
         { reject: false },
@@ -1248,12 +1522,14 @@ export async function actionApply(
     }
 
     progress(85, "Saving run state");
+    await revalidatePolicyAuthority();
     persistRunPlan();
 
     progress(100, "Apply complete");
     log(`Sandbox '${sandboxName}' is ready.`);
     log(`Inference: ${providerName} -> ${model} @ ${endpoint}`);
   } catch (error) {
+    if (isBlueprintPolicyAuthorityRefusalError(error)) throw error;
     const cleanupFailures: string[] = [];
     if (runtimeIdentityReceipt) {
       try {
@@ -1387,6 +1663,19 @@ export async function actionRollback(rid: string): Promise<void> {
         ? parsedPlan
         : null;
     sandboxName = readRollbackSandboxName(rollbackPlan);
+    if (
+      rollbackPlan?.policy_authority !== undefined &&
+      !isBlueprintPolicyAuthorityReceipt(rollbackPlan.policy_authority)
+    ) {
+      throw new Error("policy authority receipt is invalid");
+    }
+    if (
+      isBlueprintPolicyAuthorityReceipt(rollbackPlan?.policy_authority) &&
+      rollbackPlan.policy_authority.scope === "sandbox" &&
+      rollbackPlan.policy_authority.sandbox_name !== sandboxName
+    ) {
+      throw new Error("policy authority receipt names another sandbox");
+    }
     sandboxCreatedByApply = rollbackPlan?.sandbox_created_by_apply === true;
     inferenceProviderCreatedByApply = rollbackPlan?.inference_provider_created_by_apply === true;
     if (inferenceProviderCreatedByApply) {

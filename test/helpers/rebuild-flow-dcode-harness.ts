@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
 import { type MockInstance, vi } from "vitest";
 import type { GatewayRestartResult } from "../../src/lib/actions/sandbox/gateway-restart";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
@@ -19,12 +20,14 @@ import {
   installTerminalStepFailureMock,
   loadRebuildSandbox,
   mcpBridge,
+  mcpBridgeProvider,
   messaging,
   messagingHostForwardLifecycle,
   nim,
   onboardCredentialEnv,
   onboardSession,
   openshellRuntime,
+  policyAuthority,
   policies,
   processRecovery,
   purgeRebuildModule,
@@ -208,6 +211,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     displayName: agentDisplayName,
     expectedVersion: "0.2.0",
     dockerfileBasePath: "/tmp/Dockerfile.base",
+    policyAdditionsPath:
+      agentName === "openclaw"
+        ? null
+        : path.join(process.cwd(), "agents", agentName, "policy-additions.yaml"),
     runtime: { kind: "terminal" },
   };
 
@@ -340,6 +347,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     provider: "ollama-local",
     model: "nvidia/nemotron",
     policies: ["npm"],
+    policyAuthority: "nemoclaw-managed" as const,
     agent: null,
     agentVersion: "0.1.0",
     // A current managed-image registry row carries positive NemoClaw provenance.
@@ -353,11 +361,15 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   let sandboxEntryReadCount = 0;
   vi.spyOn(registry, "getSandbox").mockImplementation(() => {
     const configuredReads = overrides.sandboxEntryReads ?? [];
-    return (
+    const entry =
       sandboxEntryReadCount < configuredReads.length
         ? configuredReads[sandboxEntryReadCount++]
-        : sandboxEntry
-    ) as never;
+        : sandboxEntry;
+    return entry
+      ? (Object.assign(entry, {
+          policyAuthority: entry.policyAuthority ?? "nemoclaw-managed",
+        }) as never)
+      : null;
   });
   let registryLoadCount = 0;
   vi.spyOn(registryPersistence, "load").mockImplementation(() => {
@@ -375,6 +387,20 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
   const registryUpdateSpy = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+  vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
+    authority: "nemoclaw-managed",
+    effectivePolicy: {},
+  });
+  vi.spyOn(policyAuthority, "inspectGlobalPolicyAuthority").mockReturnValue({
+    authority: "nemoclaw-managed",
+    effectivePolicy: {},
+  });
+  vi.spyOn(mcpBridgeProvider, "preflightMcpEntryTargets").mockImplementation(
+    async (...args: unknown[]) => {
+      const entries = args[0] as Array<{ server: string }>;
+      return new Map(entries.map((entry) => [entry.server, { addresses: ["8.8.8.8"] }]));
+    },
+  );
   vi.spyOn(rebuildRoutePreflight, "commitRebuildRoutePreflight").mockImplementation(
     (...args: unknown[]) => {
       const input = args[0] as {

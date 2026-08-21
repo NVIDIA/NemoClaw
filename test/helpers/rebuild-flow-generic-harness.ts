@@ -21,12 +21,14 @@ import {
   installTerminalStepFailureMock,
   loadRebuildSandbox,
   mcpBridge,
+  mcpBridgeProvider,
   messaging,
   messagingHostForwardLifecycle,
   nim,
   onboardCredentialEnv,
   onboardSession,
   openshellRuntime,
+  policyAuthority,
   policies,
   processRecovery,
   purgeRebuildModule,
@@ -66,15 +68,19 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
-  let policyAdditionsPath: string | null = null;
+  const agentName =
+    typeof overrides.sandboxEntry?.agent === "string" ? overrides.sandboxEntry.agent : "openclaw";
+  let policyAdditionsPath: string | null =
+    agentName === "openclaw"
+      ? null
+      : path.join(process.cwd(), "agents", agentName, "policy-additions.yaml");
   if (typeof overrides.agentPolicyAdditionsContent === "string") {
     const policyDir = createHarnessTempDir("nemoclaw-rebuild-agent-policy-");
     policyAdditionsPath = path.join(policyDir, "policy-additions.yaml");
     fs.writeFileSync(policyAdditionsPath, overrides.agentPolicyAdditionsContent);
   }
   const agentDef = {
-    name:
-      typeof overrides.sandboxEntry?.agent === "string" ? overrides.sandboxEntry.agent : "openclaw",
+    name: agentName,
     expectedVersion: "0.2.0",
     policyAdditionsPath,
   };
@@ -250,9 +256,49 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     dashboardPort: 18789,
     gatewayName: "nemoclaw",
     gatewayPort: 8080,
+    policyAuthority: "nemoclaw-managed" as const,
     ...customOpenClawPluginProvenance,
     ...(overrides.sandboxEntry ?? {}),
   };
+  const currentSandboxRecord = currentSandboxEntry as Record<string, unknown>;
+  const rawMcp = currentSandboxRecord.mcp;
+  if (typeof rawMcp === "object" && rawMcp !== null && !Array.isArray(rawMcp)) {
+    const rawMcpRecord = rawMcp as Record<string, unknown>;
+    const rawBridges = rawMcpRecord.bridges;
+    if (typeof rawBridges === "object" && rawBridges !== null && !Array.isArray(rawBridges)) {
+      const adapter =
+        agentName === "hermes"
+          ? "hermes-config"
+          : agentName === "langchain-deepagents-code"
+            ? "deepagents-config"
+            : "mcporter";
+      const bridges = Object.fromEntries(
+        Object.entries(rawBridges as Record<string, unknown>).map(([key, value]) => {
+          const entry =
+            typeof value === "object" && value !== null && !Array.isArray(value)
+              ? (value as Record<string, unknown>)
+              : {};
+          const server = typeof entry.server === "string" ? entry.server : key;
+          return [
+            key,
+            {
+              server,
+              agent: agentName,
+              adapter,
+              url: "https://mcp.example.test/mcp",
+              env: ["GITHUB_TOKEN"],
+              providerName: `nemoclaw-mcp-alpha-${server}`,
+              providerId: `provider-${server}`,
+              policyName: `mcp-bridge-${server.toLowerCase().replaceAll("_", "-")}`,
+              addedAt: "2026-06-01T00:00:00.000Z",
+              ...entry,
+            },
+          ];
+        }),
+      );
+      currentSandboxRecord.mcp = { ...rawMcpRecord, bridges };
+    }
+  }
   const readCurrentSandboxEntry = () => structuredClone(currentSandboxEntry);
   vi.spyOn(registry, "getSandbox").mockImplementation(readCurrentSandboxEntry);
   const initialDefaultSandbox = overrides.defaultSandbox ?? null;
@@ -304,6 +350,22 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       Object.assign(currentSandboxEntry, updates);
       return true;
     });
+  const policyAuthorityInspection = overrides.policyAuthorityInspection ?? {
+    authority: "nemoclaw-managed" as const,
+    effectivePolicy: {},
+  };
+  const inspectSandboxPolicyAuthoritySpy = vi
+    .spyOn(policyAuthority, "inspectSandboxPolicyAuthority")
+    .mockReturnValue(policyAuthorityInspection);
+  const inspectGlobalPolicyAuthoritySpy = vi
+    .spyOn(policyAuthority, "inspectGlobalPolicyAuthority")
+    .mockReturnValue(policyAuthorityInspection);
+  vi.spyOn(mcpBridgeProvider, "preflightMcpEntryTargets").mockImplementation(
+    async (...args: unknown[]) => {
+      const entries = args[0] as Array<{ server: string }>;
+      return new Map(entries.map((entry) => [entry.server, { addresses: ["8.8.8.8"] }]));
+    },
+  );
   vi.spyOn(rebuildRoutePreflight, "commitRebuildRoutePreflight").mockImplementation(
     (...args: unknown[]) => {
       const input = args[0] as {
@@ -392,7 +454,15 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       }
     );
   });
-  vi.spyOn(rebuildShields, "openRebuildShieldsWindow").mockReturnValue(rebuildShieldsWindow);
+  const openRebuildShieldsWindowSpy = vi
+    .spyOn(rebuildShields, "openRebuildShieldsWindow")
+    .mockImplementation((_sandboxName, _cliName, authority) => {
+      Object.assign(rebuildShieldsWindow, {
+        policyAuthority: authority,
+        sourceDeleted: false,
+      });
+      return rebuildShieldsWindow;
+    });
   const relockSpy = vi
     .spyOn(rebuildShields, "relockRebuildShieldsWindow")
     .mockImplementation((...args: unknown[]) => {
@@ -663,9 +733,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     ensureTargetGatewaySpy,
     ensureValidatedBraveSearchCredentialSpy,
     hydrateCredentialEnvSpy,
+    inspectGlobalPolicyAuthoritySpy,
+    inspectSandboxPolicyAuthoritySpy,
     logSpy,
     finalizeIncompleteOnboardStepSpy,
     onboardSpy,
+    openRebuildShieldsWindowSpy,
     registryUpdateSpy,
     setDefaultSpy,
     setDefault: (name: string) => registry.setDefault(name),

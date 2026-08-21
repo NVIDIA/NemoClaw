@@ -12,6 +12,7 @@ import {
   finalizeMcpBridgesAfterSandboxDelete as finalizeMcpBridgesAfterSandboxDeleteLifecycle,
   prepareMcpBridgesForAbsentSandboxDestroy as prepareMcpBridgesForAbsentSandboxDestroyLifecycle,
   prepareMcpBridgesForDestroy as prepareMcpBridgesForDestroyLifecycle,
+  revalidateMcpDestroyAbortPolicyAuthority as revalidateMcpDestroyAbortPolicyAuthorityLifecycle,
   restoreMcpBridgesAfterDestroyAbort as restoreMcpBridgesAfterDestroyAbortLifecycle,
 } from "./mcp-bridge-destroy";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
@@ -61,6 +62,7 @@ export {
   buildMcpBridgePolicyYaml,
   MCP_BRIDGE_ALLOWED_METHODS,
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
+  McpPolicyAuthorityRefusalError,
 } from "./mcp-bridge-policy";
 export {
   buildMcpBridgeProviderArgs,
@@ -121,15 +123,39 @@ export async function prepareMcpBridgesForAbsentSandboxDestroy(
 
 export async function prepareMcpBridgesForDestroy(
   sandboxName: string,
+  validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<McpDestroyPreparation> {
-  return prepareMcpBridgesForDestroyLifecycle(sandboxName);
+  return validateContainingPolicyReceipt
+    ? prepareMcpBridgesForDestroyLifecycle(sandboxName, validateContainingPolicyReceipt)
+    : prepareMcpBridgesForDestroyLifecycle(sandboxName);
 }
 
 export async function restoreMcpBridgesAfterDestroyAbort(
   sandboxName: string,
   preparation: McpDestroyPreparation,
+  validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<void> {
-  return restoreMcpBridgesAfterDestroyAbortLifecycle(sandboxName, preparation);
+  return validateContainingPolicyReceipt
+    ? restoreMcpBridgesAfterDestroyAbortLifecycle(
+        sandboxName,
+        preparation,
+        validateContainingPolicyReceipt,
+      )
+    : restoreMcpBridgesAfterDestroyAbortLifecycle(sandboxName, preparation);
+}
+
+export async function revalidateMcpDestroyAbortPolicyAuthority(
+  sandboxName: string,
+  preparation: McpDestroyPreparation,
+  validateContainingPolicyReceipt?: () => Promise<void>,
+): Promise<void> {
+  return validateContainingPolicyReceipt
+    ? revalidateMcpDestroyAbortPolicyAuthorityLifecycle(
+        sandboxName,
+        preparation,
+        validateContainingPolicyReceipt,
+      )
+    : revalidateMcpDestroyAbortPolicyAuthorityLifecycle(sandboxName, preparation);
 }
 
 export async function finalizeMcpBridgesAfterSandboxDelete(
@@ -148,27 +174,37 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
 
 export async function prepareMcpBridgesForRebuild(
   sandboxName: string,
+  validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<McpRebuildPreparation> {
-  return prepareMcpBridgesForRebuildLifecycle(sandboxName);
+  return validateContainingPolicyReceipt
+    ? prepareMcpBridgesForRebuildLifecycle(sandboxName, validateContainingPolicyReceipt)
+    : prepareMcpBridgesForRebuildLifecycle(sandboxName);
 }
 
 export async function reattachMcpProvidersAfterRebuildAbort(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
   scrubbedAdapterEntries: readonly McpBridgeEntry[] = [],
+  validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<void> {
-  return reattachMcpProvidersAfterRebuildAbortLifecycle(
-    sandboxName,
-    entries,
-    scrubbedAdapterEntries,
-  );
+  return validateContainingPolicyReceipt
+    ? reattachMcpProvidersAfterRebuildAbortLifecycle(
+        sandboxName,
+        entries,
+        scrubbedAdapterEntries,
+        validateContainingPolicyReceipt,
+      )
+    : reattachMcpProvidersAfterRebuildAbortLifecycle(sandboxName, entries, scrubbedAdapterEntries);
 }
 
 export async function restoreMcpBridgesAfterRebuild(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
+  validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<void> {
-  return restoreMcpBridgesAfterRebuildLifecycle(sandboxName, entries);
+  return validateContainingPolicyReceipt
+    ? restoreMcpBridgesAfterRebuildLifecycle(sandboxName, entries, validateContainingPolicyReceipt)
+    : restoreMcpBridgesAfterRebuildLifecycle(sandboxName, entries);
 }
 
 function parseJsonFlag(args: string[]): { json: boolean; rest: string[] } {

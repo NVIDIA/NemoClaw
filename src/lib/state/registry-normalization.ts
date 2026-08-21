@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
 import { isObjectRecord } from "../core/json-types";
 import { normalizeTrustedPrivatePolicyPinReceipt } from "../policy/trusted-private-endpoints";
 import type {
@@ -14,6 +15,17 @@ const BASELINE_TRANSITION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BASELINE_TRANSITION_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const SHA256_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
+
+/** Keep legacy absence unknown and reject every unrecognized authority value. */
+export function normalizeSandboxPolicyAuthority(
+  value: unknown,
+): SandboxPolicyAuthority | undefined {
+  if (value === undefined) return undefined;
+  if (value === "nemoclaw-managed" || value === "externally-managed") return value;
+  throw new Error(
+    "Sandbox registry contains an invalid policy authority; repair the registry before continuing",
+  );
+}
 
 /** Normalize persisted custom policy content and its generated-pin authority. */
 export function normalizeCustomPolicyEntries(value: unknown): CustomPolicyEntry[] | undefined {

@@ -436,6 +436,31 @@ describe("handlePoliciesState", () => {
     expect(result.appliedPolicyPresets).toEqual(["dns", "github"]);
   });
 
+  it("verifies external selections without recording NemoClaw preset ownership (#9833)", async () => {
+    const setupPolicies = vi.fn(async (_name: string, options: SetupOptions) => {
+      options.onSelection(["dns", "github"]);
+      return ["dns", "github"];
+    });
+    const { deps, calls } = createDeps({
+      getActiveSandbox: vi.fn(() => ({
+        messaging: null,
+        policyAuthority: "externally-managed" as const,
+      })),
+      setupPoliciesWithSelection: setupPolicies,
+    });
+
+    const result = await handlePoliciesState({ ...baseOptions(deps), resume: true });
+
+    expect(setupPolicies).toHaveBeenCalledOnce();
+    expect(calls.persistPolicies).not.toHaveBeenCalled();
+    expect(calls.updateSession).not.toHaveBeenCalled();
+    expect(calls.complete).toHaveBeenCalledWith(
+      "policies",
+      expect.objectContaining({ policyPresets: null }),
+    );
+    expect(result.appliedPolicyPresets).toEqual([]);
+  });
+
   it("re-onboard carries the persisted set forward without re-adding removed defaults (#4621)", async () => {
     // A prior onboard recorded the custom "Balanced minus npm plus github" set.
     // On re-onboard the recorded set is re-applied verbatim and persisted back —

@@ -433,7 +433,7 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
 
-    expect(harness.events).toEqual(["mcp-prepare", "mcp-restore"]);
+    expect(harness.events).toEqual(["mcp-prepare", "mcp-restore-preflight", "mcp-restore"]);
     expect(harness.stopNimByNameSpy).not.toHaveBeenCalled();
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
@@ -451,7 +451,7 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
 
-    expect(harness.events).toEqual(["mcp-prepare", "mcp-restore"]);
+    expect(harness.events).toEqual(["mcp-prepare", "mcp-restore-preflight", "mcp-restore"]);
     expect(harness.stopNimByNameSpy).toHaveBeenCalledOnce();
     expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
       ["sandbox", "exec", "alpha"],
@@ -491,7 +491,7 @@ describe("destroySandbox flow", () => {
         "process.exit(1)",
       );
 
-      expect(harness.events).toEqual(["mcp-prepare", "mcp-restore"]);
+      expect(harness.events).toEqual(["mcp-prepare", "mcp-restore-preflight", "mcp-restore"]);
       expect(harness.stopNimByNameSpy).toHaveBeenCalledOnce();
       expect(harness.events).not.toContain("wipe");
       expect(harness.events).not.toContain("detach");
@@ -896,6 +896,91 @@ describe("destroySandbox flow", () => {
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(7)");
 
     expectMcpRestoreAfterDeleteFailure(harness);
+  });
+
+  it("refuses MCP delete-abort recovery before opening a Shields window (#9833)", async () => {
+    const harness = createDestroyHarness({
+      activeTimer: true,
+      deleteStatus: 7,
+      deleteOutput: "delete failed",
+      mcpAbortPreflightError: "policy authority changed during delete",
+      mcpServers: ["github"],
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+      "policy authority changed during delete",
+    );
+
+    expect(harness.revalidateMcpDestroyAbortPolicyAuthoritySpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ entries: [{ server: "github" }] }),
+    );
+    expect(harness.shieldsDownSpy).not.toHaveBeenCalled();
+    expect(harness.restoreMcpBridgesAfterDestroyAbortSpy).not.toHaveBeenCalled();
+    expect(harness.events.filter((event) => event === "harden")).toHaveLength(1);
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("relocks Shields and preserves a final MCP policy-authority refusal (#9833)", async () => {
+    const harness = createDestroyHarness({
+      activeTimer: true,
+      deleteStatus: 7,
+      deleteOutput: "delete failed",
+      mcpServers: ["github"],
+      restoreMcpPolicyAuthorityRefusal: "policy authority changed during restoration",
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+      "policy authority changed during restoration",
+    );
+
+    expect(harness.shieldsDownSpy).toHaveBeenCalledOnce();
+    expect(harness.restoreMcpBridgesAfterDestroyAbortSpy).toHaveBeenCalledOnce();
+    expect(harness.events.filter((event) => event === "harden")).toHaveLength(2);
+    expect(harness.events.indexOf("mcp-restore")).toBeLessThan(
+      harness.events.lastIndexOf("harden"),
+    );
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("treats a Shields policy-authority refusal as final during MCP recovery (#9833)", async () => {
+    const shieldsRefusal = Object.assign(new Error("Shields policy authority changed"), {
+      code: "NEMOCLAW_POLICY_AUTHORITY_REFUSAL",
+    });
+    const harness = createDestroyHarness({
+      activeTimer: true,
+      deleteStatus: 7,
+      deleteOutput: "delete failed",
+      mcpServers: ["github"],
+      shieldsDownError: shieldsRefusal,
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toBe(shieldsRefusal);
+
+    expect(harness.shieldsDownSpy).toHaveBeenCalledOnce();
+    expect(harness.restoreMcpBridgesAfterDestroyAbortSpy).not.toHaveBeenCalled();
+    expect(harness.events.filter((event) => event === "harden")).toHaveLength(1);
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed Shields relock with the final MCP authority refusal (#9833)", async () => {
+    const harness = createDestroyHarness({
+      activeTimer: true,
+      deleteStatus: 7,
+      deleteOutput: "delete failed",
+      mcpServers: ["github"],
+      restoreMcpPolicyAuthorityRefusal: "policy authority changed during restoration",
+      shieldsUpErrors: [undefined, new Error("injected relock failure")],
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+      "policy authority changed during restoration; shields re-lock failed: injected relock failure",
+    );
+
+    expect(harness.shieldsDownSpy).toHaveBeenCalledOnce();
+    expect(harness.restoreMcpBridgesAfterDestroyAbortSpy).toHaveBeenCalledOnce();
+    expect(harness.events.filter((event) => event === "harden")).toHaveLength(2);
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 
   it("relocks shields and preserves destroy failure when MCP rollback fails", async () => {

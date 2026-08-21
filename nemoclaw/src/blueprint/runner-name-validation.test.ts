@@ -16,7 +16,11 @@ import {
   inMemoryFsMethods,
   resolvedEndpointFor,
 } from "./runner-mock-fixtures.js";
-import { minimalBlueprint, successResult } from "./runner-test-fixtures.js";
+import {
+  minimalBlueprint,
+  resultWithSandboxPolicyAuthority,
+  successResult,
+} from "./runner-test-fixtures.js";
 
 const { store, addFile, addDir } = createRunnerFsStore();
 
@@ -114,40 +118,44 @@ describe("blueprint name validation (fail-closed integration)", () => {
     stdout.reset();
     vi.clearAllMocks();
     vi.spyOn(process.stdout, "write").mockImplementation(stdout.write);
-    mockExeca.mockResolvedValue(successResult());
+    mockExeca.mockImplementation((_command: string, args: string[]) =>
+      Promise.resolve(resultWithSandboxPolicyAuthority(args, successResult())),
+    );
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it.each(
-    INVALID_NAME_CASES,
-  )("apply rejects a malformed %s and creates no sandbox", async (_label, corrupt, expected) => {
-    const bp = minimalBlueprint();
-    corrupt(bp.components as BlueprintComponents);
+  it.each(INVALID_NAME_CASES)(
+    "apply rejects a malformed %s and creates no sandbox",
+    async (_label, corrupt, expected) => {
+      const bp = minimalBlueprint();
+      corrupt(bp.components as BlueprintComponents);
 
-    await expect(actionApply("default", bp)).rejects.toThrow(expected);
-    // Validation runs before any command, so no provider or sandbox command
-    // may have executed — not merely no sandbox create.
-    expect(mockExeca).not.toHaveBeenCalled();
-    expect(createCalls()).toEqual([]);
-  });
+      await expect(actionApply("default", bp)).rejects.toThrow(expected);
+      // Validation runs before any command, so no provider or sandbox command
+      // may have executed — not merely no sandbox create.
+      expect(mockExeca).not.toHaveBeenCalled();
+      expect(createCalls()).toEqual([]);
+    },
+  );
 
-  it.each(
-    VALID_PROVIDER_NAMES,
-  )("apply accepts the supported provider name '%s'", async (providerName) => {
-    const bp = minimalBlueprint();
-    const components = bp.components as BlueprintComponents;
-    components.inference.profiles.default.provider_name = providerName;
+  it.each(VALID_PROVIDER_NAMES)(
+    "apply accepts the supported provider name '%s'",
+    async (providerName) => {
+      const bp = minimalBlueprint();
+      const components = bp.components as BlueprintComponents;
+      components.inference.profiles.default.provider_name = providerName;
 
-    await expect(actionApply("default", bp)).resolves.toBeUndefined();
-    expect(mockExeca).toHaveBeenCalledWith(
-      "openshell",
-      expect.arrayContaining(["provider", "create", "--name", providerName]),
-      expect.any(Object),
-    );
-  });
+      await expect(actionApply("default", bp)).resolves.toBeUndefined();
+      expect(mockExeca).toHaveBeenCalledWith(
+        "openshell",
+        expect.arrayContaining(["provider", "create", "--name", providerName]),
+        expect.any(Object),
+      );
+    },
+  );
 
   it("rollback rejects a plan whose sandbox_name is not OpenShell-compatible", async () => {
     const runDir = `${RUNS_DIR}/nc-run-1`;

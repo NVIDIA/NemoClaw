@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import type { AgentMcpAdapter } from "../../agent/defs";
@@ -24,6 +24,7 @@ import {
   removeGeneratedPolicy,
 } from "./mcp-bridge-policy";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
+import * as policyAuthority from "./policy-authority/preflight";
 
 function buildMcpBridgePolicyYaml(
   server: string,
@@ -49,6 +50,12 @@ function githubBridgeEntry(overrides: Partial<McpBridgeEntry> = {}): McpBridgeEn
 }
 
 describe("MCP OpenShell policy", () => {
+  beforeEach(() => {
+    vi.spyOn(policyAuthority, "preflightSandboxPolicyAuthority").mockReturnValue(
+      "nemoclaw-managed",
+    );
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -273,6 +280,76 @@ describe("MCP OpenShell policy", () => {
       nonFatal: true,
       skipRegistryUpdate: true,
     });
+  });
+
+  it("stops before reserving generated policy ownership when authority changes after inspection (#9833)", () => {
+    vi.mocked(policyAuthority.preflightSandboxPolicyAuthority)
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockImplementationOnce(() => {
+        throw new Error("policy authority changed");
+      });
+    vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
+    vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("absent");
+    const addPolicy = vi.spyOn(registry, "addCustomPolicy").mockReturnValue(true);
+    const applyPolicy = vi.spyOn(policies, "applyPresetContent").mockReturnValue(true);
+
+    expect(() =>
+      applyGeneratedPolicy("alpha", githubBridgeEntry(), { addresses: ["8.8.8.8"] }),
+    ).toThrow(/policy authority changed/);
+    expect(addPolicy).not.toHaveBeenCalled();
+    expect(applyPolicy).not.toHaveBeenCalled();
+  });
+
+  it("keeps a generated policy transition pending when authority changes after policy apply (#9833)", () => {
+    vi.mocked(policyAuthority.preflightSandboxPolicyAuthority)
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockImplementationOnce(() => {
+        throw new Error("policy authority changed");
+      });
+    vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
+    vi.spyOn(policies, "getPresetContentGatewayState")
+      .mockReturnValueOnce("absent")
+      .mockReturnValueOnce("match");
+    const addPolicy = vi.spyOn(registry, "addCustomPolicy").mockReturnValue(true);
+    const applyPolicy = vi.spyOn(policies, "applyPresetContent").mockReturnValue(true);
+
+    expect(() =>
+      applyGeneratedPolicy("alpha", githubBridgeEntry(), { addresses: ["8.8.8.8"] }),
+    ).toThrow(/policy authority changed/);
+    expect(applyPolicy).toHaveBeenCalledOnce();
+    expect(addPolicy).toHaveBeenCalledOnce();
+    expect(addPolicy.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({ pendingContent: expect.any(String) }),
+    );
+  });
+
+  it("does not swallow an authority change during best-effort generated policy removal (#9833)", () => {
+    const entry = githubBridgeEntry();
+    const content = buildMcpBridgePolicyYaml(entry.server, entry.url, "mcporter", {
+      addresses: ["8.8.8.8"],
+    });
+    vi.mocked(policyAuthority.preflightSandboxPolicyAuthority)
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockImplementationOnce(() => {
+        throw new Error("policy authority changed");
+      });
+    vi.spyOn(registry, "getCustomPolicies").mockReturnValue([
+      { name: entry.policyName, content, sourcePath: MCP_BRIDGE_POLICY_SOURCE },
+    ]);
+    vi.spyOn(policies, "getPresetContentGatewayState")
+      .mockReturnValueOnce("match")
+      .mockReturnValueOnce("absent");
+    const removePolicy = vi.spyOn(policies, "removePreset").mockReturnValue(true);
+    const removeOwnership = vi.spyOn(registry, "removeCustomPolicyByName");
+
+    expect(() => removeGeneratedPolicy("alpha", entry, { bestEffort: true })).toThrow(
+      /policy authority changed/,
+    );
+    expect(removePolicy).toHaveBeenCalledOnce();
+    expect(removeOwnership).not.toHaveBeenCalled();
   });
 
   it("accepts only the canonical generated policy for the exact bridge and DNS pins", () => {

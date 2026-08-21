@@ -57,6 +57,7 @@ describe("runSandboxSnapshot restore: baseline exclusions", () => {
     f.prepareInitialSandboxCreatePolicyMock.mockReturnValue({
       policyPath: "/tmp/snapshot-clone-policy.yaml",
       appliedPresets: [],
+      sourceBytes: Buffer.from("version: 1\nnetwork_policies: {}\n"),
       cleanup,
     });
 

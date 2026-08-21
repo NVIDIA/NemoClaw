@@ -39,12 +39,16 @@ export const gatewayTeardownAuthority = requireDist(
 ) as typeof import("../../src/lib/onboard/gateway-teardown-authority");
 export const hermesProviderAuth = requireDist("../../hermes-provider-auth.js");
 export const mcpBridge = requireDist("./mcp-bridge.js");
+export const mcpBridgeProvider = requireDist("./mcp-bridge-provider.js");
 export const messaging = requireDist("../../messaging/index.js");
 export const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
 export const nim = requireDist("../../inference/nim.js");
 export const onboardCredentialEnv = requireDist("../../onboard/credential-env.js");
 export const onboardSession = requireDist("../../state/onboard-session.js");
 export const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+export const policyAuthority = requireDist(
+  "../../adapters/openshell/policy-authority.js",
+) as typeof import("../../src/lib/adapters/openshell/policy-authority");
 export const policies = requireDist("../../policy/index.js");
 export const portableAgentLifecycle = requireDist(
   "../../onboard/experimental/portable-agent-lifecycle.js",

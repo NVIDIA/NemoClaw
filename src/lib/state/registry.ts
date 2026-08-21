@@ -38,6 +38,7 @@ import {
   normalizeBaselineExclusions,
   normalizeBaselineExclusionTransition,
   normalizeCustomPolicyEntries,
+  normalizeSandboxPolicyAuthority,
   retainedDefaultSandbox,
 } from "./registry-normalization";
 import * as reversibleRemoval from "./registry-reversible-removal";
@@ -157,6 +158,18 @@ export function registerSandbox(
     if (entry.servingProfileProvenance !== undefined && !servingProfileProvenance) {
       throw new Error("Cannot register a sandbox with invalid serving profile provenance");
     }
+    const requestedPolicyAuthority = normalizeSandboxPolicyAuthority(entry.policyAuthority);
+    const recordedPolicyAuthority = normalizeSandboxPolicyAuthority(
+      data.sandboxes[entry.name]?.policyAuthority,
+    );
+    if (
+      recordedPolicyAuthority !== undefined &&
+      requestedPolicyAuthority !== undefined &&
+      recordedPolicyAuthority !== requestedPolicyAuthority
+    ) {
+      throw new Error("Cannot register a sandbox after its policy authority changed");
+    }
+    const policyAuthority = requestedPolicyAuthority ?? recordedPolicyAuthority;
     if (retainedDefaultSandbox(data.defaultSandbox, data.sandboxes) === null) {
       data.defaultSandbox = null;
     }
@@ -217,12 +230,17 @@ export function registerSandbox(
           : undefined,
       openshellDriver: entry.openshellDriver || null,
       openshellVersion: entry.openshellVersion || null,
-      policies: entry.policies || [],
-      baselineExclusions: normalizeBaselineExclusions(entry.baselineExclusions),
-      baselineExclusionTransition: normalizeBaselineExclusionTransition(
-        entry.baselineExclusionTransition,
-      ),
-      policyTier: entry.policyTier || null,
+      ...(policyAuthority !== undefined ? { policyAuthority } : {}),
+      ...(policyAuthority === "externally-managed"
+        ? { policies: [] }
+        : {
+            policies: entry.policies || [],
+            baselineExclusions: normalizeBaselineExclusions(entry.baselineExclusions),
+            baselineExclusionTransition: normalizeBaselineExclusionTransition(
+              entry.baselineExclusionTransition,
+            ),
+            policyTier: entry.policyTier || null,
+          }),
       webSearchEnabled:
         typeof entry.webSearchEnabled === "boolean" ? entry.webSearchEnabled : undefined,
       // Preserve absence on reconstructed legacy rows. Only a freshly built
@@ -410,6 +428,15 @@ function changesHostLocalInferenceLifecycleAuthority(
   );
 }
 
+function changesRecordedPolicyAuthority(
+  current: SandboxEntry,
+  updates: Partial<SandboxEntry>,
+): boolean {
+  if (!Object.prototype.hasOwnProperty.call(updates, "policyAuthority")) return false;
+  const requested = normalizeSandboxPolicyAuthority(updates.policyAuthority);
+  return current.policyAuthority !== undefined && requested !== current.policyAuthority;
+}
+
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {
   return withLock(() => {
     const data = load();
@@ -419,6 +446,7 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
       return false;
     }
     if (changesHostLocalInferenceLifecycleAuthority(current, updates)) return false;
+    if (changesRecordedPolicyAuthority(current, updates)) return false;
     data.sandboxes[name] = { ...current, ...updates };
     save(data);
     return true;
@@ -452,13 +480,17 @@ export function restoreSandboxEntry(
 ): void {
   withLock(() => {
     const data = load();
-    save(
-      reversibleRemoval.restoreSandboxEntryInRegistry(
-        data,
-        entry,
-        options.defaultTransition,
-      ),
-    );
+    const current = data.sandboxes[entry.name];
+    if (
+      current &&
+      normalizeSandboxPolicyAuthority(current.policyAuthority) !==
+        normalizeSandboxPolicyAuthority(entry.policyAuthority)
+    ) {
+      throw new Error(
+        `Refusing to restore sandbox '${entry.name}' because its policy authority changed during recovery.`,
+      );
+    }
+    save(reversibleRemoval.restoreSandboxEntryInRegistry(data, entry, options.defaultTransition));
   });
 }
 

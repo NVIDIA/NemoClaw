@@ -1,0 +1,465 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
+
+const mocks = vi.hoisted(() => ({
+  addCustomPolicy: vi.fn(),
+  beginBaselineExclusionTransition: vi.fn(),
+  getBaselineExclusions: vi.fn(),
+  getBaselineExclusionTransition: vi.fn(),
+  getSandbox: vi.fn(),
+  inspectSandboxPolicyAuthority: vi.fn(),
+  resolveOpenshell: vi.fn(),
+  run: vi.fn(),
+  runCapture: vi.fn(),
+  updateSandbox: vi.fn(),
+}));
+
+vi.mock("../adapters/openshell/policy-authority", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/openshell/policy-authority")>()),
+  inspectSandboxPolicyAuthority: mocks.inspectSandboxPolicyAuthority,
+}));
+
+vi.mock("../adapters/openshell/resolve", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/openshell/resolve")>()),
+  resolveOpenshell: mocks.resolveOpenshell,
+}));
+
+vi.mock("../runner", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../runner")>()),
+  run: mocks.run,
+  runCapture: mocks.runCapture,
+}));
+
+vi.mock("../state/registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../state/registry")>()),
+  addCustomPolicy: mocks.addCustomPolicy,
+  beginBaselineExclusionTransition: mocks.beginBaselineExclusionTransition,
+  getBaselineExclusions: mocks.getBaselineExclusions,
+  getBaselineExclusionTransition: mocks.getBaselineExclusionTransition,
+  getSandbox: mocks.getSandbox,
+  updateSandbox: mocks.updateSandbox,
+}));
+
+import {
+  applyPermissivePolicy,
+  applyPresetContent,
+  applyPresets,
+  excludeBaselineEntry,
+  loadPreset,
+  removePreset,
+  restoreBaselineEntry,
+} from "./index";
+
+const SANDBOX = "authority-9833";
+const BASE_POLICY = `version: 1
+network_policies:
+  existing:
+    endpoints:
+      - host: existing.example.com
+        port: 443
+`;
+const WEATHER_PRESET = `preset:
+  name: weather
+  description: Read-only weather
+network_policies:
+  weather:
+    name: weather
+    endpoints:
+      - host: wttr.in
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+`;
+const WEATHER_POLICY = YAML.parse(WEATHER_PRESET).network_policies.weather;
+
+function reportedErrors(): string {
+  return vi
+    .mocked(console.error)
+    .mock.calls.flat()
+    .map((entry) => String(entry))
+    .join("\n");
+}
+
+describe("sandbox policy authority ownership", () => {
+  let sandbox: Record<string, unknown>;
+
+  beforeEach(() => {
+    for (const mock of Object.values(mocks)) mock.mockReset();
+    sandbox = {
+      name: SANDBOX,
+      gatewayName: "nemoclaw",
+      policies: [],
+    };
+    mocks.getSandbox.mockImplementation(() => sandbox);
+    mocks.getBaselineExclusions.mockReturnValue([]);
+    mocks.getBaselineExclusionTransition.mockReturnValue(null);
+    mocks.inspectSandboxPolicyAuthority.mockReturnValue({
+      authority: "nemoclaw-managed",
+      effectivePolicy: {},
+    });
+    mocks.resolveOpenshell.mockReturnValue("/usr/local/bin/openshell");
+    mocks.runCapture.mockReturnValue(BASE_POLICY);
+    mocks.run.mockReturnValue({ status: 0 });
+    mocks.updateSandbox.mockImplementation((_name, updates) => {
+      sandbox = { ...sandbox, ...updates };
+      return true;
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+
+  it("accepts an externally supplied custom preset without setting or attributing it (#9833)", () => {
+    mocks.inspectSandboxPolicyAuthority.mockReturnValue({
+      authority: "externally-managed",
+      effectivePolicy: { network_policies: { weather: WEATHER_POLICY } },
+    });
+
+    expect(
+      applyPresetContent(SANDBOX, "weather", WEATHER_PRESET, {
+        custom: { sourcePath: "/tmp/weather.yaml" },
+      }),
+    ).toBe(true);
+
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.addCustomPolicy).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).toHaveBeenCalledTimes(1);
+    expect(mocks.updateSandbox).toHaveBeenCalledWith(SANDBOX, {
+      policyAuthority: "externally-managed",
+    });
+  });
+
+  it("accepts externally supplied batch requirements without reading the base policy (#9833)", () => {
+    const weather = loadPreset("weather");
+    expect(weather).not.toBeNull();
+    const required = YAML.parse(weather as string).network_policies;
+    mocks.inspectSandboxPolicyAuthority.mockReturnValue({
+      authority: "externally-managed",
+      effectivePolicy: { network_policies: required },
+    });
+
+    expect(applyPresets(SANDBOX, ["weather"])).toBe(true);
+
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).toHaveBeenCalledTimes(1);
+    expect(mocks.updateSandbox).not.toHaveBeenCalledWith(
+      SANDBOX,
+      expect.objectContaining({ policies: expect.anything() }),
+    );
+  });
+
+  it("records external authority before refusing a missing preset requirement (#9833)", () => {
+    mocks.inspectSandboxPolicyAuthority.mockReturnValue({
+      authority: "externally-managed",
+      effectivePolicy: { network_policies: {} },
+    });
+
+    expect(applyPresetContent(SANDBOX, "weather", WEATHER_PRESET)).toBe(false);
+
+    expect(reportedErrors()).toContain("external policy authority");
+    expect(reportedErrors()).toContain('"weather"');
+    expect(reportedErrors()).not.toContain("wttr.in");
+    expect(reportedErrors()).not.toContain("network_policies:");
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).toHaveBeenCalledOnce();
+    expect(sandbox).toEqual(
+      expect.objectContaining({ policyAuthority: "externally-managed", policies: [] }),
+    );
+  });
+
+  it("rechecks authority before policy set and refuses an ownership change (#9833)", () => {
+    mocks.inspectSandboxPolicyAuthority
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "externally-managed", effectivePolicy: {} });
+
+    expect(applyPresetContent(SANDBOX, "weather", WEATHER_PRESET, { nonFatal: true })).toBe(false);
+
+    expect(mocks.inspectSandboxPolicyAuthority).toHaveBeenCalledTimes(2);
+    expect(mocks.runCapture).toHaveBeenCalledTimes(1);
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).toHaveBeenCalledOnce();
+    expect(sandbox).toEqual(
+      expect.objectContaining({ policyAuthority: "nemoclaw-managed", policies: [] }),
+    );
+    expect(reportedErrors()).toContain("policy authority changed");
+    expect(reportedErrors()).toContain("external policy authority");
+  });
+
+  it("refuses custom attribution when no-op authority becomes external (#9833)", () => {
+    sandbox = { ...sandbox, policyAuthority: "nemoclaw-managed" };
+    mocks.runCapture.mockReturnValue(
+      YAML.stringify({ version: 1, network_policies: { weather: WEATHER_POLICY } }),
+    );
+    mocks.inspectSandboxPolicyAuthority
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({
+        authority: "externally-managed",
+        effectivePolicy: { network_policies: { weather: WEATHER_POLICY } },
+      });
+
+    expect(
+      applyPresetContent(SANDBOX, "weather", WEATHER_PRESET, {
+        custom: { sourcePath: "/tmp/weather.yaml" },
+      }),
+    ).toBe(false);
+
+    expect(mocks.inspectSandboxPolicyAuthority).toHaveBeenCalledTimes(2);
+    expect(reportedErrors()).toContain("policy authority changed");
+    expect(reportedErrors()).toContain("external policy authority");
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.addCustomPolicy).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("refuses batch attribution when no-op authority becomes external (#9833)", () => {
+    const weather = loadPreset("weather");
+    expect(weather).not.toBeNull();
+    const required = YAML.parse(weather as string).network_policies;
+    sandbox = { ...sandbox, policyAuthority: "nemoclaw-managed" };
+    mocks.runCapture.mockReturnValue(YAML.stringify({ version: 1, network_policies: required }));
+    mocks.inspectSandboxPolicyAuthority
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({
+        authority: "externally-managed",
+        effectivePolicy: { network_policies: required },
+      });
+
+    expect(applyPresets(SANDBOX, ["weather"])).toBe(false);
+
+    expect(mocks.inspectSandboxPolicyAuthority).toHaveBeenCalledTimes(2);
+    expect(reportedErrors()).toContain("policy authority changed");
+    expect(reportedErrors()).toContain("external policy authority");
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.addCustomPolicy).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("withholds single-preset success when the final registry check changes authority (#9833)", () => {
+    sandbox = { ...sandbox, policyAuthority: "nemoclaw-managed" };
+    mocks.inspectSandboxPolicyAuthority
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "externally-managed", effectivePolicy: {} });
+
+    expect(
+      applyPresetContent(SANDBOX, "weather", WEATHER_PRESET, {
+        custom: { sourcePath: "/tmp/weather.yaml" },
+      }),
+    ).toBe(false);
+
+    expect(mocks.run).toHaveBeenCalledOnce();
+    expect(mocks.addCustomPolicy).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+    expect(console.log).not.toHaveBeenCalledWith("  Applied preset: weather");
+    expect(reportedErrors()).toContain("policy authority changed");
+  });
+
+  it("withholds batch success when the final registry check changes authority (#9833)", () => {
+    sandbox = { ...sandbox, policyAuthority: "nemoclaw-managed" };
+    mocks.inspectSandboxPolicyAuthority
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "externally-managed", effectivePolicy: {} });
+
+    expect(applyPresets(SANDBOX, ["weather"])).toBe(false);
+
+    expect(mocks.run).toHaveBeenCalledOnce();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+    expect(console.log).not.toHaveBeenCalledWith("  Applied preset: weather");
+    expect(reportedErrors()).toContain("policy authority changed");
+  });
+
+  it("keeps superseded preset attribution when authority changes during the read (#9833)", () => {
+    const personal = loadPreset("personal-open-internet");
+    expect(personal).not.toBeNull();
+    sandbox = { ...sandbox, policyAuthority: "nemoclaw-managed", policies: ["weather"] };
+    mocks.runCapture.mockReturnValue(
+      YAML.stringify({
+        version: 1,
+        network_policies: YAML.parse(personal as string).network_policies,
+      }),
+    );
+    mocks.inspectSandboxPolicyAuthority
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "externally-managed", effectivePolicy: {} });
+
+    expect(removePreset(SANDBOX, "weather", { nonFatal: true })).toBe(false);
+
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+    expect(sandbox.policies).toEqual(["weather"]);
+    expect(reportedErrors()).toContain("policy authority changed");
+  });
+
+  it("withholds removal success when the final registry check changes authority (#9833)", () => {
+    sandbox = { ...sandbox, policyAuthority: "nemoclaw-managed", policies: ["weather"] };
+    mocks.runCapture.mockReturnValue(
+      YAML.stringify({ version: 1, network_policies: { weather: WEATHER_POLICY } }),
+    );
+    mocks.inspectSandboxPolicyAuthority
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "externally-managed", effectivePolicy: {} });
+
+    expect(removePreset(SANDBOX, "weather", { nonFatal: true })).toBe(false);
+
+    expect(mocks.run).toHaveBeenCalledOnce();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+    expect(sandbox.policies).toEqual(["weather"]);
+    expect(console.log).not.toHaveBeenCalledWith("  Removed preset: weather");
+    expect(reportedErrors()).toContain("policy authority changed");
+  });
+
+  it("refuses preset removal when authority changes at the policy-set edge (#9833)", () => {
+    sandbox = { ...sandbox, policyAuthority: "nemoclaw-managed", policies: ["weather"] };
+    mocks.runCapture.mockReturnValue(
+      YAML.stringify({ version: 1, network_policies: { weather: WEATHER_POLICY } }),
+    );
+    mocks.inspectSandboxPolicyAuthority
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "externally-managed", effectivePolicy: {} });
+
+    expect(removePreset(SANDBOX, "weather", { nonFatal: true })).toBe(false);
+
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+    expect(sandbox.policies).toEqual(["weather"]);
+    expect(reportedErrors()).toContain("policy authority changed");
+  });
+
+  it("records managed authority before reading or setting policy (#9833)", () => {
+    expect(applyPresetContent(SANDBOX, "weather", WEATHER_PRESET)).toBe(true);
+
+    expect(mocks.inspectSandboxPolicyAuthority).toHaveBeenCalledTimes(5);
+    expect(mocks.run).toHaveBeenCalledTimes(1);
+    expect(mocks.updateSandbox.mock.calls[0]).toEqual([
+      SANDBOX,
+      { policyAuthority: "nemoclaw-managed" },
+    ]);
+    expect(mocks.updateSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.runCapture.mock.invocationCallOrder[0] as number,
+    );
+    expect(mocks.updateSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.run.mock.invocationCallOrder[0] as number,
+    );
+    expect(mocks.updateSandbox).toHaveBeenCalledWith(
+      SANDBOX,
+      expect.objectContaining({ policies: ["weather"] }),
+    );
+  });
+
+  it("retains only recorded authority when OpenShell rejects policy set (#9833)", () => {
+    mocks.run.mockReturnValue({
+      status: 1,
+      stderr:
+        "Error: code: 'Failed precondition', message: 'policy denied', " +
+        "source: tonic::Status { code: FailedPrecondition, grpc_status: 9 }",
+    });
+
+    expect(
+      applyPresetContent(SANDBOX, "weather", WEATHER_PRESET, {
+        custom: { sourcePath: "/tmp/weather.yaml" },
+        nonFatal: true,
+      }),
+    ).toBe(false);
+
+    expect(sandbox).toEqual({
+      name: SANDBOX,
+      gatewayName: "nemoclaw",
+      policies: [],
+      policyAuthority: "nemoclaw-managed",
+    });
+    expect(mocks.updateSandbox).toHaveBeenCalledTimes(1);
+    expect(mocks.addCustomPolicy).not.toHaveBeenCalled();
+    expect(reportedErrors()).toContain("OpenShell rejected the policy");
+  });
+
+  it("refuses before policy reads when authority cannot be recorded (#9833)", () => {
+    mocks.updateSandbox.mockReturnValue(false);
+
+    expect(applyPresetContent(SANDBOX, "weather", WEATHER_PRESET)).toBe(false);
+
+    expect(mocks.inspectSandboxPolicyAuthority).toHaveBeenCalledOnce();
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.addCustomPolicy).not.toHaveBeenCalled();
+    expect(reportedErrors()).toContain("could not record policy authority");
+  });
+
+  it("refuses external removal before reading or changing policy state (#9833)", () => {
+    sandbox = { ...sandbox, policyAuthority: "externally-managed", policies: ["weather"] };
+    mocks.inspectSandboxPolicyAuthority.mockReturnValue({
+      authority: "externally-managed",
+      effectivePolicy: { network_policies: { weather: WEATHER_POLICY } },
+    });
+
+    expect(removePreset(SANDBOX, "weather", { nonFatal: true })).toBe(false);
+
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+    expect(reportedErrors()).toContain("external policy authority");
+  });
+
+  it("refuses external baseline and permissive changes before side effects (#9833)", () => {
+    sandbox = { ...sandbox, policyAuthority: "externally-managed" };
+    mocks.inspectSandboxPolicyAuthority.mockReturnValue({
+      authority: "externally-managed",
+      effectivePolicy: {},
+    });
+
+    expect(excludeBaselineEntry(SANDBOX, "existing", "reviewed-digest", { nonFatal: true })).toBe(
+      false,
+    );
+    expect(restoreBaselineEntry(SANDBOX, "existing", { nonFatal: true })).toBe(false);
+    expect(() => applyPermissivePolicy(SANDBOX)).toThrow(/external policy authority/);
+
+    expect(mocks.getBaselineExclusionTransition).not.toHaveBeenCalled();
+    expect(mocks.beginBaselineExclusionTransition).not.toHaveBeenCalled();
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("does not report permissive policy success when authority changes during set (#9833)", () => {
+    sandbox = { ...sandbox, policyAuthority: "nemoclaw-managed" };
+    mocks.inspectSandboxPolicyAuthority
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "externally-managed", effectivePolicy: {} });
+
+    expect(applyPermissivePolicy(SANDBOX)).toBeUndefined();
+
+    expect(mocks.run).toHaveBeenCalledOnce();
+    expect(console.log).not.toHaveBeenCalledWith("  Applied permissive policy.");
+    expect(reportedErrors()).toContain("policy authority changed");
+  });
+
+  it("leaves authority absent when live inspection is unknown (#9833)", () => {
+    mocks.inspectSandboxPolicyAuthority.mockImplementation(() => {
+      throw new Error(
+        "OpenShell sandbox policy authority inspection failed: metadata unavailable. No policy-dependent changes were made.",
+      );
+    });
+
+    expect(applyPresetContent(SANDBOX, "weather", WEATHER_PRESET)).toBe(false);
+
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+  });
+});

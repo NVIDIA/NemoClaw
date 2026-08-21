@@ -14,6 +14,18 @@ import { testTimeoutOptions } from "../../../test/helpers/timeouts";
 vi.mock("../runner", () => ({
   run: vi.fn(() => ({ status: 0 })),
   runCapture: vi.fn(() => "version: 1\nnetwork_policies:\n  test: {}"),
+  runCaptureEx: vi.fn(() => ({
+    stdout: JSON.stringify({
+      scope: "sandbox",
+      sandbox: "openclaw",
+      status: "effective",
+      policy_source: "sandbox",
+      policy: { version: 1, network_policies: { test: {} } },
+    }),
+    stderr: "",
+    exitCode: 0,
+    timedOut: false,
+  })),
   validateName: vi.fn((name) => name),
   shellQuote: vi.fn((s) => `'${s}'`),
   redact: vi.fn((s) => s),
@@ -486,75 +498,6 @@ describe("shields — unit logic", () => {
       );
     }
 
-    it("shieldsStatus attempts inline recovery for an expired timer marker", async () => {
-      const sandboxName = "openclaw";
-      const configPath = "/sandbox/.openclaw/openclaw.json";
-      const hashPath = "/sandbox/.openclaw/.config-hash";
-      const snapshotPath = path.join(stateDir(), "policy-snapshot-test.yaml");
-      fs.mkdirSync(stateDir(), { recursive: true });
-      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n");
-      writeState(sandboxName, {
-        shieldsDown: true,
-        shieldsDownAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-        shieldsDownTimeout: 300,
-        shieldsDownReason: "testing",
-        shieldsDownPolicy: "permissive",
-        shieldsPolicySnapshotPath: snapshotPath,
-        updatedAt: new Date().toISOString(),
-      });
-      writeMarker(sandboxName, {
-        pid: 4242,
-        sandboxName,
-        snapshotPath,
-        restoreAt: new Date(Date.now() - 30_000).toISOString(),
-        processToken: "token-123",
-      });
-
-      const processKillSpy = vi
-        .spyOn(process, "kill")
-        .mockImplementation((pid: number, signal?: string | number) => {
-          if (signal === 0 && pid === 4242) {
-            const err = new Error("not running") as NodeJS.ErrnoException;
-            err.code = "ESRCH";
-            throw err;
-          }
-          return true;
-        });
-      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      setNodeExecFileSyncMock((_file: string, argv?: readonly string[]) =>
-        withDefaultNodeExecFileSync(_file, argv, () => {
-          const cmd = Array.isArray(argv) ? argv.join(" ") : "";
-          if (cmd.includes(` stat -c %a %U:%G ${hashPath}`)) {
-            return "444 root:root";
-          }
-          if (cmd.includes(` stat -c %a %U:%G ${configPath}`)) {
-            return "444 root:root";
-          }
-          if (cmd.includes(` lsattr -d ${hashPath}`)) {
-            return `----i---------e----- ${hashPath}`;
-          }
-          if (cmd.includes(" stat -c %a %U:%G /sandbox/.openclaw")) {
-            return "755 root:root";
-          }
-          if (cmd.includes(` lsattr -d ${configPath}`)) {
-            return `----i---------e----- ${configPath}`;
-          }
-          return "";
-        }),
-      );
-
-      const { shieldsStatus } = await loadShieldsModule();
-
-      shieldsStatus(sandboxName);
-
-      expect(processKillSpy).not.toHaveBeenCalled();
-      expect(errorSpy).toHaveBeenCalledWith(
-        "  Warning: auto-restore timer authority is expired, invalid, or no longer live; attempting inline restore.",
-      );
-      expect(logSpy).toHaveBeenCalledWith("  Shields: DOWN (temporarily unlocked)");
-    });
-
     it("deadline composition removes an unproven MCP add from the restrictive policy", async () => {
       const snapshot =
         "version: 1\nnetwork_policies:\n  restrictive_baseline: {}\n  mcp_bridge_beta: {}\n";
@@ -565,7 +508,7 @@ describe("shields — unit logic", () => {
       expect(composition.yaml).not.toContain("mcp_bridge_beta");
     });
 
-    it("deadline restore removes saved MCP keys when the registry cannot be read", async () => {
+    it("deadline restore refuses policy mutation when authority cannot be read (#9833)", async () => {
       const sandboxName = "openclaw";
       const processToken = "b".repeat(32);
       const snapshotPath = path.join(stateDir(), "policy-snapshot-unreadable-registry.yaml");
@@ -600,25 +543,21 @@ describe("shields — unit logic", () => {
         originalRmSync(target, options);
       });
       const { applyShieldsPolicySnapshot } = await loadShieldsModule();
+      const { run } = await import("../runner");
 
-      const result = applyShieldsPolicySnapshot(sandboxName, snapshotPath, {
-        transitionProcessToken: processToken,
-        deadlineAuthoritative: true,
-        expiredTimerRecovery: true,
-      });
-
-      expect(result.managedMcpOmissions).toEqual([
-        expect.objectContaining({
-          reason: expect.stringMatching(
-            /Managed MCP registry inspection failed at the auto-restore deadline/,
-          ),
+      expect(() =>
+        applyShieldsPolicySnapshot(sandboxName, snapshotPath, {
+          transitionProcessToken: processToken,
+          deadlineAuthoritative: true,
+          expiredTimerRecovery: true,
         }),
-      ]);
-      expect(appliedPolicy).toContain("restrictive_baseline");
-      expect(appliedPolicy).not.toContain("mcp_bridge_alpha");
+      ).toThrow(/policy authority/i);
+
+      expect(run).not.toHaveBeenCalled();
+      expect(appliedPolicy).toBe("");
     });
 
-    it("auto-restore applies a snapshot with no managed MCP entries when policy staging is unavailable (#7952)", async () => {
+    it("auto-restore refuses before policy staging when authority is unavailable (#9833)", async () => {
       const sandboxName = "openclaw";
       const processToken = "d".repeat(32);
       const snapshotPath = path.join(stateDir(), "policy-snapshot-no-managed-mcp.yaml");
@@ -645,26 +584,16 @@ describe("shields — unit logic", () => {
         });
       });
 
-      const result = applyShieldsPolicySnapshot(sandboxName, snapshotPath, {
-        transitionProcessToken: processToken,
-        deadlineAuthoritative: true,
-        expiredTimerRecovery: true,
-      });
+      expect(() =>
+        applyShieldsPolicySnapshot(sandboxName, snapshotPath, {
+          transitionProcessToken: processToken,
+          deadlineAuthoritative: true,
+          expiredTimerRecovery: true,
+        }),
+      ).toThrow(/policy authority is unavailable/i);
 
-      expect(result.status).toBe(0);
       expect(createTempDirectory).not.toHaveBeenCalled();
-      expect(run).toHaveBeenCalledWith(
-        [
-          expect.stringMatching(/(?:^|\/)openshell$/),
-          "policy",
-          "set",
-          "--policy",
-          snapshotPath,
-          "--wait",
-          sandboxName,
-        ],
-        { ignoreError: true },
-      );
+      expect(run).not.toHaveBeenCalled();
     });
 
     it("reuses the snapshot without staging when the snapshot and current policy have no managed MCP entries (#7952)", async () => {
@@ -786,80 +715,6 @@ describe("shields — unit logic", () => {
       expect(assertCommandAvailable).toHaveBeenCalledOnce();
       expect(fs.existsSync(`${lockPath}.containment`)).toBe(true);
       expect(fs.existsSync(path.join(stateDir(), `shields-timer-${sandboxName}.json`))).toBe(true);
-    });
-
-    it("shieldsStatus attempts inline recovery when expired marker PID is alive but cmdline does not match recorded timer", async () => {
-      const sandboxName = "openclaw";
-      const snapshotPath = path.join(stateDir(), "policy-snapshot-test.yaml");
-      fs.mkdirSync(stateDir(), { recursive: true });
-      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n");
-      writeState(sandboxName, {
-        shieldsDown: true,
-        shieldsDownAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-        shieldsDownTimeout: 300,
-        shieldsDownReason: "testing",
-        shieldsDownPolicy: "permissive",
-        shieldsPolicySnapshotPath: snapshotPath,
-        updatedAt: new Date().toISOString(),
-      });
-      writeMarker(sandboxName, {
-        pid: 4242,
-        sandboxName,
-        snapshotPath,
-        restoreAt: new Date(Date.now() - 30_000).toISOString(),
-        processToken: "token-123",
-      });
-
-      // PID is alive but belongs to an unrelated process (PID reuse after reboot).
-      vi.spyOn(process, "kill").mockImplementation(
-        (_pid: number, _signal?: string | number) => true,
-      );
-      const originalExistsSync = fs.existsSync.bind(fs);
-      const originalReadFileSync = fs.readFileSync.bind(fs);
-      vi.spyOn(fs, "existsSync").mockImplementation((p: fs.PathLike) => {
-        if (String(p) === "/proc/4242/cmdline") return true;
-        return originalExistsSync(p);
-      });
-      vi.spyOn(fs, "readFileSync").mockImplementation(
-        (p: fs.PathOrFileDescriptor, options?: unknown) => {
-          if (String(p) === "/proc/4242/cmdline") {
-            return "python\0unrelated-process\0";
-          }
-          return originalReadFileSync(p, options as never) as never;
-        },
-      );
-
-      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      setNodeExecFileSyncMock((_file: string, argv?: readonly string[]) =>
-        withDefaultNodeExecFileSync(_file, argv, () => {
-          const cmd = Array.isArray(argv) ? argv.join(" ") : "";
-          if (cmd.includes(" stat -c %a %U:%G /sandbox/.openclaw/.config-hash")) {
-            return "444 root:root";
-          }
-          if (cmd.includes(" stat -c %a %U:%G /sandbox/.openclaw/openclaw.json")) {
-            return "444 root:root";
-          }
-          if (cmd.includes(" lsattr -d /sandbox/.openclaw/.config-hash")) {
-            return "----i---------e----- /sandbox/.openclaw/.config-hash";
-          }
-          if (cmd.includes(" stat -c %a %U:%G /sandbox/.openclaw")) {
-            return "755 root:root";
-          }
-          if (cmd.includes(" lsattr -d /sandbox/.openclaw/openclaw.json")) {
-            return "----i---------e----- /sandbox/.openclaw/openclaw.json";
-          }
-          return "";
-        }),
-      );
-
-      const { shieldsStatus } = await loadShieldsModule();
-      shieldsStatus(sandboxName);
-
-      expect(errorSpy).toHaveBeenCalledWith(
-        "  Warning: auto-restore timer authority is expired, invalid, or no longer live; attempting inline restore.",
-      );
-      expect(logSpy).toHaveBeenCalledWith("  Shields: DOWN (temporarily unlocked)");
     });
 
     it("rejects state files whose fileHashes entries are not SHA-256 hex strings", async () => {

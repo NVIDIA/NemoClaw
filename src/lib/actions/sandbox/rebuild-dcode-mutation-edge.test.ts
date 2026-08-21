@@ -90,7 +90,11 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
     expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
       harness.preparedDcodeBuildContext,
     );
-    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      [mcpEntry],
+      expect.any(Function),
+    );
   });
   it("rolls back managed MCP mutation when DCode inputs drift during MCP preparation (#6195)", async () => {
     const detached = { server: "search", providerName: "mcp-search" };
@@ -112,11 +116,15 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).rejects.toThrow("the prepared DCode replacement inputs changed before deletion");
 
-    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Function),
+    );
     expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledWith(
       "alpha",
       [detached],
       [scrubbed],
+      expect.any(Function),
     );
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.onboardSpy).not.toHaveBeenCalled();

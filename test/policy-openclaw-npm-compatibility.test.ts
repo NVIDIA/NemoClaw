@@ -132,20 +132,30 @@ function runLiveScenario({ initialPolicy, childScript, setMode = "success" }: Li
   const fakeOpenshell = path.join(tmpDir, "openshell");
   const callsPath = path.join(tmpDir, "calls.log");
   const currentPolicyPath = path.join(tmpDir, "current-policy.yaml");
+  const effectivePolicyPath = path.join(tmpDir, "effective-policy.json");
   const firstSetMarker = path.join(tmpDir, "first-set-attempted");
   fs.writeFileSync(currentPolicyPath, initialPolicy);
+  fs.writeFileSync(effectivePolicyPath, JSON.stringify(YAML.parse(initialPolicy)));
 
   fs.writeFileSync(
     fakeOpenshell,
     `#!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
 if [ "$1 $2" = "policy get" ]; then
+  if [[ " $* " == *" --output json "* ]]; then
+    sandbox_name="\${!#}"
+    printf '{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":' "$sandbox_name"
+    cat ${JSON.stringify(effectivePolicyPath)}
+    printf '}\n'
+    exit 0
+  fi
+  printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
   printf 'Version: 1\nHash: test\n---\n'
   cat ${JSON.stringify(currentPolicyPath)}
   exit 0
 fi
 if [ "$1 $2" = "policy set" ]; then
+  printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
   npm_test_set_mode=${JSON.stringify(setMode)}
   if [ "$npm_test_set_mode" = "fail" ]; then
     exit 88

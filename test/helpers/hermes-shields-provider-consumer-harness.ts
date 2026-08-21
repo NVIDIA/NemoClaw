@@ -46,6 +46,7 @@ export const hermesProviderConsumerSandbox: SandboxEntry = {
   name: "current-hermes",
   agent: "hermes",
   openshellDriver: "docker",
+  policyAuthority: "nemoclaw-managed",
   lifecycleGeneration: "generation-1",
   workload: {
     schemaVersion: 1,
@@ -252,6 +253,9 @@ export function createHermesShieldsProviderConsumerHarness(
   const runner = loadSource("../runner.js");
   const policy = loadSource("../policy/index.js");
   const registry = loadSource("../state/registry.js");
+  const policyAuthority = loadSource(
+    "../adapters/openshell/policy-authority.js",
+  ) as typeof import("../../src/lib/adapters/openshell/policy-authority.js");
   const privilegedExec = loadSource("../sandbox/privileged-exec.js");
   const dockerExec = loadSource("../adapters/docker/exec.js");
   const transition = loadSource("./hermes-runtime-state-mutation.js");
@@ -279,6 +283,10 @@ export function createHermesShieldsProviderConsumerHarness(
         String(file),
         String(name),
       ]),
+    vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
+      authority: "nemoclaw-managed",
+      effectivePolicy: { version: 1, network_policies: {} },
+    }),
     registrySpy,
     vi
       .spyOn(privilegedExec, "privilegedSandboxExecArgv")

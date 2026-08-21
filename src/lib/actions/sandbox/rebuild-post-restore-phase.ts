@@ -3,6 +3,7 @@
 
 import { loadAgent } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
+import type { SandboxPolicyAuthority } from "../../adapters/openshell/policy-authority";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
@@ -83,6 +84,8 @@ export interface RebuildPostRestorePhaseInput {
   backupWasForceSkipped: boolean;
   failedPresets: string[];
   finalBuiltinPresets: string[];
+  policyAuthority: SandboxPolicyAuthority;
+  validatePolicyAuthority: () => Promise<void>;
   failedPresetRemovals: string[];
   policyPresetReconciliationVerified: boolean;
   staleRecovery: boolean;
@@ -186,6 +189,8 @@ export async function runRebuildPostRestorePhase(
     backupWasForceSkipped,
     failedPresets,
     finalBuiltinPresets,
+    policyAuthority,
+    validatePolicyAuthority,
     failedPresetRemovals,
     policyPresetReconciliationVerified,
     staleRecovery,
@@ -222,6 +227,7 @@ export async function runRebuildPostRestorePhase(
     bail("Recreated sandbox agent identity did not match the authoritative rebuild target.");
     return;
   }
+  await validatePolicyAuthority();
   const agentDef = loadAgent(targetAgentName);
   const rebuiltAgentName = agentDef.displayName;
   let mutablePermsRepairUnverified = false;
@@ -247,16 +253,20 @@ export async function runRebuildPostRestorePhase(
       );
     }
 
+    await validatePolicyAuthority();
     // #7102: clear stale per-session pinned models left over from an
     // `inference set` before this rebuild, while the gateway is still down.
     reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log);
 
+    await validatePolicyAuthority();
     await reapplyMessagingManifestAfterOpenClawDoctor(sandboxName, messagingPlan, log);
+    await validatePolicyAuthority();
     log("Refreshing mutable OpenClaw config hash after post-restore config writes");
     if (!refreshMutableOpenClawConfigHashAfterPostRestoreWrites(sandboxName, log)) {
       mutableConfigHashRefreshUnverified = true;
     }
 
+    await validatePolicyAuthority();
     log("Restoring mutable OpenClaw config permissions after post-restore config writes");
     let permRepair: ReturnType<typeof shields.repairMutableConfigPerms> | null = null;
     try {
@@ -291,11 +301,15 @@ export async function runRebuildPostRestorePhase(
   // Restart before restoring MCP. The Hermes MCP transaction performs an
   // acknowledged reload of its own; restarting afterwards would replace the
   // only runtime whose managed MCP configuration was proven to have loaded.
+  await validatePolicyAuthority();
   const hermesGatewayRestartState = restartHermesGatewayAfterStateRestore(
     sandboxName,
     targetAgentName,
   );
-  const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(sandboxName, mcpEntries));
+  await validatePolicyAuthority();
+  const mcpBridgeRestoreUnverified = !(
+    await restoreMcpAfterRebuild(sandboxName, mcpEntries, validatePolicyAuthority)
+  );
   const hermesGatewayVerification = hermesCronRestoreIdentity
     ? verifyHermesGatewayAfterStateRestoreForCronGate(
         sandboxName,
@@ -341,6 +355,7 @@ export async function runRebuildPostRestorePhase(
     }
     let completedIdentity: HermesCronRestoreIdentity;
     try {
+      await validatePolicyAuthority();
       completedIdentity = completeHermesCronRestoreAfterGatewayReplacement(
         sandboxName,
         hermesCronRestoreIdentity,
@@ -374,29 +389,37 @@ export async function runRebuildPostRestorePhase(
   } else if (hermesGatewayRestoreState === "recovered") {
     console.log(`  ${G}\u2713${R} Hermes gateway recovered after state restore`);
   }
-  const { policies: restoredBuiltinPresets, policyPresetsFinalized } =
-    resolveRestoredPolicyRegistryState(
-      {
-        policyPresetsFinalized: sb.policyPresetsFinalized,
-      },
-      finalBuiltinPresets,
-      failedPresets,
-      policyPresetReconciliationVerified,
-    );
+  const externallyManagedPolicy = policyAuthority === "externally-managed";
+  const { policies: restoredBuiltinPresets, policyPresetsFinalized } = externallyManagedPolicy
+    ? { policies: [], policyPresetsFinalized: undefined }
+    : resolveRestoredPolicyRegistryState(
+        {
+          policyPresetsFinalized: sb.policyPresetsFinalized,
+        },
+        finalBuiltinPresets,
+        failedPresets,
+        policyPresetReconciliationVerified,
+      );
+  await validatePolicyAuthority();
   registry.updateSandbox(sandboxName, {
     agentVersion: agentDef.expectedVersion || null,
     policies: restoredBuiltinPresets,
     policyTier: normalizePolicyTierName(sb.policyTier),
     policyPresetsFinalized,
+    ...(externallyManagedPolicy
+      ? { baselineExclusions: [], customPolicies: [], policyAuthority }
+      : {}),
   });
   log(
     `Registry updated: agentVersion=${agentDef.expectedVersion}, policies=[${restoredBuiltinPresets.join(",")}], policyPresetsFinalized=${String(policyPresetsFinalized === true)}`,
   );
 
+  await validatePolicyAuthority();
   if (!relockShieldsIfNeeded(true)) {
     bail("Failed to re-apply shields lockdown.");
     return;
   }
+  await validatePolicyAuthority();
   if (!ensureMessagingHostForwardAfterRebuild(sandboxName, messagingPlan)) {
     messagingHostForwardUnverified = true;
   }
@@ -404,6 +427,7 @@ export async function runRebuildPostRestorePhase(
     finalMutableConfigHashUnverified = true;
   }
 
+  await validatePolicyAuthority();
   console.log("");
   const postRestoreComplete = postRestoreCompleted({
     hermesGatewayRestoreUnverified,

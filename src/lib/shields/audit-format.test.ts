@@ -202,4 +202,21 @@ describe("shields-audit production redaction", () => {
     expect(entry.policy_applied).toBe("permissive");
     expect(entry.action).toBe("shields_up_failed");
   });
+
+  it("strips secrets from warning fields (#9833)", async () => {
+    const appendAuditEntry = await loadAppendAuditEntry();
+    appendAuditEntry({
+      action: "shields_auto_restore_lock_warning",
+      sandbox: "hermes",
+      timestamp: "2026-04-13T14:30:00Z",
+      warning: `lock_token=${SECRETS.nvapi} ${SECRETS.bearer}`,
+    });
+
+    const line = fs.readFileSync(realAuditPath, "utf-8").trim();
+    assertNoSecrets(line);
+    expect(JSON.parse(line)).toMatchObject({
+      action: "shields_auto_restore_lock_warning",
+      sandbox: "hermes",
+    });
+  });
 });

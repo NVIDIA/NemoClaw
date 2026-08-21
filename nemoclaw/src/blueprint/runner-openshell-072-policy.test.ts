@@ -13,6 +13,13 @@ import {
   inMemoryFsMethods,
   resolvedEndpointFor,
 } from "./runner-mock-fixtures.js";
+import {
+  globalPolicyAbsentResult,
+  globalPolicyAuthorityResult,
+  minimalBlueprint,
+  sandboxPolicyAuthorityResult,
+  successResult,
+} from "./runner-test-fixtures.js";
 
 const { store } = createRunnerFsStore();
 const mockExeca = vi.fn();
@@ -108,6 +115,14 @@ function policySetCalls(): unknown[][] {
   );
 }
 
+function defaultCommandResult(args: string[]) {
+  return args.join(" ") === "policy get --global --full --output json"
+    ? globalPolicyAbsentResult()
+    : args.join(" ") === "policy get test-sandbox --full --output json"
+      ? sandboxPolicyAuthorityResult("test-sandbox")
+      : successResult();
+}
+
 function mergedPolicy(): Record<string, unknown> {
   const key = [...store.keys()].find((candidate) => candidate.endsWith("/merged-policy.yaml"));
   expect(key).toBeDefined();
@@ -155,15 +170,17 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       ["policy get --base test-sandbox", policyOutput(BASE_POLICY)],
       ["policy get --full test-sandbox", policyOutput(FULL_POLICY)],
     ]);
-    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => ({
-      exitCode: 0,
-      stdout: policyByCommand.get(args.slice(0, 4).join(" ")) ?? "",
-      stderr: "",
-    }));
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
+      const policy = policyByCommand.get(args.slice(0, 4).join(" "));
+      return policy === undefined
+        ? defaultCommandResult(args)
+        : { exitCode: 0, stdout: policy, stderr: "" };
+    });
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("preserves MCP, JSON-RPC, and unknown mapping sections without provider entries", async () => {
@@ -200,14 +217,11 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     ["scalar", "future_mode", "future_mode: strict\n"],
     ["sequence", "future_features", "future_features: [audit, attribution]\n"],
   ])("fails closed for an unknown top-level %s", async (_shape, key, fragment) => {
-    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => ({
-      exitCode: 0,
-      stdout:
-        args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
-          ? policyOutput(`${fragment}${BASE_POLICY}`)
-          : "",
-      stderr: "",
-    }));
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
+        ? { exitCode: 0, stdout: policyOutput(`${fragment}${BASE_POLICY}`), stderr: "" }
+        : defaultCommandResult(args),
+    );
 
     await expect(actionApply("default", blueprint())).rejects.toThrow(
       `Current policy top-level field "${key}" must be a YAML mapping`,
@@ -219,7 +233,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
       args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
         ? { exitCode: 1, stdout: "", stderr: "gateway unavailable" }
-        : { exitCode: 0, stdout: "", stderr: "" },
+        : defaultCommandResult(args),
     );
 
     await expect(actionApply("default", blueprint())).rejects.toThrow(
@@ -229,14 +243,11 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
   });
 
   it("fails closed when policy get --base returns metadata without a policy document", async () => {
-    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => ({
-      exitCode: 0,
-      stdout:
-        args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
-          ? "Version: 1\nHash: sha256:test\n"
-          : "",
-      stderr: "",
-    }));
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
+        ? { exitCode: 0, stdout: "Version: 1\nHash: sha256:test\n", stderr: "" }
+        : defaultCommandResult(args),
+    );
 
     await expect(actionApply("default", blueprint())).rejects.toThrow(
       /does not contain a policy YAML document/,
@@ -249,14 +260,11 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     malformedBase.network_policies["_provider_unexpected"] = {
       endpoints: [{ host: "provider.invalid", port: 443, access: "full" }],
     };
-    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => ({
-      exitCode: 0,
-      stdout:
-        args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
-          ? policyOutput(YAML.stringify(malformedBase))
-          : "",
-      stderr: "",
-    }));
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
+        ? { exitCode: 0, stdout: policyOutput(YAML.stringify(malformedBase)), stderr: "" }
+        : defaultCommandResult(args),
+    );
 
     await actionApply("default", blueprint());
     const merged = mergedPolicy() as {
@@ -284,18 +292,162 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
   });
 
   it("fails closed for a legacy network_policies array instead of dropping it", async () => {
-    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => ({
-      exitCode: 0,
-      stdout:
-        args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
-          ? policyOutput("version: 1\nnetwork_policies:\n  - name: legacy\n")
-          : "",
-      stderr: "",
-    }));
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
+        ? {
+            exitCode: 0,
+            stdout: policyOutput("version: 1\nnetwork_policies:\n  - name: legacy\n"),
+            stderr: "",
+          }
+        : defaultCommandResult(args),
+    );
 
     await expect(actionApply("default", blueprint())).rejects.toThrow(
       /network_policies must be a YAML mapping/,
     );
     expect(policySetCalls()).toEqual([]);
+  });
+
+  it("records external authority and omits ambient create policy without additions (#9833)", async () => {
+    vi.stubEnv("OPENSHELL_SANDBOX_POLICY", "/tmp/caller-policy.yaml");
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.includes("--global")
+        ? globalPolicyAuthorityResult()
+        : args.join(" ") === "policy get test-sandbox --full --output json"
+          ? sandboxPolicyAuthorityResult("test-sandbox", "externally-managed")
+          : defaultCommandResult(args),
+    );
+
+    await actionApply("default", minimalBlueprint());
+
+    const createCall = mockExeca.mock.calls.find(([, args]) => args[0] === "sandbox");
+    expect(createCall?.[2].env).not.toHaveProperty("OPENSHELL_SANDBOX_POLICY");
+    const plan = [...store.entries()].find(([key]) => key.endsWith("/plan.json"))?.[1];
+    expect(JSON.parse(plan?.content ?? "{}").policy_authority).toEqual({
+      authority: "externally-managed",
+      scope: "sandbox",
+      sandbox_name: "test-sandbox",
+    });
+    expect(policySetCalls()).toEqual([]);
+  });
+
+  it.each([
+    ["omitted", { exitCode: 0, stdout: "" }],
+    ["changed", { exitCode: 0, stdout: "", stderr: "No policy revisions exist" }],
+  ])(
+    "accepts an empty successful global result when stderr is %s (#9833)",
+    async (_label, result) => {
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        args.join(" ") === "policy get --global --full --output json"
+          ? result
+          : defaultCommandResult(args),
+      );
+
+      await expect(actionApply("default", minimalBlueprint())).resolves.toBeUndefined();
+
+      const commands = mockExeca.mock.calls.map(([, args]) => args.join(" "));
+      expect(commands.some((command) => command.startsWith("sandbox create "))).toBe(true);
+    },
+  );
+
+  it("records global authority before refusing missing external requirements (#9833)", async () => {
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.includes("--global") ? globalPolicyAuthorityResult() : successResult(),
+    );
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      /missing entries "nim_service"/,
+    );
+
+    const plan = [...store.entries()].find(([key]) => key.endsWith("/plan.json"))?.[1];
+    expect(JSON.parse(plan?.content ?? "{}").policy_authority).toEqual({
+      authority: "externally-managed",
+      scope: "global",
+    });
+    const commands = mockExeca.mock.calls.map(([, args]) => args.join(" "));
+    expect(commands.some((command) => command.startsWith("sandbox create "))).toBe(false);
+    expect(commands.some((command) => command.startsWith("provider create "))).toBe(false);
+  });
+
+  it("rejects missing external entries on a reused sandbox before provider mutation (#9833)", async () => {
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "sandbox create --from openclaw --name test-sandbox --forward 18789"
+        ? { exitCode: 1, stdout: "", stderr: "already exists" }
+        : args.join(" ") === "policy get test-sandbox --full --output json"
+          ? sandboxPolicyAuthorityResult("test-sandbox", "externally-managed")
+          : defaultCommandResult(args),
+    );
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      /missing entries "nim_service"/,
+    );
+    const plan = [...store.entries()].find(([key]) => key.endsWith("/plan.json"))?.[1];
+    expect(JSON.parse(plan?.content ?? "{}").policy_authority).toEqual({
+      authority: "externally-managed",
+      scope: "sandbox",
+      sandbox_name: "test-sandbox",
+    });
+    expect(
+      mockExeca.mock.calls.some(([, args]) => args[0] === "provider" && args[1] === "create"),
+    ).toBe(false);
+    expect(policySetCalls()).toEqual([]);
+  });
+
+  it.each([
+    ["provider", 2, false],
+    ["inference route", 3, true],
+  ])(
+    "rechecks sandbox authority immediately before %s mutation (#9833)",
+    async (_edge, driftAtInspection, providerCreated) => {
+      let sandboxInspections = 0;
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        args.join(" ") === "policy get test-sandbox --full --output json"
+          ? sandboxPolicyAuthorityResult(
+              "test-sandbox",
+              (sandboxInspections += 1) < driftAtInspection
+                ? "nemoclaw-managed"
+                : "externally-managed",
+            )
+          : args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
+            ? { exitCode: 0, stdout: policyOutput(BASE_POLICY), stderr: "" }
+            : defaultCommandResult(args),
+      );
+
+      await expect(actionApply("default", blueprint())).rejects.toThrow(/authority changed/);
+      const commands = mockExeca.mock.calls.map(([, args]) => args.join(" "));
+      expect(sandboxInspections).toBe(driftAtInspection);
+      expect(
+        commands.includes(
+          "provider create --name my-provider --type openai --config OPENAI_BASE_URL=https://api.example.com/v1",
+        ),
+      ).toBe(providerCreated);
+      expect(commands).not.toContain("inference set --provider my-provider --model gpt-4");
+      expect(policySetCalls()).toEqual([]);
+    },
+  );
+
+  it("does not report completion when authority changes during the final policy command (#9833)", async () => {
+    let sandboxInspections = 0;
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "policy get test-sandbox --full --output json"
+        ? sandboxPolicyAuthorityResult(
+            "test-sandbox",
+            (sandboxInspections += 1) < 6 ? "nemoclaw-managed" : "externally-managed",
+          )
+        : args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
+          ? { exitCode: 0, stdout: policyOutput(BASE_POLICY), stderr: "" }
+          : defaultCommandResult(args),
+    );
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(/authority changed/);
+    expect(policySetCalls()).toHaveLength(1);
+    expect(sandboxInspections).toBe(6);
+    expect(vi.mocked(process.stdout.write).mock.calls.flat().join("")).not.toContain(
+      "Apply complete",
+    );
+    const commands = mockExeca.mock.calls.map(([, args]) => args.join(" "));
+    expect(commands).not.toContain("sandbox stop test-sandbox");
+    expect(commands).not.toContain("sandbox remove test-sandbox");
+    expect(commands).not.toContain("provider delete my-provider");
   });
 });

@@ -14,6 +14,7 @@ import {
   reattachMcpProvidersAfterRebuildAbort,
   restoreMcpBridgesAfterRebuild,
 } from "./mcp-bridge";
+import { McpPolicyAuthorityRefusalError } from "./mcp-bridge-policy";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
@@ -38,6 +39,7 @@ export async function prepareMcpForRebuild(
   force: boolean,
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean,
   bail: RebuildBail,
+  validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<McpRebuildPreparation | null> {
   // invalidState: OpenShell still reports a live sandbox, but the
   // side-effect-free `:` command cannot cross every transport required by live
@@ -67,7 +69,9 @@ export async function prepareMcpForRebuild(
   try {
     return await (staleRecovery
       ? prepareMcpBridgesForAbsentSandboxRebuild(sandboxName)
-      : prepareMcpBridgesForRebuild(sandboxName));
+      : validateContainingPolicyReceipt
+        ? prepareMcpBridgesForRebuild(sandboxName, validateContainingPolicyReceipt)
+        : prepareMcpBridgesForRebuild(sandboxName));
   } catch (error) {
     relockShieldsIfNeeded(!staleRecovery);
     bail(
@@ -81,9 +85,17 @@ export async function reattachMcpAfterDeleteFailure(
   sandboxName: string,
   entries: McpRebuildPreparation["detachedProviderEntries"],
   scrubbedAdapterEntries: McpRebuildPreparation["scrubbedAdapterEntries"],
+  validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<string | undefined> {
   try {
-    await reattachMcpProvidersAfterRebuildAbort(sandboxName, entries, scrubbedAdapterEntries);
+    await (validateContainingPolicyReceipt
+      ? reattachMcpProvidersAfterRebuildAbort(
+          sandboxName,
+          entries,
+          scrubbedAdapterEntries,
+          validateContainingPolicyReceipt,
+        )
+      : reattachMcpProvidersAfterRebuildAbort(sandboxName, entries, scrubbedAdapterEntries));
     return undefined;
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
@@ -150,14 +162,19 @@ export function printMcpRebuildRetryCommand(
 export async function restoreMcpAfterRebuild(
   sandboxName: string,
   entries: McpRebuildPreparation["entries"],
+  validatePolicyAuthority: () => Promise<void>,
 ): Promise<boolean> {
+  await validatePolicyAuthority();
   if (entries.length === 0) return true;
   console.log("  Restoring MCP bridges...");
   try {
-    await restoreMcpBridgesAfterRebuild(sandboxName, entries);
+    await restoreMcpBridgesAfterRebuild(sandboxName, entries, validatePolicyAuthority);
+    await validatePolicyAuthority();
     console.log(`  ${G}✓${R} MCP bridges restored`);
     return true;
   } catch (error) {
+    if (error instanceof McpPolicyAuthorityRefusalError) throw error;
+    await validatePolicyAuthority();
     console.error(
       `  ${YW}⚠${R} MCP bridge restore incomplete: ${error instanceof Error ? error.message : String(error)}`,
     );

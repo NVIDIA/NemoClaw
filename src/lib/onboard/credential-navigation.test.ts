@@ -74,4 +74,28 @@ describe("credential prompt navigation helpers", () => {
       vi.restoreAllMocks();
     }
   });
+
+  it("rechecks policy authority after the credential prompt before persistence (#9833)", async () => {
+    const prompt = vi
+      .spyOn(credentials, "readCredentialPrompt")
+      .mockResolvedValue({ kind: "credential", value: "new-secret" });
+    const saveCredential = vi.spyOn(credentials, "saveCredential");
+    delete process.env.NEMOCLAW_TEST_POLICY_CREDENTIAL;
+
+    await expect(
+      replaceNamedCredential({
+        envName: "NEMOCLAW_TEST_POLICY_CREDENTIAL",
+        label: "Policy credential",
+        exitOnboardFromPrompt: () => process.exit(1),
+        revalidatePolicyRequirements: () => {
+          throw new Error("external policy authority must supply the selected route");
+        },
+      }),
+    ).rejects.toThrow(/external policy authority must supply/u);
+
+    expect(prompt).toHaveBeenCalledOnce();
+    expect(saveCredential).not.toHaveBeenCalled();
+    expect(process.env.NEMOCLAW_TEST_POLICY_CREDENTIAL).toBeUndefined();
+    vi.restoreAllMocks();
+  });
 });

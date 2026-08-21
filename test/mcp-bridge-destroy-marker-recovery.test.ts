@@ -52,6 +52,19 @@ function runNodeScript(
   return { status: result.status, stdout: result.stdout || "", stderr: result.stderr || "" };
 }
 
+function runManagedMcpNodeScript(
+  home: string,
+  script: string,
+): { status: number | null; stdout: string; stderr: string } {
+  const managedPolicyAuthority = `
+const __mcpPolicy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+const __policyAuthority = require("./src/lib/actions/sandbox/policy-authority/preflight.js");
+__mcpPolicy.preflightMcpPolicyAuthority = () => "nemoclaw-managed";
+__policyAuthority.preflightSandboxPolicyAuthority = () => "nemoclaw-managed";
+`;
+  return runNodeScript(home, `${managedPolicyAuthority}\n${script}`);
+}
+
 const GITHUB_BRIDGE = `{
   server: "github",
   agent: "openclaw",
@@ -197,7 +210,7 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
   },
 );
 `;
-    const result = runNodeScript(home, script);
+    const result = runManagedMcpNodeScript(home, script);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(
       "Cleared incomplete MCP destroy transaction on sandbox 'stuck-sandbox'",
@@ -338,7 +351,7 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
   },
 );
 `;
-    const result = runNodeScript(home, script);
+    const result = runManagedMcpNodeScript(home, script);
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const removedLog = result.stdout.indexOf("Removed MCP server 'github'");
     const clearedLog = result.stdout.indexOf("Cleared incomplete MCP destroy transaction");
@@ -419,7 +432,7 @@ bridge.removeMcpBridge("stuck-sandbox", "not-registered", { force: true }).then(
   },
 );
 `;
-    const result = runNodeScript(home, script);
+    const result = runManagedMcpNodeScript(home, script);
     expect(result.status).toBe(0);
     const jsonMarker = "<<REPRO_JSON>>";
     const parsed = JSON.parse(
@@ -460,7 +473,7 @@ bridge.removeMcpBridge("deleted-sandbox", "github", { force: true }).then(
   },
 );
 `;
-    const result = runNodeScript(home, script);
+    const result = runManagedMcpNodeScript(home, script);
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout) as {
       error: string;
@@ -525,7 +538,7 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
   },
 );
 `;
-    const result = runNodeScript(home, script);
+    const result = runManagedMcpNodeScript(home, script);
     expect(result.status).toBe(0);
     const jsonMarker = "<<REPRO_JSON>>";
     const jsonPayload = result.stdout.slice(result.stdout.indexOf(jsonMarker) + jsonMarker.length);
@@ -581,7 +594,7 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true, allowResidual: 
   },
 );
 `;
-    const result = runNodeScript(home, script);
+    const result = runManagedMcpNodeScript(home, script);
     expect(result.status).toBe(0);
     expect(result.stderr).toContain("adapter cleanup failed (injected)");
     const jsonMarker = "<<REPRO_JSON>>";
@@ -630,7 +643,7 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
   },
 );
 `;
-    const result = runNodeScript(home, script);
+    const result = runManagedMcpNodeScript(home, script);
     expect(result.status).toBe(0);
     const jsonMarker = "<<REPRO_JSON>>";
     const parsed = JSON.parse(
@@ -745,7 +758,7 @@ bridge.removeMcpBridge("stuck-sandbox", "github", {}).then(
   },
 );
 `;
-    const result = runNodeScript(home, script);
+    const result = runManagedMcpNodeScript(home, script);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("incomplete MCP destroy transaction");
     expect(result.stdout).toContain("mcp remove <server> --force");

@@ -512,9 +512,11 @@ export async function verifyGpuSandboxLocalInferenceAndCommitAfterReady(
     ManagedBootstrapRuntimePatch,
     "commitAfterReady" | "rollbackManagedStartupAfterCreateFailure"
   >,
+  revalidateBeforeCommit?: () => void,
 ): Promise<void> {
   try {
     verifyGpuSandboxLocalInferenceAfterReady(config, provider, options);
+    revalidateBeforeCommit?.();
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error));
     try {

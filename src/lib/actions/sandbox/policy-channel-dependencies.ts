@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { runOpenshell } from "../../adapters/openshell/runtime";
+import { runOpenshell as defaultRunOpenshell } from "../../adapters/openshell/runtime";
+import { preflightSandboxPolicyAuthority } from "./policy-authority/preflight";
 
 type MessagingProviderTokenDefinition = {
   name: string;
@@ -13,12 +14,13 @@ type MessagingProviderTokenDefinition = {
 type MessagingProviderUpsertOptions = {
   replaceExisting?: boolean;
   bestEffort?: boolean;
+  revalidatePolicyRequirements?(operation: string): void;
 };
 
 type LegacyOnboardProvidersModule = {
   upsertMessagingProviders(
     tokenDefs: MessagingProviderTokenDefinition[],
-    run: typeof runOpenshell,
+    run: typeof defaultRunOpenshell,
     options?: MessagingProviderUpsertOptions,
   ): string[];
 };
@@ -45,12 +47,14 @@ type GooglechatWebhookProxy = Pick<
  * onboarding and rebuild modules at policy-channel import time.
  */
 export const policyChannelDependencies = {
+  preflightSandboxPolicyAuthority,
+  runOpenshell: (...args: Parameters<typeof defaultRunOpenshell>) => defaultRunOpenshell(...args),
   upsertMessagingProviders(
     tokenDefs: MessagingProviderTokenDefinition[],
     options?: MessagingProviderUpsertOptions,
   ): string[] {
     const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
-    return providers.upsertMessagingProviders(tokenDefs, runOpenshell, options);
+    return providers.upsertMessagingProviders(tokenDefs, defaultRunOpenshell, options);
   },
   rebuildSandbox(
     sandboxName: Parameters<RebuildModule["rebuildSandbox"]>[0],

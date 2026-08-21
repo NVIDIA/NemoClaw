@@ -109,6 +109,8 @@ describe("rebuild post-restore phase", () => {
       backupWasForceSkipped: false,
       failedPresets: [],
       finalBuiltinPresets: [],
+      policyAuthority: "nemoclaw-managed" as const,
+      validatePolicyAuthority: vi.fn(async () => undefined),
       failedPresetRemovals: [],
       policyPresetReconciliationVerified: true,
       staleRecovery: false,
@@ -126,6 +128,108 @@ describe("rebuild post-restore phase", () => {
     await runRebuildPostRestorePhase(input());
 
     expect(order).toEqual(["doctor", "reconcile", "messaging", "config-hash", "config-hash-final"]);
+  });
+
+  it("stops post-restore service and registry effects when authority changed (#9833)", async () => {
+    const args = {
+      ...input(),
+      validatePolicyAuthority: vi.fn(async () => {
+        throw new Error("authority changed after filesystem restore");
+      }),
+    };
+
+    await expect(runRebuildPostRestorePhase(args)).rejects.toThrow(
+      "authority changed after filesystem restore",
+    );
+
+    expect(processRecovery.executeSandboxCommand).not.toHaveBeenCalled();
+    expect(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).not.toHaveBeenCalled();
+    expect(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
+    expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
+    expect(registry.updateSandbox).not.toHaveBeenCalled();
+    expect(args.relockShieldsIfNeeded).not.toHaveBeenCalled();
+    expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
+  });
+
+  it("stops after doctor when policy authority changes during the command (#9833)", async () => {
+    let authorityChanged = false;
+    vi.mocked(processRecovery.executeSandboxCommand).mockImplementation(() => {
+      authorityChanged = true;
+      return { status: 0, stdout: "", stderr: "" };
+    });
+    const args = {
+      ...input(),
+      validatePolicyAuthority: vi.fn(() =>
+        authorityChanged
+          ? Promise.reject(new Error("authority changed during doctor"))
+          : Promise.resolve(),
+      ),
+    };
+
+    await expect(runRebuildPostRestorePhase(args)).rejects.toThrow(
+      "authority changed during doctor",
+    );
+
+    expect(processRecovery.executeSandboxCommand).toHaveBeenCalledOnce();
+    expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).not.toHaveBeenCalled();
+    expect(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).not.toHaveBeenCalled();
+    expect(shields.repairMutableConfigPerms).not.toHaveBeenCalled();
+    expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
+    expect(registry.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("stops before permission repair when authority changes during hash refresh (#9833)", async () => {
+    let authorityChanged = false;
+    vi.mocked(
+      rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
+    ).mockImplementation(() => {
+      authorityChanged = true;
+      return true;
+    });
+    const args = {
+      ...input(),
+      validatePolicyAuthority: vi.fn(() =>
+        authorityChanged
+          ? Promise.reject(new Error("authority changed during config hash refresh"))
+          : Promise.resolve(),
+      ),
+    };
+
+    await expect(runRebuildPostRestorePhase(args)).rejects.toThrow(
+      "authority changed during config hash refresh",
+    );
+
+    expect(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).toHaveBeenCalledOnce();
+    expect(shields.repairMutableConfigPerms).not.toHaveBeenCalled();
+    expect(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
+    expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
+    expect(registry.updateSandbox).not.toHaveBeenCalled();
+    expect(args.relockShieldsIfNeeded).not.toHaveBeenCalled();
+  });
+
+  it("keeps external rebuild policy authority without NemoClaw preset attribution (#9833)", async () => {
+    const args = {
+      ...input(),
+      policyAuthority: "externally-managed" as const,
+      finalBuiltinPresets: ["npm"],
+      sandboxEntry: {
+        baselineExclusions: [{ key: "openclaw_docs" }],
+        customPolicies: [{ name: "custom-api", content: "network_policies: {}" }],
+        policies: ["npm"],
+      } as never,
+    };
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(registry.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        baselineExclusions: [],
+        customPolicies: [],
+        policies: [],
+        policyAuthority: "externally-managed",
+      }),
+    );
   });
 
   it("fails when doctor returns 255 and the final OpenClaw config hash is unverified (#9530)", async () => {

@@ -42,8 +42,12 @@ export interface RebuildDestroyPhaseInput {
   bail: RebuildBail;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
   force?: boolean;
+  validateBeforeMcpPreparation?: () => Promise<RebuildDeleteValidationResult>;
+  validateMcpPolicyAuthorityReceipt?: () => Promise<void>;
   validateAfterMcpPreparation?: () => Promise<RebuildDeleteValidationResult>;
+  validateBeforeDeleteCommit?: () => Promise<RebuildDeleteValidationResult>;
   validateAtDeleteEdge?: () => RebuildDeleteValidationResult;
+  validateAfterDeleteConfirmation?: () => Promise<RebuildDeleteValidationResult>;
   onDeleted: () => void;
   onDeleteStateAmbiguous?: () => void;
 }
@@ -234,8 +238,12 @@ export async function runRebuildDestroyPhase(
     log,
     bail,
     relockShieldsIfNeeded,
+    validateBeforeMcpPreparation,
+    validateMcpPolicyAuthorityReceipt,
     validateAfterMcpPreparation,
+    validateBeforeDeleteCommit,
     validateAtDeleteEdge,
+    validateAfterDeleteConfirmation,
     onDeleted,
   } = input;
   const deleteTarget = resolveRebuildDeleteTarget(sandboxName, input.sandboxEntry);
@@ -270,13 +278,39 @@ export async function runRebuildDestroyPhase(
   };
   const mcpPreparation = await prepareMcpBeforeBestEffortNimStop({
     prepareMcp: async () => {
-      const preparation = await prepareMcpForRebuild(
-        sandboxName,
-        staleRecovery,
-        input.force === true,
-        relockShieldsIfNeeded,
-        bail,
-      );
+      if (validateBeforeMcpPreparation) {
+        let validation: RebuildDeleteValidationResult;
+        try {
+          validation = await validateBeforeMcpPreparation();
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          log(`Unexpected pre-MCP validation failure: ${redactFull(detail)}`);
+          validation = {
+            ok: false,
+            message: "Policy authority validation failed before MCP preparation.",
+          };
+        }
+        if (!validation.ok) {
+          relockShieldsIfNeeded(true);
+          bail(validation.message, validation.code);
+        }
+      }
+      const preparation = await (validateMcpPolicyAuthorityReceipt
+        ? prepareMcpForRebuild(
+            sandboxName,
+            staleRecovery,
+            input.force === true,
+            relockShieldsIfNeeded,
+            bail,
+            validateMcpPolicyAuthorityReceipt,
+          )
+        : prepareMcpForRebuild(
+            sandboxName,
+            staleRecovery,
+            input.force === true,
+            relockShieldsIfNeeded,
+            bail,
+          ));
       return preparation;
     },
     afterPrepare: async (preparation) => {
@@ -302,6 +336,7 @@ export async function runRebuildDestroyPhase(
           sandboxName,
           preparation.detachedProviderEntries,
           preparation.scrubbedAdapterEntries,
+          validateMcpPolicyAuthorityReceipt,
         );
         relockShieldsIfNeeded(true);
         bail(
@@ -351,6 +386,7 @@ export async function runRebuildDestroyPhase(
       sandboxName,
       rebuildDetachedMcpProviderEntries,
       rebuildScrubbedMcpAdapterEntries,
+      validateMcpPolicyAuthorityReceipt,
     );
     relockShieldsIfNeeded(true);
     bail(
@@ -378,6 +414,7 @@ export async function runRebuildDestroyPhase(
         sandboxName,
         rebuildDetachedMcpProviderEntries,
         rebuildScrubbedMcpAdapterEntries,
+        validateMcpPolicyAuthorityReceipt,
       );
       relockShieldsIfNeeded(true);
       bail(
@@ -390,18 +427,18 @@ export async function runRebuildDestroyPhase(
     }
   }
 
-  // MCP adapter entries are already detached and scrubbed here. A journal write
-  // that fails must reattach them before the rebuild gives up, or the still
-  // running sandbox is left without its MCP wiring.
+  // MCP adapter entries are already detached and scrubbed here. Observe the
+  // source before the final awaited authority proof. Refusal must leave the
+  // delete journal, inference runtime, registry, and live sandbox unchanged.
   let sourcePresence: RebuildRecreateSourcePresence;
   try {
     sourcePresence = recreateJournal.observeSourceForDelete();
-    recreateJournal.markDeleting();
   } catch (error) {
     const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
       sandboxName,
       rebuildDetachedMcpProviderEntries,
       rebuildScrubbedMcpAdapterEntries,
+      validateMcpPolicyAuthorityReceipt,
     );
     relockShieldsIfNeeded(true);
     const detail = error instanceof Error ? error.message : String(error);
@@ -411,6 +448,72 @@ export async function runRebuildDestroyPhase(
         : `Sandbox deletion could not be journaled: ${redactFull(detail)}`,
     );
     return null;
+  }
+  if (validateBeforeDeleteCommit) {
+    let validation: RebuildDeleteValidationResult;
+    try {
+      validation = await validateBeforeDeleteCommit();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      log(`Unexpected delete-commit validation failure: ${redactFull(detail)}`);
+      validation = {
+        ok: false,
+        message: "Policy authority validation failed before sandbox deletion.",
+      };
+    }
+    if (!validation.ok) {
+      const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+        sandboxName,
+        rebuildDetachedMcpProviderEntries,
+        rebuildScrubbedMcpAdapterEntries,
+        validateMcpPolicyAuthorityReceipt,
+      );
+      relockShieldsIfNeeded(true);
+      bail(
+        mcpRecoveryFailure
+          ? `${validation.message} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+          : validation.message,
+        validation.code,
+      );
+      return null;
+    }
+  }
+  try {
+    recreateJournal.markDeleting();
+  } catch (error) {
+    const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+      sandboxName,
+      rebuildDetachedMcpProviderEntries,
+      rebuildScrubbedMcpAdapterEntries,
+      validateMcpPolicyAuthorityReceipt,
+    );
+    relockShieldsIfNeeded(true);
+    const detail = error instanceof Error ? error.message : String(error);
+    bail(
+      mcpRecoveryFailure
+        ? `Sandbox deletion could not be journaled: ${redactFull(detail)} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+        : `Sandbox deletion could not be journaled: ${redactFull(detail)}`,
+    );
+    return null;
+  }
+  if (validateBeforeDeleteCommit) {
+    const validation = await validateBeforeDeleteCommit();
+    if (!validation.ok) {
+      const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+        sandboxName,
+        rebuildDetachedMcpProviderEntries,
+        rebuildScrubbedMcpAdapterEntries,
+        validateMcpPolicyAuthorityReceipt,
+      );
+      relockShieldsIfNeeded(true);
+      bail(
+        mcpRecoveryFailure
+          ? `${validation.message} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+          : validation.message,
+        validation.code,
+      );
+      return null;
+    }
   }
   if (sourcePresence === "missing") {
     log(`Skipping delete: gateway ${gatewayName} reports '${sandboxName}' already absent`);
@@ -441,6 +544,7 @@ export async function runRebuildDestroyPhase(
         sandboxName,
         rebuildDetachedMcpProviderEntries,
         rebuildScrubbedMcpAdapterEntries,
+        validateMcpPolicyAuthorityReceipt,
       );
       if (mcpRecoveryFailure) {
         console.error(
@@ -488,6 +592,13 @@ export async function runRebuildDestroyPhase(
     input.onDeleteStateAmbiguous?.();
     bail("Sandbox deletion could not be confirmed.");
     return null;
+  }
+  if (validateAfterDeleteConfirmation) {
+    const validation = await validateAfterDeleteConfirmation();
+    if (!validation.ok) {
+      bail(validation.message, validation.code);
+      return null;
+    }
   }
   try {
     recreateJournal.confirmDeleted();

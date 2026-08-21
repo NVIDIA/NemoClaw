@@ -47,6 +47,25 @@ const RUNTIME_IDENTITY_BINARIES = Object.freeze([
   "/usr/local/bin/curl",
   "/usr/bin/curl",
 ]);
+const BLUEPRINT_POLICY_AUTHORITY_REFUSAL_CODE = "NEMOCLAW_BLUEPRINT_POLICY_AUTHORITY_REFUSAL";
+
+/** A final refusal at the blueprint policy-authority boundary. */
+export class BlueprintPolicyAuthorityRefusalError extends Error {
+  readonly code = BLUEPRINT_POLICY_AUTHORITY_REFUSAL_CODE;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "BlueprintPolicyAuthorityRefusalError";
+  }
+}
+
+/** Recognize blueprint policy-authority refusals across module boundaries. */
+export function isBlueprintPolicyAuthorityRefusalError(error: unknown): boolean {
+  return (
+    error instanceof BlueprintPolicyAuthorityRefusalError ||
+    (isPlainObject(error) && error.code === BLUEPRINT_POLICY_AUTHORITY_REFUSAL_CODE)
+  );
+}
 const RUNTIME_IDENTITY_PROFILE_KEYS = Object.freeze([
   "id",
   "display_name",
@@ -182,6 +201,7 @@ const RUNTIME_IDENTITY_PROFILE_POLICIES: Readonly<Record<string, RuntimeIdentity
 export interface RuntimeIdentityDeps extends RuntimeIdentityCommandDeps {
   validateEndpointUrl(url: string): Promise<RuntimeIdentityValidatedDestination>;
   persistReceipt(receipt: RuntimeIdentityReceipt): void;
+  revalidatePolicyAuthority(): Promise<void>;
   profilePolicy?: RuntimeIdentityProfilePolicy;
 }
 
@@ -844,6 +864,7 @@ async function compensatePreparationFailure(
   error: unknown,
   deps: RuntimeIdentityCommandDeps,
 ): Promise<never> {
+  if (isBlueprintPolicyAuthorityRefusalError(error)) throw error;
   const message = error instanceof Error ? error.message : String(error);
   try {
     await deleteCreatedProvider(receipt, deps);
@@ -922,6 +943,7 @@ export async function prepareRuntimeIdentity(
     );
   }
 
+  await deps.revalidatePolicyAuthority();
   const profileImport = await importValidatedProfile(profileSource, deps);
   if (profileImport.exitCode !== 0) {
     if (!/already exists/i.test(commandOutput(profileImport))) {
@@ -970,6 +992,7 @@ export async function prepareRuntimeIdentity(
   };
   let providerAcquired = false;
   try {
+    await deps.revalidatePolicyAuthority();
     const providerCreate = await deps.run([
       "openshell",
       "provider",
@@ -1010,6 +1033,7 @@ export async function prepareRuntimeIdentity(
       refreshArgs.push("--secret-material-env", `client_secret=${config.client_secret_env}`);
       refreshEnv[config.client_secret_env] = clientSecret;
     }
+    await deps.revalidatePolicyAuthority();
     const refreshResult = await deps.run(refreshArgs, { env: refreshEnv });
     if (refreshResult.exitCode !== 0) {
       throw new Error(

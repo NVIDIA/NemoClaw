@@ -117,24 +117,24 @@ describe("onboard session", () => {
     expect(dirStat.mode & 0o777).toBe(0o700);
   });
 
-  it.each([
-    true,
-    false,
-  ])("persists explicit observability intent when enabled=$enabled", (observabilityEnabled) => {
-    session.saveSession(
-      session.createSession({
-        observabilityEnabled,
-        observabilityRequestedExplicitly: true,
-      }),
-    );
-    const loaded = requireLoadedSession(session.loadSession());
-    const summary = requireDebugSummary(session.summarizeForDebug());
+  it.each([true, false])(
+    "persists explicit observability intent when enabled=$enabled",
+    (observabilityEnabled) => {
+      session.saveSession(
+        session.createSession({
+          observabilityEnabled,
+          observabilityRequestedExplicitly: true,
+        }),
+      );
+      const loaded = requireLoadedSession(session.loadSession());
+      const summary = requireDebugSummary(session.summarizeForDebug());
 
-    expect(loaded.observabilityEnabled).toBe(observabilityEnabled);
-    expect(loaded.observabilityRequestedExplicitly).toBe(true);
-    expect(summary.observabilityEnabled).toBe(observabilityEnabled);
-    expect(summary.observabilityRequestedExplicitly).toBe(true);
-  });
+      expect(loaded.observabilityEnabled).toBe(observabilityEnabled);
+      expect(loaded.observabilityRequestedExplicitly).toBe(true);
+      expect(summary.observabilityEnabled).toBe(observabilityEnabled);
+      expect(summary.observabilityRequestedExplicitly).toBe(true);
+    },
+  );
 
   it("defaults legacy observability intent and provenance off", () => {
     const legacy = session.createSession() as unknown as Record<string, unknown>;
@@ -1039,6 +1039,17 @@ describe("onboard session", () => {
     fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
     fs.writeFileSync(session.SESSION_FILE, "not-json");
     expect(session.loadSession()).toBeNull();
+  });
+
+  it("does not swallow an invalid saved policy authority (#9833)", () => {
+    const saved = session.createSession({ policyAuthority: "externally-managed" });
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.SESSION_FILE,
+      JSON.stringify({ ...saved, policyAuthority: "unspecified" }),
+    );
+
+    expect(() => session.loadSession()).toThrow(/saved policy authority is invalid/u);
   });
 
   it("keeps completed legacy checkpoint sessions readable as status evidence", () => {

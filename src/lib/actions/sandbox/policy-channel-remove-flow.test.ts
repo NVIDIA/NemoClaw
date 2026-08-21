@@ -28,6 +28,9 @@ describe("policy channel remove/enable flows", () => {
       throw new Error(`process.exit(${code ?? 0})`);
     }) as never);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(policyChannelDependencies, "preflightSandboxPolicyAuthority").mockReturnValue(
+      "nemoclaw-managed",
+    );
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
       status: 0,
@@ -89,9 +92,7 @@ describe("policy channel remove/enable flows", () => {
     expect(String(command)).toContain(
       "/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session",
     );
-    expect(String(command)).toContain(
-      "/sandbox/.hermes/dashboard-home/platforms/whatsapp/session",
-    );
+    expect(String(command)).toContain("/sandbox/.hermes/dashboard-home/platforms/whatsapp/session");
   }
 
   async function removeWhatsappNonInteractive() {
@@ -147,10 +148,21 @@ describe("policy channel remove/enable flows", () => {
     ).toBeLessThan(updateSandbox.mock.invocationCallOrder[0]);
   });
 
+  it("does not report tokenless removal before the messaging plan is persisted (#9833)", async () => {
+    const { updateSandbox } = await arrangeHermesWhatsappRemoval();
+    updateSandbox.mockReturnValue(false);
+
+    await expect(removeWhatsappNonInteractive()).rejects.toThrow("process.exit(1)");
+
+    expect(logSpy.mock.calls.flat().join("\n")).not.toContain("Removed whatsapp channel.");
+  });
+
   it.each([
     { scenario: "exec transport", execStatus: 0, usesSsh: false },
     { scenario: "SSH fallback", execStatus: 1, usesSsh: true },
-  ])("clears every Hermes WhatsApp session path through $scenario", async ({ execStatus, usesSsh }) => {
+  ])(
+    "clears every Hermes WhatsApp session path through $scenario",
+    async ({ execStatus, usesSsh }) => {
       const { updateSandbox } = await arrangeHermesWhatsappRemoval();
       vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
         status: execStatus,
@@ -180,36 +192,35 @@ describe("policy channel remove/enable flows", () => {
       expect(transport.mock.invocationCallOrder[0]).toBeLessThan(
         updateSandbox.mock.invocationCallOrder[0],
       );
-    });
+    },
+  );
 
   it("keeps channel state unchanged when both Hermes cleanup transports fail", async () => {
-      const { rebuildSandbox, removePreset, updateSandbox } = await arrangeHermesWhatsappRemoval();
-      const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
-      vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
-        status: 1,
-        stdout: "",
-        stderr: "exec unavailable",
-      });
-      vi.mocked(processRecovery.executeSandboxCommand).mockReturnValue({
-        status: 1,
-        stdout: "",
-        stderr: "ssh unavailable",
-      });
-
-      await expect(removeWhatsappNonInteractive()).rejects.toThrow("process.exit(1)");
-
-      expectHermesSessionCleanup(
-        vi.mocked(processRecovery.executeSandboxExecCommand).mock.calls[0]?.[1],
-      );
-      expectHermesSessionCleanup(
-        vi.mocked(processRecovery.executeSandboxCommand).mock.calls[0]?.[1],
-      );
-
-      expect(runOpenshell).not.toHaveBeenCalled();
-      expect(updateSandbox).not.toHaveBeenCalled();
-      expect(removePreset).not.toHaveBeenCalled();
-      expect(rebuildSandbox).not.toHaveBeenCalled();
+    const { rebuildSandbox, removePreset, updateSandbox } = await arrangeHermesWhatsappRemoval();
+    const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
+    vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "exec unavailable",
     });
+    vi.mocked(processRecovery.executeSandboxCommand).mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "ssh unavailable",
+    });
+
+    await expect(removeWhatsappNonInteractive()).rejects.toThrow("process.exit(1)");
+
+    expectHermesSessionCleanup(
+      vi.mocked(processRecovery.executeSandboxExecCommand).mock.calls[0]?.[1],
+    );
+    expectHermesSessionCleanup(vi.mocked(processRecovery.executeSandboxCommand).mock.calls[0]?.[1]);
+
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+    expect(removePreset).not.toHaveBeenCalled();
+    expect(rebuildSandbox).not.toHaveBeenCalled();
+  });
 
   it("supports stop dry runs for configured Hermes channels", async () => {
     vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", agent: "hermes" });
@@ -252,6 +263,76 @@ describe("policy channel remove/enable flows", () => {
     expect(updateSandboxSpy).not.toHaveBeenCalled();
     expect(rebuildSpy).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("stops channel start before policy or registry mutation when authority is inconclusive (#9833)", async () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", agent: "openclaw" });
+    vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
+    vi.spyOn(registry, "getDisabledChannels").mockReturnValue(["telegram"]);
+    vi.spyOn(policies, "loadPresetForSandbox").mockReturnValue(
+      "network_policies:\n  telegram_bot:\n    endpoints:\n      - host: api.telegram.org\n        port: 443\n",
+    );
+    vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("absent");
+    const updateSandbox = vi.spyOn(registry, "updateSandbox");
+    const applyPreset = vi.spyOn(policies, "applyPreset");
+    const rebuild = vi.spyOn(policyChannelDependencies, "rebuildSandbox");
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() => {
+      throw new Error("OpenShell returned an unknown policy source");
+    });
+
+    await expect(startSandboxChannel("alpha", { channel: "telegram" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(updateSandbox).not.toHaveBeenCalled();
+    expect(applyPreset).not.toHaveBeenCalled();
+    expect(rebuild).not.toHaveBeenCalled();
+  });
+
+  it("rechecks authority after start planning before registry mutation (#9833)", async () => {
+    const plan = await new MessagingWorkflowPlanner(
+      createBuiltInChannelManifestRegistry(),
+      createBuiltInMessagingHookRegistry(),
+      createBuiltInRenderTemplateResolver(),
+    ).buildPlan({
+      sandboxName: "alpha",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["telegram"],
+      disabledChannels: ["telegram"],
+    });
+    vi.spyOn(defs, "loadAgent").mockReturnValue({
+      name: "openclaw",
+      displayName: "OpenClaw",
+      configPaths: { dir: "/sandbox/.openclaw" },
+      stateDirs: [],
+    } as unknown as defs.AgentDefinition);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      messaging: { schemaVersion: 1, plan },
+    });
+    vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
+    vi.spyOn(registry, "getDisabledChannels").mockReturnValue(["telegram"]);
+    vi.spyOn(policies, "loadPresetForSandbox").mockReturnValue(
+      "network_policies:\n  telegram_bot:\n    endpoints:\n      - host: api.telegram.org\n        port: 443\n",
+    );
+    vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("absent");
+    const updateSandbox = vi.spyOn(registry, "updateSandbox");
+    const applyPreset = vi.spyOn(policies, "applyPreset");
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority)
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockImplementationOnce(() => {
+        throw new Error("OpenShell policy authority changed after channel planning");
+      });
+
+    await expect(startSandboxChannel("alpha", { channel: "telegram" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(updateSandbox).not.toHaveBeenCalled();
+    expect(applyPreset).not.toHaveBeenCalled();
   });
 
   it("does not claim new egress on a start dry run when the preset already matches the live policy (#7179)", async () => {

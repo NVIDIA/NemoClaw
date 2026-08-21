@@ -494,6 +494,7 @@ describe("rebuildSandbox flow: recovery", () => {
       "alpha",
       [attached],
       undefined,
+      expect.any(Function),
     );
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });

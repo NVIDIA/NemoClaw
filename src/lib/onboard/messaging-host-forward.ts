@@ -25,6 +25,7 @@ export interface MessagingHostForwardRollbackOptions {
   ) => readonly string[];
   readonly cliName: () => string;
   readonly forwardPortsToStop?: readonly (number | string | null | undefined)[];
+  readonly beforeMutation?: (operation: string) => void;
   readonly error?: (message?: string) => void;
   readonly exit?: (code: number) => never;
 }
@@ -113,8 +114,12 @@ function abortMessagingHostForwardFailure({
   portsToStop.add(String(forward.port));
 
   for (const port of portsToStop) {
+    rollback.beforeMutation?.(
+      `stop messaging forward ${port} for sandbox '${sandboxName}' after dashboard failure`,
+    );
     rollback.runOpenshell(["forward", "stop", port, sandboxName], { ignoreError: true });
   }
+  rollback.beforeMutation?.(`remove sandbox '${sandboxName}' after dashboard failure`);
   const deleteResult = rollback.runOpenshell(["sandbox", "delete", sandboxName], {
     ignoreError: true,
   });

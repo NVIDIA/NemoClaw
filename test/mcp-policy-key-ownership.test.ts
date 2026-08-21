@@ -17,6 +17,16 @@ const PRESET = `network_policies:
     endpoints: []
 `;
 
+function managedSandboxPolicyMetadata(networkPolicies: Record<string, unknown>): string {
+  return JSON.stringify({
+    scope: "sandbox",
+    sandbox: "alpha",
+    status: "effective",
+    policy_source: "sandbox",
+    policy: { version: 1, network_policies: networkPolicies },
+  });
+}
+
 function runApply(
   expectedExistingNetworkPolicyContent: string | null,
   liveName: string | null = "operator-owned",
@@ -24,12 +34,18 @@ function runApply(
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-policy-owner-"));
   const binDir = path.join(home, ".local", "bin");
   const callsPath = path.join(home, "calls.log");
+  const liveNetworkPolicies =
+    liveName === null ? {} : { example: { name: liveName, endpoints: [] } };
   fs.mkdirSync(binDir, { recursive: true });
   fs.writeFileSync(
     path.join(binDir, "openshell"),
     `#!/bin/sh
 ${MATCHING_OPENSHELL_VERSION_CLAUSE}
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
+if [ "$3" = "--full" ] || [ "$5" = "--full" ]; then
+  printf '%s\n' '${managedSandboxPolicyMetadata(liveNetworkPolicies)}'
+  exit 0
+fi
 if [ "$1 $2" = "policy get" ]; then
   printf 'Version: 1\nHash: test\n---\nversion: 1\n${
     liveName === null
@@ -109,6 +125,12 @@ function runFailedPolicyMutation(operation: "apply" | "remove") {
     path.join(binDir, "openshell"),
     `#!/bin/sh
 ${MATCHING_OPENSHELL_VERSION_CLAUSE}
+if [ "$3" = "--full" ] || [ "$5" = "--full" ]; then
+  printf '%s\n' '${managedSandboxPolicyMetadata({
+    example: { name: "generated-policy", endpoints: [] },
+  })}'
+  exit 0
+fi
 if [ "$1 $2" = "policy get" ]; then
   printf 'Version: 1\nHash: test\n---\nversion: 1\nnetwork_policies:\n  example:\n    name: generated-policy\n    endpoints: []\n'
   exit 0
@@ -174,6 +196,12 @@ function runSuccessfulPolicyRemoval(skipRegistryUpdate: boolean) {
     path.join(binDir, "openshell"),
     `#!/bin/sh
 ${MATCHING_OPENSHELL_VERSION_CLAUSE}
+if [ "$3" = "--full" ] || [ "$5" = "--full" ]; then
+  printf '%s\n' '${managedSandboxPolicyMetadata({
+    example: { name: "generated-policy", endpoints: [] },
+  })}'
+  exit 0
+fi
 if [ "$1 $2" = "policy get" ]; then
   printf 'Version: 1\nHash: test\n---\nversion: 1\nnetwork_policies:\n  example:\n    name: generated-policy\n    endpoints: []\n'
 fi
@@ -338,6 +366,10 @@ processRecovery.executeSandboxExecCommand = () => ({
   stderr: "",
 });
 registry.registerSandbox({ name: "alpha", agent: "openclaw" });
+const mcpPolicy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+const policyAuthority = require("./src/lib/actions/sandbox/policy-authority/preflight.js");
+mcpPolicy.preflightMcpPolicyAuthority = () => "nemoclaw-managed";
+policyAuthority.preflightSandboxPolicyAuthority = () => "nemoclaw-managed";
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.addMcpBridge("alpha", {
   server: "example",
@@ -441,6 +473,10 @@ processRecovery.executeSandboxExecCommand = () => ({
 });
 registry.registerSandbox({ name: "alpha", agent: "openclaw" });
 registry.addCustomPolicy = () => { throw new Error("injected registry write failure"); };
+const mcpPolicy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+const policyAuthority = require("./src/lib/actions/sandbox/policy-authority/preflight.js");
+mcpPolicy.preflightMcpPolicyAuthority = () => "nemoclaw-managed";
+policyAuthority.preflightSandboxPolicyAuthority = () => "nemoclaw-managed";
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.addMcpBridge("alpha", {
   server: "reservation",
@@ -523,6 +559,10 @@ processRecovery.executeSandboxCommand = () => ({
   stderr: "",
 });
 
+const mcpPolicy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+const policyAuthority = require("./src/lib/actions/sandbox/policy-authority/preflight.js");
+mcpPolicy.preflightMcpPolicyAuthority = () => "nemoclaw-managed";
+policyAuthority.preflightSandboxPolicyAuthority = () => "nemoclaw-managed";
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 const entry = {
   server: "example",

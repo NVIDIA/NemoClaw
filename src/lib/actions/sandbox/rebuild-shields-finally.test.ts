@@ -4,10 +4,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const phaseMocks = vi.hoisted(() => ({
+  createRegistryRollback: vi.fn(),
+  recordRegistryRemoval: vi.fn(),
+  restoreRegistryForRetry: vi.fn(),
   runBackup: vi.fn(),
   runDestroy: vi.fn(),
   runPreflight: vi.fn(),
+  runRecreate: vi.fn(),
   runShields: vi.fn(),
+  revalidateAuthority: vi.fn(),
   openRecreateJournal: vi.fn(),
 }));
 
@@ -22,6 +27,15 @@ const gatewayAuthority = {
   requiredCapabilities: [],
 } as const;
 
+const policyAuthorityReceipt = {
+  authority: "nemoclaw-managed",
+  gatewayName: "nemoclaw",
+  managedMcpPolicies: [],
+  operation: "rebuild sandbox 'alpha'",
+  requiredPolicies: [],
+  sandboxName: "alpha",
+} as const;
+
 vi.mock("./rebuild-recreate-journal", () => ({
   fingerprintRebuildRecreateTargetIntent: () => "intent-1",
   openRebuildRecreateJournal: phaseMocks.openRecreateJournal,
@@ -32,12 +46,21 @@ vi.mock("./rebuild-backup-phase", () => ({
 }));
 
 vi.mock("./rebuild-preflight-phase", () => ({
+  revalidateRebuildPolicyAuthority: phaseMocks.revalidateAuthority,
   runHermesCronRestoreBackupPreflight: () => ({ plan: null }),
   runRebuildPreflightPhase: phaseMocks.runPreflight,
 }));
 
 vi.mock("./rebuild-destroy-phase", () => ({
   runRebuildDestroyPhase: phaseMocks.runDestroy,
+}));
+
+vi.mock("./rebuild-recreate-phase", () => ({
+  runRebuildRecreatePhase: phaseMocks.runRecreate,
+}));
+
+vi.mock("./rebuild-registry-rollback", () => ({
+  createRebuildRegistryRollback: phaseMocks.createRegistryRollback,
 }));
 
 vi.mock("./rebuild-shields-phase", () => ({
@@ -48,8 +71,10 @@ import { rebuildSandbox } from "./rebuild";
 
 describe("rebuild shields relock guard", () => {
   const rebuildWindow = { relocked: false, wasLocked: true };
+  const applyDcodePatch = vi.fn();
   const cleanupDcodePreflight = vi.fn();
   const releaseOnboardLock = vi.fn();
+  const restoreDcodePatch = vi.fn();
   const revalidateDcodeBeforeDelete = vi.fn(async () => true);
   const relockShields = vi.fn(() => {
     rebuildWindow.relocked = true;
@@ -59,6 +84,13 @@ describe("rebuild shields relock guard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     rebuildWindow.relocked = false;
+    applyDcodePatch.mockReturnValue(restoreDcodePatch);
+    phaseMocks.createRegistryRollback.mockReturnValue({
+      recordRemoval: phaseMocks.recordRegistryRemoval,
+      restoreForRetry: phaseMocks.restoreRegistryForRetry,
+    });
+    phaseMocks.revalidateAuthority.mockResolvedValue(undefined);
+    phaseMocks.runRecreate.mockResolvedValue(true);
     phaseMocks.runPreflight.mockResolvedValue({
       sandboxEntry: { name: "alpha", customPolicies: [] },
       targetConfig: { durableConfig: { webSearchConfig: null } },
@@ -71,10 +103,13 @@ describe("rebuild shields relock guard", () => {
       liveState: { staleRecovery: false, staleRegistrySnapshot: null },
       recoveryManifest: null,
       dcodePreflight: {
+        applyDockerGpuPatchNetwork: applyDcodePatch,
+        checkAtDeleteEdge: vi.fn(async () => ({ ok: true })),
         cleanup: cleanupDcodePreflight,
         revalidateBeforeDelete: revalidateDcodeBeforeDelete,
       },
       preparedImage: null,
+      policyAuthorityReceipt,
       releaseOnboardLock,
       log: vi.fn(),
       bail: vi.fn(),
@@ -125,6 +160,45 @@ describe("rebuild shields relock guard", () => {
     expect(rebuildWindow.relocked).toBe(false);
   });
 
+  it("revalidates policy authority after destroy before replacement mutations (#9833)", async () => {
+    phaseMocks.runBackup.mockReturnValue({
+      backupManifest: null,
+      backupWasForceSkipped: false,
+      policyPresets: [],
+      sessionPolicyPresets: [],
+    });
+    phaseMocks.runDestroy.mockImplementation(
+      async (input: {
+        validateAfterDeleteConfirmation?: () => Promise<unknown>;
+      }) => {
+        await expect(input.validateAfterDeleteConfirmation?.()).resolves.toEqual({ ok: true });
+        phaseMocks.revalidateAuthority.mockRejectedValue(
+          new Error("Policy authority receipt changed after deletion."),
+        );
+        return {
+          entries: [],
+          detachedProviderEntries: [],
+          scrubbedAdapterEntries: [],
+          removalReceipt: null,
+        };
+      },
+    );
+
+    await expect(rebuildSandbox("alpha", ["--yes"], { throwOnError: true })).rejects.toThrow(
+      "Policy authority receipt changed after deletion.",
+    );
+
+    expect(phaseMocks.revalidateAuthority).toHaveBeenCalledTimes(3);
+    expect(
+      phaseMocks.revalidateAuthority.mock.calls.every(
+        ([receipt]) => receipt === policyAuthorityReceipt,
+      ),
+    ).toBe(true);
+    expect(phaseMocks.recordRegistryRemoval).not.toHaveBeenCalled();
+    expect(applyDcodePatch).not.toHaveBeenCalled();
+    expect(phaseMocks.runRecreate).not.toHaveBeenCalled();
+  });
+
   it("blocks a pending baseline transition before shields, backup, or destroy phases begin (#7194)", async () => {
     const bail = vi.fn();
     phaseMocks.runPreflight.mockResolvedValue({
@@ -154,6 +228,7 @@ describe("rebuild shields relock guard", () => {
       recoveryManifest: null,
       dcodePreflight: { cleanup: cleanupDcodePreflight },
       preparedImage: null,
+      policyAuthorityReceipt,
       releaseOnboardLock,
       log: vi.fn(),
       bail,

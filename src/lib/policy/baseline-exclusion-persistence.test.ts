@@ -14,9 +14,15 @@ const mocks = vi.hoisted(() => ({
   getBaselineExclusions: vi.fn(),
   getBaselineExclusionTransition: vi.fn(),
   getSandbox: vi.fn(),
+  inspectSandboxPolicyAuthority: vi.fn(),
   removeBaselineExclusion: vi.fn(),
   run: vi.fn(),
   runCapture: vi.fn(),
+}));
+
+vi.mock("../adapters/openshell/policy-authority", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/openshell/policy-authority")>()),
+  inspectSandboxPolicyAuthority: mocks.inspectSandboxPolicyAuthority,
 }));
 
 vi.mock("../runner", async (importOriginal) => ({
@@ -76,16 +82,30 @@ const OPENCLAW_RESTORED_POLICY = YAML.stringify({
   network_policies: { managed_inference: OPENCLAW_BASELINE_ENTRY },
 });
 
+function expectNoBaselineMutation(): void {
+  expect(mocks.addBaselineExclusion).not.toHaveBeenCalled();
+  expect(mocks.beginBaselineExclusionTransition).not.toHaveBeenCalled();
+  expect(mocks.clearBaselineExclusionTransition).not.toHaveBeenCalled();
+  expect(mocks.commitBaselineExclusionTransition).not.toHaveBeenCalled();
+  expect(mocks.removeBaselineExclusion).not.toHaveBeenCalled();
+  expect(mocks.run).not.toHaveBeenCalled();
+}
+
 describe("excludeBaselineEntry persistence boundary (#7178)", () => {
   beforeEach(() => {
     vi.spyOn(openshellResolveModule, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     mocks.runCapture.mockReturnValue(LIVE_POLICY);
     mocks.run.mockReturnValue({ status: 0 });
+    mocks.inspectSandboxPolicyAuthority.mockReturnValue({
+      authority: "nemoclaw-managed",
+      effectivePolicy: {},
+    });
     mocks.getSandbox.mockReturnValue({
       name: "alpha",
       agent: "hermes",
       agentVersion: "1.2.3",
+      policyAuthority: "nemoclaw-managed",
     });
     mocks.getBaselineExclusions.mockReturnValue([]);
     mocks.getBaselineExclusionTransition.mockReturnValue(null);
@@ -123,6 +143,37 @@ describe("excludeBaselineEntry persistence boundary (#7178)", () => {
       }),
     );
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("no live policy changes"));
+  });
+
+  it("refuses exclusion journal changes when authority changes during the live read (#9833)", () => {
+    mocks.inspectSandboxPolicyAuthority
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "externally-managed", effectivePolicy: {} });
+
+    expect(excludeBaselineEntry("alpha", "nous_research", LIVE_DIGEST, { nonFatal: true })).toBe(
+      false,
+    );
+
+    expectNoBaselineMutation();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("policy authority changed"));
+  });
+
+  it("preserves a pending exclusion when authority changes at the policy-set edge (#9833)", () => {
+    mocks.beginBaselineExclusionTransition.mockReturnValue(true);
+    mocks.inspectSandboxPolicyAuthority
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValue({ authority: "externally-managed", effectivePolicy: {} });
+
+    expect(excludeBaselineEntry("alpha", "nous_research", LIVE_DIGEST, { nonFatal: true })).toBe(
+      false,
+    );
+
+    expect(mocks.beginBaselineExclusionTransition).toHaveBeenCalledOnce();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.clearBaselineExclusionTransition).not.toHaveBeenCalled();
+    expect(mocks.commitBaselineExclusionTransition).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("policy authority changed"));
   });
 
   it("clears a fresh transaction when live narrowing fails", () => {
@@ -217,6 +268,7 @@ describe("excludeBaselineEntry persistence boundary (#7178)", () => {
       agentVersion: "1.2.3",
       gatewayName: "nemoclaw-18080",
       gatewayPort: 18080,
+      policyAuthority: "nemoclaw-managed",
     });
     mocks.beginBaselineExclusionTransition.mockReturnValue(true);
     mocks.runCapture
@@ -360,10 +412,15 @@ describe("restoreBaselineEntry persistence boundary (#7178)", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     mocks.runCapture.mockReturnValue("version: 1\nnetwork_policies: {}\n");
     mocks.run.mockReturnValue({ status: 0 });
+    mocks.inspectSandboxPolicyAuthority.mockReturnValue({
+      authority: "nemoclaw-managed",
+      effectivePolicy: {},
+    });
     mocks.getSandbox.mockReturnValue({
       name: "alpha",
       agent: "hermes",
       agentVersion: "1.2.3",
+      policyAuthority: "nemoclaw-managed",
     });
     mocks.getBaselineExclusions.mockReturnValue([RECORDED]);
     mocks.getBaselineExclusionTransition.mockReturnValue(null);
@@ -384,21 +441,24 @@ describe("restoreBaselineEntry persistence boundary (#7178)", () => {
     ["changes", "nous_research", "stale-preview-digest", [RECORDED]],
     ["appears", "nous_research", null, [RECORDED]],
     ["disappears", "legacy_entry", LIVE_DIGEST, [{ ...RECORDED, key: "legacy_entry" }]],
-  ] as const)("does not mutate when the baseline entry %s after the operator preview", (_change, key, expectedTargetDigest, exclusions) => {
-    mocks.getBaselineExclusions.mockReturnValue([...exclusions]);
+  ] as const)(
+    "does not mutate when the baseline entry %s after the operator preview",
+    (_change, key, expectedTargetDigest, exclusions) => {
+      mocks.getBaselineExclusions.mockReturnValue([...exclusions]);
 
-    expect(restoreBaselineEntry("alpha", key, { nonFatal: true, expectedTargetDigest })).toBe(
-      false,
-    );
+      expect(restoreBaselineEntry("alpha", key, { nonFatal: true, expectedTargetDigest })).toBe(
+        false,
+      );
 
-    expect(mocks.runCapture).not.toHaveBeenCalled();
-    expect(mocks.run).not.toHaveBeenCalled();
-    expect(mocks.beginBaselineExclusionTransition).not.toHaveBeenCalled();
-    expect(mocks.clearBaselineExclusionTransition).not.toHaveBeenCalled();
-    expect(mocks.commitBaselineExclusionTransition).not.toHaveBeenCalled();
-    expect(mocks.removeBaselineExclusion).not.toHaveBeenCalled();
-    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("changed after preview"));
-  });
+      expect(mocks.runCapture).not.toHaveBeenCalled();
+      expect(mocks.run).not.toHaveBeenCalled();
+      expect(mocks.beginBaselineExclusionTransition).not.toHaveBeenCalled();
+      expect(mocks.clearBaselineExclusionTransition).not.toHaveBeenCalled();
+      expect(mocks.commitBaselineExclusionTransition).not.toHaveBeenCalled();
+      expect(mocks.removeBaselineExclusion).not.toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining("changed after preview"));
+    },
+  );
 
   it("does not widen live egress when its durable transaction cannot be recorded", () => {
     mocks.beginBaselineExclusionTransition.mockReturnValue(false);
@@ -407,6 +467,17 @@ describe("restoreBaselineEntry persistence boundary (#7178)", () => {
 
     expect(mocks.run).not.toHaveBeenCalled();
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining("no live policy changes"));
+  });
+
+  it("refuses restore journal changes when authority changes during the live read (#9833)", () => {
+    mocks.inspectSandboxPolicyAuthority
+      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
+      .mockReturnValueOnce({ authority: "externally-managed", effectivePolicy: {} });
+
+    expect(restoreBaselineEntry("alpha", "nous_research", { nonFatal: true })).toBe(false);
+
+    expectNoBaselineMutation();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("policy authority changed"));
   });
 
   it("clears the restore transaction when live policy restoration fails", () => {
@@ -443,6 +514,7 @@ describe("restoreBaselineEntry persistence boundary (#7178)", () => {
       name: "alpha",
       agent: "openclaw",
       agentVersion: "2.0.0",
+      policyAuthority: "nemoclaw-managed",
     });
     mocks.getBaselineExclusions.mockReturnValue([staleExclusion]);
     mocks.runCapture
@@ -556,6 +628,7 @@ describe("restoreBaselineEntry persistence boundary (#7178)", () => {
       name: "alpha",
       agent: "agent-without-a-readable-baseline",
       agentVersion: "1.2.3",
+      policyAuthority: "nemoclaw-managed",
     });
     mocks.runCapture.mockReturnValue(LIVE_POLICY);
     mocks.getBaselineExclusionTransition.mockReturnValue({

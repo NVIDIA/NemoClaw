@@ -52,11 +52,14 @@ import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
 import * as shields from "../../shields";
-import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
+import {
+  withTimerBoundShieldsMutationLock,
+  withTimerBoundShieldsMutationLockAsync,
+} from "../../shields/timer-bound-lock";
 import { readTimerMarker } from "../../shields/timer-control";
 import { isSandboxReady } from "../../state/gateway";
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
-import type { SandboxEntry } from "../../state/registry";
+import type { SandboxEntry, SandboxRemovalReceipt } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import * as sandboxState from "../../state/sandbox";
@@ -69,6 +72,7 @@ import {
 import {
   cleanupShieldsDestroyArtifacts,
   removeSandboxRegistryEntryOutcome,
+  removeSandboxRegistryEntryWithReceipt,
   requireSandboxDestructiveCleanupAuthority,
 } from "./destroy";
 import {
@@ -92,17 +96,25 @@ import {
   createSnapshotCloneLifecycle,
   confirmSandboxRuntimeRestore,
   fingerprintSandboxLiveIdentity,
+  inspectSnapshotCloneTargetPolicyAuthority,
   type PreparedHostLocalInferenceAuthority,
   type PreparedSandboxRuntimeRestore,
   prepareHostLocalInferenceAuthority,
   prepareManagedSnapshotProfileRestore,
   prepareSandboxHostLocalInferenceDestroyAuthority,
   prepareSandboxRuntimeRestore,
+  qualifySnapshotPolicyAuthority,
   readManagedSnapshotProfileAuthority,
+  revalidateDeletedSnapshotPolicyAuthority,
+  revalidateRemovedSnapshotPolicyAuthority,
   rejectManagedSnapshotCloneUntilRebind,
   requireCurrentSnapshotRuntimeProvider,
+  resolveManagedMcpPolicyRequirementContents,
+  resolveSnapshotPolicyRequirements,
+  revalidateSnapshotPolicyAuthority,
   retirePreparedHostLocalInferenceAuthority,
   type RuntimeProviderBundle,
+  type SnapshotPolicyAuthorityReceipt,
 } from "./snapshot/dependencies";
 import { formatSnapshotBaselineExclusionSummary } from "./snapshot-baseline-exclusion-summary";
 import { printHermesGatewayRestoreHint } from "./snapshot-hermes-gateway-hint";
@@ -375,6 +387,7 @@ function resolveCloneDashboardEnvArgs(
 }
 
 async function prepareSnapshotClonePolicy(srcEntry: SandboxEntry): Promise<{
+  policyContent: string;
   policyPath: string;
   cleanup?: () => boolean;
 }> {
@@ -390,22 +403,30 @@ async function prepareSnapshotClonePolicy(srcEntry: SandboxEntry): Promise<{
     throw new Error(`Cannot resolve the '${agentName}' baseline policy for snapshot restore.`);
   }
   const baselineExclusions = srcEntry.baselineExclusions ?? [];
-  if (baselineExclusions.length === 0) return { policyPath: baseline.policyPath };
+  if (baselineExclusions.length === 0) {
+    return { policyContent: baseline.content, policyPath: baseline.policyPath };
+  }
 
   const disabledChannels = new Set(registry.getDisabledMessagingChannelsFromEntry(srcEntry));
   const activeMessagingChannels = registry
     .getConfiguredMessagingChannelsFromEntry(srcEntry)
     .filter((channel) => !disabledChannels.has(channel));
   const { prepareInitialSandboxCreatePolicy } = await import("../../onboard/initial-policy");
-  return prepareInitialSandboxCreatePolicy(baseline.policyPath, activeMessagingChannels, {
+  const prepared = prepareInitialSandboxCreatePolicy(baseline.policyPath, activeMessagingChannels, {
     agentName,
     baselineExclusions,
   });
+  return {
+    ...prepared,
+    policyContent:
+      prepared.sourceBytes?.toString("utf8") ?? fs.readFileSync(prepared.policyPath, "utf8"),
+  };
 }
 
 // Used by `snapshot restore --to <dst>` when dst does not exist yet: reuses
 // the source's baked image so the user does not have to re-run onboarding.
-// Returns true on success; on failure, logs and throws SnapshotCommandError.
+// Returns the receipt captured from the Ready target. On failure, it throws
+// SnapshotCommandError before DNS setup or durable clone registration.
 async function autoCreateSandboxFromSource(
   srcName: string,
   dstName: string,
@@ -414,10 +435,23 @@ async function autoCreateSandboxFromSource(
   sourceGatewayPort: number,
   fromImage: string,
   createPolicyPath: string,
+  sourcePolicyAuthorityReceipt: SnapshotPolicyAuthorityReceipt,
   dstDashboardPort: number | null,
   dashboardEnvArgs: readonly string[],
   dstHermesApiPort: number | null,
-): Promise<void> {
+): Promise<SnapshotPolicyAuthorityReceipt> {
+  const validateSourcePolicyAuthority = async (): Promise<void> => {
+    try {
+      await revalidateSnapshotPolicyAuthority(sourcePolicyAuthorityReceipt);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new SnapshotCommandError([
+        `  Cannot create sandbox '${dstName}': source policy authority could not be revalidated.`,
+        `  ${detail}`,
+      ]);
+    }
+  };
+  await validateSourcePolicyAuthority();
   const cloneLifecycle = createSnapshotCloneLifecycle(
     dstName,
     sourceGatewayName,
@@ -449,7 +483,11 @@ async function autoCreateSandboxFromSource(
     "nemoclaw-start",
   ];
   const createEnv = { ...process.env };
+  const policyAuthority = sourcePolicyAuthorityReceipt.authority;
   delete createEnv.NEMOCLAW_OBSERVABILITY;
+  if (policyAuthority === "externally-managed") {
+    delete createEnv.OPENSHELL_SANDBOX_POLICY;
+  }
   let cloneHostLocalReservation: Pick<
     SandboxEntry,
     "hostLocalInferenceReceipt" | "hostLocalInferenceProvenance"
@@ -469,6 +507,26 @@ async function autoCreateSandboxFromSource(
     }
     cloneHostLocalReservation = null;
   };
+  const refuseUnregisteredClonePolicyAuthority = (): never => {
+    throw new SnapshotCommandError([
+      `  Sandbox '${dstName}' reached Ready, but its policy authority did not match the qualified clone receipt.`,
+      "  Snapshot state was not restored and the clone was not registered.",
+      ...(cloneHostLocalReservation
+        ? ["  The pending inference route reservation was preserved for exact cleanup authority."]
+        : []),
+      "  Remove the unregistered sandbox before retrying:",
+      `    openshell sandbox delete -g ${shellQuote(sourceGatewayName)} ${shellQuote(dstName)}`,
+    ]);
+  };
+  const inspectReadyClonePolicyAuthority = (
+    receipt: SnapshotPolicyAuthorityReceipt,
+  ): SnapshotPolicyAuthorityReceipt => {
+    try {
+      return inspectSnapshotCloneTargetPolicyAuthority(receipt, dstName);
+    } catch {
+      return refuseUnregisteredClonePolicyAuthority();
+    }
+  };
 
   const command = openshellBin;
   const commandArgs = [
@@ -478,8 +536,7 @@ async function autoCreateSandboxFromSource(
     dstName,
     "--from",
     fromImage,
-    "--policy",
-    createPolicyPath,
+    ...(policyAuthority === "nemoclaw-managed" ? ["--policy", createPolicyPath] : []),
     "--auto-providers",
     "--",
     ...startupCommand,
@@ -498,6 +555,7 @@ async function autoCreateSandboxFromSource(
         "Source host-local inference lifecycle authority is incomplete.",
       );
     }
+    await validateSourcePolicyAuthority();
     const reserved = registry.reserveSandboxInferenceRoute(dstName, {
       provider: sourceAuthority.provider,
       model: sourceAuthority.model,
@@ -520,12 +578,19 @@ async function autoCreateSandboxFromSource(
       hostLocalInferenceReceipt: sourceAuthority.hostLocalInferenceReceipt,
       hostLocalInferenceProvenance: sourceAuthority.hostLocalInferenceProvenance,
     };
+    try {
+      await validateSourcePolicyAuthority();
+    } catch (error) {
+      releaseCloneHostLocalReservation();
+      throw error;
+    }
   }
 
   console.log(`  '${dstName}' does not exist. Creating from '${srcName}' image (${fromImage})...`);
 
   let createResult: Awaited<ReturnType<typeof streamSandboxCreate>>;
   try {
+    await validateSourcePolicyAuthority();
     createResult = await streamSandboxCreate(command, commandArgs, createEnv, {
       // Use a pre-built image, so skip build+push and jump to pod creation.
       initialPhase: "create",
@@ -566,6 +631,7 @@ async function autoCreateSandboxFromSource(
     releaseCloneHostLocalReservation();
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
+  let targetPolicyAuthorityReceipt = inspectReadyClonePolicyAuthority(sourcePolicyAuthorityReceipt);
 
   // DNS proxy is only meaningful for the kubernetes driver (matches onboard.ts).
   const dnsScript = path.join(ROOT, "scripts", "setup-dns-proxy.sh");
@@ -587,12 +653,17 @@ async function autoCreateSandboxFromSource(
     releaseCloneHostLocalReservation();
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
+  targetPolicyAuthorityReceipt = inspectReadyClonePolicyAuthority(targetPolicyAuthorityReceipt);
   try {
     registry.registerSandbox({
       ...srcEntry,
       name: dstName,
       createdAt: new Date().toISOString(),
+      policyAuthority: targetPolicyAuthorityReceipt.authority,
       policies: [],
+      ...(policyAuthority === "externally-managed"
+        ? { baselineExclusions: [], customPolicies: [], policyPresetsFinalized: undefined }
+        : {}),
       observabilityEnabled: sourceObservabilityEnabled,
       // dst has its own lifecycle; don't inherit src's local NIM container
       // reference, or destroying dst would stop src's NIM.
@@ -623,6 +694,15 @@ async function autoCreateSandboxFromSource(
     releaseCloneHostLocalReservation();
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
+  try {
+    await revalidateSnapshotPolicyAuthority(targetPolicyAuthorityReceipt);
+  } catch (error) {
+    throw new SnapshotCommandError([
+      `  Sandbox '${dstName}' was registered, but its policy authority changed before clone setup completed.`,
+      `  ${error instanceof Error ? error.message : String(error)}`,
+      `  Retry the restore to reconcile the registered clone '${dstName}'.`,
+    ]);
+  }
 
   const sourceAgent = (srcEntry as SandboxEntry).agent || "openclaw";
   if (sourceAgent === "openclaw" && !waitForRestoredSandboxGatewaySupervisor(dstName)) {
@@ -632,8 +712,18 @@ async function autoCreateSandboxFromSource(
     console.error("  Snapshot state was not restored into the incomplete clone.");
     snapshotExit(1);
   }
+  try {
+    await revalidateSnapshotPolicyAuthority(targetPolicyAuthorityReceipt);
+  } catch (error) {
+    throw new SnapshotCommandError([
+      `  Sandbox '${dstName}' was registered, but its policy authority changed before clone setup completed.`,
+      `  ${error instanceof Error ? error.message : String(error)}`,
+      `  Retry the restore to reconcile the registered clone '${dstName}'.`,
+    ]);
+  }
 
   console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);
+  return targetPolicyAuthorityReceipt;
 }
 
 // Delete an existing destination sandbox so `snapshot restore --to <dst> --force`
@@ -649,102 +739,143 @@ async function autoCreateSandboxFromSource(
 // `stopHostServices`), Ollama model unload, gateway teardown \u2014 are
 // deliberately skipped here because they can also affect the source sandbox
 // we are about to clone from.
-function deleteSandboxForRestore(name: string): void {
-  withTimerBoundShieldsMutationLock(name, "delete snapshot restore destination", () => {
-    const sbMeta = registry.getSandbox(name);
-    if (!sbMeta) {
-      console.error(
-        `  Cannot delete destination '${name}': its durable runtime ownership entry disappeared.`,
-      );
-      snapshotExit(1);
-    }
-    let runtimeProvider: RuntimeProviderBundle;
-    let hostLocalInferenceAuthority: PreparedHostLocalInferenceAuthority | null;
-    try {
-      runtimeProvider = requireSandboxDestructiveCleanupAuthority(name, sbMeta).provider;
-      hostLocalInferenceAuthority = prepareSandboxHostLocalInferenceDestroyAuthority(
-        runtimeProvider,
-        sbMeta,
-      );
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      console.error(
-        `  Cannot delete destination '${name}' because runtime cleanup authority is unproven: ${detail}`,
-      );
-      console.error(
-        `  Run '${CLI_NAME} ${name} doctor --json' and resolve the recorded ownership conflict before retrying.`,
-      );
-      snapshotExit(1);
-    }
-    if (!hostLocalInferenceAuthority) {
-      if (sbMeta.nimContainer) {
-        nim.stopNimContainerByName(sbMeta.nimContainer);
-      } else {
-        nim.stopNimContainer(name, { silent: true });
+async function deleteSandboxForRestore(
+  name: string,
+  validateLivePolicyAuthority: () => Promise<void>,
+  validateDeletedPolicyAuthority: () => Promise<void>,
+  validateRemovalReceipt: (receipt: SandboxRemovalReceipt) => Promise<void>,
+): Promise<void> {
+  await withTimerBoundShieldsMutationLockAsync(
+    name,
+    "delete snapshot restore destination",
+    async () => {
+      await validateLivePolicyAuthority();
+      const sbMeta = registry.getSandbox(name);
+      if (!sbMeta) {
+        console.error(
+          `  Cannot delete destination '${name}': its durable runtime ownership entry disappeared.`,
+        );
+        snapshotExit(1);
       }
-    }
-    console.log(`  Deleting existing destination '${name}' before restore...`);
-    if (readTimerMarker(name)) {
-      shields.shieldsUp(name, {
-        throwOnError: true,
-        allowLegacyHermesProtocol: true,
-      });
-    }
-    const deleteResult = runOpenshell(["sandbox", "delete", name], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const { alreadyGone } = getSandboxDeleteOutcome(deleteResult);
-    if (deleteResult.status !== 0 && !alreadyGone) {
-      // Any active timer was cleared only after shieldsUp verified the live
-      // destination was hardened. Preserve that locked state on failure.
-      console.error(
-        `  Failed to delete '${name}' (exit ${deleteResult.status}). Aborting restore.`,
-      );
-      snapshotExit(1);
-    }
-    if (hostLocalInferenceAuthority) {
+      let runtimeProvider: RuntimeProviderBundle;
+      let hostLocalInferenceAuthority: PreparedHostLocalInferenceAuthority | null;
       try {
-        const current = registry.getSandbox(name);
-        if (!current) throw new Error(`sandbox '${name}' is no longer registered`);
-        retirePreparedHostLocalInferenceAuthority(
+        runtimeProvider = requireSandboxDestructiveCleanupAuthority(name, sbMeta).provider;
+        hostLocalInferenceAuthority = prepareSandboxHostLocalInferenceDestroyAuthority(
           runtimeProvider,
-          current,
-          hostLocalInferenceAuthority,
-          registry.listSandboxes().sandboxes,
+          sbMeta,
         );
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         console.error(
-          `  Destination '${name}' is gone, but its host-local inference cleanup failed: ${detail}`,
+          `  Cannot delete destination '${name}' because runtime cleanup authority is unproven: ${detail}`,
         );
-        console.error("  Local ownership state was preserved; retry the restore to reconcile it.");
+        console.error(
+          `  Run '${CLI_NAME} ${name} doctor --json' and resolve the recorded ownership conflict before retrying.`,
+        );
         snapshotExit(1);
       }
-    }
-    // Destination-only cleanup so the recreated sandbox does not inherit stale
-    // host-side state or hit provider-name conflicts (Codex #3796 P2):
-    // - /tmp/nemoclaw-services-<name>: PID dir for this sandbox's services
-    // - OpenShell per-sandbox messaging bridge providers declared by channel
-    //   manifests.
-    // - shields-<name>.json + shields timer: per-sandbox shields artifacts
-    try {
-      fs.rmSync(`/tmp/nemoclaw-services-${name}`, {
-        recursive: true,
-        force: true,
-      });
-    } catch {
-      // PID dir may not exist \u2014 ignore.
-    }
-    for (const suffix of listMessagingProviderSuffixes()) {
-      runOpenshell(["provider", "delete", `${name}${suffix}`], {
+      if (!hostLocalInferenceAuthority) {
+        await validateLivePolicyAuthority();
+        if (sbMeta.nimContainer) {
+          nim.stopNimContainerByName(sbMeta.nimContainer);
+        } else {
+          nim.stopNimContainer(name, { silent: true });
+        }
+        await validateLivePolicyAuthority();
+      }
+      console.log(`  Deleting existing destination '${name}' before restore...`);
+      if (readTimerMarker(name)) {
+        await validateLivePolicyAuthority();
+        shields.shieldsUp(name, {
+          throwOnError: true,
+          allowLegacyHermesProtocol: true,
+        });
+        await validateLivePolicyAuthority();
+      }
+      await validateLivePolicyAuthority();
+      const deleteResult = runOpenshell(["sandbox", "delete", name], {
         ignoreError: true,
-        stdio: ["ignore", "ignore", "ignore"],
+        stdio: ["ignore", "pipe", "pipe"],
       });
-    }
-    cleanupShieldsDestroyArtifacts(name);
-    requireSnapshotDestinationRegistryRemoval(name, removeSandboxRegistryEntryOutcome(name));
-  });
+      const { alreadyGone } = getSandboxDeleteOutcome(deleteResult);
+      if (deleteResult.status !== 0 && !alreadyGone) {
+        await validateLivePolicyAuthority();
+        // Any active timer was cleared only after shieldsUp verified the live
+        // destination was hardened. Preserve that locked state on failure.
+        console.error(
+          `  Failed to delete '${name}' (exit ${deleteResult.status}). Aborting restore.`,
+        );
+        snapshotExit(1);
+      }
+      await validateDeletedPolicyAuthority();
+      if (hostLocalInferenceAuthority) {
+        try {
+          await validateDeletedPolicyAuthority();
+          const current = registry.getSandbox(name);
+          if (!current) throw new Error(`sandbox '${name}' is no longer registered`);
+          retirePreparedHostLocalInferenceAuthority(
+            runtimeProvider,
+            current,
+            hostLocalInferenceAuthority,
+            registry.listSandboxes().sandboxes,
+          );
+          await validateDeletedPolicyAuthority();
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          console.error(
+            `  Destination '${name}' is gone, but its host-local inference cleanup failed: ${detail}`,
+          );
+          console.error(
+            "  Local ownership state was preserved; retry the restore to reconcile it.",
+          );
+          snapshotExit(1);
+        }
+      }
+      // Destination-only cleanup so the recreated sandbox does not inherit stale
+      // host-side state or hit provider-name conflicts (Codex #3796 P2):
+      // - /tmp/nemoclaw-services-<name>: PID dir for this sandbox's services
+      // - OpenShell per-sandbox messaging bridge providers declared by channel
+      //   manifests.
+      // - shields-<name>.json + shields timer: per-sandbox shields artifacts
+      await validateDeletedPolicyAuthority();
+      try {
+        fs.rmSync(`/tmp/nemoclaw-services-${name}`, {
+          recursive: true,
+          force: true,
+        });
+      } catch {
+        // PID dir may not exist \u2014 ignore.
+      }
+      await validateDeletedPolicyAuthority();
+      for (const suffix of listMessagingProviderSuffixes()) {
+        await validateDeletedPolicyAuthority();
+        runOpenshell(["provider", "delete", `${name}${suffix}`], {
+          ignoreError: true,
+          stdio: ["ignore", "ignore", "ignore"],
+        });
+        await validateDeletedPolicyAuthority();
+      }
+      await validateDeletedPolicyAuthority();
+      cleanupShieldsDestroyArtifacts(name);
+      await validateDeletedPolicyAuthority();
+      const removalReceipt = removeSandboxRegistryEntryWithReceipt(name);
+      if (!removalReceipt) {
+        requireSnapshotDestinationRegistryRemoval(name, {
+          status: "blocked",
+          reason: "authority-unproven",
+          removed: false,
+        });
+        return;
+      }
+      try {
+        await validateRemovalReceipt(removalReceipt);
+      } catch (error) {
+        registry.restoreSandboxEntryIfMissing(removalReceipt);
+        throw error;
+      }
+    },
+  );
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
 }
 
@@ -963,10 +1094,24 @@ function repairRestoredOpenClawConfigPerms(
   }
 }
 
-function reconcileSnapshotPolicyPresets(
+async function runSnapshotPolicyAuthorityBoundOperation<T>(
+  validatePolicyAuthority: () => Promise<void>,
+  operation: () => T,
+): Promise<T> {
+  await validatePolicyAuthority();
+  try {
+    return operation();
+  } finally {
+    await validatePolicyAuthority();
+  }
+}
+
+async function reconcileSnapshotPolicyPresets(
   targetSandbox: string,
   resolvedSnapshot: ReturnType<typeof sandboxState.getLatestBackup>,
-): void {
+  validatePolicyAuthority: () => Promise<void>,
+): Promise<void> {
+  await validatePolicyAuthority();
   if (!resolvedSnapshot) return;
   const snapshotPolicyPresets = Array.isArray(resolvedSnapshot.policyPresets)
     ? resolvedSnapshot.policyPresets
@@ -992,12 +1137,17 @@ function reconcileSnapshotPolicyPresets(
   const customPolicyNames = new Set([...snapshotCustomPolicyNames, ...currentCustomPolicyNames]);
   let customOwnsObservability: boolean;
   try {
-    customOwnsObservability = OBSERVABILITY_POLICY_BINDING.hasLiveCustomOwner(
-      targetSandbox,
-      currentCustomPolicies.map((entry) => entry.content),
-      policies,
+    customOwnsObservability = await runSnapshotPolicyAuthorityBoundOperation(
+      validatePolicyAuthority,
+      () =>
+        OBSERVABILITY_POLICY_BINDING.hasLiveCustomOwner(
+          targetSandbox,
+          currentCustomPolicies.map((entry) => entry.content),
+          policies,
+        ),
     );
   } catch (error) {
+    await validatePolicyAuthority();
     const detail = error instanceof Error ? error.message : String(error);
     console.warn(
       `  Warning: could not verify custom ownership of '${OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET}' (${detail}); leaving live policy presets unchanged.`,
@@ -1015,8 +1165,13 @@ function reconcileSnapshotPolicyPresets(
   // getAppliedPresets includes custom-policy names for display/CLI parity.
   // Built-in preset reconciliation must not remove those; custom policy content
   // is reconciled separately below from registry.getCustomPolicies().
+  const appliedPresets = hasSnapshotPresetMetadata
+    ? await runSnapshotPolicyAuthorityBoundOperation(validatePolicyAuthority, () =>
+        policies.getAppliedPresets(targetSandbox),
+      )
+    : [];
   const currentPresets = hasSnapshotPresetMetadata
-    ? [...new Set(policies.getAppliedPresets(targetSandbox))].filter((preset: string) => {
+    ? [...new Set(appliedPresets)].filter((preset: string) => {
         const normalized = preset.trim().toLowerCase();
         return (
           !OBSERVABILITY_POLICY_BINDING.matchesPreset(normalized) &&
@@ -1027,7 +1182,10 @@ function reconcileSnapshotPolicyPresets(
   const recordedBuiltinObservability = (targetEntry?.policies ?? []).some((preset) =>
     OBSERVABILITY_POLICY_BINDING.matchesPreset(preset),
   );
-  const setRecordedBuiltinObservability = (enabled: boolean, force = false): void => {
+  const setRecordedBuiltinObservability = async (
+    enabled: boolean,
+    force = false,
+  ): Promise<void> => {
     const currentEntry = registry.getSandbox(targetSandbox);
     if (!currentEntry) return;
     const currentPolicies = currentEntry.policies ?? [];
@@ -1035,12 +1193,14 @@ function reconcileSnapshotPolicyPresets(
       OBSERVABILITY_POLICY_BINDING.matchesPreset(preset),
     );
     if (!force && enabled === currentlyRecorded) return;
+    await validatePolicyAuthority();
     registry.updateSandbox(targetSandbox, {
       policies: OBSERVABILITY_POLICY_BINDING.setAttribution(currentPolicies, enabled),
     });
+    await validatePolicyAuthority();
   };
   if (customOwnsObservability) {
-    setRecordedBuiltinObservability(false);
+    await setRecordedBuiltinObservability(false);
   }
   // Legacy snapshots predate generic preset metadata. Leave those unrelated
   // presets untouched, while still reconciling the managed observability
@@ -1059,18 +1219,21 @@ function reconcileSnapshotPolicyPresets(
   let builtinObservabilityContent: string | null = null;
   let builtinObservabilityState: "match" | "absent" | "drift" | null = null;
   if (!customOwnsObservability) {
-    const loadedBinding = OBSERVABILITY_POLICY_BINDING.load(targetSandbox, policies);
+    const loadedBinding = await runSnapshotPolicyAuthorityBoundOperation(
+      validatePolicyAuthority,
+      () => OBSERVABILITY_POLICY_BINDING.load(targetSandbox, policies),
+    );
     builtinObservabilityContent = loadedBinding.content;
     builtinObservabilityState = loadedBinding.state;
     const builtinState = builtinObservabilityState;
     if (builtinState === "absent" && shouldEnableBuiltinObservability) {
       toAdd.push(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET);
     } else if (builtinState === "absent" && recordedBuiltinObservability) {
-      setRecordedBuiltinObservability(false);
+      await setRecordedBuiltinObservability(false);
     } else if (builtinState === "match" && !shouldEnableBuiltinObservability) {
       toRemove.push(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET);
     } else if (builtinState === "match" && !recordedBuiltinObservability) {
-      setRecordedBuiltinObservability(true);
+      await setRecordedBuiltinObservability(true);
     } else if (builtinState === "drift" || builtinState === null) {
       const reason = builtinState === "drift" ? "has drifted" : "could not be inspected";
       console.warn(
@@ -1088,20 +1251,22 @@ function reconcileSnapshotPolicyPresets(
   const failed: string[] = [];
   for (const preset of toRemove) {
     if (OBSERVABILITY_POLICY_BINDING.matchesPreset(preset) && builtinObservabilityContent) {
-      const removal = OBSERVABILITY_POLICY_BINDING.removeExact(
-        targetSandbox,
-        builtinObservabilityContent,
-        policies,
-        { knownBefore: builtinObservabilityState, removeOptions: { nonFatal: true } },
+      const removal = await runSnapshotPolicyAuthorityBoundOperation(validatePolicyAuthority, () =>
+        OBSERVABILITY_POLICY_BINDING.removeExact(
+          targetSandbox,
+          builtinObservabilityContent,
+          policies,
+          { knownBefore: builtinObservabilityState, removeOptions: { nonFatal: true } },
+        ),
       );
       builtinObservabilityState = removal.after;
       if (removal.verifiedAbsent) {
-        setRecordedBuiltinObservability(false);
+        await setRecordedBuiltinObservability(false);
       } else {
         // removePreset updates the registry on a reported success. Restore
         // attribution whenever exact absence was not proven so recovery does
         // not forget built-in policy that may still be live.
-        setRecordedBuiltinObservability(true, true);
+        await setRecordedBuiltinObservability(true, true);
       }
       if (removal.failureDetail) failed.push(`${preset} (${removal.failureDetail})`);
       continue;
@@ -1111,18 +1276,28 @@ function reconcileSnapshotPolicyPresets(
       // gateway policy mutation must be reported as a warning, not terminate
       // the restore before gateway pairing. Pass nonFatal so setPolicyFile
       // returns false on failure instead of exiting the process (#8210).
-      if (!policies.removePreset(targetSandbox, preset, { nonFatal: true }))
+      if (
+        !(await runSnapshotPolicyAuthorityBoundOperation(validatePolicyAuthority, () =>
+          policies.removePreset(targetSandbox, preset, { nonFatal: true }),
+        ))
+      )
         failed.push(`${preset} (remove failed)`);
     } catch (err) {
+      await validatePolicyAuthority();
       const message = err instanceof Error ? err.message : String(err);
       failed.push(`${preset} (remove: ${message})`);
     }
   }
   for (const preset of toAdd) {
     try {
-      if (!policies.applyPreset(targetSandbox, preset, { nonFatal: true }))
+      if (
+        !(await runSnapshotPolicyAuthorityBoundOperation(validatePolicyAuthority, () =>
+          policies.applyPreset(targetSandbox, preset, { nonFatal: true }),
+        ))
+      )
         failed.push(`${preset} (apply failed)`);
     } catch (err) {
+      await validatePolicyAuthority();
       const message = err instanceof Error ? err.message : String(err);
       failed.push(`${preset} (apply: ${message})`);
     }
@@ -1130,12 +1305,15 @@ function reconcileSnapshotPolicyPresets(
   if (failed.length > 0) {
     console.warn(`  Warning: could not reconcile preset(s): ${failed.join("; ")}`);
   }
+  await validatePolicyAuthority();
 }
 
-function reconcileSnapshotCustomPolicies(
+async function reconcileSnapshotCustomPolicies(
   targetSandbox: string,
   resolvedSnapshot: ReturnType<typeof sandboxState.getLatestBackup>,
-): void {
+  validatePolicyAuthority: () => Promise<void>,
+): Promise<void> {
+  await validatePolicyAuthority();
   if (!resolvedSnapshot || !Array.isArray(resolvedSnapshot.customPolicies)) return;
   const snapshotCustom = resolvedSnapshot.customPolicies;
   const currentCustom = registry.getCustomPolicies(targetSandbox);
@@ -1162,10 +1340,15 @@ function reconcileSnapshotCustomPolicies(
   for (const entry of toRemove) {
     try {
       // Best-effort like the built-in preset reconciliation above (#8210).
-      if (!policies.removePreset(targetSandbox, entry.name, { nonFatal: true })) {
+      if (
+        !(await runSnapshotPolicyAuthorityBoundOperation(validatePolicyAuthority, () =>
+          policies.removePreset(targetSandbox, entry.name, { nonFatal: true }),
+        ))
+      ) {
         failed.push(`${entry.name} (remove failed)`);
       }
     } catch (err) {
+      await validatePolicyAuthority();
       const message = err instanceof Error ? err.message : String(err);
       failed.push(`${entry.name} (remove: ${message})`);
     }
@@ -1181,17 +1364,20 @@ function reconcileSnapshotCustomPolicies(
             )
           : undefined;
       if (
-        !policies.applyPresetContent(targetSandbox, entry.name, entry.content, {
-          custom: {
-            sourcePath: entry.sourcePath,
-            ...(trustedPrivatePinCapability ? { trustedPrivatePinCapability } : {}),
-          },
-          nonFatal: true,
-        })
+        !(await runSnapshotPolicyAuthorityBoundOperation(validatePolicyAuthority, () =>
+          policies.applyPresetContent(targetSandbox, entry.name, entry.content, {
+            custom: {
+              sourcePath: entry.sourcePath,
+              ...(trustedPrivatePinCapability ? { trustedPrivatePinCapability } : {}),
+            },
+            nonFatal: true,
+          }),
+        ))
       ) {
         failed.push(`${entry.name} (apply failed)`);
       }
     } catch (err) {
+      await validatePolicyAuthority();
       const message = err instanceof Error ? err.message : String(err);
       failed.push(`${entry.name} (apply: ${message})`);
     }
@@ -1199,6 +1385,31 @@ function reconcileSnapshotCustomPolicies(
   if (failed.length > 0) {
     console.warn(`  Warning: could not reconcile custom policy(ies): ${failed.join("; ")}`);
   }
+  await validatePolicyAuthority();
+}
+
+function snapshotRestoreBuiltinPolicyPresets(
+  resolvedSnapshot: ReturnType<typeof sandboxState.getLatestBackup>,
+  targetEntry: SandboxEntry,
+): string[] {
+  const customPolicies = resolvedSnapshot?.customPolicies ?? [];
+  const customOwnsObservability = customPolicies.some((entry) =>
+    OBSERVABILITY_POLICY_BINDING.ownsContent(entry.content),
+  );
+  const recordedPresets = resolvedSnapshot?.policyPresets ?? [];
+  const includeManagedObservability =
+    !customOwnsObservability &&
+    isDcodeAgent(targetEntry.agent) &&
+    targetEntry.observabilityEnabled === true &&
+    normalizePolicyTierName(targetEntry.policyTier) !== "restricted";
+  return OBSERVABILITY_POLICY_BINDING.setAttribution(recordedPresets, includeManagedObservability);
+}
+
+function failSnapshotPolicyAuthority(targetSandbox: string, error: unknown): never {
+  const detail = error instanceof Error ? error.message : String(error);
+  console.error(`  Cannot qualify snapshot policy authority: ${detail.replace(/[.]*$/u, ".")}`);
+  console.error(`  Destination '${targetSandbox}' was not changed.`);
+  snapshotExit(1);
 }
 
 function readCurrentManagedSnapshotProfileAuthority(entry: SandboxEntry | null) {
@@ -1255,6 +1466,7 @@ async function runSnapshotRestoreUnlocked(
   const isCrossSandboxRestore = targetSandbox !== sandboxName;
   let crossSandboxRestoreAgent: string | null = null;
   const targetEntry = isCrossSandboxRestore ? registry.getSandbox(targetSandbox) : null;
+  let destinationPolicyAuthorityReceipt: SnapshotPolicyAuthorityReceipt | null = null;
   const targetExists = sourceLiveNames.has(targetSandbox) || Boolean(targetEntry);
   if (targetEntry?.baselineExclusionTransition) {
     const transition = targetEntry.baselineExclusionTransition;
@@ -1306,6 +1518,53 @@ async function runSnapshotRestoreUnlocked(
     workload: resolvedSnapshot.workload,
   };
   const currentSourceEntry = registry.getSandbox(sandboxName);
+  let policyAuthorityReceipt: SnapshotPolicyAuthorityReceipt | null = null;
+  if (!isCrossSandboxRestore) {
+    try {
+      if (!currentSourceEntry) {
+        throw new Error(`snapshot source '${sandboxName}' is not registered`);
+      }
+      const operation = `restore a snapshot into sandbox '${targetSandbox}'`;
+      const managedMcpPolicyContents = await resolveManagedMcpPolicyRequirementContents(
+        currentSourceEntry,
+        operation,
+      );
+      const managedMcpPolicies = resolveSnapshotPolicyRequirements({
+        builtinPresetNames: [],
+        customPolicies: [],
+        managedMcpPolicyContents,
+        operation,
+        sandboxName,
+      });
+      const targetBasePolicy = await prepareSnapshotClonePolicy(currentSourceEntry);
+      try {
+        const requiredPolicies = resolveSnapshotPolicyRequirements({
+          basePolicyContent: targetBasePolicy.policyContent,
+          builtinPresetNames: snapshotRestoreBuiltinPolicyPresets(
+            resolvedSnapshot,
+            currentSourceEntry,
+          ),
+          customPolicies: resolvedSnapshot.customPolicies ?? [],
+          managedMcpPolicyContents,
+          operation,
+          sandboxName,
+        });
+        policyAuthorityReceipt = qualifySnapshotPolicyAuthority({
+          gatewayName: resolveSandboxGatewayName(currentSourceEntry),
+          managedMcpPolicies,
+          operation,
+          requiredPolicies,
+          sourceEntry: currentSourceEntry,
+          sourceLive: sourceLiveNames.has(sandboxName),
+          verifyGlobalCreatePolicy: false,
+        });
+      } finally {
+        targetBasePolicy.cleanup?.();
+      }
+    } catch (error) {
+      failSnapshotPolicyAuthority(targetSandbox, error);
+    }
+  }
   let hasManagedProfileAuthority = false;
   const hostLocalInferenceReceipt = resolvedSnapshot.hostLocalInferenceReceipt;
   const hostLocalInferenceProvenance = resolvedSnapshot.hostLocalInferenceProvenance;
@@ -1456,6 +1715,37 @@ async function runSnapshotRestoreUnlocked(
       );
       snapshotExit(1);
     }
+    if (targetExists) {
+      try {
+        if (!targetEntry) {
+          throw new Error(`destination sandbox '${targetSandbox}' has no durable policy authority`);
+        }
+        verifyRestoreDestinationOnOwnGateway(targetSandbox);
+        const operation = `replace destination sandbox '${targetSandbox}' from a snapshot`;
+        const managedMcpPolicyContents = await resolveManagedMcpPolicyRequirementContents(
+          targetEntry,
+          operation,
+        );
+        const managedMcpPolicies = resolveSnapshotPolicyRequirements({
+          builtinPresetNames: [],
+          customPolicies: [],
+          managedMcpPolicyContents,
+          operation,
+          sandboxName: targetSandbox,
+        });
+        destinationPolicyAuthorityReceipt = qualifySnapshotPolicyAuthority({
+          gatewayName: resolveSandboxGatewayName(targetEntry),
+          managedMcpPolicies,
+          operation,
+          requiredPolicies: managedMcpPolicies,
+          sourceEntry: targetEntry,
+          sourceLive: true,
+          verifyGlobalCreatePolicy: false,
+        });
+      } catch (error) {
+        failSnapshotPolicyAuthority(targetSandbox, error);
+      }
+    }
     // Cross-sandbox restore — whether dst exists (with --force) or not, we
     // must be able to clone the source's image. Resolve it upfront so a
     // missing source / unresolvable image cannot delete the destination first
@@ -1548,26 +1838,94 @@ async function runSnapshotRestoreUnlocked(
         console.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
         snapshotExit(1);
       }
-      // Allocate the clone's dashboard port before any destructive action, so
-      // dashboard-port-range exhaustion aborts before `deleteSandboxForRestore`
-      // removes the existing `--force` destination — matching the pre-delete
-      // validation the image and gateway-route checks above already do (#3756).
+      const operation = `clone snapshot '${sandboxName}' into sandbox '${targetSandbox}'`;
+      const clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry);
+      let clonePolicyAuthorityReceipt: SnapshotPolicyAuthorityReceipt | null = null;
+      try {
+        const managedMcpPolicyContents = await resolveManagedMcpPolicyRequirementContents(
+          lockedSourceEntry,
+          operation,
+        );
+        const managedMcpPolicies = resolveSnapshotPolicyRequirements({
+          builtinPresetNames: [],
+          customPolicies: [],
+          managedMcpPolicyContents,
+          operation,
+          sandboxName,
+        });
+        const requiredPolicies = resolveSnapshotPolicyRequirements({
+          basePolicyContent: clonePolicy.policyContent,
+          builtinPresetNames: snapshotRestoreBuiltinPolicyPresets(
+            resolvedSnapshot,
+            lockedSourceEntry,
+          ),
+          customPolicies: resolvedSnapshot.customPolicies ?? [],
+          managedMcpPolicyContents,
+          operation,
+          sandboxName,
+        });
+        clonePolicyAuthorityReceipt = qualifySnapshotPolicyAuthority({
+          gatewayName: lockedGatewayName,
+          managedMcpPolicies,
+          operation,
+          requiredPolicies,
+          sourceEntry: lockedSourceEntry,
+          sourceLive: sourceLiveNames.has(sandboxName),
+          verifyGlobalCreatePolicy: true,
+        });
+        policyAuthorityReceipt = clonePolicyAuthorityReceipt;
+      } catch (error) {
+        clonePolicy.cleanup?.();
+        failSnapshotPolicyAuthority(targetSandbox, error);
+      }
+      if (!clonePolicyAuthorityReceipt) {
+        throw new SnapshotCommandError("Snapshot clone policy authority was not qualified.");
+      }
+
+      // Allocate the clone's dashboard port only after policy authority and
+      // every replay requirement have been qualified.
       const dstDashboardPort = allocateCloneDashboardPort(targetSandbox, lockedSourceEntry);
       const dstHermesApiPort = allocateCloneHermesApiPort(targetSandbox, lockedSourceEntry);
       const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
-      const clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry);
       try {
+        try {
+          await revalidateSnapshotPolicyAuthority(clonePolicyAuthorityReceipt);
+        } catch (error) {
+          failSnapshotPolicyAuthority(targetSandbox, error);
+        }
         if (targetExists) {
           if (targetEntry) {
             verifyRestoreDestinationOnOwnGateway(targetSandbox);
           }
-          deleteSandboxForRestore(targetSandbox);
+          if (!destinationPolicyAuthorityReceipt) {
+            throw new SnapshotCommandError(
+              "Snapshot destination policy authority was not qualified.",
+            );
+          }
+          const qualifiedDestinationReceipt = destinationPolicyAuthorityReceipt;
+          try {
+            await revalidateSnapshotPolicyAuthority(qualifiedDestinationReceipt);
+          } catch (error) {
+            failSnapshotPolicyAuthority(targetSandbox, error);
+          }
+          await deleteSandboxForRestore(
+            targetSandbox,
+            () => revalidateSnapshotPolicyAuthority(qualifiedDestinationReceipt),
+            () => revalidateDeletedSnapshotPolicyAuthority(qualifiedDestinationReceipt),
+            (removalReceipt) =>
+              revalidateRemovedSnapshotPolicyAuthority(qualifiedDestinationReceipt, removalReceipt),
+          );
           requireLiveSandboxesOnSandboxGateway(
             sandboxName,
             "  Failed to re-select source sandbox gateway after deleting destination.",
           );
+          try {
+            await revalidateSnapshotPolicyAuthority(clonePolicyAuthorityReceipt);
+          } catch (error) {
+            failSnapshotPolicyAuthority(targetSandbox, error);
+          }
         }
-        await autoCreateSandboxFromSource(
+        policyAuthorityReceipt = await autoCreateSandboxFromSource(
           sandboxName,
           targetSandbox,
           lockedSourceEntry,
@@ -1575,6 +1933,7 @@ async function runSnapshotRestoreUnlocked(
           lockedGatewayPort,
           lockedFromImage,
           clonePolicy.policyPath,
+          clonePolicyAuthorityReceipt,
           dstDashboardPort,
           dashboardEnvArgs,
           dstHermesApiPort,
@@ -1617,151 +1976,226 @@ async function runSnapshotRestoreUnlocked(
         console.error(
           `  Removing incomplete clone '${targetSandbox}' while its exact provider ownership is still registered.`,
         );
-        deleteSandboxForRestore(targetSandbox);
+        const incompleteCloneReceipt = policyAuthorityReceipt;
+        if (!incompleteCloneReceipt) {
+          console.error(
+            `  Incomplete clone '${targetSandbox}' was left intact because its policy authority receipt is unavailable.`,
+          );
+          snapshotExit(1);
+        }
+        await deleteSandboxForRestore(
+          targetSandbox,
+          () => revalidateSnapshotPolicyAuthority(incompleteCloneReceipt),
+          () => revalidateDeletedSnapshotPolicyAuthority(incompleteCloneReceipt),
+          (removalReceipt) =>
+            revalidateRemovedSnapshotPolicyAuthority(incompleteCloneReceipt, removalReceipt),
+        );
         snapshotExit(1);
       }
     }
   }
-  withTimerBoundShieldsMutationLock(targetSandbox, "restore sandbox snapshot", () => {
-    // Serialize filesystem restore, mutable-permission repair, and policy
-    // reconciliation under the active timer generation. At the absolute
-    // deadline, auto-restore keeps the outer lifecycle gate closed and waits
-    // for this exact owner to finish before restoring lockdown.
-    const validateProviderRestoreBeforeMutation =
-      preparedRuntimeRestore || preparedHostLocalInferenceRestore
-        ? () => {
-            const currentTarget = registry.getSandbox(targetSandbox);
-            if (!currentTarget) {
-              throw new Error(`target '${targetSandbox}' is no longer registered`);
+  if (!policyAuthorityReceipt) {
+    throw new SnapshotCommandError("Snapshot policy authority was not qualified.");
+  }
+  const qualifiedPolicyAuthorityReceipt = policyAuthorityReceipt;
+  const validateQualifiedPolicyAuthority = (): Promise<void> =>
+    revalidateSnapshotPolicyAuthority(qualifiedPolicyAuthorityReceipt);
+  await withTimerBoundShieldsMutationLockAsync(
+    targetSandbox,
+    "restore sandbox snapshot",
+    async () => {
+      try {
+        await revalidateSnapshotPolicyAuthority(qualifiedPolicyAuthorityReceipt);
+      } catch (error) {
+        failSnapshotPolicyAuthority(targetSandbox, error);
+      }
+      // Serialize filesystem restore, mutable-permission repair, and policy
+      // reconciliation under the active timer generation. At the absolute
+      // deadline, auto-restore keeps the outer lifecycle gate closed and waits
+      // for this exact owner to finish before restoring lockdown.
+      const validateProviderRestoreBeforeMutation =
+        preparedRuntimeRestore || preparedHostLocalInferenceRestore
+          ? () => {
+              const currentTarget = registry.getSandbox(targetSandbox);
+              if (!currentTarget) {
+                throw new Error(`target '${targetSandbox}' is no longer registered`);
+              }
+              const provider = requireCurrentSnapshotRuntimeProvider(currentTarget);
+              if (preparedRuntimeRestore) {
+                const profileRestore = prepareManagedSnapshotProfileRestore(
+                  snapshotProfileSource,
+                  currentTarget,
+                  provider,
+                );
+                if (!profileRestore) {
+                  throw new Error("managed profile restore authority is missing");
+                }
+                const prepared = preparedRuntimeRestore;
+                if (!prepared) throw new Error("managed runtime restore authority is missing");
+                // The state layer invokes this after local tar staging and
+                // immediately before its first remote filesystem mutation.
+                preparedRuntimeRestore = prepareSandboxRuntimeRestore(
+                  provider,
+                  currentTarget,
+                  prepared.source,
+                  profileRestore.providerRestoreAuthority,
+                );
+              }
+              if (typeof hostLocalInferenceReceipt === "string") {
+                if (!preparedHostLocalInferenceRestore) {
+                  throw new Error("host-local inference restore authority is missing");
+                }
+                confirmHostLocalInferenceAuthority(
+                  provider,
+                  currentTarget,
+                  preparedHostLocalInferenceRestore,
+                );
+              }
             }
+          : null;
+      if (targetSandbox !== sandboxName) {
+        console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
+      } else {
+        console.log(`  Restoring snapshot into '${sandboxName}'...`);
+      }
+      if (Boolean(snapshotRestoreAuthority) !== Boolean(validateProviderRestoreBeforeMutation)) {
+        console.error(
+          `  Cannot restore provider snapshot '${sandboxName}': content authority and the runtime mutation fence must both be present.`,
+        );
+        console.error(`  Destination '${targetSandbox}' was not changed.`);
+        snapshotExit(1);
+      }
+      const result =
+        snapshotRestoreAuthority && validateProviderRestoreBeforeMutation
+          ? sandboxState.restoreSandboxState(targetSandbox, backupPath, {
+              authority: snapshotRestoreAuthority,
+              validateBeforeMutation: validateProviderRestoreBeforeMutation,
+            })
+          : sandboxState.restoreSandboxState(targetSandbox, backupPath);
+      const revalidateAfterFilesystemRestore = async (): Promise<void> => {
+        try {
+          await revalidateSnapshotPolicyAuthority(qualifiedPolicyAuthorityReceipt);
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          console.error(
+            `  Snapshot state was restored, but policy authority could not be revalidated: ${detail}`,
+          );
+          console.error(
+            "  NemoClaw did not change policy attribution or replay snapshot policies.",
+          );
+          snapshotExit(1);
+        }
+      };
+      if (result.success) {
+        if (preparedRuntimeRestore || preparedHostLocalInferenceRestore) {
+          const currentTarget = registry.getSandbox(targetSandbox);
+          if (!currentTarget) {
+            console.error(
+              `  Provider snapshot state was restored, but target '${targetSandbox}' is no longer registered.`,
+            );
+            snapshotExit(1);
+          }
+          try {
             const provider = requireCurrentSnapshotRuntimeProvider(currentTarget);
             if (preparedRuntimeRestore) {
-              const profileRestore = prepareManagedSnapshotProfileRestore(
-                snapshotProfileSource,
-                currentTarget,
-                provider,
-              );
-              if (!profileRestore) {
-                throw new Error("managed profile restore authority is missing");
-              }
-              const prepared = preparedRuntimeRestore;
-              if (!prepared) throw new Error("managed runtime restore authority is missing");
-              // The state layer invokes this after local tar staging and
-              // immediately before its first remote filesystem mutation.
-              preparedRuntimeRestore = prepareSandboxRuntimeRestore(
-                provider,
-                currentTarget,
-                prepared.source,
-                profileRestore.providerRestoreAuthority,
-              );
+              confirmSandboxRuntimeRestore(provider, currentTarget, preparedRuntimeRestore);
             }
-            if (typeof hostLocalInferenceReceipt === "string") {
-              if (!preparedHostLocalInferenceRestore) {
-                throw new Error("host-local inference restore authority is missing");
-              }
+            if (preparedHostLocalInferenceRestore) {
               confirmHostLocalInferenceAuthority(
                 provider,
                 currentTarget,
                 preparedHostLocalInferenceRestore,
               );
             }
-          }
-        : null;
-    if (targetSandbox !== sandboxName) {
-      console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
-    } else {
-      console.log(`  Restoring snapshot into '${sandboxName}'...`);
-    }
-    if (Boolean(snapshotRestoreAuthority) !== Boolean(validateProviderRestoreBeforeMutation)) {
-      console.error(
-        `  Cannot restore provider snapshot '${sandboxName}': content authority and the runtime mutation fence must both be present.`,
-      );
-      console.error(`  Destination '${targetSandbox}' was not changed.`);
-      snapshotExit(1);
-    }
-    const result =
-      snapshotRestoreAuthority && validateProviderRestoreBeforeMutation
-        ? sandboxState.restoreSandboxState(targetSandbox, backupPath, {
-            authority: snapshotRestoreAuthority,
-            validateBeforeMutation: validateProviderRestoreBeforeMutation,
-          })
-        : sandboxState.restoreSandboxState(targetSandbox, backupPath);
-    if (result.success) {
-      if (preparedRuntimeRestore || preparedHostLocalInferenceRestore) {
-        const currentTarget = registry.getSandbox(targetSandbox);
-        if (!currentTarget) {
-          console.error(
-            `  Provider snapshot state was restored, but target '${targetSandbox}' is no longer registered.`,
-          );
-          snapshotExit(1);
-        }
-        try {
-          const provider = requireCurrentSnapshotRuntimeProvider(currentTarget);
-          if (preparedRuntimeRestore) {
-            confirmSandboxRuntimeRestore(provider, currentTarget, preparedRuntimeRestore);
-          }
-          if (preparedHostLocalInferenceRestore) {
-            confirmHostLocalInferenceAuthority(
-              provider,
-              currentTarget,
-              preparedHostLocalInferenceRestore,
+          } catch (error) {
+            console.error(
+              `  Provider snapshot state was restored, but provider restore proof failed: ${
+                error instanceof Error ? error.message : String(error)
+              }.`,
             );
+            console.error("  Retry this exact snapshot after the runtime provider stabilizes.");
+            snapshotExit(1);
           }
-        } catch (error) {
+        }
+        await revalidateAfterFilesystemRestore();
+        console.log(
+          `  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories, ${result.restoredFiles.length} files`,
+        );
+        printHermesGatewayRestoreHint(
+          targetSandbox,
+          registry.getSandbox(targetSandbox)?.agent,
+          result.restoredFiles,
+          resolvedSnapshot?.stateFiles ?? [],
+        );
+      } else {
+        console.error(`  Restore failed.`);
+        if (result.restoredDirs.length > 0) {
+          console.error(`  Partial: ${result.restoredDirs.join(", ")}`);
+        }
+        if (result.failedDirs.length > 0) {
+          console.error(`  Failed: ${result.failedDirs.join(", ")}`);
+        }
+        if (result.failedFiles.length > 0) {
+          console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
+        }
+        if (result.error) {
+          console.error(`  Reason: ${result.error}`);
+        }
+        snapshotExit(1);
+      }
+      // Post-restore security-state reconciliation is best-effort by design: the
+      // filesystem restore succeeded and old snapshots may target hosts where policy
+      // providers or mutable-config repair are temporarily unavailable. Surface every
+      // failure as a warning, but keep the restore result tied to state restoration.
+      // #5027/#4538: openclaw.json restores via the generic copy strategy, which
+      // lands it at 0640. Repair the mutable config contract when needed.
+      await revalidateAfterFilesystemRestore();
+      repairRestoredOpenClawConfigPerms(targetSandbox, result);
+      await revalidateAfterFilesystemRestore();
+      if (qualifiedPolicyAuthorityReceipt.authority === "externally-managed") {
+        await validateQualifiedPolicyAuthority();
+        if (
+          !registry.updateSandbox(targetSandbox, {
+            baselineExclusions: [],
+            customPolicies: [],
+            policies: [],
+            policyAuthority: "externally-managed",
+            policyPresetsFinalized: undefined,
+          })
+        ) {
           console.error(
-            `  Provider snapshot state was restored, but provider restore proof failed: ${
-              error instanceof Error ? error.message : String(error)
-            }.`,
+            `  Snapshot state was restored, but NemoClaw could not clear local policy attribution and record external policy authority for '${targetSandbox}'.`,
           );
-          console.error("  Retry this exact snapshot after the runtime provider stabilizes.");
           snapshotExit(1);
         }
+        await validateQualifiedPolicyAuthority();
+      } else {
+        // Reconcile custom policy presets (applied via --from-file/--from-dir).
+        // Skipped for legacy snapshots that predate the `customPolicies` field.
+        await reconcileSnapshotCustomPolicies(
+          targetSandbox,
+          resolvedSnapshot,
+          validateQualifiedPolicyAuthority,
+        );
+        // Reconcile built-in presets after custom content so same-name custom
+        // policies are never transiently substituted with a built-in. The current
+        // target observability bit and tier override historical built-in OTLP state.
+        // Legacy snapshots skip unrelated generic presets but still reconcile the
+        // managed observability binding from current target state.
+        await reconcileSnapshotPolicyPresets(
+          targetSandbox,
+          resolvedSnapshot,
+          validateQualifiedPolicyAuthority,
+        );
       }
-      console.log(
-        `  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories, ${result.restoredFiles.length} files`,
-      );
-      printHermesGatewayRestoreHint(
-        targetSandbox,
-        registry.getSandbox(targetSandbox)?.agent,
-        result.restoredFiles,
-        resolvedSnapshot?.stateFiles ?? [],
-      );
-    } else {
-      console.error(`  Restore failed.`);
-      if (result.restoredDirs.length > 0) {
-        console.error(`  Partial: ${result.restoredDirs.join(", ")}`);
-      }
-      if (result.failedDirs.length > 0) {
-        console.error(`  Failed: ${result.failedDirs.join(", ")}`);
-      }
-      if (result.failedFiles.length > 0) {
-        console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
-      }
-      if (result.error) {
-        console.error(`  Reason: ${result.error}`);
-      }
-      snapshotExit(1);
-    }
-    // Post-restore security-state reconciliation is best-effort by design: the
-    // filesystem restore succeeded and old snapshots may target hosts where policy
-    // providers or mutable-config repair are temporarily unavailable. Surface every
-    // failure as a warning, but keep the restore result tied to state restoration.
-    // #5027/#4538: openclaw.json restores via the generic copy strategy, which
-    // lands it at 0640. Repair the mutable config contract when needed.
-    repairRestoredOpenClawConfigPerms(targetSandbox, result);
-    // Reconcile custom policy presets (applied via --from-file/--from-dir).
-    // Skipped for legacy snapshots that predate the `customPolicies` field.
-    reconcileSnapshotCustomPolicies(targetSandbox, resolvedSnapshot);
-    // Reconcile built-in presets after custom content so same-name custom
-    // policies are never transiently substituted with a built-in. The current
-    // target observability bit and tier override historical built-in OTLP state.
-    // Legacy snapshots skip unrelated generic presets but still reconcile the
-    // managed observability binding from current target state.
-    reconcileSnapshotPolicyPresets(targetSandbox, resolvedSnapshot);
-  });
+      await validateQualifiedPolicyAuthority();
+    },
+  );
+  await validateQualifiedPolicyAuthority();
   if (isCrossSandboxRestore && crossSandboxRestoreAgent === "openclaw") {
     try {
-      await establishRestoredSandboxGatewayPairing(targetSandbox);
+      await establishRestoredSandboxGatewayPairing(targetSandbox, validateQualifiedPolicyAuthority);
+      await validateQualifiedPolicyAuthority();
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       throw new SnapshotCommandError([
@@ -1771,6 +2205,7 @@ async function runSnapshotRestoreUnlocked(
       ]);
     }
   }
+  await validateQualifiedPolicyAuthority();
 }
 
 export async function runSandboxSnapshot(

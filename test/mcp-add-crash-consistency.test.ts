@@ -68,6 +68,8 @@ const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
+const mcpPolicy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+const policyAuthority = require("./src/lib/actions/sandbox/policy-authority/preflight.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const ownershipLocks = require("./src/lib/state/mcp-lifecycle-lock/credential-ownership.js");
 
@@ -211,6 +213,8 @@ policies.removePreset = () => {
   fs.rmSync(marker("policy"), { force: true });
   return true;
 };
+mcpPolicy.preflightMcpPolicyAuthority = () => "nemoclaw-managed";
+policyAuthority.preflightSandboxPolicyAuthority = () => "nemoclaw-managed";
 
 processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
   const encoded = command.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/)?.[1] || "";
@@ -323,6 +327,20 @@ function spawnScript(home: string, script: string): ChildProcessWithoutNullStrea
   });
 }
 
+function registerCrashTestSandbox(home: string): void {
+  const script = `
+process.env.HOME = ${JSON.stringify(home)};
+const registry = require("./src/lib/state/registry.js");
+registry.registerSandbox({ name: "crash-test", agent: "openclaw", gatewayName: "nemoclaw" });
+`;
+  const result = spawnSync(process.execPath, ["-e", script], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: { ...process.env, HOME: home },
+  });
+  expect(result.status, result.stderr).toBe(0);
+}
+
 function collectProcess(child: ChildProcessWithoutNullStreams): Promise<{
   status: number | null;
   stdout: string;
@@ -412,6 +430,8 @@ let observedProviderName = null;
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
+const mcpPolicy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+const policyAuthority = require("./src/lib/actions/sandbox/policy-authority/preflight.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
@@ -474,6 +494,8 @@ policies.removePreset = () => {
   fs.rmSync(marker("policy"), { force: true });
   return true;
 };
+mcpPolicy.preflightMcpPolicyAuthority = () => "nemoclaw-managed";
+policyAuthority.preflightSandboxPolicyAuthority = () => "nemoclaw-managed";
 
 processRecovery.executeSandboxCommand = (_sandbox, command) => {
   if (
@@ -574,6 +596,7 @@ describe("MCP add crash consistency", () => {
   it("commits one bridge and rejects one duplicate after delayed credential projection (#9764)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-concurrent-projection-"));
     try {
+      registerCrashTestSandbox(home);
       const script = buildAddProcessScript(home, "credential-projection-coalesced");
       const first = spawnScript(home, script);
       const second = spawnScript(home, script);
@@ -583,7 +606,9 @@ describe("MCP add crash consistency", () => {
         .join("\n---\n");
 
       expect(results.map((result) => result.status).sort(), combinedOutput).toEqual([0, 2]);
-      expect(results.find((result) => result.status === 2)?.stderr).toContain("already exists");
+      expect(results.find((result) => result.status === 2)?.stderr).toMatch(
+        /already exists|already supplied by attached provider/,
+      );
       expect(combinedOutput).not.toContain("host-only-secret");
       expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "republish-before-observation.marker"))).toBe(true);
@@ -1047,6 +1072,10 @@ describe("MCP add crash consistency", () => {
       const cancelScript = `
 process.env.HOME = ${JSON.stringify(home)};
 const registry = require("./src/lib/state/registry.js");
+const mcpPolicy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+const policyAuthority = require("./src/lib/actions/sandbox/policy-authority/preflight.js");
+mcpPolicy.preflightMcpPolicyAuthority = () => "nemoclaw-managed";
+policyAuthority.preflightSandboxPolicyAuthority = () => "nemoclaw-managed";
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.removeMcpBridge("crash-test", "fake", { force: true }).then(
   () => process.exit(0),

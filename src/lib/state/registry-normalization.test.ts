@@ -12,6 +12,7 @@ import {
   normalizeBaselineExclusions,
   normalizeBaselineExclusionTransition,
   normalizeCustomPolicyEntries,
+  normalizeSandboxPolicyAuthority,
 } from "./registry-normalization";
 
 const originalHome = process.env.HOME;
@@ -66,6 +67,29 @@ describe("sandbox registry normalization", () => {
     estimatedImageDownloadBytes: null,
     estimatedModelDownloadBytes: null,
   } as const;
+
+  const createPolicyAttribution = () => {
+    const exclusion = {
+      version: 1 as const,
+      agent: "hermes",
+      key: "nous_research",
+      digest: "a".repeat(64),
+      acknowledgedAt: "2026-08-20T00:00:00.000Z",
+    };
+    return {
+      policies: ["weather"],
+      customPolicies: [{ name: "private-api", content: "network_policies: {}" }],
+      baselineExclusions: [exclusion],
+      baselineExclusionTransition: {
+        id: "123e4567-e89b-42d3-a456-426614174983",
+        operation: "exclude" as const,
+        exclusion,
+        targetLiveDigest: null,
+        startedAt: "2026-08-20T00:00:01.000Z",
+      },
+      policyPresetsFinalized: true,
+    };
+  };
 
   it.each([null, [], 42, "invalid"])(
     "treats a non-object top-level registry document as empty: %j",
@@ -272,6 +296,155 @@ describe("sandbox registry normalization", () => {
       },
     });
     expect(() => registry.getSandbox("profile")).toThrow("invalid serving profile provenance");
+  });
+
+  it("round-trips known policy authority while leaving legacy authority unknown (#9833)", async () => {
+    const registry = await loadRegistryWith({
+      legacy: { name: "legacy" },
+      managed: { name: "managed", policyAuthority: "nemoclaw-managed" },
+      external: { name: "external", policyAuthority: "externally-managed" },
+    });
+
+    expect(registry.getSandbox("legacy")?.policyAuthority).toBeUndefined();
+    expect(registry.getSandbox("managed")?.policyAuthority).toBe("nemoclaw-managed");
+    expect(registry.getSandbox("external")?.policyAuthority).toBe("externally-managed");
+
+    registry.save(registry.load());
+    const persisted = JSON.parse(
+      fs.readFileSync(path.join(process.env.HOME!, ".nemoclaw", "sandboxes.json"), "utf8"),
+    ) as { sandboxes: Record<string, Record<string, unknown>> };
+    expect(persisted.sandboxes.legacy).not.toHaveProperty("policyAuthority");
+    expect(persisted.sandboxes.managed?.policyAuthority).toBe("nemoclaw-managed");
+    expect(persisted.sandboxes.external?.policyAuthority).toBe("externally-managed");
+  });
+
+  it("clears NemoClaw policy attribution from externally managed rows (#9833)", async () => {
+    const attribution = createPolicyAttribution();
+    const registry = await loadRegistryWith({
+      legacy: { name: "legacy", ...attribution, policyTier: "strict" },
+      managed: {
+        name: "managed",
+        ...attribution,
+        policyAuthority: "nemoclaw-managed",
+        policyTier: "strict",
+      },
+      external: {
+        name: "external",
+        ...attribution,
+        policyAuthority: "externally-managed",
+        policyTier: "strict",
+      },
+    });
+
+    expect(registry.getSandbox("legacy")).toMatchObject(attribution);
+    expect(registry.getSandbox("managed")).toMatchObject(attribution);
+    expect(registry.getSandbox("external")).toMatchObject({
+      policyAuthority: "externally-managed",
+      policies: [],
+    });
+    expect(registry.getSandbox("external")).not.toHaveProperty("policyTier");
+    expect(registry.getSandbox("external")).not.toHaveProperty("customPolicies");
+    expect(registry.getSandbox("external")).not.toHaveProperty("baselineExclusions");
+    expect(registry.getSandbox("external")).not.toHaveProperty("baselineExclusionTransition");
+    expect(registry.getSandbox("external")).not.toHaveProperty("policyPresetsFinalized");
+
+    registry.save(registry.load());
+    const persisted = JSON.parse(
+      fs.readFileSync(path.join(process.env.HOME!, ".nemoclaw", "sandboxes.json"), "utf8"),
+    ) as { sandboxes: Record<string, Record<string, unknown>> };
+    expect(persisted.sandboxes.legacy).toMatchObject(attribution);
+    expect(persisted.sandboxes.managed).toMatchObject(attribution);
+    expect(persisted.sandboxes.external).toMatchObject({
+      policyAuthority: "externally-managed",
+      policies: [],
+    });
+    expect(persisted.sandboxes.external).not.toHaveProperty("policyTier");
+    expect(persisted.sandboxes.external).not.toHaveProperty("customPolicies");
+    expect(persisted.sandboxes.external).not.toHaveProperty("baselineExclusions");
+    expect(persisted.sandboxes.external).not.toHaveProperty("baselineExclusionTransition");
+    expect(persisted.sandboxes.external).not.toHaveProperty("policyPresetsFinalized");
+  });
+
+  it("clears supplied policy attribution before external registration returns (#9833)", async () => {
+    const registry = await loadRegistryWith({});
+
+    const registered = registry.registerSandbox({
+      name: "external",
+      ...createPolicyAttribution(),
+      policyAuthority: "externally-managed",
+      policyTier: "strict",
+    });
+
+    expect(registered).toMatchObject({
+      policyAuthority: "externally-managed",
+      policies: [],
+    });
+    expect(registered).not.toHaveProperty("policyTier");
+    expect(registered).not.toHaveProperty("customPolicies");
+    expect(registered).not.toHaveProperty("baselineExclusions");
+    expect(registered).not.toHaveProperty("baselineExclusionTransition");
+    expect(registered).not.toHaveProperty("policyPresetsFinalized");
+  });
+
+  it.each([null, "sandbox", "global", {}, []])(
+    "fails closed on malformed persisted policy authority %j (#9833)",
+    async (policyAuthority) => {
+      const registry = await loadRegistryWith({
+        alpha: { name: "alpha", policyAuthority },
+      });
+
+      expect(() => registry.getSandbox("alpha")).toThrow(/invalid policy authority/i);
+    },
+  );
+
+  it("backfills policy authority once without allowing later changes or removal (#9833)", async () => {
+    const registry = await loadRegistryWith({ legacy: { name: "legacy" } });
+
+    expect(() => registry.updateSandbox("legacy", { policyAuthority: "global" as never })).toThrow(
+      /invalid policy authority/i,
+    );
+    expect(registry.updateSandbox("legacy", { policyAuthority: "nemoclaw-managed" })).toBe(true);
+    expect(registry.updateSandbox("legacy", { policyAuthority: "nemoclaw-managed" })).toBe(true);
+    expect(registry.updateSandbox("legacy", { policyAuthority: "externally-managed" })).toBe(false);
+    expect(registry.updateSandbox("legacy", { policyAuthority: undefined })).toBe(false);
+    expect(registry.getSandbox("legacy")?.policyAuthority).toBe("nemoclaw-managed");
+
+    registry.registerSandbox({ name: "legacy" });
+    expect(registry.getSandbox("legacy")?.policyAuthority).toBe("nemoclaw-managed");
+    expect(() =>
+      registry.registerSandbox({ name: "legacy", policyAuthority: "externally-managed" }),
+    ).toThrow(/policy authority changed/u);
+  });
+
+  it("preserves a replacement row when recovery has a different policy authority (#9833)", async () => {
+    const registry = await loadRegistryWith({
+      alpha: {
+        name: "alpha",
+        model: "current",
+        policyAuthority: "externally-managed",
+      },
+    });
+
+    expect(() =>
+      registry.restoreSandboxEntry({
+        name: "alpha",
+        model: "recovered",
+        policyAuthority: "nemoclaw-managed",
+      }),
+    ).toThrow(/policy authority changed during recovery/u);
+    expect(registry.getSandbox("alpha")).toMatchObject({
+      model: "current",
+      policyAuthority: "externally-managed",
+    });
+  });
+});
+
+describe("sandbox policy authority normalization", () => {
+  it("accepts only known values while preserving legacy absence (#9833)", () => {
+    expect(normalizeSandboxPolicyAuthority(undefined)).toBeUndefined();
+    expect(normalizeSandboxPolicyAuthority("nemoclaw-managed")).toBe("nemoclaw-managed");
+    expect(normalizeSandboxPolicyAuthority("externally-managed")).toBe("externally-managed");
+    expect(() => normalizeSandboxPolicyAuthority("sandbox")).toThrow(/invalid policy authority/i);
   });
 });
 

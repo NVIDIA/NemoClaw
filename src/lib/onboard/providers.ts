@@ -434,6 +434,23 @@ function providerExistsInGateway(name, _runOpenshell) {
 }
 
 /**
+ * Recheck the caller's policy receipt immediately before each OpenShell
+ * provider command. Commands in one provider operation can be separated by
+ * probes and recovery work, so one outer check is not sufficient.
+ * @param {Function} runOpenshell
+ * @param {((operation: string) => void)|undefined} revalidatePolicyRequirements
+ * @param {string} operation
+ * @returns {Function}
+ */
+function policyAuthorityCheckedRunner(runOpenshell, revalidatePolicyRequirements, operation) {
+  if (!revalidatePolicyRequirements) return runOpenshell;
+  return (...args) => {
+    revalidatePolicyRequirements(operation);
+    return runOpenshell(...args);
+  };
+}
+
+/**
  * Create or update an OpenShell provider in the gateway.
  *
  * Checks whether the provider already exists via `openshell provider get`;
@@ -450,14 +467,19 @@ function providerExistsInGateway(name, _runOpenshell) {
  * @param {string|null} baseUrl - Optional base URL for the provider endpoint.
  * @param {Record<string, string>} env - Environment variables for the openshell command.
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean}} options - Optional replacement controls.
+ * @param {{replaceExisting?: boolean, revalidatePolicyRequirements?: (operation: string) => void}} options - Optional replacement controls.
  * @returns {{ ok: boolean, status?: number, message?: string }}
  */
 function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
-  const exists = providerExistsInGateway(name, _runOpenshell);
+  const runOpenshell = policyAuthorityCheckedRunner(
+    _runOpenshell,
+    options.revalidatePolicyRequirements,
+    `inspect or change provider ${JSON.stringify(name)}`,
+  );
+  const exists = providerExistsInGateway(name, runOpenshell);
   if (exists && options.replaceExisting) {
     const { deleteProviderWithRecovery } = require("./sandbox-provider-cleanup");
-    const r = deleteProviderWithRecovery(name, { runOpenshell: _runOpenshell });
+    const r = deleteProviderWithRecovery(name, { runOpenshell });
     if (!r.ok) {
       const base =
         compactText(redact(r.stderr)) ||
@@ -481,7 +503,7 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
   const includeCredential = action === "create" || credentialValueAvailable;
   const args = buildProviderArgs(action, name, type, credentialEnv, baseUrl, { includeCredential });
   const runOpts = { ignoreError: true, env, stdio: ["ignore", "pipe", "pipe"] };
-  const result = _runOpenshell(args, runOpts);
+  const result = runOpenshell(args, runOpts);
   if (result.status !== 0) {
     const output =
       compactText(redact(`${result.stderr || ""}`)) ||
@@ -505,7 +527,7 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
  * of terminating the CLI.
  * @param {Array<{name: string, envKey: string, token: string|null, providerType?: string}>} tokenDefs
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean, bestEffort?: boolean}} options - Forwarded to every upsertProvider call.
+ * @param {{replaceExisting?: boolean, bestEffort?: boolean, revalidatePolicyRequirements?: (operation: string) => void}} options - Forwarded to every upsertProvider call.
  * @returns {string[]} Provider names that were upserted.
  */
 function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
@@ -529,9 +551,14 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   // channels/<channel>/provider-profile/<agent>.yaml (not a flag inside it); both
   // bracket steps self-gate when no bridge token def is present.
   const messagingBridgeProvider = require("./messaging-bridge-provider");
+  const runMessagingBridgeOpenshell = policyAuthorityCheckedRunner(
+    _runOpenshell,
+    options.revalidatePolicyRequirements,
+    "inspect or change a messaging bridge provider",
+  );
   messagingBridgeProvider.ensureMessagingBridgeProfiles(tokenDefs, {
     root: ROOT,
-    runOpenshell: _runOpenshell,
+    runOpenshell: runMessagingBridgeOpenshell,
     redact,
   });
   const upserted = [];
@@ -545,7 +572,10 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
       null,
       { [envKey]: token },
       _runOpenshell,
-      { replaceExisting: Boolean(options.replaceExisting) },
+      {
+        replaceExisting: Boolean(options.replaceExisting),
+        revalidatePolicyRequirements: options.revalidatePolicyRequirements,
+      },
     );
     if (!result.ok) {
       if (options.bestEffort) {
@@ -564,7 +594,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   // self-gates without a bridge token def). Secret material stays gateway-side —
   // never written into the sandbox.
   const refreshResult = messagingBridgeProvider.configureMessagingBridgeRefreshes(tokenDefs, {
-    runOpenshell: _runOpenshell,
+    runOpenshell: runMessagingBridgeOpenshell,
     redact,
     getCredential,
     env: process.env,

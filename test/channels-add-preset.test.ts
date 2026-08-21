@@ -180,6 +180,9 @@ beforeEach(() => {
   process.env.SLACK_BOT_TOKEN = "xoxb-slack-bot-token-for-test";
   process.env.SLACK_APP_TOKEN = "xapp-slack-app-token-for-test";
   process.env.DISCORD_BOT_TOKEN = "test-discord-token";
+  vi.spyOn(policyChannelDependencies, "preflightSandboxPolicyAuthority").mockReturnValue(
+    "nemoclaw-managed",
+  );
 
   sandboxAgent = "openclaw";
   registryEntry = makeRegistryEntry();
@@ -336,6 +339,186 @@ afterEach(() => {
 });
 
 describe("channels add applies a matching policy preset (#3437)", () => {
+  it("stops channel add before credential, provider, policy, or registry mutation when policy authority is inconclusive (#9833)", async () => {
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() => {
+      throw new Error("OpenShell returned an unknown policy source");
+    });
+
+    await expectExit(() => addSandboxChannel("test-sb", { channel: "telegram" }));
+
+    expect(printedText()).toContain("unknown policy source");
+    expect(buildPlanSpy).not.toHaveBeenCalled();
+    expect(getCredentialSpy).not.toHaveBeenCalled();
+    expect(saveCredentialSpy).not.toHaveBeenCalled();
+    expect(providerSpy).not.toHaveBeenCalled();
+    expect(applyPresetSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(rebuildSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not attribute an externally supplied channel preset to the onboard session (#9833)", async () => {
+    registryEntry = { ...registryEntry, policyAuthority: "externally-managed" };
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockReturnValue(
+      "externally-managed",
+    );
+
+    await addSandboxChannel("test-sb", { channel: "telegram" });
+
+    expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "telegram", {
+      disclosedPresetState: "absent",
+    });
+    expect(sessionUpdates).toEqual([]);
+    expect(sessionState?.policyPresets).not.toContain("telegram");
+  });
+
+  it("rechecks authority after channel planning and prompts before credential mutation (#9833)", async () => {
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority)
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockImplementationOnce(() => {
+        throw new Error("OpenShell policy authority changed during channel setup");
+      });
+
+    await expectExit(() => addSandboxChannel("test-sb", { channel: "telegram" }));
+
+    expect(printedText()).toContain("authority changed");
+    expect(buildPlanSpy).toHaveBeenCalledOnce();
+    expect(saveCredentialSpy).not.toHaveBeenCalled();
+    expect(providerSpy).not.toHaveBeenCalled();
+    expect(applyPresetSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(rebuildSpy).not.toHaveBeenCalled();
+  });
+
+  it("rechecks authority after gateway recovery before credential or provider mutation (#9833)", async () => {
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority)
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockImplementationOnce(() => {
+        throw new Error("OpenShell policy authority changed after gateway recovery");
+      });
+
+    await expectExit(() => addSandboxChannel("test-sb", { channel: "telegram" }));
+
+    expect(printedText()).toContain("authority changed");
+    expect(saveCredentialSpy).not.toHaveBeenCalled();
+    expect(providerSpy).not.toHaveBeenCalled();
+    expect(applyPresetSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
+  });
+
+  it("rechecks authority after policy apply before recording the channel plan (#9833)", async () => {
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority)
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockImplementationOnce(() => {
+        throw new Error("OpenShell policy authority changed before channel plan persistence");
+      });
+
+    await expectExit(() => addSandboxChannel("test-sb", { channel: "telegram" }));
+
+    expect(printedText()).toContain("authority changed");
+    expect(applyPresetSpy).toHaveBeenCalledOnce();
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(rebuildSpy).not.toHaveBeenCalled();
+  });
+
+  it("stops external channel removal before credential, provider, policy, or registry teardown (#9833)", async () => {
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() => {
+      throw new Error("this sandbox policy is externally managed");
+    });
+
+    await expectExit(() => removeSandboxChannel("test-sb", { channel: "slack" }));
+
+    expect(printedText()).toContain("externally managed");
+    expect(deleteCredentialSpy).not.toHaveBeenCalled();
+    expect(providerSpy).not.toHaveBeenCalled();
+    expect(removePresetSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(execSpy).not.toHaveBeenCalled();
+    expect(rebuildSpy).not.toHaveBeenCalled();
+  });
+
+  it("rechecks authority after removal inspection before channel teardown (#9833)", async () => {
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority)
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockImplementationOnce(() => {
+        throw new Error("OpenShell policy authority changed during channel removal");
+      });
+
+    await expectExit(() => removeSandboxChannel("test-sb", { channel: "slack" }));
+
+    expect(printedText()).toContain("authority changed");
+    expect(deleteCredentialSpy).not.toHaveBeenCalled();
+    expect(providerSpy).not.toHaveBeenCalled();
+    expect(removePresetSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(execSpy).not.toHaveBeenCalled();
+    expect(rebuildSpy).not.toHaveBeenCalled();
+  });
+
+  it("rechecks authority after removal gateway recovery before teardown (#9833)", async () => {
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority)
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockImplementationOnce(() => {
+        throw new Error("OpenShell policy authority changed after gateway recovery");
+      });
+
+    await expectExit(() => removeSandboxChannel("test-sb", { channel: "slack" }));
+
+    expect(printedText()).toContain("authority changed");
+    expect(deleteCredentialSpy).not.toHaveBeenCalled();
+    expect(providerSpy).not.toHaveBeenCalled();
+    expect(removePresetSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(execSpy).not.toHaveBeenCalled();
+  });
+
+  it("stops a multi-provider removal when authority changes between detach commands (#9833)", async () => {
+    let detachedProviders = 0;
+    runOpenshellSpy.mockImplementation((args: string[]) => {
+      const onDetach = args.slice(0, 3).join(" ") === "sandbox provider detach";
+      detachedProviders += Number(onDetach);
+      onDetach
+        ? vi
+            .mocked(policyChannelDependencies.preflightSandboxPolicyAuthority)
+            .mockImplementation(() => {
+              throw new Error("OpenShell policy authority changed between providers");
+            })
+        : undefined;
+      return successfulOpenshellResult();
+    });
+
+    await expectExit(() => removeSandboxChannel("test-sb", { channel: "slack" }));
+
+    expect(printedText()).toContain("authority changed");
+    expect(detachedProviders).toBe(1);
+    expect(runOpenshellSpy.mock.calls.some(([args]) => (args as string[])[0] === "provider")).toBe(
+      false,
+    );
+    expect(removePresetSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
+  });
+
+  it("rechecks authority after removal planning before registry or durable-state mutation (#9833)", async () => {
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority)
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockReturnValueOnce("nemoclaw-managed")
+      .mockImplementationOnce(() => {
+        throw new Error("OpenShell policy authority changed after removal planning");
+      });
+
+    await expectExit(() => removeSandboxChannel("test-sb", { channel: "slack" }));
+
+    expect(printedText()).toContain("authority changed");
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(execSpy).not.toHaveBeenCalled();
+    expect(rebuildSpy).not.toHaveBeenCalled();
+  });
+
   it("discloses token-channel egress before credential prompts and gateway mutation (#7179)", async () => {
     delete process.env.NEMOCLAW_NON_INTERACTIVE;
     delete process.env.TELEGRAM_BOT_TOKEN;
@@ -567,6 +750,27 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(callOrder).not.toContain("promptAndRebuild");
   });
 
+  it("does not roll back fresh channel state after policy authority changes (#9833)", async () => {
+    applyPresetResult = false;
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() =>
+      applyPresetSpy.mock.calls.length > 0
+        ? (() => {
+            throw new Error("OpenShell policy authority changed during preset application");
+          })()
+        : "nemoclaw-managed",
+    );
+
+    await expectExit(() => addSandboxChannel("test-sb", { channel: "telegram" }));
+
+    expect(printedText()).toContain("authority changed");
+    expect(deleteCredentialSpy).not.toHaveBeenCalled();
+    expect(runOpenshellSpy).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["detach"]),
+      expect.anything(),
+    );
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
+  });
+
   it("leaves plan state untouched and reports residual gateway state when detach fails", async () => {
     applyPresetResult = false;
     runOpenshellSpy.mockImplementation((args: string[]) =>
@@ -603,6 +807,31 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     ).toEqual([["test-sb-telegram-bridge"], ["test-sb-telegram-bridge"]]);
     expect(callOrder).not.toContain("promptAndRebuild");
     expect(printedText()).toContain("Rollback could not fully clean gateway-providers");
+  });
+
+  it("does not restore prior channel state after policy authority changes (#9833)", async () => {
+    applyPresetResult = false;
+    registryEntry = makeRegistryEntry(["telegram"]);
+    getCredentialSpy.mockImplementation((key: string) =>
+      key === "TELEGRAM_BOT_TOKEN" ? "prior-telegram-token" : null,
+    );
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() =>
+      applyPresetSpy.mock.calls.length > 0
+        ? (() => {
+            throw new Error("OpenShell policy authority changed during preset application");
+          })()
+        : "nemoclaw-managed",
+    );
+
+    await expectExit(() => addSandboxChannel("test-sb", { channel: "telegram" }));
+
+    expect(printedText()).toContain("authority changed");
+    expect(saveCredentialSpy).not.toHaveBeenCalledWith(
+      "TELEGRAM_BOT_TOKEN",
+      "prior-telegram-token",
+    );
+    expect(providerSpy).toHaveBeenCalledOnce();
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
   });
 
   it("leaves prior plan state untouched even when re-upsert during re-add rollback throws", async () => {

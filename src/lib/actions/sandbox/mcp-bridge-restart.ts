@@ -8,7 +8,14 @@ import type { McpBridgeEntry } from "../../state/registry";
 import { registerAgentAdapter } from "./mcp-bridge-adapters";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
-import { applyGeneratedPolicy, assertGeneratedPolicyMutationSafe } from "./mcp-bridge-policy";
+import {
+  applyGeneratedPolicy,
+  assertGeneratedPolicyMutationSafe,
+  buildRequiredMcpBridgePolicy,
+  preflightMcpPolicyAuthority,
+  qualifyMcpPolicyAuthorityReceipt,
+  revalidateMcpPolicyAuthorityReceipt,
+} from "./mcp-bridge-policy";
 import {
   assertMcpProviderRecoverable,
   assertNoAttachedProviderCredentialCollisions,
@@ -99,12 +106,26 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   // recovery/selection, provider inspection, or any lifecycle mutation.
   assertMcpAdapterConfigMutationsAllowed(sandboxName, sandbox, targetEntries);
   const resolvedByServer = await preflightMcpEntryTargets(targetEntries);
+  const operation = server ? `restart MCP server '${server}'` : "restart managed MCP servers";
+  const requiredPolicyContents = targetEntries.map((entry) =>
+    buildRequiredMcpBridgePolicy(entry, resolvedTargetPins(resolvedByServer, entry)),
+  );
+  const recheckPolicyAuthority = () =>
+    preflightMcpPolicyAuthority({
+      externalPolicy: "verify",
+      operation,
+      requiredPolicyContents,
+      sandboxName,
+    });
+  const policyAuthority = recheckPolicyAuthority();
   assertMcpCredentialBoundaryRuntimeVersion();
   await ensureSandboxGatewaySelected(sandboxName);
   // Prove every policy key is absent or still matches its recorded ownership
   // before inspecting or updating any provider. `applyGeneratedPolicy` repeats
   // this check immediately before mutation to close the preflight-to-apply race.
-  for (const entry of targetEntries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
+  if (policyAuthority === "nemoclaw-managed") {
+    for (const entry of targetEntries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
+  }
   const providerInspectionByServer = new Map<string, McpProviderInspection>();
   for (const entry of targetEntries) {
     providerInspectionByServer.set(entry.server, assertMcpProviderRecoverable(entry));
@@ -117,7 +138,9 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   // is still present in the sandbox spec. These references name providers
   // already proven absent; no live credential is removed before the runtime
   // capability probe, and the durable bridge manifest is retained on failure.
+  recheckPolicyAuthority();
   for (const entry of missingProviderEntries) {
+    recheckPolicyAuthority();
     detachMissingProviderReference(sandboxName, entry);
   }
   assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, targetEntries);
@@ -139,12 +162,16 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     // Revalidate the actual running supervisor before rotating or recreating
     // credentials. The temporary policy cannot bind the provider until an
     // endpointless profile is attached.
+    recheckPolicyAuthority();
     ensureMcpBridgeProviderProfile();
-    applyGeneratedPolicy(sandboxName, entry, target, { bindCredential: false });
+    if (policyAuthority === "nemoclaw-managed") {
+      applyGeneratedPolicy(sandboxName, entry, target, { bindCredential: false });
+    }
     const providerResult = upsertMcpProvider(entry.providerName ?? "", envRefs, {
       allowExisting: true,
       expectedProviderId: entry.providerId,
       prepareMutation: (action) => {
+        recheckPolicyAuthority();
         if (action === "update") {
           previousCredentialRevision = observeMcpCredentialRevision(sandboxName, entry);
         }
@@ -161,6 +188,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     if (refreshedEntry !== entry) {
       // A missing owned provider may be recreated during restart. Record the
       // replacement object's immutable ID before policy/attach/adapter work.
+      recheckPolicyAuthority();
       writeBridgeEntry(sandboxName, refreshedEntry);
       entry = refreshedEntry;
     }
@@ -170,14 +198,19 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
         `Could not retain the prior OpenShell credential revision for provider '${entry.providerName}'.`,
       );
     }
+    recheckPolicyAuthority();
     attachProvider(sandboxName, entry);
-    applyGeneratedPolicy(sandboxName, entry, target);
+    if (policyAuthority === "nemoclaw-managed") {
+      applyGeneratedPolicy(sandboxName, entry, target);
+    }
+    recheckPolicyAuthority();
     refreshMcpProviderEnvironment(entry);
     waitForAttachedMcpCredential(sandboxName, entry, {
       ...(providerResult.action === "updated"
         ? { previousRevision: previousCredentialRevision }
         : {}),
     });
+    recheckPolicyAuthority();
     registerAgentAdapter(
       sandboxName,
       (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,
@@ -185,11 +218,13 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       adapterEnvValues,
       { replaceExisting: true },
     );
+    recheckPolicyAuthority();
     writeBridgeEntry(sandboxName, {
       ...entry,
       adapter: (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,
       updatedAt: nowIso(),
     });
+    recheckPolicyAuthority();
     console.log(`  Refreshed MCP server '${name}'.`);
   }
   if (adapter === "hermes-config") assertHermesMcpRuntimeIntent(sandboxName);
@@ -198,17 +233,35 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
 export async function restoreExistingMcpBridgeRuntime(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
-  options: { lifecyclePhase?: "active-mutation" | "teardown-rollback" } = {},
+  options: {
+    lifecyclePhase?: "active-mutation" | "teardown-rollback";
+    validateContainingPolicyReceipt?: () => Promise<void>;
+  } = {},
 ): Promise<void> {
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
   const resolvedByServer = await preflightMcpEntryTargets(entries);
+  const sandbox = getSandboxOrThrow(sandboxName);
+  assertMcpDestroyNotPending(sandbox);
+  const requiredPolicyContents = entries.map((entry) =>
+    buildRequiredMcpBridgePolicy(entry, resolvedTargetPins(resolvedByServer, entry)),
+  );
+  const policyAuthorityReceipt = qualifyMcpPolicyAuthorityReceipt({
+    operation: "restore managed MCP runtime",
+    requiredPolicyContents,
+    sandboxName,
+  });
+  const revalidateBeforeMutation = () =>
+    revalidateMcpPolicyAuthorityReceipt(
+      policyAuthorityReceipt,
+      options.validateContainingPolicyReceipt,
+    );
+  const policyAuthority = policyAuthorityReceipt.authority;
   if (options.lifecyclePhase !== "teardown-rollback") {
     assertMcpCredentialBoundaryRuntimeVersion();
   }
+  await revalidateBeforeMutation();
   await ensureSandboxGatewaySelected(sandboxName);
-  const sandbox = getSandboxOrThrow(sandboxName);
-  assertMcpDestroyNotPending(sandbox);
   if (options.lifecyclePhase === "teardown-rollback") {
     // A failed delete/rebuild must be able to restore a backward-compatible
     // Deep Agents entry on the same old image it just scrubbed. New/rebuilt
@@ -220,7 +273,9 @@ export async function restoreExistingMcpBridgeRuntime(
   }
   const defaultAdapter = getBridgeAdapter(getSandboxAgent(sandbox));
   for (const entry of entries) {
-    assertGeneratedPolicyMutationSafe(sandboxName, entry);
+    if (policyAuthority === "nemoclaw-managed") {
+      assertGeneratedPolicyMutationSafe(sandboxName, entry);
+    }
     const provider = assertMcpProviderRecoverable(entry);
     if (provider.exists !== true) {
       throw new McpBridgeError(
@@ -235,15 +290,25 @@ export async function restoreExistingMcpBridgeRuntime(
   assertNoProviderCredentialCollisions(sandboxName, entries);
   for (const entry of entries) {
     assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
+    await revalidateBeforeMutation();
     ensureMcpBridgeProviderProfile();
-    applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
-      bindCredential: false,
-    });
+    if (policyAuthority === "nemoclaw-managed") {
+      await revalidateBeforeMutation();
+      applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
+        bindCredential: false,
+      });
+    }
+    await revalidateBeforeMutation();
     attachProvider(sandboxName, entry);
-    applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry));
+    if (policyAuthority === "nemoclaw-managed") {
+      await revalidateBeforeMutation();
+      applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry));
+    }
+    await revalidateBeforeMutation();
     refreshMcpProviderEnvironment(entry);
     waitForAttachedMcpCredential(sandboxName, entry);
     const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
+    await revalidateBeforeMutation();
     registerAgentAdapter(
       sandboxName,
       adapter,
@@ -254,6 +319,7 @@ export async function restoreExistingMcpBridgeRuntime(
         teardownRollback: options.lifecyclePhase === "teardown-rollback",
       },
     );
+    await revalidateBeforeMutation();
     writeBridgeEntry(sandboxName, { ...entry, adapter, updatedAt: nowIso() });
   }
   if (

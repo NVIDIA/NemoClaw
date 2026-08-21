@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 
 const phaseMocks = vi.hoisted(() => ({
+  markSourceDeleted: vi.fn(),
   openWindow: vi.fn(),
   relockWindow: vi.fn(),
 }));
@@ -14,6 +15,7 @@ vi.mock("./rebuild-flow-helpers", () => ({
 }));
 
 vi.mock("./rebuild-shields", () => ({
+  markRebuildShieldsSourceDeleted: phaseMocks.markSourceDeleted,
   relockRebuildShieldsWindow: phaseMocks.relockWindow,
 }));
 
@@ -39,12 +41,15 @@ describe("rebuild Shields phase", () => {
     const phase = runRebuildShieldsPhase(
       "alpha",
       false,
+      "nemoclaw-managed",
       releaseOnboardLock,
       bail as unknown as RebuildBail,
     );
 
-    expect(phaseMocks.openWindow).toHaveBeenCalledWith("alpha", false);
+    expect(phaseMocks.openWindow).toHaveBeenCalledWith("alpha", false, "nemoclaw-managed");
     expect(phase).toMatchObject({ window, staleSandboxWasLocked: false });
+    phase?.markSourceDeleted();
+    expect(phaseMocks.markSourceDeleted).toHaveBeenCalledWith(window);
     expect(phase?.relock(true)).toBe(true);
     expect(phaseMocks.relockWindow).toHaveBeenCalledWith("alpha", window, true, "nemoclaw");
     expect(releaseOnboardLock).not.toHaveBeenCalled();
@@ -60,7 +65,13 @@ describe("rebuild Shields phase", () => {
     const bail = vi.fn();
 
     expect(
-      runRebuildShieldsPhase("alpha", false, releaseOnboardLock, bail as unknown as RebuildBail),
+      runRebuildShieldsPhase(
+        "alpha",
+        false,
+        "nemoclaw-managed",
+        releaseOnboardLock,
+        bail as unknown as RebuildBail,
+      ),
     ).toBeNull();
 
     expect(releaseOnboardLock).toHaveBeenCalledOnce();
@@ -75,7 +86,13 @@ describe("rebuild Shields phase", () => {
     const releaseOnboardLock = vi.fn();
 
     expect(() =>
-      runRebuildShieldsPhase("alpha", false, releaseOnboardLock, vi.fn() as unknown as RebuildBail),
+      runRebuildShieldsPhase(
+        "alpha",
+        false,
+        "nemoclaw-managed",
+        releaseOnboardLock,
+        vi.fn() as unknown as RebuildBail,
+      ),
     ).toThrow("Shields state is unreadable");
 
     expect(releaseOnboardLock).toHaveBeenCalledOnce();

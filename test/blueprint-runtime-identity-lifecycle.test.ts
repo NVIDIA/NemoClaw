@@ -217,6 +217,7 @@ describe("blueprint runtime identity lifecycle integration", () => {
       formatError: (output, secrets = []) =>
         secrets.reduce((redacted, secret) => redacted.replaceAll(secret, "<redacted>"), output),
       persistReceipt: (receipt) => persistedReceipts.push({ ...receipt }),
+      revalidatePolicyAuthority: async () => undefined,
       run,
       // This test intentionally bypasses DNS validation and uses a fake OpenShell to isolate lifecycle orchestration.
       // TC-INF-12 separately proves the successful path through a real

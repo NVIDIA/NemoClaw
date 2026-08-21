@@ -101,6 +101,9 @@ beforeEach(() => {
   process.env.HOME = testHome;
   process.env.NEMOCLAW_NON_INTERACTIVE = "1";
   Object.assign(process.env, GOOGLECHAT_ENV);
+  vi.spyOn(policyChannelDependencies, "preflightSandboxPolicyAuthority").mockReturnValue(
+    "nemoclaw-managed",
+  );
 
   logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -212,7 +215,10 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
           providerType: "google-chat-bridge",
         },
       ],
-      { bestEffort: true },
+      expect.objectContaining({
+        bestEffort: true,
+        revalidatePolicyRequirements: expect.any(Function),
+      }),
     );
     const refreshCall = runOpenshellSpy.mock.calls.find(
       (call) =>

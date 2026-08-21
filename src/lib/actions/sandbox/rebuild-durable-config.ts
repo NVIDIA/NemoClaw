@@ -26,7 +26,11 @@ import {
   normalizeDcodeAutoApprovalMode,
 } from "../../onboard/dcode-auto-approval";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
-import { hasInvalidSessionToolDisclosure, type Session } from "../../state/onboard-session";
+import {
+  hasInvalidSessionToolDisclosure,
+  loadSession,
+  type Session,
+} from "../../state/onboard-session";
 import {
   DEFAULT_TOOL_DISCLOSURE,
   invalidRecordedToolDisclosure,
@@ -127,7 +131,7 @@ function builtinWebSearchPolicyProviders(entry: RebuildSandboxEntry): WebSearchP
 export function resolveRebuildDurableConfig(
   sandboxName: string,
   entry: RebuildSandboxEntry,
-  session: Session | null,
+  session: Session | null = loadSession(),
   resolvedSelection: { provider: string | null; model: string | null } = {
     provider: entry.provider ?? null,
     model: entry.model ?? null,

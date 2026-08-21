@@ -250,6 +250,9 @@ export function createHermesUnsafeConfigHarness(
       const policy = requireSource("../policy/index.js");
       const agentConfig = requireSource("../sandbox/agent-config.js");
       const registry = requireSource("../state/registry.js");
+      const policyAuthority = requireSource(
+        "../adapters/openshell/policy-authority.js",
+      ) as typeof import("../../src/lib/adapters/openshell/policy-authority.js");
       const privilegedExec = requireSource("../sandbox/privileged-exec.js");
       const dockerExec = requireSource("../adapters/docker/exec.js");
       const stateDirLock = requireSource("./state-dir-lock.js");
@@ -285,9 +288,14 @@ export function createHermesUnsafeConfigHarness(
         name: String(name),
         agent: "hermes",
         openshellDriver: "docker",
+        policyAuthority: "nemoclaw-managed",
         lifecycleGeneration: "legacy-generation",
         workload: { kind: "managed-image" },
       }));
+      vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
+        authority: "nemoclaw-managed",
+        effectivePolicy: { version: 1, network_policies: {} },
+      });
       vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(
         (_sandboxName: unknown, cmd: unknown) => cmd as string[],
       );

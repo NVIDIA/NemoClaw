@@ -19,10 +19,7 @@ import {
   withModelRouterPortLifecycleLock,
 } from "../inference/gateway-route-mutation-lock";
 import { getManagedVllmProviderBinding } from "../inference/local";
-import {
-  type OllamaModelHolder,
-  supersededOllamaModel,
-} from "../inference/ollama/model-ownership";
+import { type OllamaModelHolder, supersededOllamaModel } from "../inference/ollama/model-ownership";
 import {
   getOllamaProxyToken,
   persistAndProbeOllamaProxy,
@@ -183,6 +180,8 @@ type ProviderBranchDeps = Pick<
   Pick<RoutedDeps, "reconcileModelRouter" | "routedInference">;
 
 export type SetupInferenceDeps = ProviderBranchDeps & {
+  /** Optional focused-test seam when no receipt-bound options callback is supplied. */
+  revalidatePolicyRequirements?: (operation: string) => void;
   /** Injectable resolver for resumed custom-endpoint SSRF preflight tests. */
   resolveEndpointHost?: EndpointDnsLookupFn;
   /** Exact private endpoint hosts trusted by the operator (tests may inject this). */
@@ -202,6 +201,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
     baseUrl: string | null,
     env: NodeJS.ProcessEnv | undefined,
     gatewayName: string,
+    options?: { revalidatePolicyRequirements?(operation: string): void },
   ) => ReturnType<CommonDeps["upsertProvider"]>;
   verifyInferenceRoute: (gatewayName: string, provider: string, model: string) => void;
   providerExistsInGateway: (name: string, gatewayName: string) => boolean;
@@ -278,9 +278,14 @@ export function createGatewayScopedOpenshellRunner<Rest extends unknown[], Resul
 export function bindGatewayUpsertProvider(
   upsertProvider: SetupInferenceDeps["upsertProvider"],
   gatewayName: string,
+  revalidatePolicyRequirements?: (operation: string) => void,
 ): CommonDeps["upsertProvider"] {
   return (name, type, credentialEnv, baseUrl, env) =>
-    upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName);
+    revalidatePolicyRequirements
+      ? upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName, {
+          revalidatePolicyRequirements,
+        })
+      : upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName);
 }
 
 export function selectGatewayForFollowupOrExit(
@@ -301,13 +306,21 @@ export function selectGatewayForFollowupOrExit(
 function resolveLocalInferenceRouteApplier(
   deps: SetupInferenceDeps,
   runOpenshell: SetupInferenceDeps["runOpenshell"],
+  revalidatePolicyRequirements: (operation: string) => void,
 ) {
   return (
     deps.applyLocalInferenceRoute ??
     createLocalInferenceRouteApplier({
       runOpenshell,
       isNonInteractive: deps.isNonInteractive,
-      promptValidationRecovery: deps.promptValidationRecovery,
+      promptValidationRecovery: (label, recovery, credentialEnv, helpUrl) =>
+        deps.promptValidationRecovery(
+          label,
+          recovery,
+          credentialEnv,
+          helpUrl,
+          revalidatePolicyRequirements,
+        ),
       classifyApplyFailure: deps.classifyApplyFailure,
       compactText: deps.compactText,
       redact: deps.redact,
@@ -480,22 +493,30 @@ function releaseSupersededOllamaModel(
   nextModel: string,
   result: SetupInferenceResult,
   deps: SetupInferenceDeps,
+  revalidatePolicyRequirements: (operation: string) => void,
 ): void {
   // A reselection retry left the recorded route untouched, so the sandbox
   // still owns its model.
   if (!previous || result.retry) return;
+  let authorityRefusal: unknown;
   try {
-    const withOwnershipLock =
-      deps.withOllamaModelOwnershipLock ?? withOllamaModelOwnershipLock;
+    const withOwnershipLock = deps.withOllamaModelOwnershipLock ?? withOllamaModelOwnershipLock;
     withOwnershipLock(() => {
       const peers = deps.listSandboxes?.().sandboxes ?? [];
       const superseded = supersededOllamaModel(previous, nextModel, peers);
       if (!superseded) return;
+      try {
+        revalidatePolicyRequirements("release the superseded Ollama model");
+      } catch (error) {
+        authorityRefusal = error;
+        return;
+      }
       deps.unloadOllamaModels?.([superseded]);
     });
   } catch {
     /* Best-effort: a failed unload must not fail an onboarding that already committed its route. */
   }
+  if (authorityRefusal) throw authorityRefusal;
 }
 
 export function createSetupInference(
@@ -515,6 +536,8 @@ export function createSetupInference(
     options: ProviderInferenceSetupOptions = {},
   ): Promise<SetupInferenceResult> {
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
+    const revalidatePolicyRequirements =
+      options.revalidatePolicyRequirements ?? deps.revalidatePolicyRequirements ?? (() => {});
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
     const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;
@@ -529,6 +552,7 @@ export function createSetupInference(
     const mutateGatewayRoute = (): Promise<SetupInferenceResult> =>
       // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider onboarding centralizes route and two-phase transaction ordering.
       withInferenceMutationLocks(async () => {
+        revalidatePolicyRequirements("change the inference provider route");
         if (
           options.isRecordedProviderRecoveryAuthorized &&
           !options.isRecordedProviderRecoveryAuthorized()
@@ -595,11 +619,16 @@ export function createSetupInference(
           }
           endpointPinnedAddresses = preflight.addresses;
           endpointTrustedPrivateCapability = preflight.trustedPrivateCapability;
+          revalidatePolicyRequirements("change the inference provider route after DNS validation");
         }
-        const runGatewayOpenshell = createGatewayScopedOpenshellRunner(
+        const runExactGatewayOpenshell = createGatewayScopedOpenshellRunner(
           deps.runOpenshell,
           gatewayName,
         );
+        const runGatewayOpenshell: typeof runExactGatewayOpenshell = (...args) => {
+          revalidatePolicyRequirements("change the OpenShell inference provider route");
+          return runExactGatewayOpenshell(...args);
+        };
         let hostLocalRoute: HostLocalInferenceStartupRoute | null = null;
         let hostLocalGatewayMutation: HostLocalInferenceGatewayMutation | null = null;
         let hostLocalRollbackAttempted = false;
@@ -615,6 +644,7 @@ export function createSetupInference(
         let hostLocalInferenceRuntimeProviderId: string | undefined;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
+          revalidatePolicyRequirements("reserve the sandbox inference route");
           const reserved = deps.updateSandbox(name, {
             provider: selectedProvider,
             model: selectedModel,
@@ -637,10 +667,15 @@ export function createSetupInference(
           return reserved;
         };
 
-        const defaultUpsertProvider = bindGatewayUpsertProvider(deps.upsertProvider, gatewayName);
+        const defaultUpsertProvider = bindGatewayUpsertProvider(
+          deps.upsertProvider,
+          gatewayName,
+          revalidatePolicyRequirements,
+        );
         const commonDeps = {
           runOpenshell: runGatewayOpenshell,
           upsertProvider: (...args: Parameters<CommonDeps["upsertProvider"]>) => {
+            revalidatePolicyRequirements("register the inference provider");
             const exactUpsertProvider = hostLocalGatewayMutation?.upsertProvider;
             return (exactUpsertProvider ?? defaultUpsertProvider)(...args);
           },
@@ -678,6 +713,7 @@ export function createSetupInference(
 
         if (options.hostLocalInference) {
           try {
+            revalidatePolicyRequirements("prepare the host-local inference runtime");
             hostLocalRoute = resolveHostLocalInferenceRoute(
               sandboxName,
               model,
@@ -699,6 +735,7 @@ export function createSetupInference(
               );
               hostLocalInferenceRuntimeProviderId = options.hostLocalInference.runtimeProviderId;
             }
+            revalidatePolicyRequirements("prepare the host-local inference provider route");
             hostLocalGatewayMutation = await options.hostLocalInference.prepareGatewayMutation({
               gatewayName,
               sandboxName: sandboxName!,
@@ -788,7 +825,14 @@ export function createSetupInference(
                 ...commonDeps,
                 REMOTE_PROVIDER_CONFIG: deps.REMOTE_PROVIDER_CONFIG,
                 hydrateCredentialEnv: deps.hydrateCredentialEnv,
-                promptValidationRecovery: deps.promptValidationRecovery,
+                promptValidationRecovery: (label, recovery, selectedCredentialEnv, helpUrl) =>
+                  deps.promptValidationRecovery(
+                    label,
+                    recovery,
+                    selectedCredentialEnv,
+                    helpUrl,
+                    revalidatePolicyRequirements,
+                  ),
                 classifyApplyFailure: deps.classifyApplyFailure,
                 LOCAL_INFERENCE_TIMEOUT_SECS: deps.localInferenceTimeoutSecs,
                 bedrockRuntimeOnboard: deps.bedrockRuntimeOnboard,
@@ -822,6 +866,7 @@ export function createSetupInference(
                       }
                     : deps,
                   runGatewayOpenshell,
+                  revalidatePolicyRequirements,
                 ),
                 run: deps.run,
                 VLLM_LOCAL_CREDENTIAL_ENV: deps.vllmLocalCredentialEnv,
@@ -872,6 +917,7 @@ export function createSetupInference(
                       }
                     : deps,
                   runGatewayOpenshell,
+                  revalidatePolicyRequirements,
                 ),
                 getOllamaWarmupCommand: deps.getOllamaWarmupCommand,
                 run: deps.run,
@@ -966,6 +1012,7 @@ export function createSetupInference(
               }
             };
             validatePreparedReceipt();
+            revalidatePolicyRequirements("commit the host-local inference provider route");
             await hostLocalGatewayMutation.commit();
             // The awaited gateway commit is the only async gap between provider
             // proof and publication. Close it before registry or receipt entry.
@@ -982,6 +1029,7 @@ export function createSetupInference(
                 throw new Error("Host-local inference lost sandbox route reservation authority.");
               }
             }
+            revalidatePolicyRequirements("publish the host-local inference provider receipt");
             const committed = normalizeHostLocalInferenceReceipt(hostLocalRoute.prepared.commit());
             if (
               serializeHostLocalInferenceReceipt(committed) !==
@@ -992,6 +1040,7 @@ export function createSetupInference(
               );
             }
           }
+          revalidatePolicyRequirements("report successful inference provider setup");
           deps.log(`  ✓ Inference route set: ${provider} / ${model}`);
           return { ok: true as const };
         } catch (error) {
@@ -1036,18 +1085,23 @@ export function createSetupInference(
     // happens before the lock opens, so a serialized re-onboard can neither
     // replace the row under the read nor select the captured model before
     // this cleanup runs.
-    const mutateGatewayRouteAndReleaseSupersededModel =
-      async (): Promise<SetupInferenceResult> => {
-        let previousSandbox: OllamaModelHolder | null = null;
-        try {
-          previousSandbox = sandboxName ? (deps.getSandbox?.(sandboxName) ?? null) : null;
-        } catch {
-          /* An unreadable registry skips GPU release; it must not fail onboarding. */
-        }
-        const result = await mutateGatewayRoute();
-        releaseSupersededOllamaModel(previousSandbox, model, result, deps);
-        return result;
-      };
+    const mutateGatewayRouteAndReleaseSupersededModel = async (): Promise<SetupInferenceResult> => {
+      let previousSandbox: OllamaModelHolder | null = null;
+      try {
+        previousSandbox = sandboxName ? (deps.getSandbox?.(sandboxName) ?? null) : null;
+      } catch {
+        /* An unreadable registry skips GPU release; it must not fail onboarding. */
+      }
+      const result = await mutateGatewayRoute();
+      releaseSupersededOllamaModel(
+        previousSandbox,
+        model,
+        result,
+        deps,
+        revalidatePolicyRequirements,
+      );
+      return result;
+    };
     return sandboxName
       ? deps.withSandboxMutationLock(sandboxName, mutateGatewayRouteAndReleaseSupersededModel)
       : mutateGatewayRouteAndReleaseSupersededModel();

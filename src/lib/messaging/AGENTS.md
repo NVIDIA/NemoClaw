@@ -45,6 +45,9 @@ The design goal is to keep messaging channel behavior out of core onboard/rebuil
 - Disabled channels are not active. Always filter effects through `enabledPlanChannels()` or `filterEnabledPlanEntries()` when applying providers, policies, render, hooks, runtime setup, or conflicts.
 - Conflict detection has two axes: generic credential-hash overlap in `applier/conflict-detection/` and channel-owned `pre-enable` hooks such as Slack Socket Mode gateway checks.
 - Keep transitional compatibility tables derived from manifests. `src/lib/sandbox/channels.ts` intentionally builds legacy CLI metadata from `listBuiltInMessagingChannelManifests()`.
+- Channel add and start must inspect OpenShell policy authority before credential, provider, policy, or registry mutation.
+- An externally managed policy must contain each exact channel policy entry before add or start continues. NemoClaw must not record those entries as applied presets.
+- Channel remove must refuse an externally managed policy before tunnel, credential, provider, policy, in-sandbox state, or registry mutation.
 
 ## Adding or Changing a Channel
 

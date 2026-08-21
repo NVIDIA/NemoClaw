@@ -18,10 +18,13 @@ import type {
 } from "../actions/sandbox/mcp-bridge-policy";
 import { cleanupTempDir, secureTempFile } from "../onboard/temp-files";
 
+export { assertLegacyMcpPolicyRestoreSafe, isManagedMcpPolicyKey } from "./mcp-policy-transition";
 export {
-  assertLegacyMcpPolicyRestoreSafe,
-  isManagedMcpPolicyKey,
-} from "./mcp-policy-transition";
+  assertShieldsPolicyMutationAuthority,
+  isPolicyAuthorityRefusalError,
+  PolicyAuthorityRefusalError,
+  rejectFinalShieldsPolicySetResult,
+} from "./policy-authority";
 
 import {
   composeDeadlineManagedMcpPolicies,

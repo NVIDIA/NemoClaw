@@ -10,11 +10,12 @@ import type {
 } from "../../src/lib/actions/sandbox/rebuild-custom-image-preflight";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import type { VersionCheckResult } from "../../src/lib/sandbox/version";
+import type { SandboxPolicyAuthorityInspection } from "../../src/lib/adapters/openshell/policy-authority";
 import type { PreservedEnvFile } from "../../src/lib/state/preserved-env";
 import type { SandboxRemovalReceipt } from "../../src/lib/state/registry";
 
 export type RebuildSandbox =
-  typeof import("../../src/lib/actions/sandbox/rebuild")["rebuildSandbox"];
+  (typeof import("../../src/lib/actions/sandbox/rebuild"))["rebuildSandbox"];
 export type RebuildFlowStep = {
   status: string;
   startedAt: string | null;
@@ -72,6 +73,7 @@ export type RebuildFlowOverrides = {
   buildMessagingRebuildPlan?: () => Promise<unknown> | unknown;
   agentPolicyAdditionsContent?: string;
   preflightWithProductionBaselineResolver?: boolean;
+  policyAuthorityInspection?: SandboxPolicyAuthorityInspection;
   preflightAuthoritativeRebuildTarget?: (options: Record<string, unknown>) => Promise<void> | void;
   revalidateRebuildRouteBeforeDelete?: (
     receipt: Record<string, unknown>,
@@ -142,9 +144,12 @@ export type RebuildFlowHarness = {
   ensureTargetGatewaySpy: MockInstance;
   ensureValidatedBraveSearchCredentialSpy: MockInstance;
   hydrateCredentialEnvSpy: MockInstance;
+  inspectGlobalPolicyAuthoritySpy: MockInstance;
+  inspectSandboxPolicyAuthoritySpy: MockInstance;
   logSpy: MockInstance;
   finalizeIncompleteOnboardStepSpy: MockInstance;
   onboardSpy: MockInstance;
+  openRebuildShieldsWindowSpy: MockInstance;
   registryUpdateSpy: MockInstance;
   setDefaultSpy: MockInstance;
   setDefault: (name: string) => boolean;

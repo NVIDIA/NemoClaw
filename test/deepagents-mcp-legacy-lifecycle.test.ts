@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   executeSandboxExecCommand: vi.fn(),
   getLiveSandboxPolicyEntryDigest: vi.fn(),
   getPresetContentGatewayState: vi.fn(),
+  preflightMcpPolicyAuthority: vi.fn(),
+  preflightSandboxPolicyAuthority: vi.fn(),
   recoverNamedGatewayRuntime: vi.fn(),
   removePreset: vi.fn(),
   runOpenshellProviderCommand: vi.fn(),
@@ -38,6 +40,15 @@ vi.mock("../src/lib/actions/sandbox/process-recovery", () => ({
   executeGatewaySupervisorAction: mocks.executeGatewaySupervisorAction,
   executeSandboxCommand: mocks.executeSandboxCommand,
   executeSandboxExecCommand: mocks.executeSandboxExecCommand,
+}));
+
+vi.mock("../src/lib/actions/sandbox/mcp-bridge-policy", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/lib/actions/sandbox/mcp-bridge-policy")>()),
+  preflightMcpPolicyAuthority: mocks.preflightMcpPolicyAuthority,
+}));
+
+vi.mock("../src/lib/actions/sandbox/policy-authority/preflight", () => ({
+  preflightSandboxPolicyAuthority: mocks.preflightSandboxPolicyAuthority,
 }));
 
 const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
@@ -110,6 +121,9 @@ beforeEach(() => {
   policyApplyCalls = 0;
   policyState = "match";
   adapterCalls = [];
+
+  mocks.preflightMcpPolicyAuthority.mockReset().mockReturnValue("nemoclaw-managed");
+  mocks.preflightSandboxPolicyAuthority.mockReset().mockReturnValue("nemoclaw-managed");
 
   mocks.runOpenshellProviderCommand.mockReset().mockImplementation((args: string[]) => {
     const command = args.join(" ");

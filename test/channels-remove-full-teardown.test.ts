@@ -185,6 +185,9 @@ process.exit = (code) => {
   throw new Error("__PROCESS_EXIT__:" + code);
 };
 
+const policyAuthorityPreflight = require(${j("actions/sandbox/policy-authority/preflight.js")});
+policyAuthorityPreflight.preflightSandboxPolicyAuthority = () => "nemoclaw-managed";
+
 const channelModule = require(${j("actions/sandbox/policy-channel.js")});
 
 module.exports = {

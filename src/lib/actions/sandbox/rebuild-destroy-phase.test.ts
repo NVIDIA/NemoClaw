@@ -176,6 +176,127 @@ describe("rebuild destroy phase", () => {
     );
   });
 
+  it("revalidates the authority receipt immediately before MCP preparation (#9833)", async () => {
+    const events: string[] = [];
+    const relockShieldsIfNeeded = vi.fn(() => true);
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+    mocks.prepareMcpForRebuild.mockImplementation(async () => {
+      events.push("prepare-mcp");
+      return { entries: [], detachedProviderEntries: [], scrubbedAdapterEntries: [] };
+    });
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw" },
+        staleRecovery: false,
+        recreateJournal: stubRecreateJournal(),
+        backupManifest: null,
+        log: vi.fn(),
+        bail,
+        relockShieldsIfNeeded,
+        validateBeforeMcpPreparation: async () => {
+          events.push("validate-authority");
+          return { ok: false, message: "Policy authority receipt changed." };
+        },
+        onDeleted: vi.fn(),
+      }),
+    ).rejects.toThrow("Policy authority receipt changed.");
+
+    expect(events).toEqual(["validate-authority"]);
+    expect(mocks.prepareMcpForRebuild).not.toHaveBeenCalled();
+    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+    expectNoSandboxDelete(mocks.runOpenshell);
+  });
+
+  it("revalidates authority after source observation and before the delete commit (#9833)", async () => {
+    const events: string[] = [];
+    const recreateJournal = stubRecreateJournal();
+    vi.mocked(recreateJournal.observeSourceForDelete).mockImplementation(() => {
+      events.push("observe-source");
+      return "source";
+    });
+    vi.mocked(recreateJournal.markDeleting).mockImplementation(() => {
+      events.push("mark-deleting");
+    });
+    const relockShieldsIfNeeded = vi.fn(() => true);
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw" },
+        staleRecovery: false,
+        recreateJournal,
+        backupManifest: null,
+        log: vi.fn(),
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
+        relockShieldsIfNeeded,
+        validateBeforeDeleteCommit: async () => {
+          events.push("validate-authority");
+          return { ok: false, message: "Policy authority receipt changed." };
+        },
+        onDeleted: vi.fn(),
+      }),
+    ).rejects.toThrow("Policy authority receipt changed.");
+
+    expect(events).toEqual(["observe-source", "validate-authority"]);
+    expect(recreateJournal.markDeleting).not.toHaveBeenCalled();
+    expect(mocks.stopNimContainer).not.toHaveBeenCalled();
+    expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
+    expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
+    expectNoSandboxDelete(mocks.runOpenshell);
+    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+  });
+
+  it("revalidates authority after confirmed deletion before local completion effects (#9833)", async () => {
+    const recreateJournal = stubRecreateJournal();
+    const onDeleted = vi.fn();
+    const validateAfterDeleteConfirmation = vi.fn(async () => ({
+      ok: false as const,
+      message: "Policy authority receipt changed after deletion.",
+    }));
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: {
+          name: "alpha",
+          agent: "openclaw",
+          nimContainer: "nim-alpha",
+        },
+        staleRecovery: false,
+        recreateJournal,
+        backupManifest: null,
+        log: vi.fn(),
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
+        relockShieldsIfNeeded: vi.fn(() => true),
+        validateAfterDeleteConfirmation,
+        onDeleted,
+      }),
+    ).rejects.toThrow("Policy authority receipt changed after deletion.");
+
+    expect(mocks.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+      expect.any(Object),
+    );
+    expect(mocks.waitUntil).toHaveBeenCalledOnce();
+    expect(mocks.waitUntil.mock.invocationCallOrder[0]).toBeLessThan(
+      validateAfterDeleteConfirmation.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(recreateJournal.confirmDeleted).not.toHaveBeenCalled();
+    expect(mocks.stopNimContainer).not.toHaveBeenCalled();
+    expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
+    expect(onDeleted).not.toHaveBeenCalled();
+    expect(mocks.listSandboxes).not.toHaveBeenCalled();
+    expect(console.log).not.toHaveBeenCalledWith(expect.stringContaining("Old sandbox deleted"));
+  });
+
   it("retains unexpected delete-edge diagnostics without logging credentials (#6195)", async () => {
     const secret = `nvapi-${"a".repeat(32)}`;
     const log = vi.fn();
@@ -359,6 +480,7 @@ describe("rebuild destroy phase", () => {
       "alpha",
       [{ server: "github" }],
       [],
+      undefined,
     );
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
@@ -442,7 +564,12 @@ describe("rebuild destroy phase", () => {
     expect(revalidateBeforeDelete.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.runOpenshell.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
-    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], []);
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
+      "alpha",
+      [],
+      [],
+      undefined,
+    );
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
     expect(onDeleted).not.toHaveBeenCalled();
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
@@ -1001,6 +1128,7 @@ describe("rebuild destroy phase", () => {
       "alpha",
       [{ providerName: "nemoclaw-mcp-alpha-github" }],
       [{ server: "github" }],
+      undefined,
     );
     expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
     expect(mocks.runOpenshell).not.toHaveBeenCalledWith(

@@ -12,6 +12,7 @@ import * as runtime from "../../adapters/openshell/runtime";
 import * as defs from "../../agent/defs";
 import * as store from "../../credentials/store";
 import * as gatewayRuntime from "../../gateway-runtime-action";
+import * as wechatLogin from "../../messaging/channels/wechat/login";
 import * as policy from "../../policy";
 import { hashCredential } from "../../security/credential-hash";
 import * as onboardSession from "../../state/onboard-session";
@@ -225,6 +226,7 @@ let errSpy: MockInstance;
 let exitMock: MockInstance;
 let promptMock: MockInstance;
 let getCredentialMock: MockInstance;
+let saveCredentialMock: MockInstance;
 let updateSandboxMock: MockInstance;
 let upsertMock: MockInstance;
 let runOpenshellMock: MockInstance;
@@ -278,6 +280,9 @@ beforeEach(() => {
   delete process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION;
   delete process.env.WECHAT_BOT_TOKEN;
   delete process.env.WECHAT_ACCOUNT_ID;
+  vi.spyOn(policyChannelDependencies, "preflightSandboxPolicyAuthority").mockReturnValue(
+    "nemoclaw-managed",
+  );
   delete process.env.WECHAT_BASE_URL;
   delete process.env.WECHAT_USER_ID;
   delete process.env.MSTEAMS_APP_ID;
@@ -322,7 +327,7 @@ beforeEach(() => {
   // Credentials store: staged token (no real prompt) + controllable prompt.
   getCredentialMock = vi.spyOn(store, "getCredential").mockReturnValue(null);
   promptMock = vi.spyOn(store, "prompt").mockResolvedValue("");
-  vi.spyOn(store, "saveCredential").mockImplementation(() => undefined);
+  saveCredentialMock = vi.spyOn(store, "saveCredential").mockImplementation(() => undefined);
 
   // Agent gate: OpenClaw support is derived from channel manifests.
   vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("openclaw"));
@@ -568,6 +573,35 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   });
 
   // Scenario 8: WeChat is host-qr (token-bearing) -> non-empty acquired -> IS conflict-checked.
+  it("stops host-QR credential persistence when policy authority changes during login (#9833)", async () => {
+    arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    const runLogin = vi.spyOn(wechatLogin, "runWechatHostQrLogin").mockImplementation(async () => {
+      vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(
+        () => {
+          throw new Error("OpenShell policy authority changed during QR login");
+        },
+      );
+      return {
+        kind: "ok",
+        credentials: {
+          token: "wechat-token",
+          accountId: "wechat-account",
+          baseUrl: "https://ilinkai.wechat.com",
+          userId: "wechat-user",
+        },
+      };
+    });
+
+    await expect(addSandboxChannel("alpha", { channel: "wechat" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(runLogin).toHaveBeenCalledOnce();
+    expect(saveCredentialMock).not.toHaveBeenCalled();
+    expect(process.env.WECHAT_BOT_TOKEN).toBeUndefined();
+    expect(upsertMock).not.toHaveBeenCalled();
+  });
+
   it("host-qr wechat (token-bearing) IS conflict-checked", async () => {
     const wechatToken = "wx-secret-token-abc";
     const wechatHash = hashCredential(wechatToken) as string;
@@ -1105,6 +1139,65 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
     });
   });
 
+  it("stops before rebuild when policy authority changes during confirmation (#9833)", async () => {
+    setTeamsEnv();
+    arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    promptMock.mockImplementation(async () => {
+      vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(
+        () => {
+          throw new Error("OpenShell policy authority changed during confirmation");
+        },
+      );
+      return "";
+    });
+
+    await expect(addSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
+    expect(ensureMessagingHostForwardAfterRebuildMock).not.toHaveBeenCalled();
+  });
+
+  it("stops channel forwarding when policy authority changes after rebuild (#9833)", async () => {
+    setTeamsEnv();
+    arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() =>
+      rebuildSandboxMock.mock.calls.length > 0
+        ? (() => {
+            throw new Error("OpenShell policy authority changed after rebuild");
+          })()
+        : "nemoclaw-managed",
+    );
+
+    await expect(addSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(ensureMessagingHostForwardAfterRebuildMock).not.toHaveBeenCalled();
+    expect(processRecovery.executeSandboxExecCommand).not.toHaveBeenCalled();
+  });
+
+  it("stops channel health checks when policy authority changes during forwarding (#9833)", async () => {
+    setTeamsEnv();
+    arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    ensureMessagingHostForwardAfterRebuildMock.mockImplementation(() => {
+      vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(
+        () => {
+          throw new Error("OpenShell policy authority changed during forwarding");
+        },
+      );
+      return true;
+    });
+
+    await expect(addSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(ensureMessagingHostForwardAfterRebuildMock).toHaveBeenCalledOnce();
+    expect(processRecovery.executeSandboxExecCommand).not.toHaveBeenCalled();
+  });
+
   it("channels start teams re-establishes the MSTEAMS_PORT host forward after rebuild-now completes", async () => {
     arrangeRegistry({ current: makeTeamsEntry("alpha", { disabled: true, port: "3978" }) });
     getDisabledChannelsMock.mockReturnValue(["teams"]);
@@ -1130,6 +1223,24 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
       port: 3978,
       label: "Microsoft Teams webhook",
     });
+  });
+
+  it("stops channel start forwarding when policy authority changes after rebuild (#9833)", async () => {
+    arrangeRegistry({ current: makeTeamsEntry("alpha", { disabled: true, port: "3978" }) });
+    getDisabledChannelsMock.mockReturnValue(["teams"]);
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() =>
+      rebuildSandboxMock.mock.calls.length > 0
+        ? (() => {
+            throw new Error("OpenShell policy authority changed after rebuild");
+          })()
+        : "nemoclaw-managed",
+    );
+
+    await expect(startSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(ensureMessagingHostForwardAfterRebuildMock).not.toHaveBeenCalled();
   });
 
   it("channels start reapplies its policy before a non-interactive rebuild is queued", async () => {
@@ -1191,6 +1302,26 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
     expect(registry.getDisabledChannels("alpha")).toContain("teams");
     expect(rebuildSandboxMock).not.toHaveBeenCalled();
     expect(loggedText()).toContain("channels start teams");
+  });
+
+  it("does not rewrite the disabled plan after policy authority changes (#9833)", async () => {
+    arrangeRegistry({ current: makeTeamsEntry("alpha", { disabled: true }) });
+    getDisabledChannelsMock.mockReturnValue(["teams"]);
+    applyPresetMock.mockReturnValue(false);
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() =>
+      applyPresetMock.mock.calls.length > 0
+        ? (() => {
+            throw new Error("OpenShell policy authority changed during preset application");
+          })()
+        : "nemoclaw-managed",
+    );
+
+    await expect(startSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(updateSandboxMock).toHaveBeenCalledOnce();
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
   });
 
   it("channels start prints recovery guidance when policy and disabled-plan rollback both fail", async () => {

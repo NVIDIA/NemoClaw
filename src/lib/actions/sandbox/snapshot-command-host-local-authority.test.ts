@@ -79,6 +79,14 @@ vi.mock("../../adapters/openshell/runtime", () => ({
   runOpenshell: vi.fn(() => ({ status: 0, output: "" })),
 }));
 
+vi.mock("../../adapters/openshell/policy-authority", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/policy-authority")>()),
+  inspectSandboxPolicyAuthority: vi.fn(() => ({
+    authority: "nemoclaw-managed",
+    effectivePolicy: {},
+  })),
+}));
+
 vi.mock("../../policy", () => ({
   applyPreset: vi.fn(() => true),
   applyPresetContent: vi.fn(() => true),
@@ -86,6 +94,11 @@ vi.mock("../../policy", () => ({
   getPresetContentGatewayState: vi.fn(() => "absent"),
   loadPresetForSandbox: vi.fn(() => null),
   removePreset: vi.fn(() => true),
+  resolveAgentBaselinePolicy: vi.fn((agent: string) => ({
+    agent,
+    policyPath: "/repo/nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+    content: "version: 1\nnetwork_policies: {}\n",
+  })),
 }));
 
 vi.mock("../../runtime-recovery", () => ({
@@ -100,6 +113,9 @@ vi.mock("../../shields", () => ({
 vi.mock("../../shields/timer-bound-lock", () => ({
   withTimerBoundShieldsMutationLock: vi.fn(
     (_name: string, _operation: string, callback: () => unknown) => callback(),
+  ),
+  withTimerBoundShieldsMutationLockAsync: vi.fn(
+    (_name: string, _operation: string, callback: () => Promise<unknown>) => callback(),
   ),
 }));
 
@@ -172,6 +188,7 @@ function sandbox(receipt: string): SandboxEntry {
     endpointUrl: "https://inference.local/v1",
     gatewayName: "nemoclaw",
     gatewayPort: 8080,
+    policyAuthority: "nemoclaw-managed",
     lifecycleGeneration: "11111111-1111-4111-8111-111111111111",
     lifecycleLiveIdentityFingerprint: "f".repeat(64),
     hostLocalInferenceReceipt: receipt,

@@ -4,6 +4,10 @@
 import { vi } from "vitest";
 import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
 import type {
+  SandboxPolicyAuthority,
+  SandboxPolicyAuthorityInspection,
+} from "../../adapters/openshell/policy-authority";
+import type {
   SandboxEntry,
   SandboxHostLocalInferenceProvenance,
   SandboxWorkloadReceipt,
@@ -52,6 +56,10 @@ export type SandboxRecord = {
   workload?: SandboxWorkloadReceipt;
   openshellDriver?: string | null;
   observabilityEnabled?: boolean;
+  policyAuthority?: SandboxPolicyAuthority;
+  policies?: string[];
+  customPolicies?: Array<{ name: string; content: string; sourcePath?: string }>;
+  policyPresetsFinalized?: boolean;
   provider?: string | null;
   model?: string | null;
   endpointUrl?: string | null;
@@ -146,6 +154,21 @@ const lifecycleMock = vi.hoisted(() => {
   };
 });
 
+const policyAuthorityMock = vi.hoisted(() => ({
+  inspectGlobalPolicyAuthorityMock: vi.fn(
+    (_input: { gatewayName?: string }): SandboxPolicyAuthorityInspection => ({
+      authority: "nemoclaw-managed",
+      effectivePolicy: {},
+    }),
+  ),
+  inspectSandboxPolicyAuthorityMock: vi.fn(
+    (_input: { gatewayName?: string; sandboxName: string }): SandboxPolicyAuthorityInspection => ({
+      authority: "nemoclaw-managed",
+      effectivePolicy: {},
+    }),
+  ),
+}));
+
 export const backupSandboxStateMock = vi.fn();
 export const assertHermesPortableCommandUnavailableMock = vi.fn();
 export const captureSnapshotRestoreAuthorityMock = vi.fn(() => ({
@@ -180,7 +203,9 @@ export const resolveAgentBaselinePolicyMock = vi.fn(resolveTestAgentBaselinePoli
 export const builtinObservabilityPolicy =
   "network_policies:\n  observability-otlp-local:\n    endpoints:\n      - host: host.openshell.internal\n";
 export const loadPresetForSandboxMock = vi.fn((_sandbox: string, preset: string) =>
-  preset === "observability-otlp-local" ? builtinObservabilityPolicy : null,
+  preset === "observability-otlp-local"
+    ? builtinObservabilityPolicy
+    : `network_policies:\n  ${JSON.stringify(preset)}: {}\n`,
 );
 export const getSandboxMock = vi.fn<(name?: string) => SandboxRecord | null>(() => null);
 export const isGatewayHealthyMock = vi.fn(() => true);
@@ -192,14 +217,24 @@ export const waitForRestoredSandboxGatewaySupervisorMock = vi.fn(() => true);
 export const prepareInitialSandboxCreatePolicyMock = vi.fn(
   (
     policyPath: string,
-  ): { policyPath: string; appliedPresets: string[]; cleanup?: () => boolean } => ({
+  ): {
+    policyPath: string;
+    appliedPresets: string[];
+    sourceBytes?: Buffer;
+    cleanup?: () => boolean;
+  } => ({
     policyPath,
     appliedPresets: [],
   }),
 );
 export const registerSandboxMock = vi.fn();
 export const reserveSandboxInferenceRouteMock = vi.fn(() => true);
+export const restoreSandboxEntryIfMissingMock = vi.fn(() => true);
 export const updateSandboxMock = vi.fn();
+export const inspectGlobalPolicyAuthorityMock =
+  policyAuthorityMock.inspectGlobalPolicyAuthorityMock;
+export const inspectSandboxPolicyAuthorityMock =
+  policyAuthorityMock.inspectSandboxPolicyAuthorityMock;
 export const restoreSandboxStateMock = vi.fn();
 export const removeSandboxRegistryEntryOutcomeMock = vi.fn<
   (
@@ -208,6 +243,20 @@ export const removeSandboxRegistryEntryOutcomeMock = vi.fn<
     | { status: "complete"; removed: true }
     | { status: "blocked"; reason: "authority-unproven"; removed: false }
 >(() => ({ status: "complete", removed: true }));
+export const removeSandboxRegistryEntryWithReceiptMock = vi.fn((name: string) => {
+  const registered = [...registerSandboxMock.mock.calls]
+    .reverse()
+    .find((call) => (call[0] as { name?: string } | undefined)?.name === name)?.[0];
+  const entry = registered ?? getSandboxMock(name);
+  return entry
+    ? {
+        entry: { policyAuthority: "nemoclaw-managed" as const, ...entry },
+        wasDefault: false,
+        fallbackDefault: "alpha",
+        postRemovalDefaultSelectionRevision: 1,
+      }
+    : null;
+});
 export const runOpenshellMock = vi.fn((args: string[]) => {
   args[0] === "sandbox" && args[1] === "delete" && lifecycleMock.events.push("delete");
   return { status: 0, output: "" };
@@ -240,6 +289,12 @@ vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: captureOpenshellMock,
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: runOpenshellMock,
+}));
+
+vi.mock("../../adapters/openshell/policy-authority", async (importOriginal) => ({
+  ...(await importOriginal()),
+  inspectGlobalPolicyAuthority: policyAuthorityMock.inspectGlobalPolicyAuthorityMock,
+  inspectSandboxPolicyAuthority: policyAuthorityMock.inspectSandboxPolicyAuthorityMock,
 }));
 
 vi.mock("../../credentials/store", () => ({
@@ -298,6 +353,7 @@ vi.mock("../../shields", () => ({
 
 vi.mock("../../shields/timer-bound-lock", () => ({
   withTimerBoundShieldsMutationLock: lifecycleMock.withTimerBoundMock,
+  withTimerBoundShieldsMutationLockAsync: lifecycleMock.withTimerBoundMock,
 }));
 
 vi.mock("../../shields/timer-control", () => ({
@@ -322,7 +378,15 @@ vi.mock("../../state/registry", () => ({
   getConfiguredMessagingChannelsFromEntry: vi.fn(() => []),
   getCustomPolicies: getCustomPoliciesMock,
   getDisabledMessagingChannelsFromEntry: vi.fn(() => []),
-  getSandbox: getSandboxMock,
+  getSandbox: (name: string) => {
+    const registered = [...registerSandboxMock.mock.calls]
+      .reverse()
+      .find((call) => (call[0] as { name?: string } | undefined)?.name === name)?.[0] as
+      | SandboxRecord
+      | undefined;
+    const record = registered ?? getSandboxMock(name);
+    return record ? { policyAuthority: "nemoclaw-managed", ...record } : null;
+  },
   listSandboxes: () => ({
     sandboxes: ["alpha", "beta", "gamma"].map((name) => getSandboxMock(name)).filter(Boolean),
     defaultSandbox: "alpha",
@@ -330,6 +394,7 @@ vi.mock("../../state/registry", () => ({
   registerSandbox: registerSandboxMock,
   reserveSandboxInferenceRoute: reserveSandboxInferenceRouteMock,
   removeSandbox: vi.fn(),
+  restoreSandboxEntryIfMissing: restoreSandboxEntryIfMissingMock,
   updateSandbox: updateSandboxMock,
 }));
 
@@ -350,6 +415,7 @@ vi.mock("./destroy", async () => {
     cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
     removeSandboxRegistryEntry: vi.fn(() => true),
     removeSandboxRegistryEntryOutcome: removeSandboxRegistryEntryOutcomeMock,
+    removeSandboxRegistryEntryWithReceipt: removeSandboxRegistryEntryWithReceiptMock,
     requireSandboxDestructiveCleanupAuthority: (sandboxName: string, sandbox: SandboxRecord) =>
       runtimeProviders.requireRuntimeProviderDestructiveCleanupAuthority(
         sandboxName,
@@ -389,7 +455,9 @@ export function resetSnapshotRestoreMocks(): void {
   removePresetMock.mockReturnValue(true);
   getPresetContentGatewayStateMock.mockReturnValue("absent");
   loadPresetForSandboxMock.mockImplementation((_sandbox, preset) =>
-    preset === "observability-otlp-local" ? builtinObservabilityPolicy : null,
+    preset === "observability-otlp-local"
+      ? builtinObservabilityPolicy
+      : `network_policies:\n  ${JSON.stringify(preset)}: {}\n`,
   );
   getSandboxMock.mockReturnValue(null);
   isGatewayHealthyMock.mockReturnValue(true);
@@ -405,8 +473,31 @@ export function resetSnapshotRestoreMocks(): void {
   }));
   registerSandboxMock.mockReset();
   reserveSandboxInferenceRouteMock.mockReset().mockReturnValue(true);
+  restoreSandboxEntryIfMissingMock.mockReset().mockReturnValue(true);
   removeSandboxRegistryEntryOutcomeMock.mockReturnValue({ status: "complete", removed: true });
-  updateSandboxMock.mockReset();
+  removeSandboxRegistryEntryWithReceiptMock.mockReset().mockImplementation((name: string) => {
+    const registered = [...registerSandboxMock.mock.calls]
+      .reverse()
+      .find((call) => (call[0] as { name?: string } | undefined)?.name === name)?.[0];
+    const entry = registered ?? getSandboxMock(name);
+    return entry
+      ? {
+          entry: { policyAuthority: "nemoclaw-managed" as const, ...entry },
+          wasDefault: false,
+          fallbackDefault: "alpha",
+          postRemovalDefaultSelectionRevision: 1,
+        }
+      : null;
+  });
+  updateSandboxMock.mockReset().mockReturnValue(true);
+  inspectGlobalPolicyAuthorityMock.mockReset().mockReturnValue({
+    authority: "nemoclaw-managed",
+    effectivePolicy: {},
+  });
+  inspectSandboxPolicyAuthorityMock.mockReset().mockReturnValue({
+    authority: "nemoclaw-managed",
+    effectivePolicy: {},
+  });
   restoreSandboxStateMock.mockReturnValue({
     success: true,
     restoredDirs: [],

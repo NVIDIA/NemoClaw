@@ -16,6 +16,7 @@ import * as policy from "../../policy";
 import * as registry from "../../state/registry";
 import { addSandboxChannel, startSandboxChannel, stopSandboxChannel } from "./policy-channel";
 import { policyChannelDependencies } from "./policy-channel-dependencies";
+import * as policyAuthorityPreflight from "./policy-authority/preflight";
 
 function agentFixture(name: string): defs.AgentDefinition {
   return { name } as defs.AgentDefinition;
@@ -76,6 +77,9 @@ beforeEach(() => {
   saveCredentialMock = vi.spyOn(store, "saveCredential").mockImplementation(() => undefined);
   promptMock = vi.spyOn(store, "prompt").mockResolvedValue("");
   rebuildMock = vi.spyOn(policyChannelDependencies, "rebuildSandbox").mockResolvedValue(undefined);
+  vi.spyOn(policyAuthorityPreflight, "preflightSandboxPolicyAuthority").mockReturnValue(
+    "nemoclaw-managed",
+  );
 });
 
 afterEach(() => {

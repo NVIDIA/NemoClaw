@@ -7,6 +7,7 @@ import path from "node:path";
 import { expect, type MockInstance, vi } from "vitest";
 import YAML from "yaml";
 import { buildMcpBridgePolicyYaml } from "../../src/lib/actions/sandbox/mcp-bridge-policy-render";
+import type { SandboxPolicyAuthorityInspection } from "../../src/lib/adapters/openshell/policy-authority";
 import type { AgentConfigTarget } from "../../src/lib/sandbox/agent-config";
 import type { SandboxEntry } from "../../src/lib/state/registry";
 
@@ -54,6 +55,8 @@ export type ShieldsFlowHarnessOptions = {
     detail: string;
   }>;
   processStartIdentity?: string;
+  policyAuthorityInspection?: SandboxPolicyAuthorityInspection;
+  relockAndReconfirm?: typeof import("../../src/lib/shields/relock-reconfirm.js").relockAndReconfirm;
   timerAuthorizationOutcome?: "authorized" | "dies-before-proof";
   timerDiesAfterUnlock?: boolean;
   fork?: (...args: unknown[]) => {
@@ -159,7 +162,9 @@ export function createShieldsFlowHarness(
   delete require.cache[requireDist.resolve("./timer-bound-lock.js")];
   delete require.cache[requireDist.resolve("./transition-lock.js")];
   delete require.cache[requireDist.resolve("./permissive-runtime.js")];
+  delete require.cache[requireDist.resolve("./policy-authority.js")];
   delete require.cache[requireDist.resolve("../actions/sandbox/mcp-bridge-policy.js")];
+  delete require.cache[requireDist.resolve("../adapters/openshell/policy-authority.js")];
   delete require.cache[requireDist.resolve("../sandbox/privileged-exec.js")];
   delete require.cache[requireDist.resolve("../cli/branding.js")];
   const timerControl = requireDist(
@@ -221,14 +226,24 @@ export function createShieldsFlowHarness(
   const policy = requireDist("../policy/index.js");
   const agentConfig = requireDist("../sandbox/agent-config.js");
   const registry = requireDist("../state/registry.js");
+  const policyAuthority = requireDist(
+    "../adapters/openshell/policy-authority.js",
+  ) as typeof import("../../src/lib/adapters/openshell/policy-authority.js");
   const privilegedExec = requireDist("../sandbox/privileged-exec.js");
   const dockerExec = requireDist("../adapters/docker/exec.js");
   const audit = requireDist("./audit.js");
   const tempFiles = requireDist("../onboard/temp-files.js");
   const stateDirLock = requireDist("./state-dir-lock.js");
-  const relockReconfirm = requireDist("./relock-reconfirm.js");
+  const relockReconfirm = requireDist(
+    "./relock-reconfirm.js",
+  ) as typeof import("../../src/lib/shields/relock-reconfirm.js");
   const childProcess = requireDist("node:child_process");
   const policySetBodies: string[] = [];
+  if (options.relockAndReconfirm) {
+    vi.spyOn(relockReconfirm, "relockAndReconfirm").mockImplementation(
+      options.relockAndReconfirm,
+    );
+  }
   let openClawPosture: "locked" | "mutable" = options.initialOpenClawPosture ?? "mutable";
   const stateLockPlan = {
     version: 1 as const,
@@ -305,10 +320,22 @@ export function createShieldsFlowHarness(
   };
   vi.spyOn(agentConfig, "resolveAgentConfig").mockReturnValue(resolvedAgentConfig);
   vi.spyOn(registry, "getSandbox").mockReturnValue(
-    options.sandboxEntry ?? {
-      name: options.sandboxName ?? "openclaw",
-      agent: resolvedAgentConfig.agentName,
-      openshellDriver: "docker",
+    options.sandboxEntry
+      ? { policyAuthority: "nemoclaw-managed", ...options.sandboxEntry }
+      : {
+          name: options.sandboxName ?? "openclaw",
+          agent: resolvedAgentConfig.agentName,
+          openshellDriver: "docker",
+          policyAuthority: "nemoclaw-managed",
+        },
+  );
+  vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+  vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue(
+    options.policyAuthorityInspection ?? {
+      authority: "nemoclaw-managed",
+      effectivePolicy: YAML.parse(
+        options.livePolicyYaml ?? "version: 1\nnetwork_policies:\n  test: {}\n",
+      ) as Record<string, unknown>,
     },
   );
   vi.spyOn(registry, "listSandboxes").mockReturnValue({

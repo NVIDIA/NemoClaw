@@ -9,6 +9,7 @@ import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction"
 import {
   applyReusedSandboxDashboardState,
   createSandboxReuseHelpers,
+  restoreReusedSandboxDashboardState,
   type SandboxReuseDeps,
 } from "./sandbox-reuse";
 
@@ -30,7 +31,7 @@ describe("applyReusedSandboxDashboardState", () => {
     vi.restoreAllMocks();
   });
 
-  it("updates dashboard URL, Hermes forwarding, reuse metadata, and gateway registry fields", () => {
+  it("threads receipt checks across dashboard and reuse registry mutations (#9833)", () => {
     const updateSandbox = vi.fn();
     const env: NodeJS.ProcessEnv = {};
     const sandboxGpuConfig: SandboxGpuConfig = {
@@ -57,6 +58,7 @@ describe("applyReusedSandboxDashboardState", () => {
     };
     const ensureDashboardForward = vi.fn(() => 18790);
     const updateReusedSandboxMetadata = vi.fn();
+    const revalidatePolicyRequirements = vi.fn();
 
     const result = applyReusedSandboxDashboardState({
       sandboxName: "reuse-me",
@@ -73,14 +75,19 @@ describe("applyReusedSandboxDashboardState", () => {
       hermesDashboardForwarding,
       updateSandbox,
       updateReusedSandboxMetadata,
+      revalidatePolicyRequirements,
     });
 
-    expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789");
+    expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
+      revalidatePolicyAuthority: revalidatePolicyRequirements,
+    });
     expect(env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
     expect(hermesDashboardForwarding.resolveStateForPort).toHaveBeenCalledWith(18790);
     expect(hermesDashboardForwarding.ensureForState).toHaveBeenCalledWith(
       hermesDashboardState,
       "reuse-me",
+      false,
+      revalidatePolicyRequirements,
     );
     expect(updateReusedSandboxMetadata).toHaveBeenCalledWith(
       "reuse-me",
@@ -90,6 +97,7 @@ describe("applyReusedSandboxDashboardState", () => {
       18790,
       false,
       sandboxGpuConfig,
+      revalidatePolicyRequirements,
     );
     expect(updateSandbox).toHaveBeenCalledWith("reuse-me", {
       hermesDashboardEnabled: true,
@@ -198,6 +206,7 @@ describe("applyReusedSandboxDashboardState", () => {
       0,
       true,
       sandboxGpuConfig,
+      undefined,
     );
     expect(updateSandbox).toHaveBeenCalledWith("terminal-box", {
       hermesDashboardEnabled: undefined,
@@ -212,6 +221,161 @@ describe("applyReusedSandboxDashboardState", () => {
       dashboardPort: 0,
       hermesDashboardState: { enabled: false, config: null },
     });
+  });
+
+  it("rechecks after releasing the dashboard reservation before reuse effects (#9833)", async () => {
+    const releaseDashboardPort = vi.fn(async () => undefined);
+    const ensureDashboardForward = vi.fn(() => 18790);
+    const ensureForState = vi.fn();
+    const updateReusedSandboxMetadata = vi.fn();
+    const updateSandbox = vi.fn();
+
+    await expect(
+      restoreReusedSandboxDashboardState({
+        sandboxName: "reuse-me",
+        chatUiUrl: "http://127.0.0.1:18789",
+        env: {},
+        agent: null,
+        model: "test-model",
+        provider: "openai-compatible",
+        selectionVerified: true,
+        sandboxGpuConfig: {
+          hostGpuDetected: false,
+          hostGpuPlatform: null,
+          sandboxGpuEnabled: false,
+          mode: "auto",
+          sandboxGpuDevice: null,
+          errors: [],
+        },
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        releaseDashboardPort,
+        ensureDashboardForward,
+        hermesDashboardForwarding: {
+          resolveStateForPort: vi.fn(() => ({ enabled: false, config: null })),
+          ensureForState,
+        },
+        updateSandbox,
+        updateReusedSandboxMetadata,
+        revalidatePolicyRequirements: () => {
+          throw new Error("external policy authority must supply the dashboard entry");
+        },
+      }),
+    ).rejects.toThrow(/external policy authority must supply/u);
+
+    expect(releaseDashboardPort).toHaveBeenCalledOnce();
+    expect(ensureDashboardForward).not.toHaveBeenCalled();
+    expect(ensureForState).not.toHaveBeenCalled();
+    expect(updateReusedSandboxMetadata).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("passes the receipt check into dashboard forwarding after release (#9833)", async () => {
+    const revalidatePolicyRequirements = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("external policy authority must supply the dashboard entry");
+      });
+    const ensureDashboardForward = vi.fn(
+      (
+        _sandboxName: string,
+        _chatUiUrl: string,
+        options?: { revalidatePolicyAuthority?: (operation: string) => void },
+      ) => {
+        options?.revalidatePolicyAuthority?.("start the dashboard forward");
+        return 18790;
+      },
+    );
+    const env: NodeJS.ProcessEnv = {};
+    const ensureForState = vi.fn();
+    const updateReusedSandboxMetadata = vi.fn();
+    const updateSandbox = vi.fn();
+
+    await expect(
+      restoreReusedSandboxDashboardState({
+        sandboxName: "reuse-me",
+        chatUiUrl: "http://127.0.0.1:18789",
+        env,
+        agent: null,
+        model: "test-model",
+        provider: "openai-compatible",
+        selectionVerified: true,
+        sandboxGpuConfig: {
+          hostGpuDetected: false,
+          hostGpuPlatform: null,
+          sandboxGpuEnabled: false,
+          mode: "auto",
+          sandboxGpuDevice: null,
+          errors: [],
+        },
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        releaseDashboardPort: vi.fn(async () => undefined),
+        ensureDashboardForward,
+        hermesDashboardForwarding: {
+          resolveStateForPort: vi.fn(() => ({ enabled: false, config: null })),
+          ensureForState,
+        },
+        updateSandbox,
+        updateReusedSandboxMetadata,
+        revalidatePolicyRequirements,
+      }),
+    ).rejects.toThrow(/external policy authority must supply/u);
+
+    expect(ensureDashboardForward).toHaveBeenCalledOnce();
+    expect(env.CHAT_UI_URL).toBeUndefined();
+    expect(ensureForState).not.toHaveBeenCalled();
+    expect(updateReusedSandboxMetadata).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("rechecks after Hermes forwarding before reuse metadata (#9833)", () => {
+    const revalidatePolicyRequirements = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("external policy authority must supply the dashboard entry");
+      });
+    const ensureForState = vi.fn();
+    const updateReusedSandboxMetadata = vi.fn();
+    const updateSandbox = vi.fn();
+
+    expect(() =>
+      applyReusedSandboxDashboardState({
+        sandboxName: "reuse-me",
+        chatUiUrl: "http://127.0.0.1:18789",
+        env: {},
+        agent: null,
+        model: "test-model",
+        provider: "openai-compatible",
+        selectionVerified: true,
+        sandboxGpuConfig: {
+          hostGpuDetected: false,
+          hostGpuPlatform: null,
+          sandboxGpuEnabled: false,
+          mode: "auto",
+          sandboxGpuDevice: null,
+          errors: [],
+        },
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        ensureDashboardForward: vi.fn(() => 18790),
+        hermesDashboardForwarding: {
+          resolveStateForPort: vi.fn(() => ({ enabled: false, config: null })),
+          ensureForState,
+        },
+        updateSandbox,
+        updateReusedSandboxMetadata,
+        revalidatePolicyRequirements,
+      }),
+    ).toThrow(/external policy authority must supply/u);
+
+    expect(ensureForState).toHaveBeenCalledOnce();
+    expect(updateReusedSandboxMetadata).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
   });
 });
 

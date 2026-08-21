@@ -91,6 +91,36 @@ function createDeps(
 }
 
 describe("prepareOnboardSession", () => {
+  it("stops resume before side effects when saved policy authority is invalid (#9833)", async () => {
+    const loadSession = vi.fn((): Session | null => {
+      throw new Error(
+        "Refusing to load the onboarding session: the saved policy authority is invalid.",
+      );
+    });
+    const { deps } = createDeps(null, { loadSession });
+
+    await expect(
+      prepareOnboardSession(
+        {
+          resume: true,
+          fresh: false,
+          requestedFromDockerfile: null,
+          requestedSandboxName: null,
+          cannotPrompt: true,
+          nonInteractive: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow(/saved policy authority is invalid/u);
+
+    expect(loadSession).toHaveBeenCalledOnce();
+    expect(deps.requireHostMountRuntimeSupport).not.toHaveBeenCalled();
+    expect(deps.setOnboardBrandingAgent).not.toHaveBeenCalled();
+    expect(deps.updateSession).not.toHaveBeenCalled();
+    expect(deps.saveSession).not.toHaveBeenCalled();
+    expect(deps.clearSession).not.toHaveBeenCalled();
+  });
+
   it("creates a fresh session and records the resolved Dockerfile", async () => {
     const existing = createSession({ sessionId: "old-session" });
     const { deps, getSession } = createDeps(existing);
@@ -403,34 +433,34 @@ describe("prepareOnboardSession", () => {
   it.each([
     { recorded: true, requested: false },
     { recorded: false, requested: true },
-  ])("records an explicit observability request while resuming", async ({
-    recorded,
-    requested,
-  }) => {
-    const { deps } = createDeps(
-      createSession({
-        sandboxName: "demo",
-        observabilityEnabled: recorded,
-        status: "failed",
-      }),
-    );
+  ])(
+    "records an explicit observability request while resuming",
+    async ({ recorded, requested }) => {
+      const { deps } = createDeps(
+        createSession({
+          sandboxName: "demo",
+          observabilityEnabled: recorded,
+          status: "failed",
+        }),
+      );
 
-    const result = await prepareOnboardSession(
-      {
-        resume: true,
-        fresh: false,
-        requestedFromDockerfile: null,
-        requestedSandboxName: null,
-        cannotPrompt: false,
-        nonInteractive: false,
-        requestedObservabilityEnabled: requested,
-      },
-      deps,
-    );
+      const result = await prepareOnboardSession(
+        {
+          resume: true,
+          fresh: false,
+          requestedFromDockerfile: null,
+          requestedSandboxName: null,
+          cannotPrompt: false,
+          nonInteractive: false,
+          requestedObservabilityEnabled: requested,
+        },
+        deps,
+      );
 
-    expect(result.session?.observabilityEnabled).toBe(requested);
-    expect(result.session?.observabilityRequestedExplicitly).toBe(true);
-  });
+      expect(result.session?.observabilityEnabled).toBe(requested);
+      expect(result.session?.observabilityRequestedExplicitly).toBe(true);
+    },
+  );
 
   it("records and reports resume conflicts before exiting", async () => {
     const conflict: ResumeConfigConflict = {
@@ -718,9 +748,10 @@ describe("prepareOnboardSession", () => {
     };
     session.checkpoint = checkpoint;
     const { deps } = createDeps(session, {
-      resolveResumeCheckpoint: vi.fn(
-        (): CheckpointLoadResult => ({ status: "loaded", checkpoint }),
-      ),
+      resolveResumeCheckpoint: vi.fn((): CheckpointLoadResult => ({
+        status: "loaded",
+        checkpoint,
+      })),
     });
 
     const result = await prepareOnboardSession(
