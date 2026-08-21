@@ -51,7 +51,7 @@ if [ "$1 $2" = "policy set" ]; then
     fi
     shift
   done
-  mode="$(stat -f '%Lp' "$policy_file" 2>/dev/null || stat -c '%a' "$policy_file")"
+  mode="$(node -e 'process.stdout.write((require("node:fs").statSync(process.argv[1]).mode & 0o777).toString(8))' "$policy_file")"
   printf '%s\n%s\n' "$policy_file" "$mode" > ${JSON.stringify(stagedRecord)}
   cp "$policy_file" ${JSON.stringify(policyOut)}
   if [ "${policySetStatus}" -eq 0 ]; then
