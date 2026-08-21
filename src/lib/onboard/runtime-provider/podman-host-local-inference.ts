@@ -374,13 +374,21 @@ function sanitizeFailureResult(
   redactor: PodmanInferenceRedactor,
 ): ContainerEngineCommandResult {
   const failed = result.status !== 0 || result.error !== undefined;
+  const error =
+    result.error === undefined
+      ? undefined
+      : Object.assign(new Error(redactEvidence(redactor, result.error.message)), {
+          ...((result.error as NodeJS.ErrnoException).code === "ETIMEDOUT"
+            ? { code: "ETIMEDOUT" }
+            : {}),
+        });
   return Object.freeze({
     status: result.status,
     // Successful stdout remains intact because it carries provider JSON and
     // exact runtime identities. Stderr is never parsed and is always redacted.
     stdout: failed ? redactEvidence(redactor, result.stdout) : result.stdout,
     stderr: redactEvidence(redactor, result.stderr),
-    ...(result.error ? { error: new Error(redactEvidence(redactor, result.error.message)) } : {}),
+    ...(error ? { error } : {}),
   });
 }
 
@@ -423,6 +431,10 @@ function commandEvidence(result: ContainerEngineCommandResult): string {
   return boundedEvidence(
     result.stderr || result.stdout || result.error?.message || "unknown failure",
   );
+}
+
+function commandTimedOut(result: ContainerEngineCommandResult): boolean {
+  return (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
 }
 
 function redactedCommandEvidence(
@@ -1164,11 +1176,17 @@ function inspectContainer(engine: ContainerEngine, runtimeId: string): ManagedCo
   });
 }
 
-function inspectProbeContainer(engine: ContainerEngine, runtimeId: string): ProbeContainer {
-  const output = requireSuccess(
-    "probe container inspection",
-    engine.capture(["container", "inspect", runtimeId], PROBE_TIMEOUT_MS),
-  );
+function inspectProbeContainer(
+  engine: ContainerEngine,
+  runtimeId: string,
+  retryTimeoutOnce = false,
+): ProbeContainer {
+  const args = ["container", "inspect", runtimeId] as const;
+  let result = engine.capture(args, PROBE_TIMEOUT_MS);
+  if (retryTimeoutOnce && commandTimedOut(result)) {
+    result = engine.capture(args, PROBE_TIMEOUT_MS);
+  }
+  const output = requireSuccess("probe container inspection", result);
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
@@ -1957,7 +1975,11 @@ function executeExactProbe(
   }
   let container: ProbeContainer;
   try {
-    container = requireProbeIdentity(inspectProbeContainer(engine, runtimeId), spec, runtimeId);
+    container = requireProbeIdentity(
+      inspectProbeContainer(engine, runtimeId, true),
+      spec,
+      runtimeId,
+    );
   } catch (error) {
     captureFailure(error);
     throw new PodmanInferenceIndeterminateCleanupError(

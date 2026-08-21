@@ -567,8 +567,11 @@ export function observeHermesPortableSandbox(
     `^(?:Error:\\s*)?sandbox ['\"]?${escapedRegExp(sandboxName)}['\"]? not found\\.?$`,
     "u",
   );
-  const coded = /^Error: code: 'NotFound', message: "sandbox not found"$/u;
-  return named.test(output) || coded.test(output)
+  const coded =
+    output === `Error: code: 'NotFound', message: "sandbox not found"` ||
+    output ===
+      `Error:   × code: 'Some requested entity was not found', message: "sandbox not found"`;
+  return named.test(output) || coded
     ? { kind: "absent" }
     : { kind: "ambiguous", detail: "sandbox get did not prove exact sandbox absence" };
 }

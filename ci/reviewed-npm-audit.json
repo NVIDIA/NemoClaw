@@ -5,6 +5,7 @@
   "severityThreshold": "high",
   "exceptionFile": "ci/npm-audit-exceptions.json",
   "archiveGraphId": "reviewed-archive-graph",
+  "archiveTarVersion": "7.5.21",
   "artifactDirectory": "coverage/reviewed-npm-audit",
   "archivePackages": [
     {
@@ -70,7 +71,7 @@
       "integrity": "sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==",
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz",
       "directory": "agents/openclaw/openclaw-runtime",
-      "lockSha256": "a814d82a36046bd7819d222337809ce80ccfd76b553cd17265ff64a527d3d095"
+      "lockSha256": "60f816dcff6f35179b1c48b4c06db9473497760d45ca1831252c27e8b1d2d665"
     },
     {
       "id": "mcporter-runtime",
