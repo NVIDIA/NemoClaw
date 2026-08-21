@@ -1717,9 +1717,10 @@ async function prepareConnectSandboxWithinLifecycleFence(
       break;
     }
     if (publication.kind === "validation-failed") {
-      console.error(
-        `  Probe failed: final launch-readiness validation failed due to ${publication.category}.`,
-      );
+      const failedCheck = publication.failedCheck
+        ? ` because the ${publication.failedCheck} failed`
+        : ` due to ${publication.category}`;
+      console.error(`  Probe failed: final launch-readiness validation failed${failedCheck}.`);
       process.exit(1);
     }
     if (publication.kind === "evidence-failed") {
