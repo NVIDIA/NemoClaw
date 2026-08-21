@@ -1029,10 +1029,27 @@ describe("E2E workflow plan", () => {
     expect(registryRow).toBeDefined();
     expect(testRow).toBeDefined();
     expect(coverageRow).toBeDefined();
+    const { timeout_minutes: _timeoutMinutes, ...registryRowWithoutTimeout } = registryRow!;
     const { explicitOnlyJobs: _omitted, ...missingField } = validPlan;
     const malformedPlans = [
       missingField,
       { ...validPlan, matrix: [...validPlan.matrix, { ...registryRow }] },
+      {
+        ...validPlan,
+        matrix: [registryRowWithoutTimeout, ...validPlan.matrix.slice(1)],
+      },
+      {
+        ...validPlan,
+        matrix: validPlan.matrix.map((row, index) =>
+          index === 0 ? { ...row, timeout_minutes: 0 } : row,
+        ),
+      },
+      {
+        ...validPlan,
+        matrix: validPlan.matrix.map((row, index) =>
+          index === 0 ? { ...row, timeout_minutes: 1.5 } : row,
+        ),
+      },
       { ...validPlan, testMatrix: [{ ...testRow, id: "invalid_id" }] },
       {
         ...validPlan,

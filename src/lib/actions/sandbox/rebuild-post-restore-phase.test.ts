@@ -52,6 +52,10 @@ describe("rebuild post-restore phase", () => {
       order.push("config-hash");
       return true;
     });
+    vi.spyOn(rebuildConfigHash, "verifyFinalMutableOpenClawConfigHash").mockImplementation(() => {
+      order.push("config-hash-final");
+      return true;
+    });
     vi.spyOn(shields, "repairMutableConfigPerms").mockReturnValue({
       applied: false,
       reason: "not needed",
@@ -121,7 +125,7 @@ describe("rebuild post-restore phase", () => {
   it("reconciles OpenClaw sessions after doctor and before later config writes (#7102)", async () => {
     await runRebuildPostRestorePhase(input());
 
-    expect(order).toEqual(["doctor", "reconcile", "messaging", "config-hash"]);
+    expect(order).toEqual(["doctor", "reconcile", "messaging", "config-hash", "config-hash-final"]);
   });
 
   it("fails when doctor returns 255 and the final OpenClaw config hash is unverified (#9530)", async () => {
@@ -144,6 +148,40 @@ describe("rebuild post-restore phase", () => {
     expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
       "rebuilt successfully",
     );
+  });
+
+  it("fails when finalization invalidates the OpenClaw config hash after the early refresh (#9530)", async () => {
+    let configHashValid = true;
+    vi.mocked(
+      rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
+    ).mockImplementation(() => configHashValid);
+    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockImplementation(
+      () => {
+        configHashValid = false;
+        return true;
+      },
+    );
+    vi.mocked(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).mockImplementation(
+      () => configHashValid,
+    );
+    const args = input();
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(
+      rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
+    ).toHaveBeenCalledOnce();
+    expect(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).toHaveBeenCalledOnce();
+    expect(args.relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+    expect(args.bail).toHaveBeenCalledWith(
+      "OpenClaw config integrity verification failed after rebuild.",
+    );
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(output).toContain(
+      "Final OpenClaw configuration hash verification failed after post-restore finalization",
+    );
+    expect(output).not.toContain("Mutable OpenClaw config hash was not refreshed");
+    expect(output).not.toContain("rebuilt successfully");
   });
 
   it("does not run OpenClaw session reconciliation for another agent (#7102)", async () => {
