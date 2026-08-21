@@ -109,6 +109,33 @@ export async function completeHermesPortableSandboxRegistration(input: {
   return registered;
 }
 
+type ApplyRecreatePolicyCarryForward = (
+  sandboxName: string,
+  nonInteractive: boolean,
+  note: (message: string) => void,
+  rebuildPolicyPresets?: readonly string[],
+) => void;
+
+/** Reseed an outer rebuild after its owned delete leaves no live source branch. */
+export function applyAbsentSandboxRebuildPolicyCarryForward(
+  input: {
+    readonly sandboxName: string;
+    readonly liveExists: boolean;
+    readonly nonInteractive: boolean;
+    readonly note: (message: string) => void;
+    readonly rebuildPolicyPresets?: readonly string[];
+  },
+  applyRecreatePolicyCarryForward: ApplyRecreatePolicyCarryForward,
+): void {
+  if (input.liveExists || !Array.isArray(input.rebuildPolicyPresets)) return;
+  applyRecreatePolicyCarryForward(
+    input.sandboxName,
+    input.nonInteractive,
+    input.note,
+    input.rebuildPolicyPresets,
+  );
+}
+
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
   return async function createSandboxWithBaseImageResolution(
     baseImageResolutionContext: import("../base-image-resolution-flow").BaseImageResolutionContext,
@@ -345,6 +372,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           inspectSandboxForCreate,
           createIntent?.toolDisclosure ?? null,
         );
+    applyAbsentSandboxRebuildPolicyCarryForward(
+      {
+        sandboxName,
+        liveExists,
+        nonInteractive: isNonInteractive(),
+        note,
+        rebuildPolicyPresets: createIntent?.rebuildPolicyPresets,
+      },
+      policyPresetCarry.applyRecreatePolicyCarryForward,
+    );
     let recreateRuntime:
       | import("../sandbox-recreate-transaction").SandboxRecreateRuntime
       | OwnedSandboxRecreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(
