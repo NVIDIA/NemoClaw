@@ -103,8 +103,9 @@ const DEFAULT_HOST_DEPENDENCY_SCRIPT_PATH = join(
   "scripts",
   "host-dependency-setup.sh",
 );
-const REVIEWED_HERMES_PLATFORM_ACTION =
-  "./.github/actions/resolve-reviewed-hermes-platform";
+const REVIEWED_HERMES_PLATFORM_ACTION = "./.github/actions/resolve-reviewed-hermes-platform";
+const TRUSTED_MULTIARCH_HERMES_PLATFORM_ACTION =
+  "./.trusted-hermes-resolver/.github/actions/resolve-reviewed-hermes-platform";
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -1131,11 +1132,12 @@ function requireFullShaAction(
 
 function isReviewedLocalHermesPlatformAction(jobName: string, step: WorkflowStep): boolean {
   return (
-    step.uses === REVIEWED_HERMES_PLATFORM_ACTION &&
-    ((jobName === "managed-image-multiarch-startup" &&
-      step.name === "Resolve reviewed Hermes platform base image") ||
-      (jobName === "managed-image-protected-runtime" &&
-        step.name === "Resolve reviewed Hermes runtime base image"))
+    (jobName === "managed-image-multiarch-startup" &&
+      step.name === "Resolve reviewed Hermes platform base image" &&
+      step.uses === TRUSTED_MULTIARCH_HERMES_PLATFORM_ACTION) ||
+    (jobName === "managed-image-protected-runtime" &&
+      step.name === "Resolve reviewed Hermes runtime base image" &&
+      step.uses === REVIEWED_HERMES_PLATFORM_ACTION)
   );
 }
 
@@ -1526,6 +1528,9 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
     const checkoutIndexes = workflowSteps.flatMap((step, index) => {
       if (jobName === "managed-image-protected-runtime") {
         return step.name === "Checkout exact protected runtime candidate source" ? [index] : [];
+      }
+      if (jobName === "managed-image-multiarch-startup") {
+        return step.name === "Checkout trusted Hermes resolver" ? [index] : [];
       }
       if (jobName === "llama-cpp-dgx-spark-qualification") {
         return step.name === "Checkout exact llama.cpp qualification candidate" ? [index] : [];

@@ -63,7 +63,12 @@
     },
     {
       "file": "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
-      "test": "rejects mutable Hermes base selection in %s",
+      "test": "%s binds Hermes resolution to trusted workflow code",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+      "test": "%s rejects duplicate Hermes resolver steps",
       "category": "security"
     },
     {

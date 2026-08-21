@@ -19,8 +19,7 @@ const ACTIVATION_PATH = "ci/protected-managed-image-runtime-activation-v1.json";
 const LIVE_TEST_PATH = "test/e2e/live/managed-image-protected-runtime.test.ts";
 const REGISTRY_IMAGE =
   "docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373";
-const REVIEWED_HERMES_PLATFORM_ACTION =
-  "./.github/actions/resolve-reviewed-hermes-platform";
+const REVIEWED_HERMES_PLATFORM_ACTION = "./.github/actions/resolve-reviewed-hermes-platform";
 const GUARDED_NVIDIA_API_KEY =
   "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_API_KEY || '' }}";
 
@@ -260,7 +259,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     errors.push(`${JOB_ID} must use the shared reviewed Hermes platform resolver`);
   }
   requireValues(errors, `${JOB_ID} Hermes platform resolver`, record(hermesBase?.with), {
-    "dockerfile-path": "agents/hermes/Dockerfile",
+    "dockerfile-path": ".candidate-runtime/agents/hermes/Dockerfile",
     platform: "linux/amd64",
   });
 
