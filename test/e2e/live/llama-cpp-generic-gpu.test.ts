@@ -261,6 +261,26 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
   expect(startupLog).toContain(
     `llama_server: listening on http://127.0.0.1:${recipe.spec.serve.requestGuard.upstreamPort}`,
   );
+  const processes = await host.command(
+    "docker",
+    ["container", "top", MANAGED_LLAMA_CPP_CONTAINER_NAME, "-eo", "pid,ppid,comm"],
+    {
+      artifactName: "managed-llama-cpp-container-processes",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(processes.exitCode, resultText(processes)).toBe(0);
+  const llamaProcess = processes.stdout
+    .trim()
+    .split("\n")
+    .slice(1)
+    .map((line) => line.trim().split(/\s+/u))
+    .find(([, , command]) => command === "llama-server");
+  expect(llamaProcess, resultText(processes)).toBeDefined();
+  const llamaPid = Number(llamaProcess?.[0]);
+  expect(llamaPid).toBeGreaterThan(0);
+  expect(Number(llamaProcess?.[1])).toBe(containerPid);
   const computeApps = await host.command(
     "nvidia-smi",
     ["--query-compute-apps=pid,process_name,used_gpu_memory", "--format=csv,noheader,nounits"],
@@ -276,7 +296,7 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
     .split("\n")
     .map((line) => line.split(",").map((value) => value.trim()))
     .find(
-      ([pid, processName]) => Number(pid) === containerPid && /llama-server$/u.test(processName),
+      ([pid, processName]) => Number(pid) === llamaPid && /llama-server$/u.test(processName),
     );
   expect(llamaGpuProcess, resultText(computeApps)).toBeDefined();
   const usedGpuMemoryMiB = Number(llamaGpuProcess?.[2]);
