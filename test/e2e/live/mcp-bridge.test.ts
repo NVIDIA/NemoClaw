@@ -691,6 +691,7 @@ async function rebuildWithoutMcpHostSecret(
     env: {
       ...buildMcpBridgeExactMainEnv({ envOverlay }),
       COMPATIBLE_API_KEY: COMPATIBLE_KEY,
+      NEMOCLAW_REBUILD_VERBOSE: "1",
       NVIDIA_INFERENCE_API_KEY: COMPATIBLE_KEY,
     },
     redactionValues: [COMPATIBLE_KEY, HOST_SECRET, ROTATED_HOST_SECRET],
