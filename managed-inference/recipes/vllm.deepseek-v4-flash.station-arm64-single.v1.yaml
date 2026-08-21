@@ -17,7 +17,7 @@ spec:
     imageDownloadSizeBytes: 9603085145
     imageUnpackedSizeBytes: 27658526720
     minimumComputeCapability: 100
-    minimumGpuMemoryBytes: 352381000000
+    # Station qualification validates the supported GB300 runtime. The model repository size is not an HBM minimum.
     pullTimeoutSeconds: 43200
     architecture: arm64
     networkMode: bridge

@@ -6,6 +6,7 @@ import type { ResolvedHostLocalInferenceSelection } from "../../inference/servin
 import type { VllmProfile } from "../../inference/vllm";
 import { VLLM_EXTRA_ARGS_ENV } from "../../inference/vllm-models";
 import type { SetupNimSelectionResult, SetupNimSelectionState } from "../setup-nim-flow";
+import { vllmInstallRecoveryOptions } from "../provider-recovery";
 import type { LocalModelProfilePlan } from "./plan";
 
 export interface LocalModelProfileOnboarderDeps {
@@ -17,8 +18,11 @@ export interface LocalModelProfileOnboarderDeps {
       nonInteractive: boolean;
       promptFn: (question: string) => Promise<string>;
       beforeInstall?: (modelId: string) => void;
+      checkpointInstallIntent?: (modelId: string) => void;
     },
   ): Promise<{ ok: boolean }>;
+  getVllmInstallResumeModel?(): string | null;
+  checkpointVllmInstallModel?(modelId: string): void;
   handleVllmSelection(
     state: SetupNimSelectionState,
     options?: { managedInstall?: boolean; sparkHost?: boolean },
@@ -82,10 +86,26 @@ export function createLocalModelProfileOnboarder(deps: LocalModelProfileOnboarde
       );
       return "retry-selection";
     }
+    const recovery = vllmInstallRecoveryOptions(deps);
+    const resumedModel = recovery.modelIntent?.trim().toLowerCase();
+    if (
+      resumedModel &&
+      ![materialized.model.id, materialized.model.envValue, materialized.model.servedModelId].some(
+        (candidate) => candidate?.toLowerCase() === resumedModel,
+      )
+    ) {
+      deps.error(
+        `  The resumed vLLM model conflicts with the ${materialized.model.envValue} local model profile.`,
+      );
+      return "retry-selection";
+    }
     const result = await deps.installVllm(materialized.profile, {
       hasImage: host.hasVllmImage,
       nonInteractive: true,
       promptFn: deps.prompt,
+      ...(recovery.checkpointInstallIntent
+        ? { checkpointInstallIntent: recovery.checkpointInstallIntent }
+        : {}),
       beforeInstall: (modelId) => {
         state.provider = "vllm-local";
         state.model = modelId;

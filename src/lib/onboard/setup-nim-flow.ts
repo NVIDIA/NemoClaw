@@ -47,7 +47,11 @@ import type {
 } from "./nvidia-featured-model-selection";
 import type { InferenceProviderHostGpu, InferenceProviderHostState } from "./provider-host-state";
 import { buildInferenceProviderMenu, type ProviderMenuChoice } from "./provider-menu";
-import { resolveRequestedProviderSelection } from "./provider-selection";
+import {
+  applyVllmInstallResumeDefaults,
+  resolveRequestedProviderSelection,
+  vllmInstallRecoveryOptions,
+} from "./provider-selection";
 import { reportProviderSelectionFailure } from "./provider-selection-failure";
 import { promptForInferenceProviderSelection } from "./provider-selection-prompt";
 import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-route-handoff";
@@ -108,6 +112,7 @@ export interface SetupNimFlowDeps {
   step(current: number, total: number, label: string): void;
   isNonInteractive(): boolean;
   getNonInteractiveProvider(): string | null;
+  getVllmInstallResumeModel?(): string | null;
   getNonInteractiveModel(
     providerKey: string,
     options?: { allowProviderModelFallback?: boolean },
@@ -204,8 +209,11 @@ export interface SetupNimFlowDeps {
       nonInteractive: boolean;
       promptFn: (question: string) => Promise<string>;
       beforeInstall?: (modelId: string) => void;
+      checkpointInstallIntent?: (modelId: string) => void;
+      modelIntent?: string;
     },
   ): Promise<{ ok: boolean }>;
+  checkpointVllmInstallModel?(modelId: string): void;
   handleVllmSelection(
     state: SetupNimSelectionState,
     options?: {
@@ -651,7 +659,10 @@ export function createSetupNim(
   defaults: SetupNimFlowDeps,
   overrides: Partial<SetupNimFlowDeps> = {},
 ): SetupNim {
-  const deps: SetupNimFlowDeps = { ...defaults, ...overrides };
+  const deps: SetupNimFlowDeps = applyVllmInstallResumeDefaults({
+    ...defaults,
+    ...overrides,
+  });
   const localModelProfileIntegration =
     deps.localModelProfileIntegration ?? createLocalModelProfileIntegration(deps);
 
@@ -1113,6 +1124,7 @@ export function createSetupNim(
             hasImage: hasVllmImage,
             nonInteractive: deps.isNonInteractive(),
             promptFn: deps.prompt,
+            ...vllmInstallRecoveryOptions(deps),
             beforeInstall: (modelId) => {
               vllmState.provider = "vllm-local";
               vllmState.model = modelId;

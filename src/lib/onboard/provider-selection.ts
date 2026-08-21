@@ -4,6 +4,12 @@
 import { type ProviderOption, resolveProviderKeyFallback } from "./provider-key-fallback";
 import { providerNameToOptionKey, type RemoteProviderConfigEntryLike } from "./provider-recovery";
 
+export {
+  applyVllmInstallResumeDefaults,
+  readVllmInstallResumeModel,
+  vllmInstallRecoveryOptions,
+} from "./provider-recovery";
+
 export type ProviderSelectionFailureReason =
   | {
       kind: "wsl-recorded-ollama-windows-host";

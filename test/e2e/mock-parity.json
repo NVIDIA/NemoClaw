@@ -125,6 +125,7 @@
     {
       "live": "test/e2e/live/full-e2e.test.ts",
       "fast": [
+        "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
         "test/e2e/support/onboard-performance.test.ts",
@@ -600,6 +601,7 @@
     {
       "live": "test/e2e/live/channels-stop-start.test.ts",
       "fast": [
+        "test/e2e/support/channels-stop-start-config-state.test.ts",
         "test/e2e/support/channels-stop-start-googlechat-entry.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
@@ -646,9 +648,13 @@
     {
       "live": "test/e2e/live/registry-targets.test.ts",
       "fast": [
+        "test/e2e/support/e2e-matrix.test.ts",
+        "test/e2e/support/e2e-phase-onboarding.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts",
+        "test/e2e/support/workflow-plan.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     },

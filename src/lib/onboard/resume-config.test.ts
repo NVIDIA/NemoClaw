@@ -128,4 +128,43 @@ describe("authoritative rebuild resume config", () => {
     expect(getResumeConfigConflicts(session, {})).toEqual([]);
     expect(getResumeConfigConflicts(session, { observabilityEnabled: false })).toEqual([]);
   });
+
+  it("treats an unfinished vLLM install checkpoint as authoritative resume state", () => {
+    const session = {
+      sandboxName: "demo",
+      provider: null,
+      model: null,
+      vllmInstallModel: "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
+    };
+
+    expect(getResumeConfigConflicts(session, { nonInteractive: true })).toEqual([]);
+
+    vi.stubEnv("NEMOCLAW_PROVIDER", "install-vllm");
+    vi.stubEnv("NEMOCLAW_VLLM_MODEL", "inferact/muse-glimmer-30b-nvfp4-w4a4");
+    expect(getResumeConfigConflicts(session, { nonInteractive: true })).toEqual([]);
+  });
+
+  it("rejects provider or model changes against an unfinished vLLM install", () => {
+    const session = {
+      sandboxName: "demo",
+      provider: null,
+      model: null,
+      vllmInstallModel: "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
+    };
+    vi.stubEnv("NEMOCLAW_PROVIDER", "install-vllm");
+    vi.stubEnv("NEMOCLAW_VLLM_MODEL", "nemotron-3.5-lightning-30b");
+
+    expect(getResumeConfigConflicts(session, { nonInteractive: true })).toContainEqual({
+      field: "model",
+      requested: "nemotron-3.5-lightning-30b",
+      recorded: "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
+    });
+
+    vi.stubEnv("NEMOCLAW_PROVIDER", "build");
+    expect(getResumeConfigConflicts(session, { nonInteractive: true })).toContainEqual({
+      field: "provider",
+      requested: "nvidia-prod",
+      recorded: "vllm-local",
+    });
+  });
 });

@@ -303,6 +303,7 @@ async function runRestoreTimerWithBudget(
   let exitCode = 0;
   let retryScheduled = false;
   let terminalContainment = false;
+  let restoreCompleted = false;
   let managedMcpWarning: string | undefined;
   const scheduleRetry = (): boolean => {
     if (!markerMatchesCurrentTimer(args)) return false;
@@ -531,7 +532,7 @@ async function runRestoreTimerWithBudget(
               scheduled_restore_at: args.restoreAtIso,
               ...(managedMcpWarning ? { warning: managedMcpWarning } : {}),
             });
-            cleanupOwnedTimerMarker(args);
+            restoreCompleted = true;
             exitCode = 0;
             return "complete";
           }
@@ -630,6 +631,11 @@ async function runRestoreTimerWithBudget(
             policy_snapshot: args.snapshotPath,
             error: `${reason}${ownerPid ? ` Contained owner PID: ${String(ownerPid)}.` : ""}`,
           });
+        },
+        onReleased: () => {
+          // Retire timer authority only after both exact lifecycle generations
+          // are gone, without yielding another event-loop turn in between.
+          if (restoreCompleted) cleanupOwnedTimerMarker(args);
         },
       },
     );

@@ -11,6 +11,66 @@ import {
 
 export type RemoteProviderConfigEntryLike = { providerName?: string };
 
+interface VllmInstallResumeSession {
+  readonly vllmInstallModel?: string | null;
+  readonly steps?: {
+    readonly provider_selection?: { readonly status?: string | null } | null;
+  } | null;
+}
+
+interface VllmInstallResumeSessionAccess {
+  loadSession(): VllmInstallResumeSession | null;
+  checkpointVllmInstallModel(modelId: string): unknown;
+}
+
+export interface VllmInstallResumeDeps {
+  getNonInteractiveProvider(): string | null;
+  getVllmInstallResumeModel?(): string | null;
+  checkpointVllmInstallModel?(modelId: string): void;
+}
+
+export function readVllmInstallResumeModel(
+  access: Pick<VllmInstallResumeSessionAccess, "loadSession"> = onboardSession,
+): string | null {
+  return access.loadSession()?.vllmInstallModel ?? null;
+}
+
+export function applyVllmInstallResumeDefaults<T extends VllmInstallResumeDeps>(
+  deps: T,
+  access: Pick<VllmInstallResumeSessionAccess, "loadSession"> = onboardSession,
+): T {
+  return {
+    ...deps,
+    getNonInteractiveProvider: () =>
+      deps.getNonInteractiveProvider() ??
+      (readVllmInstallResumeModel(access) ? "install-vllm" : null),
+    getVllmInstallResumeModel: () =>
+      deps.getVllmInstallResumeModel?.() ?? readVllmInstallResumeModel(access),
+  };
+}
+
+export function vllmInstallRecoveryOptions(
+  deps: Pick<
+    VllmInstallResumeDeps,
+    "checkpointVllmInstallModel" | "getVllmInstallResumeModel"
+  >,
+  access: VllmInstallResumeSessionAccess = onboardSession,
+): {
+  checkpointInstallIntent?: (modelId: string) => void;
+  modelIntent?: string;
+} {
+  const resumeModel = deps.getVllmInstallResumeModel?.() ?? null;
+  const checkpoint =
+    deps.checkpointVllmInstallModel ??
+    (access.loadSession()?.steps?.provider_selection?.status === "in_progress"
+      ? access.checkpointVllmInstallModel
+      : undefined);
+  return {
+    ...(checkpoint ? { checkpointInstallIntent: checkpoint } : {}),
+    ...(resumeModel ? { modelIntent: resumeModel } : {}),
+  };
+}
+
 export function providerNameToOptionKey(
   remoteProviderConfig: Record<string, RemoteProviderConfigEntryLike>,
   name: string | null | undefined,

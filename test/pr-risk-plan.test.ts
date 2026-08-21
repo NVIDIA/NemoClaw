@@ -107,7 +107,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(17);
+    expect(first.version).toBe(18);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -403,6 +403,7 @@ describe("deterministic PR risk plan", () => {
       "agents/hermes/Dockerfile",
       "agents/langchain-deepagents-code/Dockerfile",
       "scripts/checks/run-managed-image-direct-e2e.ts",
+      "src/lib/actions/sandbox/mcp-bridge-adapter-openclaw.ts",
       "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json",
       "src/lib/onboard/managed-startup/image-runtime.ts",
     ];
@@ -432,6 +433,7 @@ describe("deterministic PR risk plan", () => {
     "nemoclaw/src/index.ts",
     "nemoclaw-blueprint/blueprint.yaml",
     "scripts/checks/build-protected-managed-images.sh",
+    "src/lib/actions/sandbox/mcp-bridge-adapter-openclaw.ts",
     "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json",
     "src/lib/core/json-types.ts",
     "src/lib/core/ports.ts",
@@ -716,6 +718,22 @@ describe("deterministic PR risk plan", () => {
     ]);
     expect(riskPlanRequiredTargetIds(adjacentStatusFile)).toEqual([]);
     expect(result.planHash).not.toBe(adjacentStatusFile.planHash);
+  });
+
+  it("selects post-reboot recovery when its shared timeout contract changes (#9622)", () => {
+    const changedFile = "tools/e2e/onboard-timeout-contract.mts";
+    const result = plan(changedFile);
+
+    expect(riskPlanRequiredTargetIds(result)).toEqual([
+      "ubuntu-repo-docker-post-reboot-recovery",
+    ]);
+    expect(result.requiredTargets).toEqual([
+      expect.objectContaining({
+        id: "ubuntu-repo-docker-post-reboot-recovery",
+        families: ["focused-e2e"],
+        matchedFiles: [changedFile],
+      }),
+    ]);
   });
 
   it("does not infer security or inference risk from unrelated path substrings", () => {
