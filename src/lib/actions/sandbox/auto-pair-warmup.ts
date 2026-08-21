@@ -84,10 +84,24 @@ import subprocess
 import sys
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
+# The proxy environment is shared gateway routing. Settlement must instead use
+# the paired CLI identity with its current pairing-only credential so the list
+# call can observe the write-scope request that the provoke command just made.
+list_env = dict(os.environ)
+for key in (
+    'OPENCLAW_GATEWAY_URL',
+    'OPENCLAW_GATEWAY_PORT',
+    'OPENCLAW_GATEWAY_TOKEN',
+    'OPENCLAW_GATEWAY_PASSWORD',
+    'NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING',
+    'NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING',
+):
+    list_env.pop(key, None)
+list_env['NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT'] = '1'
 try:
     proc = subprocess.run(
         [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=${WARMUP_POLL_LIST_TIMEOUT_S},
+        capture_output=True, text=True, timeout=${WARMUP_POLL_LIST_TIMEOUT_S}, env=list_env,
     )
 except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
     sys.exit(1)

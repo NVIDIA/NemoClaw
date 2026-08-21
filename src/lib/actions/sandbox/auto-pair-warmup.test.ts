@@ -150,14 +150,83 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
     }
   });
 
-  it("forces device pairing only for the provoke command on OpenClaw 2026.7.1", () => {
+  it("scopes forced device pairing to the provoke command on OpenClaw 2026.7.1", () => {
     const [provoke, poll] = WARMUP_SCRIPT.split("command -v python3", 2);
     expect(WARMUP_SCRIPT).toContain(
       'NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \\\n  openclaw agent --agent main -m "ping" \\',
     );
     expect(provoke.match(/NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1/g)).toHaveLength(1);
-    expect(poll).not.toContain("NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING");
+    expect(poll).toContain("list_env.pop(key, None)");
+    expect(poll).toContain("'NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING'");
     expect(WARMUP_SCRIPT).not.toContain("export NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING");
+  });
+
+  itWithSh("polls the pending upgrade with pairing-only stored device auth (#9817)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-warmup-poll-"));
+    const binDir = path.join(fixtureRoot, "bin");
+    const proxyEnv = path.join(fixtureRoot, "proxy-env.sh");
+    const pollEnvLog = path.join(fixtureRoot, "poll-env.log");
+    fs.mkdirSync(binDir);
+    fs.writeFileSync(
+      proxyEnv,
+      [
+        "export OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789",
+        "export OPENCLAW_GATEWAY_PORT=18789",
+        "export OPENCLAW_GATEWAY_TOKEN=shared-token",
+        "export OPENCLAW_GATEWAY_PASSWORD=shared-password",
+        "export NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=ambient-force-marker",
+        "export NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING=ambient-clone-marker",
+        "",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      path.join(binDir, "openclaw"),
+      [
+        "#!/bin/sh",
+        'if [ "${1:-}" = "agent" ]; then exit 1; fi',
+        "{",
+        "  printf 'url=%s\\n' \"${OPENCLAW_GATEWAY_URL-unset}\"",
+        "  printf 'port=%s\\n' \"${OPENCLAW_GATEWAY_PORT-unset}\"",
+        "  printf 'token=%s\\n' \"${OPENCLAW_GATEWAY_TOKEN-unset}\"",
+        "  printf 'password=%s\\n' \"${OPENCLAW_GATEWAY_PASSWORD-unset}\"",
+        "  printf 'force=%s\\n' \"${NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING-unset}\"",
+        "  printf 'restored=%s\\n' \"${NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING-unset}\"",
+        "  printf 'settlement=%s\\n' \"${NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT-unset}\"",
+        '} > "$NEMOCLAW_TEST_POLL_ENV_LOG"',
+        "printf '%s\\n' '{\"pending\":[{\"scopes\":[\"operator.write\"]}],\"paired\":[]}'",
+        "",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const script = WARMUP_SCRIPT.replace("/tmp/nemoclaw-proxy-env.sh", proxyEnv);
+      const result = spawnSync("sh", ["-c", script], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          NEMOCLAW_TEST_POLL_ENV_LOG: pollEnvLog,
+          PATH: `${binDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+        },
+        timeout: 10_000,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(pollEnvLog, "utf8")).toBe(
+        [
+          "url=unset",
+          "port=unset",
+          "token=unset",
+          "password=unset",
+          "force=unset",
+          "restored=unset",
+          "settlement=1",
+          "",
+        ].join("\n"),
+      );
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   it("keeps the v2 provoke run foreground and within the original budget (#4504)", () => {
