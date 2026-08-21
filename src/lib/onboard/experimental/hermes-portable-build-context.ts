@@ -83,6 +83,7 @@ const LOCAL_COPY_SOURCES = [
   "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json",
   "src/lib/hermes-managed-route.ts",
   "src/lib/messaging/",
+  "src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py",
   "src/lib/tool-disclosure.ts",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json",

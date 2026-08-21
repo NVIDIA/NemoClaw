@@ -369,7 +369,7 @@ export function translatePodmanLocalInferenceArgs(
     }
     allowedPublishAddresses.add(address);
   }
-  const translated = ["run", "--http-proxy", "false"];
+  const translated = ["run", "--http-proxy=false"];
   const seenOptions = new Set<string>(["--http-proxy"]);
   const seenLabels = new Set<string>();
   const requestedGpuDevices = new Set<string>();

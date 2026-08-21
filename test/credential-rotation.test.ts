@@ -264,6 +264,7 @@ describe("credential rotation detection", () => {
     const A = "multi-telegram-bridge";
     const B = "multi-discord-bridge";
     const C = "multi-slack-bridge";
+    const D = "multi-slack-app";
 
     it("names ONLY provider A and excludes unchanged siblings B and C", () => {
       vi.spyOn(registry, "getSandbox").mockReturnValue(
@@ -307,6 +308,31 @@ describe("credential rotation detection", () => {
 
       expect(result.changedProviders).toEqual([B]);
       expect(result.changedProviders.join(", ")).toBe(B);
+      vi.restoreAllMocks();
+    });
+
+    it("names both Slack providers and excludes unchanged Telegram and Discord siblings", () => {
+      vi.spyOn(registry, "getSandbox").mockReturnValue(
+        makePlanEntry("multi-sandbox", [
+          { providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: hashCredentialOrThrow("tg-same") },
+          { providerEnvKey: "DISCORD_BOT_TOKEN", credentialHash: hashCredentialOrThrow("dc-same") },
+          { providerEnvKey: "SLACK_BOT_TOKEN", credentialHash: hashCredentialOrThrow("sl-bot-old") },
+          { providerEnvKey: "SLACK_APP_TOKEN", credentialHash: hashCredentialOrThrow("sl-app-old") },
+        ]),
+      );
+
+      const result = detectMessagingCredentialRotation("multi-sandbox", [
+        { name: A, envKey: "TELEGRAM_BOT_TOKEN", token: "tg-same" },
+        { name: B, envKey: "DISCORD_BOT_TOKEN", token: "dc-same" },
+        { name: C, envKey: "SLACK_BOT_TOKEN", token: "sl-bot-new" },
+        { name: D, envKey: "SLACK_APP_TOKEN", token: "sl-app-new" },
+      ]);
+
+      expect(result.changed).toBe(true);
+      expect(result.changedProviders).toEqual([C, D]);
+      expect(result.changedProviders).not.toContain(A);
+      expect(result.changedProviders).not.toContain(B);
+      expect(result.changedProviders.join(", ")).toBe(`${C}, ${D}`);
       vi.restoreAllMocks();
     });
 

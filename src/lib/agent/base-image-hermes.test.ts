@@ -14,7 +14,7 @@ describe("agent base image provisioning", () => {
     vi.restoreAllMocks();
   });
 
-  it("probes resolved Hermes bases for the native MCP Streamable HTTP runtime", () => {
+  it("accepts a Hermes base only after its required MCP and ACP runtime probe succeeds", () => {
     withMockedDocker(({ ensureAgentBaseImage, dockerCaptureMock, resolveSandboxBaseImageMock }) => {
       ensureAgentBaseImage(makeAgent());
       const options = resolveSandboxBaseImageMock.mock.calls[0]?.[0] as {
@@ -22,21 +22,58 @@ describe("agent base image provisioning", () => {
       };
 
       expect(options.validateImage?.("hermes-base:test")).toBe(true);
-      expect(dockerCaptureMock).toHaveBeenCalledWith(
-        [
-          "run",
-          "--rm",
-          "--entrypoint",
-          "/opt/hermes/.venv/bin/python",
-          "hermes-base:test",
-          "-c",
-          expect.stringContaining("_MCP_HTTP_AVAILABLE"),
-        ],
-        { ignoreError: true, timeout: 20_000 },
-      );
+      const [probeArgs, probeOptions] = dockerCaptureMock.mock.calls[0] as [string[], object];
+      expect(probeArgs.slice(0, -1)).toEqual([
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--read-only",
+        "--user",
+        "sandbox",
+        "--entrypoint",
+        "/opt/hermes/.venv/bin/python",
+        "hermes-base:test",
+        "-I",
+        "-c",
+      ]);
+      expect(probeArgs.at(-1)).toContain("_MCP_HTTP_AVAILABLE");
+      expect(probeArgs.at(-1)).toContain('metadata.version("agent-client-protocol") == "0.9.0"');
+      expect(probeArgs.at(-1)).toContain("import acp");
+      expect(probeArgs.at(-1)).toContain("from acp_adapter.server import HermesACPAgent");
+      expect(probeArgs.at(-1)).toContain("or sys.exit(1)");
+      expect(probeArgs.at(-1)).not.toContain("assert ");
+      expect(probeArgs.at(-1)).toContain('print("nemoclaw-hermes-mcp-runtime-ok")');
+      expect(probeOptions).toEqual({ ignoreError: true, timeout: 20_000 });
 
       dockerCaptureMock.mockReturnValue("");
       expect(options.validateImage?.("hermes-base:stale")).toBe(false);
+
+      dockerCaptureMock.mockReturnValue("nemoclaw-hermes-mcp-runtime-ok\nunexpected-output");
+      expect(options.validateImage?.("hermes-base:unexpected-output")).toBe(false);
+    });
+  });
+
+  it("rejects a Hermes base that has MCP but lacks ACP", () => {
+    withMockedDocker(({ ensureAgentBaseImage, dockerCaptureMock, resolveSandboxBaseImageMock }) => {
+      ensureAgentBaseImage(makeAgent());
+      const options = resolveSandboxBaseImageMock.mock.calls[0]?.[0] as {
+        validateImage?: (imageRef: string) => boolean;
+      };
+      dockerCaptureMock.mockReturnValue("");
+
+      expect(options.validateImage?.("hermes-base:mcp-only")).toBe(false);
+      expect(dockerCaptureMock).toHaveBeenLastCalledWith(
+        expect.arrayContaining([
+          "hermes-base:mcp-only",
+          expect.stringContaining("from acp_adapter.server import HermesACPAgent"),
+        ]),
+        { ignoreError: true, timeout: 20_000 },
+      );
     });
   });
 
@@ -126,7 +163,7 @@ describe("agent base image provisioning", () => {
     }
   });
 
-  it("fails closed when no MCP-capable Hermes base image can be resolved", () => {
+  it("fails closed when no required-runtime-compatible Hermes base image can be resolved", () => {
     withMockedDocker(
       ({
         ensureAgentBaseImage,

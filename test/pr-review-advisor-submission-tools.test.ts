@@ -73,6 +73,13 @@ function finding(title = "The refusal is hidden") {
     verificationHint: "Assert the refusal result.",
     missingRegressionTest: "Add a refusal-path test.",
     evidence: ["tools/pr-review-advisor/review-submission.mts:7 returns success"],
+    receiptConcerns: [
+      "acceptance:Propagate refusal",
+      "acceptance:Cover refusal regression",
+      "acceptance:Clause",
+      `security:${SECURITY_CATEGORY_NAMES[0]}`,
+      "source-of-truth:config",
+    ],
     basis: {
       kind: "behavior_mismatch",
       observed: "The refusal path returns success.",
@@ -125,6 +132,20 @@ function receipt(
     },
     positives: ["The change keeps the interface small."],
     reviewCompleteness: { limitations: [], requiresHumanReview: true },
+  };
+}
+function terminologyDecision(traceId: string) {
+  return {
+    term: "review receipt",
+    change: "introduced",
+    disposition: "justified",
+    meaning: "The complete structured review sections.",
+    contrast: "Unlike drafts, this is complete.",
+    existingTerm: null,
+    semanticImpact: "evidence",
+    recommendation: "Keep the contrast explicit.",
+    traceId,
+    source: { file: "tools/pr-review-advisor/review-submission.mts", line: 9 },
   };
 }
 function e2e() {
@@ -640,6 +661,43 @@ describe("PR review advisor submission tools", () => {
     expect(submission.findingSnapshot()).toMatchObject({ version: 1, findings: [{ id: "F-001" }] });
   });
 
+  it("enforces the simplification contract while recording findings", async () => {
+    const ordinary = controller();
+    await expect(
+      execute(ordinary, RECORD_FINDINGS_TOOL, {
+        findings: [
+          {
+            ...finding(),
+            simplification: {
+              tag: "delete",
+              cut: "Remove code.",
+              replacement: "Use current code.",
+              estimatedNetLines: -1,
+              safetyBoundary: "Keep validation.",
+            },
+          },
+        ],
+      }),
+    ).rejects.toThrow("must omit simplification unless basis.kind=unnecessary_complexity");
+
+    const complexity = controller();
+    await expect(
+      execute(complexity, RECORD_FINDINGS_TOOL, {
+        findings: [
+          {
+            ...finding(),
+            category: "architecture",
+            basis: {
+              kind: "unnecessary_complexity",
+              observed: "The change adds a parallel dispatcher.",
+              expected: "The existing dispatcher owns the behavior.",
+            },
+          },
+        ],
+      }),
+    ).rejects.toThrow("requires simplification for basis.kind=unnecessary_complexity");
+  });
+
   it("accepts a finding pair admitted by one canonical policy", async () => {
     const submission = controller();
     await execute(submission, RECORD_FINDINGS_TOOL, {
@@ -651,6 +709,13 @@ describe("PR review advisor submission tools", () => {
             kind: "unnecessary_complexity",
             observed: "The change adds a parallel dispatcher.",
             expected: "The existing dispatcher owns the behavior.",
+          },
+          simplification: {
+            tag: "delete",
+            cut: "Remove the parallel dispatcher.",
+            replacement: "Use the existing dispatcher.",
+            estimatedNetLines: -10,
+            safetyBoundary: "Keep current dispatcher validation.",
           },
         },
       ],
@@ -694,7 +759,7 @@ describe("PR review advisor submission tools", () => {
     await execute(duplicateSecurity, RECORD_REVIEW_RECEIPT_TOOL, duplicateReceipt);
     await execute(duplicateSecurity, RECOMMEND_E2E_TOOL, e2e());
     await expect(execute(duplicateSecurity, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
-      `unsupported or duplicate: ${SECURITY_CATEGORY_NAMES[0]}`,
+      `securityCategories contains duplicate receipt concern security:${SECURITY_CATEGORY_NAMES[0]}`,
     );
 
     const badReference = controller();
@@ -718,6 +783,30 @@ describe("PR review advisor submission tools", () => {
     await execute(badReference, RECOMMEND_E2E_TOOL, e2e());
     await expect(execute(badReference, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
       "sourceOfTruthReview[1] references unknown finding F-999",
+    );
+  });
+
+  it("explains exact receipt reference repairs", async () => {
+    const nonConcern = controller();
+    const nonConcernReceipt = receipt();
+    nonConcernReceipt.acceptanceCoverage[0].findingId = "F-001";
+    await execute(nonConcern, RECORD_FINDINGS_TOOL, { findings: [finding()] });
+    await execute(nonConcern, RECORD_REVIEW_RECEIPT_TOOL, nonConcernReceipt);
+    await execute(nonConcern, RECOMMEND_E2E_TOOL, e2e());
+    await expect(execute(nonConcern, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
+      "acceptanceCoverage[1] does not report a concern. Set findingId=null; do not reuse an unrelated finding to fill this entry.",
+    );
+
+    const concern = controller();
+    const concernReceipt = receipt();
+    concernReceipt.acceptanceCoverage = [
+      { clause: "Clause", status: "missing", evidence: "evidence", findingId: null },
+    ];
+    await execute(concern, RECORD_FINDINGS_TOOL, { findings: [] });
+    await execute(concern, RECORD_REVIEW_RECEIPT_TOOL, concernReceipt);
+    await execute(concern, RECOMMEND_E2E_TOOL, e2e());
+    await expect(execute(concern, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
+      "acceptanceCoverage[1] reports a concern and requires a finding ID for this exact concern.",
     );
   });
 
@@ -912,6 +1001,63 @@ describe("PR review advisor submission tools", () => {
     await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.toBeDefined();
   });
 
+  it.each([
+    [
+      "acceptance",
+      (draft: ReturnType<typeof receipt>) => {
+        draft.acceptanceCoverage = [
+          { clause: "Repeated", status: "missing", evidence: "one", findingId: "F-001" },
+          { clause: "Repeated", status: "partial", evidence: "two", findingId: "F-001" },
+        ];
+      },
+      "acceptanceCoverage contains duplicate receipt concern acceptance:Repeated",
+    ],
+    [
+      "source of truth",
+      (draft: ReturnType<typeof receipt>) => {
+        draft.acceptanceCoverage = [];
+        draft.sourceOfTruthReview = [
+          { surface: "config", status: "missing", findingId: "F-001", invalidState: "one", sourceBoundary: "source", whyNotSourceFix: "none", regressionTest: "test", removalCondition: "fixed", evidence: "one" },
+          { surface: "config", status: "needs_followup", findingId: "F-001", invalidState: "two", sourceBoundary: "source", whyNotSourceFix: "none", regressionTest: "test", removalCondition: "fixed", evidence: "two" },
+        ];
+      },
+      "sourceOfTruthReview contains duplicate receipt concern source-of-truth:config",
+    ],
+  ] as const)("rejects duplicate %s receipt concern identities", async (_name, mutate, message) => {
+    const submission = controller();
+    const draft = receipt();
+    mutate(draft);
+    await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
+    await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft);
+    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
+    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(message);
+  });
+
+  it("rejects a compatible finding linked to a different receipt concern", async () => {
+    const submission = controller();
+    const draft = receipt();
+    draft.acceptanceCoverage = [
+      { clause: "First", status: "missing", evidence: "line 1", findingId: "F-001" },
+      { clause: "Second", status: "partial", evidence: "line 2", findingId: "F-001" },
+    ];
+    await execute(submission, RECORD_FINDINGS_TOOL, {
+      findings: [
+        {
+          ...finding(),
+          severity: "blocker",
+          category: "acceptance",
+          basis: { ...finding().basis, kind: "unmet_acceptance" },
+          receiptConcerns: ["acceptance:First"],
+        },
+      ],
+    });
+    await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft);
+    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
+    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
+      "acceptanceCoverage[2] references F-001, but that finding does not name receipt concern acceptance:Second",
+    );
+  });
+
   it("rejects two concerns that share one wrong finding ID without mutation", async () => {
     const submission = controller();
     const draft = receipt();
@@ -931,10 +1077,45 @@ describe("PR review advisor submission tools", () => {
     await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft);
     await execute(submission, RECOMMEND_E2E_TOOL, e2e());
     await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
-      "acceptanceCoverage[1] references finding F-001, which does not fit this concern",
+      "acceptanceCoverage[1] references F-001 (security/semantic_ambiguity), which does not fit this concern",
     );
     expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
     expect(submission.result()).toBeNull();
+  });
+
+  it("reports draft errors together before one submit repair", async () => {
+    let returnInvalidE2e = true;
+    const submission = controller(new Map(), (draft) =>
+      returnInvalidE2e ? { ...draft, coverage: null } : draft,
+    );
+    const draft = receipt({
+      decisions: [terminologyDecision("missing-trace")],
+      noChangesReason: null,
+    });
+    draft.acceptanceCoverage[0].findingId = "F-001";
+    draft.securityCategories[0].findingId = "F-001";
+    await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
+    await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft);
+    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
+
+    const failure = await execute(submission, SUBMIT_REVIEW_TOOL, {}).then(
+      () => null,
+      (error: unknown) => error as Error,
+    );
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure?.message).toContain("acceptanceCoverage[1] does not report a concern");
+    expect(failure?.message).toContain("securityCategories[1] does not report a concern");
+    expect(failure?.message).toContain("normalized E2E failed schema validation");
+    expect(failure?.message).toContain("Unknown terminology trace missing-trace");
+    expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
+    expect(submission.terminologySnapshot()).toMatchObject({ revision: 0 });
+    expect(submission.result()).toBeNull();
+
+    returnInvalidE2e = false;
+    await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, receipt());
+    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.toMatchObject({
+      terminate: true,
+    });
   });
 
   it.each([
@@ -1145,20 +1326,7 @@ describe("PR review advisor submission tools", () => {
       submission,
       RECORD_REVIEW_RECEIPT_TOOL,
       receipt({
-        decisions: [
-          {
-            term: trace.term,
-            change: "introduced",
-            disposition: "justified",
-            meaning: "The complete structured review sections.",
-            contrast: "Unlike drafts, this is complete.",
-            existingTerm: null,
-            semanticImpact: "evidence",
-            recommendation: "Keep the contrast explicit.",
-            traceId: trace.id,
-            source: { file: "tools/pr-review-advisor/review-submission.mts", line: 9 },
-          },
-        ],
+        decisions: [terminologyDecision(trace.id)],
         noChangesReason: null,
       }),
     );
@@ -1192,20 +1360,7 @@ describe("PR review advisor submission tools", () => {
       submission,
       RECORD_REVIEW_RECEIPT_TOOL,
       receipt({
-        decisions: [
-          {
-            term: "review receipt",
-            change: "introduced",
-            disposition: "justified",
-            meaning: "The complete structured review sections.",
-            contrast: "Unlike drafts, this is complete.",
-            existingTerm: null,
-            semanticImpact: "evidence",
-            recommendation: "Keep the contrast explicit.",
-            traceId: trace.id,
-            source: { file: "tools/pr-review-advisor/review-submission.mts", line: 9 },
-          },
-        ],
+        decisions: [terminologyDecision(trace.id)],
         noChangesReason: null,
       }),
     );

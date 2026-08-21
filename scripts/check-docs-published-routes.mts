@@ -23,12 +23,10 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse } from "yaml";
 
-import { renderAgentVariantPage } from "./sync-agent-variant-docs.mts";
+import { agentVariants, renderAgentVariantPage } from "./sync-agent-variant-docs.mts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const docsRoot = path.join(repoRoot, "docs");
-const agentVariants = ["openclaw", "hermes", "deepagents"] as const;
-
 type AgentVariant = (typeof agentVariants)[number];
 
 export type PublishedRouteIndex = {

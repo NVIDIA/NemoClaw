@@ -5,14 +5,18 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { loadPortableInferenceDescriptor } from "../../../src/lib/onboard/experimental/portable-inference-descriptor.ts";
+import { resolveRequestedProviderSelection } from "../../../src/lib/onboard/provider-selection.ts";
+import { createPortableOnboardEnvironmentScope } from "../../../src/lib/onboard/session-bootstrap.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { ProviderClient, trustedProviderEndpoint } from "../fixtures/clients/provider.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import {
   buildHostedInferenceModelsProbe,
   requireHostedInferenceConfig,
+  stagePortableHostedInferenceDescriptor,
 } from "../fixtures/hosted-inference.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import type {
@@ -29,6 +33,20 @@ const COMPAT_HELPER = path.join(
   "lib",
   "ci-compatible-inference.sh",
 );
+
+function readPrivateFileSnapshot(filePath: string): { contents: string; metadata: fs.Stats } {
+  const descriptor = fs.openSync(
+    filePath,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+  );
+  try {
+    const metadata = fs.fstatSync(descriptor);
+    const contents = fs.readFileSync(descriptor, "utf8");
+    return { contents, metadata };
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
 
 function secrets(values: Record<string, string | undefined>) {
   return {
@@ -194,6 +212,166 @@ describe("hosted inference E2E config", () => {
     expect(cfg.credentialEnv).toBe("COMPATIBLE_API_KEY");
   });
 
+  it("stages the Portable NVIDIA inference descriptor before provider selection or network activity (#9200)", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-hosted-"));
+    const filePath = path.join(directory, "portable-inference.json");
+    const now = Date.parse("2026-08-20T16:00:00Z");
+    const resolverCalls: string[] = [];
+    const config = requireHostedInferenceConfig(
+      secrets({ NVIDIA_INFERENCE_API_KEY: "portable-hosted-key" }),
+      {
+        NEMOCLAW_ENDPOINT_URL: "https://inference.example.test/v1",
+        NEMOCLAW_MODEL: "nvidia/provider-model",
+      },
+    );
+
+    try {
+      const staged = stagePortableHostedInferenceDescriptor(config, {
+        filePath,
+        now: () => now,
+      });
+      const stagedSnapshot = readPrivateFileSnapshot(filePath);
+      const metadata = stagedSnapshot.metadata;
+      expect(resolverCalls).toEqual([]);
+      expect(metadata.isFile()).toBe(true);
+      expect(metadata.isSymbolicLink()).toBe(false);
+      expect(metadata.mode & 0o777).toBe(0o600);
+      expect(metadata.nlink).toBe(1);
+      expect(JSON.parse(stagedSnapshot.contents)).toMatchObject({
+        schemaVersion: 1,
+        baseUrl: config.endpointUrl,
+        model: config.model,
+      });
+
+      const conflicting = { ...config, model: "ollama/model" };
+      expect(() =>
+        stagePortableHostedInferenceDescriptor(conflicting, {
+          filePath,
+          now: () => now,
+        }),
+      ).toThrow(/already exists.*refusing to replace/u);
+      expect(JSON.parse(readPrivateFileSnapshot(filePath).contents)).toMatchObject({
+        baseUrl: config.endpointUrl,
+        model: config.model,
+      });
+      const temporaryPath = path.join(directory, ".portable-inference.json.tmp");
+      fs.writeFileSync(temporaryPath, "foreign temporary marker", {
+        encoding: "utf8",
+        flag: "wx",
+        mode: 0o600,
+      });
+      expect(() =>
+        stagePortableHostedInferenceDescriptor(conflicting, {
+          filePath,
+          now: () => now,
+        }),
+      ).toThrow(/EEXIST/u);
+      expect(readPrivateFileSnapshot(temporaryPath).contents).toBe("foreign temporary marker");
+      fs.unlinkSync(temporaryPath);
+
+      const descriptor = await loadPortableInferenceDescriptor({
+        filePath,
+        now: () => now,
+        resolveEndpointHost: async (hostname) => {
+          resolverCalls.push(hostname);
+          return [{ address: "93.184.216.34", family: 4 }];
+        },
+      });
+      expect(resolverCalls).toEqual(["inference.example.test"]);
+      expect(descriptor).not.toBeNull();
+
+      const selectorEnv: NodeJS.ProcessEnv = {
+        NEMOCLAW_PROVIDER: "install-ollama",
+        NEMOCLAW_MODEL: "nvidia/provider-model",
+      };
+      const environmentScope = createPortableOnboardEnvironmentScope(selectorEnv, {
+        schemaVersion: descriptor!.schemaVersion,
+        baseUrl: descriptor!.baseUrl,
+        model: descriptor!.model,
+        expiresAt: descriptor!.expiresAt,
+      });
+      const selection = resolveRequestedProviderSelection({
+        options: [
+          { key: "custom", label: "Compatible endpoint" },
+          { key: "anthropicCompatible", label: "Anthropic-compatible endpoint" },
+          { key: "openrouter", label: "OpenRouter" },
+          { key: "install-ollama", label: "Install Ollama" },
+        ],
+        requestedProvider: selectorEnv.NEMOCLAW_PROVIDER ?? null,
+        sandboxName: "portable-launch",
+        remoteProviderConfig: {},
+        isWsl: false,
+        isWindowsHostOllama: false,
+        windowsHostOllamaSupported: false,
+        hermesProviderAvailable: false,
+        ollamaRunning: false,
+        readRecordedProvider: () => null,
+        readRecordedNimContainer: () => null,
+        readRecordedModel: () => null,
+      });
+
+      expect(selectorEnv.NEMOCLAW_PROVIDER).toBe("custom");
+      expect(selectorEnv.NEMOCLAW_MODEL).toBe(config.model);
+      expect(selectorEnv.NEMOCLAW_ENDPOINT_URL).toBe(config.endpointUrl);
+      expect(selection.kind).toBe("selected");
+      expect(selection.kind === "selected" ? selection.selected.key : null).toBe("custom");
+      expect(config.providerName).toBe("compatible-endpoint");
+      expect(config.providerName).not.toBe("compatible-anthropic-endpoint");
+      expect(config.providerName).not.toBe("openrouter-api");
+      expect(selection.kind === "selected" ? selection.selected.key : null).not.toBe(
+        "anthropicCompatible",
+      );
+      expect(selection.kind === "selected" ? selection.selected.key : null).not.toBe("openrouter");
+      expect(selection.kind === "selected" ? selection.selected.key : null).not.toBe(
+        "install-ollama",
+      );
+      expect(fs.existsSync(filePath)).toBe(false);
+      expect(() => staged.dispose()).not.toThrow();
+      environmentScope.restore();
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("preserves the staging failure when owned-file rollback also fails (#9200)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-hosted-"));
+    const filePath = path.join(directory, "portable-inference.json");
+    const temporaryPath = path.join(directory, ".portable-inference.json.tmp");
+    const config = requireHostedInferenceConfig(
+      secrets({ NVIDIA_INFERENCE_API_KEY: "portable-hosted-key" }),
+      {
+        NEMOCLAW_ENDPOINT_URL: "https://inference.example.test/v1",
+        NEMOCLAW_MODEL: "nvidia/provider-model",
+      },
+    );
+    const realUnlinkSync = fs.unlinkSync.bind(fs);
+    const unlinkSync = vi
+      .spyOn(fs, "unlinkSync")
+      .mockImplementationOnce((target) => {
+        expect(target).toBe(temporaryPath);
+        realUnlinkSync(target);
+        throw new Error("original staging failure");
+      })
+      .mockImplementationOnce((target) => {
+        expect(target).toBe(filePath);
+        throw new Error("rollback cleanup failure");
+      });
+
+    try {
+      expect(() =>
+        stagePortableHostedInferenceDescriptor(config, {
+          filePath,
+          now: () => Date.parse("2026-08-20T16:00:00Z"),
+        }),
+      ).toThrow("original staging failure");
+      expect(fs.existsSync(filePath)).toBe(true);
+      expect(unlinkSync).toHaveBeenCalledTimes(2);
+    } finally {
+      unlinkSync.mockRestore();
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("passes hosted authorization to curl on stdin without exposing the key in arguments", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hosted-models-probe-"));
     const argsPath = path.join(directory, "curl.args");
@@ -277,7 +455,6 @@ printf '{"data":[]}'
       "https://inference-api.nvidia.com/v1",
     ]);
   });
-
 
   it("uses a lightweight compatible reachability probe without API or auth requests", () => {
     const { result, calls } = runHostedProbe({

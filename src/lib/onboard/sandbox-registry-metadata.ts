@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "../agent/defs";
+import type { HERMES_PORTABLE_OPENSHELL_VERSION } from "../adapters/openshell/resolve-shared";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import { getSandboxAgentRegistryFields } from "./sandbox-agent";
@@ -42,7 +43,7 @@ export interface SandboxRegistryMetadataHelpers {
 /** Build schema-5 runtime fields without ambient driver or OpenShell discovery. */
 export function getHermesPortableSandboxRuntimeRegistryFields(
   config: SandboxGpuConfig,
-  openshellVersion: "0.0.101",
+  openshellVersion: typeof HERMES_PORTABLE_OPENSHELL_VERSION,
 ): ReturnType<SandboxRegistryMetadataHelpers["getSandboxRuntimeRegistryFields"]> {
   return {
     gpuEnabled: config.sandboxGpuEnabled,

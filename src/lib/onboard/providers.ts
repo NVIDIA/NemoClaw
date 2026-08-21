@@ -147,7 +147,7 @@ const REMOTE_PROVIDER_CONFIG = {
     endpointUrl: GEMINI_ENDPOINT_URL,
     helpUrl: "https://aistudio.google.com/app/apikey",
     modelMode: "curated",
-    defaultModel: "gemini-2.5-flash",
+    defaultModel: "gemini-3.6-flash",
     skipVerify: true,
   },
   // Hermes Provider is a single menu entry by design: every model family it

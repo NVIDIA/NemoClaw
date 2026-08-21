@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
@@ -211,6 +214,48 @@ describe("startSandbox", () => {
     expect(order).toEqual([...order].sort((a, b) => a - b));
     expect(new Set(order).size).toBe(order.length);
   });
+
+  it(
+    "uses the default recovery path through Error, Provisioning, and Ready (#9753)",
+    testTimeoutOptions(30_000),
+    async () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-readiness-"));
+      vi.stubEnv("HOME", home);
+      const listOutputs = ["my-sandbox Error", "my-sandbox Provisioning", "my-sandbox Ready"];
+      const captureSandboxList = vi.fn(() => ({
+        status: 0,
+        output: listOutputs.shift() ?? "my-sandbox Ready",
+        stdout: "",
+        stderr: "",
+      }));
+      const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
+      const h = harness({
+        allowDockerRuntimeInspection: false,
+        captureSandboxList,
+        environment: { ...process.env, HOME: home },
+        restoreLockedStartupAccess: vi.fn(),
+        restoreProcessState: restoreProcesses,
+      });
+      delete h.deps.restoreStartupState;
+
+      try {
+        const result = await startSandbox("my-sandbox", h.deps);
+
+        expect(result.exitCode).toBe(0);
+        expect(captureSandboxList).toHaveBeenCalledTimes(3);
+        expect(restoreProcesses).toHaveBeenCalledWith("my-sandbox");
+        expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
+        expect(captureSandboxList.mock.invocationCallOrder[2]).toBeLessThan(
+          restoreProcesses.mock.invocationCallOrder[0],
+        );
+        expect(restoreProcesses.mock.invocationCallOrder[0]).toBeLessThan(
+          h.verifyGateway.mock.invocationCallOrder[0],
+        );
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("restores startup state before the final gateway and host-forward probe (#8112)", async () => {
     const h = harness();

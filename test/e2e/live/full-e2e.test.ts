@@ -19,6 +19,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   buildHostedInferenceModelsProbe,
   requireHostedInferenceConfig,
+  stagePortableHostedInferenceDescriptor,
 } from "../fixtures/hosted-inference.ts";
 import {
   type ColdOnboardPerformanceBudget,
@@ -377,6 +378,15 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   },
 }, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, secrets, skip }) => {
   const hosted = requireHostedInferenceConfig(secrets);
+  const portableHostedDescriptor =
+    PORTABLE_PROFILE && !USE_PREINSTALLED_LAUNCHABLE
+      ? stagePortableHostedInferenceDescriptor(hosted)
+      : null;
+  portableHostedDescriptor &&
+    cleanupRegistry.trackDisposable(
+      "remove unconsumed Portable hosted inference descriptor",
+      portableHostedDescriptor.dispose,
+    );
   const coldOnboardBudget = USE_PREINSTALLED_LAUNCHABLE ? null : readFullE2eColdPathBudget();
   const redactionValues = [hosted.apiKey];
   await artifacts.target.declare({

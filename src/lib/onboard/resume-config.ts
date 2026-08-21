@@ -17,6 +17,7 @@ export interface ResumeSessionLike {
   sandboxName?: string | null;
   provider?: string | null;
   model?: string | null;
+  vllmInstallModel?: string | null;
   agent?: string | null;
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
@@ -161,25 +162,38 @@ export function getResumeConfigConflicts(
   }
 
   const requestedProvider = getRequestedProviderHint(nonInteractive, allowHostedInferenceStaging);
-  const effectiveRequestedProvider = onboardProviders.getEffectiveProviderName(requestedProvider);
+  const effectiveRequestedProvider =
+    session?.vllmInstallModel && requestedProvider === "install-vllm"
+      ? "vllm-local"
+      : onboardProviders.getEffectiveProviderName(requestedProvider);
+  const recordedProvider = session?.vllmInstallModel ? "vllm-local" : session?.provider;
   if (
     effectiveRequestedProvider &&
-    session?.provider &&
-    effectiveRequestedProvider !== session.provider
+    recordedProvider &&
+    effectiveRequestedProvider !== recordedProvider
   ) {
     conflicts.push({
       field: "provider",
       requested: effectiveRequestedProvider,
-      recorded: session.provider,
+      recorded: recordedProvider,
     });
   }
 
-  const requestedModel = getRequestedModelHint(nonInteractive, allowHostedInferenceStaging);
-  if (requestedModel && session?.model && requestedModel !== session.model) {
+  const requestedVllmModel = String(process.env.NEMOCLAW_VLLM_MODEL ?? "").trim();
+  const requestedModel =
+    session?.vllmInstallModel && requestedVllmModel
+      ? requestedVllmModel
+      : getRequestedModelHint(nonInteractive, allowHostedInferenceStaging);
+  const recordedModel = session?.vllmInstallModel ?? session?.model;
+  if (
+    requestedModel &&
+    recordedModel &&
+    requestedModel.toLowerCase() !== recordedModel.toLowerCase()
+  ) {
     conflicts.push({
       field: "model",
       requested: requestedModel,
-      recorded: session.model,
+      recorded: recordedModel,
     });
   }
 

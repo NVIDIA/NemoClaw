@@ -23,6 +23,7 @@ const commands = [
   "discord-reopen",
   "gateway-process-identity",
   "gateway-runtime-metadata",
+  "googlechat-override-seams",
   "langfuse-credentials",
   "neutral-platform-inertness",
   "profile-policy",

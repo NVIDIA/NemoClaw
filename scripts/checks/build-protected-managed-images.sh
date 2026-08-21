@@ -159,7 +159,7 @@ if [[ -n "$cache_from" ]]; then
   }
 fi
 
-for command in docker jq node sha256sum; do
+for command in curl docker jq node sha256sum; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "ERROR: protected managed-image build requires $command" >&2
     exit 1
@@ -236,6 +236,100 @@ fi
 contracts="$work_dir/contracts.jsonl"
 : >"$contracts"
 
+confirm_build_retry_state() {
+  local agent="$1"
+  local image_repository="$2"
+  local manifest_status
+  local registry_host="${image_repository%%/*}"
+  local repository_path="${image_repository#*/}"
+  local manifest_url="http://${registry_host}/v2/${repository_path}/manifests/${revision}"
+
+  if ! manifest_status="$(curl \
+    --silent \
+    --show-error \
+    --output /dev/null \
+    --write-out '%{http_code}' \
+    --head \
+    --connect-timeout 5 \
+    --max-time 15 \
+    --header 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+    "$manifest_url")"; then
+    echo "::error::Protected managed-image build retry state check failed agent=${agent} transport=curl" >&2
+    return 1
+  fi
+
+  case "$manifest_status" in
+    200)
+      echo "::error::Protected managed-image build retry state agent=${agent} revision-tag=present" >&2
+      return 1
+      ;;
+    404)
+      echo "::notice::Protected managed-image build retry state agent=${agent} revision-tag=absent"
+      return 0
+      ;;
+    *)
+      echo "::error::Protected managed-image build retry state check failed agent=${agent} registry-http=${manifest_status}" >&2
+      return 1
+      ;;
+  esac
+}
+
+run_build_with_retry() {
+  local agent="$1"
+  local image_repository="$2"
+  shift 2
+  local -a build_command=("$@")
+  local attempt_log="$work_dir/${agent}-build-attempt.log"
+  local max_attempts=2
+  local attempt
+  local build_status
+  local last_line
+  local log_status
+  local outcome
+  local -a pipeline_status=()
+
+  for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+    : >"$attempt_log"
+    if "${build_command[@]}" 2>&1 | tee "$attempt_log"; then
+      if [[ "$attempt" == 1 ]]; then
+        outcome="passed-first-attempt"
+      else
+        outcome="passed-after-retry"
+      fi
+      echo "::notice::Protected managed-image build outcome=${outcome} agent=${agent} attempt=${attempt}/${max_attempts}"
+      return 0
+    else
+      pipeline_status=("${PIPESTATUS[@]}")
+      build_status="${pipeline_status[0]}"
+      log_status="${pipeline_status[1]}"
+    fi
+
+    if [[ "$log_status" != 0 ]]; then
+      echo "::error::Protected managed-image build outcome=failed-no-retry agent=${agent} attempt=${attempt}/${max_attempts} evidence-exit=${log_status}" >&2
+      return "$log_status"
+    fi
+
+    last_line="$(awk 'NF { line=$0 } END { sub(/\r$/, "", line); print line }' "$attempt_log")"
+    if [[ ! "$last_line" =~ ^ERROR:\ failed\ to\ build:\ failed\ to\ solve:\ stream\ error:\ stream\ ID\ [0-9]+\;\ INTERNAL_ERROR\;\ received\ from\ peer$ ]]; then
+      echo "::error::Protected managed-image build outcome=failed-no-retry agent=${agent} attempt=${attempt}/${max_attempts} docker-exit=${build_status}" >&2
+      return "$build_status"
+    fi
+
+    if [[ "$attempt" == "$max_attempts" ]]; then
+      echo "::error::Protected managed-image build outcome=exhausted agent=${agent} attempt=${attempt}/${max_attempts} failure=buildkit-http2-internal-error docker-exit=${build_status}" >&2
+      return "$build_status"
+    fi
+
+    if ! confirm_build_retry_state "$agent" "$image_repository"; then
+      echo "::error::Protected managed-image build outcome=failed-no-retry agent=${agent} attempt=${attempt}/${max_attempts} failure=state-check" >&2
+      return "$build_status"
+    fi
+
+    echo "::warning::Protected managed-image build outcome=transient-external agent=${agent} attempt=${attempt}/${max_attempts} retry-in=2s failure=buildkit-http2-internal-error" >&2
+    sleep 2
+  done
+}
+
 build_agent() {
   local agent="$1"
   local dockerfile="$2"
@@ -279,27 +373,28 @@ build_agent() {
     --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
     --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
 
-  docker buildx build \
-    --file "$dockerfile_path" \
-    --platform "$platform" \
-    --push \
-    --provenance=false \
-    --sbom=false \
-    --metadata-file "$metadata" \
-    ${cache_args[@]+"${cache_args[@]}"} \
-    --tag "${image_repository}:${revision}" \
-    --label "org.opencontainers.image.source=https://github.com/NVIDIA/NemoClaw" \
-    --label "org.opencontainers.image.revision=${revision}" \
-    --label "io.nvidia.nemoclaw.agent=${agent}" \
-    --label "io.nvidia.nemoclaw.managed-image.contract=1" \
-    --label "io.nvidia.nemoclaw.managed-image.platform=${platform}" \
-    --label "io.nvidia.nemoclaw.managed-image.startup-profile=1" \
-    --label "io.nvidia.nemoclaw.managed-image.capabilities=1" \
-    --label "io.nvidia.nemoclaw.managed-image.cohort=${cohort}" \
-    --build-arg "BASE_IMAGE=${base_reference}" \
-    --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
-    --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root" \
-    "$source_root"
+  local -a build_command=(docker buildx build
+    --file "$dockerfile_path"
+    --platform "$platform"
+    --push
+    --provenance=false
+    --sbom=false
+    --metadata-file "$metadata"
+    ${cache_args[@]+"${cache_args[@]}"}
+    --tag "${image_repository}:${revision}"
+    --label "org.opencontainers.image.source=https://github.com/NVIDIA/NemoClaw"
+    --label "org.opencontainers.image.revision=${revision}"
+    --label "io.nvidia.nemoclaw.agent=${agent}"
+    --label "io.nvidia.nemoclaw.managed-image.contract=1"
+    --label "io.nvidia.nemoclaw.managed-image.platform=${platform}"
+    --label "io.nvidia.nemoclaw.managed-image.startup-profile=1"
+    --label "io.nvidia.nemoclaw.managed-image.capabilities=1"
+    --label "io.nvidia.nemoclaw.managed-image.cohort=${cohort}"
+    --build-arg "BASE_IMAGE=${base_reference}"
+    --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1"
+    --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+    "$source_root")
+  run_build_with_retry "$agent" "$image_repository" "${build_command[@]}"
 
   local digest
   digest="$(jq -er '."containerimage.digest"' "$metadata")"

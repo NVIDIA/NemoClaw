@@ -963,6 +963,8 @@ fi
     expect(validation.match(/docker run/g)).toHaveLength(2);
     expect(validation).toContain("run-managed-image-direct-e2e.ts");
     expect(validation).toContain("npx --no-install tsx");
+    expect(validation).toContain('metadata.version("agent-client-protocol") != "0.9.0"');
+    expect(validation).toContain("/usr/local/bin/hermes acp --check");
     expect(validation).toContain('--image "$reference"');
     expect(validation).toContain("printf 'local_id=%s\\n' \"$image_id\"");
     expect(validation).not.toContain("NEMOCLAW_STARTUP_PROFILE_B64");

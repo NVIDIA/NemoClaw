@@ -354,6 +354,32 @@ Physical qualification covered only the bounded verification above.
 Vision and DFlash speculative decoding are disabled and outside this profile's scope.
 </Warning>
 
+### Use Explicit Linux x86_64 Profiles
+
+Experimental Linux x86_64 profiles provide the Muse Glimmer and NVIDIA Nemotron 3.5 Lightning models on one NVIDIA GPU.
+They are explicit-only, so they do not change the generic Linux default or appear in the interactive model picker.
+
+Before you select either profile, confirm that the host runs Linux x86_64 with Docker, the NVIDIA Container Toolkit, healthy CDI support, NVIDIA driver `580.65.06` or later, and at least `96 GB` of GPU memory.
+Muse Glimmer also requires GPU compute capability `12.0` or later.
+NVIDIA Nemotron 3.5 Lightning requires GPU compute capability `9.0` or later.
+
+List the compatible profiles, then pass one stable profile ID to onboarding:
+
+```bash
+$$nemoclaw profiles list
+$$nemoclaw onboard --profile vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4
+```
+
+Use `vllm.linux-amd64-nvidia.single.nemotron-3.5-lightning-30b-a3b-nvfp4` for NVIDIA Nemotron 3.5 Lightning.
+NemoClaw stops before image or model downloads when the profile does not match the host.
+The selected recipe uses a pinned image, fixed serving arguments, bearer authentication, and the managed host-local lifecycle.
+Do not combine `--profile` with `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, or `NEMOCLAW_VLLM_EXTRA_ARGS_JSON`.
+
+<Warning title="Experimental Linux x86_64 Profiles">
+These profiles have bounded hardware validation and remain Experimental.
+They do not establish general support for other Linux x86_64 GPUs, models, images, or serving arguments.
+</Warning>
+
 NemoClaw creates or reuses the Muse Glimmer bearer key in the owner-only `~/.nemoclaw/dual-station-vllm-api-key` host file before confirmation.
 The managed vLLM container reads the key while it runs, and the sandbox receives only the managed inference route.
 The key remains for a retry after cancellation, interruption, or a later preflight failure.
@@ -410,7 +436,9 @@ Refer to [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for 
 On DGX Spark, Express keeps automatic managed-vLLM serving-profile selection as option 1, the default.
 It offers the fixed local vLLM profile as option 2.
 When you select option 2, the serving catalog supplies the pinned model, runtime image, container port, and serve arguments.
-The installer rejects provider and model overrides for that fixed profile, and the dedicated onboarder rejects vLLM model and serve-argument overrides before it starts the managed container. `NEMOCLAW_VLLM_PORT` may select another host listener.
+The installer rejects provider and model overrides for that fixed profile.
+`NEMOCLAW_VLLM_MODEL` can select a catalog model only when the catalog resolves it to the matching fixed recipe, but the dedicated onboarder rejects a model that does not resolve to that recipe and all serve-argument overrides before it starts the managed container.
+`NEMOCLAW_VLLM_PORT` may select another host listener.
 Explicit `NEMOCLAW_MODEL` or `NEMOCLAW_VLLM_MODEL` intent retains the customizable managed-vLLM path and skips the fixed-profile choice.
 If onboarding stops after you select option 2, `$$nemoclaw onboard --resume` reuses the recorded fixed profile instead of returning to automatic serving-profile selection.
 Refer to [Choose a Local Inference Server](choose-local-inference-server#install-a-fixed-vllm-profile) for fixed-profile installation and verification.
@@ -511,7 +539,8 @@ NemoClaw applies the registered `vllm serve` arguments, including the reasoning 
 |---|---|---|---|---|
 | `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | `8.9` | Supported override. |
 | `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | DGX Spark, N1x | `12.1` | DGX Spark and N1x default. |
-| `muse-glimmer-30b` | `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` | DGX Spark | `12.1` | Experimental single-DGX Spark choice for text, reasoning, and structured tool calls. NemoClaw does not enable or support DFlash for this profile. |
+| `muse-glimmer-30b` | `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` | DGX Spark, Linux x86_64 with an NVIDIA GPU | `12.0` on Linux; `12.1` on DGX Spark | Experimental choice for text, reasoning, and structured tool calls. NemoClaw does not enable or support DFlash for this profile. |
+| `nemotron-3.5-lightning-30b` | `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` | DGX Spark, Linux x86_64 with an NVIDIA GPU | `9.0` on Linux; `12.1` on DGX Spark | Experimental reasoning and tool-calling choice. |
 | `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | `8.9` | Generic Linux NVIDIA GPU default. |
 | `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | DGX Station | `10.0` | DGX Station profile default outside express install. |
 | `nemotron-3-ultra-550b-a55b` | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` | DGX Station | `10.0` | DGX Station express-install selection with a pinned model revision and model-specific vLLM image. |
