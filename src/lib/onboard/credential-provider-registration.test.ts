@@ -125,7 +125,16 @@ describe("credential provider registration", () => {
         ),
       ).toBe(expected);
       expect(runOpenshell).toHaveBeenCalledWith(
-        ["provider", "profile", "export", "discord-hermes-static-v1", "--output", "json"],
+        [
+          "provider",
+          "profile",
+          "-g",
+          "test-gateway",
+          "export",
+          "discord-hermes-static-v1",
+          "--output",
+          "json",
+        ],
         expect.objectContaining({ suppressOutput: true }),
       );
       expect(
@@ -135,6 +144,50 @@ describe("credential provider registration", () => {
       ).toEqual([]);
     },
   );
+
+  it("uses one selected gateway for static profile and provider identity", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const commandResults = new Map([
+      [
+        "provider profile -g test-gateway export discord-hermes-static-v1 --output json",
+        { status: 0, stdout: JSON.stringify(DISCORD_STATIC_PROFILE), stderr: "" },
+      ],
+      [
+        "provider get -g test-gateway alpha-discord-bridge",
+        providerMetadata(
+          "alpha-discord-bridge",
+          "discord-hermes-static-v1",
+          "DISCORD_BOT_TOKEN",
+        ),
+      ],
+    ]);
+    const ambientProfileMismatch = {
+      status: 0,
+      stdout: JSON.stringify({
+        ...DISCORD_STATIC_PROFILE,
+        endpoints: [{ host: "gateway.discord.gg", port: 443 }],
+      }),
+      stderr: "",
+    };
+    const runOpenshell = vi.fn(
+      (args: string[]) => commandResults.get(args.join(" ")) ?? ambientProfileMismatch,
+    );
+    const deps = registrationDeps(runOpenshell, session);
+    deps.root = process.cwd();
+    const registration = createCredentialProviderRegistration(deps);
+
+    expect(
+      registration.providerMatchesGatewayCredential(
+        "alpha-discord-bridge",
+        "discord-hermes-static-v1",
+        "DISCORD_BOT_TOKEN",
+      ),
+    ).toBe(true);
+    expect(runOpenshell.mock.calls.map(([args]) => args.join(" "))).toEqual([
+      "provider profile -g test-gateway export discord-hermes-static-v1 --output json",
+      "provider get -g test-gateway alpha-discord-bridge",
+    ]);
+  });
 
   it("rejects tokenless Hermes Discord profile drift before provider mutation", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;

@@ -193,7 +193,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
   ): boolean {
     const staticProfileMatches = messagingBridgeProvider.matchesRegisteredStaticMessagingProfile(
       binding.type,
-      { root: deps.root, runOpenshell: deps.runOpenshell },
+      { root: deps.root, runOpenshell },
     );
     if (staticProfileMatches === false) return false;
     return gatewayProviderMetadata.matchesGatewayCredentialOnlyProviderBinding(
