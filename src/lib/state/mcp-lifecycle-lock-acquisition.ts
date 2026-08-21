@@ -58,6 +58,8 @@ export interface McpLifecycleDeadlineFenceOptions extends McpLifecycleLockOption
   onSetupFailure?: (error: unknown) => Promise<void> | void;
   /** Return operator guidance instead of waiting when durable containment already exists. */
   throwOnCommittedContainment?: boolean;
+  /** Run synchronously after this fence's exact main and deadline generations are released. */
+  onReleased?: () => void;
 }
 
 export interface McpLifecycleDeadlineFenceSyncOptions extends McpLifecycleLockOptions {
@@ -1581,6 +1583,7 @@ export async function withMcpLifecycleDeadlineFence<T>(
     if (!retainOwnedGate) {
       if (mainToken) await safelyReleaseMcpLifecycleLock(lockPath, mainToken);
       await safelyReleaseMcpLifecycleLock(fence.lockPath, fence.token);
+      options.onReleased?.();
     }
   }
 }
