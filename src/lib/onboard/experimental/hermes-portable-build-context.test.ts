@@ -112,9 +112,18 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     const plan = createHermesPortableBuildContextPlan(ROOT, BUILD_SETTINGS);
     const first = plan.materialize(contextInput());
 
-    expect(first.dockerfilePath).toBe(
-      path.join(first.buildContextPath, "agents/hermes/Dockerfile"),
-    );
+    expect(first.dockerfilePath).toBe(path.join(first.buildContextPath, "Dockerfile"));
+    const inferredContext = path.dirname(first.dockerfilePath);
+    expect(inferredContext).toBe(first.buildContextPath);
+    expect(
+      fs.existsSync(
+        path.join(
+          inferredContext,
+          "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json",
+        ),
+      ),
+    ).toBe(true);
+    expect(fs.existsSync(path.join(inferredContext, "agents/hermes/Dockerfile"))).toBe(false);
     expect(plan.authority.sourceRevision).toMatch(/^[a-f0-9]{40,64}$/u);
     expect(plan.authority.contextManifestSha256).toMatch(/^[a-f0-9]{64}$/u);
     const stagedDockerfile = fs.readFileSync(first.dockerfilePath, "utf8");
