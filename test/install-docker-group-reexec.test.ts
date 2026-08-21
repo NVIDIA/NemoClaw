@@ -138,13 +138,17 @@ function runEnsureDocker(
     ? fs.readFileSync(sgProviderLog, "utf-8").trim()
     : null;
 
-  return {
-    status: result.status,
-    stdout: result.stdout,
-    stderr: result.stderr,
-    sgArgs,
-    sgProvider,
-  };
+  try {
+    return {
+      status: result.status,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      sgArgs,
+      sgProvider,
+    };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 function runSourcedInstaller(body: string) {
@@ -232,9 +236,7 @@ describeLinux("install.sh ensure_docker — #4414 non-interactive self re-exec",
   });
 });
 
-// The harness supplies Linux behavior and a fake sg, so these process-boundary
-// cases run on every host.
-describe("install.sh ensure_docker — Station intent across self re-exec", () => {
+describeLinux("install.sh ensure_docker — Station intent across self re-exec", () => {
   it("unsets the derived provider before the Station Express Docker-group re-exec (#9900)", () => {
     const outcome = runEnsureDocker(
       {
@@ -344,11 +346,12 @@ maybe_offer_express_install
         "detect_express_platform() { printf 'DGX Station'; }",
         `station_installer_revision() { printf '${STATION_REVISION}'; }`,
         `station_express_resume_generation() { printf '${STATION_GENERATION}'; }`,
-        "NON_INTERACTIVE=1",
+        "NON_INTERACTIVE=''",
         "NEMOCLAW_NO_EXPRESS=''",
-        "_NEMOCLAW_INSTALLER_ARGS=(--non-interactive --yes-i-accept-third-party-software)",
+        "_NEMOCLAW_INSTALLER_ARGS=()",
         'NEMOCLAW_INSTALLER_STAGED="$0"',
         "maybe_offer_express_install",
+        '[[ "${NEMOCLAW_DOCKER_GROUP_REACTIVATED:-}" != "1" ]] && printf \'RESUME_COMMAND=%s\\n\' "$(station_express_resume_command)"',
         "phase=parent",
         '[[ "${NEMOCLAW_DOCKER_GROUP_REACTIVATED:-}" == "1" ]] && phase=child',
         'printf \'PHASE=%s MODE=%s PROVIDER=%s\\n\' "$phase" "$_STATION_INSTALL_MODE" "$NEMOCLAW_PROVIDER"',
@@ -379,6 +382,11 @@ maybe_offer_express_install
       const output = `${result.stdout}${result.stderr}`;
 
       expect(result.status, output).toBe(0);
+      const resumeCommand = output
+        .split("\n")
+        .find((line) => line.startsWith("RESUME_COMMAND="));
+      expect(resumeCommand).toContain("NEMOCLAW_AGENT=openclaw");
+      expect(resumeCommand).not.toContain("NEMOCLAW_PROVIDER");
       expect(output).toContain("PHASE=parent MODE=express PROVIDER=install-vllm");
       expect(output).toContain("PHASE=child MODE=express PROVIDER=install-vllm");
       expect(output).toContain("CHILD_CONTINUED");
