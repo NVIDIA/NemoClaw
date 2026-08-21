@@ -24,6 +24,17 @@ _ATTESTATION = {
     "digest": "3d872ea8299fc2d4663469b2e6e81c56e9bfc3dcab53779fc19b0588915d0f9e",
     "nonce": "qualification-nonce",
 }
+_ERROR_MESSAGES = {
+    "ambiguous_tool": "The exact MCP tool name is ambiguous.",
+    "input_too_large": "The JSON input exceeds the managed size limit.",
+    "invalid_input": "Standard input must be one JSON object.",
+    "result_too_large": "The MCP tool result exceeds the managed size limit.",
+    "runtime_failure": "The managed MCP tool call failed.",
+    "timeout": "The managed MCP tool call exceeded its time limit.",
+    "tool_failed": "The MCP tool reported a failure.",
+    "tool_not_found": "The exact MCP tool is unavailable.",
+    "tool_not_read_only": "The selected MCP tool is not coherently read-only.",
+}
 
 
 def _record(marker: Path, value: str) -> None:
@@ -291,6 +302,31 @@ def _invoke(
     return payload["data"]
 
 
+def _expect_error(
+    tool: str,
+    code: str,
+    *,
+    cert: Path,
+    host: str,
+    raw_input: str | None = None,
+) -> None:
+    data = _invoke(
+        tool,
+        {},
+        cert=cert,
+        host=host,
+        expected_status=1,
+        raw_input=raw_input,
+    )
+    if data != {
+        "ok": False,
+        "status": "error",
+        "code": code,
+        "message": _ERROR_MESSAGES[code],
+    }:
+        raise RuntimeError(f"managed MCP command returned the wrong {code} error")
+
+
 def _marker_values(marker: Path) -> list[str]:
     if not marker.exists():
         return []
@@ -342,83 +378,43 @@ def _validate(
         ("worker-broker_missing", "tool_not_found"),
     )
     for tool, code in rejected:
-        data = _invoke(tool, {}, cert=cert, host=host, expected_status=1)
-        if data != {
-            "ok": False,
-            "status": "error",
-            "code": code,
-            "message": (
-                "The exact MCP tool is unavailable."
-                if code == "tool_not_found"
-                else "The selected MCP tool is not coherently read-only."
-            ),
-        }:
-            raise RuntimeError("managed MCP command returned the wrong rejection")
+        _expect_error(tool, code, cert=cert, host=host)
     if _marker_values(marker) != ["worker_task_context"]:
         raise RuntimeError("managed MCP command invoked a rejected tool")
 
-    malformed_input = _invoke(
+    _expect_error(
         _TOOL,
-        {},
+        "invalid_input",
         cert=cert,
         host=host,
-        expected_status=1,
         raw_input='{"nonce":"one","nonce":"two"}',
     )
-    oversized_input = _invoke(
+    _expect_error(
         _TOOL,
-        {},
+        "input_too_large",
         cert=cert,
         host=host,
-        expected_status=1,
         raw_input="x" * (_MAX_BYTES + 1),
     )
-    if (
-        malformed_input.get("code") != "invalid_input"
-        or oversized_input.get("code") != "input_too_large"
-        or _marker_values(marker) != ["worker_task_context"]
-    ):
+    if _marker_values(marker) != ["worker_task_context"]:
         raise RuntimeError("managed MCP command accepted invalid input")
 
-    failed = _invoke(
-        "worker-broker_failing", {}, cert=cert, host=host, expected_status=1
-    )
-    if failed.get("code") != "tool_failed" or "untrusted" in json.dumps(failed):
-        raise RuntimeError("managed MCP command exposed an unbounded tool failure")
-
-    oversized = _invoke(
-        "worker-broker_oversized", {}, cert=cert, host=host, expected_status=1
-    )
-    if oversized.get("code") != "result_too_large":
-        raise RuntimeError("managed MCP command accepted an oversized result")
-
-    malformed_result = _invoke(
-        "worker-broker_malformed_result",
-        {},
-        cert=cert,
-        host=host,
-        expected_status=1,
-    )
-    if malformed_result.get("code") != "runtime_failure":
-        raise RuntimeError("managed MCP command accepted an unsupported result")
+    for tool, code in (
+        ("worker-broker_failing", "tool_failed"),
+        ("worker-broker_oversized", "result_too_large"),
+        ("worker-broker_malformed_result", "runtime_failure"),
+    ):
+        _expect_error(tool, code, cert=cert, host=host)
 
     started = time.monotonic()
-    timed_out = _invoke(
-        "worker-broker_hanging", {}, cert=cert, host=host, expected_status=1
-    )
+    _expect_error("worker-broker_hanging", "timeout", cert=cert, host=host)
     elapsed = time.monotonic() - started
-    if (
-        timed_out.get("code") != "timeout"
-        or elapsed < 15
-        or elapsed > 24
-    ):
+    if elapsed < 15 or elapsed > 24:
         raise RuntimeError("managed MCP command did not enforce its fixed deadline")
 
     _CONFIG.unlink()
     _write_config(url, ambiguous=True)
-    ambiguous = _invoke("a_b_c", {}, cert=cert, host=host, expected_status=1)
-    if ambiguous.get("code") != "ambiguous_tool":
-        raise RuntimeError("managed MCP command accepted a duplicate tool name")
+    _expect_error("a_b_c", "ambiguous_tool", cert=cert, host=host)
     if _marker_values(marker) != [
         "worker_task_context",
         "failing",
@@ -430,14 +426,13 @@ def _validate(
 
     _CONFIG.unlink()
     _write_config(f"https://{host}:{malformed_port}/mcp")
-    malformed = _invoke(
+    _expect_error(
         "worker-broker_malformed_annotations",
-        {},
+        "tool_not_found",
         cert=cert,
         host=host,
-        expected_status=1,
     )
-    if malformed.get("code") != "tool_not_found" or _marker_values(malformed_marker):
+    if _marker_values(malformed_marker):
         raise RuntimeError("managed MCP command accepted malformed tool annotations")
 
 

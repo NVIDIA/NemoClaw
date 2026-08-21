@@ -95,7 +95,7 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     expect(wrapper).toContain("list | call-read-only | help");
     expect(wrapper).toContain("dcode tools call-read-only TOOL --json");
     expect(wrapper).toContain(
-      'exec /opt/venv/bin/python3 -I -m deepagents_code.nemoclaw_read_only_mcp "$@" 2>/dev/null',
+      'exec /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/nemoclaw_read_only_mcp.py "$@" 2>/dev/null',
     );
     expect(wrapper).not.toContain("call-mutating");
     expect(command).toContain('_COMMAND = "tools call-read-only"');

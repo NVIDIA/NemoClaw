@@ -11,7 +11,6 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 const agentDir = path.join(repoRoot, "agents", "langchain-deepagents-code");
 const middlewarePath = path.join(agentDir, "progressive_tool_disclosure.py");
 const observabilityPath = path.join(agentDir, "nemoclaw_observability.py");
-const readOnlyMcpPath = path.join(agentDir, "nemoclaw_read_only_mcp.py");
 const patcherPath = path.join(agentDir, "patch-managed-deepagents-code.py");
 const harnessPath = path.join(
   repoRoot,
@@ -336,7 +335,6 @@ interface PatchFixture {
   agentPath: string;
   modulePath: string;
   observabilityModulePath: string;
-  readOnlyMcpModulePath: string;
   helperPath: string;
   sourcePaths: string[];
 }
@@ -364,7 +362,6 @@ function makePatchFixture(version = "0.1.55"): PatchFixture {
   const agentPath = path.join(packageDir, "agent.py");
   const modulePath = path.join(packageDir, "progressive_tool_disclosure.py");
   const observabilityModulePath = path.join(packageDir, "nemoclaw_observability.py");
-  const readOnlyMcpModulePath = path.join(packageDir, "nemoclaw_read_only_mcp.py");
   const helperPath = path.join(packageDir, "_nemoclaw_managed.py");
   return {
     root,
@@ -374,7 +371,6 @@ function makePatchFixture(version = "0.1.55"): PatchFixture {
     agentPath,
     modulePath,
     observabilityModulePath,
-    readOnlyMcpModulePath,
     helperPath,
     sourcePaths,
   };
@@ -745,7 +741,6 @@ describe("Deep Agents 0.1.55 progressive-disclosure build patch", () => {
       ...fixture.sourcePaths,
       fixture.modulePath,
       fixture.observabilityModulePath,
-      fixture.readOnlyMcpModulePath,
       fixture.helperPath,
     ];
     const firstBytes = snapshot(managedPaths);
@@ -775,9 +770,6 @@ describe("Deep Agents 0.1.55 progressive-disclosure build patch", () => {
     expect(firstBytes[fixture.modulePath]).toBe(fs.readFileSync(middlewarePath, "utf8"));
     expect(firstBytes[fixture.observabilityModulePath]).toBe(
       fs.readFileSync(observabilityPath, "utf8"),
-    );
-    expect(firstBytes[fixture.readOnlyMcpModulePath]).toBe(
-      fs.readFileSync(readOnlyMcpPath, "utf8"),
     );
     expect(firstBytes[fixture.agentPath]).toContain(
       '"callbacks": new_metadata_only_callback_manager()',
@@ -922,7 +914,6 @@ describe("Deep Agents 0.1.55 progressive-disclosure build patch", () => {
       ...fixture.sourcePaths,
       fixture.modulePath,
       fixture.observabilityModulePath,
-      fixture.readOnlyMcpModulePath,
       fixture.helperPath,
     ]);
 
@@ -934,7 +925,6 @@ describe("Deep Agents 0.1.55 progressive-disclosure build patch", () => {
         ...fixture.sourcePaths,
         fixture.modulePath,
         fixture.observabilityModulePath,
-        fixture.readOnlyMcpModulePath,
         fixture.helperPath,
       ]),
     ).toEqual(before);
@@ -972,34 +962,6 @@ describe("Deep Agents 0.1.55 progressive-disclosure build patch", () => {
     expect(fs.existsSync(fixture.observabilityModulePath)).toBe(false);
   });
 
-  it("rejects a partial package install with the read-only MCP command missing (#9889)", () => {
-    const fixture = makePatchFixture();
-    const first = runPatcher(fixture);
-    expect(first.status, first.stderr).toBe(0);
-    fs.rmSync(fixture.readOnlyMcpModulePath);
-    const before = snapshot([
-      ...fixture.sourcePaths,
-      fixture.modulePath,
-      fixture.observabilityModulePath,
-      fixture.helperPath,
-    ]);
-
-    const result = runPatcher(fixture);
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(
-      "Managed package patch is partial: read-only MCP command is missing",
-    );
-    expect(
-      snapshot([
-        ...fixture.sourcePaths,
-        fixture.modulePath,
-        fixture.observabilityModulePath,
-        fixture.helperPath,
-      ]),
-    ).toEqual(before);
-    expect(fs.existsSync(fixture.readOnlyMcpModulePath)).toBe(false);
-  });
-
   it("refuses to overwrite a conflicting installed middleware module", () => {
     const fixture = makePatchFixture();
     fs.writeFileSync(fixture.modulePath, "# unexpected module\n", "utf8");
@@ -1022,19 +984,5 @@ describe("Deep Agents 0.1.55 progressive-disclosure build patch", () => {
     expect(result.stderr).toContain("Refusing to overwrite unexpected observability module");
     expect(snapshot(fixture.sourcePaths)).toEqual(before);
     expect(fs.readFileSync(fixture.observabilityModulePath, "utf8")).toBe("# unexpected module\n");
-  });
-
-  it("refuses to overwrite a conflicting read-only MCP command module (#9889)", () => {
-    const fixture = makePatchFixture();
-    fs.writeFileSync(fixture.readOnlyMcpModulePath, "# unexpected module\n", "utf8");
-    const before = snapshot(fixture.sourcePaths);
-    const result = runPatcher(fixture);
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(
-      "Refusing to overwrite unexpected read-only MCP command module",
-    );
-    expect(snapshot(fixture.sourcePaths)).toEqual(before);
-    expect(fs.readFileSync(fixture.readOnlyMcpModulePath, "utf8")).toBe("# unexpected module\n");
   });
 });

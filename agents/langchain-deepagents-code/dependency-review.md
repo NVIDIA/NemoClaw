@@ -70,7 +70,7 @@ or call an exact task-context tool does not prove that the call occurred, even
 when the headless process exits successfully.
 
 NemoClaw adds `dcode tools call-read-only TOOL --json` at the managed wrapper
-and exact-version package-patch boundary. The command uses the released DCode
+and exact-version compatibility boundary. The command uses the released DCode
 MCP configuration, loader, wrapped executor, protocol metadata, and session
 manager. It selects one exact resolved name and invokes it only when DCode marks
 it as an MCP tool and its protocol annotations are coherently read-only. It

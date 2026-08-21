@@ -1011,7 +1011,7 @@ if [ "${1:-}" = "tools" ] && [ "${2:-}" = "call-read-only" ]; then
   # The managed command returns one bounded JSON envelope on stdout. Suppress
   # child MCP stderr so an untrusted server cannot create an unbounded or
   # credential-bearing diagnostic channel outside that envelope.
-  exec /opt/venv/bin/python3 -I -m deepagents_code.nemoclaw_read_only_mcp "$@" 2>/dev/null
+  exec /opt/venv/bin/python3 -I /usr/local/lib/nemoclaw/nemoclaw_read_only_mcp.py "$@" 2>/dev/null
 fi
 
 run_dcode "${extra_args[@]}" "$@"
