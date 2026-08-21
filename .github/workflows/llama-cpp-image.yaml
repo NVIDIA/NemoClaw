@@ -786,6 +786,7 @@ jobs:
       - name: Verify publication evidence and create receipt
         shell: bash
         env:
+          CANDIDATE_TAG: ${{ needs.assemble-candidate.outputs.candidate_tag }}
           CERTIFICATE_IDENTITY: ${{ needs.config.outputs.publication_signature_identity }}
           CERTIFICATE_OIDC_ISSUER: ${{ needs.config.outputs.publication_signature_issuer }}
           CUDA_DEVELOPMENT_BASE: ${{ needs.config.outputs.cuda_dev_image }}
@@ -800,8 +801,8 @@ jobs:
             --reference "$REFERENCE" \
             --candidate-index "$evidence/candidate-index.json" \
             --platform-digests "$evidence/platform-digests.json" \
-            --sbom-amd64 "$evidence/llama-cpp-sbom-amd64.spdx.json" \
-            --sbom-arm64 "$evidence/llama-cpp-sbom-arm64.spdx.json" \
+            --sbom-amd64 "$evidence/llama-cpp-sbom-amd64-$CANDIDATE_TAG" \
+            --sbom-arm64 "$evidence/llama-cpp-sbom-arm64-$CANDIDATE_TAG" \
             --sbom-verification "$evidence/sbom-verification.json" \
             --provenance-verification "$evidence/provenance-verification.json" \
             --signature-verification "$evidence/signature-verification.json" \
