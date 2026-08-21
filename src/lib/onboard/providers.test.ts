@@ -67,7 +67,7 @@ const {
     baseUrl: string | null,
     env: Record<string, string | undefined>,
     runOpenshell: RunOpenshell,
-    options?: { replaceExisting?: boolean },
+    options?: { replaceExisting?: boolean; requireExactBinding?: boolean },
   ) => { ok: boolean; status?: number; message?: string };
   upsertMessagingProviders: (
     tokenDefs: Array<{
@@ -77,7 +77,11 @@ const {
       providerType?: string;
     }>,
     runOpenshell: RunOpenshell,
-    options?: { replaceExisting?: boolean; bestEffort?: boolean },
+    options?: {
+      replaceExisting?: boolean;
+      bestEffort?: boolean;
+      requireExactBindings?: boolean;
+    },
   ) => string[];
 };
 
@@ -659,6 +663,74 @@ describe("onboard provider helpers", () => {
     expect(commands).toEqual([
       "provider get alpha-brave-search",
       "provider update alpha-brave-search --credential BRAVE_API_KEY",
+    ]);
+  });
+
+  it("rejects an existing generic provider when an exact credential binding is required", () => {
+    const commands: string[] = [];
+    const result = upsertProvider(
+      "alpha-discord-bridge",
+      "discord-hermes-static-v1",
+      "DISCORD_BOT_TOKEN",
+      null,
+      { DISCORD_BOT_TOKEN: "discord-test" },
+      (command) => {
+        commands.push(command.join(" "));
+        return {
+          status: 0,
+          stdout: [
+            "Name: alpha-discord-bridge",
+            "Type: generic",
+            "Credential keys: DISCORD_BOT_TOKEN",
+            "Config keys: <none>",
+            "",
+          ].join("\n"),
+        };
+      },
+      { requireExactBinding: true },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      status: 1,
+      message:
+        "Existing provider 'alpha-discord-bridge' does not match the required 'discord-hermes-static-v1' credential binding.",
+    });
+    expect(commands).toEqual([
+      "provider get alpha-discord-bridge",
+      "provider get alpha-discord-bridge",
+    ]);
+  });
+
+  it("updates an existing provider when its exact credential binding matches", () => {
+    const commands: string[] = [];
+    const result = upsertProvider(
+      "alpha-discord-bridge",
+      "discord-hermes-static-v1",
+      "DISCORD_BOT_TOKEN",
+      null,
+      { DISCORD_BOT_TOKEN: "discord-test" },
+      (command) => {
+        commands.push(command.join(" "));
+        return {
+          status: 0,
+          stdout: [
+            "Name: alpha-discord-bridge",
+            "Type: discord-hermes-static-v1",
+            "Credential keys: DISCORD_BOT_TOKEN",
+            "Config keys: <none>",
+            "",
+          ].join("\n"),
+        };
+      },
+      { requireExactBinding: true },
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(commands).toEqual([
+      "provider get alpha-discord-bridge",
+      "provider get alpha-discord-bridge",
+      "provider update alpha-discord-bridge --credential DISCORD_BOT_TOKEN",
     ]);
   });
 

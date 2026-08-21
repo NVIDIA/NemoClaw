@@ -13,6 +13,7 @@ type MessagingProviderTokenDefinition = {
 type MessagingProviderUpsertOptions = {
   replaceExisting?: boolean;
   bestEffort?: boolean;
+  requireExactBindings?: boolean;
 };
 
 type LegacyOnboardProvidersModule = {

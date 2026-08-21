@@ -21,7 +21,10 @@ const {
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
 } = require("../inference/llama-cpp/contract");
-const { readGatewayProviderMetadata } = require("./gateway-provider-metadata");
+const {
+  matchesGatewayCredentialOnlyProviderBinding,
+  readGatewayProviderMetadata,
+} = require("./gateway-provider-metadata");
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -455,6 +458,22 @@ function providerExistsInGateway(name, _runOpenshell) {
  */
 function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
   const exists = providerExistsInGateway(name, _runOpenshell);
+  if (
+    exists &&
+    options.requireExactBinding &&
+    !options.replaceExisting &&
+    !matchesGatewayCredentialOnlyProviderBinding(readGatewayProviderMetadata(name, _runOpenshell), {
+      name,
+      type,
+      credentialKey: credentialEnv,
+    })
+  ) {
+    return {
+      ok: false,
+      status: 1,
+      message: `Existing provider '${name}' does not match the required '${type}' credential binding.`,
+    };
+  }
   if (exists && options.replaceExisting) {
     const { deleteProviderWithRecovery } = require("./sandbox-provider-cleanup");
     const r = deleteProviderWithRecovery(name, { runOpenshell: _runOpenshell });
@@ -505,7 +524,7 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
  * of terminating the CLI.
  * @param {Array<{name: string, envKey: string, token: string|null, providerType?: string}>} tokenDefs
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean, bestEffort?: boolean}} options - Forwarded to every upsertProvider call.
+ * @param {{replaceExisting?: boolean, bestEffort?: boolean, requireExactBindings?: boolean}} options - Forwarded to every upsertProvider call.
  * @returns {string[]} Provider names that were upserted.
  */
 function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
@@ -545,7 +564,10 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
       null,
       { [envKey]: token },
       _runOpenshell,
-      { replaceExisting: Boolean(options.replaceExisting) },
+      {
+        replaceExisting: Boolean(options.replaceExisting),
+        requireExactBinding: Boolean(options.requireExactBindings && providerType),
+      },
     );
     if (!result.ok) {
       if (options.bestEffort) {

@@ -47,6 +47,7 @@ import {
   bridgeProviderNamesForChannel,
   bridgeSecretEnvsForChannel,
   collectMessagingBridgeTokenDefs,
+  staticMessagingProviderTypeForChannel,
 } from "../../onboard/messaging-bridge-provider";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import type { MessagingTokenDef } from "../../onboard/messaging-prep";
@@ -847,10 +848,13 @@ async function applyChannelAddToGatewayAndRegistry(
   channelName: string,
   acquired: Record<string, string>,
 ): Promise<boolean> {
+  const sandboxAgent = registry.getSandbox(sandboxName)?.agent;
+  const staticProviderType = staticMessagingProviderTypeForChannel(channelName, sandboxAgent);
   const tokenDefs: MessagingTokenDef[] = Object.entries(acquired).map(([envKey, token]) => ({
     name: bridgeProviderName(sandboxName, channelName, envKey),
     envKey,
     token,
+    ...(staticProviderType ? { providerType: staticProviderType } : {}),
   }));
   // Bridge channels declare no manifest credentials, so the loop above yields
   // nothing for them. Their provider must be created HERE (same seam onboarding
@@ -860,7 +864,7 @@ async function applyChannelAddToGatewayAndRegistry(
     sandboxName,
     // Unnormalized: the bridge profile filter owns the unset default and rejects
     // an agent no profile declares.
-    agent: registry.getSandbox(sandboxName)?.agent,
+    agent: sandboxAgent,
     enabledChannels: [channelName],
     disabledChannelNames: new Set<string>(),
     getCredential,
@@ -897,7 +901,10 @@ async function applyChannelAddToGatewayAndRegistry(
   try {
     // bestEffort: failures throw (instead of process.exit inside the helper)
     // so a partial add can be torn down below before exiting.
-    policyChannelDependencies.upsertMessagingProviders(tokenDefs, { bestEffort: true });
+    policyChannelDependencies.upsertMessagingProviders(tokenDefs, {
+      bestEffort: true,
+      requireExactBindings: true,
+    });
   } catch (err) {
     console.error(
       `  ✗ Failed to register '${channelName}' providers with the gateway: ${
