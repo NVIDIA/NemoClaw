@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -15,6 +16,26 @@ type Workflow = {
 
 const WORKFLOW_PATH = ".github/workflows/pr-self-hosted.yaml";
 const CANDIDATE_SHA = "a".repeat(40);
+
+function genericGpuJobSteps() {
+  const workflow = YAML.parse(readFileSync(WORKFLOW_PATH, "utf8")) as Workflow;
+  return workflow.jobs["llama-cpp-generic-gpu"]?.steps ?? [];
+}
+
+function fail(message: string): never {
+  throw new Error(message);
+}
+
+function replaceRequired(source: string, search: string, replacement: string) {
+  const result = source.replaceAll(search, replacement);
+  return result === source ? fail(`Workflow command is missing ${search}`) : result;
+}
+
+function writeCommand(directory: string, name: string, body: string) {
+  const commandPath = join(directory, name);
+  writeFileSync(commandPath, `#!/bin/sh\nset -eu\n${body}\n`, { mode: 0o755 });
+  return commandPath;
+}
 
 function selectGenericGpuLane(changedFiles: readonly string[], copiedSha = CANDIDATE_SHA) {
   const workflow = YAML.parse(readFileSync(WORKFLOW_PATH, "utf8")) as Workflow;
@@ -76,9 +97,12 @@ describe("generic NVIDIA GPU PR selection", () => {
     "src/lib/onboard/fatal-runtime-preflight.ts",
     "src/lib/onboard/overlayfs-auto-fix.ts",
     "src/lib/onboard/preflight.ts",
-  ])("selects the generic NVIDIA GPU E2E job when %s can change installer readiness", (changedFile) => {
-    expect(selectGenericGpuLane([changedFile])).toBe("selected=true");
-  });
+  ])(
+    "selects the generic NVIDIA GPU E2E job when %s can change installer readiness",
+    (changedFile) => {
+      expect(selectGenericGpuLane([changedFile])).toBe("selected=true");
+    },
+  );
 
   it("does not select the generic NVIDIA GPU E2E job for unrelated documentation", () => {
     expect(selectGenericGpuLane(["docs/get-started/quickstart.mdx"])).toBe("selected=false");
@@ -88,5 +112,122 @@ describe("generic NVIDIA GPU PR selection", () => {
     expect(() => selectGenericGpuLane(["scripts/install.sh"], "b".repeat(40))).toThrow(
       "Copied PR branch SHA does not match the current PR head",
     );
+  });
+
+  it("binds the existing same-user manager before the live test without changing services", async () => {
+    const directory = mkdtempSync("/tmp/nemoclaw-gpu-manager-");
+    const binDirectory = join(directory, "bin");
+    const runtimeDirectory = join(directory, "runtime");
+    const busSocket = join(runtimeDirectory, "bus");
+    const commandLog = join(directory, "commands.log");
+    const githubEnv = join(directory, "github-env");
+    mkdirSync(binDirectory);
+    mkdirSync(runtimeDirectory, { mode: 0o700 });
+    writeFileSync(commandLog, "");
+    writeFileSync(githubEnv, "");
+
+    const idCommand = writeCommand(
+      binDirectory,
+      "id",
+      `case "$1" in
+  -u) printf '2000\\n' ;;
+  -g) printf '2000\\n' ;;
+  *) exit 97 ;;
+esac`,
+    );
+    const statCommand = writeCommand(
+      binDirectory,
+      "stat",
+      `case "$2" in
+  %u:%g:%a) printf '2000:2000:700\\n' ;;
+  %u) printf '2000\\n' ;;
+  *) exit 97 ;;
+esac`,
+    );
+    const systemctlCommand = writeCommand(
+      binDirectory,
+      "systemctl",
+      `printf 'systemctl:%s\\n' "$*" >>"$COMMAND_LOG"
+printf '%s\\n' "$CHILD_OUTPUT_SENTINEL"
+printf '%s\\n' "$CHILD_OUTPUT_SENTINEL" >&2`,
+    );
+    const busctlCommand = writeCommand(
+      binDirectory,
+      "busctl",
+      `printf 'busctl:%s\\n' "$*" >>"$COMMAND_LOG"
+printf '%s\\n' "$CHILD_OUTPUT_SENTINEL"
+printf '%s\\n' "$CHILD_OUTPUT_SENTINEL" >&2`,
+    );
+    writeCommand(binDirectory, "openshell", `printf 'openshell:%s\\n' "$*" >>"$COMMAND_LOG"`);
+    writeCommand(
+      binDirectory,
+      "npx",
+      `printf 'live:%s:%s\\n' "\${DBUS_SESSION_BUS_ADDRESS-unset}" "\${XDG_RUNTIME_DIR-unset}" >>"$COMMAND_LOG"`,
+    );
+
+    const selectedStepNames = new Set([
+      "Bind existing systemd user manager",
+      "Run llama.cpp generic NVIDIA GPU live test",
+    ]);
+    const sourceScript = genericGpuJobSteps()
+      .filter((step) => selectedStepNames.has(step.name ?? ""))
+      .map(
+        (step) => `${step.run ?? ""}
+set -a
+[ ! -s "$GITHUB_ENV" ] || . "$GITHUB_ENV"
+set +a`,
+      )
+      .join("\n");
+    const runtimeBoundScript = replaceRequired(
+      sourceScript,
+      'runtime_dir="/run/user/${uid}"',
+      `runtime_dir=${JSON.stringify(runtimeDirectory)}`,
+    );
+    const commandBoundScript = [
+      ["/usr/bin/id", idCommand],
+      ["/usr/bin/stat", statCommand],
+      ["/usr/bin/systemctl", systemctlCommand],
+      ["/usr/bin/busctl", busctlCommand],
+    ].reduce(
+      (script, [command, replacement]) =>
+        replaceRequired(script, command!, JSON.stringify(replacement)),
+      runtimeBoundScript,
+    );
+    const server = createServer();
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(busSocket, () => resolve());
+      });
+      const result = spawnSync(
+        "/bin/bash",
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", commandBoundScript],
+        {
+          encoding: "utf8",
+          env: {
+            CHILD_OUTPUT_SENTINEL: "manager-output-secret",
+            COMMAND_LOG: commandLog,
+            DBUS_SESSION_BUS_ADDRESS: "inherited-secret-address",
+            GITHUB_ENV: githubEnv,
+            HOME: directory,
+            PATH: binDirectory,
+          },
+        },
+      );
+
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(result.stdout + result.stderr).not.toContain("manager-output-secret");
+      expect(readFileSync(githubEnv, "utf8")).toBe(`XDG_RUNTIME_DIR=${runtimeDirectory}\n`);
+      expect(readFileSync(commandLog, "utf8").trim().split("\n")).toEqual([
+        "systemctl:--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager",
+        "busctl:--user --json=short get-property org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager UnitPath",
+        "openshell:--version",
+        `live:unset:${runtimeDirectory}`,
+      ]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      rmSync(directory, { force: true, recursive: true });
+    }
   });
 });
