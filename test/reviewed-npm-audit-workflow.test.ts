@@ -14,6 +14,7 @@ import {
   materializeSourceGraph,
   normalizeOpenClawSignatureAlias,
   parseAuditConfig,
+  reviewedArchiveGraphManifest,
   selectReviewedLockSha256,
   verifyMaterializedLockedGraph,
 } from "../scripts/audit-reviewed-npm-graph.mts";
@@ -109,6 +110,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     const config = {
       archiveGraphId: "reviewed-archive-graph",
       archivePackages: [],
+      archiveTarVersion: "7.5.21",
       artifactDirectory: "artifacts/reviewed-npm-audit",
       exceptionFile: "ci/npm-audit-exceptions.json",
       lockedGraphs: [
@@ -127,6 +129,25 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
 
     expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
       "ci/reviewed-npm-audit.json is invalid",
+    );
+  });
+
+  it("pins the reviewed archive graph to the first tar release outside the advisory", () => {
+    const configFile = path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json");
+    const config = parseAuditConfig(fs.readFileSync(configFile, "utf-8"));
+
+    expect(config.archiveTarVersion).toBe("7.5.21");
+    expect(reviewedArchiveGraphManifest(config.archiveTarVersion)).toEqual({
+      name: "nemoclaw-reviewed-production-graph",
+      overrides: { tar: "7.5.21" },
+      private: true,
+      version: "1.0.0",
+    });
+  });
+
+  it("rejects an affected tar release for the reviewed archive graph", () => {
+    expect(() => reviewedArchiveGraphManifest("7.5.20")).toThrow(
+      "reviewed archive graph tar version must be exactly 7.5.21",
     );
   });
 

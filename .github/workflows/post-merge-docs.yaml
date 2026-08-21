@@ -6,6 +6,10 @@ name: Docs / Post-Merge Catch-Up
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "fern/docs.yml"
+      - "fern/assets/**"
 
 permissions: {}
 concurrency:
@@ -13,26 +17,25 @@ concurrency:
 
 jobs:
   gate:
-    name: Check for an active documentation PR
+    name: Validate the managed documentation PR count
     runs-on: ubuntu-24.04
     permissions:
       pull-requests: read
-    outputs:
-      pending: ${{ steps.scan.outputs.pending }}
     steps:
-      - id: scan
-        env:
+      - env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          pending="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&base=main&per_page=100" | jq --slurp 'any(.[][]; (.head.ref | startswith("automation/post-merge-docs-")) and .head.repo.full_name == "NVIDIA/NemoClaw")')"
-          [[ "$pending" == true || "$pending" == false ]]
-          echo "pending=$pending" >> "$GITHUB_OUTPUT"
+          count="$(
+            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&base=main&per_page=100" |
+              jq --slurp '[.[][] | select((.head.ref | startswith("automation/post-merge-docs-")) and .head.repo.full_name == "NVIDIA/NemoClaw")] | length'
+          )"
+          [[ "$count" =~ ^[0-9]+$ && "$count" -le 1 ]]
 
   author:
     name: Author and review documentation catch-up
     needs: gate
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && needs.gate.outputs.pending != 'true' }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     permissions:
