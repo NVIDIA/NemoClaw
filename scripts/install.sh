@@ -4139,6 +4139,11 @@ ensure_docker() {
             printf -v cmd '%s %q' "$cmd" "$arg"
           done
         fi
+        # Express mode derives the provider from its saved receipt. Do not let
+        # that derived value become explicit provider intent after re-entry.
+        if [ "${_STATION_INSTALL_MODE:-}" = "express" ]; then
+          unset NEMOCLAW_PROVIDER
+        fi
         exec sg docker -c "$cmd"
       fi
     fi

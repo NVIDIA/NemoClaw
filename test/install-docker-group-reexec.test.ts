@@ -28,6 +28,7 @@ type EnsureDockerOutcome = {
   stdout: string;
   stderr: string;
   sgArgs: string[];
+  sgProvider: string | null;
 };
 
 function runEnsureDocker(
@@ -36,6 +37,7 @@ function runEnsureDocker(
 ): EnsureDockerOutcome {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-docker-group-"));
   const sgLog = path.join(tmp, "sg-args.txt");
+  const sgProviderLog = path.join(tmp, "sg-provider.txt");
   const sgStub = path.join(tmp, "sg");
   const harnessDir = path.join(tmp, "scripts");
   const installHarness = path.join(harnessDir, "install.sh");
@@ -57,9 +59,11 @@ function runEnsureDocker(
   // Stub `sg`: record the args the installer asked us to execute, then exit 0.
   // Without this stub, `exec sg docker -c …` would replace the test process
   // with a real group switch — flaky and platform-dependent.
-  fs.writeFileSync(sgStub, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${sgLog}"\nexit 0\n`, {
-    mode: 0o755,
-  });
+  fs.writeFileSync(
+    sgStub,
+    `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${sgLog}"\nprintf '%s\\n' "$NEMOCLAW_PROVIDER" > "${sgProviderLog}"\nexit 0\n`,
+    { mode: 0o755 },
+  );
 
   // Backslashes must be escaped before quotes — otherwise a literal `\` in
   // an installer arg would slip through unescaped (CodeQL: incomplete string
@@ -108,6 +112,8 @@ function runEnsureDocker(
     verify_downloaded_script() { :; }
 
     _NEMOCLAW_INSTALLER_ARGS=(${argsArrayLiteral})
+    _STATION_INSTALL_MODE="$NEMOCLAW_TEST_STATION_INSTALL_MODE"
+    NEMOCLAW_INSTALLER_STAGED="${installHarness}"
     export PATH="${tmp}:$PATH"
 
     ensure_docker
@@ -115,7 +121,7 @@ function runEnsureDocker(
 
   const result = spawnSync("bash", ["-c", snippet], {
     encoding: "utf-8",
-    env: { ...process.env, ...env },
+    env: { ...process.env, NEMOCLAW_TEST_STATION_INSTALL_MODE: "", ...env },
   });
 
   const sgArgs = fs.existsSync(sgLog)
@@ -123,9 +129,12 @@ function runEnsureDocker(
         .readFileSync(sgLog, "utf-8")
         .split("\n")
         .filter((line) => line.length > 0)
-    : [];
+      : [];
+  const sgProvider = fs.existsSync(sgProviderLog)
+    ? fs.readFileSync(sgProviderLog, "utf-8").trim()
+    : null;
 
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr, sgArgs };
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr, sgArgs, sgProvider };
 }
 
 describeLinux("install.sh ensure_docker — #4414 non-interactive self re-exec", () => {
@@ -186,5 +195,38 @@ describeLinux("install.sh ensure_docker — #4414 non-interactive self re-exec",
     expect(outcome.stdout).toContain(
       "Re-run: curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash",
     );
+  });
+});
+
+describe("install.sh ensure_docker — Station intent across self re-exec", () => {
+  it("does not reclassify derived Station Express provider state after re-exec (#9900)", () => {
+    const outcome = runEnsureDocker(
+      {
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_PROVIDER: "install-vllm",
+        NEMOCLAW_STATION_EXPRESS: "1",
+        NEMOCLAW_TEST_STATION_INSTALL_MODE: "express",
+      },
+      ["--non-interactive", "--yes-i-accept-third-party-software"],
+    );
+
+    expect(outcome.sgArgs.length).toBeGreaterThan(0);
+    expect(outcome.sgProvider).toBe("");
+  });
+
+  it("preserves an explicitly selected Station provider after re-exec", () => {
+    const outcome = runEnsureDocker(
+      {
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_PROVIDER: "install-vllm",
+        NEMOCLAW_TEST_STATION_INSTALL_MODE: "provider",
+      },
+      ["--non-interactive", "--yes-i-accept-third-party-software"],
+    );
+
+    expect(outcome.sgArgs.length).toBeGreaterThan(0);
+    expect(outcome.sgProvider).toBe("install-vllm");
   });
 });
