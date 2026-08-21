@@ -75,7 +75,13 @@ interface ShellToken {
 }
 
 function isShellTokenBoundary(character: string): boolean {
-  return character === " " || character === "\t" || character === "\r" || character === "\n";
+  return (
+    character === " " ||
+    character === "\t" ||
+    character === "\r" ||
+    character === "\n" ||
+    ";&|(){}<>".includes(character)
+  );
 }
 
 function readShellToken(source: string, start: number): ShellToken | undefined {
@@ -84,8 +90,7 @@ function readShellToken(source: string, start: number): ShellToken | undefined {
   const tokenStart = cursor;
   while (
     cursor < source.length &&
-    !isShellTokenBoundary(source[cursor]!) &&
-    !";&|".includes(source[cursor]!)
+    !isShellTokenBoundary(source[cursor]!)
   ) {
     cursor += 1;
   }
@@ -266,6 +271,32 @@ describe("node-tar image remediation contract", () => {
 });
 
 describe("reviewed npm image remediation contract", () => {
+  it.each([
+    ["an if condition", "if npm ci; then true; fi"],
+    ["an elif condition", "if false; then true; elif npm install; then true; fi"],
+    ["a while condition", "while npm ci; do true; done"],
+    ["an until condition", "until npm install; do true; done"],
+    ["a subshell group", "( npm ci )"],
+    ["a brace group", "{ npm install; }"],
+    ["a case branch", "case value in value) npm ci ;; esac"],
+    ["a negated command", "! npm install"],
+  ])("detects npm consumers in %s before the final patch (#9933)", (_label, body) => {
+    const source = [
+      `RUN ${body}`,
+      `RUN ${patchCommand} ${npmRootArguments.join(" ")}`,
+      "",
+    ].join("\n");
+    const patchRun = requireSingleReviewedDockerfileRunCommand(
+      source,
+      patchCommand,
+      npmRootArguments,
+    );
+    const npmConsumers = npmConsumerPositions(source);
+
+    expect(npmConsumers).toEqual([source.indexOf("npm")]);
+    expect(npmConsumers.every((index) => index > patchRun.commandStart)).toBe(false);
+  });
+
   it.each([
     { file: "Dockerfile.base", installsWithNpm: true },
     { file: "agents/hermes/Dockerfile.base", installsWithNpm: true },

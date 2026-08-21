@@ -14,7 +14,7 @@ const invocation = [command, ...requiredArguments].join(" ");
 const splicedCommand = command.replace("strip-types", "strip-\\\ntypes");
 
 describe("Dockerfile RUN command discovery", () => {
-  it("finds only unquoted npm command words in RUN instructions", () => {
+  it("finds only executable unquoted npm command words in RUN instructions (#9933)", () => {
     const source = [
       "# npm install",
       'LABEL example="npm install"',
@@ -25,6 +25,14 @@ describe("Dockerfile RUN command discovery", () => {
       "    npm --prefix /runtime ci",
       "RUN if true; then npm --prefix=/runtime install; fi",
       "RUN true && NPM_CONFIG_OFFLINE=true OTHER=value npm ci --prefix /runtime",
+      "RUN if npm ci --prefix /if; then true; fi",
+      "RUN if false; then true; elif npm install --prefix /elif; then true; fi",
+      "RUN while npm ci --prefix /while; do true; done",
+      "RUN until npm install --prefix /until; do true; done",
+      "RUN ( npm ci --prefix /subshell )",
+      "RUN { npm install --prefix /group; }",
+      "RUN case value in value) npm ci --prefix /case ;; esac",
+      "RUN ! npm install --prefix /negated",
       "",
     ].join("\n");
 
@@ -32,6 +40,14 @@ describe("Dockerfile RUN command discovery", () => {
       source.indexOf("npm --prefix /runtime"),
       source.indexOf("npm --prefix=/runtime"),
       source.indexOf("npm ci --prefix"),
+      source.indexOf("npm ci --prefix /if"),
+      source.indexOf("npm install --prefix /elif"),
+      source.indexOf("npm ci --prefix /while"),
+      source.indexOf("npm install --prefix /until"),
+      source.indexOf("npm ci --prefix /subshell"),
+      source.indexOf("npm install --prefix /group"),
+      source.indexOf("npm ci --prefix /case"),
+      source.indexOf("npm install --prefix /negated"),
     ]);
   });
 

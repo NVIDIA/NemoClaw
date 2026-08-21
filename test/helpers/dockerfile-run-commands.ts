@@ -140,13 +140,17 @@ function followsShellCommandSeparator(source: string, index: number): boolean {
   while (wordStart > 0) {
     let cursor = wordStart - 1;
     while (cursor >= 0 && /[ \t\r]/u.test(source[cursor]!)) cursor -= 1;
-    if (cursor < 0 || source[cursor] === "\n" || ";&|".includes(source[cursor]!)) return true;
+    if (cursor < 0 || source[cursor] === "\n" || ";&|({)".includes(source[cursor]!)) {
+      return true;
+    }
 
     const wordEnd = cursor + 1;
     while (cursor >= 0 && !/[ \t\r\n;&|]/u.test(source[cursor]!)) cursor -= 1;
     const previousWord = source.slice(cursor + 1, wordEnd);
-    if (["do", "else", "then"].includes(previousWord)) return true;
-    if (!/^[A-Za-z_][A-Za-z0-9_]*=.*$/u.test(previousWord)) return false;
+    const continuesCommandPrefix =
+      ["!", "do", "elif", "else", "if", "then", "until", "while"].includes(previousWord) ||
+      /^[A-Za-z_][A-Za-z0-9_]*=.*$/u.test(previousWord);
+    if (!continuesCommandPrefix) return false;
     wordStart = cursor + 1;
   }
   return true;
@@ -161,7 +165,7 @@ export function dockerfileRunCommandPositions(source: string, command: string): 
       const afterCommand = collapsed.text[index + command.length];
       if (
         followsShellCommandSeparator(collapsed.text, index) &&
-        (afterCommand === undefined || /[ \t\r\n;&|]/u.test(afterCommand))
+        (afterCommand === undefined || /[ \t\r\n;&|(){}<>]/u.test(afterCommand))
       ) {
         positions.push(instruction.bodyStart + collapsed.originalIndexes[index]!);
       }
