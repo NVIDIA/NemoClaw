@@ -19,7 +19,7 @@ import {
   trustedFormulaBoundaryEvents,
   unverifiedFormulaBoundaryEvents,
   ZERO_SHA256,
-} from "./helpers/openshell-installer-fixtures";
+} from "./helpers/openshell-release-fixtures";
 
 const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
 const REQUIRED_OPENSHELL_VERSION = credentialBoundaryManifest.openshellVersion;
