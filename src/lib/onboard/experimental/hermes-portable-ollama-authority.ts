@@ -29,7 +29,13 @@ const NETWORK_ID = /^[a-f0-9]{64}$/u;
 const REGISTRY_CONTAINER = "nemoclaw-portable-registry";
 const PORTABLE_MANAGED_LABEL = "com.nvidia.nemoclaw.portable";
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
+const DIAGNOSTIC_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]+/gu;
 const IMAGE_PULL_TIMEOUT_MS = 30 * 60_000;
+const IMAGE_PULL_DIAGNOSTIC_LIMIT = 240;
+type PortablePodmanResult = ReturnType<
+  ReturnType<typeof createHermesPortablePodmanOperationEngines>["hostLocalInference"]["capture"]
+>;
+type DiagnosticRedactor = (message: string) => string;
 
 function digest(value: object): string {
   return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
@@ -268,10 +274,33 @@ export function capturePortableNetworkAuthority(
   });
 }
 
+function throwImagePullFailure(
+  image: string,
+  result: PortablePodmanResult,
+  redactSensitive: DiagnosticRedactor,
+): never {
+  const raw = [result.error?.message, result.stderr].filter(Boolean).join("\n");
+  const detail = redactSensitive(raw.replace(DIAGNOSTIC_CONTROL_CHARACTERS, ""))
+    .replace(DIAGNOSTIC_CONTROL_CHARACTERS, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, IMAGE_PULL_DIAGNOSTIC_LIMIT);
+  const code = (result.error as NodeJS.ErrnoException | undefined)?.code;
+  const outcome = result.error
+    ? code === "ETIMEDOUT"
+      ? `timed out after ${String(IMAGE_PULL_TIMEOUT_MS)} ms`
+      : "spawn failed"
+    : `exited with status ${String(result.status)}`;
+  throw new Error(
+    `Hermes Portable inference could not acquire an immutable runtime image ${image}: Podman pull ${outcome}.${detail ? ` Detail: ${detail}` : ""}`,
+  );
+}
+
 function acquireRetainedImage(
   engine: ReturnType<typeof createHermesPortablePodmanOperationEngines>["hostLocalInference"],
   image: string,
   assertCurrent: () => void,
+  redactSensitive: DiagnosticRedactor,
 ): void {
   assertCurrent();
   const prior = engine.capture(["image", "exists", image], 30_000);
@@ -281,7 +310,7 @@ function acquireRetainedImage(
   if (prior.status === 0) return;
   const pull = engine.capture(["pull", image], IMAGE_PULL_TIMEOUT_MS);
   if (pull.error || pull.status !== 0) {
-    throw new Error("Hermes Portable inference could not acquire an immutable runtime image.");
+    throwImagePullFailure(image, pull, redactSensitive);
   }
   const exists = engine.capture(["image", "exists", image], 30_000);
   if (exists.error || exists.status !== 0) {
@@ -294,6 +323,7 @@ export function withRetainedImageAcquisition(
   bundle: RuntimeProviderBundle,
   engine: ReturnType<typeof createHermesPortablePodmanOperationEngines>["hostLocalInference"],
   assertCurrent: () => void,
+  redactSensitive: DiagnosticRedactor,
 ): RuntimeProviderBundle {
   if (!bundle.hostLocalInference.supported) {
     throw new Error("Hermes Portable inference runtime lacks managed startup authority.");
@@ -318,8 +348,9 @@ export function withRetainedImageAcquisition(
             // Images are immutable shared cache state. This transaction owns
             // the exact container, model, route, and receipt, but deliberately
             // never deletes a digest image that another operation may reuse.
-            acquireRetainedImage(engine, PORTABLE_OLLAMA_IMAGE, assertCurrent);
-            acquireRetainedImage(engine, PORTABLE_PROBE_IMAGE, assertCurrent);
+            for (const image of [PORTABLE_OLLAMA_IMAGE, PORTABLE_PROBE_IMAGE]) {
+              acquireRetainedImage(engine, image, assertCurrent, redactSensitive);
+            }
             return managedRuntime.startManaged(managedInput, writer);
           },
         });

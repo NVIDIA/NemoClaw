@@ -748,7 +748,7 @@ describe("shields — unit logic", () => {
       expect(fs.existsSync(path.join(stateDir(), `shields-timer-${sandboxName}.json`))).toBe(true);
     });
 
-    it("bounds current-generation inline recovery when the snapshot is missing (#7952)", async () => {
+    it("runs portable-command validation under the expired-timer deadline gate before recovery (#9738)", async () => {
       const sandboxName = "openclaw";
       const processToken = "c".repeat(32);
       const missingSnapshotPath = path.join(stateDir(), "missing-current-snapshot.yaml");
@@ -773,12 +773,18 @@ describe("shields — unit logic", () => {
       vi.spyOn(console, "log").mockImplementation(() => undefined);
       vi.spyOn(console, "error").mockImplementation(() => undefined);
       const { shieldsStatus } = await loadShieldsModule();
-
-      expect(() => shieldsStatus(sandboxName)).toThrow("Inline auto-restore exhausted 7 attempts");
       const { getMcpLifecycleLockPath } = await import("../state/mcp-lifecycle-lock");
-      expect(fs.existsSync(`${getMcpLifecycleLockPath(sandboxName, stateDir())}.containment`)).toBe(
-        true,
+      const lockPath = getMcpLifecycleLockPath(sandboxName, stateDir());
+      const assertCommandAvailable = vi.fn(() => {
+        expect(fs.existsSync(lockPath)).toBe(true);
+        expect(fs.existsSync(`${lockPath}.deadline`)).toBe(true);
+      });
+
+      expect(() => shieldsStatus(sandboxName, true, { assertCommandAvailable })).toThrow(
+        "Inline auto-restore exhausted 7 attempts",
       );
+      expect(assertCommandAvailable).toHaveBeenCalledOnce();
+      expect(fs.existsSync(`${lockPath}.containment`)).toBe(true);
       expect(fs.existsSync(path.join(stateDir(), `shields-timer-${sandboxName}.json`))).toBe(true);
     });
 

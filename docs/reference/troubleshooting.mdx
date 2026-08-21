@@ -1159,6 +1159,209 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 $$nemoclaw onboard
 ```
 
+### Onboarding Reports a Rejected or Unconfirmed Policy Update
+
+Onboarding can submit several policy mutations in sequence when you deselect policy presets and select others.
+It submits deselection mutations before selection mutations.
+Each successful mutation updates the live OpenShell gateway policy and the sandbox registry before the next mutation starts.
+If a later mutation fails, the earlier successful mutations remain applied and recorded.
+
+Each mutation uses a temporary `policy.yaml` file in a `nemoclaw-policy-*` directory.
+When the submission finishes, NemoClaw removes that directory, whether or not the gateway accepted the mutation.
+If cleanup fails, NemoClaw reports the directory that still holds the policy instead of reporting the submission result.
+
+When NemoClaw reports this directory, do not retry the policy operation.
+Use Bash to enter and validate the exact path from the error before you remove its contents:
+
+```bash
+cleanup_retained_policy() {
+  local platform_tmp_root retained_policy_dir
+
+  if ! platform_tmp_root=$(node -p "require('node:os').tmpdir()"); then
+    printf 'Validation failed: Node.js could not report the platform temporary directory.\n' >&2
+    return 1
+  fi
+  platform_tmp_root=${platform_tmp_root%/}
+  IFS= read -r -p 'Enter the exact temporary policy directory from the error: ' retained_policy_dir
+  python3 - "$platform_tmp_root" "$retained_policy_dir" <<'PY'
+import os
+import re
+import stat
+import sys
+
+
+class CleanupError(Exception):
+    pass
+
+
+def open_retained_policy_directory(platform_tmp_root, reported_path):
+    if not os.path.isabs(platform_tmp_root):
+        raise CleanupError("the platform temporary directory is not absolute")
+    platform_tmp_root_real = os.path.realpath(platform_tmp_root)
+    if platform_tmp_root_real == os.path.abspath(os.sep):
+        raise CleanupError("the platform temporary directory cannot be the filesystem root")
+    reported_basename = os.path.basename(reported_path)
+    reported_parent = os.path.dirname(reported_path)
+    if not re.fullmatch(r"nemoclaw-policy-.+", reported_basename):
+        raise CleanupError("the basename must match nemoclaw-policy-* and include a suffix")
+    if reported_parent != platform_tmp_root:
+        raise CleanupError(
+            f"the path must be a direct child of the actual platform temporary directory {platform_tmp_root!r}"
+        )
+    if os.path.realpath(reported_path) != os.path.join(platform_tmp_root_real, reported_basename):
+        raise CleanupError("the canonical path is outside the actual platform temporary directory")
+    if (
+        not hasattr(os, "geteuid")
+        or not hasattr(os, "O_DIRECTORY")
+        or not hasattr(os, "O_NOFOLLOW")
+        or os.stat not in os.supports_dir_fd
+        or os.unlink not in os.supports_dir_fd
+    ):
+        raise CleanupError("this platform cannot perform descriptor-relative cleanup")
+
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
+    root_stat = os.stat(platform_tmp_root_real, follow_symlinks=False)
+    if not stat.S_ISDIR(root_stat.st_mode):
+        raise CleanupError("the canonical platform temporary path is not a directory")
+    root_fd = os.open(platform_tmp_root_real, directory_flags | os.O_NOFOLLOW)
+    try:
+        opened_root_stat = os.fstat(root_fd)
+        if (opened_root_stat.st_dev, opened_root_stat.st_ino) != (root_stat.st_dev, root_stat.st_ino):
+            raise CleanupError("the platform temporary directory changed while it was being opened")
+        reported_stat = os.stat(reported_basename, dir_fd=root_fd, follow_symlinks=False)
+        if not stat.S_ISDIR(reported_stat.st_mode):
+            raise CleanupError("the path is not a directory or is a symbolic link")
+        if reported_stat.st_uid != os.geteuid():
+            raise CleanupError("the current user does not own the directory")
+        policy_fd = os.open(
+            reported_basename,
+            directory_flags | os.O_NOFOLLOW,
+            dir_fd=root_fd,
+        )
+        opened_stat = os.fstat(policy_fd)
+        if (opened_stat.st_dev, opened_stat.st_ino) != (reported_stat.st_dev, reported_stat.st_ino):
+            os.close(policy_fd)
+            raise CleanupError("the directory changed while it was being opened")
+        return root_fd, policy_fd, reported_basename, opened_stat
+    except Exception:
+        os.close(root_fd)
+        raise
+
+
+def remove_retained_policy_material(policy_fd):
+    try:
+        os.unlink("policy.yaml", dir_fd=policy_fd)
+    except FileNotFoundError:
+        pass
+    remaining = os.listdir(policy_fd)
+    if remaining:
+        raise CleanupError(f"the directory contains unexpected entries: {remaining!r}")
+
+
+def main():
+    root_fd = None
+    policy_fd = None
+    try:
+        root_fd, policy_fd, basename, opened_stat = open_retained_policy_directory(
+            sys.argv[1], sys.argv[2]
+        )
+        remove_retained_policy_material(policy_fd)
+        try:
+            current_stat = os.stat(basename, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError as error:
+            raise CleanupError("the reported path changed during cleanup") from error
+        if (current_stat.st_dev, current_stat.st_ino) != (opened_stat.st_dev, opened_stat.st_ino):
+            raise CleanupError("the reported path was replaced during cleanup; the replacement was not removed")
+        print(
+            f"Removed retained policy material from {sys.argv[2]!r}. "
+            "The empty directory intentionally remains."
+        )
+    except (CleanupError, OSError) as error:
+        print(f"Cleanup failed for {sys.argv[2]!r}: {error}.", file=sys.stderr)
+        raise SystemExit(1) from error
+    finally:
+        if policy_fd is not None:
+            os.close(policy_fd)
+        if root_fd is not None:
+            os.close(root_fd)
+
+
+if __name__ == "__main__":
+    main()
+PY
+}
+cleanup_retained_policy
+```
+
+The procedure opens the validated directory without following a symbolic link and removes `policy.yaml` relative to that open directory.
+It fails if the directory contains anything else.
+It intentionally leaves the empty directory because deleting it later by pathname would reintroduce a directory-replacement race.
+Continue only after the procedure reports that the retained policy material was removed.
+Do not remove the empty directory by pathname.
+If validation or cleanup fails, preserve the exact path and complete error message for support.
+Do not use another removal command on that path.
+
+After temporary-directory cleanup, treat the gateway state as unknown because the cleanup error replaced the submission result.
+Restore access to the OpenShell gateway, then read the sandbox policy:
+
+```bash
+$$nemoclaw <name> policy list
+```
+
+If `policy list` reports `⚠ Could not query gateway — showing local state only.`, stop because the command did not read the gateway policy.
+If it reports container-runtime recovery guidance, restore that runtime and run `policy list` again.
+Do not resume or start fresh onboarding until `policy list` reports the live gateway policy.
+
+When NemoClaw reports a rejected or unconfirmed policy mutation, onboarding stops and:
+
+- leaves earlier successful mutations applied and recorded;
+- does not record that mutation in the sandbox registry;
+- marks the session failed and resumable;
+- reports one of the two results below.
+
+After either result, run `policy list` before you resume or start fresh onboarding.
+
+The gateway read the policy and refused it:
+
+```text
+OpenShell rejected the policy for sandbox 'my-assistant' (exit <exit status>): <OpenShell diagnostic>. The policy was not applied and re-applying it will be rejected again; change the preset selection instead.
+```
+
+An OpenShell refusal means this mutation did not change the live policy.
+Earlier successful mutations in the same onboarding step remain applied and recorded.
+Use the quoted OpenShell diagnostic to identify what the gateway refused.
+After you inspect `policy list`, follow [Previous onboarding session failed](#previous-onboarding-session-failed) to start fresh onboarding and choose a different preset selection.
+
+NemoClaw could not confirm the result.
+This covers a connection that ended before the result arrived, an unreachable gateway, an elapsed deadline, a rejected credential, and a refusal the gateway reported with a status NemoClaw does not recognize as final.
+NemoClaw reports this whenever the gateway did not return an explicit refusal, because only an explicit refusal proves the policy was not applied:
+
+```text
+Could not confirm the policy update for sandbox 'my-assistant': <transport or command error>. The gateway may or may not have applied it; read the current policy back before retrying.
+```
+
+The gateway state is unknown, so read the sandbox policy with `policy list` before you retry.
+`policy list` compares the sandbox registry with the live gateway policy and flags a preset that is applied in one place but not the other.
+The unconfirmed mutation does not update the sandbox registry.
+
+The same connection problem that made the result unconfirmed can also stop `policy list` from reaching the gateway.
+When that happens, `policy list` prints `⚠ Could not query gateway — showing local state only.` and still exits 0.
+If the container runtime is down, it prints that runtime's recovery guidance instead.
+Stop while `policy list` reports local state only because that output does not show whether the gateway applied the mutation.
+Restore gateway access and run `policy list` again before you resume or start fresh onboarding.
+
+After `policy list` reads the live gateway policy, follow the result below.
+The [failed-session recovery steps](#previous-onboarding-session-failed) provide the resume and fresh onboarding commands.
+
+- If an affected preset reports `active on gateway, missing from local state`, resume the failed session.
+  The gateway completed the addition, and resume can record the applied preset locally without submitting that policy change again.
+- If an affected preset reports `recorded locally, not active on gateway`, do not resume or start fresh onboarding.
+  The gateway may have completed the removal while the sandbox registry retained the preset.
+  Preserve the original unconfirmed error and the complete `policy list` output for support.
+- If `policy list` reports no disagreement for the unconfirmed mutation, compare the live preset set with the selection in the failed session.
+  Resume only if the live policy still requires the unconfirmed addition or removal to match that selection.
+  Otherwise, start fresh onboarding and select the exact preset set that `policy list` reports as active.
+
 ### Previous onboarding session failed
 
 If a previous `$$nemoclaw onboard` attempt fails partway through (for example, a provider or inference-setup step reporting an error), NemoClaw records the failure in `~/.nemoclaw/onboard-session.json`.

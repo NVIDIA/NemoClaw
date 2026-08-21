@@ -907,7 +907,7 @@ describe("created sandbox completion actions", () => {
               sandboxGpuDevice: null,
               sandboxGpuProof: null,
               openshellDriver: "docker",
-              openshellVersion: "0.0.101",
+              openshellVersion: "0.0.106",
             },
             agent: null,
             agentVersionKnown: true,
