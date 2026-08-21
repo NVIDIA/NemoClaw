@@ -26,6 +26,11 @@ import {
   buildHermesMcpStatusCommand,
   registerAgentAdapter,
 } from "./mcp-bridge-adapters";
+import { registerOpenClawAdapter } from "./mcp-bridge-adapter-openclaw";
+import {
+  entryHeaders,
+  mcporterHeadersMatchExpected,
+} from "./mcp-bridge-adapter-status";
 
 const baseEntry: McpBridgeEntry = {
   server: "github",
@@ -112,5 +117,40 @@ describe.each(adapterCases)("$name MCP adapter registration", (adapterCase) => {
         GITHUB_TOKEN: "host-only-secret",
       }),
     ).toThrow(`${adapterCase.adapter} config verification failed after adding 'github': mismatch.`);
+  });
+});
+
+describe("OpenClaw MCP adapter registration", () => {
+  beforeEach(() => {
+    mocks.executeSandboxCommand.mockReset();
+  });
+
+  it("rejects a v11 post-write observation after registering the readiness-proven v12", () => {
+    const entry: McpBridgeEntry = {
+      ...baseEntry,
+      agent: "openclaw",
+      adapter: "mcporter",
+    };
+    const actualV11Headers = {
+      Authorization: "Bearer openshell:resolve:env:v11_GITHUB_TOKEN",
+    };
+    const verification = mcporterHeadersMatchExpected(actualV11Headers, entryHeaders(entry, "v12"))
+      ? registered
+      : mismatch;
+    mocks.executeSandboxCommand
+      .mockReturnValueOnce({ status: 0, stdout: "/usr/bin/mcporter\n", stderr: "" })
+      .mockReturnValueOnce(commandSuccess)
+      .mockReturnValueOnce(verification);
+
+    expect(() =>
+      registerOpenClawAdapter("alpha", entry, { GITHUB_TOKEN: "host-only-secret" }, false, "v12"),
+    ).toThrow("mcporter config verification failed after adding 'github': mismatch");
+
+    expect(mocks.executeSandboxCommand.mock.calls[1]?.[1]).toContain(
+      "Authorization=Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+    );
+    expect(mocks.executeSandboxCommand.mock.calls[2]?.[1]).toContain(
+      "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+    );
   });
 });

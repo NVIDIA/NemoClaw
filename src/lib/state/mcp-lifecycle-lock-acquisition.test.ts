@@ -663,6 +663,25 @@ describe("MCP lifecycle lock acquisition", () => {
     expect(fs.existsSync(deadlinePath)).toBe(false);
   });
 
+  it("runs deadline release completion only after exact gates are absent (#9750)", async () => {
+    const processToken = "8".repeat(32);
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const deadlinePath = `${lockPath}.deadline`;
+    writeTimerMarker(processToken);
+    const onReleased = vi.fn(() => {
+      expect(fs.existsSync(lockPath)).toBe(false);
+      expect(fs.existsSync(deadlinePath)).toBe(false);
+    });
+
+    await expect(
+      withMcpLifecycleDeadlineFence(SANDBOX_NAME, processToken, () => "complete", {
+        ...options(),
+        onReleased,
+      }),
+    ).resolves.toBe("complete");
+    expect(onReleased).toHaveBeenCalledOnce();
+  });
+
   it("contains a stale async main generation that records a rotated Shields timer token", async () => {
     const ownerToken = "3".repeat(32);
     const currentToken = "4".repeat(32);

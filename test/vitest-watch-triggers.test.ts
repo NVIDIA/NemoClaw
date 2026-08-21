@@ -27,6 +27,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/mcp-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-compatibility.test.ts",
   "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
+  "test/e2e/support/onboard-timeout-contract.test.ts",
   "test/e2e/support/openshell-gateway-auth-contract-workflow-boundary.test.ts",
   "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
   "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
@@ -45,6 +46,7 @@ const OPAQUE_INPUTS = [
   "scripts/release-daily-brev-image.sh",
   ".github/workflows/release-lkg-brev-image.yaml",
   "scripts/release-lkg-brev-image.sh",
+  "tools/e2e/brev-launchable-e2e.sh",
   "managed-inference/models/example.yaml",
   "managed-inference/recipes/vllm.example.managed-cluster.v1.yaml",
   "internal/security-reviews/hermes-0.19.0-dependency-review.md",
@@ -112,6 +114,12 @@ describe("Vitest opaque-input watch triggers", () => {
       expect(triggeredBy(inputPath)).toEqual(["test/release-lkg-brev-image.test.ts"]);
     },
   );
+
+  it("maps the Launchable host harness to its integration contract (#6409)", () => {
+    expect(triggeredBy("tools/e2e/brev-launchable-e2e.sh")).toEqual([
+      "test/brev-launchable-e2e.test.ts",
+    ]);
+  });
 
   it.each([
     ".github/actions/docker-auth-setup/action.yaml",
