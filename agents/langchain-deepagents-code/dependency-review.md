@@ -77,8 +77,9 @@ it as an MCP tool and its protocol annotations are coherently read-only. It
 does not expose a mutating tool command or ask a model to choose the call.
 
 The command accepts one bounded JSON object on standard input. It returns one
-bounded JSON envelope on standard output, rejects oversized nested results before serialization,
-redacts recognized credential shapes, preserves the MCP
+JSON envelope of at most 131,072 bytes, followed by one newline delimiter, so
+standard output is at most 131,073 bytes. It rejects oversized nested results
+before serialization, redacts recognized credential shapes, preserves the MCP
 `structuredContent` object under `structured_content`, and suppresses child
 diagnostics on standard error. Fixed, content-free errors cover unavailable,
 ambiguous, unsafe, failed, malformed, oversized, and timed-out calls. A fixed
