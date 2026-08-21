@@ -22,7 +22,7 @@ export default async function run_github_cli(input: {
     api: null,
     auth: new Set(["status"]),
     issue: new Set(["list", "view"]),
-    pr: new Set(["checks", "list", "view", "merge", "ready", "review"]),
+    pr: new Set(["checks", "create", "list", "view", "merge", "ready", "review"]),
     repo: new Set(["view"]),
     run: new Set(["list", "view"]),
     workflow: new Set(["list", "view"]),
@@ -65,7 +65,7 @@ export default async function run_github_cli(input: {
       (operation === "graphql"
         ? !graphQlRead
         : method !== "GET" || (fieldFlags && methodIndex < 0 && attachedMethod === undefined))) ||
-    (command === "pr" && new Set(["merge", "ready", "review"]).has(operation));
+    (command === "pr" && new Set(["create", "merge", "ready", "review"]).has(operation));
   if (mutating && input.apply !== true)
     throw new Error("mutating GitHub CLI operations require apply: true");
   const accepted = input.acceptedExitCodes ?? [0];

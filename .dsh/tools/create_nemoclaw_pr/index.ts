@@ -91,7 +91,13 @@ export default async function create_nemoclaw_pr(input: {
     throw new Error(diagnostic.text || "Could not read commit sign-off trailers");
   }
   const trailerRows = trailerResult.stdout.text.split(/\r?\n/).filter(Boolean);
-  if (!trailerRows.length || trailerRows.some((row) => !row.includes("\t")))
+  if (
+    !trailerRows.length ||
+    trailerRows.some((row) => {
+      const separator = row.indexOf("\t");
+      return separator < 1 || row.slice(separator + 1).trim().length === 0;
+    })
+  )
     throw new Error("Every candidate commit must contain a Signed-off-by trailer");
   let assignee = null;
   if (input.assignee !== false) {

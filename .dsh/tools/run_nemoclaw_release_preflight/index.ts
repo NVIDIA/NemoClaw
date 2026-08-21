@@ -76,7 +76,11 @@ export default async function run_nemoclaw_release_preflight(input: {
     throw new Error("branch is not a valid Git branch name");
   if (apply) {
     const fetched = await tools.bash({
-      command: "git fetch --prune " + q(remote) + " " + q(branch),
+      command:
+        "git fetch --prune " +
+        q(remote) +
+        " " +
+        q("refs/heads/" + branch + ":refs/remotes/" + remote + "/" + branch),
       workdir: input.workdir,
       description: "Refresh release candidate reference",
       timeoutMs: 120000,
@@ -172,6 +176,28 @@ export default async function run_nemoclaw_release_preflight(input: {
       timeoutMs: 60000,
     }),
   ]);
+  if (subjectResult.kind !== "foreground" || subjectResult.exitCode !== 0)
+    return {
+      stage: "version-unavailable",
+      apply,
+      candidateSha,
+      previousTag,
+      error:
+        subjectResult.kind === "foreground"
+          ? await diagnostic(subjectResult.stderr.text, subjectResult.stderr.truncated)
+          : "unexpected result",
+    };
+  if (changelogResult.kind !== "foreground" || changelogResult.exitCode !== 0)
+    return {
+      stage: "version-unavailable",
+      apply,
+      candidateSha,
+      previousTag,
+      error:
+        changelogResult.kind === "foreground"
+          ? await diagnostic(changelogResult.stderr.text, changelogResult.stderr.truncated)
+          : "unexpected result",
+    };
   if (runResult.code !== 0)
     return { stage: "github-runs-failed", apply, error: await diagnostic(runResult.stderr) };
   let parsedRuns;
