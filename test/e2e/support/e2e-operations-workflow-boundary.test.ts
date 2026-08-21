@@ -19,6 +19,8 @@ import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (
   ...parameters: string[]
 ) => (...args: unknown[]) => Promise<unknown>;
+const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
+  "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 
 function workflowScript(jobName: string, stepName: string): string {
   const workflow = readE2eOperationsWorkflow();
@@ -32,12 +34,16 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
     expect(validateE2eOperationsWorkflowBoundary()).toEqual([]);
   });
 
-  it("requires the live job to upload cold-onboard performance evidence (#6660)", () => {
+  it("rejects a lookalike live cold-onboard performance artifact path (#6660)", () => {
     const workflow = readE2eOperationsWorkflow();
     const upload = workflow.jobs.live.steps!.find((step) => step.name === "Upload E2E artifacts")!;
     upload.with!.path = String(upload.with!.path)
       .split("\n")
-      .filter((line) => !line.includes("onboard-progress-budget.json"))
+      .map((line) =>
+        line.trim() === COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH
+          ? `${COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH}.backup`
+          : line,
+      )
       .join("\n");
 
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
