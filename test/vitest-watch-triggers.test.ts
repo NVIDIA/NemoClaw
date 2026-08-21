@@ -28,6 +28,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/mcp-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-compatibility.test.ts",
   "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
+  "test/e2e/support/onboard-timeout-contract.test.ts",
   "test/e2e/support/openshell-gateway-auth-contract-workflow-boundary.test.ts",
   "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
   "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
@@ -67,6 +68,7 @@ const OPAQUE_INPUTS = [
   ".github/workflows/base-image.yaml",
   ".github/workflows/base-image-platform.yaml",
   "scripts/export-managed-base-image-contract.sh",
+  "scripts/checks/download-hermes-source-archive.sh",
   "scripts/checks/validate-managed-base-index.sh",
   "scripts/e2e/sanitize-trace-timing.py",
   "test/e2e/manifests/openclaw-nvidia.yaml",
@@ -89,6 +91,10 @@ const OPAQUE_INPUTS = [
   ".github/workflows/platform-vitest-main.yaml",
   "tools/wsl/ci-helper.ps1",
   "ci/platform-vitest-macos-requirements.lock",
+  ".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md",
+  ".agents/skills/nemoclaw-maintainer-evening/SKILL.md",
+  ".agents/skills/nemoclaw-maintainer-release-notes/SKILL.md",
+  ".agents/skills/nemoclaw-maintainer-policies/references/release-train.md",
 ] as const;
 
 function triggeredBy(relativePath: string): string[] {
@@ -146,11 +152,16 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("agents/hermes/Dockerfile.base")).toEqual([
       "test/hermes-dependency-review.test.ts",
       "test/hermes-share-mount-deps.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
       "test/sandbox-provisioning.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",
       "test/hermes-mcp-runtime-capability.test.ts",
+    ]);
+    expect(triggeredBy("scripts/checks/download-hermes-source-archive.sh")).toEqual([
+      "test/hermes-share-mount-deps.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
     ]);
     expect(triggeredBy("agents/langchain-deepagents-code/Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",
@@ -284,6 +295,18 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("ci/platform-vitest-macos-requirements.lock")).toEqual([
       "test/platform-vitest-main-workflow.test.ts",
     ]);
+    expect(triggeredBy(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md")).toEqual([
+      "test/release-post-tag-follow-through.test.ts",
+    ]);
+    expect(triggeredBy(".agents/skills/nemoclaw-maintainer-evening/SKILL.md")).toEqual([
+      "test/release-post-tag-follow-through.test.ts",
+    ]);
+    expect(triggeredBy(".agents/skills/nemoclaw-maintainer-release-notes/SKILL.md")).toEqual([
+      "test/release-post-tag-follow-through.test.ts",
+    ]);
+    expect(
+      triggeredBy(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md"),
+    ).toEqual(["test/release-post-tag-follow-through.test.ts"]);
   });
 
   it.each(Array.from(vitestWatchTriggerPatterns, (value) => [value]))(

@@ -84,7 +84,10 @@ describe("rebuildSandbox flow: lifecycle", () => {
     ).resolves.toBeUndefined();
 
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
-    expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ captureStateFile: expect.any(Function) }),
+    );
     expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha");
     expect(harness.prepareMcpBridgesForRebuildSpy.mock.invocationCallOrder[0]).toBeLessThan(
       harness.warnUnpreservedUserManagedFilesSpy.mock.invocationCallOrder[0],

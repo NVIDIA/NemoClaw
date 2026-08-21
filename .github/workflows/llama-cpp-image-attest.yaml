@@ -123,9 +123,16 @@ jobs:
           format: ${{ needs.validate-inputs.outputs.sbom_format }}
           artifact-name: llama-cpp-sbom-amd64-${{ needs.validate-inputs.outputs.candidate_tag }}
           output-file: llama-cpp-sbom-amd64.spdx.json
-          upload-artifact: true
-          upload-artifact-retention: ${{ needs.validate-inputs.outputs.retention_days }}
+          upload-artifact: false
           upload-release-assets: false
+
+      - name: Upload amd64 SPDX SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: llama-cpp-sbom-amd64-${{ needs.validate-inputs.outputs.candidate_tag }}
+          path: llama-cpp-sbom-amd64.spdx.json
+          if-no-files-found: error
+          retention-days: ${{ needs.validate-inputs.outputs.retention_days }}
 
       - name: Generate arm64 SPDX SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
@@ -136,9 +143,16 @@ jobs:
           format: ${{ needs.validate-inputs.outputs.sbom_format }}
           artifact-name: llama-cpp-sbom-arm64-${{ needs.validate-inputs.outputs.candidate_tag }}
           output-file: llama-cpp-sbom-arm64.spdx.json
-          upload-artifact: true
-          upload-artifact-retention: ${{ needs.validate-inputs.outputs.retention_days }}
+          upload-artifact: false
           upload-release-assets: false
+
+      - name: Upload arm64 SPDX SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: llama-cpp-sbom-arm64-${{ needs.validate-inputs.outputs.candidate_tag }}
+          path: llama-cpp-sbom-arm64.spdx.json
+          if-no-files-found: error
+          retention-days: ${{ needs.validate-inputs.outputs.retention_days }}
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2

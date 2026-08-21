@@ -481,6 +481,7 @@ export async function execSandbox(
   const emitPolicyDenialHint = preparePolicyHint(
     CLI_NAME,
     sandboxName,
+    command,
     deps.policyHint,
     gatewayName,
   );
