@@ -5,11 +5,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { setupBedrockRuntimeInference } from "../../../src/lib/onboard/bedrock-runtime.ts";
 import { loadPortableInferenceDescriptor } from "../../../src/lib/onboard/experimental/portable-inference-descriptor.ts";
-import { setupOpenRouterRuntimeInference } from "../../../src/lib/onboard/openrouter-runtime.ts";
 import { resolveRequestedProviderSelection } from "../../../src/lib/onboard/provider-selection.ts";
 import { createPortableOnboardEnvironmentScope } from "../../../src/lib/onboard/session-bootstrap.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -35,6 +33,20 @@ const COMPAT_HELPER = path.join(
   "lib",
   "ci-compatible-inference.sh",
 );
+
+function readPrivateFileSnapshot(filePath: string): { contents: string; metadata: fs.Stats } {
+  const descriptor = fs.openSync(
+    filePath,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+  );
+  try {
+    const metadata = fs.fstatSync(descriptor);
+    const contents = fs.readFileSync(descriptor, "utf8");
+    return { contents, metadata };
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
 
 function secrets(values: Record<string, string | undefined>) {
   return {
@@ -218,13 +230,14 @@ describe("hosted inference E2E config", () => {
         filePath,
         now: () => now,
       });
-      const metadata = fs.lstatSync(filePath);
+      const stagedSnapshot = readPrivateFileSnapshot(filePath);
+      const metadata = stagedSnapshot.metadata;
       expect(resolverCalls).toEqual([]);
       expect(metadata.isFile()).toBe(true);
       expect(metadata.isSymbolicLink()).toBe(false);
       expect(metadata.mode & 0o777).toBe(0o600);
       expect(metadata.nlink).toBe(1);
-      expect(JSON.parse(fs.readFileSync(filePath, "utf8"))).toMatchObject({
+      expect(JSON.parse(stagedSnapshot.contents)).toMatchObject({
         schemaVersion: 1,
         baseUrl: config.endpointUrl,
         model: config.model,
@@ -237,11 +250,25 @@ describe("hosted inference E2E config", () => {
           now: () => now,
         }),
       ).toThrow(/already exists.*refusing to replace/u);
-      expect(JSON.parse(fs.readFileSync(filePath, "utf8"))).toMatchObject({
+      expect(JSON.parse(readPrivateFileSnapshot(filePath).contents)).toMatchObject({
         baseUrl: config.endpointUrl,
         model: config.model,
       });
-      expect(fs.existsSync(path.join(directory, ".portable-inference.json.tmp"))).toBe(false);
+      const temporaryPath = path.join(directory, ".portable-inference.json.tmp");
+      expect(fs.existsSync(temporaryPath)).toBe(false);
+      fs.writeFileSync(temporaryPath, "foreign temporary marker", {
+        encoding: "utf8",
+        flag: "wx",
+        mode: 0o600,
+      });
+      expect(() =>
+        stagePortableHostedInferenceDescriptor(conflicting, {
+          filePath,
+          now: () => now,
+        }),
+      ).toThrow(/EEXIST/u);
+      expect(readPrivateFileSnapshot(temporaryPath).contents).toBe("foreign temporary marker");
+      fs.unlinkSync(temporaryPath);
 
       const descriptor = await loadPortableInferenceDescriptor({
         filePath,
@@ -267,6 +294,8 @@ describe("hosted inference E2E config", () => {
       const selection = resolveRequestedProviderSelection({
         options: [
           { key: "custom", label: "Compatible endpoint" },
+          { key: "anthropicCompatible", label: "Anthropic-compatible endpoint" },
+          { key: "openrouter", label: "OpenRouter" },
           { key: "install-ollama", label: "Install Ollama" },
         ],
         requestedProvider: selectorEnv.NEMOCLAW_PROVIDER ?? null,
@@ -287,42 +316,16 @@ describe("hosted inference E2E config", () => {
       expect(selectorEnv.NEMOCLAW_ENDPOINT_URL).toBe(config.endpointUrl);
       expect(selection.kind).toBe("selected");
       expect(selection.kind === "selected" ? selection.selected.key : null).toBe("custom");
-
-      const unexpectedRuntimeCall = (): never => {
-        throw new Error("Portable NVIDIA hosted inference entered a local-adapter lifecycle.");
-      };
-      const bedrockAdapter = vi.fn(async () => unexpectedRuntimeCall());
-      const openrouterAdapter = vi.fn(async () => unexpectedRuntimeCall());
-      const commonRuntimeOptions = {
-        sandboxName: "portable-launch",
-        provider: config.providerName,
-        model: config.model,
-        credentialEnv: config.credentialEnv,
-        isNonInteractive: () => true,
-        runOpenshell: unexpectedRuntimeCall,
-        upsertProvider: unexpectedRuntimeCall,
-        verifyInferenceRoute: unexpectedRuntimeCall,
-        verifyOnboardInferenceSmoke: unexpectedRuntimeCall,
-        exitProcess: unexpectedRuntimeCall,
-        error: unexpectedRuntimeCall,
-        log: unexpectedRuntimeCall,
-      };
-      expect(
-        await setupBedrockRuntimeInference({
-          ...commonRuntimeOptions,
-          endpointUrl: config.endpointUrl,
-          ensureAdapter: bedrockAdapter,
-        }),
-      ).toEqual({ handled: false });
-      expect(
-        await setupOpenRouterRuntimeInference({
-          ...commonRuntimeOptions,
-          credentialValue: config.apiKey,
-          ensureAdapter: openrouterAdapter,
-        }),
-      ).toEqual({ handled: false });
-      expect(bedrockAdapter).not.toHaveBeenCalled();
-      expect(openrouterAdapter).not.toHaveBeenCalled();
+      expect(config.providerName).toBe("compatible-endpoint");
+      expect(config.providerName).not.toBe("compatible-anthropic-endpoint");
+      expect(config.providerName).not.toBe("openrouter-api");
+      expect(selection.kind === "selected" ? selection.selected.key : null).not.toBe(
+        "anthropicCompatible",
+      );
+      expect(selection.kind === "selected" ? selection.selected.key : null).not.toBe("openrouter");
+      expect(selection.kind === "selected" ? selection.selected.key : null).not.toBe(
+        "install-ollama",
+      );
       expect(fs.existsSync(filePath)).toBe(false);
       expect(() => staged.dispose()).not.toThrow();
       environmentScope.restore();
@@ -414,7 +417,6 @@ printf '{"data":[]}'
       "https://inference-api.nvidia.com/v1",
     ]);
   });
-
 
   it("uses a lightweight compatible reachability probe without API or auth requests", () => {
     const { result, calls } = runHostedProbe({

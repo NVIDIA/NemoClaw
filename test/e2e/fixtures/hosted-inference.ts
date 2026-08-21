@@ -87,6 +87,16 @@ function removeExactDescriptor(filePath: string, expected: fs.Stats): void {
   fs.unlinkSync(filePath);
 }
 
+function removeOwnedDescriptorAfterFailure(filePath: string, expected: fs.Stats | null): void {
+  if (!expected) return;
+  try {
+    removeExactDescriptor(filePath, expected);
+  } catch {
+    // Preserve the staging failure. The workflow's always-run cleanup still
+    // owns exact-path removal and reports a cleanup failure separately.
+  }
+}
+
 export function stagePortableHostedInferenceDescriptor(
   config: HostedInferenceConfig,
   options: { readonly filePath?: string; readonly now?: () => number } = {},
@@ -109,10 +119,12 @@ export function stagePortableHostedInferenceDescriptor(
     ).toISOString(),
   };
   const temporary = path.join(directory, `.${path.basename(filePath)}.tmp`);
+  let stagedTemporary: fs.Stats | null = null;
   let published: fs.Stats | null = null;
   try {
     createPrivateRegularFile(temporary, `${JSON.stringify(descriptor)}\n`);
     const staged = fs.lstatSync(temporary);
+    stagedTemporary = staged;
     if (staged.uid !== uid || (staged.mode & 0o777) !== 0o600) {
       throw new Error(
         "Portable hosted inference staging did not create a current-user-owned mode-0600 file.",
@@ -130,6 +142,7 @@ export function stagePortableHostedInferenceDescriptor(
     }
     published = staged;
     fs.unlinkSync(temporary);
+    stagedTemporary = null;
 
     const final = fs.lstatSync(filePath);
     if (
@@ -145,16 +158,14 @@ export function stagePortableHostedInferenceDescriptor(
         "Portable hosted inference staging did not publish the staged current-user-owned mode-0600 single-link regular file.",
       );
     }
-    published = final;
     return {
       filePath,
       dispose: () => removeExactDescriptor(filePath, final),
     };
   } catch (error) {
-    if (published) removeExactDescriptor(filePath, published);
+    removeOwnedDescriptorAfterFailure(filePath, published);
+    removeOwnedDescriptorAfterFailure(temporary, stagedTemporary);
     throw error;
-  } finally {
-    fs.rmSync(temporary, { force: true });
   }
 }
 
