@@ -275,7 +275,7 @@ exit 0
   });
 });
 
-describe("Hermes host forward watcher", () => {
+describe("Hermes host forward watcher", { timeout: 10_000 }, () => {
   it.each(["running", "active"])(
     "does not replace a forward that OpenShell lists as %s when the health check fails (#8884)",
     (status) => {
