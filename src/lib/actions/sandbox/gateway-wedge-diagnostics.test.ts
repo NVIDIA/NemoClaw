@@ -48,7 +48,7 @@ describe("collectGatewayWedgeDiagnostics wedge signature (#4710)", () => {
       stderr: "",
     }));
     expect(lines[0]).toBe("gateway startup failed: Authorization: Bearer [REDACTED] rejected");
-    expect(lines[1]).toBe('gateway startup failed: api_key="[REDACTED] invalid');
+    expect(lines[1]).toBe('gateway startup failed: api_key="[REDACTED]" invalid');
     // Terminal escape sequences are stripped so sandbox output cannot forge
     // operator-terminal content.
     expect(lines[2]).toBe("gateway startup failed: [31mboom[0m Process will stay alive");
@@ -71,6 +71,21 @@ describe("sanitizeWedgeLogLine", () => {
     expect(sanitizeWedgeLogLine("PASSWORD: hunter2 rejected")).toBe(
       "PASSWORD: [REDACTED] rejected",
     );
+  });
+
+  it.each([
+    ['OPENAI_API_KEY="opaque api key value"', "opaque api key value"],
+    ["SERVICE_TOKEN='opaque token value'", "opaque token value"],
+    ['DATABASE_PASSWORD="opaque password value"', "opaque password value"],
+    ["WEBHOOK_SECRET='opaque secret value'", "opaque secret value"],
+  ])("redacts the complete quoted value in %s", (assignment, secret) => {
+    const sanitized = sanitizeWedgeLogLine(
+      `gateway startup failed: ${assignment}; safe diagnostic remains`,
+    );
+
+    expect(sanitized).not.toContain(secret);
+    expect(sanitized).toContain("REDACTED");
+    expect(sanitized).toContain("; safe diagnostic remains");
   });
 
   it("leaves ordinary wedge lines untouched", () => {

@@ -30,20 +30,25 @@ const WEDGE_LOG_SIGNATURE =
 // strip terminal control characters (no escape-sequence forgery in operator
 // terminals) and redact common credential shapes before printing.
 const CONTROL_CHARS_RE = new RegExp("[\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f]", "g");
-// These local patterns run after redactFull and stay: their `nvapi-\S+` catch-all
+// These local patterns run after redactFull and stay: the `nvapi-\S+` catch-all
 // is unbounded where the shared one requires ten or more characters.
-const SECRET_PATTERNS: RegExp[] = [
-  /\b(authorization\s*:\s*bearer)\s+\S+/gi,
-  /\b(api[-_]?key|token|secret|password)(["']?\s*[=:]\s*["']?)\S+/gi,
-  /\bnvapi-\S+/gi,
-];
+const AUTHORIZATION_PATTERN = /\b(authorization\s*:\s*bearer)\s+\S+/gi;
+const LOCAL_SECRET_ASSIGNMENT_PATTERN =
+  /\b(api[-_]?key|token|secret|password)(["']?\s*[=:]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/gi;
+const NVAPI_PATTERN = /\bnvapi-\S+/gi;
 
 export function sanitizeWedgeLogLine(line: string): string {
   let sanitized = line.replace(CONTROL_CHARS_RE, "");
   sanitized = redactFull(sanitized);
-  sanitized = sanitized.replace(SECRET_PATTERNS[0], "$1 [REDACTED]");
-  sanitized = sanitized.replace(SECRET_PATTERNS[1], "$1$2[REDACTED]");
-  sanitized = sanitized.replace(SECRET_PATTERNS[2], "[REDACTED]");
+  sanitized = sanitized.replace(AUTHORIZATION_PATTERN, "$1 [REDACTED]");
+  sanitized = sanitized.replace(
+    LOCAL_SECRET_ASSIGNMENT_PATTERN,
+    (_match: string, key: string, separator: string, value: string) => {
+      const quote = value.startsWith('"') ? '"' : value.startsWith("'") ? "'" : "";
+      return `${key}${separator}${quote}[REDACTED]${quote}`;
+    },
+  );
+  sanitized = sanitized.replace(NVAPI_PATTERN, "[REDACTED]");
   return sanitized.trim();
 }
 

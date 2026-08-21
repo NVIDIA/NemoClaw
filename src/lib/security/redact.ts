@@ -45,8 +45,9 @@ const SENSITIVE_ENV_ASSIGNMENT_KEYS = [
   ...listMessagingCredentialMetadata().map((credential) => credential.providerEnvKey),
 ];
 
+const SENSITIVE_ENV_ASSIGNMENT_VALUE = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)`;
 const SENSITIVE_ENV_ASSIGNMENT_PATTERN = new RegExp(
-  `(${SENSITIVE_ENV_ASSIGNMENT_KEYS.map(escapeRegExp).join("|")})=\\S+`,
+  `(${SENSITIVE_ENV_ASSIGNMENT_KEYS.map(escapeRegExp).join("|")})=${SENSITIVE_ENV_ASSIGNMENT_VALUE}`,
   "gi",
 );
 
@@ -100,6 +101,19 @@ export function writeRedactedResult(
 
 // ── Full redaction (debug.ts style) ─────────────────────────────
 
+const UNDERSCORE_SECRET_ASSIGNMENT_KEY_SOURCE =
+  "(?:[A-Za-z0-9]{1,128}_(?:key|token|secret|credential|password|passwd|pass)|(?:x[-_])?api[-_]key|token|secret|credential|password|passwd|pass)";
+const CAMEL_SECRET_ASSIGNMENT_KEY_SOURCE =
+  "(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))";
+
+function quotedSecretAssignmentPatterns(keySource: string, flags: string): [RegExp, string][] {
+  const prefix = `((?:^|[^A-Za-z0-9])${keySource}["']?(?:[ \\t]{0,32}[=:][ \\t]{0,32}|[ \\t]{1,32}))`;
+  return [
+    [new RegExp(`${prefix}"(?:\\\\.|[^"\\\\])*"`, flags), '$1"<REDACTED>"'],
+    [new RegExp(`${prefix}'(?:\\\\.|[^'\\\\])*'`, flags), "$1'<REDACTED>'"],
+  ];
+}
+
 const FULL_REDACT_PATTERNS: [RegExp, string][] = [
   ...SECRET_BLOCK_PATTERNS.map((p): [RegExp, string] => [
     new RegExp(p.source, p.flags),
@@ -142,6 +156,9 @@ const FULL_REDACT_PATTERNS: [RegExp, string][] = [
     "$1 <REDACTED>",
   ],
   [/(\b(?:cookie|set-cookie)[ \t]*[:=][ \t]*)[^\r\n]*/gi, "$1<REDACTED>"],
+  ...quotedSecretAssignmentPatterns(UNDERSCORE_SECRET_ASSIGNMENT_KEY_SOURCE, "gi"),
+  ...quotedSecretAssignmentPatterns(CAMEL_SECRET_ASSIGNMENT_KEY_SOURCE, "g"),
+  ...quotedSecretAssignmentPatterns("KEY", "g"),
   [
     /((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:key|token|secret|credential|password|passwd|pass)|(?:x[-_])?api[-_]key|token|secret|credential|password|passwd|pass)["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]+((?:"|')?)/gi,
     "$1<REDACTED>$2",
