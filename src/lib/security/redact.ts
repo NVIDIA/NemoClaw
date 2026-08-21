@@ -45,8 +45,8 @@ const SENSITIVE_ENV_ASSIGNMENT_KEYS = [
   ...listMessagingCredentialMetadata().map((credential) => credential.providerEnvKey),
 ];
 
-const DOUBLE_QUOTED_SECRET_ASSIGNMENT_VALUE = String.raw`"(?:\\.|[^"\\\r\n])*(?:"|(?:\\)?(?=\r?\n|$))`;
-const SINGLE_QUOTED_SECRET_ASSIGNMENT_VALUE = String.raw`'(?:\\.|[^'\\\r\n])*(?:'|(?:\\)?(?=\r?\n|$))`;
+const DOUBLE_QUOTED_SECRET_ASSIGNMENT_VALUE = String.raw`"(?:\\.|[^"\\\r\n])*(?:"|(?:\\)?(?=\r\n?|\n|$))`;
+const SINGLE_QUOTED_SECRET_ASSIGNMENT_VALUE = String.raw`'(?:\\.|[^'\\\r\n])*(?:'|(?:\\)?(?=\r\n?|\n|$))`;
 const SENSITIVE_ENV_ASSIGNMENT_VALUE = `(?:${DOUBLE_QUOTED_SECRET_ASSIGNMENT_VALUE}|${SINGLE_QUOTED_SECRET_ASSIGNMENT_VALUE}|\\S+)`;
 const SENSITIVE_ENV_ASSIGNMENT_PATTERN = new RegExp(
   `(${SENSITIVE_ENV_ASSIGNMENT_KEYS.map(escapeRegExp).join("|")})=${SENSITIVE_ENV_ASSIGNMENT_VALUE}`,

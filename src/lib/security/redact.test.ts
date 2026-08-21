@@ -108,14 +108,35 @@ describe("redactForLog", () => {
       "OPENAI_API_KEY='opaque first second\\\nsafe diagnostic",
       "OPENAI_API_KEY='<REDACTED>'\nsafe diagnostic",
     ],
+    [
+      "double-quoted before a bare carriage return",
+      'OPENAI_API_KEY="opaque first second\rsafe diagnostic',
+      'OPENAI_API_KEY="<REDACTED>"\rsafe diagnostic',
+    ],
+    [
+      "single-quoted before a bare carriage return",
+      "OPENAI_API_KEY='opaque first second\rsafe diagnostic",
+      "OPENAI_API_KEY='<REDACTED>'\rsafe diagnostic",
+    ],
+    [
+      "double-quoted with a dangling backslash before a bare carriage return",
+      'OPENAI_API_KEY="opaque first second\\\rsafe diagnostic',
+      'OPENAI_API_KEY="<REDACTED>"\rsafe diagnostic',
+    ],
+    [
+      "single-quoted with a dangling backslash before a bare carriage return",
+      "OPENAI_API_KEY='opaque first second\\\rsafe diagnostic",
+      "OPENAI_API_KEY='<REDACTED>'\rsafe diagnostic",
+    ],
   ])(
     "fails closed at line end for an unterminated %s environment assignment (#9863)",
     (_case, assignment, expectedFull) => {
       const full = redactFull(assignment);
       const sensitive = redactSensitiveText(assignment);
+      const suffix = assignment.includes("\r") ? "\rsafe diagnostic" : "\nsafe diagnostic";
 
       expect(full).toBe(expectedFull);
-      expect(sensitive).toBe("OPENAI_API_KEY=<REDACTED>\nsafe diagnostic");
+      expect(sensitive).toBe(`OPENAI_API_KEY=<REDACTED>${suffix}`);
     },
   );
 
