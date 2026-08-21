@@ -9,17 +9,35 @@ import { assertHermesPortableCommandUnavailable } from "../../onboard/experiment
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
+  type SandboxSession,
 } from "../../state/sandbox-session";
 
-function countActiveSandboxSessions(sandboxName: string): number {
+function findActiveSandboxSessions(sandboxName: string): SandboxSession[] {
   const opsBin = resolveOpenshell();
-  if (!opsBin) return 0;
+  if (!opsBin) return [];
   try {
     const result = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBin));
-    return result.detected ? result.sessions.length : 0;
+    return result.detected ? result.sessions : [];
   } catch {
-    return 0;
+    return [];
   }
+}
+
+function printActiveSessionWarning(sessions: SandboxSession[]): void {
+  if (sessions.length < 1) return;
+  const plural = sessions.length > 1 ? "sessions" : "session";
+  // #9855 asked for the detected PIDs, not just a count, so the operator can
+  // identify whose session is about to break before they confirm the destroy.
+  const pids =
+    sessions.length === 1
+      ? `PID ${sessions[0]?.pid}`
+      : `PIDs ${sessions.map((session) => session.pid).join(", ")}`;
+  console.log(
+    `  ${YW}⚠  Active SSH ${plural} detected (${sessions.length} connection${sessions.length > 1 ? "s" : ""}, ${pids})${R}`,
+  );
+  console.log(
+    `  Destroying will terminate ${sessions.length === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`,
+  );
 }
 
 export function assertSandboxDestroyCommandAvailable(sandboxName: string): void {
@@ -30,21 +48,18 @@ export async function confirmSandboxDestroy(
   sandboxName: string,
   options: DestroySandboxOptions,
 ): Promise<boolean> {
-  // Preserve the existing best-effort session probe even for pre-confirmed
-  // destroys; callers historically performed it before checking --yes/--force.
-  const activeSessionCount = countActiveSandboxSessions(sandboxName);
-  if (options.yes === true || options.force === true) return true;
+  const activeSessions = findActiveSandboxSessions(sandboxName);
+  // #9855: --yes/--force waives the confirmation prompt, not the notice that
+  // this destroy is about to break somebody else's live SSH session. Without
+  // this the operator sees no warning and the connected terminal just gets a
+  // Broken pipe.
+  if (options.yes === true || options.force === true) {
+    printActiveSessionWarning(activeSessions);
+    return true;
+  }
 
   console.log(`  ${YW}Destroy sandbox '${sandboxName}'?${R}`);
-  if (activeSessionCount > 0) {
-    const plural = activeSessionCount > 1 ? "sessions" : "session";
-    console.log(
-      `  ${YW}⚠  Active SSH ${plural} detected (${activeSessionCount} connection${activeSessionCount > 1 ? "s" : ""})${R}`,
-    );
-    console.log(
-      `  Destroying will terminate ${activeSessionCount === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`,
-    );
-  }
+  printActiveSessionWarning(activeSessions);
   console.log("  This will permanently delete the sandbox and all workspace files inside it.");
   console.log("  This cannot be undone.");
   const answer = await askPrompt("  Type 'yes' to confirm, or press Enter to cancel [y/N]: ");

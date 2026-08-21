@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { listMessagingProviderSuffixes } from "../messaging/channels";
+import { listMessagingBridgeProfiles } from "./messaging-bridge-provider";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 
 export {
@@ -67,6 +68,10 @@ export type SandboxRecreateCleanupDeps = DetachSandboxProvidersDeps & {
 
 export const SANDBOX_PROVIDER_SUFFIXES = [
   ...listMessagingProviderSuffixes().map((suffix) => suffix.replace(/^-/, "")),
+  // Bridge-profile channels mint their provider outside the manifest credentials
+  // (nothing is delivered into the sandbox), so the credential-derived suffixes
+  // above miss them and destroy would leave the provider still minting a token.
+  ...new Set(listMessagingBridgeProfiles().map((profile) => `${profile.channelId}-bridge`)),
   "brave-search",
   "tavily-search",
 ] as readonly string[];

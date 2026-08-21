@@ -16,7 +16,7 @@ spec:
     image: vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416
     imageDownloadSizeBytes: 10670087425
     minimumComputeCapability: 100
-    minimumGpuMemoryBytes: 352381245521
+    # Station qualification validates the supported GB300 runtime. The model repository size is not an HBM minimum.
     pullTimeoutSeconds: 43200
     architecture: arm64
     networkMode: bridge

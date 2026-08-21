@@ -4,7 +4,6 @@
 import {
   assertHermesPortableCommandUnavailable,
   NemoClawCommand,
-  withSandboxCommandLifecycleLock,
 } from "../../../lib/cli/nemoclaw-oclif-command";
 import { sandboxNameArg } from "../../../lib/sandbox/command-support";
 import * as shields from "../../../lib/shields/index";
@@ -21,9 +20,9 @@ export default class ShieldsStatusCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args } = await this.parse(ShieldsStatusCommand);
-    await withSandboxCommandLifecycleLock(args.sandboxName, () => {
-      assertHermesPortableCommandUnavailable(args.sandboxName, "sandbox:shields:status");
-      shields.shieldsStatus(args.sandboxName);
+    shields.shieldsStatus(args.sandboxName, true, {
+      assertCommandAvailable: () =>
+        assertHermesPortableCommandUnavailable(args.sandboxName, "sandbox:shields:status"),
     });
   }
 }

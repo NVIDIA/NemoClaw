@@ -49,6 +49,7 @@ import {
 import {
   captureLaunchReadiness,
   LaunchReadinessEvidenceError,
+  type LaunchReadinessFailedCheck,
   type LaunchReadinessHealthDeps,
   LaunchReadinessObservationError as ObservationError,
   requireLaunchSemanticHealth,
@@ -61,6 +62,8 @@ import {
   OpenClawPairingQualificationError,
   type OpenClawPairingSettlementObservation,
 } from "./launch-readiness/openclaw-pairing-qualification";
+
+export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/timing";
 
 const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
 const ALLOWED_OPENSHELL_DRIVERS = new Set(["docker", "kubernetes", "vm"]);
@@ -131,6 +134,7 @@ export type LaunchReadinessPublicationResult =
   | {
       kind: "validation-failed";
       category: "identity" | "config" | "health" | "session";
+      failedCheck?: LaunchReadinessFailedCheck;
     }
   | { kind: "evidence-failed" };
 
@@ -834,13 +838,16 @@ function debugDecision(category: LaunchReadinessDecisionCategory): void {
   );
 }
 
-function publicationValidationCategory(
-  error: unknown,
-): LaunchReadinessPublicationValidationCategory | null {
+function publicationValidationCategory(error: unknown): {
+  category: LaunchReadinessPublicationValidationCategory;
+  failedCheck?: LaunchReadinessFailedCheck;
+} | null {
   if (!(error instanceof ObservationError)) return null;
-  return ["identity", "config", "health", "session"].includes(error.category)
-    ? (error.category as LaunchReadinessPublicationValidationCategory)
-    : null;
+  if (!["identity", "config", "health", "session"].includes(error.category)) return null;
+  return {
+    category: error.category as LaunchReadinessPublicationValidationCategory,
+    ...(error.failedCheck ? { failedCheck: error.failedCheck } : {}),
+  };
 }
 
 function fallback(
@@ -1214,9 +1221,9 @@ export async function publishLaunchReadiness(
         try {
           captured = await captureLaunchIdentity(sandboxName, gatewayName, gatewayPort, deps);
         } catch (error) {
-          const category = publicationValidationCategory(error);
-          return category
-            ? ({ kind: "validation-failed", category } as const)
+          const validation = publicationValidationCategory(error);
+          return validation
+            ? ({ kind: "validation-failed", ...validation } as const)
             : ({ kind: "evidence-failed" } as const);
         } finally {
           recordPerformanceStage("publication-validation", validationStartedAt);

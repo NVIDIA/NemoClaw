@@ -12,6 +12,8 @@ import type { ConfigObject } from "../../src/lib/security/credential-filter";
 import type { SandboxEntry } from "../../src/lib/state/registry";
 
 type ConnectSandbox = (typeof import("../../src/lib/actions/sandbox/connect"))["connectSandbox"];
+type WaitForSandboxReadyOrExit =
+  (typeof import("../../src/lib/actions/sandbox/connect"))["waitForSandboxReadyOrExit"];
 type RestoreSandboxStartupState =
   (typeof import("../../src/lib/actions/sandbox/connect"))["restoreSandboxStartupState"];
 type GatewayRouteMutationLock =
@@ -61,6 +63,7 @@ export type ConnectHarness = {
   runSetupDnsProxySpy: MockInstance;
   spawnSyncSpy: MockInstance;
   withGatewayRouteMutationLockSpy: MockInstance;
+  waitForSandboxReadyOrExit: WaitForSandboxReadyOrExit;
   writeSandboxConfigSpy: MockInstance;
 };
 
@@ -503,6 +506,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     runSetupDnsProxySpy,
     spawnSyncSpy,
     withGatewayRouteMutationLockSpy,
+    waitForSandboxReadyOrExit: requireDist(connectModulePath).waitForSandboxReadyOrExit,
     writeSandboxConfigSpy,
   };
 }
