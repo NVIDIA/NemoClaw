@@ -211,6 +211,7 @@ def _write_certificate(directory: Path, host: str) -> tuple[Path, Path]:
 
 def _wait_for_server(host: str, port: int, cert: Path, process: subprocess.Popen[bytes]) -> None:
     context = ssl.create_default_context(cafile=str(cert))
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         if process.poll() is not None:

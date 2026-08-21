@@ -107,6 +107,7 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     expect(validator).toContain('"worker-broker_worker_task_context"');
     expect(validator).toContain('"output_attestation"');
     expect(validator).toContain('name="hanging"');
+    expect(validator).toContain("ssl.TLSVersion.TLSv1_2");
     expect(validator).not.toContain("unittest.mock");
   });
 
