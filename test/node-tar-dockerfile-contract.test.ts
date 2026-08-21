@@ -67,14 +67,53 @@ const pinnedBaseDockerfiles = [
   "agents/pi/Dockerfile.base",
 ] as const;
 const reviewedNodeBases = new Set<string>(NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH);
-const npmConsumerPattern =
-  /\bnpm\s+(?:--?[\w-]+(?:=\S+)?\s+(?:\S+\s+)?)*(?:ci|install)\b/gu;
+
+interface ShellToken {
+  end: number;
+  value: string;
+}
+
+function isShellTokenBoundary(character: string): boolean {
+  return character === " " || character === "\t" || character === "\r" || character === "\n";
+}
+
+function readShellToken(source: string, start: number): ShellToken | undefined {
+  let cursor = start;
+  while (cursor < source.length && isShellTokenBoundary(source[cursor]!)) cursor += 1;
+  const tokenStart = cursor;
+  while (
+    cursor < source.length &&
+    !isShellTokenBoundary(source[cursor]!) &&
+    !";&|".includes(source[cursor]!)
+  ) {
+    cursor += 1;
+  }
+  const value = source.slice(tokenStart, cursor);
+  return value.length === 0 ? undefined : { end: cursor, value };
+}
+
+function npmSubcommand(source: string, start: number): ShellToken | undefined {
+  const token = readShellToken(source, start);
+  const prefix = token?.value === "--prefix" ? readShellToken(source, token.end) : undefined;
+  return token?.value === "--prefix"
+    ? prefix === undefined
+      ? undefined
+      : readShellToken(source, prefix.end)
+    : token?.value.startsWith("--prefix=") === true
+      ? readShellToken(source, token.end)
+      : token;
+}
 
 function npmConsumerPositions(source: string): number[] {
-  const executableSource = source.replace(/^\s*#.*$/gmu, (comment) =>
-    " ".repeat(comment.length),
-  );
-  return [...executableSource.matchAll(npmConsumerPattern)].map((match) => match.index);
+  const executableSource = source
+    .replace(/^\s*#.*$/gmu, (comment) => " ".repeat(comment.length))
+    .replace(/\\\s*\n/gu, (continuation) => " ".repeat(continuation.length));
+  return [...executableSource.matchAll(/\bnpm\b/gu)]
+    .filter((match) => {
+      const subcommand = npmSubcommand(executableSource, match.index + match[0].length);
+      return subcommand?.value === "ci" || subcommand?.value === "install";
+    })
+    .map((match) => match.index);
 }
 
 function nodeBaseReferences(source: string): string[] {
