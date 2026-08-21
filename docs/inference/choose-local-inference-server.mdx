@@ -113,7 +113,8 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
 The flag enables the dedicated vLLM profile gate, disables Express selection, and selects the matching catalog recipe.
 Selecting Express option 2 enables the same profile gate and selects the vLLM runtime.
 Do not combine this path with `NEMOCLAW_PROVIDER` or `NEMOCLAW_MODEL`.
-The profile rejects `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` before installation.
+`NEMOCLAW_VLLM_MODEL` can select a catalog model only when the catalog resolves it to the matching fixed recipe.
+The profile rejects a model that does not resolve to that recipe and all `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` values before installation.
 Set `NEMOCLAW_VLLM_PORT` before installation to use another host listener port.
 Before installation, ensure no other process or container owns `${NEMOCLAW_VLLM_PORT:-8000}` on `127.0.0.1` or on the private IPv4 gateway of `openshell-docker`.
 
