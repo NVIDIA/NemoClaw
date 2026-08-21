@@ -147,11 +147,12 @@ export default async function run_nemoclaw_release_preflight(input: {
     }),
     tools.bash({
       command:
-        "git grep -n " +
+        "set -o pipefail; status=0; git grep -n " +
         q("^## " + nextTag.replaceAll(".", "\\.")) +
         " " +
         q(ref) +
-        " -- 'docs/changelog/*.mdx' | sed -n '1,101p' || true",
+        " -- 'docs/changelog/*.mdx' | sed -n '1,101p' || status=$?; " +
+        'if [ "$status" -eq 1 ]; then exit 0; fi; exit "$status"',
       workdir: input.workdir,
       description: "Inspect bounded release changelog matches",
       timeoutMs: 60000,
