@@ -203,6 +203,9 @@ On Linux, the publication-failure diagnostic is redacted and does not print file
 
 Infrastructure must run `connect --probe-only` as the same final numeric user that later runs `launch`.
 Run it after the final durable home and state volume is mounted and after policy and network provisioning is complete.
+On completion, `connect --probe-only` writes one credential-free `Probe timing:` line with elapsed milliseconds for readiness, authority, lifecycle, gateway, processes, forward, inference, pairing, and publication stages.
+The line also reports the lifecycle and forward actions, the result, and the failed stage when the probe fails.
+Timing output is diagnostic only and does not change probe success or failure.
 NemoClaw rejects evidence after a bound sandbox, configuration, policy, or network identity changes.
 Deployment ordering remains responsible for external changes that OpenShell and NemoClaw cannot observe.
 

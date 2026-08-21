@@ -9,7 +9,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const SCRIPT = path.join(REPO_ROOT, "tools", "e2e", "brev-launchable-e2e.sh");
+const REAL_CUT = spawnSync("which", ["cut"], { encoding: "utf8" }).stdout.trim();
 const REAL_PYTHON3 = spawnSync("which", ["python3"], { encoding: "utf8" }).stdout.trim();
+const REAL_STAT = spawnSync("which", ["stat"], { encoding: "utf8" }).stdout.trim();
 const candidateSha = "a".repeat(40);
 const roots: string[] = [];
 
@@ -26,10 +28,14 @@ function fixture(
     bootImage?: string;
     brevExecStatus?: number;
     deleteFails?: boolean;
+    e2eDiagnosticTimesOut?: boolean;
     e2eFails?: boolean;
+    gatewayExecStart?: string;
     imageRepositorySha?: string;
+    listenerOutput?: string;
     missingProvisionReceipt?: boolean;
     omitReceiptField?: "imageName" | "imageRepositorySha" | "project";
+    platformDiagnosticFails?: boolean;
     provisionImageRepositorySha?: string;
     provisionSha?: string;
     ready?: boolean;
@@ -89,6 +95,11 @@ if [ "$FAKE_TIMEOUT_BLOCK_DIAGNOSTICS" = 1 ] && [[ "$duration" =~ ^[1-5]s$ ]]; t
     exit 124
   fi
 fi
+if [ "$FAKE_E2E_DIAGNOSTIC_TIMES_OUT" = 1 ] &&
+  [[ "$*" == *"openshell-gateway.service"* ]] && [[ "$*" == *"ExecMainCode"* ]]; then
+  /bin/sleep "\${duration%s}"
+  exit 124
+fi
 if [ -f "$FAKE_TIMEOUT_BLOCK" ] && [ "$should_block" -eq 1 ]; then
   rm -f "$FAKE_TIMEOUT_BLOCK"
   /bin/sleep "\${duration%s}"
@@ -100,6 +111,136 @@ exec "$@"
   executable(
     path.join(bin, "sleep"),
     '#!/usr/bin/env bash\nprintf "sleep %s\\n" "$*" >> "$FAKE_CALLS"\n',
+  );
+  executable(
+    path.join(bin, "sudo"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+[ "\${1:-}" != -n ] || shift
+exec "$@"
+`,
+  );
+  executable(
+    path.join(bin, "cut"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$*" = "-d. -f1 /proc/uptime" ]; then
+  printf '180\n'
+  exit 0
+fi
+exec ${JSON.stringify(REAL_CUT)} "$@"
+`,
+  );
+  executable(
+    path.join(bin, "stat"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+expected='--printf=gateway-state-dir type=%F uid=%u gid=%g mode=%a\\n'
+if [ "\${*: -1}" = /var/lib/brev/openshell-gateway ]; then
+  [ "$#" -eq 2 ]
+  [ "$1" = "$expected" ]
+  printf 'gateway-state-dir type=directory uid=1000 gid=1000 mode=750\n'
+  exit 0
+fi
+exec ${JSON.stringify(REAL_STAT)} "$@"
+`,
+  );
+  executable(
+    path.join(bin, "ss"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$FAKE_LISTENER_OUTPUT"
+`,
+  );
+  executable(
+    path.join(bin, "systemctl"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "show --no-pager --property=Id --property=ActiveState --property=SubState --property=Result --property=NRestarts --property=ActiveEnterTimestampMonotonic docker.service docker.socket")
+    if [ "$FAKE_PLATFORM_DIAGNOSTIC_FAILS" = 1 ]; then
+      printf 'platform api_key=brev-test-secret Authorization: Bearer github-test-token\n' >&2
+      printf '%s%s\n' '-----BEGIN PRIVATE ' 'KEY-----' >&2
+      printf '%s\n' 'private-key-material' >&2
+      printf '%s%s\n' '-----END PRIVATE ' 'KEY-----' >&2
+      printf '%05000d\n' 0 >&2
+      printf '\\033[31mplatform diagnostic safe detail\\033[0m password=journal-test-secret nvapi-test-value 203.0.113.20 workspace.hidden.internal\n' >&2
+      exit 42
+    fi
+    printf 'Id=docker.service\nActiveState=active\nSubState=running\nResult=success\n'
+    printf 'NRestarts=0\nActiveEnterTimestampMonotonic=1000\n\n'
+    printf 'Id=docker.socket\nActiveState=active\nSubState=running\nResult=success\n'
+    printf 'NRestarts=0\nActiveEnterTimestampMonotonic=1000\n' ;;
+  "show --no-pager --property=Requires --value openshell-gateway.service") printf 'docker.service\n' ;;
+  "show --no-pager --property=After --value openshell-gateway.service")
+    printf 'docker.service network.target\n' ;;
+  "show --no-pager --property=Wants --value docker.service") printf 'openshell-gateway.service\n' ;;
+  *"--property=Restart --value openshell-gateway.service"*) printf 'always\n' ;;
+  *"--property=ExecStart --value openshell-gateway.service"*) printf '%s\n' "$FAKE_GATEWAY_EXEC_START" ;;
+  *"--property=FragmentPath --value openshell-gateway.service"*)
+    printf '/etc/systemd/system/openshell-gateway.service\n' ;;
+  *"--property=DropInPaths --value openshell-gateway.service"*) printf '\n' ;;
+  *"--property=ControlGroup --value openshell-gateway.service"*)
+    printf '/system.slice/openshell-gateway.service\n' ;;
+  "show --no-pager --property=Id --property=LoadState --property=ActiveState --property=SubState --property=Result --property=ExecMainCode --property=ExecMainStatus --property=ActiveEnterTimestampMonotonic --property=InactiveEnterTimestampMonotonic cloud-final.service")
+    printf 'Id=cloud-final.service\nLoadState=loaded\nActiveState=active\nSubState=exited\n'
+    printf 'Result=success\nExecMainCode=1\nExecMainStatus=0\n'
+    printf 'ActiveEnterTimestampMonotonic=1200\nInactiveEnterTimestampMonotonic=0\n' ;;
+  *ExecMainCode*openshell-gateway.service*)
+    printf 'Id=openshell-gateway.service\nLoadState=loaded\nUnitFileState=enabled\n'
+    printf 'ActiveState=inactive\nSubState=dead\nResult=success\n'
+    printf 'ExecMainCode=1\nExecMainStatus=0\nNRestarts=0\n'
+    printf 'ActiveEnterTimestampMonotonic=1234\nActiveExitTimestampMonotonic=0\n'
+    printf 'InactiveEnterTimestampMonotonic=5678\nInactiveExitTimestampMonotonic=0\n' ;;
+  *) exit 2 ;;
+esac
+`,
+  );
+  executable(
+    path.join(bin, "journalctl"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "--boot _PID=1 --unit=openshell-gateway.service --no-pager --lines=80 --output=json")
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1000","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Starting OpenShell gateway"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1100","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Started OpenShell gateway"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1200","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"guest s3cr3t password=journal-test-secret 203.0.113.20"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1300","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Start request repeated too quickly"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1400","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Scheduled restart job, restart counter is at 1"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1500","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Main process exited, code=exited, status=1/FAILURE"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1600","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Failed with result exit-code"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1700","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Dependency failed for OpenShell gateway"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"2200","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Stopping OpenShell gateway"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"2300","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Deactivated successfully"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"2400","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Stopped OpenShell gateway"}' ;;
+  "--boot _PID=1 --unit=docker.service --unit=docker.socket --no-pager --lines=80 --output=json")
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"900","_SYSTEMD_UNIT":"docker.service","MESSAGE":"Starting Docker Application Container Engine"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"950","_SYSTEMD_UNIT":"docker.service","MESSAGE":"Started Docker Application Container Engine"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"960","UNIT":"docker.socket","_SYSTEMD_UNIT":"systemd.service","MESSAGE":"Started Docker Socket"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"970","_SYSTEMD_UNIT":"containerd.service","MESSAGE":"Container runtime event"}' ;;
+  *) exit 2 ;;
+esac
+`,
+  );
+  executable(
+    path.join(bin, "cat"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == /proc/*/cgroup ]]; then
+  pid="\${1#/proc/}"
+  pid="\${pid%/cgroup}"
+  case "$pid" in
+    98) printf '0::/system.slice/openshell-gateway.service\n' ;;
+    97) printf '0::/system.slice/openshell-gateway.service/delegated\n' ;;
+    96) printf '2:cpu,cpuacct:/system.slice/openshell-gateway.service\n' ;;
+    95) printf '2:cpu,cpuacct:/system.slice/openshell-gateway.service/delegated\n' ;;
+    94) printf '0::/system.slice/openshell-gateway.service-other\n' ;;
+    *) printf '0::/system.slice/unrelated.service\n' ;;
+  esac
+  exit 0
+fi
+exec /bin/cat "$@"
+`,
   );
   executable(
     path.join(bin, "python3"),
@@ -211,6 +352,15 @@ esac
     path.join(bin, "ssh"),
     `#!/usr/bin/env bash
 set -euo pipefail
+probe_options_present() {
+  required=(-T "-o BatchMode=yes" "-o ConnectTimeout=10" "-o ConnectionAttempts=1" "-o NumberOfPasswordPrompts=0" "-o RequestTTY=no" "-o LogLevel=ERROR")
+  for argument in "\${required[@]}"; do
+    [[ " $* " == *" $argument "* ]]
+  done
+  target="\${*: -2:1}"
+  [ "$target" = "$INSTANCE_NAME" ]
+  bash -n -c "\${*: -1}"
+}
 if [ "\${1:-}" = -G ]; then
   touch "$FAKE_DIAGNOSTIC_PHASE"
   [ "$FAKE_SSH_ALIAS_QUERY_STATUS" -eq 0 ] || exit "$FAKE_SSH_ALIAS_QUERY_STATUS"
@@ -223,12 +373,7 @@ if [ "\${1:-}" = -G ]; then
   exit 0
 fi
 if [ "\${*: -1}" = true ]; then
-  required=(-T "-o BatchMode=yes" "-o ConnectTimeout=10" "-o ConnectionAttempts=1" "-o NumberOfPasswordPrompts=0" "-o RequestTTY=no" "-o LogLevel=ERROR")
-  for argument in "\${required[@]}"; do
-    [[ " $* " == *" $argument "* ]]
-  done
-  target="\${*: -2:1}"
-  [ "$target" = "$INSTANCE_NAME" ]
+  probe_options_present "$@"
   if [ -f "$FAKE_DIAGNOSTIC_PHASE" ]; then
     if [ "$FAKE_SSH_PROBE_STATUS" -ne 0 ]; then
       printf '%s\n' "$FAKE_SSH_ERROR" >&2
@@ -251,6 +396,43 @@ if [ "\${*: -1}" = true ]; then
   fi
   exit 0
 fi
+remote="\${*: -1}"
+case "$remote" in
+  *ExecMainCode*openshell-gateway.service*)
+    probe_options_present "$@"
+    printf 'ssh full-e2e diagnostic gateway state\n' >> "$FAKE_CALLS"
+    bash -c "$remote"
+    exit $? ;;
+  *"gateway service requires Docker service"*)
+    probe_options_present "$@"
+    printf 'ssh full-e2e diagnostic platform state\n' >> "$FAKE_CALLS"
+    bash -c "$remote"
+    exit $? ;;
+  *journalctl*openshell-gateway.service*)
+    probe_options_present "$@"
+    printf 'ssh full-e2e diagnostic gateway lifecycle\n' >> "$FAKE_CALLS"
+    bash -c "$remote"
+    exit $? ;;
+  *journalctl*docker.service*)
+    probe_options_present "$@"
+    printf 'ssh full-e2e diagnostic Docker lifecycle\n' >> "$FAKE_CALLS"
+    bash -c "$remote"
+    exit $? ;;
+  *ActiveEnterTimestampMonotonic*cloud-final.service*)
+    probe_options_present "$@"
+    printf 'ssh full-e2e diagnostic cloud-final state\n' >> "$FAKE_CALLS"
+    bash -c "$remote"
+    exit $? ;;
+  *"ss -H -ltnp"*)
+    probe_options_present "$@"
+    printf 'ssh full-e2e diagnostic port 8080 listener\n' >> "$FAKE_CALLS"
+    bash -c "$remote"
+    exit $? ;;
+  "bash -s") ;;
+  *)
+    printf 'unexpected SSH remote command\n' >&2
+    exit 97 ;;
+esac
 script="$(cat)"
 [ "\${*: -2:1}" = "$INSTANCE_NAME" ]
 grep -q 'NEMOCLAW_E2E_SETUP_MODE=preinstalled-launchable' <<<"$script"
@@ -279,10 +461,18 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_CALLS: calls,
     FAKE_DELETE_FAILS: options.deleteFails ? "1" : "0",
     FAKE_DIAGNOSTIC_PHASE: diagnosticPhase,
+    FAKE_E2E_DIAGNOSTIC_TIMES_OUT: options.e2eDiagnosticTimesOut ? "1" : "0",
     FAKE_E2E_FAILS: options.e2eFails ? "1" : "0",
+    FAKE_GATEWAY_EXEC_START:
+      options.gatewayExecStart ??
+      "{ path=/usr/local/bin/nemoclaw-openshell-gateway-service ; argv[]=/usr/local/bin/nemoclaw-openshell-gateway-service ; ignore_errors=no ; }",
     FAKE_IMAGE_REPOSITORY_SHA: options.imageRepositorySha ?? "b".repeat(40),
+    FAKE_LISTENER_OUTPUT:
+      options.listenerOutput ??
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("s3cr3t",pid=99,fd=3))',
     FAKE_MISSING_PROVISION_RECEIPT: options.missingProvisionReceipt ? "1" : "0",
     FAKE_OMIT_RECEIPT_FIELD: options.omitReceiptField ?? "",
+    FAKE_PLATFORM_DIAGNOSTIC_FAILS: options.platformDiagnosticFails ? "1" : "0",
     FAKE_PROVISION_IMAGE_REPOSITORY_SHA:
       options.provisionImageRepositorySha ?? options.imageRepositorySha ?? "b".repeat(40),
     FAKE_PROVISION_SHA: options.provisionSha ?? candidateSha,
@@ -452,6 +642,7 @@ describe("focused staging Brev Launchable lane", () => {
     ]);
     expect(fs.readFileSync(sshAttempts, "utf8").trim()).toBe("6");
     expect(commands).toContain("ssh preinstalled full-e2e.test.ts");
+    expect(commands).not.toContain("ssh full-e2e diagnostic");
     expect(commands).not.toContain("nvapi-test-value");
     expect(commands).not.toMatch(/rsync|install\.sh|npm (?:ci|install)|git clone/u);
     expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).not.toMatch(
@@ -459,6 +650,9 @@ describe("focused staging Brev Launchable lane", () => {
     );
     expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).toContain(
       "Waiting up to 900 seconds for workspace SSH access",
+    );
+    expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).not.toContain(
+      "Full E2E failure diagnostic",
     );
     expect(fs.existsSync(state)).toBe(false);
     expect(fs.readdirSync(workDir).sort()).toEqual([
@@ -708,11 +902,84 @@ describe("focused staging Brev Launchable lane", () => {
     });
   });
 
-  it("reports E2E failure only after verified workspace cleanup", () => {
-    const { env, state, workDir } = fixture({ e2eFails: true });
+  it("retains bounded redacted host diagnostics before failed-workspace cleanup (#6409)", () => {
+    const { calls, env, state, workDir } = fixture({ e2eFails: true });
     const result = run(env);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("full E2E failed");
+    const commands = fs.readFileSync(calls, "utf8");
+    expect(commands.indexOf("ssh preinstalled full-e2e.test.ts")).toBeLessThan(
+      commands.indexOf("ssh full-e2e diagnostic gateway state"),
+    );
+    expect(commands.indexOf("ssh full-e2e diagnostic gateway state")).toBeLessThan(
+      commands.indexOf("brev delete nclaw-e2e-test-1"),
+    );
+    expect(commands.match(/ssh full-e2e diagnostic/gu)).toHaveLength(6);
+
+    const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
+    expect(laneLog).toContain("Full E2E failure diagnostics budget: up to 30 seconds");
+    expect(laneLog).toContain("Full E2E failure diagnostic gateway state: status 0; output:");
+    expect(laneLog).toContain("ActiveState : inactive");
+    expect(laneLog).toContain("NRestarts : 0");
+    expect(laneLog).toContain("restart-policy is always: true");
+    expect(laneLog).toContain("exec-start matches packaged gateway service: true");
+    expect(laneLog).toContain("fragment-path is packaged unit path: true");
+    expect(laneLog).toContain("drop-ins: absent");
+    expect(laneLog).toContain("Full E2E failure diagnostic platform state: status 0; output:");
+    expect(laneLog).toContain("gateway service requires Docker service: present");
+    expect(laneLog).toContain("gateway service ordered after Docker service: present");
+    expect(laneLog).toContain("Docker service wants gateway service: present");
+    expect(laneLog).not.toContain("boot-id-prefix");
+    expect(laneLog).toContain("boot-uptime-seconds 180");
+    expect(laneLog).toContain("gateway-state-dir type=directory uid=1000 gid=1000 mode=750");
+    expect(laneLog).toContain("Full E2E failure diagnostic gateway lifecycle: status 0; output:");
+    expect(laneLog).toContain("1000 starting");
+    expect(laneLog).toContain("1100 started");
+    expect(laneLog).toContain("1200 other-systemd-event");
+    expect(laneLog).toContain("1300 start-limit-hit");
+    expect(laneLog).toContain("1400 restart-scheduled");
+    expect(laneLog).toContain("1500 main-exited");
+    expect(laneLog).toContain("1600 failed-result");
+    expect(laneLog).toContain("1700 dependency-failed");
+    expect(laneLog).toContain("2200 stopping");
+    expect(laneLog).toContain("2300 deactivated");
+    expect(laneLog).toContain("2400 stopped");
+    expect(laneLog).toContain("Full E2E failure diagnostic Docker lifecycle: status 0; output:");
+    expect(laneLog).toContain("900 docker-service starting");
+    expect(laneLog).toContain("950 docker-service started");
+    expect(laneLog).toContain("960 docker-socket started");
+    expect(laneLog).toContain("970 docker-unit other-systemd-event");
+    expect(laneLog).toContain("Full E2E failure diagnostic cloud-final state: status 0; output:");
+    expect(laneLog).toContain("SubState : exited");
+    expect(laneLog).toContain("active-enter-us: 1200");
+    expect(laneLog).toContain("inactive-enter-us: 0");
+    expect(laneLog).toContain("listener presence: present");
+    expect(laneLog).toContain("listener owner: unexpected");
+    expect(laneLog).not.toContain("s3cr3t");
+    const diagnosticLines = laneLog
+      .split("\n")
+      .filter((line) => line.startsWith("Full E2E failure diagnostic "));
+    expect(diagnosticLines).toHaveLength(6);
+    diagnosticLines
+      .filter((line) => line.includes("; output: "))
+      .forEach((line) => {
+        const payload = line.split("; output: ", 2)[1] ?? "";
+        expect(Buffer.byteLength(payload)).toBeLessThanOrEqual(512);
+      });
+    const output = emittedOutput(result, workDir);
+    expect(
+      [
+        "brev-test-secret",
+        "github-test-token",
+        "journal-test-secret",
+        "nvapi-test-value",
+        "private-key-material",
+        "203.0.113.20",
+        "workspace.hidden.internal",
+        "s3cr3t",
+      ].filter((secretOrAddress) => output.includes(secretOrAddress)),
+    ).toEqual([]);
+    expect(output).not.toContain("\u001B");
     expect(fs.existsSync(state)).toBe(false);
     expect(
       JSON.parse(fs.readFileSync(path.join(workDir, "launchable-e2e.json"), "utf8")),
@@ -724,6 +991,199 @@ describe("focused staging Brev Launchable lane", () => {
         fullE2E: "failed",
       },
     });
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
+  it("continues bounded diagnostics and cleanup after a probe error (#6409)", () => {
+    const { calls, env, state, workDir } = fixture({
+      e2eFails: true,
+      platformDiagnosticFails: true,
+    });
+    const result = run(env);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("full E2E failed");
+    const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
+    expect(laneLog).toContain(
+      "Full E2E failure diagnostic platform state: status 42; output:",
+    );
+    expect(laneLog).toContain("platform diagnostic safe detail");
+    expect(laneLog).toContain("[REDACTED PRIVATE KEY]");
+    expect(laneLog).toContain("[REDACTED LONG LINE]");
+    expect(laneLog).toContain("Full E2E failure diagnostic gateway lifecycle: status 0; output:");
+    expect(laneLog).toContain("Full E2E failure diagnostic port 8080 listener: status 0; output:");
+    const commands = fs.readFileSync(calls, "utf8");
+    expect(commands.indexOf("ssh full-e2e diagnostic platform state")).toBeLessThan(
+      commands.indexOf("ssh full-e2e diagnostic gateway lifecycle"),
+    );
+    expect(commands.indexOf("ssh full-e2e diagnostic gateway lifecycle")).toBeLessThan(
+      commands.indexOf("brev delete nclaw-e2e-test-1"),
+    );
+    const output = emittedOutput(result, workDir);
+    expect(
+      [
+        "brev-test-secret",
+        "github-test-token",
+        "journal-test-secret",
+        "nvapi-test-value",
+        "private-key-material",
+        "203.0.113.20",
+        "workspace.hidden.internal",
+      ].filter((secretOrAddress) => output.includes(secretOrAddress)),
+    ).toEqual([]);
+    expect(output).not.toContain("\u001B");
+    expect(fs.existsSync(state)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
+  it.each([
+    ["absent", "", ["listener presence: absent"]],
+    [
+      "expected owner",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3))',
+      ["listener presence: present", "listener owner: openshell-gateway"],
+    ],
+    [
+      "expected owner in a v2 descendant cgroup",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=97,fd=3))',
+      ["listener presence: present", "listener owner: openshell-gateway"],
+    ],
+    [
+      "expected owner in an exact v1 cgroup",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=96,fd=3))',
+      ["listener presence: present", "listener owner: openshell-gateway"],
+    ],
+    [
+      "expected owner in a v1 descendant cgroup",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=95,fd=3))',
+      ["listener presence: present", "listener owner: openshell-gateway"],
+    ],
+    [
+      "mixed owners",
+      [
+        'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3))',
+        'LISTEN 0 4096 172.18.0.1:8080 0.0.0.0:* users:(("s3cr3t",pid=99,fd=4))',
+      ].join("\n"),
+      ["listener presence: present", "listener owner: mixed"],
+    ],
+    [
+      "mixed owners in one socket record",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3),("s3cr3t",pid=99,fd=4))',
+      ["listener presence: present", "listener owner: mixed"],
+    ],
+    [
+      "unexpected owner",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gatew",pid=94,fd=3))',
+      ["listener presence: present", "listener owner: unexpected"],
+    ],
+    [
+      "unrelated cgroup",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("other-process",pid=93,fd=3))',
+      ["listener presence: present", "listener owner: unexpected"],
+    ],
+    [
+      "owner unavailable",
+      "LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:*",
+      ["listener presence: present", "listener owner: unavailable"],
+    ],
+    [
+      "PID-like text inside a process label",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("s3cr3t,pid=7,fd=8",pid=98,fd=3))',
+      ["listener presence: present", "listener owner: openshell-gateway"],
+    ],
+    [
+      "an injected owner tuple inside a process label",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("s3cr3t",pid=98,fd=3",pid=99,fd=4))',
+      ["listener presence: present", "listener owner: unavailable"],
+    ],
+    [
+      "one socket record without owner metadata",
+      [
+        'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3))',
+        "LISTEN 0 4096 172.18.0.1:8080 0.0.0.0:*",
+      ].join("\n"),
+      ["listener presence: present", "listener owner: unavailable"],
+    ],
+  ])(
+    "classifies port 8080 listener evidence with %s (#6409)",
+    (_name, listenerOutput, expectedEvidence) => {
+      const { env, workDir } = fixture({
+        e2eFails: true,
+        listenerOutput,
+      });
+      const result = run(env);
+
+      expect(result.status).not.toBe(0);
+      const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
+      expectedEvidence.forEach((entry) => expect(laneLog).toContain(entry));
+      expect(laneLog).not.toContain("s3cr3t");
+      expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject(
+        { status: "ABSENT" },
+      );
+    },
+  );
+
+  it.each([
+    [
+      "a similarly prefixed executable",
+      "{ path=/usr/local/bin/nemoclaw-openshell-gateway-service-wrapper ; argv[]=/usr/local/bin/nemoclaw-openshell-gateway-service-wrapper ; ignore_errors=no ; }",
+      "nemoclaw-openshell-gateway-service-wrapper",
+    ],
+    [
+      "an extra argument",
+      "{ path=/usr/local/bin/nemoclaw-openshell-gateway-service ; argv[]=/usr/local/bin/nemoclaw-openshell-gateway-service --extra ; ignore_errors=no ; }",
+      "--extra",
+    ],
+    [
+      "a second serialized command",
+      "{ path=/usr/local/bin/nemoclaw-openshell-gateway-service ; argv[]=/usr/local/bin/nemoclaw-openshell-gateway-service ; ignore_errors=no ; } { path=/usr/bin/true ; argv[]=/usr/bin/true ; ignore_errors=no ; }",
+      "/usr/bin/true",
+    ],
+  ])("rejects gateway ExecStart with %s (#6409)", (_name, gatewayExecStart, rawValue) => {
+    const { env, workDir } = fixture({ e2eFails: true, gatewayExecStart });
+    const result = run(env);
+
+    expect(result.status).not.toBe(0);
+    const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
+    expect(laneLog).toContain("exec-start matches packaged gateway service: false");
+    expect(laneLog).not.toContain(rawValue);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
+  it("keeps the E2E failure and cleanup when the diagnostic budget expires (#6409)", () => {
+    const { calls, env, state, workDir } = fixture({
+      e2eDiagnosticTimesOut: true,
+      e2eFails: true,
+    });
+    const result = run({
+      ...env,
+      FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS: "1",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("full E2E failed");
+    const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
+    expect(laneLog).toContain(
+      "Full E2E failure diagnostic gateway state: status 124; output: probe timed out",
+    );
+    expect(laneLog).toContain(
+      "Full E2E failure diagnostic platform state: not run; output: diagnostic budget exhausted",
+    );
+    expect(laneLog).toContain(
+      "Full E2E failure diagnostic port 8080 listener: not run; output: diagnostic budget exhausted",
+    );
+    const commands = fs.readFileSync(calls, "utf8");
+    expect(commands).not.toContain("ssh full-e2e diagnostic platform state");
+    expect(commands.indexOf("ExecMainCode")).toBeLessThan(
+      commands.indexOf("brev delete nclaw-e2e-test-1"),
+    );
+    expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
     });
@@ -883,6 +1343,7 @@ describe("focused staging Brev Launchable lane", () => {
     ["BREV_SSH_TIMEOUT_SECONDS", "0"],
     ["BREV_SSH_TIMEOUT_SECONDS", ""],
     ["BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS", "0"],
+    ["FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS", "0"],
     ["POLL_SECONDS", "0"],
     ["POLL_SECONDS", ""],
   ])("rejects invalid %s=%s before dispatch", (name, value) => {
