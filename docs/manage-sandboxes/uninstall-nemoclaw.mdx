@@ -57,6 +57,11 @@ It preserves the selected gateway's PID, bearer token, any lifecycle state that 
 If required evidence conflicts before journal preparation, uninstall preserves that evidence and does not signal a process.
 
 The lifecycle evidence is `<selected-state-root>/bedrock-runtime-adapter.pid`, `<selected-state-root>/bedrock-runtime-adapter-token`, and `<selected-state-root>/bedrock-runtime-adapter.json`.
+If startup leaves only a private PID file containing one canonical positive PID, uninstall does not signal that PID.
+Under the adapter lifecycle lock, uninstall removes only the unchanged PID file after it observes that the PID is absent twice.
+It also confirms that no bearer token, lifecycle state, or uninstall journal appeared between those checks.
+A live or uninspectable PID, malformed or changed PID file, or newly published evidence makes uninstall exit nonzero.
+Uninstall preserves the PID file and any new lifecycle evidence in those cases.
 Keep those files intact while you resolve the reported process or state conflict.
 Rerun uninstall with the same `NEMOCLAW_GATEWAY_PORT` value afterward.
 The journal is `~/.local/state/nemoclaw-bedrock-runtime-adapter/<gateway-port>/uninstall.json`.

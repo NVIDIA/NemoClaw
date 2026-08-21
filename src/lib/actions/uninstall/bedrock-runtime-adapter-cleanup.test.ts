@@ -97,6 +97,12 @@ function writeFailedStartupEvidence(home: string): void {
   fs.writeFileSync(paths.tokenPath, `${TOKEN}\n`, { mode: 0o600 });
 }
 
+function writePidOnlyEvidence(home: string): void {
+  const paths = adapterPaths(home);
+  fs.mkdirSync(paths.stateDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(paths.pidPath, `${String(PID)}\n`, { mode: 0o600 });
+}
+
 function writeJournal(
   home: string,
   phase:
@@ -154,6 +160,7 @@ function cleanupHost(
     lsofPids?: readonly number[];
     lsofStatus?: number;
     onKill?: (pid: number, signal: NodeJS.Signals | number | undefined) => void;
+    onRun?: (command: string, args: readonly string[]) => void;
   } = {},
 ) {
   const kills: Array<{ pid: number; signal: NodeJS.Signals | number | undefined }> = [];
@@ -186,6 +193,7 @@ function cleanupHost(
       },
       readProcessIdentity: (pid: number) => processes.get(pid)?.processStart ?? null,
       run: (command: string, args: readonly string[]) => {
+        options.onRun?.(command, args);
         switch (command) {
           case "lsof":
             lsofPorts.push(args[1] ?? "");
@@ -237,6 +245,66 @@ function stop(home: string, host: ReturnType<typeof cleanupHost>["host"], scanOr
 }
 
 describe("Bedrock Runtime adapter fail-closed uninstall cleanup (#9552)", () => {
+  it("retires PID-only evidence after the startup child exits before identity capture", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-stop-pid-only-"));
+    writePidOnlyEvidence(home);
+    const { host, kills, lsofPorts } = cleanupHost(home, new Map());
+
+    try {
+      expect(stop(home, host)).toMatchObject({ ok: true, status: "stopped", pid: PID });
+      expect(kills).toEqual([]);
+      expect(fs.existsSync(adapterPaths(home).pidPath)).toBe(false);
+
+      expect(stop(home, host)).toMatchObject({ ok: true, status: "absent" });
+      expect(kills).toEqual([]);
+      expect(lsofPorts).toEqual([":11436"]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("does not signal a live process from PID-only evidence", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-stop-pid-only-live-"));
+    writePidOnlyEvidence(home);
+    const { host, kills } = cleanupHost(home, new Map([[PID, managedProcess()]]));
+
+    try {
+      expect(stop(home, host)).toMatchObject({
+        ok: false,
+        fatal: true,
+        pid: PID,
+        message: expect.stringContaining("PID-only"),
+      });
+      expect(kills).toEqual([]);
+      expect(fs.existsSync(adapterPaths(home).pidPath)).toBe(true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves PID-only evidence when the recorded PID appears before deletion", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-stop-pid-only-race-"));
+    const processes = new Map<number, AdapterProcess>();
+    writePidOnlyEvidence(home);
+    const presenceChecks = [vi.fn(), vi.fn(() => processes.set(PID, managedProcess()))];
+    const { host, kills } = cleanupHost(home, processes, {
+      onRun: (command, args) => {
+        expect(command).toBe("ps");
+        expect(args.at(-1)).toBe("pid=");
+        presenceChecks.shift()?.();
+      },
+    });
+
+    try {
+      expect(stop(home, host)).toMatchObject({ ok: false, fatal: true, pid: PID });
+      expect(presenceChecks).toEqual([]);
+      expect(kills).toEqual([]);
+      expect(fs.existsSync(adapterPaths(home).pidPath)).toBe(true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("retires failed-startup PID and token evidence after proving process exit", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-stop-startup-journal-"));
     const processes = new Map([[PID, managedProcess()]]);

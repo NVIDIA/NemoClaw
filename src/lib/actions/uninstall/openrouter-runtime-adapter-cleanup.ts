@@ -254,6 +254,7 @@ function readBedrockEvidence(
 ):
   | { kind: "absent" }
   | { kind: "invalid"; message: string }
+  | { kind: "pid-only"; pid: number }
   | { kind: "present"; evidence: BedrockEvidence } {
   const present = {
     pid: runtime.existsSync(evidencePaths.pidPath),
@@ -261,6 +262,17 @@ function readBedrockEvidence(
     token: runtime.existsSync(evidencePaths.tokenPath),
   };
   if (!present.pid && !present.state && !present.token) return { kind: "absent" };
+  if (present.pid && !present.state && !present.token) {
+    const pidText = readPrivateBedrockRuntimeFile(evidencePaths.pidPath);
+    const pid = pidText === null ? null : canonicalPid(pidText);
+    return pid === null
+      ? {
+          kind: "invalid",
+          message:
+            "Bedrock Runtime adapter PID-only evidence is unsafe or malformed; no files were removed.",
+        }
+      : { kind: "pid-only", pid };
+  }
   if (!present.state || !present.token) {
     return {
       kind: "invalid",
@@ -420,6 +432,67 @@ function stopFailure(
   pid?: number,
 ): BedrockRuntimeAdapterStopResult {
   return { ok: false, fatal: true, message, ...(pid === undefined ? {} : { pid }) };
+}
+
+function pidOnlyEvidenceMatches(
+  evidencePaths: BedrockEvidencePaths,
+  journalPath: string,
+  pid: number,
+  runtime: RuntimeAdapterCleanupRuntime,
+): boolean {
+  if (
+    !runtime.existsSync(evidencePaths.pidPath) ||
+    runtime.existsSync(evidencePaths.statePath) ||
+    runtime.existsSync(evidencePaths.tokenPath) ||
+    runtime.existsSync(journalPath)
+  ) {
+    return false;
+  }
+  const pidText = readPrivateBedrockRuntimeFile(evidencePaths.pidPath);
+  return pidText !== null && canonicalPid(pidText) === pid;
+}
+
+function retireAbsentPidOnlyEvidence(
+  evidencePaths: BedrockEvidencePaths,
+  journalPath: string,
+  pid: number,
+  runtime: RuntimeAdapterCleanupRuntime,
+): BedrockRuntimeAdapterStopResult {
+  const presence = bedrockRuntimeAdapterProcessPresence(pid, runtime);
+  if (presence === "unknown") {
+    return stopFailure(
+      runtime,
+      "Bedrock Runtime adapter PID-only process state is unavailable; PID evidence was preserved.",
+      pid,
+    );
+  }
+  if (presence === "present") {
+    return stopFailure(
+      runtime,
+      "Bedrock Runtime adapter PID-only evidence cannot authorize a process signal; PID evidence was preserved.",
+      pid,
+    );
+  }
+  if (!pidOnlyEvidenceMatches(evidencePaths, journalPath, pid, runtime)) {
+    return stopFailure(
+      runtime,
+      "Bedrock Runtime adapter PID-only evidence changed before cleanup; no files were removed.",
+      pid,
+    );
+  }
+  if (
+    bedrockRuntimeAdapterProcessPresence(pid, runtime) !== "absent" ||
+    !pidOnlyEvidenceMatches(evidencePaths, journalPath, pid, runtime)
+  ) {
+    return stopFailure(
+      runtime,
+      "Bedrock Runtime adapter process absence or PID-only evidence could not be revalidated before deletion; PID evidence was preserved.",
+      pid,
+    );
+  }
+  removeDurableBedrockRuntimeFile(evidencePaths.pidPath);
+  runtime.log(`Removed stale Bedrock Runtime adapter PID evidence ${String(pid)}`);
+  return { ok: true, status: "stopped", pid };
 }
 
 function waitForRecordedProcessExit(
@@ -715,6 +788,14 @@ function stopBedrockRuntimeAdapterLocked(
     const evidenceResult = readBedrockEvidence(evidencePaths, runtime);
     if (evidenceResult.kind === "invalid") {
       return stopFailure(runtime, evidenceResult.message);
+    }
+    if (evidenceResult.kind === "pid-only") {
+      return retireAbsentPidOnlyEvidence(
+        evidencePaths,
+        journalPath,
+        evidenceResult.pid,
+        runtime,
+      );
     }
     if (evidenceResult.kind === "absent") {
       if (scanOrphans) {
