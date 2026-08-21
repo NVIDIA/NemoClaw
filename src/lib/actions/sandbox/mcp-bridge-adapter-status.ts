@@ -41,8 +41,11 @@ export function authorizationValue(
   return placeholder ? `${DEFAULT_AUTH_SCHEME} ${placeholder}` : null;
 }
 
-export function entryHeaders(entry: Pick<McpBridgeEntry, "env">): Record<string, string> {
-  const authorization = authorizationValue(entry);
+export function entryHeaders(
+  entry: Pick<McpBridgeEntry, "env">,
+  credentialRevision?: McpAttachedCredentialRevision,
+): Record<string, string> {
+  const authorization = authorizationValue(entry, credentialRevision);
   return authorization ? { [DEFAULT_AUTH_HEADER]: authorization } : {};
 }
 
@@ -55,10 +58,9 @@ export function pythonJsonLiteral(value: unknown): string {
  * `config get --json` with an `accept: application/json, text/event-stream`
  * header, even when that header is absent from the persisted config. Treat
  * only that synthesized header as equivalent; every persisted/other header
- * remains part of the ownership fingerprint. A strictly revisioned form of
- * the same OpenShell credential placeholder is also equivalent because the
- * adapter projection records the revision proven ready immediately before it
- * is written.
+ * remains part of the ownership fingerprint. When the expected placeholder is
+ * canonical, a strictly bounded revisioned form of the same credential is also
+ * equivalent. A revisioned expectation remains exact.
  *
  * This function is also serialized into the in-sandbox inspection commands,
  * so keep it self-contained (no references to module-scope values).
@@ -193,11 +195,12 @@ export function buildOpenClawMcporterInspectCommand(
   entry: McpBridgeEntry,
   failOnMismatch: boolean,
   root = OPENCLAW_MCPORTER_ROOT,
+  credentialRevision?: McpAttachedCredentialRevision,
 ): string {
   const payload = {
     server: entry.server,
     url: entry.url,
-    headers: entryHeaders(entry),
+    headers: entryHeaders(entry, credentialRevision),
     failOnMismatch,
     root,
   };

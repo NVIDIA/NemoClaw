@@ -18,6 +18,7 @@ import {
   OPENCLAW_MCPORTER_ROOT,
 } from "./mcp-bridge-adapter-openclaw";
 import {
+  entryHeaders,
   buildOpenClawMcporterInspectCommand,
   mcporterHeadersMatchExpected,
   openClawMcporterRoot,
@@ -120,6 +121,23 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
       "Authorization=Bearer openshell:resolve:env:v1442987827285932589_GITHUB_TOKEN",
     );
     expect(command).not.toContain("Authorization=Bearer openshell:resolve:env:GITHUB_TOKEN'");
+  });
+
+  it("matches the exact readiness-proven revision during post-write inspection", () => {
+    const expectedV12 = entryHeaders(baseEntry, "v12");
+
+    expect(
+      mcporterHeadersMatchExpected(
+        { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
+        expectedV12,
+      ),
+    ).toBe(true);
+    expect(
+      mcporterHeadersMatchExpected(
+        { Authorization: "Bearer openshell:resolve:env:v11_GITHUB_TOKEN" },
+        expectedV12,
+      ),
+    ).toBe(false);
   });
 
   it("registers, inspects, and removes the OpenClaw workspace project config", () => {

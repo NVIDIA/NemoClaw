@@ -167,7 +167,7 @@ export function registerOpenClawAdapter(
   // from the URL and opaque OpenShell placeholder NemoClaw intended.
   const verification = executeSandboxCommand(
     sandboxName,
-    buildOpenClawMcporterInspectCommand(entry, true, root),
+    buildOpenClawMcporterInspectCommand(entry, true, root, credentialRevision),
   );
   const verificationOutput = redactBridgeSecretsForDisplay(
     [verification?.stdout, verification?.stderr].filter(Boolean).join("\n").trim(),
