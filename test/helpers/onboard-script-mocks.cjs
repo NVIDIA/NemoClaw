@@ -71,8 +71,13 @@ function createStatefulMessagingProviderRunner({
 
     const providerAction = providerIndex >= 0 ? args[providerIndex + 1] : null;
     if (providerAction === "profile") {
+      const profileActionIndex = providerIndex + 2;
+      const profileAction =
+        args[profileActionIndex] === "-g"
+          ? args[profileActionIndex + 2]
+          : args[profileActionIndex];
       const fileIndex = args.indexOf("--file");
-      return args[providerIndex + 2] === "import" && fileIndex >= 0 && args[fileIndex + 1]
+      return profileAction === "import" && fileIndex >= 0 && args[fileIndex + 1]
         ? { status: 0 }
         : { status: 1, stderr: "unsupported provider profile command" };
     }
