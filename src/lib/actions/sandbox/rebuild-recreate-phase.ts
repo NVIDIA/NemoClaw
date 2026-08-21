@@ -32,6 +32,7 @@ import {
   type RebuildRecreateOnboardOpts,
 } from "./rebuild-gpu-opt-out";
 import {
+  MCP_BRIDGE_POLICY_SOURCE,
   type McpRebuildPreparation,
   printMcpRebuildRetryCommand,
   restoreMcpRegistryForRebuildRetry,
@@ -290,24 +291,26 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       if (!currentEntry) {
         throw new Error("MCP-bearing rebuild lost its preserved registry entry before recreate.");
       }
+      const mcpPolicyNames = new Set(rebuildMcpEntries.map((entry) => entry.policyName));
       const currentPolicies = Array.isArray(currentEntry.policies) ? currentEntry.policies : [];
-      const stagedPolicies = excludePolicyPresetsByName(
-        currentPolicies,
-        rebuildMcpEntries.map((entry) => entry.policyName),
+      const stagedPolicies = excludePolicyPresetsByName(currentPolicies, [...mcpPolicyNames]);
+      const stagedCustomPolicies = (currentEntry.customPolicies ?? []).filter(
+        (entry) =>
+          !(mcpPolicyNames.has(entry.name) && entry.sourcePath === MCP_BRIDGE_POLICY_SOURCE),
       );
-      if (
-        stagedPolicies.length !== currentPolicies.length &&
-        !registry.updateSandbox(sandboxName, { policies: stagedPolicies })
-      ) {
+      if (!registry.updateSandbox(sandboxName, {
+        policies: stagedPolicies,
+        customPolicies: stagedCustomPolicies.length > 0 ? stagedCustomPolicies : undefined,
+        mcp: undefined,
+      })) {
         throw new Error("MCP-bearing rebuild could not stage its inner policy selection.");
       }
-      // The recreate path reloads policy carry-forward from the preserved
-      // registry row and overwrites the session immediately before sandbox
-      // creation. Generated MCP definitions are intentionally absent until the
-      // dedicated post-rebuild restore, so their stale names must be removed
-      // from that transient carry-forward source as well as from the session.
-      // Failure recovery restores the original row from `sb`/the recovery
-      // snapshot; successful MCP restoration writes the live ownership back.
+      // The inner generic onboard path refuses any registry row that still
+      // advertises managed MCP state, and its policy carry-forward also reloads
+      // this row immediately before creation. Stage the dedicated rebuild
+      // handoff without MCP ownership or generated policies; failure recovery
+      // restores the original row, while successful post-rebuild MCP restore
+      // re-establishes the live manifest and generated policy registrations.
     }
     await rebuildOnboardDependencies.onboard({
       ...recreateOptions,
