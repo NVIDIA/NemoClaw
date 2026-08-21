@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  matchesGatewayCredentialOnlyProviderBinding,
-  parseGatewayProviderMetadata,
-} from "../../onboard/gateway-provider-metadata";
+import { inspectGatewayCredentialOnlyProviderBinding } from "../../onboard/gateway-provider-metadata";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import { redact } from "../../security/redact";
 import type { SandboxMessagingCredentialBindingPlan, SandboxMessagingPlan } from "../manifest";
@@ -114,21 +111,20 @@ function inspectProviderBinding(
   binding: MessagingCredentialBindingLike,
   runOpenshell: MessagingOpenShellRunner,
 ): "collision" | "exact" | "missing" {
-  const result = runOpenshell(["provider", "get", binding.providerName], {
-    ignoreError: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.status !== 0) return "missing";
-  const metadata = parseGatewayProviderMetadata(
-    `${String(result.stdout ?? "")}\n${String(result.stderr ?? "")}`,
+  const inspection = inspectGatewayCredentialOnlyProviderBinding(
+    {
+      name: binding.providerName,
+      type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+      credentialKey: binding.providerEnvKey,
+    },
+    runOpenshell,
   );
-  return matchesGatewayCredentialOnlyProviderBinding(metadata, {
-    name: binding.providerName,
-    type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-    credentialKey: binding.providerEnvKey,
-  })
-    ? "exact"
-    : "collision";
+  if (inspection === "indeterminate") {
+    throw new Error(
+      `Could not inspect messaging provider '${binding.providerName}'; no provider mutation was attempted.`,
+    );
+  }
+  return inspection;
 }
 
 function buildProviderArgs(

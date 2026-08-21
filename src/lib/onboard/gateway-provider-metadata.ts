@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { reportsExactProviderNotFound } from "./extra-provider-diagnostic-parser";
+
 const MAX_PROVIDER_OUTPUT_BYTES = 16 * 1024;
+const PROVIDER_PROBE_DIAGNOSTIC_LIMIT = 64 * 1024;
+const PROVIDER_PROBE_TIMEOUT_MS = 5_000;
 const MAX_PROVIDER_NAME_LENGTH = 128;
 const MAX_PROVIDER_TYPE_LENGTH = 64;
 const MAX_PROVIDER_KEYS = 32;
@@ -65,17 +69,22 @@ export function matchesGatewayCredentialOnlyProviderBinding(
 }
 
 type GatewayProviderCommandResult = {
-  status: number | null;
-  stdout?: string | Buffer | null;
-  stderr?: string | Buffer | null;
+  status?: number | null;
+  stdout?: unknown;
+  stderr?: unknown;
+  output?: unknown;
+  error?: unknown;
+  signal?: unknown;
 };
 
 type GatewayProviderRunner = (
   args: string[],
   options: {
     ignoreError: true;
+    maxBuffer?: number;
     suppressOutput: true;
     stdio: ["ignore", "pipe", "pipe"];
+    timeout?: number;
   },
 ) => GatewayProviderCommandResult;
 
@@ -111,8 +120,18 @@ function parseProviderKeys(value: string): string[] | null {
   return keys;
 }
 
-function commandStreamText(value: string | Buffer | null | undefined): string {
-  return Buffer.isBuffer(value) ? value.toString("utf8") : (value ?? "");
+function commandStreamText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Buffer.isBuffer(value)) return value.toString("utf8");
+  if (Array.isArray(value)) return value.map(commandStreamText).filter(Boolean).join("\n");
+  return "";
+}
+
+function providerCommandOutput(result: GatewayProviderCommandResult): string {
+  const streams = [result.stderr, result.stdout]
+    .map(commandStreamText)
+    .filter((value) => value.length > 0);
+  return streams.length > 0 ? streams.join("\n") : commandStreamText(result.output);
 }
 
 function hasUnsafeRawProviderFieldValue(rawLine: string): boolean {
@@ -191,4 +210,43 @@ export function readGatewayProviderMetadata(
   const output = `${commandStreamText(result.stdout)}\n${commandStreamText(result.stderr)}`;
   const metadata = parseGatewayProviderMetadata(output);
   return metadata?.name === name ? metadata : null;
+}
+
+export type GatewayCredentialOnlyProviderInspection =
+  | "collision"
+  | "exact"
+  | "indeterminate"
+  | "missing";
+
+/** Inspect one credential-only provider without treating ambiguous failures as absence. */
+export function inspectGatewayCredentialOnlyProviderBinding(
+  expected: GatewayCredentialOnlyProviderBinding,
+  runOpenshell: GatewayProviderRunner,
+): GatewayCredentialOnlyProviderInspection {
+  let result: GatewayProviderCommandResult;
+  try {
+    result = runOpenshell(["provider", "get", expected.name], {
+      ignoreError: true,
+      maxBuffer: PROVIDER_PROBE_DIAGNOSTIC_LIMIT,
+      suppressOutput: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: PROVIDER_PROBE_TIMEOUT_MS,
+    });
+  } catch {
+    return "indeterminate";
+  }
+
+  const output = providerCommandOutput(result);
+  if (result.error || result.signal || result.status !== 0) {
+    return !result.error &&
+      !result.signal &&
+      result.status === 1 &&
+      reportsExactProviderNotFound(output, expected.name, PROVIDER_PROBE_DIAGNOSTIC_LIMIT)
+      ? "missing"
+      : "indeterminate";
+  }
+
+  return matchesGatewayCredentialOnlyProviderBinding(parseGatewayProviderMetadata(output), expected)
+    ? "exact"
+    : "collision";
 }

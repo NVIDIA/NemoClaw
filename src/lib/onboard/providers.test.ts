@@ -3,8 +3,22 @@
 
 import { describe, expect, it } from "vitest";
 
-type RunResult = { status: number; stdout?: string; stderr?: string };
-type RunOptions = { env?: Record<string, string | undefined> };
+type RunResult = {
+  error?: unknown;
+  output?: string;
+  signal?: unknown;
+  status: number;
+  stdout?: string;
+  stderr?: string;
+};
+type RunOptions = {
+  env?: Record<string, string | undefined>;
+  ignoreError?: boolean;
+  maxBuffer?: number;
+  stdio?: readonly unknown[];
+  suppressOutput?: boolean;
+  timeout?: number;
+};
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
 const {
@@ -67,7 +81,7 @@ const {
     baseUrl: string | null,
     env: Record<string, string | undefined>,
     runOpenshell: RunOpenshell,
-    options?: { replaceExisting?: boolean },
+    options?: { knownExists?: boolean; replaceExisting?: boolean },
   ) => { ok: boolean; status?: number; message?: string };
   upsertMessagingProviders: (
     tokenDefs: Array<{
@@ -651,7 +665,12 @@ describe("onboard provider helpers", () => {
       (command, options) => {
         calls.push({ command, env: options?.env });
         return command[0] === "provider" && command[1] === "get"
-          ? { status: 1, stdout: "", stderr: "not found" }
+          ? {
+              status: 1,
+              stdout: "",
+              stderr:
+                "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
+            }
           : { status: 0, stdout: "", stderr: "" };
       },
     );
@@ -664,6 +683,65 @@ describe("onboard provider helpers", () => {
     ]);
     expect(calls[2]?.env).toEqual({ DISCORD_BOT_TOKEN: credential });
     expect(calls.flatMap(({ command }) => command)).not.toContain(credential);
+  });
+
+  it.each([
+    ["Discord", "alpha-discord-bridge", "DISCORD_BOT_TOKEN"],
+    ["Slack", "alpha-slack-bridge", "SLACK_BOT_TOKEN"],
+  ])("rejects an existing generic %s provider before mutation", (_channel, name, envKey) => {
+    const mutations: string[] = [];
+    const genericProvider = `Name: ${name}\nType: generic\nCredential keys: ${envKey}\nConfig keys: <none>\n`;
+    const getResult = { status: 0, stdout: genericProvider, stderr: "" };
+    const profileResult = { status: 0, stdout: "", stderr: "" };
+
+    expect(() =>
+      upsertMessagingProviders(
+        [{ name, envKey, token: "credential", providerType: "nemoclaw-mcp-v1" }],
+        (command) => {
+          const joined = command.join(" ");
+          const result = joined.startsWith("provider profile import ")
+            ? profileResult
+            : new Map([[`provider get ${name}`, getResult]]).get(joined);
+          mutations.push(...(result ? [] : [joined]));
+          return result ?? profileResult;
+        },
+        { bestEffort: true },
+      ),
+    ).toThrow(/does not match the required endpointless credential binding/);
+    expect(mutations).toEqual([]);
+  });
+
+  it("rejects an ambiguous messaging provider lookup before mutation", () => {
+    const mutations: string[] = [];
+    const getResult = {
+      status: 1,
+      stdout: "",
+      stderr: 'Error: status: Unavailable, message: "provider not found"',
+    };
+    const profileResult = { status: 0, stdout: "", stderr: "" };
+
+    expect(() =>
+      upsertMessagingProviders(
+        [
+          {
+            name: "alpha-discord-bridge",
+            envKey: "DISCORD_BOT_TOKEN",
+            token: "credential",
+            providerType: "nemoclaw-mcp-v1",
+          },
+        ],
+        (command) => {
+          const joined = command.join(" ");
+          const result = joined.startsWith("provider profile import ")
+            ? profileResult
+            : new Map([["provider get alpha-discord-bridge", getResult]]).get(joined);
+          mutations.push(...(result ? [] : [joined]));
+          return result ?? profileResult;
+        },
+        { bestEffort: true },
+      ),
+    ).toThrow(/Could not inspect messaging provider/);
+    expect(mutations).toEqual([]);
   });
 
   it("updates an existing Brave Search provider in place on reuse paths", () => {

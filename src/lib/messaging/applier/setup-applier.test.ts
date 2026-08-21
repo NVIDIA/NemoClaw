@@ -408,7 +408,11 @@ describe("MessagingSetupApplier", () => {
               stdout:
                 "Name: demo-slack-bridge\nType: nemoclaw-mcp-v1\nCredential keys: SLACK_BOT_TOKEN\nConfig keys: <none>\n",
             }
-          : { status: 1 };
+          : {
+              status: 1,
+              stderr:
+                "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
+            };
       }
       return { status: 0 };
     };
@@ -505,7 +509,11 @@ describe("MessagingSetupApplier", () => {
         case "profile":
           return { status: 0 };
         case "get":
-          return { status: 1 };
+          return {
+            status: 1,
+            stderr:
+              "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
+          };
         default:
           return {
             status: 1,
@@ -526,6 +534,29 @@ describe("MessagingSetupApplier", () => {
 
     expect(message).toContain("TELEGRAM_BOT_TOKEN=toke");
     expect(message).not.toContain("tokensecretvalue");
+  });
+
+  it("does not mutate a provider after an ambiguous inspection failure", async () => {
+    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" }, [
+      "telegram",
+    ]);
+    const calls: string[] = [];
+    const runOpenshell: MessagingOpenShellRunner = (args) => {
+      calls.push(args.join(" "));
+      if (args[1] === "profile") return { status: 0 };
+      return {
+        status: 1,
+        stderr: 'Error: status: Unavailable, message: "provider not found"',
+      };
+    };
+
+    expect(() =>
+      MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
+        env: { TELEGRAM_BOT_TOKEN: "123456:telegram-token" },
+        runOpenshell,
+      }),
+    ).toThrow(/Could not inspect messaging provider/);
+    expect(calls.some((command) => /provider (create|update)/u.test(command))).toBe(false);
   });
 
   it("applies agent config render plans into sandbox files through OpenShell", async () => {
@@ -642,7 +673,13 @@ describe("MessagingSetupApplier", () => {
     const credentialResult = MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
       env: ALL_CHANNEL_ENV,
       runOpenshell: (args) =>
-        args[0] === "provider" && args[1] === "get" ? { status: 1 } : { status: 0 },
+        args[0] === "provider" && args[1] === "get"
+          ? {
+              status: 1,
+              stderr:
+                "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
+            }
+          : { status: 0 },
     });
     const policyResult = MessagingSetupApplier.applyPolicyAtOpenShell(plan, {
       applyPresets: (_sandboxName, presetNames, context) => {
@@ -765,7 +802,13 @@ describe("MessagingSetupApplier", () => {
       },
       runOpenshell: (args) => {
         providerCalls.push([...args]);
-        if (args[0] === "provider" && args[1] === "get") return { status: 1 };
+        if (args[0] === "provider" && args[1] === "get") {
+          return {
+            status: 1,
+            stderr:
+              "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
+          };
+        }
         return { status: 0 };
       },
     });
