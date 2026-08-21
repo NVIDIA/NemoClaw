@@ -73,6 +73,7 @@ import {
 } from "../../state/gateway-registry";
 import { stopHermesForwardWatchers } from "./hermes-forward-watcher-cleanup";
 import {
+  stopBedrockRuntimeAdapter,
   stopHttpsPinRuntimeAdapter,
   stopOpenRouterRuntimeAdapter,
 } from "./openrouter-runtime-adapter-cleanup";
@@ -319,6 +320,7 @@ const HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES: readonly string[] = [
 const OLLAMA_AUTH_PROXY_STATE_ENTRIES: readonly string[] = [
   "ollama-proxy-token",
   "ollama-backend",
+  "ollama-backend.json",
   "ollama-proxy-port",
   "ollama-auth-proxy.pid",
   "ollama-auth-proxy.status",
@@ -2991,6 +2993,9 @@ function executePlan(
       }
       stopOllamaAuthProxy(paths, runtime, !scopedToSelectedGateway);
       stopOpenRouterRuntimeAdapter(paths, runtime, {
+        scanOrphans: !scopedToSelectedGateway,
+      });
+      stopBedrockRuntimeAdapter(paths, runtime, {
         scanOrphans: !scopedToSelectedGateway,
       });
       if (scopedToSelectedGateway) {

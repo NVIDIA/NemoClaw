@@ -858,6 +858,9 @@ async function applyChannelAddToGatewayAndRegistry(
   // deferred rebuild cannot configure it.
   const bridgeDefs = collectMessagingBridgeTokenDefs({
     sandboxName,
+    // Unnormalized: the bridge profile filter owns the unset default and rejects
+    // an agent no profile declares.
+    agent: registry.getSandbox(sandboxName)?.agent,
     enabledChannels: [channelName],
     disabledChannelNames: new Set<string>(),
     getCredential,

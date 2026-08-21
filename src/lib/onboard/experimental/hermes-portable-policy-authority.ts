@@ -141,7 +141,7 @@ function capturePolicy(
 }
 
 /**
- * Prove the current 0.0.101 Hermes matrix's empty provider projection.
+ * Prove the current 0.0.106 Hermes matrix's empty provider projection.
  * Both reads are explicitly gateway and sandbox scoped. A non-empty full/base
  * delta is unsupported until OpenShell exposes an authoritative projection.
  */

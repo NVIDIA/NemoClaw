@@ -114,6 +114,7 @@
         "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
         "test/blueprint-runtime-identity-lifecycle.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts",
         "test/onboard-inference-gateway-scope.test.ts"
       ]
     },
@@ -124,6 +125,7 @@
     {
       "live": "test/e2e/live/full-e2e.test.ts",
       "fast": [
+        "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
         "test/e2e/support/onboard-performance.test.ts",
@@ -245,7 +247,8 @@
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts"
       ]
     },
     {
@@ -644,9 +647,13 @@
     {
       "live": "test/e2e/live/registry-targets.test.ts",
       "fast": [
+        "test/e2e/support/e2e-matrix.test.ts",
+        "test/e2e/support/e2e-phase-onboarding.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts",
+        "test/e2e/support/workflow-plan.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     },

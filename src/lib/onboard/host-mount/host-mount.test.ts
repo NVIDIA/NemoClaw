@@ -45,7 +45,7 @@ describe("read-only host mount validation", () => {
   });
 
   it.each(["\u001b[31m", "\u202e", "\u2028", "\u2029"])(
-    "rejects missing, relative, symlinked, non-normalized, and terminal-control paths [%s]",
+    "rejects missing, unreadable, relative, symlinked, non-normalized, and terminal-control paths [%s]",
     (terminalControl) => {
       const source = workspaceTempDir();
       const symlink = `${source}-link`;
@@ -56,7 +56,7 @@ describe("read-only host mount validation", () => {
         "host directory must be an absolute path",
       );
       expect(() => parseReadOnlyHostMount(`${source}-missing:/sandbox/project`)).toThrow(
-        "does not exist",
+        "no such file or directory",
       );
       expect(() => parseReadOnlyHostMount(`${symlink}:/sandbox/project`)).toThrow(
         "must not contain symlinks",
@@ -64,6 +64,19 @@ describe("read-only host mount validation", () => {
       expect(() => parseReadOnlyHostMount(`${source}:/sandbox/../project`)).toThrow(
         "normalized absolute path below /sandbox",
       );
+
+      const file = path.join(source, "alpha.txt");
+      fs.writeFileSync(file, "test");
+      let unreadable: unknown;
+      try {
+        parseReadOnlyHostMount(`${file}/child:/sandbox/project`);
+      } catch (error) {
+        unreadable = error;
+      }
+      expect((unreadable as NodeJS.ErrnoException | undefined)?.cause).toMatchObject({
+        code: "ENOTDIR",
+      });
+      expect(unreadable).toMatchObject({ message: expect.stringContaining("ENOTDIR") });
 
       let message = "";
       try {
@@ -108,7 +121,7 @@ describe("read-only host mount validation", () => {
     created.splice(created.indexOf(source), 1);
     expect(() =>
       normalizePersistedSandboxHostMounts([{ source, target: "/sandbox/project", readOnly: true }]),
-    ).toThrow("host directory does not exist");
+    ).toThrow("no such file or directory");
   });
 
   it("revalidates and compares unordered declarations before sandbox reuse", () => {

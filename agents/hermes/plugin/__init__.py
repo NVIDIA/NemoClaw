@@ -7,6 +7,10 @@ Provides sandbox status tools, skill hot-reload, managed-tool broker patches,
 and quiet runtime grounding when Hermes runs inside an OpenShell sandbox
 managed by NemoClaw.
 
+Layout: channel-specific runtime overrides live in sibling modules loaded by
+register() only when that channel is configured, so a sandbox without the
+channel carries none of its behavior. Today that is googlechat_adapter.py.
+
 Skill hot-reload: Hermes caches its skill slash-command registry in a
 module-global dict on first scan. New skills dropped on disk are invisible
 until the cache is cleared. This plugin provides a nemoclaw_reload_skills
@@ -22,9 +26,11 @@ chat transcript.
 """
 
 import atexit
+import importlib.util
 import inspect
 import ipaddress
 import json
+import logging
 import os
 import re
 import subprocess
@@ -96,6 +102,7 @@ _MESSAGING_PLATFORMS = (
     "qqbot",
     "yuanbao",
     "webhook",
+    "google_chat",
 )
 _RAW_MESSAGING_TOOL_RE = re.compile(
     r"^\s*send_message\s*:\s*(?P<body>.+?)\s*$",
@@ -1418,10 +1425,44 @@ def _handle_reload_skills(tool_input=None, context=None, **_kwargs):
     return "\n".join(lines)
 
 
+# Google Chat: the channel owns the override. Source lives in
+# src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py; the Hermes
+# image copies it in beside this file. Loaded only when the channel is
+# configured, so other sandboxes never replace the bundled platform entry.
+_GOOGLE_CHAT_SUBSCRIPTION_ENV = "GOOGLE_CHAT_SUBSCRIPTION_NAME"
+_GOOGLE_CHAT_MODULE = "googlechat_adapter.py"
+
+
+def _install_googlechat_adapter(ctx):
+    """Install the Google Chat override when that channel is configured.
+
+    The module is loaded by path: Hermes imports this plugin as a directory
+    module under a synthetic name, so a relative import has no package context.
+    Load failure must not abort plugin registration, but it has to be visible —
+    without the override the bundled gRPC adapter hangs under the REST-only
+    egress policy and the channel goes quiet with no other clue.
+    """
+    if not _get_env_value(_GOOGLE_CHAT_SUBSCRIPTION_ENV):
+        return False
+    path = os.path.join(os.path.dirname(__file__), _GOOGLE_CHAT_MODULE)
+    try:
+        spec = importlib.util.spec_from_file_location("nemoclaw_hermes_googlechat", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.install(ctx)
+    except Exception:
+        logging.getLogger("gateway.platforms.google_chat").exception(
+            "[GoogleChat][NemoClaw] loading %s failed", _GOOGLE_CHAT_MODULE,
+        )
+        return False
+    return True
+
+
 def register(ctx):
     """Register NemoClaw tools and hooks with Hermes."""
     _install_nous_tool_broker_patch()
     _install_messaging_response_patch()
+    _install_googlechat_adapter(ctx)
 
     # Register status tool
     ctx.register_tool(

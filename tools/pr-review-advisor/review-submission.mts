@@ -317,6 +317,7 @@ export function createReviewSubmissionController({
   const reviewReceiptSchema = createReviewReceiptSchema(securityCategoryNames);
   const ajv = new Ajv2020({ allErrors: true, strict: false });
   const validateReceipt = ajv.compile(reviewReceiptSchema);
+  const validateE2e = ajv.compile(e2eSchema);
   const validate = ajv.compile(schema);
 
   const recordFindings = defineTool({
@@ -412,23 +413,55 @@ export function createReviewSubmissionController({
       ].filter(Boolean);
       if (missing.length > 0) throw new Error(`submit_review requires: ${missing.join(", ")}`);
 
-      validateReceiptFindingReferences(receiptDraft!, findingsDraft!);
-      const candidateFindingSnapshot = validateReviewFindingSubmission(
-        findingsDraft!,
-        repositoryRoot,
+      const validationIssues = await receiptFindingReferenceIssues(receiptDraft!, findingsDraft!);
+      const candidateFindingSnapshot = await captureValidationIssue(validationIssues, () =>
+        validateReviewFindingSubmission(findingsDraft!, repositoryRoot),
       );
-      const openFindings = candidateFindingSnapshot.findings;
-      validateSecurityCategories(receiptDraft!.securityCategories, securityCategoryNames);
-      const summary = canonicalSummary(
-        receiptDraft!.summary,
-        openFindings,
-        metadata.deterministic.hasOpenPrReplacement,
+      const openFindings = candidateFindingSnapshot?.findings;
+      const summary = openFindings
+        ? await captureValidationIssue(validationIssues, () =>
+            canonicalSummary(
+              receiptDraft!.summary,
+              openFindings,
+              metadata.deterministic.hasOpenPrReplacement,
+            ),
+          )
+        : undefined;
+      await captureValidationIssue(validationIssues, () =>
+        validateSecurityCategories(receiptDraft!.securityCategories, securityCategoryNames),
       );
-      const normalizedE2e = await normalizeE2e(structuredClone(e2eDraft!), metadata);
+      const normalizedE2e = await captureValidationIssue(validationIssues, async () => {
+        const normalized = await normalizeE2e(structuredClone(e2eDraft!), metadata);
+        if (!validateE2e(normalized)) {
+          throw new Error(
+            `submit_review normalized E2E failed schema validation: ${ajv.errorsText(validateE2e.errors)}`,
+          );
+        }
+        return normalized;
+      });
       const candidateTerminology = createTerminologyLedger(metadata.headSha);
       const traces =
         typeof terminologyTraces === "function" ? terminologyTraces() : terminologyTraces;
-      candidateTerminology.commit(receiptDraft!.terminologyReview, traces);
+      await captureValidationIssue(validationIssues, () =>
+        candidateTerminology.commit(receiptDraft!.terminologyReview, traces),
+      );
+      if (openFindings) {
+        const qualityIssues = reviewQualityIssues({
+          findings: openFindings,
+          securityCategories: receiptDraft!.securityCategories,
+        });
+        if (qualityIssues.length > 0) {
+          validationIssues.push(
+            `submit_review result failed review quality validation: ${qualityIssues.join("; ")}`,
+          );
+        }
+      }
+      if (validationIssues.length > 0) {
+        throw new Error(`submit_review failed validation: ${validationIssues.join("; ")}`);
+      }
+      if (!candidateFindingSnapshot || !openFindings || !summary || !normalizedE2e) {
+        throw new Error("submit_review validation did not assemble every candidate section");
+      }
       const publicReceipt = publicReceiptDraft(receiptDraft!, metadata.deterministic.testDepth);
       const result = {
         version: 1,
@@ -442,15 +475,6 @@ export function createReviewSubmissionController({
         terminologyReview: candidateTerminology.snapshot().review,
         e2e: normalizedE2e,
       };
-      const qualityIssues = reviewQualityIssues({
-        findings: openFindings,
-        securityCategories: receiptDraft!.securityCategories,
-      });
-      if (qualityIssues.length > 0) {
-        throw new Error(
-          `submit_review result failed review quality validation: ${qualityIssues.join("; ")}`,
-        );
-      }
       if (!validate(result)) {
         const reason = (validate.errors ?? [])
           .map((error) => `${error.instancePath || "/"} ${error.message}`)
@@ -539,37 +563,45 @@ function findingPair(finding: CandidateFindingInput): string {
   return `${finding.category}:${finding.basis.kind}`;
 }
 
-function validateReceiptFindingReferences(
+async function receiptFindingReferenceIssues(
   receipt: DraftReceipt,
   findings: readonly CandidateFindingInput[],
-): void {
+): Promise<string[]> {
   const findingsById = new Map(findings.map((finding, index) => [findingId(index), finding]));
-  validateConcernEntries(
-    "acceptanceCoverage",
-    receipt.acceptanceCoverage,
-    findingsById,
-    (entry) => entry.status === "partial" || entry.status === "missing",
-    (finding) => ACCEPTANCE_FINDING_PAIRS.has(findingPair(finding)),
-    (entry) => `acceptance:${String(entry.clause)}`,
-    (entry) => (entry.status === "missing" ? "blocker" : "warning"),
+  const issues: string[] = [];
+  await captureValidationIssue(issues, () =>
+    validateConcernEntries(
+      "acceptanceCoverage",
+      receipt.acceptanceCoverage,
+      findingsById,
+      (entry) => entry.status === "partial" || entry.status === "missing",
+      (finding) => ACCEPTANCE_FINDING_PAIRS.has(findingPair(finding)),
+      (entry) => `acceptance:${String(entry.clause)}`,
+      (entry) => (entry.status === "missing" ? "blocker" : "warning"),
+    ),
   );
-  validateConcernEntries(
-    "securityCategories",
-    receipt.securityCategories,
-    findingsById,
-    (entry) => entry.verdict === "warning" || entry.verdict === "fail",
-    (finding) => SECURITY_FINDING_PAIRS.has(findingPair(finding)),
-    (entry) => `security:${String(entry.category)}`,
-    (entry) => (entry.verdict === "fail" ? "blocker" : "warning"),
+  await captureValidationIssue(issues, () =>
+    validateConcernEntries(
+      "securityCategories",
+      receipt.securityCategories,
+      findingsById,
+      (entry) => entry.verdict === "warning" || entry.verdict === "fail",
+      (finding) => SECURITY_FINDING_PAIRS.has(findingPair(finding)),
+      (entry) => `security:${String(entry.category)}`,
+      (entry) => (entry.verdict === "fail" ? "blocker" : "warning"),
+    ),
   );
-  validateConcernEntries(
-    "sourceOfTruthReview",
-    receipt.sourceOfTruthReview,
-    findingsById,
-    (entry) => entry.status === "needs_followup" || entry.status === "missing",
-    (finding) => SOURCE_OF_TRUTH_FINDING_CATEGORIES.has(finding.category),
-    (entry) => `source-of-truth:${String(entry.surface)}`,
+  await captureValidationIssue(issues, () =>
+    validateConcernEntries(
+      "sourceOfTruthReview",
+      receipt.sourceOfTruthReview,
+      findingsById,
+      (entry) => entry.status === "needs_followup" || entry.status === "missing",
+      (finding) => SOURCE_OF_TRUTH_FINDING_CATEGORIES.has(finding.category),
+      (entry) => `source-of-truth:${String(entry.surface)}`,
+    ),
   );
+  return issues;
 }
 
 function validateConcernEntries(
@@ -621,6 +653,18 @@ function validateConcernEntries(
         `${section}[${index + 1}] references ${findingId} with severity ${finding.severity}; ${String(entry.status ?? entry.verdict)} requires ${requiredSeverity}${requiredSeverity === "warning" ? " or blocker" : ""}`,
       );
     }
+  }
+}
+
+async function captureValidationIssue<T>(
+  issues: string[],
+  validate: () => T | Promise<T>,
+): Promise<T | undefined> {
+  try {
+    return await validate();
+  } catch (error: unknown) {
+    issues.push(error instanceof Error ? error.message : String(error));
+    return undefined;
   }
 }
 

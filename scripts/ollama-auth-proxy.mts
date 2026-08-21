@@ -158,7 +158,7 @@ function decodeProcAddress(addr: string): number[] | null {
  *   - IPv4: first byte 0x7F (127.0.0.0/8)
  *   - IPv6 canonical loopback: 15 zero bytes then 0x01 (::1)
  *   - IPv4-mapped IPv6 loopback: 10 zero bytes, then 0xFF 0xFF, then any
- *     127.x.y.z (byte 12 == 0x7F). Covers ::ffff:127.0.0.0/8.
+ *     127.x.y.z (byte 12 == 0x7F). Covers ::ffff:127.0.0.0/104.
  * Returns false for any input the decoder produced that does not match one
  * of these shapes.
  */
@@ -202,10 +202,16 @@ function probeLinuxLoopbackBind(port: number): BackendProbeResult | null {
   try {
     v6Text = fs.readFileSync("/proc/net/tcp6", "utf8");
   } catch (err) {
-    // tcp6 may be absent on IPv6-disabled kernels; treat as empty. Any
-    // other failure (EACCES / EPERM) is treated the same: absence of IPv6
-    // data doesn't invalidate the IPv4 data we already read.
-    void err;
+    // tcp6 absent (ENOENT) means the kernel runs without IPv6, so there are
+    // no IPv6 listeners to classify; the IPv4 data alone is complete.
+    // Any other failure (EACCES / EPERM) means IPv6 listeners exist but are
+    // not visible here, and passing on IPv4 data alone would let a
+    // non-loopback IPv6-only listener through. Degrade to null so the
+    // caller falls back to `lsof`, which sees both address families.
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== "ENOENT") {
+      return null;
+    }
   }
   const listeners = [
     ...parseProcNetTcpListeners(v4Text, port),
@@ -226,7 +232,7 @@ function probeLinuxLoopbackBind(port: number): BackendProbeResult | null {
  * as loopback. Handles the same three semantic cases as
  * `isLoopbackProcAddress`, but on the cross-platform lsof-style form so the
  * IPv4 accept range matches on both probes: any 127.x.y.z (127.0.0.0/8),
- * ::1, and ::ffff:127.0.0.0/8. Advisor PRA-4 (Ultra) flagged the earlier
+ * ::1, and ::ffff:127.0.0.0/104. Advisor PRA-4 (Ultra) flagged the earlier
  * exact-match against "127.0.0.1" as an incomplete classifier that would
  * refuse legitimate loopback binds and, worse, mask a genuine non-loopback
  * mistake as "not-loopback" on the fallback path.
@@ -318,6 +324,10 @@ function assertBackendBoundToLoopback(port: number): void {
   const labels = (result.nonLoopback || result.listeners || [])
     .map((l) => `${l.address}:${l.port}`)
     .join(", ");
+  // This stderr is not the user-facing message: the host spawns the proxy with
+  // stdio "ignore" and renders remediation from the status reason below, which
+  // knows whether the backend is Ollama or a compatible endpoint (#9730). Keep
+  // user-facing wording in that renderer, not here.
   console.error(
     `Ollama auth proxy: backend on port ${port} is NOT bound to loopback ` +
       `(found ${labels || "non-loopback listener"}). ` +
@@ -368,7 +378,7 @@ function buildProxyServer(token: string, backendUrl: URL): http.Server {
         return;
       }
       clientRes.writeHead(502, { "Content-Type": "text/plain" });
-      clientRes.end(`Ollama backend error: ${err.message}`);
+      clientRes.end(`Backend error: ${err.message}`);
     };
 
     const proxyReq = http.request(

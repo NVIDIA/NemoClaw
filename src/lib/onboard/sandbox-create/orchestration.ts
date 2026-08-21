@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
+import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../adapters/openshell/resolve-shared";
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { BackupResult } from "../../state/sandbox";
@@ -1054,7 +1055,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const sandboxRuntimeFields = agentCreateInput.hermesPortableLifecycle
       ? sandboxRegistryMetadata.getHermesPortableSandboxRuntimeRegistryFields(
           effectiveSandboxGpuConfig,
-          "0.0.101",
+          HERMES_PORTABLE_OPENSHELL_VERSION,
         )
       : getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
     const createdSandboxCompletion = createOnboardCreatedSandboxCompletion(

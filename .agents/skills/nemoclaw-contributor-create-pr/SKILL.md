@@ -60,12 +60,21 @@ Select checks that apply to the diff.
 
 When this workflow pushes an update to an open PR, first follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) through its complete review-cycle collection step, then classify every finding in that collection.
 
-Group valid code-changing findings by root cause. Route each valid code-changing finding to `nemoclaw-contributor-implement-issue` as part of its root-cause group. That workflow owns the repair, its validation, and its evidence. Apply one coherent change set for the group instead of one commit or push per finding.
+This workflow owns the push gate. Before routing a repair, enter the ordered remediation sequence
+in the [Handle results](../_shared/pr-follow-up.md#handle-results) section and complete its
+count-and-approval decision. The shared workflow owns the single count-and-approval state machine
+for the complete PR task. Carry its recorded progress across every routed repair.
 
-This workflow owns the push gate. After the routed repair returns, follow the numbered steps under
-`After editing:` in the [Handle results](../_shared/pr-follow-up.md#handle-results) section for
-validation, the commit, the final collection, evidence removal, and the push. Push after no
-unresolved finding requires a change.
+Group valid code-changing findings in the repair scope by root cause. Route only finding groups in
+the repair scope to `nemoclaw-contributor-implement-issue`. Do not route a finding group that the
+shared workflow excludes from the repair scope. Preserve its unresolved or deferred disposition.
+That workflow owns the repair, its validation, and its evidence. Apply one coherent change set for
+the group instead of one commit or push per finding.
+
+After the routed repair returns and its validation passes, resume the shared sequence at the commit
+step. If validation fails or is inconclusive, return to the repair and validation steps. Do not commit
+or push until validation passes. Complete the final collection and evidence-removal steps before
+pushing. Push after no unresolved finding requires a change.
 
 Immediately before pushing, repeat the complete collection. Confirm that its initial and final `headRefOid` values match.
 
@@ -318,6 +327,6 @@ Automated review: no actionable findings / addressed findings / waiting on user
 - Select only boxes that have evidence.
 - Do not create a PR from `main`.
 - Assign the PR to its creator with `--assignee @me` when the creator has triage permission.
-- Route each valid code-changing review finding to `nemoclaw-contributor-implement-issue`.
+- Route only review finding groups in the repair scope to `nemoclaw-contributor-implement-issue`.
 - Report decisions, changes, and verification evidence. Do not report the analysis process.
 - Follow CI and automated reviews after you create the PR.
