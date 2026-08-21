@@ -199,7 +199,6 @@ describe("sandbox command transport privileged execution lease", () => {
     expect(
       executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {
         gatewayName: "recorded-gateway",
-        allowLocalDockerFallback: false,
       }),
     ).toBeNull();
     expect(deps.privilegedSandboxExecArgv).not.toHaveBeenCalled();

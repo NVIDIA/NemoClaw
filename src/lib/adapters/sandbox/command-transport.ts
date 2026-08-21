@@ -193,7 +193,7 @@ export function executeSandboxExecCommandTransport(
       } catch {
         // OpenShell transport failed; try the trusted direct-container fallback.
       }
-      if (options.allowLocalDockerFallback === false) return null;
+      if (options.gatewayName || options.allowLocalDockerFallback === false) return null;
       // Keep the fallback outside the OpenShell try/catch so a fail-closed identity
       // refusal cannot be caught and retried against changing container state.
       // The outer execution lease covers argv resolution and the complete fallback
