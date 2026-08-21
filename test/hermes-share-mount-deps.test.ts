@@ -461,29 +461,18 @@ describe("Hermes share mount package parity (#2947)", () => {
     }
   });
 
-  it.each([404, 500])("does not retry terminal Hermes archive HTTP %i (#9815)", (status) => {
-    const { calls, result, tmp } = runHermesArchiveLayer([`http:${status}`]);
+  it.each([
+    { response: "http:404", failure: "http-404", name: "HTTP 404" },
+    { response: "http:500", failure: "http-500", name: "HTTP 500" },
+    { response: "exit:28", failure: "curl-exit-28", name: "transport failure" },
+  ])("does not retry a terminal Hermes archive $name (#9815)", ({ failure, response }) => {
+    const { calls, result, tmp } = runHermesArchiveLayer([response]);
     try {
       expect(result.status).not.toBe(0);
-      expect(calls).toEqual([`curl http:${status}`]);
-      expect(result.stderr).toContain(
-        `Hermes archive download outcome=failed-no-retry attempt=1/3 failure=http-${status}`,
+      expect(calls).toEqual([`curl ${response}`]);
+      expect(result.stderr).toBe(
+        `Hermes archive download outcome=failed-no-retry attempt=1/3 failure=${failure}\n`,
       );
-      expect(result.stderr).not.toContain(PRIVATE_CURL_DIAGNOSTIC);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("does not retry a Hermes archive transport failure (#9815)", () => {
-    const { calls, result, tmp } = runHermesArchiveLayer(["exit:28"]);
-    try {
-      expect(result.status).not.toBe(0);
-      expect(calls).toEqual(["curl exit:28"]);
-      expect(result.stderr).toContain(
-        "Hermes archive download outcome=failed-no-retry attempt=1/3 failure=curl-exit-28",
-      );
-      expect(result.stderr).not.toContain(PRIVATE_CURL_DIAGNOSTIC);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -505,25 +494,14 @@ describe("Hermes share mount package parity (#2947)", () => {
     }
   });
 
-  it("rejects a downloaded Hermes archive that does not match its checksum (#9815)", () => {
-    const { calls, result, targetRoot, tmp } = runHermesArchiveLayer(["http:200"], "0".repeat(64));
-    try {
-      expect(result.status).not.toBe(0);
-      expect(calls).toEqual(["curl http:200"]);
-      expect(result.stderr).toContain(
-        "Hermes archive download outcome=passed-first-attempt attempt=1/3",
-      );
-      expect(fs.existsSync(path.join(targetRoot, "pyproject.toml"))).toBe(false);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("does not retry a checksum-valid malformed Hermes archive (#9815)", () => {
+  it.each([
+    { expectedChecksum: "0".repeat(64), name: "checksum mismatch" },
+    { archiveReplacement: "checksum-valid malformed archive\n", name: "malformed archive" },
+  ])("does not retry a Hermes archive $name (#9815)", ({ archiveReplacement, expectedChecksum }) => {
     const { calls, result, targetRoot, tmp } = runHermesArchiveLayer(
       ["http:200"],
-      undefined,
-      "checksum-valid malformed archive\n",
+      expectedChecksum,
+      archiveReplacement,
     );
     try {
       expect(result.status).not.toBe(0);

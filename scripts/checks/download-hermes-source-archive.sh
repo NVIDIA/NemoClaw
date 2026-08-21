@@ -7,6 +7,7 @@ set -euo pipefail
 version="${1:-}"
 output="${2:-}"
 max_attempts=3
+retry_delays=(1 2)
 url="https://github.com/NousResearch/hermes-agent/archive/refs/tags/${version}.tar.gz"
 partial="${output}.partial"
 curl_error="${output}.curl-error"
@@ -26,7 +27,7 @@ cleanup() {
 trap cleanup EXIT
 rm -f -- "$output"
 
-for attempt in 1 2 3; do
+for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
   rm -f -- "$partial" "$curl_error"
   http_status=""
   if http_status="$(curl \
@@ -86,7 +87,7 @@ for attempt in 1 2 3; do
     echo "Hermes archive download outcome=exhausted attempt=${attempt}/${max_attempts} failure=http-429" >&2
     exit 1
   fi
-  delay="$attempt"
+  delay="${retry_delays[$((attempt - 1))]}"
   echo "Hermes archive download outcome=transient-external attempt=${attempt}/${max_attempts} failure=http-429 retry-in=${delay}s" >&2
   sleep "$delay"
 done
