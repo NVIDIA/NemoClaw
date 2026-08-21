@@ -452,28 +452,29 @@ async function addMcpBridgeUnlocked(
             previousRevision: previousCredentialRevision,
           }
         : {}),
-      // A no-field provider update advances only the provider resource version.
-      // If the credential remains available, republish it after observing an
-      // absence; otherwise, a hostless recovery advances the provider revision.
+      // After an observed absence, republish an available host credential and
+      // then advance the provider resource version with a no-field update.
+      // Hostless recovery reuses the stored credential before the same refresh.
       refreshAfterObservedAbsence: () => {
-        // invalidState: OpenShell 0.0.106 can coalesce a no-field provider
-        // refresh without publishing the credential into fresh sandbox execs.
+        // invalidState: OpenShell 0.0.106 can leave the credential absent from
+        // fresh sandbox execs after a credential-bearing provider update.
         // sourceBoundary: OpenShell owns provider revision projection.
         // whyNotSourceFix: NemoClaw can only observe absence after the bound
         // policy is active, then republish when this process still has the host
-        // credential value. Hostless recovery retains the credential-free path.
-        // regressionTest: mcp-add-crash-consistency.test.ts covers republish
-        // and hostless recovery; mcp-provider-ownership.test.ts covers loss of
-        // the persisted provider identity before republish.
-        // removalCondition: remove the credential-bearing republish when the
-        // supported OpenShell version guarantees that a post-policy no-field
-        // refresh projects the bound credential into fresh sandbox execs.
-        const republished = upsertMcpProvider(entry.providerName ?? "", options.env, {
+        // credential value. One no-field update then publishes a new provider
+        // revision while preserving the exact provider ownership boundary.
+        // regressionTest: mcp-add-crash-consistency.test.ts covers the ordered
+        // republish and refresh plus hostless recovery; mcp-provider-ownership.test.ts
+        // covers loss of the persisted provider identity before either mutation.
+        // removalCondition: remove the ordered republish and refresh when the
+        // supported OpenShell version projects a credential-bearing update into
+        // fresh sandbox execs after policy binding.
+        upsertMcpProvider(entry.providerName ?? "", options.env, {
           allowExisting: true,
           expectedProviderId: entry.providerId,
           requireExisting: true,
         });
-        if (republished.action !== "updated") refreshMcpProviderEnvironment(entry);
+        refreshMcpProviderEnvironment(entry);
       },
     });
     // The adapter was proven absent above, so cleanup is safe even when a

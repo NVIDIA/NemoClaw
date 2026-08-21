@@ -537,7 +537,7 @@ registry.addExtraProvider("my-assistant-extra-telegram-bot-token-agent-a"); regi
 runner.run = (command) => {
   const normalized = _n(command);
   commands.push({ command: normalized });
-  const providerGet = normalized.match(/provider get -g nemoclaw ([^ ]+)$/)?.[1];
+  const providerGet = normalized.match(/provider get -g nemoclaw ([^ ]+)$/)?.[1]; if (providerGet === process.env.NEMOCLAW_TEST_FAIL_PROVIDER) return { status: 2, stderr: "transport unavailable" };
   if (providerGet && revisions.has(providerGet)) return { status: 0, stdout: "Name: " + providerGet + "\nType: " + (providerGet === "compatible-endpoint" ? "openai" : "generic") + "\nCredential keys: " + credentialKeys[providerGet] + "\nConfig keys: " + (providerGet === "compatible-endpoint" ? "OPENAI_BASE_URL" : "<none>") + "\n" };
   const refresh = normalized.match(/provider update -g nemoclaw ([^ ]+)$/)?.[1];
   if (refresh && gatewaySecrets.has(refresh)) { if (refresh === process.env.NEMOCLAW_TEST_FAIL_PROVIDER) return { status: 1 }; revisions.set(refresh, revisions.get(refresh) + 1); return { status: 0 }; }
@@ -571,7 +571,6 @@ const { createSandbox } = require(${onboardPath});
 })().catch((error) => { const temporaryCreateSources = require("node:fs").readdirSync(process.env.TMPDIR).filter((entry) => entry.startsWith("nemoclaw-initial-policy-") || entry.startsWith("nemoclaw-build-")); console.log(JSON.stringify({ commands, registered, error: String(error), providerRevisions: Object.fromEntries(revisions), temporaryCreateSources })); console.error(error); process.exit(1); });
 `;
       fs.writeFileSync(scriptPath, script);
-
       const runScenario = (failedProvider?: string) =>
         spawnSync(process.execPath, [scriptPath], {
           cwd: repoRoot,
@@ -605,6 +604,7 @@ const { createSandbox } = require(${onboardPath});
         .sort();
       const denied = runScenario("my-assistant-extra-telegram-bot-token-agent-b");
       assert.equal(denied.status, 1);
+      assert.match(denied.stderr, /preserved indeterminate attachments .*unexpected-exit/);
       const deniedPayload = parseStdoutJson(denied.stdout);
       const deniedCommands = (deniedPayload.commands as CommandEntry[]).map(
         ({ command }) => command,

@@ -141,7 +141,8 @@ providerCommands.runOpenshellProviderCommand = (args) => {
         fs.appendFileSync(marker("republish-after-observed-absence"), "republish\n", { mode: 0o600 });
       }
       if (
-        crashAfter === "credential-projection-delayed-hostless" &&
+        (crashAfter === "credential-projection-coalesced" ||
+          crashAfter === "credential-projection-delayed-hostless") &&
         isCredentialFreeRefresh &&
         observedCredentialAbsentThisProcess
       ) {
@@ -223,13 +224,17 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
     !attachmentAttemptedThisProcess;
   isPreupdateObservation && mark("observation");
   if (crashAfter === "credential-projection-coalesced" && isObservation) {
-    if (credentialRepublishBeforeObservationCountThisProcess === 0) {
+    if (credentialFreeRefreshAfterAbsenceCountThisProcess === 0) {
       observedCredentialAbsentThisProcess = true;
       mark("credential-observed-absent");
     }
     return {
       status: 0,
-      stdout: credentialRepublishBeforeObservationCountThisProcess > 0 ? "v" + providerVersion() : "absent",
+      stdout:
+        credentialRepublishAfterAbsenceCountThisProcess > 0 &&
+        credentialFreeRefreshAfterAbsenceCountThisProcess > 0
+          ? "v" + providerVersion()
+          : "absent",
       stderr: "",
     };
   }
@@ -571,7 +576,7 @@ function readBridge(home: string): Record<string, unknown> {
 }
 
 describe("MCP add crash consistency", () => {
-  it("commits one bridge and rejects one duplicate after delayed credential projection (#9764)", async () => {
+  it("commits one bridge after a credential-free refresh publishes the delayed credential revision (#9764)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-concurrent-projection-"));
     try {
       const script = buildAddProcessScript(home, "credential-projection-coalesced");
@@ -585,14 +590,24 @@ describe("MCP add crash consistency", () => {
       expect(results.map((result) => result.status).sort(), combinedOutput).toEqual([0, 2]);
       expect(results.find((result) => result.status === 2)?.stderr).toContain("already exists");
       expect(combinedOutput).not.toContain("host-only-secret");
-      expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "republish-before-observation.marker"))).toBe(true);
-      expect(fs.existsSync(path.join(home, "republish-after-observed-absence.marker"))).toBe(false);
-      const credentialRepublishCount = fs
+      expect(fs.existsSync(path.join(home, "republish-after-observed-absence.marker"))).toBe(true);
+      const credentialRepublishBeforeObservationCount = fs
         .readFileSync(path.join(home, "republish-before-observation.marker"), "utf8")
         .split("\n")
         .filter(Boolean).length;
-      expect(credentialRepublishCount).toBe(1);
+      expect(credentialRepublishBeforeObservationCount).toBe(1);
+      const credentialRepublishAfterAbsenceCount = fs
+        .readFileSync(path.join(home, "republish-after-observed-absence.marker"), "utf8")
+        .split("\n")
+        .filter(Boolean).length;
+      expect(credentialRepublishAfterAbsenceCount).toBe(1);
+      const credentialFreeRefreshAfterAbsenceCount = fs
+        .readFileSync(path.join(home, "refresh-after-observed-absence.marker"), "utf8")
+        .split("\n")
+        .filter(Boolean).length;
+      expect(credentialFreeRefreshAfterAbsenceCount).toBe(1);
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(true);

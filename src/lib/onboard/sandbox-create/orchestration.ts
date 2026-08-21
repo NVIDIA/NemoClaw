@@ -110,22 +110,27 @@ export async function completeHermesPortableSandboxRegistration(input: {
 }
 
 function publishAttachedProvidersBeforeDockerSandboxCreation(
-  openshellDriver: SandboxEntry["openshellDriver"],
-  inferenceProvider: string | null,
-  messagingProviders: readonly string[],
-  extraProviders: readonly string[],
-  gatewayName: string,
+  input: {
+    readonly openshellDriver: SandboxEntry["openshellDriver"];
+    readonly inferenceProvider: string | null;
+    readonly messagingProviders: readonly string[];
+    readonly extraProviders: readonly string[];
+    readonly gatewayName: string;
+  },
   deps: Pick<SandboxCreateOrchestrationRuntime, "providerExistsInGateway" | "runOpenshell"> & {
     readonly cleanupCreateSources: () => void;
   },
 ): void {
-  if (openshellDriver === "docker") {
+  if (input.openshellDriver === "docker") {
     const providersRequiringExistenceProbe = new Set(
-      [inferenceProvider, ...messagingProviders].filter((provider): provider is string =>
-        Boolean(provider),
+      [input.inferenceProvider, ...input.messagingProviders].filter(
+        (provider): provider is string => Boolean(provider),
       ),
     );
-    const attachedProviders = new Set([...providersRequiringExistenceProbe, ...extraProviders]);
+    const attachedProviders = new Set([
+      ...providersRequiringExistenceProbe,
+      ...input.extraProviders,
+    ]);
     for (const attachedProvider of attachedProviders) {
       if (
         providersRequiringExistenceProbe.has(attachedProvider) &&
@@ -133,7 +138,7 @@ function publishAttachedProvidersBeforeDockerSandboxCreation(
       )
         continue;
       const refreshed = deps.runOpenshell(
-        ["provider", "update", "-g", gatewayName, attachedProvider],
+        ["provider", "update", "-g", input.gatewayName, attachedProvider],
         {
           ignoreError: true,
           suppressOutput: true,
@@ -1220,11 +1225,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       cleanupBuildContext();
     } else {
       publishAttachedProvidersBeforeDockerSandboxCreation(
-        sandboxRuntimeFields.openshellDriver,
-        resolvedCreateIntent.inferenceProvider,
-        messagingProviders,
-        resolvedCreateIntent.extraProviders,
-        GATEWAY_NAME,
+        {
+          openshellDriver: sandboxRuntimeFields.openshellDriver,
+          inferenceProvider: resolvedCreateIntent.inferenceProvider,
+          messagingProviders,
+          extraProviders: resolvedCreateIntent.extraProviders,
+          gatewayName: GATEWAY_NAME,
+        },
         {
           providerExistsInGateway,
           runOpenshell,
