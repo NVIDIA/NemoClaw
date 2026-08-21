@@ -549,6 +549,36 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     );
   });
 
+  it("does not remove a pre-existing provider after a Hermes Discord identity conflict", async () => {
+    const originalEntry = { ...makeEmptyEntry("alpha"), agent: "hermes" } as SandboxEntry;
+    arrangeRegistry({ current: originalEntry });
+    vi.mocked(defs.loadAgent).mockReturnValue(agentFixture("hermes"));
+    getCredentialMock.mockImplementation((key: string) =>
+      key === "DISCORD_BOT_TOKEN" ? DISCORD_TOKEN : null,
+    );
+    upsertMock.mockImplementationOnce(() => {
+      throw Object.assign(
+        new Error("alpha-discord-bridge does not match the required binding"),
+        {
+          code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
+          mutatedProviderNames: [],
+        },
+      );
+    });
+
+    await expect(addSandboxChannel("alpha", { channel: "discord" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(updateSandboxMock).not.toHaveBeenCalled();
+    expect(registry.getSandbox("alpha")).toBe(originalEntry);
+    expect(
+      runOpenshellMock.mock.calls
+        .map(([args]) => (args as string[]).join(" "))
+        .filter((command) => command.includes("provider detach") || command.includes("delete")),
+    ).toEqual([]);
+  });
+
   // Scenario 6
   it("idempotent same-sandbox re-add does not self-conflict", async () => {
     arrangeRegistry({

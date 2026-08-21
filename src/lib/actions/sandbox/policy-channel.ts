@@ -911,6 +911,14 @@ async function applyChannelAddToGatewayAndRegistry(
         err instanceof Error ? err.message : String(err)
       }`,
     );
+    if (policyChannelDependencies.isMessagingProviderBindingConflict(err)) {
+      if (err.mutatedProviderNames.length > 0) {
+        console.error(
+          `  ${YW}⚠${R} Provider state changed before the identity conflict; inspect ${err.mutatedProviderNames.join(", ")} before retrying.`,
+        );
+      }
+      process.exit(1);
+    }
     const teardown = await applyChannelRemoveToGatewayAndRegistry(
       sandboxName,
       channelName,

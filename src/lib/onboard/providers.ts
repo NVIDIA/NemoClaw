@@ -26,6 +26,21 @@ const {
   readGatewayProviderMetadata,
 } = require("./gateway-provider-metadata");
 
+const MESSAGING_PROVIDER_BINDING_CONFLICT = "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT";
+
+class MessagingProviderBindingConflictError extends Error {
+  constructor(message, mutatedProviderNames = []) {
+    super(message);
+    this.name = "MessagingProviderBindingConflictError";
+    this.code = MESSAGING_PROVIDER_BINDING_CONFLICT;
+    this.mutatedProviderNames = mutatedProviderNames;
+  }
+}
+
+function isMessagingProviderBindingConflict(error) {
+  return error instanceof Error && error.code === MESSAGING_PROVIDER_BINDING_CONFLICT;
+}
+
 // ── Constants ────────────────────────────────────────────────────
 
 const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
@@ -454,7 +469,7 @@ function providerExistsInGateway(name, _runOpenshell) {
  * @param {Record<string, string>} env - Environment variables for the openshell command.
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
  * @param {{replaceExisting?: boolean}} options - Optional replacement controls.
- * @returns {{ ok: boolean, status?: number, message?: string }}
+ * @returns {{ ok: boolean, status?: number, message?: string, reason?: string }}
  */
 function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
   const exists = providerExistsInGateway(name, _runOpenshell);
@@ -471,6 +486,7 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
     return {
       ok: false,
       status: 1,
+      reason: "binding-conflict",
       message: `Existing provider '${name}' does not match the required '${type}' credential binding.`,
     };
   }
@@ -571,7 +587,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
     );
     if (!result.ok) {
       if (options.bestEffort) {
-        failures.push(`${name}: ${result.message}`);
+        failures.push({ name, message: result.message, reason: result.reason });
         continue;
       }
       console.error(`\n  ✗ Failed to create messaging provider '${name}': ${result.message}`);
@@ -580,7 +596,11 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
     upserted.push(name);
   }
   if (failures.length > 0) {
-    throw new Error(failures.join("; "));
+    const message = failures.map(({ name, message }) => `${name}: ${message}`).join("; ");
+    if (failures.every(({ reason }) => reason === "binding-conflict")) {
+      throw new MessagingProviderBindingConflictError(message, upserted);
+    }
+    throw new Error(message);
   }
   // Gateway-side token minting is configured AFTER the providers exist (best-effort,
   // self-gates without a bridge token def). Secret material stays gateway-side —
@@ -610,6 +630,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
 }
 
 module.exports = {
+  isMessagingProviderBindingConflict,
   BUILD_ENDPOINT_URL,
   OPENAI_ENDPOINT_URL,
   ANTHROPIC_ENDPOINT_URL,

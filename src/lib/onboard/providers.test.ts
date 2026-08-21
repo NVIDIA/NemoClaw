@@ -7,6 +7,23 @@ type RunResult = { status: number; stdout?: string; stderr?: string };
 type RunOptions = { env?: Record<string, string | undefined> };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
+const DISCORD_STATIC_PROFILE_EXPORT = JSON.stringify({
+  id: "discord-hermes-static-v1",
+  credentials: [
+    {
+      name: "bot_token",
+      env_vars: ["DISCORD_BOT_TOKEN"],
+      required: true,
+      auth_style: "header",
+      header_name: "Authorization",
+      query_param: "",
+    },
+  ],
+  endpoints: [],
+  binaries: [],
+  inference_capable: false,
+});
+
 const {
   HOSTED_INFERENCE_ENDPOINT_URL,
   HOSTED_INFERENCE_MODEL,
@@ -68,7 +85,7 @@ const {
     env: Record<string, string | undefined>,
     runOpenshell: RunOpenshell,
     options?: { replaceExisting?: boolean; requireExactBinding?: boolean },
-  ) => { ok: boolean; status?: number; message?: string };
+  ) => { ok: boolean; status?: number; message?: string; reason?: string };
   upsertMessagingProviders: (
     tokenDefs: Array<{
       name: string;
@@ -693,6 +710,7 @@ describe("onboard provider helpers", () => {
     expect(result).toEqual({
       ok: false,
       status: 1,
+      reason: "binding-conflict",
       message:
         "Existing provider 'alpha-discord-bridge' does not match the required 'discord-hermes-static-v1' credential binding.",
     });
@@ -759,6 +777,47 @@ describe("onboard provider helpers", () => {
     } finally {
       process.exit = originalExit;
     }
+  });
+
+  it("classifies an exact-binding conflict without mutating the existing provider", () => {
+    const commands: string[] = [];
+
+    expect(() =>
+      upsertMessagingProviders(
+        [
+          {
+            name: "alpha-discord-bridge",
+            envKey: "DISCORD_BOT_TOKEN",
+            token: "discord-test",
+            providerType: "discord-hermes-static-v1",
+          },
+        ],
+        (command) => {
+          commands.push(command.join(" "));
+          return command.includes("profile") && command.includes("export")
+            ? { status: 0, stdout: DISCORD_STATIC_PROFILE_EXPORT }
+            : {
+                status: 0,
+                stdout: [
+                  "Name: alpha-discord-bridge",
+                  "Type: generic",
+                  "Credential keys: DISCORD_BOT_TOKEN",
+                  "Config keys: <none>",
+                  "",
+                ].join("\n"),
+              };
+        },
+        { bestEffort: true, requireExactBindings: true },
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
+        mutatedProviderNames: [],
+      }),
+    );
+    expect(commands).not.toContain(
+      "provider update alpha-discord-bridge --credential DISCORD_BOT_TOKEN",
+    );
   });
 
   it("replaces existing providers when the caller opts in (post-sandbox-delete path)", () => {
