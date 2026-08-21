@@ -185,7 +185,6 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     expect(citations.every((citation) => docs.includes(citation))).toBe(true);
     expect(docs).toContain("proxy_connect_by_hostname");
     expect(docs).toContain("reopens proxy-side DNS resolution");
-
   });
 
   it("adds one raw MCP policy with an exact public IP pin and no adapter identity", () => {
@@ -284,7 +283,9 @@ network_policies:
       "utf8",
     );
     expect(
-      mcpBridgeSource.match(/await assertRawOpenShellAllowedIpsRebindingDenied/g),
+      mcpBridgeSource.match(
+        /await runFullMcpBridgeE2eCoverage\(\s*mcpBridgeE2eScope,\s*\(\) =>\s*assertRawOpenShellAllowedIpsRebindingDenied\(/gu,
+      ),
     ).toHaveLength(1);
     expect(networkPolicySource).not.toContain("assertRawOpenShellAllowedIpsRebindingDenied");
     expect(contractSource).toContain('["policy", "set", "--policy"');
