@@ -130,7 +130,7 @@ export function parseOpenClawPairingSettlementObservation(
 export function buildOpenClawPairingObservationScript(
   approvalPolicyModuleB64: string,
   stateDirectory: string,
-  mode: "qualification" | "settlement" = "qualification",
+  mode: "ordinary-settlement" | "qualification" | "settlement" = "qualification",
 ): string {
   if (!path.posix.isAbsolute(stateDirectory)) {
     throw new OpenClawPairingQualificationError();
@@ -142,7 +142,7 @@ export function buildOpenClawPairingObservationScript(
     throw new OpenClawPairingQualificationError();
   }
   const stateDirectoryB64 = Buffer.from(stateDirectory, "utf8").toString("base64");
-  const marker = mode === "settlement" ? SETTLEMENT_MARKER : QUALIFICATION_MARKER;
+  const marker = mode === "qualification" ? QUALIFICATION_MARKER : SETTLEMENT_MARKER;
   // OpenClaw owns these in-sandbox state files. This observer reads
   // descriptor-pinned state through the requested gateway and returns only
   // allowlisted fields and digests. Pairing changes remain owned by the
@@ -167,6 +167,8 @@ REQUIRED_ROLES = ['operator']
 PAIRING_ONLY_SCOPES = ['operator.pairing']
 REQUEST_SCOPES = ['operator.pairing', 'operator.write']
 TOKEN_SCOPES = ['operator.pairing', 'operator.read', 'operator.write']
+ORDINARY_SETTLEMENT = ${mode === "ordinary-settlement" ? "True" : "False"}
+STRICT_SETTLEMENT = ${mode === "settlement" ? "True" : "False"}
 ED25519_SPKI_PREFIX = bytes.fromhex('302a300506032b6570032100')
 RAW_PUBLIC_KEY_RE = re.compile(r'^[A-Za-z0-9_-]{43}$')
 
@@ -474,7 +476,8 @@ try:
     ):
         reject()
 
-    ${mode === "settlement" ? "if pending:\n        reject()" : ""}
+    if STRICT_SETTLEMENT and pending:
+        reject()
     for request_id, request in pending.items():
         if (
             not isinstance(request_id, str)
@@ -483,6 +486,10 @@ try:
             or request.get('requestId') != request_id
         ):
             reject()
+        if ORDINARY_SETTLEMENT:
+            if request.get('deviceId') == device_id or request.get('publicKey') == device_public_key:
+                sys.exit(2)
+            continue
         decision = approval_request_decision(request)
         if decision.get('reason') == 'malformed-scopes':
             reject()
@@ -517,7 +524,7 @@ try:
         'publicKey': device_public_key,
     }, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
     ${
-      mode === "settlement"
+      mode !== "qualification"
         ? "print(MARKER + json.dumps({\n        'deviceIdentitySha256': device_identity_sha256,\n        'state': 'settled' if settled else 'pairing-only',\n    }, sort_keys=True, separators=(',', ':')))\n    sys.exit(0)"
         : "if not settled:\n        reject()"
     }
@@ -575,7 +582,7 @@ function runOpenClawPairingObservation(
   gatewayName: string,
   openclawVersion: string,
   stateDirectory: string,
-  mode: "qualification" | "settlement",
+  mode: "ordinary-settlement" | "qualification" | "settlement",
   execDeps?: Partial<OpenClawPairingQualificationDeps>,
 ): { readonly output: string; readonly policy: string } {
   const approvalPolicy = (execDeps?.readApprovalPolicy ?? readAutoPairApprovalPolicyModule)();
@@ -630,6 +637,31 @@ export function observeOpenClawPairingSettlement(
       openclawVersion,
       stateDirectory,
       "settlement",
+      execDeps,
+    );
+    const observation = parseOpenClawPairingSettlementObservation(executed.output);
+    if (!observation) throw new OpenClawPairingQualificationError();
+    return observation;
+  } catch (error) {
+    if (error instanceof OpenClawPairingQualificationError) throw error;
+    throw new OpenClawPairingQualificationError();
+  }
+}
+
+export function observeOrdinaryOpenClawPairingSettlement(
+  sandboxName: string,
+  gatewayName: string,
+  openclawVersion: string,
+  stateDirectory: string,
+  execDeps?: Partial<OpenClawPairingQualificationDeps>,
+): OpenClawPairingSettlementObservation {
+  try {
+    const executed = runOpenClawPairingObservation(
+      sandboxName,
+      gatewayName,
+      openclawVersion,
+      stateDirectory,
+      "ordinary-settlement",
       execDeps,
     );
     const observation = parseOpenClawPairingSettlementObservation(executed.output);

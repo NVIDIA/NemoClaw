@@ -20,12 +20,11 @@
  * immediately after) then approves it, so `operator.write` is persisted before
  * handoff and the user's first run connects clean.
  *
- * Contract: best-effort, non-blocking, idempotent. The warm-up run will itself
- * fall back to embedded mode on this first invocation (EXIT 0) — that is
- * expected; its output is discarded. Any failure (exec timeout, gateway not up,
- * agent error) is swallowed so finalization is never blocked; behavior then
- * degrades to the v1 first-run-falls-back-then-recover path, strictly no worse
- * than today. On re-onboard where `operator.write` is already paired the run
+ * Contract: best-effort, bounded, idempotent. The warm-up run will itself
+ * fall back to embedded mode on this first invocation (EXIT 0). That is
+ * expected, and its output is discarded. The leaf swallows execution failures, and
+ * onboarding separately observes the canonical pairing state before it reports
+ * success. On re-onboard where `operator.write` is already paired the run
  * connects clean (no new pending) and the approval pass is a no-op.
  *
  * Workaround boundary (NemoClaw#4462): OpenClaw owns device-pairing semantics
@@ -180,8 +179,8 @@ function runSandboxWarmupScript(sandboxName: string, script: string): void {
 /**
  * Run the bounded, throwaway scope-upgrade warm-up inside the named sandbox via
  * `openshell sandbox exec`. All failure modes (timeout, sandbox-exec errors,
- * missing openclaw, gateway unreachable) are swallowed: this is best-effort and
- * must never throw — onboard finalization must not be blocked.
+ * missing openclaw, gateway unreachable) are swallowed. The finalization
+ * settlement gate decides readiness from a later canonical observation.
  */
 export function runSandboxScopeWarmupRun(sandboxName: string): void {
   runSandboxWarmupScript(sandboxName, WARMUP_SCRIPT);

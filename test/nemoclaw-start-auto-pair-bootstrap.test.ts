@@ -139,6 +139,12 @@ exit 2
       });
 
       expect(run.status).toBe(0);
+      expect(run.stdout).toContain("[auto-pair] stage=listing failed reason=pairing-required");
+      expect(run.stdout).toContain("[auto-pair] stage=request-creation observed request=request-1");
+      expect(run.stdout).toContain(
+        "[auto-pair] stage=validation accepted request=request-1 reason=allowlisted-initial-cli",
+      );
+      expect(run.stdout).toContain("[auto-pair] stage=approval attempting request=request-1");
       expect(run.stdout).toContain("[auto-pair] approved initial CLI pairing request=request-1");
       expect(JSON.parse(fs.readFileSync(approveLog, "utf-8"))).toEqual({
         url: null,
@@ -262,6 +268,9 @@ exit 2
 
         expect(run.status).toBe(0);
         expect(run.stdout).not.toContain("approved initial CLI pairing");
+        expect(run.stdout).toContain(
+          "[auto-pair] stage=validation rejected request=request-1 reason=not-allowlisted",
+        );
         expect(fs.existsSync(approveLog)).toBe(false);
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -779,4 +788,62 @@ exit 1
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 40_000);
+
+  it("reports the request-creation stage while a valid device list stays empty (#9844)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-empty-"));
+    const fakeOpenclaw = path.join(tmpDir, "openclaw");
+    fs.writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+printf '%s\\n' '{"pending":[],"paired":[]}'
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_BIN: fakeOpenclaw,
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
+          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
+          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+        },
+        timeout: 10_000,
+      });
+
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain("[auto-pair] stage=request-creation waiting reason=no-request");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a fixed watcher-execution stage without raw exception details (#9844)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-exception-"));
+    const writablePolicy = path.join(tmpDir, "openclaw_device_approval_policy.py");
+    fs.writeFileSync(writablePolicy, "def approval_request_decision(_device): return {}\n", {
+      mode: 0o600,
+    });
+    const script = startScriptHeredoc(src, "PYAUTOPAIR").replace(
+      "APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'",
+      `APPROVAL_POLICY_FILE = ${JSON.stringify(writablePolicy)}`,
+    );
+
+    try {
+      const run = spawnSync("python3", ["-c", script], {
+        encoding: "utf-8",
+        env: { ...process.env, OPENCLAW_BIN: "/bin/false" },
+        timeout: 10_000,
+      });
+
+      expect(run.status).toBe(1);
+      expect(run.stdout).toContain("[auto-pair] stage=watcher-execution failed error=RuntimeError");
+      expect(run.stdout).not.toContain(writablePolicy);
+      expect(run.stderr).toBe("");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

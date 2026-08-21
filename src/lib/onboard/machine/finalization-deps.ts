@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenClawPairingSettlementObservation } from "../../actions/sandbox/launch-readiness/openclaw-pairing-qualification";
+import type { OpenClawPairingSettlementTarget } from "../../actions/sandbox/launch-readiness";
+
 // The lazy `require` calls avoid an import cycle because connect.ts and
 // process-recovery.ts both import onboarding helpers.
 type ProcessRecoveryDeps = Pick<
@@ -8,12 +11,179 @@ type ProcessRecoveryDeps = Pick<
   "checkAndRecoverSandboxProcesses" | "waitForRecreatedSandboxOpenShellReady"
 >;
 
+export const OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS = 30_000;
+export const OPENCLAW_ONBOARDING_PAIRING_POLL_MS = 1_000;
+
+export type OrdinaryOpenClawPairingSettlementResult =
+  | { readonly kind: "settled" }
+  | {
+      readonly kind: "incomplete";
+      readonly reason:
+        | "runtime-identity-invalid"
+        | "pairing-unavailable"
+        | "scope-upgrade-incomplete";
+    };
+
+interface OrdinaryOpenClawPairingSettlementDeps {
+  getTarget(name: string): OpenClawPairingSettlementTarget | null;
+  observePairing(
+    name: string,
+    gatewayName: string,
+    version: string,
+    stateDirectory: string,
+  ): OpenClawPairingSettlementObservation;
+  runWarmup(name: string): void;
+  runApproval(name: string, gatewayName: string): void;
+  now(): number;
+  sleep(milliseconds: number): Promise<void>;
+}
+
 export const finalizationHandlerRuntime = {
   loadProcessRecovery: () =>
     require("../../actions/sandbox/process-recovery") as ProcessRecoveryDeps,
   loadRegistryPersistence: () =>
     require("../../state/registry/persistence") as typeof import("../../state/registry/persistence"),
+  loadLaunchReadiness: () =>
+    require("../../actions/sandbox/launch-readiness") as typeof import("../../actions/sandbox/launch-readiness"),
+  loadPairingQualification: () =>
+    require("../../actions/sandbox/launch-readiness/openclaw-pairing-qualification") as typeof import("../../actions/sandbox/launch-readiness/openclaw-pairing-qualification"),
+  loadAutoPairApproval: () =>
+    require("../../actions/sandbox/auto-pair-approval") as typeof import("../../actions/sandbox/auto-pair-approval"),
+  loadAutoPairWarmup: () =>
+    require("../../actions/sandbox/auto-pair-warmup") as typeof import("../../actions/sandbox/auto-pair-warmup"),
 };
+
+function samePairingTarget(
+  left: OpenClawPairingSettlementTarget,
+  right: OpenClawPairingSettlementTarget | null,
+): right is OpenClawPairingSettlementTarget {
+  return (
+    right !== null &&
+    left.gatewayName === right.gatewayName &&
+    left.lifecycleGeneration === right.lifecycleGeneration &&
+    left.lifecycleLiveIdentityFingerprint === right.lifecycleLiveIdentityFingerprint &&
+    left.stateDirectory === right.stateDirectory &&
+    left.version === right.version
+  );
+}
+
+type PairingWaitResult =
+  | { readonly kind: "observed"; readonly value: OpenClawPairingSettlementObservation }
+  | { readonly kind: "target-changed" }
+  | { readonly kind: "timeout" };
+
+async function waitForPairingObservation(
+  name: string,
+  target: OpenClawPairingSettlementTarget,
+  accept: (value: OpenClawPairingSettlementObservation) => boolean,
+  deps: OrdinaryOpenClawPairingSettlementDeps,
+): Promise<PairingWaitResult> {
+  const deadline = deps.now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS;
+  while (true) {
+    if (!samePairingTarget(target, deps.getTarget(name))) return { kind: "target-changed" };
+    try {
+      const value = deps.observePairing(
+        name,
+        target.gatewayName,
+        target.version,
+        target.stateDirectory,
+      );
+      if (!samePairingTarget(target, deps.getTarget(name))) return { kind: "target-changed" };
+      if (accept(value)) return { kind: "observed", value };
+    } catch {
+      // Pairing state can be absent or changing while the startup watcher runs.
+    }
+    const remaining = deadline - deps.now();
+    if (remaining <= 0) return { kind: "timeout" };
+    await deps.sleep(Math.min(OPENCLAW_ONBOARDING_PAIRING_POLL_MS, remaining));
+  }
+}
+
+function defaultPairingSettlementDeps(): OrdinaryOpenClawPairingSettlementDeps {
+  return {
+    getTarget: (name) => {
+      try {
+        return finalizationHandlerRuntime
+          .loadLaunchReadiness()
+          .resolveOrdinaryOpenClawPairingTarget(name);
+      } catch {
+        return null;
+      }
+    },
+    observePairing: (...args) =>
+      finalizationHandlerRuntime
+        .loadPairingQualification()
+        .observeOrdinaryOpenClawPairingSettlement(...args),
+    runWarmup: (name) =>
+      finalizationHandlerRuntime.loadAutoPairWarmup().runSandboxScopeWarmupRun(name),
+    runApproval: (name, gatewayName) =>
+      finalizationHandlerRuntime
+        .loadAutoPairApproval()
+        .runConnectAutoPairApprovalPass(name, gatewayName),
+    now: () => performance.now(),
+    sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  };
+}
+
+/**
+ * Wait for the startup watcher to publish one canonical CLI pairing. When the
+ * device has only its pairing scope, request and approve the write scope once.
+ * A final read verifies the exact device and no pending request for that device.
+ */
+export async function settleOrdinaryOpenClawPairing(
+  name: string,
+  deps: OrdinaryOpenClawPairingSettlementDeps = defaultPairingSettlementDeps(),
+): Promise<OrdinaryOpenClawPairingSettlementResult> {
+  const target = deps.getTarget(name);
+  if (!target) return { kind: "incomplete", reason: "runtime-identity-invalid" };
+
+  const baseline = await waitForPairingObservation(name, target, () => true, deps);
+  if (baseline.kind === "target-changed") {
+    return { kind: "incomplete", reason: "runtime-identity-invalid" };
+  }
+  if (baseline.kind === "timeout") {
+    return { kind: "incomplete", reason: "pairing-unavailable" };
+  }
+  if (baseline.value.state === "settled") return { kind: "settled" };
+  if (!samePairingTarget(target, deps.getTarget(name))) {
+    return { kind: "incomplete", reason: "runtime-identity-invalid" };
+  }
+
+  try {
+    deps.runWarmup(name);
+    deps.runApproval(name, target.gatewayName);
+  } catch {
+    return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
+  }
+
+  const final = await waitForPairingObservation(
+    name,
+    target,
+    (value) =>
+      value.state === "settled" &&
+      value.deviceIdentitySha256 === baseline.value.deviceIdentitySha256,
+    deps,
+  );
+  if (final.kind === "target-changed") {
+    return { kind: "incomplete", reason: "runtime-identity-invalid" };
+  }
+  return final.kind === "observed"
+    ? { kind: "settled" }
+    : { kind: "incomplete", reason: "scope-upgrade-incomplete" };
+}
+
+export function ordinaryOpenClawPairingIncompleteMessage(
+  name: string,
+  reason: Extract<OrdinaryOpenClawPairingSettlementResult, { kind: "incomplete" }>["reason"],
+): string {
+  const cause =
+    reason === "runtime-identity-invalid"
+      ? "its recorded OpenClaw runtime identity changed or is invalid"
+      : reason === "pairing-unavailable"
+        ? "its canonical CLI device pairing did not appear"
+        : "its canonical CLI device did not receive the required baseline scopes";
+  return `OpenClaw onboarding for '${name}' is incomplete because ${cause}. Resume or rerun onboarding.`;
+}
 
 export const finalizationHandlerDeps = {
   waitForSandboxControlPlaneReady(name: string): boolean {
@@ -25,23 +195,8 @@ export const finalizationHandlerDeps = {
     const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
     processRecovery.checkAndRecoverSandboxProcesses(name, options);
   },
-  // Best-effort device-approval sweep that clears pending allowlisted
-  // CLI/webchat scope upgrades so onboard hands off without a stuck pairing
-  // request (#4504). Never throws.
-  autoPairScopeApproval(name: string): void {
-    const {
-      runConnectAutoPairApprovalPass,
-    }: typeof import("../../actions/sandbox/auto-pair-approval") = require("../../actions/sandbox/auto-pair-approval");
-    runConnectAutoPairApprovalPass(name);
-  },
-  // Provoke the operator.write scope upgrade with a throwaway in-sandbox agent
-  // run so the request is PENDING when the approval pass above clears it,
-  // letting the user's first real run connect without an embedded fallback
-  // (#4504-v2). Best-effort; never throws.
-  warmupScopeUpgrade(name: string): void {
-    const warmup: typeof import("../../actions/sandbox/auto-pair-warmup") = require("../../actions/sandbox/auto-pair-warmup");
-    warmup.runSandboxScopeWarmupRun(name);
-  },
+  settleOrdinaryOpenClawPairing,
+  ordinaryOpenClawPairingIncompleteMessage,
   readRegistryAgent(name: string): string | null {
     try {
       const value = finalizationHandlerRuntime.loadRegistryPersistence().load().sandboxes[

@@ -4,7 +4,168 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { VerifyDeploymentResult } from "../../verify-deployment";
-import { finalizationHandlerDeps, finalizationHandlerRuntime } from "./finalization-deps";
+import type { OpenClawPairingSettlementObservation } from "../../actions/sandbox/launch-readiness/openclaw-pairing-qualification";
+import {
+  finalizationHandlerDeps,
+  finalizationHandlerRuntime,
+  ordinaryOpenClawPairingIncompleteMessage,
+  settleOrdinaryOpenClawPairing,
+} from "./finalization-deps";
+
+const PAIRING_TARGET = {
+  gatewayName: "nemoclaw",
+  lifecycleGeneration: "generation-1",
+  lifecycleLiveIdentityFingerprint: "fingerprint-1",
+  stateDirectory: "/sandbox/.openclaw",
+  version: "2026.7.1",
+};
+
+const PAIRING_ONLY: OpenClawPairingSettlementObservation = {
+  state: "pairing-only",
+  deviceIdentitySha256: "a".repeat(64),
+};
+
+const SETTLED: OpenClawPairingSettlementObservation = {
+  state: "settled",
+  deviceIdentitySha256: PAIRING_ONLY.deviceIdentitySha256,
+};
+
+function ordinaryPairingDeps(
+  overrides: Partial<Parameters<typeof settleOrdinaryOpenClawPairing>[1]> = {},
+) {
+  let now = 0;
+  const calls: string[] = [];
+  const deps = {
+    getTarget: vi.fn(() => PAIRING_TARGET),
+    observePairing: vi.fn(() => SETTLED),
+    runWarmup: vi.fn(() => calls.push("warmup")),
+    runApproval: vi.fn(() => calls.push("approval")),
+    now: vi.fn(() => now),
+    sleep: vi.fn(async (milliseconds: number) => {
+      calls.push("sleep");
+      now += milliseconds;
+    }),
+    ...overrides,
+  };
+  return { calls, deps };
+}
+
+describe("ordinary OpenClaw pairing settlement", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("accepts one already-settled canonical CLI device without pairing writes (#9844)", async () => {
+    const scope = ordinaryPairingDeps();
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+
+    expect(scope.deps.observePairing).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      "nemoclaw",
+      "2026.7.1",
+      "/sandbox/.openclaw",
+    );
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+    expect(scope.deps.runApproval).not.toHaveBeenCalled();
+  });
+
+  it("waits for canonical pairing before one warm-up and approval pass (#9844)", async () => {
+    const scope = ordinaryPairingDeps({
+      observePairing: vi
+        .fn()
+        .mockImplementationOnce(() => {
+          throw new Error("not published");
+        })
+        .mockReturnValueOnce(PAIRING_ONLY)
+        .mockReturnValue(SETTLED),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+
+    expect(scope.calls).toEqual(["sleep", "warmup", "approval"]);
+    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(scope.deps.runApproval).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
+  });
+
+  it("performs no writes when a canonical CLI pairing never appears (#9844)", async () => {
+    const scope = ordinaryPairingDeps({
+      observePairing: vi.fn(() => {
+        throw new Error("not published");
+      }),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "pairing-unavailable",
+    });
+
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+    expect(scope.deps.runApproval).not.toHaveBeenCalled();
+  });
+
+  it("does not repeat pairing writes when baseline scopes never settle (#9844)", async () => {
+    const scope = ordinaryPairingDeps({ observePairing: vi.fn(() => PAIRING_ONLY) });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "scope-upgrade-incomplete",
+    });
+
+    expect(scope.deps.runWarmup).toHaveBeenCalledOnce();
+    expect(scope.deps.runApproval).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed without writes when the recorded runtime target changes (#9844)", async () => {
+    const getTarget = vi
+      .fn()
+      .mockReturnValueOnce(PAIRING_TARGET)
+      .mockReturnValueOnce(PAIRING_TARGET)
+      .mockReturnValueOnce({ ...PAIRING_TARGET, lifecycleGeneration: "generation-2" });
+    const scope = ordinaryPairingDeps({ getTarget });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "runtime-identity-invalid",
+    });
+
+    expect(scope.deps.observePairing).toHaveBeenCalledOnce();
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+    expect(scope.deps.runApproval).not.toHaveBeenCalled();
+  });
+
+  it("resolves the finalized default OpenClaw runtime before observation (#9844)", async () => {
+    const observePairing = vi.fn(() => SETTLED);
+    const resolveTarget = vi.fn(() => PAIRING_TARGET);
+    vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
+      resolveOrdinaryOpenClawPairingTarget: resolveTarget,
+    } as never);
+    vi.spyOn(finalizationHandlerRuntime, "loadPairingQualification").mockReturnValue({
+      observeOrdinaryOpenClawPairingSettlement: observePairing,
+    } as never);
+
+    await expect(finalizationHandlerDeps.settleOrdinaryOpenClawPairing("alpha")).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(resolveTarget).toHaveBeenCalledWith("alpha");
+    expect(observePairing).toHaveBeenCalledWith(
+      "alpha",
+      "nemoclaw",
+      "2026.7.1",
+      "/sandbox/.openclaw",
+    );
+  });
+
+  it("explains the bounded failure without exposing runtime identifiers (#9844)", () => {
+    expect(ordinaryOpenClawPairingIncompleteMessage("alpha", "pairing-unavailable")).toBe(
+      "OpenClaw onboarding for 'alpha' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.",
+    );
+  });
+});
 
 describe("finalizationHandlerDeps.waitForSandboxControlPlaneReady", () => {
   afterEach(() => {

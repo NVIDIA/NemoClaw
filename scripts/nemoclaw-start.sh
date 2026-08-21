@@ -2619,9 +2619,17 @@ import os
 import re
 import stat
 import subprocess
+import sys
 import time
 
 print('[auto-pair] watcher started', flush=True)
+
+
+def report_unhandled_watcher_exception(exc_type, _exc_value, _traceback):
+    print(f'[auto-pair] stage=watcher-execution failed error={exc_type.__name__}', flush=True)
+
+
+sys.excepthook = report_unhandled_watcher_exception
 
 APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'
 
@@ -2722,6 +2730,10 @@ QUIET_POLLS = 0
 APPROVED = 0
 SLOW_MODE = False
 HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
+OBSERVED_REQUEST_IDS = set()
+VALIDATED_REQUEST_IDS = set()
+LAST_LIST_FAILURE_REASON = None
+REQUEST_CREATION_WAITING_REPORTED = False
 PAIRING_BOOTSTRAPPED = False
 # SECURITY NOTE: clientId/clientMode are client-supplied and spoofable
 # (the gateway stores connectParams.client.id verbatim). The policy requires
@@ -2934,6 +2946,31 @@ def brief_child_error(out, err):
     lines = [line.strip() for line in f'{err}\n{out}'.splitlines() if line.strip()]
     return (lines[-1] if lines else '')[:400]
 
+
+def report_request_observed(request_id):
+    if request_id in OBSERVED_REQUEST_IDS:
+        return
+    OBSERVED_REQUEST_IDS.add(request_id)
+    print(f'[auto-pair] stage=request-creation observed request={request_id}')
+
+
+def report_request_validation(request_id, accepted, reason):
+    if request_id in VALIDATED_REQUEST_IDS:
+        return
+    VALIDATED_REQUEST_IDS.add(request_id)
+    outcome = 'accepted' if accepted else 'rejected'
+    print(f'[auto-pair] stage=validation {outcome} request={request_id} reason={reason}')
+
+
+def list_failure_reason(rc, out, err):
+    if rc == 124:
+        return 'timeout'
+    if is_pairing_required_list_failure(out, err):
+        return 'pairing-required'
+    if rc != 0:
+        return 'command-failed'
+    return 'empty-output'
+
 # Workaround boundary (NemoClaw#4462): the watcher child sources the trusted
 # runtime environment, so its first list call resolves the live gateway through
 # local loopback and retains the shared token plus a private child marker. The
@@ -3009,12 +3046,23 @@ while time.time() < DEADLINE:
         force_device_pairing=not PAIRING_BOOTSTRAPPED,
     )
     if rc != 0 or not out:
+        failure_reason = list_failure_reason(rc, out, err)
+        if failure_reason != LAST_LIST_FAILURE_REASON:
+            print(f'[auto-pair] stage=listing failed reason={failure_reason}')
+            LAST_LIST_FAILURE_REASON = failure_reason
         initial_request_id = pairing_required_request_id(out, err)
-        if (
-            initial_request_id
-            and initial_request_id not in HANDLED
-            and initial_cli_request_is_allowlisted(initial_request_id)
-        ):
+        if initial_request_id and initial_request_id not in HANDLED:
+            report_request_observed(initial_request_id)
+            initial_request_allowed = initial_cli_request_is_allowlisted(initial_request_id)
+            report_request_validation(
+                initial_request_id,
+                initial_request_allowed,
+                'allowlisted-initial-cli' if initial_request_allowed else 'not-allowlisted',
+            )
+        else:
+            initial_request_allowed = False
+        if initial_request_id and initial_request_id not in HANDLED and initial_request_allowed:
+            print(f'[auto-pair] stage=approval attempting request={initial_request_id}')
             arc, aout, aerr = run(
                 OPENCLAW, 'devices', 'approve', initial_request_id, '--json', strip_gateway_env=True,
             )
@@ -3036,12 +3084,20 @@ while time.time() < DEADLINE:
     try:
         data = json.loads(out)
     except Exception:
+        if LAST_LIST_FAILURE_REASON != 'invalid-json':
+            print('[auto-pair] stage=listing failed reason=invalid-json')
+            LAST_LIST_FAILURE_REASON = 'invalid-json'
         sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
+    LAST_LIST_FAILURE_REASON = None
 
     pending = data.get('pending') or []
     paired = data.get('paired') or []
     has_browser = any((d.get('clientId') == 'openclaw-control-ui') or (d.get('clientMode') == 'webchat') for d in paired if isinstance(d, dict))
+
+    if not pending and not paired and APPROVED == 0 and not REQUEST_CREATION_WAITING_REPORTED:
+        print('[auto-pair] stage=request-creation waiting reason=no-request')
+        REQUEST_CREATION_WAITING_REPORTED = True
 
     if pending:
         QUIET_POLLS = 0
@@ -3056,23 +3112,29 @@ while time.time() < DEADLINE:
             pending_request_ids.add(request_id)
             if request_id in HANDLED:
                 continue
+            report_request_observed(request_id)
             decision = approval_request_decision(device)
             client_id = decision['client_id']
             client_mode = decision['client_mode']
             if decision['reason'] == 'unknown-client':
                 HANDLED.add(request_id)
+                report_request_validation(request_id, False, 'unknown-client')
                 print(f'[auto-pair] rejected unknown client={client_id} mode={client_mode}')
                 continue
             if decision['reason'] == 'malformed-scopes':
                 HANDLED.add(request_id)
+                report_request_validation(request_id, False, 'malformed-scopes')
                 print(f'[auto-pair] rejected malformed scopes client={client_id} mode={client_mode}')
                 continue
             if decision['reason'] == 'disallowed-scopes':
                 HANDLED.add(request_id)
                 scopes = decision['scopes']
+                report_request_validation(request_id, False, 'disallowed-scopes')
                 print(f'[auto-pair] rejected disallowed scopes={sorted(scopes)} client={client_id} mode={client_mode}')
                 continue
+            report_request_validation(request_id, True, 'allowlisted-request')
             attempted_request_ids.add(request_id)
+            print(f'[auto-pair] stage=approval attempting request={request_id}')
             arc, aout, aerr = run(
                 OPENCLAW, 'devices', 'approve', request_id, '--json', strip_gateway_env=True,
             )
