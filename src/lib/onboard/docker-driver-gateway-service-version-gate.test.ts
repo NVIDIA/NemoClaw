@@ -13,7 +13,7 @@ import {
   resetUpstreamGatewayVersionWarning,
   startOpenShellGatewayUserService,
 } from "./docker-driver-gateway-service";
-import { serviceFileIdentityFixture } from "./__test-helpers__/docker-driver-gateway-service";
+import { serviceFileIdentityFixture } from "./__test-helpers__/docker-driver-gateway-service-test-fixture";
 
 const PACKAGE_UNIT = "/usr/lib/systemd/user/openshell-gateway.service";
 const PACKAGE_BINARY = "/usr/bin/openshell-gateway";

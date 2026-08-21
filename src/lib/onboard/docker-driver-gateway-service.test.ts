@@ -11,7 +11,7 @@ import {
   createGatewayServiceFileContentsFixture,
   openShellHomebrewServicePlistFixture,
   serviceFileIdentityFixture,
-} from "./__test-helpers__/docker-driver-gateway-service";
+} from "./__test-helpers__/docker-driver-gateway-service-test-fixture";
 import {
   getNemoclawOpenShellGatewayUserServicePath,
   getOpenShellGatewayManagedServiceLogCommand,
@@ -47,20 +47,7 @@ Gateway: nemoclaw
 Gateway endpoint: https://127.0.0.1:8080/
 `;
 
-const HOMEBREW = {
-  command: "/opt/homebrew/opt/openshell/libexec/openshell-gateway-homebrew-service",
-  formulaPlist: "/opt/homebrew/opt/openshell/homebrew.mxcl.openshell.plist",
-  gateway: "/opt/homebrew/opt/openshell/bin/openshell-gateway",
-  prefix: "/opt/homebrew/opt/openshell",
-  userPlist: "/Users/nvidia/Library/LaunchAgents/homebrew.mxcl.openshell.plist",
-};
-const TRUSTED_HOMEBREW_PLIST = openShellHomebrewServicePlistFixture(HOMEBREW.prefix);
-const HOMEBREW_HOST = {
-  commandExists: (command: string) => command === "brew",
-  existsSync: (candidate: string) => Object.values(HOMEBREW).includes(candidate),
-  home: "/Users/nvidia",
-  platform: "darwin" as const,
-};
+const TRUSTED_HOMEBREW_PLIST = openShellHomebrewServicePlistFixture("/opt/homebrew/opt/openshell");
 function spawnResult(status = 0, stderr = "", stdout = ""): SpawnSyncLikeResult {
   return { status, stderr, stdout };
 }
@@ -114,37 +101,6 @@ function officialFormulaInfo(): SpawnSyncLikeResult {
   );
 }
 
-function officialRunningServiceInfo(
-  overrides: Record<string, boolean | number | string | null> = {},
-): SpawnSyncLikeResult {
-  const running = overrides.running !== false;
-  return spawnResult(
-    0,
-    "",
-    JSON.stringify([
-      {
-        command: HOMEBREW.command,
-        file: running ? HOMEBREW.userPlist : HOMEBREW.formulaPlist,
-        loaded: running,
-        loaded_file: running ? HOMEBREW.userPlist : null,
-        name: "openshell",
-        pid: running ? 4242 : null,
-        registered: running,
-        running,
-        service_name: "homebrew.mxcl.openshell",
-        ...overrides,
-      },
-    ]),
-  );
-}
-function homebrewResponse(args: string[], serviceInfo = officialRunningServiceInfo()) {
-  const responses: Record<string, SpawnSyncLikeResult> = {
-    "--prefix": spawnResult(0, "", HOMEBREW.prefix),
-    info: officialFormulaInfo(),
-    services: args[1] === "info" ? serviceInfo : spawnResult(),
-  };
-  return responses[args[0] ?? ""] ?? spawnResult();
-}
 let nextTrustedFileDescriptor = 10;
 const trustedFilePaths = new Map<number, string>();
 const trustedFileOffsets = new Map<number, number>();

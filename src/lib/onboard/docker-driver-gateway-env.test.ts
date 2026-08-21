@@ -15,7 +15,7 @@ import {
   startPackageManagedDockerDriverGatewayWithEnvOverride,
   writeDockerGatewayDebEnvOverride,
 } from "./docker-driver-gateway-env";
-import { serviceFileIdentityFixture } from "./__test-helpers__/docker-driver-gateway-service";
+import { serviceFileIdentityFixture } from "./__test-helpers__/docker-driver-gateway-service-test-fixture";
 import { PORTABLE_HOST_GATEWAY_IP } from "./experimental/portable-profile";
 
 function homeEnv(home: string, xdgConfigHome = ""): NodeJS.ProcessEnv {

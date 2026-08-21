@@ -12,7 +12,7 @@ import {
 import {
   openShellHomebrewServicePlistFixture,
   serviceFileIdentityFixture,
-} from "./__test-helpers__/docker-driver-gateway-service";
+} from "./__test-helpers__/docker-driver-gateway-service-test-fixture";
 
 const HOME = "/Users/nemoclaw";
 const FORMULA_PREFIX = "/opt/homebrew/opt/openshell";

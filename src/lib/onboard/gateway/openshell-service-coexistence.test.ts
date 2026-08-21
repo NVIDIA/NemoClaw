@@ -23,7 +23,7 @@ import {
 import {
   nemoclawGatewaySystemdUnitFixture,
   serviceFileIdentityFixture,
-} from "../__test-helpers__/docker-driver-gateway-service";
+} from "../__test-helpers__/docker-driver-gateway-service-test-fixture";
 
 const TRUSTED_GATEWAY = "/usr/local/bin/openshell-gateway";
 const TRUSTED_GATEWAY_PATHS = [

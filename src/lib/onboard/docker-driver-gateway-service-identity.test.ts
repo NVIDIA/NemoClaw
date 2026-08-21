@@ -14,7 +14,7 @@ import {
 import {
   nemoclawGatewaySystemdUnitFixture,
   serviceFileIdentityFixture,
-} from "./__test-helpers__/docker-driver-gateway-service";
+} from "./__test-helpers__/docker-driver-gateway-service-test-fixture";
 
 const HOME = "/home/nvidia";
 const NEMOCLAW_UNIT = `${HOME}/.config/systemd/user/nemoclaw-openshell-gateway.service`;

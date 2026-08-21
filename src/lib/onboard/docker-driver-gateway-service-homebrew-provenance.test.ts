@@ -3,14 +3,14 @@
 
 import { createHash } from "node:crypto";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   type OpenShellGatewayUserServiceOptions,
   type SpawnSyncLikeResult,
   startOpenShellGatewayUserService,
 } from "./docker-driver-gateway-service";
-import { openShellHomebrewServicePlistFixture } from "./__test-helpers__/docker-driver-gateway-service";
+import { openShellHomebrewServicePlistFixture } from "./__test-helpers__/docker-driver-gateway-service-test-fixture";
 
 const HOME = "/Users/nemoclaw";
 const FORMULA_PREFIX = "/opt/homebrew/opt/openshell";
@@ -28,20 +28,20 @@ function launchctlAbsentResult(): SpawnSyncLikeResult {
   return { signal: null, status: 113, stderr: null, stdout: null };
 }
 
-function serviceInfo(running: boolean): SpawnSyncLikeResult {
+function serviceInfo(): SpawnSyncLikeResult {
   return spawnResult(
     0,
     "",
     JSON.stringify([
       {
         command: SERVICE_COMMAND,
-        file: running ? USER_PLIST : FORMULA_PLIST,
-        loaded: running,
-        loaded_file: running ? USER_PLIST : null,
+        file: FORMULA_PLIST,
+        loaded: false,
+        loaded_file: null,
         name: "openshell",
-        pid: running ? 4242 : null,
-        registered: running,
-        running,
+        pid: null,
+        registered: false,
+        running: false,
         service_name: "homebrew.mxcl.openshell",
       },
     ]),
@@ -159,7 +159,7 @@ function homebrewOptions(
         : args[0] === "--prefix"
           ? spawnResult(0, "", FORMULA_PREFIX)
           : args[0] === "services" && args[1] === "info"
-            ? serviceInfo(false)
+            ? serviceInfo()
             : spawnResult();
     },
     inspectServiceFileIdentity,

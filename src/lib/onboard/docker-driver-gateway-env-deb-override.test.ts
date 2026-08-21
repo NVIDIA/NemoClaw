@@ -11,7 +11,7 @@ import {
   buildDockerGatewayDebEnvFile,
   writeDockerGatewayDebEnvOverride,
 } from "./docker-driver-gateway-env";
-import { serviceFileIdentityFixture } from "./__test-helpers__/docker-driver-gateway-service";
+import { serviceFileIdentityFixture } from "./__test-helpers__/docker-driver-gateway-service-test-fixture";
 
 function homeEnv(home: string, xdgConfigHome = ""): NodeJS.ProcessEnv {
   return { HOME: home, XDG_CONFIG_HOME: xdgConfigHome } as NodeJS.ProcessEnv;

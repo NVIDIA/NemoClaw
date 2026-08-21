@@ -13,7 +13,7 @@ import {
   startOpenShellGatewayUserService,
   stopOpenShellGatewayUserService,
 } from "./docker-driver-gateway-service";
-import { nemoclawGatewaySystemdUnitFixture } from "./__test-helpers__/docker-driver-gateway-service";
+import { nemoclawGatewaySystemdUnitFixture } from "./__test-helpers__/docker-driver-gateway-service-test-fixture";
 
 const HOME = "/home/nvidia";
 const NEMOCLAW_UNIT = `${HOME}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
