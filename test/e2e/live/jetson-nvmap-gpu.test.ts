@@ -1,7 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import path from "node:path";
+
+import {
+  OPENCLAW_SANDBOX_BASE_IMAGE,
+  parseSandboxBaseImageResolutionLabels,
+} from "../../../src/lib/sandbox-base-image";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
@@ -20,7 +26,20 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-jetson-nvmap";
 const INFERENCE_API_KEY = "jetson-nvmap-e2e-key";
 const INFERENCE_MODEL = "jetson-nvmap-e2e";
+const PUBLISHED_BASE_IMAGE_SOURCES = new Set(["pinned", "version-tag", "source-sha", "latest"]);
+const REGISTRY_FILE = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "sandboxes.json");
 const TIMEOUT_MS = 50 * 60_000;
+
+function sandboxImageTag(): string {
+  expect(fs.existsSync(REGISTRY_FILE), `${REGISTRY_FILE} missing`).toBe(true);
+  const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
+    sandboxes?: Record<string, { imageTag?: unknown }>;
+  };
+  const imageTag = registry.sandboxes?.[SANDBOX_NAME]?.imageTag;
+  const normalizedImageTag = typeof imageTag === "string" ? imageTag.trim() : "";
+  expect(normalizedImageTag, `registry imageTag missing for ${SANDBOX_NAME}`).not.toBe("");
+  return normalizedImageTag;
+}
 
 function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
@@ -254,6 +273,35 @@ fi`,
     });
     await artifacts.writeText("install-jetson-nvmap.log", resultText(install));
     expect(install.exitCode, resultText(install)).toBe(0);
+
+    // #3508 failed after Jetson onboarding silently fell back to building
+    // Dockerfile.base locally. Prove the completed managed image instead uses
+    // an immutable published linux/arm64 sandbox base.
+    expect(resultText(install)).not.toContain(
+      "Building OpenClaw sandbox base image locally because no compatible published base image was found.",
+    );
+    const managedImage = sandboxImageTag();
+    const managedImageLabels = await host.command(
+      "docker",
+      ["image", "inspect", "--format", "{{json .Config.Labels}}", managedImage],
+      {
+        artifactName: "phase-2-managed-image-base-resolution-labels",
+        env: env(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(managedImageLabels.exitCode, resultText(managedImageLabels)).toBe(0);
+    const baseResolution = parseSandboxBaseImageResolutionLabels(
+      JSON.parse(managedImageLabels.stdout.trim()),
+    );
+    expect(baseResolution, "managed image lacks valid base-resolution metadata").not.toBeNull();
+    expect(baseResolution?.imageName).toBe(OPENCLAW_SANDBOX_BASE_IMAGE);
+    expect(PUBLISHED_BASE_IMAGE_SOURCES.has(baseResolution?.source ?? "")).toBe(true);
+    expect(baseResolution?.digest).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    expect(baseResolution?.ref).toBe(`${OPENCLAW_SANDBOX_BASE_IMAGE}@${baseResolution?.digest}`);
+    expect(baseResolution?.os).toBe("linux");
+    expect(baseResolution?.architecture).toBe("arm64");
+    await artifacts.writeJson("phase-2-published-base-image-resolution.json", baseResolution);
 
     const inferenceRoute = await host.command(
       "bash",
