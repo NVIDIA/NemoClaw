@@ -176,8 +176,12 @@ export async function prepareMcpBridgesForRebuild(
     }
     if (policyAuthorityReceipt.authority === "nemoclaw-managed") {
       for (const entry of entries) {
+        // The same-name replacement journal fingerprints this source row before
+        // MCP teardown. Keep exact generated-policy ownership in that preserved
+        // row while removing only the live policy; inner onboarding excludes the
+        // generated name and post-rebuild restoration reuses this ownership.
         await revalidateBeforeMutation();
-        removeGeneratedPolicy(sandboxName, entry);
+        removeGeneratedPolicy(sandboxName, entry, { preserveRegistryOwnership: true });
         removedPolicies.push(entry);
       }
     }

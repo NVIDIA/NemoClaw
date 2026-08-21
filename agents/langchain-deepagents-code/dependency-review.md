@@ -62,6 +62,38 @@ The same fixture requires the subagent tool to remain searchable and to appear i
 The live Deep Agents MCP E2E test separately requires the tool to be hidden initially, returned by `search_tools`, exposed on the next model request, and invoked through the authenticated managed MCP path.
 Remove the retained catalog only after the pinned Deep Agents and LangChain runtime supplies every registered searchable tool to middleware calls and both evidence paths pass without it.
 
+## Deterministic Read-Only MCP Invocation
+
+Deep Agents Code `0.1.55` can expose MCP tools to a model, but it has no public
+command that deterministically invokes one tool. Prompting a model to discover
+or call an exact task-context tool does not prove that the call occurred, even
+when the headless process exits successfully.
+
+NemoClaw adds `dcode tools call-read-only TOOL --json` at the managed wrapper
+and exact-version compatibility boundary. The command uses the released DCode
+MCP configuration, loader, wrapped executor, protocol metadata, and session
+manager. It selects one exact resolved name and invokes it only when DCode marks
+it as an MCP tool and its protocol annotations are coherently read-only. It
+does not expose a mutating tool command or ask a model to choose the call.
+
+The command accepts one bounded JSON object on standard input. It returns one
+JSON envelope of at most 131,072 bytes, followed by one newline delimiter, so
+standard output is at most 131,073 bytes. It rejects oversized nested results
+before serialization, redacts recognized credential shapes, preserves the MCP
+`structuredContent` object under `structured_content`, and suppresses child
+diagnostics on standard error. Fixed, content-free errors cover unavailable,
+ambiguous, unsafe, failed, malformed, oversized, and timed-out calls. A fixed
+deadline covers discovery, invocation, and session cleanup.
+
+The installed-image validator runs the patched DCode process in progressive
+mode against a local TLS Streamable HTTP server from the installed MCP SDK. It
+requires one exact invocation and exact nested output-attestation fidelity. It
+also rejects missing, duplicate, unannotated, malformed, mutating, failed, and
+oversized cases, and proves that a hanging tool exits with the fixed timeout
+result. Remove this command when a pinned Deep Agents Code release provides an
+equivalent deterministic read-only MCP command and the same installed-image
+validation passes through that upstream path.
+
 ## Managed `fetch_url` Proxy Adapter
 
 Deep Agents Code `0.1.55` deliberately disables ambient proxies and resolves

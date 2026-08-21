@@ -134,6 +134,7 @@ export type RebuildRecreateOnboardOpts = {
   preparedImageRebuild?: PreparedImageRebuildHandoff;
   managedWorkloadRebuild?: ManagedWorkloadRebuildHandoff;
   rebuildPreservedEnv?: readonly PreservedEnvFile[];
+  rebuildPolicyPresets?: readonly string[];
   hostMounts?: readonly import("../../state/registry/types").SandboxHostMount[];
   autoYes: boolean;
   toolDisclosure: ToolDisclosure;

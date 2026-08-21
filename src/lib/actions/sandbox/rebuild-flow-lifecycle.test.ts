@@ -208,7 +208,12 @@ describe("rebuildSandbox flow: lifecycle", () => {
     };
     const harness = createRebuildFlowHarness({
       applyPreset: () => true,
-      sandboxEntry: { policyPresetsFinalized: true, policyTier: "balanced" },
+      backupPolicyPresets: ["npm", "bad", "throw", "mcp-bridge-github"],
+      sandboxEntry: {
+        policies: ["npm", "mcp-bridge-github"],
+        policyPresetsFinalized: true,
+        policyTier: "balanced",
+      },
       mcpPreparation: {
         entries: [mcpEntry],
         detachedProviderEntries: [mcpEntry],
@@ -244,6 +249,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
         nonInteractive: true,
         recreateSandbox: true,
         authoritativeResumeConfig: true,
+        rebuildPolicyPresets: ["npm", "bad", "throw"],
         autoYes: true,
       }),
     );
@@ -286,6 +292,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "bad");
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "throw");
+    expect(harness.applyPresetSpy).not.toHaveBeenCalledWith("alpha", "mcp-bridge-github");
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
       policies: ["npm", "bad", "throw"],

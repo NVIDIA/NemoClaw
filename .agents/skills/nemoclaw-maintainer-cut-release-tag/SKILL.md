@@ -15,8 +15,9 @@ push, version-bump, or other release-state GitHub writes.
 
 Treat these as separate states:
 
-- **Tag can be cut:** all required documentation and image checks pass.
-  The release brief records the maintainer's general E2E decision and contains no unresolved prompts.
+- **Tag can be cut:** the release entry and required image checks pass.
+  The maintainer chooses to proceed with the displayed documentation coverage and general E2E state.
+  The release brief records both decisions and contains no unresolved prompts.
 - **Tag cut:** the remote signed tag exists and peels to the planned candidate.
 - **Post-tag follow-through:** after reporting the tag as cut, continue the same task. Monitor
   `latest`, release labels, public documentation, and release images. Draft the Announcement and
@@ -26,8 +27,10 @@ Treat these as separate states:
 
 - Use the exact requested version. Generate the plan with `--version vX.Y.Z`; never infer a bump.
 - Tag only the candidate captured in the plan.
-- Require the release entry and exact-candidate approved-empty Pi documentation result. They cannot
-  be waived.
+- Require the release entry. It cannot be waived.
+- Treat documentation coverage as maintainer context, not a tag gate. Show the exact coverage point,
+  later commits and PRs, review and check state, changed paths, and open managed docs PRs.
+- Record the maintainer's documentation decision in the signed release brief.
 - Require applicable GHCR base and managed-image publication evidence.
 - Treat E2E as maintainer context, not a tag gate. Show the newest full E2E result and let the
   maintainer run focused tests, run the full suite, or proceed with the displayed status.
@@ -81,7 +84,7 @@ After later reads of remote state, keep this candidate when all of these remain 
 
 - the candidate is still an ancestor of `origin/main`;
 - the previous release tag still peels to the commit recorded in the plan;
-- the candidate's own documentation evidence remains valid; and
+- the candidate's release entry remains valid; and
 - the candidate's own required evidence remains valid.
 
 New commits on `main` do not invalidate that plan. A managed documentation PR or branch for a later
@@ -116,11 +119,15 @@ the helper after evidence has been added.
 ### 2. Verify Required Candidate Evidence
 
 Read and follow [Candidate Evidence](references/candidate-evidence.md). It owns the executable reads
-for the release entry, approved-empty Pi result, candidate-specific managed documentation state, and
-applicable base-image verifier.
+for the release entry, documentation coverage, and applicable base-image verifier.
 
-Do not offer the general E2E proceed option until every candidate-evidence check passes. Record the
-returned paths, URLs, run identities, and image identities in the release brief.
+Show the complete documentation coverage evidence. Offer the maintainer the three choices defined
+there. If the maintainer requests documentation work or stops, do not continue to E2E or tag
+confirmation. If the maintainer proceeds, record the exact decision line in the release brief.
+
+Do not offer the general E2E proceed option until the release entry and image checks pass and the
+maintainer chooses to proceed with the displayed documentation coverage. Record the returned paths,
+URLs, PR state, commit ranges, review state, check state, and image identities in the release brief.
 
 ### 3. Present General E2E and Ask for a Decision
 
@@ -148,14 +155,16 @@ and no requested run remains unresolved. Otherwise, ask for and record one conci
 reason. The reason must say what differs or remains unresolved and why the maintainer is proceeding.
 Selecting “Proceed with the status as shown” is the decision, not the reason. Stop and ask the
 maintainer why before continuing when a reason is required.
-This exception applies only to E2E. It never covers documentation or required image evidence.
+This exception applies only to E2E. It never replaces the release entry, documentation coverage
+decision, or required image evidence.
 
 ### 4. Finish and Review the Release Brief
 
 Replace every `TODO_RELEASE_BRIEF` prompt in that Markdown file with:
 
 - the complete canonical release entry and its repository path;
-- Pi documentation workflow and job URLs, artifact name, and normalized approved-empty review;
+- the latest included cumulative docs PR, coverage commit, later commits and PRs, changed-path
+  result, review and check state, open managed docs PRs, and maintainer decision;
 - exact-candidate E2E workflow, attempt, and successful `base-image-publication` job URL;
 - the newest full E2E result and every focused or full rerun result, including SHA, time, age, status,
   conclusion, and URLs;
@@ -177,14 +186,11 @@ Ask the maintainer to paste the plan's exact phrase:
 CONFIRM RELEASE vX.Y.Z <full-candidate-sha>
 ```
 
-After receiving that exact phrase, run the self-contained
-[Final Documentation Recheck](references/candidate-evidence.md#final-documentation-recheck). It
-reads the candidate from the immutable plan again, so it does not depend on the Step 2 shell. Stop on
-a failed read or pending state, consume that confirmation, and request a new one after readiness is
-restored. Otherwise, run the cutter immediately; do not insert another wait between the reads and
-the push.
+After receiving that exact phrase, run the cutter immediately. The cutter reads the immutable plan,
+validates the signed release brief's documentation decision, and checks remote tag state before the
+push.
 
-Then run:
+Run:
 
 ```bash
 npm run release:cut -- \
@@ -238,12 +244,11 @@ Keep the semver tag immutable.
 
 ## Recovery
 
-- Missing release entry or approved-empty Pi result: finish the candidate's documentation work and
-  obtain a successful exact-candidate run. Do not bypass it.
-- Candidate-specific documentation PR or branch exists: when the patch is required, merge it and generate a
-  new plan for the resulting commit. When maintainers reject the patch, close the PR, remove its
-  branch with the required repository authorization, and rerun exact-candidate documentation before
-  requesting a new confirmation.
+- Missing release entry: finish the candidate's documentation work and generate a new plan for the
+  resulting commit. Do not bypass the release entry.
+- Documentation coverage shows a gap, failed checks, unapproved changes, unsupported paths, or an
+  open managed docs PR: show that state. Let the maintainer proceed, create or update a docs PR, or
+  stop. If documentation work changes the candidate, generate a new plan.
 - Required GHCR evidence fails: repair and rerun only the affected image work. Do not replace it
   with the general E2E proceed decision.
 - General E2E is old, incomplete, failed, or from another SHA: show it and offer focused, full, or

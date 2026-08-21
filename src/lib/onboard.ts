@@ -3233,9 +3233,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           gatewayName: GATEWAY_NAME,
           hermesPortableLifecycle:
             lockedRuntime.portableRuntimeContext !== null && agent?.name === "hermes",
-          authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
-          authoritativePolicyTier:
-            opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
+          ...authoritativeRebuildTarget.authoritativeRebuildSandboxFlowOptions(opts),
           recreateJournalTargetIntentFingerprint:
             opts.recreateJournalTargetIntentFingerprint ?? null,
           resumeAgentChanged,

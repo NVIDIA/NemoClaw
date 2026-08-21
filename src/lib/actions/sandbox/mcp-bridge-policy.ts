@@ -1026,7 +1026,7 @@ export function assertGeneratedPolicyExactReadOnly(
 function removeGeneratedPolicyStrict(
   sandboxName: string,
   entry: McpBridgeEntry,
-  options: { bestEffort?: boolean } = {},
+  options: { bestEffort?: boolean; preserveRegistryOwnership?: boolean } = {},
 ): void {
   const recheckAuthority = () =>
     assertGeneratedPolicyMutationAuthority(
@@ -1051,7 +1051,7 @@ function removeGeneratedPolicyStrict(
       ? policies.getPresetContentGatewayState(sandboxName, content)
       : getUnownedGeneratedPolicyState(sandboxName, entry));
   if (gatewayState === "absent") {
-    if (ownsRegistration) {
+    if (ownsRegistration && !options.preserveRegistryOwnership) {
       recheckAuthority();
       registry.removeCustomPolicyByName(sandboxName, policyName);
     }
@@ -1080,8 +1080,10 @@ function removeGeneratedPolicyStrict(
   }
   const activeState = policies.getPresetContentGatewayState(sandboxName, content);
   if (activeState === "absent") {
-    recheckAuthority();
-    registry.removeCustomPolicyByName(sandboxName, policyName);
+    if (!options.preserveRegistryOwnership) {
+      recheckAuthority();
+      registry.removeCustomPolicyByName(sandboxName, policyName);
+    }
     return;
   }
   // Keep (or defensively restore) the last reconciled ownership record when
@@ -1097,7 +1099,7 @@ function removeGeneratedPolicyStrict(
 export function removeGeneratedPolicy(
   sandboxName: string,
   entry: McpBridgeEntry,
-  options: { bestEffort?: boolean } = {},
+  options: { bestEffort?: boolean; preserveRegistryOwnership?: boolean } = {},
 ): void {
   try {
     removeGeneratedPolicyStrict(sandboxName, entry, options);
