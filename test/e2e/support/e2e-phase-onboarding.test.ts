@@ -6,6 +6,9 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 
+import {
+  ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+} from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { type CommandRunner, HostCliClient } from "../fixtures/clients/index.ts";
 import { DCODE_BASE_IMAGE, DCODE_BASE_IMAGE_ENV } from "../fixtures/dcode-base-image.ts";
@@ -172,6 +175,20 @@ describe("onboarding phase fixture", () => {
       },
     ]);
     expect(runner.calls[0]?.options?.env?.[DCODE_BASE_IMAGE_ENV]).toBeUndefined();
+  });
+
+  it("passes a caller-selected final-handoff timeout to the public command (#9622)", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "onboarded\n"));
+    const secrets = new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" });
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets);
+
+    await onboard.from(ready(), {
+      sandboxName: "e2e-final-handoff",
+      timeoutMs: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+    });
+
+    expect(runner.calls[0]?.options?.timeoutMs).toBe(40 * 60_000);
   });
 
   it("runs the Personal cloud OpenClaw target without search-provider credentials", async () => {

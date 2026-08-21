@@ -465,6 +465,7 @@ describe("llama.cpp image PR workflow", () => {
     const attest = required(workflow.jobs?.["attest-candidate"], "attestation job is missing");
     const verify = required(workflow.jobs?.["verify-candidate"], "verification job is missing");
     const scanStep = namedStep(scan, "Scan exact platform digest");
+    const downloadSboms = namedStep(verify, "Download SPDX SBOMs");
     const crypto = namedStep(verify, "Verify cryptographic evidence");
     const receipt = namedStep(verify, "Verify publication evidence and create receipt");
 
@@ -504,7 +505,18 @@ describe("llama.cpp image PR workflow", () => {
     expect(crypto.run).toContain("--signer-workflow");
     expect(crypto.run).toContain('--source-ref "$EXPECTED_REF"');
     expect(crypto.run).toContain('--source-digest "$EXPECTED_REVISION"');
+    expect(downloadSboms.with).toEqual({
+      pattern: "llama-cpp-sbom-*-${{ needs.assemble-candidate.outputs.candidate_tag }}",
+      path: "${{ runner.temp }}/llama-cpp-evidence",
+      "merge-multiple": true,
+    });
     expect(receipt.run).toContain("scripts/checks/verify-llama-cpp-image-publication-evidence.sh");
+    expect(receipt.run).toContain(
+      '--sbom-amd64 "$evidence/llama-cpp-sbom-amd64.spdx.json"',
+    );
+    expect(receipt.run).toContain(
+      '--sbom-arm64 "$evidence/llama-cpp-sbom-arm64.spdx.json"',
+    );
     const publicationJobs = [
       "publish-platform",
       "assemble-candidate",
@@ -576,6 +588,35 @@ describe("llama.cpp image PR workflow", () => {
       "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
       "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
     ]);
+    expect(sbomSteps.map((step) => step.with?.["artifact-name"])).toEqual([
+      "llama-cpp-sbom-amd64-${{ needs.validate-inputs.outputs.candidate_tag }}",
+      "llama-cpp-sbom-arm64-${{ needs.validate-inputs.outputs.candidate_tag }}",
+    ]);
+    expect(sbomSteps.map((step) => step.with?.["output-file"])).toEqual([
+      "llama-cpp-sbom-amd64.spdx.json",
+      "llama-cpp-sbom-arm64.spdx.json",
+    ]);
+    expect(sbomSteps.map((step) => step.with?.["upload-artifact"])).toEqual([false, false]);
+    const uploadAmd64Sbom = namedStep(attest, "Upload amd64 SPDX SBOM");
+    const uploadArm64Sbom = namedStep(attest, "Upload arm64 SPDX SBOM");
+    expect(uploadAmd64Sbom.uses).toBe(
+      "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    );
+    expect(uploadAmd64Sbom.with).toEqual({
+      name: "llama-cpp-sbom-amd64-${{ needs.validate-inputs.outputs.candidate_tag }}",
+      path: "llama-cpp-sbom-amd64.spdx.json",
+      "if-no-files-found": "error",
+      "retention-days": "${{ needs.validate-inputs.outputs.retention_days }}",
+    });
+    expect(uploadArm64Sbom.uses).toBe(
+      "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    );
+    expect(uploadArm64Sbom.with).toEqual({
+      name: "llama-cpp-sbom-arm64-${{ needs.validate-inputs.outputs.candidate_tag }}",
+      path: "llama-cpp-sbom-arm64.spdx.json",
+      "if-no-files-found": "error",
+      "retention-days": "${{ needs.validate-inputs.outputs.retention_days }}",
+    });
     expect(namedStep(attest, "Attest SLSA build provenance").uses).toBe(
       "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8",
     );

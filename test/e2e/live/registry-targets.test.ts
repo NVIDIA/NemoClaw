@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { liveTargetTimeoutContract } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { HOSTED_INFERENCE_SECRET } from "../fixtures/hosted-inference.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
@@ -71,6 +72,7 @@ const REGISTRY_TARGET_PHASES = [
 
 for (const [targetIndex, target] of listTargets().entries()) {
   const support = liveTargetSupport(target);
+  const timeoutContract = liveTargetTimeoutContract(target.environment?.lifecycle);
   if (!support.supported) {
     if (SELECTED_TARGET_ID === target.id) {
       console.warn(`[not wired] ${target.id}: ${support.reasons.join("; ")}`);
@@ -95,6 +97,9 @@ for (const [targetIndex, target] of listTargets().entries()) {
         e2eArtifactRootId: target.id,
         e2ePhases: REGISTRY_TARGET_PHASES,
       },
+      ...(timeoutContract.testTimeoutMs === undefined
+        ? {}
+        : { timeout: timeoutContract.testTimeoutMs }),
     },
     async ({
       artifacts,
@@ -155,6 +160,9 @@ for (const [targetIndex, target] of listTargets().entries()) {
       const instance = await onboard.from(ready, {
         sandboxName: `e2e-reg-${targetIndex.toString(36)}`,
         dcodeBaseImageReference,
+        ...(timeoutContract.commandTimeoutMs === undefined
+          ? {}
+          : { timeoutMs: timeoutContract.commandTimeoutMs }),
       });
 
       // Lifecycle phase runs between onboard and state-validation.

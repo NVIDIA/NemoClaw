@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { maybeEmitPolicyDenialHint, POLICY_HINT_SUPPRESS_ENV } from "./exec-policy-hint";
+import {
+  maybeEmitPolicyDenialHint,
+  maybeEmitScopeUpgradeHint,
+  POLICY_HINT_SUPPRESS_ENV,
+} from "./exec-policy-hint";
 
 const DENIED_CURL_LINE =
   "[1783046573.602] [sandbox] [OCSF ] [ocsf] NET:OPEN [MED] DENIED /usr/bin/curl(1245) -> example.com:443 [policy:- engine:opa] [reason:endpoint example.com:443 is not allowed by any policy]";
@@ -228,5 +232,127 @@ describe("maybeEmitPolicyDenialHint (#5978)", () => {
     expect(calls).toBe(3);
     expect(h.enableCount()).toBe(1);
     expect(h.lines).toHaveLength(0);
+  });
+});
+
+describe("maybeEmitScopeUpgradeHint (#9744)", () => {
+  const OPENCLAW_CRON_ADD = ["openclaw", "cron", "add"];
+  const PENDING_REQUEST_ID = "4899d110-911f-4bc7-ac1a-85d76c7b366f";
+  const PENDING_JSON = JSON.stringify({ pending: [{ requestId: PENDING_REQUEST_ID }] });
+  // An upgrade the failed command did not ask for: a different device asking for
+  // operator.admin. NemoClaw cannot correlate it, so it must never be named.
+  const UNRELATED_ADMIN_PENDING_JSON = JSON.stringify({
+    pending: [
+      {
+        requestId: "c0ffee00-dead-4beef-b0bb-000000000001",
+        device: "unrelated-device-fingerprint",
+        scopes: ["operator.admin"],
+      },
+    ],
+  });
+
+  const harness = (devicesJson: string = PENDING_JSON) => {
+    const lines: string[] = [];
+    let probeCalls = 0;
+    return {
+      lines,
+      probeCount: () => probeCalls,
+      base: {
+        env: {} as NodeJS.ProcessEnv,
+        writeStderr: (line: string) => lines.push(line),
+        probePendingDevices: () => {
+          probeCalls += 1;
+          return devicesJson;
+        },
+      },
+    };
+  };
+
+  it("names the devices-list review command after a failed openclaw command", async () => {
+    const h = harness();
+    const hint = await maybeEmitScopeUpgradeHint(
+      "nemoclaw",
+      "my-assistant",
+      1,
+      false,
+      OPENCLAW_CRON_ADD,
+      h.base,
+    );
+    expect(hint).toContain("nemoclaw my-assistant exec -- openclaw devices list");
+    expect(h.lines).toEqual([hint]);
+  });
+
+  it.each([
+    ["a sole uncorrelated pending request", PENDING_JSON, PENDING_REQUEST_ID],
+    [
+      "an unrelated admin-scope pending request",
+      UNRELATED_ADMIN_PENDING_JSON,
+      "c0ffee00-dead-4beef-b0bb-000000000001",
+    ],
+  ])(
+    "keeps the approve placeholder and never names the request id for %s",
+    async (_label, devicesJson, leakedId) => {
+      const h = harness(devicesJson);
+      const hint = await maybeEmitScopeUpgradeHint(
+        "nemoclaw",
+        "my-assistant",
+        1,
+        false,
+        OPENCLAW_CRON_ADD,
+        h.base,
+      );
+      expect(hint).toContain(
+        "nemoclaw my-assistant exec -- openclaw devices approve <requestId>",
+      );
+      expect(hint).not.toContain(leakedId);
+      expect(hint).not.toContain("operator.admin");
+      expect(hint).not.toContain("unrelated-device-fingerprint");
+    },
+  );
+
+  it.each([
+    ["a successful command", 0, false, OPENCLAW_CRON_ADD, {}],
+    ["a non-openclaw command", 1, false, ["curl", "example.com"], {}],
+    ["a transport invocation error", 1, true, OPENCLAW_CRON_ADD, {}],
+    ["a suppressed hint", 1, false, OPENCLAW_CRON_ADD, { [POLICY_HINT_SUPPRESS_ENV]: "1" }],
+  ])(
+    "stays silent and skips the probe for %s",
+    async (_label, code, invocationError, command, env) => {
+      const h = harness();
+      const hint = await maybeEmitScopeUpgradeHint(
+        "nemoclaw",
+        "my-assistant",
+        code,
+        invocationError,
+        command,
+        { ...h.base, env: env as NodeJS.ProcessEnv },
+      );
+      expect(hint).toBeNull();
+      expect(h.lines).toEqual([]);
+      expect(h.probeCount()).toBe(0);
+    },
+  );
+
+  it.each([
+    ["nothing is pending", () => JSON.stringify({ pending: [] })],
+    ["only paired devices are reported", () => JSON.stringify({ paired: [{ scopes: ["a"] }] })],
+    [
+      "the probe fails",
+      () => {
+        throw new Error("exec failed");
+      },
+    ],
+  ])("stays silent when %s", async (_label, probePendingDevices) => {
+    const h = harness();
+    const hint = await maybeEmitScopeUpgradeHint(
+      "nemoclaw",
+      "my-assistant",
+      1,
+      false,
+      OPENCLAW_CRON_ADD,
+      { ...h.base, probePendingDevices },
+    );
+    expect(hint).toBeNull();
+    expect(h.lines).toEqual([]);
   });
 });
