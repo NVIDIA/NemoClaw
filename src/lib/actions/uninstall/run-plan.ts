@@ -126,6 +126,7 @@ export interface UninstallRunDeps {
   readProcessArgv?: (pid: number) => readonly string[] | null;
   readProcessExecutable?: (pid: number) => string | null;
   readProcessEnvironment?: (pid: number) => Record<string, string> | null;
+  realpathSync?: (target: string) => string;
   readLine?: () => string | null;
   requireCompleteGatewayProcessCleanup?: boolean;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
@@ -485,6 +486,7 @@ interface UninstallRuntime {
   readProcessArgv: ((pid: number) => readonly string[] | null) | undefined;
   readProcessExecutable: ((pid: number) => string | null) | undefined;
   readProcessEnvironment: ((pid: number) => Record<string, string> | null) | undefined;
+  realpathSync: (target: string) => string;
   readLine: () => string | null;
   requireCompleteGatewayProcessCleanup: boolean;
   resolveGatewayTeardownAuthority: GatewayTeardownAuthorityResolver;
@@ -541,6 +543,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     readProcessArgv: deps.readProcessArgv,
     readProcessExecutable: deps.readProcessExecutable,
     readProcessEnvironment: deps.readProcessEnvironment,
+    realpathSync: deps.realpathSync ?? fs.realpathSync.native,
     readLine: deps.readLine ?? readLineFromStdin,
     requireCompleteGatewayProcessCleanup: deps.requireCompleteGatewayProcessCleanup ?? false,
     resolveGatewayTeardownAuthority:
@@ -1549,9 +1552,12 @@ function removeOpenShellResources(
   return true;
 }
 
-function normalizeGatewayProcessExecutable(executablePath: string): string {
+function normalizeGatewayProcessExecutable(
+  executablePath: string,
+  runtime: UninstallRuntime,
+): string {
   try {
-    return fs.realpathSync.native(executablePath);
+    return runtime.realpathSync(executablePath);
   } catch {
     return path.resolve(executablePath);
   }
@@ -1562,7 +1568,7 @@ function readGatewayProcessExecutable(pid: number, runtime: UninstallRuntime): s
   if (provided !== undefined) return provided;
   if (runtime.platform === "linux") {
     try {
-      return fs.realpathSync.native(`/proc/${String(pid)}/exe`);
+      return runtime.realpathSync(`/proc/${String(pid)}/exe`);
     } catch {
       return null;
     }
@@ -1598,11 +1604,11 @@ function packageManagedServiceGatewayProcessOwnershipFailure(
   if (!before?.executablePath) {
     return "active package-managed OpenShell gateway service identity is unavailable";
   }
-  const expectedExecutable = normalizeGatewayProcessExecutable(before.executablePath);
+  const expectedExecutable = normalizeGatewayProcessExecutable(before.executablePath, runtime);
   const executableBefore = readGatewayProcessExecutable(before.pid, runtime);
   if (
     !executableBefore ||
-    normalizeGatewayProcessExecutable(executableBefore) !== expectedExecutable
+    normalizeGatewayProcessExecutable(executableBefore, runtime) !== expectedExecutable
   ) {
     return "live process executable does not match the trusted service executable";
   }
@@ -1610,15 +1616,22 @@ function packageManagedServiceGatewayProcessOwnershipFailure(
     return "gateway process owner and loaded sandbox namespace cannot be proven";
   }
   const after = inspectService();
-  const executableAfter = readGatewayProcessExecutable(before.pid, runtime);
   if (
     !after?.executablePath ||
     after.pid !== before.pid ||
-    normalizeGatewayProcessExecutable(after.executablePath) !== expectedExecutable ||
-    !executableAfter ||
-    normalizeGatewayProcessExecutable(executableAfter) !== expectedExecutable
+    normalizeGatewayProcessExecutable(after.executablePath, runtime) !== expectedExecutable
   ) {
     return "package-managed OpenShell gateway service identity changed during validation";
+  }
+  const executableAfter = readGatewayProcessExecutable(after.pid, runtime);
+  if (
+    !executableAfter ||
+    normalizeGatewayProcessExecutable(executableAfter, runtime) !== expectedExecutable
+  ) {
+    return "package-managed OpenShell gateway service identity changed during validation";
+  }
+  if (!processUsesStateScopedSandboxNamespace(after.pid, stateDir, runtime)) {
+    return "package-managed OpenShell gateway service sandbox namespace changed during validation";
   }
   return null;
 }
