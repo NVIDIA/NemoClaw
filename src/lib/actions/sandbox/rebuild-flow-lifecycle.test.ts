@@ -153,7 +153,11 @@ describe("rebuildSandbox flow: lifecycle", () => {
       policyTier: "balanced",
       policyPresetsFinalized: true,
     });
-    expect(harness.executeSandboxCommandSpy).toHaveBeenCalledWith("alpha", "openclaw doctor --fix");
+    expect(harness.executeSandboxCommandSpy).toHaveBeenCalledWith(
+      "alpha",
+      "openclaw doctor --fix",
+      300_000,
+    );
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
     expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe(originalSandboxName);
     expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(

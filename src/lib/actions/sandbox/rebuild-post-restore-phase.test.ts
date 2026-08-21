@@ -126,6 +126,11 @@ describe("rebuild post-restore phase", () => {
     await runRebuildPostRestorePhase(input());
 
     expect(order).toEqual(["doctor", "reconcile", "messaging", "config-hash", "config-hash-final"]);
+    expect(processRecovery.executeSandboxCommand).toHaveBeenCalledWith(
+      "alpha",
+      "openclaw doctor --fix",
+      300_000,
+    );
   });
 
   it("fails when doctor returns 255 and the final OpenClaw config hash is unverified (#9530)", async () => {

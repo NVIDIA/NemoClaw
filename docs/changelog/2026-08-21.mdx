@@ -1,0 +1,33 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.114
+
+NemoClaw v0.0.114 adds deterministic read-only MCP tool calls for LangChain Deep Agents Code and per-stage launch-readiness probe timing.
+It strengthens destructive-operation warnings, session export cleanup, and sandbox recovery evidence.
+It also improves managed local inference, Portable and Hermes onboarding, image provenance, and release automation.
+
+- Managed LangChain Deep Agents Code automation can now invoke one uniquely registered, coherently read-only MCP tool with `dcode tools call-read-only <tool> --json` without model participation.
+  The command accepts one JSON object on standard input, bounds execution and cleanup, rejects ambiguous or mutating tools, redacts credential-shaped output, and returns one versioned JSON envelope.
+  `connect --probe-only` now reports credential-free elapsed time for each readiness stage, including the failed stage when the probe does not complete.
+  For more information, refer to [Run LangChain Deep Agents Code](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code) and [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+  Related changes: [PR #9894](https://github.com/NVIDIA/NemoClaw/pull/9894) and [PR #9865](https://github.com/NVIDIA/NemoClaw/pull/9865).
+- Sandbox destruction now warns before terminating active SSH sessions, including unattended runs that use `--yes` or `--force`.
+  Session export reports a retained in-sandbox staging artifact and its manual removal command when cleanup fails, because the artifact can contain pasted secrets.
+  Rebuild and snapshot recovery preserve and verify sealed OpenClaw configuration, host-mount diagnostics report the actual failed condition, selected uninstall cleanup uses the shared registry lock, and Shields timers retire only after lifecycle gates complete.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), and [Understand Host Files and State](/user-guide/openclaw/reference/host-files-and-state).
+  Related changes: [PR #9231](https://github.com/NVIDIA/NemoClaw/pull/9231), [PR #9782](https://github.com/NVIDIA/NemoClaw/pull/9782), [PR #9784](https://github.com/NVIDIA/NemoClaw/pull/9784), [PR #9787](https://github.com/NVIDIA/NemoClaw/pull/9787), [PR #9791](https://github.com/NVIDIA/NemoClaw/pull/9791), [PR #9858](https://github.com/NVIDIA/NemoClaw/pull/9858), and [PR #9866](https://github.com/NVIDIA/NemoClaw/pull/9866).
+- Managed vLLM onboarding now restores DGX Station large-model selection, validates fixed-profile selection and resume state, recognizes the N1x preview readiness response, and gives Podman inference probes more time while retrying only the timed-out inspected probe.
+  Recovery names protected loopback endpoints and bind refusals, while managed llama.cpp receipts bind to published software bill of materials files, isolate platform pulls, verify current Cosign evidence, and include patched image dependencies.
+  For more information, refer to [Use vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm), [Configure Inference Timeouts](/user-guide/openclaw/inference/manage-inference/configure-inference-timeouts), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+  Related changes: [PR #9821](https://github.com/NVIDIA/NemoClaw/pull/9821), [PR #9836](https://github.com/NVIDIA/NemoClaw/pull/9836), [PR #9843](https://github.com/NVIDIA/NemoClaw/pull/9843), [PR #9849](https://github.com/NVIDIA/NemoClaw/pull/9849), [PR #9852](https://github.com/NVIDIA/NemoClaw/pull/9852), [PR #9857](https://github.com/NVIDIA/NemoClaw/pull/9857), [PR #9868](https://github.com/NVIDIA/NemoClaw/pull/9868), [PR #9878](https://github.com/NVIDIA/NemoClaw/pull/9878), [PR #9881](https://github.com/NVIDIA/NemoClaw/pull/9881), [PR #9906](https://github.com/NVIDIA/NemoClaw/pull/9906), [PR #9908](https://github.com/NVIDIA/NemoClaw/pull/9908), and [PR #9914](https://github.com/NVIDIA/NemoClaw/pull/9914).
+- Managed MCP image discovery again finds its projected credentials, Hermes retries throttled source archive downloads, Portable keeps its Podman proxy setting attached, and Hermes Portable onboarding distinguishes an absent OpenShell sandbox from a failed inspection.
+  Installation now fails closed when no SHA-256 tool can verify the `nvm` installer, and pending OpenClaw scope upgrades identify the exact device-review path.
+  For more information, refer to [Manage MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers), [Troubleshooting](/user-guide/hermes/reference/troubleshooting), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+  Related changes: [PR #9776](https://github.com/NVIDIA/NemoClaw/pull/9776), [PR #9792](https://github.com/NVIDIA/NemoClaw/pull/9792), [PR #9822](https://github.com/NVIDIA/NemoClaw/pull/9822), [PR #9853](https://github.com/NVIDIA/NemoClaw/pull/9853), [PR #9867](https://github.com/NVIDIA/NemoClaw/pull/9867), and [PR #9912](https://github.com/NVIDIA/NemoClaw/pull/9912).
+- Documentation automation now maintains one cumulative release PR, can resume the exact partially advanced branch state left by the earlier publisher, and bounds automated review remediation.
+  E2E support preserves registry and Launchable failure evidence, validates OpenClaw channel state, stages the Portable hosted-inference descriptor, and delegates Portable BuildKit cgroup setup to the workflow shim.
+  The inference model-limit documentation now shows each agent only the settings that apply to it.
+  Related changes: [PR #9679](https://github.com/NVIDIA/NemoClaw/pull/9679), [PR #9762](https://github.com/NVIDIA/NemoClaw/pull/9762), [PR #9785](https://github.com/NVIDIA/NemoClaw/pull/9785), [PR #9793](https://github.com/NVIDIA/NemoClaw/pull/9793), [PR #9854](https://github.com/NVIDIA/NemoClaw/pull/9854), [PR #9856](https://github.com/NVIDIA/NemoClaw/pull/9856), [PR #9871](https://github.com/NVIDIA/NemoClaw/pull/9871), [PR #9910](https://github.com/NVIDIA/NemoClaw/pull/9910), and [PR #9911](https://github.com/NVIDIA/NemoClaw/pull/9911).
