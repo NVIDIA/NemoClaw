@@ -24,6 +24,8 @@ export type ProxyExitStatus = {
   exitedAt?: number;
 };
 
+export type ProxyBackendKind = "ollama" | "compatible-endpoint" | "unknown";
+
 /**
  * Name of the env var the host uses to hand the proxy script a path to
  * write its structured exit status to. Kept in one place so a rename of
@@ -111,6 +113,15 @@ function describeBackend(backendUrl: string): { authority: string; portClause: s
   }
 }
 
+function resolveOllamaRemediationPort(backendUrl: string | undefined, fallbackPort: number): string {
+  if (!backendUrl) return String(fallbackPort);
+  try {
+    return new URL(backendUrl).port || String(fallbackPort);
+  } catch {
+    return String(fallbackPort);
+  }
+}
+
 /**
  * Render the backend-not-loopback refusal (#6014).
  *
@@ -118,35 +129,49 @@ function describeBackend(backendUrl: string): { authority: string; portClause: s
  * onboard it without authentication (`noAuthProxy` in ./proxy.ts), so the
  * backend is not always the Ollama daemon. Naming Ollama and OLLAMA_HOST for
  * a vLLM or llama-server backend sends the reader to a service they are not
- * running, on a port they are not using (#9730). The backend is the managed
- * Ollama daemon exactly when the caller selected no compatible endpoint, so
- * only an absent `backendUrl` selects the Ollama text. A compatible endpoint
- * can itself sit on the Ollama port, and `OLLAMA_PORT` is overridable, so URL
- * equality cannot identify the daemon.
+ * running, on a port they are not using (#9730).
  */
 function printBackendNotLoopback(
   details: string | undefined,
   ollamaPort: number,
   backendUrl: string | undefined,
+  backendKind: ProxyBackendKind,
 ): void {
   const listeners = details || "see proxy log";
-  if (backendUrl === undefined) {
+  if (backendKind === "ollama") {
+    const remediationPort = resolveOllamaRemediationPort(backendUrl, ollamaPort);
     console.error("  Error: Ollama auth proxy refused to start.");
     console.error(
       `  Ollama is reachable on a non-loopback interface on the host (${listeners}), ` +
         "which would bypass the proxy's token check entirely.",
     );
     console.error(
-      `  Remediation: bind Ollama to loopback only. On Linux, set OLLAMA_HOST=127.0.0.1:${ollamaPort} ` +
+      `  Remediation: bind Ollama to loopback only. On Linux, set OLLAMA_HOST=127.0.0.1:${remediationPort} ` +
         "in the Ollama systemd unit's [Service] section. On other platforms, set OLLAMA_HOST=127.0.0.1 " +
         "in the launcher's environment before starting Ollama.",
+    );
+    return;
+  }
+  if (backendKind === "unknown") {
+    const { authority, portClause } = backendUrl
+      ? describeBackend(backendUrl)
+      : { authority: "the configured inference backend", portClause: "" };
+    const target = backendUrl ? `The inference backend at ${authority}` : "The inference backend";
+    const remediationTarget = backendUrl ? `the service at ${authority}` : authority;
+    console.error("  Error: The protected loopback route refused to start.");
+    console.error(
+      `  ${target} is reachable on a non-loopback interface on the host (${listeners}), ` +
+        "which would bypass the route's token check entirely.",
+    );
+    console.error(
+      `  Remediation: bind ${remediationTarget} to a loopback address only${portClause}, then re-run onboarding.`,
     );
     return;
   }
   // Name the loopback requirement, not a literal address: an endpoint entered
   // as [::1] must stay on the IPv6 loopback, and telling that reader to listen
   // on 127.0.0.1 would make the endpoint unreachable again.
-  const { authority, portClause } = describeBackend(backendUrl);
+  const { authority, portClause } = describeBackend(backendUrl ?? "the configured endpoint");
   console.error("  Error: The protected loopback route refused to start.");
   console.error(
     `  The endpoint at ${authority} is reachable on a non-loopback interface on the host ` +
@@ -163,18 +188,16 @@ function printBackendNotLoopback(
  * structured reason (e.g. backend-not-loopback per #6014), surface a
  * specific actionable message. Otherwise return false so the caller falls
  * back to its existing owner-or-port remediation.
- *
- * `backendUrl` is the compatible endpoint the caller selected, or undefined
- * when the proxy fronts the managed Ollama daemon.
  */
 export function printProxyStartupReason(
   status: ProxyExitStatus | null,
   ollamaPort: number,
   backendUrl?: string,
+  backendKind: ProxyBackendKind = backendUrl === undefined ? "ollama" : "compatible-endpoint",
 ): boolean {
   if (status === null) return false;
   if (status.reason === "backend-not-loopback") {
-    printBackendNotLoopback(status.details, ollamaPort, backendUrl);
+    printBackendNotLoopback(status.details, ollamaPort, backendUrl, backendKind);
     return true;
   }
   console.error(`  Error: Ollama auth proxy exited during startup: ${status.reason}`);
