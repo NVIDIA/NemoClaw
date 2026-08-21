@@ -1303,7 +1303,15 @@ Treat it as passing evidence only when the `E2E` workflow concludes with `succes
 A changed PR source repository, candidate commit SHA, or base commit SHA invalidates the evidence and requires a new manual run.
 
 The platform-evidence workflow runs on configured pushes to `main` and supports manual dispatch for branch diagnosis.
-The experimental portable-profile workflow runs on `main` when one of its configured paths changes.
+The experimental portable-profile workflow can run for pull requests, matching `main` pushes, and manual dispatch.
+Its `portable-launch` job runs only when `github.ref` is `refs/heads/main`.
+The `portable-launch` job's exercise step exposes the long-lived repository `NVIDIA_INFERENCE_API_KEY` to the checked-out source through its environment.
+The hosted-inference fixture copies that key into `/run/nemoclaw/portable-inference.json`, a mode-`0600` file beneath the current-user-owned mode-`0700` `/run/nemoclaw` directory.
+Code running as the current user can read that descriptor until the production loader consumes it or cleanup removes it.
+The descriptor has a one-hour admission window; that window does not expire or revoke the API key.
+The production loader consumes and unlinks the descriptor before provider selection.
+The always-run workflow cleanup removes `/run/nemoclaw/portable-inference.json` and `/run/nemoclaw/.portable-inference.json.tmp` and fails if it cannot remove either path.
+Runner teardown is the fallback that discards the ephemeral runner filesystem; only issuer rotation or revocation removes later API-key access.
 The Podman CPU proof runs only for matching pull request changes.
 The sandbox-image workflow accepts manual and reusable workflow calls for image build and test evidence.
 

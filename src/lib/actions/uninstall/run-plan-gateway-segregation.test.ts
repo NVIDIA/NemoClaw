@@ -916,6 +916,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const proxyStateEntries = [
         "ollama-proxy-token",
         "ollama-backend",
+        "ollama-backend.json",
         "ollama-auth-proxy.pid",
         "ollama-auth-proxy.status",
       ];
@@ -1345,6 +1346,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const proxyStateEntries = [
         "ollama-proxy-token",
         "ollama-backend",
+        "ollama-backend.json",
         "ollama-auth-proxy.pid",
         "ollama-auth-proxy.status",
       ];
