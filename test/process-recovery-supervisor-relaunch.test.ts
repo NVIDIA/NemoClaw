@@ -579,6 +579,21 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       finalReadinessReady: true,
     },
     {
+      condition: "OpenShell does not release the sandbox name",
+      finalizeOutcome: () => ({
+        backupRemoved: true,
+        lifecycleReleaseObserved: false,
+        replacementRestarted: false,
+        replacementStoppedForCommit: true,
+        rolledBack: false,
+        stateRestored: true,
+      }),
+      expectedDetail: "OpenShell did not release the sandbox name",
+      expectedReadinessCalls: 1,
+      finalPinnedAction: () => ACCEPTED_MANAGED_PROBE,
+      finalReadinessReady: true,
+    },
+    {
       condition: "Docker cannot start the replacement container",
       finalizeOutcome: () => ({
         backupRemoved: true,

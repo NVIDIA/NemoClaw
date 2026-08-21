@@ -108,7 +108,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
     );
   });
 
-  it("waits for the deleting lifecycle record to clear before restarting the replacement (#9531)", () => {
+  it("waits for the sandbox name to disappear before restarting the replacement (#9531)", () => {
     const events: string[] = [];
     const dockerStop = vi.fn(() => {
       events.push("stop replacement");
@@ -129,8 +129,12 @@ describe("finalizeDockerGpuPatchBackup", () => {
         return { status: 0, stdout: "alpha  2026-08-21 05:53:16  Deleting\n" };
       })
       .mockImplementationOnce(() => {
-        events.push("observe stopped replacement");
+        events.push("observe error");
         return { status: 0, stdout: "alpha  2026-08-21 05:53:18  Error\n" };
+      })
+      .mockImplementationOnce(() => {
+        events.push("observe name absence");
+        return { status: 0, stdout: "beta  2026-08-21 05:53:20  Ready\n" };
       });
 
     const outcome = finalizeDockerGpuPatchBackup(
@@ -152,7 +156,8 @@ describe("finalizeDockerGpuPatchBackup", () => {
       "stop replacement",
       "remove backup",
       "observe deleting",
-      "observe stopped replacement",
+      "observe error",
+      "observe name absence",
       "start replacement",
     ]);
   });

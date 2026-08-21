@@ -13,7 +13,6 @@ import {
 describe("Docker GPU final lifecycle release", () => {
   it.each([
     ["an explicit empty list", "No sandboxes found.\n"],
-    ["the stopped replacement Error row", "alpha  2026-08-21 05:53:18  Error\n"],
     ["another phase-bearing sandbox", "beta  2026-08-21 05:53:18  Ready\n"],
   ])("accepts %s as a release receipt (#9531)", (_receipt, stdout) => {
     const runOpenshell = vi.fn(() => ({ status: 0, stdout }));
@@ -35,6 +34,7 @@ describe("Docker GPU final lifecycle release", () => {
     ["the selected sandbox in Deleting", "alpha  2026-08-21 05:53:18  Deleting\n"],
     ["the selected sandbox in Ready", "alpha  2026-08-21 05:53:18  Ready\n"],
     ["the selected sandbox in Provisioning", "alpha  2026-08-21 05:53:18  Provisioning\n"],
+    ["the selected sandbox in Error", "alpha  2026-08-21 05:53:18  Error\n"],
     ["the selected sandbox in Failed", "alpha  2026-08-21 05:53:18  Failed\n"],
   ])("rejects %s as a release receipt (#9531)", (_case, stdout) => {
     const runOpenshell = vi.fn(() => ({ status: 0, stdout }));

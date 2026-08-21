@@ -83,10 +83,9 @@ export type DockerGpuSupervisorReconnectDeps = {
  * - This layer waits after backup removal and before replacement restart so
  *   OpenShell processes the stale deletion before the new registration.
  * - The caller enters this wait only after the replacement reached Ready and
- *   was deliberately stopped. Its exact `Error` row therefore proves the
- *   stale `Deleting` record no longer owns the sandbox name; the final start
- *   can make the replacement authoritative again.
- * - `waits for the deleting lifecycle record to clear before restarting the
+ *   was deliberately stopped. A successful list must omit the sandbox name;
+ *   a name-and-phase row cannot identify which container owns that lifecycle.
+ * - `waits for the sandbox name to disappear before restarting the
  *   replacement (#9531)` protects the event order. `rejects final handoff when
  *   OpenShell never releases the deleting lifecycle record (#9531)` protects
  *   the composed failure path.
@@ -117,16 +116,9 @@ export function waitForOpenShellSandboxLifecycleRelease(
       const output = String(result.stdout ?? "").trim();
       const entries = parseLiveSandboxEntries(output);
       const sandboxPresent = entries.some((entry) => entry.name === sandboxName);
-      const stoppedReplacementOwnsLifecycle = entries.some(
-        (entry) => entry.name === sandboxName && entry.phase === "Error",
-      );
       const hasPhaseBearingEntry = entries.some((entry) => entry.phase !== null);
       const explicitEmptyList = output === "No sandboxes found" || output === "No sandboxes found.";
-      if (
-        explicitEmptyList ||
-        stoppedReplacementOwnsLifecycle ||
-        (hasPhaseBearingEntry && !sandboxPresent)
-      ) {
+      if (explicitEmptyList || (hasPhaseBearingEntry && !sandboxPresent)) {
         return true;
       }
     }
