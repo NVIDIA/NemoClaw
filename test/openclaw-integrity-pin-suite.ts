@@ -54,13 +54,22 @@ const OPENCLAW_RUNTIME_LOCKFILE = path.join(
   "openclaw-runtime",
   "package-lock.json",
 );
+const NEMOCLAW_PLUGIN_LOCKFILE = path.join(REPO_ROOT, "nemoclaw", "package-lock.json");
+const NEMOCLAW_NPM_CACHE_SEED_MANIFEST = path.join(
+  REPO_ROOT,
+  "tools",
+  "mcp-tool-discovery-runtime",
+  "npm-cache-seed",
+  "manifest.json",
+);
 const PINNED_OPENCLAW_LOCK_SHA256 = createHash("sha256")
   .update(fs.readFileSync(OPENCLAW_RUNTIME_LOCKFILE))
   .digest("hex");
-const PINNED_NEMOCLAW_TAR_VERSION = "7.5.20";
+const PINNED_NEMOCLAW_TAR_VERSION = "7.5.21";
 const PINNED_NEMOCLAW_TAR_INTEGRITY =
-  "sha512-9FcyK4PA6+WbzlTM9WhQm6vB5W7cP7dUiPsv1g7YDwEQnQ1CGpK3MGlKk/ITVWMk05kHZuBhmVhiv8LZoy/PFQ==";
-const PINNED_NEMOCLAW_TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.20.tgz";
+  "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==";
+const PINNED_NEMOCLAW_TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz";
+const PINNED_NEMOCLAW_TAR_COMMIT = "0cd9cc3c5814446d3c0cbea6a31d6c00c2c8a9d9";
 const PINNED_CODEX_ACP_VERSION = "0.11.1";
 const PINNED_CODEX_ACP_TARBALL =
   "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz";
@@ -656,6 +665,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(reviewNote).toContain(`tar@${PINNED_NEMOCLAW_TAR_VERSION}`);
         expect(reviewNote).toContain(PINNED_NEMOCLAW_TAR_INTEGRITY);
         expect(reviewNote).toContain(PINNED_NEMOCLAW_TAR_TARBALL);
+        expect(reviewNote).toContain(PINNED_NEMOCLAW_TAR_COMMIT);
         expect(reviewNote).toContain(`@zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION}`);
         expect(reviewNote).toContain(PINNED_CODEX_ACP_TARBALL);
         expect(reviewNote).toContain(PINNED_CODEX_ACP_INTEGRITY);
@@ -732,10 +742,15 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         const packageJson = JSON.parse(
           fs.readFileSync(path.join(REPO_ROOT, "nemoclaw", "package.json"), "utf-8"),
         ) as { dependencies?: Record<string, string> };
-        const packageLock = JSON.parse(
-          fs.readFileSync(path.join(REPO_ROOT, "nemoclaw", "package-lock.json"), "utf-8"),
-        ) as {
+        const packageLockSource = fs.readFileSync(NEMOCLAW_PLUGIN_LOCKFILE);
+        const packageLock = JSON.parse(packageLockSource.toString("utf-8")) as {
           packages?: Record<string, { integrity?: string; resolved?: string; version?: string }>;
+        };
+        const cacheSeed = JSON.parse(
+          fs.readFileSync(NEMOCLAW_NPM_CACHE_SEED_MANIFEST, "utf-8"),
+        ) as {
+          archives?: Array<{ archive?: string; integrity?: string; resolved?: string }>;
+          lockSha256?: string;
         };
         const lockedTar = packageLock.packages?.["node_modules/tar"];
 
@@ -745,6 +760,16 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
             integrity: PINNED_NEMOCLAW_TAR_INTEGRITY,
             resolved: PINNED_NEMOCLAW_TAR_TARBALL,
             version: PINNED_NEMOCLAW_TAR_VERSION,
+          }),
+        );
+        expect(cacheSeed.lockSha256).toBe(
+          createHash("sha256").update(packageLockSource).digest("hex"),
+        );
+        expect(cacheSeed.archives).toContainEqual(
+          expect.objectContaining({
+            archive: `tar-${PINNED_NEMOCLAW_TAR_VERSION}.tgz`,
+            integrity: PINNED_NEMOCLAW_TAR_INTEGRITY,
+            resolved: PINNED_NEMOCLAW_TAR_TARBALL,
           }),
         );
       });
