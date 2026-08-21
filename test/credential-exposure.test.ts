@@ -140,6 +140,24 @@ describe("credential exposure in process arguments", () => {
     },
   );
 
+  it.each([withCliLocalNoProxy, withPluginLocalNoProxy])(
+    "subprocess-env preserves distinct proxy exclusions in both spellings [case %#]",
+    (withLocalNoProxy) => {
+      const env: Record<string, string> = {
+        HTTP_PROXY: "http://proxy.example.com:8888",
+        NO_PROXY: "upper.internal",
+        no_proxy: "lower.internal",
+      };
+
+      withLocalNoProxy(env);
+
+      expect(env.NO_PROXY).toBe(
+        "upper.internal,lower.internal,localhost,127.0.0.1,host.docker.internal,host.containers.internal,::1,0.0.0.0,inference.local",
+      );
+      expect(env.no_proxy).toBe(env.NO_PROXY);
+    },
+  );
+
   it("subprocess env builder does not spread full process.env into subprocesses", () => {
     const previous = {
       NVIDIA_INFERENCE_API_KEY: process.env.NVIDIA_INFERENCE_API_KEY,
