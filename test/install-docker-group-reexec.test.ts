@@ -7,9 +7,12 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
+import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "..", "scripts", "install.sh");
 const INSTALLER_SOURCE = fs.readFileSync(INSTALLER_PAYLOAD, "utf-8");
+const STATION_REVISION = "a".repeat(40);
+const STATION_GENERATION = "0123456789abcdef0123456789abcdef";
 
 function extractShellFunctionBefore(name: string, nextName: string): string {
   const start = INSTALLER_SOURCE.indexOf(`${name}() {`);
@@ -205,18 +208,18 @@ describeLinux("install.sh ensure_docker — #4414 non-interactive self re-exec",
 });
 
 describe("install.sh ensure_docker — Station intent across self re-exec", () => {
-  it("does not reclassify derived Station Express provider state after re-exec (#9900)", () => {
+  it("removes the derived provider before Station Express enters sg (#9900)", () => {
     const outcome = runEnsureDocker(
       {
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NEMOCLAW_PROVIDER: "install-vllm",
-        NEMOCLAW_STATION_EXPRESS: "1",
         NEMOCLAW_TEST_STATION_INSTALL_MODE: "express",
       },
       ["--non-interactive", "--yes-i-accept-third-party-software"],
     );
 
+    expect(outcome.status, outcome.stderr).toBe(0);
     expect(outcome.sgArgs.length).toBeGreaterThan(0);
     expect(outcome.sgProvider).toBe("");
   });
@@ -232,7 +235,107 @@ describe("install.sh ensure_docker — Station intent across self re-exec", () =
       ["--non-interactive", "--yes-i-accept-third-party-software"],
     );
 
+    expect(outcome.status, outcome.stderr).toBe(0);
     expect(outcome.sgArgs.length).toBeGreaterThan(0);
     expect(outcome.sgProvider).toBe("install-vllm");
+  });
+
+  it("resumes the saved Station Express receipt after Docker-group re-exec (#9900)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-docker-reexec-"));
+    const home = path.join(tmp, "home");
+    const fakeBin = path.join(tmp, "bin");
+    const stagedInstaller = path.join(tmp, "staged-install.sh");
+    const stateRoot = path.join(home, ".nemoclaw");
+    const gatewaysRoot = path.join(stateRoot, "gateways");
+    const stateDir = path.join(gatewaysRoot, "18081");
+    const receipt = path.join(stateDir, "station-express-resume");
+    const receiptContents =
+      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\n` +
+      `generation=${STATION_GENERATION}\nagent=openclaw\nsandbox=my-assistant\n` +
+      "policy_tier=balanced\ngateway_port=18081\ndashboard_port=18790\n" +
+      "vllm_port=18000\nmode=express\n";
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(home, 0o700);
+    fs.chmodSync(stateRoot, 0o700);
+    fs.chmodSync(gatewaysRoot, 0o700);
+    fs.chmodSync(stateDir, 0o700);
+    fs.writeFileSync(receipt, receiptContents, { mode: 0o600 });
+    fs.writeFileSync(
+      path.join(fakeBin, "sg"),
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        '[[ "${1:-}" == "docker" ]] || exit 91',
+        '[[ "${2:-}" == "-c" ]] || exit 92',
+        'exec bash -c "$3"',
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      stagedInstaller,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'source "$INSTALLER_UNDER_TEST" >/dev/null',
+        "uname() { printf 'Linux\\n'; }",
+        "docker() { return 1; }",
+        "systemctl() { return 0; }",
+        "sudo() { return 0; }",
+        "id() {",
+        '  case "$1" in',
+        "    -u) printf '1000\\n' ;;",
+        "    -un) printf 'testuser\\n' ;;",
+        "    -nG) printf 'testuser sudo\\n' ;;",
+        "  esac",
+        "}",
+        "is_wsl_host() { return 1; }",
+        "verify_downloaded_script() { :; }",
+        "detect_express_platform() { printf 'DGX Station'; }",
+        `station_installer_revision() { printf '${STATION_REVISION}'; }`,
+        `station_express_resume_generation() { printf '${STATION_GENERATION}'; }`,
+        "NON_INTERACTIVE=1",
+        "NEMOCLAW_NO_EXPRESS=''",
+        "_NEMOCLAW_INSTALLER_ARGS=(--non-interactive --yes-i-accept-third-party-software)",
+        'NEMOCLAW_INSTALLER_STAGED="$0"',
+        "maybe_offer_express_install",
+        "phase=parent",
+        '[[ "${NEMOCLAW_DOCKER_GROUP_REACTIVATED:-}" == "1" ]] && phase=child',
+        'printf \'PHASE=%s MODE=%s PROVIDER=%s\\n\' "$phase" "$_STATION_INSTALL_MODE" "$NEMOCLAW_PROVIDER"',
+        '[[ "$phase" == "child" ]] && exit 0',
+        "ensure_docker",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = spawnSync("bash", [stagedInstaller], {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: {
+          HOME: home,
+          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          NEMOCLAW_AGENT: "openclaw",
+          NEMOCLAW_SANDBOX_NAME: "my-assistant",
+          NEMOCLAW_POLICY_TIER: "balanced",
+          NEMOCLAW_GATEWAY_PORT: "18081",
+          NEMOCLAW_DASHBOARD_PORT: "18790",
+          NEMOCLAW_VLLM_PORT: "18000",
+        },
+        timeout: 15_000,
+        killSignal: "SIGKILL",
+      });
+      const output = `${result.stdout}${result.stderr}`;
+
+      expect(result.status, output).toBe(0);
+      expect(output).toContain("PHASE=parent MODE=express PROVIDER=install-vllm");
+      expect(output).toContain("PHASE=child MODE=express PROVIDER=install-vllm");
+      expect(output).not.toContain("refusing to resume it in provider mode");
+      expect(fs.readFileSync(receipt, "utf-8")).toBe(receiptContents);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
