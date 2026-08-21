@@ -184,8 +184,10 @@ jobs:
 
           uid="$(id -u)"
           receipt="${RUNNER_TEMP}/nemoclaw-portable-cpu-delegation.receipt"
+          containers_conf="/run/nemoclaw/portable-containers.conf"
           delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
           app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
+          podman_service_drop_in="/etc/systemd/user/podman.service.d/90-nemoclaw-cgroup-manager.conf"
           user_slice_drop_in="/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf"
           : >"$receipt"
 
@@ -219,6 +221,14 @@ jobs:
             sudo chmod 0644 "$target"
           }
 
+          if test -e "$containers_conf" || test -L "$containers_conf"; then
+            printf 'Refusing existing Portable Podman configuration path: %s\n' "$containers_conf" >&2
+            exit 1
+          fi
+          printf 'file\tpodman-config\t%s\n' "$containers_conf" >>"$receipt"
+          printf '%s' $'[engine]\ncgroup_manager = "systemd"\n' >"$containers_conf"
+          chmod 0600 "$containers_conf"
+
           install_fixture_drop_in \
             user-slice \
             "$user_slice_drop_in" \
@@ -231,6 +241,10 @@ jobs:
             delegation \
             "$delegation_drop_in" \
             $'[Service]\nDelegate=cpu memory pids\n'
+          install_fixture_drop_in \
+            podman-service \
+            "$podman_service_drop_in" \
+            "[Service]"$'\n'"Environment=CONTAINERS_CONF=${containers_conf}"$'\n'
 
           if sudo systemctl is-active --quiet "user@${uid}.service"; then
             printf 'manager-active\t%s\n' "$uid" >>"$receipt"
@@ -246,10 +260,12 @@ jobs:
 
           export XDG_RUNTIME_DIR="$runtime_dir"
           export DBUS_SESSION_BUS_ADDRESS="unix:path=${runtime_dir}/bus"
+          export CONTAINERS_CONF="$containers_conf"
           export DOCKER_HOST="unix://${runtime_dir}/podman/podman.sock"
           {
             printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir"
             printf 'DBUS_SESSION_BUS_ADDRESS=%s\n' "$DBUS_SESSION_BUS_ADDRESS"
+            printf 'CONTAINERS_CONF=%s\n' "$CONTAINERS_CONF"
             printf 'DOCKER_HOST=%s\n' "$DOCKER_HOST"
             printf 'E2E_PORTABLE_CPU_DELEGATION_RECEIPT=%s\n' "$receipt"
           } >>"$GITHUB_ENV"
@@ -265,7 +281,11 @@ jobs:
             process.stdout.write(result.detail + "\n");
           '
           cgroup_manager="$(podman info --format '{{.Host.CgroupManager}}')"
-          test "$cgroup_manager" = "systemd"
+          if [ "$cgroup_manager" != "systemd" ]; then
+            printf 'Portable Podman must use the systemd cgroup manager; observed: %s\n' \
+              "${cgroup_manager:-empty}" >&2
+            exit 1
+          fi
           podman --version
           docker --version
           docker --host "$DOCKER_HOST" info
@@ -340,8 +360,10 @@ jobs:
 
           uid="$(id -u)"
           receipt="${E2E_PORTABLE_CPU_DELEGATION_RECEIPT:-${RUNNER_TEMP}/nemoclaw-portable-cpu-delegation.receipt}"
+          containers_conf="/run/nemoclaw/portable-containers.conf"
           delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
           app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
+          podman_service_drop_in="/etc/systemd/user/podman.service.d/90-nemoclaw-cgroup-manager.conf"
           user_slice_drop_in="/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf"
           disable_linger=0
           restore_manager=0
@@ -371,10 +393,18 @@ jobs:
               if [ "$kind" = "file" ]; then
                 case "$name:$target" in
                   "delegation:$delegation_drop_in")
-                    cleanup_fixture_drop_in "$target" $'[Service]\nDelegate=cpu memory pids' || cleanup_failed=1
+                    cleanup_fixture_drop_in "$target" $'[Service]\nDelegate=cpu memory pids\n' || cleanup_failed=1
                     ;;
                   "app-slice:$app_slice_drop_in"|"user-slice:$user_slice_drop_in")
-                    cleanup_fixture_drop_in "$target" $'[Slice]\nCPUWeight=100' || cleanup_failed=1
+                    cleanup_fixture_drop_in "$target" $'[Slice]\nCPUWeight=100\n' || cleanup_failed=1
+                    ;;
+                  "podman-service:$podman_service_drop_in")
+                    cleanup_fixture_drop_in \
+                      "$target" \
+                      "[Service]"$'\n'"Environment=CONTAINERS_CONF=${containers_conf}"$'\n' || cleanup_failed=1
+                    ;;
+                  "podman-config:$containers_conf")
+                    cleanup_fixture_drop_in "$target" $'[engine]\ncgroup_manager = "systemd"\n' || cleanup_failed=1
                     ;;
                   *)
                     printf 'Refusing unexpected Portable CPU-delegation receipt: %s:%s\n' "$name" "$target" >&2
@@ -387,7 +417,7 @@ jobs:
                 restore_manager=1
               elif [ "$kind" = "directory" ] && [ -z "${target:-}" ]; then
                 case "$name" in
-                  /etc/systemd/system/user@.service.d|/etc/systemd/user/app.slice.d|"/etc/systemd/system/user-${uid}.slice.d")
+                  /etc/systemd/system/user@.service.d|/etc/systemd/user/app.slice.d|/etc/systemd/user/podman.service.d|"/etc/systemd/system/user-${uid}.slice.d")
                     directories+=("$name")
                     ;;
                   *)

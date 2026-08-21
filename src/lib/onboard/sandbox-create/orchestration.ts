@@ -109,6 +109,51 @@ export async function completeHermesPortableSandboxRegistration(input: {
   return registered;
 }
 
+function publishAttachedProvidersBeforeDockerSandboxCreation(
+  input: {
+    readonly openshellDriver: SandboxEntry["openshellDriver"];
+    readonly inferenceProvider: string | null;
+    readonly messagingProviders: readonly string[];
+    readonly extraProviders: readonly string[];
+    readonly gatewayName: string;
+  },
+  deps: Pick<SandboxCreateOrchestrationRuntime, "providerExistsInGateway" | "runOpenshell"> & {
+    readonly cleanupCreateSources: () => void;
+  },
+): void {
+  if (input.openshellDriver === "docker") {
+    const providersRequiringExistenceProbe = new Set(
+      [input.inferenceProvider, ...input.messagingProviders].filter(
+        (provider): provider is string => Boolean(provider),
+      ),
+    );
+    const attachedProviders = new Set([
+      ...providersRequiringExistenceProbe,
+      ...input.extraProviders,
+    ]);
+    for (const attachedProvider of attachedProviders) {
+      if (
+        providersRequiringExistenceProbe.has(attachedProvider) &&
+        !deps.providerExistsInGateway(attachedProvider)
+      )
+        continue;
+      const refreshed = deps.runOpenshell(
+        ["provider", "update", "-g", input.gatewayName, attachedProvider],
+        {
+          ignoreError: true,
+          suppressOutput: true,
+        },
+      );
+      if (refreshed.status !== 0) {
+        deps.cleanupCreateSources();
+        throw new Error(
+          `OpenShell did not publish attached provider '${attachedProvider}' before Docker sandbox creation.`,
+        );
+      }
+    }
+  }
+}
+
 type ApplyRecreatePolicyCarryForward = (
   sandboxName: string,
   nonInteractive: boolean,
@@ -1238,6 +1283,23 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
       cleanupBuildContext();
     } else {
+      publishAttachedProvidersBeforeDockerSandboxCreation(
+        {
+          openshellDriver: sandboxRuntimeFields.openshellDriver,
+          inferenceProvider: resolvedCreateIntent.inferenceProvider,
+          messagingProviders,
+          extraProviders: resolvedCreateIntent.extraProviders,
+          gatewayName: GATEWAY_NAME,
+        },
+        {
+          providerExistsInGateway,
+          runOpenshell,
+          cleanupCreateSources: () => {
+            cleanupInitialCreateSource();
+            cleanupBuildContext();
+          },
+        },
+      );
       const created = await runCreateFlow(createArgv);
       cleanupInitialCreateSource();
       await completeCreatedSandboxRegistration(created, null);
@@ -1251,7 +1313,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxWasLiveDefault,
         runtimeFields: sandboxRuntimeFields,
         messagingProviders,
-        inferenceProvider: provider,
         liveExists,
       },
       {
@@ -1260,7 +1321,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         scriptsDir: SCRIPTS,
         gatewayName: GATEWAY_NAME,
         providerExistsInGateway,
-        runOpenshell,
         armCancelRollback: sandboxCancelRollback.arm,
         dockerInfoFormat,
         runCapture,
