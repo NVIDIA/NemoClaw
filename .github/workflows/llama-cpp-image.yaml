@@ -288,9 +288,10 @@ jobs:
             exit 1
           fi
           if ! jq -e '
-            (keys | sort) == ["environment", "execution", "gpu", "model", "platform", "probes", "profile", "recipeRef", "required", "runner"]
+            (keys | sort) == ["environment", "execution", "gpu", "model", "platform", "probeBounds", "probes", "profile", "recipeRef", "requestGuard", "required", "runner"]
             and .required == true
             and .execution == "enabled"
+            and .requestGuard == "required"
             and .profile == "dgx-spark-gb10-single"
             and .recipeRef == "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1"
             and .platform == "linux/arm64"
@@ -298,7 +299,8 @@ jobs:
             and (.environment | type) == "string" and (.environment | length) > 0
             and (.model.hostPath | type) == "string" and (.model.hostPath | startswith("/"))
             and .gpu == {vendor:"nvidia", fullOffload:true, cpuFallback:"reject"}
-            and .probes == ["health", "completion"]
+            and .probeBounds == {cancellationMaxTokens:4096,clientTimeoutMilliseconds:250,maxResponseBytes:16777216,maxStreamEvents:512,maxTokens:{synchronousChat:16,streamingChat:32,structuredOutput:64,toolCall:256,toolResultContinuation:64}}
+            and .probes == ["health","models","properties","metrics","disabled-surfaces","synchronous-chat","streaming-chat","usage","structured-output","tool-call","tool-result-continuation","context-window","authentication","malformed-request","request-body-limit","cancellation","client-timeout","log-redaction"]
           ' <<< "$QUALIFICATION" >/dev/null; then
             echo "ERROR: protected DGX Spark qualification infrastructure is incomplete." >&2
             exit 1
@@ -311,36 +313,9 @@ jobs:
           fi
           printf 'candidate_tag=%s\n' "$candidate_tag" >> "$GITHUB_OUTPUT"
 
-  publication-preflight:
-    name: Require public GHCR package
-    needs: [config, publication-gate]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      packages: read
-    steps:
-      - name: Verify public package visibility before registry writes
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          IMAGE: ${{ needs.config.outputs.publication_repository }}
-        run: |
-          set -euo pipefail
-          package_name="${IMAGE#ghcr.io/nvidia/}"
-          encoded_package_name="${package_name//\//%2F}"
-          package_api="/orgs/NVIDIA/packages/container/${encoded_package_name}"
-          if ! visibility="$(gh api "$package_api" --jq .visibility)"; then
-            echo "::error::GHCR package ${IMAGE} must exist with public visibility before publication. Bootstrap the package, set public visibility, then rerun this workflow."
-            exit 1
-          fi
-          if [ "$visibility" != "public" ]; then
-            echo "::error::GHCR package ${IMAGE} has ${visibility} visibility. Set public visibility, then rerun this workflow."
-            exit 1
-          fi
-
   publish-platform:
     name: Publish native llama.cpp digest (${{ matrix.arch }})
-    needs: [config, publication-gate, publication-preflight]
+    needs: [config, publication-gate]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     permissions:
@@ -448,6 +423,29 @@ jobs:
           install -d -m 0700 "$RUNNER_TEMP/llama-cpp-digests"
           touch "$RUNNER_TEMP/llama-cpp-digests/${ARCH}-${DIGEST#sha256:}"
 
+      - name: Remove GHCR publication credentials
+        if: always()
+        shell: bash
+        run: docker logout ghcr.io
+
+      - name: Verify anonymous exact platform pull
+        shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ needs.config.outputs.publication_repository }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          reference="${IMAGE}@${DIGEST}"
+          anonymous_config="$(mktemp -d "$RUNNER_TEMP/llama-cpp-anonymous-XXXXXX")"
+          chmod 0700 "$anonymous_config"
+          trap 'rm -rf -- "$anonymous_config"' EXIT
+          if ! env -u DOCKER_AUTH_CONFIG DOCKER_CONFIG="$anonymous_config" \
+            docker pull --platform "$PLATFORM" "$reference"; then
+            echo "::error::Anonymous exact-digest pull failed for ${reference}. The GHCR package ${IMAGE} must be public before candidate assembly."
+            exit 1
+          fi
+
       - name: Upload platform digest
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -548,13 +546,28 @@ jobs:
             exit 1
           fi
           reference="$IMAGE@$digest"
-          scripts/checks/validate-managed-base-index.sh \
-            "$reference" \
-            "${platform_digests[linux/amd64]}" \
-            "${platform_digests[linux/arm64]}"
           install -d -m 0700 "$RUNNER_TEMP/llama-cpp-candidate"
           docker buildx imagetools inspect "$reference" --raw \
             > "$RUNNER_TEMP/llama-cpp-candidate/candidate-index.json"
+          if ! jq -e \
+            --arg amd64 "${platform_digests[linux/amd64]}" \
+            --arg arm64 "${platform_digests[linux/arm64]}" '
+              (keys | sort) == ["manifests", "mediaType", "schemaVersion"]
+              and .schemaVersion == 2
+              and .mediaType == "application/vnd.oci.image.index.v1+json"
+              and (.manifests | type == "array" and length == 2)
+              and all(.manifests[];
+                (keys | sort) == ["digest", "mediaType", "platform", "size"]
+                and .mediaType == "application/vnd.oci.image.manifest.v1+json"
+                and (.size | type == "number" and . > 0 and floor == .)
+                and (.platform | keys | sort) == ["architecture", "os"]
+              )
+              and ([.manifests[] | select(.platform == {os:"linux", architecture:"amd64"} and .digest == $amd64)] | length) == 1
+              and ([.manifests[] | select(.platform == {os:"linux", architecture:"arm64"} and .digest == $arm64)] | length) == 1
+            ' "$RUNNER_TEMP/llama-cpp-candidate/candidate-index.json" >/dev/null; then
+            echo "ERROR: candidate index does not match the exact platform digests." >&2
+            exit 1
+          fi
           actual_digest="sha256:$(sha256sum "$RUNNER_TEMP/llama-cpp-candidate/candidate-index.json" | awk '{print $1}')"
           if [ "$actual_digest" != "$digest" ]; then
             echo "ERROR: candidate index bytes do not match its registry digest." >&2

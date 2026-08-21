@@ -38,11 +38,13 @@ import {
   deleteProvider,
   detachMissingProviderReference,
   detachProvider,
+  ensureMcpBridgeProviderProfile,
   inspectMcpProvider,
   type McpCredentialRevisionObservation,
   observeMcpCredentialRevision,
   providerMatchesCredential,
   providerShapeDetail,
+  refreshMcpProviderEnvironment,
   upsertMcpProvider,
   waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
@@ -125,7 +127,13 @@ function assertPreparedMcpAddResourcesAbsent(
       `MCP add preflight for '${entry.server}' found an existing policy ownership record '${entry.policyName}'. The durable add manifest was preserved without claiming it.`,
     );
   }
-  const policyContent = buildMcpBridgePolicyYaml(entry.server, entry.url, adapter, target);
+  const policyContent = buildMcpBridgePolicyYaml(
+    entry.server,
+    entry.url,
+    adapter,
+    target,
+    entry.providerName ?? "",
+  );
   const policyState = policies.getPresetContentGatewayState(sandboxName, policyContent);
   if (policyState !== "absent") {
     throw new McpBridgeError(
@@ -382,10 +390,12 @@ async function addMcpBridgeUnlocked(
     // supplied by a foreign attachment before opening its MCP route, then check
     // again after provider creation to close the intervening race.
     assertNoProviderCredentialCollisions(sandboxName, [entry]);
-    // Loading the real protocol:mcp policy with --wait is the authoritative
-    // running-supervisor capability check. Do it before any host credential is
-    // created or updated so unsupported runtimes fail without that side effect.
-    applyGeneratedPolicy(sandboxName, entry, target);
+    ensureMcpBridgeProviderProfile();
+    // Load the real protocol:mcp policy without a credential binding before
+    // provider mutation. OpenShell requires the endpointless provider to be
+    // attached before it accepts credential_binding.provider, and withholds
+    // that provider's static credential until the bound policy is active.
+    applyGeneratedPolicy(sandboxName, entry, target, { bindCredential: false });
     policyApplied = true;
     const providerResult = upsertMcpProvider(providerName ?? "", options.env, {
       // A first mutation must still observe the absence proven above. Only a
@@ -424,12 +434,47 @@ async function addMcpBridgeUnlocked(
     }
     providerAttachAttempted = true;
     attachProvider(sandboxName, entry);
+    applyGeneratedPolicy(sandboxName, entry, target);
+    if (Object.hasOwn(adapterEnvValues, entry.env[0])) {
+      // OpenShell 0.0.106 can miss a credential update published before the
+      // bound policy generation. Republish while that policy is active and
+      // before the first readiness exec; the exact provider identity is
+      // rechecked before and after this update-only mutation.
+      upsertMcpProvider(entry.providerName ?? "", options.env, {
+        allowExisting: true,
+        expectedProviderId: entry.providerId,
+        requireExisting: true,
+      });
+    }
     waitForAttachedMcpCredential(sandboxName, entry, {
       ...(providerResult.action === "updated"
         ? {
             previousRevision: previousCredentialRevision,
           }
         : {}),
+      // A no-field provider update advances only the provider resource version.
+      // If the credential remains available, republish it after observing an
+      // absence; otherwise, a hostless recovery advances the provider revision.
+      refreshAfterObservedAbsence: () => {
+        // invalidState: OpenShell 0.0.106 can coalesce a no-field provider
+        // refresh without publishing the credential into fresh sandbox execs.
+        // sourceBoundary: OpenShell owns provider revision projection.
+        // whyNotSourceFix: NemoClaw can only observe absence after the bound
+        // policy is active, then republish when this process still has the host
+        // credential value. Hostless recovery retains the credential-free path.
+        // regressionTest: mcp-add-crash-consistency.test.ts covers republish
+        // and hostless recovery; mcp-provider-ownership.test.ts covers loss of
+        // the persisted provider identity before republish.
+        // removalCondition: remove the credential-bearing republish when the
+        // supported OpenShell version guarantees that a post-policy no-field
+        // refresh projects the bound credential into fresh sandbox execs.
+        const republished = upsertMcpProvider(entry.providerName ?? "", options.env, {
+          allowExisting: true,
+          expectedProviderId: entry.providerId,
+          requireExisting: true,
+        });
+        if (republished.action !== "updated") refreshMcpProviderEnvironment(entry);
+      },
     });
     // The adapter was proven absent above, so cleanup is safe even when a
     // command commits config and then fails during its runtime reload.
@@ -457,6 +502,9 @@ async function addMcpBridgeUnlocked(
         envValues: adapterEnvValues,
       });
     }
+    if (policyApplied) {
+      removeGeneratedPolicy(sandboxName, entry, { bestEffort: true });
+    }
     const detachOutcome = providerAttachAttempted
       ? detachProvider(sandboxName, entry, { bestEffort: true })
       : "absent";
@@ -469,10 +517,6 @@ async function addMcpBridgeUnlocked(
         reservationCleanupProved = false;
       }
     }
-    if (policyApplied && reservationCleanupProved)
-      removeGeneratedPolicy(sandboxName, entry, {
-        bestEffort: true,
-      });
     if (providerCreated && rollbackProviderOwned && reservationCleanupProved) {
       const beforeDelete = inspectMcpProvider(providerName);
       if (providerMatchesCredential(beforeDelete, entry.env[0], entry.providerId)) {

@@ -742,8 +742,7 @@ const { getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded } =
 const { refreshDockerDriverGatewayReuseState } =
   gatewayReuse.createDockerDriverGatewayReuseApplication({
     gatewayName: () => GATEWAY_NAME,
-    getGatewayCompatContainerName: () =>
-      gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
+    getGatewayCompatContainerName: () => gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
     isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled,
     resolveOpenShellGatewayBinary,
     getDockerDriverGatewayEnv,
@@ -756,6 +755,7 @@ const { refreshDockerDriverGatewayReuseState } =
     checkGatewayPortAvailable,
     getDockerDriverGatewayPortListenerPid,
     rememberDockerDriverGatewayPid,
+    runDockerNetworkInspect: docker.dockerRun,
   });
 
 const { getSandboxReuseState, getSandboxRecreateObservation, waitForSandboxRecreateDeleteAbsence } =
@@ -2438,6 +2438,7 @@ function getSetupNimDeps(): SetupNimDeps {
     handleInstallOllamaSelection,
     installVllm: setupNimFlow.withServingPortGuard(vllmInference.installVllm, checkPortAvailable),
     handleVllmSelection,
+    selectVllmModelFromEnv: vllmInference.selectVllmModelFromEnv,
     handleRoutedSelection,
     coerceAgentInferenceApi: inferenceConfig.coerceAgentInferenceApi,
     resolveAgentInferenceApi: inferenceConfig.resolveAgentInferenceApi,
@@ -2451,7 +2452,6 @@ function getSetupNimDeps(): SetupNimDeps {
 }
 const setupNim = setupNimFlow.createSetupNim(getSetupNimDeps());
 // ── Step 4: Inference provider ───────────────────────────────────
-
 function getSetupInferenceDeps(): SetupInferenceDeps {
   return {
     checkGatewayRouteCompatibility,
@@ -2810,8 +2810,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     collector: null,
     span: null,
   };
-  let completed = false,
-    returnedNormally = false;
+  let completed = false, preserveDeferredExitSession = false, preserveIncompleteSession = false;
   try {
     await portableRetirementEntry.run(async () => {
       const lockedRuntime = await resumeRuntime.prepare(
@@ -2920,10 +2919,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         process.exit(1);
       }
 
-      registerIncompleteOnboardExitHandlerForSession(
-        onboardSession,
-        () => completed || returnedNormally,
-      );
+      registerIncompleteOnboardExitHandlerForSession(onboardSession, () => completed || preserveIncompleteSession);
       const agent = await selectOnboardAgent({
         agentFlag: opts.agent,
         session,
@@ -3362,7 +3358,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             recordStepComplete,
             recordStepFailed,
             skippedStepMessage,
-            cuaRegistry: registry,
           }),
           ensureAgentDashboardForward: (name, selectedAgent) =>
             selectedAgent
@@ -3493,6 +3488,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       }
       process.exitCode = completed ? 0 : 1;
     });
+  } catch (error) {
+    preserveDeferredExitSession = onboardSessionBootstrap.shouldPreserveIncompleteOnboardSession(error);
+    throw error;
   } finally {
     try {
       await hermesApiPortReservationScope.release();
@@ -3510,8 +3508,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       restorePortableEnvScope();
       hostMountScope.restore();
     }
+    if (preserveDeferredExitSession) preserveIncompleteSession = true;
   }
-  returnedNormally = true;
+  preserveIncompleteSession = true;
 }
 
 module.exports = {

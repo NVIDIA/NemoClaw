@@ -62,6 +62,16 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test": "keeps live E2E on the accepted rootless runtime and local registry authority (#9006)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test": "selects exact-commit rootless evidence for Portable recovery changes (#9707)",
+      "category": "security"
+    },
+    {
       "file": "test/growth-guardrails-workflow-boundary.test.ts",
       "test": "runs the trusted Vitest guardrails against pull request data",
       "category": "security"
@@ -74,6 +84,11 @@
     {
       "file": "test/hermes-runtime-config-guard-topology.test.ts",
       "test": "restores exact locked posture after root-separated repair and later failure (#7033)",
+      "category": "security"
+    },
+    {
+      "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
+      "test": "binds the checked-in provenance to the selected runtime",
       "category": "security"
     },
     {
@@ -149,6 +164,16 @@
     {
       "file": "test/pr-workflow-contract.test.ts",
       "test": "executes pull request installer hash checks only from the PR base SHA",
+      "category": "security"
+    },
+    {
+      "file": "test/release-daily-brev-image.test.ts",
+      "test": "attests one daily request before the isolated dispatch job (#9799)",
+      "category": "security"
+    },
+    {
+      "file": "test/release-lkg-brev-image.test.ts",
+      "test": "keeps the LKG credential on the production-only dispatch step (#9798)",
       "category": "security"
     },
     {

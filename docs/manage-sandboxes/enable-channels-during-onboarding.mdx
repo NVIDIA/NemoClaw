@@ -24,6 +24,13 @@ Google Chat enrollment is interactive because you must set and confirm the publi
 Refer to [Set Up Google Chat](set-up-google-chat) before selecting it.
 </AgentOnly>
 
+<AgentOnly variant="hermes">
+The Hermes picker also lists experimental Google Chat.
+Prepare the service-account JSON, Google Cloud project ID, complete Pub/Sub subscription name, and email sender allowlist before selecting it.
+Hermes pulls Chat events from Pub/Sub over REST and does not require a public webhook endpoint.
+Refer to [Set Up Google Chat](set-up-google-chat) before selecting it.
+</AgentOnly>
+
 If you select no channels, pressing **Enter** skips messaging setup.
 If the current host inputs do not include a token-based channel token, the wizard prompts for it and stages it for the current onboarding process.
 

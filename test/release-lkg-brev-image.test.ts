@@ -26,6 +26,8 @@ type Workflow = {
     string,
     {
       if?: string;
+      permissions?: Record<string, string>;
+      "runs-on"?: string;
       steps?: WorkflowStep[];
       "timeout-minutes"?: number;
     }
@@ -141,6 +143,58 @@ afterEach(() => {
   for (const root of tempRoots.splice(0)) {
     fs.rmSync(root, { force: true, recursive: true });
   }
+});
+
+describe("LKG production image workflow", () => {
+  // source-shape-contract: security -- The LKG caller must keep its production-only trigger, permissions, action pins, and dispatch credential on reviewed workflow and process boundaries
+  it("keeps the LKG credential on the production-only dispatch step (#9798)", () => {
+    const workflow = readYaml<Workflow>(".github/workflows/release-lkg-brev-image.yaml");
+
+    expect(workflow.on).toEqual({ push: { tags: ["lkg"] } });
+    expect(workflow.permissions).toEqual({ contents: "read" });
+    expect(Object.keys(workflow.jobs)).toEqual(["dispatch-production-image"]);
+
+    const dispatch = workflow.jobs["dispatch-production-image"];
+    expect(dispatch.if).toBe(
+      "${{ github.repository == 'NVIDIA/NemoClaw' && github.event.deleted == false && github.run_attempt == 1 }}",
+    );
+    expect(dispatch.permissions).toBeUndefined();
+    expect(dispatch["runs-on"]).toBe("ubuntu-latest");
+    expect(dispatch["timeout-minutes"]).toBe(5);
+    expect(dispatch.steps).toEqual([
+      {
+        name: "Check out LKG target",
+        uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        with: {
+          ref: "${{ github.sha }}",
+          "fetch-depth": 0,
+          "persist-credentials": false,
+        },
+      },
+      {
+        name: "Dispatch production image build",
+        env: {
+          LKG_SHA: "${{ github.sha }}",
+          NEMOCLAW_IMAGE_DISPATCH_TOKEN: "${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}",
+        },
+        run: "scripts/release-lkg-brev-image.sh",
+      },
+    ]);
+
+    const serialized = JSON.stringify(workflow);
+    expect(serialized.match(/\$\{\{ secrets\.[^}]+ \}\}/gu)).toEqual([
+      "${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}",
+    ]);
+    expect(serialized).not.toContain("attestations");
+    expect(serialized).not.toContain("id-token");
+    expect(serialized).not.toContain("build-lkg-image.yml");
+    expect(serialized).not.toContain("build-daily-image.yml");
+
+    const scriptSource = fs.readFileSync(scriptPath, "utf8");
+    expect(scriptSource).toContain("\nunset GH_DEBUG\n");
+    expect(scriptSource).toContain('GH_TOKEN="$NEMOCLAW_IMAGE_DISPATCH_TOKEN" gh api');
+    expect(scriptSource).not.toMatch(/\benv[^\n]*GH_TOKEN=/u);
+  });
 });
 
 describe("LKG production image dispatch", () => {

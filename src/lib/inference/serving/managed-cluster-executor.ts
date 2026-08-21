@@ -209,9 +209,10 @@ function recipeCommandArguments(
   plan: ManagedClusterVllmPlan,
   recipe: SelectedRecipe,
 ): string[] {
-  const staticArguments = recipe.serve.arguments.flatMap(({ name, value }) =>
-    value === undefined ? [name] : [name, String(value)],
-  );
+  const staticArguments = recipe.serve.arguments.flatMap(({ name, value }) => {
+    if (name === "--port") return [name, String(plan.apiPort)];
+    return value === undefined ? [name] : [name, String(value)];
+  });
   return [
     "serve",
     recipe.model.id,
@@ -337,19 +338,6 @@ function assertRolePlan(
   }
 }
 
-function recipeApiPort(recipe: SelectedRecipe): number | undefined {
-  const ports = recipe.serve.arguments
-    .filter(({ name }) => name === "--port")
-    .map(({ value }) =>
-      typeof value === "number"
-        ? value
-        : typeof value === "string" && /^\d{1,5}$/u.test(value)
-          ? Number(value)
-          : Number.NaN,
-    );
-  return ports.length === 1 && Number.isInteger(ports[0]) ? ports[0] : undefined;
-}
-
 /** Read-only validation shared by installer, receipt, recovery, and cleanup. */
 export function assertManagedClusterVllmExecutorConfig(
   config: CreateManagedClusterVllmExecutorOptions,
@@ -409,6 +397,7 @@ export function assertManagedClusterVllmExecutorConfig(
     preset: { id: plan.presetId, digest: plan.presetDigest },
     recipe: { id: plan.recipeId, digest: plan.recipeDigest },
     topology: topologyIdentity,
+    deployment: { apiPort: plan.apiPort },
   });
   const expectedPlan = {
     schemaVersion: 1,
@@ -430,7 +419,7 @@ export function assertManagedClusterVllmExecutorConfig(
       servedName: recipe.model.servedName,
     },
     authentication: recipe.serve.authentication,
-    apiPort: recipeApiPort(recipe),
+    apiPort: plan.apiPort,
     masterAddress: plan.masterAddress,
     masterPort: recipe.execution.rendezvousPort,
     readiness: {
@@ -447,6 +436,9 @@ export function assertManagedClusterVllmExecutorConfig(
     plan.masterAddress !== managedClusterHeadRole(plan).fabric.address ||
     !HEX64_PATTERN.test(plan.clusterId) ||
     !HEX64_PATTERN.test(plan.planId) ||
+    !Number.isSafeInteger(plan.apiPort) ||
+    plan.apiPort < 1024 ||
+    plan.apiPort > 65_535 ||
     !SHA256_PATTERN.test(plan.topologySubjectDigest) ||
     !SHA256_PATTERN.test(plan.topologyOutputDigest) ||
     plan.roles.length !== recipe.execution.nodeCount ||

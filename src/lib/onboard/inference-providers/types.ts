@@ -253,6 +253,7 @@ export type OllamaDeps = CommonDeps & {
       model: string,
       allowToolsIncompatible: boolean,
     ): { ok: boolean; message?: string };
+    validateSandboxFacingOllamaModel(model: string): { ok: boolean; message?: string };
   };
   /** Exact provider-owned proof used instead of legacy host warmup/probes. */
   providerOwnedInferenceProof?: {

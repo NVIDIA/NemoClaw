@@ -78,12 +78,18 @@ describe("prepareCreateSandboxMessaging", () => {
     // Deferred rebuild in a fresh process: the pasted secret is env-only and
     // gone, so no bridge token def exists — but the gateway still durably
     // holds the refresh material, so the provider only needs re-attaching.
-    const providerExistsInGateway = vi.fn((name: string) => name === "demo-googlechat-bridge");
+    // The gateway holds the OpenClaw binding, which is the agent being onboarded.
+    const providerMatchesGatewayCredential = vi.fn(
+      (name: string, type: string, credentialKey: string) =>
+        name === "demo-googlechat-bridge" &&
+        type === "google-chat-bridge" &&
+        credentialKey === "GOOGLE_CHAT_ACCESS_TOKEN",
+    );
 
     const result = prepareCreateSandboxMessaging(
       createInput({
         enabledChannels: ["googlechat"],
-        providerExistsInGateway,
+        providerMatchesGatewayCredential,
       }),
     );
 
@@ -92,10 +98,67 @@ describe("prepareCreateSandboxMessaging", () => {
     );
     expect(result.reusableMessagingProviders).toContain("demo-googlechat-bridge");
     expect(result.reusableMessagingChannels).toContain("googlechat");
-    expect(providerExistsInGateway).toHaveBeenCalledWith("demo-googlechat-bridge");
+    expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "demo-googlechat-bridge",
+      "google-chat-bridge",
+      "GOOGLE_CHAT_ACCESS_TOKEN",
+    );
+  });
+
+  it("refuses and reports a bridge the gateway holds for a different agent", () => {
+    // onboard recreates a sandbox name under a new agent (`Delete and recreate
+    // '<name>' as <agent>?`), and the provider name carries no agent. Reusing the
+    // stale binding would mint the previous agent's token — for Hermes that means
+    // an OpenClaw profile whose scopes omit pubsub, so `:pull` fails with 403.
+    // Refusing it also has to surface, or the channel silently leaves the intent.
+    const result = prepareCreateSandboxMessaging(
+      createInput({
+        agentName: "hermes",
+        enabledChannels: ["googlechat"],
+        providerMatchesGatewayCredential: (_name: string, type: string) =>
+          type === "google-chat-bridge",
+      }),
+    );
+
+    expect(result.reusableMessagingProviders).not.toContain("demo-googlechat-bridge");
+    expect(result.reusableMessagingChannels).not.toContain("googlechat");
+    expect(result.missingBridgeChannels).toEqual(["googlechat"]);
+  });
+
+  it("reuses a bridge the gateway holds for the agent being onboarded", () => {
+    const result = prepareCreateSandboxMessaging(
+      createInput({
+        agentName: "hermes",
+        enabledChannels: ["googlechat"],
+        providerMatchesGatewayCredential: (_name: string, type: string) =>
+          type === "google-chat-hermes-bridge",
+      }),
+    );
+
+    expect(result.reusableMessagingProviders).toContain("demo-googlechat-bridge");
+    expect(result.reusableMessagingChannels).toContain("googlechat");
+    expect(result.missingBridgeChannels).toEqual([]);
+  });
+
+  it("does not reuse a Hermes bridge when onboarding OpenClaw", () => {
+    const gatewayHoldsHermesBinding = vi.fn(
+      (_name: string, type: string) => type === "google-chat-hermes-bridge",
+    );
+
+    const result = prepareCreateSandboxMessaging(
+      createInput({
+        enabledChannels: ["googlechat"],
+        providerMatchesGatewayCredential: gatewayHoldsHermesBinding,
+      }),
+    );
+
+    expect(result.reusableMessagingProviders).not.toContain("demo-googlechat-bridge");
+    expect(result.reusableMessagingChannels).not.toContain("googlechat");
   });
 
   it("routes the bridge through upsert instead of reuse when the secret is resolvable", () => {
+    const providerMatchesGatewayCredential = vi.fn(() => true);
+
     const result = prepareCreateSandboxMessaging(
       createInput({
         enabledChannels: ["googlechat"],
@@ -105,37 +168,73 @@ describe("prepareCreateSandboxMessaging", () => {
             private_key: "fake-test-private-key-material",
           }),
         },
-        providerExistsInGateway: () => true,
+        providerMatchesGatewayCredential,
       }),
     );
 
     const def = result.messagingTokenDefs.find((d) => d.name === "demo-googlechat-bridge");
     expect(def?.token).toBeTruthy();
     expect(result.reusableMessagingProviders).not.toContain("demo-googlechat-bridge");
+    expect(result.missingBridgeChannels).toEqual([]);
+    // The token definition already owns the provider, so reuse never asks the
+    // gateway — a matcher that would have said yes is never consulted.
+    expect(providerMatchesGatewayCredential).not.toHaveBeenCalled();
   });
 
-  it("does not reuse a bridge provider that is absent from the gateway", () => {
+  it("configures no bridge for an agent no channel manifest supports", () => {
+    // Defaulting an unknown agent to OpenClaw would hand a sandbox with no
+    // messaging support the OpenClaw Google Chat bridge and its credential.
+    const result = prepareCreateSandboxMessaging(
+      createInput({
+        agentName: "deepagents",
+        enabledChannels: ["googlechat"],
+        env: {
+          GOOGLECHAT_SERVICE_ACCOUNT: JSON.stringify({
+            client_email: "bot@p.iam.gserviceaccount.com",
+            private_key: "fake-test-private-key-material",
+          }),
+        },
+      }),
+    );
+
+    expect(result.messagingTokenDefs.map((def) => def.name)).not.toContain(
+      "demo-googlechat-bridge",
+    );
+    // The provider name derives from the channel alone, so reuse has to be gated
+    // as well; otherwise the sandbox adopts whichever bridge already exists.
+    expect(result.reusableMessagingProviders).not.toContain("demo-googlechat-bridge");
+    expect(result.reusableMessagingChannels).not.toContain("googlechat");
+  });
+
+  it("does not reuse a bridge provider without an exact gateway binding", () => {
     const result = prepareCreateSandboxMessaging(
       createInput({
         enabledChannels: ["googlechat"],
-        providerExistsInGateway: () => false,
+        providerMatchesGatewayCredential: () => false,
       }),
     );
 
     expect(result.reusableMessagingProviders).toEqual([]);
     expect(result.reusableMessagingChannels).toEqual([]);
+    expect(result.missingBridgeChannels).toEqual(["googlechat"]);
   });
 
   it("does not reuse the bridge provider of a disabled channel", () => {
+    // The matcher would accept this provider, so only the disabled guard can
+    // keep it out — and a disabled channel is not a missing one either.
+    const providerMatchesGatewayCredential = vi.fn(() => true);
+
     const result = prepareCreateSandboxMessaging(
       createInput({
         enabledChannels: ["googlechat"],
         disabledChannels: ["googlechat"],
-        providerExistsInGateway: () => true,
+        providerMatchesGatewayCredential,
       }),
     );
 
     expect(result.reusableMessagingProviders).toEqual([]);
+    expect(result.missingBridgeChannels).toEqual([]);
+    expect(providerMatchesGatewayCredential).not.toHaveBeenCalled();
   });
 
   it("reports missing Brave API keys before registering extra placeholder providers", () => {

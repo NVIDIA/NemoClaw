@@ -27,6 +27,7 @@ import {
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROBES,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_PROFILE,
   LLAMA_CPP_DGX_SPARK_QUALIFICATION_RECIPE,
+  LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES,
   LLAMA_CPP_DGX_SPARK_RUNNER_PATTERN,
   LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID,
   LLAMA_CPP_DGX_SPARK_SOURCE_ARCHIVE_SHA256,
@@ -208,6 +209,17 @@ function receipt() {
       health: { httpStatus: 200, ok: true },
       logRedaction: { ok: true },
       malformedRequest: { httpStatus: 400, ok: true },
+      requestBodyLimit: {
+        acceptedBytes: 32768,
+        acceptedHttpStatus: 200,
+        continuationHealthHttpStatus: 200,
+        continuationHttpStatus: 200,
+        errorCode: "request_body_too_large",
+        errorType: "invalid_request_error",
+        ok: true,
+        rejectedBytes: LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES,
+        rejectedHttpStatus: 413,
+      },
       metrics: {
         httpStatus: 200,
         ok: true,
@@ -361,7 +373,7 @@ function executionPlan() {
         kvCache: { key: "f16", value: "f16" },
         speculativeDecoding: "disabled",
         limits: {
-          maxRequestBodyBytes: 1048576,
+          maxRequestBodyBytes: 32768,
           maxRequestHeaderBytes: 32768,
           maxOutputTokens: 4096,
           requestTimeoutSeconds: 900,
@@ -892,6 +904,21 @@ describe("llama.cpp DGX Spark qualification contract", () => {
         {
           ...receipt(),
           probes: { ...receipt().probes, health: { httpStatus: 503, ok: false } },
+        },
+        evidenceIdentity(),
+      ),
+    ).toThrow("probes did not pass");
+    expect(() =>
+      parseLlamaCppDgxSparkQualificationReceipt(
+        {
+          ...receipt(),
+          probes: {
+            ...receipt().probes,
+            requestBodyLimit: {
+              ...receipt().probes.requestBodyLimit,
+              continuationHealthHttpStatus: 503,
+            },
+          },
         },
         evidenceIdentity(),
       ),

@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.101");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
 
 describe("MCP restart policy ordering", () => {
   it.each(["restart", "restore"] as const)(
@@ -70,7 +70,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
       return {
         status: 0,
         stdout:
-          "Id: 99999999-8888-4777-8666-555555555555\nType: generic\nResource version: 1\nCredential keys: SECOND_MCP_TOKEN\n",
+          "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: SECOND_MCP_TOKEN\n",
         stderr: "",
       };
     }
@@ -78,14 +78,14 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     if (!entry) return { status: 1, stdout: "", stderr: "NotFound: provider" };
     return {
       status: 0,
-      stdout: "Id: " + entry.providerId + "\nType: generic\nResource version: " + (updatedProviders.has(entry.providerName) ? "2" : "1") + "\nCredential keys: " + entry.env[0] + "\n",
+      stdout: "Id: " + entry.providerId + "\nType: nemoclaw-mcp-v1\nResource version: " + (updatedProviders.has(entry.providerName) ? "2" : "1") + "\nCredential keys: " + entry.env[0] + "\n",
       stderr: "",
     };
   }
   if (args.join(" ") === "sandbox provider list alpha") {
     return {
       status: 0,
-      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-first generic 1 0\nalpha-mcp-second generic 1 0\nforeign-attached generic 1 0\n",
+      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-first nemoclaw-mcp-v1 1 0\nalpha-mcp-second nemoclaw-mcp-v1 1 0\nforeign-attached nemoclaw-mcp-v1 1 0\n",
       stderr: "",
     };
   }
@@ -125,7 +125,7 @@ for (const entry of Object.values(entries)) {
     name: entry.policyName,
     content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, {
       addresses: [new URL(entry.url).hostname],
-    }),
+    }, entry.providerName),
     sourcePath: "generated:nemoclaw-mcp-bridge",
   });
 }
@@ -214,25 +214,25 @@ providerCommands.runOpenshellProviderCommand = (args) => {
       registeredProviderGets += 1;
       return {
         status: 0,
-        stdout: "Id: 99999999-8888-4777-8666-555555555555\nType: generic\nResource version: 1\nCredential keys: OTHER_TOKEN\n",
+        stdout: "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: OTHER_TOKEN\n",
         stderr: "",
       };
     }
     return {
       status: 0,
-      stdout: "Id: " + entry.providerId + "\nType: generic\nResource version: " + resourceVersion + "\nCredential keys: MCP_TOKEN\n",
+      stdout: "Id: " + entry.providerId + "\nType: nemoclaw-mcp-v1\nResource version: " + resourceVersion + "\nCredential keys: MCP_TOKEN\n",
       stderr: "",
     };
   }
   if (args[0] === "provider" && args[1] === "update") {
     providerCalls.push(command);
-    resourceVersion = 2;
+    resourceVersion += 1;
     return { status: 0, stdout: "Updated provider", stderr: "" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
     return {
       status: 0,
-      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n" + entry.providerName + " generic 1 0\n",
+      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n" + entry.providerName + " nemoclaw-mcp-v1 1 0\n",
       stderr: "",
     };
   }
@@ -271,7 +271,7 @@ registry.addCustomPolicy("alpha", {
   name: entry.policyName,
   content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, {
     addresses: ["8.8.8.8"],
-  }),
+  }, entry.providerName),
   sourcePath: "generated:nemoclaw-mcp-bridge",
 });
 
@@ -296,9 +296,10 @@ bridge.restartMcpBridge("alpha", "example").then(
       providerCalls: string[];
       registeredProviderGets: number;
     };
-    expect(payload.observations).toEqual(["v1", "v2"]);
+    expect(payload.observations).toEqual(["v1", "v3"]);
     expect(payload.providerCalls).toEqual([
       "provider update alpha-mcp-example --credential MCP_TOKEN",
+      "provider update alpha-mcp-example",
     ]);
     expect(payload.registeredProviderGets).toBe(1);
     expect(payload.proofScripts).toHaveLength(2);

@@ -1882,7 +1882,15 @@ function installHermesUvPackages(selectedPackages: readonly string[], env: Env):
       "--",
       ...selectedPackages,
     ],
-    env,
+    // uv (rustls) ignores the corporate-only SSL_CERT_FILE, so a PyPI fetch
+    // behind a MITM proxy fails with `UnknownIssuer`. Point it at the merged
+    // system bundle instead; harmless off-proxy, and UV_SYSTEM_CERTS is the
+    // current name for UV_NATIVE_TLS.
+    {
+      ...env,
+      UV_SYSTEM_CERTS: "1",
+      SSL_CERT_FILE: "/etc/ssl/certs/ca-certificates.crt",
+    },
   );
 }
 

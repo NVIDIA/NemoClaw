@@ -60,11 +60,20 @@ describe("local model installer gate", () => {
   it.each([
     ["provider", { NEMOCLAW_PROVIDER: "install-vllm" }],
     ["model", { NEMOCLAW_MODEL: "catalog/model" }],
-    ["vLLM port", { NEMOCLAW_VLLM_PORT: "9000" }],
   ])("rejects the %s override before installer work", (_label, env) => {
     const result = runInstallerMain(["--local-model-runtime=vllm"], env);
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).not.toContain("HARNESS_REACHED");
+  });
+
+  it("accepts a vLLM host port override", () => {
+    const result = runInstallerMain(["--local-model-runtime=vllm"], {
+      NEMOCLAW_VLLM_PORT: "9000",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("HARNESS_REACHED runtime=vllm gate=1 no_express=1");
   });
 });

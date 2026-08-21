@@ -12,6 +12,8 @@ const GENERATED_METADATA_FILE = "oclif-command-metadata.generated.json";
 export type OclifCommandMetadata = {
   args?: Record<string, unknown>;
   baseFlags?: Record<string, unknown>;
+  /** Whether the command renders public help outside oclif flag metadata. */
+  customHelp?: boolean;
   description?: string;
   deprecationOptions?: unknown;
   examples?: string[];
@@ -83,7 +85,10 @@ function staticSummary(source: string): string | undefined {
   return `${brandedTemplate[1]}${CLI_DISPLAY_NAME}${brandedTemplate[2]}`;
 }
 
-function staticBoolean(source: string, property: "hidden" | "strict"): boolean | undefined {
+function staticBoolean(
+  source: string,
+  property: "customHelp" | "hidden" | "strict",
+): boolean | undefined {
   const match = source.match(
     new RegExp(`\\bstatic\\s+(?:readonly\\s+)?${property}\\s*=\\s*(true|false)\\s*;`),
   );
@@ -104,9 +109,11 @@ function loadSourceOclifMetadata(commandRoot: string): Record<string, OclifComma
     const commandId = commandIdFromSourceFile(relativeFile);
     const commandMetadata: OclifCommandMetadata = { id: commandId };
     const summary = staticSummary(source);
+    const customHelp = staticBoolean(source, "customHelp");
     const hidden = staticBoolean(source, "hidden");
     const strict = staticBoolean(source, "strict");
     if (summary !== undefined) commandMetadata.summary = summary;
+    if (customHelp !== undefined) commandMetadata.customHelp = customHelp;
     if (hidden !== undefined) commandMetadata.hidden = hidden;
     if (strict !== undefined) commandMetadata.strict = strict;
     if (metadata[commandId]) throw new Error(`Duplicate source oclif command ID: ${commandId}`);

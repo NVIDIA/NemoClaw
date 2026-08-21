@@ -225,8 +225,10 @@ describe("installOllamaOnLinux (upgrade recovery)", () => {
       isUpgrade: true,
     });
     expect(installOllamaOnLinux(opts).ok).toBe(true);
-    const installer = findRunShellCall(runShellImpl, "ollama.com/install.sh");
+    const installer = findRunShellCall(runShellImpl, "OLLAMA_VERSION=");
     expect(installer).toContain(`OLLAMA_VERSION=${MIN_OLLAMA_VERSION} sh`);
+    expect(installer).not.toContain("curl");
+    expect(installer).not.toContain("|");
   });
 
   it("restarts the daemon for an already-current binary without running the pinned installer", () => {
@@ -259,8 +261,10 @@ describe("installOllamaOnLinux (upgrade recovery)", () => {
       runShellImpl,
     });
     expect(installOllamaOnLinux(opts).ok).toBe(true);
-    const installer = findRunShellCall(runShellImpl, "ollama.com/install.sh");
-    expect(installer).toContain("| sh");
+    const installer = findRunShellCall(runShellImpl, "sh '");
+    expect(installer).toBeDefined();
+    expect(installer).not.toContain("curl");
+    expect(installer).not.toContain("|");
     expect(installer).not.toContain("OLLAMA_VERSION=");
   });
 

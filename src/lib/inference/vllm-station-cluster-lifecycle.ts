@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerCapture, dockerForceRm, dockerRunDetached } from "../adapters/docker";
+import { DEFAULT_VLLM_PORT, VLLM_PORT } from "../core/vllm-port";
 import { DUAL_STATION_VLLM_API_KEY_PATTERN, loadDualStationVllmApiKey } from "./vllm-api-key";
 import { buildLocalDualStationDockerEnv, buildRemoteVllmDockerEnv } from "./vllm-docker-env";
 import { buildNemotronUltraDistributedServeCommand } from "./vllm-models";
@@ -36,7 +37,7 @@ export const DUAL_STATION_VLLM_TRANSACTION_LABEL = "com.nvidia.nemoclaw.vllm-tra
 export const DUAL_STATION_VLLM_GPU_SMOKE_LABEL = "com.nvidia.nemoclaw.gpu-smoke";
 export const DUAL_STATION_VLLM_MASTER_PORT = 6379;
 
-const HEAD_API_PORT = 8000;
+const HEAD_API_PORT = VLLM_PORT;
 // The pinned Station vLLM images ship a non-root-ready /home/vllm. Each Station
 // mounts an owner-only tmpfs there and runs as the probed model-cache owner.
 const VLLM_RUNTIME_HOME = "/home/vllm";
@@ -61,6 +62,7 @@ const GPU_SMOKE_NONCE_PATTERN = /^[a-f0-9]{32}$/;
 const TRANSACTION_ID_PATTERN = /^[a-f0-9]{32}$/;
 const GPU_SMOKE_CONTAINER_PREFIX = "nemoclaw-vllm-gpu-smoke";
 export const DUAL_STATION_VLLM_LAUNCH_SCHEMA = "3";
+export const PREVIOUS_DUAL_STATION_VLLM_LAUNCH_SCHEMA = "2";
 const VLLM_FINGERPRINT_CONTEXT = "nemoclaw-dual-station-vllm-api-key\0";
 // Compatibility bridge for schema-less single-Station Ultra containers from
 // the v0.0.86 rollback window before dual launch schema 1.
@@ -153,6 +155,8 @@ type ManagedContainerSpec = {
   gpuUuid: string;
   image: string;
   launchContract: string;
+  previousEndpoint: string;
+  previousLaunchContract: string;
   apiKeyFingerprint: string | null;
   env: Record<string, string>;
 };
@@ -351,8 +355,12 @@ function withoutVllmApiKey(env: Record<string, string>): Record<string, string> 
   return sanitized;
 }
 
-function endpointFor(plan: DualStationVllmPlan, role: DualStationVllmRole): string {
-  return role === "head" ? `http://${plan.masterAddress}:${String(HEAD_API_PORT)}` : "headless";
+function endpointFor(
+  plan: DualStationVllmPlan,
+  role: DualStationVllmRole,
+  apiPort = HEAD_API_PORT,
+): string {
+  return role === "head" ? `http://${plan.masterAddress}:${String(apiPort)}` : "headless";
 }
 
 function nameFor(role: DualStationVllmRole): string {
@@ -390,11 +398,12 @@ function appendRuntimeHomeEnv(args: string[]): void {
 function buildDualStationVllmBaseRunArgs(
   plan: DualStationVllmPlan,
   role: DualStationVllmRole,
+  apiPort = HEAD_API_PORT,
 ): string[] {
   assertSafePlan(plan);
   const node = role === "head" ? plan.local : plan.peer;
   const endpoints = plan.rails.map((rail) => (role === "head" ? rail.local : rail.peer));
-  const endpoint = endpointFor(plan, role);
+  const endpoint = endpointFor(plan, role, apiPort);
   const clusterId = clusterIdForPlan(plan);
   const args = [
     "--pull=never",
@@ -497,6 +506,7 @@ function buildDualStationVllmBaseRunArgs(
       masterAddr: plan.masterAddress,
       masterPort: DUAL_STATION_VLLM_MASTER_PORT,
       nodeAddr: endpoints[0].address,
+      apiPort,
     }),
   );
   return args;
@@ -511,6 +521,19 @@ export function dualStationVllmLaunchContract(
     schema: DUAL_STATION_VLLM_LAUNCH_SCHEMA,
     role,
     args: buildDualStationVllmBaseRunArgs(plan, role),
+  };
+  return createHash("sha256").update(JSON.stringify(contract)).digest("hex");
+}
+
+/** Stable schema-2 contract used only to authenticate and replace the prior managed pair. */
+export function previousDualStationVllmLaunchContract(
+  plan: DualStationVllmPlan,
+  role: DualStationVllmRole,
+): string {
+  const contract = {
+    schema: PREVIOUS_DUAL_STATION_VLLM_LAUNCH_SCHEMA,
+    role,
+    args: buildDualStationVllmBaseRunArgs(plan, role, DEFAULT_VLLM_PORT),
   };
   return createHash("sha256").update(JSON.stringify(contract)).digest("hex");
 }
@@ -635,6 +658,8 @@ function specsForPlan(
       gpuUuid: plan.local.gpu.uuid,
       image: plan.runtime.image,
       launchContract: dualStationVllmLaunchContract(plan, "head"),
+      previousEndpoint: endpointFor(plan, "head", DEFAULT_VLLM_PORT),
+      previousLaunchContract: previousDualStationVllmLaunchContract(plan, "head"),
       apiKeyFingerprint,
       env: withoutVllmApiKey(deps.buildLocalDockerEnv()),
     },
@@ -646,6 +671,8 @@ function specsForPlan(
       gpuUuid: plan.peer.gpu.uuid,
       image: plan.runtime.image,
       launchContract: dualStationVllmLaunchContract(plan, "worker"),
+      previousEndpoint: endpointFor(plan, "worker", DEFAULT_VLLM_PORT),
+      previousLaunchContract: previousDualStationVllmLaunchContract(plan, "worker"),
       apiKeyFingerprint,
       env: withoutVllmApiKey(deps.buildRemoteDockerEnv(plan.peerSshBinding)),
     },
@@ -746,14 +773,29 @@ function inspectManagedContainer(
     image !== spec.image ||
     managed !== "true" ||
     role !== spec.role ||
-    endpoint !== spec.endpoint ||
     clusterId !== spec.clusterId ||
     gpuUuid !== spec.gpuUuid ||
-    (launchSchema !== DUAL_STATION_VLLM_LAUNCH_SCHEMA && launchSchema !== "2") ||
+    (launchSchema !== DUAL_STATION_VLLM_LAUNCH_SCHEMA &&
+      launchSchema !== PREVIOUS_DUAL_STATION_VLLM_LAUNCH_SCHEMA) ||
     !SHA256_HEX_PATTERN.test(launchContract) ||
     !SHA256_HEX_PATTERN.test(apiKeyFingerprint) ||
     !TRANSACTION_ID_PATTERN.test(transactionId)
   ) {
+    return { kind: "foreign" };
+  }
+  if (launchSchema === PREVIOUS_DUAL_STATION_VLLM_LAUNCH_SCHEMA) {
+    if (endpoint !== spec.previousEndpoint || launchContract !== spec.previousLaunchContract) {
+      return { kind: "foreign" };
+    }
+    return {
+      kind: "managed",
+      containerId,
+      running: state === "running",
+      transactionId,
+      reusable: false,
+    };
+  }
+  if (endpoint !== spec.endpoint || launchSchema !== DUAL_STATION_VLLM_LAUNCH_SCHEMA) {
     return { kind: "foreign" };
   }
   const reusable =

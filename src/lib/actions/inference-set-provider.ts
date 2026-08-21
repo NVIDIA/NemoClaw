@@ -34,8 +34,10 @@ export type InferenceSetSandboxRouteProbe = (
   input: SandboxInferenceInvocationInput,
 ) => SandboxInferenceInvocationResult;
 
-// OpenShell 0.0.101 refreshes the sandbox route cache every five seconds.
-// The final probe runs after six seconds so one full refresh can occur.
+// OpenShell 0.0.106 refreshes the sandbox route cache every five seconds.
+// A stale route can still return a valid 2xx response, so wait one complete
+// refresh interval before probing a changed provider/model selection.
+const ROUTE_SELECTION_REFRESH_WAIT_MS = 6_000;
 const ROUTE_FAMILY_CONVERGENCE_RETRY_DELAYS_MS = [2_000, 4_000] as const;
 
 export function sleepInferenceSetRouteConvergence(milliseconds: number): Promise<void> {
@@ -58,6 +60,8 @@ export function probeInferenceSetSandboxRoute(
 export async function probeInferenceSetSandboxRouteUntilConverged(
   options: {
     input: SandboxInferenceInvocationInput;
+    previousProvider: string;
+    previousModel: string;
     previousInferenceApi: string | null;
     targetInferenceApi: string | null;
   },
@@ -74,6 +78,12 @@ export async function probeInferenceSetSandboxRouteUntilConverged(
     sleep: sleepInferenceSetRouteConvergence,
   },
 ): Promise<SandboxInferenceInvocationResult> {
+  const routeSelectionChanged =
+    options.previousProvider !== options.input.provider ||
+    options.previousModel !== options.input.model;
+  if (routeSelectionChanged) {
+    await deps.sleep(ROUTE_SELECTION_REFRESH_WAIT_MS);
+  }
   const inferenceApiChanged = options.previousInferenceApi !== options.targetInferenceApi;
   return await retryUntilAsync(() => deps.probe(options.input), {
     accept: (result) =>

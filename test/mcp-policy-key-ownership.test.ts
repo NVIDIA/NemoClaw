@@ -8,8 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.101");
-const MATCHING_OPENSHELL_VERSION_CLAUSE = `if [ "$1" = "--version" ]; then printf '%s\\n' 'openshell 0.0.101'; exit 0; fi`;
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
+const MATCHING_OPENSHELL_VERSION_CLAUSE = `if [ "$1" = "--version" ]; then printf '%s\\n' 'openshell 0.0.106'; exit 0; fi`;
 
 const PRESET = `network_policies:
   example:
@@ -259,7 +259,8 @@ describe("MCP-generated network policy ownership", () => {
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain('__RESULT__{"result":false,"policies":[]}');
-    expect(result.stderr).toContain("Failed to update policy");
+    expect(result.stderr).toContain("Could not confirm the policy update");
+    expect(result.stderr).toContain("read the current policy back before retrying");
   });
 
   it("preserves MCP policy ownership state when policy removal fails", () => {
@@ -267,19 +268,23 @@ describe("MCP-generated network policy ownership", () => {
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain('__RESULT__{"result":false,"policies":["mcp-bridge-example"]}');
-    expect(result.stderr).toContain("Failed to update policy");
+    expect(result.stderr).toContain("Could not confirm the policy update");
+    expect(result.stderr).toContain("read the current policy back before retrying");
   });
 
   it.each([
     [false, []],
     [true, ["mcp-bridge-example"]],
-  ] as const)("supports ownership-preserving policy removal (skipRegistryUpdate=%s)", (skipRegistryUpdate, expectedPolicies) => {
-    const result = runSuccessfulPolicyRemoval(skipRegistryUpdate);
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(result.stdout).toContain(
-      `__RESULT__${JSON.stringify({ result: true, policies: expectedPolicies })}`,
-    );
-  });
+  ] as const)(
+    "supports ownership-preserving policy removal (skipRegistryUpdate=%s)",
+    (skipRegistryUpdate, expectedPolicies) => {
+      const result = runSuccessfulPolicyRemoval(skipRegistryUpdate);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain(
+        `__RESULT__${JSON.stringify({ result: true, policies: expectedPolicies })}`,
+      );
+    },
+  );
 
   it("does not delete an operator-owned same-key policy when add rolls back", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-policy-lifecycle-"));
@@ -392,7 +397,7 @@ if [ "$1 $2 $3" = "sandbox provider list" ]; then
 fi
 if [ "$1 $2" = "provider get" ]; then
   if [ -f ${JSON.stringify(providerStatePath)} ]; then
-    printf 'Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: 1\nCredential keys: RESERVATION_TOKEN\n'
+    printf 'Id: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: RESERVATION_TOKEN\n'
     exit 0
   fi
   printf 'Provider not found\n' >&2
@@ -496,7 +501,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Type: generic\\nCredential keys: DRIFT_TOKEN\\n",
+      stdout: "Type: nemoclaw-mcp-v1\\nCredential keys: DRIFT_TOKEN\\n",
       stderr: "",
     };
   }
@@ -539,7 +544,7 @@ registry.addCustomPolicy("alpha", {
   name: entry.policyName,
   content: bridge.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, {
     addresses: ["8.8.8.8"],
-  }),
+  }, entry.providerName),
   sourcePath: "generated:nemoclaw-mcp-bridge",
 });
 

@@ -32,6 +32,7 @@ export const DOCKER_STATE_MUTATION_PROJECTION_SHA256 = "b".repeat(64);
 export const DOCKER_STATE_MUTATION_STATE_ROOT = "/sandbox/.hermes";
 export const DOCKER_STATE_MUTATION_LIFECYCLE_GENERATION = "generation-7";
 const SANDBOX_ID = "sandbox-alpha-id";
+const DOCKER_EXECUTABLE_SOURCE = "#!/bin/sh\nexit 1\n";
 const PODMAN_EXECUTABLE_BYTES = Buffer.from("qualified-podman-state-mutation", "utf8");
 const PODMAN_SOCKET_AUTHORITY = {
   directoryChain: [],
@@ -80,6 +81,13 @@ function temporaryRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-state-mutation-"));
   roots.push(root);
   return root;
+}
+
+function createDockerExecutableSearchPath(root: string): string {
+  const directory = path.join(root, "bin");
+  fs.mkdirSync(directory, { mode: 0o700 });
+  fs.writeFileSync(path.join(directory, "docker"), DOCKER_EXECUTABLE_SOURCE, { mode: 0o700 });
+  return directory;
 }
 
 export function cleanupDockerStateMutationRoots(): void {
@@ -375,6 +383,7 @@ function createContainerStateMutationHarness(
           HOME: "/tmp/nemoclaw-home",
           DOCKER_CONFIG: "/tmp/nemoclaw-docker",
           DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+          PATH: createDockerExecutableSearchPath(root),
         }
       : { HOME: "/tmp/nemoclaw-home" };
   const dockerAuthority =

@@ -15,14 +15,18 @@
  * targets.
  */
 
+import path from "node:path";
+
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError, type ParsedEnvReference } from "./mcp-bridge-contracts";
 import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";
 import {
   inspectMcpProvider,
+  MCP_BRIDGE_PROVIDER_TYPE,
   type McpProviderInspection,
   providerMatchesCredential,
+  providerMatchesManagedCredential,
   providerShapeDetail,
 } from "./mcp-bridge-provider-inspection";
 import {
@@ -40,6 +44,63 @@ export {
   providerDetachChangedState,
 } from "./mcp-bridge-provider-attachments";
 
+function profileHasExpectedCredentialBoundary(output: string): boolean {
+  try {
+    const parsed = JSON.parse(output) as Record<string, unknown>;
+    return (
+      parsed.id === MCP_BRIDGE_PROVIDER_TYPE &&
+      Array.isArray(parsed.credentials) &&
+      parsed.credentials.length === 0 &&
+      Array.isArray(parsed.endpoints) &&
+      parsed.endpoints.length === 0 &&
+      Array.isArray(parsed.binaries) &&
+      parsed.binaries.length === 0 &&
+      parsed.inference_capable === false
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Ensure the endpointless profile required by OpenShell static credential binding. */
+export function ensureMcpBridgeProviderProfile(): void {
+  const profilePath = path.resolve(
+    __dirname,
+    "../../../..",
+    "nemoclaw-blueprint",
+    "provider-profiles",
+    `${MCP_BRIDGE_PROVIDER_TYPE}.yaml`,
+  );
+  const imported = runOpenshellProviderCommand(
+    ["provider", "profile", "import", "--file", profilePath],
+    {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  ) as OpenShellCommandResult;
+  if (imported.status === 0) return;
+
+  const importOutput = commandOutput(imported);
+  if (!/already exists/i.test(importOutput)) {
+    throw new McpBridgeError(
+      importOutput || `Could not import OpenShell provider profile '${MCP_BRIDGE_PROVIDER_TYPE}'.`,
+    );
+  }
+
+  const exported = runOpenshellProviderCommand(
+    ["provider", "profile", "export", MCP_BRIDGE_PROVIDER_TYPE, "--output", "json"],
+    {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  ) as OpenShellCommandResult;
+  if (exported.status !== 0 || !profileHasExpectedCredentialBoundary(String(exported.stdout))) {
+    throw new McpBridgeError(
+      `OpenShell provider profile '${MCP_BRIDGE_PROVIDER_TYPE}' already exists but does not match NemoClaw's endpointless credential contract. Refusing to attach MCP credentials to it.`,
+    );
+  }
+}
+
 export function buildMcpBridgeProviderArgs(
   action: "create" | "update",
   providerName: string,
@@ -48,7 +109,7 @@ export function buildMcpBridgeProviderArgs(
 ): string[] {
   const args =
     action === "create"
-      ? ["provider", "create", "--name", providerName, "--type", "generic"]
+      ? ["provider", "create", "--name", providerName, "--type", MCP_BRIDGE_PROVIDER_TYPE]
       : ["provider", "update", providerName];
   for (const entry of env) {
     validateMcpCredentialEnvName(entry.name);
@@ -66,6 +127,7 @@ export function upsertMcpProvider(
   options: {
     allowExisting: boolean;
     expectedProviderId?: string;
+    requireExisting?: boolean;
     prepareMutation?: (action: "create" | "update") => void;
   },
 ): {
@@ -90,6 +152,11 @@ export function upsertMcpProvider(
   if (inspection.exists === null) {
     throw new McpBridgeError(
       inspection.error ?? `Could not inspect OpenShell provider '${providerName}'.`,
+    );
+  }
+  if (inspection.exists === false && options.requireExisting) {
+    throw new McpBridgeError(
+      `OpenShell provider '${providerName}' disappeared before credential republish. Refusing to create a replacement with a different identity.`,
     );
   }
   if (inspection.exists && !options.allowExisting) {
@@ -188,9 +255,52 @@ export function upsertMcpProvider(
   return { action: action === "create" ? "created" : "updated", inspection: after };
 }
 
+/**
+ * Republish an attached provider after its endpointless credential binding is
+ * active. OpenShell's Docker sidecar can observe the provider mutation before
+ * the bound policy generation; a no-field update advances the provider
+ * revision without reading or rotating the stored credential, giving the
+ * sidecar a post-policy generation to synchronize.
+ */
+export function refreshMcpProviderEnvironment(entry: McpBridgeEntry): McpProviderInspection {
+  assertPersistedAuthenticatedBridgeEntry(entry);
+  if (!entry.providerName || !entry.providerId) {
+    throw new McpBridgeError(
+      `MCP server '${entry.server}' has no stable OpenShell provider identity for credential synchronization.`,
+    );
+  }
+  const before = inspectMcpProvider(entry.providerName);
+  if (!providerMatchesCredential(before, entry.env[0], entry.providerId)) {
+    throw new McpBridgeError(
+      `OpenShell provider '${entry.providerName}' changed before credential synchronization. ${providerShapeDetail(before, entry.env[0], entry.providerId)} Refusing to mutate it.`,
+    );
+  }
+  const result = runOpenshellProviderCommand(["provider", "update", entry.providerName], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  }) as OpenShellCommandResult;
+  if (result.status !== 0) {
+    throw new McpBridgeError(
+      commandOutput(result) ||
+        `Failed to synchronize MCP provider '${entry.providerName}' after policy binding.`,
+    );
+  }
+  const after = inspectMcpProvider(entry.providerName);
+  if (
+    !providerMatchesCredential(after, entry.env[0], entry.providerId) ||
+    !after.resourceVersion ||
+    after.resourceVersion <= (before.resourceVersion ?? 0)
+  ) {
+    throw new McpBridgeError(
+      `OpenShell provider '${entry.providerName}' changed during credential synchronization. ${providerShapeDetail(after, entry.env[0], entry.providerId)} Refusing later MCP side effects.`,
+    );
+  }
+  return after;
+}
+
 function inspectMcpProviderForDeletion(
   entry: McpBridgeEntry,
-  options: { allowMissing?: boolean; bestEffort?: boolean } = {},
+  options: { allowLegacyGeneric?: boolean; allowMissing?: boolean; bestEffort?: boolean } = {},
 ): McpProviderInspection | null {
   if (!entry.providerName) return null;
   try {
@@ -207,7 +317,11 @@ function inspectMcpProviderForDeletion(
         `OpenShell provider '${entry.providerName}' disappeared before delete.`,
       );
     }
-    if (!providerMatchesCredential(inspection, entry.env[0], entry.providerId)) {
+    if (
+      !providerMatchesManagedCredential(inspection, entry.env[0], entry.providerId, {
+        allowLegacyGeneric: options.allowLegacyGeneric,
+      })
+    ) {
       throw new McpBridgeError(
         `OpenShell provider '${entry.providerName}' changed before delete. ${providerShapeDetail(inspection, entry.env[0], entry.providerId)} Refusing to mutate it.`,
       );
@@ -221,7 +335,7 @@ function inspectMcpProviderForDeletion(
 
 export function deleteProvider(
   entry: McpBridgeEntry,
-  options: { allowMissing?: boolean; bestEffort?: boolean } = {},
+  options: { allowLegacyGeneric?: boolean; allowMissing?: boolean; bestEffort?: boolean } = {},
 ): void {
   if (!entry.providerName) return;
   const inspection = inspectMcpProviderForDeletion(entry, options);

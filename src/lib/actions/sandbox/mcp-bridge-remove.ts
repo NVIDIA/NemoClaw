@@ -18,7 +18,7 @@ import {
   detachMissingProviderReference,
   detachProvider,
   inspectMcpProvider,
-  providerMatchesCredential,
+  providerMatchesManagedCredential,
   providerShapeDetail,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
@@ -76,7 +76,11 @@ function assertExactMcpRemoveProvider(
       `OpenShell provider '${entry.providerName}' is missing. Refusing to destroy sandbox state because a failed sandbox delete could not restore authenticated MCP without the preserved provider credential.`,
     );
   }
-  if (!providerMatchesCredential(inspection, entry.env[0], entry.providerId)) {
+  if (
+    !providerMatchesManagedCredential(inspection, entry.env[0], entry.providerId, {
+      allowLegacyGeneric: true,
+    })
+  ) {
     const forceDetail = options.force
       ? " --force does not delete a non-matching global provider because it may be owned by another workflow."
       : "";
@@ -235,7 +239,9 @@ async function removeMcpBridgeUnlocked(
       } else if (
         inspection.exists === true &&
         entry.env.length === 1 &&
-        providerMatchesCredential(inspection, entry.env[0], entry.providerId)
+        providerMatchesManagedCredential(inspection, entry.env[0], entry.providerId, {
+          allowLegacyGeneric: true,
+        })
       ) {
         providerOwnershipProved = true;
       } else {
@@ -255,7 +261,12 @@ async function removeMcpBridgeUnlocked(
   }
 
   let missingProviderReferenceDetached = false;
-  if (providerWasMissing && providerOwnershipProved && entry.providerName) {
+  if (
+    providerWasMissing &&
+    providerOwnershipProved &&
+    entry.providerName &&
+    detachBeforeAdapterCleanup
+  ) {
     try {
       detachMissingProviderReference(sandboxName, entry);
       missingProviderReferenceDetached = true;
@@ -273,7 +284,7 @@ async function removeMcpBridgeUnlocked(
         ? missingProviderReferenceDetached
           ? "detached"
           : "unknown"
-        : detachProvider(sandboxName, entry);
+        : detachProvider(sandboxName, entry, { allowLegacyGeneric: true });
       providerDetachedBeforeAdapterCleanup = detachOutcome !== "unknown";
       if (!providerDetachedBeforeAdapterCleanup) {
         throw new McpBridgeError(
@@ -331,19 +342,38 @@ async function removeMcpBridgeUnlocked(
       failures.push(detail);
     }
   }
-  let reservationCleanupProved = !entry.providerName && adapterCleanupProved;
-  if (adapterCleanupProved && providerOwnershipProved && entry.providerName) {
+  let policyCleanupProved = false;
+  if (adapterCleanupProved) {
+    try {
+      removeGeneratedPolicy(sandboxName, entry);
+      policyCleanupProved = true;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (!options.force) throw new McpBridgeError(detail);
+      failures.push(detail);
+    }
+  }
+  let reservationCleanupProved = !entry.providerName && adapterCleanupProved && policyCleanupProved;
+  if (
+    adapterCleanupProved &&
+    policyCleanupProved &&
+    providerOwnershipProved &&
+    entry.providerName
+  ) {
     try {
       // OpenShell main cannot list a sandbox whose spec references a missing
       // provider. Remove that dangling name directly before using the normal
       // table-backed detach path for a provider that still exists.
-      const detachOutcome = providerWasMissing
-        ? missingProviderReferenceDetached
+      let detachOutcome;
+      if (providerWasMissing) {
+        detachOutcome = missingProviderReferenceDetached
           ? "detached"
-          : "unknown"
-        : providerDetachedBeforeAdapterCleanup
+          : detachMissingProviderReference(sandboxName, entry);
+      } else {
+        detachOutcome = providerDetachedBeforeAdapterCleanup
           ? "detached"
-          : detachProvider(sandboxName, entry);
+          : detachProvider(sandboxName, entry, { allowLegacyGeneric: true });
+      }
       if (detachOutcome !== "unknown") {
         // A missing provider has no credential left to revoke. Its stock CLI
         // detach result is authoritative for the sandbox-spec reference, and
@@ -360,17 +390,9 @@ async function removeMcpBridgeUnlocked(
       failures.push(detail);
     }
   }
-  if (reservationCleanupProved) {
-    try {
-      removeGeneratedPolicy(sandboxName, entry);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      if (!options.force) throw new McpBridgeError(detail);
-      failures.push(detail);
-    }
-  } else {
+  if (!reservationCleanupProved) {
     failures.push(
-      `Provider detach state for '${entry.providerName}' is unknown; preserved the MCP policy and ownership manifest.`,
+      `Provider detach or policy cleanup state for '${entry.providerName}' is unknown; preserved the MCP ownership manifest.`,
     );
   }
   if (
@@ -389,6 +411,7 @@ async function removeMcpBridgeUnlocked(
         force: options.force,
       });
       deleteProvider(entry, {
+        allowLegacyGeneric: true,
         allowMissing: options.force === true || entry.addState === "preflighted",
       });
     } catch (error) {

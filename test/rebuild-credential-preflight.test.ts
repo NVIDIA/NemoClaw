@@ -184,7 +184,7 @@ wait();`,
 const fs = require("fs");
 const a = process.argv.slice(2);
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
-if (a[0] === "-V" || a[0] === "--version") { process.stdout.write("openshell 0.0.101\\n"); process.exit(0); }
+if (a[0] === "-V" || a[0] === "--version") { process.stdout.write("openshell 0.0.106\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "list") { process.stdout.write("${sandboxName} Ready\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "get") {
@@ -233,7 +233,7 @@ process.exit(0);
       path.join(tmpDir, component),
       `#!/usr/bin/env node
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
-if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.101\\n");
+if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.106\\n");
 process.exit(0);
 `,
       { mode: 0o755 },
@@ -302,7 +302,7 @@ if (a[0] === "inspect") {
   const format = formatIndex >= 0 ? a[formatIndex + 1] : "";
   if (format === "{{.State.Running}}") process.stdout.write("true\\n");
   if (format === "{{json .NetworkSettings.Ports}}") process.stdout.write(JSON.stringify({"${gatewayPort}/tcp":[{HostPort:"${gatewayPort}"}]}) + "\\n");
-  if (format === "{{.Config.Image}}") process.stdout.write("nvcr.io/nvidia/openshell/cluster:0.0.101\\n");
+  if (format === "{{.Config.Image}}") process.stdout.write("nvcr.io/nvidia/openshell/cluster:0.0.106\\n");
   process.exit(0);
 }
 if (a[0] === "ps") process.exit(0);

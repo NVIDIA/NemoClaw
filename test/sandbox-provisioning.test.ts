@@ -1046,7 +1046,7 @@ describe("Hermes sandbox provisioning", () => {
       "patch-hermes-langfuse-credentials.mts",
     );
     const managedPolicyReaderPath = path.join(localLib, "managed_policy.py");
-    const mcpManifest = path.join(localLib, "openshell-child-visible-credentials.v0.0.101.json");
+    const mcpManifest = path.join(localLib, "openshell-child-visible-credentials.v0.0.106.json");
     const stateDirGuardPath = path.join(localLib, "state-dir-guard.py");
     const runtimeStateMutationControlPath = path.join(
       localLib,
@@ -1276,7 +1276,7 @@ describe("Hermes sandbox provisioning", () => {
     return { result, tmp };
   }
 
-  it("installs Hermes' native Anthropic provider dependency (#4230)", () => {
+  it("installs the selected Hermes extras, including native Anthropic (#4230)", () => {
     const { result, tmp } = runHermesUvExtrasExpansion();
     try {
       expect(result.status).toBe(0);
@@ -1292,6 +1292,8 @@ describe("Hermes sandbox provisioning", () => {
         "pty",
         "--extra",
         "mcp",
+        "--extra",
+        "acp",
       ]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
