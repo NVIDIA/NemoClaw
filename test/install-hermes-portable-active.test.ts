@@ -273,9 +273,7 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
         readRegistry: () => registry.getSandbox(sandboxName),
         createSandbox: async (argv, buildContextPath) => {
           expect(buildContextPath).toContain(path.join(stateDir, "hermes-portable-build-context"));
-          expect(argv[argv.indexOf("--from") + 1]).toBe(
-            path.join(buildContextPath, "agents", "hermes", "Dockerfile"),
-          );
+          expect(argv[argv.indexOf("--from") + 1]).toBe(path.join(buildContextPath, "Dockerfile"));
           expect(argv[argv.indexOf("--policy") + 1]).not.toBe(basePolicyPath);
           return { ready: true };
         },
