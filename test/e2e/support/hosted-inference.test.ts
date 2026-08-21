@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { loadPortableInferenceDescriptor } from "../../../src/lib/onboard/experimental/portable-inference-descriptor.ts";
 import { resolveRequestedProviderSelection } from "../../../src/lib/onboard/provider-selection.ts";
@@ -255,7 +255,6 @@ describe("hosted inference E2E config", () => {
         model: config.model,
       });
       const temporaryPath = path.join(directory, ".portable-inference.json.tmp");
-      expect(fs.existsSync(temporaryPath)).toBe(false);
       fs.writeFileSync(temporaryPath, "foreign temporary marker", {
         encoding: "utf8",
         flag: "wx",
@@ -330,6 +329,45 @@ describe("hosted inference E2E config", () => {
       expect(() => staged.dispose()).not.toThrow();
       environmentScope.restore();
     } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("preserves the staging failure when owned-file rollback also fails (#9200)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-hosted-"));
+    const filePath = path.join(directory, "portable-inference.json");
+    const temporaryPath = path.join(directory, ".portable-inference.json.tmp");
+    const config = requireHostedInferenceConfig(
+      secrets({ NVIDIA_INFERENCE_API_KEY: "portable-hosted-key" }),
+      {
+        NEMOCLAW_ENDPOINT_URL: "https://inference.example.test/v1",
+        NEMOCLAW_MODEL: "nvidia/provider-model",
+      },
+    );
+    const realUnlinkSync = fs.unlinkSync.bind(fs);
+    const unlinkSync = vi
+      .spyOn(fs, "unlinkSync")
+      .mockImplementationOnce((target) => {
+        expect(target).toBe(temporaryPath);
+        realUnlinkSync(target);
+        throw new Error("original staging failure");
+      })
+      .mockImplementationOnce((target) => {
+        expect(target).toBe(filePath);
+        throw new Error("rollback cleanup failure");
+      });
+
+    try {
+      expect(() =>
+        stagePortableHostedInferenceDescriptor(config, {
+          filePath,
+          now: () => Date.parse("2026-08-20T16:00:00Z"),
+        }),
+      ).toThrow("original staging failure");
+      expect(fs.existsSync(filePath)).toBe(true);
+      expect(unlinkSync).toHaveBeenCalledTimes(2);
+    } finally {
+      unlinkSync.mockRestore();
       fs.rmSync(directory, { force: true, recursive: true });
     }
   });
