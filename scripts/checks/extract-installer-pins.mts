@@ -333,14 +333,16 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       sha256: "f0f86519e227b3b326431410058ba690b1a7b83e5af7384014e4b96283d3a642",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.106/openshell.rb",
     },
-    // The first template came from the downstream 0.0.106 pin. The second authorizes repair when
-    // an existing formula has an invalid checksum or its release formula is unavailable. Homebrew
-    // owns that source state, so NemoClaw cannot correct it there; the installer verifies the
-    // trusted release formula before reuse. installer-homebrew-formula-reuse-trust.test.ts and
-    // installer-hash-check.test.ts lock the template and trust transition. Remove the second digest
-    // when supported Homebrew installs no longer need this repair path.
+    // The first template came from the downstream 0.0.106 pin. The second authorizes its
+    // fail-before-download strings preflight. The third authorizes repair when an existing formula
+    // has an invalid checksum or its release formula is unavailable. Homebrew owns that source
+    // state, so NemoClaw cannot correct it there; the installer verifies the trusted release
+    // formula before reuse. installer-homebrew-formula-reuse-trust.test.ts and
+    // installer-hash-check.test.ts lock the template and trust transitions. Remove the repair
+    // digest when supported Homebrew installs no longer need this repair path.
     installerTemplateSha256: [
       "5d4cdb2db60df7539193b486ac15bb9be96ec1d40fc0f739a94d4d2f0bf597a0",
+      "e850e927aab619d52c5de72967137569d65dd7fa669920c7c5b558f0770140d1",
       "e7d51536442b217e3d5e77c4ba3b7c25e6a74898bf22523f7fb58627d34329cb",
     ],
     manifests: [
