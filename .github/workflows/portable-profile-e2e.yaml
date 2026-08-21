@@ -351,7 +351,6 @@ jobs:
           cleanup_fixture_drop_in() {
             local target="$1"
             local expected="$2"
-            local actual
             if ! sudo test -e "$target" && ! sudo test -L "$target"; then
               return 0
             fi
@@ -359,8 +358,7 @@ jobs:
               printf 'Refusing unexpected Portable CPU-delegation fixture path: %s\n' "$target" >&2
               return 1
             fi
-            actual="$(sudo cat -- "$target")"
-            if [ "$actual" != "$expected" ]; then
+            if ! printf '%s' "$expected" | sudo cmp -s -- "$target" -; then
               printf 'Refusing changed Portable CPU-delegation fixture file: %s\n' "$target" >&2
               return 1
             fi

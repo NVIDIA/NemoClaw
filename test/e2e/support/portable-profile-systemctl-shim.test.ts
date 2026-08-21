@@ -372,11 +372,14 @@ async function waitForGatewayCommands(
   scope: FixtureScope,
   expectedKinds: string[],
 ): Promise<Record<string, unknown>[]> {
-  return vi.waitFor(() => {
-    const commands = readGatewayCommands(scope);
-    expect(commands.map((command) => command.kind)).toEqual(expectedKinds);
-    return commands;
-  }, { timeout: 5_000 });
+  return vi.waitFor(
+    () => {
+      const commands = readGatewayCommands(scope);
+      expect(commands.map((command) => command.kind)).toEqual(expectedKinds);
+      return commands;
+    },
+    { timeout: 5_000 },
+  );
 }
 
 function pidIsActive(pid: number): boolean {
@@ -468,6 +471,15 @@ function portableLaunchStep(name: string): WorkflowStep {
   );
   expect(step).toBeDefined();
   return step!;
+}
+
+function portableLaunchShellFunction(stepName: string, functionName: string): string {
+  const run = portableLaunchStep(stepName).run ?? "";
+  const start = run.indexOf(`${functionName}() {\n`);
+  expect(start).toBeGreaterThanOrEqual(0);
+  const end = run.slice(start).search(/^\}\n/mu);
+  expect(end).toBeGreaterThanOrEqual(0);
+  return run.slice(start, start + end + 2);
 }
 
 describe("portable profile systemctl fixture", () => {
@@ -1425,5 +1437,51 @@ describe("portable profile systemctl fixture", () => {
     expect(cleanupRun).toContain(
       "rm -f -- /run/nemoclaw/portable-inference.json /run/nemoclaw/.portable-inference.json.tmp",
     );
+  });
+
+  it("removes only byte-identical CPU-delegation drop-ins with terminal newlines", () => {
+    const root = fs.mkdtempSync("/tmp/portable-cpu-delegation-cleanup-");
+    const bin = path.join(root, "bin");
+    const exact = path.join(root, "exact.conf");
+    const changed = path.join(root, "changed.conf");
+    const expected = "[Service]\nDelegate=cpu memory pids\n";
+    fs.mkdirSync(bin, { mode: 0o700 });
+    writeExecutable(path.join(bin, "sudo"), '#!/usr/bin/env bash\nexec "$@"\n');
+    fs.writeFileSync(exact, expected);
+    fs.writeFileSync(changed, `${expected}unexpected\n`);
+    const cleanupFunction = portableLaunchShellFunction(
+      "Clean up portable runtime",
+      "cleanup_fixture_drop_in",
+    );
+    const runCleanup = (target: string) =>
+      spawnSync(
+        "bash",
+        [
+          "-c",
+          `${cleanupFunction}\ncleanup_fixture_drop_in \"$1\" \"$2\"`,
+          "cleanup",
+          target,
+          expected,
+        ],
+        {
+          encoding: "utf8",
+          env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
+        },
+      );
+
+    try {
+      const exactCleanup = runCleanup(exact);
+      expect(exactCleanup.status, exactCleanup.stderr).toBe(0);
+      expect(fs.existsSync(exact)).toBe(false);
+
+      const changedCleanup = runCleanup(changed);
+      expect(changedCleanup.status).not.toBe(0);
+      expect(changedCleanup.stderr).toContain(
+        "Refusing changed Portable CPU-delegation fixture file",
+      );
+      expect(fs.readFileSync(changed, "utf8")).toBe(`${expected}unexpected\n`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
