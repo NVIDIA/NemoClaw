@@ -232,9 +232,14 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     'reference="${repository}@${digest}"',
     '"sha256:$(sha256sum "$exact_raw" | awk \'{print $1}\')" == "$digest"',
     "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
-    "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest",
+    "agents/hermes/Dockerfile",
+    '[[ "$hermes_index" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ]]',
+    'resolve_base hermes \\\n  "$hermes_index"',
     "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest",
   ]);
+  if (text(bases?.run).includes("ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest")) {
+    errors.push(`${JOB_ID} must resolve Hermes from the immutable reviewed Dockerfile index`);
+  }
 
   const registry = requireStep(errors, steps, "Start isolated protected managed-image registry");
   requireFragments(errors, registry, [

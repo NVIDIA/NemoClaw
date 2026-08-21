@@ -24,6 +24,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/inference-switch-workflow-boundary.test.ts",
   "test/e2e/support/llama-cpp-dgx-spark-qualification-workflow.test.ts",
   "test/e2e/support/jetson-workflow-boundary.test.ts",
+  "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
   "test/e2e/support/mcp-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-compatibility.test.ts",
   "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",

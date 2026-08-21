@@ -62,6 +62,11 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+      "test": "rejects mutable Hermes base selection in %s",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
       "test": "keeps live E2E on the accepted rootless runtime and local registry authority (#9006)",
       "category": "compatibility"

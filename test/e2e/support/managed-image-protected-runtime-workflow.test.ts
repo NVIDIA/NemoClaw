@@ -31,7 +31,16 @@ function multiarchJob(value: WorkflowRecord): Record<string, unknown> {
 }
 
 function namedStep(value: WorkflowRecord, name: string): Record<string, unknown> {
-  const step = (runtimeJob(value).steps as Array<Record<string, unknown>>).find(
+  return namedJobStep(value, "managed-image-protected-runtime", name);
+}
+
+function namedJobStep(
+  value: WorkflowRecord,
+  jobId: string,
+  name: string,
+): Record<string, unknown> {
+  const job = (value.jobs as Record<string, Record<string, unknown>>)[jobId];
+  const step = (job.steps as Array<Record<string, unknown>>).find(
     (step) => step.name === name,
   );
   expect(step, `workflow step '${name}' is missing`).toBeDefined();
@@ -48,6 +57,28 @@ describe("protected managed-image runtime workflow", () => {
 
     expect(validateManagedImageMultiarchWorkflow(value)).toEqual([]);
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toEqual([]);
+  });
+
+  // source-shape-contract: security -- The trusted workflow validator must reject mutable Hermes base provenance in both protected build jobs
+  it.each([
+    [
+      "managed-image-multiarch-startup",
+      "Resolve exact platform base images",
+      validateManagedImageMultiarchWorkflow,
+    ],
+    [
+      "managed-image-protected-runtime",
+      "Resolve exact amd64 runtime base images",
+      validateManagedImageProtectedRuntimeWorkflow,
+    ],
+  ] as const)("rejects mutable Hermes base selection in %s", (jobId, stepName, validate) => {
+    const value = workflow();
+    const step = namedJobStep(value, jobId, stepName);
+    step.run = `${String(step.run)}\nghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest`;
+
+    expect(validate(value)).toContain(
+      `${jobId} must resolve Hermes from the immutable reviewed Dockerfile index`,
+    );
   });
 
   it("runs protected runtime checks from .candidate-runtime", () => {
