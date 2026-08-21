@@ -87,6 +87,12 @@ export interface MessagingBridgeSecretResolveDeps {
 
 export interface CollectMessagingBridgeTokenDefsInput extends MessagingBridgeSecretResolveDeps {
   readonly sandboxName: string;
+  /**
+   * Recorded sandbox agent, unnormalized. Bridge profiles are per-agent and a
+   * channel may ship both (Google Chat does), so the profile filter selects the
+   * matching one and rejects an agent no profile declares.
+   */
+  readonly agent: string | null | undefined;
   readonly enabledChannels: readonly string[] | null;
   readonly disabledChannelNames: ReadonlySet<string>;
   /** Injected for tests; defaults to convention discovery. */
@@ -255,7 +261,7 @@ function bridgeProviderNameFor(sandboxName: string, channelId: string): string {
 export function collectMessagingBridgeTokenDefs(
   input: CollectMessagingBridgeTokenDefsInput,
 ): { name: string; envKey: string; token: string; providerType: string }[] {
-  const profiles = input.profiles ?? listMessagingBridgeProfiles();
+  const profiles = messagingBridgeProfilesForAgent(input.agent, input.profiles);
   const defs: { name: string; envKey: string; token: string; providerType: string }[] = [];
   for (const profile of profiles) {
     if (input.disabledChannelNames.has(profile.channelId)) continue;
@@ -271,6 +277,19 @@ export function collectMessagingBridgeTokenDefs(
     });
   }
   return defs;
+}
+
+/**
+ * Single authority for which bridge profiles an agent may use. An unset agent is
+ * OpenClaw, matching `toMessagingAgentId`; a recorded agent no profile declares
+ * selects nothing, so it mints and reuses no bridge.
+ */
+export function messagingBridgeProfilesForAgent(
+  agent: string | null | undefined,
+  profiles: readonly MessagingBridgeProfile[] = listMessagingBridgeProfiles(),
+): MessagingBridgeProfile[] {
+  const name = agent?.trim().toLowerCase() || "openclaw";
+  return profiles.filter((profile) => profile.agent === name);
 }
 
 /**
@@ -399,8 +418,12 @@ function buildRefreshMaterial(
       { key: "client_email", value: clientEmail },
       { key: "private_key", value: privateKey },
     ];
-    // Scope comes from the profile's declared refresh scopes (single source of truth).
-    if (profile.scopes[0]) material.push({ key: "scope", value: profile.scopes[0] });
+    // Join every declared scope space-separated so ONE minted token carries all
+    // of them. Hermes Google Chat needs chat.bot AND pubsub in a single
+    // credential; taking only scopes[0] made `:pull` fail with 403.
+    if (profile.scopes.length > 0) {
+      material.push({ key: "scope", value: profile.scopes.join(" ") });
+    }
     // This strategy always emits private_key as material, so force it into the
     // secret set (delivered via --secret-material-env, never argv) regardless of
     // what the profile declares. A profile whose secretMaterialKeys omitted it

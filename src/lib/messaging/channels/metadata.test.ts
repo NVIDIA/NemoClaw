@@ -43,6 +43,7 @@ describe("built-in messaging channel metadata", () => {
       "slack",
       "whatsapp",
       "teams",
+      "googlechat",
     ]);
   });
 
@@ -124,6 +125,8 @@ describe("built-in messaging channel metadata", () => {
       "GOOGLECHAT_AUDIENCE",
       "GOOGLECHAT_APP_PRINCIPAL",
       "GOOGLECHAT_ALLOWED_USERS",
+      "GOOGLE_CHAT_PROJECT_ID",
+      "GOOGLE_CHAT_SUBSCRIPTION_NAME",
     ]);
     expect(getMessagingConfigEnvAliases()).toEqual({
       DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
@@ -213,6 +216,27 @@ describe("built-in messaging channel metadata", () => {
         agents: ["hermes"],
         manager: "hermes-uv-pip",
         spec: "aiohttp==3.14.3",
+      },
+      {
+        channelId: "googlechat",
+        packageId: "hermesGooglePubsubPackage",
+        agents: ["hermes"],
+        manager: "hermes-uv-pip",
+        spec: "google-cloud-pubsub==2.39.0",
+      },
+      {
+        channelId: "googlechat",
+        packageId: "hermesGoogleApiClientPackage",
+        agents: ["hermes"],
+        manager: "hermes-uv-pip",
+        spec: "google-api-python-client==2.194.0",
+      },
+      {
+        channelId: "googlechat",
+        packageId: "hermesGoogleAuthPackage",
+        agents: ["hermes"],
+        manager: "hermes-uv-pip",
+        spec: "google-auth==2.55.1",
       },
     ]);
   });

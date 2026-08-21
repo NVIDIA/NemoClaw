@@ -9,6 +9,7 @@ import * as braveProviderProfile from "./brave-provider-profile";
 import {
   bridgeProviderNamesForChannel,
   collectMessagingBridgeTokenDefs,
+  messagingBridgeProfilesForAgent,
 } from "./messaging-bridge-provider";
 
 export type NamedMessagingChannel = { name: string } & ChannelDef;
@@ -51,6 +52,8 @@ export interface CreateSandboxMessagingPrepResult {
   hasMessagingTokens: boolean;
   reusableMessagingProviders: string[];
   reusableMessagingChannels: string[];
+  /** Selected bridge channels with no usable provider and no source secret. */
+  missingBridgeChannels: string[];
   missingWebSearchCredentialEnv: string | null;
 }
 
@@ -119,6 +122,7 @@ export function prepareCreateSandboxMessaging(
       hasMessagingTokens: messagingTokenDefs.some(({ token }) => !!token),
       reusableMessagingProviders: [],
       reusableMessagingChannels: [],
+      missingBridgeChannels: [],
       missingWebSearchCredentialEnv,
     };
   }
@@ -138,9 +142,13 @@ export function prepareCreateSandboxMessaging(
   // gateway-side) and the L7 proxy injects it. The credential value is a sentinel
   // (minted by refresh, configured post-create in onboard's
   // upsertMessagingProviders wrapper). Today only Google Chat uses this.
+  // Resolve the agent instead of defaulting it: an agent no manifest supports
+  // must configure no bridge, not the OpenClaw one.
+  const bridgeProfiles = messagingBridgeProfilesForAgent(input.agentName);
   messagingTokenDefs.push(
     ...collectMessagingBridgeTokenDefs({
       sandboxName: input.sandboxName,
+      agent: input.agentName,
       getCredential: input.getCredential,
       env: input.env,
       normalizeCredentialValue: input.normalizeCredentialValue,
@@ -178,13 +186,19 @@ export function prepareCreateSandboxMessaging(
   // Bridge channels have no token def at all when their env-only secret is
   // gone (fresh process), so the envKey loop above misses them. The gateway
   // still holds the refresh material — reuse the provider by name instead.
+  // The name carries the channel but not the agent, and onboard can recreate a
+  // sandbox name under a different agent, so match the gateway binding against
+  // the selected profile rather than accepting any provider with that name.
   if (input.enabledChannels != null) {
-    for (const channel of input.enabledChannels) {
+    for (const profile of bridgeProfiles) {
+      const channel = profile.channelId;
+      if (!input.enabledChannels.includes(channel)) continue;
       if (disabledChannelNames.has(channel)) continue;
-      for (const name of bridgeProviderNamesForChannel(input.sandboxName, channel)) {
+      for (const name of bridgeProviderNamesForChannel(input.sandboxName, channel, [profile])) {
         if (messagingTokenDefs.some((def) => def.name === name && def.token)) continue;
         if (reusableMessagingProviders.includes(name)) continue;
-        if (!input.providerExistsInGateway(name)) continue;
+        if (!input.providerMatchesGatewayCredential(name, profile.profileId, profile.credentialKey))
+          continue;
         reusableMessagingProviders.push(name);
         if (!reusableMessagingChannels.includes(channel)) {
           reusableMessagingChannels.push(channel);
@@ -193,8 +207,27 @@ export function prepareCreateSandboxMessaging(
     }
   }
 
+  // A selected bridge channel that ends with neither a token def nor a matching
+  // gateway provider would otherwise vanish from the create intent, and onboard
+  // can act on that intent by deleting and recreating the sandbox. Report it so
+  // the caller can stop and ask for the source secret again.
+  const selectedChannels = input.enabledChannels;
+  const missingBridgeChannels =
+    selectedChannels == null
+      ? []
+      : [...new Set(bridgeProfiles.map((profile) => profile.channelId))].filter(
+          (channel) =>
+            selectedChannels.includes(channel) &&
+            !disabledChannelNames.has(channel) &&
+            !reusableMessagingChannels.includes(channel) &&
+            !bridgeProviderNamesForChannel(input.sandboxName, channel, bridgeProfiles).some(
+              (name) => messagingTokenDefs.some((def) => def.name === name && def.token),
+            ),
+        );
+
   return {
     disabledChannelNames,
+    missingBridgeChannels,
     messagingTokenDefs,
     extraPlaceholderKeys,
     hasMessagingTokens,

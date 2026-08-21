@@ -155,6 +155,22 @@ fi
   }
 }
 
+function candidateIndexFilter(step: Step): string {
+  const source = required(step.run, "candidate assembly script is missing");
+  const match =
+    /--arg arm64 [^\n]+ '\n(?<filter>[\s\S]*?)\n\s+' "\$RUNNER_TEMP\/llama-cpp-candidate\/candidate-index\.json"/u.exec(
+      source,
+    );
+  return required(match?.groups?.filter, "candidate index jq filter is missing");
+}
+
+function runCandidateIndexFilter(filter: string, candidate: unknown, amd64: string, arm64: string) {
+  return spawnSync("jq", ["-e", "--arg", "amd64", amd64, "--arg", "arm64", arm64, filter], {
+    encoding: "utf8",
+    input: JSON.stringify(candidate),
+  });
+}
+
 describe("llama.cpp image PR workflow", () => {
   const config = required(workflow.jobs?.config, "config job is missing");
   const build = required(workflow.jobs?.["pr-build"], "native PR build job is missing");
@@ -206,6 +222,7 @@ describe("llama.cpp image PR workflow", () => {
       cuda_runtime_image: "${{ steps.manifest.outputs.cuda_runtime_image }}",
       image: "${{ steps.manifest.outputs.image }}",
       matrix: "${{ steps.manifest.outputs.matrix }}",
+      request_guard_go_version: "${{ steps.manifest.outputs.request_guard_go_version }}",
       runtime_forbidden_paths: "${{ steps.manifest.outputs.runtime_forbidden_paths }}",
       runtime_gid: "${{ steps.manifest.outputs.runtime_gid }}",
       runtime_required_paths: "${{ steps.manifest.outputs.runtime_required_paths }}",
@@ -213,27 +230,31 @@ describe("llama.cpp image PR workflow", () => {
       source_archive_sha256: "${{ steps.manifest.outputs.source_archive_sha256 }}",
       source_revision: "${{ steps.manifest.outputs.source_revision }}",
     });
-    expect([
-          "publication_allowed_ref",
-          "publication_anonymous_exact_digest_pull",
-          "publication_candidate_tag_template",
-          "publication_enabled",
-          "publication_platforms",
-          "publication_provenance_predicate_type",
-          "publication_qualification",
-          "publication_receipt_retention_days",
-          "publication_receipt_schema_version",
-          "publication_repository",
-          "publication_sbom_format",
-          "publication_signature_identity",
-          "publication_signature_issuer",
-          "publication_signature_mode",
-          "publication_signature_transparency_log",
-          "publication_trigger",
-          "publication_vulnerability_only_fixed",
-          "publication_vulnerability_scanner",
-          "publication_vulnerability_severity_cutoff",
-        ].every((output) => Object.is(config.outputs?.[output], `\${{ steps.manifest.outputs.${output} }}`))).toBe(true);
+    expect(
+      [
+        "publication_allowed_ref",
+        "publication_anonymous_exact_digest_pull",
+        "publication_candidate_tag_template",
+        "publication_enabled",
+        "publication_platforms",
+        "publication_provenance_predicate_type",
+        "publication_qualification",
+        "publication_receipt_retention_days",
+        "publication_receipt_schema_version",
+        "publication_repository",
+        "publication_sbom_format",
+        "publication_signature_identity",
+        "publication_signature_issuer",
+        "publication_signature_mode",
+        "publication_signature_transparency_log",
+        "publication_trigger",
+        "publication_vulnerability_only_fixed",
+        "publication_vulnerability_scanner",
+        "publication_vulnerability_severity_cutoff",
+      ].every((output) =>
+        Object.is(config.outputs?.[output], `\${{ steps.manifest.outputs.${output} }}`),
+      ),
+    ).toBe(true);
     expect(namedStep(config, "Compile image manifest").run).toBe(
       "node --experimental-strip-types --no-warnings scripts/checks/export-llama-cpp-image-config.mts",
     );
@@ -242,19 +263,31 @@ describe("llama.cpp image PR workflow", () => {
     expect(build.strategy?.matrix).toBe("${{ fromJSON(needs.config.outputs.matrix) }}");
 
     const args = String(buildStep.with?.["build-args"] ?? "");
-    expect([
-          "backend_directory",
-          "compiler_c",
-          "compiler_cuda_host_cxx",
-          "compiler_cxx",
-          "cuda_dev_image",
-          "cuda_runtime_image",
-          "runtime_gid",
-          "runtime_uid",
-          "source_archive_sha256",
-          "source_revision",
-        ].every((output) => args.includes(`needs.config.outputs.${output}`))).toBe(true);
+    expect(
+      [
+        "backend_directory",
+        "compiler_c",
+        "compiler_cuda_host_cxx",
+        "compiler_cxx",
+        "cuda_dev_image",
+        "cuda_runtime_image",
+        "request_guard_go_version",
+        "runtime_gid",
+        "runtime_uid",
+        "source_archive_sha256",
+        "source_revision",
+      ].every((output) => args.includes(`needs.config.outputs.${output}`)),
+    ).toBe(true);
     expect(args).toContain("CUDA_ARCHITECTURES=${{ matrix.cuda_architectures }}");
+    expect(args).toContain(
+      "REQUEST_GUARD_GO_ARCHIVE_SHA256=${{ matrix.request_guard_go_archive_sha256 }}",
+    );
+    expect(validate.run).toContain(
+      'Labels["io.nvidia.nemoclaw.inference-server.request-guard.go.version"] == $requestGuardGoVersion',
+    );
+    expect(validate.run).toContain(
+      'Labels["io.nvidia.nemoclaw.inference-server.request-guard.go.archive-sha256"] == $requestGuardGoArchive',
+    );
     expect(args).toContain("TARGETPLATFORM=${{ matrix.platform }}");
     expect(args).not.toMatch(/sha256:[0-9a-f]{64}/u);
     expect(args).not.toMatch(/[0-9a-f]{40}/u);
@@ -289,15 +322,9 @@ describe("llama.cpp image PR workflow", () => {
     expect(gate.if).toContain("inputs.publish == true");
     expect(gate.permissions).toEqual({});
     const gateStep = namedStep(gate, "Enforce declarative publication boundary");
-    expect(gateStep.run).toContain(
-      'PUBLICATION_ENABLED" != "true"',
-    );
-    expect(gateStep.run).toContain(
-      'GITHUB_REPOSITORY" != "NVIDIA/NemoClaw"',
-    );
-    expect(gateStep.run).toContain(
-      'GITHUB_REF" != "$ALLOWED_REF"',
-    );
+    expect(gateStep.run).toContain('PUBLICATION_ENABLED" != "true"');
+    expect(gateStep.run).toContain('GITHUB_REPOSITORY" != "NVIDIA/NemoClaw"');
+    expect(gateStep.run).toContain('GITHUB_REF" != "$ALLOWED_REF"');
     expect(gateStep.run).toContain(
       `and .probes == ${JSON.stringify(
         required(
@@ -338,6 +365,12 @@ describe("llama.cpp image PR workflow", () => {
     expect(publishBuild.with?.provenance).toBe(false);
     expect(publishBuild.with?.sbom).toBe(false);
     const publishArgs = String(publishBuild.with?.["build-args"] ?? "");
+    expect(publishArgs).toContain(
+      "REQUEST_GUARD_GO_ARCHIVE_SHA256=${{ matrix.request_guard_go_archive_sha256 }}",
+    );
+    expect(publishArgs).toContain(
+      "REQUEST_GUARD_GO_VERSION=${{ needs.config.outputs.request_guard_go_version }}",
+    );
     const publishArgNames = [...publishArgs.matchAll(/^([A-Z0-9_]+)=/gmu)].map((match) => match[1]);
     const guardedArgNames = [
       ...(publishGuard.run ?? "").matchAll(/--build-arg "([A-Z0-9_]+)=/gu),
@@ -364,10 +397,48 @@ describe("llama.cpp image PR workflow", () => {
     expect(assembleStep.run).toContain(
       'docker buildx imagetools create --tag "$IMAGE:$CANDIDATE_TAG" "${sources[@]}"',
     );
-    expect(assembleStep.run).toContain("scripts/checks/validate-managed-base-index.sh");
+    expect(assembleStep.run).not.toContain("scripts/checks/validate-managed-base-index.sh");
     expect(assembleStep.run).toContain("candidate-index.json");
     expect(assembleStep.run).toContain("platform-digests.json");
     expect(assembleStep.run).not.toMatch(/latest|stable|release/iu);
+  });
+
+  it("accepts direct platform manifests and rejects descriptor drift (#8231)", () => {
+    const assemble = required(
+      workflow.jobs?.["assemble-candidate"],
+      "candidate assembly job is missing",
+    );
+    const assembleStep = namedStep(assemble, "Assemble candidate index and capture exact digest");
+    const descriptor = (architecture: string, digest: string) => ({
+      digest,
+      mediaType: "application/vnd.oci.image.manifest.v1+json",
+      platform: { architecture, os: "linux" },
+      size: 4096,
+    });
+    const amd64 = `sha256:${"a".repeat(64)}`;
+    const arm64 = `sha256:${"b".repeat(64)}`;
+    const filter = candidateIndexFilter(assembleStep);
+    const candidate = (manifests: ReturnType<typeof descriptor>[]) => ({
+      manifests,
+      mediaType: "application/vnd.oci.image.index.v1+json",
+      schemaVersion: 2,
+    });
+
+    const accepted = runCandidateIndexFilter(
+      filter,
+      candidate([descriptor("amd64", amd64), descriptor("arm64", arm64)]),
+      amd64,
+      arm64,
+    );
+    expect(accepted.status, accepted.stderr).toBe(0);
+
+    const rejected = runCandidateIndexFilter(
+      filter,
+      candidate([descriptor("amd64", arm64), descriptor("arm64", amd64)]),
+      amd64,
+      arm64,
+    );
+    expect(rejected.status).toBe(1);
   });
 
   it("requires an anonymous exact-digest pull after publication and before candidate assembly (#8250)", () => {
@@ -514,9 +585,10 @@ describe("llama.cpp image PR workflow", () => {
     expect(JSON.stringify(attestationWorkflow)).not.toContain("secrets.");
     (attest.steps ?? [])
       .map((step) => step.uses)
-      .filter((uses): uses is string => uses !== undefined).forEach((action) => {
-      expect(action).toMatch(fullShaAction);
-    });
+      .filter((uses): uses is string => uses !== undefined)
+      .forEach((action) => {
+        expect(action).toMatch(fullShaAction);
+      });
   });
 
   it("pins actions and validates the native non-root read-only image (#8231)", () => {
