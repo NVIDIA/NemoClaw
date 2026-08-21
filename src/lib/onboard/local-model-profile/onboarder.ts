@@ -86,10 +86,7 @@ export function createLocalModelProfileOnboarder(deps: LocalModelProfileOnboarde
       );
       return "retry-selection";
     }
-    const recovery: ReturnType<typeof vllmInstallRecoveryOptions> =
-      deps.getVllmInstallResumeModel || deps.checkpointVllmInstallModel
-        ? vllmInstallRecoveryOptions(deps)
-        : {};
+    const recovery = vllmInstallRecoveryOptions(deps);
     const resumedModel = recovery.modelIntent?.trim().toLowerCase();
     if (
       resumedModel &&

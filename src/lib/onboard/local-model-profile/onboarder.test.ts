@@ -167,6 +167,7 @@ describe("dedicated local model profile onboarder", () => {
       handleVllmSelection,
       prompt: vi.fn(async () => ""),
       error,
+      checkpointVllmInstallModel: vi.fn(),
     });
 
     await expect(
@@ -201,6 +202,7 @@ describe("dedicated local model profile onboarder", () => {
       handleVllmSelection: vi.fn() as never,
       prompt: vi.fn(async () => ""),
       error,
+      checkpointVllmInstallModel: vi.fn(),
     });
 
     await expect(

@@ -6,10 +6,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { VllmProfile } from "../inference/vllm";
 import * as onboardSession from "../state/onboard-session";
 import { makeDeps, makeHostState, unexpected } from "./__test-helpers__/setup-nim-flow";
+import {
+  LOCAL_MODEL_PROFILE_ENABLED_ENV,
+  LOCAL_MODEL_PROFILE_RUNTIME_ENV,
+} from "./local-model-profile/plan";
 import { createSetupNim, type SetupNimFlowDeps } from "./setup-nim-flow";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("createSetupNim vLLM resume", () => {
@@ -61,6 +66,77 @@ describe("createSetupNim vLLM resume", () => {
         nonInteractive: true,
       }),
     );
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
+  it("uses the session fallback to checkpoint and retry a dedicated local profile (#9582)", async () => {
+    vi.stubEnv(LOCAL_MODEL_PROFILE_ENABLED_ENV, "1");
+    vi.stubEnv(LOCAL_MODEL_PROFILE_RUNTIME_ENV, "vllm");
+    let sessionModel: string | null = null;
+    vi.spyOn(onboardSession, "loadSession").mockImplementation(
+      () =>
+        ({
+          vllmInstallModel: sessionModel,
+          steps: { provider_selection: { status: "in_progress" } },
+        }) as unknown as ReturnType<typeof onboardSession.loadSession>,
+    );
+    const checkpointVllmInstallModel = vi
+      .spyOn(onboardSession, "checkpointVllmInstallModel")
+      .mockImplementation((modelId) => {
+        sessionModel = modelId;
+        return {} as ReturnType<typeof onboardSession.checkpointVllmInstallModel>;
+      });
+    const profile = {
+      name: "DGX Spark",
+      platform: "spark",
+      architecture: "arm64",
+    } as VllmProfile;
+    const installVllm = vi
+      .fn<SetupNimFlowDeps["installVllm"]>()
+      .mockImplementationOnce(async (selected, options) => {
+        options.checkpointInstallIntent?.(selected.defaultModel.id);
+        return { ok: false };
+      })
+      .mockImplementationOnce(async (selected, options) => {
+        options.checkpointInstallIntent?.(selected.defaultModel.id);
+        options.beforeInstall?.(selected.defaultModel.servedModelId ?? selected.defaultModel.id);
+        return { ok: true };
+      });
+    const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
+      state.provider = "vllm";
+      state.endpointUrl = "http://127.0.0.1:8000/v1";
+      state.credentialEnv = null;
+      state.preferredInferenceApi = "openai-completions";
+      return "selected";
+    });
+    const prompt = vi.fn(async () => unexpected("provider prompt"));
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => null,
+        prompt,
+        abortNonInteractive: (message) => {
+          throw new Error(message);
+        },
+        detectInferenceProviderHostState: () =>
+          makeHostState({ vllmProfile: profile, hasVllmImage: true }),
+        installVllm,
+        handleVllmSelection,
+      }),
+    );
+    const sparkGpu = { type: "nvidia", spark: true, platform: "spark" } as never;
+
+    await expect(setupNim(sparkGpu)).rejects.toThrow(
+      "The local model profile could not be configured.",
+    );
+    expect(sessionModel).toBe("nvidia/Qwen3.6-35B-A3B-NVFP4");
+
+    await expect(setupNim(sparkGpu)).resolves.toMatchObject({
+      model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      provider: "vllm",
+    });
+    expect(checkpointVllmInstallModel).toHaveBeenCalledTimes(2);
+    expect(installVllm.mock.calls[1]?.[1]).not.toHaveProperty("modelIntent");
     expect(prompt).not.toHaveBeenCalled();
   });
 });
