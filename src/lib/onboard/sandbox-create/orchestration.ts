@@ -109,6 +109,87 @@ export async function completeHermesPortableSandboxRegistration(input: {
   return registered;
 }
 
+function publishAttachedProvidersBeforeDockerSandboxCreation(
+  input: {
+    readonly openshellDriver: SandboxEntry["openshellDriver"];
+    readonly inferenceProvider: string | null;
+    readonly messagingProviders: readonly string[];
+    readonly extraProviders: readonly string[];
+    readonly gatewayName: string;
+  },
+  deps: Pick<SandboxCreateOrchestrationRuntime, "providerExistsInGateway" | "runOpenshell"> & {
+    readonly cleanupCreateSources: () => void;
+  },
+): void {
+  if (input.openshellDriver === "docker") {
+    const providersRequiringExistenceProbe = new Set(
+      [input.inferenceProvider, ...input.messagingProviders].filter(
+        (provider): provider is string => Boolean(provider),
+      ),
+    );
+    const attachedProviders = new Set([
+      ...providersRequiringExistenceProbe,
+      ...input.extraProviders,
+    ]);
+    for (const attachedProvider of attachedProviders) {
+      if (
+        providersRequiringExistenceProbe.has(attachedProvider) &&
+        !deps.providerExistsInGateway(attachedProvider)
+      )
+        continue;
+      const refreshed = deps.runOpenshell(
+        ["provider", "update", "-g", input.gatewayName, attachedProvider],
+        {
+          ignoreError: true,
+          suppressOutput: true,
+        },
+      );
+      if (refreshed.status !== 0) {
+        deps.cleanupCreateSources();
+        throw new Error(
+          `OpenShell did not publish attached provider '${attachedProvider}' before Docker sandbox creation.`,
+        );
+      }
+    }
+  }
+}
+
+type ApplyRecreatePolicyCarryForward = (
+  sandboxName: string,
+  nonInteractive: boolean,
+  note: (message: string) => void,
+  rebuildPolicyPresets?: readonly string[],
+) => void;
+
+/** Reseed an outer rebuild after its owned delete leaves no live source branch. */
+export function applyAbsentSandboxRebuildPolicyCarryForward(
+  input: {
+    readonly sandboxName: string;
+    readonly liveExists: boolean;
+    readonly nonInteractive: boolean;
+    readonly note: (message: string) => void;
+    readonly rebuildPolicyPresets?: readonly string[];
+  },
+  applyRecreatePolicyCarryForward: ApplyRecreatePolicyCarryForward,
+): void {
+  if (input.liveExists || !Array.isArray(input.rebuildPolicyPresets)) return;
+  applyRecreatePolicyCarryForward(
+    input.sandboxName,
+    input.nonInteractive,
+    input.note,
+    input.rebuildPolicyPresets,
+  );
+}
+
+export function proveRecreateSourceBeforePolicyCarryForward<T>(input: {
+  readonly createRecreateRuntime: () => T;
+  readonly carryForward: () => void;
+}): T {
+  const runtime = input.createRecreateRuntime();
+  input.carryForward();
+  return runtime;
+}
+
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
   return async function createSandboxWithBaseImageResolution(
     baseImageResolutionContext: import("../base-image-resolution-flow").BaseImageResolutionContext,
@@ -345,17 +426,35 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           inspectSandboxForCreate,
           createIntent?.toolDisclosure ?? null,
         );
+    // Prove the preserved source row before replacing its stale preset list.
+    // Policy carry-forward is an owned post-delete mutation, but applying it
+    // before recreate recovery makes the journal correctly reject that row as
+    // changed before the replacement can be created.
     let recreateRuntime:
       | import("../sandbox-recreate-transaction").SandboxRecreateRuntime
-      | OwnedSandboxRecreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(
-      onboardSession,
-      createIntent?.recreateTransaction,
-      sandboxName,
-      GATEWAY_NAME,
-      existingEntry,
-      getSandboxRecreateObservation,
-      note,
-    );
+      | OwnedSandboxRecreateRuntime = proveRecreateSourceBeforePolicyCarryForward({
+      createRecreateRuntime: () =>
+        sandboxRecreateTransaction.createSandboxRecreateRuntime(
+          onboardSession,
+          createIntent?.recreateTransaction,
+          sandboxName,
+          GATEWAY_NAME,
+          existingEntry,
+          getSandboxRecreateObservation,
+          note,
+        ),
+      carryForward: () =>
+        applyAbsentSandboxRebuildPolicyCarryForward(
+          {
+            sandboxName,
+            liveExists,
+            nonInteractive: isNonInteractive(),
+            note,
+            rebuildPolicyPresets: createIntent?.rebuildPolicyPresets,
+          },
+          policyPresetCarry.applyRecreatePolicyCarryForward,
+        ),
+    });
     const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
       await dashboardPortReservationScope.release();
       ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({
@@ -753,7 +852,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         baseImageResolutionContext,
         previousEntry?.imageTag,
       );
-      policyPresetCarry.applyRecreatePolicyCarryForward(sandboxName, isNonInteractive(), note);
+      policyPresetCarry.applyRecreatePolicyCarryForward(
+        sandboxName,
+        isNonInteractive(),
+        note,
+        createIntent?.rebuildPolicyPresets,
+      );
 
       const noRestorePending =
         pendingStateRestore === null && pendingStateRestoreBackupPath === null;
@@ -1179,6 +1283,23 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
       cleanupBuildContext();
     } else {
+      publishAttachedProvidersBeforeDockerSandboxCreation(
+        {
+          openshellDriver: sandboxRuntimeFields.openshellDriver,
+          inferenceProvider: resolvedCreateIntent.inferenceProvider,
+          messagingProviders,
+          extraProviders: resolvedCreateIntent.extraProviders,
+          gatewayName: GATEWAY_NAME,
+        },
+        {
+          providerExistsInGateway,
+          runOpenshell,
+          cleanupCreateSources: () => {
+            cleanupInitialCreateSource();
+            cleanupBuildContext();
+          },
+        },
+      );
       const created = await runCreateFlow(createArgv);
       cleanupInitialCreateSource();
       await completeCreatedSandboxRegistration(created, null);
@@ -1192,7 +1313,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxWasLiveDefault,
         runtimeFields: sandboxRuntimeFields,
         messagingProviders,
-        inferenceProvider: provider,
         liveExists,
       },
       {
@@ -1201,7 +1321,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         scriptsDir: SCRIPTS,
         gatewayName: GATEWAY_NAME,
         providerExistsInGateway,
-        runOpenshell,
         armCancelRollback: sandboxCancelRollback.arm,
         dockerInfoFormat,
         runCapture,

@@ -24,6 +24,8 @@ import {
   PODMAN_INFERENCE_NETWORK_PROVIDER_LABEL,
   PODMAN_INFERENCE_PRIOR_STATE_LABEL,
   PODMAN_INFERENCE_PROBE_MANAGED_LABEL,
+  PODMAN_INFERENCE_PROBE_PHASE_LABEL,
+  PODMAN_INFERENCE_PROBE_SPEC_LABEL,
   PODMAN_INFERENCE_PROVIDER_LABEL,
   PODMAN_INFERENCE_RECEIPT_TARGET_LABEL,
   PODMAN_INFERENCE_SERVICE_LABEL,
@@ -90,6 +92,7 @@ export interface PodmanHostLocalInferenceHarness {
   readonly env: NodeJS.ProcessEnv;
   readonly events: string[];
   readonly failures: PodmanInferenceFailureEvidence[];
+  readonly failureProbeIds: Array<string | null>;
   readonly input: HostLocalManagedInferenceInput;
   readonly operationAcceleration: HostLocalOllamaAccelerationAuthority;
   readonly routeAuthorityStore: HostLocalInferenceRouteAuthorityStore;
@@ -118,6 +121,14 @@ export interface PodmanHostLocalInferenceHarness {
     runSemanticMismatchText: string | null;
     probeRunLostAcknowledgement: boolean;
     probeRunAcknowledgementText: string | null;
+    probePostCreateNameLookupTimeout: boolean;
+    probePostCreateInspectFailuresRemaining: number;
+    probePostCreateInspectTimeoutsRemaining: number;
+    probeInspectRuntimeIdMismatchAt: number | null;
+    probeForbiddenActions: Array<"logs" | "rm" | "wait">;
+    probeWaitTimeouts: number[];
+    retainLegacyInferenceProbe: boolean;
+    legacyInferenceProbeRunning: boolean;
     probeWaitFailure: boolean;
     probeRemoveLostAcknowledgement: boolean;
     probeRemoveLeavesContainer: boolean;
@@ -341,6 +352,28 @@ function digest(value: object): string {
   return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
 }
 
+function networkAuthoritySha256(engineAuthoritySha256: string): string {
+  return digest({
+    id: NETWORK_ID,
+    name: NETWORK_NAME,
+    driver: "bridge",
+    internal: false,
+    ipv6Enabled: false,
+    dnsEnabled: true,
+    networkInterface: "podman42",
+    subnet: { subnet: NETWORK_SUBNET, gateway: NETWORK_GATEWAY_IP },
+    labels: Object.fromEntries(
+      [
+        [PODMAN_INFERENCE_NETWORK_ENGINE_AUTHORITY_LABEL, engineAuthoritySha256],
+        [PODMAN_INFERENCE_NETWORK_MANAGED_LABEL, "true"],
+        [PODMAN_INFERENCE_NETWORK_PROVIDER_LABEL, "podman"],
+      ].sort(([left], [right]) => left.localeCompare(right)),
+    ),
+    ipamOptions: { driver: "host-local" },
+    options: {},
+  });
+}
+
 function discoveredDevicesAuthority(state: {
   readonly cdiDevices: readonly string[];
   readonly omitDiscoveredDevices: boolean;
@@ -358,6 +391,7 @@ export function createPodmanHostLocalInferenceTestHarness(
   const probeImageRef = options.probeImageRef ?? `registry.test/curl@sha256:${PROBE_DIGEST}`;
   const events: string[] = [];
   const failures: PodmanInferenceFailureEvidence[] = [];
+  const failureProbeIds: Array<string | null> = [];
   const written: string[] = [];
   const state = {
     cdiDevices: [...(options.cdiDevices ?? [`nvidia.com/gpu=${GPU_UUID}`])],
@@ -391,6 +425,14 @@ export function createPodmanHostLocalInferenceTestHarness(
     runSemanticMismatchText: null as string | null,
     probeRunLostAcknowledgement: false,
     probeRunAcknowledgementText: null as string | null,
+    probePostCreateNameLookupTimeout: false,
+    probePostCreateInspectFailuresRemaining: 0,
+    probePostCreateInspectTimeoutsRemaining: 0,
+    probeInspectRuntimeIdMismatchAt: null as number | null,
+    probeForbiddenActions: [] as Array<"logs" | "rm" | "wait">,
+    probeWaitTimeouts: [] as number[],
+    retainLegacyInferenceProbe: false,
+    legacyInferenceProbeRunning: false,
     probeWaitFailure: false,
     probeRemoveLostAcknowledgement: false,
     probeRemoveLeavesContainer: false,
@@ -406,9 +448,11 @@ export function createPodmanHostLocalInferenceTestHarness(
   };
   let currentContainer: TestContainer | null = null;
   let currentProbe: TestProbeContainer | null = null;
+  let probeInspectCount = 0;
   let networkEngineAuthoritySha256 = "";
   let persistedAuthority: PersistedEngineAuthority | null = null;
   let routeAuthority: HostLocalInferenceRouteAuthority | null = null;
+  let retainedLegacyInferenceProbeForName = (_name: string): TestProbeContainer | null => null;
 
   const authorityStore: PersistedEngineAuthorityStore = {
     load: () => persistedAuthority,
@@ -458,7 +502,17 @@ export function createPodmanHostLocalInferenceTestHarness(
     displayName: "Podman",
     authorityId: options.authorityId ?? "test:podman-inference",
     endpointAuthorityId: options.authorityId ?? "test:podman-inference",
-    capture: (args) => {
+    capture: (args, timeoutMs) => {
+      const probeAction =
+        args[0] === "logs" || args[0] === "rm" || args[0] === "wait" ? args[0] : null;
+      const probeActionId = probeAction === "rm" ? args.at(-1) : args[1];
+      if (
+        probeAction !== null &&
+        state.probeForbiddenActions.includes(probeAction) &&
+        (probeActionId === PROBE_CONTAINER_ID || probeActionId === REUSED_PROBE_CONTAINER_ID)
+      ) {
+        throw new Error(`test forbids probe action '${probeAction}'`);
+      }
       events.push(`podman:${args.join(" ")}`);
       if (args[0] === "version") {
         return result(0, JSON.stringify({ Server: { Version: "6.0.1" } }));
@@ -509,15 +563,49 @@ export function createPodmanHostLocalInferenceTestHarness(
           "name=^".length,
           -1,
         );
-        const candidate = [currentContainer, currentProbe].find(
+        let candidate = [currentContainer, currentProbe].find(
           (container) => container?.name === expectedName,
         );
+        if (!candidate && state.retainLegacyInferenceProbe) {
+          const retained = retainedLegacyInferenceProbeForName(expectedName);
+          if (retained !== null) {
+            currentProbe = retained;
+            state.retainLegacyInferenceProbe = false;
+            candidate = retained;
+          }
+        }
+        if (
+          state.probePostCreateNameLookupTimeout &&
+          candidate === currentProbe &&
+          currentProbe !== null
+        ) {
+          return result(1, "", "spawnSync /usr/local/bin/podman ETIMEDOUT", new Error("ETIMEDOUT"));
+        }
         if (!candidate) return result();
         return result(0, `${candidate.id}\t${candidate.name}\n`);
       }
       if (args[0] === "container" && args[1] === "inspect") {
         if (currentContainer?.id === args[2]) return result(0, inspectPayload(currentContainer));
-        if (currentProbe?.id === args[2]) return result(0, probeInspectPayload(currentProbe));
+        if (currentProbe?.id === args[2]) {
+          probeInspectCount += 1;
+          if (state.probePostCreateInspectFailuresRemaining > 0) {
+            state.probePostCreateInspectFailuresRemaining -= 1;
+            const error = Object.assign(new Error("permission denied"), { code: "EACCES" });
+            return result(1, "", "permission denied", error);
+          }
+          if (state.probePostCreateInspectTimeoutsRemaining > 0) {
+            state.probePostCreateInspectTimeoutsRemaining -= 1;
+            const error = Object.assign(new Error("spawnSync /usr/local/bin/podman ETIMEDOUT"), {
+              code: "ETIMEDOUT",
+            });
+            return result(1, "", "spawnSync /usr/local/bin/podman ETIMEDOUT", error);
+          }
+          const inspectedProbe =
+            state.probeInspectRuntimeIdMismatchAt === probeInspectCount
+              ? { ...currentProbe, id: REUSED_PROBE_CONTAINER_ID }
+              : currentProbe;
+          return result(0, probeInspectPayload(inspectedProbe));
+        }
         return result(125, "", "no such container");
       }
       if (args[0] === "container" && args[1] === "exists") {
@@ -573,6 +661,7 @@ export function createPodmanHostLocalInferenceTestHarness(
           : result(0, state.runAcknowledgementText ?? `${CONTAINER_ID}\n`);
       }
       if (args[0] === "wait") {
+        state.probeWaitTimeouts.push(timeoutMs ?? 0);
         if (!currentProbe || currentProbe.id !== args[1]) return result(125, "", "missing probe");
         return completeProbeWait(currentProbe, currentContainer, state);
       }
@@ -698,12 +787,113 @@ export function createPodmanHostLocalInferenceTestHarness(
     requireToolCalling: true,
     environment: secretNames,
   };
+  retainedLegacyInferenceProbeForName = (expectedName) => {
+    if (currentContainer === null) return null;
+    const parentAuthoritySha256 = currentContainer.labels[PODMAN_INFERENCE_AUTHORITY_LABEL];
+    if (!parentAuthoritySha256) {
+      throw new Error("test managed runtime lacks probe parent authority");
+    }
+    const endpoint = Object.freeze({
+      host: "host.openshell.internal" as const,
+      port: input.hostPort,
+      networkName: input.networkName,
+      networkId: input.networkId,
+      networkGatewayIp: input.networkGatewayIp,
+      networkAuthoritySha256: networkAuthoritySha256(networkEngineAuthoritySha256),
+    });
+    const body = JSON.stringify({
+      model: input.model,
+      messages: [{ role: "user", content: "Use the probe tool when it is available." }],
+      max_tokens: 512,
+      stream: false,
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "nemoclaw_probe",
+            description: "Return one host-local inference proof.",
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+          },
+        },
+      ],
+      tool_choice: "required",
+    });
+    const request = Object.freeze([
+      "--header",
+      "Content-Type: application/json",
+      "--data-binary",
+      body,
+      `http://${input.networkGatewayIp}:${String(input.hostPort)}/v1/chat/completions`,
+    ]);
+    const specSha256 = digest({
+      providerId: "podman",
+      service: input.service,
+      phase: "inference",
+      endpoint,
+      probeImageRef: input.probeImageRef,
+      transactionId: writer.transactionId,
+      receiptTargetSha256: writer.targetSha256,
+      parentAuthoritySha256,
+      request,
+    });
+    const name = `nemoclaw-inference-probe-inference-${specSha256.slice(0, 16)}`;
+    if (name !== expectedName) return null;
+    const labels = {
+      [PODMAN_INFERENCE_PROBE_MANAGED_LABEL]: "true",
+      [PODMAN_INFERENCE_PROVIDER_LABEL]: "podman",
+      [PODMAN_INFERENCE_SERVICE_LABEL]: input.service,
+      [PODMAN_INFERENCE_AUTHORITY_LABEL]: parentAuthoritySha256,
+      [PODMAN_INFERENCE_TRANSACTION_LABEL]: writer.transactionId,
+      [PODMAN_INFERENCE_RECEIPT_TARGET_LABEL]: writer.targetSha256,
+      [PODMAN_INFERENCE_PROBE_PHASE_LABEL]: "inference",
+      [PODMAN_INFERENCE_PROBE_SPEC_LABEL]: specSha256,
+    };
+    const running = state.legacyInferenceProbeRunning;
+    return {
+      id: PROBE_CONTAINER_ID,
+      name,
+      imageRef: input.probeImageRef,
+      labels,
+      createArguments: Object.freeze([
+        "run",
+        "--http-proxy=false",
+        "--detach",
+        "--pull",
+        "never",
+        "--name",
+        name,
+        ...Object.entries(labels).flatMap(([key, value]) => ["--label", `${key}=${value}`]),
+        "--network",
+        input.networkName,
+        "--read-only",
+        "--ipc",
+        "private",
+        input.probeImageRef,
+        "--fail-with-body",
+        "--silent",
+        "--show-error",
+        "--connect-timeout",
+        "3",
+        "--max-time",
+        "20",
+        ...request,
+      ]),
+      running,
+      status: running ? "running" : "exited",
+      exitCode: running ? 0 : 28,
+      logsStdout: "",
+      logsStderr: running
+        ? ""
+        : "curl: (28) Operation timed out after 20002 milliseconds with 0 bytes received",
+    };
+  };
   return {
     authorityStore,
     engine,
     env,
     events,
     failures,
+    failureProbeIds,
     input,
     operationAcceleration,
     routeAuthorityStore,
@@ -711,6 +901,7 @@ export function createPodmanHostLocalInferenceTestHarness(
     written,
     state,
     onFailureEvidence: (evidence) => {
+      failureProbeIds.push(currentProbe?.id ?? null);
       events.push(`evidence:${evidence.phase}`);
       failures.push(evidence);
     },
@@ -731,25 +922,7 @@ export function createPodmanHostLocalInferenceTestHarness(
         networkName: input.networkName,
         networkId: input.networkId,
         networkGatewayIp: input.networkGatewayIp,
-        networkAuthoritySha256: digest({
-          id: NETWORK_ID,
-          name: NETWORK_NAME,
-          driver: "bridge",
-          internal: false,
-          ipv6Enabled: false,
-          dnsEnabled: true,
-          networkInterface: "podman42",
-          subnet: { subnet: NETWORK_SUBNET, gateway: NETWORK_GATEWAY_IP },
-          labels: Object.fromEntries(
-            [
-              [PODMAN_INFERENCE_NETWORK_ENGINE_AUTHORITY_LABEL, networkEngineAuthoritySha256],
-              [PODMAN_INFERENCE_NETWORK_MANAGED_LABEL, "true"],
-              [PODMAN_INFERENCE_NETWORK_PROVIDER_LABEL, "podman"],
-            ].sort(([left], [right]) => left.localeCompare(right)),
-          ),
-          ipamOptions: { driver: "host-local" },
-          options: {},
-        }),
+        networkAuthoritySha256: networkAuthoritySha256(networkEngineAuthoritySha256),
       });
       const canonical = {
         service: input.service,

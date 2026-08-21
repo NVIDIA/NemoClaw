@@ -108,6 +108,29 @@ If the response cannot fit, the runtime discards it and emits a bounded `output_
 If it cannot write the envelope, the command exits nonzero and reports the write failure on stderr.
 Callers must reject empty, malformed, additional, or unsupported-version stdout.
 
+## Call a Read-Only MCP Tool
+
+Use `dcode tools call-read-only` when automation must invoke one managed MCP tool without model participation.
+The command accepts one exact tool name, requires `--json`, and reads one JSON object from standard input.
+
+```bash
+printf '%s\n' '{"worker":"worker-17","nonce":"request-42"}' | \
+  dcode tools call-read-only worker_task_context --json
+```
+
+The command runs only a tool that the managed MCP configuration exposes exactly once and marks coherently read-only.
+It rejects unavailable, ambiguous, mutating, malformed, oversized, and timed-out calls.
+It runs for at most 15 seconds and allows up to three seconds for cleanup.
+
+Standard output contains exactly one version 1 JSON envelope.
+Successful output includes the exact tool name, `content`, and, when supplied by the MCP server, `structured_content`.
+NemoClaw redacts recognized credential-shaped values before it writes successful output.
+Errors use a bounded `data` object with `ok: false`, `status: "error"`, `code`, and `message`.
+The command writes no server diagnostics to standard error.
+
+This command uses only MCP servers registered through NemoClaw.
+For MCP registration and credential lifecycle operations, refer to [Add an MCP Server](../mcp-servers/add-an-mcp-server) and [Manage MCP Servers](../mcp-servers/manage-mcp-servers).
+
 ## Understand the Managed Runtime
 
 The managed `dcode`, `dcode.real`, and `deepagents-code` launchers use `/opt/venv/bin/python3 -I` to run the pinned package with an isolated import path and `HOME=/sandbox`.

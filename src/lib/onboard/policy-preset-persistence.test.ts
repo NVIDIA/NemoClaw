@@ -171,6 +171,69 @@ describe("applyRecreatePolicyCarryForward (#4621)", () => {
     expect(note).not.toHaveBeenCalled();
   });
 
+  it("keeps the matching recreate journal selection instead of stale source presets", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "sb",
+      policies: ["github", "mcp-bridge-fake"],
+      policyPresetsFinalized: true,
+    } as ReturnType<typeof registry.getSandbox>);
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      policyPresets: ["github"],
+      checkpoint: { sandboxRecreate: { sandboxName: "sb" } },
+    } as never);
+    const updateSession = vi
+      .spyOn(onboardSession, "updateSession")
+      .mockReturnValue(undefined as never);
+    const note = vi.fn();
+
+    applyRecreatePolicyCarryForward("sb", true, note);
+
+    expect(readSeededPresets(updateSession)).toEqual(["github"]);
+    expect(note).not.toHaveBeenCalled();
+  });
+
+  it("uses an explicit rebuild selection instead of stale source presets", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "sb",
+      policies: ["github", "mcp-bridge-fake"],
+      policyPresetsFinalized: true,
+    } as ReturnType<typeof registry.getSandbox>);
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
+    const updateSession = vi
+      .spyOn(onboardSession, "updateSession")
+      .mockReturnValue(undefined as never);
+    const note = vi.fn();
+    process.env.NEMOCLAW_POLICY_PRESETS = "pypi";
+
+    try {
+      applyRecreatePolicyCarryForward("sb", true, note, ["github"]);
+    } finally {
+      delete process.env.NEMOCLAW_POLICY_PRESETS;
+    }
+
+    expect(readSeededPresets(updateSession)).toEqual(["github"]);
+    expect(note).not.toHaveBeenCalled();
+  });
+
+  it("does not carry a different sandbox journal selection across targets", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "sb",
+      policies: ["github"],
+      policyPresetsFinalized: true,
+    } as ReturnType<typeof registry.getSandbox>);
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      policyPresets: ["npm"],
+      checkpoint: { sandboxRecreate: { sandboxName: "other" } },
+    } as never);
+    const updateSession = vi
+      .spyOn(onboardSession, "updateSession")
+      .mockReturnValue(undefined as never);
+
+    applyRecreatePolicyCarryForward("sb", true, vi.fn());
+
+    expect(readSeededPresets(updateSession)).toEqual(["github"]);
+  });
+
   it("prints the override note when an env override clears the selection", () => {
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "sb",

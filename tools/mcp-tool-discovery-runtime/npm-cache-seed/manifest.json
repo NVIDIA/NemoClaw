@@ -404,10 +404,10 @@
       "size": 2176
     },
     {
-      "archive": "tar-7.5.20.tgz",
-      "integrity": "sha512-9FcyK4PA6+WbzlTM9WhQm6vB5W7cP7dUiPsv1g7YDwEQnQ1CGpK3MGlKk/ITVWMk05kHZuBhmVhiv8LZoy/PFQ==",
-      "resolved": "https://registry.npmjs.org/tar/-/tar-7.5.20.tgz",
-      "size": 470426
+      "archive": "tar-7.5.21.tgz",
+      "integrity": "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==",
+      "resolved": "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz",
+      "size": 470965
     },
     {
       "archive": "tinybench-2.9.0.tgz",
@@ -513,7 +513,7 @@
     }
   ],
   "kind": "nemoclaw-locked-npm-cache-seed-v1",
-  "lockSha256": "07bea4a0938adac70a48bb1937ea1bd002e7e6a94300cb8d22d06cbb8c648704",
+  "lockSha256": "66bef669196bb1c61385871e369542d3c321c277adb0f0e2e9f0ad972106b163",
   "target": {
     "cpu": "x64",
     "libc": "glibc",

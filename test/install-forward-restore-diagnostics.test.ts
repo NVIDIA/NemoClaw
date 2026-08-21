@@ -72,7 +72,7 @@ function runWatcherTick(watcherScript: string, binDir: string, openshell: string
     encoding: "utf-8",
     env: { ...process.env, OPENSHELL_LOG: log, PATH: `${binDir}:/usr/bin:/bin` },
     killSignal: "SIGKILL",
-    timeout: 4_000,
+    timeout: 2_000,
   });
   return fs.existsSync(log) ? fs.readFileSync(log, "utf-8") : "";
 }
