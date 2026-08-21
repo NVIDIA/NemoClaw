@@ -1083,6 +1083,7 @@ describe("Hermes sandbox provisioning", () => {
       path.join(localBin, "nemoclaw-managed-startup-hold"),
       path.join(localBin, "nemoclaw-managed-bootstrap"),
       gatewayControlPath,
+      path.join(localLib, "corporate-ca-runtime.sh"),
       path.join(localLib, "entrypoint-env-wrapper.sh"),
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "validate-hermes-env-secret-boundary.py"),
