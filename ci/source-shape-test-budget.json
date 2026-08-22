@@ -62,6 +62,16 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+      "test": "%s binds Hermes resolution to trusted workflow code",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+      "test": "%s rejects duplicate Hermes resolver steps",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
       "test": "keeps live E2E on the accepted rootless runtime and local registry authority (#9006)",
       "category": "compatibility"
@@ -179,6 +189,11 @@
     {
       "file": "test/release-lkg-brev-image.test.ts",
       "test": "keeps the LKG credential on the production-only dispatch step (#9798)",
+      "category": "security"
+    },
+    {
+      "file": "test/reviewed-hermes-platform-action.test.ts",
+      "test": "publishes the verified native manifest digest",
       "category": "security"
     },
     {

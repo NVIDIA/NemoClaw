@@ -47,14 +47,15 @@ export function dockerfileInstructions(source: string): DockerfileInstruction[] 
     }
 
     let end = endOfFirstLine;
-    let currentLine = firstLine;
-    while (continuesInstruction(currentLine)) {
+    let continues = continuesInstruction(firstLine);
+    while (continues) {
       if (end >= source.length) {
         throw new Error(`Dockerfile ends inside the ${instructionMatch[1]} instruction`);
       }
       const nextEnd = lineEnd(source, end);
-      currentLine = source.slice(end, nextEnd);
+      const currentLine = source.slice(end, nextEnd);
       end = nextEnd;
+      continues = /^[ \t]*#/u.test(currentLine) || continuesInstruction(currentLine);
     }
 
     const bodyStart = offset + instructionMatch[0].length;
@@ -132,6 +133,98 @@ function unquotedTextIndexes(source: string, text: string): number[] {
   }
 
   return indexes;
+}
+
+function shellCommandPrefixWords(source: string, end: number): string[] {
+  const words: string[] = [];
+  let wordStart: number | undefined;
+  let quote: "'" | '"' | "`" | null = null;
+  let comment = false;
+
+  const finishWord = (wordEnd: number): void => {
+    if (wordStart === undefined) return;
+    words.push(source.slice(wordStart, wordEnd));
+    wordStart = undefined;
+  };
+
+  for (let index = 0; index < end; index += 1) {
+    const character = source[index]!;
+    if (comment) {
+      if (character === "\n") {
+        comment = false;
+        words.length = 0;
+      }
+      continue;
+    }
+    if (quote !== null) {
+      if (character === "\\" && quote !== "'") {
+        index += 1;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      wordStart ??= index;
+      quote = character;
+      continue;
+    }
+    if (character === "\\") {
+      wordStart ??= index;
+      index += 1;
+      continue;
+    }
+    if (character === "#" && (index === 0 || /[\s;&|(){}]/u.test(source[index - 1]!))) {
+      finishWord(index);
+      comment = true;
+      continue;
+    }
+    if (/[ \t\r]/u.test(character)) {
+      finishWord(index);
+      continue;
+    }
+    if (character === "\n" || ";&|({)".includes(character)) {
+      finishWord(index);
+      words.length = 0;
+      continue;
+    }
+    wordStart ??= index;
+  }
+
+  finishWord(end);
+  return words;
+}
+
+function followsShellCommandSeparator(source: string, index: number): boolean {
+  return shellCommandPrefixWords(source, index).every(
+    (word) =>
+      ["!", "do", "elif", "else", "if", "then", "until", "while"].includes(word) ||
+      /^[A-Za-z_][A-Za-z0-9_]*=.*$/u.test(word),
+  );
+}
+
+function startsShellWord(source: string, index: number): boolean {
+  const previousCharacter = source[index - 1];
+  return previousCharacter === undefined || /[\t\r\n &|();<>]/u.test(previousCharacter);
+}
+
+export function dockerfileRunCommandPositions(source: string, command: string): number[] {
+  const positions: number[] = [];
+  for (const instruction of dockerfileInstructions(source)) {
+    if (instruction.keyword !== "RUN") continue;
+    const collapsed = collapseDockerfileContinuations(instruction.body);
+    for (const index of unquotedTextIndexes(collapsed.text, command)) {
+      const afterCommand = collapsed.text[index + command.length];
+      if (
+        startsShellWord(collapsed.text, index) &&
+        followsShellCommandSeparator(collapsed.text, index) &&
+        (afterCommand === undefined || /[ \t\r\n;&|(){}<>]/u.test(afterCommand))
+      ) {
+        positions.push(instruction.bodyStart + collapsed.originalIndexes[index]!);
+      }
+    }
+  }
+  return positions;
 }
 
 function normalizedInstructionBody(source: string): string {
