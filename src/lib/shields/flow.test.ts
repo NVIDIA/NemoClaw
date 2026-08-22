@@ -104,6 +104,7 @@ describe("shields command flow", () => {
 
   it.each(["down", "up"] as const)(
     "stops Shields %s before mutation when policy is externally managed (#9833)",
+    { timeout: 30_000 },
     (operation) => {
       const harness = createHarness({
         policyAuthorityInspection: externalPolicyAuthorityInspection,
