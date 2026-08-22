@@ -12,6 +12,7 @@ import {
 describe("managed bootstrap Docker launch spec", () => {
   it("hashes reproducible launch state while excluding runtime ID, phase, IP, and gateway", () => {
     const first = createDockerGpuInspectFixture();
+    first.Id = "a".repeat(64);
     first.Mounts = [
       {
         Type: "image",
@@ -25,18 +26,37 @@ describe("managed bootstrap Docker launch spec", () => {
       "/run/podman/old/merge:/opt/openshell/bin:lowerdir=/run/podman/old/lower,private",
     ];
     first.HostConfig!.PidMode = "private";
+    first.HostConfig!.PidsLimit = 2048;
     first.HostConfig!.CpuPeriod = 100_000;
     first.HostConfig!.CpuQuota = 250_000;
+    first.HostConfig!.NetworkMode = "bridge";
+    first.HostConfig!.Annotations = { "io.container.manager": "libpod" };
+    first.HostConfig!.Tmpfs = {
+      "/run/netns": "rw,nosuid,nodev,rprivate,tmpcopyup",
+    };
+    first.NetworkSettings!.Networks!["openshell-docker"]!.Aliases = [
+      first.Id.slice(0, 12),
+      "openshell-alpha",
+    ];
     const second = structuredClone(first);
-    second.Id = "another-runtime-id";
+    second.Id = "b".repeat(64);
     second.HostConfig!.Binds = second.HostConfig!.Binds!.map((bind) =>
       bind.includes("/opt/openshell/bin")
         ? "/run/podman/new/merge:/opt/openshell/bin:lowerdir=/run/podman/new/lower,private"
         : bind,
     );
     Object.assign(second, { State: { Running: false, Dead: true } });
+    second.HostConfig!.Annotations = {
+      ...second.HostConfig!.Annotations,
+      "io.podman.annotations.pids-limit": "2048",
+    };
+    second.HostConfig!.Tmpfs = {};
     second.NetworkSettings!.Networks!["openshell-docker"]!.IPAddress = "172.18.0.99";
     second.NetworkSettings!.Networks!["openshell-docker"]!.Gateway = "172.18.0.254";
+    second.NetworkSettings!.Networks!["openshell-docker"]!.Aliases = [
+      second.Id.slice(0, 12),
+      "openshell-alpha",
+    ];
 
     const expected = normalizeDockerManagedBootstrapLaunchSpec(first);
     const observed = normalizeDockerManagedBootstrapLaunchSpec(second);
@@ -55,6 +75,11 @@ describe("managed bootstrap Docker launch spec", () => {
     expect(expected.spec.inspect.HostConfig?.PidMode).toBe("");
     expect(expected.spec.inspect.HostConfig?.CpuPeriod).toBe(0);
     expect(expected.spec.inspect.HostConfig?.CpuQuota).toBe(0);
+    expect(expected.spec.inspect.HostConfig?.NetworkMode).toBe("openshell-docker");
+    expect(expected.spec.inspect.HostConfig?.Tmpfs).toEqual({});
+    expect(expected.spec.inspect.NetworkSettings?.Networks?.["openshell-docker"]?.Aliases).toEqual([
+      "openshell-alpha",
+    ]);
     expect(parseDockerManagedBootstrapLaunchSpec(expected.canonicalJson)).toEqual(expected.spec);
   });
 

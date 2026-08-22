@@ -123,6 +123,8 @@ export type DockerGpuCloneRunOptions = {
   containerCommand?: readonly string[] | null;
   /** Stopped staging name used before exact-name cutover. */
   containerName?: string | null;
+  /** Preserve managed-bootstrap-only launch fields during stopped replacement. */
+  preserveManagedLaunchSpec?: boolean;
   /**
    * Extra supplementary group IDs to add to the recreated container via
    * `--group-add`. On Jetson these are the host group(s) owning the Tegra GPU
@@ -207,6 +209,15 @@ export type DockerContainerInspect = {
     AttachStderr?: boolean;
     Env?: string[] | null;
     Labels?: Record<string, string> | null;
+    ExposedPorts?: Record<string, Record<string, never>> | null;
+    Healthcheck?: {
+      Test?: string[] | null;
+      Interval?: number;
+      Timeout?: number;
+      StartPeriod?: number;
+      StartInterval?: number;
+      Retries?: number;
+    } | null;
     Entrypoint?: string[] | string | null;
     Cmd?: string[] | string | null;
     User?: string;
@@ -253,6 +264,7 @@ export type DockerContainerInspect = {
     }> | null;
     NetworkMode?: string;
     PortBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }> | null> | null;
+    Tmpfs?: Record<string, string> | null;
     RestartPolicy?: { Name?: string; MaximumRetryCount?: number } | null;
     CapAdd?: string[] | null;
     CapDrop?: string[] | null;

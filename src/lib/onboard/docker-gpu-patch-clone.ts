@@ -75,6 +75,100 @@ function pushStringFlag(args: string[], flag: string, value: unknown): void {
   if (normalized) args.push(flag, normalized);
 }
 
+function managedPortKey(value: string): string {
+  const match = /^(\d{1,5})\/(tcp|udp|sctp)$/u.exec(value);
+  const port = Number(match?.[1]);
+  if (!match || !Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`Managed bootstrap Docker port '${value}' is invalid.`);
+  }
+  return value;
+}
+
+function managedPublishedPort(hostIp: unknown, hostPort: unknown, containerPort: string): string {
+  const ip = String(hostIp ?? "").trim();
+  const published = String(hostPort ?? "").trim();
+  if (!/^\d{1,5}$/u.test(published) || Number(published) < 1 || Number(published) > 65_535) {
+    throw new Error(`Managed bootstrap Docker binding for '${containerPort}' is invalid.`);
+  }
+  if (ip.includes("\0") || /\s/u.test(ip)) {
+    throw new Error(`Managed bootstrap Docker binding for '${containerPort}' is invalid.`);
+  }
+  const address = ip.includes(":") && !ip.startsWith("[") ? `[${ip}]` : ip;
+  return address ? `${address}:${published}:${containerPort}` : `${published}:${containerPort}`;
+}
+
+function pushManagedPortArgs(args: string[], inspect: DockerContainerInspect): void {
+  const exposed = inspect.Config?.ExposedPorts ?? {};
+  const bindings = inspect.HostConfig?.PortBindings ?? {};
+  for (const port of new Set([...Object.keys(exposed), ...Object.keys(bindings)])) {
+    const normalizedPort = managedPortKey(port);
+    args.push("--expose", normalizedPort);
+    const entries = bindings[port];
+    if (entries === null || entries === undefined) continue;
+    if (!Array.isArray(entries)) {
+      throw new Error(`Managed bootstrap Docker bindings for '${port}' are invalid.`);
+    }
+    for (const entry of entries) {
+      args.push(
+        "--publish",
+        managedPublishedPort(entry?.HostIp, entry?.HostPort, normalizedPort),
+      );
+    }
+  }
+}
+
+function managedDuration(value: unknown, label: string): string | null {
+  if (value === undefined || value === null) return null;
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new Error(`Managed bootstrap Docker ${label} is invalid.`);
+  }
+  return `${String(value)}ns`;
+}
+
+function pushManagedHealthcheckArgs(args: string[], inspect: DockerContainerInspect): void {
+  const healthcheck = inspect.Config?.Healthcheck;
+  if (healthcheck === undefined || healthcheck === null) return;
+  const test = healthcheck.Test ?? [];
+  if (!Array.isArray(test) || test.some((entry) => typeof entry !== "string")) {
+    throw new Error("Managed bootstrap Docker healthcheck command is invalid.");
+  }
+  if (test.length === 1 && test[0] === "NONE") {
+    args.push("--no-healthcheck");
+  } else if (test.length === 2 && test[0] === "CMD-SHELL" && test[1]) {
+    args.push("--health-cmd", test[1]);
+  } else {
+    throw new Error("Managed bootstrap Docker healthcheck command cannot be reproduced exactly.");
+  }
+  for (const [flag, value, label] of [
+    ["--health-interval", healthcheck.Interval, "healthcheck interval"],
+    ["--health-timeout", healthcheck.Timeout, "healthcheck timeout"],
+    ["--health-start-period", healthcheck.StartPeriod, "healthcheck start period"],
+    ["--health-start-interval", healthcheck.StartInterval, "healthcheck start interval"],
+  ] as const) {
+    const duration = managedDuration(value, label);
+    if (duration !== null) args.push(flag, duration);
+  }
+  if (healthcheck.Retries !== undefined && healthcheck.Retries !== null) {
+    if (!Number.isSafeInteger(healthcheck.Retries) || healthcheck.Retries < 0) {
+      throw new Error("Managed bootstrap Docker healthcheck retries are invalid.");
+    }
+    args.push("--health-retries", String(healthcheck.Retries));
+  }
+}
+
+function managedNetworkMode(inspect: DockerContainerInspect, configured: unknown): string {
+  const mode = String(configured ?? "").trim();
+  const networks = Object.keys(inspect.NetworkSettings?.Networks ?? {});
+  if (
+    networks.length === 1 &&
+    ["", "bridge", "default", "podman"].includes(mode) &&
+    !["bridge", "default", "podman"].includes(networks[0]!)
+  ) {
+    return networks[0]!;
+  }
+  return mode;
+}
+
 function normalizeRequiredUlimit(ulimit: DockerUlimit): DockerUlimit {
   const name = String(ulimit.name).trim();
   if (!/^[a-z][a-z0-9_]*$/u.test(name)) {
@@ -518,6 +612,16 @@ export function buildDockerGpuCloneRunArgs(
   pushStringFlag(args, "--workdir", config.WorkingDir);
   if (config.Tty) args.push("--tty");
   if (config.OpenStdin) args.push("--interactive");
+  if (options.preserveManagedLaunchSpec) {
+    pushManagedPortArgs(args, inspect);
+    pushManagedHealthcheckArgs(args, inspect);
+    if (config.StopTimeout !== undefined && config.StopTimeout !== null) {
+      if (!Number.isSafeInteger(config.StopTimeout) || config.StopTimeout < 0) {
+        throw new Error("Managed bootstrap Docker stop timeout is invalid.");
+      }
+      args.push("--stop-timeout", String(config.StopTimeout));
+    }
+  }
 
   const sandboxCommand = openshellSandboxCommandEnvValue(options.openshellSandboxCommand);
   const omitOciImageUser = shouldOmitOpenShellOciImageUser(
@@ -554,7 +658,10 @@ export function buildDockerGpuCloneRunArgs(
   }
   for (const bind of stringArray(host.Binds)) args.push("--volume", bind);
   args.push(...dockerStructuredMountArgs(inspect));
-  const networkMode = options.networkMode ?? host.NetworkMode;
+  const configuredNetworkMode = options.networkMode ?? host.NetworkMode;
+  const networkMode = options.preserveManagedLaunchSpec
+    ? managedNetworkMode(inspect, configuredNetworkMode)
+    : configuredNetworkMode;
   pushStringFlag(args, "--network", networkMode);
   for (const alias of dockerNetworkAliases(inspect, networkMode))
     args.push("--network-alias", alias);

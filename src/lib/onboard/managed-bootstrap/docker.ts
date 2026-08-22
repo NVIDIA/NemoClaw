@@ -3428,6 +3428,7 @@ export function createDockerManagedBootstrapAdapter(
         containerEntrypoint: MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE,
         containerCommand: trampolineCommand,
         containerName: stagingName,
+        preserveManagedLaunchSpec: true,
       });
       const options = {
         ignoreError: true,

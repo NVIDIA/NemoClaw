@@ -170,6 +170,8 @@ const NULLABLE_HOST_CONFIG_ARRAY_KEYS = [
 ] as const;
 
 const DOCKER_DEFAULT_TMPFS_OPTIONS = new Set(["noexec", "nosuid", "nodev"]);
+const PODMAN_PIDS_LIMIT_ANNOTATION = "io.podman.annotations.pids-limit";
+const PODMAN_RUNTIME_NETNS_TMPFS = "rw,nosuid,nodev,rprivate,tmpcopyup";
 
 // Docker derives ConsoleSize, MaskedPaths, and ReadonlyPaths when it creates a
 // container. They have no corresponding create flags, but the adapter inspects
@@ -232,8 +234,10 @@ function byCodeUnit(left: string, right: string): number {
 
 function normalizedNetworkSettings(
   value: DockerContainerInspect["NetworkSettings"],
+  runtimeId: string | undefined,
 ): DockerContainerInspect["NetworkSettings"] {
   const networks = value?.Networks ?? {};
+  const normalizedRuntimeId = String(runtimeId ?? "").trim().toLowerCase();
   return {
     Networks: Object.fromEntries(
       Object.entries(networks)
@@ -241,7 +245,17 @@ function normalizedNetworkSettings(
         .map(([name, network]) => [
           name,
           {
-            Aliases: [...(network.Aliases ?? [])].sort(),
+            Aliases: [...(network.Aliases ?? [])]
+              .filter((alias) => {
+                const normalizedAlias = alias.trim().toLowerCase();
+                return !(
+                  /^[0-9a-f]{64}$/u.test(normalizedRuntimeId) &&
+                  /^[0-9a-f]{12,64}$/u.test(normalizedAlias) &&
+                  (normalizedRuntimeId.startsWith(normalizedAlias) ||
+                    normalizedAlias.startsWith(normalizedRuntimeId))
+                );
+              })
+              .sort(),
           },
         ]),
     ),
@@ -371,6 +385,7 @@ function dockerBindTarget(bind: string): string {
 function normalizedHostConfig(
   hostConfig: Record<string, unknown>,
   imageMounts: ReturnType<typeof normalizedImageMounts>,
+  networkSettings: DockerContainerInspect["NetworkSettings"],
 ): Record<string, unknown> {
   const normalized = { ...hostConfig };
   for (const key of NULLABLE_HOST_CONFIG_ARRAY_KEYS) {
@@ -382,6 +397,37 @@ function normalizedHostConfig(
   // Active bindings remain present and hash-bound.
   if (normalized.PortBindings === null || normalized.PortBindings === undefined) {
     normalized.PortBindings = {};
+  }
+  const annotations =
+    typeof normalized.Annotations === "object" &&
+    normalized.Annotations !== null &&
+    !Array.isArray(normalized.Annotations)
+      ? { ...(normalized.Annotations as Record<string, unknown>) }
+      : null;
+  if (
+    annotations &&
+    Number.isSafeInteger(normalized.PidsLimit) &&
+    String(annotations[PODMAN_PIDS_LIMIT_ANNOTATION] ?? "") === String(normalized.PidsLimit)
+  ) {
+    delete annotations[PODMAN_PIDS_LIMIT_ANNOTATION];
+    normalized.Annotations = annotations;
+  }
+  const tmpfs =
+    typeof normalized.Tmpfs === "object" &&
+    normalized.Tmpfs !== null &&
+    !Array.isArray(normalized.Tmpfs)
+      ? { ...(normalized.Tmpfs as Record<string, unknown>) }
+      : {};
+  if (tmpfs["/run/netns"] === PODMAN_RUNTIME_NETNS_TMPFS) delete tmpfs["/run/netns"];
+  normalized.Tmpfs = tmpfs;
+  const attachedNetworks = Object.keys(networkSettings?.Networks ?? {});
+  const configuredNetworkMode = String(normalized.NetworkMode ?? "").trim();
+  if (
+    attachedNetworks.length === 1 &&
+    ["", "bridge", "default", "podman"].includes(configuredNetworkMode) &&
+    !["bridge", "default", "podman"].includes(attachedNetworks[0]!)
+  ) {
+    normalized.NetworkMode = attachedNetworks[0];
   }
   // Podman reports its default private PID namespace as `private`, while the
   // Docker CLI represents the same default by omitting `--pid` and rejects
@@ -498,8 +544,9 @@ export function normalizeDockerManagedBootstrapLaunchSpec(inspect: DockerContain
       HostConfig: normalizedHostConfig(
         hostConfig,
         imageMounts,
+        inspect.NetworkSettings,
       ) as DockerContainerInspect["HostConfig"],
-      NetworkSettings: normalizedNetworkSettings(inspect.NetworkSettings),
+      NetworkSettings: normalizedNetworkSettings(inspect.NetworkSettings, inspect.Id),
       ...("Platform" in raw && typeof raw.Platform === "string" ? { Platform: raw.Platform } : {}),
     },
   };

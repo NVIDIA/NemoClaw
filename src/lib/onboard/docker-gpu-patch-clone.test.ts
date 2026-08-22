@@ -310,19 +310,60 @@ describe("Docker GPU clone envelope", () => {
   });
 
   it("uses exact managed-bootstrap container, entrypoint, and command overrides", () => {
+    const inspect = inspectFixture();
+    Object.assign(inspect.Config!, {
+      ExposedPorts: { "2222/tcp": {} },
+      Healthcheck: {
+        Test: ["CMD-SHELL", "test -S /run/openshell/ssh.sock"],
+        Interval: 10_000_000_000,
+        Timeout: 2_000_000_000,
+        StartPeriod: 5_000_000_000,
+        Retries: 10,
+      },
+      StopTimeout: 45,
+    });
+    Object.assign(inspect.HostConfig!, {
+      NetworkMode: "bridge",
+      PortBindings: {
+        "2222/tcp": [{ HostIp: "0.0.0.0", HostPort: "33513" }],
+      },
+    });
     const args = buildDockerGpuCloneRunArgs(
-      inspectFixture(),
+      inspect,
       buildDockerGpuMode("startup-command"),
       {
         containerName: "openshell-alpha-bootstrap-stage",
         containerEntrypoint: "/usr/local/bin/nemoclaw-managed-bootstrap",
         containerCommand: ["--request", "/run/nemoclaw/bootstrap-request.json"],
+        preserveManagedLaunchSpec: true,
       },
     );
 
     expect(args.slice(0, 2)).toEqual(["--name", "openshell-alpha-bootstrap-stage"]);
     expect(args).toEqual(
       expect.arrayContaining(["--entrypoint", "/usr/local/bin/nemoclaw-managed-bootstrap"]),
+    );
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--expose",
+        "2222/tcp",
+        "--publish",
+        "0.0.0.0:33513:2222/tcp",
+        "--health-cmd",
+        "test -S /run/openshell/ssh.sock",
+        "--health-interval",
+        "10000000000ns",
+        "--health-timeout",
+        "2000000000ns",
+        "--health-start-period",
+        "5000000000ns",
+        "--health-retries",
+        "10",
+        "--stop-timeout",
+        "45",
+        "--network",
+        "openshell-docker",
+      ]),
     );
     expect(args.slice(args.indexOf("openshell/sandbox:abc"))).toEqual([
       "openshell/sandbox:abc",
