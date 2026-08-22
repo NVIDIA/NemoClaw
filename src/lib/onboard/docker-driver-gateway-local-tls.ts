@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { isPortableExperimentalProfile, PORTABLE_HOST_GATEWAY_IP } from "./docker-driver-platform";
+import { isPodmanGatewayRuntimeEnabled } from "./gateway-runtime-selection";
 
 // See docs/security/gateway-authentication-controls.mdx for the public compatibility boundary.
 export const DOCKER_DRIVER_GATEWAY_LOCAL_TLS_DIR_NAME = "tls";
@@ -194,7 +195,9 @@ export function ensureDockerDriverGatewayLocalTlsBundle({
   stateDir,
 }: EnsureDockerDriverGatewayLocalTlsBundleOptions): DockerDriverGatewayLocalTlsBundle {
   const bundle = getDockerDriverGatewayLocalTlsBundle(stateDir);
-  const requiredServerIpSans = isPortableExperimentalProfile(env)
+  const usesPodmanHostGateway =
+    isPortableExperimentalProfile(env) || isPodmanGatewayRuntimeEnabled(env);
+  const requiredServerIpSans = usesPodmanHostGateway
     ? [...REQUIRED_SERVER_IP_SANS, PORTABLE_HOST_GATEWAY_IP]
     : REQUIRED_SERVER_IP_SANS;
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
@@ -216,7 +219,7 @@ export function ensureDockerDriverGatewayLocalTlsBundle({
       "localhost",
       "--server-san",
       "127.0.0.1",
-      ...(isPortableExperimentalProfile(env) ? ["--server-san", PORTABLE_HOST_GATEWAY_IP] : []),
+      ...(usesPodmanHostGateway ? ["--server-san", PORTABLE_HOST_GATEWAY_IP] : []),
     ],
     {
       encoding: "utf-8",
