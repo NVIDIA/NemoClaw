@@ -759,6 +759,37 @@ describe("host-local model cleanup", () => {
     expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(false);
   });
 
+  it("fails closed when the qualified engine becomes unavailable after preparation (#9888)", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    const privateBridge = privateBridgeFixture();
+    createManagedState(homeDir, harness.engine);
+
+    const prepared = prepareManagedLlamaCppRuntimeCleanupForSandbox("spark-agent", {
+      homeDir,
+      engine: harness.engine,
+      privateBridge,
+    });
+    harness.capture.mockClear();
+    harness.capture.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "daemon unavailable",
+    });
+
+    expect(prepared).not.toBeNull();
+    expect(prepared!.cleanup()).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("engine availability check"),
+    });
+    expect(harness.capture).toHaveBeenCalledWith(["info"], expect.any(Number));
+    expect(harness.capture).not.toHaveBeenCalledWith(
+      ["rm", "--force", RUNTIME_ID],
+      expect.any(Number),
+    );
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
+  });
+
   it("retains the selected engine for an interrupted journal without a receipt (#9888)", () => {
     const homeDir = temporaryHome();
     const qualified = engineHarness({ authorityId: "docker:qualified" });
