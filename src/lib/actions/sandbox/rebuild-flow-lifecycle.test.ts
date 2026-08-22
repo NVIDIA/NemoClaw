@@ -156,7 +156,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.executeSandboxExecCommandSpy).toHaveBeenCalledWith(
       "alpha",
       "openclaw doctor --fix",
-      60_000,
+      300_000,
       { allowLocalDockerFallback: false },
     );
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");

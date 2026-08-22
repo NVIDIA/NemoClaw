@@ -45,7 +45,7 @@ export {
   runHermesCronRestoreTransaction,
 } from "./rebuild-hermes-post-restore";
 
-const OPENCLAW_DOCTOR_TIMEOUT_MS = 60_000;
+const OPENCLAW_DOCTOR_TIMEOUT_MS = 5 * 60_000;
 
 export function printHermesCronRestoreRecoveryCommand(
   sandboxName: string,

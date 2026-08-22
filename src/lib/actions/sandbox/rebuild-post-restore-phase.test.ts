@@ -134,7 +134,7 @@ describe("rebuild post-restore phase", () => {
     expect(processRecovery.executeSandboxExecCommand).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       "openclaw doctor --fix",
-      60_000,
+      300_000,
       { allowLocalDockerFallback: false },
     );
   });
