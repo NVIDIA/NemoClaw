@@ -249,7 +249,7 @@ function normalizedNetworkSettings(
               .filter((alias) => {
                 const normalizedAlias = alias.trim().toLowerCase();
                 return !(
-                  /-nemoclaw-staged-[0-9a-f]{20}$/u.test(normalizedAlias) ||
+                  normalizedAlias.includes("-nemoclaw-staged-") ||
                   (/^[0-9a-f]{64}$/u.test(normalizedRuntimeId) &&
                     /^[0-9a-f]{12,64}$/u.test(normalizedAlias) &&
                     (normalizedRuntimeId.startsWith(normalizedAlias) ||
