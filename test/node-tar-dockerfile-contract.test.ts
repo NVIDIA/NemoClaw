@@ -398,6 +398,16 @@ describe("reviewed npm image remediation contract", () => {
     expect(npmConsumerPositions(`RUN ${body}\n`)).toEqual([]);
   });
 
+  it("does not treat an assignment value as a pre-remediation npm consumer (#9933)", () => {
+    const source = [
+      "RUN VALUE=npm ci",
+      `RUN ${patchCommand} ${npmRootArguments.join(" ")}`,
+      "",
+    ].join("\n");
+
+    expect(npmConsumerPositions(source)).toEqual([]);
+  });
+
   it.each([
     ["an if condition", "if npm ci; then true; fi"],
     ["an elif condition", "if false; then true; elif npm install; then true; fi"],

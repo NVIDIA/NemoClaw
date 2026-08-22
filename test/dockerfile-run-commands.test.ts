@@ -55,6 +55,19 @@ describe("Dockerfile RUN command discovery", () => {
     ]);
   });
 
+  it("ignores npm assignment values, redirection operands, and here-document delimiters (#9933)", () => {
+    const source = [
+      "RUN VALUE=npm ci",
+      "RUN echo ok > npm",
+      "RUN cat <<npm",
+      "payload",
+      "npm",
+      "",
+    ].join("\n");
+
+    expect(dockerfileRunCommandPositions(source, "npm")).toEqual([]);
+  });
+
   it("ignores command text in comments, strings, and non-RUN instructions", () => {
     const source = [
       `# ${command}`,

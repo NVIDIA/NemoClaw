@@ -203,6 +203,11 @@ function followsShellCommandSeparator(source: string, index: number): boolean {
   );
 }
 
+function startsShellWord(source: string, index: number): boolean {
+  const previousCharacter = source[index - 1];
+  return previousCharacter === undefined || /[\t\r\n &|();<>]/u.test(previousCharacter);
+}
+
 export function dockerfileRunCommandPositions(source: string, command: string): number[] {
   const positions: number[] = [];
   for (const instruction of dockerfileInstructions(source)) {
@@ -211,6 +216,7 @@ export function dockerfileRunCommandPositions(source: string, command: string): 
     for (const index of unquotedTextIndexes(collapsed.text, command)) {
       const afterCommand = collapsed.text[index + command.length];
       if (
+        startsShellWord(collapsed.text, index) &&
         followsShellCommandSeparator(collapsed.text, index) &&
         (afterCommand === undefined || /[ \t\r\n;&|(){}<>]/u.test(afterCommand))
       ) {
