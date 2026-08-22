@@ -255,7 +255,7 @@ describe("Docker GPU clone envelope", () => {
     const inspect = inspectFixture();
     inspect.HostConfig!.Ulimits = [
       { Name: "core", Soft: 0, Hard: -1 },
-      { Name: "nofile", Soft: 1024, Hard: 1024 },
+      { Name: "RLIMIT_NOFILE", Soft: 1024, Hard: 1024 },
     ];
 
     const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
@@ -275,6 +275,7 @@ describe("Docker GPU clone envelope", () => {
         "nproc=512:512",
       ]),
     );
+    expect(args).not.toContain("RLIMIT_NOFILE=1024:1024");
     expect(args).not.toContain("nofile=1024:1024");
   });
 

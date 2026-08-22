@@ -185,7 +185,7 @@ describe("Docker managed bootstrap adapter", () => {
   it("preserves signed and accepts Docker-normalized required ulimits before cutover", async () => {
     const fake = fixture();
     fake.original!.HostConfig!.Ulimits = [
-      { Name: "nofile", Soft: 65_536, Hard: 65_536 },
+      { Name: "RLIMIT_NOFILE", Soft: 65_536, Hard: 65_536 },
       { Name: "memlock", Soft: -1, Hard: -1 },
     ];
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);

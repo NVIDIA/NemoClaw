@@ -91,6 +91,13 @@ function normalizeRequiredUlimit(ulimit: DockerUlimit): DockerUlimit {
   return { name, soft: ulimit.soft, hard: ulimit.hard };
 }
 
+export function normalizeDockerUlimitName(name: unknown): string {
+  const normalized = String(name ?? "").trim();
+  return /^RLIMIT_[A-Z][A-Z0-9_]*$/u.test(normalized)
+    ? normalized.slice("RLIMIT_".length).toLowerCase()
+    : normalized;
+}
+
 export function validateRequiredDockerUlimits(
   required: readonly DockerUlimit[] | null | undefined,
 ): void {
@@ -103,7 +110,7 @@ function dockerUlimits(
 ): DockerUlimit[] {
   const merged = new Map<string, DockerUlimit>();
   for (const ulimit of inspect.HostConfig?.Ulimits ?? []) {
-    const name = String(ulimit.Name ?? "").trim();
+    const name = normalizeDockerUlimitName(ulimit.Name);
     const soft = ulimit.Soft;
     const hard = ulimit.Hard;
     if (

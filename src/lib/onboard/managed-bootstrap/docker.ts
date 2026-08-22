@@ -23,6 +23,7 @@ import {
 import {
   buildDockerGpuCloneRunArgs,
   dockerContainerName,
+  normalizeDockerUlimitName,
   shouldOmitOpenShellOciImageUser,
 } from "../docker-gpu-patch-clone";
 import {
@@ -904,7 +905,7 @@ function canonicalUlimits(value: unknown, label: string): string {
       throw new Error(`Managed bootstrap Docker ${label} is invalid.`);
     }
     const record = entry as Record<string, unknown>;
-    const name = String(record.Name ?? "");
+    const name = normalizeDockerUlimitName(record.Name);
     const soft = record.Soft;
     const hard = record.Hard;
     if (!name || !Number.isSafeInteger(soft) || !Number.isSafeInteger(hard)) {
