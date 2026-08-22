@@ -170,14 +170,23 @@ runs:
         service_log="$RUNNER_TEMP/native-podman-e2e-service.log"
         podman system service --time=0 "unix://$socket_path" >"$service_log" 2>&1 &
         service_pid="$!"
+        service_ready=false
         for attempt in $(seq 1 30); do
           if podman --url "unix://$socket_path" info --format json \
             >"$RUNNER_TEMP/native-podman-e2e-info.json" 2>>"$service_log"; then
+            service_ready=true
             break
           fi
-          [[ "$attempt" -lt 30 ]]
-          sleep 1
+          if [[ "$attempt" -lt 30 ]]; then
+            sleep 1
+          fi
         done
+        if [[ "$service_ready" != true ]]; then
+          echo "::error::Native Podman API service did not become ready" >&2
+          cat "$service_log" >&2
+          wait "$service_pid" || true
+          exit 1
+        fi
         [[ -S "$socket_path" ]]
         jq -e '
           (.host.security.rootless // .Host.Security.Rootless) == true and
