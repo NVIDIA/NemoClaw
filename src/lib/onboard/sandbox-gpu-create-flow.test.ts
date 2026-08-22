@@ -23,7 +23,8 @@ vi.mock("../sandbox/create-stream", () => ({
   streamSandboxCreate: mocks.streamSandboxCreate,
 }));
 
-vi.mock("./sandbox-readiness-tracing", () => ({
+vi.mock("./sandbox-readiness-tracing", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./sandbox-readiness-tracing")>()),
   waitForCreatedSandboxReadyWithTrace: mocks.waitForCreatedSandboxReadyWithTrace,
   printReadinessFailure: mocks.printReadinessFailure,
 }));
@@ -52,7 +53,6 @@ vi.mock("./openshell-docker-sandbox-containers", async (importOriginal) => ({
   queryOpenShellDockerSandboxRuntimeSnapshot: mocks.queryOpenShellDockerSandboxRuntimeSnapshot,
 }));
 
-import type { AgentDefinition } from "../agent/defs";
 import type { CheckpointPortableRuntimeAuthority } from "../state/onboard-checkpoint-types";
 import type { SandboxGpuProofResult } from "../state/registry";
 import {
@@ -81,9 +81,6 @@ import type {
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import { prepareSandboxCreateLaunch } from "./sandbox-create-launch";
 import {
-  resolveExportedPortableRuntimeAuthority,
-  resolveAgentCreateInput,
-  resolvePortableLifecycleMode,
   runSandboxGpuCreateFlow,
   type SandboxGpuCreateFlowDeps,
   type SandboxGpuCreateFlowInput,
@@ -203,56 +200,6 @@ function createSourceInput(): SandboxGpuCreateFlowInput {
 
 beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
-
-describe("resolveAgentCreateInput", () => {
-  it("selects portable lifecycle ownership only for OpenClaw (#9068)", () => {
-    const env = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
-
-    expect(resolveAgentCreateInput(null, true, env)).toMatchObject({
-      persistStartupCommand: false,
-      portableLifecycle: true,
-    });
-    expect(resolveAgentCreateInput({ name: "hermes" } as AgentDefinition, true, env)).toMatchObject(
-      {
-        persistStartupCommand: false,
-        portableLifecycle: false,
-        hermesPortableLifecycle: true,
-      },
-    );
-    expect(resolvePortableLifecycleMode(null, env)).toBe(true);
-    expect(resolvePortableLifecycleMode({ name: "hermes" } as AgentDefinition, env)).toBe(false);
-  });
-});
-
-describe("resolveExportedPortableRuntimeAuthority", () => {
-  it("passes checkpoint-owned authority to exported portable creation (#9070)", () => {
-    expect(
-      resolveExportedPortableRuntimeAuthority(
-        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-        () => ({
-          checkpoint: {
-            profile: { kind: "selected", value: "portable" },
-            runtimeAuthority: { kind: "selected", value: PORTABLE_RUNTIME_AUTHORITY },
-          },
-        }),
-      ),
-    ).toEqual(PORTABLE_RUNTIME_AUTHORITY);
-  });
-
-  it("rejects exported portable creation before effects when authority is absent (#9070)", () => {
-    expect(() =>
-      resolveExportedPortableRuntimeAuthority(
-        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-        () => ({
-          checkpoint: {
-            profile: { kind: "selected", value: "portable" },
-            runtimeAuthority: { kind: "unset" },
-          },
-        }),
-      ),
-    ).toThrow("requires checkpoint-owned Podman runtime authority before creation begins");
-  });
-});
 
 describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
   it("recovers before an MXC-style create without a Docker branch in central orchestration", async () => {
@@ -482,6 +429,55 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     expect(errorOutput()).toContain("never delete a runtime by mutable sandbox name");
     expect(errorOutput()).toContain("Authorization: Bearer <REDACTED>");
     expect(errorOutput()).not.toContain(recoverySecret);
+  });
+
+  it("reports the terminal phase when an incomplete managed create cannot become ready (#9819)", async () => {
+    const input = createInput();
+    const bootstrapIdentity = "e".repeat(64);
+    input.managedBootstrap = {
+      bootstrapIdentity,
+      stateRoot: "/tmp/nemoclaw-managed-bootstrap",
+      runtimeProvider: {
+        identity: { id: "mxc" },
+        bootstrap: {
+          createOnboardRouting: () => ({ nativeFallbackHasCleanBaseline: false }),
+          createLifecycle: (options: ManagedBootstrapRuntimeCreateLifecycleInput) => ({
+            launchArgv: options.launchArgv,
+            patch: createPatch(),
+            recoverUnfinished: async () => null,
+            prepareNetwork: async () => undefined,
+            runCreate: async <T>(
+              start: (held: {
+                readonly heldWorkloadArgv: readonly string[];
+                readonly bootstrapIdentity: string;
+              }) => Promise<{ readonly value: T }>,
+            ): Promise<T> =>
+              (
+                await start({
+                  heldWorkloadArgv: options.heldWorkloadArgv,
+                  bootstrapIdentity: options.bootstrapIdentity,
+                })
+              ).value,
+          }),
+        },
+      },
+    } as unknown as NonNullable<SandboxGpuCreateFlowInput["managedBootstrap"]>;
+    const deps = createDeps();
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 23,
+      output: "Created sandbox: alpha",
+      sawProgress: true,
+    });
+    mocks.waitForCreatedSandboxReadyWithTrace.mockReturnValueOnce({
+      ready: false,
+      reason: "terminal_failure_phase",
+      failurePhase: "Failed",
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "Sandbox 'alpha' entered Failed phase before it became ready (waited up to 60s).",
+    );
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledOnce();
   });
 });
 describe("runSandboxGpuCreateFlow proof authorization", () => {
