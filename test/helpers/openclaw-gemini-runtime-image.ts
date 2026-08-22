@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { stripVTControlCharacters } from "node:util";
+
 import type {
   DockerSpawnSyncOptions,
   DockerSpawnSyncResult,
 } from "../../src/lib/adapters/docker/exec";
 import { dockerSpawnSync } from "../../src/lib/adapters/docker/exec";
+import { redact, redactFull } from "../../src/lib/security/redact";
 
 export const OPENCLAW_GEMINI_IMAGE_INSPECT_TIMEOUT_MS = 15_000;
 export const OPENCLAW_GEMINI_IMAGE_PULL_TIMEOUT_MS = 5 * 60_000;
@@ -13,6 +16,8 @@ export const OPENCLAW_GEMINI_IMAGE_PULL_TIMEOUT_MS = 5 * 60_000;
 const PULL_CAPTURE_MAX_BYTES = 256 * 1024;
 const PULL_DIAGNOSTIC_MAX_BYTES = 4 * 1024;
 const TRUNCATION_SUFFIX = "\n[diagnostic truncated]";
+const UNSAFE_TERMINAL_CONTROL_CHARACTERS =
+  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu;
 
 export type DockerImageSetupRunner = (
   args: readonly string[],
@@ -39,7 +44,7 @@ function boundedTail(value: string, maximumBytes: number): string {
   return `${content}${TRUNCATION_SUFFIX}`;
 }
 
-function pullFailureReason(result: ReturnType<DockerImageSetupRunner>): string {
+function commandFailureReason(result: ReturnType<DockerImageSetupRunner>): string {
   if (result.error) {
     const code = (result.error as NodeJS.ErrnoException).code;
     return code === "ETIMEDOUT" ? "timed out" : "failed to execute";
@@ -54,7 +59,16 @@ function pullFailureDiagnostic(result: ReturnType<DockerImageSetupRunner>): stri
     .join("\n")
     .trim();
   return output.length > 0
-    ? boundedTail(output, PULL_DIAGNOSTIC_MAX_BYTES)
+    ? boundedTail(
+        redact(
+          redactFull(
+            stripVTControlCharacters(output)
+              .replace(/\r\n?/gu, "\n")
+              .replace(UNSAFE_TERMINAL_CONTROL_CHARACTERS, ""),
+          ),
+        ),
+        PULL_DIAGNOSTIC_MAX_BYTES,
+      )
     : "docker pull produced no diagnostic output";
 }
 
@@ -68,6 +82,11 @@ export function ensureOpenClawGeminiRuntimeImage(
     killSignal: "SIGKILL",
   });
   if (inspect.status === 0) return "cached";
+  if (inspect.error || inspect.signal || inspect.status === null) {
+    throw new Error(
+      `Pinned OpenClaw runtime image inspection ${commandFailureReason(inspect)}: ${image}`,
+    );
+  }
 
   const pull = runDocker(["pull", image], {
     encoding: "utf8",
@@ -78,6 +97,6 @@ export function ensureOpenClawGeminiRuntimeImage(
   if (pull.status === 0) return "pulled";
 
   throw new Error(
-    `Pinned OpenClaw runtime image pull ${pullFailureReason(pull)}: ${image}\n${pullFailureDiagnostic(pull)}`,
+    `Pinned OpenClaw runtime image pull ${commandFailureReason(pull)}: ${image}\n${pullFailureDiagnostic(pull)}`,
   );
 }
