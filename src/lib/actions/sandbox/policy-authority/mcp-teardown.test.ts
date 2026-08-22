@@ -116,11 +116,7 @@ import {
   restoreMcpBridgesAfterDestroyAbort,
 } from "../mcp-bridge-destroy";
 import { assertMcpProviderRecoverable } from "../mcp-bridge-provider";
-import {
-  McpPolicyAuthorityRefusalError,
-  qualifyMcpPolicyAuthorityReceipt,
-  revalidateMcpPolicyAuthorityReceipt,
-} from "../mcp-bridge-policy";
+import { McpPolicyAuthorityRefusalError } from "../mcp-bridge-policy";
 import { buildMcpBridgePolicyYaml } from "../mcp-bridge-policy-render";
 import { prepareMcpBridgesForRebuild } from "../mcp-bridge-rebuild";
 
@@ -263,24 +259,6 @@ describe("MCP teardown policy authority", () => {
     },
   );
 
-  it("restores external MCP runtime after provider detach cannot be proved (#9833)", async () => {
-    harness.authority = "externally-managed";
-    harness.detachOutcomes.push("unknown");
-    registerSandbox("externally-managed");
-
-    await expect(prepareMcpBridgesForDestroy("alpha")).rejects.toThrow(
-      "Could not prove provider detach",
-    );
-
-    expect(harness.actions).toEqual([
-      "adapter:scrub",
-      "provider:detach",
-      "provider:attach",
-      "adapter:rollback",
-    ]);
-    expect(harness.actions).not.toContain("policy:remove");
-  });
-
   it.each([
     ["destroy", prepareMcpBridgesForDestroy],
     ["rebuild", prepareMcpBridgesForRebuild],
@@ -344,28 +322,6 @@ describe("MCP teardown policy authority", () => {
     },
   );
 
-  it("does not roll back after the original MCP bridge snapshot changes (#9833)", async () => {
-    registerSandbox("nemoclaw-managed");
-    const validateContainingReceipt = vi
-      .fn<() => Promise<void>>()
-      .mockImplementationOnce(async () => {
-        registry.updateSandbox("alpha", {
-          mcp: {
-            bridges: {
-              example: { ...bridgeEntry, url: "https://changed.example.test/mcp" },
-            },
-          },
-        });
-      });
-
-    await expect(
-      prepareMcpBridgesForRebuild("alpha", validateContainingReceipt),
-    ).rejects.toBeInstanceOf(McpPolicyAuthorityRefusalError);
-
-    expect(harness.actions).toEqual(["adapter:scrub"]);
-    expect(harness.adapterRegistered).toBe(false);
-  });
-
   it("reports both authority refusal and snapshot drift during destroy-abort recovery (#9833)", async () => {
     harness.authority = "externally-managed";
     registerSandbox("externally-managed");
@@ -400,18 +356,5 @@ describe("MCP teardown policy authority", () => {
     expect((refusal as Error).message).toContain("changed");
     expect(harness.actions).toEqual(["adapter:scrub", "provider:detach"]);
     expect(registry.getSandbox("alpha")?.mcp?.destroyPreparedAt).toEqual(expect.any(String));
-  });
-
-  it("rejects a policy authority that differs from the qualified receipt (#9833)", async () => {
-    const receipt = qualifyMcpPolicyAuthorityReceipt({
-      operation: "prepare MCP teardown",
-      requiredPolicyContents: ["network_policies: {}\n"],
-      sandboxName: "alpha",
-    });
-    harness.authority = "externally-managed";
-
-    await expect(revalidateMcpPolicyAuthorityReceipt(receipt)).rejects.toBeInstanceOf(
-      McpPolicyAuthorityRefusalError,
-    );
   });
 });

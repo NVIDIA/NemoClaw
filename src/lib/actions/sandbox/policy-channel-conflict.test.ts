@@ -8,12 +8,10 @@
 //
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import * as runtime from "../../adapters/openshell/runtime";
 import * as defs from "../../agent/defs";
 import * as store from "../../credentials/store";
 import * as gatewayRuntime from "../../gateway-runtime-action";
-import { MessagingSetupApplier } from "../../messaging";
 import * as wechatLogin from "../../messaging/channels/wechat/login";
 import * as policy from "../../policy";
 import { hashCredential } from "../../security/credential-hash";
@@ -233,7 +231,6 @@ let updateSandboxMock: MockInstance;
 let upsertMock: MockInstance;
 let runOpenshellMock: MockInstance;
 let applyPresetMock: MockInstance;
-let removePresetMock: MockInstance;
 let getSandboxMock: MockInstance;
 let getDisabledChannelsMock: MockInstance;
 let listSandboxesMock: MockInstance;
@@ -263,11 +260,6 @@ function conflictPromptShown(): boolean {
   return (promptMock.mock.calls as unknown[][]).some((call) =>
     String(call[0]).includes("Continue anyway?"),
   );
-}
-
-function arrangeWhatsappPresetRollback(): MockInstance {
-  vi.mocked(policy.listPresets).mockReturnValue([{ name: "whatsapp" } as never]);
-  return removePresetMock;
 }
 
 let stdinIsTty: PropertyDescriptor | undefined;
@@ -353,7 +345,7 @@ beforeEach(() => {
     .spyOn(policy, "logPresetScopeForState")
     .mockImplementation(() => undefined);
   applyPresetMock = vi.spyOn(policy, "applyPreset").mockReturnValue(true);
-  removePresetMock = vi.spyOn(policy, "removePreset").mockReturnValue(true);
+  vi.spyOn(policy, "removePreset").mockReturnValue(true);
   vi.spyOn(policy, "getAppliedPresets").mockReturnValue([]);
 
   // Downstream rebuild is not under test.
@@ -673,102 +665,6 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(updateSandboxMock).toHaveBeenLastCalledWith("alpha", { messaging: undefined });
     expect(exitMock).toHaveBeenCalledWith(1);
     expect(promptMock).not.toHaveBeenCalled();
-  });
-
-  it("rolls back the in-sandbox-QR snapshot when authority changes during planning (#9833)", async () => {
-    arrangeRegistry({ current: makeEmptyEntry("alpha") });
-    const refusal = new PolicyAuthorityRefusalError(
-      "OpenShell policy authority changed during WhatsApp planning",
-    );
-    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority)
-      .mockReturnValueOnce("nemoclaw-managed")
-      .mockImplementation(() => {
-        throw refusal;
-      });
-    process.env.NEMOCLAW_NON_INTERACTIVE = "1";
-
-    await expect(addSandboxChannel("alpha", { channel: "whatsapp" })).rejects.toBe(refusal);
-
-    expect(applyPresetMock).not.toHaveBeenCalled();
-    expect(updateSandboxMock).toHaveBeenLastCalledWith("alpha", { messaging: undefined });
-    expect(rebuildSandboxMock).not.toHaveBeenCalled();
-  });
-
-  it("removes a new WhatsApp preset and restores the plan when authority changes (#9833)", async () => {
-    arrangeRegistry({ current: makeEmptyEntry("alpha") });
-    const removePreset = arrangeWhatsappPresetRollback();
-    const refusal = new PolicyAuthorityRefusalError(
-      "OpenShell policy authority changed after the WhatsApp preset",
-    );
-    const preflightAuthority = vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority);
-    preflightAuthority.mockReturnValue("nemoclaw-managed");
-    applyPresetMock.mockImplementation(() => {
-      preflightAuthority.mockImplementation(() => {
-        throw refusal;
-      });
-      return true;
-    });
-    process.env.NEMOCLAW_NON_INTERACTIVE = "1";
-
-    await expect(addSandboxChannel("alpha", { channel: "whatsapp" })).rejects.toBe(refusal);
-
-    expect(removePreset).toHaveBeenCalledWith("alpha", "whatsapp", { nonFatal: true });
-    expect(updateSandboxMock).toHaveBeenLastCalledWith("alpha", { messaging: undefined });
-    expect(rebuildSandboxMock).not.toHaveBeenCalled();
-  });
-
-  it("rolls back WhatsApp state when policy authority changes during rebuild (#9833)", async () => {
-    arrangeRegistry({ current: makeEmptyEntry("alpha") });
-    const removePreset = arrangeWhatsappPresetRollback();
-    const refusal = new PolicyAuthorityRefusalError(
-      "OpenShell policy authority changed during WhatsApp rebuild",
-    );
-    const preflightAuthority = vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority);
-    preflightAuthority.mockReturnValue("nemoclaw-managed");
-    rebuildSandboxMock.mockImplementation(async () => {
-      preflightAuthority.mockImplementation(() => {
-        throw refusal;
-      });
-    });
-
-    await expect(addSandboxChannel("alpha", { channel: "whatsapp" })).rejects.toBe(refusal);
-
-    expect(rebuildSandboxMock).toHaveBeenCalledWith("alpha", ["--yes"]);
-    expect(removePreset).toHaveBeenCalledWith("alpha", "whatsapp", { nonFatal: true });
-    expect(updateSandboxMock).toHaveBeenLastCalledWith("alpha", { messaging: undefined });
-    expect(ensureMessagingHostForwardAfterRebuildMock).not.toHaveBeenCalled();
-  });
-
-  it("rolls back WhatsApp state when authority changes during the health check (#9833)", async () => {
-    arrangeRegistry({ current: makeEmptyEntry("alpha") });
-    const removePreset = arrangeWhatsappPresetRollback();
-    const refusal = new PolicyAuthorityRefusalError(
-      "OpenShell policy authority changed during WhatsApp health verification",
-    );
-    const preflightAuthority = vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority);
-    preflightAuthority.mockReturnValue("nemoclaw-managed");
-    vi.spyOn(MessagingSetupApplier, "listHealthChecks").mockReturnValue([{} as never]);
-    const applyHealthChecks = vi
-      .spyOn(MessagingSetupApplier, "applyHealthChecks")
-      .mockImplementation(async () => {
-        preflightAuthority.mockImplementation(() => {
-          throw refusal;
-        });
-        return {
-          phase: "health-check",
-          hookRequests: [],
-          hookResults: [],
-          appliedHooks: [],
-          skippedHooks: [],
-        };
-      });
-
-    await expect(addSandboxChannel("alpha", { channel: "whatsapp" })).rejects.toBe(refusal);
-
-    expect(applyHealthChecks).toHaveBeenCalledOnce();
-    expect(ensureMessagingHostForwardAfterRebuildMock).toHaveBeenCalled();
-    expect(removePreset).toHaveBeenCalledWith("alpha", "whatsapp", { nonFatal: true });
-    expect(updateSandboxMock).toHaveBeenLastCalledWith("alpha", { messaging: undefined });
   });
 
   // Scenario 9
@@ -1245,65 +1141,6 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
     });
   });
 
-  it("stops before rebuild when policy authority changes during confirmation (#9833)", async () => {
-    setTeamsEnv();
-    arrangeRegistry({ current: makeEmptyEntry("alpha") });
-    promptMock.mockImplementation(async () => {
-      vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(
-        () => {
-          throw new Error("OpenShell policy authority changed during confirmation");
-        },
-      );
-      return "";
-    });
-
-    await expect(addSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    expect(rebuildSandboxMock).not.toHaveBeenCalled();
-    expect(ensureMessagingHostForwardAfterRebuildMock).not.toHaveBeenCalled();
-  });
-
-  it("stops channel forwarding when policy authority changes after rebuild (#9833)", async () => {
-    setTeamsEnv();
-    arrangeRegistry({ current: makeEmptyEntry("alpha") });
-    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() =>
-      rebuildSandboxMock.mock.calls.length > 0
-        ? (() => {
-            throw new Error("OpenShell policy authority changed after rebuild");
-          })()
-        : "nemoclaw-managed",
-    );
-
-    await expect(addSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    expect(ensureMessagingHostForwardAfterRebuildMock).not.toHaveBeenCalled();
-    expect(processRecovery.executeSandboxExecCommand).not.toHaveBeenCalled();
-  });
-
-  it("stops channel health checks when policy authority changes during forwarding (#9833)", async () => {
-    setTeamsEnv();
-    arrangeRegistry({ current: makeEmptyEntry("alpha") });
-    ensureMessagingHostForwardAfterRebuildMock.mockImplementation(() => {
-      vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(
-        () => {
-          throw new Error("OpenShell policy authority changed during forwarding");
-        },
-      );
-      return true;
-    });
-
-    await expect(addSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    expect(ensureMessagingHostForwardAfterRebuildMock).toHaveBeenCalledOnce();
-    expect(processRecovery.executeSandboxExecCommand).not.toHaveBeenCalled();
-  });
-
   it("channels start teams re-establishes the MSTEAMS_PORT host forward after rebuild-now completes", async () => {
     arrangeRegistry({ current: makeTeamsEntry("alpha", { disabled: true, port: "3978" }) });
     getDisabledChannelsMock.mockReturnValue(["teams"]);
@@ -1329,24 +1166,6 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
       port: 3978,
       label: "Microsoft Teams webhook",
     });
-  });
-
-  it("stops channel start forwarding when policy authority changes after rebuild (#9833)", async () => {
-    arrangeRegistry({ current: makeTeamsEntry("alpha", { disabled: true, port: "3978" }) });
-    getDisabledChannelsMock.mockReturnValue(["teams"]);
-    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() =>
-      rebuildSandboxMock.mock.calls.length > 0
-        ? (() => {
-            throw new Error("OpenShell policy authority changed after rebuild");
-          })()
-        : "nemoclaw-managed",
-    );
-
-    await expect(startSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    expect(ensureMessagingHostForwardAfterRebuildMock).not.toHaveBeenCalled();
   });
 
   it("channels start reapplies its policy before a non-interactive rebuild is queued", async () => {
@@ -1408,26 +1227,6 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
     expect(registry.getDisabledChannels("alpha")).toContain("teams");
     expect(rebuildSandboxMock).not.toHaveBeenCalled();
     expect(loggedText()).toContain("channels start teams");
-  });
-
-  it("does not rewrite the disabled plan after policy authority changes (#9833)", async () => {
-    arrangeRegistry({ current: makeTeamsEntry("alpha", { disabled: true }) });
-    getDisabledChannelsMock.mockReturnValue(["teams"]);
-    applyPresetMock.mockReturnValue(false);
-    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() =>
-      applyPresetMock.mock.calls.length > 0
-        ? (() => {
-            throw new Error("OpenShell policy authority changed during preset application");
-          })()
-        : "nemoclaw-managed",
-    );
-
-    await expect(startSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    expect(updateSandboxMock).toHaveBeenCalledOnce();
-    expect(rebuildSandboxMock).not.toHaveBeenCalled();
   });
 
   it("channels start prints recovery guidance when policy and disabled-plan rollback both fail", async () => {

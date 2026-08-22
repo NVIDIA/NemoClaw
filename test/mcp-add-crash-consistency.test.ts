@@ -22,7 +22,10 @@ type CrashBoundary =
   | "registered-credential-collision"
   | "registered-late-collision"
   | "adapter"
+  | "adapter-authority-refusal"
   | "adapter-mismatch"
+  | "authority-external"
+  | "authority-missing"
   | "attach-race"
   | "race"
   | "late-race"
@@ -34,6 +37,7 @@ function buildAddProcessScript(
   crashAfter: CrashBoundary,
   includeSecret = true,
   initializeSandbox = true,
+  operation: "add" | "restart" = "add",
 ): string {
   return String.raw`
 process.env.HOME = ${JSON.stringify(home)};
@@ -43,6 +47,11 @@ includeSecret ? (process.env.FAKE_MCP_SECRET = "host-only-secret") : delete proc
 const fs = require("node:fs");
 const path = require("node:path");
 const crashAfter = ${JSON.stringify(crashAfter)};
+const operation = ${JSON.stringify(operation)};
+const externalAuthority =
+  crashAfter === "authority-external" ||
+  crashAfter === "authority-missing" ||
+  crashAfter === "adapter-authority-refusal";
 if (
   crashAfter === "credential-projection-coalesced" ||
   crashAfter === "credential-projection-delayed-hostless"
@@ -107,7 +116,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
       : { status: 1, stdout: "", stderr: "NotFound: provider" };
   }
   if (args[0] === "provider" && (args[1] === "create" || args[1] === "update")) {
-    if (!marked("policy")) {
+    if (!marked("policy") && !externalAuthority) {
       return { status: 1, stdout: "", stderr: "provider mutation preceded policy attestation" };
     }
     if (args[1] === "create") observedProviderName = args[args.indexOf("--name") + 1], setProviderVersion(1);
@@ -215,8 +224,24 @@ policies.removePreset = () => {
   fs.rmSync(marker("policy"), { force: true });
   return true;
 };
-mcpPolicy.preflightMcpPolicyAuthority = () => "nemoclaw-managed";
-policyAuthority.preflightSandboxPolicyAuthority = () => "nemoclaw-managed";
+const inspectPolicyAuthority = (options) => {
+  if (crashAfter === "authority-missing") {
+    const requirement = options.requiredPolicyContents?.[0] ?? "";
+    const providerName = /\n\s+provider:\s+(\S+)/u.exec(requirement)?.[1] ?? "missing";
+    fs.appendFileSync(marker("authority-provider-name"), providerName + "\n", { mode: 0o600 });
+    throw new mcpPolicy.McpPolicyAuthorityRefusalError(
+      "the externally managed policy has missing entries",
+    );
+  }
+  if (crashAfter === "adapter-authority-refusal" && marked("adapter")) {
+    throw new mcpPolicy.McpPolicyAuthorityRefusalError(
+      "OpenShell policy authority changed after adapter registration",
+    );
+  }
+  return externalAuthority ? "externally-managed" : "nemoclaw-managed";
+};
+mcpPolicy.preflightMcpPolicyAuthority = inspectPolicyAuthority;
+policyAuthority.preflightSandboxPolicyAuthority = inspectPolicyAuthority;
 
 processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
   const encoded = command.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/)?.[1] || "";
@@ -291,18 +316,21 @@ if (initializeSandbox && !registry.getSandbox("crash-test")) {
     name: "crash-test",
     agent: "openclaw",
     gatewayName: "nemoclaw",
-    policyAuthority: "nemoclaw-managed",
+    policyAuthority: externalAuthority ? "externally-managed" : "nemoclaw-managed",
   });
 }
 if (crashAfter === "registered-credential-collision") {
   registry.addExtraProvider("foreign-registered");
 }
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
-bridge.addMcpBridge("crash-test", {
+const bridgeOperation = operation === "restart"
+  ? bridge.restartMcpBridge("crash-test", "fake")
+  : bridge.addMcpBridge("crash-test", {
   server: "fake",
   url: "https://8.8.8.8/mcp",
   env: [{ name: "FAKE_MCP_SECRET" }],
-}).then(
+});
+bridgeOperation.then(
   () => process.exit(0),
   (error) => {
     console.error(error && error.stack || error);
@@ -312,12 +340,17 @@ bridge.addMcpBridge("crash-test", {
 `;
 }
 
-function initializeSandboxRegistry(home: string): void {
+function initializeSandboxRegistry(
+  home: string,
+  policyAuthority = "nemoclaw-managed",
+  lifecycleGeneration?: string,
+  replace = false,
+): void {
   const result = spawnSync(
     process.execPath,
     [
       "-e",
-      `process.env.HOME = ${JSON.stringify(home)}; const registry = require("./src/lib/state/registry.js"); registry.registerSandbox({ name: "crash-test", agent: "openclaw", gatewayName: "nemoclaw", policyAuthority: "nemoclaw-managed" });`,
+      `process.env.HOME = ${JSON.stringify(home)}; const registry = require("./src/lib/state/registry.js"); if (${JSON.stringify(replace)}) registry.removeSandbox("crash-test"); registry.registerSandbox({ name: "crash-test", agent: "openclaw", gatewayName: "nemoclaw", policyAuthority: ${JSON.stringify(policyAuthority)}, lifecycleGeneration: ${JSON.stringify(lifecycleGeneration)} });`,
     ],
     {
       cwd: process.cwd(),
@@ -332,14 +365,34 @@ function initializeSandboxRegistry(home: string): void {
   ).toBe(0);
 }
 
-function runAddProcess(home: string, crashAfter: CrashBoundary, includeSecret = true) {
-  const script = buildAddProcessScript(home, crashAfter, includeSecret);
+function runAddProcess(
+  home: string,
+  crashAfter: CrashBoundary,
+  includeSecret = true,
+  operation: "add" | "restart" = "add",
+) {
+  const script = buildAddProcessScript(home, crashAfter, includeSecret, true, operation);
   return spawnSync(process.execPath, ["-e", script], {
     cwd: process.cwd(),
     encoding: "utf8",
     env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: MATCHING_OPENSHELL },
     timeout: 30_000,
   });
+}
+
+function expectExternalAuthorityRefusal(result: ReturnType<typeof runAddProcess>): void {
+  expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(2);
+  expect(result.stderr).toContain("missing entries");
+  expect(`${result.stdout}\n${result.stderr}`).not.toContain("host-only-secret");
+}
+
+function expectNoAddMutationMarkers(home: string): void {
+  expect({
+    adapter: fs.existsSync(path.join(home, "adapter.marker")),
+    attached: fs.existsSync(path.join(home, "attached.marker")),
+    policy: fs.existsSync(path.join(home, "policy.marker")),
+    provider: fs.existsSync(path.join(home, "provider.marker")),
+  }).toEqual({ adapter: false, attached: false, policy: false, provider: false });
 }
 
 function spawnScript(home: string, script: string): ChildProcessWithoutNullStreams {
@@ -694,6 +747,91 @@ describe("MCP add crash consistency", () => {
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
       expect(readBridge(home).addState).toBeUndefined();
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the external provider binding stable across first refusal retries and changes it for a new sandbox lifecycle (#9833)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-external-binding-"));
+    try {
+      initializeSandboxRegistry(home, "externally-managed", "external-generation-1");
+
+      const first = runAddProcess(home, "authority-missing");
+      const second = runAddProcess(home, "authority-missing");
+      expectExternalAuthorityRefusal(first);
+      expectExternalAuthorityRefusal(second);
+
+      const providerNames = fs
+        .readFileSync(path.join(home, "authority-provider-name.marker"), "utf8")
+        .trim()
+        .split("\n");
+      expect(providerNames).toHaveLength(2);
+      expect(providerNames[1]).toBe(providerNames[0]);
+      expect(
+        JSON.parse(fs.readFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), "utf8"))
+          .sandboxes["crash-test"].mcp,
+      ).toBeUndefined();
+      expectNoAddMutationMarkers(home);
+
+      initializeSandboxRegistry(home, "externally-managed", "external-generation-2", true);
+      const nextLifecycle = runAddProcess(home, "authority-missing");
+      expect(nextLifecycle.status, `${nextLifecycle.stdout}\n${nextLifecycle.stderr}`).toBe(2);
+      const nextProviderName = fs
+        .readFileSync(path.join(home, "authority-provider-name.marker"), "utf8")
+        .trim()
+        .split("\n")
+        .at(-1);
+      expect(nextProviderName).not.toBe(providerNames[0]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("adds and restarts under matching external policy without mutation or attribution (#9833)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-external-positive-"));
+    try {
+      initializeSandboxRegistry(home, "externally-managed", "external-generation");
+
+      const added = runAddProcess(home, "authority-external");
+      expect(added.status, `${added.stdout}\n${added.stderr}`).toBe(0);
+      const restarted = runAddProcess(home, "authority-external", true, "restart");
+      expect(restarted.status, `${restarted.stdout}\n${restarted.stderr}`).toBe(0);
+
+      const registry = JSON.parse(
+        fs.readFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), "utf8"),
+      ) as {
+        sandboxes: {
+          "crash-test": { customPolicies?: unknown; policyAuthority?: string };
+        };
+      };
+      expect(registry.sandboxes["crash-test"]).toMatchObject({
+        policyAuthority: "externally-managed",
+      });
+      expect(registry.sandboxes["crash-test"].customPolicies).toBeUndefined();
+      expect(readBridge(home).addState).toBeUndefined();
+      expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "policy-apply-log.marker"))).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("removes adapter and provider mutations after external authority changes post-adapter (#9833)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-adapter-authority-"));
+    try {
+      initializeSandboxRegistry(home, "externally-managed", "external-generation");
+
+      const refused = runAddProcess(home, "adapter-authority-refusal");
+
+      expect(refused.status, `${refused.stdout}\n${refused.stderr}`).toBe(2);
+      expect(refused.stderr).toContain("authority changed after adapter registration");
+      expect(`${refused.stdout}\n${refused.stderr}`).not.toContain("host-only-secret");
+      expect(readBridge(home)).toMatchObject({ addState: "preflighted" });
+      expectNoAddMutationMarkers(home);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

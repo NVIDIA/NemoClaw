@@ -8,6 +8,11 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import {
+  createHermesShieldsProviderConsumerHarness,
+  hermesProviderConsumerSandbox,
+  hermesProviderConsumerTarget,
+} from "../../../test/helpers/hermes-shields-provider-consumer-harness";
+import {
   createHermesUnsafeConfigHarness,
   expectHermesShieldsUpRecord,
   failHermesInferenceConvergence,
@@ -15,7 +20,9 @@ import {
 } from "../../../test/helpers/hermes-unsafe-config-shields-harness";
 import {
   createShieldsFlowHarness,
+  externalPolicyAuthorityInspection,
   type ShieldsFlowHarnessOptions,
+  writeLockedShieldsState,
 } from "../../../test/helpers/shields-flow-harness";
 import type { AgentConfigTarget } from "../sandbox/agent-config";
 
@@ -517,6 +524,54 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     delete require.cache[requireSource.resolve("./permissive-runtime.js")];
     delete require.cache[requireSource.resolve("../actions/sandbox/mcp-bridge-policy.js")];
     delete require.cache[requireSource.resolve("../cli/branding.js")];
+  });
+
+  it("rechecks authority after policy set and before Shields down unlocks config (#9833)", () => {
+    writeLockedShieldsState(tmpDir, "openclaw", "/sandbox/.openclaw/openclaw.json");
+    const harness = createHarness({ initialOpenClawPosture: "locked" });
+    const policyAuthority = requireSource(
+      "../adapters/openshell/policy-authority.js",
+    ) as typeof import("../adapters/openshell/policy-authority.js");
+    vi.mocked(policyAuthority.inspectSandboxPolicyAuthority).mockImplementation(() => ({
+      authority: harness.runSpy.mock.calls.length > 0 ? "externally-managed" : "nemoclaw-managed",
+      effectivePolicy: { version: 1, network_policies: {} },
+    }));
+
+    expect(() => harness.shieldsDown("openclaw", { throwOnError: true })).toThrow(
+      /policy authority changed/u,
+    );
+    expect(harness.runSpy).toHaveBeenCalledOnce();
+    expect(harness.getOpenClawPosture()).toBe("locked");
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+  });
+
+  it("relocks config and retains recovery after authority changes post-unlock (#9833)", () => {
+    writeLockedShieldsState(tmpDir, "openclaw", "/sandbox/.openclaw/openclaw.json");
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const harness = createHarness({
+      confirmOpenClawInodeFlags: true,
+      initialOpenClawPosture: "locked",
+    });
+    const policyAuthority = requireSource(
+      "../adapters/openshell/policy-authority.js",
+    ) as typeof import("../adapters/openshell/policy-authority.js");
+    vi.mocked(policyAuthority.inspectSandboxPolicyAuthority).mockImplementation(() => ({
+      authority:
+        harness.getOpenClawPosture() === "mutable" ? "externally-managed" : "nemoclaw-managed",
+      effectivePolicy: { version: 1, network_policies: {} },
+    }));
+
+    expect(() => harness.shieldsDown("openclaw", { throwOnError: true })).toThrow(
+      expect.objectContaining({ code: "NEMOCLAW_POLICY_AUTHORITY_REFUSAL" }),
+    );
+    expect(harness.getOpenClawPosture()).toBe("locked");
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf8")),
+    ).toMatchObject({ shieldsDown: true });
+    expect(fs.existsSync(path.join(stateDir, "shields-timer-openclaw.json"))).toBe(true);
+    expect(harness.auditSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "shields_down" }),
+    );
   });
 
   it.each(retryAgentCases)(
@@ -1363,5 +1418,73 @@ describe("Hermes Shields down unsafe config path (#8804)", () => {
     ).toMatchObject({ shieldsDown: true });
     expect(errors).toContain("Manual intervention is required");
     expect(errors).not.toContain("provisional Shields down cleared");
+  });
+});
+
+describe("Hermes provider policy authority", () => {
+  it("restores retained and replacement provider protection under external authority (#9833)", () => {
+    const harness = createHermesShieldsProviderConsumerHarness(requireSource);
+    try {
+      harness.registrySpy.mockReturnValue({
+        ...hermesProviderConsumerSandbox,
+        policyAuthority: "externally-managed",
+      });
+      harness.lifecycleGateSpy.mockReturnValue(false);
+      const policyAuthority = requireSource(
+        "../adapters/openshell/policy-authority.js",
+      ) as typeof import("../adapters/openshell/policy-authority.js");
+      vi.mocked(policyAuthority.inspectSandboxPolicyAuthority).mockReturnValue(
+        externalPolicyAuthorityInspection,
+      );
+      harness.spies.push(
+        vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+          throw new Error(`process exit ${String(code)}`);
+        }) as never),
+      );
+
+      expect(() => harness.shields.shieldsStatus(hermesProviderConsumerSandbox.name)).toThrow(
+        "process exit 2",
+      );
+      expect(harness.transitionSpy).not.toHaveBeenCalled();
+      fs.mkdirSync(
+        path.join(process.env.HOME!, ".nemoclaw", "state", "runtime-provider-lifecycle"),
+        { recursive: true, mode: 0o700 },
+      );
+      harness.lifecycleGateSpy.mockReturnValue(true);
+      expect(() => harness.shields.shieldsStatus(hermesProviderConsumerSandbox.name)).toThrow(
+        "process exit 2",
+      );
+      expect(harness.transitionSpy).toHaveBeenCalledOnce();
+
+      harness.cleanup();
+      const replacementHarness = createHermesShieldsProviderConsumerHarness(requireSource);
+      replacementHarness.registrySpy.mockReturnValue({
+        ...hermesProviderConsumerSandbox,
+        policyAuthority: "externally-managed",
+      });
+      const replacementAuthority = requireSource(
+        "../adapters/openshell/policy-authority.js",
+      ) as typeof import("../adapters/openshell/policy-authority.js");
+      vi.mocked(replacementAuthority.inspectSandboxPolicyAuthority).mockReturnValue(
+        externalPolicyAuthorityInspection,
+      );
+      writeLockedShieldsState(
+        process.env.HOME!,
+        hermesProviderConsumerSandbox.name,
+        hermesProviderConsumerTarget.configPath,
+      );
+      replacementHarness.shields.rebindReplacementConfigLock(
+        hermesProviderConsumerSandbox.name,
+        true,
+      );
+      expect(replacementHarness.transitionSpy).toHaveBeenCalledTimes(2);
+      expect(replacementHarness.transitionSpy).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ target: "locked", rollback: "locked" }),
+      );
+      replacementHarness.cleanup();
+    } finally {
+      harness.cleanup();
+    }
   });
 });

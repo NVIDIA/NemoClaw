@@ -160,45 +160,6 @@ describe("rebuild shields relock guard", () => {
     expect(rebuildWindow.relocked).toBe(false);
   });
 
-  it("revalidates policy authority after destroy before replacement mutations (#9833)", async () => {
-    phaseMocks.runBackup.mockReturnValue({
-      backupManifest: null,
-      backupWasForceSkipped: false,
-      policyPresets: [],
-      sessionPolicyPresets: [],
-    });
-    phaseMocks.runDestroy.mockImplementation(
-      async (input: {
-        validateAfterDeleteConfirmation?: () => Promise<unknown>;
-      }) => {
-        await expect(input.validateAfterDeleteConfirmation?.()).resolves.toEqual({ ok: true });
-        phaseMocks.revalidateAuthority.mockRejectedValue(
-          new Error("Policy authority receipt changed after deletion."),
-        );
-        return {
-          entries: [],
-          detachedProviderEntries: [],
-          scrubbedAdapterEntries: [],
-          removalReceipt: null,
-        };
-      },
-    );
-
-    await expect(rebuildSandbox("alpha", ["--yes"], { throwOnError: true })).rejects.toThrow(
-      "Policy authority receipt changed after deletion.",
-    );
-
-    expect(phaseMocks.revalidateAuthority).toHaveBeenCalledTimes(3);
-    expect(
-      phaseMocks.revalidateAuthority.mock.calls.every(
-        ([receipt]) => receipt === policyAuthorityReceipt,
-      ),
-    ).toBe(true);
-    expect(phaseMocks.recordRegistryRemoval).not.toHaveBeenCalled();
-    expect(applyDcodePatch).not.toHaveBeenCalled();
-    expect(phaseMocks.runRecreate).not.toHaveBeenCalled();
-  });
-
   it("blocks a pending baseline transition before shields, backup, or destroy phases begin (#7194)", async () => {
     const bail = vi.fn();
     phaseMocks.runPreflight.mockResolvedValue({

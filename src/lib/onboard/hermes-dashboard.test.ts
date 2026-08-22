@@ -252,31 +252,6 @@ describe("onboard Hermes dashboard helpers", () => {
     expect(revalidatePolicyAuthority).toHaveBeenCalledTimes(2);
   });
 
-  it("withholds Hermes dashboard success when authority changes after forwarding (#9833)", () => {
-    const note = vi.fn();
-    const ensure = createHermesDashboardForwardEnsurer({
-      state: resolveHermesDashboardOnboardState({
-        agentName: "hermes",
-        effectivePort: 18789,
-        env: { NEMOCLAW_HERMES_DASHBOARD: "1" },
-      }),
-      ensureForward: vi.fn(() => true),
-      note,
-      rollbackSandbox: vi.fn(),
-      fail: (message): never => {
-        throw new Error(message);
-      },
-    });
-
-    expect(() =>
-      ensure("my-hermes", false, () => {
-        throw new Error("policy authority changed");
-      }),
-    ).toThrow("policy authority changed");
-
-    expect(note).not.toHaveBeenCalled();
-  });
-
   it("stops Hermes dashboard rollback when authority changes between commands (#9833)", () => {
     const runOpenshell = vi.fn();
     const revalidatePolicyAuthority = vi

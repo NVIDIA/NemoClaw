@@ -103,19 +103,13 @@ export async function selectBedrockRuntimeCustomAnthropic(
       printMissingBedrockAuth(error);
       return exitProcess(1);
     }
-    const credentialResult = options.credentialMutationGuard
-      ? await options.replaceNamedCredential(
-          credentialEnv,
-          `${options.label} API key`,
-          options.helpUrl,
-          null,
-          options.credentialMutationGuard,
-        )
-      : await options.replaceNamedCredential(
-          credentialEnv,
-          `${options.label} API key`,
-          options.helpUrl,
-        );
+    const credentialResult = await options.replaceNamedCredential(
+      credentialEnv,
+      `${options.label} API key`,
+      options.helpUrl,
+      null,
+      options.credentialMutationGuard,
+    );
     if (credentialResult === options.backToSelection) {
       return { action: "retry-selection" };
     }

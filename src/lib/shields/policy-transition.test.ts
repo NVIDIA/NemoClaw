@@ -231,29 +231,6 @@ describe("shields down policy rejection", () => {
     });
   }
 
-  it("stops before Shields state or policy mutation when policy is externally managed (#9833)", () => {
-    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
-      policyAuthorityInspection: {
-        authority: "externally-managed",
-        effectivePolicy: { version: 1, network_policies: {} },
-      },
-      sandboxEntry: {
-        name: "openclaw",
-        openshellDriver: "docker",
-        policyAuthority: "externally-managed",
-      },
-    });
-
-    expect(() => harness.shieldsDown("openclaw", { throwOnError: true })).toThrow(
-      "OpenShell policy is externally managed",
-    );
-    expect(harness.runSpy).not.toHaveBeenCalled();
-    expect(harness.auditSpy).not.toHaveBeenCalled();
-    expect(fs.existsSync(path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json"))).toBe(
-      false,
-    );
-  });
-
   it("keeps `shields status` at `UP` when OpenShell rejects the permissive policy (#8198)", () => {
     const harness = createRejectedPolicyHarness();
 

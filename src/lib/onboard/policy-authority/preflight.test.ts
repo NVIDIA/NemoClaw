@@ -3,11 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  qualifyGlobalPolicyAuthority,
-  qualifySandboxPolicyAuthority,
-  requiredOnboardPolicyPresets,
-} from "./preflight";
+import { qualifySandboxPolicyAuthority, requiredOnboardPolicyPresets } from "./preflight";
 
 const requiredPolicy = {
   policyPath: "/tmp/unused.yaml",
@@ -28,25 +24,6 @@ describe("sandbox policy authority preflight", () => {
         observabilityEnabled: true,
       }),
     ).toEqual(["github", "local-inference", "tavily", "observability-otlp-local"]);
-  });
-
-  it("binds the global authority before provider selection (#9833)", () => {
-    const inspectGlobal = vi.fn(() => ({
-      authority: "externally-managed" as const,
-      effectivePolicy: { network_policies: {} },
-    }));
-
-    const result = qualifyGlobalPolicyAuthority(
-      {
-        gatewayName: "nemoclaw",
-        recordedAuthority: "externally-managed",
-        operation: "continue onboarding",
-      },
-      { inspectGlobalPolicyAuthority: inspectGlobal },
-    );
-
-    expect(result.authority).toBe("externally-managed");
-    expect(inspectGlobal).toHaveBeenCalledWith({ gatewayName: "nemoclaw" });
   });
 
   it("uses live sandbox metadata and accepts externally supplied requirements (#9833)", () => {

@@ -78,8 +78,7 @@ const managedRuntime: HostLocalInferenceRuntime = {
   startManaged: vi.fn(),
   inspectManaged: vi.fn((value) => ({ running: true, receipt: value })),
   stopManaged: vi.fn((value) => ({ running: false, receipt: value })),
-  preserveForRebuild:
-    harness.preserveForRebuild as HostLocalInferenceRuntime["preserveForRebuild"],
+  preserveForRebuild: harness.preserveForRebuild as HostLocalInferenceRuntime["preserveForRebuild"],
   prepareDestroy: harness.prepareDestroy as HostLocalInferenceRuntime["prepareDestroy"],
   destroy: harness.destroy as HostLocalInferenceRuntime["destroy"],
 };
@@ -134,6 +133,26 @@ function sourceEntry(receipt?: string): Record<string, unknown> {
     endpointUrl: "https://inference.local/v1",
     lifecycleGeneration: "alpha-generation-1",
     ...(receipt ? { hostLocalInferenceReceipt: receipt } : {}),
+  };
+}
+
+function llamaCppSourceEntry(): { entry: Record<string, unknown>; receipt: string } {
+  const receipt = serializedLlamaCppHostLocalInferenceReceipt();
+  return {
+    entry: {
+      ...sourceEntry(),
+      openshellDriver: "docker",
+      provider: "llama-cpp-local",
+      model: "llama-cpp-model",
+      endpointUrl: "https://inference.local/v1",
+      endpointSource: "inference-set",
+      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      preferredInferenceApi: "openai-completions",
+      gatewayPort: 8080,
+      hostLocalInferenceReceipt: receipt,
+      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance("alpha", receipt),
+    },
+    receipt,
   };
 }
 
@@ -313,20 +332,8 @@ describe("snapshot restore auto-create failures", () => {
   });
 
   it("releases an exact host-local clone reservation when auto-create fails", async () => {
-    const receipt = serializedLlamaCppHostLocalInferenceReceipt();
-    harness.entries.set("alpha", {
-      ...sourceEntry(),
-      openshellDriver: "docker",
-      provider: "llama-cpp-local",
-      model: "llama-cpp-model",
-      endpointUrl: "https://inference.local/v1",
-      endpointSource: "inference-set",
-      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
-      preferredInferenceApi: "openai-completions",
-      gatewayPort: 8080,
-      hostLocalInferenceReceipt: receipt,
-      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance("alpha", receipt),
-    });
+    const { entry, receipt } = llamaCppSourceEntry();
+    harness.entries.set("alpha", entry);
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
@@ -349,27 +356,15 @@ describe("snapshot restore auto-create failures", () => {
   });
 
   it("releases an exact host-local clone reservation when auto-create rejects", async () => {
-    const receipt = serializedLlamaCppHostLocalInferenceReceipt();
-    harness.entries.set("alpha", {
-      ...sourceEntry(),
-      openshellDriver: "docker",
-      provider: "llama-cpp-local",
-      model: "llama-cpp-model",
-      endpointUrl: "https://inference.local/v1",
-      endpointSource: "inference-set",
-      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
-      preferredInferenceApi: "openai-completions",
-      gatewayPort: 8080,
-      hostLocalInferenceReceipt: receipt,
-      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance("alpha", receipt),
-    });
+    const { entry, receipt } = llamaCppSourceEntry();
+    harness.entries.set("alpha", entry);
     streamSandboxCreateMock.mockRejectedValue(new Error("injected create rejection"));
     vi.spyOn(console, "log").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
 
-    await expect(
-      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
-    ).rejects.toThrow("injected create rejection");
+    await expect(runSandboxSnapshot("alpha", { kind: "restore", to: "beta" })).rejects.toThrow(
+      "injected create rejection",
+    );
 
     expect(reserveSandboxInferenceRouteMock).toHaveBeenCalledWith(
       "beta",
@@ -385,20 +380,7 @@ describe("snapshot restore auto-create failures", () => {
   });
 
   it("preserves cleanup ownership when the Ready clone authority is refused (#9833)", async () => {
-    const receipt = serializedLlamaCppHostLocalInferenceReceipt();
-    harness.entries.set("alpha", {
-      ...sourceEntry(),
-      openshellDriver: "docker",
-      provider: "llama-cpp-local",
-      model: "llama-cpp-model",
-      endpointUrl: "https://inference.local/v1",
-      endpointSource: "inference-set",
-      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
-      preferredInferenceApi: "openai-completions",
-      gatewayPort: 8080,
-      hostLocalInferenceReceipt: receipt,
-      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance("alpha", receipt),
-    });
+    harness.entries.set("alpha", llamaCppSourceEntry().entry);
     streamSandboxCreateMock.mockResolvedValue({
       status: 0,
       output: "beta Ready",
@@ -428,20 +410,7 @@ describe("snapshot restore auto-create failures", () => {
   });
 
   it("revalidates source authority before route reservation or clone creation (#9833)", async () => {
-    const receipt = serializedLlamaCppHostLocalInferenceReceipt();
-    harness.entries.set("alpha", {
-      ...sourceEntry(),
-      openshellDriver: "docker",
-      provider: "llama-cpp-local",
-      model: "llama-cpp-model",
-      endpointUrl: "https://inference.local/v1",
-      endpointSource: "inference-set",
-      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
-      preferredInferenceApi: "openai-completions",
-      gatewayPort: 8080,
-      hostLocalInferenceReceipt: receipt,
-      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance("alpha", receipt),
-    });
+    harness.entries.set("alpha", llamaCppSourceEntry().entry);
     refusePolicyAuthorityInspectionOnCall(
       inspectSandboxPolicyAuthorityMock,
       3,

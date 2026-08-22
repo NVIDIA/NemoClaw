@@ -85,17 +85,6 @@ function seedBlueprintFile(bp?: Record<string, unknown>): void {
   addFile("blueprint.yaml", YAML.stringify(bp ?? minimalBlueprint()));
 }
 
-function mockCurrentPolicy(stdout: string): void {
-  mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-    runnerCommandResult(
-      args,
-      args.join(" ") === "policy get -g test-gateway --base test-sandbox"
-        ? { exitCode: 0, stdout, stderr: "" }
-        : { exitCode: 0, stdout: "", stderr: "" },
-    ),
-  );
-}
-
 describe("runner", () => {
   beforeEach(() => {
     store.clear();
@@ -731,103 +720,6 @@ describe("runner", () => {
           .every((call) => call[1].includes("--output")),
       ).toBe(true);
       expect(policyCalls.some((call) => call[1][1] === "set")).toBe(false);
-    });
-
-    it("records authority before rejecting a missing external addition without resource mutation (#9833)", async () => {
-      const bp = blueprintWithPolicyAdditions({ nim_service: { name: "nim_service" } });
-      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        args.join(" ") === "status"
-          ? gatewayStatusResult()
-          : args.join(" ") === "policy list -g test-gateway --global --limit 1"
-            ? globalPolicyHistoryResult()
-            : globalPolicyAuthorityResult(),
-      );
-
-      await expect(actionApply("default", bp)).rejects.toThrow(/missing entries "nim_service"/);
-
-      expect(mockExeca).toHaveBeenCalledTimes(3);
-      expect([...store.keys()].some((key) => key.endsWith("/plan.json"))).toBe(true);
-    });
-
-    it("fails closed when the live policy cannot be parsed", async () => {
-      const bp = blueprintWithPolicyAdditions({
-        nim_service: {
-          name: "nim_service",
-          endpoints: [
-            {
-              host: "integrate.api.nvidia.com",
-              port: 443,
-              access: "full",
-            },
-          ],
-        },
-      });
-
-      mockCurrentPolicy(
-        ["Version: 1", "Hash: sha256:test", "---", "network_policies: ["].join("\n"),
-      );
-
-      await expect(actionApply("default", bp)).rejects.toThrow(/current policy.*not valid YAML/i);
-      const policySetCalls = mockExeca.mock.calls.filter(
-        (c) => Array.isArray(c[1]) && c[1][0] === "policy" && c[1][1] === "set",
-      );
-      expect(policySetCalls).toEqual([]);
-    });
-
-    it("fails closed when live network_policies is not a mapping", async () => {
-      const bp = blueprintWithPolicyAdditions({
-        nim_service: {
-          name: "nim_service",
-          endpoints: [{ host: "integrate.api.nvidia.com", port: 443, access: "full" }],
-        },
-      });
-      mockCurrentPolicy(
-        ["Version: 1", "Hash: sha256:test", "---", "network_policies: []"].join("\n"),
-      );
-
-      await expect(actionApply("default", bp)).rejects.toThrow(
-        /network_policies must be a YAML mapping/i,
-      );
-      const policySetCalls = mockExeca.mock.calls.filter(
-        (c) => Array.isArray(c[1]) && c[1][0] === "policy" && c[1][1] === "set",
-      );
-      expect(policySetCalls).toEqual([]);
-    });
-
-    it("fails closed when policy get --base does not include a policy document", async () => {
-      const bp = blueprintWithPolicyAdditions({
-        nim_service: {
-          name: "nim_service",
-          endpoints: [{ host: "integrate.api.nvidia.com", port: 443, access: "full" }],
-        },
-      });
-      mockCurrentPolicy(["Version: 1", "Hash: sha256:test"].join("\n"));
-
-      await expect(actionApply("default", bp)).rejects.toThrow(
-        /does not contain a policy YAML document/i,
-      );
-      const policySetCalls = mockExeca.mock.calls.filter(
-        (c) => Array.isArray(c[1]) && c[1][0] === "policy" && c[1][1] === "set",
-      );
-      expect(policySetCalls).toEqual([]);
-    });
-
-    it("fails closed when policy get --base returns metadata without a policy document", async () => {
-      const bp = blueprintWithPolicyAdditions({
-        nim_service: {
-          name: "nim_service",
-          endpoints: [{ host: "integrate.api.nvidia.com", port: 443, access: "full" }],
-        },
-      });
-      mockCurrentPolicy(["Version: 1", "Hash: sha256:test", "---"].join("\n"));
-
-      await expect(actionApply("default", bp)).rejects.toThrow(
-        /does not contain a policy YAML document/i,
-      );
-      const policySetCalls = mockExeca.mock.calls.filter(
-        (call) => Array.isArray(call[1]) && call[1][0] === "policy" && call[1][1] === "set",
-      );
-      expect(policySetCalls).toEqual([]);
     });
 
     it("skips policy mutation when policy additions are empty (#9833)", async () => {

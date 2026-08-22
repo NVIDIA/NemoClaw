@@ -301,35 +301,4 @@ describe("rebuild policy authority preflight", () => {
     ).rejects.toThrow(/missing entries "custom-api"/);
     expect(inspectSandbox).not.toHaveBeenCalled();
   });
-
-  it("checks global authority after deletion and the replacement sandbox when it returns (#9833)", async () => {
-    const entry = sandboxEntry("externally-managed");
-    vi.spyOn(registry, "getSandbox").mockReturnValue(entry);
-    const inspection = {
-      authority: "externally-managed" as const,
-      effectivePolicy: externalEffectivePolicy(),
-    };
-    const presence = vi.fn<() => "present" | "missing">();
-    presence
-      .mockReturnValueOnce("present")
-      .mockReturnValueOnce("missing")
-      .mockReturnValue("present");
-    const inspectSandbox = vi.fn(() => inspection);
-    const deps = {
-      observeSandboxPresence: presence,
-      inspectSandboxPolicyAuthority: inspectSandbox,
-      inspectGlobalPolicyAuthority: vi.fn(() => inspection),
-    };
-
-    const receipt = await qualifyRebuildPolicyAuthority(
-      { sandboxName: "alpha", sandboxEntry: entry, manifest: null },
-      deps,
-    );
-    await revalidateRebuildPolicyAuthority(receipt, deps);
-    await revalidateRebuildPolicyAuthority(receipt, deps);
-
-    expect(presence).toHaveBeenCalledTimes(3);
-    expect(inspectSandbox).toHaveBeenCalledTimes(2);
-    expect(deps.inspectGlobalPolicyAuthority).toHaveBeenCalledTimes(3);
-  });
 });

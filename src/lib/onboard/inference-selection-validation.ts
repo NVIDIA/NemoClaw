@@ -161,22 +161,6 @@ export function createInferenceSelectionValidationHelpers(
   const runOpenAiLikeProbe = deps.probeOpenAiLikeEndpoint ?? probeOpenAiLikeEndpointOptimized;
   const trustedPrivateEndpointHosts =
     deps.trustedPrivateEndpointHosts ?? parseTrustedPrivateInferenceHostsFromEnv(process.env);
-  const promptRecovery = (
-    label: string,
-    recovery: ReturnType<typeof getProbeRecovery>,
-    credentialEnv: string | null,
-    helpUrl: string | null,
-    revalidatePolicyRequirements?: (operation: string) => void,
-  ) =>
-    revalidatePolicyRequirements
-      ? deps.promptValidationRecovery(
-          label,
-          recovery,
-          credentialEnv,
-          helpUrl,
-          revalidatePolicyRequirements,
-        )
-      : deps.promptValidationRecovery(label, recovery, credentialEnv, helpUrl);
 
   function exitNonInteractiveValidationFailure(): never {
     // #8952: tear down an unowned managed gateway before fatal exit.
@@ -304,7 +288,7 @@ export function createInferenceSelectionValidationHelpers(
     if (deps.isNonInteractive()) {
       exitNonInteractiveValidationFailure();
     }
-    const retry = await promptRecovery(
+    const retry = await deps.promptValidationRecovery(
       label,
       getProbeRecovery(syntheticProbe),
       credentialEnv,
@@ -345,7 +329,7 @@ export function createInferenceSelectionValidationHelpers(
       if (deps.isNonInteractive()) {
         exitNonInteractiveValidationFailure();
       }
-      const retry = await promptRecovery(
+      const retry = await deps.promptValidationRecovery(
         label,
         getProbeRecovery(probe),
         credentialEnv,
@@ -394,7 +378,7 @@ export function createInferenceSelectionValidationHelpers(
       if (deps.isNonInteractive()) {
         exitNonInteractiveValidationFailure();
       }
-      const retry = await promptRecovery(
+      const retry = await deps.promptValidationRecovery(
         label,
         getProbeRecovery(probe),
         credentialEnv,
@@ -469,7 +453,7 @@ export function createInferenceSelectionValidationHelpers(
     if (deps.isNonInteractive()) {
       exitNonInteractiveValidationFailure();
     }
-    const retry = await promptRecovery(
+    const retry = await deps.promptValidationRecovery(
       label,
       getProbeRecovery(probe, { allowModelRetry: true }),
       credentialEnv,
@@ -555,7 +539,7 @@ export function createInferenceSelectionValidationHelpers(
     if (deps.isNonInteractive()) {
       exitNonInteractiveValidationFailure();
     }
-    const retry = await promptRecovery(
+    const retry = await deps.promptValidationRecovery(
       label,
       recovery,
       credentialEnv,

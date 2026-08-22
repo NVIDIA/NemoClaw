@@ -10,6 +10,8 @@ import {
   returningToProviderSelection,
   shouldReturnToProviderSelection,
 } from "./credential-navigation";
+import { handleRoutedSelection } from "./inference-providers/routed-selection";
+import type { SetupNimSelectionState } from "./setup-nim-selection";
 
 describe("credential prompt navigation helpers", () => {
   it("treats both the shared back sentinel and credential back intents as provider-selection navigation", () => {
@@ -98,4 +100,61 @@ describe("credential prompt navigation helpers", () => {
     expect(process.env.NEMOCLAW_TEST_POLICY_CREDENTIAL).toBeUndefined();
     vi.restoreAllMocks();
   });
+
+  it.each(["configured", "bridged"] as const)(
+    "stops Model Router %s credential persistence when policy authority changes (#9833)",
+    async (source) => {
+      const saveCredential = vi.fn();
+      const stageRouterProviderKeyBridge = vi.fn();
+      const state = {
+        model: null,
+        provider: "",
+        endpointUrl: null,
+        credentialEnv: null,
+        hermesAuthMethod: null,
+        hermesToolGateways: [],
+        preferredInferenceApi: null,
+        nimContainer: null,
+        allowToolsIncompatible: false,
+        revalidatePolicyRequirements: () => {
+          throw new Error("external policy authority must supply the selected route");
+        },
+      } satisfies SetupNimSelectionState;
+
+      await expect(
+        handleRoutedSelection(state, {
+          modelRouter: {
+            DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV: "ROUTER_KEY",
+            loadBlueprintProfile: () => ({
+              model: "router/model",
+              router: { enabled: true, credential_env: "ROUTER_KEY" },
+            }),
+          },
+          localInference: { HOST_GATEWAY_URL: "http://host.openshell.internal" },
+          urlUtils: { isLoopbackHostname: () => false },
+          credentials: {
+            normalizeCredentialValue: (value) => String(value ?? ""),
+            resolveProviderCredential: () => null,
+            saveCredential,
+          },
+          hydrateCredentialEnv: () => (source === "configured" ? "configured-secret" : null),
+          providerKeyBridge: {
+            resolveRouterProviderKeyBridge: () => (source === "bridged" ? "bridged-secret" : null),
+            stageRouterProviderKeyBridge,
+          },
+          isNonInteractive: () => true,
+          exitProcess: (code): never => {
+            throw new Error(`unexpected exit ${String(code)}`);
+          },
+          credentialPrompt: {
+            ensureNamedCredential: vi.fn(),
+            returningToProviderSelection: () => false,
+          },
+        }),
+      ).rejects.toThrow(/external policy authority must supply/u);
+
+      expect(saveCredential).not.toHaveBeenCalled();
+      expect(stageRouterProviderKeyBridge).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
+import { assertRecordedPolicyAuthority } from "../../adapters/openshell/policy-authority";
 import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../adapters/openshell/resolve-shared";
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
@@ -210,28 +211,6 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<Result>(input: {
   return created;
 }
 
-/** Keep provider cleanup ahead of the final receipt check that guards sandbox deletion. */
-export function runSandboxDeleteWithPolicyAuthorityCheck<Result>(input: {
-  readonly cleanupProviders: () => void;
-  readonly revalidate: () => void;
-  readonly deleteSandbox: () => Result;
-}): Result {
-  input.cleanupProviders();
-  input.revalidate();
-  return input.deleteSandbox();
-}
-
-function assertCreatePolicyAuthorityUnchanged(
-  observed: string,
-  recorded: string,
-  operation: string,
-): void {
-  if (observed === recorded) return;
-  throw new Error(
-    `Policy authority changed before ${operation}. Ask the external policy authority to supply or change the required entry.`,
-  );
-}
-
 function assertHermesPortablePolicyAuthority(
   hermesPortableLifecycle: boolean,
   policyAuthority: string,
@@ -329,7 +308,7 @@ export function applyManagedSandboxRebuildPolicyCarryForward(
 }
 
 /** Reseed an outer rebuild after its owned delete leaves no live source branch. */
-export function applyAbsentSandboxRebuildPolicyCarryForward(
+function applyAbsentSandboxRebuildPolicyCarryForward(
   input: {
     readonly sandboxName: string;
     readonly liveExists: boolean;
@@ -343,15 +322,6 @@ export function applyAbsentSandboxRebuildPolicyCarryForward(
 ): void {
   if (input.liveExists || !Array.isArray(input.rebuildPolicyPresets)) return;
   applyManagedSandboxRebuildPolicyCarryForward(input, applyRecreatePolicyCarryForward);
-}
-
-export function proveRecreateSourceBeforePolicyCarryForward<T>(input: {
-  readonly createRecreateRuntime: () => T;
-  readonly carryForward: () => void;
-}): T {
-  const runtime = input.createRecreateRuntime();
-  input.carryForward();
-  return runtime;
 }
 
 async function validatePortableManagedWorkloadSelection(input: {
@@ -721,11 +691,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const resolvedPolicyAuthority = policyAuthorityInspection.authority;
     const revalidatePolicyAuthority = (sandboxIsLive: boolean, operation: string): void => {
       const inspection = qualifyPolicyAuthority(sandboxIsLive, operation);
-      assertCreatePolicyAuthorityUnchanged(
-        inspection.authority,
-        resolvedPolicyAuthority,
-        operation,
-      );
+      assertRecordedPolicyAuthority(resolvedPolicyAuthority, inspection.authority, operation);
     };
     assertHermesPortablePolicyAuthority(
       agentCreateInput.hermesPortableLifecycle,
@@ -747,31 +713,27 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     // changed before the replacement can be created.
     let recreateRuntime:
       | import("../sandbox-recreate-transaction").SandboxRecreateRuntime
-      | OwnedSandboxRecreateRuntime = proveRecreateSourceBeforePolicyCarryForward({
-      createRecreateRuntime: () =>
-        sandboxRecreateTransaction.createSandboxRecreateRuntime(
-          onboardSession,
-          createIntent?.recreateTransaction,
-          sandboxName,
-          GATEWAY_NAME,
-          existingEntry,
-          getSandboxRecreateObservation,
-          note,
-        ),
-      carryForward: () =>
-        applyAbsentSandboxRebuildPolicyCarryForward(
-          {
-            sandboxName,
-            liveExists,
-            policyAuthority: resolvedPolicyAuthority,
-            nonInteractive: isNonInteractive(),
-            note,
-            rebuildPolicyPresets: createIntent?.rebuildPolicyPresets,
-            revalidatePolicyAuthority: (operation) => revalidatePolicyAuthority(false, operation),
-          },
-          policyPresetCarry.applyRecreatePolicyCarryForward,
-        ),
-    });
+      | OwnedSandboxRecreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(
+      onboardSession,
+      createIntent?.recreateTransaction,
+      sandboxName,
+      GATEWAY_NAME,
+      existingEntry,
+      getSandboxRecreateObservation,
+      note,
+    );
+    applyAbsentSandboxRebuildPolicyCarryForward(
+      {
+        sandboxName,
+        liveExists,
+        policyAuthority: resolvedPolicyAuthority,
+        nonInteractive: isNonInteractive(),
+        note,
+        rebuildPolicyPresets: createIntent?.rebuildPolicyPresets,
+        revalidatePolicyAuthority: (operation) => revalidatePolicyAuthority(false, operation),
+      },
+      policyPresetCarry.applyRecreatePolicyCarryForward,
+    );
     const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
       ({ chatUiUrl } = await sandboxReuse.restoreReusedSandboxDashboardState({
         sandboxName,
@@ -1133,24 +1095,19 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
 
       revalidatePolicyAuthority(true, `recreating sandbox '${sandboxName}'`);
       if (recreateRuntime.beginDelete() === "source") {
-        runSandboxDeleteWithPolicyAuthorityCheck({
-          cleanupProviders: () => {
-            revalidatePolicyAuthority(true, `cleaning up providers for sandbox '${sandboxName}'`);
-            runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
-          },
-          revalidate: () => revalidatePolicyAuthority(true, `deleting sandbox '${sandboxName}'`),
-          deleteSandbox: () =>
-            runOpenshell(
-              [
-                "sandbox",
-                "delete",
-                "-g",
-                recreateRuntime.journaledGatewayName ?? GATEWAY_NAME,
-                sandboxName,
-              ],
-              { ignoreError: true },
-            ),
-        });
+        revalidatePolicyAuthority(true, `cleaning up providers for sandbox '${sandboxName}'`);
+        runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
+        revalidatePolicyAuthority(true, `deleting sandbox '${sandboxName}'`);
+        runOpenshell(
+          [
+            "sandbox",
+            "delete",
+            "-g",
+            recreateRuntime.journaledGatewayName ?? GATEWAY_NAME,
+            sandboxName,
+          ],
+          { ignoreError: true },
+        );
         if (
           !waitForSandboxRecreateDeleteAbsence(
             sandboxName,

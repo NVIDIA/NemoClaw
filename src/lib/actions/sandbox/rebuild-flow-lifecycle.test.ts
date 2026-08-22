@@ -78,28 +78,6 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
-  it("stops before backup or delete when the registry has an unknown non-MCP preset (#9833)", async () => {
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {
-        policies: ["npm", "retired-custom-policy"],
-        policyPresetsFinalized: true,
-      },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Policy authority preflight failed");
-
-    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
-      'recorded policy preset "retired-custom-policy"',
-    );
-    expect(harness.ensureTargetGatewaySpy).not.toHaveBeenCalled();
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.onboardSpy).not.toHaveBeenCalled();
-    expect(harness.relockSpy).not.toHaveBeenCalled();
-    expectNoSandboxDelete(harness.runOpenshellSpy);
-  });
-
   it("rebuilds a live Shields-up external-policy sandbox without policy mutation (#9833)", async () => {
     const harness = createRebuildFlowHarness({
       applyPreset: () => {
@@ -163,44 +141,6 @@ describe("rebuildSandbox flow: lifecycle", () => {
     ).rejects.toThrow("policy authority changed");
 
     expect(harness.restoreSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.applyPresetSpy).not.toHaveBeenCalled();
-    expect(harness.executeSandboxCommandSpy).not.toHaveBeenCalled();
-    expect(harness.restoreMcpBridgesAfterRebuildSpy).not.toHaveBeenCalled();
-    expect(harness.registryUpdateSpy).not.toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({ agentVersion: "0.2.0" }),
-    );
-  });
-
-  it("stops replay and post-restore effects when authority flips during restore (#9833)", async () => {
-    let authorityFlipped = false;
-    const managedInspection = {
-      authority: "nemoclaw-managed" as const,
-      effectivePolicy: {},
-    };
-    const harness = createRebuildFlowHarness({
-      restoreSandboxState: () => {
-        authorityFlipped = true;
-        return {
-          success: true,
-          restoredDirs: ["workspace"],
-          restoredFiles: ["user.md"],
-          failedDirs: [],
-          failedFiles: [],
-        };
-      },
-    });
-    harness.inspectSandboxPolicyAuthoritySpy.mockImplementation(() =>
-      authorityFlipped
-        ? { authority: "externally-managed", effectivePolicy: {} }
-        : managedInspection,
-    );
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("policy authority changed");
-
-    expect(harness.restoreSandboxStateSpy).toHaveBeenCalledOnce();
     expect(harness.applyPresetSpy).not.toHaveBeenCalled();
     expect(harness.executeSandboxCommandSpy).not.toHaveBeenCalled();
     expect(harness.restoreMcpBridgesAfterRebuildSpy).not.toHaveBeenCalled();

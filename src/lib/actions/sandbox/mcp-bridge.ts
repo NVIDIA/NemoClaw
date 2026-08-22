@@ -125,9 +125,7 @@ export async function prepareMcpBridgesForDestroy(
   sandboxName: string,
   validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<McpDestroyPreparation> {
-  return validateContainingPolicyReceipt
-    ? prepareMcpBridgesForDestroyLifecycle(sandboxName, validateContainingPolicyReceipt)
-    : prepareMcpBridgesForDestroyLifecycle(sandboxName);
+  return prepareMcpBridgesForDestroyLifecycle(sandboxName, validateContainingPolicyReceipt);
 }
 
 export async function restoreMcpBridgesAfterDestroyAbort(
@@ -135,13 +133,11 @@ export async function restoreMcpBridgesAfterDestroyAbort(
   preparation: McpDestroyPreparation,
   validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<void> {
-  return validateContainingPolicyReceipt
-    ? restoreMcpBridgesAfterDestroyAbortLifecycle(
-        sandboxName,
-        preparation,
-        validateContainingPolicyReceipt,
-      )
-    : restoreMcpBridgesAfterDestroyAbortLifecycle(sandboxName, preparation);
+  return restoreMcpBridgesAfterDestroyAbortLifecycle(
+    sandboxName,
+    preparation,
+    validateContainingPolicyReceipt,
+  );
 }
 
 export async function revalidateMcpDestroyAbortPolicyAuthority(
@@ -149,13 +145,11 @@ export async function revalidateMcpDestroyAbortPolicyAuthority(
   preparation: McpDestroyPreparation,
   validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<void> {
-  return validateContainingPolicyReceipt
-    ? revalidateMcpDestroyAbortPolicyAuthorityLifecycle(
-        sandboxName,
-        preparation,
-        validateContainingPolicyReceipt,
-      )
-    : revalidateMcpDestroyAbortPolicyAuthorityLifecycle(sandboxName, preparation);
+  return revalidateMcpDestroyAbortPolicyAuthorityLifecycle(
+    sandboxName,
+    preparation,
+    validateContainingPolicyReceipt,
+  );
 }
 
 export async function finalizeMcpBridgesAfterSandboxDelete(
@@ -176,9 +170,7 @@ export async function prepareMcpBridgesForRebuild(
   sandboxName: string,
   validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<McpRebuildPreparation> {
-  return validateContainingPolicyReceipt
-    ? prepareMcpBridgesForRebuildLifecycle(sandboxName, validateContainingPolicyReceipt)
-    : prepareMcpBridgesForRebuildLifecycle(sandboxName);
+  return prepareMcpBridgesForRebuildLifecycle(sandboxName, validateContainingPolicyReceipt);
 }
 
 export async function reattachMcpProvidersAfterRebuildAbort(
@@ -187,14 +179,12 @@ export async function reattachMcpProvidersAfterRebuildAbort(
   scrubbedAdapterEntries: readonly McpBridgeEntry[] = [],
   validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<void> {
-  return validateContainingPolicyReceipt
-    ? reattachMcpProvidersAfterRebuildAbortLifecycle(
-        sandboxName,
-        entries,
-        scrubbedAdapterEntries,
-        validateContainingPolicyReceipt,
-      )
-    : reattachMcpProvidersAfterRebuildAbortLifecycle(sandboxName, entries, scrubbedAdapterEntries);
+  return reattachMcpProvidersAfterRebuildAbortLifecycle(
+    sandboxName,
+    entries,
+    scrubbedAdapterEntries,
+    validateContainingPolicyReceipt,
+  );
 }
 
 export async function restoreMcpBridgesAfterRebuild(
@@ -202,9 +192,11 @@ export async function restoreMcpBridgesAfterRebuild(
   entries: readonly McpBridgeEntry[],
   validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<void> {
-  return validateContainingPolicyReceipt
-    ? restoreMcpBridgesAfterRebuildLifecycle(sandboxName, entries, validateContainingPolicyReceipt)
-    : restoreMcpBridgesAfterRebuildLifecycle(sandboxName, entries);
+  return restoreMcpBridgesAfterRebuildLifecycle(
+    sandboxName,
+    entries,
+    validateContainingPolicyReceipt,
+  );
 }
 
 function parseJsonFlag(args: string[]): { json: boolean; rest: string[] } {

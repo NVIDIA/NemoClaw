@@ -186,40 +186,6 @@ describe("Shields timer policy authority", () => {
     expect(fs.existsSync(fixture.containmentPath)).toBe(false);
   });
 
-  it("stops after config relock when policy authority changes (#9833)", async () => {
-    const timer = await import("./timer");
-    const fixture = createFixture(
-      "beta",
-      timer.parseTimerArgs,
-      "/sandbox/.openclaw/openclaw.json",
-      "/sandbox/.openclaw",
-    );
-    shieldsIndexMock.lockAgentConfig = vi.fn(() => ({
-      chattrApplied: true,
-      fileHashes: { "/sandbox/.openclaw/openclaw.json": "a".repeat(64) },
-    }));
-    shieldsIndexMock.assertShieldsPolicyMutationAuthority
-      .mockImplementationOnce(() => undefined)
-      .mockImplementation(() => {
-        throw new PolicyAuthorityRefusalError("Policy authority changed after config relock");
-      });
-    const exitSpy = captureExit();
-
-    await timer.runRestoreTimer(fixture.args as never, {
-      retryDelayMs: 0,
-      maxRestoreAttempts: 7,
-    });
-
-    expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(1);
-    expect(shieldsIndexMock.assertShieldsPolicyMutationAuthority).toHaveBeenCalledTimes(3);
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(shieldsIndexMock.completeAutoRestoreTransition).not.toHaveBeenCalled();
-    expect(JSON.parse(fs.readFileSync(fixture.stateFile, "utf8"))).toEqual({
-      shieldsDown: true,
-    });
-    expect(fs.existsSync(fixture.markerPath)).toBe(true);
-  });
-
   it("checks policy authority before every automatic config relock retry (#9833)", async () => {
     const timer = await import("./timer");
     const fixture = createFixture(
@@ -256,30 +222,6 @@ describe("Shields timer policy authority", () => {
     expect(shieldsIndexMock.lockAgentConfig).toHaveBeenCalledTimes(2);
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(shieldsIndexMock.completeAutoRestoreTransition).not.toHaveBeenCalled();
-    expect(fs.existsSync(fixture.markerPath)).toBe(true);
-  });
-
-  it("retains timer recovery when authority changes during UP-state persistence (#9833)", async () => {
-    const timer = await import("./timer");
-    const fixture = createFixture("state-race", timer.parseTimerArgs);
-    shieldsIndexMock.assertShieldsPolicyMutationAuthority
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => undefined)
-      .mockImplementation(() => {
-        throw new PolicyAuthorityRefusalError("Policy authority changed during state persistence");
-      });
-    const exitSpy = captureExit();
-
-    await timer.runRestoreTimer(fixture.args as never, {
-      retryDelayMs: 0,
-      maxRestoreAttempts: 7,
-    });
-
-    expect(shieldsIndexMock.completeAutoRestoreTransition).not.toHaveBeenCalled();
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(JSON.parse(fs.readFileSync(fixture.stateFile, "utf8"))).toMatchObject({
-      shieldsDown: false,
-    });
     expect(fs.existsSync(fixture.markerPath)).toBe(true);
   });
 

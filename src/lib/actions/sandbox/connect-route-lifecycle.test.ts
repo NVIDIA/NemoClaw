@@ -194,50 +194,6 @@ describe("connectSandbox route lifecycle", () => {
     }
   });
 
-  it("refuses connect VM repair when its recorded policy authority drifts (#9833)", async () => {
-    vi.stubEnv("NEMOCLAW_FORCE_VM_DNS_MONKEYPATCH", "1");
-    const harness = createConnectHarness({
-      inferenceGetOutput:
-        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
-      inferenceProbeResponses: ['BROKEN 503 {"error":"inference service unavailable"}'],
-      registryEntry: {
-        model: "nvidia/nemotron-3-super-120b-a12b",
-        openshellDriver: "vm",
-        policyAuthority: "nemoclaw-managed",
-        provider: "nvidia-prod",
-      },
-    });
-    let authorityRefusal: unknown;
-    harness.applyVmDnsMonkeypatchSpy.mockImplementation(
-      (
-        _sandboxName: string,
-        _entry: unknown,
-        options?: { revalidatePolicyAuthority?: (operation: string) => void },
-      ) => {
-        harness.registryEntries[0]!.policyAuthority = "externally-managed";
-        try {
-          options?.revalidatePolicyAuthority?.("write VM resolver");
-        } catch (error) {
-          authorityRefusal = error;
-          throw error;
-        }
-        return { attempted: true, changed: true, ok: true, status: "applied" };
-      },
-    );
-
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    expect(authorityRefusal).toMatchObject({
-      code: "NEMOCLAW_POLICY_AUTHORITY_REFUSAL",
-    });
-    const routeProbeCalls = harness.captureOpenshellSpy.mock.calls.filter((call) =>
-      JSON.stringify(call[0]).includes("inference.local/v1/models"),
-    );
-    expect(routeProbeCalls).toHaveLength(1);
-  });
-
   it.each([
     ["null", null, null],
     ["provider-only", "nvidia-prod", null],

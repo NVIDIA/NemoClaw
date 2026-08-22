@@ -13,6 +13,28 @@ import type { SandboxEntry } from "../../src/lib/state/registry";
 
 const shieldsModulePath = "./index.js";
 
+export const externalPolicyAuthorityInspection = {
+  authority: "externally-managed" as const,
+  effectivePolicy: { version: 1, network_policies: {} },
+};
+
+export function writeLockedShieldsState(
+  homeDir: string,
+  sandboxName: string,
+  configPath: string,
+): void {
+  const stateDir = path.join(homeDir, ".nemoclaw", "state");
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(stateDir, `shields-${sandboxName}.json`),
+    JSON.stringify({
+      shieldsDown: false,
+      chattrApplied: true,
+      fileHashes: { [configPath]: "a".repeat(64) },
+    }),
+  );
+}
+
 export type ShieldsFlowHarness = {
   applyShieldsPolicySnapshot: typeof import("../../src/lib/shields/index.js").applyShieldsPolicySnapshot;
   auditSpy: MockInstance;
@@ -240,9 +262,7 @@ export function createShieldsFlowHarness(
   const childProcess = requireDist("node:child_process");
   const policySetBodies: string[] = [];
   if (options.relockAndReconfirm) {
-    vi.spyOn(relockReconfirm, "relockAndReconfirm").mockImplementation(
-      options.relockAndReconfirm,
-    );
+    vi.spyOn(relockReconfirm, "relockAndReconfirm").mockImplementation(options.relockAndReconfirm);
   }
   let openClawPosture: "locked" | "mutable" = options.initialOpenClawPosture ?? "mutable";
   const stateLockPlan = {

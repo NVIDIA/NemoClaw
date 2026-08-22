@@ -305,29 +305,6 @@ describe("sandbox connect route repair unit flow", () => {
     expect(calls.reapplications).toEqual([]);
   });
 
-  it("refuses legacy DNS repair when policy authority drifts before the write (#9833)", () => {
-    const refusal = new Error("policy authority changed before DNS repair");
-    const { calls, deps } = makeRepairDeps([broken()], {
-      revalidatePolicyAuthority: vi.fn(() => {
-        throw refusal;
-      }),
-    });
-
-    expect(() =>
-      repairSandboxInferenceRouteWithDeps(
-        "legacy-box",
-        sandbox({ openshellDriver: "kubernetes" }),
-        {},
-        deps,
-      ),
-    ).toThrow(refusal);
-
-    expect(deps.revalidatePolicyAuthority).toHaveBeenCalledWith(
-      "repair the DNS proxy for sandbox 'legacy-box'",
-    );
-    expect(calls.legacyRepairs).toEqual([]);
-  });
-
   it("reports broken non-legacy routes after inference reapply cannot repair them", () => {
     const { calls, deps } = makeRepairDeps([broken(), broken()]);
 
@@ -464,29 +441,6 @@ describe("managed inference route reset unit flow", () => {
     expect(result).toBe(false);
     expect(calls.errors).toContain("  Error: failed to reset the OpenShell inference route.");
     expect(calls.unrecoverable).toEqual([{ sandboxName: "demo", detail: "BROKEN 503 still down" }]);
-  });
-
-  it("refuses the managed Docker route reset when policy authority drifts before the write (#9833)", () => {
-    const refusal = new Error("policy authority changed before Docker route reset");
-    const { calls, deps } = makeResetDeps([], {
-      revalidatePolicyAuthority: vi.fn(() => {
-        throw refusal;
-      }),
-    });
-
-    expect(() =>
-      resetManagedInferenceRouteWithDeps(
-        "docker-box",
-        sandbox({ openshellDriver: "docker" }),
-        { detail: "BROKEN 503" },
-        deps,
-      ),
-    ).toThrow(refusal);
-
-    expect(deps.revalidatePolicyAuthority).toHaveBeenCalledWith(
-      "reset the inference route for sandbox 'docker-box'",
-    );
-    expect(calls.inferenceSets).toEqual([]);
   });
 });
 

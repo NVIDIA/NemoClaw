@@ -180,8 +180,6 @@ type ProviderBranchDeps = Pick<
   Pick<RoutedDeps, "reconcileModelRouter" | "routedInference">;
 
 export type SetupInferenceDeps = ProviderBranchDeps & {
-  /** Optional focused-test seam when no receipt-bound options callback is supplied. */
-  revalidatePolicyRequirements?: (operation: string) => void;
   /** Injectable resolver for resumed custom-endpoint SSRF preflight tests. */
   resolveEndpointHost?: EndpointDnsLookupFn;
   /** Exact private endpoint hosts trusted by the operator (tests may inject this). */
@@ -281,11 +279,9 @@ export function bindGatewayUpsertProvider(
   revalidatePolicyRequirements?: (operation: string) => void,
 ): CommonDeps["upsertProvider"] {
   return (name, type, credentialEnv, baseUrl, env) =>
-    revalidatePolicyRequirements
-      ? upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName, {
-          revalidatePolicyRequirements,
-        })
-      : upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName);
+    upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName, {
+      revalidatePolicyRequirements,
+    });
 }
 
 export function selectGatewayForFollowupOrExit(
@@ -536,8 +532,7 @@ export function createSetupInference(
     options: ProviderInferenceSetupOptions = {},
   ): Promise<SetupInferenceResult> {
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
-    const revalidatePolicyRequirements =
-      options.revalidatePolicyRequirements ?? deps.revalidatePolicyRequirements ?? (() => {});
+    const revalidatePolicyRequirements = options.revalidatePolicyRequirements ?? (() => {});
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
     const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;

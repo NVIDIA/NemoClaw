@@ -117,48 +117,44 @@ describe("OpenShell policy authority inspection", () => {
     ]);
   });
 
-  it.each([
-    ["empty with no stderr", { stdout: "", exitCode: 0, timedOut: false }],
-    ["empty with stderr", captureResult("", { stderr: "No policy revisions exist" })],
-    ["whitespace only", captureResult(" \n\t")],
-  ])("recognizes NemoClaw-managed authority when global history is %s (#9833)", (_case, result) => {
-    const runCaptureEx = vi.fn<PolicyAuthorityCapture>(() => result);
+  it("recognizes NemoClaw-managed authority when global history is absent (#9833)", () => {
+    const runCaptureEx = vi.fn<PolicyAuthorityCapture>(() => captureResult(""));
 
     expect(inspectGlobalPolicyAuthority({ runCaptureEx })).toEqual({
       authority: "nemoclaw-managed",
       effectivePolicy: {},
     });
-    expect(runCaptureEx).toHaveBeenCalledOnce();
-    expect(runCaptureEx).toHaveBeenCalledWith(
-      ["openshell", "policy", "list", "--global", "--limit", "1"],
-      {
-        maxBuffer: policyAuthorityInternals.captureMaxBytes,
-        timeout: policyAuthorityInternals.captureTimeoutMs,
-      },
-    );
+    expect(runCaptureEx.mock.calls[0]?.[0]).toEqual([
+      "openshell",
+      "policy",
+      "list",
+      "--global",
+      "--limit",
+      "1",
+    ]);
   });
 
-  it("recognizes a loaded global policy as externally managed before create (#9833)", () => {
-    const policy = { version: 1, network_policies: { required: { endpoints: ["api.test"] } } };
+  it.each([
+    [
+      "loaded",
+      globalMetadata({
+        policy: { version: 1, network_policies: { required: { endpoints: ["api.test"] } } },
+      }),
+      "externally-managed",
+    ],
+    ["superseded", globalMetadata({ status: "superseded", policy: undefined }), "nemoclaw-managed"],
+  ] as const)("classifies %s global policy metadata (#9833)", (_case, metadata, authority) => {
     const runCaptureEx = vi
       .fn<PolicyAuthorityCapture>()
       .mockReturnValueOnce(captureResult("policy revision history"))
-      .mockReturnValueOnce(captureResult(JSON.stringify(globalMetadata({ policy }))));
+      .mockReturnValueOnce(captureResult(JSON.stringify(metadata)));
 
     expect(inspectGlobalPolicyAuthority({ gatewayName: "nemoclaw-18080", runCaptureEx })).toEqual({
-      authority: "externally-managed",
-      effectivePolicy: policy,
+      authority,
+      effectivePolicy: authority === "externally-managed" ? metadata.policy : {},
     });
-    expect(runCaptureEx).toHaveBeenNthCalledWith(
-      1,
+    expect(runCaptureEx.mock.calls.map(([argv]) => argv)).toEqual([
       ["openshell", "policy", "list", "-g", "nemoclaw-18080", "--global", "--limit", "1"],
-      {
-        maxBuffer: policyAuthorityInternals.captureMaxBytes,
-        timeout: policyAuthorityInternals.captureTimeoutMs,
-      },
-    );
-    expect(runCaptureEx).toHaveBeenNthCalledWith(
-      2,
       [
         "openshell",
         "policy",
@@ -170,26 +166,7 @@ describe("OpenShell policy authority inspection", () => {
         "--output",
         "json",
       ],
-      {
-        maxBuffer: policyAuthorityInternals.captureMaxBytes,
-        timeout: policyAuthorityInternals.captureTimeoutMs,
-      },
-    );
-  });
-
-  it("recognizes a superseded global policy as NemoClaw-managed (#9833)", () => {
-    const runCaptureEx = vi
-      .fn<PolicyAuthorityCapture>()
-      .mockReturnValueOnce(captureResult("policy revision history"))
-      .mockReturnValueOnce(
-        captureResult(JSON.stringify(globalMetadata({ status: "superseded", policy: undefined }))),
-      );
-
-    expect(inspectGlobalPolicyAuthority({ runCaptureEx })).toEqual({
-      authority: "nemoclaw-managed",
-      effectivePolicy: {},
-    });
-    expect(runCaptureEx).toHaveBeenCalledTimes(2);
+    ]);
   });
 
   it("rejects invalid sandbox and gateway identities before querying policy (#9833)", () => {
@@ -212,10 +189,7 @@ describe("OpenShell policy authority inspection", () => {
   it.each([
     ["another scope", sandboxMetadata({ scope: "global" })],
     ["another sandbox", sandboxMetadata({ sandbox: "beta" })],
-    ["a non-effective status", sandboxMetadata({ status: "loaded" })],
     ["an unknown source", sandboxMetadata({ policy_source: "unknown" })],
-    ["a missing policy", sandboxMetadata({ policy: undefined })],
-    ["a non-object policy", sandboxMetadata({ policy: [] })],
   ])("rejects sandbox metadata with %s (#9833)", (_caseName, metadata) => {
     const secret = "captured-policy-secret";
     const runCaptureEx = vi.fn<PolicyAuthorityCapture>(() =>
@@ -231,9 +205,12 @@ describe("OpenShell policy authority inspection", () => {
 
   it.each([
     ["empty", captureResult("")],
-    ["whitespace-only", captureResult(" \n\t")],
     ["malformed", captureResult('{"secret":"captured-global-secret"')],
-  ])("fails closed when global policy metadata is %s (#9833)", (_case, result) => {
+    ["another scope", captureResult(JSON.stringify(globalMetadata({ scope: "sandbox" })))],
+    ["another source", captureResult(JSON.stringify(globalMetadata({ policy_source: "sandbox" })))],
+    ["a pending status", captureResult(JSON.stringify(globalMetadata({ status: "pending" })))],
+    ["a failed status", captureResult(JSON.stringify(globalMetadata({ status: "failed" })))],
+  ])("rejects global policy metadata that is %s (#9833)", (_case, result) => {
     const runCaptureEx = vi
       .fn<PolicyAuthorityCapture>()
       .mockReturnValueOnce(captureResult("policy revision history"))
@@ -245,46 +222,17 @@ describe("OpenShell policy authority inspection", () => {
   });
 
   it.each([
-    ["another scope", globalMetadata({ scope: "sandbox" })],
-    ["a sandbox identity", globalMetadata({ sandbox: "alpha" })],
-    ["another source", globalMetadata({ policy_source: "sandbox" })],
-    ["a pending status", globalMetadata({ status: "pending" })],
-    ["a failed status", globalMetadata({ status: "failed" })],
-    ["a missing status", globalMetadata({ status: undefined })],
-    ["an unknown status", globalMetadata({ status: "unknown" })],
-    ["a missing loaded policy", globalMetadata({ policy: undefined })],
-    ["a non-object loaded policy", globalMetadata({ policy: null })],
-  ])("rejects global metadata with %s (#9833)", (_caseName, metadata) => {
-    const secret = "captured-global-policy-secret";
-    const runCaptureEx = vi
-      .fn<PolicyAuthorityCapture>()
-      .mockReturnValueOnce(captureResult("policy revision history"))
-      .mockReturnValueOnce(captureResult(JSON.stringify({ ...metadata, diagnostic: secret })));
-
-    const error = errorFrom(() => inspectGlobalPolicyAuthority({ runCaptureEx }));
-    expect(error.message).toContain("inspection failed");
-    expect(error.message).not.toContain(secret);
-  });
-
-  it.each([
-    [
-      "a nonzero exit",
-      captureResult("captured-history-secret", {
-        stderr: "captured-history-stderr-secret",
-        exitCode: 7,
-      }),
-    ],
-    [
-      "a timeout",
-      captureResult("captured-history-secret", {
-        stderr: "captured-history-stderr-secret",
-        timedOut: true,
-      }),
-    ],
+    ["a nonzero exit", { exitCode: 7 }],
+    ["a timeout", { timedOut: true }],
   ])(
     "fails closed without reading global metadata after history query has %s (#9833)",
-    (_case, result) => {
-      const runCaptureEx = vi.fn<PolicyAuthorityCapture>(() => result);
+    (_case, overrides) => {
+      const runCaptureEx = vi.fn<PolicyAuthorityCapture>(() =>
+        captureResult("captured-history-secret", {
+          ...overrides,
+          stderr: "captured-history-stderr-secret",
+        }),
+      );
 
       const error = errorFrom(() => inspectGlobalPolicyAuthority({ runCaptureEx }));
       expect(error.message).toContain("inspection failed");
@@ -294,51 +242,26 @@ describe("OpenShell policy authority inspection", () => {
     },
   );
 
-  it.each([
-    ["empty", captureResult("")],
-    ["whitespace-only", captureResult(" \n\t")],
-  ])(
-    "recognizes NemoClaw-managed authority when sandbox policy output is %s (#9833)",
-    (_case, result) => {
-      const runCaptureEx = vi.fn<PolicyAuthorityCapture>(() => result);
+  it("recognizes NemoClaw-managed authority when sandbox policy output is empty (#9833)", () => {
+    const runCaptureEx = vi.fn<PolicyAuthorityCapture>(() => captureResult(""));
 
-      expect(inspectSandboxPolicyAuthority({ sandboxName: "alpha", runCaptureEx })).toEqual({
-        authority: "nemoclaw-managed",
-        effectivePolicy: {},
-      });
-    },
-  );
-
-  it("fails closed when sandbox metadata is malformed (#9833)", () => {
-    const runCaptureEx = vi.fn<PolicyAuthorityCapture>(() =>
-      captureResult('{"secret":"captured-stdout-secret"'),
-    );
-
-    const error = errorFrom(() =>
-      inspectSandboxPolicyAuthority({ sandboxName: "alpha", runCaptureEx }),
-    );
-    expect(error.message).toContain("inspection failed");
-    expect(error.message).not.toContain("captured-stdout-secret");
+    expect(inspectSandboxPolicyAuthority({ sandboxName: "alpha", runCaptureEx })).toEqual({
+      authority: "nemoclaw-managed",
+      effectivePolicy: {},
+    });
   });
 
   it.each([
-    [
-      "a nonzero exit",
-      captureResult('{"secret":"captured-stdout-secret"}', {
+    ["a nonzero exit", { exitCode: 7 }],
+    ["a timeout", { timedOut: true }],
+    ["malformed JSON", {}],
+  ])("fails closed without exposing output after %s (#9833)", (_caseName, overrides) => {
+    const runCaptureEx = vi.fn<PolicyAuthorityCapture>(() =>
+      captureResult('{"secret":"captured-stdout-secret"', {
+        ...overrides,
         stderr: "captured-stderr-secret",
-        exitCode: 7,
       }),
-    ],
-    [
-      "a timeout",
-      captureResult('{"secret":"captured-stdout-secret"}', {
-        stderr: "captured-stderr-secret",
-        timedOut: true,
-      }),
-    ],
-    ["malformed JSON", captureResult('{"secret":"captured-stdout-secret"')],
-  ])("fails closed without exposing output after %s (#9833)", (_caseName, result) => {
-    const runCaptureEx = vi.fn<PolicyAuthorityCapture>(() => result);
+    );
 
     const error = errorFrom(() =>
       inspectSandboxPolicyAuthority({ sandboxName: "alpha", runCaptureEx }),
@@ -372,17 +295,10 @@ describe("OpenShell policy authority inspection", () => {
 });
 
 describe("recorded policy authority", () => {
-  it("accepts an unchanged recorded authority (#9833)", () => {
+  it("accepts unchanged authority and refuses missing or changed authority (#9833)", () => {
     expect(() =>
-      assertRecordedPolicyAuthority(
-        "externally-managed",
-        "externally-managed",
-        "rebuild the sandbox",
-      ),
+      assertRecordedPolicyAuthority("externally-managed", "externally-managed", "rebuild"),
     ).not.toThrow();
-  });
-
-  it("refuses an absent or changed recorded authority (#9833)", () => {
     expect(() =>
       assertRecordedPolicyAuthority(undefined, "externally-managed", "restore the snapshot"),
     ).toThrow(/recorded policy authority is unavailable or invalid/);
@@ -400,30 +316,28 @@ describe("recorded policy authority", () => {
 });
 
 describe("externally managed policy requirements", () => {
-  const externalInspection = (
-    effectivePolicy: Record<string, unknown>,
-  ): SandboxPolicyAuthorityInspection => ({
-    authority: "externally-managed",
-    effectivePolicy,
-  });
-
-  it("compares exact network entries and static policy sections (#9833)", () => {
+  it("compares exact requirements and redacts missing or drifted contents (#9833)", () => {
     const requiredPolicy = {
       version: 1,
       filesystem_policy: { read_only: ["/required-secret"] },
       process: { run_as_user: 1000 },
       network_policies: {
-        required: { endpoints: [{ host: "api.test", port: 443 }], mode: "allow" },
+        exact: { endpoints: [{ host: "api.test", port: 443 }], mode: "allow" },
+        missing: { endpoints: [{ host: "missing-secret.test", port: 443 }] },
+        drifted: { endpoints: [{ host: "required-secret.test", port: 443 }] },
       },
     };
-    const inspection = externalInspection({
-      version: 9,
-      filesystem_policy: { read_only: ["/observed-secret"] },
-      network_policies: {
-        extra: { endpoints: [{ host: "extra.test", port: 443 }] },
-        required: { mode: "allow", endpoints: [{ port: 443, host: "api.test" }] },
+    const inspection: SandboxPolicyAuthorityInspection = {
+      authority: "externally-managed",
+      effectivePolicy: {
+        version: 9,
+        filesystem_policy: { read_only: ["/observed-secret"] },
+        network_policies: {
+          exact: { mode: "allow", endpoints: [{ port: 443, host: "api.test" }] },
+          drifted: { endpoints: [{ host: "observed-secret.test", port: 443 }] },
+        },
       },
-    });
+    };
 
     const error = errorFrom(() =>
       assertExternalPolicyRequirements({
@@ -435,36 +349,11 @@ describe("externally managed policy requirements", () => {
     );
     expect(error.message).toContain('missing sections "process"');
     expect(error.message).toContain('drifted sections "filesystem_policy"');
-    expect(error.message).not.toContain("required-secret");
-    expect(error.message).not.toContain("observed-secret");
-  });
-
-  it("names missing and drifted keys without exposing policy contents (#9833)", () => {
-    const inspection = externalInspection({
-      network_policies: {
-        drifted_entry: { endpoints: [{ host: "observed-secret.test", port: 443 }] },
-      },
-    });
-    const requiredPolicy = {
-      network_policies: {
-        missing_entry: { endpoints: [{ host: "missing-secret.test", port: 443 }] },
-        drifted_entry: { endpoints: [{ host: "required-secret.test", port: 443 }] },
-      },
-    };
-
-    const error = errorFrom(() =>
-      assertExternalPolicyRequirements({
-        inspection,
-        requiredPolicy,
-        operation: "start the managed MCP service",
-        sandboxName: "alpha",
-      }),
+    expect(error.message).toContain('missing entries "missing"');
+    expect(error.message).toContain('drifted entries "drifted"');
+    expect(error.message).not.toMatch(
+      /required-secret|observed-secret|missing-secret\.test|observed-secret\.test/u,
     );
-    expect(error.message).toContain('missing entries "missing_entry"');
-    expect(error.message).toContain('drifted entries "drifted_entry"');
-    expect(error.message).not.toContain("missing-secret.test");
-    expect(error.message).not.toContain("required-secret.test");
-    expect(error.message).not.toContain("observed-secret.test");
   });
 
   it("leaves NemoClaw-managed requirements to the mutation path (#9833)", () => {

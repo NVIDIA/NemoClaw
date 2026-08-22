@@ -209,9 +209,7 @@ describe("inference selection validation", () => {
       expect(errorOutput).toContain(
         "This 404 came from Google's OpenAI-compatible Chat Completions runtime route, not the native /v1beta/models catalog.",
       );
-      expect(errorOutput).toContain(
-        "the sandbox uses that Chat Completions route at runtime",
-      );
+      expect(errorOutput).toContain("the sandbox uses that Chat Completions route at runtime");
       expect(errorOutput).not.toContain(apiKey);
     } finally {
       log.mockRestore();
@@ -528,6 +526,7 @@ describe("inference selection validation", () => {
         expect.objectContaining({ kind: "transport", retry: "retry" }),
         "COMPATIBLE_API_KEY",
         null,
+        undefined,
       );
     } finally {
       error.mockRestore();

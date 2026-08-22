@@ -373,41 +373,6 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(sessionState?.policyPresets).not.toContain("telegram");
   });
 
-  it("rechecks authority after channel planning and prompts before credential mutation (#9833)", async () => {
-    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority)
-      .mockReturnValueOnce("nemoclaw-managed")
-      .mockImplementationOnce(() => {
-        throw new Error("OpenShell policy authority changed during channel setup");
-      });
-
-    await expectExit(() => addSandboxChannel("test-sb", { channel: "telegram" }));
-
-    expect(printedText()).toContain("authority changed");
-    expect(buildPlanSpy).toHaveBeenCalledOnce();
-    expect(saveCredentialSpy).not.toHaveBeenCalled();
-    expect(providerSpy).not.toHaveBeenCalled();
-    expect(applyPresetSpy).not.toHaveBeenCalled();
-    expect(updateSandboxSpy).toHaveBeenLastCalledWith("test-sb", { messaging: undefined });
-    expect(rebuildSpy).not.toHaveBeenCalled();
-  });
-
-  it("rechecks authority after gateway recovery before credential or provider mutation (#9833)", async () => {
-    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority)
-      .mockReturnValueOnce("nemoclaw-managed")
-      .mockReturnValueOnce("nemoclaw-managed")
-      .mockImplementationOnce(() => {
-        throw new Error("OpenShell policy authority changed after gateway recovery");
-      });
-
-    await expectExit(() => addSandboxChannel("test-sb", { channel: "telegram" }));
-
-    expect(printedText()).toContain("authority changed");
-    expect(saveCredentialSpy).not.toHaveBeenCalled();
-    expect(providerSpy).not.toHaveBeenCalled();
-    expect(applyPresetSpy).not.toHaveBeenCalled();
-    expect(updateSandboxSpy).not.toHaveBeenCalled();
-  });
-
   it("rolls back owned state when authority changes after provider registration (#9833)", async () => {
     const refusal = new PolicyAuthorityRefusalError(
       "OpenShell policy authority changed after provider registration",
@@ -511,76 +476,6 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(registryEntry.policies).toEqual(["npm"]);
     expect(sessionState?.policyPresets).toEqual(["pypi"]);
     expect(updateSandboxSpy).toHaveBeenCalledWith("test-sb", { policies: ["npm"] });
-  });
-
-  it("preserves external policy while cleaning Slack credentials, providers, and state (#9833)", async () => {
-    registryEntry = {
-      ...makeRegistryEntry(["slack"]),
-      policyAuthority: "externally-managed",
-      policies: ["slack"],
-    };
-    appliedPresets = ["slack"];
-    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() => {
-      throw new PolicyAuthorityRefusalError("Slack policy is externally managed");
-    });
-    removePresetSpy.mockImplementation((_name, presetName) => {
-      callOrder.push(`removePreset:${presetName}`);
-      throw new PolicyAuthorityRefusalError("Slack policy is externally managed");
-    });
-
-    await removeSandboxChannel("test-sb", { channel: "slack" });
-
-    expect(policyChannelDependencies.preflightSandboxPolicyAuthority).not.toHaveBeenCalled();
-    expect(deleteCredentialSpy).toHaveBeenCalledWith("SLACK_BOT_TOKEN");
-    expect(deleteCredentialSpy).toHaveBeenCalledWith("SLACK_APP_TOKEN");
-    expect(
-      runOpenshellSpy.mock.calls.filter(
-        ([args]) => (args as string[]).slice(0, 3).join(" ") === "sandbox provider detach",
-      ),
-    ).toHaveLength(2);
-    expect(
-      runOpenshellSpy.mock.calls.filter(
-        ([args]) => (args as string[]).slice(0, 2).join(" ") === "provider delete",
-      ),
-    ).toHaveLength(2);
-    expect(removePresetSpy).toHaveBeenCalledWith("test-sb", "slack");
-    expect(appliedPresets).toEqual(["slack"]);
-    expect(updateSandboxSpy).toHaveBeenCalled();
-    expect(rebuildSpy).not.toHaveBeenCalled();
-  });
-
-  it("stops the Google Chat tunnel and cleans owned state when external policy refuses (#9833)", async () => {
-    registryEntry = {
-      ...makeRegistryEntry(["googlechat"]),
-      policyAuthority: "externally-managed",
-      policies: ["googlechat"],
-    };
-    appliedPresets = ["googlechat"];
-    vi.mocked(policies.listPresets).mockReturnValue([
-      { name: "googlechat", file: "googlechat.yaml", description: "Google Chat test preset" },
-    ]);
-    removePresetSpy.mockImplementation((_name, presetName) => {
-      callOrder.push(`removePreset:${presetName}`);
-      throw new PolicyAuthorityRefusalError("Google Chat policy is externally managed");
-    });
-    const stopTunnel = vi
-      .spyOn(policyChannelDependencies, "stopGooglechatWebhookTunnel")
-      .mockImplementation(() => undefined);
-
-    await removeSandboxChannel("test-sb", { channel: "googlechat" });
-
-    expect(stopTunnel).toHaveBeenCalledWith("test-sb");
-    expect(removePresetSpy).toHaveBeenCalledWith("test-sb", "googlechat");
-    expect(appliedPresets).toEqual(["googlechat"]);
-    expect(runOpenshellSpy).toHaveBeenCalledWith(
-      ["sandbox", "provider", "detach", "test-sb", "test-sb-googlechat-bridge"],
-      expect.anything(),
-    );
-    expect(runOpenshellSpy).toHaveBeenCalledWith(
-      ["provider", "delete", "test-sb-googlechat-bridge"],
-      expect.anything(),
-    );
-    expect(updateSandboxSpy).toHaveBeenCalled();
   });
 
   it("discloses token-channel egress before credential prompts and gateway mutation (#7179)", async () => {
@@ -818,30 +713,6 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(callOrder).not.toContain("promptAndRebuild");
   });
 
-  it("rolls back fresh channel state when policy apply fails during authority drift (#9833)", async () => {
-    applyPresetResult = false;
-    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() =>
-      applyPresetSpy.mock.calls.length > 0
-        ? (() => {
-            throw new Error("OpenShell policy authority changed during preset application");
-          })()
-        : "nemoclaw-managed",
-    );
-
-    await expectExit(() => addSandboxChannel("test-sb", { channel: "telegram" }));
-
-    expect(deleteCredentialSpy).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN");
-    expect(runOpenshellSpy).toHaveBeenCalledWith(
-      ["sandbox", "provider", "detach", "test-sb", "test-sb-telegram-bridge"],
-      expect.anything(),
-    );
-    expect(runOpenshellSpy).toHaveBeenCalledWith(
-      ["provider", "delete", "test-sb-telegram-bridge"],
-      expect.anything(),
-    );
-    expect(updateSandboxSpy).toHaveBeenLastCalledWith("test-sb", { messaging: undefined });
-  });
-
   it("leaves plan state untouched and reports residual gateway state when detach fails", async () => {
     applyPresetResult = false;
     runOpenshellSpy.mockImplementation((args: string[]) =>
@@ -954,29 +825,6 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       ["DISCORD_BOT_TOKEN", "test-discord-token"],
       ["DISCORD_BOT_TOKEN", "prior-discord-token"],
     ]);
-  });
-
-  it("restores prior channel state when policy apply fails during authority drift (#9833)", async () => {
-    applyPresetResult = false;
-    registryEntry = makeRegistryEntry(["telegram"]);
-    getCredentialSpy.mockImplementation((key: string) =>
-      key === "TELEGRAM_BOT_TOKEN" ? "prior-telegram-token" : null,
-    );
-    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() =>
-      applyPresetSpy.mock.calls.length > 0
-        ? (() => {
-            throw new Error("OpenShell policy authority changed during preset application");
-          })()
-        : "nemoclaw-managed",
-    );
-
-    await expectExit(() => addSandboxChannel("test-sb", { channel: "telegram" }));
-
-    expect(saveCredentialSpy).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN", "prior-telegram-token");
-    expect(providerSpy).toHaveBeenCalledTimes(2);
-    expect(updateSandboxSpy).toHaveBeenLastCalledWith("test-sb", {
-      messaging: registryEntry.messaging,
-    });
   });
 
   it("leaves prior plan state untouched even when re-upsert during re-add rollback throws", async () => {

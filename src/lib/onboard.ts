@@ -1827,24 +1827,6 @@ type RemoteProviderSelectionArgs = {
   recoverySessionId: string | null | undefined;
 };
 
-const handleRoutedSelection = setupNimRoutedSelection.createRoutedSelectionHandler({
-  loadBlueprintProfile,
-  getHostGatewayUrl: () => require("./inference/local").HOST_GATEWAY_URL,
-  defaultCredentialEnv: DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV,
-  isNonInteractive,
-  exitProcess: (code) => process.exit(code),
-  hydrateCredentialEnv,
-  normalizeCredentialValue,
-  saveCredential,
-  resolveRouterProviderKeyBridge: providerKeyBridge.resolveRouterProviderKeyBridge,
-  stageRouterProviderKeyBridge: providerKeyBridge.stageRouterProviderKeyBridge,
-  resolveProviderCredential,
-  ensureNamedCredential: credentialPrompt.ensureNamedCredential,
-  returningToProviderSelection: credentialPrompt.returningToProviderSelection,
-  log: (message) => console.log(message),
-  error: (message) => console.error(message),
-});
-
 async function handleNimLocalSelection(
   gpu: ReturnType<typeof nim.detectGpu>,
   args: Pick<
@@ -2430,7 +2412,18 @@ function getSetupNimDeps(): SetupNimDeps {
     installVllm: setupNimFlow.withServingPortGuard(vllmInference.installVllm, checkPortAvailable),
     handleVllmSelection,
     selectVllmModelFromEnv: vllmInference.selectVllmModelFromEnv,
-    handleRoutedSelection,
+    handleRoutedSelection: (state) =>
+      setupNimRoutedSelection.handleRoutedSelection(state, {
+        modelRouter,
+        localInference,
+        urlUtils,
+        credentials,
+        hydrateCredentialEnv,
+        providerKeyBridge,
+        isNonInteractive,
+        exitProcess: (code): never => process.exit(code),
+        credentialPrompt,
+      }),
     coerceAgentInferenceApi: inferenceConfig.coerceAgentInferenceApi,
     resolveAgentInferenceApi: inferenceConfig.resolveAgentInferenceApi,
     ...reasoningMode.compatibleEndpointReasoningClearDeps,
@@ -2802,7 +2795,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     collector: null,
     span: null,
   };
-  let completed = false, preserveDeferredExitSession = false, preserveIncompleteSession = false;
+  let completed = false,
+    preserveDeferredExitSession = false,
+    preserveIncompleteSession = false;
   try {
     await portableRetirementEntry.run(async () => {
       const lockedRuntime = await resumeRuntime.prepare(
@@ -2911,7 +2906,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         process.exit(1);
       }
 
-      registerIncompleteOnboardExitHandlerForSession(onboardSession, () => completed || preserveIncompleteSession);
+      registerIncompleteOnboardExitHandlerForSession(
+        onboardSession,
+        () => completed || preserveIncompleteSession,
+      );
       const agent = await selectOnboardAgent({
         agentFlag: opts.agent,
         session,
@@ -3487,7 +3485,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       process.exitCode = completed ? 0 : 1;
     });
   } catch (error) {
-    preserveDeferredExitSession = onboardSessionBootstrap.shouldPreserveIncompleteOnboardSession(error);
+    preserveDeferredExitSession =
+      onboardSessionBootstrap.shouldPreserveIncompleteOnboardSession(error);
     throw error;
   } finally {
     try {

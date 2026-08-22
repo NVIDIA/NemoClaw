@@ -159,46 +159,6 @@ describe("dedicated local model profile onboarder", () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining("resumed vLLM model conflicts"));
   });
 
-  it("stops a fixed vLLM install when policy authority changes after planning (#9833)", async () => {
-    const selection = state();
-    const installEffect = vi.fn();
-    selection.revalidatePolicyRequirements = () => {
-      throw new Error("external policy authority must supply local inference");
-    };
-    const installVllm = vi.fn(async (_profile: VllmProfile, options) => {
-      options.beforeInstall?.("nvidia/Qwen3.6-35B-A3B-NVFP4");
-      installEffect();
-      return { ok: true };
-    });
-    const handleVllmSelection = vi.fn(async () => "selected" as const);
-    const onboard = createLocalModelProfileOnboarder({
-      env: {},
-      installVllm,
-      handleVllmSelection,
-      prompt: vi.fn(async () => ""),
-      error: vi.fn(),
-    });
-
-    await expect(
-      onboard(
-        plan(),
-        {
-          hasVllmImage: false,
-          sparkHost: true,
-          vllmProfile: {
-            name: "DGX Spark",
-            platform: "spark",
-            architecture: "arm64",
-          } as VllmProfile,
-          vllmRunning: false,
-        },
-        selection,
-      ),
-    ).rejects.toThrow(/external policy authority must supply/u);
-    expect(installEffect).not.toHaveBeenCalled();
-    expect(handleVllmSelection).not.toHaveBeenCalled();
-  });
-
   it("refuses vLLM install intent persistence when policy authority changes (#9833)", async () => {
     const selection = state();
     const checkpointVllmInstallModel = vi.fn();

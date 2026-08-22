@@ -1,34 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isDeepStrictEqual } from "node:util";
-import YAML from "yaml";
-
-import {
-  assertExternalPolicyRequirements,
-  assertRecordedPolicyAuthority,
-  inspectGlobalPolicyAuthority,
-  inspectSandboxPolicyAuthority,
-  type SandboxPolicyAuthority,
-  type SandboxPolicyAuthorityInspection,
-} from "../../../adapters/openshell/policy-authority";
+import { assertRecordedPolicyAuthority } from "../../../adapters/openshell/policy-authority";
 import * as policies from "../../../policy";
 import * as registry from "../../../policy/policy-registry";
 import type { SandboxEntry } from "../../../policy/policy-registry";
 import { MCP_BRIDGE_POLICY_SOURCE } from "../mcp-bridge-policy";
 import { resolveManagedMcpPolicyRequirementContents } from "./mcp-requirements";
+import {
+  assertManagedMcpPolicyRequirementsUnchanged,
+  inspectPolicyAuthorityRequirements,
+  parseRequiredPolicyDocument,
+  type PolicyAuthorityInspectionDeps,
+  type RequiredPolicy,
+} from "./preflight";
 
 export { resolveManagedMcpPolicyRequirementContents };
 
-type RequiredPolicy = Record<string, unknown>;
-
-interface SnapshotPolicyAuthorityDeps {
-  readonly inspectGlobalPolicyAuthority?: typeof inspectGlobalPolicyAuthority;
-  readonly inspectSandboxPolicyAuthority?: typeof inspectSandboxPolicyAuthority;
-}
-
 export interface SnapshotPolicyAuthorityReceipt {
-  readonly authority: SandboxPolicyAuthority;
+  readonly authority: "nemoclaw-managed" | "externally-managed";
   readonly gatewayName: string;
   readonly inspectLiveSource: boolean;
   readonly managedMcpPolicies: readonly RequiredPolicy[];
@@ -43,16 +33,8 @@ export interface SnapshotPolicyAuthorityRemovalReceipt {
 }
 
 function parseRequiredPolicy(content: string, operation: string): RequiredPolicy {
-  let parsed: unknown;
-  try {
-    parsed = YAML.parse(content);
-  } catch {
-    throw new Error(`Refusing to ${operation}: a required network policy document is invalid.`);
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(`Refusing to ${operation}: a required network policy document is invalid.`);
-  }
-  const networkPolicies = (parsed as RequiredPolicy).network_policies;
+  const parsed = parseRequiredPolicyDocument(content, operation);
+  const networkPolicies = parsed.network_policies;
   if (
     typeof networkPolicies !== "object" ||
     networkPolicies === null ||
@@ -61,7 +43,7 @@ function parseRequiredPolicy(content: string, operation: string): RequiredPolicy
   ) {
     throw new Error(`Refusing to ${operation}: a required network policy document is invalid.`);
   }
-  return parsed as RequiredPolicy;
+  return parsed;
 }
 
 /** Resolve every network-policy document that snapshot restore may replay. */
@@ -117,69 +99,6 @@ export function resolveSnapshotPolicyRequirements(input: {
   return required;
 }
 
-function verifyRequirements(
-  inspection: SandboxPolicyAuthorityInspection,
-  receipt: Pick<
-    SnapshotPolicyAuthorityReceipt,
-    "operation" | "requiredPolicies" | "sourceSandboxName"
-  >,
-): void {
-  for (const requiredPolicy of receipt.requiredPolicies) {
-    assertExternalPolicyRequirements({
-      inspection,
-      requiredPolicy,
-      operation: receipt.operation,
-      sandboxName: receipt.sourceSandboxName,
-    });
-  }
-}
-
-function inspectSnapshotAuthorities(
-  receipt: Omit<SnapshotPolicyAuthorityReceipt, "authority">,
-  recordedAuthority: unknown,
-  deps: SnapshotPolicyAuthorityDeps,
-): {
-  authority: SandboxPolicyAuthority;
-  globalInspection: SandboxPolicyAuthorityInspection | null;
-  liveInspection: SandboxPolicyAuthorityInspection | null;
-} {
-  const liveInspection = receipt.inspectLiveSource
-    ? (deps.inspectSandboxPolicyAuthority ?? inspectSandboxPolicyAuthority)({
-        sandboxName: receipt.sourceSandboxName,
-        gatewayName: receipt.gatewayName,
-      })
-    : null;
-  if (liveInspection && recordedAuthority !== undefined) {
-    assertRecordedPolicyAuthority(recordedAuthority, liveInspection.authority, receipt.operation);
-  }
-  const globalInspection = receipt.verifyGlobalCreatePolicy
-    ? (deps.inspectGlobalPolicyAuthority ?? inspectGlobalPolicyAuthority)({
-        gatewayName: receipt.gatewayName,
-      })
-    : null;
-  if (liveInspection && globalInspection) {
-    assertRecordedPolicyAuthority(
-      liveInspection.authority,
-      globalInspection.authority,
-      receipt.operation,
-    );
-    return { authority: liveInspection.authority, globalInspection, liveInspection };
-  }
-  if (liveInspection) {
-    return { authority: liveInspection.authority, globalInspection, liveInspection };
-  }
-  if (globalInspection) {
-    if (recordedAuthority === undefined) {
-      throw new Error(
-        `Refusing to ${receipt.operation}: legacy policy authority requires a live source inspection.`,
-      );
-    }
-    assertRecordedPolicyAuthority(recordedAuthority, globalInspection.authority, receipt.operation);
-    return { authority: globalInspection.authority, globalInspection, liveInspection };
-  }
-  throw new Error(`Refusing to ${receipt.operation}: policy authority could not be inspected.`);
-}
-
 /** Qualify snapshot restore or clone policy authority before destination effects. */
 export function qualifySnapshotPolicyAuthority(
   input: {
@@ -191,7 +110,7 @@ export function qualifySnapshotPolicyAuthority(
     readonly sourceLive: boolean;
     readonly verifyGlobalCreatePolicy: boolean;
   },
-  deps: SnapshotPolicyAuthorityDeps = {},
+  deps: PolicyAuthorityInspectionDeps = {},
 ): SnapshotPolicyAuthorityReceipt {
   if (!input.sourceLive && input.sourceEntry.policyAuthority === undefined) {
     throw new Error(
@@ -207,25 +126,25 @@ export function qualifySnapshotPolicyAuthority(
     sourceSandboxName: input.sourceEntry.name,
     verifyGlobalCreatePolicy: input.verifyGlobalCreatePolicy,
   };
-  const inspection = inspectSnapshotAuthorities(
-    receiptWithoutAuthority,
-    input.sourceEntry.policyAuthority,
+  const inspection = inspectPolicyAuthorityRequirements(
+    {
+      ...receiptWithoutAuthority,
+      recordedAuthority: input.sourceEntry.policyAuthority,
+      sandboxName: receiptWithoutAuthority.sourceSandboxName,
+    },
     deps,
   );
   const { authority } = inspection;
-  if (input.sourceEntry.policyAuthority === undefined) {
-    if (!registry.updateSandbox(input.sourceEntry.name, { policyAuthority: authority })) {
-      throw new Error(
-        `Refusing to ${input.operation}: the observed policy authority could not be recorded.`,
-      );
-    }
+  if (
+    input.sourceEntry.policyAuthority === undefined &&
+    !registry.updateSandbox(input.sourceEntry.name, { policyAuthority: authority })
+  ) {
+    throw new Error(
+      `Refusing to ${input.operation}: the observed policy authority could not be recorded.`,
+    );
   }
   input.sourceEntry.policyAuthority = authority;
-  if (inspection.liveInspection)
-    verifyRequirements(inspection.liveInspection, receiptWithoutAuthority);
-  if (inspection.globalInspection) {
-    verifyRequirements(inspection.globalInspection, receiptWithoutAuthority);
-  }
+  inspection.verifyRequirements();
   return { ...receiptWithoutAuthority, authority };
 }
 
@@ -233,7 +152,7 @@ export function qualifySnapshotPolicyAuthority(
 export function inspectSnapshotCloneTargetPolicyAuthority(
   sourceReceipt: SnapshotPolicyAuthorityReceipt,
   targetSandboxName: string,
-  deps: SnapshotPolicyAuthorityDeps = {},
+  deps: PolicyAuthorityInspectionDeps = {},
 ): SnapshotPolicyAuthorityReceipt {
   const targetReceiptWithoutAuthority = {
     gatewayName: sourceReceipt.gatewayName,
@@ -244,22 +163,20 @@ export function inspectSnapshotCloneTargetPolicyAuthority(
     sourceSandboxName: targetSandboxName,
     verifyGlobalCreatePolicy: false,
   };
-  const inspection = inspectSnapshotAuthorities(
-    targetReceiptWithoutAuthority,
-    sourceReceipt.authority,
+  const inspection = inspectPolicyAuthorityRequirements(
+    {
+      ...targetReceiptWithoutAuthority,
+      recordedAuthority: sourceReceipt.authority,
+      sandboxName: targetReceiptWithoutAuthority.sourceSandboxName,
+    },
     deps,
-  );
-  assertRecordedPolicyAuthority(
-    sourceReceipt.authority,
-    inspection.authority,
-    sourceReceipt.operation,
   );
   if (!inspection.liveInspection) {
     throw new Error(
       `Refusing to ${sourceReceipt.operation}: the Ready clone policy could not be inspected.`,
     );
   }
-  verifyRequirements(inspection.liveInspection, targetReceiptWithoutAuthority);
+  inspection.verifyRequirements();
   return { ...targetReceiptWithoutAuthority, authority: inspection.authority };
 }
 
@@ -279,11 +196,12 @@ async function revalidateRecordedSnapshotPolicyAuthority(
   const currentManagedMcpPolicies = (
     await resolveManagedMcpPolicyRequirementContents(current, receipt.operation)
   ).map((content) => parseRequiredPolicy(content, receipt.operation));
-  if (!isDeepStrictEqual(currentManagedMcpPolicies, receipt.managedMcpPolicies)) {
-    throw new Error(
-      `Refusing to ${receipt.operation}: managed MCP policy requirements changed after qualification.`,
-    );
-  }
+  assertManagedMcpPolicyRequirementsUnchanged(
+    currentManagedMcpPolicies,
+    receipt.managedMcpPolicies,
+    receipt.operation,
+    "after qualification",
+  );
   return current;
 }
 
@@ -309,21 +227,26 @@ export async function revalidateRemovedSnapshotPolicyAuthority(
   const removedManagedMcpPolicies = (
     await resolveManagedMcpPolicyRequirementContents(removed, receipt.operation)
   ).map((content) => parseRequiredPolicy(content, receipt.operation));
-  if (!isDeepStrictEqual(removedManagedMcpPolicies, receipt.managedMcpPolicies)) {
-    throw new Error(
-      `Refusing to ${receipt.operation}: managed MCP policy requirements changed before destination removal.`,
-    );
-  }
+  assertManagedMcpPolicyRequirementsUnchanged(
+    removedManagedMcpPolicies,
+    receipt.managedMcpPolicies,
+    receipt.operation,
+    "before destination removal",
+  );
 }
 
 /** Recheck a snapshot authority receipt at the destination mutation edge. */
 export async function revalidateSnapshotPolicyAuthority(
   receipt: SnapshotPolicyAuthorityReceipt,
-  deps: SnapshotPolicyAuthorityDeps = {},
+  deps: PolicyAuthorityInspectionDeps = {},
 ): Promise<void> {
   const current = await revalidateRecordedSnapshotPolicyAuthority(receipt);
-  const inspection = inspectSnapshotAuthorities(receipt, current.policyAuthority, deps);
-  assertRecordedPolicyAuthority(receipt.authority, inspection.authority, receipt.operation);
-  if (inspection.liveInspection) verifyRequirements(inspection.liveInspection, receipt);
-  if (inspection.globalInspection) verifyRequirements(inspection.globalInspection, receipt);
+  inspectPolicyAuthorityRequirements(
+    {
+      ...receipt,
+      recordedAuthority: current.policyAuthority,
+      sandboxName: receipt.sourceSandboxName,
+    },
+    deps,
+  ).verifyRequirements();
 }

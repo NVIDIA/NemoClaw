@@ -65,7 +65,7 @@ vi.mock("./ssrf.js", async (importOriginal) => {
 });
 
 const { BlueprintPolicyAuthorityRefusalError } = await import("./runtime-identity.js");
-const { actionApply, actionRollback } = await import("./runner.js");
+const { actionApply, actionRollback, actionStatus } = await import("./runner.js");
 const RUNS_DIR = `${FAKE_HOME}/.nemoclaw/state/runs`;
 
 function planPath(): string {
@@ -76,19 +76,59 @@ function commandNames(): string[] {
   return mockExeca.mock.calls.map(([, args]) => (args as string[]).join(" "));
 }
 
-function seedOwnedProviderRun(runId: string): string {
+function seedRun(runId: string, plan: Record<string, unknown>): string {
   const stateDir = `${RUNS_DIR}/${runId}`;
   store.set(stateDir, { type: "dir" });
   store.set(`${stateDir}/plan.json`, {
     type: "file",
-    content: JSON.stringify({
-      sandbox_name: "existing-sandbox",
-      inference_provider_created_by_apply: true,
-      provider_gateway: "test-gateway",
-      inference: { provider_name: "my-provider" },
-    }),
+    content: JSON.stringify(plan),
   });
   return stateDir;
+}
+
+function seedOwnedProviderRun(runId: string): string {
+  return seedRun(runId, {
+    sandbox_name: "existing-sandbox",
+    inference_provider_created_by_apply: true,
+    provider_gateway: "test-gateway",
+    inference: { provider_name: "my-provider" },
+  });
+}
+
+async function expectApplyCleanupFailure(
+  failedCommand: string,
+  failure: () => ReturnType<typeof successResult>,
+  expected: RegExp,
+): Promise<void> {
+  const routeResult = createInferenceRouteResult("test-gateway");
+  const commandResult = createRunnerCommandResult();
+  let routeSet = false;
+  mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
+    const command = args.join(" ");
+    const exactResult = new Map([
+      [failedCommand, failure],
+      [
+        "policy get -g test-gateway --full --output json test-sandbox",
+        () =>
+          sandboxPolicyAuthorityResult(
+            "test-sandbox",
+            routeSet ? "externally-managed" : "nemoclaw-managed",
+          ),
+      ],
+    ]).get(command);
+    const result = exactResult?.() ?? routeResult(args, commandResult(args, successResult()));
+    new Map([
+      [
+        "inference set -g test-gateway --provider my-provider --model gpt-4 --timeout 180",
+        () => {
+          routeSet = true;
+        },
+      ],
+    ]).get(command)?.();
+    return result;
+  });
+
+  await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(expected);
 }
 
 describe("blueprint recovery durability", () => {
@@ -196,8 +236,96 @@ describe("blueprint recovery durability", () => {
     );
   });
 
+  it.each([
+    [
+      "a legacy destructive ownership receipt",
+      { sandbox_created_by_apply: true },
+      /provider gateway receipt is required for destructive rollback/u,
+    ],
+    [
+      "a malformed configured-route receipt",
+      {
+        provider_gateway: "test-gateway",
+        inference_route_recovery: {
+          gateway: "test-gateway",
+          previous_route: {
+            state: "configured",
+            provider: "prior-provider",
+            model: "prior-model",
+          },
+          replacement_route: {
+            state: "configured",
+            provider: "my-provider",
+            model: "gpt-4",
+            timeout_seconds: 180,
+          },
+        },
+      },
+      /inference route recovery receipt is invalid/u,
+    ],
+    [
+      "an invalid policy authority receipt",
+      { policy_authority: { authority: "invalid", scope: "global" } },
+      /policy authority receipt is invalid/u,
+    ],
+    [
+      "a policy authority receipt for another sandbox",
+      {
+        policy_authority: {
+          authority: "nemoclaw-managed",
+          scope: "sandbox",
+          sandbox_name: "other-sandbox",
+        },
+      },
+      /policy authority receipt names another sandbox/u,
+    ],
+    [
+      "an invalid provider gateway receipt",
+      { sandbox_created_by_apply: true, provider_gateway: "../gateway" },
+      /provider gateway receipt is invalid/u,
+    ],
+    [
+      "a provider gateway conflicting with route recovery",
+      {
+        provider_gateway: "other-gateway",
+        inference_route_recovery: {
+          gateway: "test-gateway",
+          previous_route: {
+            state: "configured",
+            provider: "prior-provider",
+            model: "prior-model",
+            timeout_seconds: 45,
+          },
+          replacement_route: {
+            state: "configured",
+            provider: "my-provider",
+            model: "gpt-4",
+            timeout_seconds: 180,
+          },
+        },
+      },
+      /provider gateway receipt conflicts with route recovery receipt/u,
+    ],
+    [
+      "an invalid owned provider receipt",
+      {
+        inference_provider_created_by_apply: true,
+        provider_gateway: "test-gateway",
+        inference: { provider_name: "../../other" },
+      },
+      /Invalid rollback inference provider name/u,
+    ],
+  ])("rejects %s before rollback mutation (#9833)", async (_case, plan, expectedError) => {
+    const runId = "invalid-recovery-receipt";
+    const stateDir = seedRun(runId, { sandbox_name: "existing-sandbox", ...plan });
+
+    await expect(actionRollback(runId)).rejects.toThrow(expectedError);
+    expect(mockExeca).not.toHaveBeenCalled();
+    expect(store.has(`${stateDir}/rolled_back`)).toBe(false);
+  });
+
   it("preserves the refusal and continues cleanup when clearing a route receipt cannot persist (#9833)", async () => {
-    const routeResult = createInferenceRouteResult("test-gateway");
+    const routeResult = createInferenceRouteResult("test-gateway", null);
     const commandResult = createRunnerCommandResult();
     let replacementSet = false;
     const providerCreateCommand =
@@ -246,6 +374,7 @@ describe("blueprint recovery durability", () => {
     expect(message).not.toContain("receipt-secret");
     expect(commandNames()).toContain("sandbox stop -g test-gateway test-sandbox");
     expect(commandNames()).toContain("sandbox remove -g test-gateway test-sandbox");
+    expect(commandNames()).toContain("inference delete -g test-gateway");
     expect(commandNames()).not.toContain("provider delete -g test-gateway my-provider");
     const plan = JSON.parse(store.get(planPath())?.content ?? "{}");
     expect(plan).toMatchObject({
@@ -253,6 +382,145 @@ describe("blueprint recovery durability", () => {
       inference_provider_created_by_apply: false,
     });
     expect(plan).not.toHaveProperty("inference_route_recovery");
+  });
+
+  it.each([
+    {
+      name: "an unreadable active gateway",
+      exercise: async () => {
+        const commandResult = createRunnerCommandResult();
+        mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+          args.join(" ") === "status"
+            ? { exitCode: 1, stdout: "", stderr: "status denied" }
+            : commandResult(args, successResult()),
+        );
+        await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
+          /Failed to inspect the active OpenShell gateway/u,
+        );
+      },
+    },
+    {
+      name: "an ambiguous active gateway",
+      exercise: async () => {
+        const commandResult = createRunnerCommandResult();
+        mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+          args.join(" ") === "status" ? successResult() : commandResult(args, successResult()),
+        );
+        await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
+          /Failed to prove the active OpenShell gateway identity/u,
+        );
+      },
+    },
+    {
+      name: "a configured route without a timeout",
+      exercise: async () => {
+        const commandResult = createRunnerCommandResult();
+        mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+          args.join(" ") === "inference get -g test-gateway"
+            ? {
+                exitCode: 0,
+                stdout: "Gateway inference:\n  Provider: prior-provider\n  Model: prior-model\n",
+                stderr: "",
+              }
+            : commandResult(args, successResult()),
+        );
+        await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
+          /prior timeout is not a finite integer/u,
+        );
+      },
+    },
+    {
+      name: "an unparseable route",
+      exercise: async () => {
+        const commandResult = createRunnerCommandResult();
+        mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+          args.join(" ") === "inference get -g test-gateway"
+            ? { exitCode: 0, stdout: "unknown route", stderr: "" }
+            : commandResult(args, successResult()),
+        );
+        await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
+          /Failed to parse the active inference route/u,
+        );
+      },
+    },
+    {
+      name: "a non-object status plan",
+      exercise: async () => {
+        const stateDir = `${RUNS_DIR}/invalid-status-plan`;
+        store.set(stateDir, { type: "dir" });
+        store.set(`${stateDir}/plan.json`, { type: "file", content: "[]" });
+        actionStatus("invalid-status-plan");
+        expect(vi.mocked(process.stdout.write).mock.calls.flat().join("")).toContain(
+          '"status":"unknown"',
+        );
+      },
+    },
+    {
+      name: "validated route and global-authority status receipts",
+      exercise: async () => {
+        seedRun("validated-status-plan", {
+          run_id: "validated-status-plan",
+          sandbox_name: "existing-sandbox",
+          policy_authority: { authority: "nemoclaw-managed", scope: "global" },
+          inference_route_recovery: {
+            gateway: "test-gateway",
+            previous_route: { state: "unconfigured" },
+            replacement_route: {
+              state: "configured",
+              provider: "my-provider",
+              model: "gpt-4",
+              timeout_seconds: 180,
+            },
+          },
+        });
+        actionStatus("validated-status-plan");
+        const output = vi.mocked(process.stdout.write).mock.calls.flat().join("");
+        expect(output).toContain('"inference_route_recovery"');
+        expect(output).toContain('"policy_authority"');
+      },
+    },
+    {
+      name: "a denied sandbox removal",
+      exercise: () =>
+        expectApplyCleanupFailure(
+          "sandbox remove -g test-gateway test-sandbox",
+          () => ({ exitCode: 1, stdout: "", stderr: "sandbox remove denied" }),
+          /cleanup failed.*sandbox remove denied/su,
+        ),
+    },
+    {
+      name: "a sandbox removal spawn failure",
+      exercise: () =>
+        expectApplyCleanupFailure(
+          "sandbox remove -g test-gateway test-sandbox",
+          () => {
+            throw new Error("sandbox remove spawn failed");
+          },
+          /cleanup failed.*sandbox remove spawn failed/su,
+        ),
+    },
+    {
+      name: "a denied provider deletion",
+      exercise: () =>
+        expectApplyCleanupFailure(
+          "provider delete -g test-gateway my-provider",
+          () => ({ exitCode: 1, stdout: "", stderr: "provider delete denied" }),
+          /cleanup failed.*provider delete denied/su,
+        ),
+    },
+    {
+      name: "a provider deletion spawn failure",
+      exercise: () =>
+        expectApplyCleanupFailure(
+          "provider delete -g test-gateway my-provider",
+          () => {
+            throw new Error("provider delete spawn failed");
+          },
+          /cleanup failed.*provider delete spawn failed/su,
+        ),
+    },
+  ])("retains deterministic recovery semantics for $name (#9833)", async ({ exercise }) => {
+    await exercise();
   });
 
   it("atomically consumes completed rollback so replay cannot touch newer names (#9833)", async () => {
@@ -303,20 +571,5 @@ describe("blueprint recovery durability", () => {
     expect(mockOpenSync).toHaveBeenCalledWith(stateDir, "r");
     expect(mockFsyncSync).toHaveBeenCalledTimes(1);
     expect(mockExeca).not.toHaveBeenCalled();
-  });
-
-  it("leaves an interrupted rollback unconsumed and retryable (#9833)", async () => {
-    const stateDir = seedOwnedProviderRun("interrupted-rollback");
-    mockExeca.mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "denied" });
-
-    await expect(actionRollback("interrupted-rollback")).rejects.toThrow(/denied/u);
-    expect(store.has(`${stateDir}/rolled_back`)).toBe(false);
-
-    mockExeca.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
-    await actionRollback("interrupted-rollback");
-    expect(
-      commandNames().filter((command) => command === "provider delete -g test-gateway my-provider"),
-    ).toHaveLength(2);
-    expect(store.has(`${stateDir}/rolled_back`)).toBe(true);
   });
 });

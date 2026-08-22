@@ -2,16 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import { isDeepStrictEqual } from "node:util";
-import YAML from "yaml";
 
 import {
-  assertExternalPolicyRequirements,
   assertRecordedPolicyAuthority,
-  inspectGlobalPolicyAuthority,
-  inspectSandboxPolicyAuthority,
   type SandboxPolicyAuthority,
-  type SandboxPolicyAuthorityInspection,
 } from "../../../adapters/openshell/policy-authority";
 import { prepareInitialSandboxCreatePolicy } from "../../../onboard/initial-policy";
 import { mergeRebuildMessagingPolicyPresets } from "../../../onboard/messaging-policy-presets";
@@ -29,8 +23,13 @@ import { normalizeRebuildTargetPolicyPresets } from "../rebuild-backup-phase";
 import { resolveRebuildDurableConfig } from "../rebuild-durable-config";
 import type { RebuildSandboxEntry } from "../rebuild-flow-helpers";
 import { resolveManagedMcpPolicyRequirementContents } from "./mcp-requirements";
-
-type RequiredPolicy = Record<string, unknown>;
+import {
+  assertManagedMcpPolicyRequirementsUnchanged,
+  inspectPolicyAuthorityRequirements,
+  parseRequiredPolicyDocument,
+  type PolicyAuthorityInspectionDeps,
+  type RequiredPolicy,
+} from "./preflight";
 
 export interface RebuildPolicyAuthorityReceipt {
   readonly authority: SandboxPolicyAuthority;
@@ -41,9 +40,7 @@ export interface RebuildPolicyAuthorityReceipt {
   readonly sandboxName: string;
 }
 
-interface RebuildPolicyAuthorityDeps {
-  readonly inspectGlobalPolicyAuthority?: typeof inspectGlobalPolicyAuthority;
-  readonly inspectSandboxPolicyAuthority?: typeof inspectSandboxPolicyAuthority;
+interface RebuildPolicyAuthorityDeps extends PolicyAuthorityInspectionDeps {
   readonly observeSandboxPresence?: (target: {
     readonly gatewayName: string;
     readonly sandboxName: string;
@@ -51,16 +48,8 @@ interface RebuildPolicyAuthorityDeps {
 }
 
 function parseRequiredPolicy(content: string, operation: string): RequiredPolicy {
-  let parsed: unknown;
-  try {
-    parsed = YAML.parse(content);
-  } catch {
-    throw new Error(`Refusing to ${operation}: a required network policy document is invalid.`);
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(`Refusing to ${operation}: a required network policy document is invalid.`);
-  }
-  const networkPolicies = (parsed as RequiredPolicy).network_policies;
+  const parsed = parseRequiredPolicyDocument(content, operation);
+  const networkPolicies = parsed.network_policies;
   if (
     networkPolicies !== undefined &&
     (typeof networkPolicies !== "object" ||
@@ -69,7 +58,7 @@ function parseRequiredPolicy(content: string, operation: string): RequiredPolicy
   ) {
     throw new Error(`Refusing to ${operation}: a required network policy document is invalid.`);
   }
-  return parsed as RequiredPolicy;
+  return parsed;
 }
 
 function readPreparedPolicy(
@@ -178,62 +167,30 @@ async function resolveRequiredPolicies(input: {
   return { managedMcpPolicies, requiredPolicies: required };
 }
 
-function verifyRequiredPolicies(
-  inspection: SandboxPolicyAuthorityInspection,
-  receipt: Pick<RebuildPolicyAuthorityReceipt, "operation" | "requiredPolicies" | "sandboxName">,
-): void {
-  for (const requiredPolicy of receipt.requiredPolicies) {
-    assertExternalPolicyRequirements({
-      inspection,
-      requiredPolicy,
-      operation: receipt.operation,
-      sandboxName: receipt.sandboxName,
-    });
-  }
-}
-
-function inspectRebuildAuthorities(
-  receipt: Pick<
-    RebuildPolicyAuthorityReceipt,
-    "gatewayName" | "operation" | "requiredPolicies" | "sandboxName"
-  >,
-  recordedAuthority: SandboxPolicyAuthority | undefined,
+function inspectRebuildPolicyAuthority(
+  receipt: Omit<RebuildPolicyAuthorityReceipt, "authority">,
+  recordedAuthority: RebuildSandboxEntry["policyAuthority"],
   deps: RebuildPolicyAuthorityDeps,
-): {
-  authority: SandboxPolicyAuthority;
-  globalInspection: SandboxPolicyAuthorityInspection;
-  sandboxInspection: SandboxPolicyAuthorityInspection | null;
-} {
-  const presence = (deps.observeSandboxPresence ?? observeSandboxPresenceOnGateway)({
-    sandboxName: receipt.sandboxName,
-    gatewayName: receipt.gatewayName,
-  });
-  const globalInspection = (deps.inspectGlobalPolicyAuthority ?? inspectGlobalPolicyAuthority)({
-    gatewayName: receipt.gatewayName,
-  });
-  if (presence === "missing") {
-    if (recordedAuthority === undefined) {
-      throw new Error(
-        `Refusing to ${receipt.operation}: the sandbox is absent and its recorded policy authority is missing.`,
-      );
-    }
-    assertRecordedPolicyAuthority(recordedAuthority, globalInspection.authority, receipt.operation);
-    return {
-      authority: globalInspection.authority,
-      globalInspection,
-      sandboxInspection: null,
-    };
+): ReturnType<typeof inspectPolicyAuthorityRequirements> {
+  const inspectLiveSource =
+    (deps.observeSandboxPresence ?? observeSandboxPresenceOnGateway)({
+      sandboxName: receipt.sandboxName,
+      gatewayName: receipt.gatewayName,
+    }) !== "missing";
+  if (!inspectLiveSource && recordedAuthority === undefined) {
+    throw new Error(
+      `Refusing to ${receipt.operation}: the sandbox is absent and its recorded policy authority is missing.`,
+    );
   }
-  const sandboxInspection = (deps.inspectSandboxPolicyAuthority ?? inspectSandboxPolicyAuthority)({
-    sandboxName: receipt.sandboxName,
-    gatewayName: receipt.gatewayName,
-  });
-  assertRecordedPolicyAuthority(
-    sandboxInspection.authority,
-    globalInspection.authority,
-    receipt.operation,
+  return inspectPolicyAuthorityRequirements(
+    {
+      ...receipt,
+      inspectLiveSource,
+      recordedAuthority,
+      verifyGlobalCreatePolicy: true,
+    },
+    deps,
   );
-  return { authority: sandboxInspection.authority, globalInspection, sandboxInspection };
 }
 
 /** Qualify both the live source and its recreate policy before rebuild effects. */
@@ -258,11 +215,16 @@ export async function qualifyRebuildPolicyAuthority(
     requiredPolicies,
     sandboxName: input.sandboxName,
   };
-  const inspection = inspectRebuildAuthorities(receipt, input.sandboxEntry.policyAuthority, deps);
+  const inspection = inspectRebuildPolicyAuthority(
+    receipt,
+    input.sandboxEntry.policyAuthority,
+    deps,
+  );
   const { authority } = inspection;
-  if (input.sandboxEntry.policyAuthority !== undefined) {
-    assertRecordedPolicyAuthority(input.sandboxEntry.policyAuthority, authority, operation);
-  } else if (!registry.updateSandbox(input.sandboxName, { policyAuthority: authority })) {
+  if (
+    input.sandboxEntry.policyAuthority === undefined &&
+    !registry.updateSandbox(input.sandboxName, { policyAuthority: authority })
+  ) {
     throw new Error(
       `Refusing to ${operation}: the observed policy authority could not be recorded.`,
     );
@@ -279,8 +241,7 @@ export async function qualifyRebuildPolicyAuthority(
   delete input.sandboxEntry.policyTier;
   delete input.sandboxEntry.policyAuthority;
   Object.assign(input.sandboxEntry, normalizedEntry);
-  if (inspection.sandboxInspection) verifyRequiredPolicies(inspection.sandboxInspection, receipt);
-  verifyRequiredPolicies(inspection.globalInspection, receipt);
+  inspection.verifyRequirements();
   return { ...receipt, authority };
 }
 
@@ -300,13 +261,12 @@ export async function revalidateRebuildPolicyAuthority(
   const currentManagedMcpPolicies = (
     await resolveManagedMcpPolicyRequirementContents(current, receipt.operation)
   ).map((content) => parseRequiredPolicy(content, receipt.operation));
-  if (!isDeepStrictEqual(currentManagedMcpPolicies, receipt.managedMcpPolicies)) {
-    throw new Error(
-      `Refusing to ${receipt.operation}: managed MCP policy requirements changed after qualification.`,
-    );
-  }
-  const inspection = inspectRebuildAuthorities(receipt, current.policyAuthority, deps);
-  assertRecordedPolicyAuthority(receipt.authority, inspection.authority, receipt.operation);
-  if (inspection.sandboxInspection) verifyRequiredPolicies(inspection.sandboxInspection, receipt);
-  verifyRequiredPolicies(inspection.globalInspection, receipt);
+  assertManagedMcpPolicyRequirementsUnchanged(
+    currentManagedMcpPolicies,
+    receipt.managedMcpPolicies,
+    receipt.operation,
+    "after qualification",
+  );
+  const authorityCheck = inspectRebuildPolicyAuthority(receipt, current.policyAuthority, deps);
+  authorityCheck.verifyRequirements();
 }

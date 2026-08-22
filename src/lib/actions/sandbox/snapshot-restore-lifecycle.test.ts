@@ -353,258 +353,6 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.registerSandboxMock).not.toHaveBeenCalled();
   });
 
-  it("qualifies the forced destination authority before reservation or deletion (#9833)", async () => {
-    f.getSandboxMock.mockImplementation((name) =>
-      name === "alpha"
-        ? {
-            name: "alpha",
-            agent: "openclaw",
-            imageTag: "nemoclaw-alpha:test",
-            openshellDriver: "docker",
-            provider: "nvidia-nim",
-            model: "nvidia/model-a",
-            policyAuthority: "nemoclaw-managed",
-          }
-        : name === "beta"
-          ? {
-              name: "beta",
-              agent: "openclaw",
-              imageTag: "nemoclaw-beta:test",
-              openshellDriver: "docker",
-              provider: "nvidia-nim",
-              model: "nvidia/model-a",
-              policyAuthority: "nemoclaw-managed",
-            }
-          : null,
-    );
-    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
-    f.getLatestBackupMock.mockReturnValue(f.latestBackupFixture);
-    f.inspectSandboxPolicyAuthorityMock.mockImplementation(({ sandboxName }) => ({
-      authority: sandboxName === "beta" ? "externally-managed" : "nemoclaw-managed",
-      effectivePolicy: {},
-    }));
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await expect(
-      runSandboxSnapshot("alpha", {
-        kind: "restore",
-        to: "beta",
-        force: true,
-        yes: true,
-      }),
-    ).rejects.toMatchObject({ exitCode: 1 });
-
-    expect(f.reserveSandboxInferenceRouteMock).not.toHaveBeenCalled();
-    expect(f.lifecycleMock.events).not.toContain("delete");
-    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
-  });
-
-  it("awaits destination authority revalidation before forced deletion (#9833)", async () => {
-    f.getSandboxMock.mockImplementation((name) =>
-      name === "alpha" || name === "beta"
-        ? {
-            name,
-            agent: "openclaw",
-            imageTag: `nemoclaw-${name}:test`,
-            openshellDriver: "docker",
-            provider: "nvidia-nim",
-            model: "nvidia/model-a",
-            policyAuthority: "nemoclaw-managed",
-          }
-        : null,
-    );
-    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
-    f.getLatestBackupMock.mockReturnValue(f.latestBackupFixture);
-    refusePolicyAuthorityInspectionOnCall(
-      f.inspectSandboxPolicyAuthorityMock,
-      4,
-      { authority: "nemoclaw-managed", effectivePolicy: {} },
-      "destination authority changed before delete",
-    );
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await expect(
-      runSandboxSnapshot("alpha", {
-        kind: "restore",
-        to: "beta",
-        force: true,
-        yes: true,
-      }),
-    ).rejects.toMatchObject({ exitCode: 1 });
-
-    expect(
-      f.inspectSandboxPolicyAuthorityMock.mock.calls.filter(
-        ([input]) => input.sandboxName === "beta",
-      ),
-    ).toHaveLength(2);
-    expect(f.lifecycleMock.events).not.toContain("delete");
-    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
-  });
-
-  it("revalidates the source receipt after forced deletion and before clone creation (#9833)", async () => {
-    f.getSandboxMock.mockImplementation((name) =>
-      name === "alpha" || name === "beta"
-        ? {
-            name,
-            agent: "openclaw",
-            imageTag: `nemoclaw-${name}:test`,
-            openshellDriver: "docker",
-            provider: "nvidia-nim",
-            model: "nvidia/model-a",
-            policyAuthority: "nemoclaw-managed",
-          }
-        : null,
-    );
-    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
-    f.getLatestBackupMock.mockReturnValue(f.latestBackupFixture);
-    refusePolicyAuthorityInspectionOnCall(
-      f.inspectSandboxPolicyAuthorityMock,
-      9,
-      { authority: "nemoclaw-managed", effectivePolicy: {} },
-      "source authority changed after destination deletion",
-    );
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await expect(
-      runSandboxSnapshot("alpha", {
-        kind: "restore",
-        to: "beta",
-        force: true,
-        yes: true,
-      }),
-    ).rejects.toMatchObject({ exitCode: 1 });
-
-    expect(
-      f.inspectSandboxPolicyAuthorityMock.mock.calls.filter(
-        ([input]) => input.sandboxName === "alpha",
-      ),
-    ).toHaveLength(3);
-    expect(f.lifecycleMock.events).toContain("delete");
-    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
-    expect(f.registerSandboxMock).not.toHaveBeenCalled();
-  });
-
-  it("revalidates the created clone at the filesystem restore fence (#9833)", async () => {
-    f.getSandboxMock.mockImplementation((name) =>
-      name === "alpha"
-        ? {
-            name: "alpha",
-            agent: "openclaw",
-            imageTag: "nemoclaw-alpha:test",
-            openshellDriver: "docker",
-            provider: "nvidia-nim",
-            model: "nvidia/model-a",
-            policyAuthority: "nemoclaw-managed",
-          }
-        : null,
-    );
-    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
-    f.getLatestBackupMock.mockReturnValue(f.latestBackupFixture);
-    f.captureOpenshellMock.mockImplementation((args) =>
-      f.openshellResponses(args, {
-        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
-        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
-      }),
-    );
-    refusePolicyAuthorityInspectionOnCall(
-      f.inspectSandboxPolicyAuthorityMock,
-      9,
-      { authority: "nemoclaw-managed", effectivePolicy: {} },
-      "clone policy authority changed at restore fence",
-    );
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await expect(
-      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
-    ).rejects.toMatchObject({ exitCode: 1 });
-
-    const firstTargetInspection = f.inspectSandboxPolicyAuthorityMock.mock.calls.findIndex(
-      (call) => call[0]?.sandboxName === "beta",
-    );
-    expect(firstTargetInspection).toBeGreaterThanOrEqual(0);
-    expect(f.streamSandboxCreateMock.mock.invocationCallOrder[0]).toBeLessThan(
-      f.inspectSandboxPolicyAuthorityMock.mock.invocationCallOrder[firstTargetInspection],
-    );
-    expect(
-      f.inspectSandboxPolicyAuthorityMock.mock.invocationCallOrder[firstTargetInspection],
-    ).toBeLessThan(f.registerSandboxMock.mock.invocationCallOrder[0]);
-    const targetInspectionOrders = f.inspectSandboxPolicyAuthorityMock.mock.calls.flatMap(
-      (call, index) =>
-        call[0]?.sandboxName === "beta"
-          ? [f.inspectSandboxPolicyAuthorityMock.mock.invocationCallOrder[index]]
-          : [],
-    );
-    expect(targetInspectionOrders[1]).toBeLessThan(
-      f.registerSandboxMock.mock.invocationCallOrder[0],
-    );
-    expect(targetInspectionOrders).toHaveLength(5);
-    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
-  });
-
-  it("stops when permission repair changes clone authority before policy attribution (#9833)", async () => {
-    f.getSandboxMock.mockImplementation((name) =>
-      name === "alpha"
-        ? {
-            name: "alpha",
-            agent: "openclaw",
-            imageTag: "nemoclaw-alpha:test",
-            openshellDriver: "docker",
-            provider: "nvidia-nim",
-            model: "nvidia/model-a",
-            policyAuthority: "externally-managed",
-          }
-        : null,
-    );
-    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
-    f.captureOpenshellMock.mockImplementation((args) =>
-      f.openshellResponses(args, {
-        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
-        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
-      }),
-    );
-    f.getLatestBackupMock.mockReturnValue({
-      ...f.latestBackupFixture,
-      policyPresets: [],
-      customPolicies: [],
-    });
-    f.restoreSandboxStateMock.mockReturnValue({
-      success: true,
-      restoredDirs: [],
-      restoredFiles: ["openclaw.json"],
-      failedDirs: [],
-      failedFiles: [],
-    });
-    const baseline = f.resolveAgentBaselinePolicyMock("openclaw")!;
-    const externalInspection = {
-      authority: "externally-managed" as const,
-      effectivePolicy: YAML.parse(baseline.content) as Record<string, unknown>,
-    };
-    f.inspectGlobalPolicyAuthorityMock.mockReturnValue(externalInspection);
-    refusePolicyAuthorityInspectionOnCall(
-      f.inspectSandboxPolicyAuthorityMock,
-      12,
-      externalInspection,
-      "clone authority changed during permission repair",
-    );
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await expect(
-      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
-    ).rejects.toMatchObject({ exitCode: 1 });
-
-    expect(
-      f.inspectSandboxPolicyAuthorityMock.mock.calls.filter(
-        ([input]) => input.sandboxName === "beta",
-      ),
-    ).toHaveLength(8);
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledOnce();
-    expect(f.shieldsMock.repairMutableConfigPermsMock).toHaveBeenCalledOnce();
-    expect(f.updateSandboxMock).not.toHaveBeenCalled();
-    expect(f.applyPresetMock).not.toHaveBeenCalled();
-    expect(f.applyPresetContentMock).not.toHaveBeenCalled();
-    expect(f.removePresetMock).not.toHaveBeenCalled();
-  });
-
   it("clones under external authority without passing NemoClaw policy inputs (#9833)", async () => {
     vi.stubEnv("OPENSHELL_SANDBOX_POLICY", "/tmp/ambient-policy.yaml");
     f.getSandboxMock.mockImplementation((name) =>
@@ -695,190 +443,56 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       },
       expected: "could not prove ownership",
     },
-  ])("refuses force deletion before every side effect for $label", async ({
-    destination,
-    expected,
-  }) => {
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    f.getSandboxMock.mockImplementation((name) =>
-      name === "alpha"
-        ? {
-            name: "alpha",
-            agent: "openclaw",
-            imageTag: "nemoclaw-alpha:test",
-            openshellDriver: "docker",
-            provider: "nvidia-nim",
-            model: "nvidia/model-a",
-          }
-        : name === "beta"
-          ? destination
-          : null,
-    );
-    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
-    f.captureOpenshellMock.mockImplementation((args) =>
-      f.openshellResponses(args, {
-        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
-        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
-      }),
-    );
-    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
-    const { runSandboxSnapshot } = await import("./snapshot");
+  ])(
+    "refuses force deletion before every side effect for $label",
+    async ({ destination, expected }) => {
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+      f.getSandboxMock.mockImplementation((name) =>
+        name === "alpha"
+          ? {
+              name: "alpha",
+              agent: "openclaw",
+              imageTag: "nemoclaw-alpha:test",
+              openshellDriver: "docker",
+              provider: "nvidia-nim",
+              model: "nvidia/model-a",
+            }
+          : name === "beta"
+            ? destination
+            : null,
+      );
+      f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+      f.captureOpenshellMock.mockImplementation((args) =>
+        f.openshellResponses(args, {
+          "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+          "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+        }),
+      );
+      f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+      const { runSandboxSnapshot } = await import("./snapshot");
 
-    await expect(
-      runSandboxSnapshot("alpha", {
-        kind: "restore",
-        to: "beta",
-        force: true,
-        yes: true,
-      }),
-    ).rejects.toMatchObject({ exitCode: 1 });
+      await expect(
+        runSandboxSnapshot("alpha", {
+          kind: "restore",
+          to: "beta",
+          force: true,
+          yes: true,
+        }),
+      ).rejects.toMatchObject({ exitCode: 1 });
 
-    expect(consoleError.mock.calls.flat().join("\n")).toContain(expected);
-    expect(f.stopNimContainerMock).not.toHaveBeenCalled();
-    expect(f.stopNimContainerByNameMock).not.toHaveBeenCalled();
-    expect(f.lifecycleMock.events).not.toContain("delete");
-    expect(f.lifecycleMock.events).not.toContain("cleanup-shields");
-    expect(f.runOpenshellMock).not.toHaveBeenCalledWith(
-      expect.arrayContaining(["provider", "delete"]),
-      expect.anything(),
-    );
-    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
-    expect(f.registerSandboxMock).not.toHaveBeenCalled();
-  });
-
-  it("rechecks cleanup authority inside the destination lock before every side effect", async () => {
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    const destination = {
-      name: "beta",
-      agent: "openclaw",
-      imageTag: "nemoclaw-beta:test",
-      openshellDriver: "docker",
-      provider: "nvidia-nim",
-      model: "nvidia/model-a",
-      workload: {
-        schemaVersion: 1 as const,
-        kind: "legacy-dockerfile" as const,
-        reference: "nemoclaw-beta:test",
-        shared: false as const,
-      },
-    };
-    let lockedDestination = destination;
-    const destinationAtLock = new Map<string, typeof destination>([
-      [
-        "delete snapshot restore destination",
-        {
-          ...destination,
-          workload: {
-            ...destination.workload,
-            reference: "nemoclaw-beta:changed-owner",
-          },
-        },
-      ],
-    ]);
-    f.getSandboxMock.mockImplementation((name) =>
-      name === "alpha"
-        ? {
-            name: "alpha",
-            agent: "openclaw",
-            imageTag: "nemoclaw-alpha:test",
-            openshellDriver: "docker",
-            provider: "nvidia-nim",
-            model: "nvidia/model-a",
-          }
-        : name === "beta"
-          ? lockedDestination
-          : null,
-    );
-    f.lifecycleMock.withTimerBoundMock.mockImplementation((_sandboxName, command, fn) => {
-      f.lifecycleMock.events.push(`lock:${command}`);
-      lockedDestination = destinationAtLock.get(command) ?? lockedDestination;
-      return fn();
-    });
-    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
-    f.captureOpenshellMock.mockImplementation((args) =>
-      f.openshellResponses(args, {
-        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
-        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
-      }),
-    );
-    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await expect(
-      runSandboxSnapshot("alpha", {
-        kind: "restore",
-        to: "beta",
-        force: true,
-        yes: true,
-      }),
-    ).rejects.toMatchObject({ exitCode: 1 });
-
-    expect(consoleError.mock.calls.flat().join("\n")).toContain("could not prove ownership");
-    expect(f.stopNimContainerMock).not.toHaveBeenCalled();
-    expect(f.stopNimContainerByNameMock).not.toHaveBeenCalled();
-    expect(f.lifecycleMock.events).not.toContain("delete");
-    expect(f.lifecycleMock.events).not.toContain("cleanup-shields");
-    expect(f.runOpenshellMock).not.toHaveBeenCalledWith(
-      expect.arrayContaining(["provider", "delete"]),
-      expect.anything(),
-    );
-    expect(f.removeSandboxRegistryEntryOutcomeMock).not.toHaveBeenCalled();
-    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
-    expect(f.registerSandboxMock).not.toHaveBeenCalled();
-  });
-
-  it("stops after deleting a destination when registry removal loses authority", async () => {
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    const destination = {
-      name: "beta",
-      agent: "openclaw",
-      imageTag: "nemoclaw-beta:test",
-      openshellDriver: "docker",
-      provider: "nvidia-nim",
-      model: "nvidia/model-a",
-    };
-    f.getSandboxMock.mockImplementation((name) =>
-      name === "alpha"
-        ? {
-            name: "alpha",
-            agent: "openclaw",
-            imageTag: "nemoclaw-alpha:test",
-            openshellDriver: "docker",
-            provider: "nvidia-nim",
-            model: "nvidia/model-a",
-          }
-        : name === "beta"
-          ? destination
-          : null,
-    );
-    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
-    f.captureOpenshellMock.mockImplementation((args) =>
-      f.openshellResponses(args, {
-        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
-        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
-      }),
-    );
-    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
-    f.removeSandboxRegistryEntryWithReceiptMock.mockReturnValue(null);
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await expect(
-      runSandboxSnapshot("alpha", {
-        kind: "restore",
-        to: "beta",
-        force: true,
-        yes: true,
-      }),
-    ).rejects.toMatchObject({ exitCode: 1 });
-
-    expect(f.lifecycleMock.events).toContain("delete");
-    expect(f.lifecycleMock.events).toContain("cleanup-shields");
-    expect(consoleError.mock.calls.flat().join("\n")).toContain("registry entry was preserved");
-    expect(f.getSandboxMock("beta")).toBe(destination);
-    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
-    expect(f.registerSandboxMock).not.toHaveBeenCalled();
-    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
-  });
+      expect(consoleError.mock.calls.flat().join("\n")).toContain(expected);
+      expect(f.stopNimContainerMock).not.toHaveBeenCalled();
+      expect(f.stopNimContainerByNameMock).not.toHaveBeenCalled();
+      expect(f.lifecycleMock.events).not.toContain("delete");
+      expect(f.lifecycleMock.events).not.toContain("cleanup-shields");
+      expect(f.runOpenshellMock).not.toHaveBeenCalledWith(
+        expect.arrayContaining(["provider", "delete"]),
+        expect.anything(),
+      );
+      expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+      expect(f.registerSandboxMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("checks the removed destination receipt before reporting deletion (#9833)", async () => {
     f.getSandboxMock.mockImplementation((name) =>
@@ -1325,71 +939,69 @@ describe("runSandboxSnapshot restore: gateway pairing on a freshly created desti
           { custom: { sourcePath: appliedCustomPolicy.sourcePath }, nonFatal: true },
         ),
     },
-  ])("warns before gateway pairing and continues after $label failure (#8210)", async ({
-    snapshot,
-    configureFailure,
-    expectedWarning,
-    assertMutation,
-  }) => {
-    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-pairing-"));
-    tempHomes.push(tempHome);
-    vi.stubEnv("HOME", tempHome);
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    const events: string[] = [];
-    const consoleWarn = vi.spyOn(console, "warn").mockImplementation((...args) => {
-      events.push(`warn:${args.join(" ")}`);
-    });
-    f.establishRestoredSandboxGatewayPairingMock.mockImplementation(() => {
-      events.push("pairing");
-    });
-    let registeredClone: f.SandboxRecord | null = null;
-    f.registerSandboxMock.mockImplementation((entry) => {
-      registeredClone = entry as f.SandboxRecord;
-    });
-    const alphaEntry = {
-      name: "alpha",
-      agent: "openclaw",
-      imageTag: "nemoclaw-alpha:test",
-      openshellDriver: "docker",
-      provider: "nvidia-nim",
-      model: "nvidia/model-a",
-    } as f.SandboxRecord;
-    f.getSandboxMock.mockImplementation((name) =>
-      name === "alpha" ? alphaEntry : registeredClone,
-    );
-    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
-    f.captureOpenshellMock.mockImplementation((args) =>
-      f.openshellResponses(args, {
-        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
-        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
-      }),
-    );
-    f.getLatestBackupMock.mockReturnValue(snapshot);
-    configureFailure();
-    f.restoreSandboxStateMock.mockReturnValue({
-      success: true,
-      restoredDirs: ["workspace"],
-      restoredFiles: ["user.md"],
-      failedDirs: [],
-      failedFiles: [],
-    });
-    const { runSandboxSnapshot } = await import("./snapshot");
+  ])(
+    "warns before gateway pairing and continues after $label failure (#8210)",
+    async ({ snapshot, configureFailure, expectedWarning, assertMutation }) => {
+      const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-pairing-"));
+      tempHomes.push(tempHome);
+      vi.stubEnv("HOME", tempHome);
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const events: string[] = [];
+      const consoleWarn = vi.spyOn(console, "warn").mockImplementation((...args) => {
+        events.push(`warn:${args.join(" ")}`);
+      });
+      f.establishRestoredSandboxGatewayPairingMock.mockImplementation(() => {
+        events.push("pairing");
+      });
+      let registeredClone: f.SandboxRecord | null = null;
+      f.registerSandboxMock.mockImplementation((entry) => {
+        registeredClone = entry as f.SandboxRecord;
+      });
+      const alphaEntry = {
+        name: "alpha",
+        agent: "openclaw",
+        imageTag: "nemoclaw-alpha:test",
+        openshellDriver: "docker",
+        provider: "nvidia-nim",
+        model: "nvidia/model-a",
+      } as f.SandboxRecord;
+      f.getSandboxMock.mockImplementation((name) =>
+        name === "alpha" ? alphaEntry : registeredClone,
+      );
+      f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
+      f.captureOpenshellMock.mockImplementation((args) =>
+        f.openshellResponses(args, {
+          "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+          "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+        }),
+      );
+      f.getLatestBackupMock.mockReturnValue(snapshot);
+      configureFailure();
+      f.restoreSandboxStateMock.mockReturnValue({
+        success: true,
+        restoredDirs: ["workspace"],
+        restoredFiles: ["user.md"],
+        failedDirs: [],
+        failedFiles: [],
+      });
+      const { runSandboxSnapshot } = await import("./snapshot");
 
-    await expect(
-      runSandboxSnapshot("alpha", { kind: "restore", to: "beta", yes: true }),
-    ).resolves.toBeUndefined();
+      await expect(
+        runSandboxSnapshot("alpha", { kind: "restore", to: "beta", yes: true }),
+      ).resolves.toBeUndefined();
 
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
-    assertMutation();
-    expect(consoleWarn.mock.calls.flat().join("\n")).toContain(expectedWarning);
-    const warningIndex = events.findIndex((event) => event.includes(expectedWarning));
-    expect(warningIndex).toBeGreaterThanOrEqual(0);
-    expect(warningIndex).toBeLessThan(events.indexOf("pairing"));
-    expect(f.establishRestoredSandboxGatewayPairingMock).toHaveBeenCalledWith(
-      "beta",
-      expect.any(Function),
-    );
-  });
+      expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
+      assertMutation();
+      expect(consoleWarn.mock.calls.flat().join("\n")).toContain(expectedWarning);
+      const warningIndex = events.findIndex((event) => event.includes(expectedWarning));
+      expect(warningIndex).toBeGreaterThanOrEqual(0);
+      expect(warningIndex).toBeLessThan(events.indexOf("pairing"));
+      expect(f.establishRestoredSandboxGatewayPairingMock).toHaveBeenCalledWith(
+        "beta",
+        expect.any(Function),
+      );
+    },
+  );
 
   it("fails with repair guidance when restored gateway pairing cannot be verified (#7431)", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -1437,45 +1049,45 @@ describe("runSandboxSnapshot restore: gateway pairing on a freshly created desti
     });
   });
 
-  it.each([
-    "hermes",
-    "langchain-deepagents-code",
-  ])("does not run OpenClaw pairing for a cross-sandbox %s restore (#7431)", async (agent) => {
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    f.getSandboxMock.mockImplementation((name) =>
-      name === "alpha"
-        ? {
-            name: "alpha",
-            agent,
-            imageTag: "nemoclaw-alpha:test",
-            openshellDriver: "docker",
-            provider: "nvidia-nim",
-            model: "nvidia/model-a",
-          }
-        : null,
-    );
-    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
-    f.captureOpenshellMock.mockImplementation((args) =>
-      f.openshellResponses(args, {
-        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
-        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
-      }),
-    );
-    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
-    f.restoreSandboxStateMock.mockReturnValue({
-      success: true,
-      restoredDirs: ["workspace"],
-      restoredFiles: [],
-      failedDirs: [],
-      failedFiles: [],
-    });
-    const { runSandboxSnapshot } = await import("./snapshot");
+  it.each(["hermes", "langchain-deepagents-code"])(
+    "does not run OpenClaw pairing for a cross-sandbox %s restore (#7431)",
+    async (agent) => {
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      f.getSandboxMock.mockImplementation((name) =>
+        name === "alpha"
+          ? {
+              name: "alpha",
+              agent,
+              imageTag: "nemoclaw-alpha:test",
+              openshellDriver: "docker",
+              provider: "nvidia-nim",
+              model: "nvidia/model-a",
+            }
+          : null,
+      );
+      f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
+      f.captureOpenshellMock.mockImplementation((args) =>
+        f.openshellResponses(args, {
+          "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+          "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+        }),
+      );
+      f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+      f.restoreSandboxStateMock.mockReturnValue({
+        success: true,
+        restoredDirs: ["workspace"],
+        restoredFiles: [],
+        failedDirs: [],
+        failedFiles: [],
+      });
+      const { runSandboxSnapshot } = await import("./snapshot");
 
-    await runSandboxSnapshot("alpha", { kind: "restore", to: "beta", yes: true });
+      await runSandboxSnapshot("alpha", { kind: "restore", to: "beta", yes: true });
 
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
-    expect(f.establishRestoredSandboxGatewayPairingMock).not.toHaveBeenCalled();
-  });
+      expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
+      expect(f.establishRestoredSandboxGatewayPairingMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("leaves the working gateway credentials untouched on a self-restore", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});

@@ -5,70 +5,21 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry } from "../../state/registry";
 import {
-  applyAbsentSandboxRebuildPolicyCarryForward,
   applyManagedSandboxRebuildPolicyCarryForward,
   completeHermesPortableSandboxRegistration,
-  proveRecreateSourceBeforePolicyCarryForward,
   readManagedDcodeCreateSelectionDrift,
   runSandboxCreateWithPolicyAuthorityChecks,
 } from "./orchestration";
 
 describe("authoritative rebuild policy carry-forward", () => {
-  it("proves the journaled source before mutating its preserved policy row (#9792)", () => {
-    const events: string[] = [];
-    const runtime = { acceptedTarget: false };
-
-    expect(
-      proveRecreateSourceBeforePolicyCarryForward({
-        createRecreateRuntime: () => {
-          events.push("prove-source");
-          return runtime;
-        },
-        carryForward: () => events.push("carry-forward"),
-      }),
-    ).toBe(runtime);
-    expect(events).toEqual(["prove-source", "carry-forward"]);
-  });
-
-  it("replaces stale resumed presets after the outer rebuild deletes the source sandbox (#9792)", () => {
-    const events: string[] = [];
-    const note = vi.fn();
-    const applyRecreatePolicyCarryForward = vi.fn(() => events.push("carry-forward"));
-    const revalidatePolicyAuthority = vi.fn(() => events.push("revalidate"));
-    const filteredPolicyPresets = ["github"];
-
-    applyAbsentSandboxRebuildPolicyCarryForward(
-      {
-        sandboxName: "alpha",
-        liveExists: false,
-        policyAuthority: "nemoclaw-managed",
-        nonInteractive: true,
-        note,
-        rebuildPolicyPresets: filteredPolicyPresets,
-        revalidatePolicyAuthority,
-      },
-      applyRecreatePolicyCarryForward,
-    );
-
-    expect(applyRecreatePolicyCarryForward).toHaveBeenCalledExactlyOnceWith(
-      "alpha",
-      true,
-      note,
-      filteredPolicyPresets,
-    );
-    expect(revalidatePolicyAuthority).toHaveBeenCalledOnce();
-    expect(events).toEqual(["revalidate", "carry-forward"]);
-  });
-
-  it("preserves an intentionally empty preset selection after the outer delete (#9792)", () => {
+  it("preserves an intentionally empty managed preset selection (#9792)", () => {
     const note = vi.fn();
     const applyRecreatePolicyCarryForward = vi.fn();
     const revalidatePolicyAuthority = vi.fn();
 
-    applyAbsentSandboxRebuildPolicyCarryForward(
+    applyManagedSandboxRebuildPolicyCarryForward(
       {
         sandboxName: "alpha",
-        liveExists: false,
         policyAuthority: "nemoclaw-managed",
         nonInteractive: true,
         note,
@@ -84,27 +35,6 @@ describe("authoritative rebuild policy carry-forward", () => {
       note,
       [],
     );
-  });
-
-  it("does not carry managed presets into an absent external sandbox (#9833)", () => {
-    const applyRecreatePolicyCarryForward = vi.fn();
-    const revalidatePolicyAuthority = vi.fn();
-
-    applyAbsentSandboxRebuildPolicyCarryForward(
-      {
-        sandboxName: "alpha",
-        liveExists: false,
-        policyAuthority: "externally-managed",
-        nonInteractive: true,
-        note: vi.fn(),
-        rebuildPolicyPresets: ["github"],
-        revalidatePolicyAuthority,
-      },
-      applyRecreatePolicyCarryForward,
-    );
-
-    expect(revalidatePolicyAuthority).not.toHaveBeenCalled();
-    expect(applyRecreatePolicyCarryForward).not.toHaveBeenCalled();
   });
 
   it("does not carry managed presets into a live external recreation (#9833)", () => {

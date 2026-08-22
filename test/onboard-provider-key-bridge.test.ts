@@ -113,7 +113,7 @@ Object.assign(process.env, env, {
     return JSON.parse(result.stdout.trim()) as {
       outcome: "completed" | "exit";
       exitCode?: number | null;
-      result?: { provider: string; credentialEnv: string | null };
+      result?: { provider: string; credentialEnv: string | null; endpointUrl: string | null };
       env: Record<string, string | null>;
       lines: string[];
     };
@@ -135,6 +135,7 @@ describe("onboard provider-key compatibility bridges", () => {
       assert.equal(payload.outcome, "completed");
       assert.equal(payload.result?.provider, "nvidia-router");
       assert.equal(payload.result?.credentialEnv, "NVIDIA_INFERENCE_API_KEY");
+      assert.equal(payload.result?.endpointUrl, "http://host.openshell.internal:4000/v1");
       assert.equal(payload.env.NVIDIA_INFERENCE_API_KEY, "sk-router-fallback");
     },
   );
