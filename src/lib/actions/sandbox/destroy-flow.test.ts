@@ -243,7 +243,7 @@ describe("destroySandbox flow", () => {
         harness.runOpenshellSpy.mock.calls.map(([args]) => (args as string[]).slice(0, 2)),
       ).not.toContainEqual(["sandbox", "delete"]);
       expect(harness.errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
-        "The sandbox was not deleted. Fix the reported authority and retry destroy.",
+        "The sandbox was not deleted. Resolve the reported cleanup preflight failure and retry destroy.",
       );
       expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     },
@@ -283,6 +283,49 @@ describe("destroySandbox flow", () => {
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(7)");
+
+    expect(abort).toHaveBeenCalledOnce();
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+  });
+
+  it("releases prepared managed llama.cpp cleanup when destroy execution throws (#9888)", async () => {
+    const abort = vi.fn();
+    const cleanup = vi.fn(() => ({ ok: true as const, removed: [], preserved: [] }));
+    const harness = createDestroyHarness({
+      provider: "llama-cpp-local",
+      hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
+      preparedManagedLlamaCppRuntimeCleanup: { abort, cleanup },
+    });
+    harness.executeSandboxDestroySpy.mockRejectedValueOnce(
+      new Error("injected destroy execution failure"),
+    );
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+      "injected destroy execution failure",
+    );
+
+    expect(abort).toHaveBeenCalledOnce();
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+  });
+
+  it("releases prepared managed llama.cpp cleanup when service cleanup throws (#9888)", async () => {
+    const abort = vi.fn();
+    const cleanup = vi.fn(() => ({ ok: true as const, removed: [], preserved: [] }));
+    const harness = createDestroyHarness({
+      provider: "llama-cpp-local",
+      hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
+      preparedManagedLlamaCppRuntimeCleanup: { abort, cleanup },
+      registeredSandboxCount: 1,
+    });
+    harness.stopAllSpy.mockImplementationOnce(() => {
+      throw new Error("injected service cleanup failure");
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+      "injected service cleanup failure",
+    );
 
     expect(abort).toHaveBeenCalledOnce();
     expect(cleanup).not.toHaveBeenCalled();

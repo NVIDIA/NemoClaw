@@ -460,9 +460,15 @@ test(
       },
     });
 
+    const destroyEnv = env();
+    delete destroyEnv.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE;
+    delete destroyEnv.NEMOCLAW_LLAMACPP_RECIPE;
+    delete destroyEnv.NEMOCLAW_NON_INTERACTIVE;
+    delete destroyEnv.NEMOCLAW_PROVIDER;
+    delete destroyEnv.NEMOCLAW_RECREATE_SANDBOX;
     const destroy = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "destroy-managed-llama-cpp-sandbox",
-      env: env(),
+      env: destroyEnv,
       timeoutMs: 180_000,
     });
     expect(destroy.exitCode, resultText(destroy)).toBe(0);
@@ -471,7 +477,7 @@ test(
     ).not.toThrow();
     const listAfterDestroy = await host.command("node", [CLI_ENTRYPOINT, "list", "--json"], {
       artifactName: "list-after-managed-llama-cpp-destroy",
-      env: env(),
+      env: destroyEnv,
       timeoutMs: 30_000,
     });
     expect(listAfterDestroy.exitCode, resultText(listAfterDestroy)).toBe(0);

@@ -518,21 +518,26 @@ async function destroySandboxUnlocked(
       console.error(
         `  Refusing to destroy sandbox '${sandboxName}': Managed llama.cpp cleanup preflight failed: ${redactDestroyError(error)}`,
       );
-      console.error(`  The sandbox was not deleted. Fix the reported authority and retry destroy.`);
+      console.error(
+        `  The sandbox was not deleted. Resolve the reported cleanup preflight failure and retry destroy.`,
+      );
       process.exit(1);
     }
   }
+  const abortPreparedCleanupOnError = <T>(operation: () => T): T => {
+    try {
+      return operation();
+    } catch (error) {
+      preparedManagedLlamaCppCleanup?.abort();
+      throw error;
+    }
+  };
   let destroyPreflight: ReturnType<typeof prepareSandboxDestroy>;
-  try {
-    destroyPreflight = prepareSandboxDestroy(sandboxName);
-  } catch (error) {
-    preparedManagedLlamaCppCleanup?.abort();
-    throw error;
-  }
+  destroyPreflight = abortPreparedCleanupOnError(() => prepareSandboxDestroy(sandboxName));
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } = destroyPreflight;
   // Recheck identity after pre-delete qualification and recoverable journal
   // publication reconciliation, before any sandbox runtime mutation.
-  const preMutationIdentity = inspectContainerIdentity();
+  const preMutationIdentity = abortPreparedCleanupOnError(inspectContainerIdentity);
   if (
     preMutationIdentity === false ||
     !isSameDestroyContainerIdentityProof(initialIdentity, preMutationIdentity)
@@ -545,19 +550,27 @@ async function destroySandboxUnlocked(
     preparedManagedLlamaCppCleanup?.abort();
     process.exit(1);
   }
-  const priorHttpsPinRouteId = parseHttpsPinRouteId(sandbox?.endpointUrl);
-  const destructiveResult = await executeSandboxDestroy({
-    cleanupShieldsArtifacts: cleanupShieldsDestroyArtifacts,
-    force: normalized.force === true,
-    getSandbox: registry.getSandbox,
-    listSandboxes: registry.listSandboxes,
-    runOpenshell,
-    sandbox,
-    sandboxConfirmedAbsent,
-    sandboxName,
-    expectedContainerIdentity: initialIdentity.identity,
-    stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
-  });
+  const priorHttpsPinRouteId = abortPreparedCleanupOnError(() =>
+    parseHttpsPinRouteId(sandbox?.endpointUrl),
+  );
+  let destructiveResult: Awaited<ReturnType<typeof executeSandboxDestroy>>;
+  try {
+    destructiveResult = await executeSandboxDestroy({
+      cleanupShieldsArtifacts: cleanupShieldsDestroyArtifacts,
+      force: normalized.force === true,
+      getSandbox: registry.getSandbox,
+      listSandboxes: registry.listSandboxes,
+      runOpenshell,
+      sandbox,
+      sandboxConfirmedAbsent,
+      sandboxName,
+      expectedContainerIdentity: initialIdentity.identity,
+      stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
+    });
+  } catch (error) {
+    preparedManagedLlamaCppCleanup?.abort();
+    throw error;
+  }
   if (!destructiveResult.ok) {
     if (destructiveResult.hostLocalInferenceCleanupFailure) {
       console.error(
@@ -660,12 +673,14 @@ async function destroySandboxUnlocked(
     preparedManagedLlamaCppCleanup?.abort();
   }
   if (deleteSucceededOrAlreadyGone && sandbox) {
-    const stateVolumeCleanup = removeManagedHermesStateVolume({
-      agentName: sandbox.agent,
-      runtimeProviderId: normalizeRuntimeProviderIdentity(sandbox.openshellDriver),
-      sandboxName,
-      workloadKind: sandbox.workload?.kind ?? "",
-    });
+    const stateVolumeCleanup = abortPreparedCleanupOnError(() =>
+      removeManagedHermesStateVolume({
+        agentName: sandbox.agent,
+        runtimeProviderId: normalizeRuntimeProviderIdentity(sandbox.openshellDriver),
+        sandboxName,
+        workloadKind: sandbox.workload?.kind ?? "",
+      }),
+    );
     if (stateVolumeCleanup.status === "failed") {
       console.error(
         `  Sandbox '${sandboxName}' is gone, but its managed Hermes state volume '${stateVolumeCleanup.volumeName}' could not be removed: ${redactDestroyError(stateVolumeCleanup.detail)}`,
@@ -682,14 +697,15 @@ async function destroySandboxUnlocked(
       console.log(`  Removed managed Hermes state volume for '${sandboxName}'.`);
     }
   }
-  const shouldStopHostServices = shouldStopHostServicesAfterDestroy({
-    deleteSucceededOrAlreadyGone,
-    registeredSandboxCount: registry.listSandboxes().sandboxes.length,
-    sandboxStillRegistered: !!registry.getSandbox(sandboxName),
-  });
-
-  cleanupSandboxServices(sandboxName, {
-    stopHostServices: shouldStopHostServices,
+  abortPreparedCleanupOnError(() => {
+    const shouldStopHostServices = shouldStopHostServicesAfterDestroy({
+      deleteSucceededOrAlreadyGone,
+      registeredSandboxCount: registry.listSandboxes().sandboxes.length,
+      sandboxStillRegistered: !!registry.getSandbox(sandboxName),
+    });
+    cleanupSandboxServices(sandboxName, {
+      stopHostServices: shouldStopHostServices,
+    });
   });
   if (deleteSucceededOrAlreadyGone && commonLlamaCppAuthorityRetired === true) {
     preparedManagedLlamaCppCleanup?.abort();
