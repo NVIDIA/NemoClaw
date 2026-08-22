@@ -77,6 +77,7 @@ function composedRelaunchTransaction(
     .fn()
     .mockReturnValueOnce("old-container-id")
     .mockReturnValue("replacement-container-id");
+  const runOpenshell = vi.fn(() => ({ status: 0, stdout: "No sandboxes found.\n" }));
   const relaunchManagedSupervisorSessionImpl = vi.fn(
     (sandboxName: string, options: Parameters<typeof relaunchManagedSupervisorSession>[1]) =>
       relaunchManagedSupervisorSession(sandboxName, {
@@ -109,6 +110,7 @@ function composedRelaunchTransaction(
             };
           }),
           removeBackup: vi.fn(() => true),
+          runOpenshell,
           recreate: vi.fn(() => ({
             applied: true as const,
             oldContainerId: "old-container-id",
@@ -127,7 +129,7 @@ function composedRelaunchTransaction(
         },
       }),
   );
-  return { finalizeTransaction, relaunchManagedSupervisorSessionImpl };
+  return { finalizeTransaction, relaunchManagedSupervisorSessionImpl, runOpenshell };
 }
 
 function scriptedPinnedGatewayRecovery(
@@ -401,7 +403,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     mockOpenClawSandbox("recovered-box");
     setImmediateRecoveryPolling();
     const order: string[] = [];
-    const { finalizeTransaction, relaunchManagedSupervisorSessionImpl } =
+    const { finalizeTransaction, relaunchManagedSupervisorSessionImpl, runOpenshell } =
       composedRelaunchTransaction(order);
     const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
       action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
@@ -451,7 +453,12 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(order).toEqual(["restore-state", "post-restore-restart", "commit-container"]);
     expect(finalizeTransaction).toHaveBeenCalledOnce();
     expect(finalizeTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({ supervisorReady: true }),
+      expect.objectContaining({
+        lifecycleReleaseTimeoutSecs: 900,
+        sandboxName: "recovered-box",
+        supervisorReady: true,
+      }),
+      { runOpenshell },
     );
   });
 
@@ -464,8 +471,10 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     const dockerRm = vi.fn(() => ({ status: 0 }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
     const finalizeTransaction = vi.fn(
-      (options: Parameters<typeof finalizeDockerGpuPatchBackup>[0]) =>
-        finalizeDockerGpuPatchBackup(options, { dockerStop, dockerRm, dockerStart }),
+      (
+        options: Parameters<typeof finalizeDockerGpuPatchBackup>[0],
+        deps: Parameters<typeof finalizeDockerGpuPatchBackup>[1],
+      ) => finalizeDockerGpuPatchBackup(options, { ...deps, dockerStop, dockerRm, dockerStart }),
     );
     const { relaunchManagedSupervisorSessionImpl } = composedRelaunchTransaction(
       order,
@@ -565,6 +574,21 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         stateRestored: true,
       }),
       expectedDetail: "Docker could not stop the replacement container",
+      expectedReadinessCalls: 1,
+      finalPinnedAction: () => ACCEPTED_MANAGED_PROBE,
+      finalReadinessReady: true,
+    },
+    {
+      condition: "OpenShell does not release the sandbox name",
+      finalizeOutcome: () => ({
+        backupRemoved: true,
+        lifecycleReleaseObserved: false,
+        replacementRestarted: false,
+        replacementStoppedForCommit: true,
+        rolledBack: false,
+        stateRestored: true,
+      }),
+      expectedDetail: "OpenShell did not release the sandbox name",
       expectedReadinessCalls: 1,
       finalPinnedAction: () => ACCEPTED_MANAGED_PROBE,
       finalReadinessReady: true,

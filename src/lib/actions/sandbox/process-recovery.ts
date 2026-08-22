@@ -10,6 +10,7 @@ import {
   captureSandboxSshConfig,
   getOpenshellBinary,
   isCommandTimeout,
+  runOpenshell,
 } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import {
@@ -504,6 +505,9 @@ function finalRelaunchContainerFailureDetail(
   if (completion.replacementStoppedForCommit === false) {
     return "Docker could not stop the replacement container for the final recovery handoff. NemoClaw did not start the primary dashboard/API host forward";
   }
+  if (completion.lifecycleReleaseObserved === false) {
+    return "OpenShell did not release the sandbox name before the final recovery handoff. NemoClaw did not restart the replacement container or start the primary dashboard/API host forward";
+  }
   if (completion.replacementRestarted === false) {
     return "Docker could not start the replacement container to complete the final recovery handoff. NemoClaw did not start the primary dashboard/API host forward";
   }
@@ -754,6 +758,7 @@ function recoverSandboxProcesses(
       const relaunch = relaunchManagedSupervisorSessionImpl(sandboxName, {
         quiet,
         deps: {
+          runOpenshell,
           confirmMissingSupervisor: (containerId) =>
             isExactlyMissingManagedSupervisor(
               requestPinnedGatewaySupervisorAction(sandboxName, "probe", 210000, containerId),
