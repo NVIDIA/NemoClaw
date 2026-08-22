@@ -93,6 +93,7 @@ type DestroyHarnessOptions = {
   prepareMcpBridgeError?: string;
   promptResponses?: string[];
   provider?: string;
+  registryEntryPresent?: boolean;
   registeredSandboxCount?: number;
   replaceSessionAfterRegistryRemoval?: boolean;
   removeSandboxResult?: boolean;
@@ -236,36 +237,40 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     detected: true,
     sessions: [{ pid: 1 }],
   });
-  vi.spyOn(registry, "getSandbox").mockReturnValue({
-    ...sandboxEntry,
-    imageTag: options.imageTag === undefined ? sandboxEntry.imageTag : options.imageTag,
-    agent: options.agent ?? sandboxEntry.agent,
-    ...(options.provider ? { provider: options.provider } : {}),
-    ...(options.openshellDriver ? { openshellDriver: options.openshellDriver } : {}),
-    ...(options.endpointUrl ? { endpointUrl: options.endpointUrl } : {}),
-    ...(options.hostLocalInferenceReceipt !== undefined
-      ? { hostLocalInferenceReceipt: options.hostLocalInferenceReceipt }
-      : {}),
-    ...(options.hostLocalInferenceProvenance
-      ? { hostLocalInferenceProvenance: options.hostLocalInferenceProvenance }
-      : {}),
-    ...(options.workload ? { workload: options.workload } : {}),
-    ...(options.mcpServers?.length
-      ? {
-          mcp: {
-            bridges: Object.fromEntries(
-              options.mcpServers.map((server) => [
-                server,
-                {
-                  server,
-                  ...(options.mcpAddState ? { addState: options.mcpAddState } : {}),
+  vi.spyOn(registry, "getSandbox").mockReturnValue(
+    options.registryEntryPresent === false
+      ? null
+      : {
+          ...sandboxEntry,
+          imageTag: options.imageTag === undefined ? sandboxEntry.imageTag : options.imageTag,
+          agent: options.agent ?? sandboxEntry.agent,
+          ...(options.provider ? { provider: options.provider } : {}),
+          ...(options.openshellDriver ? { openshellDriver: options.openshellDriver } : {}),
+          ...(options.endpointUrl ? { endpointUrl: options.endpointUrl } : {}),
+          ...(options.hostLocalInferenceReceipt !== undefined
+            ? { hostLocalInferenceReceipt: options.hostLocalInferenceReceipt }
+            : {}),
+          ...(options.hostLocalInferenceProvenance
+            ? { hostLocalInferenceProvenance: options.hostLocalInferenceProvenance }
+            : {}),
+          ...(options.workload ? { workload: options.workload } : {}),
+          ...(options.mcpServers?.length
+            ? {
+                mcp: {
+                  bridges: Object.fromEntries(
+                    options.mcpServers.map((server) => [
+                      server,
+                      {
+                        server,
+                        ...(options.mcpAddState ? { addState: options.mcpAddState } : {}),
+                      },
+                    ]),
+                  ),
                 },
-              ]),
-            ),
-          },
-        }
-      : {}),
-  });
+              }
+            : {}),
+        },
+  );
   let registeredSandboxCount = options.registeredSandboxCount ?? 0;
   vi.spyOn(registry, "listSandboxes").mockImplementation(() => ({
     sandboxes: Array.from({ length: registeredSandboxCount }, (_, index) => ({

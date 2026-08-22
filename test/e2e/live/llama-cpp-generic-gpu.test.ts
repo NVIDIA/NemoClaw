@@ -455,6 +455,13 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
     timeoutMs: 180_000,
   });
   expect(destroy.exitCode, resultText(destroy)).toBe(0);
+  const listAfterDestroy = await host.command("node", [CLI_ENTRYPOINT, "list"], {
+    artifactName: "list-after-managed-llama-cpp-destroy",
+    env: env(),
+    timeoutMs: 30_000,
+  });
+  expect(listAfterDestroy.exitCode, resultText(listAfterDestroy)).toBe(0);
+  expect(listAfterDestroy.stdout).not.toContain(SANDBOX_NAME);
   const runtimeAbsent = await host.command(
     "docker",
     ["container", "inspect", MANAGED_LLAMA_CPP_CONTAINER_NAME],

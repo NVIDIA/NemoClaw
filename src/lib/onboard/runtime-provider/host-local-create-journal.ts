@@ -769,8 +769,8 @@ export function createHostLocalCreateJournalStore(
   return Object.freeze(store);
 }
 
-/** Read existing journal records without creating state; repair an interrupted exclusive publish. */
-export function readHostLocalCreateJournalRecords(
+/** Reconcile an interrupted exclusive publish and read records without creating a directory. */
+export function reconcileAndReadHostLocalCreateJournalRecords(
   stateDirectory: string,
 ): readonly HostLocalCreateJournalRecord[] {
   const root = path.join(stateDirectory, HOST_LOCAL_CREATE_JOURNAL_DIRECTORY);

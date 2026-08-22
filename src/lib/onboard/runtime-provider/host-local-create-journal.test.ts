@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createHostLocalCreateJournalStore,
   HOST_LOCAL_CREATE_JOURNAL_DIRECTORY,
-  readHostLocalCreateJournalRecords,
+  reconcileAndReadHostLocalCreateJournalRecords,
   type HostLocalCreateJournalRecord,
   serializeHostLocalCreateJournalRecord,
 } from "./host-local-create-journal";
@@ -101,7 +101,7 @@ function executionPath(name: ".execution-lease.json" | ".execution-recovery.json
 
 describe("existing journal reads", () => {
   it("does not create an absent journal directory", () => {
-    expect(readHostLocalCreateJournalRecords(stateDirectory)).toEqual([]);
+    expect(reconcileAndReadHostLocalCreateJournalRecords(stateDirectory)).toEqual([]);
     expect(fs.existsSync(path.dirname(journalPath()))).toBe(false);
   });
 
@@ -114,7 +114,7 @@ describe("existing journal reads", () => {
     );
     fs.linkSync(journalPath(), orphan);
 
-    expect(readHostLocalCreateJournalRecords(stateDirectory)).toEqual([prepared()]);
+    expect(reconcileAndReadHostLocalCreateJournalRecords(stateDirectory)).toEqual([prepared()]);
     expect(fs.existsSync(orphan)).toBe(false);
   });
 });

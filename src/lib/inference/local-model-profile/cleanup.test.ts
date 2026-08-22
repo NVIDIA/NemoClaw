@@ -791,6 +791,75 @@ describe("host-local model cleanup", () => {
     expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
   });
 
+  it("refuses an unavailable engine before preparing interrupted cleanup (#9888)", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine, { phase: "started" });
+    harness.capture.mockClear();
+    harness.capture.mockReturnValue({ status: 1, stdout: "", stderr: "daemon unavailable" });
+
+    expect(() =>
+      prepareManagedLlamaCppRuntimeCleanupForSandbox("spark-agent", {
+        homeDir,
+        engine: harness.engine,
+      }),
+    ).toThrow("engine availability check");
+    expect(harness.capture).toHaveBeenCalledWith(["info"], expect.any(Number));
+    expect(harness.capture).not.toHaveBeenCalledWith(
+      ["rm", "--force", RUNTIME_ID],
+      expect.any(Number),
+    );
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
+  });
+
+  it("refuses a foreign container before preparing interrupted cleanup (#9888)", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness({ containerForeign: true });
+    createManagedState(homeDir, harness.engine, { phase: "started" });
+    harness.capture.mockClear();
+
+    expect(() =>
+      prepareManagedLlamaCppRuntimeCleanupForSandbox("spark-agent", {
+        homeDir,
+        engine: harness.engine,
+      }),
+    ).toThrow("container does not match its exact journal");
+    expect(harness.capture).not.toHaveBeenCalledWith(
+      ["rm", "--force", RUNTIME_ID],
+      expect.any(Number),
+    );
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
+  });
+
+  it("refuses private owner drift after cleanup preparation (#9888)", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine);
+    const paths = managedLlamaCppStatePaths(homeDir);
+    const prepared = prepareManagedLlamaCppRuntimeCleanupForSandbox("spark-agent", {
+      homeDir,
+      engine: harness.engine,
+    });
+    const owner = fs.readFileSync(paths.ownerPath, "utf8");
+    const parsedOwner = JSON.parse(owner) as Record<string, unknown>;
+    fs.writeFileSync(
+      paths.ownerPath,
+      `${JSON.stringify({ ...parsedOwner, catalogDigest: `sha256:${"0".repeat(64)}` })}\n`,
+      { mode: 0o600 },
+    );
+    harness.capture.mockClear();
+
+    expect(prepared?.cleanup()).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("private authority changed after cleanup preparation"),
+    });
+    expect(harness.capture).not.toHaveBeenCalledWith(
+      ["rm", "--force", RUNTIME_ID],
+      expect.any(Number),
+    );
+    expect(fs.existsSync(paths.stateDir)).toBe(true);
+  });
+
   it("rejects receipt and journal disagreement during pre-delete qualification (#9888)", () => {
     const homeDir = temporaryHome();
     const harness = engineHarness();
@@ -814,6 +883,34 @@ describe("host-local model cleanup", () => {
     ).toThrow("receipt does not match gateway lifecycle authority");
     expect(harness.capture).not.toHaveBeenCalled();
     expect(fs.existsSync(paths.stateDir)).toBe(true);
+  });
+
+  it("reports an incompatible journal before a missing finalized receipt (#9888)", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine);
+    const paths = managedLlamaCppStatePaths(homeDir);
+    fs.unlinkSync(paths.receiptPath);
+    const journalDirectory = path.join(paths.stateDir, HOST_LOCAL_CREATE_JOURNAL_DIRECTORY);
+    const [entry] = fs.readdirSync(journalDirectory);
+    const journalPath = path.join(journalDirectory, entry!);
+    const record = JSON.parse(fs.readFileSync(journalPath, "utf8")) as Record<string, unknown>;
+    fs.writeFileSync(
+      journalPath,
+      `${JSON.stringify({ ...record, containerName: "foreign-container" })}\n`,
+      { mode: 0o600 },
+    );
+
+    expect(
+      cleanupManagedLlamaCppRuntimeForSandbox("spark-agent", {
+        homeDir,
+        engine: harness.engine,
+      }),
+    ).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("lifecycle journal is incompatible"),
+    });
+    expect(harness.capture).not.toHaveBeenCalled();
   });
 
   it("retains the selected engine for an interrupted journal without a receipt (#9888)", () => {

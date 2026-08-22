@@ -107,6 +107,7 @@ describe("destroySandbox flow", () => {
             trace.push("delete");
             return { status: 0, stdout: "", stderr: "" };
           case "sandbox:list":
+            trace.push("list");
             return { status: 0, stdout: '[{"name":"alpha","phase":"Ready"}]', stderr: "" };
           default:
             return { status: 0, stdout: "", stderr: "" };
@@ -119,7 +120,7 @@ describe("destroySandbox flow", () => {
         gatewayPort: 19080,
       });
       expect(cleanup).toHaveBeenCalledOnce();
-      expect(trace).toEqual(["prepare", "delete", "cleanup"]);
+      expect(trace).toEqual(["prepare", "list", "delete", "cleanup"]);
       expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
       expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledWith("alpha");
       expect(exitSpy).not.toHaveBeenCalled();
@@ -220,6 +221,21 @@ describe("destroySandbox flow", () => {
     expect(cleanup).toHaveBeenCalledOnce();
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
     expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledWith("alpha");
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("prepares leftover managed llama.cpp cleanup when the registry row is already absent (#9888)", async () => {
+    const cleanup = vi.fn(() => ({ ok: true as const, removed: [], preserved: [] }));
+    const harness = createDestroyHarness({
+      registryEntryPresent: false,
+      sandboxPresent: false,
+      preparedManagedLlamaCppRuntimeCleanup: { cleanup },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.prepareManagedLlamaCppRuntimeCleanupSpy).toHaveBeenCalledWith("alpha", {});
+    expect(cleanup).toHaveBeenCalledOnce();
     expect(exitSpy).not.toHaveBeenCalled();
   });
 

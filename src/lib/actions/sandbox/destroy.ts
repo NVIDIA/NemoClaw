@@ -497,18 +497,25 @@ async function destroySandboxUnlocked(
     process.exit(1);
   }
 
-  const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } =
-    prepareSandboxDestroy(sandboxName);
+  const registeredSandbox = registry.getSandbox(sandboxName);
   let preparedManagedLlamaCppCleanup: ReturnType<
     typeof prepareManagedLlamaCppRuntimeCleanupForSandbox
   > = null;
-  if (sandbox?.provider === "llama-cpp-local" && !sandbox.hostLocalInferenceProvenance) {
+  if (
+    !registeredSandbox ||
+    (registeredSandbox.provider === "llama-cpp-local" &&
+      !registeredSandbox.hostLocalInferenceProvenance)
+  ) {
     try {
       // Fresh Docker qualification reads ambient DOCKER_CONTEXT, DOCKER_HOST,
-      // or Docker's persisted currentContext. Pin that selection before the
-      // OpenShell delete boundary so legacy cleanup cannot switch daemons.
+      // or Docker's persisted currentContext. Pin that selection before any
+      // OpenShell subprocess and the delete boundary so legacy cleanup cannot
+      // switch daemons. A missing registry row still permits exact owner-state
+      // recovery for a prior partial destroy.
       preparedManagedLlamaCppCleanup = prepareManagedLlamaCppRuntimeCleanupForSandbox(sandboxName, {
-        ...(typeof sandbox?.gatewayPort === "number" ? { gatewayPort: sandbox.gatewayPort } : {}),
+        ...(typeof registeredSandbox?.gatewayPort === "number"
+          ? { gatewayPort: registeredSandbox.gatewayPort }
+          : {}),
       });
     } catch (error) {
       console.error(
@@ -518,7 +525,10 @@ async function destroySandboxUnlocked(
       process.exit(1);
     }
   }
-  // Recheck identity after read-only preflight and before local mutation.
+  const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } =
+    prepareSandboxDestroy(sandboxName);
+  // Recheck identity after pre-delete qualification and recoverable journal
+  // publication reconciliation, before any sandbox runtime mutation.
   const preMutationIdentity = inspectContainerIdentity();
   if (
     preMutationIdentity === false ||
@@ -526,7 +536,7 @@ async function destroySandboxUnlocked(
   ) {
     if (preMutationIdentity !== false) {
       console.error(
-        `  Refusing to destroy sandbox '${sandboxName}': Container identity changed during preflight. No sandbox resources were removed.`,
+        `  Refusing to destroy sandbox '${sandboxName}': Container identity changed during preflight. No sandbox runtime resources were removed.`,
       );
     }
     process.exit(1);

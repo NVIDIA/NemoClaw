@@ -40,6 +40,7 @@ function commandResult(status: number, stdout = "", stderr = ""): ContainerEngin
 
 interface EngineHarnessOptions {
   authorityId?: string;
+  containerForeign?: boolean;
   containerPresent?: boolean;
   networkPresent?: boolean;
   daemonInspectFailure?: boolean;
@@ -64,14 +65,16 @@ export function engineHarness(options: EngineHarnessOptions = {}): {
             Id: RUNTIME_ID,
             Name: `/${MANAGED_LLAMA_CPP_CONTAINER_NAME}`,
             Config: {
-              Labels: {
-                [MANAGED_LLAMA_CPP_OWNER_LABEL]: MANAGED_LLAMA_CPP_OWNER_VALUE,
-                "io.nvidia.nemoclaw.host-local-inference.managed": "true",
-                "io.nvidia.nemoclaw.host-local-inference.provider": "docker",
-                "io.nvidia.nemoclaw.host-local-inference.service": "llama-cpp",
-                "io.nvidia.nemoclaw.host-local-inference.spec-sha256": SPEC_SHA256,
-                "io.nvidia.nemoclaw.host-local-inference.transaction-sha256": TRANSACTION_ID,
-              },
+              Labels: options.containerForeign
+                ? {}
+                : {
+                    [MANAGED_LLAMA_CPP_OWNER_LABEL]: MANAGED_LLAMA_CPP_OWNER_VALUE,
+                    "io.nvidia.nemoclaw.host-local-inference.managed": "true",
+                    "io.nvidia.nemoclaw.host-local-inference.provider": "docker",
+                    "io.nvidia.nemoclaw.host-local-inference.service": "llama-cpp",
+                    "io.nvidia.nemoclaw.host-local-inference.spec-sha256": SPEC_SHA256,
+                    "io.nvidia.nemoclaw.host-local-inference.transaction-sha256": TRANSACTION_ID,
+                  },
             },
           },
         ]),
