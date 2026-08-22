@@ -245,18 +245,19 @@ function normalizedNetworkSettings(
         .map(([name, network]) => [
           name,
           {
-            Aliases: [...(network.Aliases ?? [])]
-              .filter((alias) => {
-                const normalizedAlias = alias.trim().toLowerCase();
-                return !(
-                  normalizedAlias.includes("-nemoclaw-staged-") ||
-                  (/^[0-9a-f]{64}$/u.test(normalizedRuntimeId) &&
+            Aliases: [
+              ...new Set(
+                (network.Aliases ?? []).filter((alias) => {
+                  const normalizedAlias = alias.trim().toLowerCase();
+                  return !(
+                    /^[0-9a-f]{64}$/u.test(normalizedRuntimeId) &&
                     /^[0-9a-f]{12,64}$/u.test(normalizedAlias) &&
                     (normalizedRuntimeId.startsWith(normalizedAlias) ||
-                      normalizedAlias.startsWith(normalizedRuntimeId)))
-                );
-              })
-              .sort(),
+                      normalizedAlias.startsWith(normalizedRuntimeId))
+                  );
+                }),
+              ),
+            ].sort(),
           },
         ]),
     ),
