@@ -246,7 +246,7 @@ describe("PR review advisor OpenShell wrapper", () => {
       GH_TOKEN: "host-token",
       GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
       PR_NUMBER: "7542",
-          });
+    });
     const pullRequest = context?.pullRequest as Record<string, unknown>;
     expect(pullRequest.author_association).toBe("MEMBER");
     expect(pullRequest).not.toHaveProperty("authorAssociation");
@@ -307,7 +307,7 @@ describe("PR review advisor OpenShell wrapper", () => {
       GH_TOKEN: "host-token",
       GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
       PR_NUMBER: "7542",
-          });
+    });
     expect(context?.openPrOverlaps).toHaveLength(25);
     (context?.openPrOverlaps ?? []).forEach((overlap) => {
       expect(overlap.sameFileCount).toBe(300);
@@ -573,19 +573,26 @@ describe("PR review advisor OpenShell wrapper", () => {
 
   it("staggers and retries transient inference configuration failures", async () => {
     const env = advisorEnvironment();
-    let inferenceAttempts = 0;
-    const tools = advisorTools((command, args) => {
-      if (command === "which") return "/trusted/bin/openshell-sandbox";
-      if (command === "openshell" && args.slice(0, 2).join(" ") === "inference set") {
-        inferenceAttempts += 1;
-        if (inferenceAttempts < 3) throw new Error("HTTP 429 Too Many Requests");
-      }
-      return "";
-    });
+    const inference = vi
+      .fn<() => string>()
+      .mockImplementationOnce(() => {
+        throw new Error("HTTP 429 Too Many Requests");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("HTTP 429 Too Many Requests");
+      })
+      .mockReturnValue("");
+    const responses = new Map<string, () => string>([
+      ["which openshell-sandbox", () => "/trusted/bin/openshell-sandbox"],
+      ["openshell inference set", inference],
+    ]);
+    const tools = advisorTools(
+      (command, args) => responses.get([command, ...args.slice(0, 2)].join(" "))?.() ?? "",
+    );
 
     await configureAdvisorOpenShellInference(env, tools);
 
-    expect(inferenceAttempts).toBe(3);
+    expect(inference).toHaveBeenCalledTimes(3);
     expect(vi.mocked(tools.wait)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(tools.wait).mock.calls.every(([milliseconds]) => milliseconds >= 2000)).toBe(
       true,
@@ -784,7 +791,10 @@ describe("PR review advisor OpenShell wrapper", () => {
 
   it("exposes validated specialist sessions inside the standard Pi workdir (#9949)", () => {
     const env = advisorEnvironment();
-    const sessionDirectory = path.join(env.ADVISOR_WORKDIR as string, ".pr-review-advisor-sessions");
+    const sessionDirectory = path.join(
+      env.ADVISOR_WORKDIR as string,
+      ".pr-review-advisor-sessions",
+    );
     fs.mkdirSync(sessionDirectory);
     const sessionEntries = {
       behavior: "behavior",
@@ -806,13 +816,19 @@ describe("PR review advisor OpenShell wrapper", () => {
     runAdvisorSandbox(env, tools);
 
     const calls = vi.mocked(tools.run).mock.calls;
-    const createArgs = calls.find(([, args]) => args.slice(0, 2).join(" ") === "sandbox create")?.[1] ?? [];
+    const createArgs =
+      calls.find(([, args]) => args.slice(0, 2).join(" ") === "sandbox create")?.[1] ?? [];
     const driverConfigIndex = createArgs.indexOf("--driver-config-json");
     const driverConfig = JSON.parse(createArgs[driverConfigIndex + 1] as string);
-    expect(driverConfig.docker.mounts.filter((mount: { target?: string }) => mount.target === "/pr-workdir")).toEqual([
-      expect.objectContaining({ read_only: true }),
-    ]);
-    const runArgs = calls.find(([, args]) => args.includes("/advisor/tools/pr-review-advisor/run-analysis.mts"))?.[1] ?? [];
+    expect(
+      driverConfig.docker.mounts.filter(
+        (mount: { target?: string }) => mount.target === "/pr-workdir",
+      ),
+    ).toEqual([expect.objectContaining({ read_only: true })]);
+    const runArgs =
+      calls.find(([, args]) =>
+        args.includes("/advisor/tools/pr-review-advisor/run-analysis.mts"),
+      )?.[1] ?? [];
     expect(runArgs).toContain(
       "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR=/pr-workdir/.pr-review-advisor-sessions",
     );
