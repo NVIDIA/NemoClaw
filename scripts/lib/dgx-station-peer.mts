@@ -8,6 +8,7 @@ import { stationKnownHostsDigest } from "../../src/lib/inference/vllm-station-ss
 export const DUAL_STATION_RESUME_SCHEMA_VERSION = 1;
 export const STATION_PREP_REBOOT_REQUIRED_EXIT = 10;
 export const STATION_PREP_LOGIN_REQUIRED_EXIT = 11;
+export const STATION_PREP_EXISTING_VLLM_EXIT = 12;
 
 const DIRECT_RAIL_PREFIX_LENGTH = 30;
 const SAFE_TARGET_PATTERN =
@@ -836,6 +837,19 @@ export function prepareDualStationPair(
     );
   }
 
+  let peerPreparationCheckStatus = 0;
+  if (!options.reuseExistingManagedPair) {
+    deps.log(`Checking reciprocal peer ${binding.sshTarget} with the exact reviewed helper`);
+    peerPreparationCheckStatus = deps.runRemoteHelper(binding, "--check");
+    if (peerPreparationCheckStatus === STATION_PREP_EXISTING_VLLM_EXIT && !strict) {
+      return {
+        kind: "single-station",
+        reason:
+          "Trusted reciprocal peer has an active vLLM workload; leaving it unchanged and using single-Station inference",
+      };
+    }
+  }
+
   const state: DualStationResumeState = {
     schemaVersion: 1,
     revision: options.revision,
@@ -863,7 +877,7 @@ export function prepareDualStationPair(
   }
   deps.log(`Preparing reciprocal peer ${binding.sshTarget} with the exact reviewed helper`);
 
-  if (deps.runRemoteHelper(binding, "--check") !== 0) {
+  if (peerPreparationCheckStatus !== 0) {
     throw new Error(
       "Peer DGX Station host-preparation check failed; the selected pair remains pinned",
     );

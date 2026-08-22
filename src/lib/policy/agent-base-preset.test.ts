@@ -66,4 +66,14 @@ describe("agent base preset detection", () => {
 
     expect(isAgentBasePreset("hermes", "pypi")).toBe(true);
   });
+
+  it("reports pypi and github as non-baseline presets for the Pi policy (#7924)", () => {
+    const piPolicy = fs.readFileSync(path.join(AGENTS_DIR, "pi", "policy-additions.yaml"), "utf8");
+    const agent = createAgentFixture(piPolicy);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "pi", agent } as never);
+
+    expect(isAgentBasePreset("pi", "managed_inference")).toBe(true);
+    expect(isAgentBasePreset("pi", "pypi")).toBe(false);
+    expect(isAgentBasePreset("pi", "github")).toBe(false);
+  });
 });

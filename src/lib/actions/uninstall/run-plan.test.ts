@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import {
   buildRunPlan,
@@ -14,6 +14,12 @@ import {
   type UninstallRunDeps,
   type UninstallRunOptions,
 } from "./run-plan";
+
+const STATIC_TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-static-"));
+
+afterAll(() => {
+  fs.rmSync(STATIC_TEST_HOME, { recursive: true, force: true });
+});
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -912,13 +918,14 @@ describe("uninstall run plan", () => {
         // process.env, so a developer shell exporting it would silently flip
         // this interactive scenario onto the non-interactive path.
         env: {
-          HOME: "/home/test",
+          HOME: STATIC_TEST_HOME,
           NEMOCLAW_NON_INTERACTIVE: "",
           TMPDIR: "/tmp/test",
         } as NodeJS.ProcessEnv,
         error: (line) => warnings.push(line),
         existsSync: (target) =>
-          target === "/swapfile" || target === "/home/test/.nemoclaw/managed_swap",
+          target === "/swapfile" ||
+          target === path.join(STATIC_TEST_HOME, ".nemoclaw/managed_swap"),
         isTty: true,
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
@@ -942,7 +949,7 @@ describe("uninstall run plan", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command !== "docker" && command !== "pgrep",
-        env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+        env: { HOME: STATIC_TEST_HOME, TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
         error: (line) => warnings.push(line),
         existsSync: () => false,
         isTty: false,

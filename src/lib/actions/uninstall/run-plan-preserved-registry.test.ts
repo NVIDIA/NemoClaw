@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import {
   type RunResult,
@@ -13,6 +13,14 @@ import {
   type UninstallRunOptions,
   runUninstallPlan as runUninstallPlanBase,
 } from "./run-plan";
+
+const STATIC_TEST_HOME = fs.mkdtempSync(
+  path.join(os.tmpdir(), "nemoclaw-uninstall-preserved-registry-static-"),
+);
+
+afterAll(() => {
+  fs.rmSync(STATIC_TEST_HOME, { recursive: true, force: true });
+});
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -94,7 +102,7 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command !== "docker" && command !== "pgrep",
-        env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+        env: { HOME: STATIC_TEST_HOME, TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
         error: (line) => warnings.push(line),
         existsSync: () => false,
         isTty: false,

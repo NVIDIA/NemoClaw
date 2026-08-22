@@ -7,6 +7,7 @@ import path from "node:path";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
 
 import { acquireOnboardLock, normalizeSession, releaseOnboardLock } from "../state/onboard-session";
+import { assertHermesPortableUninstallCompleteForOnboarding } from "../state/hermes-portable-uninstall/journal";
 import {
   inspectPortableOnboardSupersession,
   inspectPortableRetirementRecovery,
@@ -519,6 +520,7 @@ export async function withPortableOnboardRetirementBoundary<T>(
   deps: PortableRetirementAuthorityDeps,
 ): Promise<T> {
   return await withPortableHostFence(boundary.homeDir, async () => {
+    assertHermesPortableUninstallCompleteForOnboarding(boundary.stateDir);
     await recover(boundary, deps);
     return await operation();
   });
