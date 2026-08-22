@@ -161,11 +161,31 @@ describe("rebuild post-restore phase", () => {
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
     ).not.toHaveBeenCalled();
     expect(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).not.toHaveBeenCalled();
+    expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
+    expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
     expect(args.bail).toHaveBeenCalledWith(
       "OpenClaw post-upgrade structure repair completion was not verified after rebuild.",
     );
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
     expect(output).toContain("Post-upgrade structure repair completion was not verified");
+    expect(output).not.toContain("rebuilt successfully");
+  });
+
+  it("does not seal OpenClaw config after unverified MCP restoration (#9946)", async () => {
+    vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockResolvedValue(false);
+    const args = input();
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(
+      rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
+    ).not.toHaveBeenCalled();
+    expect(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).not.toHaveBeenCalled();
+    expect(args.bail).toHaveBeenCalledWith(
+      "OpenClaw config integrity verification failed after rebuild.",
+    );
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(output).toContain("Mutable OpenClaw config hash was not refreshed");
     expect(output).not.toContain("rebuilt successfully");
   });
 
