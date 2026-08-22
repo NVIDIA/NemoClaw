@@ -1,0 +1,18 @@
+{{/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */}}
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+HPA: kubectl get hpa -n {{ include "nemoclaw-gpu.namespace" . }} -w
+Pods: kubectl get pods -n {{ include "nemoclaw-gpu.namespace" . }} -l 'app.kubernetes.io/name={{ include "nemoclaw-gpu.name" . }},app.kubernetes.io/instance={{ .Release.Name }},component=gpu-metrics-proxy' -w
+Per-pod GPU metrics: kubectl get --raw '/apis/custom.metrics.k8s.io/v1beta1/namespaces/{{ include "nemoclaw-gpu.namespace" . }}/pods/*/gpu_utilization_percent'
+{{- if .Values.ingress.gateway.enabled }}
+Gateway: kubectl get gateway {{ include "nemoclaw-gpu.gatewayName" . }} -n {{ include "nemoclaw-gpu.namespace" . }}
+HTTPRoute: kubectl get httproute {{ include "nemoclaw-gpu.httpRouteName" . }} -n {{ include "nemoclaw-gpu.namespace" . }}
+LeastRequest policy: kubectl get backendtrafficpolicy {{ include "nemoclaw-gpu.httpRouteName" . }}-least-request -n {{ include "nemoclaw-gpu.namespace" . }}
+Endpoint: http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}{{ .Values.ingress.path }}
+{{- else }}
+Envoy load balancer: disabled (ingress.gateway.enabled=false). Use the metrics-proxy Service ClusterIP or kubectl port-forward.
+{{- end }}
+Inference API key: kubectl get secret {{ include "nemoclaw-gpu.inferenceApiSecretName" . }} -n {{ include "nemoclaw-gpu.namespace" . }} -o jsonpath='{.data.{{ replace "." "\\." .Values.inference.auth.key }}}' | base64 -d
+{{- if and .Values.ingress.gateway.enabled .Values.ingress.auth.enabled (not .Values.ingress.auth.existingSecret) }}
+Gateway basic-auth username: {{ .Values.ingress.auth.username }}
+Gateway basic-auth password: kubectl get secret {{ include "nemoclaw-gpu.ingressAuthSecretName" . }} -n {{ include "nemoclaw-gpu.namespace" . }} -o jsonpath='{.data.password}' | base64 -d
+{{- end }}

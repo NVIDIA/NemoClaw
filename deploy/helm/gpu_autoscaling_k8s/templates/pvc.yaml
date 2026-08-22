@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+{{- $runtime := include "nemoclaw-gpu.runtime" . }}
+{{- $rt := index .Values $runtime }}
+{{- if and $rt.persistence.enabled (not $rt.persistence.hostPath) }}
+{{- if ne $rt.persistence.accessMode "ReadWriteMany" }}
+{{- fail (printf "%s.persistence.accessMode must be ReadWriteMany when PVC persistence is enabled because every replica mounts the shared claim" $runtime) }}
+{{- end }}
+{{- if not $rt.persistence.storageClass }}
+{{- fail (printf "%s.persistence.storageClass is required when PVC persistence is enabled; select a class that provisions ReadWriteMany volumes" $runtime) }}
+{{- end }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "nemoclaw-gpu.runtimePvcName" . }}
+  namespace: {{ include "nemoclaw-gpu.namespace" . }}
+  labels:
+    {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ $rt.persistence.accessMode | quote }}
+  resources:
+    requests:
+      storage: {{ $rt.persistence.size | quote }}
+  storageClassName: {{ $rt.persistence.storageClass | quote }}
+{{- end }}

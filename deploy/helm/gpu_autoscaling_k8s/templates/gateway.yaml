@@ -1,0 +1,214 @@
+{{/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */}}
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{- if .Values.ingress.gateway.enabled }}
+{{- if and (not .Values.ingress.tls) (not .Values.ingress.allowInsecureHttp) }}
+{{- fail "ingress.tls is empty and ingress.allowInsecureHttp is false: refusing to render a Gateway that would expose /v1/chat/completions over plain HTTP. Configure ingress.tls with a real certificate, or set ALLOW_INSECURE_HTTP=1 when running the chart scripts to acknowledge cleartext HTTP after their exposure preflight. See README \"Ingress security\"." }}
+{{- end }}
+{{- $fullname := include "nemoclaw-gpu.fullname" . }}
+{{- $ns := include "nemoclaw-gpu.namespace" . }}
+{{- $gatewayName := include "nemoclaw-gpu.gatewayName" . }}
+{{- $routeName := include "nemoclaw-gpu.httpRouteName" . }}
+{{- $openShellRouteName := include "nemoclaw-gpu.openShellHttpRouteName" . }}
+{{- $serviceType := .Values.ingress.gateway.serviceType | default "ClusterIP" }}
+{{- $gatewayClassName := .Values.ingress.gateway.className | default "eg" }}
+{{- $hasTLS := and .Values.ingress.tls (not .Values.ingress.allowInsecureHttp) }}
+{{- /* The OpenShell HTTPRoute is hostname-unrestricted on the cleartext HTTP listener so
+     in-cluster sandboxes can inject Authorization: Bearer. NodePort/LoadBalancer would
+     expose that same listener externally and let clients bypass hostname-scoped HTTPS
+     redirect and Basic auth while carrying Bearer credentials over cleartext. */}}
+{{- if ne $serviceType "ClusterIP" }}
+{{- fail "ingress.gateway.serviceType must be ClusterIP while the OpenShell cleartext HTTP listener is present. NodePort or LoadBalancer would expose the hostname-unrestricted OpenShell HTTPRoute externally and bypass Gateway TLS and Basic authentication. Keep ClusterIP (port-forward or in-cluster access), or set ingress.gateway.enabled=false / ENABLE_ENVOY_LB=0. See README \"Ingress security\"." }}
+{{- end }}
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: {{ $gatewayName }}-proxy
+  namespace: {{ $ns }}
+  labels:
+    {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: {{ $serviceType | quote }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ $gatewayName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
+spec:
+  gatewayClassName: {{ $gatewayClassName | quote }}
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: {{ $gatewayName }}-proxy
+  listeners:
+    # Hostname-unrestricted HTTP listener for the in-cluster OpenShell path only.
+    # The Envoy dataplane Service must remain ClusterIP (enforced above) so this
+    # cleartext listener is not reachable via NodePort/LoadBalancer.
+    # External clients should use the HTTPS listener when TLS is configured.
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same
+    {{- if $hasTLS }}
+    - name: https
+      protocol: HTTPS
+      port: 443
+      {{- with .Values.ingress.host }}
+      hostname: {{ . | quote }}
+      {{- end }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          {{- range .Values.ingress.tls }}
+          - kind: Secret
+            name: {{ .secretName | quote }}
+          {{- end }}
+      allowedRoutes:
+        namespaces:
+          from: Same
+    {{- end }}
+{{- if $hasTLS }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $routeName }}-http-redirect
+  namespace: {{ $ns }}
+  labels:
+    {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+      sectionName: http
+  {{- with .Values.ingress.host }}
+  hostnames:
+    - {{ . | quote }}
+  {{- end }}
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+{{- end }}
+---
+# OpenShell CPU sandbox path: in-cluster HTTP → Envoy LeastRequest → Bearer-authenticated pods.
+# No Gateway Basic auth here so OpenShell can inject Authorization: Bearer for the proxy.
+# This route is intentionally hostname-unrestricted; exposure is bounded by ClusterIP-only.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $openShellRouteName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
+    nemoclaw.ai/route-role: openshell
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+      sectionName: http
+  rules:
+    - matches:
+        - path:
+            type: {{ include "nemoclaw-gpu.httpPathMatchType" . }}
+            value: {{ .Values.ingress.path | quote }}
+      backendRefs:
+        - name: {{ $fullname }}-metrics-proxy
+          port: {{ .Values.service.port }}
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: {{ $openShellRouteName }}-least-request
+  namespace: {{ $ns }}
+  labels:
+    {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ $openShellRouteName }}
+  loadBalancer:
+    type: LeastRequest
+  timeout:
+    http:
+      connectionIdleTimeout: {{ .Values.ingress.gateway.connectionIdleTimeout | default "60s" | quote }}
+      requestTimeout: {{ .Values.ingress.gateway.requestTimeout | default "600s" | quote }}
+---
+# Optional external/operator path (hostname-scoped). When TLS is on, this is HTTPS-only.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $routeName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
+    nemoclaw.ai/route-role: external
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+      {{- if $hasTLS }}
+      sectionName: https
+      {{- else }}
+      sectionName: http
+      {{- end }}
+  {{- with .Values.ingress.host }}
+  hostnames:
+    - {{ . | quote }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: {{ include "nemoclaw-gpu.httpPathMatchType" . }}
+            value: {{ .Values.ingress.path | quote }}
+      backendRefs:
+        - name: {{ $fullname }}-metrics-proxy
+          port: {{ .Values.service.port }}
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: {{ $routeName }}-least-request
+  namespace: {{ $ns }}
+  labels:
+    {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ $routeName }}
+  loadBalancer:
+    type: LeastRequest
+  timeout:
+    http:
+      connectionIdleTimeout: {{ .Values.ingress.gateway.connectionIdleTimeout | default "60s" | quote }}
+      requestTimeout: {{ .Values.ingress.gateway.requestTimeout | default "600s" | quote }}
+{{- if .Values.ingress.auth.enabled }}
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: {{ $routeName }}-basic-auth
+  namespace: {{ $ns }}
+  labels:
+    {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ $routeName }}
+  basicAuth:
+    users:
+      name: {{ .Values.ingress.auth.existingSecret | default (include "nemoclaw-gpu.ingressAuthSecretName" .) | quote }}
+{{- end }}
+{{- end }}
