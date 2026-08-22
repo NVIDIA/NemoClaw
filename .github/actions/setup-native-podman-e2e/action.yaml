@@ -92,7 +92,7 @@ runs:
           apparmor btrfs-progs conmon fuse-overlayfs \
           golang-github-containers-common iptables nftables runc slirp4netns uidmap
 
-        toolchain_install_root=/opt/nemoclaw-native-podman-e2e
+        toolchain_install_root=/usr/lib/nemoclaw-native-podman-e2e
         sudo install -d --owner=root --group=root --mode=0755 \
           "$toolchain_install_root" "$toolchain_install_root/bin"
         podman_executable="$toolchain_install_root/bin/podman"
@@ -152,7 +152,7 @@ runs:
             'abi <abi/4.0>,' \
             'include <tunables/global>' \
             '' \
-            'profile nemoclaw-native-podman-e2e /opt/nemoclaw-native-podman-e2e/bin/podman flags=(unconfined, attach_disconnected) {' \
+            'profile nemoclaw-native-podman-e2e /usr/lib/nemoclaw-native-podman-e2e/bin/podman flags=(unconfined, attach_disconnected) {' \
             '  userns,' \
             '}' >"$profile"
           sudo apparmor_parser -r "$profile"
@@ -162,7 +162,7 @@ runs:
             'abi <abi/4.0>,' \
             'include <tunables/global>' \
             '' \
-            'profile nemoclaw-native-pasta-e2e /opt/nemoclaw-native-podman-e2e/bin/pasta flags=(unconfined) {' \
+            'profile nemoclaw-native-pasta-e2e /usr/lib/nemoclaw-native-podman-e2e/bin/pasta flags=(unconfined) {' \
             '  userns,' \
             '}' >"$pasta_profile"
           sudo apparmor_parser -r "$pasta_profile"
