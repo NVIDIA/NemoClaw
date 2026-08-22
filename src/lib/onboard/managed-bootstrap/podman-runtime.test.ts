@@ -41,6 +41,7 @@ import {
   createPodmanManagedBootstrapAdapter,
   createPodmanManagedBootstrapSurface,
   finishCommittedPodmanBootstrap,
+  renderPodmanReplacementMountArgs,
 } from "./podman-runtime";
 import type { PodmanGatewayWatcherLease } from "./podman-watcher-lease";
 import { PODMAN_WATCHER_LEASE_SCHEMA_VERSION } from "./podman-watcher-lease";
@@ -172,6 +173,24 @@ function installCoordinatorMocks() {
 }
 
 describe("Podman managed-bootstrap runtime surface", () => {
+  it("reproduces the OpenShell supervisor image mount on the bootstrap replacement", () => {
+    expect(
+      renderPodmanReplacementMountArgs({
+        Mounts: [
+          {
+            Type: "image",
+            Source: `sha256:${"9".repeat(64)}`,
+            Destination: "/opt/openshell/bin",
+            RW: false,
+          },
+        ],
+      }),
+    ).toEqual([
+      "--mount",
+      `type=image,source=sha256:${"9".repeat(64)},destination=/opt/openshell/bin,rw=false`,
+    ]);
+  });
+
   it("persists only non-secret native gateway launch environment", () => {
     const first = buildPodmanStandaloneGatewayEnvironmentAuthority({
       PATH: "/usr/bin",

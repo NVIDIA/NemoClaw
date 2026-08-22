@@ -297,7 +297,7 @@ function networkArgs(inspect: JsonRecord): string[] {
   return names[0] ? ["--network", names[0]] : [];
 }
 
-function mountArgs(inspect: JsonRecord): string[] {
+export function renderPodmanReplacementMountArgs(inspect: JsonRecord): string[] {
   if (!Array.isArray(inspect.Mounts)) return [];
   const args: string[] = [];
   for (const value of inspect.Mounts) {
@@ -308,10 +308,15 @@ function mountArgs(inspect: JsonRecord): string[] {
     if (!source || !destination || !path.isAbsolute(destination)) {
       throw new Error("Managed bootstrap Podman mount cannot be reproduced exactly.");
     }
-    if (type !== "volume" && type !== "bind") {
+    if (type !== "volume" && type !== "bind" && type !== "image") {
       throw new Error(`Managed bootstrap Podman mount type '${type}' is unsupported.`);
     }
-    const options = mount.RW === false ? ",ro" : "";
+    const options =
+      type === "image"
+        ? `,rw=${mount.RW === true ? "true" : "false"}`
+        : mount.RW === false
+          ? ",ro"
+          : "";
     args.push("--mount", `type=${type},source=${source},destination=${destination}${options}`);
   }
   return args;
@@ -1328,7 +1333,7 @@ export function createPodmanManagedBootstrapAdapter(
             heldWorkload: current.held,
             runtimeArgs: Object.freeze([
               ...networkArgs(current.rawInspect),
-              ...mountArgs(current.rawInspect),
+              ...renderPodmanReplacementMountArgs(current.rawInspect),
               ...optionArgs(replacementOptions.values),
             ]),
             environment: replacementEnvironment(current.rawInspect, handle),
