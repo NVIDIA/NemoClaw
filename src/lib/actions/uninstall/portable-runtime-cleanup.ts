@@ -11,8 +11,6 @@ import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-che
 import { hasPortableUninstallAuthority } from "../../onboard/portable-retirement-authority";
 import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
 import {
-  assertNoHermesPortableHostAuthority,
-  defaultPortableStateDir,
   inspectPortableRetirementRecovery,
   PORTABLE_RETIREMENT_STATE_ENTRIES,
   preparePortableRetirement,
@@ -40,6 +38,14 @@ import {
   type PortablePodmanLifecycleTransport,
 } from "../../onboard/experimental/portable-demo-lifecycle";
 import { portablePodmanCommandEnvironment } from "../../onboard/experimental/portable-runtime-readiness";
+import {
+  inspectHermesPortableUninstallSandboxNames,
+  runHermesPortableUninstall,
+  type HermesPortableUninstallDeps,
+} from "./hermes-portable-uninstall";
+import { HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE } from "./hermes-portable-uninstall-transaction";
+
+export { HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE };
 
 const REGISTRY_CONTAINER_NAME = "nemoclaw-portable-registry";
 const REGISTRY_LABEL_NAME = "com.nvidia.nemoclaw.portable";
@@ -55,9 +61,8 @@ const PORTABLE_SELECTOR_NAMES = [
 ] as const;
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 
-/** Refuse legacy uninstall while the host fence keeps schema-5 authority stable. */
-export function assertHermesPortableUninstallAvailable(env: NodeJS.ProcessEnv): void {
-  assertNoHermesPortableHostAuthority(defaultPortableStateDir(env), "uninstall");
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 interface PortableRegistryRemoval {
@@ -88,6 +93,9 @@ export interface PortableRuntimeCleanupDeps extends PortableDemoLifecycleDeps {
   ) => PreparedPortableRetirement;
   readonly publishRetirement?: (prepared: PreparedPortableRetirement) => void;
   readonly resumeRetirement?: (homeDir: string) => void;
+  readonly hermesPortable?: HermesPortableUninstallDeps;
+  readonly inspectHermesPortableSandboxNames?: typeof inspectHermesPortableUninstallSandboxNames;
+  readonly runHermesPortableUninstall?: typeof runHermesPortableUninstall;
 }
 
 export interface PortableRuntimeCleanupResult {
@@ -207,7 +215,7 @@ function requireCompleteReceiptRegistryOwnership(
 
 function currentReceipts(stateDir: string): PortableDemoLifecycleReceiptRecord[] {
   return listPortableDemoSandboxLifecycleReceipts(stateDir).sort((left, right) =>
-    left.sandboxName.localeCompare(right.sandboxName),
+    compareCodeUnits(left.sandboxName, right.sandboxName),
   );
 }
 
@@ -215,6 +223,16 @@ function currentReceipts(stateDir: string): PortableDemoLifecycleReceiptRecord[]
 export function hasPortableRuntimeCleanup(stateDir: string): boolean {
   const homeDir = path.dirname(stateDir);
   const registryFile = path.join(stateDir, "sandboxes.json");
+  if (
+    inspectHermesPortableUninstallSandboxNames({
+      env: process.env,
+      homeDir,
+      registryFile,
+      stateDir,
+    })
+  ) {
+    return true;
+  }
   return hasPortableUninstallAuthority(
     {
       homeDir,
@@ -272,6 +290,29 @@ export function runPortableRuntimeCleanupTransaction(
   ) => boolean,
   deps: PortableRuntimeCleanupDeps = {},
 ): PortableRuntimeCleanupResult | null {
+  const hermesInput = {
+    env: input.env,
+    homeDir: input.homeDir,
+    registryFile: input.registryFile,
+    stateDir: input.stateDir,
+  };
+  const hermesSandboxNames = (
+    deps.inspectHermesPortableSandboxNames ?? inspectHermesPortableUninstallSandboxNames
+  )(hermesInput);
+  if (hermesSandboxNames) {
+    const names = [...hermesSandboxNames].sort(compareCodeUnits);
+    return withPortableFences(input, names, deps, () => {
+      const result = (deps.runHermesPortableUninstall ?? runHermesPortableUninstall)(
+        hermesInput,
+        deps.hermesPortable,
+      );
+      return {
+        registryRemoved: false,
+        sandboxContainersRemoved: result.sandboxContainersRemoved,
+        selectorsRemoved: [],
+      };
+    });
+  }
   const inspectRetirement = deps.inspectRetirement ?? inspectPortableRetirementRecovery;
   const recovery = inspectRetirement(input.homeDir);
   if (recovery) {

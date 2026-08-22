@@ -177,21 +177,7 @@ async function applyHermesFakeDiscordPolicy(options: {
 policy_file="$(mktemp)"
 trap 'rm -f "$policy_file"' EXIT
 "$1" policy get --base "$2" >"$policy_file"
-node --input-type=module - "$policy_file" "$3" "$4" "$5" <<'NODE'
-import fs from "node:fs";
-import YAML from "yaml";
-
-const [policyFile, providerName, host, rawPort] = process.argv.slice(2);
-const policy = YAML.parse(fs.readFileSync(policyFile, "utf8"));
-const port = Number(rawPort);
-const endpoints = Object.values(policy.network_policies ?? {}).flatMap((entry) =>
-  Array.isArray(entry?.endpoints) ? entry.endpoints : [],
-);
-const endpoint = endpoints.find((candidate) => candidate?.host === host && candidate?.port === port);
-if (!endpoint) throw new Error("fake Discord endpoint is missing from the base policy");
-endpoint.credential_binding = { provider: providerName };
-fs.writeFileSync(policyFile, YAML.stringify(policy), { mode: 0o600 });
-NODE
+node --import tsx "$6" "$policy_file" "$3" "$4" "$5"
 "$1" policy set --policy "$policy_file" --wait "$2"`,
       "bind-hermes-fake-discord-policy",
       options.host.openshellCommandPath,
@@ -199,6 +185,7 @@ NODE
       `${options.sandboxName}-discord-bridge`,
       FAKE_DISCORD_HOST,
       String(options.api.port),
+      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
     ],
     {
       artifactName: "bind-hermes-fake-discord-gateway-credential",

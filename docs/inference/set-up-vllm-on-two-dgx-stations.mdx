@@ -42,6 +42,8 @@ After qualification, the installer prepares the peer with the same reviewed help
 
 No managed-vLLM image or model download starts before the pair qualification or single-Station fallback decision completes.
 If no trusted pair qualifies, Express retains the single-Station Ultra recipe.
+If the read-only preparation check finds an active vLLM workload on an automatically discovered peer, Express leaves that peer unchanged.
+It retains the single-Station Ultra recipe.
 
 Set `NEMOCLAW_DGX_STATION_PEER` to request one exact already-trusted peer.
 The installer stops instead of falling back when that peer does not qualify.
