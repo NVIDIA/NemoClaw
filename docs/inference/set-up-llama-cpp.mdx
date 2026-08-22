@@ -296,9 +296,10 @@ $$nemoclaw my-assistant destroy
 ```
 
 Although the setup steps above target DGX Spark, this removal and recovery behavior also applies to other experimental managed llama.cpp profiles on Linux.
-Before sandbox deletion, NemoClaw qualifies the Docker operation authority recorded during managed llama.cpp onboarding.
+NemoClaw qualifies the Docker operation authority recorded during managed llama.cpp onboarding.
+It completes this qualification before it requests sandbox deletion or reconciles an already-absent sandbox.
 This authority includes Docker endpoint selection and identity, Docker executable identity, and command environment.
-If qualification fails, NemoClaw leaves the sandbox in place and reports the Docker operation authority error.
+If qualification fails, NemoClaw reports the Docker operation authority error and stops the destroy operation.
 
 If the reported Docker operation authority mismatch involves endpoint selection, inspect the current Docker configuration and selectors:
 
@@ -336,9 +337,11 @@ Restore the configuration and selection used during onboarding with the matching
 
 After restoring the recorded Docker configuration and selector, run `docker info`.
 Confirm that it reports the Docker daemon used during onboarding.
-Other Docker operation authority mismatches can involve Docker executable identity or command environment.
-Restore the reported Docker executable or command environment to the value used during onboarding.
 Rerun the earlier `destroy` command.
+
+NemoClaw stores opaque authority identity and binding data, not the original Docker executable or command environment values.
+For any other authority mismatch, do not guess Docker selector values.
+Retry the earlier `destroy` command from the same shell or automation environment that ran onboarding.
 After OpenShell confirms sandbox deletion, the command removes the exact managed llama.cpp container, internal network, API key, and gateway-scoped ownership state.
 It preserves `~/.cache/huggingface/` because other applications can use that cache.
 If exact cleanup fails, NemoClaw preserves the sandbox registry entry and ownership state for a retry.
