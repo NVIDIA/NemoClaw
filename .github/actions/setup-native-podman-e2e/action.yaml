@@ -92,8 +92,9 @@ runs:
           apparmor btrfs-progs conmon fuse-overlayfs \
           golang-github-containers-common iptables nftables runc slirp4netns uidmap
 
+        podman_executable=/usr/local/bin/podman
         sudo install --owner=root --group=root --mode=0755 \
-          "$TOOLCHAIN_DIRECTORY/bin/podman" /usr/local/bin/podman
+          "$TOOLCHAIN_DIRECTORY/bin/podman" "$podman_executable"
         sudo install --owner=root --group=root --mode=0755 \
           "$TOOLCHAIN_DIRECTORY/bin/pasta" /usr/local/bin/pasta
         for helper in aardvark-dns netavark rootlessport; do
@@ -104,7 +105,7 @@ runs:
         sudo install --owner=root --group=root --mode=0644 \
           "$TOOLCHAIN_DIRECTORY/share/containers/containers.conf" \
           /usr/share/containers/containers.conf
-        [[ "$(podman --version)" == "podman version 6.1.0" ]]
+        [[ "$("$podman_executable" --version)" == "podman version 6.1.0" ]]
 
         execution_user="$(id -un)"
         ensure_subordinate_range() {
@@ -138,6 +139,7 @@ runs:
         ensure_subordinate_range /etc/subuid --add-subuids
         ensure_subordinate_range /etc/subgid --add-subgids
 
+        podman_command=("$podman_executable")
         if [[ -r /sys/module/apparmor/parameters/enabled ]] && grep -q '^Y' /sys/module/apparmor/parameters/enabled; then
           profile="$RUNNER_TEMP/nemoclaw-native-podman-e2e.apparmor"
           pasta_profile="$RUNNER_TEMP/nemoclaw-native-pasta-e2e.apparmor"
@@ -145,10 +147,12 @@ runs:
             'abi <abi/4.0>,' \
             'include <tunables/global>' \
             '' \
-            'profile nemoclaw-native-podman-e2e /usr/local/bin/podman flags=(unconfined) {' \
+            'profile nemoclaw-native-podman-e2e /usr/local/bin/podman flags=(unconfined, attach_disconnected) {' \
             '  userns,' \
             '}' >"$profile"
           sudo apparmor_parser -r "$profile"
+          command -v aa-exec >/dev/null
+          podman_command=(aa-exec -p nemoclaw-native-podman-e2e -- "$podman_executable")
           printf '%s\n' \
             'abi <abi/4.0>,' \
             'include <tunables/global>' \
@@ -167,17 +171,37 @@ runs:
           sudo install -d --owner="$uid" --group="$gid" --mode=0700 "$runtime_directory"
         fi
         install -d -m 0700 "$runtime_directory/podman"
+        storage_directory="$RUNNER_TEMP/native-podman-e2e-storage"
+        storage_config="$RUNNER_TEMP/native-podman-e2e-storage.conf"
+        install -d -m 0700 "$storage_directory/runroot" "$storage_directory/graphroot"
+        printf '%s\n' \
+          '[storage]' \
+          'driver = "overlay"' \
+          "runroot = \"$storage_directory/runroot\"" \
+          "graphroot = \"$storage_directory/graphroot\"" >"$storage_config"
+        export CONTAINERS_STORAGE_CONF="$storage_config"
+        export XDG_RUNTIME_DIR="$runtime_directory"
         service_log="$RUNNER_TEMP/native-podman-e2e-service.log"
-        podman system service --time=0 "unix://$socket_path" >"$service_log" 2>&1 &
+        "${podman_command[@]}" system service --time=0 "unix://$socket_path" >"$service_log" 2>&1 &
         service_pid="$!"
+        service_ready=false
         for attempt in $(seq 1 30); do
-          if podman --url "unix://$socket_path" info --format json \
+          if "${podman_command[@]}" --url "unix://$socket_path" info --format json \
             >"$RUNNER_TEMP/native-podman-e2e-info.json" 2>>"$service_log"; then
+            service_ready=true
             break
           fi
-          [[ "$attempt" -lt 30 ]]
-          sleep 1
+          if [[ "$attempt" -lt 30 ]]; then
+            sleep 1
+          fi
         done
+        if [[ "$service_ready" != true ]]; then
+          echo "::error::Native Podman API service did not become ready" >&2
+          cat "$service_log" >&2
+          sudo dmesg | grep -E 'apparmor=.*DENIED' | tail -n 20 >&2 || true
+          wait "$service_pid" || true
+          exit 1
+        fi
         [[ -S "$socket_path" ]]
         jq -e '
           (.host.security.rootless // .Host.Security.Rootless) == true and
@@ -186,6 +210,7 @@ runs:
 
         sudo ip address replace 169.254.2.2/32 dev lo
         {
+          printf 'CONTAINERS_STORAGE_CONF=%s\n' "$storage_config"
           printf 'DOCKER_HOST=unix://%s\n' "$socket_path"
           printf 'NEMOCLAW_NATIVE_PODMAN_SERVICE_PID=%s\n' "$service_pid"
           printf 'OPENSHELL_PODMAN_SOCKET=%s\n' "$socket_path"
