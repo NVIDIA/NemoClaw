@@ -2794,6 +2794,7 @@ jobs:
                             CpuQuota: .HostConfig.CpuQuota,
                             OomScoreAdj: .HostConfig.OomScoreAdj,
                             NetworkMode: .HostConfig.NetworkMode,
+                            Binds: .HostConfig.Binds,
                             Mounts: .HostConfig.Mounts
                           },
                           Mounts,
@@ -2840,6 +2841,7 @@ jobs:
                     CpuPeriod: .HostConfig.CpuPeriod,
                     CpuQuota: .HostConfig.CpuQuota,
                     OomScoreAdj: .HostConfig.OomScoreAdj,
+                    Binds: .HostConfig.Binds,
                     Mounts: .HostConfig.Mounts
                   },
                   Mounts,
