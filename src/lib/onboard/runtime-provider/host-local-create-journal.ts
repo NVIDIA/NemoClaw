@@ -462,6 +462,23 @@ function readRecord(
   return record;
 }
 
+function listRecords(
+  root: string,
+  options: { readonly createDirectory: boolean; readonly recoverPublishOrphans: boolean },
+): readonly HostLocalCreateJournalRecord[] {
+  if (!requireDirectory(root, options.createDirectory)) return Object.freeze([]);
+  return Object.freeze(
+    fs
+      .readdirSync(root)
+      .filter((entry) => SHA256.test(entry.replace(/\.json$/u, "")) && entry.endsWith(".json"))
+      .sort()
+      .flatMap((entry) => {
+        const record = readRecord(path.join(root, entry), options.recoverPublishOrphans);
+        return record === null ? [] : [record];
+      }),
+  );
+}
+
 function readExecutionLease(target: string): HostLocalCreateJournalExecutionLease | null {
   const source = readPrivateFile(target);
   if (source === null) return null;
@@ -607,17 +624,7 @@ export function createHostLocalCreateJournalStore(
   const store: HostLocalCreateJournalStore = {
     load,
     list() {
-      requireDirectory(root);
-      return Object.freeze(
-        fs
-          .readdirSync(root)
-          .filter((entry) => SHA256.test(entry.replace(/\.json$/u, "")) && entry.endsWith(".json"))
-          .sort()
-          .flatMap((entry) => {
-            const record = readRecord(path.join(root, entry));
-            return record === null ? [] : [record];
-          }),
-      );
+      return listRecords(root, { createDirectory: true, recoverPublishOrphans: true });
     },
     create(record) {
       requireDirectory(root);
@@ -762,20 +769,10 @@ export function createHostLocalCreateJournalStore(
   return Object.freeze(store);
 }
 
-/** Read existing journal records without creating or repairing filesystem state. */
+/** Read existing journal records without creating state; repair an interrupted exclusive publish. */
 export function readHostLocalCreateJournalRecords(
   stateDirectory: string,
 ): readonly HostLocalCreateJournalRecord[] {
   const root = path.join(stateDirectory, HOST_LOCAL_CREATE_JOURNAL_DIRECTORY);
-  if (!requireDirectory(root, false)) return Object.freeze([]);
-  return Object.freeze(
-    fs
-      .readdirSync(root)
-      .filter((entry) => SHA256.test(entry.replace(/\.json$/u, "")) && entry.endsWith(".json"))
-      .sort()
-      .flatMap((entry) => {
-        const record = readRecord(path.join(root, entry), false);
-        return record === null ? [] : [record];
-      }),
-  );
+  return listRecords(root, { createDirectory: false, recoverPublishOrphans: true });
 }

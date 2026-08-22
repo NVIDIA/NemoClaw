@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import * as dockerLlamaCppOperation from "../../onboard/runtime-provider/docker-llama-cpp-operation";
 import { privateBridgeFixture } from "../../onboard/runtime-provider/docker-llama-cpp-private-bridge.test-support";
 import { createHostLocalCreateJournalStore } from "../../onboard/runtime-provider/host-local-create-journal";
+import { serializeHostLocalInferenceReceipt } from "../../onboard/runtime-provider/host-local-inference";
 import {
   loadManagedLlamaCppReceipt,
   managedLlamaCppStatePaths,
@@ -788,6 +789,31 @@ describe("host-local model cleanup", () => {
       expect.any(Number),
     );
     expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
+  });
+
+  it("rejects receipt and journal disagreement during pre-delete qualification (#9888)", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine);
+    const paths = managedLlamaCppStatePaths(homeDir);
+    const receipt = loadManagedLlamaCppReceipt(paths)!;
+    fs.writeFileSync(
+      paths.receiptPath,
+      serializeHostLocalInferenceReceipt({
+        ...receipt,
+        endpoint: { ...receipt.endpoint, networkName: "foreign-network" },
+      }),
+      { mode: 0o600 },
+    );
+
+    expect(() =>
+      prepareManagedLlamaCppRuntimeCleanupForSandbox("spark-agent", {
+        homeDir,
+        engine: harness.engine,
+      }),
+    ).toThrow("receipt does not match gateway lifecycle authority");
+    expect(harness.capture).not.toHaveBeenCalled();
+    expect(fs.existsSync(paths.stateDir)).toBe(true);
   });
 
   it("retains the selected engine for an interrupted journal without a receipt (#9888)", () => {

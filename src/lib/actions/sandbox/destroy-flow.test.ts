@@ -126,6 +126,21 @@ describe("destroySandbox flow", () => {
     },
   );
 
+  it("does not let legacy llama.cpp state block an unrelated provider destroy (#9888)", async () => {
+    const harness = createDestroyHarness({
+      provider: "nvidia-prod",
+      onPrepareManagedLlamaCppRuntimeCleanup: () => {
+        throw new Error("foreign managed llama.cpp state is corrupt");
+      },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.prepareManagedLlamaCppRuntimeCleanupSpy).not.toHaveBeenCalled();
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["--yes", false],
     ["--yes --force", true],

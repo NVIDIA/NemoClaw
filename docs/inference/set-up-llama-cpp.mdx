@@ -308,6 +308,9 @@ docker context show
 printf 'DOCKER_CONFIG=%s\n' "${DOCKER_CONFIG:-<unset>}"
 printf 'DOCKER_CONTEXT=%s\n' "${DOCKER_CONTEXT:-<unset>}"
 printf 'DOCKER_HOST=%s\n' "${DOCKER_HOST:-<unset>}"
+printf 'DOCKER_TLS=%s\n' "${DOCKER_TLS:-<unset>}"
+printf 'DOCKER_TLS_VERIFY=%s\n' "${DOCKER_TLS_VERIFY:-<unset>}"
+printf 'DOCKER_CERT_PATH=%s\n' "${DOCKER_CERT_PATH:-<unset>}"
 ```
 
 Compare this output with the shell or automation that ran onboarding.
@@ -334,6 +337,10 @@ Restore the configuration and selection used during onboarding with the matching
   unset DOCKER_CONTEXT
   export DOCKER_HOST="<onboarding-docker-host>"
   ```
+
+For either selection path, restore `DOCKER_TLS`, `DOCKER_TLS_VERIFY`, and `DOCKER_CERT_PATH` to their onboarding state.
+Unset each TLS variable that was unset or empty during onboarding.
+These variables are part of the endpoint-selection tuple for both Docker contexts and `DOCKER_HOST`.
 
 After restoring the recorded Docker configuration and selector, run `docker info`.
 Confirm that it reports the Docker daemon used during onboarding.

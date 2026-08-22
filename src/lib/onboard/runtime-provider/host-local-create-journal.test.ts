@@ -99,13 +99,13 @@ function executionPath(name: ".execution-lease.json" | ".execution-recovery.json
   return path.join(stateDirectory, HOST_LOCAL_CREATE_JOURNAL_DIRECTORY, name);
 }
 
-describe("non-mutating journal reads", () => {
+describe("existing journal reads", () => {
   it("does not create an absent journal directory", () => {
     expect(readHostLocalCreateJournalRecords(stateDirectory)).toEqual([]);
     expect(fs.existsSync(path.dirname(journalPath()))).toBe(false);
   });
 
-  it("rejects an exclusive-publish orphan without repairing it", () => {
+  it("repairs a recoverable exclusive-publish orphan", () => {
     const store = createHostLocalCreateJournalStore(stateDirectory);
     store.create(prepared());
     const orphan = path.join(
@@ -114,10 +114,8 @@ describe("non-mutating journal reads", () => {
     );
     fs.linkSync(journalPath(), orphan);
 
-    expect(() => readHostLocalCreateJournalRecords(stateDirectory)).toThrow(
-      "journal file authority is invalid",
-    );
-    expect(fs.existsSync(orphan)).toBe(true);
+    expect(readHostLocalCreateJournalRecords(stateDirectory)).toEqual([prepared()]);
+    expect(fs.existsSync(orphan)).toBe(false);
   });
 });
 

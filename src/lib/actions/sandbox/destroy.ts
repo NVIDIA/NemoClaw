@@ -502,7 +502,7 @@ async function destroySandboxUnlocked(
   let preparedManagedLlamaCppCleanup: ReturnType<
     typeof prepareManagedLlamaCppRuntimeCleanupForSandbox
   > = null;
-  if (!sandbox?.hostLocalInferenceProvenance) {
+  if (sandbox?.provider === "llama-cpp-local" && !sandbox.hostLocalInferenceProvenance) {
     try {
       // Fresh Docker qualification reads ambient DOCKER_CONTEXT, DOCKER_HOST,
       // or Docker's persisted currentContext. Pin that selection before the

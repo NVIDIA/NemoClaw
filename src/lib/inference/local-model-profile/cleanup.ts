@@ -397,6 +397,28 @@ function requireManagedLlamaJournal(
   }
 }
 
+function requireManagedLlamaReceiptJournalAgreement(
+  receipt: HostLocalInferenceReceipt,
+  journal: HostLocalCreateJournalRecord,
+  ownerRecipeId: string,
+): void {
+  requireManagedLlamaJournal(journal, ownerRecipeId);
+  if (
+    receipt.service !== "llama-cpp" ||
+    receipt.runtime.kind !== "container" ||
+    receipt.runtime.name !== MANAGED_LLAMA_CPP_CONTAINER_NAME ||
+    receipt.endpoint.networkName !== MANAGED_LLAMA_CPP_NETWORK_NAME ||
+    receipt.runtime.model?.recipeId !== ownerRecipeId ||
+    receipt.runtime.model.generation !== journal.transactionId ||
+    receipt.runtime.runtimeId !== journal.runtimeId ||
+    receipt.runtime.specSha256 !== journal.specSha256 ||
+    JSON.stringify(receipt.engineAuthority) !== JSON.stringify(journal.engineAuthority) ||
+    (journal.phase !== "receipt-prepared" && journal.phase !== "finalized")
+  ) {
+    throw new Error("managed llama.cpp receipt does not match gateway lifecycle authority");
+  }
+}
+
 function requireQualifiedEngine(
   authority: HostLocalCreateJournalRecord["engineAuthority"],
   engine: ContainerEngine,
@@ -531,24 +553,12 @@ function cleanupLlamaCpp(
     throw new Error("managed llama.cpp has more than one lifecycle journal");
   }
   const journal = journals[0]!;
-  requireManagedLlamaJournal(journal, owner.recipeId);
   if (receipt !== null) {
-    if (
-      receipt.service !== "llama-cpp" ||
-      receipt.runtime.kind !== "container" ||
-      receipt.runtime.name !== MANAGED_LLAMA_CPP_CONTAINER_NAME ||
-      receipt.endpoint.networkName !== MANAGED_LLAMA_CPP_NETWORK_NAME ||
-      receipt.runtime.model?.recipeId !== owner.recipeId ||
-      receipt.runtime.model.generation !== journal.transactionId ||
-      receipt.runtime.runtimeId !== journal.runtimeId ||
-      receipt.runtime.specSha256 !== journal.specSha256 ||
-      JSON.stringify(receipt.engineAuthority) !== JSON.stringify(journal.engineAuthority) ||
-      (journal.phase !== "receipt-prepared" && journal.phase !== "finalized")
-    ) {
-      throw new Error("managed llama.cpp receipt does not match gateway lifecycle authority");
-    }
+    requireManagedLlamaReceiptJournalAgreement(receipt, journal, owner.recipeId);
   } else if (journal.phase === "finalized") {
     throw new Error("managed llama.cpp finalized receipt is missing");
+  } else {
+    requireManagedLlamaJournal(journal, owner.recipeId);
   }
 
   const lease = journalStore.acquireExecution(journal.transactionId);
@@ -676,19 +686,24 @@ export function prepareManagedLlamaCppRuntimeCleanupForSandbox(
   if (!owner || owner.sandboxName !== sandboxName) return null;
   const engine = options.engine ?? createManagedLlamaCppEngine(options.env ?? process.env);
   const receipt = loadManagedLlamaCppReceipt(paths);
+  const journals = readHostLocalCreateJournalRecords(paths.stateDir).filter(
+    ({ providerId, service }) => providerId === "docker" && service === "llama-cpp",
+  );
+  if (journals.length > 1) {
+    throw new Error("managed llama.cpp has more than one lifecycle journal");
+  }
   if (receipt !== null) {
+    const journal = journals[0];
+    if (!journal) {
+      throw new Error("managed llama.cpp receipt exists without lifecycle authority");
+    }
+    requireManagedLlamaReceiptJournalAgreement(receipt, journal, owner.recipeId);
     prepareManagedLlamaCppLifecycleCleanup(owner.sandboxName, receipt, {
       ...options,
       homeDir,
       engine,
     });
   } else {
-    const journals = readHostLocalCreateJournalRecords(paths.stateDir).filter(
-      ({ providerId, service }) => providerId === "docker" && service === "llama-cpp",
-    );
-    if (journals.length > 1) {
-      throw new Error("managed llama.cpp has more than one lifecycle journal");
-    }
     const authority =
       journals[0]?.engineAuthority ??
       openFilePersistedEngineAuthorityStore(paths.stateDir).load("host-local-inference");

@@ -438,6 +438,35 @@ describe("host-local inference lifecycle authority", () => {
     expect(drifted.destroy).not.toHaveBeenCalled();
   });
 
+  it("refuses provenance-tracked retirement when prepared authority drifts (#9888)", () => {
+    const qualified = provider();
+    qualified.assertAuthority
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("prepared authority drifted");
+      });
+    const entry = explicitLlamaSandbox();
+    const createLlamaCppAdapter = vi.fn((options) => ({
+      gatewayPort: options.gatewayPort ?? 8080,
+      runtimeOwnerSandboxName: options.runtimeOwnerSandboxName,
+      model: "llama-cpp-model",
+      operation: options.operation!,
+      receipt: options.expectedReceipt,
+      runtime: qualified.runtime,
+      prepareStartup: vi.fn(),
+    }));
+    const prepared = requiredPrepared(
+      prepareSandboxHostLocalInferenceDestroyAuthority(qualified.bundle, entry, {
+        createLlamaCppAdapter,
+      }),
+    );
+
+    expect(() =>
+      retirePreparedHostLocalInferenceAuthority(qualified.bundle, entry, prepared, [entry]),
+    ).toThrow("prepared authority drifted");
+    expect(qualified.destroy).not.toHaveBeenCalled();
+  });
+
   it("rejects a llama.cpp peer on a different gateway before retirement", () => {
     const runtimeProvider = provider();
     const alpha = explicitLlamaSandbox("alpha");
