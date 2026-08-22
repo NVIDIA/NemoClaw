@@ -181,34 +181,35 @@ describe("rebuild post-restore phase", () => {
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
     ).not.toHaveBeenCalled();
     expect(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).not.toHaveBeenCalled();
-    expect(args.bail).toHaveBeenCalledWith(
-      "OpenClaw config integrity verification failed after rebuild.",
-    );
+    expect(args.bail).not.toHaveBeenCalled();
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
     expect(output).toContain("Mutable OpenClaw config hash was not refreshed");
+    expect(output).toContain("MCP bridge definitions were preserved but not fully refreshed");
     expect(output).not.toContain("rebuilt successfully");
   });
 
-  it("fails when doctor returns 255 and the final OpenClaw config hash is unverified (#9530)", async () => {
+  it("stops before later writes when doctor exits nonzero (#9946)", async () => {
     vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
       status: 255,
       stdout: "",
       stderr: "",
     });
-    vi.mocked(
-      rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
-    ).mockReturnValue(false);
     const args = input();
 
     await runRebuildPostRestorePhase(args);
 
-    expect(args.relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+    expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
+    expect(
+      rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
+    ).not.toHaveBeenCalled();
+    expect(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).not.toHaveBeenCalled();
+    expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
     expect(args.bail).toHaveBeenCalledWith(
-      "OpenClaw config integrity verification failed after rebuild.",
+      "OpenClaw post-upgrade structure repair failed during rebuild.",
     );
-    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
-      "rebuilt successfully",
-    );
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(output).toContain("Post-upgrade structure repair failed (doctor returned 255)");
+    expect(output).not.toContain("rebuilt successfully");
   });
 
   it("captures a completed doctor mutation and rejects a later config change (#9946)", async () => {

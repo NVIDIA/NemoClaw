@@ -248,13 +248,15 @@ export async function runRebuildPostRestorePhase(
       console.log(`  ${D}Post-upgrade structure repair completion was not verified${R}`);
       bail("OpenClaw post-upgrade structure repair completion was not verified after rebuild.");
       return;
-    } else if (doctorResult.status === 0) {
-      console.log(`  ${G}\u2713${R} Post-upgrade structure check passed`);
-    } else {
-      console.log(
-        `  ${D}Post-upgrade structure repair completed with exit ${doctorResult.status}${R}`,
-      );
     }
+    if (doctorResult.status !== 0) {
+      console.log(
+        `  ${D}Post-upgrade structure repair failed (doctor returned ${doctorResult.status})${R}`,
+      );
+      bail("OpenClaw post-upgrade structure repair failed during rebuild.");
+      return;
+    }
+    console.log(`  ${G}\u2713${R} Post-upgrade structure check passed`);
 
     // #7102: clear stale per-session pinned models left over from an
     // `inference set` before this rebuild, while the gateway is still down.
@@ -500,6 +502,7 @@ export async function runRebuildPostRestorePhase(
   }
   if (
     targetAgentName === "openclaw" &&
+    !mcpBridgeRestoreUnverified &&
     (mutableConfigHashRefreshUnverified || finalMutableConfigHashUnverified)
   ) {
     bail("OpenClaw config integrity verification failed after rebuild.");
