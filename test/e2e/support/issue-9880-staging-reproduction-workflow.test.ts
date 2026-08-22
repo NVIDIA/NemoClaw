@@ -95,9 +95,11 @@ describe("the staging Launchable reproduces the bounded OpenClaw CLI scenario", 
     );
     expect(reproduce.env).not.toHaveProperty("BREV_API_KEY");
     expect(reproduce.env?.HOME).toBe(privateHome);
-    expect(cleanup.if).toContain("always()");
+    expect(cleanup.if).toBe("${{ always() && steps.prepare.outputs.work_dir != '' }}");
     expect(cleanup.env?.HOME).toBe(privateHome);
-    expect(cleanup.run).toContain("cleanup-owned-workspace");
+    expect(cleanup.run).toMatch(
+      /^tools\/e2e\/brev-launchable-issue-9880[.]sh cleanup-owned-workspace$/,
+    );
     expect(removeCredentials.if).toBe("always()");
     expect(removeCredentials.env?.HOME).toBe(privateHome);
     expect(removeCredentials.run).toContain('rm -rf -- "$HOME"');
