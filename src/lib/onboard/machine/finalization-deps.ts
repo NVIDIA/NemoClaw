@@ -19,8 +19,8 @@ type GatewayRouteLock =
 export const OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS = 30_000;
 export const OPENCLAW_ONBOARDING_PAIRING_POLL_MS = 1_000;
 export const OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS = 30_000;
-// Keep one fixed outer cap while reserving the full published cap of each
-// bounded child. Pairing appearance retains its existing 30-second limit, and
+// Keep one outer cap while reserving each bounded child's fixed budget.
+// Pairing appearance retains its existing 30-second limit, and
 // a capped warm-up can no longer consume the approval or final-read budget.
 export const OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS =
   OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS +
