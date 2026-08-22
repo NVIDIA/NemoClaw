@@ -135,6 +135,8 @@ describe("stable CLI coverage sharding", () => {
     const integrationEntries = currentCliCoverageEntries().filter((entry) =>
       entry.key.startsWith("integration:"),
     );
+    expect(integrationEntries.length).toBeGreaterThan(0);
+
     const weights = assignStableShards(integrationEntries, 12).map(
       (shard) => shard.totalWeightMs,
     );
