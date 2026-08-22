@@ -129,7 +129,7 @@ type NpmSubcommand =
 
 function npmSubcommand(source: string, start: number): NpmSubcommand {
   let token = readShellToken(source, start);
-  while (token?.value.startsWith("-") === true) {
+  while (token?.value.startsWith("-") === true && token.complete) {
     switch (token.value) {
       case "--silent":
         token = readShellToken(source, token.end);
@@ -343,6 +343,7 @@ describe("reviewed npm image remediation contract", () => {
     ["a nonempty inline global option operand", "npm --prefix=/work install"],
     ["a quoted global option operand", 'npm --prefix "/tmp/npm cache" ci'],
     ["an escaped-space global option operand", "npm --prefix /tmp/npm\\ cache install"],
+    ["an incomplete inline global option operand", 'npm --prefix="/tmp/npm cache install'],
     ["a missing global option operand", "npm --prefix --silent ci"],
     ["an empty inline global option operand", "npm --prefix= --silent ci"],
     ["an unknown global option", "npm --future-option ci"],
@@ -379,6 +380,7 @@ describe("reviewed npm image remediation contract", () => {
     ["mixed global options", "npm --prefix /work --silent install"],
     ["a quoted global option operand", 'npm --prefix "/tmp/npm cache" ci'],
     ["an escaped-space global option operand", "npm --prefix /tmp/npm\\ cache install"],
+    ["an incomplete inline global option operand", 'npm --prefix="/tmp/npm cache install'],
   ])("detects npm consumers in %s before the final patch (#9933)", (_label, body) => {
     const source = [
       `RUN ${body}`,
