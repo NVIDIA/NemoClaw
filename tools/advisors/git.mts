@@ -3,13 +3,14 @@
 
 import { execFileSync } from "node:child_process";
 
-export function getChangedFiles(base: string, head: string): string[] {
+export function getChangedFiles(base: string, head: string, cwd = process.cwd()): string[] {
   const stdout = gitOutput(
     [
       ["diff", "--name-only", `${base}...${head}`],
       ["diff", "--name-only", `${base}..${head}`],
     ],
     10 * 1024 * 1024,
+    cwd,
   );
   if (stdout === undefined) {
     throw new Error(`failed to diff ${base}..${head}; ensure both refs are fetched`);
@@ -21,44 +22,36 @@ export function getChangedFiles(base: string, head: string): string[] {
     .sort();
 }
 
-export function getDiff(base: string, head: string): string {
-  const stdout = getDiffOutput(base, head);
+export function getDiff(base: string, head: string, cwd = process.cwd()): string {
+  const stdout = getDiffOutput(base, head, undefined, cwd);
   if (stdout === undefined) {
     throw new Error(`failed to read complete diff ${base}..${head}; ensure both refs are fetched`);
   }
   return stdout;
 }
 
-export function getFileDiff(base: string, head: string, file: string): string {
-  const stdout = getDiffOutput(base, head, file);
+export function getFileDiff(base: string, head: string, file: string, cwd = process.cwd()): string {
+  const stdout = getDiffOutput(base, head, file, cwd);
   if (stdout === undefined) {
     throw new Error(`failed to read diff for ${file}; ensure both refs are fetched`);
   }
   return stdout;
 }
 
-function getDiffOutput(base: string, head: string, file?: string): string | undefined {
+function getDiffOutput(
+  base: string,
+  head: string,
+  file?: string,
+  cwd = process.cwd(),
+): string | undefined {
   const pathspec = file === undefined ? [] : ["--", `:(literal)${file}`];
   return gitOutput(
     [
-      [
-        "diff",
-        "--find-renames",
-        "--find-copies",
-        "--unified=80",
-        `${base}...${head}`,
-        ...pathspec,
-      ],
-      [
-        "diff",
-        "--find-renames",
-        "--find-copies",
-        "--unified=80",
-        `${base}..${head}`,
-        ...pathspec,
-      ],
+      ["diff", "--find-renames", "--find-copies", "--unified=80", `${base}...${head}`, ...pathspec],
+      ["diff", "--find-renames", "--find-copies", "--unified=80", `${base}..${head}`, ...pathspec],
     ],
     Number.POSITIVE_INFINITY,
+    cwd,
   );
 }
 
@@ -86,10 +79,14 @@ export function getHeadSha(head: string): string {
   return execFileSync("git", ["rev-parse", head], { encoding: "utf8" }).trim();
 }
 
-export function gitOutput(commands: string[][], maxBuffer: number): string | undefined {
+export function gitOutput(
+  commands: string[][],
+  maxBuffer: number,
+  cwd = process.cwd(),
+): string | undefined {
   for (const command of commands) {
     try {
-      return execFileSync("git", command, { encoding: "utf8", maxBuffer });
+      return execFileSync("git", command, { cwd, encoding: "utf8", maxBuffer });
     } catch {
       // Try the next form. Some checkouts do not have a merge base locally.
     }

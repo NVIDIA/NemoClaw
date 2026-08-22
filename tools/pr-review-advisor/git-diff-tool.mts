@@ -18,6 +18,7 @@ type GitDiffToolController = {
 type GitDiffToolOptions = {
   baseRef: string;
   headRef: string;
+  cwd?: string;
   changedFiles: readonly string[];
   totalDiffCharacters: number;
   readFileDiff?: (file: string) => string;
@@ -35,7 +36,8 @@ export function createGitDiffToolController(options: GitDiffToolOptions): GitDif
   const servedPages = new Set<string>();
   let servedDiffCharacters = 0;
   const readFileDiff =
-    options.readFileDiff ?? ((file: string) => getFileDiff(options.baseRef, options.headRef, file));
+    options.readFileDiff ??
+    ((file: string) => getFileDiff(options.baseRef, options.headRef, file, options.cwd));
 
   const tool = defineTool({
     name: PR_REVIEW_GIT_DIFF_TOOL,
