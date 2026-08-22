@@ -583,6 +583,40 @@ describe("PR review advisor workflow boundary", () => {
     },
   );
 
+  it("rejects a second checkout that replaces trusted advisor code with the PR head", () => {
+    const errors = validateMutation((source) =>
+      mutateWorkflowSource(source, (workflow) => {
+        const steps = workflow.jobs["review-specialists"].steps;
+        steps.splice(1, 0, {
+          name: "Replace advisor with PR head",
+          uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+          with: {
+            ref: "${{ github.event.pull_request.head.sha }}",
+            path: "advisor",
+            "persist-credentials": false,
+          },
+        });
+      }),
+    );
+    expect(errors).toContain(
+      "review-specialists steps must match the fixed trusted analysis inventory",
+    );
+  });
+
+  it("requires all specialist models to match the unique publishing review model", () => {
+    const errors = validateMutation((source) =>
+      mutateWorkflowSource(source, (workflow) => {
+        workflow.jobs["review-specialists"].strategy.matrix.advisor = workflow.jobs[
+          "review-specialists"
+        ].strategy.matrix.advisor.map((specialist: Record<string, unknown>) => ({
+          ...specialist,
+          model: "nvidia/nvidia/nemotron-3-ultra",
+        }));
+      }),
+    );
+    expect(errors).toContain("specialists must use the publishing review model");
+  });
+
   it.skipIf(!CAN_CREATE_SYMLINKS || !CAN_RUN_BASH)(
     "removes worktree symlinks without touching their targets",
     () => {

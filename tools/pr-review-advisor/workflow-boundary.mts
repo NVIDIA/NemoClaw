@@ -59,6 +59,28 @@ const ADVISOR_RUNTIME_PACKAGE_PINS = [
   { packageName: "yaml", envName: "YAML_VERSION", version: "2.8.3" },
   { packageName: "vitest", envName: "VITEST_VERSION", version: "4.1.9" },
 ] as const;
+const SHADOW_ANALYSIS_STEP_NAMES = [
+  "Checkout trusted advisor code (workflow revision)",
+  "Checkout dispatch workspace (read-only data)",
+  "Set default advisor workdir",
+  "Setup Node",
+  "Prepare isolated analysis workspace",
+  "Remove symlinks from analysis workspace",
+  "Download specialist session artifacts",
+  "Install Pi SDK",
+  "Prepare advisor sandbox inputs",
+  "Install OpenShell",
+  "Configure OpenShell inference",
+  "Write unavailable advisor artifacts",
+  "Create credential-free advisor sandbox",
+  "Run PR review advisor",
+  "Download advisor artifacts from sandbox",
+  "Delete advisor sandbox",
+  "Publish job summary",
+  "Upload advisor artifacts",
+  "Upload native specialist session",
+  "Verify advisor analysis outcome",
+] as const;
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -1147,6 +1169,10 @@ function checkShadowAnalysisTrustBoundary(
     errors.push(`${jobName} job-level environment must not expose GitHub or model credentials`);
   }
   requireEnv(errors, `${jobName} job`, job, "ADVISOR_DIR", CANONICAL_ADVISOR_DIR);
+  const stepNames = steps.map((step) => step.name ?? "<unnamed>");
+  if (stepNames.join("\n") !== SHADOW_ANALYSIS_STEP_NAMES.join("\n")) {
+    errors.push(`${jobName} steps must match the fixed trusted analysis inventory`);
+  }
   rejectUntrustedAdvisorHelperExecution(errors, steps);
 
   const trustedCheckout = requireStep(
@@ -1221,6 +1247,7 @@ function checkShadowAnalysisTrustBoundary(
 
 function checkShadowTopology(
   errors: string[],
+  reviewJob: WorkflowRecord,
   specialistJob: WorkflowRecord,
   synthesisJob: WorkflowRecord,
 ): void {
@@ -1240,6 +1267,12 @@ function checkShadowTopology(
   if (booleanValue(strategy["fail-fast"]) !== false) {
     errors.push("specialist matrix must disable fail-fast");
   }
+  const reviewEntries = asRecord(asRecord(reviewJob.strategy).matrix).advisor;
+  const publishingReviewEntries = Array.isArray(reviewEntries)
+    ? reviewEntries.map(asRecord).filter((entry) => booleanValue(entry.publish_comment) === true)
+    : [];
+  const primaryModel =
+    publishingReviewEntries.length === 1 ? stringValue(publishingReviewEntries[0].model) : "";
   const entries = asRecord(strategy.matrix).advisor;
   const expected = ["behavior", "trust", "design-architecture", "operations", "documentation"];
   if (!Array.isArray(entries) || entries.length !== expected.length) {
@@ -1249,8 +1282,8 @@ function checkShadowTopology(
     if (records.map((entry) => stringValue(entry.interest)).join(",") !== expected.join(",")) {
       errors.push("specialist matrix interests must match the trusted five-interest order");
     }
-    if (new Set(records.map((entry) => stringValue(entry.model))).size !== 1) {
-      errors.push("specialists must use one primary model");
+    if (!primaryModel || records.some((entry) => stringValue(entry.model) !== primaryModel)) {
+      errors.push("specialists must use the publishing review model");
     }
   }
   requireEnv(
@@ -1336,7 +1369,7 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   if (Object.keys(publishJob).length === 0) errors.push("workflow must declare the publish job");
   checkPrivilegeDomains(errors, workflow, reviewJob, publishJob);
   checkAnalysisJob(errors, reviewJob);
-  checkShadowTopology(errors, specialistJob, synthesisJob);
+  checkShadowTopology(errors, reviewJob, specialistJob, synthesisJob);
   checkPublishJob(errors, publishJob);
   return errors;
 }
