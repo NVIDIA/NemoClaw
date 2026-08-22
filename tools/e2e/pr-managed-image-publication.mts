@@ -29,7 +29,7 @@ const MAX_CHANGED_FILES = 3_000;
 const PAGE_SIZE = 100;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/*-]+$/u;
-const PODMAN_DIAGNOSTIC_CANDIDATE_SHA = "695b8b3e5747c92081fa877da2116572693fccda";
+const PODMAN_DIAGNOSTIC_CANDIDATE_SHA = "91de73cb8e25eda958fa34ef7743ee61eb05a959";
 const PODMAN_DIAGNOSTIC_IMAGE_SHA = "0956c30eadfbd92475edca2c7807a4d700942276";
 
 type JsonRecord = Record<string, unknown>;
