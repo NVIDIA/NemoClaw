@@ -41,6 +41,7 @@ import {
 } from "../../inference/serving/managed-runtime-receipts";
 import { buildDockerGatewayDebEnvFile } from "../../onboard/docker-driver-gateway-env";
 import {
+  getTrustedActiveOpenShellGatewayUserServiceIdentity,
   getNemoclawOpenShellGatewayUserServicePath,
   getOpenShellUserConfigHome,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
@@ -117,6 +118,7 @@ export interface UninstallRunDeps {
   error?: (message: string) => void;
   existsSync?: (target: string) => boolean;
   fs?: FileSystemDeps;
+  getTrustedActiveOpenShellGatewayUserServiceIdentity?: typeof getTrustedActiveOpenShellGatewayUserServiceIdentity;
   isPortFree?: (port: number) => boolean;
   isTty?: boolean;
   kill?: (pid: number, signal?: NodeJS.Signals | number) => boolean;
@@ -126,6 +128,7 @@ export interface UninstallRunDeps {
   readProcessArgv?: (pid: number) => readonly string[] | null;
   readProcessExecutable?: (pid: number) => string | null;
   readProcessEnvironment?: (pid: number) => Record<string, string> | null;
+  realpathSync?: (target: string) => string;
   readProcessIdentity?: (pid: number, fresh?: boolean) => string | null;
   readLine?: () => string | null;
   requireCompleteGatewayProcessCleanup?: boolean;
@@ -477,6 +480,7 @@ interface UninstallRuntime {
   env: NodeJS.ProcessEnv;
   error: (message: string) => void;
   existsSync: (target: string) => boolean;
+  getTrustedActiveOpenShellGatewayUserServiceIdentity: typeof getTrustedActiveOpenShellGatewayUserServiceIdentity;
   isPortFree: ((port: number) => boolean) | undefined;
   isTty: boolean;
   kill: (pid: number, signal?: NodeJS.Signals | number) => boolean;
@@ -486,6 +490,7 @@ interface UninstallRuntime {
   readProcessArgv: ((pid: number) => readonly string[] | null) | undefined;
   readProcessExecutable: ((pid: number) => string | null) | undefined;
   readProcessEnvironment: ((pid: number) => Record<string, string> | null) | undefined;
+  realpathSync: (target: string) => string;
   readProcessIdentity: ((pid: number, fresh?: boolean) => string | null) | undefined;
   readLine: () => string | null;
   requireCompleteGatewayProcessCleanup: boolean;
@@ -520,6 +525,9 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     env,
     error: deps.error ?? ((message) => console.error(message)),
     existsSync: deps.existsSync ?? ((target) => fs.existsSync(target)),
+    getTrustedActiveOpenShellGatewayUserServiceIdentity:
+      deps.getTrustedActiveOpenShellGatewayUserServiceIdentity ??
+      getTrustedActiveOpenShellGatewayUserServiceIdentity,
     isPortFree: deps.isPortFree,
     // Side-effect-free TTY check + EAGAIN-tolerant reader; the
     // process.stdin/non-blocking-fd hazard is documented in core/stdin.ts.
@@ -540,6 +548,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     readProcessArgv: deps.readProcessArgv,
     readProcessExecutable: deps.readProcessExecutable,
     readProcessEnvironment: deps.readProcessEnvironment,
+    realpathSync: deps.realpathSync ?? fs.realpathSync.native,
     readProcessIdentity: deps.readProcessIdentity,
     readLine: deps.readLine ?? readLineFromStdin,
     requireCompleteGatewayProcessCleanup: deps.requireCompleteGatewayProcessCleanup ?? false,
@@ -1542,6 +1551,90 @@ function removeOpenShellResources(
   return true;
 }
 
+function normalizeGatewayProcessExecutable(
+  executablePath: string,
+  runtime: UninstallRuntime,
+): string {
+  try {
+    return runtime.realpathSync(executablePath);
+  } catch {
+    return path.resolve(executablePath);
+  }
+}
+
+function readGatewayProcessExecutable(pid: number, runtime: UninstallRuntime): string | null {
+  const provided = runtime.readProcessExecutable?.(pid);
+  if (provided !== undefined) return provided;
+  if (runtime.platform === "linux") {
+    try {
+      return runtime.realpathSync(`/proc/${String(pid)}/exe`);
+    } catch {
+      return null;
+    }
+  }
+  if (runtime.platform !== "darwin") return null;
+  const inspected = runtime.run("/usr/sbin/lsof", ["-a", "-p", String(pid), "-d", "txt", "-Fn"], {
+    env: runtime.env,
+  });
+  if (inspected.status !== 0) return null;
+  const executable = inspected.stdout
+    .split(/\r?\n/)
+    .find((line) => line.startsWith("n/"))
+    ?.slice(1)
+    .trim();
+  return executable && path.isAbsolute(executable) ? executable : null;
+}
+
+function packageManagedServiceGatewayProcessOwnershipFailure(
+  stateDir: string,
+  runtime: UninstallRuntime,
+): string | null {
+  const inspectService = () =>
+    runtime.getTrustedActiveOpenShellGatewayUserServiceIdentity({
+      commandExists: runtime.commandExists,
+      env: runtime.env,
+      existsSync: runtime.existsSync,
+      home: runtime.env.HOME || os.homedir(),
+      platform: runtime.platform,
+      spawnSyncImpl: runtime.run,
+      suppressUnsupportedVersionWarning: true,
+    });
+  const before = inspectService();
+  if (!before?.executablePath) {
+    return "active package-managed OpenShell gateway service identity is unavailable";
+  }
+  const expectedExecutable = normalizeGatewayProcessExecutable(before.executablePath, runtime);
+  const executableBefore = readGatewayProcessExecutable(before.pid, runtime);
+  if (
+    !executableBefore ||
+    normalizeGatewayProcessExecutable(executableBefore, runtime) !== expectedExecutable
+  ) {
+    return "live process executable does not match the trusted service executable";
+  }
+  if (!processUsesStateScopedSandboxNamespace(before.pid, stateDir, runtime)) {
+    return "gateway process owner and loaded sandbox namespace cannot be proven";
+  }
+  const after = inspectService();
+  if (
+    !after?.executablePath ||
+    after.pid !== before.pid ||
+    normalizeGatewayProcessExecutable(after.executablePath, runtime) !== expectedExecutable
+  ) {
+    return "package-managed OpenShell gateway service identity changed during validation";
+  }
+  const executableAfter = readGatewayProcessExecutable(after.pid, runtime);
+  if (
+    !executableAfter ||
+    normalizeGatewayProcessExecutable(executableAfter, runtime) !== expectedExecutable
+  ) {
+    return "package-managed OpenShell gateway service identity changed during validation";
+  }
+  if (!processUsesStateScopedSandboxNamespace(after.pid, stateDir, runtime)) {
+    return "package-managed OpenShell gateway service sandbox namespace changed during validation";
+  }
+  return null;
+}
+
 function canRemoveScopedOpenShellResources(
   paths: UninstallPaths,
   options: UninstallRunOptions,
@@ -1606,6 +1699,14 @@ function canRemoveScopedOpenShellResources(
     return false;
   }
   if (!requireLiveManagedProcess) return true;
+  if (teardownAuthority.source === "packaged-service") {
+    const reason = packageManagedServiceGatewayProcessOwnershipFailure(stateDir, runtime);
+    if (reason === null) return true;
+    runtime.warn(
+      `Refusing scoped gateway cleanup because the package-managed OpenShell gateway service identity cannot be proven: ${reason}.`,
+    );
+    return false;
+  }
   const reason = scopedHostGatewayProcessOwnershipFailure(
     {
       env: runtime.env,
