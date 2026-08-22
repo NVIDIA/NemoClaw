@@ -451,6 +451,36 @@ describe("pull request and main workflow contracts", () => {
     }
   });
 
+  it("runs each CLI coverage shard with one worker (#6237)", () => {
+    const coverageStep = requiredStep(
+      sharedActions.cliCoverageShard,
+      "Run CLI coverage and E2E support shard",
+    );
+    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-cli-coverage-command-"));
+    const executable = join(temp, "npx");
+    const output = join(temp, "args");
+
+    try {
+      writeFileSync(
+        executable,
+        '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$CAPTURE_ARGS"\n',
+        { mode: 0o755 },
+      );
+      const result = runWorkflowShellStep(coverageStep, {
+        CAPTURE_ARGS: output,
+        CLI_SHARD: "1",
+        CLI_SHARD_COUNT: cliShardCount,
+        PATH: `${temp}:${process.env.PATH ?? ""}`,
+      });
+      const args = readFileSync(output, "utf8").trim().split("\n");
+
+      expect(result.status).toBe(0);
+      expect(args.filter((argument) => argument === "--maxWorkers=1")).toHaveLength(1);
+    } finally {
+      rmSync(temp, { force: true, recursive: true });
+    }
+  });
+
   const coverageEntrypointCases = [
     {
       action: sharedActions.cliCoverageShard,
