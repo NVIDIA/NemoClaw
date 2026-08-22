@@ -770,6 +770,7 @@ function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTu
     activeToolNames: normalizedToolNames(turn.activeToolNames),
     requiredToolNames: normalizedToolNames(turn.requiredToolNames),
     requireToolsBeforeText: normalizedToolNames(turn.requireToolsBeforeText),
+    requiredReadPaths: turn.requiredReadPaths,
     requireAssistantText: turn.requireAssistantText === true,
     atomicTerminalToolName: normalizedToolNames(
       turn.atomicTerminalToolName ? [turn.atomicTerminalToolName] : undefined,
