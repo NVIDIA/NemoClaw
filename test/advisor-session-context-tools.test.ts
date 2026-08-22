@@ -397,6 +397,31 @@ describe("advisor session context tool flow", () => {
         { type: "tool_start", toolName: "pr_review_context" },
       ]),
     ).toContain("investigate assistant-text repair called unexpected tool pr_review_context");
+    const readObservation: AdvisorTurnFlowEvent = {
+      type: "read",
+      path: "/workspace/required.txt",
+      offset: 1,
+      endOffset: null,
+      fileSize: 9,
+      reachesEnd: true,
+    };
+    expect(assistantTextRepairErrors("investigate", [readObservation])).toContain(
+      "investigate assistant-text repair called unexpected tool read",
+    );
+    expect(
+      repairableAssistantText(
+        turn,
+        [
+          ...completedContext,
+          { type: "tool_start", toolName: "read" },
+          readObservation,
+          { type: "tool_end", toolName: "read", isError: false },
+        ],
+        tools,
+        new Set(["pr_review_context"]),
+        undefined,
+      ),
+    ).toBe(true);
     expect(
       repairableAssistantText(
         turn,
@@ -475,5 +500,26 @@ describe("advisor session context tool flow", () => {
     expect(advisorTurnFlowErrors("prepare", events, tools).join("; ")).toMatch(
       /exactly 1|activity after successful/,
     );
+  });
+
+  it("permits read observations after a successful terminal submit", () => {
+    const tools = {
+      ...atomicMutationTools,
+      atomicTerminalToolName: undefined,
+      terminalSubmitToolName: ledgerToolName,
+      terminalSubmitRepairToolNames: [],
+    };
+    const readObservation: AdvisorTurnFlowEvent = {
+      type: "read",
+      path: "/workspace/required.txt",
+      offset: 1,
+      endOffset: null,
+      fileSize: 9,
+      reachesEnd: true,
+    };
+
+    expect(
+      advisorTurnFlowErrors("prepare", [ledgerStart, ledgerSuccess, readObservation], tools),
+    ).toEqual([]);
   });
 });

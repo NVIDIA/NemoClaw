@@ -133,6 +133,20 @@ describe("specialist Pi session inputs", () => {
       }),
     ).toEqual([]);
     expect(
+      requiredReadPreparationErrors("synthesize", [complete[0]!], {
+        ...tools,
+        requiredReadPaths: [paths[0]!],
+        terminalSubmitToolName: "submit_review",
+      }),
+    ).toEqual([]);
+    expect(
+      requiredReadPreparationErrors("synthesize", [complete[0]!], {
+        ...tools,
+        requiredReadPaths: [paths[0]!],
+        atomicTerminalToolName: "commit_receipt",
+      }),
+    ).toEqual([]);
+    expect(
       requiredReadPreparationErrors("synthesize", [receipt, complete[0]!], {
         ...tools,
         requiredReadPaths: [paths[0]!],
@@ -152,6 +166,20 @@ describe("specialist Pi session inputs", () => {
     ).toContain(`synthesize required-read preparation read unexpected path: ${paths[1]}`);
 
     expect(advisorTurnFlowErrors("synthesize", [...complete, receipt], tools)).toEqual([]);
+    expect(
+      advisorTurnFlowErrors(
+        "synthesize",
+        [
+          {
+            ...complete[0]!,
+            fileSize: 0,
+          },
+          ...complete.slice(1),
+          receipt,
+        ],
+        tools,
+      ),
+    ).toEqual([]);
     expect(
       ["grep", "find", "ls", "other_tool"].map((toolName) =>
         advisorTurnFlowErrors(

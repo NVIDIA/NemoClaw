@@ -219,7 +219,7 @@ function terminalSubmitAttemptSequence(events: AdvisorTurnFlowEvent[], toolName:
 function hasOnlySettledSuccessfulToolCalls(events: AdvisorTurnFlowEvent[]): boolean {
   const openCalls = new Map<string, number>();
   for (const event of events) {
-    if (event.type === "text") continue;
+    if (event.type === "text" || event.type === "read") continue;
     if (event.type === "tool_start") {
       openCalls.set(event.toolName, (openCalls.get(event.toolName) ?? 0) + 1);
       continue;
@@ -243,6 +243,7 @@ function hasActivityAfterSuccessfulTerminalSubmit(
     successIndex >= 0 &&
     events.slice(successIndex + 1).some((event) => {
       if (event.type === "text") return Boolean(event.text.trim());
+      if (event.type === "read") return false;
       if (event.toolName !== toolName) return true;
       return event.type === "tool_end" && !event.isError;
     })
@@ -343,6 +344,8 @@ export function requiredReadPreparationErrors(
   const errors = advisorTurnFlowErrors(turnName, events, {
     ...tools,
     requireAssistantText: false,
+    atomicTerminalToolName: undefined,
+    terminalSubmitToolName: undefined,
   });
   if (events.some((event) => event.type === "text" && event.text.trim())) {
     errors.push(`${turnName} required-read preparation emitted text`);
@@ -403,7 +406,7 @@ export function advisorTurnFlowErrors(
         ranges.push({ start: event.offset, end: event.endOffset });
         ranges.sort((left, right) => left.start - right.start);
       }
-      if (event.reachesEnd && event.fileSize > 0) endOffsets.push(event.offset);
+      if (event.reachesEnd) endOffsets.push(event.offset);
       let coveredThrough = 0;
       for (const range of ranges) {
         if (range.start > coveredThrough + 1) break;
@@ -484,7 +487,9 @@ export function assistantTextRepairErrors(
   }
   const toolEvent = events.find((event) => event.type !== "text");
   if (toolEvent) {
-    errors.push(`${repairName} called unexpected tool ${toolEvent.toolName}`);
+    errors.push(
+      `${repairName} called unexpected tool ${toolEvent.type === "read" ? "read" : toolEvent.toolName}`,
+    );
   }
   return errors;
 }

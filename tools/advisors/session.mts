@@ -22,7 +22,7 @@ import {
   DEFAULT_ADVISOR_PROVIDER,
   NEMOTRON_ULTRA_ADVISOR_MODEL,
 } from "./provider-constants.mts";
-import { createRepoConfinedReadOnlyTools } from "./repo-read-only-tools.mts";
+import { canonicalRepoReadPath, createRepoConfinedReadOnlyTools } from "./repo-read-only-tools.mts";
 import {
   assistantTextRepairErrors,
   assistantTextRepairPrompt,
@@ -366,6 +366,7 @@ export async function runReadOnlyAdvisor(
   }
 
   const promptTurns = normalizePromptTurns(options.promptTurns);
+  await canonicalizeRequiredReadPaths(promptTurns, options.cwd);
   const contextTools = createAdvisorContextToolRuntime(promptTurns);
   let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
   const customTools = [
@@ -806,6 +807,22 @@ function normalizeProviderError(message: string | undefined): string | undefined
 function errorText(error: unknown): string {
   if (error === undefined || error === null) return "";
   return error instanceof Error ? error.message : String(error);
+}
+
+async function canonicalizeRequiredReadPaths(
+  promptTurns: AdvisorPromptTurn[],
+  cwd: string,
+): Promise<void> {
+  await Promise.all(
+    promptTurns.map(async (turn) => {
+      if (turn.requiredReadPaths === undefined) return;
+      turn.requiredReadPaths = await Promise.all(
+        [...new Set(turn.requiredReadPaths)].map((candidate) =>
+          canonicalRepoReadPath(cwd, candidate),
+        ),
+      );
+    }),
+  );
 }
 
 function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTurn[] {
