@@ -712,6 +712,13 @@ jobs:
             [[ -f "$managed_catalog" && ! -L "$managed_catalog" && -s "$managed_catalog" ]] ||
               { echo "::error::trusted PR managed-image catalog is not a nonempty regular file"; exit 1; }
             candidate_release="v$(jq -r '.nemoclawVersion' dist/build-identity.json)"
+            jq --arg release "$candidate_release" --arg revision "$CANDIDATE_SHA" '
+              with_entries(
+                if .value.source.revision != $revision then error("managed-image catalog revision mismatch")
+                else .value.source.release = $release end
+              )
+            ' "$managed_catalog" >"${managed_catalog}.next"
+            mv "${managed_catalog}.next" "$managed_catalog"
             jq -e --arg release "$candidate_release" --arg revision "$CANDIDATE_SHA" '
               type == "object" and length > 0 and
               all(.[]; .source.revision == $revision and .source.release == $release)
