@@ -521,6 +521,68 @@ describe("PR review advisor workflow boundary", () => {
     );
   });
 
+  it.each(["review-specialists", "review-synthesis-shadow"])(
+    "rejects secret injection into %s",
+    (jobName) => {
+      const errors = validateMutation((source) =>
+        mutateWorkflowSource(source, (workflow) => {
+          workflow.jobs[jobName].env.INJECTED_SECRET = "${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}";
+        }),
+      );
+      expect(errors).toContain(
+        `${jobName} job-level environment must not expose GitHub or model credentials`,
+      );
+    },
+  );
+
+  it.each(["review-specialists", "review-synthesis-shadow"])(
+    "rejects $ADVISOR_WORKDIR helper execution in %s",
+    (jobName) => {
+      const errors = validateMutation((source) =>
+        mutateWorkflowSource(source, (workflow) => {
+          const step = workflow.jobs[jobName].steps.find(
+            (candidate: { name?: string }) => candidate.name === "Run PR review advisor",
+          );
+          step.run =
+            'node --experimental-strip-types --no-warnings "$ADVISOR_WORKDIR/tools/pr-review-advisor/openshell.mts" run';
+        }),
+      );
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "review step 'Run PR review advisor' must not execute pr-review-advisor helpers from ADVISOR_WORKDIR",
+          `${jobName} step 'Run PR review advisor' must use the canonical trusted command`,
+        ]),
+      );
+    },
+  );
+
+  it.each(["review-specialists", "review-synthesis-shadow"])(
+    "validates trusted checkout and credential placement in %s",
+    (jobName) => {
+      const errors = validateMutation((source) =>
+        mutateWorkflowSource(source, (workflow) => {
+          const job = workflow.jobs[jobName];
+          const checkout = job.steps.find(
+            (candidate: { name?: string }) =>
+              candidate.name === "Checkout trusted advisor code (workflow revision)",
+          );
+          checkout.with.ref = "main";
+          const configure = job.steps.find(
+            (candidate: { name?: string }) => candidate.name === "Configure OpenShell inference",
+          );
+          configure.env.GH_TOKEN = "${{ github.token }}";
+        }),
+      );
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "step 'Checkout trusted advisor code (workflow revision)' expected with.ref=${{ github.workflow_sha }}",
+          `${jobName} Configure OpenShell inference must receive only the advisor model credential`,
+          `${jobName} must expose github.token only during sandbox input preparation`,
+        ]),
+      );
+    },
+  );
+
   it.skipIf(!CAN_CREATE_SYMLINKS || !CAN_RUN_BASH)(
     "removes worktree symlinks without touching their targets",
     () => {
@@ -800,12 +862,7 @@ process.exitCode = valid ? 0 : 1;`,
         cwd: string;
       }> = [];
       const input = advisorAnalysisInput({ model, runAnalysis: "0" });
-      const analyzePath = path.join(
-        input.advisorDir,
-        "tools",
-        "pr-review-advisor",
-        "analyze.mts",
-      );
+      const analyzePath = path.join(input.advisorDir, "tools", "pr-review-advisor", "analyze.mts");
       const previousRunAnalysis = process.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS;
       process.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS = "1";
 
@@ -841,7 +898,6 @@ process.exitCode = valid ? 0 : 1;`,
       expect(runCalls[0]!.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS).toBe("0");
     },
   );
-
 
   it("writes failure artifacts when analysis exits before producing artifacts", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-failure-"));

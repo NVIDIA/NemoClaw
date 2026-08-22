@@ -1130,6 +1130,95 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
   }
 }
 
+function checkShadowAnalysisTrustBoundary(
+  errors: string[],
+  jobName: string,
+  job: WorkflowRecord,
+  steps: readonly WorkflowStep[],
+): void {
+  const env = asRecord(job.env);
+  if (
+    ["GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "PR_REVIEW_ADVISOR_API_KEY"].some((name) =>
+      Object.hasOwn(env, name),
+    ) ||
+    containsSecretExpression(env) ||
+    containsGitHubTokenExpression(env)
+  ) {
+    errors.push(`${jobName} job-level environment must not expose GitHub or model credentials`);
+  }
+  requireEnv(errors, `${jobName} job`, job, "ADVISOR_DIR", CANONICAL_ADVISOR_DIR);
+  rejectUntrustedAdvisorHelperExecution(errors, steps);
+
+  const trustedCheckout = requireStep(
+    errors,
+    steps,
+    "Checkout trusted advisor code (workflow revision)",
+  );
+  requireWith(errors, trustedCheckout, "repository", "NVIDIA/NemoClaw");
+  requireWith(errors, trustedCheckout, "ref", TRUSTED_WORKFLOW_REF);
+  requireWith(errors, trustedCheckout, "path", "advisor");
+  requireWith(errors, trustedCheckout, "persist-credentials", false);
+  requireWith(errors, trustedCheckout, "lfs", false);
+  requireWith(errors, trustedCheckout, "submodules", false);
+
+  const canonicalCommands = [
+    ["Prepare isolated analysis workspace", CANONICAL_PREPARE_TARGET_PR],
+    ["Prepare advisor sandbox inputs", CANONICAL_PREPARE_SANDBOX],
+    ["Install OpenShell", CANONICAL_INSTALL_OPENSHELL],
+    ["Configure OpenShell inference", CANONICAL_CONFIGURE_OPENSHELL],
+    ["Write unavailable advisor artifacts", CANONICAL_UNAVAILABLE_ANALYSIS],
+    ["Create credential-free advisor sandbox", CANONICAL_CREATE_SANDBOX],
+    ["Run PR review advisor", CANONICAL_RUN_ANALYSIS],
+    ["Download advisor artifacts from sandbox", CANONICAL_DOWNLOAD_ARTIFACTS],
+    ["Delete advisor sandbox", CANONICAL_DELETE_SANDBOX],
+  ] as const;
+  for (const [stepName, command] of canonicalCommands) {
+    const step = requireStep(errors, steps, stepName);
+    requireCanonicalRun(
+      errors,
+      step,
+      command,
+      `${jobName} step '${stepName}' must use the canonical trusted command`,
+    );
+  }
+
+  const install = requireStep(errors, steps, "Install Pi SDK");
+  requireRunLine(
+    errors,
+    install,
+    CANONICAL_ADVISOR_NPM_CI,
+    `${jobName} step 'Install Pi SDK' must use the canonical lockfile-only npm ci command`,
+  );
+  requireRunOrder(errors, install, 'cd "$ADVISOR_DIR"', CANONICAL_ADVISOR_NPM_CI);
+
+  const configure = namedStep(steps, "Configure OpenShell inference");
+  const configureEnv = asRecord(configure?.env);
+  if (
+    configureEnv.OPENAI_API_KEY !== "${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}" ||
+    Object.keys(configureEnv).length !== 1
+  ) {
+    errors.push(
+      `${jobName} Configure OpenShell inference must receive only the advisor model credential`,
+    );
+  }
+  const prepareSandbox = namedStep(steps, "Prepare advisor sandbox inputs");
+  const prepareSandboxEnv = asRecord(prepareSandbox?.env);
+  if (
+    prepareSandboxEnv.GH_TOKEN !== "${{ github.token }}" ||
+    Object.keys(prepareSandboxEnv).length !== 1
+  ) {
+    errors.push(`${jobName} Prepare advisor sandbox inputs must receive only github.token`);
+  }
+  const modelSecretSteps = steps.filter((step) => containsSecretExpression(step));
+  if (modelSecretSteps.length !== 1 || modelSecretSteps[0] !== configure) {
+    errors.push(`${jobName} must expose the advisor model credential only during configuration`);
+  }
+  const githubTokenSteps = steps.filter((step) => containsGitHubTokenExpression(step));
+  if (githubTokenSteps.length !== 1 || githubTokenSteps[0] !== prepareSandbox) {
+    errors.push(`${jobName} must expose github.token only during sandbox input preparation`);
+  }
+}
+
 function checkShadowTopology(
   errors: string[],
   specialistJob: WorkflowRecord,
@@ -1171,7 +1260,13 @@ function checkShadowTopology(
     "PR_REVIEW_ADVISOR_INTEREST",
     "${{ matrix.advisor.interest }}",
   );
-  requireEnv(errors, "specialist job", specialistJob, "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR", "");
+  requireEnv(
+    errors,
+    "specialist job",
+    specialistJob,
+    "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR",
+    "",
+  );
   requireEnv(
     errors,
     "synthesis job",
@@ -1186,6 +1281,8 @@ function checkShadowTopology(
   const synthesisSteps = asSteps(synthesisJob.steps);
   requireActionPins(errors, "review-specialists", specialistSteps);
   requireActionPins(errors, "review-synthesis-shadow", synthesisSteps);
+  checkShadowAnalysisTrustBoundary(errors, "review-specialists", specialistJob, specialistSteps);
+  checkShadowAnalysisTrustBoundary(errors, "review-synthesis-shadow", synthesisJob, synthesisSteps);
   const upload = requireStep(errors, specialistSteps, "Upload native specialist session");
   requireWith(errors, upload, "name", "${{ matrix.advisor.artifact_name }}");
   requireWith(
@@ -1233,7 +1330,8 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   const synthesisJob = asRecord(jobs["review-synthesis-shadow"]);
   const publishJob = asRecord(jobs.publish);
   if (Object.keys(reviewJob).length === 0) errors.push("workflow must declare the review job");
-  if (Object.keys(specialistJob).length === 0) errors.push("workflow must declare the specialist matrix");
+  if (Object.keys(specialistJob).length === 0)
+    errors.push("workflow must declare the specialist matrix");
   if (Object.keys(synthesisJob).length === 0) errors.push("workflow must declare shadow synthesis");
   if (Object.keys(publishJob).length === 0) errors.push("workflow must declare the publish job");
   checkPrivilegeDomains(errors, workflow, reviewJob, publishJob);

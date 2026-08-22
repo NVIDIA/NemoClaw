@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { buildSynthesisTurn } from "../tools/pr-review-advisor/synthesis-turn.mts";
 import { ADVISOR_INTERESTS } from "../tools/pr-review-advisor/specialists.mts";
 import {
   specialistSessionFileName,
@@ -51,14 +52,39 @@ describe("specialist Pi session inputs", () => {
     const inventory = validateSpecialistSessionDirectory(root);
     expect(Object.keys(inventory.files)).toEqual(ADVISOR_INTERESTS);
     expect(inventory.totalBytes).toBeGreaterThan(0);
+    expect(inventory.available).toEqual(ADVISOR_INTERESTS);
+    expect(inventory.missing).toEqual([]);
   });
 
-  it("rejects a missing mandatory session", () => {
+  it.each(["behavior", "trust"] as const)("rejects a missing required %s session", (interest) => {
     const root = fixture();
-    fs.rmSync(path.join(root, specialistSessionFileName("trust")));
+    fs.rmSync(path.join(root, specialistSessionFileName(interest)));
     expect(() => validateSpecialistSessionDirectory(root)).toThrow(
-      /Missing specialist session: trust/u,
+      new RegExp(`Missing required specialist session: ${interest}`, "u"),
     );
+  });
+
+  it.each(["design-architecture", "operations", "documentation"] as const)(
+    "accepts a missing optional %s session and inventories the limitation",
+    (interest) => {
+      const root = fixture();
+      fs.rmSync(path.join(root, specialistSessionFileName(interest)));
+      const inventory = validateSpecialistSessionDirectory(root);
+
+      expect(inventory.available).toEqual(ADVISOR_INTERESTS.filter((item) => item !== interest));
+      expect(inventory.missing).toEqual([interest]);
+      expect(inventory.files[interest]).toBeUndefined();
+    },
+  );
+
+  it("passes only available traces to synthesis and names missing domains", () => {
+    const root = fixture();
+    fs.rmSync(path.join(root, specialistSessionFileName("documentation")));
+    const turn = buildSynthesisTurn(validateSpecialistSessionDirectory(root));
+
+    expect(turn.prompt).not.toContain(specialistSessionFileName("documentation"));
+    expect(turn.prompt).toContain("documentation: specialist trace unavailable");
+    expect(turn.prompt).toContain("explicit review-completeness limitation");
   });
 
   it("rejects unexpected files", () => {
@@ -78,6 +104,12 @@ describe("specialist Pi session inputs", () => {
     fs.renameSync(behavior, target);
     fs.symlinkSync(target, behavior);
     expect(() => validateSpecialistSessionDirectory(root)).toThrow(/regular file: behavior/u);
+  });
+
+  it("rejects a malformed present optional session", () => {
+    const root = fixture();
+    fs.writeFileSync(path.join(root, specialistSessionFileName("operations")), "{\n");
+    expect(() => validateSpecialistSessionDirectory(root)).toThrow(/invalid JSONL/u);
   });
 
   it("rejects malformed JSONL and non-Pi headers", () => {

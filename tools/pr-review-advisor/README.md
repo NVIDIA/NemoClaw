@@ -161,12 +161,14 @@ Architecture, Operations, and Documentation. Each cell uses the primary model an
 unchanged native JSONL session. Specialists have ordinary repository read tools and cannot record or
 submit the canonical review.
 
-The shadow synthesis job places the five traces beside the read-only repository inside OpenShell. It
-reads them with the ordinary Pi filesystem tools, treats their model-authored content as advisory and
+The shadow synthesis job places the available traces beside the read-only repository inside OpenShell.
+It reads them with the ordinary Pi filesystem tools, treats their model-authored content as advisory and
 untrusted, verifies retained concerns against repository evidence, and uses the existing atomic
 submission tools to create a candidate result. It does not concatenate, resume, project, or translate
-the specialist sessions. The shadow synthesis job runs only after all five validated traces are
-available. It rejects a missing or invalid trace and produces no synthesis candidate.
+the specialist sessions. Behavior and Trust traces are required. If Design / Architecture, Operations,
+or Documentation is missing, synthesis continues with the available traces and the trusted analyzer
+adds each missing domain to the result's review-completeness limitations. Any present trace must remain
+a valid, bounded native Pi JSONL session; an invalid present trace rejects synthesis.
 
 The existing primary lane remains the published authority during shadow evaluation. The publisher
 keeps sole pull-request write permission and receives neither the model credential nor specialist

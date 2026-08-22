@@ -368,7 +368,7 @@ jobs:
           - { interest: design-architecture, label: Design / Architecture, model: azure/openai/gpt-5.6-terra, sandbox_name: pr-advisor-sp-design, artifact_dir: pr-review-specialist-design-architecture, artifact_name: pr-review-specialist-design-architecture }
           - { interest: operations, label: Operations, model: azure/openai/gpt-5.6-terra, sandbox_name: pr-advisor-sp-operations, artifact_dir: pr-review-specialist-operations, artifact_name: pr-review-specialist-operations }
           - { interest: documentation, label: Documentation, model: azure/openai/gpt-5.6-terra, sandbox_name: pr-advisor-sp-docs, artifact_dir: pr-review-specialist-documentation, artifact_name: pr-review-specialist-documentation }
-    env: &shadow-analysis-env
+    env:
       PI_SDK_VERSION: "0.80.6"
       TYPEBOX_VERSION: "1.1.38"
       YAML_VERSION: "2.8.3"
