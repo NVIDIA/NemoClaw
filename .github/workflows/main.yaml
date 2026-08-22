@@ -137,7 +137,9 @@ jobs:
 
   cli-test-shards:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # Keep the post-merge budget aligned with pull requests so the same
+    # duration-weighted coverage roster can finish and upload its artifacts.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
