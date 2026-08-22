@@ -481,16 +481,23 @@ async function destroySandboxUnlocked(
   const normalized = normalizeDestroySandboxOptions(options);
   if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
   const destroySession = onboardSession.loadSession();
-  const portableContainerAuthority = preparePortableDemoSandboxDestroyAuthority(sandboxName, () => {
-    const current = registry.getSandbox(sandboxName);
-    return current
-      ? {
-          agent: current.agent,
-          lifecycleGeneration: current.lifecycleGeneration,
-          openshellDriver: current.openshellDriver,
-        }
-      : null;
-  });
+  let portableContainerAuthority: ReturnType<typeof preparePortableDemoSandboxDestroyAuthority>;
+  try {
+    portableContainerAuthority = preparePortableDemoSandboxDestroyAuthority(sandboxName, () => {
+      const current = registry.getSandbox(sandboxName);
+      return current
+        ? {
+            agent: current.agent,
+            lifecycleGeneration: current.lifecycleGeneration,
+            openshellDriver: current.openshellDriver,
+          }
+        : null;
+    });
+  } catch (error) {
+    throw new Error(
+      `Refusing to destroy sandbox '${sandboxName}': NemoClaw could not validate Portable lifecycle authority before the Docker preflight: ${redactDestroyError(error)}. NemoClaw removed no sandbox resources.`,
+    );
+  }
 
   const inspectContainerIdentity = () =>
     assertUnambiguousDestroyContainerIdentity(sandboxName, {

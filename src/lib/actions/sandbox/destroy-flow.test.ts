@@ -119,19 +119,28 @@ describe("destroySandbox flow", () => {
     );
   });
 
-  it("fails closed on invalid schema-4 Portable receipt authority before Docker preflight (#9189)", async () => {
+  it("redacts credentials from an invalid schema-4 Portable receipt refusal and releases the lifecycle lock before retry (#9189)", async () => {
     const harness = createDestroyHarness({
-      portableDestroyPrepareError: "portable receipt is invalid",
+      portableDestroyPrepareError: "portable receipt API_KEY=opaque-portable-secret is invalid",
     });
 
-    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
-      "portable receipt is invalid",
-    );
+    const refusal = await harness.destroySandbox("alpha", { yes: true }).catch((error) => error);
 
+    expect(String(refusal)).toContain("API_KEY=<REDACTED>");
+    expect(String(refusal)).not.toContain("opaque-portable-secret");
+    expect(exitSpy).not.toHaveBeenCalled();
     expect(harness.dockerRunSpy).not.toHaveBeenCalled();
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+
+    harness.preparePortableDestroyAuthoritySpy.mockReturnValue(null);
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+    expect(harness.preparePortableDestroyAuthoritySpy).toHaveBeenCalledTimes(2);
+    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.any(Object),
+    );
   });
 
   it("preserves the sandbox registry record and Portable receipt when Podman absence is unproven (#9189)", async () => {
