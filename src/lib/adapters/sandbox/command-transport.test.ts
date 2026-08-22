@@ -146,6 +146,26 @@ describe("sandbox command transport privileged execution lease", () => {
     ]);
   });
 
+  it("uses the caller's bounded SSH command timeout", () => {
+    const deps = createDependencies();
+    mocks.resolveOpenshellSandboxSshHost.mockReturnValue("openshell-alpha.default");
+    mocks.createTempSshConfig.mockReturnValue({
+      cleanup: vi.fn(),
+      dir: "/tmp/nemoclaw-ssh-test",
+      file: "/tmp/nemoclaw-ssh-test/ssh_config",
+    });
+    mocks.spawnSync.mockReturnValue(spawnResult("ok\n"));
+
+    expect(executeSandboxCommandTransport(deps, "alpha", "openclaw doctor --fix", 300_000)).toEqual(
+      {
+        status: 0,
+        stderr: "",
+        stdout: "ok",
+      },
+    );
+    expect(mocks.spawnSync.mock.calls[0]?.[2]).toMatchObject({ timeout: 300_000 });
+  });
+
   it("does not resolve SSH state or spawn when lease acquisition is rejected", () => {
     const rejection = new Error("provider fence active");
     const deps = createDependencies({

@@ -37,6 +37,7 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        allow_encoded_slash: false
         rules:
           - allow: { method: POST, path: "/v1/chat/completions" }
           - allow: { method: POST, path: "/v1/completions" }

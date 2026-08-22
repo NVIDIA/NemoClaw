@@ -220,6 +220,14 @@ describe("base-image publication workflow boundary (#7372)", () => {
         ]),
     ],
     [
+      "Launchable identity publication dependency",
+      (value) =>
+        (value.jobs["staging-brev-launchable-identity"].needs = [
+          "base-image-publication",
+          "generate-matrix",
+        ]),
+    ],
+    [
       "matrix base output",
       (value) => {
         (value.jobs["generate-matrix"].outputs as Record<string, unknown>).dcode_base_ref =
