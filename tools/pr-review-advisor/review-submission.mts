@@ -558,6 +558,7 @@ export const ACCEPTANCE_FINDING_REFERENCE_PAIRS = [
 export const SECURITY_FINDING_REFERENCE_PAIRS = [
   ["security", "security_violation"],
   ["security", "semantic_ambiguity"],
+  ["tests", "missing_regression"],
 ] as const;
 
 const ACCEPTANCE_FINDING_PAIRS: ReadonlySet<string> = new Set(

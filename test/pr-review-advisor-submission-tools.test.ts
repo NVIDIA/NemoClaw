@@ -9,6 +9,7 @@ import {
   RECORD_FINDINGS_TOOL,
   RECORD_REVIEW_RECEIPT_TOOL,
   RECOMMEND_E2E_TOOL,
+  SECURITY_FINDING_REFERENCE_PAIRS,
   SUBMIT_REVIEW_TOOL,
 } from "../tools/pr-review-advisor/review-submission.mts";
 import {
@@ -812,6 +813,25 @@ describe("PR review advisor submission tools", () => {
           findingId: "F-001",
         },
       ];
+      await execute(submission, RECORD_FINDINGS_TOOL, {
+        findings: [{ ...finding(), category, basis: { ...finding().basis, kind: basisKind } }],
+      });
+      await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft);
+      await execute(submission, RECOMMEND_E2E_TOOL, e2e());
+      await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.toBeDefined();
+    },
+  );
+
+  it.each(SECURITY_FINDING_REFERENCE_PAIRS)(
+    "accepts security reference tuple %s/%s",
+    async (category, basisKind) => {
+      const submission = controller();
+      const draft = receipt();
+      draft.securityCategories[0] = {
+        ...draft.securityCategories[0],
+        verdict: "warning",
+        findingId: "F-001",
+      };
       await execute(submission, RECORD_FINDINGS_TOOL, {
         findings: [{ ...finding(), category, basis: { ...finding().basis, kind: basisKind } }],
       });
