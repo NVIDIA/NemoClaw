@@ -70,9 +70,8 @@ const pinnedBaseDockerfiles = [
 const reviewedNodeBases = new Set<string>(NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH);
 
 interface ShellToken {
-  complete: boolean;
   end: number;
-  value: string;
+  staticValue: string | undefined;
 }
 
 function isShellTokenBoundary(character: string): boolean {
@@ -91,46 +90,79 @@ function readShellToken(source: string, start: number): ShellToken | undefined {
   const tokenStart = cursor;
   let quote: "'" | '"' | "`" | null = null;
   let escaped = false;
+  let expanded = false;
+  let staticValue = "";
   token: while (cursor < source.length) {
     const character = source[cursor]!;
     switch (true) {
       case escaped:
         escaped = false;
+        staticValue += character;
         cursor += 1;
         continue;
-      case character === "\\" && quote !== "'":
+      case character === "\\" &&
+        quote !== "'" &&
+        (quote !== '"' || ["$", "`", '"', "\\"].includes(source[cursor + 1]!)):
         escaped = true;
         cursor += 1;
         continue;
       case quote !== null:
-        quote = character === quote ? null : quote;
+        switch (quote === "`" || (quote === '"' && character === "$")) {
+          case true:
+            expanded = true;
+        }
+        switch (character === quote) {
+          case true:
+            quote = null;
+            break;
+          default:
+            staticValue += character;
+        }
         cursor += 1;
         continue;
       case character === "'" || character === '"' || character === "`":
+        expanded = expanded || character === "`";
         quote = character;
         cursor += 1;
         continue;
       case isShellTokenBoundary(character):
         break token;
       default:
+        switch (character === "$" || "*?[~".includes(character)) {
+          case true:
+            expanded = true;
+            break;
+          default:
+            staticValue += character;
+        }
         cursor += 1;
     }
   }
-  const value = source.slice(tokenStart, cursor);
-  return value.length === 0
-    ? undefined
-    : { complete: quote === null && !escaped, end: cursor, value };
+  switch (cursor === tokenStart) {
+    case true:
+      return undefined;
+  }
+  return {
+    end: cursor,
+    staticValue: quote === null && !escaped && !expanded ? staticValue : undefined,
+  };
 }
 
-type NpmSubcommand =
-  | { kind: "known"; token: ShellToken }
-  | { kind: "none" }
-  | { kind: "unclassified" };
+type NpmSubcommand = { kind: "known"; value: string } | { kind: "none" } | { kind: "unclassified" };
 
 function npmSubcommand(source: string, start: number): NpmSubcommand {
   let token = readShellToken(source, start);
-  while (token?.value.startsWith("-") === true && token.complete) {
-    switch (token.value) {
+  while (token !== undefined) {
+    const value = token.staticValue;
+    switch (value) {
+      case undefined:
+        return { kind: "unclassified" };
+    }
+    switch (value.startsWith("-")) {
+      case false:
+        return { kind: "known", value };
+    }
+    switch (value) {
       case "--silent":
         token = readShellToken(source, token.end);
         continue;
@@ -139,19 +171,24 @@ function npmSubcommand(source: string, start: number): NpmSubcommand {
         switch (prefix) {
           case undefined:
             return { kind: "unclassified" };
-          default:
-            switch (prefix.complete && !prefix.value.startsWith("-")) {
+          default: {
+            const prefixValue = prefix.staticValue;
+            switch (
+              prefixValue === undefined ||
+              prefixValue === "" ||
+              prefixValue.startsWith("-")
+            ) {
               case true:
-                token = readShellToken(source, prefix.end);
-                continue;
-              default:
                 return { kind: "unclassified" };
             }
+            token = readShellToken(source, prefix.end);
+            continue;
+          }
         }
       }
       default: {
-        const inlinePrefix = token.value.startsWith("--prefix=")
-          ? token.value.slice("--prefix=".length)
+        const inlinePrefix = value.startsWith("--prefix=")
+          ? value.slice("--prefix=".length)
           : undefined;
         switch (inlinePrefix) {
           case undefined:
@@ -164,11 +201,7 @@ function npmSubcommand(source: string, start: number): NpmSubcommand {
       }
     }
   }
-  return token === undefined
-    ? { kind: "none" }
-    : token.complete
-      ? { kind: "known", token }
-      : { kind: "unclassified" };
+  return { kind: "none" };
 }
 
 function npmConsumerPositions(source: string): number[] {
@@ -179,8 +212,7 @@ function npmConsumerPositions(source: string): number[] {
     const subcommand = npmSubcommand(executableSource, index + "npm".length);
     return (
       subcommand.kind === "unclassified" ||
-      (subcommand.kind === "known" &&
-        (subcommand.token.value === "ci" || subcommand.token.value === "install"))
+      (subcommand.kind === "known" && (subcommand.value === "ci" || subcommand.value === "install"))
     );
   });
 }
@@ -343,6 +375,9 @@ describe("reviewed npm image remediation contract", () => {
     ["a nonempty inline global option operand", "npm --prefix=/work install"],
     ["a quoted global option operand", 'npm --prefix "/tmp/npm cache" ci'],
     ["an escaped-space global option operand", "npm --prefix /tmp/npm\\ cache install"],
+    ["a quoted subcommand", 'npm "ci"'],
+    ["an escaped subcommand", "npm in\\stall"],
+    ["a dynamic subcommand", 'npm "$NPM_SUBCOMMAND"'],
     ["an incomplete inline global option operand", 'npm --prefix="/tmp/npm cache install'],
     ["a missing global option operand", "npm --prefix --silent ci"],
     ["an empty inline global option operand", "npm --prefix= --silent ci"],
@@ -358,12 +393,10 @@ describe("reviewed npm image remediation contract", () => {
     "npm --prefix /work view",
     "npm --silent --silent view",
     "npm --prefix=/work view",
-  ])(
-    "ignores a supported global option before a non-consumer subcommand in %s (#9933)",
-    (body) => {
-      expect(npmConsumerPositions(`RUN ${body}\n`)).toEqual([]);
-    },
-  );
+    'npm "view"',
+  ])("ignores a supported global option before a non-consumer subcommand in %s (#9933)", (body) => {
+    expect(npmConsumerPositions(`RUN ${body}\n`)).toEqual([]);
+  });
 
   it.each([
     ["an if condition", "if npm ci; then true; fi"],
@@ -380,13 +413,14 @@ describe("reviewed npm image remediation contract", () => {
     ["mixed global options", "npm --prefix /work --silent install"],
     ["a quoted global option operand", 'npm --prefix "/tmp/npm cache" ci'],
     ["an escaped-space global option operand", "npm --prefix /tmp/npm\\ cache install"],
+    ["a quoted subcommand", 'npm "ci"'],
+    ["an escaped subcommand", "npm in\\stall"],
+    ["a dynamic subcommand", 'npm "$NPM_SUBCOMMAND"'],
     ["an incomplete inline global option operand", 'npm --prefix="/tmp/npm cache install'],
   ])("detects npm consumers in %s before the final patch (#9933)", (_label, body) => {
-    const source = [
-      `RUN ${body}`,
-      `RUN ${patchCommand} ${npmRootArguments.join(" ")}`,
-      "",
-    ].join("\n");
+    const source = [`RUN ${body}`, `RUN ${patchCommand} ${npmRootArguments.join(" ")}`, ""].join(
+      "\n",
+    );
     const patchRun = requireSingleReviewedDockerfileRunCommand(
       source,
       patchCommand,
