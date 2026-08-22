@@ -324,6 +324,7 @@ describe("Docker GPU clone envelope", () => {
     });
     Object.assign(inspect.HostConfig!, {
       NetworkMode: "bridge",
+      OomScoreAdj: 0,
       PortBindings: {
         "2222/tcp": [{ HostIp: "0.0.0.0", HostPort: "33513" }],
       },
@@ -361,6 +362,8 @@ describe("Docker GPU clone envelope", () => {
         "10",
         "--stop-timeout",
         "45",
+        "--oom-score-adj",
+        "0",
         "--network",
         "openshell-docker",
       ]),

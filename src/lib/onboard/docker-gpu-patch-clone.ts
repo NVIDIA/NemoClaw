@@ -621,6 +621,16 @@ export function buildDockerGpuCloneRunArgs(
       }
       args.push("--stop-timeout", String(config.StopTimeout));
     }
+    if (host.OomScoreAdj !== undefined && host.OomScoreAdj !== null) {
+      if (
+        !Number.isSafeInteger(host.OomScoreAdj) ||
+        host.OomScoreAdj < -1_000 ||
+        host.OomScoreAdj > 1_000
+      ) {
+        throw new Error("Managed bootstrap Docker OOM score adjustment is invalid.");
+      }
+      args.push("--oom-score-adj", String(host.OomScoreAdj));
+    }
   }
 
   const sandboxCommand = openshellSandboxCommandEnvValue(options.openshellSandboxCommand);
