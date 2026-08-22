@@ -395,7 +395,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
     );
   });
 
-  it("rejects an observation that finishes after the shared deadline (#9844)", async () => {
+  it("rejects an observation that finishes after the pairing-appearance deadline (#9844)", async () => {
     let now = 0;
     const scope = ordinaryPairingDeps({
       now: vi.fn(() => now),
