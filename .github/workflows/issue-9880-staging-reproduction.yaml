@@ -69,6 +69,7 @@ jobs:
         env:
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
           GH_TOKEN: ${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}
+          HOME: ${{ runner.temp }}/issue-9880-home
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           WORK_DIR: ${{ steps.prepare.outputs.work_dir }}
         run: tools/e2e/brev-launchable-issue-9880.sh
@@ -78,11 +79,14 @@ jobs:
         timeout-minutes: 15
         env:
           BREV_DELETE_TIMEOUT_SECONDS: "720"
+          HOME: ${{ runner.temp }}/issue-9880-home
           WORK_DIR: ${{ steps.prepare.outputs.work_dir }}
         run: tools/e2e/brev-launchable-issue-9880.sh cleanup-owned-workspace
 
       - name: Remove Brev credentials
         if: always()
+        env:
+          HOME: ${{ runner.temp }}/issue-9880-home
         run: |
           set -euo pipefail
           rm -rf -- "$HOME"

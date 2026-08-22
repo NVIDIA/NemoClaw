@@ -84,6 +84,8 @@ describe("the staging Launchable reproduces the bounded OpenClaw CLI scenario", 
       }),
     );
     expect(prepare.env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+    const privateHome = prepare.env?.HOME;
+    expect(privateHome).toBe("${{ runner.temp }}/issue-9880-home");
     expect(reproduce.env).toEqual(
       expect.objectContaining({
         BREV_LAUNCHABLE_ID: "${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}",
@@ -92,9 +94,12 @@ describe("the staging Launchable reproduces the bounded OpenClaw CLI scenario", 
       }),
     );
     expect(reproduce.env).not.toHaveProperty("BREV_API_KEY");
+    expect(reproduce.env?.HOME).toBe(privateHome);
     expect(cleanup.if).toContain("always()");
+    expect(cleanup.env?.HOME).toBe(privateHome);
     expect(cleanup.run).toContain("cleanup-owned-workspace");
     expect(removeCredentials.if).toBe("always()");
+    expect(removeCredentials.env?.HOME).toBe(privateHome);
     expect(removeCredentials.run).toContain('rm -rf -- "$HOME"');
   });
 
