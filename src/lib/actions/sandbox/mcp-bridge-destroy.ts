@@ -329,7 +329,25 @@ export async function restoreMcpBridgesAfterDestroyAbort(
     if (!(error instanceof McpPolicyAuthorityRefusalError)) throw error;
     authorityRefusal = error;
   }
-  const preparedSandbox = assertMcpDestroySnapshotCurrent(sandboxName, preparation.entries);
+  let preparedSandbox: ReturnType<typeof assertMcpDestroySnapshotCurrent>;
+  try {
+    preparedSandbox = assertMcpDestroySnapshotCurrent(sandboxName, preparation.entries);
+  } catch (snapshotError) {
+    if (!authorityRefusal) throw snapshotError;
+    const snapshotDetail =
+      snapshotError instanceof Error ? snapshotError.message : String(snapshotError);
+    throw new McpPolicyAuthorityRefusalError(
+      `${authorityRefusal.message}\nMCP destroy-abort snapshot validation also failed: ${snapshotDetail}`,
+      {
+        cause: new AggregateError(
+          [authorityRefusal, snapshotError],
+          "MCP destroy-abort authority and snapshot validation failed",
+        ),
+        exitCode: authorityRefusal.exitCode,
+        reasonCode: authorityRefusal.reasonCode,
+      },
+    );
+  }
   const destroyPreparedAt = preparedSandbox.mcp?.destroyPreparedAt ?? nowIso();
   const cleared = registry.updateSandbox(sandboxName, {
     mcp: {

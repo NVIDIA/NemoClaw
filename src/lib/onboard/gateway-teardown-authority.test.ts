@@ -255,6 +255,7 @@ describe("resolveGatewayTeardownAuthority", () => {
         }
         expect(refusal).toBeInstanceOf(GatewayAuthorityError);
         expect((refusal as Error).message).toMatch(reason);
+        expect((refusal as Error).message).toContain("fresh onboarding run");
         expect((refusal as Error).message).not.toContain(homeDir);
       } finally {
         fs.rmSync(homeDir, { recursive: true, force: true });

@@ -513,6 +513,18 @@ function rebuildPolicyPresetsForCreateIntent(
   return Array.isArray(selectedValue) ? { rebuildPolicyPresets: [...selectedValue] } : {};
 }
 
+function clearExternallyManagedPolicyPresets(
+  session: Session | null,
+  updateSession: (mutator: (current: Session) => Session | void) => Session,
+): void {
+  if (session?.policyAuthority !== "externally-managed" || session.policyPresets === null) return;
+  updateSession((current) => {
+    if (current.policyAuthority === "externally-managed") current.policyPresets = null;
+    return current;
+  });
+  session.policyPresets = null;
+}
+
 /** Replace a resumed create-plan snapshot with the outer rebuild's normalized built-ins. */
 function applyAuthoritativeRebuildPolicyPresets(
   intent: ResolvedSandboxCreateIntent,
@@ -1648,6 +1660,7 @@ class SandboxStateFlow<
     resourceProfile: ResourceProfile | null,
     hermesToolGateways: readonly string[],
   ): Promise<CompleteSandboxCreateIntent> {
+    clearExternallyManagedPolicyPresets(state.session, this.deps.updateSession);
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
     const rebuildPolicyPresetSelection = rebuildPolicyPresetsForCreateIntent(
       this.options.rebuildPolicyPresets,

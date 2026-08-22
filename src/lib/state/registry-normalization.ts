@@ -9,7 +9,7 @@ import type {
   BaselineExclusionTransition,
   CustomPolicyEntry,
   SandboxEntry,
-} from "./registry";
+} from "./registry/types";
 
 const BASELINE_TRANSITION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -25,6 +25,42 @@ export function normalizeSandboxPolicyAuthority(
   throw new Error(
     "Sandbox registry contains an invalid policy authority; repair the registry before continuing",
   );
+}
+
+/** Remove policy attribution that an external authority owns and normalize managed state. */
+export function normalizeSandboxPolicyAttribution(entry: SandboxEntry): SandboxEntry {
+  const policyAuthority = normalizeSandboxPolicyAuthority(entry.policyAuthority);
+  const {
+    policies: _policies,
+    customPolicies: _customPolicies,
+    baselineExclusions: _baselineExclusions,
+    baselineExclusionTransition: _baselineExclusionTransition,
+    policyPresetsFinalized: _policyPresetsFinalized,
+    policyTier: _policyTier,
+    policyAuthority: _policyAuthority,
+    ...rest
+  } = entry;
+  if (policyAuthority === "externally-managed") {
+    return { ...rest, policies: [], policyAuthority };
+  }
+
+  const baselineExclusions = normalizeBaselineExclusions(entry.baselineExclusions);
+  const baselineExclusionTransition = normalizeBaselineExclusionTransition(
+    entry.baselineExclusionTransition,
+  );
+  const customPolicies = normalizeCustomPolicyEntries(entry.customPolicies);
+  return {
+    ...rest,
+    ...(entry.policies !== undefined ? { policies: entry.policies } : {}),
+    ...(customPolicies ? { customPolicies } : {}),
+    ...(baselineExclusions ? { baselineExclusions } : {}),
+    ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
+    ...(entry.policyPresetsFinalized !== undefined
+      ? { policyPresetsFinalized: entry.policyPresetsFinalized }
+      : {}),
+    ...(entry.policyTier !== undefined ? { policyTier: entry.policyTier } : {}),
+    ...(policyAuthority !== undefined ? { policyAuthority } : {}),
+  };
 }
 
 /** Normalize persisted custom policy content and its generated-pin authority. */

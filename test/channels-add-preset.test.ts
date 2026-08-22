@@ -367,6 +367,7 @@ describe("channels add applies a matching policy preset (#3437)", () => {
 
     expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "telegram", {
       disclosedPresetState: "absent",
+      expectedExistingNetworkPolicyContent: null,
     });
     expect(sessionUpdates).toEqual([]);
     expect(sessionState?.policyPresets).not.toContain("telegram");
@@ -386,7 +387,7 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(saveCredentialSpy).not.toHaveBeenCalled();
     expect(providerSpy).not.toHaveBeenCalled();
     expect(applyPresetSpy).not.toHaveBeenCalled();
-    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).toHaveBeenLastCalledWith("test-sb", { messaging: undefined });
     expect(rebuildSpy).not.toHaveBeenCalled();
   });
 
@@ -411,13 +412,13 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     const refusal = new PolicyAuthorityRefusalError(
       "OpenShell policy authority changed after provider registration",
     );
-    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority)
-      .mockReturnValueOnce("nemoclaw-managed")
-      .mockReturnValueOnce("nemoclaw-managed")
-      .mockReturnValueOnce("nemoclaw-managed")
-      .mockImplementationOnce(() => {
-        throw refusal;
-      });
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() =>
+      providerSpy.mock.calls.length > 0
+        ? (() => {
+            throw refusal;
+          })()
+        : "nemoclaw-managed",
+    );
 
     await expect(addSandboxChannel("test-sb", { channel: "telegram" })).rejects.toBe(refusal);
 
@@ -432,7 +433,7 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       ["provider", "delete", "test-sb-telegram-bridge"],
       expect.anything(),
     );
-    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).toHaveBeenLastCalledWith("test-sb", { messaging: undefined });
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
@@ -440,19 +441,18 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     const refusal = new PolicyAuthorityRefusalError(
       "OpenShell policy authority changed before channel plan persistence",
     );
-    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority)
-      .mockReturnValueOnce("nemoclaw-managed")
-      .mockReturnValueOnce("nemoclaw-managed")
-      .mockReturnValueOnce("nemoclaw-managed")
-      .mockReturnValueOnce("nemoclaw-managed")
-      .mockImplementationOnce(() => {
-        throw refusal;
-      });
+    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() =>
+      applyPresetSpy.mock.calls.length > 0
+        ? (() => {
+            throw refusal;
+          })()
+        : "nemoclaw-managed",
+    );
 
     await expect(addSandboxChannel("test-sb", { channel: "telegram" })).rejects.toBe(refusal);
 
     expect(applyPresetSpy).toHaveBeenCalledOnce();
-    expect(removePresetSpy).not.toHaveBeenCalled();
+    expect(removePresetSpy).toHaveBeenCalledWith("test-sb", "telegram", { nonFatal: true });
     expect(deleteCredentialSpy).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN");
     expect(runOpenshellSpy).toHaveBeenCalledWith(
       ["sandbox", "provider", "detach", "test-sb", "test-sb-telegram-bridge"],
@@ -462,9 +462,55 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       ["provider", "delete", "test-sb-telegram-bridge"],
       expect.anything(),
     );
-    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).toHaveBeenLastCalledWith("test-sb", { messaging: undefined });
     expect(rebuildSpy).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses a drifted WhatsApp policy before channel attribution or gateway mutation (#9833)", async () => {
+    vi.mocked(policies.getPresetContentGatewayState).mockReturnValue("drift");
+
+    await expectExit(() => addSandboxChannel("test-sb", { channel: "whatsapp" }));
+
+    expect(printedText()).toContain("No channel state was changed");
+    expect(applyPresetSpy).not.toHaveBeenCalled();
+    expect(providerSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(rebuildSpy).not.toHaveBeenCalled();
+  });
+
+  it("removes only newly adopted attribution for matching WhatsApp policy (#9833)", async () => {
+    registryEntry = { ...registryEntry, policies: ["npm"] };
+    setSession("test-sb", ["pypi"]);
+    vi.mocked(policies.getPresetContentGatewayState).mockReturnValue("match");
+    updateSandboxSpy.mockImplementation((_name, updates) => {
+      Object.assign(registryEntry, updates);
+      return true;
+    });
+    const refusal = new PolicyAuthorityRefusalError(
+      "OpenShell policy authority changed after adopting the WhatsApp preset",
+    );
+    const preflightAuthority = vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority);
+    preflightAuthority.mockReturnValue("nemoclaw-managed");
+    applyPresetSpy.mockImplementation((_name, presetName) => {
+      registryEntry.policies = [...(registryEntry.policies ?? []), presetName];
+      registry.updateSandbox("test-sb", { policies: registryEntry.policies });
+      preflightAuthority.mockImplementation(() => {
+        throw refusal;
+      });
+      return true;
+    });
+
+    await expect(addSandboxChannel("test-sb", { channel: "whatsapp" })).rejects.toBe(refusal);
+
+    expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "whatsapp", {
+      disclosedPresetState: "match",
+      expectedExistingNetworkPolicyContent: presetContent,
+    });
+    expect(removePresetSpy).not.toHaveBeenCalled();
+    expect(registryEntry.policies).toEqual(["npm"]);
+    expect(sessionState?.policyPresets).toEqual(["pypi"]);
+    expect(updateSandboxSpy).toHaveBeenCalledWith("test-sb", { policies: ["npm"] });
   });
 
   it("preserves external policy while cleaning Slack credentials, providers, and state (#9833)", async () => {
@@ -611,6 +657,7 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       expect(applyPresetSpy).toHaveBeenCalledOnce();
       expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", channel, {
         disclosedPresetState: "absent",
+        expectedExistingNetworkPolicyContent: null,
       });
       expect(loadPresetForSandboxSpy).toHaveBeenCalledWith("test-sb", channel);
       expect(callOrder.indexOf(`applyPreset:${channel}`)).toBeLessThan(
@@ -645,6 +692,7 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(applyPresetSpy).toHaveBeenCalledOnce();
     expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "whatsapp", {
       disclosedPresetState: "absent",
+      expectedExistingNetworkPolicyContent: null,
     });
     expect(callOrder.indexOf("scopeDisclosure")).toBeLessThan(callOrder.indexOf("updateSandbox"));
     expect(callOrder.indexOf("applyPreset:whatsapp")).toBeLessThan(
@@ -660,9 +708,10 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     await expectExit(() => addSandboxChannel("test-sb", { channel: "whatsapp" }));
 
     expect(providerSpy).not.toHaveBeenCalled();
-    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).toHaveBeenLastCalledWith("test-sb", { messaging: undefined });
     expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "whatsapp", {
       disclosedPresetState: "absent",
+      expectedExistingNetworkPolicyContent: null,
     });
     expect(callOrder).not.toContain("promptAndRebuild");
   });
@@ -761,8 +810,9 @@ describe("channels add applies a matching policy preset (#3437)", () => {
 
     expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "telegram", {
       disclosedPresetState: "absent",
+      expectedExistingNetworkPolicyContent: null,
     });
-    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).toHaveBeenLastCalledWith("test-sb", { messaging: undefined });
     expect(deleteCredentialSpy).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN");
     expect(sessionUpdates).toEqual([]);
     expect(callOrder).not.toContain("promptAndRebuild");
@@ -789,7 +839,7 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       ["provider", "delete", "test-sb-telegram-bridge"],
       expect.anything(),
     );
-    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).toHaveBeenLastCalledWith("test-sb", { messaging: undefined });
   });
 
   it("leaves plan state untouched and reports residual gateway state when detach fails", async () => {
@@ -802,10 +852,10 @@ describe("channels add applies a matching policy preset (#3437)", () => {
 
     await expectExit(() => addSandboxChannel("test-sb", { channel: "telegram" }));
 
-    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).toHaveBeenLastCalledWith("test-sb", { messaging: undefined });
     expect(deleteCredentialSpy).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN");
     expect(printedText()).toContain("Rollback could not fully clean gateway-providers");
-    expect(printedText()).toContain("'nemoclaw test-sb channels remove telegram'");
+    expect(printedText()).toContain("inspect the live policy and local sandbox state");
     expect(callOrder).not.toContain("promptAndRebuild");
   });
 
@@ -818,7 +868,9 @@ describe("channels add applies a matching policy preset (#3437)", () => {
 
     await expectExit(() => addSandboxChannel("test-sb", { channel: "telegram" }));
 
-    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).toHaveBeenLastCalledWith("test-sb", {
+      messaging: registryEntry.messaging,
+    });
     expect(saveCredentialSpy).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN", "prior-telegram-token");
     expect(providerSpy).toHaveBeenCalledTimes(2);
     expect(
@@ -828,6 +880,80 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     ).toEqual([["test-sb-telegram-bridge"], ["test-sb-telegram-bridge"]]);
     expect(callOrder).not.toContain("promptAndRebuild");
     expect(printedText()).toContain("Rollback could not fully clean gateway-providers");
+  });
+
+  it("registers Hermes Discord with the exact static provider binding", async () => {
+    sandboxAgent = "hermes";
+    registryEntry = makeRegistryEntry([], [], "hermes");
+
+    await addSandboxChannel("test-sb", { channel: "discord" });
+
+    expect(providerSpy).toHaveBeenCalledWith(
+      [
+        {
+          name: "test-sb-discord-bridge",
+          envKey: "DISCORD_BOT_TOKEN",
+          token: "test-discord-token",
+          providerType: "discord-hermes-static-v1",
+        },
+      ],
+      expect.objectContaining({
+        bestEffort: true,
+        requireExactBindings: true,
+        revalidatePolicyRequirements: expect.any(Function),
+      }),
+    );
+  });
+
+  it("does not persist credentials after a provider identity conflict", async () => {
+    providerSpy.mockImplementationOnce(() => {
+      throw Object.assign(new Error("provider binding conflict"), {
+        code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
+        mutatedProviderNames: [],
+      });
+    });
+
+    await expectExit(() => addSandboxChannel("test-sb", { channel: "slack" }));
+
+    expect(providerSpy.mock.calls[0]?.[0]).toHaveLength(2);
+    expect(saveCredentialSpy).not.toHaveBeenCalled();
+    expect(applyPresetSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(rebuildSpy).not.toHaveBeenCalled();
+    expect(
+      runOpenshellSpy.mock.calls.filter(([args]) =>
+        (args as string[]).some((arg) => arg === "detach" || arg === "delete"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("restores Hermes Discord credentials through the exact static provider binding (#9833)", async () => {
+    applyPresetResult = false;
+    sandboxAgent = "hermes";
+    registryEntry = makeRegistryEntry(["discord"], [], "hermes");
+    getCredentialSpy.mockImplementation((key: string) =>
+      key === "DISCORD_BOT_TOKEN" ? "prior-discord-token" : null,
+    );
+
+    await expectExit(() => addSandboxChannel("test-sb", { channel: "discord" }));
+
+    expect(providerSpy).toHaveBeenCalledTimes(2);
+    expect(providerSpy).toHaveBeenNthCalledWith(
+      2,
+      [
+        {
+          name: "test-sb-discord-bridge",
+          envKey: "DISCORD_BOT_TOKEN",
+          token: "prior-discord-token",
+          providerType: "discord-hermes-static-v1",
+        },
+      ],
+      { bestEffort: true, requireExactBindings: true },
+    );
+    expect(saveCredentialSpy.mock.calls).toEqual([
+      ["DISCORD_BOT_TOKEN", "test-discord-token"],
+      ["DISCORD_BOT_TOKEN", "prior-discord-token"],
+    ]);
   });
 
   it("restores prior channel state when policy apply fails during authority drift (#9833)", async () => {
@@ -848,7 +974,9 @@ describe("channels add applies a matching policy preset (#3437)", () => {
 
     expect(saveCredentialSpy).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN", "prior-telegram-token");
     expect(providerSpy).toHaveBeenCalledTimes(2);
-    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).toHaveBeenLastCalledWith("test-sb", {
+      messaging: registryEntry.messaging,
+    });
   });
 
   it("leaves prior plan state untouched even when re-upsert during re-add rollback throws", async () => {
@@ -865,7 +993,9 @@ describe("channels add applies a matching policy preset (#3437)", () => {
 
     await expectExit(() => addSandboxChannel("test-sb", { channel: "telegram" }));
 
-    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).toHaveBeenLastCalledWith("test-sb", {
+      messaging: registryEntry.messaging,
+    });
     expect(saveCredentialSpy).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN", "prior-telegram-token");
     expect(printedText()).toContain("Failed to restore gateway providers for 'telegram'");
     expect(printedText()).toContain("Rollback could not fully clean gateway-providers");
@@ -961,6 +1091,7 @@ describe("channels add/remove keeps session.policyPresets in sync with registry"
 
     expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "slack", {
       disclosedPresetState: "absent",
+      expectedExistingNetworkPolicyContent: null,
     });
     expect(sessionUpdates).toEqual([]);
     expect(sessionState?.policyPresets).toEqual(["npm", "github"]);
@@ -973,6 +1104,7 @@ describe("channels add/remove keeps session.policyPresets in sync with registry"
 
     expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "slack", {
       disclosedPresetState: "absent",
+      expectedExistingNetworkPolicyContent: null,
     });
     expect(sessionUpdates).toEqual([]);
     expect(callOrder).toContain("promptAndRebuild");
@@ -985,6 +1117,7 @@ describe("channels add/remove keeps session.policyPresets in sync with registry"
 
     expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "slack", {
       disclosedPresetState: "absent",
+      expectedExistingNetworkPolicyContent: null,
     });
     expect(callOrder).toContain("promptAndRebuild");
   });

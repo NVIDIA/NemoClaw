@@ -3840,11 +3840,12 @@ function relockRestrictiveConfigUnderMutationLock(
 function rethrowPolicyAuthorityRefusalAfterConfigRelock(
   error: unknown,
   sandboxName: string,
-  target: AgentConfigTarget,
+  rawTarget: AgentConfigTarget | undefined,
   allowLegacyHermesProtocol = false,
   cachedProtocol?: HermesShieldsProtocol,
 ): never {
   try {
+    const target = ensureConfigHashSensitiveFile(rawTarget ?? resolveAgentConfig(sandboxName));
     relockRestrictiveConfigUnderMutationLock(
       sandboxName,
       target,
@@ -4466,7 +4467,15 @@ function activateLockdownFromSnapshot(
   try {
     restoreResult = applyShieldsPolicySnapshot(sandboxName, snapshotPath, restoreOptions);
   } catch (error) {
-    if (isPolicyAuthorityRefusalError(error)) throw error;
+    if (isPolicyAuthorityRefusalError(error)) {
+      rethrowPolicyAuthorityRefusalAfterConfigRelock(
+        error,
+        sandboxName,
+        cachedTarget,
+        allowLegacyHermesProtocol,
+        cachedProtocol,
+      );
+    }
     return {
       ok: false,
       error: `policy restore preparation failed: ${
@@ -4554,6 +4563,7 @@ function recoverExpiredAutoRestoreInline(
       : "  Warning: DOWN state has a missing or malformed auto-restore marker; attempting inline restore under the lifecycle gate.",
   );
 
+  const cachedTarget = marker ? resolvePersistedAutoRestoreTarget(sandboxName, marker) : undefined;
   if (marker?.processToken && /^[0-9a-f]{32}$/.test(marker.processToken)) {
     try {
       synchronizeAutoRestoreTransition(sandboxName, marker.processToken, marker.snapshotPath, {
@@ -4562,7 +4572,15 @@ function recoverExpiredAutoRestoreInline(
         assertTakeoverAuthority: () => assertTimerMarkerGeneration(sandboxName, marker),
       });
     } catch (error) {
-      if (isDurableContainmentFailure(error) || isPolicyAuthorityRefusalError(error)) throw error;
+      if (isDurableContainmentFailure(error)) throw error;
+      if (isPolicyAuthorityRefusalError(error)) {
+        rethrowPolicyAuthorityRefusalAfterConfigRelock(
+          error,
+          sandboxName,
+          cachedTarget,
+          marker.allowLegacyHermesProtocol === true,
+        );
+      }
       const message = error instanceof Error ? error.message : String(error);
       appendAuditEntry({
         action: "shields_up_failed",
@@ -4577,7 +4595,6 @@ function recoverExpiredAutoRestoreInline(
     }
   }
 
-  const cachedTarget = marker ? resolvePersistedAutoRestoreTarget(sandboxName, marker) : undefined;
   const activation = activateLockdownFromSnapshot(
     sandboxName,
     snapshotPath,
@@ -5431,7 +5448,13 @@ function shieldsDownWithoutHostLock(
   } finally {
     cleanupRuntimePolicyFile();
   }
-  rejectFinalShieldsPolicySetResult(policySetResult, "apply the Shields down policy");
+  let policyAuthorityRefusal: unknown = null;
+  try {
+    rejectFinalShieldsPolicySetResult(policySetResult, "apply the Shields down policy");
+  } catch (error) {
+    if (!isPolicyAuthorityRefusalError(error)) throw error;
+    policyAuthorityRefusal = error;
+  }
   if (policySetResult.status !== 0) {
     // The permissive policy was rejected before it applied — for example,
     // OpenShell refuses a live Landlock change on a sandbox whose policy is
@@ -5474,6 +5497,7 @@ function shieldsDownWithoutHostLock(
         `  ERROR: Could not apply the ${policyName} policy, and clearing the provisional Shields down record failed: ${stateMessage}`,
       );
       console.error("  The scheduled auto-restore remains authoritative.");
+      if (policyAuthorityRefusal !== null) throw policyAuthorityRefusal;
       return failShieldsCommand(`Could not apply ${policyName} policy`, opts.throwOnError);
     }
     const timerCancellation = killTimer(sandboxName);
@@ -5484,8 +5508,10 @@ function shieldsDownWithoutHostLock(
       `  ERROR: Could not apply the ${policyName} policy; the sandbox remains in the Shields up state.`,
     );
     console.error("  Shields down did not take effect. `shields status` continues to report `UP`.");
+    if (policyAuthorityRefusal !== null) throw policyAuthorityRefusal;
     return failShieldsCommand(`Could not apply ${policyName} policy`, opts.throwOnError);
   }
+  if (policyAuthorityRefusal !== null) throw policyAuthorityRefusal;
 
   // 2b. Return config to default mutable state.
   //     OpenClaw uses sandbox:sandbox 0660/2770 here so the gateway UID, which

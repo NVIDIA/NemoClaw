@@ -20,6 +20,7 @@ import {
   isAgentMcpAdapter,
   MCP_BRIDGE_POLICY_SOURCE,
   McpBridgeError,
+  type McpBridgeErrorReasonCode,
 } from "./mcp-bridge-contracts";
 import {
   buildMcpBridgeCapabilityPolicyYaml,
@@ -59,8 +60,14 @@ export interface ProvableManagedMcpPolicies {
 }
 
 export class McpPolicyAuthorityRefusalError extends McpBridgeError {
-  constructor(message: string) {
-    super(message);
+  constructor(
+    message: string,
+    options: ErrorOptions & {
+      readonly exitCode?: number;
+      readonly reasonCode?: McpBridgeErrorReasonCode;
+    } = {},
+  ) {
+    super(message, options.exitCode, options.reasonCode, options);
     this.name = "McpPolicyAuthorityRefusalError";
   }
 }

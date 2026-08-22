@@ -603,13 +603,6 @@ export async function runRebuildDestroyPhase(
     bail("Sandbox deletion could not be confirmed.");
     return null;
   }
-  if (validateAfterDeleteConfirmation) {
-    const validation = await validateAfterDeleteConfirmation();
-    if (!validation.ok) {
-      bail(validation.message, validation.code);
-      return null;
-    }
-  }
   try {
     recreateJournal.confirmDeleted();
   } catch (error) {
@@ -623,6 +616,24 @@ export async function runRebuildDestroyPhase(
     const detail = error instanceof Error ? error.message : String(error);
     bail(`Sandbox deletion could not be journaled: ${redactFull(detail)}`);
     return null;
+  }
+  if (validateAfterDeleteConfirmation) {
+    let validation: RebuildDeleteValidationResult;
+    try {
+      validation = await validateAfterDeleteConfirmation();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      log(`Unexpected post-delete validation failure: ${redactFull(detail)}`);
+      validation = {
+        ok: false,
+        message: "Policy authority validation failed after sandbox deletion.",
+      };
+    }
+    if (!validation.ok) {
+      input.onDeleteStateAmbiguous?.();
+      bail(validation.message, validation.code);
+      return null;
+    }
   }
   stopNimBestEffort();
   onDeleted();

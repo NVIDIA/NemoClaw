@@ -190,9 +190,10 @@ describe("setupInference dependency failures", () => {
       "openai-api",
       "openai",
       "OPENAI_API_KEY",
-      expect.any(String),
+      "https://api.openai.com/v1",
       { OPENAI_API_KEY: "openai-secret" },
       "nemoclaw",
+      { revalidatePolicyRequirements: expect.any(Function) },
     );
     expect(promptValidationRecovery).not.toHaveBeenCalled();
     expect(exitProcess).toHaveBeenCalledOnce();
@@ -974,6 +975,7 @@ describe("setupInference dependency failures", () => {
       "http://host.openshell.internal:4000/v1",
       { NVIDIA_INFERENCE_API_KEY: "test-secret" },
       "nemoclaw",
+      { revalidatePolicyRequirements: expect.any(Function) },
     );
     expect(exitProcess).toHaveBeenCalledOnce();
     expect(exitProcess).toHaveBeenCalledWith(29);

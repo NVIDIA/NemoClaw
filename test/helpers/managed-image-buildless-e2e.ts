@@ -452,8 +452,18 @@ runner.run = (command, options = {}) => {
 };
 runner.runFile = (file, args = []) => runner.run([file, ...args]);
 runner.runCapture = (command) => {
+  const argv = Array.isArray(command) ? command.map(String) : [];
   const normalized = normalize(command);
   runnerCommands.push(normalized);
+  if (normalized.includes("policy get") && normalized.includes("--output json")) {
+    return JSON.stringify({
+      scope: "sandbox",
+      sandbox: argv.at(-1),
+      status: "effective",
+      policy_source: "sandbox",
+      policy: {},
+    });
+  }
   if (normalized.includes("sandbox get") && normalized.includes(sandboxName)) {
     return sandboxCreated
       ? "Name: " + sandboxName + "\nId: " + sandboxName + "-id\nState: Ready"
@@ -479,7 +489,8 @@ runner.runCapture = (command) => {
   return mocked === null ? "" : mocked;
 };
 runner.runCaptureEx = (command) => ({
-  status: 0,
+  exitCode: 0,
+  timedOut: false,
   stdout: runner.runCapture(command),
   stderr: "",
 });
@@ -493,6 +504,7 @@ const sourceEntry = recreate ? {
   imageTag: catalogTemplate.hermes.reference,
   model,
   provider,
+  policyAuthority: "nemoclaw-managed",
   toolDisclosure: "progressive",
   workload: {
     schemaVersion: 1,
@@ -518,7 +530,11 @@ registry.registerSandbox = (entry) => {
   registeredSandbox = entry;
   return true;
 };
-registry.updateSandbox = () => true;
+registry.updateSandbox = (name, updates) => {
+  if (registeredSandbox?.name === name) registeredSandbox = { ...registeredSandbox, ...updates };
+  if (sourceEntry?.name === name) Object.assign(sourceEntry, updates);
+  return true;
+};
 registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 
@@ -591,6 +607,11 @@ function writeRuntimeStubs(fakeBin: string, dockerLog: string): void {
       'if [ "${1:-}" = "sandbox" ] && [ "${2:-}" = "get" ]; then',
       '  printf "Sandbox:\\n\\n  Id: fixture-managed-sandbox\\n  Name: %s\\n  Phase: Ready\\n" "${!#}"',
       "fi",
+      'if [ "${1:-}" = "policy" ] && [ "${2:-}" = "list" ]; then exit 0; fi',
+      'if [ "${1:-}" = "policy" ] && [ "${2:-}" = "get" ] && [[ " $* " = *" --output json "* ]]; then',
+      '  printf \'{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":{}}\\n\' "${!#}"',
+      "  exit 0",
+      "fi",
       "exit 0",
       "",
     ].join("\n"),
@@ -650,6 +671,7 @@ function runManagedOnboard(
       HOME: home,
       NEMOCLAW_HOME: path.join(home, ".nemoclaw"),
       NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_OPENSHELL_BIN: path.join(fakeBin, "openshell"),
       NEMOCLAW_RECREATE_SANDBOX: recreate ? "1" : "0",
       NEMOCLAW_RECREATE_WITHOUT_BACKUP: recreate ? "1" : "0",
       NEMOCLAW_TEST_DOCKER_LOG: dockerLog,

@@ -267,7 +267,18 @@ export async function qualifyRebuildPolicyAuthority(
       `Refusing to ${operation}: the observed policy authority could not be recorded.`,
     );
   }
-  input.sandboxEntry.policyAuthority = authority;
+  const normalizedEntry = registry.normalizeSandboxPolicyAttribution({
+    ...input.sandboxEntry,
+    policyAuthority: authority,
+  });
+  delete input.sandboxEntry.policies;
+  delete input.sandboxEntry.customPolicies;
+  delete input.sandboxEntry.baselineExclusions;
+  delete input.sandboxEntry.baselineExclusionTransition;
+  delete input.sandboxEntry.policyPresetsFinalized;
+  delete input.sandboxEntry.policyTier;
+  delete input.sandboxEntry.policyAuthority;
+  Object.assign(input.sandboxEntry, normalizedEntry);
   if (inspection.sandboxInspection) verifyRequiredPolicies(inspection.sandboxInspection, receipt);
   verifyRequiredPolicies(inspection.globalInspection, receipt);
   return { ...receipt, authority };

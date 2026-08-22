@@ -56,6 +56,9 @@ export type GatewayTeardownAuthorityResolver = (
 
 type GatewayAuthorityEffect = "credential mutation" | "rebuild" | "teardown";
 
+const FRESH_ONBOARDING_CHECKPOINT_RECOVERY =
+  " Start a fresh onboarding run to replace the invalid checkpoint before retrying.";
+
 export function isManagedPackagedServiceMigration(
   recorded: GatewayOwner,
   resolved: GatewayOwner,
@@ -83,13 +86,15 @@ function loadTargetSession(
   } catch (error) {
     if (isErrnoException(error) && error.code === "ENOENT") return null;
     throw new GatewayAuthorityError(
-      "The persisted onboarding session is unreadable or is not valid JSON; gateway lifecycle authority cannot be revalidated.",
+      "The persisted onboarding session is unreadable or is not valid JSON; gateway lifecycle authority cannot be revalidated." +
+        FRESH_ONBOARDING_CHECKPOINT_RECOVERY,
     );
   }
 
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     throw new GatewayAuthorityError(
-      "The persisted onboarding session is corrupt; gateway lifecycle authority cannot be revalidated.",
+      "The persisted onboarding session is corrupt; gateway lifecycle authority cannot be revalidated." +
+        FRESH_ONBOARDING_CHECKPOINT_RECOVERY,
     );
   }
 
@@ -98,11 +103,12 @@ function loadTargetSession(
   if (inspected.status === "none" || inspected.status === "legacy") return null;
   if (inspected.status === "unsupported_future") {
     throw new GatewayAuthorityError(
-      `The persisted onboarding checkpoint uses unsupported schema version ${String(inspected.foundVersion)}; gateway lifecycle authority cannot be revalidated.`,
+      `The persisted onboarding checkpoint uses unsupported schema version ${String(inspected.foundVersion)}; gateway lifecycle authority cannot be revalidated.${FRESH_ONBOARDING_CHECKPOINT_RECOVERY}`,
     );
   }
   throw new GatewayAuthorityError(
-    "The persisted onboarding checkpoint is corrupt; gateway lifecycle authority cannot be revalidated.",
+    "The persisted onboarding checkpoint is corrupt; gateway lifecycle authority cannot be revalidated." +
+      FRESH_ONBOARDING_CHECKPOINT_RECOVERY,
   );
 }
 

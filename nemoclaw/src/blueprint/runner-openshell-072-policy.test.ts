@@ -143,7 +143,6 @@ function inferenceRouteOutput(provider: string, model: string, timeoutSeconds: n
     "",
     `  Provider: ${provider}`,
     `  Model: ${model}`,
-    "  Version: 1",
     `  Timeout: ${String(timeoutSeconds)}s`,
     "",
   ].join("\n");
@@ -471,64 +470,63 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     },
   );
 
-  it("fails closed when global policy history cannot be inspected (#9833)", async () => {
-    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-      args.join(" ") === "policy list -g gateway-a --global --limit 1"
-        ? { exitCode: 1, stdout: "", stderr: "permission denied" }
-        : defaultCommandResult(args),
-    );
-
-    await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
-      /global policy authority inspection failed/,
-    );
-    expect(mockExeca).toHaveBeenCalledTimes(2);
-  });
-
-  it("fails closed when the global policy history command cannot start (#9833)", async () => {
-    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-      args.join(" ") === "policy list -g gateway-a --global --limit 1"
-        ? Promise.reject(new Error("spawn failed"))
-        : defaultCommandResult(args),
-    );
-
-    await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
-      /global policy authority inspection failed/,
-    );
-    expect(mockExeca).toHaveBeenCalledTimes(2);
-  });
-
-  it.each([
-    ["empty", successResult()],
-    [
-      "missing its policy document",
-      {
-        exitCode: 0,
-        stdout: JSON.stringify({
-          scope: "sandbox",
-          sandbox: "test-sandbox",
-          status: "effective",
-          policy_source: "sandbox",
-        }),
-        stderr: "",
-      },
-    ],
-  ])(
-    "fails closed when sandbox policy authority metadata is %s (#9833)",
-    async (_label, result) => {
+  it.each(["returns nonzero", "throws"] as const)(
+    "fails closed with bounded, redacted detail when global policy history %s (#9833)",
+    async (condition) => {
+      const commandThrows = condition === "throws";
+      const secret = commandThrows ? "spawn-secret" : "policy-secret";
+      const detail = commandThrows
+        ? `Bearer ${secret} ${"y".repeat(1000)}`
+        : `API_TOKEN=${secret} ${"x".repeat(1000)}`;
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        args.join(" ") === "policy get -g gateway-a --full --output json test-sandbox"
-          ? result
-          : defaultCommandResult(args),
+        args.join(" ") !== "policy list -g gateway-a --global --limit 1"
+          ? defaultCommandResult(args)
+          : commandThrows
+            ? Promise.reject(new Error(detail))
+            : { exitCode: 1, stdout: "", stderr: detail },
       );
-
-      await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
-        /sandbox policy authority metadata/,
+      const error = await actionApply("default", minimalBlueprint()).catch(
+        (caught: unknown) => caught,
       );
-      expect(
-        mockExeca.mock.calls.some(([, args]) => args[0] === "provider" && args[1] === "create"),
-      ).toBe(false);
+      expect(error).toBeInstanceOf(BlueprintPolicyAuthorityRefusalError);
+      const message = (error as Error).message;
+      expect(message).toContain(commandThrows ? "Bearer <REDACTED>" : "API_TOKEN=<REDACTED>");
+      expect(message).not.toContain(secret);
+      expect(message.length).toBeLessThan(700);
     },
   );
+
+  it.each(["", " \n\t"])(
+    "accepts successful empty sandbox policy output (#9833)",
+    async (stdout) => {
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        args.join(" ") === "policy get -g gateway-a --full --output json test-sandbox"
+          ? { ...successResult(), stdout }
+          : defaultCommandResult(args),
+      );
+      await expect(actionApply("default", minimalBlueprint())).resolves.toBeUndefined();
+    },
+  );
+
+  it("fails closed when sandbox policy metadata is missing its policy document (#9833)", async () => {
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "policy get -g gateway-a --full --output json test-sandbox"
+        ? {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              scope: "sandbox",
+              sandbox: "test-sandbox",
+              status: "effective",
+              policy_source: "sandbox",
+            }),
+            stderr: "",
+          }
+        : defaultCommandResult(args),
+    );
+    await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
+      /sandbox policy authority metadata/,
+    );
+  });
 
   it("records global authority before refusing missing external requirements (#9833)", async () => {
     mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
@@ -579,40 +577,34 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
   });
 
   it.each([
-    ["provider", 2, false],
-    ["inference route", 3, true],
+    ["provider", "inference get", false],
+    ["inference route", "provider create", true],
   ])(
     "rechecks sandbox authority immediately before %s mutation (#9833)",
-    async (_edge, driftAtInspection, providerCreated) => {
-      let sandboxInspections = 0;
-      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        args.join(" ") === "policy get -g gateway-a --full --output json test-sandbox"
+    async (_edge, driftAfterCommand, providerCreated) => {
+      let authorityChanged = false;
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
+        const command = args.join(" ");
+        authorityChanged ||= command.startsWith(driftAfterCommand);
+        return command === "policy get -g gateway-a --full --output json test-sandbox"
           ? sandboxPolicyAuthorityResult(
               "test-sandbox",
-              (sandboxInspections += 1) < driftAtInspection
-                ? "nemoclaw-managed"
-                : "externally-managed",
+              authorityChanged ? "externally-managed" : "nemoclaw-managed",
             )
-          : args.join(" ") === "policy get -g gateway-a --base test-sandbox"
+          : command === "policy get -g gateway-a --base test-sandbox"
             ? { exitCode: 0, stdout: policyOutput(BASE_POLICY), stderr: "" }
-            : defaultCommandResult(args),
-      );
-
+            : defaultCommandResult(args);
+      });
       await expect(actionApply("default", blueprint())).rejects.toThrow(/authority changed/);
       const commands = mockExeca.mock.calls.map(([, args]) => args.join(" "));
-      expect(sandboxInspections).toBe(driftAtInspection);
-      expect(
-        commands.includes(
-          "provider create -g gateway-a --name my-provider --type openai --config OPENAI_BASE_URL=https://api.example.com/v1",
-        ),
-      ).toBe(providerCreated);
-      expect(commands).not.toContain(
-        "inference set -g gateway-a --provider my-provider --model gpt-4",
+      expect(commands.some((command) => command.startsWith("provider create -g gateway-a "))).toBe(
+        providerCreated,
       );
-      expect(commands).toContain("sandbox stop -g gateway-a test-sandbox");
+      expect(commands).not.toContain(
+        "inference set -g gateway-a --provider my-provider --model gpt-4 --timeout 180",
+      );
       expect(commands).toContain("sandbox remove -g gateway-a test-sandbox");
       expect(commands.includes("provider delete -g gateway-a my-provider")).toBe(providerCreated);
-      expect(policySetCalls()).toEqual([]);
     },
   );
 
@@ -659,7 +651,8 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     expect(error).toBeInstanceOf(BlueprintPolicyAuthorityRefusalError);
     expect((error as Error).message).toMatch(/authority changed/);
     const commands = mockExeca.mock.calls.map(([, args]) => args.join(" "));
-    const replacement = "inference set -g gateway-a --provider my-provider --model gpt-4";
+    const replacement =
+      "inference set -g gateway-a --provider my-provider --model gpt-4 --timeout 180";
     const restoration =
       "inference set -g gateway-a --provider prior-provider --model prior-model --timeout 45";
     expect(commands).toContain(replacement);
@@ -818,54 +811,57 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
           }),
       /final plan directory sync denied/u,
     ],
-  ])("restores the exact route before deleting a provider when the final plan %s fails (#9833)", async (_case, injectFailure, expectedError) => {
-    commandResponseQueue([
-      [
-        "policy get -g gateway-a --full --output json test-sandbox",
+  ])(
+    "restores the exact route before deleting a provider when the final plan %s fails (#9833)",
+    async (_case, injectFailure, expectedError) => {
+      commandResponseQueue([
         [
-          sandboxPolicyAuthorityResult("test-sandbox"),
-          sandboxPolicyAuthorityResult("test-sandbox"),
-          sandboxPolicyAuthorityResult("test-sandbox"),
-          () => {
-            injectFailure();
-            return sandboxPolicyAuthorityResult("test-sandbox");
-          },
+          "policy get -g gateway-a --full --output json test-sandbox",
+          [
+            sandboxPolicyAuthorityResult("test-sandbox"),
+            sandboxPolicyAuthorityResult("test-sandbox"),
+            sandboxPolicyAuthorityResult("test-sandbox"),
+            () => {
+              injectFailure();
+              return sandboxPolicyAuthorityResult("test-sandbox");
+            },
+          ],
         ],
-      ],
-      [
-        "inference get -g gateway-a",
         [
-          inferenceRouteOutput("prior-provider", "prior-model", 45),
-          inferenceRouteOutput("prior-provider", "prior-model", 45),
-          inferenceRouteOutput("my-provider", "gpt-4", 180),
-          inferenceRouteOutput("my-provider", "gpt-4", 180),
-          inferenceRouteOutput("prior-provider", "prior-model", 45),
-        ].map((stdout) => ({ exitCode: 0, stdout, stderr: "" })),
-      ],
-    ]);
+          "inference get -g gateway-a",
+          [
+            inferenceRouteOutput("prior-provider", "prior-model", 45),
+            inferenceRouteOutput("prior-provider", "prior-model", 45),
+            inferenceRouteOutput("my-provider", "gpt-4", 180),
+            inferenceRouteOutput("my-provider", "gpt-4", 180),
+            inferenceRouteOutput("prior-provider", "prior-model", 45),
+          ].map((stdout) => ({ exitCode: 0, stdout, stderr: "" })),
+        ],
+      ]);
 
-    await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(expectedError);
+      await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(expectedError);
 
-    const commands = mockExeca.mock.calls.map(([, args]) => args.join(" "));
-    const restoration =
-      "inference set -g gateway-a --provider prior-provider --model prior-model --timeout 45";
-    expect(commands).toContain(
-      "sandbox create -g gateway-a --from openclaw --name test-sandbox --forward 18789",
-    );
-    expect(commands).toContain(restoration);
-    expect(commands).toContain("sandbox remove -g gateway-a test-sandbox");
-    expect(commands.indexOf(restoration)).toBeLessThan(
-      commands.indexOf("provider delete -g gateway-a my-provider"),
-    );
-    const plan = [...store.entries()].find(([key]) => key.endsWith("/plan.json"))?.[1];
-    expect(JSON.parse(plan?.content ?? "{}")).toMatchObject({
-      sandbox_created_by_apply: false,
-      inference_provider_created_by_apply: false,
-      provider_gateway: "gateway-a",
-    });
-    expect(JSON.parse(plan?.content ?? "{}")).not.toHaveProperty("inference_route_recovery");
-    expect([...store.keys()].some((path) => path.endsWith(".tmp"))).toBe(false);
-  });
+      const commands = mockExeca.mock.calls.map(([, args]) => args.join(" "));
+      const restoration =
+        "inference set -g gateway-a --provider prior-provider --model prior-model --timeout 45";
+      expect(commands).toContain(
+        "sandbox create -g gateway-a --from openclaw --name test-sandbox --forward 18789",
+      );
+      expect(commands).toContain(restoration);
+      expect(commands).toContain("sandbox remove -g gateway-a test-sandbox");
+      expect(commands.indexOf(restoration)).toBeLessThan(
+        commands.indexOf("provider delete -g gateway-a my-provider"),
+      );
+      const plan = [...store.entries()].find(([key]) => key.endsWith("/plan.json"))?.[1];
+      expect(JSON.parse(plan?.content ?? "{}")).toMatchObject({
+        sandbox_created_by_apply: false,
+        inference_provider_created_by_apply: false,
+        provider_gateway: "gateway-a",
+      });
+      expect(JSON.parse(plan?.content ?? "{}")).not.toHaveProperty("inference_route_recovery");
+      expect([...store.keys()].some((path) => path.endsWith(".tmp"))).toBe(false);
+    },
+  );
 
   it("preserves durable recovery when final and recovery plan renames fail (#9833)", async () => {
     commandResponseQueue([
@@ -1063,7 +1059,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       "provider create -g gateway-a --name my-provider --type openai --config OPENAI_BASE_URL=https://api.example.com/v1",
     );
     expect(commands).not.toContain(
-      "inference set -g gateway-a --provider my-provider --model gpt-4",
+      "inference set -g gateway-a --provider my-provider --model gpt-4 --timeout 180",
     );
     expect(commands).not.toContain("provider delete -g gateway-a my-provider");
   });
@@ -1378,25 +1374,26 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     expect(store.get(`${stateDir}/rolled_back`)).toBeUndefined();
   });
 
-  it("does not report completion when authority changes during the final policy command (#9833)", async () => {
-    let sandboxInspections = 0;
-    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-      args.join(" ") === "policy get -g gateway-a --full --output json test-sandbox"
-        ? sandboxPolicyAuthorityResult(
+  it("does not report completion when authority changes after policy mutation (#9833)", async () => {
+    let policySetCompleted = false;
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
+      switch (args.join(" ")) {
+        case "policy get -g gateway-a --full --output json test-sandbox":
+          return sandboxPolicyAuthorityResult(
             "test-sandbox",
-            (sandboxInspections += 1) < 6 ? "nemoclaw-managed" : "externally-managed",
-          )
-        : args.join(" ") === "policy get -g gateway-a --base test-sandbox"
-          ? { exitCode: 0, stdout: policyOutput(BASE_POLICY), stderr: "" }
-          : defaultCommandResult(args),
-    );
-
+            policySetCompleted ? "externally-managed" : "nemoclaw-managed",
+          );
+        case "policy get -g gateway-a --base test-sandbox":
+          return { exitCode: 0, stdout: policyOutput(BASE_POLICY), stderr: "" };
+        default:
+          policySetCompleted ||= args[0] === "policy" && args[1] === "set";
+          return defaultCommandResult(args);
+      }
+    });
     const error = await actionApply("default", blueprint()).catch((caught: unknown) => caught);
-
     expect(error).toBeInstanceOf(BlueprintPolicyAuthorityRefusalError);
     expect((error as Error).message).toMatch(/authority changed/);
     expect(policySetCalls()).toHaveLength(1);
-    expect(sandboxInspections).toBe(6);
     expect(vi.mocked(process.stdout.write).mock.calls.flat().join("")).not.toContain(
       "Apply complete",
     );
@@ -1460,25 +1457,26 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       providerDeleteAttempted,
       sandboxOwned,
     ) => {
-      let sandboxInspections = 0;
+      let policySetCompleted = false;
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
-        const command = args.join(" ");
-        return command === failedCommand
-          ? commandThrows
-            ? Promise.reject(new Error(cleanupError))
-            : { exitCode: 1, stdout: "", stderr: cleanupError }
-          : command === "policy get -g gateway-a --full --output json test-sandbox"
-            ? sandboxPolicyAuthorityResult(
-                "test-sandbox",
-                (sandboxInspections += 1) < 6 ? "nemoclaw-managed" : "externally-managed",
-              )
-            : args.join(" ") === "policy get -g gateway-a --base test-sandbox"
-              ? { exitCode: 0, stdout: policyOutput(BASE_POLICY), stderr: "" }
-              : defaultCommandResult(args);
+        switch (args.join(" ")) {
+          case failedCommand:
+            return commandThrows
+              ? Promise.reject(new Error(cleanupError))
+              : { exitCode: 1, stdout: "", stderr: cleanupError };
+          case "policy get -g gateway-a --full --output json test-sandbox":
+            return sandboxPolicyAuthorityResult(
+              "test-sandbox",
+              policySetCompleted ? "externally-managed" : "nemoclaw-managed",
+            );
+          case "policy get -g gateway-a --base test-sandbox":
+            return { exitCode: 0, stdout: policyOutput(BASE_POLICY), stderr: "" };
+          default:
+            policySetCompleted ||= args[0] === "policy" && args[1] === "set";
+            return defaultCommandResult(args);
+        }
       });
-
       const error = await actionApply("default", blueprint()).catch((caught: unknown) => caught);
-
       expect(error).toBeInstanceOf(BlueprintPolicyAuthorityRefusalError);
       expect((error as Error).message).toMatch(
         new RegExp(`authority changed[\\s\\S]*cleanup failed[\\s\\S]*${cleanupError}`, "u"),

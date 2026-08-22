@@ -10,8 +10,9 @@ export class McpBridgeError extends Error {
     message: string,
     readonly exitCode = 1,
     readonly reasonCode?: McpBridgeErrorReasonCode,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = "McpBridgeError";
   }
 }

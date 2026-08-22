@@ -289,7 +289,7 @@ function routeMatchesRequestedSelection(
     route.state === "configured" &&
     route.provider === requested.provider &&
     route.model === requested.model &&
-    (requested.timeout_seconds === undefined || route.timeout_seconds === requested.timeout_seconds)
+    route.timeout_seconds === (requested.timeout_seconds ?? DEFAULT_INFERENCE_ROUTE_TIMEOUT_SECONDS)
   );
 }
 
@@ -465,10 +465,14 @@ async function setInferenceRouteWithRecovery(options: {
     timeout_seconds: options.timeoutSeconds ?? DEFAULT_INFERENCE_ROUTE_TIMEOUT_SECONDS,
   };
   const inferenceArgs = ["openshell", "inference", "set", "-g", options.gateway];
-  inferenceArgs.push("--provider", options.provider, "--model", options.model);
-  if (options.timeoutSeconds !== undefined) {
-    inferenceArgs.push("--timeout", String(options.timeoutSeconds));
-  }
+  inferenceArgs.push(
+    "--provider",
+    options.provider,
+    "--model",
+    options.model,
+    "--timeout",
+    String(intendedReplacement.timeout_seconds),
+  );
 
   await options.revalidatePolicyAuthority();
   const currentPriorRoute = await inspectInferenceRoute(
@@ -746,7 +750,7 @@ function createDirectoryDurably(path: string): void {
   const firstCreatedPath = mkdirSync(path, { recursive: true });
   if (firstCreatedPath === undefined) return;
   const createdDirectories = [path];
-  for (let current = path; current !== firstCreatedPath; ) {
+  for (let current = path; current !== firstCreatedPath;) {
     current = dirname(current);
     createdDirectories.unshift(current);
   }
@@ -982,6 +986,9 @@ async function inspectBlueprintPolicyAuthority(
       : ["openshell", "policy", "get", "-g", gateway, "--full", "--output", "json", sandboxName];
   const result = await runBlueprintPolicyAuthorityCommand(command, subject);
   if (result.stdout.trim().length === 0) {
+    if (sandboxName !== undefined) {
+      return { authority: "nemoclaw-managed", effectivePolicy: {} };
+    }
     throw new BlueprintPolicyAuthorityRefusalError(
       `OpenShell returned empty ${subject} policy authority metadata. Policy-dependent operations must stop.`,
     );
@@ -1049,9 +1056,10 @@ async function runBlueprintPolicyAuthorityCommand(
       reject: false,
       timeout: POLICY_AUTHORITY_TIMEOUT_MS,
     });
-  } catch {
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
     throw new BlueprintPolicyAuthorityRefusalError(
-      `OpenShell ${subject} policy authority inspection failed. Policy-dependent operations must stop.`,
+      `OpenShell ${subject} policy authority inspection failed: ${boundedCommandError(detail)}. Policy-dependent operations must stop.`,
     );
   }
   if (
@@ -1060,7 +1068,7 @@ async function runBlueprintPolicyAuthorityCommand(
       POLICY_AUTHORITY_MAX_BYTES
   ) {
     throw new BlueprintPolicyAuthorityRefusalError(
-      `OpenShell ${subject} policy authority inspection failed. Policy-dependent operations must stop.`,
+      `OpenShell ${subject} policy authority inspection failed: ${boundedCommandError(`${result.stderr}\n${result.stdout}`)}. Policy-dependent operations must stop.`,
     );
   }
   return result;
@@ -1744,8 +1752,6 @@ export async function actionApply(
       }
       if (createResult.exitCode !== 0) {
         if (createResult.stderr.includes("already exists")) {
-          reuseExistingSandbox = true;
-          persistRunPlan();
           await inspectReusableSandboxOnGateway(
             sandboxName,
             inferenceGateway,
@@ -1980,10 +1986,6 @@ export async function actionApply(
       try {
         await restoreInferenceRoute(inferenceRouteRecoveryReceipt);
         inferenceRouteRestored = true;
-        if (!inferenceProviderCreatedByApply) {
-          inferenceRouteRecoveryReceipt = undefined;
-          persistRunPlan();
-        }
       } catch (cleanupError) {
         const detail = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
         try {
@@ -1998,6 +2000,18 @@ export async function actionApply(
         cleanupFailures.push(
           `Inference route recovery remains required: ${boundedCommandError(detail, [credential])}`,
         );
+      }
+      if (inferenceRouteRestored && !inferenceProviderCreatedByApply) {
+        inferenceRouteRecoveryReceipt = undefined;
+        try {
+          persistRunPlan();
+        } catch (persistError) {
+          const detail =
+            persistError instanceof Error ? persistError.message : String(persistError);
+          cleanupFailures.push(
+            `Failed to persist cleared inference route recovery receipt: ${boundedCommandError(detail, [credential])}`,
+          );
+        }
       }
     }
     if (runtimeIdentityReceipt) {

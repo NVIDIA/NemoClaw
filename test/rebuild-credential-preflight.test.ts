@@ -103,6 +103,7 @@ wait();`,
           dashboardPort: agent === "langchain-deepagents-code" ? 0 : 18789,
           fromDockerfile: null,
           policies: [],
+          policyAuthority: "nemoclaw-managed",
           agent,
           ...(agent === "langchain-deepagents-code"
             ? {
@@ -141,6 +142,7 @@ wait();`,
       nimContainer: null,
       webSearchConfig: null,
       policyPresets: [],
+      policyAuthority: "nemoclaw-managed",
       messagingPlan: null,
       metadata: { gatewayName, fromDockerfile: null },
       steps: {

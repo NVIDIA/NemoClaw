@@ -13,10 +13,7 @@ import {
   serializeSandboxMessagingStateForDisk,
 } from "../registry-messaging";
 import {
-  normalizeBaselineExclusions,
-  normalizeBaselineExclusionTransition,
-  normalizeCustomPolicyEntries,
-  normalizeSandboxPolicyAuthority,
+  normalizeSandboxPolicyAttribution,
   parseSandboxRegistryEntries,
   retainedDefaultSandbox,
 } from "../registry-normalization";
@@ -84,38 +81,6 @@ function cloneServingProfileProvenanceOrThrow(
     throw new Error(`Cannot ${operation} a sandbox entry with invalid serving profile provenance`);
   }
   return provenance ?? undefined;
-}
-
-type SandboxPolicyAttribution = Pick<
-  SandboxEntry,
-  | "policies"
-  | "customPolicies"
-  | "baselineExclusions"
-  | "baselineExclusionTransition"
-  | "policyPresetsFinalized"
-  | "policyTier"
->;
-
-function normalizeSandboxPolicyAttribution(
-  entry: SandboxEntry,
-  policyAuthority: SandboxEntry["policyAuthority"],
-): Partial<SandboxPolicyAttribution> {
-  if (policyAuthority === "externally-managed") return { policies: [] };
-  const baselineExclusions = normalizeBaselineExclusions(entry.baselineExclusions);
-  const baselineExclusionTransition = normalizeBaselineExclusionTransition(
-    entry.baselineExclusionTransition,
-  );
-  const customPolicies = normalizeCustomPolicyEntries(entry.customPolicies);
-  return {
-    ...(entry.policies !== undefined ? { policies: entry.policies } : {}),
-    ...(baselineExclusions ? { baselineExclusions } : {}),
-    ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
-    ...(customPolicies ? { customPolicies } : {}),
-    ...(entry.policyPresetsFinalized !== undefined
-      ? { policyPresetsFinalized: entry.policyPresetsFinalized }
-      : {}),
-    ...(entry.policyTier !== undefined ? { policyTier: entry.policyTier } : {}),
-  };
 }
 
 export const REGISTRY_FILE = path.join(
@@ -195,8 +160,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     "load",
   );
   const mcp = normalizeSandboxMcpState(entry.mcp);
-  const policyAuthority = normalizeSandboxPolicyAuthority(entry.policyAuthority);
-  const policyAttribution = normalizeSandboxPolicyAttribution(entry, policyAuthority);
+  const policyEntry = normalizeSandboxPolicyAttribution(entry);
   const {
     cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
     messaging: _messaging,
@@ -205,15 +169,8 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
     servingProfileProvenance: _servingProfileProvenance,
     mcp: _mcp,
-    policies: _policies,
-    baselineExclusions: _baselineExclusions,
-    baselineExclusionTransition: _baselineExclusionTransition,
-    customPolicies: _customPolicies,
-    policyPresetsFinalized: _policyPresetsFinalized,
-    policyTier: _policyTier,
-    policyAuthority: _policyAuthority,
     ...rest
-  } = entry as SandboxEntry & { cuaRuntimeReadiness?: unknown };
+  } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown };
   return {
     ...rest,
     ...(workload ? { workload } : {}),
@@ -222,8 +179,6 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     ...(servingProfileProvenance ? { servingProfileProvenance } : {}),
     ...(messaging ? { messaging } : {}),
     ...(mcp ? { mcp } : {}),
-    ...policyAttribution,
-    ...(policyAuthority !== undefined ? { policyAuthority } : {}),
   };
 }
 
@@ -263,8 +218,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     "save",
   );
   const mcp = serializeSandboxMcpStateForDisk(durable.mcp);
-  const policyAuthority = normalizeSandboxPolicyAuthority(durable.policyAuthority);
-  const policyAttribution = normalizeSandboxPolicyAttribution(durable, policyAuthority);
+  const policyEntry = normalizeSandboxPolicyAttribution(durable);
   const {
     cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
     messaging: _messaging,
@@ -273,15 +227,8 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
     servingProfileProvenance: _servingProfileProvenance,
     mcp: _mcp,
-    policies: _policies,
-    baselineExclusions: _baselineExclusions,
-    baselineExclusionTransition: _baselineExclusionTransition,
-    customPolicies: _customPolicies,
-    policyPresetsFinalized: _policyPresetsFinalized,
-    policyTier: _policyTier,
-    policyAuthority: _policyAuthority,
     ...rest
-  } = durable as SandboxEntry & { cuaRuntimeReadiness?: unknown };
+  } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown };
   return {
     ...rest,
     ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
@@ -291,7 +238,5 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     ...(servingProfileProvenance ? { servingProfileProvenance } : {}),
     ...(messaging ? { messaging } : {}),
     ...(mcp ? { mcp } : {}),
-    ...policyAttribution,
-    ...(policyAuthority !== undefined ? { policyAuthority } : {}),
   };
 }

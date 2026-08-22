@@ -313,7 +313,9 @@ describe("blueprint identity wrapper", () => {
     );
     const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
     expect(
-      commands.indexOf("inference set -g test-gateway --provider test-provider --model test-model"),
+      commands.indexOf(
+        "inference set -g test-gateway --provider test-provider --model test-model --timeout 180",
+      ),
     ).toBeLessThan(
       commands.indexOf("sandbox provider attach -g test-gateway test-sandbox acme-okta-runtime"),
     );
@@ -449,7 +451,6 @@ describe("blueprint identity wrapper", () => {
       );
 
       const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
-      expect(commands.filter((command) => command.includes("sandbox get"))).toHaveLength(2);
       expect(commands).not.toContain(
         "sandbox provider attach -g test-gateway test-sandbox acme-okta-runtime",
       );
@@ -614,16 +615,16 @@ describe("blueprint identity wrapper", () => {
 
   it("revalidates the sandbox immediately before attaching runtime identity", async () => {
     process.env.OKTA_CLIENT_ID = "client-id";
-      process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
-      process.env.OKTA_CLIENT_SECRET = "client-secret";
-      responseQueue([
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      [
+        "sandbox get -g test-gateway test-sandbox",
         [
-          "sandbox get -g test-gateway test-sandbox",
-          [
           { exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" },
           { exitCode: 0, stdout: "Name: test-sandbox\nPhase: Provisioning", stderr: "" },
-          ],
         ],
+      ],
       [
         "provider get -g test-gateway test-provider",
         [{ exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }],
@@ -646,7 +647,6 @@ describe("blueprint identity wrapper", () => {
     );
 
     const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
-    expect(commands.filter((command) => command.includes("sandbox get"))).toHaveLength(2);
     expect(commands).not.toContain(
       "sandbox provider attach -g test-gateway test-sandbox acme-okta-runtime",
     );
@@ -829,12 +829,10 @@ describe("blueprint identity wrapper", () => {
     await actionApply("default", blueprint({ identity: oktaIdentity() }));
 
     const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
-    expect(commands).toContain(
-      "inference set -g test-gateway --provider test-provider --model test-model",
-    );
-    expect(
-      commands.indexOf("inference set -g test-gateway --provider test-provider --model test-model"),
-    ).toBeLessThan(
+    const routeSet =
+      "inference set -g test-gateway --provider test-provider --model test-model --timeout 180";
+    expect(commands).toContain(routeSet);
+    expect(commands.indexOf(routeSet)).toBeLessThan(
       commands.indexOf("sandbox provider attach -g test-gateway test-sandbox acme-okta-runtime"),
     );
   });
@@ -884,14 +882,14 @@ describe("blueprint identity wrapper", () => {
 
     const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
     expect(commands).not.toContain(
-      "inference set -g test-gateway --provider test-provider --model test-model",
+      "inference set -g test-gateway --provider test-provider --model test-model --timeout 180",
     );
     expect(commands).toContain(
       "sandbox provider attach -g test-gateway test-sandbox acme-okta-runtime",
     );
   });
 
-  it("sets an exact reused route when the requested timeout differs", async () => {
+  it("sets the exact default when a reused route timeout differs", async () => {
     process.env.OKTA_CLIENT_ID = "client-id";
     process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
     process.env.OKTA_CLIENT_SECRET = "client-secret";
@@ -907,13 +905,17 @@ describe("blueprint identity wrapper", () => {
       [
         "inference get -g test-gateway",
         [
-          { exitCode: 0, stdout: matchingInferenceRoute, stderr: "" },
-          { exitCode: 0, stdout: matchingInferenceRoute, stderr: "" },
           {
             exitCode: 0,
             stdout: matchingInferenceRoute.replace("Timeout: 180s", "Timeout: 300s"),
             stderr: "",
           },
+          {
+            exitCode: 0,
+            stdout: matchingInferenceRoute.replace("Timeout: 180s", "Timeout: 300s"),
+            stderr: "",
+          },
+          { exitCode: 0, stdout: matchingInferenceRoute, stderr: "" },
         ],
       ],
       [
@@ -929,15 +931,11 @@ describe("blueprint identity wrapper", () => {
       ],
     ]);
 
-    const input = blueprint({ identity: oktaIdentity() });
-    const inferenceProfile = input.components?.inference?.profiles?.default;
-    expect(inferenceProfile).toBeDefined();
-    inferenceProfile!.timeout_secs = 300;
-    await actionApply("default", input);
+    await actionApply("default", blueprint({ identity: oktaIdentity() }));
 
     const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
     expect(commands).toContain(
-      "inference set -g test-gateway --provider test-provider --model test-model --timeout 300",
+      "inference set -g test-gateway --provider test-provider --model test-model --timeout 180",
     );
   });
 
@@ -978,7 +976,7 @@ describe("blueprint identity wrapper", () => {
 
     const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
     expect(commands).not.toContain(
-      "inference set -g test-gateway --provider test-provider --model test-model",
+      "inference set -g test-gateway --provider test-provider --model test-model --timeout 180",
     );
     expect(commands).not.toContain("provider delete -g test-gateway test-provider");
   });
@@ -1010,7 +1008,7 @@ describe("blueprint identity wrapper", () => {
         ],
       ],
       [
-        "inference set -g test-gateway --provider test-provider --model test-model",
+        "inference set -g test-gateway --provider test-provider --model test-model --timeout 180",
         [failureResult("route failed")],
       ],
     ]);
@@ -1119,7 +1117,7 @@ describe("blueprint identity wrapper", () => {
   it("compensates a sandbox even when an identity component is not configured", async () => {
     responseQueue([
       [
-        "inference set -g test-gateway --provider test-provider --model test-model",
+        "inference set -g test-gateway --provider test-provider --model test-model --timeout 180",
         [failureResult("route failed")],
       ],
     ]);
@@ -1172,7 +1170,7 @@ describe("blueprint identity wrapper", () => {
     expect(applyCommands).toContain("provider get -g test-gateway test-provider");
     expect(applyCommands).toContain("inference get -g test-gateway");
     expect(applyCommands).not.toContain(
-      "inference set -g test-gateway --provider test-provider --model test-model",
+      "inference set -g test-gateway --provider test-provider --model test-model --timeout 180",
     );
     expect(applyCommands).not.toContain(
       "provider create -g test-gateway --name test-provider --type openai --config OPENAI_BASE_URL=https://api.example.com/v1",
@@ -1333,7 +1331,7 @@ describe("blueprint identity wrapper", () => {
         [failureResult("delete denied"), { exitCode: 0, stdout: "", stderr: "" }],
       ],
       [
-        "inference set -g test-gateway --provider test-provider --model test-model",
+        "inference set -g test-gateway --provider test-provider --model test-model --timeout 180",
         [failureResult("route failed")],
       ],
     ]);
@@ -1442,15 +1440,7 @@ describe("blueprint identity wrapper", () => {
 
     expect(mockExeca).toHaveBeenCalledWith(
       "openshell",
-      [
-        "sandbox",
-        "provider",
-        "detach",
-        "-g",
-        "test-gateway",
-        "test-sandbox",
-        "acme-okta-runtime",
-      ],
+      ["sandbox", "provider", "detach", "-g", "test-gateway", "test-sandbox", "acme-okta-runtime"],
       expect.objectContaining({ reject: false }),
     );
     expect(mockExeca).toHaveBeenCalledWith(

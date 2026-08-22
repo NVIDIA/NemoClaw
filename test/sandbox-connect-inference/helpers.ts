@@ -10,6 +10,7 @@ import {
   LAUNCH_READINESS_FIXTURE_POLICY,
   LAUNCH_READINESS_PAIRING_QUALIFICATION_OUTPUT,
   launchReadinessRegistryFixture,
+  launchReadinessSandboxPolicyAuthorityFixture,
 } from "../helpers/launch-readiness-fixture";
 import { nonWslPlatformNodeOptions } from "../helpers/platform-override-node-options";
 import { execTimeout } from "../helpers/timeouts";
@@ -30,6 +31,7 @@ export type SandboxEntryFixture = {
   gpuEnabled?: boolean;
   openshellDriver?: string | null;
   policies?: string[];
+  policyAuthority?: "nemoclaw-managed" | "externally-managed";
 };
 
 export type SetupFixtureOptions = {
@@ -141,6 +143,7 @@ function writeRegistryState(
       defaultSandbox: sandboxName,
       sandboxes: {
         [sandboxName]: {
+          policyAuthority: "nemoclaw-managed",
           ...(options.launchReadinessRegistry ? launchReadinessRegistryFixture() : {}),
           ...sandboxEntry,
         },
@@ -303,7 +306,11 @@ if (args[0] === "inference" && args[1] === "get") {
 }
 
 if (args[0] === "policy" && args[1] === "get") {
-  process.stdout.write(${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)});
+  process.stdout.write(
+    args.includes("--output") && args.includes("json")
+      ? ${JSON.stringify(launchReadinessSandboxPolicyAuthorityFixture(sandboxName))}
+      : ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}
+  );
   process.exit(0);
 }
 

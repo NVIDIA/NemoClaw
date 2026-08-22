@@ -11,6 +11,7 @@ import {
   LAUNCH_READINESS_FIXTURE_POLICY,
   LAUNCH_READINESS_PAIRING_QUALIFICATION_OUTPUT,
   launchReadinessRegistryFixture,
+  launchReadinessSandboxPolicyAuthorityFixture,
 } from "../helpers/launch-readiness-fixture";
 import { nonWslPlatformNodeOptions } from "../helpers/platform-override-node-options";
 import {
@@ -36,6 +37,10 @@ const launchReadinessObservationStubLines = [
   `    printf '%s\\n' ${JSON.stringify(LAUNCH_READINESS_PAIRING_QUALIFICATION_OUTPUT)}`,
   "    exit 0",
   "  fi",
+  "fi",
+  'if [ "$1" = "policy" ] && [ "$2" = "get" ] && [[ " $* " = *" --output json "* ]]; then',
+  `  printf '%s\n' ${JSON.stringify(launchReadinessSandboxPolicyAuthorityFixture("alpha"))}`,
+  "  exit 0",
   "fi",
   'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
   `  printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}`,
@@ -480,6 +485,7 @@ describe("CLI connect recovery process contracts", () => {
           preferredInferenceApi: null,
           nimContainer: null,
           policyPresets: null,
+          policyAuthority: "nemoclaw-managed",
           metadata: { gatewayName: "nemoclaw" },
           steps: {
             preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -539,6 +545,10 @@ describe("CLI connect recovery process contracts", () => {
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "connect" ] && [ "$3" = "alpha" ]; then',
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "policy" ] && [ "$2" = "get" ] && [[ " $* " = *" --output json "* ]]; then',
+        `  printf '%s\n' ${JSON.stringify(launchReadinessSandboxPolicyAuthorityFixture("alpha"))}`,
         "  exit 0",
         "fi",
         'if [ "$1" = "--version" ]; then',

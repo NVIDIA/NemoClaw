@@ -6,7 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { launchReadinessRegistryFixture } from "../helpers/launch-readiness-fixture";
+import {
+  launchReadinessRegistryFixture,
+  launchReadinessSandboxPolicyAuthorityFixture,
+} from "../helpers/launch-readiness-fixture";
 import { run, runWithEnv, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
 
 const CALL_SEPARATOR = "--- openshell call ---";
@@ -105,6 +108,10 @@ function createLaunchHarness(prefix: string, agent: string): LaunchHarness {
       "  done",
       // Preflight probes: gateway health and the inference.local route.
       "  echo 'OK 200'",
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "policy" ] && [ "$2" = "get" ] && [[ " $* " = *" --output json "* ]]; then',
+      `  printf '%s\n' ${JSON.stringify(launchReadinessSandboxPolicyAuthorityFixture("alpha"))}`,
       "  exit 0",
       "fi",
       "exit 0",

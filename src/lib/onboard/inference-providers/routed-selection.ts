@@ -15,7 +15,12 @@ type RoutedBlueprintProfile = {
 const EXACT_LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 function rewriteExactLoopbackEndpoint(endpointUrl: string, hostGatewayUrl: string): string {
-  const parsed = new URL(endpointUrl);
+  let parsed: URL;
+  try {
+    parsed = new URL(endpointUrl);
+  } catch {
+    return endpointUrl;
+  }
   if (!EXACT_LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase())) return endpointUrl;
 
   const schemeEnd = endpointUrl.indexOf("://") + 3;

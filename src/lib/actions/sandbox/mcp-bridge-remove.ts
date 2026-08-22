@@ -426,6 +426,19 @@ async function removeMcpBridgeUnlocked(
   }
   if (failures.length > 0) {
     console.warn(`  MCP force cleanup warnings:\n${failures.join("\n")}`);
+  }
+  // A policy-authority refusal is final even when an internal destroy caller
+  // accepts other residual resources. `allowResidual` must not turn a refused
+  // live-policy mutation into a successful cleanup result.
+  if (policyAuthorityRefusal || !policyCleanupProved) {
+    throw (
+      policyAuthorityRefusal ??
+      new McpBridgeError(
+        `Generated MCP policy cleanup for '${entry.policyName}' is incomplete. The bridge manifest was preserved so cleanup can be retried.`,
+      )
+    );
+  }
+  if (failures.length > 0) {
     if (!options.allowResidual) {
       throw new McpBridgeError(
         `MCP force cleanup left residual resources for '${server}'. The registry entry was preserved so cleanup can be retried.`,
@@ -434,14 +447,6 @@ async function removeMcpBridgeUnlocked(
     // allowResidual: the caller accepted leftover resources. This is NOT a proven
     // recovery — residual state remains — so the destroy marker must be preserved.
     return "residualPreserved";
-  }
-  if (policyAuthorityRefusal || !policyCleanupProved) {
-    throw (
-      policyAuthorityRefusal ??
-      new McpBridgeError(
-        `Generated MCP policy cleanup for '${entry.policyName}' is incomplete. The bridge manifest was preserved so cleanup can be retried.`,
-      )
-    );
   }
   removeBridgeEntry(sandboxName, server);
   console.log(`  Removed MCP server '${server}' from sandbox '${sandboxName}'.`);

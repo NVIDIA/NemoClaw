@@ -39,6 +39,7 @@ import {
   normalizeBaselineExclusions,
   normalizeBaselineExclusionTransition,
   normalizeCustomPolicyEntries,
+  normalizeSandboxPolicyAttribution,
   normalizeSandboxPolicyAuthority,
   retainedDefaultSandbox,
 } from "./registry-normalization";
@@ -116,7 +117,11 @@ export {
   getMessagingPlanFromEntry,
   type SandboxMessagingState,
 } from "./registry-messaging";
-export { hasUnsafeHostMountTerminalText, normalizeCustomPolicyEntries };
+export {
+  hasUnsafeHostMountTerminalText,
+  normalizeCustomPolicyEntries,
+  normalizeSandboxPolicyAttribution,
+};
 
 export type SandboxRemovalReceipt = reversibleRemoval.RegistryRemovalReceipt<SandboxEntry>;
 
@@ -454,7 +459,7 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
     }
     if (changesHostLocalInferenceLifecycleAuthority(current, updates)) return false;
     assertRecordedPolicyAuthorityUnchanged(current, updates);
-    data.sandboxes[name] = { ...current, ...updates };
+    data.sandboxes[name] = normalizeSandboxPolicyAttribution({ ...current, ...updates });
     save(data);
     return true;
   });
@@ -487,17 +492,24 @@ export function restoreSandboxEntry(
 ): void {
   withLock(() => {
     const data = load();
-    const current = data.sandboxes[entry.name];
+    const normalizedEntry = normalizeSandboxPolicyAttribution(entry);
+    const current = data.sandboxes[normalizedEntry.name];
     if (
       current &&
       normalizeSandboxPolicyAuthority(current.policyAuthority) !==
-        normalizeSandboxPolicyAuthority(entry.policyAuthority)
+        normalizeSandboxPolicyAuthority(normalizedEntry.policyAuthority)
     ) {
       throw new PolicyAuthorityRefusalError(
-        `Refusing to restore sandbox '${entry.name}' because its policy authority changed during recovery.`,
+        `Refusing to restore sandbox '${normalizedEntry.name}' because its policy authority changed during recovery.`,
       );
     }
-    save(reversibleRemoval.restoreSandboxEntryInRegistry(data, entry, options.defaultTransition));
+    save(
+      reversibleRemoval.restoreSandboxEntryInRegistry(
+        data,
+        normalizedEntry,
+        options.defaultTransition,
+      ),
+    );
   });
 }
 
@@ -505,7 +517,10 @@ export function restoreSandboxEntry(
 export function restoreSandboxEntryIfMissing(receipt: SandboxRemovalReceipt): boolean {
   return withLock(() => {
     const data = load();
-    const result = reversibleRemoval.restoreSandboxIfMissingInRegistry(data, receipt);
+    const result = reversibleRemoval.restoreSandboxIfMissingInRegistry(data, {
+      ...receipt,
+      entry: normalizeSandboxPolicyAttribution(receipt.entry),
+    });
     if (!result.restored) return false;
     save(result.registry);
     return result.restored;

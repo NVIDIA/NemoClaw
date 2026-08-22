@@ -139,16 +139,16 @@ export function createInferenceRouteResult(
       const providerIndex = args.indexOf("--provider");
       const modelIndex = args.indexOf("--model");
       const timeoutIndex = args.indexOf("--timeout");
+      if (timeoutIndex < 0) {
+        throw new Error("inference set fixture requires an exact --timeout value");
+      }
       active = {
         provider: args[providerIndex + 1] ?? "",
         model: args[modelIndex + 1] ?? "",
-        timeoutSeconds: timeoutIndex < 0 ? 180 : Number(args[timeoutIndex + 1]),
+        timeoutSeconds: Number(args[timeoutIndex + 1]),
       };
     }
-    if (
-      fallback.exitCode === 0 &&
-      args.join(" ") === `inference delete -g ${gateway}`
-    ) {
+    if (fallback.exitCode === 0 && args.join(" ") === `inference delete -g ${gateway}`) {
       active = null;
     }
     return fallback;

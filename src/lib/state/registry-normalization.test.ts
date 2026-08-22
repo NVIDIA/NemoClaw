@@ -428,6 +428,52 @@ describe("sandbox registry normalization", () => {
     ).toThrow(/policy authority changed/u);
   });
 
+  it("clears legacy policy attribution when an update records external authority (#9833)", async () => {
+    const registry = await loadRegistryWith({
+      legacy: {
+        name: "legacy",
+        ...createPolicyAttribution(),
+        policyTier: "strict",
+      },
+    });
+
+    expect(registry.updateSandbox("legacy", { policyAuthority: "externally-managed" })).toBe(true);
+    expect(registry.getSandbox("legacy")).toEqual({
+      name: "legacy",
+      policies: [],
+      policyAuthority: "externally-managed",
+    });
+  });
+
+  it("clears external policy attribution from direct and receipt-based recovery (#9833)", async () => {
+    const registry = await loadRegistryWith({});
+    const staleEntry = {
+      name: "external",
+      ...createPolicyAttribution(),
+      policyAuthority: "externally-managed" as const,
+      policyTier: "strict",
+    };
+
+    registry.restoreSandboxEntry(staleEntry);
+    expect(registry.getSandbox("external")).toEqual({
+      name: "external",
+      policies: [],
+      policyAuthority: "externally-managed",
+    });
+    const receipt = registry.removeSandboxWithReceipt("external")!;
+    expect(
+      registry.restoreSandboxEntryIfMissing({
+        ...receipt,
+        entry: staleEntry,
+      }),
+    ).toBe(true);
+    expect(registry.getSandbox("external")).toEqual({
+      name: "external",
+      policies: [],
+      policyAuthority: "externally-managed",
+    });
+  });
+
   it("preserves a replacement row when recovery has a different policy authority (#9833)", async () => {
     const registry = await loadRegistryWith({
       alpha: {

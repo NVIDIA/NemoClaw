@@ -15,6 +15,7 @@ import type { OwnedSandboxRecreateRuntime } from "../onboard-recreate-journal";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../types";
+import type { SandboxRecreateObservation } from "../sandbox-recreate-transaction";
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
 
 export const createOnboardPolicyAuthorityBindings =
@@ -118,10 +119,94 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<Result>(input: {
   readonly sandboxName: string;
   readonly revalidate: (sandboxIsLive: boolean, operation: string) => void;
   readonly create: () => Promise<Result>;
+  readonly captureCreatedSandboxLiveIdentity: (created: Result) => string;
+  readonly observeCreatedSandbox: () => SandboxRecreateObservation;
+  readonly cleanupTemporarySources: () => void;
+  readonly deleteCreatedSandbox: () => void | Promise<void>;
+  readonly waitForCreatedSandboxAbsence: () => boolean | Promise<boolean>;
 }): Promise<Result> {
   input.revalidate(false, `creating sandbox '${input.sandboxName}'`);
   const created = await input.create();
-  input.revalidate(true, `finalizing sandbox '${input.sandboxName}'`);
+  let createdLiveIdentityFingerprint: string | null = null;
+  let createdIdentityCaptureError: unknown = null;
+  try {
+    const captured = input.captureCreatedSandboxLiveIdentity(created);
+    if (!/^[a-f0-9]{64}$/u.test(captured)) {
+      throw new Error("OpenShell did not return one exact durable sandbox identity.");
+    }
+    createdLiveIdentityFingerprint = captured;
+  } catch (error) {
+    createdIdentityCaptureError = error;
+  }
+  try {
+    input.revalidate(true, `finalizing sandbox '${input.sandboxName}'`);
+  } catch (validationError) {
+    const compensationErrors: unknown[] = [];
+    try {
+      input.cleanupTemporarySources();
+    } catch (error) {
+      compensationErrors.push(error);
+    }
+    if (!createdLiveIdentityFingerprint) {
+      compensationErrors.push(
+        new Error(
+          `Cannot safely remove sandbox '${input.sandboxName}' after policy authority validation failed because its exact created identity was not captured. NemoClaw left the named sandbox in place.`,
+          createdIdentityCaptureError === null ? undefined : { cause: createdIdentityCaptureError },
+        ),
+      );
+    } else {
+      try {
+        const beforeDelete = input.observeCreatedSandbox();
+        if (beforeDelete.state !== "missing") {
+          if (!beforeDelete.liveIdentityFingerprint) {
+            throw new Error(
+              `Cannot safely remove sandbox '${input.sandboxName}' after policy authority validation failed because its current identity is ambiguous. NemoClaw left the named sandbox in place.`,
+            );
+          }
+          if (beforeDelete.liveIdentityFingerprint !== createdLiveIdentityFingerprint) {
+            throw new Error(
+              `Cannot safely remove sandbox '${input.sandboxName}' after policy authority validation failed because its live identity changed. NemoClaw left the replacement in place.`,
+            );
+          }
+          await input.deleteCreatedSandbox();
+          let absenceProven: boolean;
+          try {
+            absenceProven = await input.waitForCreatedSandboxAbsence();
+          } catch (error) {
+            throw new Error(
+              `OpenShell accepted deletion of sandbox '${input.sandboxName}', but exact absence remained ambiguous.`,
+              { cause: error },
+            );
+          }
+          if (!absenceProven) {
+            const afterDelete = input.observeCreatedSandbox();
+            if (afterDelete.state !== "missing") {
+              if (
+                afterDelete.liveIdentityFingerprint &&
+                afterDelete.liveIdentityFingerprint !== createdLiveIdentityFingerprint
+              ) {
+                throw new Error(
+                  `OpenShell accepted deletion of sandbox '${input.sandboxName}', but the name now identifies a replacement. NemoClaw left the replacement in place.`,
+                );
+              }
+              throw new Error(
+                `OpenShell accepted deletion of sandbox '${input.sandboxName}', but exact absence was not proven. NemoClaw left the remaining sandbox in place.`,
+              );
+            }
+          }
+        }
+      } catch (error) {
+        compensationErrors.push(error);
+      }
+    }
+    if (compensationErrors.length > 0) {
+      throw new AggregateError(
+        [validationError, ...compensationErrors],
+        "Sandbox policy authority validation failed after creation, and cleanup did not complete.",
+      );
+    }
+    throw validationError;
+  }
   return created;
 }
 
@@ -1316,6 +1401,29 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       runSandboxCreateWithPolicyAuthorityChecks({
         sandboxName,
         revalidate: revalidatePolicyAuthority,
+        captureCreatedSandboxLiveIdentity: (created) =>
+          createdSandboxLifecycle.capture(created.lifecycleRegistrationFields)
+            .lifecycleLiveIdentityFingerprint,
+        observeCreatedSandbox: () => getSandboxRecreateObservation(sandboxName, GATEWAY_NAME),
+        cleanupTemporarySources: cleanupSandboxCreateSources,
+        deleteCreatedSandbox: () => {
+          const deleteResult = hermesPortableReadyRunner
+            ? hermesPortableReadyRunner(["sandbox", "delete", sandboxName], {
+                ignoreError: true,
+                suppressOutput: true,
+              })
+            : runOpenshell(["sandbox", "delete", "-g", GATEWAY_NAME, sandboxName], {
+                ignoreError: true,
+                suppressOutput: true,
+              });
+          if (deleteResult.status !== 0) {
+            throw new Error(
+              `OpenShell did not remove sandbox '${sandboxName}' after final policy authority validation failed.`,
+            );
+          }
+        },
+        waitForCreatedSandboxAbsence: () =>
+          waitForSandboxRecreateDeleteAbsence(sandboxName, GATEWAY_NAME, note),
         create: () =>
           sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
             {
@@ -1355,6 +1463,30 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       initialSandboxPolicy,
       agentCreateInput.hermesPortableLifecycle,
     );
+    const cleanupSandboxCreateSources = (): void => {
+      const cleanupErrors: Error[] = [];
+      try {
+        if (!cleanupInitialCreateSource()) {
+          cleanupErrors.push(
+            new Error("The temporary sandbox create policy could not be removed."),
+          );
+        }
+      } catch (error) {
+        cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
+      }
+      try {
+        if (!cleanupBuildContext()) {
+          cleanupErrors.push(
+            new Error("The temporary sandbox build context could not be removed."),
+          );
+        }
+      } catch (error) {
+        cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, "Temporary sandbox create sources remain.");
+      }
+    };
     const sandboxRuntimeFields = agentCreateInput.hermesPortableLifecycle
       ? sandboxRegistryMetadata.getHermesPortableSandboxRuntimeRegistryFields(
           effectiveSandboxGpuConfig,

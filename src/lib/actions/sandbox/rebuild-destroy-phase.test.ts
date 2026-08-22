@@ -306,6 +306,7 @@ describe("rebuild destroy phase", () => {
   it("revalidates authority after confirmed deletion before local completion effects (#9833)", async () => {
     const recreateJournal = stubRecreateJournal();
     const onDeleted = vi.fn();
+    const onDeleteStateAmbiguous = vi.fn();
     const validateAfterDeleteConfirmation = vi.fn(async () => ({
       ok: false as const,
       message: "Policy authority receipt changed after deletion.",
@@ -329,6 +330,7 @@ describe("rebuild destroy phase", () => {
         relockShieldsIfNeeded: vi.fn(() => true),
         validateAfterDeleteConfirmation,
         onDeleted,
+        onDeleteStateAmbiguous,
       }),
     ).rejects.toThrow("Policy authority receipt changed after deletion.");
 
@@ -340,12 +342,58 @@ describe("rebuild destroy phase", () => {
     expect(mocks.waitUntil.mock.invocationCallOrder[0]).toBeLessThan(
       validateAfterDeleteConfirmation.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
-    expect(recreateJournal.confirmDeleted).not.toHaveBeenCalled();
+    expect(recreateJournal.confirmDeleted).toHaveBeenCalledOnce();
+    expect(vi.mocked(recreateJournal.confirmDeleted).mock.invocationCallOrder[0]).toBeLessThan(
+      validateAfterDeleteConfirmation.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(onDeleteStateAmbiguous).toHaveBeenCalledOnce();
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
     expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
     expect(onDeleted).not.toHaveBeenCalled();
     expect(mocks.listSandboxes).not.toHaveBeenCalled();
     expect(console.log).not.toHaveBeenCalledWith(expect.stringContaining("Old sandbox deleted"));
+  });
+
+  it("compensates when post-delete authority validation throws without exposing credentials (#9833)", async () => {
+    const secret = `nvapi-${"a".repeat(32)}`;
+    const recreateJournal = stubRecreateJournal();
+    const onDeleted = vi.fn();
+    const onDeleteStateAmbiguous = vi.fn();
+    const log = vi.fn();
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: {
+          name: "alpha",
+          agent: "openclaw",
+          nimContainer: "nim-alpha",
+        },
+        staleRecovery: false,
+        recreateJournal,
+        backupManifest: null,
+        log,
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
+        relockShieldsIfNeeded: vi.fn(() => true),
+        validateAfterDeleteConfirmation: async () => {
+          throw new Error(`authority probe failed with ${secret}`);
+        },
+        onDeleted,
+        onDeleteStateAmbiguous,
+      }),
+    ).rejects.toThrow("Policy authority validation failed after sandbox deletion.");
+
+    expect(recreateJournal.confirmDeleted).toHaveBeenCalledOnce();
+    expect(onDeleteStateAmbiguous).toHaveBeenCalledOnce();
+    expect(onDeleted).not.toHaveBeenCalled();
+    expect(mocks.stopNimContainer).not.toHaveBeenCalled();
+    expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
+    const diagnostics = log.mock.calls.flat().join("\n");
+    expect(diagnostics).toContain("Unexpected post-delete validation failure");
+    expect(diagnostics).toContain("<REDACTED>");
+    expect(diagnostics).not.toContain(secret);
   });
 
   it("retains unexpected delete-edge diagnostics without logging credentials (#6195)", async () => {
@@ -491,53 +539,56 @@ describe("rebuild destroy phase", () => {
         gatewayPort: 29080,
       },
     ],
-  ])("refuses deletion when the registry %s changes before MCP preparation (#7062)", async (_label, currentEntry) => {
-    mocks.getSandbox.mockReturnValue(currentEntry);
-    mocks.prepareMcpForRebuild.mockResolvedValue({
-      entries: [{ server: "github" }],
-      detachedProviderEntries: [{ server: "github" }],
-      scrubbedAdapterEntries: [],
-    });
-    const relockShieldsIfNeeded = vi.fn(() => true);
+  ])(
+    "refuses deletion when the registry %s changes before MCP preparation (#7062)",
+    async (_label, currentEntry) => {
+      mocks.getSandbox.mockReturnValue(currentEntry);
+      mocks.prepareMcpForRebuild.mockResolvedValue({
+        entries: [{ server: "github" }],
+        detachedProviderEntries: [{ server: "github" }],
+        scrubbedAdapterEntries: [],
+      });
+      const relockShieldsIfNeeded = vi.fn(() => true);
 
-    await expect(
-      runRebuildDestroyPhase({
-        sandboxName: "alpha",
-        sandboxEntry: {
-          name: "alpha",
-          agent: "openclaw",
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
-        },
-        staleRecovery: false,
-        recreateJournal: stubRecreateJournal(),
-        backupManifest: null,
-        force: true,
-        log: vi.fn(),
-        bail: vi.fn((message: string): never => {
-          throw new Error(message);
+      await expect(
+        runRebuildDestroyPhase({
+          sandboxName: "alpha",
+          sandboxEntry: {
+            name: "alpha",
+            agent: "openclaw",
+            gatewayName: "nemoclaw",
+            gatewayPort: 8080,
+          },
+          staleRecovery: false,
+          recreateJournal: stubRecreateJournal(),
+          backupManifest: null,
+          force: true,
+          log: vi.fn(),
+          bail: vi.fn((message: string): never => {
+            throw new Error(message);
+          }),
+          relockShieldsIfNeeded,
+          onDeleted: vi.fn(),
         }),
-        relockShieldsIfNeeded,
-        onDeleted: vi.fn(),
-      }),
-    ).rejects.toThrow("Sandbox delete target changed during rebuild preparation.");
+      ).rejects.toThrow("Sandbox delete target changed during rebuild preparation.");
 
-    expect(mocks.getSandbox).toHaveBeenCalledTimes(2);
-    expect(mocks.prepareMcpForRebuild.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.getSandbox.mock.invocationCallOrder[1] ?? Number.POSITIVE_INFINITY,
-    );
-    expect(mocks.runOpenshell).not.toHaveBeenCalled();
-    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
-      "alpha",
-      [{ server: "github" }],
-      [],
-      undefined,
-    );
-    expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
-    expect(mocks.stopNimContainer).not.toHaveBeenCalled();
-    expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
-    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
-  });
+      expect(mocks.getSandbox).toHaveBeenCalledTimes(2);
+      expect(mocks.prepareMcpForRebuild.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.getSandbox.mock.invocationCallOrder[1] ?? Number.POSITIVE_INFINITY,
+      );
+      expect(mocks.runOpenshell).not.toHaveBeenCalled();
+      expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
+        "alpha",
+        [{ server: "github" }],
+        [],
+        undefined,
+      );
+      expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
+      expect(mocks.stopNimContainer).not.toHaveBeenCalled();
+      expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
+      expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+    },
+  );
 
   it("refuses sandbox deletion when read-only MCP state drifts at the delete edge (#7062)", async () => {
     const revalidateBeforeDelete = vi.fn().mockRejectedValue(new Error("live policy drifted"));
@@ -615,12 +666,7 @@ describe("rebuild destroy phase", () => {
     expect(revalidateBeforeDelete.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.runOpenshell.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
-    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
-      "alpha",
-      [],
-      [],
-      undefined,
-    );
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], [], undefined);
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
     expect(onDeleted).not.toHaveBeenCalled();
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();

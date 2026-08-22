@@ -271,7 +271,7 @@ describe("shields down policy rejection", () => {
     expect(state).toMatchObject({ shieldsDown: false, shieldsDownAt: null });
   });
 
-  it("retains auto-restore authority when rejected policy state cleanup fails (#8198)", () => {
+  it("preserves final policy refusal and recovery authority when cleanup fails (#9833)", () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     const statePath = path.join(stateDir, "shields-openclaw.json");
     fs.mkdirSync(stateDir, { recursive: true });
@@ -295,16 +295,23 @@ describe("shields down policy rejection", () => {
         send: vi.fn(() => true),
         kill: timerKill,
       }),
-      run: (cmd) => ({
-        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
-      }),
+      run: (command) => {
+        const policySet =
+          Array.isArray(command) && command.includes("policy") && command.includes("set");
+        return {
+          status: policySet ? 1 : 0,
+          stderr: policySet
+            ? "Error: code: 'failed_precondition', message: 'global policy owns this sandbox'"
+            : "",
+        };
+      },
     });
     expect(() =>
       harness.shieldsDown("openclaw", {
         reason: "verify recovery authority",
         throwOnError: true,
       }),
-    ).toThrow(/Could not apply/);
+    ).toThrow(expect.objectContaining({ code: "NEMOCLAW_POLICY_AUTHORITY_REFUSAL" }));
 
     expect(JSON.parse(fs.readFileSync(statePath, "utf-8"))).toMatchObject({
       shieldsDown: true,
@@ -321,6 +328,18 @@ describe("shields down policy rejection", () => {
       JSON.parse(fs.readFileSync(path.join(stateDir, transitionName!), "utf-8")),
     ).toMatchObject({ phase: "policy_rejected" });
     expect(timerKill).not.toHaveBeenCalled();
+    expect(harness.getOpenClawPosture()).toBe("locked");
+    expect(harness.dockerSpawnCalls.some(({ args }) => args.includes("unlock"))).toBe(false);
+    expect(
+      harness.runSpy.mock.calls.filter(
+        ([command]) =>
+          Array.isArray(command) && command.includes("policy") && command.includes("set"),
+      ),
+    ).toHaveLength(1);
+    expect(harness.auditSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "shields_down" }),
+    );
+    expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain("Config unlocked for");
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
       "The scheduled auto-restore remains authoritative.",
     );

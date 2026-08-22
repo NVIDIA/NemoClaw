@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
+import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as defs from "../../agent/defs";
 import * as credentials from "../../credentials/store";
@@ -125,7 +126,7 @@ describe("policy channel remove/enable flows", () => {
     vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["slack"]);
     vi.spyOn(policies, "listPresets").mockReturnValue([{ name: "slack" } as never]);
     const removePreset = vi.spyOn(policies, "removePreset").mockImplementation(() => {
-      throw new Error("Slack policy is externally managed");
+      throw new PolicyAuthorityRefusalError("Slack policy is externally managed");
     });
     vi.spyOn(gatewayRuntimeAction, "recoverNamedGatewayRuntime").mockResolvedValue({
       recovered: true,
@@ -213,7 +214,7 @@ describe("policy channel remove/enable flows", () => {
     expect(logSpy.mock.calls.flat().join("\n")).not.toContain("Removed whatsapp channel.");
   });
 
-  it("continues owned cleanup when policy authority changes after the first provider detach (#9833)", async () => {
+  it("continues owned channel cleanup when external policy removal refuses (#9833)", async () => {
     const { commands, removePreset, runOpenshell, updateSandbox } =
       await arrangeOpenClawSlackRemoval();
     vi.stubEnv("SLACK_BOT_TOKEN", "xoxb-host-only");
@@ -241,7 +242,6 @@ describe("policy channel remove/enable flows", () => {
     );
     expect(removePreset).toHaveBeenCalledWith("alpha", "slack");
     expect(updateSandbox).toHaveBeenCalled();
-    expect(policyChannelDependencies.preflightSandboxPolicyAuthority).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
@@ -261,7 +261,7 @@ describe("policy channel remove/enable flows", () => {
     vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["googlechat"]);
     vi.spyOn(policies, "listPresets").mockReturnValue([{ name: "googlechat" } as never]);
     const removePreset = vi.spyOn(policies, "removePreset").mockImplementation(() => {
-      throw new Error("Google Chat policy is externally managed");
+      throw new PolicyAuthorityRefusalError("Google Chat policy is externally managed");
     });
     vi.spyOn(gatewayRuntimeAction, "recoverNamedGatewayRuntime").mockResolvedValue({
       recovered: true,
@@ -277,9 +277,6 @@ describe("policy channel remove/enable flows", () => {
     const stopTunnel = vi
       .spyOn(policyChannelDependencies, "stopGooglechatWebhookTunnel")
       .mockImplementation(() => undefined);
-    vi.mocked(policyChannelDependencies.preflightSandboxPolicyAuthority).mockImplementation(() => {
-      throw new Error("Google Chat policy is externally managed");
-    });
     vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "1");
 
     await expect(removeSandboxChannel("alpha", { channel: "googlechat" })).resolves.toBeUndefined();
@@ -289,7 +286,6 @@ describe("policy channel remove/enable flows", () => {
     expect(stopTunnel.mock.invocationCallOrder[0]).toBeLessThan(
       removePreset.mock.invocationCallOrder[0],
     );
-    expect(policyChannelDependencies.preflightSandboxPolicyAuthority).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
   });
 

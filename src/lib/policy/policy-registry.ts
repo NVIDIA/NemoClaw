@@ -14,6 +14,7 @@ export {
   getCustomPolicies,
   getDisabledMessagingChannelsFromEntry,
   getSandbox,
+  normalizeSandboxPolicyAttribution,
   removeBaselineExclusion,
   removeCustomPolicyByName,
   updateSandbox,

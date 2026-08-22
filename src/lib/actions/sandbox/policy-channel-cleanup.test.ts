@@ -4,7 +4,7 @@
 // Cleanup-path regression: with the new strict `toMessagingAgentId` semantics,
 // stale messaging state on a non-messaging agent must still be cleanable
 // without raising MessagingAgentNotSupportedError. `channels remove` should
-// strip the stored messaging plan from the registry, `channels pause/resume`
+// strip the stored messaging plan from the registry, `channels stop/start`
 // should fail closed (no throw, no plan mutation).
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";

@@ -117,7 +117,13 @@ describe("rebuild policy authority preflight", () => {
     expect(updateSandbox).toHaveBeenCalledWith("alpha", {
       policyAuthority: "externally-managed",
     });
-    expect(entry.policyAuthority).toBe("externally-managed");
+    expect(entry).toEqual({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      policies: [],
+      policyAuthority: "externally-managed",
+    });
   });
 
   it("backfills legacy rebuild authority after live and global requirements match (#9833)", async () => {
@@ -140,7 +146,13 @@ describe("rebuild policy authority preflight", () => {
     expect(updateSandbox).toHaveBeenCalledWith("alpha", {
       policyAuthority: "externally-managed",
     });
-    expect(entry.policyAuthority).toBe("externally-managed");
+    expect(entry).toEqual({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      policies: [],
+      policyAuthority: "externally-managed",
+    });
     expect(receipt.authority).toBe("externally-managed");
   });
 

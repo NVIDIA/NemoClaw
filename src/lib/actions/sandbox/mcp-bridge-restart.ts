@@ -12,6 +12,7 @@ import {
   applyGeneratedPolicy,
   assertGeneratedPolicyMutationSafe,
   buildRequiredMcpBridgePolicy,
+  McpPolicyAuthorityRefusalError,
   preflightMcpPolicyAuthority,
   qualifyMcpPolicyAuthorityReceipt,
   revalidateMcpPolicyAuthorityReceipt,
@@ -241,28 +242,55 @@ export async function restoreExistingMcpBridgeRuntime(
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
   const teardownRollback = options.lifecyclePhase === "teardown-rollback";
-  const resolvedByServer = teardownRollback
-    ? new Map<string, McpBridgeTargetValidation>()
-    : await preflightMcpEntryTargets(entries);
+  const resolvedByServer = await preflightMcpEntryTargets(entries);
   const sandbox = getSandboxOrThrow(sandboxName);
   assertMcpDestroyNotPending(sandbox);
-  const policyAuthorityReceipt = teardownRollback
-    ? undefined
-    : qualifyMcpPolicyAuthorityReceipt({
-        operation: "restore managed MCP runtime",
-        requiredPolicyContents: entries.map((entry) =>
-          buildRequiredMcpBridgePolicy(entry, resolvedTargetPins(resolvedByServer, entry)),
-        ),
-        sandboxName,
-      });
+  let teardownAuthorityRefusal: McpPolicyAuthorityRefusalError | undefined;
+  let policyAuthorityReceipt: ReturnType<typeof qualifyMcpPolicyAuthorityReceipt> | undefined;
+  try {
+    policyAuthorityReceipt = qualifyMcpPolicyAuthorityReceipt({
+      operation: teardownRollback
+        ? "restore managed MCP runtime after teardown abort"
+        : "restore managed MCP runtime",
+      requiredPolicyContents: entries.map((entry) =>
+        buildRequiredMcpBridgePolicy(entry, resolvedTargetPins(resolvedByServer, entry)),
+      ),
+      sandboxName,
+    });
+  } catch (error) {
+    if (!teardownRollback || !(error instanceof McpPolicyAuthorityRefusalError)) throw error;
+    // Live policy must not change after this refusal. Provider and adapter
+    // compensation still runs below, then the refusal reports that policy
+    // restoration remains pending.
+    teardownAuthorityRefusal = error;
+  }
   const revalidateBeforeMutation = () =>
-    policyAuthorityReceipt
+    !teardownRollback && policyAuthorityReceipt
       ? revalidateMcpPolicyAuthorityReceipt(
           policyAuthorityReceipt,
           options.validateContainingPolicyReceipt,
         )
       : Promise.resolve();
-  const policyAuthority = policyAuthorityReceipt?.authority;
+  const policyAuthority = policyAuthorityReceipt?.authority ?? sandbox.policyAuthority;
+  const runTeardownPolicyMutation = async (mutation: () => void): Promise<boolean> => {
+    if (!teardownRollback) {
+      mutation();
+      return true;
+    }
+    if (teardownAuthorityRefusal || !policyAuthorityReceipt) return false;
+    try {
+      // The containing lifecycle receipt can already be the reason teardown
+      // aborted. Recheck the MCP receipt itself so owned compensation does not
+      // reuse a stale enclosing receipt.
+      await revalidateMcpPolicyAuthorityReceipt(policyAuthorityReceipt);
+      mutation();
+      return true;
+    } catch (error) {
+      if (!(error instanceof McpPolicyAuthorityRefusalError)) throw error;
+      teardownAuthorityRefusal = error;
+      return false;
+    }
+  };
   if (!teardownRollback) {
     assertMcpCredentialBoundaryRuntimeVersion();
   }
@@ -280,7 +308,13 @@ export async function restoreExistingMcpBridgeRuntime(
   const defaultAdapter = getBridgeAdapter(getSandboxAgent(sandbox));
   for (const entry of entries) {
     if (policyAuthority === "nemoclaw-managed") {
-      assertGeneratedPolicyMutationSafe(sandboxName, entry);
+      if (teardownRollback) {
+        await runTeardownPolicyMutation(() =>
+          assertGeneratedPolicyMutationSafe(sandboxName, entry),
+        );
+      } else {
+        assertGeneratedPolicyMutationSafe(sandboxName, entry);
+      }
     }
     const provider = assertMcpProviderRecoverable(entry);
     if (provider.exists !== true) {
@@ -299,16 +333,30 @@ export async function restoreExistingMcpBridgeRuntime(
     await revalidateBeforeMutation();
     ensureMcpBridgeProviderProfile();
     if (policyAuthority === "nemoclaw-managed") {
-      await revalidateBeforeMutation();
-      applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
-        bindCredential: false,
-      });
+      if (teardownRollback) {
+        await runTeardownPolicyMutation(() =>
+          applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
+            bindCredential: false,
+          }),
+        );
+      } else {
+        await revalidateBeforeMutation();
+        applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
+          bindCredential: false,
+        });
+      }
     }
     await revalidateBeforeMutation();
     attachProvider(sandboxName, entry);
     if (policyAuthority === "nemoclaw-managed") {
-      await revalidateBeforeMutation();
-      applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry));
+      if (teardownRollback) {
+        await runTeardownPolicyMutation(() =>
+          applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry)),
+        );
+      } else {
+        await revalidateBeforeMutation();
+        applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry));
+      }
     }
     await revalidateBeforeMutation();
     refreshMcpProviderEnvironment(entry);
@@ -335,4 +383,8 @@ export async function restoreExistingMcpBridgeRuntime(
   ) {
     assertHermesMcpRuntimeIntent(sandboxName, { entries });
   }
+  if (teardownRollback && policyAuthorityReceipt) {
+    await runTeardownPolicyMutation(() => undefined);
+  }
+  if (teardownAuthorityRefusal) throw teardownAuthorityRefusal;
 }

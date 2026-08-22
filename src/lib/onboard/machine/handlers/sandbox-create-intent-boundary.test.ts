@@ -199,8 +199,8 @@ describe("sandbox create intent machine boundary", () => {
       const session = createSession({
         sandboxName: "saved",
         policyAuthority: "externally-managed",
-        policyPresets: ["github"],
       });
+      session.policyPresets = ["github"];
       const { deps, calls } = createDeps({}, session);
 
       await handleSandboxState({

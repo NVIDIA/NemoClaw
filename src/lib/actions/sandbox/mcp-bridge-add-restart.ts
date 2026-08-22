@@ -581,6 +581,12 @@ async function addMcpBridgeUnlocked(
     if (rollbackAuthorityRefusal) {
       throw new McpPolicyAuthorityRefusalError(
         `${error instanceof Error ? error.message : String(error)}\n${rollbackAuthorityRefusal.message}`,
+        {
+          cause: error,
+          ...(error instanceof McpBridgeError
+            ? { exitCode: error.exitCode, reasonCode: error.reasonCode }
+            : {}),
+        },
       );
     }
     throw error;

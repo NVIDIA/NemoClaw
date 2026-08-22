@@ -295,6 +295,54 @@ describe("Shields policy-authority mutation boundaries", () => {
     expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain("Config unlocked for");
   });
 
+  it("cleans provisional Shields down recovery before preserving a final policy refusal (#9833)", () => {
+    writeLockedShieldsState(homeDir, "openclaw", openClawConfigPath);
+    const stateDir = path.join(homeDir, ".nemoclaw", "state");
+    const statePath = path.join(stateDir, "shields-openclaw.json");
+    const harness = createShieldsFlowHarness(requireSource, homeDir, {
+      initialOpenClawPosture: "locked",
+      run: (command) => {
+        const policySet =
+          Array.isArray(command) && command.includes("policy") && command.includes("set");
+        return {
+          status: policySet ? 1 : 0,
+          stderr: policySet
+            ? "Error: code: 'failed_precondition', message: 'global policy owns this sandbox'"
+            : "",
+        };
+      },
+    });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        reason: "structured policy refusal",
+        throwOnError: true,
+      }),
+    ).toThrow(expect.objectContaining({ code: "NEMOCLAW_POLICY_AUTHORITY_REFUSAL" }));
+
+    expect(JSON.parse(fs.readFileSync(statePath, "utf8"))).toMatchObject({
+      shieldsDown: false,
+      shieldsDownAt: null,
+      shieldsPolicySnapshotPath: null,
+    });
+    expect(fs.existsSync(path.join(stateDir, "shields-timer-openclaw.json"))).toBe(false);
+    expect(fs.readdirSync(stateDir).some((name) => name.startsWith("shields-transition-"))).toBe(
+      false,
+    );
+    expect(harness.getOpenClawPosture()).toBe("locked");
+    expect(harness.dockerSpawnCalls.some(({ args }) => args.includes("unlock"))).toBe(false);
+    expect(
+      harness.runSpy.mock.calls.filter(
+        ([command]) =>
+          Array.isArray(command) && command.includes("policy") && command.includes("set"),
+      ),
+    ).toHaveLength(1);
+    expect(harness.auditSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "shields_down" }),
+    );
+    expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain("Config unlocked for");
+  });
+
   it("rechecks after Hermes route wait before Shields down success (#9833)", () => {
     const sandboxName = "hermes";
     const configTarget = {
@@ -394,6 +442,53 @@ describe("Shields policy-authority mutation boundaries", () => {
     expect(harness.runSpy).toHaveBeenCalledOnce();
     expect(harness.getOpenClawPosture()).toBe("mutable");
     expect(harness.auditSpy).not.toHaveBeenCalled();
+  });
+
+  it("relocks config and preserves recovery after a final snapshot policy refusal (#9833)", () => {
+    const stateDir = path.join(homeDir, ".nemoclaw", "state");
+    const statePath = path.join(stateDir, "shields-openclaw.json");
+    const snapshotPath = path.join(stateDir, "policy-snapshot-openclaw-refused.yaml");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  restrictive: {}\n");
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({ shieldsDown: true, shieldsPolicySnapshotPath: snapshotPath }),
+    );
+    const stateBefore = fs.readFileSync(statePath, "utf8");
+    const harness = createShieldsFlowHarness(requireSource, homeDir, {
+      confirmOpenClawInodeFlags: true,
+      run: (command) => {
+        const policySet =
+          Array.isArray(command) && command.includes("policy") && command.includes("set");
+        return {
+          status: policySet ? 1 : 0,
+          stderr: policySet
+            ? "Error: code: 'failed_precondition', message: 'global policy owns this sandbox'"
+            : "",
+        };
+      },
+    });
+
+    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
+      expect.objectContaining({ code: "NEMOCLAW_POLICY_AUTHORITY_REFUSAL" }),
+    );
+
+    const policySetCalls = harness.runSpy.mock.calls.filter(
+      ([command]) =>
+        Array.isArray(command) && command.includes("policy") && command.includes("set"),
+    );
+    expect(policySetCalls).toHaveLength(1);
+    expect(harness.getOpenClawPosture()).toBe("locked");
+    expect(
+      harness.dockerSpawnCalls.filter(
+        ({ args }) =>
+          args.includes("lock") && args.some((arg) => arg.endsWith("openclaw-config-guard.py")),
+      ),
+    ).toHaveLength(2);
+    expect(fs.readFileSync(statePath, "utf8")).toBe(stateBefore);
+    expect(fs.existsSync(snapshotPath)).toBe(true);
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+    expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain("Lockdown active for");
   });
 
   it("rechecks a captured live policy before starting the Shields timer (#9833)", () => {
@@ -527,6 +622,106 @@ describe("Shields policy-authority mutation boundaries", () => {
 
     expect(harness.dockerSpawnCalls.filter(({ args }) => args.includes("lock"))).toHaveLength(2);
     expect(harness.auditSpy).not.toHaveBeenCalled();
+  });
+
+  it("relocks the persisted target when preparing-transition inline recovery is refused (#9833)", () => {
+    const sandboxName = "openclaw";
+    const processToken = "d".repeat(32);
+    const stateDir = path.join(homeDir, ".nemoclaw", "state");
+    const statePath = path.join(stateDir, `shields-${sandboxName}.json`);
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+    const transitionPath = path.join(
+      stateDir,
+      `shields-transition-${sandboxName}-${processToken}.json`,
+    );
+    const snapshotPath = path.join(stateDir, "policy-snapshot-preparing-refusal.yaml");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  restrictive: {}\n");
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        shieldsDown: true,
+        shieldsDownAt: new Date(Date.now() - 120_000).toISOString(),
+        shieldsDownTimeout: 60,
+        shieldsDownReason: "preparing transition refusal",
+        shieldsDownPolicy: "permissive",
+        shieldsPolicySnapshotPath: snapshotPath,
+      }),
+    );
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify({
+        pid: 4242,
+        sandboxName,
+        snapshotPath,
+        restoreAt: new Date(Date.now() - 60_000).toISOString(),
+        processToken,
+        timerProcessStartIdentity: "expired-timer-start",
+        agentName: "openclaw",
+        configPath: openClawConfigPath,
+        configDir: "/sandbox/.openclaw",
+      }),
+    );
+    fs.writeFileSync(
+      transitionPath,
+      JSON.stringify({
+        version: 1,
+        phase: "preparing",
+        ownerPid: process.pid,
+        ownerStartIdentity: "preparing-owner-start",
+        processToken,
+        sandboxName,
+        snapshotPath,
+      }),
+      { mode: 0o600 },
+    );
+    const stateBefore = fs.readFileSync(statePath, "utf8");
+    const markerBefore = fs.readFileSync(markerPath, "utf8");
+    const harness = createShieldsFlowHarness(requireSource, homeDir, {
+      confirmOpenClawInodeFlags: true,
+      processStartIdentity: "preparing-owner-start",
+    });
+    vi.spyOn(Atomics, "wait")
+      .mockImplementationOnce(() => {
+        const transition = JSON.parse(fs.readFileSync(transitionPath, "utf8"));
+        fs.writeFileSync(transitionPath, JSON.stringify({ ...transition, phase: "active" }));
+        return "ok";
+      })
+      .mockReturnValue("ok");
+    const policyAuthority = requireSource(
+      "../adapters/openshell/policy-authority.js",
+    ) as typeof import("../src/lib/adapters/openshell/policy-authority.js");
+    const refusal = Object.assign(new Error("Preparing transition policy authority refusal"), {
+      code: "NEMOCLAW_POLICY_AUTHORITY_REFUSAL",
+    });
+    vi.mocked(policyAuthority.inspectSandboxPolicyAuthority).mockImplementation(() => {
+      throw refusal;
+    });
+
+    let caught: unknown;
+    try {
+      harness.getShieldsPosture(sandboxName, true);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBe(refusal);
+    expect(harness.getOpenClawPosture()).toBe("locked");
+    expect(
+      harness.dockerSpawnCalls.filter(
+        ({ args }) =>
+          args.includes("lock") && args.some((arg) => arg.endsWith("openclaw-config-guard.py")),
+      ),
+    ).toHaveLength(2);
+    expect(harness.runSpy).not.toHaveBeenCalled();
+    expect(fs.readFileSync(statePath, "utf8")).toBe(stateBefore);
+    expect(fs.readFileSync(markerPath, "utf8")).toBe(markerBefore);
+    expect(JSON.parse(fs.readFileSync(transitionPath, "utf8"))).toMatchObject({
+      phase: "active",
+      processToken,
+    });
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+    expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain("Lockdown active for");
   });
 
   it("stops mutable rollback when authority changes during timer revocation (#9833)", () => {

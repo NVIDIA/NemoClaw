@@ -122,7 +122,17 @@ function assertFreshDistArtifacts(): void {
 
 function writeSuccessfulOpenShell(tmpDir: string): string {
   const openshellPath = path.join(tmpDir, "openshell");
-  fs.writeFileSync(openshellPath, `#!${process.execPath}\nprocess.exit(0);\n`, { mode: 0o755 });
+  fs.writeFileSync(
+    openshellPath,
+    `#!${process.execPath}
+const args = process.argv.slice(2);
+if (args[0] === "policy" && args[1] === "get" && args.includes("--output") && args.includes("json")) {
+  process.stdout.write(JSON.stringify({ scope: "sandbox", sandbox: args.at(-1), status: "effective", policy_source: "sandbox", policy: {} }) + "\\n");
+}
+process.exit(0);
+`,
+    { mode: 0o755 },
+  );
   return openshellPath;
 }
 
@@ -130,7 +140,7 @@ function probeEnvironment(tmpDir: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     HOME: tmpDir,
     TMPDIR: tmpDir,
-    PATH: process.env.PATH || "/usr/bin:/bin",
+    PATH: `${tmpDir}:/usr/bin:/bin`,
     NEMOCLAW_OPENSHELL_BIN: writeSuccessfulOpenShell(tmpDir),
     NODE_ENV: "test",
     NEMOCLAW_NON_INTERACTIVE: "1",
@@ -229,14 +239,16 @@ if (scenario.mode === "dashboard-port-composition") {
   const onboardDashboard = require(${onboardDashboardPath});
   const createOnboardDashboardHelpers = onboardDashboard.createOnboardDashboardHelpers;
   let dashboardForwardCalls = 0;
+  const nextDashboardForwardPort = () => {
+    const port = dashboardForwardCalls === 0 ? 18791 : 18792;
+    dashboardForwardCalls += 1;
+    called.push("forward-port:" + String(port));
+    return port;
+  };
   onboardDashboard.createOnboardDashboardHelpers = (deps) => ({
     ...createOnboardDashboardHelpers(deps),
-    ensureAgentDashboardForward: () => {
-      const port = dashboardForwardCalls === 0 ? 18791 : 18792;
-      dashboardForwardCalls += 1;
-      called.push("forward-port:" + String(port));
-      return port;
-    },
+    ensureAgentDashboardForward: nextDashboardForwardPort,
+    ensureFinalizationAgentDashboardForward: nextDashboardForwardPort,
   });
   require(${agentOnboardPath}).handleAgentSetup = async () => undefined;
   require(${agentSelectionPath}).createOnboardAgentSelector = () => async () => ({
@@ -275,6 +287,7 @@ function seedResumeSession(state, sandboxComplete = true) {
     sandboxName: "fsm-sandbox",
     provider: "openai-api",
     model: "gpt-test",
+    policyAuthority: "nemoclaw-managed",
     machine: machine(state),
     metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
   });
@@ -393,6 +406,7 @@ flowSlices.runFinalOnboardFlowSequence = async ({ context, phases }) => {
       model: "gpt-test",
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
+      policyAuthority: "nemoclaw-managed",
     });
     const agentSetupPhase = phases.find((phase) => phase.state === "agent_setup");
     if (!agentSetupPhase) throw new Error("agent setup phase was not composed");
@@ -440,6 +454,7 @@ if (
     endpointSource: "onboard",
     gatewayName: "nemoclaw-9090",
     gatewayPort: 9090,
+    policyAuthority: "nemoclaw-managed",
   });
 }
 

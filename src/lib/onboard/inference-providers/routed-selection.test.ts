@@ -100,6 +100,29 @@ describe("routed provider policy authority", () => {
     },
   );
 
+  it("leaves an invalid routed endpoint for route validation (#9833)", async () => {
+    const endpoint = "http://[::1";
+    const selection = state();
+    selection.assertRouteCompatible = vi.fn(() => {
+      expect(selection.endpointUrl).toBe(endpoint);
+      throw new Error("invalid routed endpoint");
+    });
+    const handle = createRoutedSelectionHandler(
+      deps({
+        loadBlueprintProfile: () => ({
+          provider_name: "nvidia-router",
+          model: "router/model",
+          endpoint,
+          credential_default: "nvapi-test",
+          router: { enabled: true, credential_env: "NVIDIA_API_KEY" },
+        }),
+      }),
+    );
+
+    await expect(handle(selection)).rejects.toThrow("invalid routed endpoint");
+    expect(selection.assertRouteCompatible).toHaveBeenCalledOnce();
+  });
+
   it("stops before the first routed credential mutation when authority changes (#9833)", async () => {
     const saveCredential = vi.fn();
     const stageRouterProviderKeyBridge = vi.fn();

@@ -26,6 +26,7 @@ const replace = (module, name, value) => Object.defineProperty(module, name, {
 const registry = require("./src/lib/state/registry.js");
 const policies = require("./src/lib/policy/index.js");
 const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
+const contracts = require("./src/lib/actions/sandbox/mcp-bridge-contracts.js");
 const policy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 const policyAuthority = require("./src/lib/actions/sandbox/policy-authority/preflight.js");
 const provider = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
@@ -45,6 +46,7 @@ let rollbackRefusalOffset = 1;
 let recordRollbackInspections = false;
 let adapterRegistered = false;
 let providerExists = false;
+let providerDrifted = false;
 let providerRecoverable = true;
 const providerId = "11111111-2222-4333-8444-555555555555";
 
@@ -71,7 +73,7 @@ const inspectPolicyAuthority = (options) => {
       "OpenShell policy authority changed during MCP setup",
     );
   }
-  return "externally-managed";
+  return authorityMode === "managed" ? "nemoclaw-managed" : "externally-managed";
 };
 replace(policy, "preflightMcpPolicyAuthority", inspectPolicyAuthority);
 replace(policyAuthority, "preflightSandboxPolicyAuthority", inspectPolicyAuthority);
@@ -105,7 +107,9 @@ replace(adapters, "registerAgentAdapter", () => {
   if (refuseRollbackAfterAdapterFailure) {
     rejectAuthorityAt = authorityCheck + rollbackRefusalOffset;
     recordRollbackInspections = true;
-    throw new Error("adapter reload failed");
+    throw new contracts.McpBridgeError("adapter reload failed", 2, "unresolved", {
+      cause: new Error("adapter reload root"),
+    });
   }
   if (rejectAfterAdapter) rejectAuthorityAt = authorityCheck + 1;
 });
@@ -121,7 +125,11 @@ const providerInspection = () => {
   return {
     credentialKeys: providerExists ? ["MCP_TOKEN"] : null,
     exists: providerExists,
-    id: providerExists ? providerId : null,
+    id: providerExists
+      ? providerDrifted
+        ? "99999999-8888-4777-8666-555555555555"
+        : providerId
+      : null,
     resourceVersion: providerExists ? "1" : null,
     type: providerExists ? "nemoclaw-mcp-v1" : null,
   };
@@ -292,22 +300,65 @@ const addOptions = {
     providerExists = false;
     mutations.length = 0;
     let message = "";
+    let exitCode = null;
+    let reasonCode = null;
+    let causeMessage = null;
     try {
       await bridge.addMcpBridge(sandboxName, addOptions);
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
+      exitCode = error?.exitCode ?? null;
+      reasonCode = error?.reasonCode ?? null;
+      causeMessage = error?.cause instanceof Error ? error.cause.message : null;
     }
     refuseRollbackAfterAdapterFailure = false;
     recordRollbackInspections = false;
     rollbackRaces.push({
       bridge: registry.getSandbox(sandboxName)?.mcp?.bridges?.example,
+      causeMessage,
+      exitCode,
       message,
       mutations: [...mutations],
+      reasonCode,
       refusalOffset: rollbackRefusalOffset,
     });
   }
 
+  registry.registerSandbox({
+    name: "rb-policy-refusal",
+    agent: "openclaw",
+    gatewayName: "nemoclaw",
+    policyAuthority: "nemoclaw-managed",
+  });
+  authorityMode = "managed";
+  authorityCheck = 0;
+  rejectAuthorityAt = 0;
+  rollbackRefusalOffset = 99;
+  refuseRollbackAfterAdapterFailure = true;
+  refusePolicyRemoval = true;
+  adapterRegistered = false;
+  providerExists = false;
+  mutations.length = 0;
+  let rollbackPolicyRefusal = null;
+  try {
+    await bridge.addMcpBridge("rb-policy-refusal", addOptions);
+  } catch (error) {
+    rollbackPolicyRefusal = {
+      causeMessage: error?.cause instanceof Error ? error.cause.message : null,
+      exitCode: error?.exitCode ?? null,
+      message: error instanceof Error ? error.message : String(error),
+      nestedCauseMessage:
+        error?.cause?.cause instanceof Error ? error.cause.cause.message : null,
+      reasonCode: error?.reasonCode ?? null,
+    };
+  }
+  refuseRollbackAfterAdapterFailure = false;
+  refusePolicyRemoval = false;
+  recordRollbackInspections = false;
+  const rollbackPolicyRefusalMutations = [...mutations];
+
   const restart = require("./src/lib/actions/sandbox/mcp-bridge-restart.js");
+  authorityMode = "external";
   const restoreRaces = [];
   for (let refusalAt = 1; refusalAt <= 6; refusalAt += 1) {
     const sandboxName = "restore-race-" + refusalAt;
@@ -386,6 +437,41 @@ const addOptions = {
     mutations: [...mutations],
   };
 
+  const removeResidualRefusalEntry = {
+    ...afterAdd.bridge,
+    providerName: "rm-resid-refusal-mcp-example",
+    providerId,
+  };
+  registry.registerSandbox({
+    name: "rm-resid-refusal",
+    agent: "openclaw",
+    gatewayName: "nemoclaw",
+    policyAuthority: "nemoclaw-managed",
+    mcp: { bridges: { example: removeResidualRefusalEntry } },
+  });
+  refusePolicyRemoval = true;
+  providerDrifted = true;
+  adapterRegistered = true;
+  providerExists = true;
+  mutations.length = 0;
+  let removeResidualRefusalMessage = "";
+  let removeResidualRefusalName = "";
+  try {
+    await bridge.removeMcpBridge("rm-resid-refusal", "example", {
+      force: true,
+      allowResidual: true,
+    });
+  } catch (error) {
+    removeResidualRefusalMessage = error instanceof Error ? error.message : String(error);
+    removeResidualRefusalName = error?.name ?? "";
+  }
+  refusePolicyRemoval = false;
+  providerDrifted = false;
+  const afterRemoveResidualRefusal = {
+    bridgePresent: !!registry.getSandbox("rm-resid-refusal")?.mcp?.bridges?.example,
+    mutations: [...mutations],
+  };
+
   registry.registerSandbox({
     name: "resume",
     agent: "openclaw",
@@ -433,6 +519,7 @@ const addOptions = {
     afterMissing,
     afterRemove,
     afterRemoveDrift,
+    afterRemoveResidualRefusal,
     afterResumeFailure,
     afterRestart,
     driftAddMessage,
@@ -442,6 +529,10 @@ const addOptions = {
     preflights,
     removeMessage,
     removeDriftMessage,
+    removeResidualRefusalMessage,
+    removeResidualRefusalName,
+    rollbackPolicyRefusal,
+    rollbackPolicyRefusalMutations,
     rollbackRaces,
     restoreRaces,
     resumeMessage,
@@ -500,6 +591,10 @@ const addOptions = {
             bridgePresent: boolean;
             mutations: string[];
           };
+          afterRemoveResidualRefusal: {
+            bridgePresent: boolean;
+            mutations: string[];
+          };
           afterResumeFailure: {
             bridgePresent: boolean;
             customPolicies: unknown[];
@@ -523,10 +618,23 @@ const addOptions = {
           }>;
           removeMessage: string;
           removeDriftMessage: string;
+          removeResidualRefusalMessage: string;
+          removeResidualRefusalName: string;
+          rollbackPolicyRefusal: {
+            causeMessage: string | null;
+            exitCode: number | null;
+            message: string;
+            nestedCauseMessage: string | null;
+            reasonCode: string | null;
+          } | null;
+          rollbackPolicyRefusalMutations: string[];
           rollbackRaces: Array<{
             bridge?: { addState?: string };
+            causeMessage: string | null;
+            exitCode: number | null;
             message: string;
             mutations: string[];
+            reasonCode: string | null;
             refusalOffset: number;
           }>;
           restoreRaces: Array<{
@@ -618,6 +726,22 @@ const addOptions = {
           expect.objectContaining({ addState: "preflighted" }),
           expect.objectContaining({ addState: "preflighted" }),
         ]);
+        expect(payload.rollbackRaces[0]).toEqual(
+          expect.objectContaining({
+            causeMessage: "adapter reload root",
+            exitCode: 2,
+            reasonCode: "unresolved",
+          }),
+        );
+        expect(payload.rollbackPolicyRefusal).toEqual({
+          causeMessage: "adapter reload failed",
+          exitCode: 2,
+          message: expect.stringContaining("authority changed during MCP removal"),
+          nestedCauseMessage: "adapter reload root",
+          reasonCode: "unresolved",
+        });
+        expect(payload.rollbackPolicyRefusalMutations).toContain("policy:apply");
+        expect(payload.rollbackPolicyRefusalMutations).toContain("policy:remove");
         expect(
           payload.rollbackRaces.map(({ mutations }) => {
             const adapterRegistration = mutations.lastIndexOf("adapter:register");
@@ -658,6 +782,15 @@ const addOptions = {
             "provider:delete",
           ]),
         );
+        expect(payload.removeResidualRefusalName).toBe("McpPolicyAuthorityRefusalError");
+        expect(payload.removeResidualRefusalMessage).toContain(
+          "authority changed during MCP removal",
+        );
+        expect(payload.afterRemoveResidualRefusal.bridgePresent).toBe(true);
+        expect(payload.afterRemoveResidualRefusal.mutations).toContain("adapter:remove");
+        expect(payload.afterRemoveResidualRefusal.mutations).toContain("policy:remove");
+        expect(payload.afterRemoveResidualRefusal.mutations).not.toContain("provider:detach");
+        expect(payload.afterRemoveResidualRefusal.mutations).not.toContain("provider:delete");
         expect(payload.resumeMessage).toContain("provider recovery failed");
         expect(payload.afterResumeFailure.bridgePresent).toBe(true);
         expect(payload.afterResumeFailure.customPolicies).toEqual([]);

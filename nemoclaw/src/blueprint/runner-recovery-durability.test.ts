@@ -16,6 +16,7 @@ import {
   createInferenceRouteResult,
   createRunnerCommandResult,
   minimalBlueprint,
+  sandboxPolicyAuthorityResult,
   successResult,
 } from "./runner-test-fixtures.js";
 
@@ -63,6 +64,7 @@ vi.mock("./ssrf.js", async (importOriginal) => {
   };
 });
 
+const { BlueprintPolicyAuthorityRefusalError } = await import("./runtime-identity.js");
 const { actionApply, actionRollback } = await import("./runner.js");
 const RUNS_DIR = `${FAKE_HOME}/.nemoclaw/state/runs`;
 
@@ -134,7 +136,7 @@ describe("blueprint recovery durability", () => {
       Array<(args: string[]) => ReturnType<typeof successResult>>
     >([
       [
-        "inference set -g test-gateway --provider my-provider --model gpt-4",
+        "inference set -g test-gateway --provider my-provider --model gpt-4 --timeout 180",
         [
           (args) => {
             routeResult(args, successResult());
@@ -192,6 +194,65 @@ describe("blueprint recovery durability", () => {
     expect(commands.indexOf(restore)).toBeLessThan(
       commands.indexOf("provider delete -g test-gateway my-provider"),
     );
+  });
+
+  it("preserves the refusal and continues cleanup when clearing a route receipt cannot persist (#9833)", async () => {
+    const routeResult = createInferenceRouteResult("test-gateway");
+    const commandResult = createRunnerCommandResult();
+    let replacementSet = false;
+    const providerCreateCommand =
+      "provider create -g test-gateway --name my-provider --type openai --config OPENAI_BASE_URL=https://api.example.com/v1";
+    const policyGetCommand = "policy get -g test-gateway --full --output json test-sandbox";
+    const inferenceSetCommand =
+      "inference set -g test-gateway --provider my-provider --model gpt-4 --timeout 180";
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
+      const command = args.join(" ");
+      const exactResult = new Map([
+        [providerCreateCommand, () => ({ exitCode: 1, stdout: "", stderr: "already exists" })],
+        [
+          policyGetCommand,
+          () =>
+            sandboxPolicyAuthorityResult(
+              "test-sandbox",
+              replacementSet ? "externally-managed" : "nemoclaw-managed",
+            ),
+        ],
+      ]).get(command);
+      const result = exactResult?.() ?? routeResult(args, commandResult(args, successResult()));
+      new Map([
+        [
+          inferenceSetCommand,
+          () => {
+            replacementSet = true;
+            mockWriteFileSync.mockImplementationOnce(() => {
+              throw new Error("API_TOKEN=receipt-secret receipt clear denied");
+            });
+          },
+        ],
+      ]).get(command)?.();
+      return result;
+    });
+
+    const error = await actionApply("default", minimalBlueprint()).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(BlueprintPolicyAuthorityRefusalError);
+    const message = (error as Error).message;
+    expect(message).toMatch(
+      /authority changed[\s\S]*cleanup failed[\s\S]*Failed to persist cleared inference route recovery receipt/u,
+    );
+    expect(message).toContain("API_TOKEN=<REDACTED>");
+    expect(message).not.toContain("receipt-secret");
+    expect(commandNames()).toContain("sandbox stop -g test-gateway test-sandbox");
+    expect(commandNames()).toContain("sandbox remove -g test-gateway test-sandbox");
+    expect(commandNames()).not.toContain("provider delete -g test-gateway my-provider");
+    const plan = JSON.parse(store.get(planPath())?.content ?? "{}");
+    expect(plan).toMatchObject({
+      sandbox_created_by_apply: false,
+      inference_provider_created_by_apply: false,
+    });
+    expect(plan).not.toHaveProperty("inference_route_recovery");
   });
 
   it("atomically consumes completed rollback so replay cannot touch newer names (#9833)", async () => {
