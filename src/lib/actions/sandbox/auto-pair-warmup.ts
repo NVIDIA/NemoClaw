@@ -42,14 +42,16 @@ import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 // pending-upgrade poll. The cap prevents a wedged sandbox from blocking onboard
 // or restore.
 export const WARMUP_TIMEOUT_MS = 30_000;
+export const WARMUP_PROBE_TIMEOUT_S = 5;
 
 // Bounded in-sandbox poll for the pending scope upgrade after the provoke run.
 // Worst case = WARMUP_POLL_ATTEMPTS × WARMUP_POLL_LIST_TIMEOUT_S list calls plus
 // (WARMUP_POLL_ATTEMPTS - 1) inter-attempt 1s sleeps = 5×2 + 4×1 = 14s, which
-// leaves clear headroom under WARMUP_TIMEOUT_MS (30s) for shell startup and the
-// direct gateway call that runs first. The gateway persists the upgrade
-// requestId once created (#4504 evidence), so once the poll sees it pending the
-// downstream approval pass deterministically finds and approves it before
+// plus the 5s direct-probe timeout consume at most 19s. This leaves clear
+// headroom under WARMUP_TIMEOUT_MS (30s) for shell and Python startup. The
+// gateway persists the upgrade requestId once created (#4504 evidence), so
+// once the poll sees it pending, the downstream approval pass finds and
+// approves it before
 // handoff — making "very first real run, zero fallback" deterministic even on
 // slow/contended gateways.
 export const WARMUP_POLL_ATTEMPTS = 5;
@@ -70,16 +72,29 @@ export const WARMUP_SCRIPT = `
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
 command -v openclaw >/dev/null 2>&1 || exit 0
+command -v python3 >/dev/null 2>&1 || exit 0
 unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT \\
   OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD \\
   NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING \\
   NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT || exit 0
 session_key="agent:main:${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)"
 params="$(printf '{"key":"%s","agentId":"main"}' "$session_key")"
-NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \\
-  openclaw gateway call sessions.create --params "$params" --json >/dev/null 2>&1 || true
-command -v python3 >/dev/null 2>&1 || exit 0
 OPENCLAW_BIN="$(command -v openclaw)"
+OPENCLAW_BIN="$OPENCLAW_BIN" NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \\
+  python3 - "$params" <<'PYPROBE'
+import os
+import subprocess
+import sys
+
+try:
+    subprocess.run(
+        [os.environ['OPENCLAW_BIN'], 'gateway', 'call', 'sessions.create', '--params', sys.argv[1], '--json'],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        timeout=${WARMUP_PROBE_TIMEOUT_S}, env=dict(os.environ),
+    )
+except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    pass
+PYPROBE
 i=0
 while [ "$i" -lt ${WARMUP_POLL_ATTEMPTS} ]; do
   OPENCLAW_BIN="$OPENCLAW_BIN" python3 - <<'PYPOLL'

@@ -7,7 +7,12 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { RESTORED_CLONE_WARMUP_SCRIPT, WARMUP_SCRIPT, WARMUP_TIMEOUT_MS } from "./auto-pair-warmup";
+import {
+  RESTORED_CLONE_WARMUP_SCRIPT,
+  WARMUP_PROBE_TIMEOUT_S,
+  WARMUP_SCRIPT,
+  WARMUP_TIMEOUT_MS,
+} from "./auto-pair-warmup";
 import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 
 const shAvailable = spawnSync("sh", ["-c", "exit 0"], { encoding: "utf-8" }).status === 0;
@@ -35,6 +40,7 @@ describe("scope-upgrade warm-up timeout bound v2 (#4504)", () => {
     expect(WARMUP_TIMEOUT_MS).toBe(30_000);
     expect(typeof WARMUP_TIMEOUT_MS).toBe("number");
     expect(WARMUP_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(WARMUP_PROBE_TIMEOUT_S).toBe(5);
   });
 
   it("stays within the bounds the contract budgeted for finalization latency", () => {
@@ -150,14 +156,55 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
   });
 
   it("scopes forced device pairing to the provoke command on OpenClaw 2026.7.1", () => {
-    const [provoke, poll] = WARMUP_SCRIPT.split("command -v python3", 2);
-    expect(WARMUP_SCRIPT).toContain(
-      'NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \\\n  openclaw gateway call sessions.create --params "$params" --json',
-    );
+    const [provoke, poll] = WARMUP_SCRIPT.split("i=0\nwhile", 2);
     expect(provoke.match(/NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1/g)).toHaveLength(1);
     expect(poll).not.toContain("NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1");
     expect(WARMUP_SCRIPT).not.toContain("export NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING");
   });
+
+  itWithSh(
+    "polls after a hung direct probe reaches its own timeout (#9844)",
+    () => {
+      const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-warmup-timeout-"));
+      const binDir = path.join(fixtureRoot, "bin");
+      const proxyEnv = path.join(fixtureRoot, "proxy-env.sh");
+      const pollLog = path.join(fixtureRoot, "poll.log");
+      fs.mkdirSync(binDir);
+      fs.writeFileSync(proxyEnv, "");
+      fs.writeFileSync(
+        path.join(binDir, "openclaw"),
+        [
+          "#!/bin/sh",
+          'if [ "${1:-}" = "gateway" ]; then',
+          "  exec sleep 60",
+          "fi",
+          "printf 'poll\\n' > \"$NEMOCLAW_TEST_POLL_LOG\"",
+          'printf \'%s\\n\' \'{"pending":[{"scopes":["operator.write"]}],"paired":[]}\'',
+          "",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+
+      try {
+        const script = WARMUP_SCRIPT.replace("/tmp/nemoclaw-proxy-env.sh", proxyEnv);
+        const result = spawnSync("sh", ["-c", script], {
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            NEMOCLAW_TEST_POLL_LOG: pollLog,
+            PATH: `${binDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+          },
+          timeout: 12_000,
+        });
+
+        expect(result.status, result.stderr).toBe(0);
+        expect(fs.readFileSync(pollLog, "utf8")).toBe("poll\n");
+      } finally {
+        fs.rmSync(fixtureRoot, { recursive: true, force: true });
+      }
+    },
+    12_000,
+  );
 
   itWithSh("polls the pending upgrade with pairing-only stored device auth (#9844)", () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-warmup-poll-"));
@@ -246,11 +293,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
   });
 
   it("uses a direct write-scope probe without an embedded inference fallback (#9844)", () => {
-    expect(WARMUP_SCRIPT).toContain(
-      'openclaw gateway call sessions.create --params "$params" --json',
-    );
     expect(WARMUP_SCRIPT).not.toContain("openclaw agent");
-    expect(WARMUP_SCRIPT).toContain(">/dev/null 2>&1 || true");
     expect(WARMUP_SCRIPT).not.toContain("setsid");
     expect(WARMUP_SCRIPT).not.toContain("WARMUP_AGENT_PID");
     expect(WARMUP_SCRIPT).not.toContain("warmup_cleanup_attempt");

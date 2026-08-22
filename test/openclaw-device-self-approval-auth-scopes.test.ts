@@ -2,51 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import {
-  type PairingFixtureRuntime,
-  runFixture,
-  runPatch,
+  openPatchedPairingFixture,
   selfApprovalOptions,
   selfApprovalTransactionJournal as transactionJournal,
   selfApprovalTransactionSnapshots as transactionSnapshots,
-  writeFixtureDist,
 } from "./helpers/openclaw-device-self-approval-patch-harness";
-
-function openPatchedPairingFixture(): { runtime: PairingFixtureRuntime; tmp: string } {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-auth-scope-runtime-"));
-  const dist = path.join(tmp, "dist");
-  fs.mkdirSync(dist);
-  writeFixtureDist(dist);
-  const apply = runPatch(dist);
-  expect(apply.status, `${apply.stdout}${apply.stderr}`).toBe(0);
-  const source = fs.readFileSync(path.join(dist, "device-pairing-fixture.js"), "utf8");
-  const runtime = runFixture<PairingFixtureRuntime>(
-    source,
-    `({
-      writes,
-      setPairingState,
-      setFile,
-      getFile,
-      getPairingPaths,
-      listDevicePairing,
-      getPairedDevice,
-      getPendingDevicePairing,
-      approveDevicePairing,
-      approveBootstrapDevicePairing,
-      armLateWriterFailure,
-      releaseLateWriter,
-      armCommittedJournalFailure,
-      armIdleJournalFailure,
-      armStateDrift
-    })`,
-  );
-  return { runtime, tmp };
-}
 
 describe("OpenClaw self-approval stored-auth scope validation (#4462)", () => {
   it.each([
