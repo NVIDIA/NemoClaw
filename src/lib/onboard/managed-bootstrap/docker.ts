@@ -793,6 +793,16 @@ function objectField(record: Record<string, unknown>, key: string): Record<strin
   return value as Record<string, unknown>;
 }
 
+function soleNetworkAliases(inspect: Record<string, unknown>): unknown {
+  const networkSettings = objectField(inspect, "NetworkSettings");
+  const networks = objectField(networkSettings, "Networks");
+  const entries = Object.values(networks);
+  if (entries.length !== 1 || typeof entries[0] !== "object" || entries[0] === null) {
+    return null;
+  }
+  return (entries[0] as Record<string, unknown>).Aliases;
+}
+
 function exactJson(value: unknown): string {
   return JSON.stringify(value ?? null);
 }
@@ -1126,8 +1136,12 @@ function assertReplacementMatchesIntent(
     )
       .sort()
       .slice(0, 16);
+    const aliasDetail =
+      changedPaths.length === 1 && changedPaths[0]?.endsWith(".Aliases")
+        ? ` Expected aliases ${exactJson(soleNetworkAliases(originalInspect))}; observed aliases ${exactJson(soleNetworkAliases(observedInspect))}.`
+        : "";
     throw new Error(
-      `Managed bootstrap Docker replacement normalized spec changed outside declared deltas: ${changedPaths.join(", ")}.`,
+      `Managed bootstrap Docker replacement normalized spec changed outside declared deltas: ${changedPaths.join(", ")}.${aliasDetail}`,
     );
   }
   return replacementSpec.hash;
