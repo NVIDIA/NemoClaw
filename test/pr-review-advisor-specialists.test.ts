@@ -1,13 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-
-import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { TERMINOLOGY_TRACE_TOOL } from "../tools/pr-review-advisor/terminology.mts";
-import { documentationSpecialistTools } from "../tools/pr-review-advisor/run-specialist.mts";
+import { runSpecialistAdvisor } from "../tools/pr-review-advisor/run-specialist.mts";
+import type { RunAdvisorResult, RunReadOnlyAdvisorOptions } from "../tools/advisors/session.mts";
 import {
   ADVISOR_INTERESTS,
   buildSpecialistInvestigateTurn,
@@ -82,58 +80,50 @@ describe("PR review advisor specialist prompts", () => {
     },
   );
 
-  it("passes terminology tracing through the production documentation specialist boundary (#9968)", () => {
-    const options = { baseRef: "origin/main", headRef: "HEAD" };
-    expect(
-      ADVISOR_INTERESTS.map((interest) => [
-        interest,
-        documentationSpecialistTools(interest, options).map(({ name }) => name),
-      ]),
-    ).toEqual([
+  it("passes terminology tracing only to the documentation specialist runner (#9968)", async () => {
+    const captured: Array<[AdvisorInterest, string[]]> = [];
+    const result: RunAdvisorResult = {
+      text: "",
+      raw: "",
+      turnTexts: [],
+      turnErrors: [],
+      turnCallbackErrors: [],
+    };
+    const options: Omit<RunReadOnlyAdvisorOptions, "customTools"> = {
+      cwd: process.cwd(),
+      promptTurns: [],
+      systemPrompt: "system",
+      configDir: "/tmp/advisor-config",
+      htmlExportPath: "/tmp/advisor.html",
+      timeoutMs: 1,
+      heartbeatMs: 1,
+      maxCaptureBytes: 1,
+      credentialEnv: "ADVISOR_TEST_KEY",
+      logPrefix: "test",
+      logProgress: vi.fn(),
+    };
+
+    await Promise.all(
+      ADVISOR_INTERESTS.map((interest) =>
+        runSpecialistAdvisor(
+          interest,
+          { baseRef: "origin/main", headRef: "HEAD" },
+          options,
+          async (runnerOptions) => {
+            captured.push([interest, runnerOptions.customTools?.map(({ name }) => name) ?? []]);
+            return result;
+          },
+        ),
+      ),
+    );
+
+    expect(captured).toEqual([
       ["behavior", []],
       ["trust", []],
       ["design-architecture", []],
       ["operations", []],
       ["documentation", [TERMINOLOGY_TRACE_TOOL]],
     ]);
-
-    const source = ts.createSourceFile(
-      "run-specialist.mts",
-      fs.readFileSync(
-        new URL("../tools/pr-review-advisor/run-specialist.mts", import.meta.url),
-        "utf8",
-      ),
-      ts.ScriptTarget.Latest,
-      true,
-      ts.ScriptKind.TS,
-    );
-    const advisorCalls: ts.CallExpression[] = [];
-    const visit = (node: ts.Node): void => {
-      advisorCalls.push(
-        ...(ts.isCallExpression(node) &&
-        ts.isIdentifier(node.expression) &&
-        node.expression.text === "runReadOnlyAdvisor"
-          ? [node]
-          : []),
-      );
-      ts.forEachChild(node, visit);
-    };
-    visit(source);
-
-    expect(advisorCalls).toHaveLength(1);
-    const optionsArgument = advisorCalls[0]?.arguments[0];
-    expect(optionsArgument && ts.isObjectLiteralExpression(optionsArgument)).toBe(true);
-    const optionsObject = optionsArgument as ts.ObjectLiteralExpression;
-    const customTools = optionsObject.properties.find(
-      (property): property is ts.PropertyAssignment =>
-        ts.isPropertyAssignment(property) &&
-        ts.isIdentifier(property.name) &&
-        property.name.text === "customTools",
-    );
-    expect(customTools).toBeDefined();
-    expect(customTools?.initializer.getText(source)).toBe(
-      "documentationSpecialistTools(interest, { baseRef, headRef })",
-    );
   });
 
   it.each(ADVISOR_INTERESTS)(
