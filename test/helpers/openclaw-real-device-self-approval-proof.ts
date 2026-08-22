@@ -363,6 +363,48 @@ function requireJsonEqual(actual: unknown, expected: unknown, label: string): vo
   );
 }
 
+function requireOnlyAuthenticationAuditChanges(
+  beforeSerialized: string,
+  afterState: Record<string, unknown>,
+  deviceId: string,
+  label: string,
+): void {
+  const beforeState = asRecord(JSON.parse(beforeSerialized) as unknown);
+  const normalizedAfterState = asRecord(JSON.parse(JSON.stringify(afterState)) as unknown);
+  const beforeDevice = asRecord(beforeState?.[deviceId]);
+  const afterDevice = asRecord(normalizedAfterState?.[deviceId]);
+  const beforeOperator = asRecord(asRecord(beforeDevice?.tokens)?.operator);
+  const afterOperator = asRecord(asRecord(afterDevice?.tokens)?.operator);
+  requireLiveProof(
+    beforeState &&
+      normalizedAfterState &&
+      beforeDevice &&
+      afterDevice &&
+      beforeOperator &&
+      afterOperator,
+    `${label}: paired authentication state shape changed`,
+  );
+  const deviceActivityChanged =
+    afterDevice.lastSeenAtMs !== beforeDevice.lastSeenAtMs ||
+    afterDevice.lastSeenReason !== beforeDevice.lastSeenReason;
+  requireLiveProof(
+    !deviceActivityChanged ||
+      ((afterDevice.lastSeenReason === "device-token-auth" ||
+        afterDevice.lastSeenReason === "connect") &&
+        typeof afterDevice.lastSeenAtMs === "number"),
+    `${label}: invalid device authentication activity`,
+  );
+  const tokenActivityChanged = afterOperator.lastUsedAtMs !== beforeOperator.lastUsedAtMs;
+  requireLiveProof(
+    !tokenActivityChanged || typeof afterOperator.lastUsedAtMs === "number",
+    `${label}: invalid token authentication activity`,
+  );
+  afterDevice.lastSeenAtMs = beforeDevice.lastSeenAtMs;
+  afterDevice.lastSeenReason = beforeDevice.lastSeenReason;
+  afterOperator.lastUsedAtMs = beforeOperator.lastUsedAtMs;
+  requireJsonEqual(normalizedAfterState, beforeState, `${label}: authorization state`);
+}
+
 function requireExactObjectKeys(
   value: Record<string, unknown>,
   expected: string[],
@@ -1220,9 +1262,31 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
     const pairedBeforeSettlementList = fs.readFileSync(pairedPath, "utf8");
     const settlementList = runCli(["devices", "list", "--json"], {
       NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT: "1",
+      OPENCLAW_TEST_RUNTIME_LOG: "1",
     });
     proofPhase = `pairing-settlement-list-exit-${settlementList.status ?? "signal"}`;
     requireSuccess(settlementList, "list paired state with pairing-only stored device auth");
+    proofPhase = "pairing-settlement-list-view";
+    const settlementView = asRecord(JSON.parse(settlementList.stdout ?? "null") as unknown);
+    const settlementPending = settlementView?.pending;
+    const settlementPaired = settlementView?.paired;
+    const settlementPairedDevice = asRecord(
+      Array.isArray(settlementPaired) ? settlementPaired[0] : null,
+    );
+    requireLiveProof(
+      Array.isArray(settlementPending) &&
+        settlementPending.length === 0 &&
+        Array.isArray(settlementPaired) &&
+        settlementPaired.length === 1 &&
+        settlementPaired.every((value) => asRecord(value) !== null) &&
+        settlementPairedDevice?.deviceId === identity.deviceId,
+      "pairing settlement list did not return the expected settled pairing records",
+    );
+    requireExactScopes(
+      settlementPairedDevice?.scopes,
+      ["operator.pairing"],
+      "pairing settlement list paired scopes",
+    );
     proofPhase = "pairing-settlement-list-server-state";
     const pendingAfterSettlementList = fs.readFileSync(pendingPath, "utf8");
     const pairedAfterSettlementList = readJsonObject(
@@ -1241,75 +1305,17 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
       pendingAfterSettlementList === pendingBeforeSettlementList,
       "pairing settlement list changed canonical pending state bytes",
     );
-    const pairedBeforeAuthentication = JSON.parse(pairedBeforeSettlementList) as Record<
-      string,
-      unknown
-    >;
-    const pairedAfterAuthentication = JSON.parse(
-      JSON.stringify(pairedAfterSettlementList),
-    ) as Record<string, unknown>;
-    const pairedDeviceBeforeAuthentication = asRecord(
-      pairedBeforeAuthentication[String(identity.deviceId)],
-    );
-    const pairedDeviceAfterAuthentication = asRecord(
-      pairedAfterAuthentication[String(identity.deviceId)],
-    );
-    const pairedOperatorBeforeAuthentication = asRecord(
-      asRecord(pairedDeviceBeforeAuthentication?.tokens)?.operator,
-    );
-    const pairedOperatorAfterAuthentication = asRecord(
-      asRecord(pairedDeviceAfterAuthentication?.tokens)?.operator,
-    );
-    const deviceAuthenticationActivityChanged =
-      pairedDeviceAfterAuthentication?.lastSeenAtMs !==
-        pairedDeviceBeforeAuthentication?.lastSeenAtMs ||
-      pairedDeviceAfterAuthentication?.lastSeenReason !==
-        pairedDeviceBeforeAuthentication?.lastSeenReason;
-    const tokenAuthenticationActivityChanged =
-      pairedOperatorAfterAuthentication?.lastUsedAtMs !==
-      pairedOperatorBeforeAuthentication?.lastUsedAtMs;
-    proofPhase = "pairing-settlement-list-authentication-state-shape";
-    requireLiveProof(
-      pairedDeviceBeforeAuthentication &&
-        pairedDeviceAfterAuthentication &&
-        pairedOperatorBeforeAuthentication &&
-        pairedOperatorAfterAuthentication,
-      "pairing settlement list changed the paired authentication state shape",
-    );
-    proofPhase = "pairing-settlement-list-device-authentication-activity";
-    requireLiveProof(
-      !deviceAuthenticationActivityChanged ||
-        ((pairedDeviceAfterAuthentication.lastSeenReason === "device-token-auth" ||
-          pairedDeviceAfterAuthentication.lastSeenReason === "connect") &&
-          typeof pairedDeviceAfterAuthentication.lastSeenAtMs === "number"),
-      "pairing settlement list recorded invalid device authentication activity",
-    );
-    proofPhase = "pairing-settlement-list-token-authentication-activity";
-    requireLiveProof(
-      !tokenAuthenticationActivityChanged ||
-        typeof pairedOperatorAfterAuthentication.lastUsedAtMs === "number",
-      "pairing settlement list recorded invalid token authentication activity",
-    );
     // Stored-device authentication can update only the gateway's last-seen
     // audit fields. Normalize those three optional writes, then require every
     // device, token, scope, and remaining metadata field to match the exact
     // before-image.
-    pairedDeviceAfterAuthentication.lastSeenAtMs = pairedDeviceBeforeAuthentication.lastSeenAtMs;
-    pairedDeviceAfterAuthentication.lastSeenReason =
-      pairedDeviceBeforeAuthentication.lastSeenReason;
-    pairedOperatorAfterAuthentication.lastUsedAtMs =
-      pairedOperatorBeforeAuthentication.lastUsedAtMs;
     proofPhase = "pairing-settlement-list-authorization-state";
-    requireJsonEqual(
-      pairedAfterAuthentication,
-      pairedBeforeAuthentication,
-      "pairing settlement list authorization state",
+    requireOnlyAuthenticationAuditChanges(
+      pairedBeforeSettlementList,
+      pairedAfterSettlementList,
+      String(identity.deviceId),
+      "pairing settlement list",
     );
-    // The remaining restored-clone proof pins inherited /proc/self/fd
-    // descriptors. Linux CI exercises that boundary; other hosts stop after
-    // the real stored-auth settlement list and exact authorization-state check
-    // above.
-    if (process.platform !== "linux") return;
 
     proofPhase = "scope-upgrade-trigger";
     const createSession = runCli([
@@ -1357,6 +1363,95 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
       "real same-device repair request id missing",
     );
     const requestId = String(repair.requestId);
+    proofPhase = "pending-pairing-settlement-list";
+    const pendingBeforePendingSettlementList = fs.readFileSync(pendingPath, "utf8");
+    const pairedBeforePendingSettlementList = fs.readFileSync(pairedPath, "utf8");
+    const pendingSettlementList = runCli(["devices", "list", "--json"], {
+      NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT: "1",
+      OPENCLAW_TEST_RUNTIME_LOG: "1",
+    });
+    proofPhase = `pending-pairing-settlement-list-exit-${pendingSettlementList.status ?? "signal"}`;
+    requireSuccess(
+      pendingSettlementList,
+      "list pending scope upgrade with pairing-only stored device auth",
+    );
+    proofPhase = "pending-pairing-settlement-list-view";
+    const pendingSettlementOutput = String(pendingSettlementList.stdout ?? "").trim();
+    let pendingSettlementView: unknown;
+    try {
+      pendingSettlementView = JSON.parse(pendingSettlementOutput);
+    } catch {
+      const firstObject = pendingSettlementOutput.indexOf("{");
+      const lastObject = pendingSettlementOutput.lastIndexOf("}");
+      let containsJsonObject = false;
+      if (firstObject >= 0 && lastObject > firstObject) {
+        try {
+          JSON.parse(pendingSettlementOutput.slice(firstObject, lastObject + 1));
+          containsJsonObject = true;
+        } catch {
+          containsJsonObject = false;
+        }
+      }
+      proofPhase = [
+        "pending-pairing-settlement-list-json",
+        pendingSettlementOutput ? "stdout-present" : "stdout-empty",
+        String(pendingSettlementList.stderr ?? "").trim() ? "stderr-present" : "stderr-empty",
+        containsJsonObject ? "json-with-prefix" : "json-absent",
+      ].join("-");
+      throw new Error("pairing settlement list did not return plain JSON");
+    }
+    const pendingSettlementRecord = asRecord(pendingSettlementView);
+    const visiblePending = pendingSettlementRecord?.pending;
+    const visiblePaired = pendingSettlementRecord?.paired;
+    const visiblePendingRequest = asRecord(
+      Array.isArray(visiblePending) ? visiblePending[0] : null,
+    );
+    const visiblePairedDevice = asRecord(Array.isArray(visiblePaired) ? visiblePaired[0] : null);
+    proofPhase = "pending-pairing-settlement-list-pending-count";
+    requireLiveProof(
+      Array.isArray(visiblePending) &&
+        visiblePending.length === 1 &&
+        visiblePending.every((value) => asRecord(value) !== null),
+      "pairing settlement list did not return one expected pending request",
+    );
+    proofPhase = "pending-pairing-settlement-list-request";
+    requireLiveProof(
+      visiblePendingRequest?.requestId === requestId &&
+        visiblePendingRequest?.deviceId === identity.deviceId,
+      "pairing settlement list did not return the expected pending scope upgrade",
+    );
+    proofPhase = "pending-pairing-settlement-list-paired";
+    requireLiveProof(
+      Array.isArray(visiblePaired) &&
+        visiblePaired.length === 1 &&
+        visiblePaired.every((value) => asRecord(value) !== null) &&
+        visiblePairedDevice?.deviceId === identity.deviceId,
+      "pairing settlement list did not return the expected paired device",
+    );
+    requireExactScopes(
+      visiblePairedDevice?.scopes,
+      ["operator.pairing"],
+      "pairing settlement list paired scopes during pending upgrade",
+    );
+    proofPhase = "pending-pairing-settlement-list-server-state";
+    requireLiveProof(
+      fs.readFileSync(pendingPath, "utf8") === pendingBeforePendingSettlementList,
+      "pairing settlement list changed pending scope-upgrade state",
+    );
+    const pairedAfterPendingSettlementList = readJsonObject(
+      pairedPath,
+      "real paired state after pending pairing settlement list",
+    );
+    requireOnlyAuthenticationAuditChanges(
+      pairedBeforePendingSettlementList,
+      pairedAfterPendingSettlementList,
+      String(identity.deviceId),
+      "pending pairing settlement list",
+    );
+    // The remaining restored-clone proof pins inherited /proc/self/fd
+    // descriptors. Linux CI exercises that boundary; other hosts stop after
+    // the real pending-upgrade settlement list and authorization-state check.
+    if (process.platform !== "linux") return;
     const pendingBeforeApproval = pending;
     const exactRepair = asRecord(pendingBeforeApproval[requestId]);
     requireLiveProof(
