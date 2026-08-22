@@ -395,7 +395,6 @@ describe("host-local inference lifecycle authority", () => {
         alpha,
         prepared,
         [beta, alpha],
-        lifecycleOptions,
       ).status,
     ).toBe("shared");
     expect(runtimeProvider.destroy).not.toHaveBeenCalled();
@@ -431,7 +430,6 @@ describe("host-local inference lifecycle authority", () => {
         entry,
         prepared,
         [entry],
-        lifecycleOptions,
       ).status,
     ).toBe("removed");
     expect(qualified.createOperation).toHaveBeenCalledOnce();
@@ -468,7 +466,6 @@ describe("host-local inference lifecycle authority", () => {
         alpha,
         prepared,
         [alpha, beta],
-        lifecycleOptions,
       ),
     ).toThrow(/conflicting gateway, route, or provenance authority/);
     expect(runtimeProvider.destroy).not.toHaveBeenCalled();
@@ -505,7 +502,6 @@ describe("host-local inference lifecycle authority", () => {
         alpha,
         prepared,
         [alpha, beta],
-        lifecycleOptions,
       ),
     ).toThrow(/conflicting gateway, route, or provenance authority/);
     expect(runtimeProvider.destroy).not.toHaveBeenCalled();
@@ -542,7 +538,6 @@ describe("host-local inference lifecycle authority", () => {
         alpha,
         prepared,
         [alpha, beta],
-        lifecycleOptions,
       ),
     ).toThrow(/conflicting gateway, route, or provenance authority/);
     expect(runtimeProvider.destroy).not.toHaveBeenCalled();

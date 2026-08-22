@@ -434,7 +434,6 @@ export function assertPreparedHostLocalInferenceRuntimePresent(
   provider: RuntimeProviderBundle,
   sandbox: HostLocalInferenceLifecycleSandbox,
   prepared: PreparedHostLocalInferenceAuthority,
-  _options: HostLocalInferenceLifecycleOptions = {},
 ): void {
   const { receipt, runtime } = currentHostLocalInferenceRuntime(provider, sandbox, prepared);
   runtime.inspectManaged(receipt);
@@ -574,7 +573,6 @@ export function retirePreparedHostLocalInferenceAuthority(
   sandbox: HostLocalInferenceLifecycleSandbox,
   prepared: PreparedHostLocalInferenceAuthority,
   peers: readonly HostLocalInferenceLifecycleSandbox[],
-  _options: HostLocalInferenceLifecycleOptions = {},
 ): HostLocalInferenceRetirementResult {
   const runtime = confirmHostLocalInferenceDestroyAuthority(provider, sandbox, prepared);
   if (sharedPeerStatus(provider, sandbox, prepared, peers) === "shared") {
