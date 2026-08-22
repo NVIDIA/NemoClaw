@@ -909,6 +909,33 @@ describe("host-local model cleanup", () => {
     expect(fs.existsSync(paths.stateDir)).toBe(true);
   });
 
+  it("refuses mixed lifecycle journals during cleanup preparation (#9888)", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine, { phase: "started" });
+    const paths = managedLlamaCppStatePaths(homeDir);
+    const journalStore = createHostLocalCreateJournalStore(paths.stateDir);
+    const [journal] = journalStore.list();
+    journalStore.create({
+      ...journal!,
+      transactionId: "8".repeat(64),
+      phase: "prepared",
+      service: "ollama",
+      runtimeId: null,
+      createIntentUnixMs: null,
+    });
+    harness.capture.mockClear();
+
+    expect(() =>
+      prepareManagedLlamaCppRuntimeCleanupForSandbox("spark-agent", {
+        homeDir,
+        engine: harness.engine,
+      }),
+    ).toThrow("more than one lifecycle journal");
+    expect(harness.capture).not.toHaveBeenCalled();
+    expect(fs.existsSync(paths.stateDir)).toBe(true);
+  });
+
   it("reports an incompatible journal before a missing finalized receipt (#9888)", () => {
     const homeDir = temporaryHome();
     const harness = engineHarness();

@@ -508,8 +508,8 @@ async function destroySandboxUnlocked(
   ) {
     try {
       // Fresh Docker qualification reads ambient DOCKER_CONTEXT, DOCKER_HOST,
-      // or Docker's persisted currentContext. Pin that selection before any
-      // OpenShell subprocess and the delete boundary so legacy cleanup cannot
+      // or Docker's persisted currentContext. Pin that selection before
+      // OpenShell sandbox deletion so legacy cleanup cannot
       // switch daemons. A missing registry row still permits exact owner-state
       // recovery for a prior partial destroy.
       preparedManagedLlamaCppCleanup = prepareManagedLlamaCppRuntimeCleanupForSandbox(sandboxName, {

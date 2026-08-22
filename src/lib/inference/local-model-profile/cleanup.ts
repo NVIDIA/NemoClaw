@@ -427,20 +427,27 @@ function managedLlamaCppPrivateAuthoritySha256(paths: ManagedLlamaCppStatePaths)
   const owner = loadManagedLlamaCppOwner(paths);
   const receipt = loadManagedLlamaCppReceipt(paths);
   const journals = reconcileAndReadHostLocalCreateJournalRecords(paths.stateDir);
-  const authorityDirectory = path.join(paths.stateDir, PERSISTED_ENGINE_AUTHORITY_DIRECTORY);
-  const authority = statePathExists(authorityDirectory)
-    ? openFilePersistedEngineAuthorityStore(paths.stateDir).load("host-local-inference")
-    : null;
+  const authority = serializedManagedLlamaCppPersistedAuthority(paths);
   return createHash("sha256")
     .update(
       JSON.stringify({
         owner,
         receipt: receipt === null ? null : serializeHostLocalInferenceReceipt(receipt),
         journals: journals.map(serializeHostLocalCreateJournalRecord),
-        authority: authority === null ? null : serializePersistedEngineAuthority(authority),
+        authority,
       }),
     )
     .digest("hex");
+}
+
+function serializedManagedLlamaCppPersistedAuthority(
+  paths: ManagedLlamaCppStatePaths,
+): string | null {
+  const authorityDirectory = path.join(paths.stateDir, PERSISTED_ENGINE_AUTHORITY_DIRECTORY);
+  const authority = statePathExists(authorityDirectory)
+    ? openFilePersistedEngineAuthorityStore(paths.stateDir).load("host-local-inference")
+    : null;
+  return authority === null ? null : serializePersistedEngineAuthority(authority);
 }
 
 function requireManagedLlamaCppPrivateAuthority(
@@ -602,10 +609,18 @@ function cleanupLlamaCpp(
   requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthoritySha256);
 
   const receipt = loadManagedLlamaCppReceipt(paths);
+  const persistedAuthority = serializedManagedLlamaCppPersistedAuthority(paths);
   const journalStore = createHostLocalCreateJournalStore(paths.stateDir);
-  const journals = journalStore
-    .list()
-    .filter(({ providerId, service }) => providerId === "docker" && service === "llama-cpp");
+  const journalRecords = journalStore.list();
+  const journals = journalRecords.filter(
+    ({ providerId, service }) => providerId === "docker" && service === "llama-cpp",
+  );
+  if (journalRecords.length > 1) {
+    throw new Error("managed llama.cpp has more than one lifecycle journal");
+  }
+  if (journalRecords.length !== journals.length) {
+    throw new Error("managed llama.cpp has an incompatible lifecycle journal");
+  }
   if (journals.length === 0) {
     if (receipt !== null) {
       throw new Error("managed llama.cpp receipt exists without lifecycle authority");
@@ -645,9 +660,6 @@ function cleanupLlamaCpp(
     fs.rmSync(paths.stateDir, { recursive: true });
     removed.push(`state:${paths.stateDir}`);
     return true;
-  }
-  if (journals.length > 1) {
-    throw new Error("managed llama.cpp has more than one lifecycle journal");
   }
   const journal = journals[0]!;
   if (receipt !== null) {
@@ -713,6 +725,7 @@ function cleanupLlamaCpp(
       : finalReceipt === null ||
         serializeHostLocalInferenceReceipt(finalReceipt) !==
           serializeHostLocalInferenceReceipt(receipt)) ||
+    serializedManagedLlamaCppPersistedAuthority(paths) !== persistedAuthority ||
     journalStore.list().length !== 0
   ) {
     throw new Error("managed llama.cpp state changed during exact cleanup");
@@ -768,8 +781,11 @@ export function prepareManagedLlamaCppRuntimeCleanupForSandbox(
   const journals = journalRecords.filter(
     ({ providerId, service }) => providerId === "docker" && service === "llama-cpp",
   );
-  if (journals.length > 1) {
+  if (journalRecords.length > 1) {
     throw new Error("managed llama.cpp has more than one lifecycle journal");
+  }
+  if (journalRecords.length !== journals.length) {
+    throw new Error("managed llama.cpp has an incompatible lifecycle journal");
   }
   if (receipt !== null) {
     const journal = journals[0];
