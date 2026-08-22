@@ -94,10 +94,6 @@ export type ResolveSandboxCreateIntentInput = {
 export type MaterializeSandboxCreatePlanInput = {
   intent: SandboxCreateIntent;
   fromRef: string;
-  runtimeProcessIdentity?: {
-    readonly runAsUser: string;
-    readonly runAsGroup: string;
-  } | null;
   managedStateMount?: ManagedHermesStateVolumeMount | null;
   messagingTokenDefs: MessagingTokenDef[];
   runProviderPreDeleteCleanup(): void;

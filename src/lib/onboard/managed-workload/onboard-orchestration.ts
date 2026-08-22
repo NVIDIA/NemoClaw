@@ -413,17 +413,9 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       ? input.workload.source.reference
       : `${requireLegacyBuildContext(legacyBuildContext).buildCtx}/Dockerfile`;
   const messagingTokenDefs = await input.plan.rebindMessagingTokenDefs();
-  const managedGatewayRuntime =
-    input.workload.source.kind === "managed-image"
-      ? requireBootstrapProvider(input.runtime.runtimeProvider).gateway.prepareHostRuntime({
-          environment: process.env,
-          platform: process.platform,
-        })
-      : null;
   const createPlan = input.dependencies.materializeSandboxCreatePlan({
     intent: input.plan.intent,
     fromRef,
-    runtimeProcessIdentity: managedGatewayRuntime?.sandboxPolicyProcessIdentity,
     messagingTokenDefs: [...messagingTokenDefs],
     runProviderPreDeleteCleanup: input.plan.runProviderPreDeleteCleanup,
     upsertMessagingProviders: input.plan.upsertMessagingProviders,
@@ -455,9 +447,11 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   let dashboardRemoteBindPrepared = false;
   let launch: SandboxCreateLaunchWithPrebuild;
   if (input.workload.source.kind === "managed-image") {
-    if (!managedGatewayRuntime) {
-      throw new Error("Managed sandbox workload is missing its provider gateway runtime.");
-    }
+    const runtimeProvider = requireBootstrapProvider(input.runtime.runtimeProvider);
+    const gatewayRuntime = runtimeProvider.gateway.prepareHostRuntime({
+      environment: process.env,
+      platform: process.platform,
+    });
     await enforceDockerGpuPatchPreserveNetwork(input.gpu.provider, input.gpu.config, {
       dockerDriverGateway: input.gpu.dockerDriverGateway,
       selectedRoute: initialGpuRoute,
@@ -468,7 +462,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
           skip: false,
           port: input.gpu.gatewayPort,
           reachabilityImpl: (options) =>
-            isSandboxBridgeGatewayReachable({ ...options, gatewayRuntime: managedGatewayRuntime }),
+            isSandboxBridgeGatewayReachable({ ...options, gatewayRuntime }),
         }),
     });
     const profile = input.runtime.ensurePreparedProfile(input.workload);

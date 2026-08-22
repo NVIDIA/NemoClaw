@@ -23,7 +23,6 @@ vi.mock("../policy", () => ({
 import {
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
-  buildRuntimeProcessPolicyYaml,
   discloseInitialSandboxPolicy,
   discoverHostStationGb300SysfsReadOnlyPaths,
   discoverStationGb300SysfsReadOnlyPaths,
@@ -144,17 +143,6 @@ afterEach(() => {
 });
 
 describe("initial sandbox policy helpers", () => {
-  it("applies an opaque runtime-provider process identity without changing portable selection", () => {
-    const policy = YAML.parse(
-      buildRuntimeProcessPolicyYaml(
-        "version: 1\nprocess:\n  run_as_user: sandbox\n  run_as_group: sandbox\n",
-        { runAsUser: "root", runAsGroup: "root" },
-      ),
-    );
-
-    expect(policy.process).toEqual({ run_as_user: "root", run_as_group: "root" });
-  });
-
   it("discloses the effective in-memory policy when exact source bytes are available (#9203)", () => {
     const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
     const effectivePolicy = Buffer.from(

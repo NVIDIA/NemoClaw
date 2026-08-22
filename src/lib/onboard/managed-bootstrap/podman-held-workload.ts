@@ -252,8 +252,10 @@ function parseObservation(
   if (state.Running !== true || state.Paused === true || state.Restarting === true) {
     throw new Error("Podman held workload must be stably running before bootstrap preparation.");
   }
-  const configuredUser = String(config.User ?? "");
-  if (configuredUser !== "" && configuredUser !== "0" && configuredUser !== "root") {
+  const configuredUser = String(config.User ?? "")
+    .trim()
+    .toLowerCase();
+  if (!["", "0", "0:0", "root", "root:root"].includes(configuredUser)) {
     throw new Error("Podman held workload does not use the image-owned root supervisor boundary.");
   }
   const supervisorArgv = Object.freeze([

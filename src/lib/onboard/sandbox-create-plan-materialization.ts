@@ -202,7 +202,6 @@ function filterDisabledMessagingProviders(
 export function materializeSandboxCreatePlan({
   intent,
   fromRef,
-  runtimeProcessIdentity,
   managedStateMount,
   messagingTokenDefs,
   runProviderPreDeleteCleanup,
@@ -227,7 +226,6 @@ export function materializeSandboxCreatePlan({
       baselineExclusions: intent.policy.options.baselineExclusions.map((exclusion) => ({
         ...exclusion,
       })),
-      runtimeProcessIdentity,
     },
     intent.gpuRoutePlan,
     prepareInitialSandboxCreatePolicy,

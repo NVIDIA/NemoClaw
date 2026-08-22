@@ -188,7 +188,6 @@ describe("current Podman runtime provider", () => {
       sandboxHostAddress: NATIVE_PODMAN_SANDBOX_HOST_ADDRESS,
       usesHostGatewayRoute: false,
       resourceOwnership: { label: "openshell.managed", value: "true" },
-      sandboxPolicyProcessIdentity: { runAsUser: "root", runAsGroup: "root" },
       gatewayConfig: {
         sandboxNamespace: "omitted",
         hostGatewayIp: NATIVE_PODMAN_SANDBOX_HOST_ADDRESS,

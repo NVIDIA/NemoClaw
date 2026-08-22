@@ -128,10 +128,6 @@ export function prepareNativePodmanGatewayHostRuntime(
       label: NATIVE_PODMAN_RESOURCE_LABEL,
       value: NATIVE_PODMAN_RESOURCE_LABEL_VALUE,
     }),
-    sandboxPolicyProcessIdentity: Object.freeze({
-      runAsUser: "root",
-      runAsGroup: "root",
-    }),
     gatewayConfig: Object.freeze({
       sandboxNamespace: "omitted" as const,
       hostGatewayIp: NATIVE_PODMAN_SANDBOX_HOST_ADDRESS,
