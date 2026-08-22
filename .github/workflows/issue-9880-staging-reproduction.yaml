@@ -1,0 +1,104 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: E2E / Issue 9880 Staging Reproduction
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-9880-staging-launchable
+  cancel-in-progress: false
+
+jobs:
+  reproduce:
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 95
+    env:
+      INSTANCE_NAME: issue-9880-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Check out trusted reproduction lane
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            tools/e2e/brev-launchable-issue-9880.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Authorize maintainer dispatch
+        env:
+          ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          for actor in "$ACTOR" "$TRIGGERING_ACTOR"; do
+            [[ "$actor" =~ ^[A-Za-z0-9-]{1,39}$ ]] || { echo "::error::invalid workflow actor"; exit 1; }
+            role="$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${actor}/permission" --jq .role_name)"
+            case "$role" in maintain|admin) ;; *) echo "::error::maintain or admin permission is required"; exit 1 ;; esac
+          done
+
+      - id: prepare
+        name: Prepare Brev CLI and evidence directory
+        env:
+          BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
+          BREV_CLI_SHA256: d4aa49db1716f10308a6587778a676a0c0076bd48a212d86a421ab9550bc8f32
+          HOME: ${{ runner.temp }}/issue-9880-home
+          BREV_CLI_VERSION: 0.6.334
+          BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$HOME"
+          work_dir="$(mktemp -d "${RUNNER_TEMP}/issue-9880.XXXXXX")"
+          chmod 700 "$work_dir"
+          archive="${RUNNER_TEMP}/brev-cli.tar.gz"
+          curl -fsSL -o "$archive" "https://github.com/brevdev/brev-cli/releases/download/v${BREV_CLI_VERSION}/brev-cli_${BREV_CLI_VERSION}_linux_amd64.tar.gz"
+          printf '%s  %s\n' "$BREV_CLI_SHA256" "$archive" | sha256sum -c -
+          tar -xzf "$archive" -C "${RUNNER_TEMP}" brev
+          sudo install -m 0755 "${RUNNER_TEMP}/brev" /usr/local/bin/brev
+          brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"
+          printf 'work_dir=%s\n' "$work_dir" >>"$GITHUB_OUTPUT"
+
+      - name: Reproduce issue 9880 on the staging Launchable
+        timeout-minutes: 65
+        env:
+          BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
+          GH_TOKEN: ${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}
+          HOME: ${{ runner.temp }}/issue-9880-home
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          WORK_DIR: ${{ steps.prepare.outputs.work_dir }}
+        run: tools/e2e/brev-launchable-issue-9880.sh
+
+      - name: Verify workflow-owned workspace cleanup
+        if: ${{ always() && steps.prepare.outputs.work_dir != '' }}
+        timeout-minutes: 15
+        env:
+          BREV_DELETE_TIMEOUT_SECONDS: "720"
+          HOME: ${{ runner.temp }}/issue-9880-home
+          WORK_DIR: ${{ steps.prepare.outputs.work_dir }}
+        run: tools/e2e/brev-launchable-issue-9880.sh cleanup-owned-workspace
+
+      - name: Remove Brev credentials
+        if: always()
+        env:
+          HOME: ${{ runner.temp }}/issue-9880-home
+        run: |
+          set -euo pipefail
+          rm -rf -- "$HOME"
+          test ! -e "$HOME"
+
+      - name: Upload issue 9880 evidence
+        if: ${{ always() && steps.prepare.outputs.work_dir != '' }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: issue-9880-staging-reproduction-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.prepare.outputs.work_dir }}/lane.log
+            ${{ steps.prepare.outputs.work_dir }}/issue-9880.json
+            ${{ steps.prepare.outputs.work_dir }}/issue-9880.log
+            ${{ steps.prepare.outputs.work_dir }}/cleanup.json

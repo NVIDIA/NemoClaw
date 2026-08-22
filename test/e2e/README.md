@@ -207,7 +207,12 @@ and exact-staging Launchable job own its product coverage:
 | `gpu` | Unified E2E | `gpu-e2e` runs on the dedicated GPU runner. |
 | `all` | Retired | The selector only duplicated `credential-sanitization` and `telegram-injection`. |
 
-The retired nightly caller no longer runs.
+The retired nightly caller no longer runs. The explicit
+`E2E / Issue 9880 Staging Reproduction` workflow is a temporary issue-specific
+exception: it deploys the standing staging Launchable, runs five bounded fresh
+OpenClaw CLI sessions against the baked image, uploads redacted evidence, and
+confirms that the workflow-owned workspace is absent. It does not restore source
+copying, source installation, the legacy suite selector, or scheduled Brev coverage.
 Each push to `main` selects E2E work from the changed files.
 Manual GPU validation must use `gpu-e2e`.
 It must not provision a generic Brev VM.
