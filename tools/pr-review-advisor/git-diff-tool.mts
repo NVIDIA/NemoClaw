@@ -8,6 +8,7 @@ import { getFileDiff } from "../advisors/git.mts";
 
 export const PR_REVIEW_GIT_DIFF_TOOL = "pr_review_git_diff";
 export const PR_REVIEW_DIFF_PAGE_CHARACTER_LIMIT = 24_000;
+export const PR_REVIEW_DIFF_TOTAL_CHARACTER_LIMIT = PR_REVIEW_DIFF_PAGE_CHARACTER_LIMIT * 8;
 const PR_REVIEW_DIFF_PATH_LIMIT = 4096;
 
 type GitDiffToolController = {
@@ -31,6 +32,8 @@ export function createGitDiffToolController(options: GitDiffToolOptions): GitDif
   const changedFiles = [...options.changedFiles];
   const changedFileSet = new Set(changedFiles);
   const diffCache = new Map<string, string>();
+  const servedPages = new Set<string>();
+  let servedDiffCharacters = 0;
   const readFileDiff =
     options.readFileDiff ?? ((file: string) => getFileDiff(options.baseRef, options.headRef, file));
 
@@ -38,7 +41,7 @@ export function createGitDiffToolController(options: GitDiffToolOptions): GitDif
     name: PR_REVIEW_GIT_DIFF_TOOL,
     label: "Read the pull request diff in bounded pages",
     description:
-      "First call with no path to list every changed file. Then pass one exact changed-file path and an optional cursor to read that file's diff in bounded pages. Follow nextCursor until null only when more detail is needed.",
+      "First call with no path to list every changed file. Then pass one exact changed-file path and an optional cursor to read that file's diff in bounded pages. Prioritize the highest-risk files: file pages share one 192,000-character investigation budget, and repeated pages return only a short receipt.",
     parameters: Type.Object(
       {
         path: Type.Optional(Type.String({ minLength: 1, maxLength: PR_REVIEW_DIFF_PATH_LIMIT })),
@@ -69,6 +72,24 @@ export function createGitDiffToolController(options: GitDiffToolOptions): GitDif
           `PR diff path is not in the deterministic changed-file list: ${input.path}`,
         );
       }
+      const pageKey = `${input.path}\0${String(cursor)}`;
+      if (servedPages.has(pageKey)) {
+        return toolResult({
+          kind: "file_diff_page_already_served",
+          path: input.path,
+          cursor,
+          characterBudget: diffCharacterBudget(servedDiffCharacters),
+        });
+      }
+      const remainingCharacters = PR_REVIEW_DIFF_TOTAL_CHARACTER_LIMIT - servedDiffCharacters;
+      if (remainingCharacters <= 0) {
+        return toolResult({
+          kind: "file_diff_budget_exhausted",
+          path: input.path,
+          cursor,
+          characterBudget: diffCharacterBudget(servedDiffCharacters),
+        });
+      }
       let diff = diffCache.get(input.path);
       if (diff === undefined) {
         diff = readFileDiff(input.path);
@@ -77,7 +98,13 @@ export function createGitDiffToolController(options: GitDiffToolOptions): GitDif
       if (cursor > diff.length) {
         throw new Error(`PR diff cursor ${cursor} is past the end of ${input.path}`);
       }
-      const page = textPage(diff, cursor);
+      const page = textPage(
+        diff,
+        cursor,
+        Math.min(PR_REVIEW_DIFF_PAGE_CHARACTER_LIMIT, remainingCharacters),
+      );
+      servedPages.add(pageKey);
+      servedDiffCharacters += page.chunk.length;
       return toolResult({
         kind: "file_diff",
         path: input.path,
@@ -85,6 +112,7 @@ export function createGitDiffToolController(options: GitDiffToolOptions): GitDif
         cursor,
         chunk: page.chunk || "<no textual diff available>",
         nextCursor: page.nextCursor,
+        characterBudget: diffCharacterBudget(servedDiffCharacters),
       });
     },
   });
@@ -114,15 +142,27 @@ function manifestPage(
   return { files: page, nextCursor: index < files.length ? index : null };
 }
 
-function textPage(text: string, cursor: number): { chunk: string; nextCursor: number | null } {
-  let end = Math.min(text.length, cursor + PR_REVIEW_DIFF_PAGE_CHARACTER_LIMIT);
+function textPage(
+  text: string,
+  cursor: number,
+  characterLimit: number,
+): { chunk: string; nextCursor: number | null } {
+  let end = Math.min(text.length, cursor + characterLimit);
   if (end < text.length) {
     const lineEnd = text.lastIndexOf("\n", end);
-    if (lineEnd > cursor + PR_REVIEW_DIFF_PAGE_CHARACTER_LIMIT / 2) end = lineEnd + 1;
+    if (lineEnd > cursor + characterLimit / 2) end = lineEnd + 1;
   }
   return {
     chunk: text.slice(cursor, end),
     nextCursor: end < text.length ? end : null,
+  };
+}
+
+function diffCharacterBudget(servedCharacters: number) {
+  return {
+    limit: PR_REVIEW_DIFF_TOTAL_CHARACTER_LIMIT,
+    served: servedCharacters,
+    remaining: PR_REVIEW_DIFF_TOTAL_CHARACTER_LIMIT - servedCharacters,
   };
 }
 
