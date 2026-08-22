@@ -25,6 +25,8 @@ import {
   resetDestroyModuleCache,
   traceDestroyBoundaryCalls,
 } from "../../../../test/helpers/destroy-flow-test-harness";
+import { serializedLlamaCppHostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
+import { createSandboxHostLocalInferenceProvenance } from "../../state/registry/host-local-inference";
 import type { SandboxWorkloadReceipt } from "../../state/registry";
 
 const managedHermesWorkload = {
@@ -79,6 +81,160 @@ describe("destroySandbox flow", () => {
     expect(harness.removeSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
       harness.retirePortableLifecycleReceiptSpy.mock.invocationCallOrder[0],
     );
+  });
+
+  it.each([
+    ["--yes", false],
+    ["--yes --force", true],
+  ] as const)(
+    "keeps managed llama.cpp cleanup authority across the sandbox delete boundary with %s (#9888)",
+    async (_flags, force) => {
+      const trace: string[] = [];
+      const cleanup = vi.fn(() => {
+        trace.push("cleanup");
+        return { ok: true as const, removed: [], preserved: [] };
+      });
+      const harness = createDestroyHarness({
+        provider: "llama-cpp-local",
+        hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
+        preparedManagedLlamaCppRuntimeCleanup: { cleanup },
+        onPrepareManagedLlamaCppRuntimeCleanup: () => trace.push("prepare"),
+      });
+      harness.runOpenshellSpy.mockImplementation((args: unknown) => {
+        const argv = Array.isArray(args) ? args : [];
+        switch (`${String(argv[0])}:${String(argv[1])}`) {
+          case "sandbox:delete":
+            trace.push("delete");
+            return { status: 0, stdout: "", stderr: "" };
+          case "sandbox:list":
+            return { status: 0, stdout: '[{"name":"alpha","phase":"Ready"}]', stderr: "" };
+          default:
+            return { status: 0, stdout: "", stderr: "" };
+        }
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true, force })).resolves.toBeUndefined();
+
+      expect(harness.prepareManagedLlamaCppRuntimeCleanupSpy).toHaveBeenCalledWith("alpha", {
+        gatewayPort: 19080,
+      });
+      expect(cleanup).toHaveBeenCalledOnce();
+      expect(trace).toEqual(["prepare", "delete", "cleanup"]);
+      expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+      expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledWith("alpha");
+      expect(exitSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["--yes", false],
+    ["--yes --force", true],
+  ] as const)(
+    "refuses sandbox deletion when managed llama.cpp cleanup authority cannot be qualified with %s (#9888)",
+    async (_flags, force) => {
+      const harness = createDestroyHarness({
+        provider: "llama-cpp-local",
+        hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
+        onPrepareManagedLlamaCppRuntimeCleanup: () => {
+          throw new Error("qualified container endpoint does not match persisted authority");
+        },
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true, force })).rejects.toThrow(
+        "process.exit(1)",
+      );
+
+      expect(
+        harness.runOpenshellSpy.mock.calls.map(([args]) => (args as string[]).slice(0, 2)),
+      ).not.toContainEqual(["sandbox", "delete"]);
+      expect(harness.errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+        "The sandbox was not deleted. Fix the reported authority and retry destroy.",
+      );
+      expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves the registry when prepared managed llama.cpp cleanup fails after deletion (#9888)", async () => {
+    const harness = createDestroyHarness({
+      provider: "llama-cpp-local",
+      hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
+      preparedManagedLlamaCppRuntimeCleanup: {
+        cleanup: () => ({
+          ok: false,
+          reason: "qualified cleanup failed",
+          removed: [],
+          preserved: ["managed llama.cpp runtime"],
+        }),
+      },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+      "qualified cleanup failed",
+    );
+  });
+
+  it("does not run prepared managed llama.cpp cleanup when OpenShell deletion fails (#9888)", async () => {
+    const cleanup = vi.fn(() => ({ ok: true as const, removed: [], preserved: [] }));
+    const harness = createDestroyHarness({
+      deleteStatus: 7,
+      provider: "llama-cpp-local",
+      hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
+      preparedManagedLlamaCppRuntimeCleanup: { cleanup },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(7)");
+
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+  });
+
+  it("reconciles prepared managed llama.cpp cleanup after OpenShell already deleted the sandbox (#9888)", async () => {
+    const cleanup = vi.fn(() => ({ ok: true as const, removed: [], preserved: [] }));
+    const harness = createDestroyHarness({
+      sandboxPresent: false,
+      provider: "llama-cpp-local",
+      hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
+      preparedManagedLlamaCppRuntimeCleanup: { cleanup },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledWith("alpha");
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("completes destroy through common cleanup for provenance-tracked llama.cpp (#9888)", async () => {
+    const receipt = serializedLlamaCppHostLocalInferenceReceipt();
+    const harness = createDestroyHarness({
+      provider: "llama-cpp-local",
+      hostLocalInferenceReceipt: receipt,
+      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance("alpha", receipt),
+      executeSandboxDestroyResult: {
+        ok: true,
+        alreadyGone: false,
+        deleteOutput: "",
+        deleteResult: { status: 0, stdout: "", stderr: "" },
+        detachOutcome: { detached: [], failures: [] },
+        forcedLocalCleanup: false,
+        commonLlamaCppAuthorityRetired: true,
+      },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.prepareManagedLlamaCppRuntimeCleanupSpy).not.toHaveBeenCalled();
+    expect(harness.executeSandboxDestroySpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandbox: expect.objectContaining({ hostLocalInferenceProvenance: expect.any(Object) }),
+      }),
+    );
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 
   it("rejects schema-5 inside the destroy lifecycle fence before Docker or OpenShell (#9203)", async () => {

@@ -21,7 +21,10 @@ import {
   parseHttpsPinRouteId,
   revokeHttpsPinRuntimeAdapterRoute,
 } from "../../inference/https-pin-runtime-adapter";
-import { cleanupManagedLlamaCppRuntimeForSandbox } from "../../inference/local-model-profile/cleanup";
+import {
+  cleanupManagedLlamaCppRuntimeForSandbox,
+  prepareManagedLlamaCppRuntimeCleanupForSandbox,
+} from "../../inference/local-model-profile/cleanup";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   normalizeRuntimeProviderIdentity,
@@ -496,6 +499,25 @@ async function destroySandboxUnlocked(
 
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } =
     prepareSandboxDestroy(sandboxName);
+  let preparedManagedLlamaCppCleanup: ReturnType<
+    typeof prepareManagedLlamaCppRuntimeCleanupForSandbox
+  > = null;
+  if (!sandbox?.hostLocalInferenceProvenance) {
+    try {
+      // Fresh Docker qualification reads ambient DOCKER_CONTEXT, DOCKER_HOST,
+      // or Docker's persisted currentContext. Pin that selection before the
+      // OpenShell delete boundary so legacy cleanup cannot switch daemons.
+      preparedManagedLlamaCppCleanup = prepareManagedLlamaCppRuntimeCleanupForSandbox(sandboxName, {
+        ...(typeof sandbox?.gatewayPort === "number" ? { gatewayPort: sandbox.gatewayPort } : {}),
+      });
+    } catch (error) {
+      console.error(
+        `  Refusing to destroy sandbox '${sandboxName}': Managed llama.cpp cleanup preflight failed: ${redactDestroyError(error)}`,
+      );
+      console.error(`  The sandbox was not deleted. Fix the reported authority and retry destroy.`);
+      process.exit(1);
+    }
+  }
   // Recheck identity after read-only preflight and before local mutation.
   const preMutationIdentity = inspectContainerIdentity();
   if (
@@ -651,9 +673,11 @@ async function destroySandboxUnlocked(
     stopHostServices: shouldStopHostServices,
   });
   if (deleteSucceededOrAlreadyGone && commonLlamaCppAuthorityRetired !== true) {
-    const managedLlamaCppCleanup = cleanupManagedLlamaCppRuntimeForSandbox(sandboxName, {
-      ...(typeof sandbox?.gatewayPort === "number" ? { gatewayPort: sandbox.gatewayPort } : {}),
-    });
+    const managedLlamaCppCleanup =
+      preparedManagedLlamaCppCleanup?.cleanup() ??
+      cleanupManagedLlamaCppRuntimeForSandbox(sandboxName, {
+        ...(typeof sandbox?.gatewayPort === "number" ? { gatewayPort: sandbox.gatewayPort } : {}),
+      });
     if (!managedLlamaCppCleanup.ok) {
       console.error(
         `  Managed llama.cpp cleanup failed for '${sandboxName}': ${managedLlamaCppCleanup.reason}`,

@@ -4,9 +4,11 @@
 import { createRequire } from "node:module";
 
 import { expect, type MockInstance, vi } from "vitest";
+import type { SandboxDestroyExecutionResult } from "../../src/lib/actions/sandbox/destroy-execution";
+import type { PreparedManagedLlamaCppRuntimeCleanup } from "../../src/lib/inference/local-model-profile/cleanup";
 import type { ManagedHermesStateVolumeCleanupResult } from "../../src/lib/onboard/managed-workload/hermes-state-volume";
 import type { Session } from "../../src/lib/state/onboard-session";
-import type { SandboxWorkloadReceipt } from "../../src/lib/state/registry";
+import type { SandboxEntry, SandboxWorkloadReceipt } from "../../src/lib/state/registry";
 
 type DestroySandbox = (typeof import("../../src/lib/actions/sandbox/destroy"))["destroySandbox"];
 
@@ -25,6 +27,7 @@ export type DestroyHarness = {
   dockerRunSpy: MockInstance;
   errorSpy: MockInstance;
   events: string[];
+  executeSandboxDestroySpy: MockInstance;
   finalizeMcpBridgesAfterSandboxDeleteSpy: MockInstance;
   gatewayPinsAtMcpPrepare: Array<string | undefined>;
   gatewayPinsAtSandboxList: Array<string | undefined>;
@@ -33,6 +36,7 @@ export type DestroyHarness = {
   logSpy: MockInstance;
   prepareMcpBridgesForAbsentSandboxDestroySpy: MockInstance;
   prepareMcpBridgesForDestroySpy: MockInstance;
+  prepareManagedLlamaCppRuntimeCleanupSpy: MockInstance;
   promptSpy: MockInstance;
   removeManagedHermesStateVolumeSpy: MockInstance;
   removeSandboxSpy: MockInstance;
@@ -72,11 +76,16 @@ type DestroyHarnessOptions = {
   onDockerRun?: (call: number) => void;
   detachedProviders?: string[];
   endpointUrl?: string;
+  executeSandboxDestroyResult?: SandboxDestroyExecutionResult;
   finalizeMcpBridgeError?: string;
   finalizeMcpError?: string;
   imageTag?: string | null;
+  hostLocalInferenceReceipt?: string | null;
+  hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   liveListOutput?: string;
   managedHermesStateVolumeCleanupResult?: ManagedHermesStateVolumeCleanupResult;
+  onPrepareManagedLlamaCppRuntimeCleanup?: () => void;
+  preparedManagedLlamaCppRuntimeCleanup?: PreparedManagedLlamaCppRuntimeCleanup | null;
   mcpAddState?: "prepared";
   mcpServers?: string[];
   openshellDriver?: string;
@@ -198,6 +207,19 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const portableAgentLifecycle = requireDist(
     "../../onboard/experimental/portable-agent-lifecycle.js",
   );
+  const localModelProfileCleanup = requireDist("../../inference/local-model-profile/cleanup.js");
+
+  const executeSandboxDestroySpy = vi.spyOn(destroyExecution, "executeSandboxDestroy");
+  if (options.executeSandboxDestroyResult) {
+    executeSandboxDestroySpy.mockResolvedValue(options.executeSandboxDestroyResult);
+  }
+
+  const prepareManagedLlamaCppRuntimeCleanupSpy = vi
+    .spyOn(localModelProfileCleanup, "prepareManagedLlamaCppRuntimeCleanupForSandbox")
+    .mockImplementation(() => {
+      options.onPrepareManagedLlamaCppRuntimeCleanup?.();
+      return options.preparedManagedLlamaCppRuntimeCleanup ?? null;
+    });
 
   const assertHermesPortableCommandUnavailableSpy = vi
     .spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable")
@@ -221,6 +243,12 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     ...(options.provider ? { provider: options.provider } : {}),
     ...(options.openshellDriver ? { openshellDriver: options.openshellDriver } : {}),
     ...(options.endpointUrl ? { endpointUrl: options.endpointUrl } : {}),
+    ...(options.hostLocalInferenceReceipt !== undefined
+      ? { hostLocalInferenceReceipt: options.hostLocalInferenceReceipt }
+      : {}),
+    ...(options.hostLocalInferenceProvenance
+      ? { hostLocalInferenceProvenance: options.hostLocalInferenceProvenance }
+      : {}),
     ...(options.workload ? { workload: options.workload } : {}),
     ...(options.mcpServers?.length
       ? {
@@ -514,6 +542,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     destroySandbox: requireDist(destroyModulePath).destroySandbox,
     errorSpy,
     events,
+    executeSandboxDestroySpy,
     finalizeMcpBridgesAfterSandboxDeleteSpy,
     gatewayPinsAtMcpPrepare,
     gatewayPinsAtSandboxList,
@@ -522,6 +551,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     logSpy,
     prepareMcpBridgesForAbsentSandboxDestroySpy,
     prepareMcpBridgesForDestroySpy,
+    prepareManagedLlamaCppRuntimeCleanupSpy,
     promptSpy,
     removeManagedHermesStateVolumeSpy,
     removeSandboxSpy,

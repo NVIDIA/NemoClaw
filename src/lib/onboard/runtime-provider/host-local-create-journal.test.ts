@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createHostLocalCreateJournalStore,
   HOST_LOCAL_CREATE_JOURNAL_DIRECTORY,
+  readHostLocalCreateJournalRecords,
   type HostLocalCreateJournalRecord,
   serializeHostLocalCreateJournalRecord,
 } from "./host-local-create-journal";
@@ -97,6 +98,28 @@ function journalPath(): string {
 function executionPath(name: ".execution-lease.json" | ".execution-recovery.json"): string {
   return path.join(stateDirectory, HOST_LOCAL_CREATE_JOURNAL_DIRECTORY, name);
 }
+
+describe("non-mutating journal reads", () => {
+  it("does not create an absent journal directory", () => {
+    expect(readHostLocalCreateJournalRecords(stateDirectory)).toEqual([]);
+    expect(fs.existsSync(path.dirname(journalPath()))).toBe(false);
+  });
+
+  it("rejects an exclusive-publish orphan without repairing it", () => {
+    const store = createHostLocalCreateJournalStore(stateDirectory);
+    store.create(prepared());
+    const orphan = path.join(
+      path.dirname(journalPath()),
+      `.${path.basename(journalPath())}.${OWNER_ONE}.tmp`,
+    );
+    fs.linkSync(journalPath(), orphan);
+
+    expect(() => readHostLocalCreateJournalRecords(stateDirectory)).toThrow(
+      "journal file authority is invalid",
+    );
+    expect(fs.existsSync(orphan)).toBe(true);
+  });
+});
 
 function executionSource(transactionId: string, ownerId: string, ownerPid: number): string {
   return `${JSON.stringify({ schemaVersion: 1, transactionId, ownerId, ownerPid })}\n`;

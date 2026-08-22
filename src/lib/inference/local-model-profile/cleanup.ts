@@ -17,10 +17,12 @@ import {
 } from "../../onboard/runtime-provider/docker-llama-cpp-private-bridge";
 import {
   createHostLocalCreateJournalStore,
+  readHostLocalCreateJournalRecords,
   type HostLocalCreateJournalRecord,
 } from "../../onboard/runtime-provider/host-local-create-journal";
 import {
   createFilePersistedEngineAuthorityStore,
+  openFilePersistedEngineAuthorityStore,
   requirePersistedEngineAuthority,
 } from "../../onboard/runtime-provider/persisted-engine-authority";
 import {
@@ -643,6 +645,67 @@ export interface ManagedLlamaCppSandboxCleanupOptions {
 
 export interface ManagedLlamaCppLifecycleCleanupOptions extends ManagedLlamaCppSandboxCleanupOptions {
   readonly privateBridge?: DockerLlamaCppPrivateBridgeController;
+}
+
+export interface PreparedManagedLlamaCppRuntimeCleanup {
+  readonly cleanup: () => LocalModelRuntimeCleanupResult;
+}
+
+/**
+ * Qualify legacy sandbox-scoped cleanup before deletion. Docker qualification
+ * reads ambient DOCKER_CONTEXT, DOCKER_HOST, or persisted currentContext, so
+ * the returned capability retains that exact selection across the OpenShell
+ * delete boundary and revalidates its endpoint and private ownership at use.
+ */
+export function prepareManagedLlamaCppRuntimeCleanupForSandbox(
+  sandboxName: string,
+  options: ManagedLlamaCppSandboxCleanupOptions = {},
+): PreparedManagedLlamaCppRuntimeCleanup | null {
+  const homeDir = canonicalCleanupHomeDir(options.homeDir ?? os.homedir());
+  const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
+  if (!statePathExists(paths.stateDir)) return null;
+  const currentUserId =
+    options.deps?.currentUserId === undefined
+      ? typeof process.getuid === "function"
+        ? process.getuid()
+        : null
+      : options.deps.currentUserId;
+  requirePrivateManagedState(paths, currentUserId);
+  if (!fs.existsSync(paths.ownerPath)) return null;
+  const owner = loadManagedLlamaCppOwner(paths);
+  if (!owner || owner.sandboxName !== sandboxName) return null;
+  const engine = options.engine ?? createManagedLlamaCppEngine(options.env ?? process.env);
+  const receipt = loadManagedLlamaCppReceipt(paths);
+  if (receipt !== null) {
+    prepareManagedLlamaCppLifecycleCleanup(owner.sandboxName, receipt, {
+      ...options,
+      homeDir,
+      engine,
+    });
+  } else {
+    const journals = readHostLocalCreateJournalRecords(paths.stateDir).filter(
+      ({ providerId, service }) => providerId === "docker" && service === "llama-cpp",
+    );
+    if (journals.length > 1) {
+      throw new Error("managed llama.cpp has more than one lifecycle journal");
+    }
+    const authority =
+      journals[0]?.engineAuthority ??
+      openFilePersistedEngineAuthorityStore(paths.stateDir).load("host-local-inference");
+    if (authority === null) {
+      throw new Error("managed llama.cpp engine authority is missing while ownership remains");
+    }
+    if (journals[0]) requireManagedLlamaJournal(journals[0], owner.recipeId);
+    requireQualifiedEngine(authority, engine);
+  }
+  return Object.freeze({
+    cleanup: () =>
+      cleanupManagedLlamaCppRuntimeForSandbox(sandboxName, {
+        ...options,
+        homeDir,
+        engine,
+      }),
+  });
 }
 
 function requireManagedLlamaCppLifecycleCleanupReceipt(

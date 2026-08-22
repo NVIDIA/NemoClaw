@@ -5,11 +5,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
+import * as dockerLlamaCppOperation from "../../onboard/runtime-provider/docker-llama-cpp-operation";
 import { privateBridgeFixture } from "../../onboard/runtime-provider/docker-llama-cpp-private-bridge.test-support";
 import { createHostLocalCreateJournalStore } from "../../onboard/runtime-provider/host-local-create-journal";
-import { loadManagedLlamaCppReceipt, managedLlamaCppStatePaths } from "../llama-cpp/managed-state";
+import {
+  loadManagedLlamaCppReceipt,
+  managedLlamaCppStatePaths,
+  reserveManagedLlamaCppOwner,
+} from "../llama-cpp/managed-state";
+import { HOST_LOCAL_CREATE_JOURNAL_DIRECTORY } from "../../onboard/runtime-provider/host-local-create-journal";
+import { PERSISTED_ENGINE_AUTHORITY_DIRECTORY } from "../../onboard/runtime-provider/persisted-engine-authority";
 import { runtimeAuthFingerprint } from "../serving/runtime-auth-fingerprint";
 import {
   HOST_LOCAL_VLLM_AUTH_LABEL,
@@ -30,6 +37,7 @@ import {
   cleanupManagedLlamaCppRuntimeForSandbox,
   finalizeManagedLlamaCppLifecycleCleanup,
   prepareManagedLlamaCppLifecycleCleanup,
+  prepareManagedLlamaCppRuntimeCleanupForSandbox,
   resolveManagedLlamaCppCleanupTarget,
 } from "./cleanup";
 import {
@@ -42,8 +50,11 @@ import {
 } from "./cleanup.test-support";
 
 const temporaryDirectories: string[] = [];
+let createManagedLlamaCppEngineSpy: MockInstance | undefined;
 
 afterEach(() => {
+  createManagedLlamaCppEngineSpy?.mockRestore();
+  createManagedLlamaCppEngineSpy = undefined;
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
   }
@@ -538,27 +549,24 @@ describe("host-local model cleanup", () => {
     expect(fs.lstatSync(paths.stateDir).isSymbolicLink()).toBe(true);
   });
 
-  it.each([
-    "network-creating",
-    "creating",
-    "created",
-    "started",
-    "receipt-prepared",
-  ] as const)("rolls back an unfinished %s create journal before deleting state", (phase) => {
-    const homeDir = temporaryHome();
-    const harness = engineHarness({ containerPresent: phase !== "network-creating" });
-    createManagedState(homeDir, harness.engine, { phase });
-    const privateBridge = privateBridgeFixture();
+  it.each(["network-creating", "creating", "created", "started", "receipt-prepared"] as const)(
+    "rolls back an unfinished %s create journal before deleting state",
+    (phase) => {
+      const homeDir = temporaryHome();
+      const harness = engineHarness({ containerPresent: phase !== "network-creating" });
+      createManagedState(homeDir, harness.engine, { phase });
+      const privateBridge = privateBridgeFixture();
 
-    const result = cleanupLocalModelRuntimes({
-      homeDir,
-      engine: harness.engine,
-      privateBridge,
-    });
+      const result = cleanupLocalModelRuntimes({
+        homeDir,
+        engine: harness.engine,
+        privateBridge,
+      });
 
-    expect(result).toMatchObject({ ok: true });
-    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(false);
-  });
+      expect(result).toMatchObject({ ok: true });
+      expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(false);
+    },
+  );
 
   it("fails closed on a fresh uncertain create that has no exact container yet", () => {
     const homeDir = temporaryHome();
@@ -716,6 +724,104 @@ describe("host-local model cleanup", () => {
       harness.capture.mock.invocationCallOrder[containerRemovalCall]!,
     );
     expect(fs.existsSync(managedLlamaCppStatePaths(homeDir, gatewayPort).stateDir)).toBe(false);
+  });
+
+  it("retains the qualified engine across delayed sandbox cleanup (#9888)", () => {
+    const homeDir = temporaryHome();
+    const qualified = engineHarness({ authorityId: "docker:qualified" });
+    const drifted = engineHarness({ authorityId: "docker:drifted" });
+    const privateBridge = privateBridgeFixture();
+    createManagedState(homeDir, qualified.engine);
+    let crossedDeleteBoundary = false;
+    const createEngine = (createManagedLlamaCppEngineSpy = vi
+      .spyOn(dockerLlamaCppOperation, "createManagedLlamaCppEngine")
+      .mockImplementation(() => (crossedDeleteBoundary ? drifted.engine : qualified.engine)));
+
+    const prepared = prepareManagedLlamaCppRuntimeCleanupForSandbox("spark-agent", {
+      homeDir,
+      privateBridge,
+    });
+    crossedDeleteBoundary = true;
+
+    expect(prepared).not.toBeNull();
+    expect(prepared!.cleanup()).toMatchObject({ ok: true });
+    expect(createEngine).toHaveBeenCalledOnce();
+    expect(privateBridge.stopTransaction).toHaveBeenCalledWith(TRANSACTION_ID);
+    expect(qualified.capture).toHaveBeenCalledWith(
+      ["rm", "--force", RUNTIME_ID],
+      expect.any(Number),
+    );
+    expect(qualified.capture).toHaveBeenCalledWith(
+      ["network", "rm", NETWORK_ID],
+      expect.any(Number),
+    );
+    expect(drifted.capture).not.toHaveBeenCalled();
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(false);
+  });
+
+  it("retains the selected engine for an interrupted journal without a receipt (#9888)", () => {
+    const homeDir = temporaryHome();
+    const qualified = engineHarness({ authorityId: "docker:qualified" });
+    const drifted = engineHarness({ authorityId: "docker:drifted" });
+    createManagedState(homeDir, qualified.engine, { phase: "started" });
+    let crossedDeleteBoundary = false;
+    createManagedLlamaCppEngineSpy = vi
+      .spyOn(dockerLlamaCppOperation, "createManagedLlamaCppEngine")
+      .mockImplementation(() => (crossedDeleteBoundary ? drifted.engine : qualified.engine));
+
+    const prepared = prepareManagedLlamaCppRuntimeCleanupForSandbox("spark-agent", { homeDir });
+    crossedDeleteBoundary = true;
+
+    expect(prepared?.cleanup()).toMatchObject({ ok: true });
+    expect(qualified.capture).toHaveBeenCalledWith(
+      ["rm", "--force", RUNTIME_ID],
+      expect.any(Number),
+    );
+    expect(drifted.capture).not.toHaveBeenCalled();
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(false);
+  });
+
+  it("refuses a drifted engine before deleting an interrupted journal owner (#9888)", () => {
+    const homeDir = temporaryHome();
+    const qualified = engineHarness({ authorityId: "docker:qualified" });
+    const drifted = engineHarness({ authorityId: "docker:drifted" });
+    createManagedState(homeDir, qualified.engine, { phase: "started" });
+    createManagedLlamaCppEngineSpy = vi
+      .spyOn(dockerLlamaCppOperation, "createManagedLlamaCppEngine")
+      .mockReturnValue(drifted.engine);
+
+    expect(() =>
+      prepareManagedLlamaCppRuntimeCleanupForSandbox("spark-agent", { homeDir }),
+    ).toThrow("Qualified container endpoint does not match persisted authority.");
+    expect(drifted.capture).not.toHaveBeenCalled();
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
+  });
+
+  it("does not create journal or authority directories during owner-only preflight (#9888)", () => {
+    const homeDir = temporaryHome();
+    const paths = managedLlamaCppStatePaths(homeDir);
+    reserveManagedLlamaCppOwner(paths, {
+      schemaVersion: 1,
+      sandboxName: "spark-agent",
+      catalogDigest: `sha256:${"5".repeat(64)}`,
+      presetDigest: `sha256:${"6".repeat(64)}`,
+      recipeDigest: `sha256:${"7".repeat(64)}`,
+      recipeId: "llama-cpp.nemotron.spark.v1",
+    });
+    const harness = engineHarness();
+
+    expect(() =>
+      prepareManagedLlamaCppRuntimeCleanupForSandbox("spark-agent", {
+        homeDir,
+        engine: harness.engine,
+      }),
+    ).toThrow("authority directory is missing");
+    expect(fs.existsSync(path.join(paths.stateDir, HOST_LOCAL_CREATE_JOURNAL_DIRECTORY))).toBe(
+      false,
+    );
+    expect(fs.existsSync(path.join(paths.stateDir, PERSISTED_ENGINE_AUTHORITY_DIRECTORY))).toBe(
+      false,
+    );
   });
 
   it("stops the managed llama.cpp bridge before removing the container it forwards to (#9598)", () => {

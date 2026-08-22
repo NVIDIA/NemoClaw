@@ -295,6 +295,50 @@ Run:
 $$nemoclaw my-assistant destroy
 ```
 
+Although the setup steps above target DGX Spark, this removal and recovery behavior also applies to other experimental managed llama.cpp profiles on Linux.
+Before sandbox deletion, NemoClaw qualifies the Docker operation authority recorded during managed llama.cpp onboarding.
+This authority includes Docker endpoint selection and identity, Docker executable identity, and command environment.
+If qualification fails, NemoClaw leaves the sandbox in place and reports the Docker operation authority error.
+
+If the reported Docker operation authority mismatch involves endpoint selection, inspect the current Docker configuration and selectors:
+
+```bash
+docker context show
+printf 'DOCKER_CONFIG=%s\n' "${DOCKER_CONFIG:-<unset>}"
+printf 'DOCKER_CONTEXT=%s\n' "${DOCKER_CONTEXT:-<unset>}"
+printf 'DOCKER_HOST=%s\n' "${DOCKER_HOST:-<unset>}"
+```
+
+Compare this output with the shell or automation that ran onboarding.
+Restore the configuration and selection used during onboarding with the matching path:
+
+- If onboarding used a custom `DOCKER_CONFIG` directory, restore it first:
+
+  ```bash
+  export DOCKER_CONFIG="<onboarding-docker-config>"
+  ```
+
+  If onboarding used Docker's default configuration directory, unset `DOCKER_CONFIG`.
+
+- If onboarding used `DOCKER_CONTEXT` or Docker's persisted current context, select the original context explicitly:
+
+  ```bash
+  unset DOCKER_HOST
+  export DOCKER_CONTEXT="<onboarding-context>"
+  ```
+
+- If onboarding used `DOCKER_HOST`, restore that selection:
+
+  ```bash
+  unset DOCKER_CONTEXT
+  export DOCKER_HOST="<onboarding-docker-host>"
+  ```
+
+After restoring the recorded Docker configuration and selector, run `docker info`.
+Confirm that it reports the Docker daemon used during onboarding.
+Other Docker operation authority mismatches can involve Docker executable identity or command environment.
+Restore the reported Docker executable or command environment to the value used during onboarding.
+Rerun the earlier `destroy` command.
 After OpenShell confirms sandbox deletion, the command removes the exact managed llama.cpp container, internal network, API key, and gateway-scoped ownership state.
 It preserves `~/.cache/huggingface/` because other applications can use that cache.
 If exact cleanup fails, NemoClaw preserves the sandbox registry entry and ownership state for a retry.
