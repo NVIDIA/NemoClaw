@@ -133,6 +133,13 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     expect(stagedDockerfile).toContain("ARG NEMOCLAW_TOOL_DISCLOSURE=direct");
     expect(stagedDockerfile).toContain("ARG CHAT_UI_URL=");
     expect(stagedDockerfile).not.toContain("ARG CHAT_UI_URL=http://127.0.0.1:18789");
+    const finalStage = stagedDockerfile.slice(stagedDockerfile.lastIndexOf("FROM ${BASE_IMAGE}"));
+    const payloadCopyIndex = finalStage.indexOf("COPY --from=hermes-runtime-payload / /");
+    const permissionNormalizationIndex = finalStage.search(
+      /chmod 444 [^\n]*\/usr\/local\/lib\/nemoclaw\/corporate-ca-runtime[.]sh/u,
+    );
+    expect(payloadCopyIndex).toBeGreaterThanOrEqual(0);
+    expect(permissionNormalizationIndex).toBeGreaterThan(payloadCopyIndex);
     expect(fs.existsSync(path.join(first.buildContextPath, ".git"))).toBe(false);
     expect(fs.existsSync(path.join(first.buildContextPath, "node_modules"))).toBe(false);
     expect(
@@ -338,6 +345,28 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     expect(() => createHermesPortableBuildContextPlan(source, BUILD_SETTINGS)).toThrow(
       "noncanonical COPY or ADD opcode",
     );
+  });
+
+  it("rejects BuildKit-only local COPY options before reservation (#9921)", () => {
+    const source = primaryCloneFixture();
+    const dockerfile = path.join(source, "agents/hermes/Dockerfile");
+    const reservationRoot = path.join(stateDir, "hermes-portable-build-context");
+    fs.writeFileSync(
+      dockerfile,
+      fs
+        .readFileSync(dockerfile, "utf8")
+        .replace(
+          "COPY scripts/lib/corporate-ca-runtime.sh",
+          "COPY --chmod=0444 scripts/lib/corporate-ca-runtime.sh",
+        ),
+      { mode: 0o644 },
+    );
+    const reservationExistedBefore = fs.existsSync(reservationRoot);
+
+    expect(() => createHermesPortableBuildContextPlan(source, BUILD_SETTINGS)).toThrow(
+      "non-Portable local COPY option",
+    );
+    expect(fs.existsSync(reservationRoot)).toBe(reservationExistedBefore);
   });
 
   it("rejects source symlinks, hardlinks, and unreviewed secret paths (#9203)", () => {

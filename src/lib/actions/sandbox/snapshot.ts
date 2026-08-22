@@ -374,7 +374,10 @@ function resolveCloneDashboardEnvArgs(
   return envArgs;
 }
 
-async function prepareSnapshotClonePolicy(srcEntry: SandboxEntry): Promise<{
+async function prepareSnapshotClonePolicy(
+  srcEntry: SandboxEntry,
+  targetSandbox: string,
+): Promise<{
   policyPath: string;
   cleanup?: () => boolean;
 }> {
@@ -399,6 +402,7 @@ async function prepareSnapshotClonePolicy(srcEntry: SandboxEntry): Promise<{
   const { prepareInitialSandboxCreatePolicy } = await import("../../onboard/initial-policy");
   return prepareInitialSandboxCreatePolicy(baseline.policyPath, activeMessagingChannels, {
     agentName,
+    sandboxName: targetSandbox,
     baselineExclusions,
   });
 }
@@ -1555,7 +1559,7 @@ async function runSnapshotRestoreUnlocked(
       const dstDashboardPort = allocateCloneDashboardPort(targetSandbox, lockedSourceEntry);
       const dstHermesApiPort = allocateCloneHermesApiPort(targetSandbox, lockedSourceEntry);
       const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
-      const clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry);
+      const clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry, targetSandbox);
       try {
         if (targetExists) {
           if (targetEntry) {
