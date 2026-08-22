@@ -12,6 +12,11 @@ export type Step = {
   "working-directory"?: string;
 };
 
+export type Action = {
+  outputs?: Record<string, { description?: string; value?: string }>;
+  runs?: { steps?: Step[] };
+};
+
 export type MatrixEntry = {
   agent?: string;
   arch?: string;
@@ -33,8 +38,10 @@ export type Job = {
   env?: Record<string, unknown>;
   if?: string;
   needs?: string | string[];
+  outputs?: Record<string, string>;
   permissions?: Record<string, string>;
   "runs-on"?: string;
+  secrets?: Record<string, string> | "inherit";
   steps?: Step[];
   strategy?: {
     "fail-fast"?: boolean;
@@ -42,6 +49,7 @@ export type Job = {
   };
   "timeout-minutes"?: number;
   uses?: string;
+  with?: Record<string, unknown>;
 };
 
 export type Workflow = {
@@ -59,7 +67,19 @@ export type Workflow = {
     push?: {
       paths?: string[];
     };
-    workflow_call?: unknown;
+    workflow_call?: {
+      inputs?: Record<
+        string,
+        {
+          default?: string | number | boolean;
+          description?: string;
+          required?: boolean;
+          type?: string;
+        }
+      >;
+      outputs?: Record<string, { description?: string; value?: string }>;
+      secrets?: Record<string, { description?: string; required?: boolean }>;
+    };
   };
   permissions?: Record<string, string>;
 };

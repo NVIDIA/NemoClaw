@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { VLLM_PORT } from "../../core/vllm-port";
+
 const N1X_EXPRESS_PROVIDER = "vllm-local";
 const N1X_EXPRESS_MODEL = "nvidia/Qwen3.6-35B-A3B-NVFP4";
-const N1X_EXPRESS_ENDPOINT_URL = "http://host.openshell.internal:8000/v1";
 
 export interface RecordedN1xManagedVllmRoute {
   provider?: string | null;
@@ -34,9 +35,12 @@ export function isRecordedN1xManagedVllmRebuildEligible(
   sandboxEntry: RecordedN1xManagedVllmRoute,
   rebuildSelection: N1xManagedVllmRebuildSelection,
   parseReceipt: ParseN1xManagedVllmReceipt,
+  vllmPort = VLLM_PORT,
 ): boolean {
+  if (!Number.isInteger(vllmPort) || vllmPort < 1024 || vllmPort > 65535) return false;
+  const canonicalEndpointUrl = `http://host.openshell.internal:${String(vllmPort)}/v1`;
   const recordedEndpointUsesCanonicalLocalRoute =
-    sandboxEntry.endpointUrl === null || sandboxEntry.endpointUrl === N1X_EXPRESS_ENDPOINT_URL;
+    sandboxEntry.endpointUrl === null || sandboxEntry.endpointUrl === canonicalEndpointUrl;
   if (
     sandboxEntry.provider !== N1X_EXPRESS_PROVIDER ||
     sandboxEntry.model !== N1X_EXPRESS_MODEL ||
@@ -57,7 +61,7 @@ export function isRecordedN1xManagedVllmRebuildEligible(
     return (
       receipt.service === "vllm" &&
       receipt.endpoint.host === "host.openshell.internal" &&
-      receipt.endpoint.port === 8000 &&
+      receipt.endpoint.port === vllmPort &&
       receipt.inference?.model === N1X_EXPRESS_MODEL
     );
   } catch {

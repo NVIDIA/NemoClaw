@@ -15,6 +15,7 @@ import {
   startPackageManagedDockerDriverGatewayWithEnvOverride,
   writeDockerGatewayDebEnvOverride,
 } from "./docker-driver-gateway-env";
+import { PORTABLE_HOST_GATEWAY_IP } from "./experimental/portable-profile";
 
 function homeEnv(home: string, xdgConfigHome = ""): NodeJS.ProcessEnv {
   return { HOME: home, XDG_CONFIG_HOME: xdgConfigHome } as NodeJS.ProcessEnv;
@@ -37,6 +38,20 @@ function trustedPackageServiceOptions(home: string) {
 }
 
 describe("buildDockerDriverGatewayEnv", () => {
+  it("uses the shared configured Docker network authority (#9461)", () => {
+    vi.stubEnv("OPENSHELL_DOCKER_NETWORK_NAME", "openshell-portable-proof");
+
+    const env = buildDockerDriverGatewayEnv({
+      platform: "linux",
+      stateDir: "/tmp/nemoclaw-gateway-network-authority",
+      getDockerSupervisorImage: () => "supervisor:test",
+      resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
+    });
+
+    expect(env.OPENSHELL_DOCKER_NETWORK_NAME).toBe("openshell-portable-proof");
+    vi.unstubAllEnvs();
+  });
+
   it("sets Docker-driver gateway networking from NemoClaw configuration", () => {
     const env = buildDockerDriverGatewayEnv({
       platform: "linux",
@@ -98,9 +113,7 @@ describe("buildDockerDriverGatewayEnv", () => {
       });
 
       expect(fs.existsSync(env.OPENSHELL_GATEWAY_CONFIG)).toBe(true);
-      expect(fs.readFileSync(path.join(stateDir, "openshell.db"), "utf-8")).toBe(
-        "legacy-database",
-      );
+      expect(fs.readFileSync(path.join(stateDir, "openshell.db"), "utf-8")).toBe("legacy-database");
     } finally {
       vi.unstubAllEnvs();
       fs.rmSync(stateDir, { recursive: true, force: true });
@@ -144,14 +157,14 @@ describe("buildDockerDriverGatewayEnv", () => {
         OPENSHELL_DRIVERS: "podman",
         CONTAINERS_CONF: "/tmp/nemoclaw-portable/containers.conf",
         OPENSHELL_BIND_ADDRESS: "0.0.0.0",
-        OPENSHELL_GRPC_ENDPOINT: "https://169.254.1.2:8080",
+        OPENSHELL_GRPC_ENDPOINT: `https://${PORTABLE_HOST_GATEWAY_IP}:8080`,
         NETAVARK_FW: "iptables",
         OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
       });
       const toml = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8");
       expect(toml).toContain('compute_drivers = ["podman"]');
       expect(toml).toContain("[openshell.drivers.podman]");
-      expect(toml).toContain('host_gateway_ip = "169.254.1.2"');
+      expect(toml).toContain(`host_gateway_ip = "${PORTABLE_HOST_GATEWAY_IP}"`);
       expect(toml).toContain('socket_path = "/run/user/1001/podman/podman.sock"');
       expect(toml).not.toContain("supervisor_bin");
     } finally {

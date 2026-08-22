@@ -147,6 +147,7 @@ const lifecycleMock = vi.hoisted(() => {
 });
 
 export const backupSandboxStateMock = vi.fn();
+export const assertHermesPortableCommandUnavailableMock = vi.fn();
 export const captureSnapshotRestoreAuthorityMock = vi.fn(() => ({
   schemaVersion: 1 as const,
   backupPath: "/tmp/backup-alpha",
@@ -274,6 +275,11 @@ vi.mock("../../runner", () => ({
   validateName: vi.fn((value: string) => value),
 }));
 
+vi.mock("../../onboard/experimental/portable-agent-lifecycle", async (importOriginal) => ({
+  ...(await importOriginal()),
+  assertHermesPortableCommandUnavailable: assertHermesPortableCommandUnavailableMock,
+}));
+
 vi.mock("../../runtime-recovery", () => ({
   parseLiveSandboxNames: parseLiveSandboxNamesMock,
 }));
@@ -360,6 +366,7 @@ vi.mock("./restore-gateway-pairing", () => ({
 
 export function resetSnapshotRestoreMocks(): void {
   vi.clearAllMocks();
+  assertHermesPortableCommandUnavailableMock.mockReset();
   captureSnapshotRestoreAuthorityMock.mockReturnValue({
     schemaVersion: 1,
     backupPath: "/tmp/backup-alpha",

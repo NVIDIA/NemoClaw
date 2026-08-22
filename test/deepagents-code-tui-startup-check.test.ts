@@ -116,7 +116,7 @@ proc expect {branches} {
     switch -- $event {
       composer {
         set branch_index [lsearch -exact $branches {$composer_pattern}]
-        set ::expect_out(0,string) "> dcode  v0.1.34"
+        set ::expect_out(0,string) "> dcode  v0.1.55"
       }
       namePrompt {
         set branch_index [lsearch -exact $branches {$name_prompt_pattern}]
@@ -175,7 +175,7 @@ proc exit {{code 0}} {
       ...process.env,
       NEMOCLAW_TUI_CAPTURE: capture,
       NEMOCLAW_TUI_CLOSE_AFTER_FIRST_CTRL_C: options.closeAfterFirstCtrlC ? "1" : "0",
-      NEMOCLAW_TUI_COMPOSER_PATTERN: "(dcode[^\\r\\n]*v0\\.1\\.34)",
+      NEMOCLAW_TUI_COMPOSER_PATTERN: "(dcode[^\\r\\n]*v0\\.1\\.55)",
       NEMOCLAW_TUI_EXPECT_NAME_PROMPT: options.expectNamePrompt === false ? "0" : "1",
       NEMOCLAW_TUI_MARKERS: markers,
       NEMOCLAW_TUI_FIRST_RUN_PATTERN: "(choose a recommended model)",
@@ -418,14 +418,13 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       "10-deepagents-code-tui-startup.repeat.sanitized.log",
     );
     const processCounts = path.join(captureDir, "process-counts.txt");
-    fs.writeFileSync(processCounts, "0\n1\n0\n1\n0\n1\n0\n");
+    fs.writeFileSync(processCounts, "0\n1\n0\n1\n0\n");
 
     try {
       const result = runTuiStartupCheckHelperResult(
         [
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:complete\\n'; }",
           "ensure_expect_available() { return 0; }",
-          'run_headless_session() { printf "PONG\\n"; }',
           "sandbox_is_ready() { return 0; }",
           "dcode_process_count() {",
           '  value="$(sed -n "1p" "$COUNT_FILE")"',
@@ -446,11 +445,6 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       const sanitizedText = fs.readFileSync(sanitizedCapture, "utf8");
       const repeatedSanitizedText = fs.readFileSync(repeatedSanitizedCapture, "utf8");
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain("headless dcode request returned PONG");
-      expect(result.stdout).toContain(
-        "headless completion returned the DCode/LangGraph process count to baseline",
-      );
-      expect(result.stdout).toContain("sandbox remained Ready after headless completion");
       expect(result.stdout).toContain(
         "session 1: finite expect harness reached startup and observed exit",
       );
@@ -479,7 +473,6 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         [
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:complete\\n'; }",
           "ensure_expect_available() { return 0; }",
-          'run_headless_session() { printf "PONG\\n"; }',
           "sandbox_is_ready() { return 0; }",
           "dcode_process_count() { printf 'NEMOCLAW_DCODE_PROCESS_COUNT:0\\n'; }",
           "wait_for_dcode_process_baseline() { return 0; }",

@@ -20,11 +20,17 @@
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
 import { cliName } from "./branding";
 import {
+  DEFAULT_DOCKER_DRIVER_NETWORK_NAME,
+  DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
+  parseDockerNetworkIpamEntries,
+  resolveDockerDriverNetworkName,
+} from "./experimental/docker-network-authority";
+import {
   isPortableExperimentalProfile,
   PORTABLE_HOST_GATEWAY_IP,
 } from "./experimental/portable-profile";
 
-export const DEFAULT_PROBE_NETWORK = "openshell-docker";
+export const DEFAULT_PROBE_NETWORK = DEFAULT_DOCKER_DRIVER_NETWORK_NAME;
 const HOST_INTERNAL_NAME = "host.openshell.internal";
 // Pinned busybox digest — same image used by the gateway bridge probe so
 // it is likely already pulled and avoids a redundant registry fetch.
@@ -66,20 +72,8 @@ export interface HostServiceReachabilityOptions {
 }
 
 function parseNetworkIpamConfig(raw: string): { subnet?: string; gatewayIp?: string } | undefined {
-  const text = raw.trim();
-  if (!text || text === "<no value>") return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  if (!Array.isArray(parsed)) return undefined;
-  for (const entry of parsed) {
-    if (!entry || typeof entry !== "object") continue;
-    const r = entry as Record<string, unknown>;
-    const subnet = typeof r.Subnet === "string" ? r.Subnet : undefined;
-    const gatewayIp = typeof r.Gateway === "string" ? r.Gateway : undefined;
+  for (const entry of parseDockerNetworkIpamEntries(raw) ?? []) {
+    const { subnet, gatewayIp } = entry;
     // Skip IPv6-only entries (contain colons)
     if (gatewayIp && !gatewayIp.includes(":")) return { subnet, gatewayIp };
   }
@@ -90,7 +84,7 @@ function defaultInspectNetwork(
   networkName: string,
 ): { subnet?: string; gatewayIp?: string } | undefined {
   const raw = dockerCapture(
-    ["network", "inspect", "--format", "{{json .IPAM.Config}}", networkName],
+    ["network", "inspect", "--format", DOCKER_NETWORK_IPAM_INSPECT_FORMAT, networkName],
     { ignoreError: true },
   );
   return parseNetworkIpamConfig(raw);
@@ -138,8 +132,7 @@ function isNameResolutionFailure(detail: string): boolean {
 export async function probeHostServiceSandboxReachability(
   opts: HostServiceReachabilityOptions,
 ): Promise<HostServiceReachabilityResult> {
-  const networkName =
-    opts.networkName ?? process.env.OPENSHELL_DOCKER_NETWORK_NAME ?? DEFAULT_PROBE_NETWORK;
+  const networkName = opts.networkName ?? resolveDockerDriverNetworkName();
   const port = opts.port;
   const timeoutSec = opts.timeoutSec ?? PROBE_TIMEOUT_SEC;
   const probeImage = opts.probeImage ?? PROBE_IMAGE;

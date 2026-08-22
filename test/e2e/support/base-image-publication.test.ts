@@ -451,7 +451,7 @@ describe("base-image publication evidence", () => {
     );
 
     expect(selection).toMatchObject({
-      state: "ready",
+      state: "selected",
       run: { headSha: EXPECTED_SHA },
     });
   });
@@ -475,7 +475,7 @@ describe("base-image publication evidence", () => {
     );
 
     expect(selection).toMatchObject({
-      state: "ready",
+      state: "selected",
       run: { id: 11, headSha: DESCENDANT_SHA },
     });
   });
@@ -495,7 +495,7 @@ describe("base-image publication evidence", () => {
       WORKFLOW_ID,
     );
 
-    expect(selection).toMatchObject({ state: "ready", run: { id: RUN_ID } });
+    expect(selection).toMatchObject({ state: "selected", run: { id: RUN_ID } });
   });
 
   it("rejects pre-rename workflow metadata inside the eligible history (#7372)", () => {
@@ -508,7 +508,7 @@ describe("base-image publication evidence", () => {
     ).toThrow(/name must be Images \/ Base Images/u);
   });
 
-  it("waits for missing and in-progress publication evidence (#7372)", () => {
+  it("selects an in-progress trusted publication run (#9549)", () => {
     expect(selectPublicationRun(runsPayload([]), history(), WORKFLOW_ID)).toEqual({
       state: "missing",
     });
@@ -518,15 +518,15 @@ describe("base-image publication evidence", () => {
         history(),
         WORKFLOW_ID,
       ),
-    ).toMatchObject({ state: "pending", run: { status: "in_progress" } });
+    ).toMatchObject({ state: "selected", run: { status: "in_progress" } });
   });
 
   it.each(["failure", "cancelled"] as const)(
-    "fails closed when publication concludes %s (#7372)",
+    "selects a terminal %s run for publisher validation (#9549)",
     (conclusion) => {
-      expect(() =>
+      expect(
         selectPublicationRun(runsPayload([workflowRun({ conclusion })]), history(), WORKFLOW_ID),
-      ).toThrow(`base-image workflow for ${RELEVANT_SHA} concluded ${conclusion}; ${RUN_URL}`);
+      ).toMatchObject({ state: "selected", run: { conclusion } });
     },
   );
 
@@ -560,29 +560,67 @@ describe("base-image publication evidence", () => {
     ).toThrow(/incomplete/u);
   });
 
-  it("requires every publisher latest attempt to complete successfully (#7372)", () => {
+  it("requires every publisher job to belong to the selected attempt (#9549)", () => {
     const run = selectedRun({ attempt: 2 });
-    const jobs = [
-      ...successfulJobs(),
-      publisherJob("Build and push Hermes base image", {
-        id: 4,
-        run_attempt: 1,
-        conclusion: "failure",
-      }),
-      publisherJob("Build and push Hermes base image", {
-        id: 5,
-        run_attempt: 2,
-      }),
-    ].filter((job, index) => index !== 1);
+    const jobs = successfulJobs({ runAttempt: 2 });
 
-    expect(() => validatePublisherJobs({ total_count: jobs.length, jobs }, run)).not.toThrow();
+    expect(validatePublisherJobs({ total_count: jobs.length, jobs }, run)).toBe("ready");
+    expect(() =>
+      validatePublisherJobs(
+        {
+          total_count: jobs.length,
+          jobs: jobs.map((job, index) => (index === 0 ? { ...job, run_attempt: 1 } : job)),
+        },
+        run,
+      ),
+    ).toThrow(/provenance does not match/u);
   });
 
-  it("reconfirms the selected successful run after reading job history (#7372)", () => {
+  it("classifies an incomplete required publisher as pending only while the selected run is in progress (#9549)", () => {
+    const jobs = successfulJobs().map((job) =>
+      job.name === "Build and push Hermes base image"
+        ? { ...job, status: "in_progress", conclusion: null }
+        : job,
+    );
+
+    expect(
+      validatePublisherJobs(
+        { total_count: jobs.length, jobs },
+        selectedRun({ status: "in_progress", conclusion: null }),
+      ),
+    ).toBe("pending");
+    expect(() => validatePublisherJobs({ total_count: jobs.length, jobs }, selectedRun())).toThrow(
+      /not complete in terminal attempt 1/u,
+    );
+  });
+
+  it.each(["failure", "cancelled", "skipped"])(
+    "rejects a required publisher that concludes %s before the workflow completes (#9549)",
+    (conclusion) => {
+      const jobs = successfulJobs().map((job) =>
+        job.name === "Build and push Hermes base image" ? { ...job, conclusion } : job,
+      );
+
+      expect(() =>
+        validatePublisherJobs(
+          { total_count: jobs.length, jobs },
+          selectedRun({ status: "in_progress", conclusion: null }),
+        ),
+      ).toThrow(/did not complete successfully in attempt 1/u);
+    },
+  );
+
+  it("reconfirms the selected run identity after reading job history (#9549)", () => {
     expect(() => validateBoundRun(workflowRun(), selectedRun())).not.toThrow();
     expect(() =>
-      validateBoundRun(workflowRun({ status: "in_progress", conclusion: null }), selectedRun()),
-    ).toThrow(/changed while evidence was verified/u);
+      validateBoundRun(
+        workflowRun({ conclusion: "cancelled" }),
+        selectedRun({ status: "in_progress", conclusion: null }),
+      ),
+    ).not.toThrow();
+    expect(() => validateBoundRun(workflowRun({ run_attempt: 2 }), selectedRun())).toThrow(
+      /changed while evidence was verified/u,
+    );
   });
 
   it("exports the selected immutable publication identity for downstream qualification (#9049)", () => {
@@ -609,7 +647,7 @@ describe("base-image publication evidence", () => {
       /duplicated in attempt/u,
     ],
     [
-      "failed latest attempt",
+      "failed selected attempt",
       successfulJobs().map((job) =>
         job.name === "Build and push Hermes base image" ? { ...job, conclusion: "failure" } : job,
       ),
@@ -626,11 +664,12 @@ describe("base-image publication evidence", () => {
     );
   });
 
-  it("polls from missing through completion and verifies jobs (#7372)", async () => {
+  it("polls from missing through publisher completion and verifies jobs (#9549)", async () => {
     const responses = [
       workflowMetadata(),
       runsPayload([]),
       runsPayload([workflowRun({ status: "queued", conclusion: null })]),
+      { total_count: 0, jobs: [] },
       runsPayload([workflowRun()]),
       { total_count: 3, jobs: successfulJobs() },
       workflowRun(),
@@ -659,12 +698,74 @@ describe("base-image publication evidence", () => {
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
-      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/jobs?filter=all&per_page=100&page=1`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
     ]);
     expect(notices).toHaveLength(2);
   });
+
+  it("accepts required publishers while managed-image jobs remain in progress (#9549)", async () => {
+    const inProgressRun = workflowRun({ status: "in_progress", conclusion: null });
+    const jobs = [
+      ...successfulJobs(),
+      publisherJob("Build and validate OpenClaw managed image (amd64)", {
+        id: 4,
+        status: "in_progress",
+        conclusion: null,
+      }),
+    ];
+    const responses = [
+      workflowMetadata(),
+      runsPayload([inProgressRun]),
+      { total_count: jobs.length, jobs },
+      inProgressRun,
+    ];
+    let sleeps = 0;
+
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async () => responses.shift(),
+        waitMs: 100,
+        pollMs: 10,
+        sleep: async () => {
+          sleeps += 1;
+        },
+      }),
+    ).resolves.toMatchObject({ id: RUN_ID, status: "in_progress" });
+    expect(sleeps).toBe(0);
+  });
+
+  it.each(["failure", "cancelled"] as const)(
+    "accepts required publishers after unrelated downstream work concludes %s (#9549)",
+    async (conclusion) => {
+      const terminalRun = workflowRun({ conclusion });
+      const jobs = [
+        ...successfulJobs(),
+        publisherJob("Build and validate OpenClaw managed image (amd64)", {
+          id: 4,
+          conclusion,
+        }),
+      ];
+      const responses = [
+        workflowMetadata(),
+        runsPayload([terminalRun]),
+        { total_count: jobs.length, jobs },
+        terminalRun,
+      ];
+
+      await expect(
+        waitForBaseImagePublication({
+          history: history(),
+          request: async () => responses.shift(),
+          waitMs: 100,
+          pollMs: 10,
+        }),
+      ).resolves.toMatchObject({ id: RUN_ID, conclusion });
+    },
+  );
 
   it("reports the selected publisher SHA and run URL for invalid job evidence (#7372)", async () => {
     const jobs = successfulJobs().map((job, index) =>

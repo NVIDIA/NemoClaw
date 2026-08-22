@@ -72,13 +72,13 @@ interface HermesApiPortScopedSandboxEntryPointDeps<
   Args extends unknown[],
   Result,
   BaseImageResolutionContext,
-  PortableRuntimeAuthority,
+  PortableRuntimeContext,
   ComputePlan,
 > {
   createBaseImageResolutionContext(): BaseImageResolutionContext;
   createSandboxWithBaseImageResolution(
     baseImageResolutionContext: BaseImageResolutionContext,
-    portableRuntimeAuthority: PortableRuntimeAuthority,
+    portableRuntimeContext: PortableRuntimeContext,
     computePlan: ComputePlan,
     managedWorkloadRebuild: null,
     temporaryManagedRuntime: boolean,
@@ -87,7 +87,7 @@ interface HermesApiPortScopedSandboxEntryPointDeps<
     hermesApiPortReservationScope: HermesApiPortReservationScope,
     ...args: Args
   ): Promise<Result>;
-  resolvePortableRuntimeAuthority(): PortableRuntimeAuthority;
+  resolvePortableRuntimeContext(): PortableRuntimeContext;
   resolveComputePlan(): ComputePlan;
 }
 
@@ -96,14 +96,14 @@ export function createHermesApiPortScopedSandboxEntryPoints<
   Args extends unknown[],
   Result,
   BaseImageResolutionContext,
-  PortableRuntimeAuthority,
+  PortableRuntimeContext,
   ComputePlan,
 >(
   deps: HermesApiPortScopedSandboxEntryPointDeps<
     Args,
     Result,
     BaseImageResolutionContext,
-    PortableRuntimeAuthority,
+    PortableRuntimeContext,
     ComputePlan
   >,
 ): {
@@ -114,7 +114,7 @@ export function createHermesApiPortScopedSandboxEntryPoints<
     createBaseImageResolutionContext: deps.createBaseImageResolutionContext,
     createSandboxWithBaseImageResolution: (
       baseImageResolutionContext,
-      portableRuntimeAuthority,
+      portableRuntimeContext,
       computePlan,
       managedWorkloadRebuild,
       temporaryManagedRuntime,
@@ -125,7 +125,7 @@ export function createHermesApiPortScopedSandboxEntryPoints<
       withHermesApiPortReservationScope((hermesApiPortReservationScope) =>
         deps.createSandboxWithBaseImageResolution(
           baseImageResolutionContext,
-          portableRuntimeAuthority,
+          portableRuntimeContext,
           computePlan,
           managedWorkloadRebuild,
           temporaryManagedRuntime,
@@ -136,7 +136,7 @@ export function createHermesApiPortScopedSandboxEntryPoints<
         ),
       ),
     resolveComputePlan: deps.resolveComputePlan,
-    resolvePortableRuntimeAuthority: deps.resolvePortableRuntimeAuthority,
+    resolvePortableRuntimeContext: deps.resolvePortableRuntimeContext,
   });
 }
 

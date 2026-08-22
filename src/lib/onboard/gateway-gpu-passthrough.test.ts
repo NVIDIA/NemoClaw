@@ -4,7 +4,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../adapters/docker", () => ({
+  dockerCapture: vi.fn(),
+  dockerForceRm: vi.fn(),
   dockerInspect: vi.fn(),
+  dockerRunDetached: vi.fn(),
 }));
 
 vi.mock("../state/registry", () => ({

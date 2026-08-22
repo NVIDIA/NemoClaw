@@ -219,6 +219,24 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       expect(JSON.stringify([settled, pairingOnly])).not.toContain(publicKey);
     });
 
+    it("observes settlement without version provenance but keeps qualification version-bound (#9527)", () => {
+      const deps = {
+        getOpenshellBinary: () => "openshell",
+        readApprovalPolicy: () => POLICY,
+        spawnSync: localScriptSpawn as typeof spawnSync,
+      };
+
+      expect(
+        observeOpenClawPairingSettlement("alpha", "nemoclaw-8080", "", stateDirectory, deps),
+      ).toEqual({
+        state: "settled",
+        deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      expect(() =>
+        observeOpenClawPairingQualification("alpha", "nemoclaw-8080", "", stateDirectory, deps),
+      ).toThrow("OpenClaw pairing qualification is unavailable");
+    });
+
     it("accepts the exact canonical Ed25519 public-key PEM representation (#9207)", () => {
       const identityPath = path.join(stateDirectory, "identity", "device.json");
       writeJson(identityPath, {

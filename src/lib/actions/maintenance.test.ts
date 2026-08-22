@@ -20,6 +20,9 @@ const mocks = vi.hoisted(() => ({
   openBackupShieldsWindow: vi.fn(),
   relockBackupShieldsWindow: vi.fn(),
   withSandboxMutationLock: vi.fn(),
+  assertNoHermesPortableHostAuthority: vi.fn(),
+  defaultPortableStateDir: vi.fn(),
+  withPortableHostFence: vi.fn(),
 }));
 
 async function runSandboxMutationAction(
@@ -42,6 +45,11 @@ vi.mock("../state/sandbox", () => ({
 }));
 vi.mock("../state/mcp-lifecycle-lock", () => ({
   withSandboxMutationLock: mocks.withSandboxMutationLock,
+}));
+vi.mock("../state/portable-uninstall-retirement", () => ({
+  assertNoHermesPortableHostAuthority: mocks.assertNoHermesPortableHostAuthority,
+  defaultPortableStateDir: mocks.defaultPortableStateDir,
+  withPortableHostFence: mocks.withPortableHostFence,
 }));
 vi.mock("./sandbox/snapshot/backup-authority", () => ({
   backupSandboxStateWithManagedAuthority: (name: string) => mocks.backupSandboxState(name),
@@ -118,11 +126,34 @@ describe("backupAll", () => {
     }));
     mocks.relockBackupShieldsWindow.mockReturnValue(true);
     mocks.withSandboxMutationLock.mockImplementation(runSandboxMutationAction);
+    mocks.assertNoHermesPortableHostAuthority.mockReset();
+    mocks.defaultPortableStateDir.mockImplementation(
+      (env: NodeJS.ProcessEnv) => env.NEMOCLAW_TEST_STATE_DIR ?? `${env.HOME}/.nemoclaw`,
+    );
+    mocks.withPortableHostFence.mockImplementation(async (_home, operation) => operation());
+  });
+
+  it("rejects schema-5 authority before OpenShell or backup effects (#9203)", async () => {
+    const stateDir = "/private/nemoclaw-test-state";
+    vi.stubEnv("VITEST", "true");
+    vi.stubEnv("NEMOCLAW_TEST_BASE_HOME", process.env.HOME ?? "");
+    vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", stateDir);
+    mocks.assertNoHermesPortableHostAuthority.mockImplementation(() => {
+      throw new Error("Command 'backup-all' is not supported");
+    });
+
+    await expect(backupAll()).rejects.toThrow("Command 'backup-all' is not supported");
+    expect(mocks.listSandboxes).not.toHaveBeenCalled();
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).not.toHaveBeenCalled();
+    expect(mocks.withSandboxMutationLock).not.toHaveBeenCalled();
+    expect(mocks.backupSandboxState).not.toHaveBeenCalled();
+    expect(mocks.assertNoHermesPortableHostAuthority).toHaveBeenCalledWith(stateDir, "backup-all");
   });
 
   afterEach(() => {
     delete process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS;
     delete process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP;
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -1119,44 +1150,49 @@ describe("backupAll", () => {
   it.each([
     ["standalone backup", "", true],
     ["installer-strict backup", "1", false],
-  ])("emits mode-appropriate unreachable guidance for %s (#6114)", async (_mode, requireAll, expectSkipGuidance) => {
-    mocks.listSandboxes.mockReturnValue({
-      sandboxes: [{ name: "sb-bad" }],
-      defaultSandbox: null,
-    });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
-    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
-      status: 0,
-      output: "sb-bad\n",
-    });
-    mocks.backupSandboxState.mockImplementation(() => ({
-      success: false,
-      unreachable: true,
-      backedUpDirs: [],
-      failedDirs: ["memories"],
-      backedUpFiles: [],
-      failedFiles: [],
-    }));
+  ])(
+    "emits mode-appropriate unreachable guidance for %s (#6114)",
+    async (_mode, requireAll, expectSkipGuidance) => {
+      mocks.listSandboxes.mockReturnValue({
+        sandboxes: [{ name: "sb-bad" }],
+        defaultSandbox: null,
+      });
+      mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
+      mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
+        status: 0,
+        output: "sb-bad\n",
+      });
+      mocks.backupSandboxState.mockImplementation(() => ({
+        success: false,
+        unreachable: true,
+        backedUpDirs: [],
+        failedDirs: ["memories"],
+        backedUpFiles: [],
+        failedFiles: [],
+      }));
 
-    delete process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP;
-    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = requireAll;
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`exit:${code}`);
-    }) as never);
+      delete process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP;
+      process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = requireAll;
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+        throw new Error(`exit:${code}`);
+      }) as never);
 
-    await expect(backupAll()).rejects.toThrow("exit:1");
+      await expect(backupAll()).rejects.toThrow("exit:1");
 
-    const errorOutput = errorSpy.mock.calls.map((c) => c[0]).join("\n");
-    expect(errorOutput.includes("NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1")).toBe(
-      expectSkipGuidance,
-    );
-    expect(errorOutput.includes("Strict pre-upgrade backup cannot skip")).toBe(!expectSkipGuidance);
-    expect(errorOutput).not.toContain("prepare the upgrade manually");
+      const errorOutput = errorSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(errorOutput.includes("NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1")).toBe(
+        expectSkipGuidance,
+      );
+      expect(errorOutput.includes("Strict pre-upgrade backup cannot skip")).toBe(
+        !expectSkipGuidance,
+      );
+      expect(errorOutput).not.toContain("prepare the upgrade manually");
 
-    errorSpy.mockRestore();
-    exitSpy.mockRestore();
-  });
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
+    },
+  );
 
   it("skips a stranded orphan sandbox without failing strict backup (#6520)", async () => {
     // Uninstall + reinstall strands a sandbox: gateway registration and
@@ -1355,6 +1391,29 @@ describe("shouldSkipUnreachableSandboxBackup", () => {
 describe("garbageCollectImages", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.assertNoHermesPortableHostAuthority.mockReset();
+    mocks.withPortableHostFence.mockImplementation(async (_home, operation) => operation());
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("rejects schema-5 authority before scanning Docker images (#9203)", async () => {
+    const stateDir = "/private/nemoclaw-test-state";
+    vi.stubEnv("VITEST", "true");
+    vi.stubEnv("NEMOCLAW_TEST_BASE_HOME", process.env.HOME ?? "");
+    vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", stateDir);
+    mocks.assertNoHermesPortableHostAuthority.mockImplementation(() => {
+      throw new Error("Command 'gc' is not supported");
+    });
+
+    await expect(garbageCollectImages({ dryRun: true })).rejects.toThrow(
+      "Command 'gc' is not supported",
+    );
+    expect(mocks.dockerListImagesFormat).not.toHaveBeenCalled();
+    expect(mocks.dockerRmi).not.toHaveBeenCalled();
+    expect(mocks.assertNoHermesPortableHostAuthority).toHaveBeenCalledWith(stateDir, "gc");
   });
 
   it("surfaces a local-repo orphan while preserving a registered local image (#6301)", async () => {

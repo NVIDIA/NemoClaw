@@ -87,6 +87,7 @@ import {
 } from "./sandbox-gateway-routing";
 import {
   backupSandboxStateWithManagedAuthority,
+  assertSandboxSnapshotCommandAvailable,
   confirmHostLocalInferenceAuthority,
   createSnapshotCloneLifecycle,
   confirmSandboxRuntimeRestore,
@@ -373,7 +374,10 @@ function resolveCloneDashboardEnvArgs(
   return envArgs;
 }
 
-async function prepareSnapshotClonePolicy(srcEntry: SandboxEntry): Promise<{
+async function prepareSnapshotClonePolicy(
+  srcEntry: SandboxEntry,
+  targetSandbox: string,
+): Promise<{
   policyPath: string;
   cleanup?: () => boolean;
 }> {
@@ -398,6 +402,7 @@ async function prepareSnapshotClonePolicy(srcEntry: SandboxEntry): Promise<{
   const { prepareInitialSandboxCreatePolicy } = await import("../../onboard/initial-policy");
   return prepareInitialSandboxCreatePolicy(baseline.policyPath, activeMessagingChannels, {
     agentName,
+    sandboxName: targetSandbox,
     baselineExclusions,
   });
 }
@@ -1224,10 +1229,20 @@ async function runSnapshotRestore(
   const targetSandbox =
     target === sandboxName ? sandboxName : validateName(target, "target sandbox name");
   const lockNames = targetSandbox === sandboxName ? [sandboxName] : [sandboxName, targetSandbox];
+  assertSandboxSnapshotCommandAvailable(sandboxName, "sandbox:snapshot:restore");
+  if (targetSandbox !== sandboxName) {
+    assertSandboxSnapshotCommandAvailable(targetSandbox, "sandbox:snapshot:restore");
+  }
   const orderedNames = [...new Set(lockNames)].sort();
   const acquire = (index: number): Promise<void> =>
     index === orderedNames.length
-      ? runSnapshotRestoreUnlocked(sandboxName, request, targetSandbox)
+      ? Promise.resolve().then(() => {
+          assertSandboxSnapshotCommandAvailable(sandboxName, "sandbox:snapshot:restore");
+          if (targetSandbox !== sandboxName) {
+            assertSandboxSnapshotCommandAvailable(targetSandbox, "sandbox:snapshot:restore");
+          }
+          return runSnapshotRestoreUnlocked(sandboxName, request, targetSandbox);
+        })
       : withSandboxMutationLock(orderedNames[index], () => acquire(index + 1));
   return acquire(0);
 }
@@ -1544,7 +1559,7 @@ async function runSnapshotRestoreUnlocked(
       const dstDashboardPort = allocateCloneDashboardPort(targetSandbox, lockedSourceEntry);
       const dstHermesApiPort = allocateCloneHermesApiPort(targetSandbox, lockedSourceEntry);
       const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
-      const clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry);
+      const clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry, targetSandbox);
       try {
         if (targetExists) {
           if (targetEntry) {
@@ -1768,21 +1783,28 @@ export async function runSandboxSnapshot(
 ) {
   switch (request.kind) {
     case "create": {
-      await withSandboxMutationLock(sandboxName, () => runSnapshotCreate(sandboxName, request));
+      assertSandboxSnapshotCommandAvailable(sandboxName, "sandbox:snapshot:create");
+      await withSandboxMutationLock(sandboxName, () => {
+        assertSandboxSnapshotCommandAvailable(sandboxName, "sandbox:snapshot:create");
+        return runSnapshotCreate(sandboxName, request);
+      });
       break;
     }
     case "list": {
-      const backups = sandboxState.listBackups(sandboxName);
-      if (backups.length === 0) {
-        console.log(`  No snapshots found for '${sandboxName}'.`);
-        return;
-      }
-      console.log(`  Snapshots for '${sandboxName}':`);
-      console.log("");
-      renderSnapshotTable(backups);
-      console.log("");
-      console.log(`  ${backups.length} snapshot(s). Restore with:`);
-      console.log(`    ${CLI_NAME} ${sandboxName} snapshot restore [version|name|timestamp]`);
+      await withSandboxMutationLock(sandboxName, () => {
+        assertSandboxSnapshotCommandAvailable(sandboxName, "sandbox:snapshot:list");
+        const backups = sandboxState.listBackups(sandboxName);
+        if (backups.length === 0) {
+          console.log(`  No snapshots found for '${sandboxName}'.`);
+          return;
+        }
+        console.log(`  Snapshots for '${sandboxName}':`);
+        console.log("");
+        renderSnapshotTable(backups);
+        console.log("");
+        console.log(`  ${backups.length} snapshot(s). Restore with:`);
+        console.log(`    ${CLI_NAME} ${sandboxName} snapshot restore [version|name|timestamp]`);
+      });
       break;
     }
     case "restore": {

@@ -348,6 +348,86 @@ describe("probeLlamaCppAttachment", () => {
     ).toMatchObject({ ok: false, reason: "conflicting-fingerprint" });
   });
 
+  it("attaches a native server whose properties omit the served model alias (#9603)", () => {
+    const responses = nativeResponses();
+    responses[3] = response(
+      200,
+      JSON.stringify({
+        model_path: "/models/model.gguf",
+        total_slots: 2,
+        default_generation_settings: { params: {} },
+      }),
+    );
+
+    expect(
+      probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: scriptedProbe(responses) }),
+    ).toEqual({ ok: true, model: "team/model-alias" });
+  });
+
+  it("rejects properties that report a null served model alias (#9603)", () => {
+    const responses = nativeResponses();
+    responses[3] = response(
+      200,
+      JSON.stringify({
+        model_alias: null,
+        model_path: "/models/model.gguf",
+        total_slots: 2,
+        default_generation_settings: { params: {} },
+      }),
+    );
+
+    expect(
+      probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: scriptedProbe(responses) }),
+    ).toMatchObject({ ok: false, reason: "conflicting-fingerprint" });
+  });
+
+  it("names the health endpoint when the server reports a loading model (#9603)", () => {
+    const responses = nativeResponses();
+    responses[2] = response(200, '{"status":"loading model"}');
+
+    expect(
+      probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: scriptedProbe(responses) }),
+    ).toMatchObject({
+      ok: false,
+      reason: "conflicting-fingerprint",
+      message: expect.stringContaining("health endpoint"),
+    });
+  });
+
+  it("names the properties endpoint when model_alias differs from the served model alias (#9603)", () => {
+    const responses = nativeResponses();
+    responses[3] = response(
+      200,
+      JSON.stringify({
+        model_alias: "different/model",
+        model_path: "/models/model.gguf",
+        total_slots: 2,
+        default_generation_settings: { params: {} },
+      }),
+    );
+
+    expect(
+      probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: scriptedProbe(responses) }),
+    ).toMatchObject({
+      ok: false,
+      reason: "conflicting-fingerprint",
+      message: expect.stringContaining("properties endpoint"),
+    });
+  });
+
+  it("names the metrics endpoint when the response has no llama.cpp metrics (#9603)", () => {
+    const responses = nativeResponses();
+    responses[4] = response(200, "# TYPE go_gc_duration_seconds summary\ngo_goroutines 12\n");
+
+    expect(
+      probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: scriptedProbe(responses) }),
+    ).toMatchObject({
+      ok: false,
+      reason: "conflicting-fingerprint",
+      message: expect.stringContaining("metrics endpoint"),
+    });
+  });
+
   it.each([
     "/models/model.gguf",
     "C:\\models\\model.gguf",

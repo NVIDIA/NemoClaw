@@ -157,7 +157,7 @@ assert_default_denial_ignores_ambient_override() {
 run_autorun_tui() {
   local marker_file="$1"
   local first_prompt reset_prompt
-  first_prompt="Use tools in exactly four sequential rounds, waiting for each result before starting the next. Round 1: use the shell execute tool to run printf and write shell-round-1 followed by a newline to ${SHELL_ROUND_ONE}. Round 2: use the non-shell write_file tool to write write-round-2 followed by a newline to ${WRITE_ROUND}. Round 3: use the shell execute tool to run printf and write shell-round-3 followed by a newline to ${SHELL_ROUND_THREE}. Round 4: use the non-shell read_file tool to read all three files and verify their exact contents. Do not combine rounds or substitute shell for write_file or read_file. After all four rounds succeed, reply with exactly the concatenation of NEMOCLAW_AUTORUN_ and COMPLETE."
+  first_prompt="Use tools in exactly four sequential rounds, waiting for each result before starting the next. Round 1: use the shell execute tool to write the text shell-round-1 to ${SHELL_ROUND_ONE}. Round 2: use the non-shell write_file tool to write the text write-round-2 to ${WRITE_ROUND}. Round 3: use the shell execute tool to write the text shell-round-3 to ${SHELL_ROUND_THREE}. Round 4: use the non-shell read_file tool to read all three files and verify their text. Do not combine rounds or substitute shell for write_file or read_file. After all four rounds succeed, reply with exactly the concatenation of NEMOCLAW_AUTORUN_ and COMPLETE."
   reset_prompt="Use the shell execute tool once to write reset-should-not-run followed by a newline to ${RESET_ROUND}, then report completion."
 
   env \
@@ -285,7 +285,7 @@ assert_autorun_evidence() {
   local file_output
   file_output="$(
     sandbox_exec \
-      "set -e; printf '%s\\n' shell-round-1 | cmp -s - ${SHELL_ROUND_ONE@Q}; printf '%s\\n' write-round-2 | cmp -s - ${WRITE_ROUND@Q}; printf '%s\\n' shell-round-3 | cmp -s - ${SHELL_ROUND_THREE@Q}; test ! -e ${RESET_ROUND@Q}; printf '%s\\n' NEMOCLAW_AUTORUN_FILES_VERIFIED"
+      "{ cmp -s <(printf '%s' shell-round-1) ${SHELL_ROUND_ONE@Q} || cmp -s <(printf '%s\\n' shell-round-1) ${SHELL_ROUND_ONE@Q}; } || { printf '%s\\n' NEMOCLAW_AUTORUN_SHELL_ROUND_1_INVALID; exit 1; }; { cmp -s <(printf '%s' write-round-2) ${WRITE_ROUND@Q} || cmp -s <(printf '%s\\n' write-round-2) ${WRITE_ROUND@Q}; } || { printf '%s\\n' NEMOCLAW_AUTORUN_WRITE_ROUND_INVALID; exit 1; }; { cmp -s <(printf '%s' shell-round-3) ${SHELL_ROUND_THREE@Q} || cmp -s <(printf '%s\\n' shell-round-3) ${SHELL_ROUND_THREE@Q}; } || { printf '%s\\n' NEMOCLAW_AUTORUN_SHELL_ROUND_3_INVALID; exit 1; }; test ! -e ${RESET_ROUND@Q} || { printf '%s\\n' NEMOCLAW_AUTORUN_RESET_ROUND_RAN; exit 1; }; printf '%s\\n' NEMOCLAW_AUTORUN_FILES_VERIFIED"
   )" || fail "autorun output files or reset-thread denial evidence are invalid: $file_output"
   [ "$file_output" = "NEMOCLAW_AUTORUN_FILES_VERIFIED" ] \
     || fail "autorun file verification marker is missing"

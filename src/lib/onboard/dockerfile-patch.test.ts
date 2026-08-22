@@ -161,20 +161,15 @@ describe("dockerfile patch helpers", () => {
         "ARG NEMOCLAW_PROVIDER_KEY=old",
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
         "ARG CHAT_UI_URL=old",
-        "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
-        "ARG NEMOCLAW_INFERENCE_API=old",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
         "ARG NEMOCLAW_BUILD_ID=old",
         "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
-        "ARG NEMOCLAW_PROXY_HOST=old",
-        "ARG NEMOCLAW_PROXY_PORT=old",
         "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_OPENCLAW_OTEL=0",
-        "ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0",
       ].join("\n"),
     );
 
-    expect(() =>
+    const patch = (options: { agentName?: string } = {}) =>
       patchStagedDockerfile(
         dockerfilePath,
         "custom-model",
@@ -187,8 +182,13 @@ describe("dockerfile patch helpers", () => {
         false,
         null,
         [],
-      ),
-    ).toThrow(/Dockerfile is missing ARG NEMOCLAW_OPENCLAW_OTEL_ENDPOINT/);
+        options,
+      );
+
+    expect(patch).toThrow(/Dockerfile is missing ARG NEMOCLAW_OPENCLAW_OTEL_ENDPOINT/);
+    expect(() => patch({ agentName: "hermes" })).toThrow(
+      "NEMOCLAW_OPENCLAW_OTEL_ENDPOINT is not supported by hermes",
+    );
   });
 
   it("patches base image, inference, proxy, and messaging plan args", () => {

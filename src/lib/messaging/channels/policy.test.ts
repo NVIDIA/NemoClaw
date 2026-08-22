@@ -11,6 +11,7 @@ import {
   createMessagingChannelPolicyResolver,
   listMessagingChannelPolicyPresets,
   loadMessagingChannelPolicyPreset,
+  materializeMessagingPolicySandboxName,
   resolveMessagingChannelPolicyPresetPath,
 } from "./policy";
 
@@ -85,6 +86,46 @@ describe("messaging channel policy presets", () => {
     expect(policy.loadMessagingChannelPolicyPreset("slack")).toBeNull();
     expect(policy.listMessagingChannelPolicyPresets()).toEqual([]);
   });
+
+  it("returns policy content unchanged when it has no sandbox placeholder", () => {
+    const content = "preset:\n  name: discord\nnetwork_policies:\n  discord: {}\n";
+    const policy = createPolicyWithFixtures([{ channelId: "discord", presetName: "discord" }], {
+      discord: content,
+    });
+
+    expect(
+      policy.loadMessagingChannelPolicyPreset("discord", { sandboxName: "test-sandbox" }),
+    ).toBe(content);
+  });
+
+  it("rejects policy content with an unresolved sandbox placeholder", () => {
+    const content = [
+      "preset:",
+      "  name: discord",
+      "network_policies:",
+      "  discord:",
+      "    credential_binding:",
+      '      provider: "{sandboxName}-discord-bridge"',
+      "",
+    ].join("\n");
+    const policy = createPolicyWithFixtures([{ channelId: "discord", presetName: "discord" }], {
+      discord: content,
+    });
+
+    expect(policy.loadMessagingChannelPolicyPreset("discord")).toBeNull();
+  });
+
+  it.each([undefined, null, "bad:provider"])(
+    "does not materialize a sandbox provider binding from %s",
+    (sandboxName) => {
+      expect(
+        materializeMessagingPolicySandboxName(
+          'credential_binding:\n  provider: "{sandboxName}-discord-bridge"\n',
+          sandboxName,
+        ),
+      ).toBeNull();
+    },
+  );
 
   it("ships a policy file for every manifest-supported agent and preset", () => {
     const missing = listBuiltInMessagingChannelManifests().flatMap((manifest) =>

@@ -161,7 +161,7 @@ export interface DirectSandboxGpuVerifierDeps extends WslDockerDesktopDetectionD
     args: string[],
     opts?: Record<string, unknown>,
   ): { status?: number | null; stdout?: unknown; stderr?: unknown };
-  buildDirectSandboxGpuProofCommands?: (sandboxName: string) => Array<{
+  buildDirectSandboxGpuProofCommands?: (sandboxName: string, gatewayName?: string) => Array<{
     id?: string;
     args: string[];
     label: string;
@@ -169,6 +169,12 @@ export interface DirectSandboxGpuVerifierDeps extends WslDockerDesktopDetectionD
   }>;
   compactText(value: string): string;
   redact(value: unknown): string;
+  gatewayName?: string;
+  subprocessEnv?: NodeJS.ProcessEnv;
+  resolveOpenShellCommandAuthority?: () => {
+    readonly env: NodeJS.ProcessEnv;
+    readonly executablePath: string;
+  };
   // Host firmware platform resolver, used to choose Jetson-specific remediation
   // when a CUDA proof fails. Defaults to the live `nim.detectNvidiaPlatform()`
   // so onboarding does not have to thread the platform through. Injected in
@@ -236,8 +242,12 @@ export function createDirectSandboxGpuVerifier(
     // could not run at all). Records the proof that determines "failed" status.
     let cudaFailure: { label: string; detail: string } | null = null;
     let explicitNvidiaSmiFailure: { label: string; detail: string } | null = null;
-    for (const proof of buildProofCommands(sandboxName)) {
+    for (const proof of buildProofCommands(sandboxName, deps.gatewayName)) {
+      const commandAuthority = deps.resolveOpenShellCommandAuthority?.();
+      const subprocessEnv = commandAuthority?.env ?? deps.subprocessEnv;
       const result = deps.runOpenshell(proof.args, {
+        ...(subprocessEnv ? { env: subprocessEnv, replaceEnv: true } : {}),
+        ...(commandAuthority ? { openshellBinary: commandAuthority.executablePath } : {}),
         ignoreError: true,
         suppressOutput: true,
         timeout: 30_000,
@@ -354,6 +364,7 @@ export function createDirectSandboxGpuVerifier(
     };
   };
 }
+
 
 export function validateSandboxGpuPreflight(
   config: SandboxGpuConfig,

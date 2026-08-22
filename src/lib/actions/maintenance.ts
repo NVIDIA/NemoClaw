@@ -27,6 +27,11 @@ import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
 import {
+  assertNoHermesPortableHostAuthority,
+  defaultPortableStateDir,
+  withPortableHostFence,
+} from "../state/portable-uninstall-retirement";
+import {
   type BackupShieldsWindowOptions,
   openBackupShieldsWindow,
   relockBackupShieldsWindow,
@@ -55,6 +60,17 @@ export function shouldSkipUnreachableSandboxBackup(env: NodeJS.ProcessEnv): bool
 
 export function rebuildBackupsDirectory(home: string, gatewayPort: number): string {
   return path.join(nemoclawStateRoot(home, gatewayPort), "rebuild-backups");
+}
+
+async function withHermesPortableMaintenanceAdmission<T>(
+  commandId: "backup-all" | "gc",
+  operation: () => Promise<T>,
+): Promise<T> {
+  const home = resolveHome();
+  return withPortableHostFence(home, async () => {
+    assertNoHermesPortableHostAuthority(defaultPortableStateDir(process.env), commandId);
+    return operation();
+  });
 }
 
 function notRunningBackupSkipMessage(name: string): string {
@@ -263,6 +279,10 @@ async function backupSandboxWithinShieldsWindow(
 }
 
 export async function backupAll(): Promise<void> {
+  return withHermesPortableMaintenanceAdmission("backup-all", backupAllWithoutPortableAuthority);
+}
+
+async function backupAllWithoutPortableAuthority(): Promise<void> {
   const sandboxes = registry
     .listSandboxes()
     .sandboxes.filter((sandbox) => !registry.isRouteOnlySandboxReservation(sandbox));
@@ -484,6 +504,14 @@ export async function backupAll(): Promise<void> {
 }
 
 export async function garbageCollectImages(
+  options: string[] | GarbageCollectImagesOptions = {},
+): Promise<void> {
+  return withHermesPortableMaintenanceAdmission("gc", () =>
+    garbageCollectImagesWithoutPortableAuthority(options),
+  );
+}
+
+async function garbageCollectImagesWithoutPortableAuthority(
   options: string[] | GarbageCollectImagesOptions = {},
 ): Promise<void> {
   const normalized = normalizeGarbageCollectImagesOptions(options);

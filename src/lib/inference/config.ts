@@ -11,6 +11,8 @@ import { isSafeLlamaCppServedModelAlias, LLAMA_CPP_CREDENTIAL_ENV } from "./llam
 import { DEFAULT_OLLAMA_MODEL } from "./local";
 import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "./openrouter";
 
+export { isSafeModelId };
+
 export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
 export const NOUS_RECOMMENDED_MODELS_URL =
   "https://portal.nousresearch.com/api/nous/recommended-models";
@@ -185,7 +187,7 @@ export function getProviderSelectionConfig(
     case "gemini-api":
       return {
         ...base,
-        model: model || "gemini-2.5-flash",
+        model: model || "gemini-3.6-flash",
         credentialEnv: "GEMINI_API_KEY",
         providerLabel: "Google Gemini",
       };

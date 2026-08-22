@@ -121,6 +121,29 @@ export function canonicalUsageList(): string[] {
     .sort();
 }
 
+type PublicFlagMetadata = {
+  allowNo?: boolean;
+  hidden?: boolean;
+};
+
+/** Sorted public long flags and their help source keyed by canonical usage. */
+export function canonicalCommandFlagLines(): string[] {
+  const metadata = getRegisteredOclifCommandsMetadata();
+  return visibleCommands()
+    .map((command) => {
+      const flags = Object.entries(metadata[command.commandId]?.flags ?? {})
+        .flatMap(([name, value]) => {
+          const flag = value as PublicFlagMetadata;
+          if (flag.hidden) return [];
+          return flag.allowNo ? [`--${name}`, `--no-${name}`] : [`--${name}`];
+        })
+        .sort();
+      const helpSource = metadata[command.commandId]?.customHelp === true ? "rendered" : "metadata";
+      return `${command.usage}\t${helpSource}\t${flags.join(" ")}`;
+    })
+    .sort();
+}
+
 /**
  * First token(s) after "nemoclaw" for each global command.
  *

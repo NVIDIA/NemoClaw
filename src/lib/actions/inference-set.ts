@@ -63,15 +63,17 @@ import {
   openshellReportsProviderNotFound,
 } from "./inference-set-error";
 import {
-  completeInferenceGatewayRestart,
+  completeInferencePostCommit,
   defaultInferenceGatewayRestart,
   finalizeInferenceMutation,
   type InferenceGatewayRestartDeps,
   type InferenceMutation,
   readPreviousOpenClawInferenceApi,
+  settleInferenceSetOpenClawPairing,
 } from "./inference-set-gateway-restart";
 import {
   type InferenceSetSandboxRouteProbe,
+  assertInferenceSetCommandAvailable,
   prepareInferenceSetProviderBinding,
   probeInferenceSetSandboxRoute,
   probeInferenceSetSandboxRouteUntilConverged,
@@ -132,7 +134,6 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   getSandbox: (name: string) => SandboxEntry | null;
   listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox: string | null };
   updateSandbox: (name: string, updates: Partial<SandboxEntry>) => boolean;
-  updateSandboxInferenceRoute?: (name: string, updates: Partial<SandboxEntry>) => boolean;
   getRequestedAgent: () => string | null | undefined;
   loadSession: () => onboardSession.Session | null;
   updateSession: (
@@ -251,7 +252,6 @@ function defaultDeps(): InferenceSetDeps {
     getSandbox: registry.getSandbox,
     listSandboxes: registry.listSandboxes,
     updateSandbox: registry.updateSandbox,
-    updateSandboxInferenceRoute: registry.updateSandboxInferenceRoute,
     getRequestedAgent: () => process.env.NEMOCLAW_AGENT,
     loadSession: onboardSession.loadSession,
     updateSession: onboardSession.updateSession,
@@ -279,6 +279,7 @@ function defaultDeps(): InferenceSetDeps {
     sleep: sleepInferenceSetRouteConvergence,
     withGatewayRouteMutationLock,
     restartSandboxGateway: defaultInferenceGatewayRestart,
+    settleOpenClawPairing: settleInferenceSetOpenClawPairing,
     isSandboxConfigMutable: (sandboxName) => {
       const { isShieldsDown }: typeof import("../shields") = require("../shields");
       return isShieldsDown(sandboxName, true);
@@ -1165,6 +1166,8 @@ async function runInferenceSetWithoutHostLock(
               model,
               preferredInferenceApi: preMutationInferenceApi,
             },
+            previousProvider,
+            previousModel,
             previousInferenceApi,
             targetInferenceApi: preMutationInferenceApi,
           },
@@ -1227,7 +1230,7 @@ async function runInferenceSetWithoutHostLock(
         nimContainer: registryMetadata.nimContainer ?? null,
       });
     if (
-      !(deps.updateSandboxInferenceRoute ?? deps.updateSandbox)(
+      !deps.updateSandbox(
         sandboxName,
         registryFields(
           resolveAgentInferenceApi(
@@ -1261,12 +1264,7 @@ async function runInferenceSetWithoutHostLock(
     // Refresh the registry with config-derived API-family metadata before the
     // crash-prone in-sandbox sync (#3725/#3726). Explicit operator-supplied
     // metadata remains authoritative when present.
-    if (
-      !(deps.updateSandboxInferenceRoute ?? deps.updateSandbox)(
-        sandboxName,
-        registryFields(preferredInferenceApi),
-      )
-    ) {
+    if (!deps.updateSandbox(sandboxName, registryFields(preferredInferenceApi))) {
       throw new InferenceSetError(
         `Failed to update NemoClaw registry for sandbox '${sandboxName}'.`,
       );
@@ -1400,6 +1398,15 @@ async function runInferenceSetWithoutHostLock(
         agentName,
         configChanged: patched.changed,
         nextApi: patched.route.inferenceApi,
+        openClawPairingTarget:
+          agentName === "openclaw"
+            ? {
+                sandboxName,
+                gatewayName: expectedGatewayName,
+                openclawVersion: entry.agentVersion ?? "",
+                stateDirectory: target.configDir,
+              }
+            : undefined,
         previousApi: previousOpenClawInferenceApi,
         result: {
           sandboxName,
@@ -1484,8 +1491,10 @@ export async function runInferenceSet(
   // an async lock. The inner resolution still validates the live registry entry.
   const selected = resolveTargetSandbox(options.sandboxName, deps);
   assertInferenceSetRuntimeAuthority(selected.entry, deps.runtimeProviders);
+  assertInferenceSetCommandAvailable(selected.sandboxName);
   deps.prepareRunOpenshell();
   return withSandboxMutationLock(selected.sandboxName, async () => {
+    assertInferenceSetCommandAvailable(selected.sandboxName);
     const lockedSelection = resolveTargetSandbox(selected.sandboxName, deps);
     assertInferenceSetRuntimeAuthority(lockedSelection.entry, deps.runtimeProviders);
     const gatewayName = resolveSandboxGatewayName(lockedSelection.entry);
@@ -1498,10 +1507,11 @@ export async function runInferenceSet(
         ),
       ),
     );
-    // Release the config transition lock before the managed restart reacquires
-    // it, but retain the outer sandbox lifecycle lock so another process cannot
-    // destroy/recreate this name between the committed write and restart.
-    completeInferenceGatewayRestart(mutation, deps);
+    // Release the config transition lock before post-commit gateway work
+    // reacquires its own route state. Retain the outer sandbox lifecycle lock
+    // so another process cannot replace this sandbox between the committed
+    // write, an optional restart, and device-scope convergence.
+    completeInferencePostCommit(mutation, deps);
     if (mutation.result.dashboardConverged === false) {
       throw new InferenceSetError(
         `Inference route and main Hermes config were updated for '${mutation.result.sandboxName}', ` +

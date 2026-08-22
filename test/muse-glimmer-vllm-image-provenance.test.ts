@@ -35,6 +35,26 @@ const recipe = YAML.parse(readFileSync(RECIPE_PATH, "utf8")) as {
 };
 
 describe("Muse Glimmer vLLM image provenance", () => {
+  // source-shape-contract: security -- The checked-in provenance and recipe must resolve to the same reviewed external runtime image and size.
+  it("binds the checked-in provenance to the selected runtime", () => {
+    verifyMuseGlimmerVllmImageProvenance(provenance);
+
+    expect(recipe.spec.runtime).toMatchObject({
+      architecture: "arm64",
+      image: MUSE_GLIMMER_VLLM_IMAGE_REFERENCE,
+      imageDownloadSizeBytes: 9_706_339_423,
+    });
+
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
+    const model = VLLM_MODELS.find(({ envValue }) => envValue === "muse-glimmer-30b");
+    expect(profile).not.toBeNull();
+    expect(model).toBeDefined();
+    expect(resolveVllmRuntimeProfile(profile!, model!)).toMatchObject({
+      image: MUSE_GLIMMER_VLLM_IMAGE_REFERENCE,
+      imageDownloadSizeBytes: 9_706_339_423,
+    });
+  });
+
   // source-shape-contract: security -- Mutating each trust field proves the reviewed provenance record fails closed before a substituted external runtime can be published.
   it.each([
     ["publisher drift", ["publisher", "namespace"], "attacker"],
@@ -43,6 +63,12 @@ describe("Muse Glimmer vLLM image provenance", () => {
     ["source drift", ["build", "sourceRevision"], "0".repeat(40)],
     ["label drift", ["reportedLabels", "org.opencontainers.image.revision"], "0".repeat(40)],
     ["support ancestry drift", ["upstreamSupport", "relationship"], "unverified"],
+    ["runtime dependency drift", ["runtimeDependencies", "huggingfaceHubVersion"], "1.27.0"],
+    [
+      "revision serialization drift",
+      ["revisionSerialization", "resolvedRevisionAfterPickle"],
+      "main",
+    ],
   ] as const)("rejects %s", (_name, pathParts, replacement) => {
     const changed = structuredClone(provenance) as JsonRecord;
     let target = changed;

@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { flushMock, handleMock, loadMock, runCommandMock, runMock } = vi.hoisted(() => ({
@@ -11,15 +15,19 @@ const { flushMock, handleMock, loadMock, runCommandMock, runMock } = vi.hoisted(
   runMock: vi.fn(),
 }));
 
-vi.mock("@oclif/core", () => ({
-  Config: {
-    load: loadMock,
-  },
-  flush: flushMock,
-  handle: handleMock,
-  run: runMock,
-}));
+vi.mock("@oclif/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@oclif/core")>();
+  return {
+    ...actual,
+    Config: { load: loadMock },
+    flush: flushMock,
+    handle: handleMock,
+    run: runMock,
+  };
+});
 
+import * as receiptAuthority from "../onboard/experimental/hermes-portable-receipt";
+import { NemoClawCommand } from "./nemoclaw-oclif-command";
 import { runOclifArgv, runOclifCommandById } from "./oclif-runner";
 
 function makeConfig() {
@@ -45,6 +53,84 @@ class NonExistentFlagsError extends Error {
 class UnexpectedArgsError extends Error {
   oclif = { exit: 2 };
 }
+
+class RunnerUnsupportedCommand extends NemoClawCommand {
+  static id = "sandbox:destroy";
+  static ran = false;
+
+  public async run(): Promise<void> {
+    RunnerUnsupportedCommand.ran = true;
+  }
+}
+
+function useHermesPortableAuthority(): void {
+  vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue({
+    kind: "hermes",
+    snapshot: { receipt: { phase: "active" } } as never,
+  });
+}
+
+describe("Hermes portable command admission through both oclif runners", () => {
+  let stateDir: string;
+
+  beforeEach(() => {
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oclif-runner-"));
+    vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", stateDir);
+    flushMock.mockReset();
+    handleMock.mockReset();
+    loadMock.mockReset();
+    runCommandMock.mockReset();
+    runMock.mockReset();
+    loadMock.mockResolvedValue(makeConfig());
+    RunnerUnsupportedCommand.ran = false;
+    process.exitCode = undefined;
+  });
+
+  afterEach(() => {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    process.exitCode = undefined;
+  });
+
+  it("rejects direct command-id execution before the raw action body (#9203)", async () => {
+    useHermesPortableAuthority();
+    runCommandMock.mockImplementation(() => RunnerUnsupportedCommand.run(["alpha"], process.cwd()));
+
+    await expect(
+      runOclifCommandById("sandbox:destroy", ["alpha"], { rootDir: "/repo" }),
+    ).rejects.toThrow("not supported for an experimental Hermes portable sandbox");
+    expect(RunnerUnsupportedCommand.ran).toBe(false);
+  });
+
+  it("rejects native argv execution before the raw action body (#9203)", async () => {
+    useHermesPortableAuthority();
+    runMock.mockImplementation(() => RunnerUnsupportedCommand.run(["alpha"], process.cwd()));
+
+    await runOclifArgv(["sandbox", "destroy", "alpha"], { rootDir: "/repo" });
+
+    expect(RunnerUnsupportedCommand.ran).toBe(false);
+    expect(handleMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining(
+          "not supported for an experimental Hermes portable sandbox",
+        ),
+      }),
+    );
+  });
+
+  it("preserves native raw-argv help without action admission (#9203)", async () => {
+    useHermesPortableAuthority();
+    runMock.mockImplementation(() =>
+      RunnerUnsupportedCommand.run(["alpha", "--help"], process.cwd()),
+    );
+
+    await runOclifArgv(["sandbox", "destroy", "alpha", "--help"], { rootDir: "/repo" });
+
+    expect(RunnerUnsupportedCommand.ran).toBe(true);
+    expect(handleMock).not.toHaveBeenCalled();
+  });
+});
 
 describe("runOclifArgv", () => {
   let originalArgv: string[];

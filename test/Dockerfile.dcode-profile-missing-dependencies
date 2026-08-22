@@ -15,7 +15,7 @@ USER root
 RUN /opt/venv/bin/pip3 uninstall --yes deepagents-code deepagents \
     && /opt/venv/bin/python3 -I -c 'import importlib.util; assert importlib.util.find_spec("deepagents") is None; assert importlib.util.find_spec("deepagents_code") is None' \
     && rm -f /usr/local/bin/dcode \
-    && printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "deepagents-code 0.1.34"' > /usr/local/bin/dcode \
+    && printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "deepagents-code 0.1.55"' > /usr/local/bin/dcode \
     && chmod 0755 /usr/local/bin/dcode
 
 USER sandbox

@@ -17,8 +17,12 @@ const googlechatPolicy = readFileSync(new URL("./policy/openclaw.yaml", import.m
 // wiring a refactor could otherwise weaken silently in the unit lane.
 
 function renderFragmentValue(path: string): Record<string, unknown> {
-  const entry = googlechatManifest.render.find((fragment) => fragment.fragment.path === path);
-  return (entry?.fragment.value ?? {}) as Record<string, unknown>;
+  const entry = googlechatManifest.render.find(
+    (render) => "fragment" in render && render.fragment.path === path,
+  );
+  return entry && "fragment" in entry
+    ? ((entry.fragment.value ?? {}) as Record<string, unknown>)
+    : {};
 }
 
 describe("googlechat runtime security contract", () => {

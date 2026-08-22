@@ -40,7 +40,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: " + liveId + "\\nType: generic\\nResource version: 4\\nCredential keys: EXPECTED_TOKEN\\n",
+      stdout: "Id: " + liveId + "\\nType: nemoclaw-mcp-v1\\nResource version: 4\\nCredential keys: EXPECTED_TOKEN\\n",
       stderr: "",
     };
   }
@@ -48,7 +48,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     return {
       status: 0,
       stdout: attached
-        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\\nalpha-mcp-fake generic 1 0\\n"
+        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\\nalpha-mcp-fake nemoclaw-mcp-v1 1 0\\n"
         : "No providers attached to sandbox alpha.\\n",
       stderr: "",
     };
@@ -61,7 +61,6 @@ providerCommands.runOpenshellProviderCommand = (args) => {
 };
 policies.getPresetContentGatewayState = () => policyState;
 policies.removePreset = () => {
-  if (swapAt === "delete") liveId = foreignId;
   policyState = "absent";
   return true;
 };
@@ -69,7 +68,10 @@ processRecovery.executeSandboxCommand = () => {
   if (swapAt === "detach") liveId = foreignId;
   return { status: 0, stdout: "", stderr: "" };
 };
-processRecovery.executeSandboxExecCommand = () => ({ status: 0, stdout: "", stderr: "" });
+processRecovery.executeSandboxExecCommand = () => {
+  if (swapAt === "delete") liveId = foreignId;
+  return { status: 0, stdout: "", stderr: "" };
+};
 const entry = {
   server: "fake",
   agent: "openclaw",
@@ -139,7 +141,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     return providerExists
       ? {
           status: 0,
-          stdout: "Id: " + expectedId + "\nType: generic\nResource version: 4\nCredential keys: LD_PRELOAD\n",
+          stdout: "Id: " + expectedId + "\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: LD_PRELOAD\n",
           stderr: "",
         }
       : { status: 1, stdout: "", stderr: "NotFound: provider" };
@@ -148,7 +150,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     return {
       status: 0,
       stdout: attached
-        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake generic 1 0\n"
+        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake nemoclaw-mcp-v1 1 0\n"
         : "No providers attached to sandbox alpha.\n",
       stderr: "",
     };
@@ -285,14 +287,14 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: 99999999-8888-4777-8666-555555555555\nType: generic\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
+      stdout: "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
       stderr: "",
     };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
     return {
       status: 0,
-      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake generic 1 0\n",
+      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake nemoclaw-mcp-v1 1 0\n",
       stderr: "",
     };
   }
@@ -442,7 +444,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: " + resourceVersion + "\nCredential keys: EXPECTED_TOKEN\n",
+      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: " + resourceVersion + "\nCredential keys: EXPECTED_TOKEN\n",
       stderr: "",
     };
   }
@@ -495,6 +497,52 @@ process.stdout.write(JSON.stringify({ message, resourceVersion, calls }));
     expect(JSON.stringify(payload.calls)).not.toContain("host-only-secret");
   });
 
+  it("does not recreate a missing provider during credential republish", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-republish-missing-"));
+    const script = String.raw`
+process.env.HOME = ${JSON.stringify(home)};
+process.env.EXPECTED_TOKEN = "host-only-secret";
+const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const calls = [];
+providerCommands.runOpenshellProviderCommand = (args) => {
+  calls.push(args.join(" "));
+  if (args[0] === "provider" && args[1] === "get") {
+    return { status: 1, stdout: "", stderr: "NotFound: provider" };
+  }
+  throw new Error("unexpected call: " + args.join(" "));
+};
+const providerActions = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
+let message = "";
+try {
+  providerActions.upsertMcpProvider(
+    "alpha-mcp-fake",
+    [{ name: "EXPECTED_TOKEN" }],
+    {
+      allowExisting: true,
+      expectedProviderId: "11111111-2222-4333-8444-555555555555",
+      requireExisting: true,
+    },
+  );
+} catch (error) {
+  message = error.message;
+}
+process.stdout.write(JSON.stringify({ message, calls }));
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, HOME: home },
+    });
+    fs.rmSync(home, { recursive: true, force: true });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const payload = JSON.parse(result.stdout) as { message: string; calls: string[] };
+    expect(payload.message).toContain("disappeared before credential republish");
+    expect(payload.message).toContain("Refusing to create a replacement");
+    expect(payload.calls).toEqual(["provider get alpha-mcp-fake"]);
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("host-only-secret");
+  });
+
   it("never detaches or deletes a non-matching provider in force mode", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-owner-"));
     const script = `
@@ -526,7 +574,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: 99999999-8888-4777-8666-555555555555\\nType: generic\\nResource version: 4\\nCredential keys: EXPECTED_TOKEN\\n",
+      stdout: "Id: 99999999-8888-4777-8666-555555555555\\nType: nemoclaw-mcp-v1\\nResource version: 4\\nCredential keys: EXPECTED_TOKEN\\n",
       stderr: "",
     };
   }

@@ -40,7 +40,10 @@ import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
 import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
-import { confirmSandboxDestroy } from "./destroy-confirmation";
+import {
+  assertSandboxDestroyCommandAvailable,
+  confirmSandboxDestroy,
+} from "./destroy-confirmation";
 import {
   executeSandboxDestroy,
   redactDestroyError,
@@ -464,7 +467,10 @@ export async function destroySandbox(
   sandboxName: string,
   options: string[] | DestroySandboxOptions = {},
 ): Promise<void> {
-  return withMcpLifecycleLock(sandboxName, () => destroySandboxUnlocked(sandboxName, options));
+  return withMcpLifecycleLock(sandboxName, () => {
+    assertSandboxDestroyCommandAvailable(sandboxName);
+    return destroySandboxUnlocked(sandboxName, options);
+  });
 }
 
 async function destroySandboxUnlocked(

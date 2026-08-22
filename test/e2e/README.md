@@ -97,11 +97,14 @@ Each live E2E consumer verifies that the catalog source revision matches `checko
 does not change a managed-image workflow path keeps the released catalog behavior. The GitHub token
 is available only to the trusted planner job and is not included in the candidate CLI artifact.
 
-The same-repository `Images / Managed Images` PR workflow also runs the complete OpenClaw
-`mcp-bridge` shard in two independent matrix jobs. Each job assembles one exact candidate catalog
-from the workflow's published contracts, uses a fresh runner and sandbox, records the existing
-trusted-private discovery diagnostics, scans the evidence for fixture credentials, and must pass.
+The same-repository `Images / Managed Images` PR workflow also runs the OpenClaw managed-image MCP
+discovery and lifecycle scope in two independent matrix jobs. Each job assembles one exact candidate
+catalog from the workflow's published contracts, uses a fresh runner and sandbox, records the
+authenticated discovery diagnostics, scans the evidence for fixture credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
+The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
+`/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
+coverage retains that assertion for environments with supervisor-authoritative DNS.
 
 #### Timing Baseline
 
@@ -817,6 +820,12 @@ phase artifact created before exit. A preparation failure can produce no
 artifact. A later early failure can retain only `lane.log`. A successful job
 contains `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`;
 `cleanup.json` exists only after the job confirms workspace absence.
+When the preinstalled full E2E fails after SSH succeeds, the job attempts to
+append bounded, redacted host state and PID 1 lifecycle classifications to
+`lane.log` before cleanup. If a probe fails or the shared budget expires,
+`lane.log` records that result and cleanup continues. The diagnostic phase is
+read-only, uses one 30-second budget, and does not retry the failed E2E or repair
+the workspace.
 
 Manual ordinary and full runs exclude the Jetson nvmap and DGX Spark llama.cpp
 jobs unless their independent opt-in flags are `true`.
@@ -1303,7 +1312,15 @@ Treat it as passing evidence only when the `E2E` workflow concludes with `succes
 A changed PR source repository, candidate commit SHA, or base commit SHA invalidates the evidence and requires a new manual run.
 
 The platform-evidence workflow runs on configured pushes to `main` and supports manual dispatch for branch diagnosis.
-The experimental portable-profile workflow runs on `main` when one of its configured paths changes.
+The experimental portable-profile workflow can run for pull requests, matching `main` pushes, and manual dispatch.
+Its `portable-launch` job runs only when `github.ref` is `refs/heads/main`.
+The `portable-launch` job's exercise step exposes the long-lived repository `NVIDIA_INFERENCE_API_KEY` to the checked-out source through its environment.
+The hosted-inference fixture copies that key into `/run/nemoclaw/portable-inference.json`, a mode-`0600` file beneath the current-user-owned mode-`0700` `/run/nemoclaw` directory.
+Code running as the current user can read that descriptor until the production loader consumes it or cleanup removes it.
+The descriptor has a one-hour admission window; that window does not expire or revoke the API key.
+The production loader consumes and unlinks the descriptor before provider selection.
+The always-run workflow cleanup removes `/run/nemoclaw/portable-inference.json` and `/run/nemoclaw/.portable-inference.json.tmp` and fails if it cannot remove either path.
+Runner teardown is the fallback that discards the ephemeral runner filesystem; only issuer rotation or revocation removes later API-key access.
 The Podman CPU proof runs only for matching pull request changes.
 The sandbox-image workflow accepts manual and reusable workflow calls for image build and test evidence.
 

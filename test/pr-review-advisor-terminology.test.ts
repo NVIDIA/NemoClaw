@@ -10,9 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createTerminologyLedger,
   createTerminologyToolController,
-  TERMINOLOGY_READ_TOOL,
   TERMINOLOGY_TRACE_TOOL,
-  TERMINOLOGY_UPDATE_TOOL,
   traceTerminology,
 } from "../tools/pr-review-advisor/terminology.mts";
 
@@ -209,37 +207,15 @@ describe("PR review advisor terminology evidence", () => {
     ).rejects.toThrow("Terminology evidence command failed: git diff:");
   });
 
-  it("rejects a justified term without a concrete contrast and commits the corrected replacement decision", async () => {
+  it("traces selected terms through the investigation controller", async () => {
     const fixture = fixtureRepository();
-    const ledger = createTerminologyLedger(fixture.head);
     const controller = createTerminologyToolController({
-      ledger,
       baseRef: fixture.base,
       headRef: fixture.head,
       cwd: fixture.directory,
     });
-    const traceTool = tool(controller.tools, TERMINOLOGY_TRACE_TOOL);
-    const update = tool(controller.tools, TERMINOLOGY_UPDATE_TOOL);
-    await expect(
-      traceTool.execute(
-        "trace-wrong-stage",
-        { term: "review-bound" },
-        undefined,
-        undefined,
-        undefined as never,
-      ),
-    ).rejects.toThrow("available only during terminology analysis");
-    await expect(
-      update.execute(
-        "update-wrong-stage",
-        { decisions: [], noChangesReason: "No candidates." },
-        undefined,
-        undefined,
-        undefined as never,
-      ),
-    ).rejects.toThrow("available only during terminology commit");
-    controller.setStage("terminology-review-analysis");
-    const traced = await traceTool.execute(
+    expect(controller.tools.map((candidate) => candidate.name)).toEqual([TERMINOLOGY_TRACE_TOOL]);
+    const traced = await tool(controller.tools, TERMINOLOGY_TRACE_TOOL).execute(
       "trace-1",
       { term: "review-bound" },
       undefined,
@@ -247,91 +223,61 @@ describe("PR review advisor terminology evidence", () => {
       undefined as never,
     );
     const trace = contentJson(traced) as { id: string; changedLocations: Array<{ line: number }> };
-    controller.setStage("terminology-review");
-    const decision = {
-      term: "review-bound",
-      change: "introduced",
-      disposition: "justified",
-      meaning: "Evidence for the commit SHA.",
-      contrast: null,
-      existingTerm: null,
-      semanticImpact: "evidence",
-      recommendation: "Use commit SHA.",
-      traceId: trace.id,
-      source: { file: "guide.md", line: trace.changedLocations[0]?.line },
-    };
-
-    await expect(
-      update.execute(
-        "update-invalid",
-        { decisions: [decision], noChangesReason: null },
-        undefined,
-        undefined,
-        undefined as never,
-      ),
-    ).rejects.toThrow("requires a concrete contrast");
-
-    const updated = await update.execute(
-      "update-valid",
-      {
-        decisions: [
-          {
-            ...decision,
-            disposition: "replace",
-            existingTerm: "commit SHA",
-          },
-        ],
-        noChangesReason: null,
-      },
-      undefined,
-      undefined,
-      undefined as never,
-    );
-    expect(updated.terminate).toBe(true);
-    expect(ledger.snapshot().review).toMatchObject({
-      status: "candidates",
-      decisions: [
-        {
-          id: "T-001",
-          disposition: "replace",
-          existingTerm: "commit SHA",
-          source: { file: "guide.md", line: 4, headSha: fixture.head },
-        },
-      ],
-    });
-
-    controller.setStage("synthesize-json");
-    const receipt = await tool(controller.tools, TERMINOLOGY_READ_TOOL).execute(
-      "read-1",
-      {},
-      undefined,
-      undefined,
-      undefined as never,
-    );
-    expect(contentJson(receipt)).toMatchObject({ version: 1, revision: 1, headSha: fixture.head });
+    expect(controller.traces().get(trace.id)?.changedLocations[0]?.line).toBe(4);
   });
 
-  it("records an explicit clear receipt without scraping for candidates", async () => {
+  it("validates provenance before committing a canonical terminology snapshot", async () => {
     const fixture = fixtureRepository();
-    const ledger = createTerminologyLedger(fixture.head);
-    const controller = createTerminologyToolController({
-      ledger,
+    const trace = await traceTerminology({
+      term: "review-bound",
       baseRef: fixture.base,
       headRef: fixture.head,
       cwd: fixture.directory,
     });
-    controller.setStage("terminology-review");
-    await tool(controller.tools, TERMINOLOGY_UPDATE_TOOL).execute(
-      "update-clear",
+    const ledger = createTerminologyLedger(fixture.head);
+    const decision = {
+      term: "review-bound",
+      change: "introduced" as const,
+      disposition: "justified" as const,
+      meaning: "Evidence for the commit SHA.",
+      contrast: null,
+      existingTerm: null,
+      semanticImpact: "evidence" as const,
+      recommendation: "Use commit SHA.",
+      traceId: trace.id,
+      source: { file: "guide.md", line: 4 },
+    };
+    expect(() => ledger.commit({ decisions: [decision], noChangesReason: null }, new Map([[trace.id, trace]]))).toThrow(
+      "requires a concrete contrast",
+    );
+    ledger.commit(
+      {
+        decisions: [{ ...decision, disposition: "replace", existingTerm: "commit SHA" }],
+        noChangesReason: null,
+      },
+      new Map([[trace.id, trace]]),
+    );
+    expect(ledger.snapshot()).toMatchObject({
+      version: 1,
+      revision: 1,
+      headSha: fixture.head,
+      review: {
+        status: "candidates",
+        decisions: [{ id: "T-001", source: { file: "guide.md", line: 4, headSha: fixture.head } }],
+      },
+    });
+  });
+
+  it("records an explicit clear canonical receipt", () => {
+    const fixture = fixtureRepository();
+    const ledger = createTerminologyLedger(fixture.head);
+    ledger.commit(
       {
         decisions: [],
         noChangesReason: "No changed explanatory term introduced a new or conflicting meaning.",
       },
-      undefined,
-      undefined,
-      undefined as never,
+      new Map(),
     );
-
     expect(ledger.snapshot().review).toEqual({
       status: "clear",
       decisions: [],

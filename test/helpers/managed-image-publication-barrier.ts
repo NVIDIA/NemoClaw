@@ -24,12 +24,21 @@ type Candidate = {
 
 export type CandidateMutation = (candidates: Candidate[]) => Candidate[];
 
+type BarrierOptions = {
+  publicationCohort?: string;
+};
+
 type PromotionResult = {
   calls: string[];
   cohortContract: Record<string, unknown> | null;
   platformContracts: Record<string, Record<string, unknown>>;
   status: number | null;
   stderr: string;
+};
+
+type PromotionOptions = {
+  mutate?: CandidateMutation;
+  publicationCohort?: string;
 };
 
 function imageFor(agent: (typeof publicationAgents)[number]): string {
@@ -54,7 +63,7 @@ function candidates(): Candidate[] {
       return {
         agent,
         platform,
-        artifact: `managed-image-candidate-${runId}-${runAttempt}-${agent}-${platform.replaceAll("/", "-")}`,
+        artifact: `managed-image-candidate-${runId}-${agent}-${platform.replaceAll("/", "-")}`,
         contract: {
           contractVersion: 2,
           phase: "candidate",
@@ -153,10 +162,59 @@ function candidates(): Candidate[] {
   );
 }
 
+export const reuseOpenclawAmd64FromAttemptOne: CandidateMutation = (candidateSet) =>
+  candidateSet.map((candidate) => {
+    const contract = structuredClone(candidate.contract);
+    const producerAttempt =
+      `${candidate.agent}|${candidate.platform}` === "openclaw|linux/amd64" ? 1 : 2;
+    (contract.source as Record<string, unknown>).cohort = "ghrun-7744-1";
+    (contract.run as Record<string, unknown>).attempt = producerAttempt;
+    const evidence = contract.publicationEvidence as Record<string, unknown>;
+    const attestations = evidence.attestations as Record<string, unknown>;
+    const statement = (attestations.slsa as Record<string, unknown>).statement as Record<
+      string,
+      unknown
+    >;
+    statement.builderId = `https://github.com/NVIDIA/NemoClaw/actions/runs/7744/attempts/${producerAttempt}`;
+    (statement.bindings as Record<string, unknown>).cohort = "ghrun-7744-1";
+    return {
+      ...candidate,
+      contract,
+    };
+  });
+
+export function runManagedImageBaseRestore(
+  script: string,
+  contract: string,
+): { restored: boolean; status: number | null; stderr: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-base-restore-"));
+  try {
+    const result = spawnSync("bash", ["-c", script], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AGENT: "openclaw",
+        DCODE_CONTRACT_BASE64: contract,
+        HERMES_CONTRACT_BASE64: contract,
+        OPENCLAW_CONTRACT_BASE64: contract,
+        RUNNER_TEMP: root,
+      },
+    });
+    return {
+      restored: fs.existsSync(path.join(root, "managed-base-contract", "contract.json")),
+      status: result.status,
+      stderr: result.stderr,
+    };
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 export function runPublicationBarrier(
   script: string,
   mutate: CandidateMutation = (value) => value,
   afterBarrier = "",
+  options: BarrierOptions = {},
 ): {
   dockerCalls: string[];
   status: number | null;
@@ -199,6 +257,7 @@ export function runPublicationBarrier(
         GITHUB_RUN_ID: runId,
         GITHUB_SHA: revision,
         PATH: `${bin}:${process.env.PATH ?? ""}`,
+        PUBLICATION_COHORT: options.publicationCohort ?? cohort,
         RUNNER_TEMP: root,
       },
     });
@@ -219,6 +278,7 @@ export function runManagedImagePromotion(
   script: string,
   failCohortAgent = "",
   pointerScript = "",
+  options: PromotionOptions = {},
 ): PromotionResult {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-promotion-"));
   const bin = path.join(root, "bin");
@@ -283,9 +343,10 @@ fi
 `,
   );
   fs.chmodSync(path.join(bin, "docker"), 0o755);
+  const candidateValues = options.mutate ? options.mutate(candidates()) : candidates();
   fs.writeFileSync(
     candidateSet,
-    `${JSON.stringify(candidates().map(({ contract }) => contract))}\n`,
+    `${JSON.stringify(candidateValues.map(({ contract }) => contract))}\n`,
   );
 
   try {
@@ -302,6 +363,7 @@ fi
         GITHUB_RUN_ID: runId,
         GITHUB_SHA: revision,
         PATH: `${bin}:${process.env.PATH ?? ""}`,
+        PUBLICATION_COHORT: options.publicationCohort ?? cohort,
         RUNNER_TEMP: root,
         STATE_ROOT: root,
       },

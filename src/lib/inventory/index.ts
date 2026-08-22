@@ -154,6 +154,12 @@ export interface ShowStatusCommandDeps {
   ) => MessagingBridgeHealth[];
   findMessagingOverlaps?: () => MessagingOverlap[];
   readGatewayLog?: (sandboxName: string) => string | null;
+  /** Receipt-only schema-5 phase lookup held by the global portable host fence. */
+  getHermesPortablePhase?: (
+    sandboxName: string,
+  ) => "pending" | "configuring" | "active" | null;
+  /** Count receipt-root authority so an unregistered phase cannot permit ambient probes. */
+  getHermesPortableHostAuthorityCount?: () => number;
   log?: (message?: string) => void;
 }
 
@@ -170,6 +176,7 @@ export interface StatusSandboxRow {
   openshellVersion: string | null;
   policies: string[];
   agent: string;
+  phase?: "pending" | "configuring" | "active";
   dashboardPort?: number | null;
   isDefault: boolean;
 }
@@ -394,6 +401,7 @@ function buildStatusSandboxRow(
   sandbox: SandboxEntry,
   defaultSandbox: string | null,
   liveInference: GatewayInference | null,
+  portablePhase: "pending" | "configuring" | "active" | null,
 ): StatusSandboxRow {
   const isDefault = sandbox.name === defaultSandbox;
   const liveModel = isDefault ? liveInference?.model : null;
@@ -424,6 +432,7 @@ function buildStatusSandboxRow(
           .map((policy) => safeStatusString(policy) || policy)
       : [],
     agent: redactFull(resolveDisplayAgent(sandbox)),
+    ...(portablePhase ? { phase: portablePhase } : {}),
     ...(dashboardPort != null ? { dashboardPort } : {}),
     isDefault,
   };
@@ -485,13 +494,31 @@ export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
     (sandbox) => !isRouteOnlySandboxReservation(sandbox),
   );
   const resolvedDefault = resolveDefaultSandboxName(() => sandboxList) ?? null;
-  const liveInference = sandboxes.length > 0 ? deps.getLiveInference() : null;
+  const portablePhases = new Map(
+    sandboxes.flatMap((sandbox) => {
+      const phase = deps.getHermesPortablePhase?.(sandbox.name) ?? null;
+      return phase ? ([[sandbox.name, phase]] as const) : [];
+    }),
+  );
+  const portableAuthorityCount = deps.getHermesPortableHostAuthorityCount?.() ?? 0;
+  if (portableAuthorityCount !== portablePhases.size) {
+    throw new Error(
+      "Global status cannot inspect an experimental Hermes portable receipt without an exact registry row. Resume its existing onboarding transaction first.",
+    );
+  }
+  const hasHermesPortable = portableAuthorityCount > 0;
+  const liveInference =
+    sandboxes.length > 0 && !hasHermesPortable ? deps.getLiveInference() : null;
   const gatewayHealth =
-    deps.getGatewayHealth && sandboxes.length > 0 ? deps.getGatewayHealth() : null;
+    deps.getGatewayHealth && sandboxes.length > 0 && !hasHermesPortable
+      ? deps.getGatewayHealth()
+      : null;
   const services =
-    deps
+    !hasHermesPortable
+      ? (deps
       .getServiceStatuses?.({ sandboxName: resolvedDefault || undefined })
-      .map(normalizeServiceStatus) ?? [];
+          .map(normalizeServiceStatus) ?? [])
+      : [];
 
   return {
     schemaVersion: 1,
@@ -503,9 +530,16 @@ export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
         }
       : null,
     gatewayHealth: normalizeGatewayHealth(gatewayHealth),
-    gatewayAuthority: normalizeGatewayAuthority(deps.getGatewayAuthority?.()),
+    gatewayAuthority: hasHermesPortable
+      ? null
+      : normalizeGatewayAuthority(deps.getGatewayAuthority?.()),
     sandboxes: sandboxes.map((sandbox) =>
-      buildStatusSandboxRow(sandbox, resolvedDefault, liveInference),
+      buildStatusSandboxRow(
+        sandbox,
+        resolvedDefault,
+        liveInference,
+        portablePhases.get(sandbox.name) ?? null,
+      ),
     ),
     services,
   };
@@ -528,10 +562,23 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
     (sandbox) => !isRouteOnlySandboxReservation(sandbox),
   );
   const resolvedDefault = resolveDefaultSandboxName(() => sandboxList) ?? null;
+  const portablePhases = new Map(
+    sandboxes.flatMap((sandbox) => {
+      const phase = deps.getHermesPortablePhase?.(sandbox.name) ?? null;
+      return phase ? ([[sandbox.name, phase]] as const) : [];
+    }),
+  );
+  const portableAuthorityCount = deps.getHermesPortableHostAuthorityCount?.() ?? 0;
+  if (portableAuthorityCount !== portablePhases.size) {
+    throw new Error(
+      "Global status cannot inspect an experimental Hermes portable receipt without an exact registry row. Resume its existing onboarding transaction first.",
+    );
+  }
+  const hasHermesPortable = portableAuthorityCount > 0;
   log("");
   log("  Global status (registered sandboxes and host services):");
   if (sandboxes.length > 0) {
-    const live = deps.getLiveInference();
+    const live = hasHermesPortable ? null : deps.getLiveInference();
     log("  Sandboxes:");
     for (const sb of sandboxes) {
       const isDefault = sb.name === resolvedDefault;
@@ -545,6 +592,8 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       const provider = liveProvider || inference.provider;
       const portSuffix = sb.dashboardPort != null ? ` :${sb.dashboardPort}` : "";
       log(`    ${sb.name}${def}${model ? ` (${model})` : ""}${portSuffix}`);
+      const portablePhase = portablePhases.get(sb.name);
+      if (portablePhase) log(`      agent: hermes  phase: ${portablePhase}`);
       if (isDefault && liveModel && liveModel !== inference.model) {
         log(`      (onboarded: ${inference.model || "unknown"})`);
       }
@@ -556,7 +605,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
         const parts = [provider, model].filter(Boolean).join(" / ");
         log(`      Inference: ${parts}`);
       }
-      if (deps.getActiveSessionCount) {
+      if (deps.getActiveSessionCount && !portablePhase) {
         const count = deps.getActiveSessionCount(sb.name);
         if (count !== null) {
           log(`      SSH sessions: ${count > 0 ? count : "none"}`);
@@ -566,7 +615,9 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
     log("");
   }
 
-  const gatewayAuthority = normalizeGatewayAuthority(deps.getGatewayAuthority?.());
+  const gatewayAuthority = hasHermesPortable
+    ? null
+    : normalizeGatewayAuthority(deps.getGatewayAuthority?.());
   if (gatewayAuthority) {
     const owner = gatewayAuthority.supervisor
       ? `${gatewayAuthority.supervisor.kind} ${gatewayAuthority.supervisor.serviceName} (${gatewayAuthority.supervisor.execPath})`
@@ -587,7 +638,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
   // the rest of the report keeps printing. A clean machine with no registered
   // sandboxes has no expectation of a configured gateway, so the check is
   // suppressed in that case to avoid a spurious failure exit code.
-  if (deps.getGatewayHealth && sandboxes.length > 0) {
+  if (deps.getGatewayHealth && sandboxes.length > 0 && !hasHermesPortable) {
     const health = deps.getGatewayHealth();
     if (!health.healthy) {
       log("");
@@ -598,9 +649,9 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
     }
   }
 
-  deps.showServiceStatus({ sandboxName: resolvedDefault || undefined });
+  if (!hasHermesPortable) deps.showServiceStatus({ sandboxName: resolvedDefault || undefined });
 
-  if (deps.findMessagingOverlaps) {
+  if (deps.findMessagingOverlaps && !hasHermesPortable) {
     const overlaps = deps.findMessagingOverlaps();
     if (overlaps.length > 0) {
       log("");
@@ -623,7 +674,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
     }
   }
 
-  if (deps.checkMessagingBridgeHealth && resolvedDefault) {
+  if (deps.checkMessagingBridgeHealth && resolvedDefault && !hasHermesPortable) {
     const refreshed = deps.listSandboxes().sandboxes;
     const defaultEntry = refreshed.find((sb) => sb.name === resolvedDefault);
     const channels = getActiveChannelIdsFromPlan(defaultEntry?.messaging?.plan);

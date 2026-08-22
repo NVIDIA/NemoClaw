@@ -37,8 +37,16 @@ The server must satisfy all of these requirements:
 - Return native llama.cpp model metadata without conflicting model entries.
 
 Configure the server with its own supported mechanism before you run NemoClaw.
+Start the server with an explicit served model alias.
+A server that starts without an alias reports its model file path as the model ID.
+NemoClaw rejects a path as a served model alias.
 Enable metrics when available, and use an API-key file instead of placing the key in process arguments when your llama.cpp build supports those options.
 If the server exposes multiple models, identify the exact served alias through `NEMOCLAW_MODEL`.
+
+NemoClaw takes the served model alias from the `/v1/models` entry that it selects.
+It also compares that alias with `model_alias` in `/props` when `/props` returns that field.
+NemoClaw refuses the attachment when the two values differ.
+If `/props` omits `model_alias`, NemoClaw attaches the server using the remaining native evidence.
 
 For interactive onboarding, run:
 

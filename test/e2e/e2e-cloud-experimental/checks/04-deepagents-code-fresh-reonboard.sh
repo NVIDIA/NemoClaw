@@ -15,9 +15,8 @@ SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-}}"
 REPO="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)}"
 CLI="${NEMOCLAW_CLI_BIN:-${REPO}/bin/nemoclaw.js}"
 PREFIX="04-deepagents-code-fresh-reonboard"
-PRIMARY_TARGET_MODEL="openai/openai/gpt-5.5"
-FALLBACK_TARGET_MODEL="nvidia/nvidia/nemotron-3-ultra"
 HOSTED_ENDPOINT="${NEMOCLAW_ENDPOINT_URL:-https://inference-api.nvidia.com/v1}"
+MODEL_SELECTOR="${REPO}/test/e2e/lib/select-authorized-chat-model.mts"
 CREDENTIAL_CANARY="nemoclaw-dcode-config-get-canary"
 MANAGED_LOGIN_PROFILE="/sandbox/.bash_profile"
 HOSTILE_LOGIN_FALLBACK="/sandbox/.bash_login"
@@ -255,12 +254,13 @@ printf '%s\n' "$managed_profile_connect_output" | grep -Fq "terminal smoke check
 [ "$marker_state" = "PROFILE_NOT_LOADED" ] || fail "hostile fallback login profile executed before the managed probe: $marker_state"
 pass "root-owned DCode login profile excludes sandbox startup code from managed probes"
 
-if [ "$model_a" = "$PRIMARY_TARGET_MODEL" ]; then
-  model_b="$FALLBACK_TARGET_MODEL"
-else
-  model_b="$PRIMARY_TARGET_MODEL"
-fi
+model_b="$(
+  npx --no-install tsx "$MODEL_SELECTOR" \
+    --endpoint "$HOSTED_ENDPOINT" \
+    --current-model "$model_a"
+)" || fail "could not select an authorized alternate chat model"
 [ "$model_a" != "$model_b" ] || fail "model A and model B must differ"
+pass "authenticated endpoint validation selected model B"
 
 seed_source="$(seed_config_source)"
 seed_output="$(

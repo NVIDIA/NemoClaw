@@ -1046,7 +1046,7 @@ describe("Hermes sandbox provisioning", () => {
       "patch-hermes-langfuse-credentials.mts",
     );
     const managedPolicyReaderPath = path.join(localLib, "managed_policy.py");
-    const mcpManifest = path.join(localLib, "openshell-child-visible-credentials.v0.0.101.json");
+    const mcpManifest = path.join(localLib, "openshell-child-visible-credentials.v0.0.106.json");
     const stateDirGuardPath = path.join(localLib, "state-dir-guard.py");
     const runtimeStateMutationControlPath = path.join(
       localLib,
@@ -1078,11 +1078,13 @@ describe("Hermes sandbox provisioning", () => {
     );
     const managedGatewayControlPath = path.join(localLib, "managed-gateway-control.py");
     const hermesCronRestoreControlPath = path.join(localLib, "hermes-cron-restore-control.py");
+    const corporateCaRuntimePath = path.join(localLib, "corporate-ca-runtime.sh");
     const files = [
       path.join(localBin, "nemoclaw-start"),
       path.join(localBin, "nemoclaw-managed-startup-hold"),
       path.join(localBin, "nemoclaw-managed-bootstrap"),
       gatewayControlPath,
+      corporateCaRuntimePath,
       path.join(localLib, "entrypoint-env-wrapper.sh"),
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "validate-hermes-env-secret-boundary.py"),
@@ -1149,6 +1151,7 @@ describe("Hermes sandbox provisioning", () => {
       expect((fs.statSync(buildMcpDigestPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(managedPolicyReaderPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
+      expect((fs.statSync(corporateCaRuntimePath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(stateDirGuardPath).mode & 0o777).toString(8)).toBe("500");
       expect((fs.statSync(runtimeStateMutationControlPath).mode & 0o777).toString(8)).toBe("500");
       expect((fs.statSync(runtimeStateMutationStartupGatePath).mode & 0o777).toString(8)).toBe(
@@ -1276,7 +1279,7 @@ describe("Hermes sandbox provisioning", () => {
     return { result, tmp };
   }
 
-  it("installs Hermes' native Anthropic provider dependency (#4230)", () => {
+  it("installs the selected Hermes extras, including native Anthropic (#4230)", () => {
     const { result, tmp } = runHermesUvExtrasExpansion();
     try {
       expect(result.status).toBe(0);
@@ -1292,6 +1295,8 @@ describe("Hermes sandbox provisioning", () => {
         "pty",
         "--extra",
         "mcp",
+        "--extra",
+        "acp",
       ]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

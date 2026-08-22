@@ -102,10 +102,44 @@ describe("managed startup shared-state transaction", () => {
       Object.defineProperty(stat, "dev", {
         configurable: true,
         value:
-          typeof stat.dev === "bigint"
-            ? stat.dev + BigInt(deviceOffset)
-            : stat.dev + deviceOffset,
+          typeof stat.dev === "bigint" ? stat.dev + BigInt(deviceOffset) : stat.dev + deviceOffset,
       });
+      return stat;
+    }) as typeof fs.lstatSync);
+  }
+
+  function simulateLinuxDirectoryMode(root: string, initialMode: number): void {
+    const resolvedRoot = path.resolve(root);
+    let exactMode = initialMode;
+    const originalChmodSync = fs.chmodSync.bind(fs);
+    vi.spyOn(fs, "chmodSync").mockImplementation((target, targetMode) => {
+      originalChmodSync(target, targetMode);
+      [path.resolve(String(target))]
+        .filter((resolvedTarget) => resolvedTarget === resolvedRoot)
+        .forEach(() => {
+          exactMode = Number(targetMode);
+        });
+    });
+    const originalLstatSync = fs.lstatSync.bind(fs);
+    vi.spyOn(fs, "lstatSync").mockImplementation(((
+      target: fs.PathLike,
+      statOptions?: { readonly bigint?: boolean },
+    ) => {
+      const stat =
+        statOptions?.bigint === true
+          ? originalLstatSync(target, { bigint: true })
+          : originalLstatSync(target);
+      [path.resolve(String(target))]
+        .filter((resolvedTarget) => resolvedTarget === resolvedRoot)
+        .forEach(() => {
+          Object.defineProperty(stat, "mode", {
+            configurable: true,
+            value:
+              typeof stat.mode === "bigint"
+                ? (stat.mode & ~0o7777n) | BigInt(exactMode)
+                : (stat.mode & ~0o7777) | exactMode,
+          });
+        });
       return stat;
     }) as typeof fs.lstatSync);
   }
@@ -182,8 +216,11 @@ describe("managed startup shared-state transaction", () => {
         "langchain-deepagents-code": [".state", "skills"],
         pi: ["agent", path.join("agent", "models.json")],
       };
-      expect(absentManagedPaths[agent].every((relativePath) =>
-          Object.is(fs.existsSync(path.join(root, relativePath)), false))).toBe(true);
+      expect(
+        absentManagedPaths[agent].every((relativePath) =>
+          Object.is(fs.existsSync(path.join(root, relativePath)), false),
+        ),
+      ).toBe(true);
       expect(fs.existsSync(transactionDirectory)).toBe(false);
     },
   );
@@ -206,6 +243,24 @@ describe("managed startup shared-state transaction", () => {
     expect(rollbackManagedStartupSharedStateTransaction("hermes", options)).toBe(true);
     expect(fs.readFileSync(config, "utf8")).toBe("before: true\n");
     expect(fs.readFileSync(env, "utf8")).toBe("TOKEN=before\n");
+  });
+
+  it("restores the setgid bit on the exact Hermes state root (#9486)", () => {
+    const root = agentRoot("hermes");
+    fs.mkdirSync(root, { mode: 0o770 });
+    simulateLinuxDirectoryMode(root, 0o3770);
+    const config = path.join(root, "config.yaml");
+    fs.writeFileSync(config, "before: true\n");
+
+    expect(
+      beginManagedStartupSharedStateTransaction(managedStartupE2eProfile("hermes"), options),
+    ).toBe(true);
+    fs.chmodSync(root, 0o770);
+    fs.writeFileSync(config, "after: true\n");
+
+    expect(rollbackManagedStartupSharedStateTransaction("hermes", options)).toBe(true);
+    expect(mode(root)).toBe(0o3770);
+    expect(fs.readFileSync(config, "utf8")).toBe("before: true\n");
   });
 
   it("rejects a nested mount below the exact Hermes named-volume root", () => {

@@ -337,6 +337,107 @@ describe("inventory commands", () => {
     ]);
   });
 
+  it("reports schema-5 phase without ambient global probes", () => {
+    const getLiveInference = vi.fn();
+    const getGatewayHealth = vi.fn();
+    const getServiceStatuses = vi.fn();
+    const report = getStatusReport({
+      listSandboxes: () => ({
+        sandboxes: [
+          {
+            name: "alpha",
+            agent: "hermes",
+            provider: "ollama",
+            model: "qwen3-vl:4b",
+          },
+        ],
+        defaultSandbox: "alpha",
+      }),
+      getHermesPortablePhase: () => "configuring",
+      getHermesPortableHostAuthorityCount: () => 1,
+      getLiveInference,
+      getGatewayHealth,
+      getServiceStatuses,
+      showServiceStatus: vi.fn(),
+    });
+
+    expect(report.sandboxes[0]).toMatchObject({
+      agent: "hermes",
+      name: "alpha",
+      phase: "configuring",
+    });
+    expect(report.liveInference).toBeNull();
+    expect(report.gatewayHealth).toBeNull();
+    expect(report.services).toEqual([]);
+    expect(getLiveInference).not.toHaveBeenCalled();
+    expect(getGatewayHealth).not.toHaveBeenCalled();
+    expect(getServiceStatuses).not.toHaveBeenCalled();
+  });
+
+  it("renders schema-5 phase without sessions, services, messaging, or logs", () => {
+    const lines: string[] = [];
+    const effects = {
+      getLiveInference: vi.fn(),
+      getActiveSessionCount: vi.fn(),
+      getGatewayHealth: vi.fn(),
+      showServiceStatus: vi.fn(),
+      findMessagingOverlaps: vi.fn(),
+      checkMessagingBridgeHealth: vi.fn(),
+      readGatewayLog: vi.fn(),
+    };
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "alpha", agent: "hermes", provider: "ollama", model: "qwen3-vl:4b" }],
+        defaultSandbox: "alpha",
+      }),
+      getHermesPortablePhase: () => "active",
+      getHermesPortableHostAuthorityCount: () => 1,
+      ...effects,
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines).toContain("      agent: hermes  phase: active");
+    expect(Object.values(effects).every((effect) => effect.mock.calls.length === 0)).toBe(true);
+  });
+
+  it("fails before ambient probes when a schema-5 phase has no registry row", () => {
+    const getLiveInference = vi.fn();
+    const showServiceStatus = vi.fn();
+    expect(() =>
+      showStatusCommand({
+        listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
+        getHermesPortableHostAuthorityCount: () => 1,
+        getHermesPortablePhase: vi.fn(),
+        getLiveInference,
+        showServiceStatus,
+      }),
+    ).toThrow("without an exact registry row");
+    expect(getLiveInference).not.toHaveBeenCalled();
+    expect(showServiceStatus).not.toHaveBeenCalled();
+  });
+
+  it("fails before ambient probes when schema-5 registry agreement is rejected", () => {
+    const getLiveInference = vi.fn();
+    const getGatewayAuthority = vi.fn();
+    expect(() =>
+      getStatusReport({
+        listSandboxes: () => ({
+          sandboxes: [{ name: "alpha", agent: "hermes" }],
+          defaultSandbox: "alpha",
+        }),
+        getHermesPortableHostAuthorityCount: () => 1,
+        getHermesPortablePhase: () => {
+          throw new Error("registry row disagreement");
+        },
+        getLiveInference,
+        getGatewayAuthority,
+        showServiceStatus: vi.fn(),
+      }),
+    ).toThrow("registry row disagreement");
+    expect(getLiveInference).not.toHaveBeenCalled();
+    expect(getGatewayAuthority).not.toHaveBeenCalled();
+  });
+
   it("omits invalid configured inference fields from status text", () => {
     const lines: string[] = [];
     showStatusCommand({

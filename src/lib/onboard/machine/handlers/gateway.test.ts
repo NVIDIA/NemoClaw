@@ -280,6 +280,97 @@ describe("handleGatewayState", () => {
     expect(calls.complete).toHaveBeenCalledWith("gateway");
   });
 
+  it("stops before gateway or sandbox state mutation when reuse verification fails (#9594)", async () => {
+    const { deps, calls } = createDeps({
+      refreshDockerDriverGatewayReuseState: vi.fn(async () => {
+        throw new Error("Docker network inspection was inconclusive");
+      }),
+    });
+
+    await expect(handleGatewayState(baseOptions(deps, "healthy"))).rejects.toThrow(
+      "Docker network inspection was inconclusive",
+    );
+
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+    expect(calls.startStep).not.toHaveBeenCalled();
+    expect(calls.retireLegacy).not.toHaveBeenCalled();
+    expect(calls.startGateway).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+  });
+
+  it("does not retire a gateway with unproven lifecycle authority when its Docker network is absent (#9594)", async () => {
+    const { deps, calls } = createDeps({
+      refreshDockerDriverGatewayReuseState: vi.fn(async () => {
+        throw new Error(
+          "Docker network is absent, but NemoClaw could not verify the running gateway's lifecycle authority.",
+        );
+      }),
+      isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
+    });
+
+    await expect(handleGatewayState(baseOptions(deps, "healthy"))).rejects.toThrow(
+      "Docker network is absent, but NemoClaw could not verify the running gateway's lifecycle authority.",
+    );
+
+    expect(calls.startStep).not.toHaveBeenCalled();
+    expect(calls.retireLegacy).not.toHaveBeenCalled();
+    expect(calls.startGateway).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+  });
+
+  it("recreates the NemoClaw-managed OpenShell gateway before completion when its Docker network is absent (#9594)", async () => {
+    const order: string[] = [];
+    const { deps, calls } = createDeps({
+      refreshDockerDriverGatewayReuseState: vi.fn(async () => {
+        order.push("verify-network");
+        return "stale" as GatewayReuseState;
+      }),
+      isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
+      startRecordedStep: vi.fn(async () => {
+        order.push("start-step");
+      }),
+      retireLegacyGatewayForDockerDriverUpgrade: vi.fn(() => {
+        order.push("retire-gateway");
+      }),
+      startGateway: vi.fn(async () => {
+        order.push("start-gateway");
+      }),
+      recordStepComplete: vi.fn(async () => {
+        order.push("complete-gateway");
+        return createSession();
+      }),
+    });
+
+    await handleGatewayState(baseOptions(deps, "healthy"));
+
+    expect(order).toEqual([
+      "verify-network",
+      "start-step",
+      "retire-gateway",
+      "start-gateway",
+      "complete-gateway",
+    ]);
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+  });
+
+  it("keeps the gateway step incomplete when missing-network recreation fails (#9594)", async () => {
+    const { deps, calls } = createDeps({
+      refreshDockerDriverGatewayReuseState: vi.fn(async () => "stale" as GatewayReuseState),
+      isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
+      startGateway: vi.fn(async () => {
+        throw new Error("gateway restart failed");
+      }),
+    });
+
+    await expect(handleGatewayState(baseOptions(deps, "healthy"))).rejects.toThrow(
+      "gateway restart failed",
+    );
+
+    expect(calls.retireLegacy).toHaveBeenCalledOnce();
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+  });
+
   it("emits one successful gateway phase when reusing a healthy gateway", async () => {
     const artifact = await captureTraceArtifact(async () => {
       const { deps } = createDeps();

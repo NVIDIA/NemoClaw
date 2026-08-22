@@ -44,7 +44,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     'getattr(args, "auto_approve", False)',
     "_nemoclaw_assert_safe_runtime()",
     'os.environ.pop("PYTHONPATH", None)',
-  ])("patches every 0.1.34 mutation and credential boundary idempotently [case %#]", (expected) => {
+  ])("patches every 0.1.55 mutation and credential boundary idempotently [case %#]", (expected) => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
     patchFixture(tempDir);
@@ -71,18 +71,17 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       "_server_config.py",
       "mcp_tools.py",
       "subagents.py",
-      "hooks.py",
+      "hooks/legacy.py",
       "client/non_interactive.py",
       "_nemoclaw_managed.py",
     ].forEach((relativePath) => {
       const source = fs.readFileSync(path.join(packageDir, relativePath), "utf8");
       expect(source.match(/NemoClaw-managed Deep Agents Code hardening v2\./g)).toHaveLength(1);
     });
+    expect(fs.existsSync(path.join(packageDir, "hooks.py"))).toBe(false);
     const main = fs.readFileSync(path.join(packageDir, "main.py"), "utf8");
-
     expect(main).toContain(expected);
   });
-
   it.each([
     ["entrypoint", "__main__.py", 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["main", "main.py", 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
@@ -104,7 +103,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     ],
     ["server override", "client/launch/server.py", 'env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["server", "client/launch/server.py", "env = _nemoclaw_original_build_server_env()"],
-    ["app", "app.py", "_nemoclaw_original_on_auto_approve_enabled"],
+    ["app", "app.py", "async def _nemoclaw_on_auto_approve_enabled"],
     ["approval", "tui/widgets/approval.py", "if managed_auto_approval_enabled():"],
   ])("rejects a fully marked package with a corrupt %s patch", (boundary, relativePath, anchor) => {
     const tempDir = createPackageFixture();
@@ -112,17 +111,14 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     const target = path.join(tempDir, "deepagents_code", relativePath);
     const corrupted = fs.readFileSync(target, "utf8").replace(anchor, `${anchor}  # corrupt`);
     fs.writeFileSync(target, corrupted, "utf8");
-
     const result = spawnSync("python3", [patcher], {
       env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
       encoding: "utf8",
     });
-
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(`Managed package ${boundary} patch is incomplete`);
     expect(fs.readFileSync(target, "utf8")).toBe(corrupted);
   });
-
   it.each([
     ['os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["def managed_auto_approval_enabled() -> bool:"],
@@ -132,23 +128,19 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     const target = path.join(tempDir, "deepagents_code", "_nemoclaw_managed.py");
     const corrupted = fs.readFileSync(target, "utf8").replace(anchor, `${anchor}  # stale`);
     fs.writeFileSync(target, corrupted, "utf8");
-
     const result = spawnSync("python3", [patcher], {
       env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
       encoding: "utf8",
     });
-
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Managed package patch is partial: helper is missing or stale");
     expect(fs.readFileSync(target, "utf8")).toBe(corrupted);
   });
-
   it("preserves upstream MCP JSON diagnostics around the managed descriptor loader", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
     const invalidConfig = path.join(tempDir, "invalid-mcp.json");
     fs.writeFileSync(invalidConfig, '{"mcpServers": }\n', "utf8");
-
     const result = spawnSync(
       "python3",
       [
@@ -203,6 +195,7 @@ else:
     ["--interpreter-t=execute"],
     ["-y"],
     ["--auto-approve"],
+    ["--yolo"],
     ["--acp"],
     ["--startup-cmd", "touch /tmp/unsafe"],
     ["--startup-cmd=touch /tmp/unsafe"],
@@ -234,9 +227,8 @@ else:
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain("managed-posture-ok auto_approve=True");
+      expect(result.stdout).toContain("managed-posture-ok auto_approve=False yolo=True");
       expect(result.stderr).toContain("Auto-approval is enabled for this thread");
-      expect(result.stderr).toContain("shell commands");
     },
   );
 
@@ -326,7 +318,9 @@ check("disabled", False)
         encoding: "utf8",
       });
       expect(result.status, `${args.join(" ")} failed: ${result.stderr}`).toBe(0);
-      expect(result.stdout).toContain("managed-posture-ok");
+      expect(result.stdout).toContain(
+        "managed-posture-ok auto_approve=False yolo=False startup_mode=manual approval_mode=manual",
+      );
     },
   );
 
@@ -388,7 +382,9 @@ check("disabled", False)
       encoding: "utf8",
     });
     expect(result.status, `${name}=${value} was rejected: ${result.stderr}`).toBe(0);
-    expect(result.stdout).toContain("managed-posture-ok");
+    expect(result.stdout).toContain(
+      "managed-posture-ok auto_approve=False yolo=False startup_mode=manual approval_mode=manual",
+    );
   });
 
   it.each(
@@ -443,7 +439,9 @@ check("disabled", False)
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("managed-posture-ok");
+    expect(result.stdout).toContain(
+      "managed-posture-ok auto_approve=False yolo=False startup_mode=manual approval_mode=manual",
+    );
   });
 
   it.each([
@@ -711,7 +709,7 @@ child = (
     "import json, os; from deepagents_code.mcp_tools import load_mcp_config; "
     "config = load_mcp_config(os.environ['DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH']); "
     "assert 'NEMOCLAW_DCODE_MCP_BINDING' not in os.environ; "
-    "print(json.dumps(config), end='')"
+    "print(json.dumps({'config': config, 'session_id': os.getsid(0)}), end='')"
 )
 def server_for_path(config_path):
     env = os.environ.copy()
@@ -773,6 +771,7 @@ for descriptor in (unsealed_descriptor, empty_descriptor, oversized_descriptor):
 print(json.dumps({
     "path": snapshot_path,
     "kind": binding["kind"],
+    "parent_session_id": os.getsid(0),
     "outputs": [json.loads(output) for output in server.outputs],
 }))
 `,
@@ -790,11 +789,14 @@ print(json.dumps({
       const proof = JSON.parse(result.stdout) as {
         path: string;
         kind: string;
-        outputs: unknown[];
+        parent_session_id: number;
+        outputs: Array<{ config: unknown; session_id: number }>;
       };
       expect(proof.path).toMatch(/^\/proc\/self\/fd\/[0-9]+$/);
       expect(proof.kind).toBe(snapshotKind);
-      expect(proof.outputs).toEqual([managedConfig, managedConfig]);
+      expect(proof.outputs.map(({ config }) => config)).toEqual([managedConfig, managedConfig]);
+      const childSessions = proof.outputs.map(({ session_id }) => session_id);
+      expect(childSessions).not.toContain(proof.parent_session_id);
       expect(result.stdout).not.toContain("attacker");
     },
   );
@@ -880,7 +882,7 @@ async def validate():
     instance._auto_approve = True
     instance._status_bar.set_auto_approve(enabled=True)
     instance._session_state.auto_approve = True
-    await instance._on_auto_approve_enabled()
+    assert await instance._on_auto_approve_enabled() is False
     assert instance._auto_approve is False
     assert instance._status_bar.auto_approve is False
     assert instance._session_state.auto_approve is False
@@ -1236,17 +1238,20 @@ spec.loader.exec_module(progressive_disclosure_harness)
 progressive_disclosure_harness._install_stubs()
 
 from deepagents_code import _nemoclaw_managed, agent, app, main as dcode_main
+from deepagents_code.approval_mode import ApprovalMode
 from deepagents_code.client import non_interactive
 from deepagents_code.tui.widgets.approval import ApprovalMenu
 
 WARNING = "Tool calls, including shell commands, may execute without further confirmation"
 
 def set_auto(instance, enabled):
+    mode = ApprovalMode.YOLO if enabled else ApprovalMode.MANUAL
+    instance._approval_mode = mode
     instance._auto_approve = enabled
-    instance._status_bar.set_auto_approve(enabled=enabled)
     instance._session_state.auto_approve = enabled
 
 def assert_auto(instance, enabled):
+    assert instance._approval_mode is (ApprovalMode.YOLO if enabled else ApprovalMode.MANUAL)
     assert instance._auto_approve is enabled
     assert instance._status_bar.auto_approve is enabled
     assert instance._session_state.auto_approve is enabled
@@ -1292,7 +1297,7 @@ async def validate():
     instance = app.DeepAgentsApp()
 
     set_auto(instance, False)
-    await instance._on_auto_approve_enabled()
+    assert await instance._on_auto_approve_enabled() is True
     assert_auto(instance, True)
     assert WARNING in instance.notifications[-1][0]
 
@@ -1307,6 +1312,7 @@ async def validate():
     assert len(instance.notifications) == warning_count + 1
 
     approval = ApprovalMenu()
+    assert approval._options[1][0] == "Auto-approve for this thread (a)"
     approval._handle_selection(1)
     assert approval.decisions == [("auto_approve_all", None)]
     assert approval.notifications == []
@@ -1424,7 +1430,7 @@ print("managed-auto-approval-ok")
       encoding: "utf8",
     });
     expect(versionResult.status).not.toBe(0);
-    expect(versionResult.stderr).toContain("Expected deepagents-code==0.1.34");
+    expect(versionResult.stderr).toContain("Expected deepagents-code==0.1.55");
 
     const missingMethod = createPackageFixture();
     const appPath = path.join(missingMethod, "deepagents_code", "app.py");
@@ -1471,7 +1477,6 @@ print("managed-auto-approval-ok")
     });
     expect(redirectLimitResult.status).not.toBe(0);
     expect(redirectLimitResult.stderr).toContain("_MAX_FETCH_REDIRECTS");
-
     const missingValidationError = createPackageFixture();
     const missingValidationErrorPath = path.join(
       missingValidationError,

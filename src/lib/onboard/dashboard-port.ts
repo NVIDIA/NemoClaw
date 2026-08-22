@@ -610,9 +610,9 @@ export async function withDashboardPortReservationScope<T>(
 ): Promise<T> {
   const scope: DashboardPortReservationScope = {
     current: null,
-    async release() {
-      const reservation = this.current;
-      this.current = null;
+    release: async () => {
+      const reservation = scope.current;
+      scope.current = null;
       await reservation?.release();
     },
   };
@@ -627,13 +627,13 @@ interface DashboardPortScopedSandboxEntryPointDeps<
   Args extends unknown[],
   Result,
   BaseImageResolutionContext,
-  PortableRuntimeAuthority,
+  PortableRuntimeContext,
   ComputePlan,
 > {
   createBaseImageResolutionContext(): BaseImageResolutionContext;
   createSandboxWithBaseImageResolution(
     baseImageResolutionContext: BaseImageResolutionContext,
-    portableRuntimeAuthority: PortableRuntimeAuthority,
+    portableRuntimeContext: PortableRuntimeContext,
     computePlan: ComputePlan,
     managedWorkloadRebuild: null,
     temporaryManagedRuntime: boolean,
@@ -641,7 +641,7 @@ interface DashboardPortScopedSandboxEntryPointDeps<
     dashboardPortReservationScope: DashboardPortReservationScope,
     ...args: Args
   ): Promise<Result>;
-  resolvePortableRuntimeAuthority(): PortableRuntimeAuthority;
+  resolvePortableRuntimeContext(): PortableRuntimeContext;
   resolveComputePlan(): ComputePlan;
 }
 
@@ -649,14 +649,14 @@ export function createDashboardPortScopedSandboxEntryPoints<
   Args extends unknown[],
   Result,
   BaseImageResolutionContext,
-  PortableRuntimeAuthority,
+  PortableRuntimeContext,
   ComputePlan,
 >(
   deps: DashboardPortScopedSandboxEntryPointDeps<
     Args,
     Result,
     BaseImageResolutionContext,
-    PortableRuntimeAuthority,
+    PortableRuntimeContext,
     ComputePlan
   >,
 ): {
@@ -668,7 +668,7 @@ export function createDashboardPortScopedSandboxEntryPoints<
     return withDashboardPortReservationScope((dashboardPortReservationScope) =>
       deps.createSandboxWithBaseImageResolution(
         deps.createBaseImageResolutionContext(),
-        deps.resolvePortableRuntimeAuthority(),
+        deps.resolvePortableRuntimeContext(),
         computePlan,
         null,
         temporaryManagedRuntime,

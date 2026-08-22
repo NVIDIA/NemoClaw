@@ -67,11 +67,13 @@ def retain(text: str) -> None:
 
 def sanitize_line(line: str) -> str:
     global debug_marker_written
+    line = re.sub(r"\x1b\][^\x07]*(?:\x07|\x1b\\)", "", line)
+    line = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", line)
+    line = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", line)
     for value in known_values:
         if value:
             line = line.replace(value, "[REDACTED]")
     if instance:
-        line = line.replace(f"{instance}-host", "[REDACTED HOST]")
         line = line.replace(instance, "[REDACTED HOST]")
     line = re.sub(
         r"(?i)\b(authorization)\b(\s*[:=]\s*)[^\r\n]+",
@@ -220,6 +222,66 @@ run_budgeted_diagnostic_probe() {
   run_bounded_probe "$remaining" "$output_name" "$status_name" "$@"
 }
 
+report_full_e2e_failure_diagnostic() {
+  local label="$1" status="$2" output="$3"
+  if [ "$status" = "not-run" ]; then
+    log "Full E2E failure diagnostic $label: not run; output: $output"
+  else
+    log "Full E2E failure diagnostic $label: status $status; output: $output"
+  fi
+}
+
+capture_full_e2e_failure_diagnostics() {
+  local timeout_seconds="${FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS:-30}"
+  local deadline=$((SECONDS + timeout_seconds))
+  local diagnostic_output diagnostic_status
+
+  log "Full E2E failure diagnostics budget: up to $timeout_seconds seconds"
+
+  # The remote shell expands the single-quoted command.
+  # shellcheck disable=SC2016
+  run_budgeted_diagnostic_probe "$deadline" diagnostic_output diagnostic_status \
+    ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" \
+    'set -eu; state=$(sudo -n systemctl show --no-pager --property=Id --property=LoadState --property=UnitFileState --property=ActiveState --property=SubState --property=Result --property=ExecMainCode --property=ExecMainStatus --property=NRestarts --property=ActiveEnterTimestampMonotonic --property=ActiveExitTimestampMonotonic --property=InactiveEnterTimestampMonotonic --property=InactiveExitTimestampMonotonic openshell-gateway.service); restart=$(sudo -n systemctl show --no-pager --property=Restart --value openshell-gateway.service); exec_start=$(sudo -n systemctl show --no-pager --property=ExecStart --value openshell-gateway.service); fragment=$(sudo -n systemctl show --no-pager --property=FragmentPath --value openshell-gateway.service); drop_ins=$(sudo -n systemctl show --no-pager --property=DropInPaths --value openshell-gateway.service); printf "%s\n" "$state" | sed -e "s/^ActiveEnterTimestampMonotonic=/active-enter-us: /" -e "s/^ActiveExitTimestampMonotonic=/active-exit-us: /" -e "s/^InactiveEnterTimestampMonotonic=/inactive-enter-us: /" -e "s/^InactiveExitTimestampMonotonic=/inactive-exit-us: /" -e "s/=/ : /"; if [ "$restart" = always ]; then printf "restart-policy is always: true\n"; else printf "restart-policy is always: false\n"; fi; exec_count=$(printf "%s\n" "$exec_start" | grep -oF "{ path=" | wc -l | tr -d " "); exec_path=$(printf "%s\n" "$exec_start" | sed -n "s/^{ path=\\([^ ;]*\\) ;.*/\\1/p"); exec_argv0=$(printf "%s\n" "$exec_start" | sed -n "s/^{ path=[^;]* ; argv\\[\\]=\\([^ ;]*\\) ;.*/\\1/p"); if [ "$exec_count" -eq 1 ] && [ "$exec_path" = /usr/local/bin/nemoclaw-openshell-gateway-service ] && [ "$exec_argv0" = /usr/local/bin/nemoclaw-openshell-gateway-service ]; then printf "exec-start matches packaged gateway service: true\n"; else printf "exec-start matches packaged gateway service: false\n"; fi; if [ "$fragment" = /etc/systemd/system/openshell-gateway.service ]; then printf "fragment-path is packaged unit path: true\n"; else printf "fragment-path is packaged unit path: false\n"; fi; if [ -z "$drop_ins" ]; then printf "drop-ins: absent\n"; else printf "drop-ins: present\n"; fi'
+  report_full_e2e_failure_diagnostic "gateway state" "$diagnostic_status" "$diagnostic_output"
+
+  # The remote shell expands the single-quoted command.
+  # shellcheck disable=SC2016
+  run_budgeted_diagnostic_probe "$deadline" diagnostic_output diagnostic_status \
+    ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" \
+    'set -eu; state=$(sudo -n systemctl show --no-pager --property=Id --property=ActiveState --property=SubState --property=Result --property=NRestarts --property=ActiveEnterTimestampMonotonic docker.service docker.socket); requires=$(sudo -n systemctl show --no-pager --property=Requires --value openshell-gateway.service); after=$(sudo -n systemctl show --no-pager --property=After --value openshell-gateway.service); docker_wants=$(sudo -n systemctl show --no-pager --property=Wants --value docker.service); printf "%s\n" "$state" | sed -e "s/^ActiveEnterTimestampMonotonic=/active-enter-us: /" -e "s/=/ : /"; if printf "%s\n" "$requires" | tr " " "\n" | grep -Fxq docker.service; then printf "gateway service requires Docker service: present\n"; else printf "gateway service requires Docker service: absent\n"; fi; if printf "%s\n" "$after" | tr " " "\n" | grep -Fxq docker.service; then printf "gateway service ordered after Docker service: present\n"; else printf "gateway service ordered after Docker service: absent\n"; fi; if printf "%s\n" "$docker_wants" | tr " " "\n" | grep -Fxq openshell-gateway.service; then printf "Docker service wants gateway service: present\n"; else printf "Docker service wants gateway service: absent\n"; fi; printf "boot-uptime-seconds "; cut -d. -f1 /proc/uptime; sudo -n stat --printf="gateway-state-dir type=%F uid=%u gid=%g mode=%a\n" /var/lib/brev/openshell-gateway'
+  report_full_e2e_failure_diagnostic "platform state" "$diagnostic_status" "$diagnostic_output"
+
+  # The remote shell expands the single-quoted command.
+  # shellcheck disable=SC2016
+  run_budgeted_diagnostic_probe "$deadline" diagnostic_output diagnostic_status \
+    ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" \
+    'set -eu; events=$(sudo -n journalctl --boot _PID=1 --unit=openshell-gateway.service --no-pager --lines=80 --output=json); classified=$(printf "%s\n" "$events" | jq -r "(.MESSAGE // \"\" | tostring) as \$message | (if (\$message | test(\"Start request repeated too quickly\"; \"i\")) then \"start-limit-hit\" elif (\$message | test(\"Scheduled restart job\"; \"i\")) then \"restart-scheduled\" elif (\$message | test(\"Main process exited\"; \"i\")) then \"main-exited\" elif (\$message | test(\"Failed with result\"; \"i\")) then \"failed-result\" elif (\$message | test(\"Dependency failed\"; \"i\")) then \"dependency-failed\" elif (\$message | test(\"^Starting \")) then \"starting\" elif (\$message | test(\"^Started \")) then \"started\" elif (\$message | test(\"^Stopping \")) then \"stopping\" elif (\$message | test(\"Deactivated successfully\"; \"i\")) then \"deactivated\" elif (\$message | test(\"^Stopped \")) then \"stopped\" else \"other-systemd-event\" end) as \$event | [.__MONOTONIC_TIMESTAMP // \"unknown\", \$event] | @tsv"); printf "%s\n" "$classified" | tail -n 16'
+  report_full_e2e_failure_diagnostic "gateway lifecycle" "$diagnostic_status" "$diagnostic_output"
+
+  # The remote shell expands the single-quoted command.
+  # shellcheck disable=SC2016
+  run_budgeted_diagnostic_probe "$deadline" diagnostic_output diagnostic_status \
+    ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" \
+    'set -eu; events=$(sudo -n journalctl --boot _PID=1 --unit=docker.service --unit=docker.socket --no-pager --lines=80 --output=json); classified=$(printf "%s\n" "$events" | jq -r "((.UNIT // ._SYSTEMD_UNIT // \"\") | if . == \"docker.service\" then \"docker-service\" elif . == \"docker.socket\" then \"docker-socket\" else \"docker-unit\" end) as \$unit | (.MESSAGE // \"\" | tostring) as \$message | (if (\$message | test(\"Start request repeated too quickly\"; \"i\")) then \"start-limit-hit\" elif (\$message | test(\"Scheduled restart job\"; \"i\")) then \"restart-scheduled\" elif (\$message | test(\"Main process exited\"; \"i\")) then \"main-exited\" elif (\$message | test(\"Failed with result\"; \"i\")) then \"failed-result\" elif (\$message | test(\"Dependency failed\"; \"i\")) then \"dependency-failed\" elif (\$message | test(\"^Starting \")) then \"starting\" elif (\$message | test(\"^Started \")) then \"started\" elif (\$message | test(\"^Stopping \")) then \"stopping\" elif (\$message | test(\"Deactivated successfully\"; \"i\")) then \"deactivated\" elif (\$message | test(\"^Stopped \")) then \"stopped\" else \"other-systemd-event\" end) as \$event | [.__MONOTONIC_TIMESTAMP // \"unknown\", \$unit, \$event] | @tsv"); printf "%s\n" "$classified" | tail -n 16'
+  report_full_e2e_failure_diagnostic "Docker lifecycle" "$diagnostic_status" "$diagnostic_output"
+
+  # The remote shell expands the single-quoted command.
+  # shellcheck disable=SC2016
+  run_budgeted_diagnostic_probe "$deadline" diagnostic_output diagnostic_status \
+    ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" \
+    'set -eu; state=$(sudo -n systemctl show --no-pager --property=Id --property=LoadState --property=ActiveState --property=SubState --property=Result --property=ExecMainCode --property=ExecMainStatus --property=ActiveEnterTimestampMonotonic --property=InactiveEnterTimestampMonotonic cloud-final.service); printf "%s\n" "$state" | sed -e "s/^ActiveEnterTimestampMonotonic=/active-enter-us: /" -e "s/^InactiveEnterTimestampMonotonic=/inactive-enter-us: /" -e "s/=/ : /"'
+  report_full_e2e_failure_diagnostic "cloud-final state" "$diagnostic_status" "$diagnostic_output"
+
+  # The remote shell classifies the listener without returning guest-controlled
+  # process labels or socket details.
+  # shellcheck disable=SC2016
+  run_budgeted_diagnostic_probe "$deadline" diagnostic_output diagnostic_status \
+    ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" \
+    'set -eu; listeners=$(sudo -n ss -H -ltnp "sport = :8080"); if [ -z "$listeners" ]; then printf "listener presence: absent\n"; else printf "listener presence: present\n"; pids=; if parsed_pids=$(printf "%s\n" "$listeners" | awk "function reject(){bad=1;exit} { marker=\"users:(\"; at=index(\$0,marker); if(!at) reject(); s=substr(\$0,at+length(marker)); sub(/[[:space:]]+\$/, \"\", s); parsed=0; while(match(s,/^\\(\"[^\"]*\",pid=[0-9]+,fd=[0-9]+\\)/)){ tuple=substr(s,1,RLENGTH); pid=tuple; sub(/^.*\",pid=/,\"\",pid); sub(/,fd=.*/,\"\",pid); seen[pid]=1; total++; parsed++; s=substr(s,RLENGTH+1); if(s==\")\"){s=\"\";break} if(substr(s,1,1)!=\",\") reject(); s=substr(s,2) } if(!parsed||s!=\"\") reject() } END{if(bad||!total) exit 1; for(pid in seen) print pid}"); then pids=$parsed_pids; fi; gateway_cgroup=$(sudo -n systemctl show --no-pager --property=ControlGroup --value openshell-gateway.service); if [ -z "$pids" ] || [ -z "$gateway_cgroup" ]; then printf "listener owner: unavailable\n"; else gateway_owner=0; other_owner=0; unavailable_owner=0; for pid in $pids; do if cgroup=$(sudo -n cat "/proc/$pid/cgroup" 2>/dev/null); then if printf "%s\n" "$cgroup" | awk -F: -v wanted="$gateway_cgroup" "\$3 == wanted || (wanted != \"/\" && index(\$3, wanted \"/\") == 1) { found=1 } END { exit !found }"; then gateway_owner=1; else other_owner=1; fi; else unavailable_owner=1; fi; done; if [ "$unavailable_owner" -eq 1 ]; then printf "listener owner: unavailable\n"; elif [ "$gateway_owner" -eq 1 ] && [ "$other_owner" -eq 1 ]; then printf "listener owner: mixed\n"; elif [ "$gateway_owner" -eq 1 ]; then printf "listener owner: openshell-gateway\n"; elif [ "$other_owner" -eq 1 ]; then printf "listener owner: unexpected\n"; else printf "listener owner: unavailable\n"; fi; fi; fi'
+  report_full_e2e_failure_diagnostic "port 8080 listener" "$diagnostic_status" "$diagnostic_output"
+}
+
 report_probe() {
   local label="$1" status="$2" error="$3"
   if [ "$status" = "not-run" ]; then
@@ -262,64 +324,50 @@ ssh_alias_status() {
 
 run_connectivity_diagnostics() {
   local refresh_status="$1" timeout_seconds="$2"
-  local container_error container_status host_exec_error host_exec_status
-  local default_ssh_error default_ssh_status host_ssh_error host_ssh_status
-  local plain_alias host_alias
+  local exec_error exec_status ssh_error ssh_status
+  local workspace_alias
   local deadline=$((SECONDS + timeout_seconds))
 
   log "Readiness diagnostics budget: up to $timeout_seconds seconds"
 
-  ssh_alias_status "$deadline" "$INSTANCE_NAME" plain_alias
-  ssh_alias_status "$deadline" "${INSTANCE_NAME}-host" host_alias
-  log "Readiness SSH alias $INSTANCE_NAME: $plain_alias"
-  log "Readiness SSH alias ${INSTANCE_NAME}-host: $host_alias"
+  ssh_alias_status "$deadline" "$INSTANCE_NAME" workspace_alias
+  log "Readiness SSH alias $INSTANCE_NAME: $workspace_alias"
 
-  run_budgeted_diagnostic_probe "$deadline" container_error container_status \
+  run_budgeted_diagnostic_probe "$deadline" exec_error exec_status \
     brev exec "$INSTANCE_NAME" true
-  run_budgeted_diagnostic_probe "$deadline" host_exec_error host_exec_status \
-    brev exec "$INSTANCE_NAME" true --host
-  run_budgeted_diagnostic_probe "$deadline" default_ssh_error default_ssh_status \
+  run_budgeted_diagnostic_probe "$deadline" ssh_error ssh_status \
     ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" true
-  run_budgeted_diagnostic_probe "$deadline" host_ssh_error host_ssh_status \
-    ssh "${SSH_PROBE_OPTIONS[@]}" "${INSTANCE_NAME}-host" true
 
-  report_probe "brev exec container" "$container_status" "$container_error"
-  report_probe "brev exec host" "$host_exec_status" "$host_exec_error"
-  report_probe "direct SSH container" "$default_ssh_status" "$default_ssh_error"
-  report_probe "direct SSH host" "$host_ssh_status" "$host_ssh_error"
+  report_probe "brev exec" "$exec_status" "$exec_error"
+  report_probe "direct SSH" "$ssh_status" "$ssh_error"
 
-  if [ "$container_status" = "not-run" ] || [ "$host_exec_status" = "not-run" ] \
-    || [ "$default_ssh_status" = "not-run" ] || [ "$host_ssh_status" = "not-run" ]; then
+  if [ "$exec_status" = "not-run" ] || [ "$ssh_status" = "not-run" ]; then
     log "Readiness classification: incomplete diagnostics; inspect available bounded probe results"
   elif [ "$refresh_status" -ne 0 ]; then
     log "Readiness classification: Brev refresh/configuration failure"
-  elif [ "$host_exec_status" -eq 0 ] && [ "$host_ssh_status" -ne 0 ]; then
-    log "Readiness classification: Brev host execution works but direct host SSH fails"
-  elif { [ "$container_status" -eq 0 ] || [ "$default_ssh_status" -eq 0 ]; } \
-    && [ "$host_exec_status" -ne 0 ] && [ "$host_ssh_status" -ne 0 ]; then
-    log "Readiness classification: default container reachable but host unreachable"
-  elif [ "$container_status" -ne 0 ] && [ "$host_exec_status" -ne 0 ] \
-    && [ "$default_ssh_status" -ne 0 ] && [ "$host_ssh_status" -ne 0 ]; then
-    log "Readiness classification: neither target reachable"
+  elif [ "$exec_status" -eq 0 ] && [ "$ssh_status" -ne 0 ]; then
+    log "Readiness classification: Brev execution works but direct SSH fails"
+  elif [ "$exec_status" -ne 0 ] && [ "$ssh_status" -ne 0 ]; then
+    log "Readiness classification: workspace shell is unreachable"
   else
-    log "Readiness classification: mixed connectivity failure; inspect bounded probe results"
+    log "Readiness classification: direct SSH recovered during diagnostics"
   fi
 }
 
-wait_for_host_ssh() {
-  local timeout_seconds="${BREV_HOST_SSH_TIMEOUT_SECONDS:-900}"
+wait_for_workspace_ssh() {
+  local timeout_seconds="${BREV_SSH_TIMEOUT_SECONDS:-900}"
   local diagnostic_timeout_seconds="${BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS:-30}"
   local poll_seconds="${POLL_SECONDS:-5}"
   local deadline=$((SECONDS + timeout_seconds))
-  local remaining refresh_timeout sleep_seconds ssh_timeout refresh_error ssh_error container_error
-  local container_probed=0 container_status=1 attempts=0
+  local remaining refresh_timeout sleep_seconds ssh_timeout refresh_error ssh_error
+  local attempts=0
   local refresh_status=1 ssh_status=1
   local last_refresh_error="" last_refresh_failure_status=""
   local last_ssh_error="" last_ssh_failure_status=""
-  log "Waiting up to $timeout_seconds seconds for host SSH access"
+  log "Waiting up to $timeout_seconds seconds for workspace SSH access"
 
   remaining=$((deadline - SECONDS))
-  [ "$remaining" -gt 0 ] || die "host SSH readiness timed out"
+  [ "$remaining" -gt 0 ] || die "workspace SSH readiness timed out"
   refresh_timeout=$((remaining < 60 ? remaining : 60))
   run_bounded_probe "$refresh_timeout" refresh_error refresh_status brev refresh
   if [ "$refresh_status" -ne 0 ]; then
@@ -327,22 +375,14 @@ wait_for_host_ssh() {
     last_refresh_failure_status="$refresh_status"
   fi
 
-  remaining=$((deadline - SECONDS))
-  if [ "$remaining" -gt 0 ]; then
-    ssh_timeout=$((remaining < 15 ? remaining : 15))
-    run_bounded_probe "$ssh_timeout" container_error container_status \
-      ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" true
-    container_probed=1
-  fi
-
   while [ "$SECONDS" -lt "$deadline" ]; do
     remaining=$((deadline - SECONDS))
     [ "$remaining" -gt 0 ] || break
     ssh_timeout=$((remaining < 15 ? remaining : 15))
     run_bounded_probe "$ssh_timeout" ssh_error ssh_status \
-      ssh "${SSH_PROBE_OPTIONS[@]}" "${INSTANCE_NAME}-host" true
+      ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" true
     if [ "$ssh_status" -eq 0 ]; then
-      log "SSH access to ${INSTANCE_NAME}-host succeeded"
+      log "SSH access to $INSTANCE_NAME succeeded"
       return 0
     fi
     attempts=$((attempts + 1))
@@ -371,17 +411,12 @@ wait_for_host_ssh() {
     log "Readiness Brev refresh last failure: none"
   fi
   if [ -n "$last_ssh_failure_status" ]; then
-    log "Readiness direct host SSH last failure: status $last_ssh_failure_status; error: $last_ssh_error"
+    log "Readiness direct SSH last failure: status $last_ssh_failure_status; error: $last_ssh_error"
   else
-    log "Readiness direct host SSH last failure: none"
-  fi
-  if [ "$container_probed" -eq 0 ]; then
-    log "Readiness initial default Brev container probe: not probed"
-  else
-    log "Readiness initial default Brev container probe: status $container_status; error: $container_error"
+    log "Readiness direct SSH last failure: none"
   fi
   run_connectivity_diagnostics "$refresh_status" "$diagnostic_timeout_seconds"
-  die "host SSH readiness timed out"
+  die "workspace SSH readiness timed out"
 }
 
 cleanup() {
@@ -449,13 +484,17 @@ if [ "$IMAGE_ONLY" -eq 0 ]; then
   done
   [[ "$INSTANCE_NAME" =~ ^[a-z][a-z0-9-]{0,62}$ ]] || die "workspace name is unsafe"
   [[ "$BREV_LAUNCHABLE_ID" =~ ^env-[A-Za-z0-9]+$ ]] || die "Launchable ID is unsafe"
-  if [ "${BREV_HOST_SSH_TIMEOUT_SECONDS+x}" = x ] \
-    && ! [[ "$BREV_HOST_SSH_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
-    die "BREV_HOST_SSH_TIMEOUT_SECONDS must be a positive integer"
+  if [ "${BREV_SSH_TIMEOUT_SECONDS+x}" = x ] \
+    && ! [[ "$BREV_SSH_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    die "BREV_SSH_TIMEOUT_SECONDS must be a positive integer"
   fi
   if [ "${BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS+x}" = x ] \
     && ! [[ "$BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
     die "BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS must be a positive integer"
+  fi
+  if [ "${FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS+x}" = x ] \
+    && ! [[ "$FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    die "FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS must be a positive integer"
   fi
   if [ "${POLL_SECONDS+x}" = x ] && ! [[ "$POLL_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
     die "POLL_SECONDS must be a positive integer"
@@ -577,7 +616,7 @@ jq -e '.status == "RUNNING" and (.shell_status // .shellStatus) == "READY" and
   <<<"${ready:-null}" >/dev/null || die "workspace readiness timed out"
 workspace_id="$(jq -r '.id // ""' <<<"$ready")"
 log "Workspace $INSTANCE_NAME ($workspace_id) is ready"
-wait_for_host_ssh
+wait_for_workspace_ssh
 
 # Record the booted image before reading the baked runtime receipt so a stale
 # Launchable image remains visible when the receipt is absent.
@@ -586,17 +625,25 @@ wait_for_host_ssh
 boot_image="$(timeout 300s brev exec "$INSTANCE_NAME" 'set -euo pipefail
   boot_image=$(curl -fsS --max-time 10 -H "Metadata-Flavor: Google" \
     http://metadata.google.internal/computeMetadata/v1/instance/image)
-  printf "NEMOCLAW_BOOT_IMAGE=%s\n" "$boot_image"' --host \
+  printf "NEMOCLAW_BOOT_IMAGE=%s\n" "$boot_image"' \
   | sed -n 's/^NEMOCLAW_BOOT_IMAGE=//p' | tail -n 1)"
 [ -n "$boot_image" ] || die "booted image identity is missing"
 
+if [ "$boot_image" = "$expected_boot_image" ]; then
+  image_selection_status=passed
+  reported_boot_image="$boot_image"
+else
+  image_selection_status=failed
+  reported_boot_image="<redacted>"
+fi
 jq -n --arg candidateSha "$CANDIDATE_SHA" --arg producerRun "$producer_run" \
-  --arg bootImage "$boot_image" --arg workspaceName "$INSTANCE_NAME" --arg workspaceId "$workspace_id" \
-  '{candidateSha:$candidateSha,producer:{runId:$producerRun,status:"success"},boot:{bootImage:$bootImage},workspace:{name:$workspaceName,id:$workspaceId},fullE2e:"pending"}' \
+  --arg bootImage "$reported_boot_image" --arg expectedBootImage "$expected_boot_image" \
+  --arg imageSelectionStatus "$image_selection_status" \
+  --arg workspaceName "$INSTANCE_NAME" --arg workspaceId "$workspace_id" \
+  '{candidateSha:$candidateSha,producer:{runId:$producerRun,status:"success"},boot:{bootImage:$bootImage},workspace:{name:$workspaceName,id:$workspaceId},fullE2e:"pending",validation:{imageSelection:{status:$imageSelectionStatus,expected:$expectedBootImage,observed:$bootImage},runtimeProvenance:{status:"not-run",checks:[]},fullE2E:"not-run"}}' \
   >"$WORK_DIR/launchable-e2e.json"
 
-[ "$boot_image" = "$expected_boot_image" ] \
-  || die "booted image does not match the producer handoff"
+[ "$image_selection_status" = passed ] || die "booted image does not match the producer handoff"
 
 # Return the baked runtime receipt.
 # shellcheck disable=SC2016
@@ -623,20 +670,55 @@ identity="$(timeout 300s brev exec "$INSTANCE_NAME" 'set -euo pipefail
     --arg repoSha "$repo_sha" --arg provisionSha "$provision_sha" \
     --arg imageRepositorySha "$image_repository_sha" --argjson repoClean "$repo_clean" \
     --argjson runtimeOverrides "$runtime_overrides" \
-    "{schemaVersion:\$schemaVersion,sourceRepository:\$sourceRepository,sourcePath:\$sourcePath,repoSha:\$repoSha,provisionSha:\$provisionSha,imageRepositorySha:\$imageRepositorySha,repoClean:\$repoClean,runtimeOverrides:\$runtimeOverrides}"' --host \
+    "{schemaVersion:\$schemaVersion,sourceRepository:\$sourceRepository,sourcePath:\$sourcePath,repoSha:\$repoSha,provisionSha:\$provisionSha,imageRepositorySha:\$imageRepositorySha,repoClean:\$repoClean,runtimeOverrides:\$runtimeOverrides}"' \
   | sed -n 's/^NEMOCLAW_IDENTITY=//p' | tail -n 1)"
-jq -e --arg sha "$CANDIDATE_SHA" --arg imageRepositorySha "$image_repository_sha" '
-  .schemaVersion == 1 and .sourceRepository == "NVIDIA/NemoClaw" and
-  .sourcePath == "/opt/nemoclaw-image/NemoClaw" and
-  .repoSha == $sha and .provisionSha == $sha and
-  .imageRepositorySha == $imageRepositorySha and
-  .repoClean == true and .runtimeOverrides == false' \
-  <<<"$identity" >/dev/null || die "booted image runtime does not match the producer handoff"
-source_path="$(jq -er .sourcePath <<<"$identity")"
+runtime_checks="$(jq -c --arg sha "$CANDIDATE_SHA" --arg imageRepositorySha "$image_repository_sha" '
+  def reported($field; $observed):
+    if $field == "schemaVersion" then
+      if ($observed | type) == "number" and $observed == ($observed | floor) and
+          $observed >= 0 and $observed <= 999 then $observed else "<redacted>" end
+    elif $field == "sourceRepository" then
+      if $observed == "NVIDIA/NemoClaw" then $observed else "<redacted>" end
+    elif $field == "sourcePath" then
+      if $observed == "/opt/nemoclaw-image/NemoClaw" then $observed else "<redacted>" end
+    elif $field == "repoSha" or $field == "provisionSha" or $field == "imageRepositorySha" then
+      if ($observed | type) == "string" and ($observed | test("^[0-9a-f]{40}$")) then $observed else "<redacted>" end
+    elif $field == "repoClean" or $field == "runtimeOverrides" then
+      if ($observed | type) == "boolean" then $observed else "<redacted>" end
+    else "<redacted>"
+    end;
+  def check($field; $expected; $observed):
+    {field:$field,expected:$expected,observed:reported($field; $observed),
+      status:(if $observed == $expected then "passed" else "failed" end)};
+  [
+    check("schemaVersion"; 1; .schemaVersion),
+    check("sourceRepository"; "NVIDIA/NemoClaw"; .sourceRepository),
+    check("sourcePath"; "/opt/nemoclaw-image/NemoClaw"; .sourcePath),
+    check("repoSha"; $sha; .repoSha),
+    check("provisionSha"; $sha; .provisionSha),
+    check("imageRepositorySha"; $imageRepositorySha; .imageRepositorySha),
+    check("repoClean"; true; .repoClean),
+    check("runtimeOverrides"; false; .runtimeOverrides)
+  ]' <<<"$identity")" || die "booted image runtime identity is malformed"
+runtime_status="$(jq -r 'if all(.status == "passed") then "passed" else "failed" end' \
+  <<<"$runtime_checks")"
+reported_identity="$(jq -c 'map({key:.field,value:.observed}) | from_entries' \
+  <<<"$runtime_checks")"
 
-jq --argjson identity "$identity" '.boot += $identity' \
+jq --argjson identity "$reported_identity" --arg status "$runtime_status" --argjson checks "$runtime_checks" '
+  .boot += $identity | .validation.runtimeProvenance = {status:$status,checks:$checks}' \
   "$WORK_DIR/launchable-e2e.json" >"$WORK_DIR/launchable-e2e.tmp"
 mv "$WORK_DIR/launchable-e2e.tmp" "$WORK_DIR/launchable-e2e.json"
+
+if [ "$runtime_status" = failed ]; then
+  while IFS= read -r mismatch; do
+    log "Runtime provenance check failed: $mismatch"
+  done < <(jq -r '.[] | select(.status == "failed") |
+    "\(.field) expected \(.expected | tojson), observed \(.observed | tojson)"' \
+    <<<"$runtime_checks")
+  die "booted image runtime provenance failed"
+fi
+source_path="$(jq -er .sourcePath <<<"$identity")"
 
 # Run the existing suite from the baked checkout; no source copy, install, or rebuild.
 raw_log_directory="$(mktemp -d "${RUNNER_TEMP:-/tmp}/brev-launchable-e2e.XXXXXX")"
@@ -660,7 +742,7 @@ export NEMOCLAW_SANDBOX_NAME=e2e-staging
 printf 'NEMOCLAW_FULL_E2E_PASSED\n'
 REMOTE
 } | timeout "${FULL_E2E_TIMEOUT_SECONDS:-3000}" ssh -T -o ConnectTimeout=10 -o LogLevel=ERROR \
-  "${INSTANCE_NAME}-host" 'bash -s' >"$raw_log" 2>&1
+  "$INSTANCE_NAME" 'bash -s' >"$raw_log" 2>&1
 e2e_status=$?
 set -e
 NEMOCLAW_REDACTION_SECRET="$NVIDIA_INFERENCE_API_KEY" \
@@ -675,8 +757,13 @@ Path(source).unlink(missing_ok=True)
 PY
 raw_log=""
 if [ "$e2e_status" -ne 0 ] || ! grep -q '^NEMOCLAW_FULL_E2E_PASSED$' "$WORK_DIR/full-e2e.log"; then
+  jq '.fullE2e = "failed" | .validation.fullE2E = "failed"' \
+    "$WORK_DIR/launchable-e2e.json" >"$WORK_DIR/launchable-e2e.tmp"
+  mv "$WORK_DIR/launchable-e2e.tmp" "$WORK_DIR/launchable-e2e.json"
+  capture_full_e2e_failure_diagnostics
   die "full E2E failed"
 fi
-jq '.fullE2e = "passed"' "$WORK_DIR/launchable-e2e.json" >"$WORK_DIR/launchable-e2e.tmp"
+jq '.fullE2e = "passed" | .validation.fullE2E = "passed"' \
+  "$WORK_DIR/launchable-e2e.json" >"$WORK_DIR/launchable-e2e.tmp"
 mv "$WORK_DIR/launchable-e2e.tmp" "$WORK_DIR/launchable-e2e.json"
 log "Full E2E passed"

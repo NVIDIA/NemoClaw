@@ -477,19 +477,18 @@ export async function startCompatibleMock(options: {
             name: "search_tools",
             arguments: { query },
           };
-        } else if (
-          toolResultCount !== 1 ||
-          !hasExpectedToolResult(0, "call_progressive_tool_search", [`- ${toolName}:`])
-        ) {
+        } else if (!hasExpectedToolResult(0, "call_progressive_tool_search", [`- ${toolName}:`])) {
           protocolError = "search_tools did not return the expected progressive target";
         } else if (!visibleToolNames.has(toolName)) {
           protocolError = `progressive target ${toolName} was not visible after search_tools`;
-        } else {
+        } else if (toolResultCount === 1) {
           plannedToolCall = {
             id: "call_progressive_mcp_proof",
             name: toolName,
             arguments: { challenge: options.toolChallenge },
           };
+        } else {
+          protocolError = `progressive target ${toolName} did not return the expected authenticated result`;
         }
       } else if (!sawAuthenticatedToolResult && options.deferredToolName) {
         const bridgeNames = ["tool_search", "tool_describe", "tool_call"];
@@ -795,6 +794,7 @@ export async function startFakeMcpHttpsServer(options: {
             {
               name: "fake_echo",
               description: "Returns an authenticated MCP proof token",
+              annotations: { readOnlyHint: true },
               inputSchema: {
                 type: "object",
                 properties: { challenge: { type: "string" } },
@@ -811,6 +811,7 @@ export async function startFakeMcpHttpsServer(options: {
             {
               name: "fake_status",
               description: "Returns fixture status",
+              annotations: { readOnlyHint: true },
               inputSchema: { type: "object", properties: {}, additionalProperties: false },
             },
           ],

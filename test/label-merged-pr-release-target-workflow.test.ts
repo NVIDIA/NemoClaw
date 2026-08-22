@@ -241,6 +241,31 @@ describe("merged PR release target workflow", () => {
     });
   });
 
+  it("does not label a merged PR when the repository has no release tag boundary (#9533)", async () => {
+    const harness = createHarness([{ name: "latest" }]);
+
+    await runScript(harness);
+
+    expect(harness.addLabels).not.toHaveBeenCalled();
+    expect(harness.getRef).not.toHaveBeenCalled();
+    expect(harness.info).toHaveBeenCalledWith(
+      "No strict semver release tags were found; no release target label added to PR #123",
+    );
+  });
+
+  it("does not fail scheduled reconciliation when the repository has no release tag boundary (#9533)", async () => {
+    const harness = createHarness([{ name: "latest" }]);
+    harness.context.eventName = "schedule";
+
+    await runScript(harness);
+
+    expect(harness.addLabels).not.toHaveBeenCalled();
+    expect(harness.getBranch).not.toHaveBeenCalled();
+    expect(harness.info).toHaveBeenCalledWith(
+      "No strict semver release tags were found; no release target labels reconciled",
+    );
+  });
+
   it("does not label a PR already captured at the latest tag boundary", async () => {
     const harness = createHarness([
       { name: "v0.0.10", status: "identical" },
@@ -494,6 +519,55 @@ describe("merged PR release target workflow", () => {
     expect(harness.addLabels).toHaveBeenCalledWith(
       expect.objectContaining({ issue_number: 123, labels: ["v0.0.12"] }),
     );
+  });
+
+  it("restarts reconciliation when the last release tag disappears during the audit (#9533)", async () => {
+    const harness = createHarness([{ name: "v0.0.10" }]);
+    const [v10] = harness.fixtures;
+    harness.context.eventName = "schedule";
+    harness.listTags
+      .mockResolvedValueOnce({ data: [{ name: v10.name }] })
+      .mockResolvedValue({ data: [] });
+    harness.compareCommitsWithBasehead.mockImplementation(
+      async ({ basehead }: { basehead: string }) => {
+        expect(basehead).toBe(`${v10.commitSha}...${MERGE_SHA}`);
+        return {
+          data: {
+            status: "ahead",
+            ahead_by: 1,
+            behind_by: 0,
+            total_commits: 1,
+            commits: [{ sha: MERGE_SHA }],
+          },
+        };
+      },
+    );
+    harness.listPullRequestsAssociatedWithCommit.mockResolvedValueOnce({
+      data: [
+        {
+          base: { ref: "main" },
+          labels: [],
+          merge_commit_sha: MERGE_SHA,
+          merged_at: "2026-07-04T00:00:00Z",
+          number: 123,
+        },
+      ],
+    });
+
+    await runScript(harness);
+
+    expect(harness.listPullRequestsAssociatedWithCommit).toHaveBeenCalledWith(
+      expect.objectContaining({ commit_sha: MERGE_SHA }),
+    );
+    expect(harness.warning).toHaveBeenCalledWith(
+      "Newest release tag changed; restarting reconciliation",
+    );
+    expect(harness.info).toHaveBeenCalledWith(
+      "No strict semver release tags were found; no release target labels reconciled",
+    );
+    expect(harness.getLabel).not.toHaveBeenCalled();
+    expect(harness.createLabel).not.toHaveBeenCalled();
+    expect(harness.addLabels).not.toHaveBeenCalled();
   });
 
   it("stops after two reconciliation restarts when release tags keep changing", async () => {

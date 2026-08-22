@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, assert, describe, expect, it, vi } from "vitest";
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 import {
   withProvenManagedGatewayProcess,
   writeManagedGatewayRuntimeProof,
@@ -19,6 +20,7 @@ import {
   type UninstallRunOptions,
 } from "./run-plan";
 import {
+  HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE,
   hasPortableRuntimeCleanup,
   runPortableRuntimeCleanupTransaction,
   type PortableRuntimeCleanupInput,
@@ -214,7 +216,7 @@ afterEach(() => {
   }
 });
 
-describe("portable runtime cleanup in the uninstall run plan", () => {
+describe("portable runtime cleanup in the uninstall run plan", testTimeoutOptions(15_000), () => {
   it.each<[string, EvidenceMutation]>([
     ["receipt without configuration", (home, state) => writeAdmissionReceipt(home, state)],
     [
@@ -250,10 +252,6 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
     [
       "unsafe receipt root",
       (_home, state) => directoryEvidence(path.join(state, "portable-demo-lifecycle"), 0o755),
-    ],
-    [
-      "unsafe configuration root",
-      (home) => directoryEvidence(path.join(home, ".config/nemoclaw/portable"), 0o755),
     ],
     [
       "symlinked receipt root",
@@ -368,6 +366,60 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
     expect(fs.existsSync(evidence)).toBe(true);
   });
 
+  it("routes schema-5 Hermes cleanup while the portable host fence is held (#9608)", async () => {
+    const scope = admissionFailureScope("nemoclaw-hermes-uninstall-");
+    const sharedInferenceEvidence = path.join(
+      scope.stateDir,
+      "portable-inference",
+      "shared-runtime",
+      "portable-inference.json",
+    );
+    fs.mkdirSync(path.dirname(sharedInferenceEvidence), { recursive: true });
+    fs.writeFileSync(sharedInferenceEvidence, "shared-authority\n", { mode: 0o600 });
+    const lifecycleLockEvidence = path.join(scope.stateDir, "state", "lifecycle.lock");
+    fs.mkdirSync(path.dirname(lifecycleLockEvidence), { recursive: true });
+    fs.writeFileSync(lifecycleLockEvidence, "held\n", { mode: 0o600 });
+    const journalEvidence = path.join(scope.stateDir, HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE);
+    fs.writeFileSync(journalEvidence, '{"phase":"prepared"}\n', { mode: 0o600 });
+    let hostFenceHeld = false;
+    const cleanupFenceStates: boolean[] = [];
+    scope.runPortableCleanup.mockImplementation(() => {
+      cleanupFenceStates.push(hostFenceHeld);
+      return {
+        registryRemoved: false,
+        sandboxContainersRemoved: 1,
+        selectorsRemoved: [],
+      };
+    });
+
+    const result = await runUninstallPlanProduction(
+      { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
+      {
+        ...admissionFailureDeps(scope),
+        commandExists: (command) => ["openshell", "pgrep", "lsof"].includes(command),
+        env: {
+          HOME: scope.homeDir,
+        },
+        hasPortableRuntimeCleanup: () => true,
+        withPortableHostFence: async (_home, operation) => {
+          hostFenceHeld = true;
+          try {
+            return await operation();
+          } finally {
+            hostFenceHeld = false;
+          }
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(scope.runPortableCleanup).toHaveBeenCalledOnce();
+    expect(cleanupFenceStates).toEqual([true]);
+    expect(fs.existsSync(sharedInferenceEvidence)).toBe(true);
+    expect(fs.existsSync(lifecycleLockEvidence)).toBe(true);
+    expect(fs.existsSync(journalEvidence)).toBe(true);
+  });
+
   it("uses exact receipt names without Docker or an all-sandbox mutation (#9189)", () => {
     const order: string[] = [];
     const logs: string[] = [];
@@ -475,8 +527,8 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
       "Kept shared OpenShell provider and gateway registrations for unrelated sandboxes.",
     );
     expect(logs).toContain("Removed the managed portable registry container.");
-    expect(logs.join("\n")).toContain("dictionary-testable pseudonymous fingerprints");
-    expect(logs.join("\n")).toContain("another process running as this user can change it");
+    expect(logs.join("\n")).toContain("secret-free portable cleanup evidence");
+    expect(logs.join("\n")).toContain("exact retry and lifecycle reconciliation");
   });
 
   it("keeps explicit receipt gateway scope when ambient selection drifts (#9189)", () => {

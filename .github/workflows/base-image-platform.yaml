@@ -1,0 +1,83 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Build base image platform
+
+on:
+  workflow_call:
+    inputs:
+      agent:
+        description: Agent identifier for the base-image build.
+        required: true
+        type: string
+      arch:
+        description: Artifact architecture identifier.
+        required: true
+        type: string
+      platform:
+        description: Docker platform to build.
+        required: true
+        type: string
+      runner:
+        description: GitHub-hosted runner for the target architecture.
+        required: true
+        type: string
+      dockerfile:
+        description: Path to the base-image Dockerfile.
+        required: true
+        type: string
+      image:
+        description: Image repository relative to GHCR.
+        required: true
+        type: string
+      openclaw-version:
+        description: Optional OpenClaw version build argument.
+        required: false
+        type: string
+        default: ""
+    outputs:
+      digest:
+        description: Exact digest for the requested platform.
+        value: ${{ jobs.build.outputs.digest }}
+    secrets:
+      registry_password:
+        description: GHCR publication credential.
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: Build ${{ inputs.agent }} base image (${{ inputs.arch }})
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.platform.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build and publish platform digest
+        id: platform
+        uses: ./.github/actions/build-base-image-platform
+        with:
+          agent: ${{ inputs.agent }}
+          arch: ${{ inputs.arch }}
+          platform: ${{ inputs.platform }}
+          dockerfile: ${{ inputs.dockerfile }}
+          image: ${{ inputs.image }}
+          registry: ghcr.io
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.registry_password }}
+          openclaw-version: ${{ inputs.openclaw-version }}
+          metadata-tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
+            type=sha,prefix=,format=short

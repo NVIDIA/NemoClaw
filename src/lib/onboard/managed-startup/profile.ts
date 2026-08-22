@@ -5,6 +5,7 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
 import { listMessagingCredentialEnvAssignments } from "../../messaging/channels/metadata.ts";
+import { authorizeMessagingManagedStartupPlaceholders } from "../../messaging/managed-startup-placeholders.ts";
 import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider.ts";
 
 /**
@@ -999,7 +1000,11 @@ function valueLooksLikeSecret(value: string): boolean {
   return false;
 }
 
-function isMessagingCredentialPlaceholder(path: readonly string[], value: unknown): boolean {
+function isMessagingCredentialPlaceholder(
+  path: readonly string[],
+  value: unknown,
+  allowedBuildStepPlaceholders: ReadonlySet<string>,
+): boolean {
   if (typeof value !== "string" || !MESSAGING_CREDENTIAL_PLACEHOLDER_RE.test(value)) {
     return false;
   }
@@ -1017,7 +1022,18 @@ function isMessagingCredentialPlaceholder(path: readonly string[], value: unknow
     path[2] === "agentRender" &&
     JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") &&
     path[4] === "value";
-  return isCredentialBindingPlaceholder || isAgentRenderValuePlaceholder;
+  const isAuthorizedBuildStepPlaceholder = allowedBuildStepPlaceholders.has(
+    buildStepPlaceholderKey(path, value),
+  );
+  return (
+    isCredentialBindingPlaceholder ||
+    isAgentRenderValuePlaceholder ||
+    isAuthorizedBuildStepPlaceholder
+  );
+}
+
+function buildStepPlaceholderKey(path: readonly string[], value: string): string {
+  return JSON.stringify([path, value]);
 }
 
 function messagingCredentialPlaceholderEnvKey(value: string): string | null {
@@ -1079,6 +1095,66 @@ function isMessagingRuntimeEnvAliasPath(path: readonly string[]): boolean {
 function ownDataPropertyValue(value: Record<string, unknown>, key: string): unknown {
   const descriptor = Object.getOwnPropertyDescriptor(value, key);
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+function isStockTeamsOpenClawWebhook(
+  root: unknown,
+  path: readonly string[],
+  value: unknown,
+): boolean {
+  if (
+    path.length !== 6 ||
+    path[0] !== "messaging" ||
+    path[1] !== "plan" ||
+    path[2] !== "agentRender" ||
+    !JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") ||
+    path[4] !== "value" ||
+    path[5] !== "webhook" ||
+    !isPlainObject(root) ||
+    ownDataPropertyValue(root, "agent") !== "openclaw"
+  ) {
+    return false;
+  }
+
+  const messaging = ownDataPropertyValue(root, "messaging");
+  if (!isPlainObject(messaging)) return false;
+  const plan = ownDataPropertyValue(messaging, "plan");
+  if (!isPlainObject(plan) || ownDataPropertyValue(plan, "agent") !== "openclaw") return false;
+  const agentRender = ownDataPropertyValue(plan, "agentRender");
+  if (!Array.isArray(agentRender)) return false;
+  const entryIndex = (path[3] as string).slice(1, -1);
+  const entryDescriptor = Object.getOwnPropertyDescriptor(agentRender, entryIndex);
+  const entry = entryDescriptor && "value" in entryDescriptor ? entryDescriptor.value : undefined;
+  if (!isPlainObject(entry)) return false;
+
+  const renderValue = ownDataPropertyValue(entry, "value");
+  if (!isPlainObject(renderValue) || ownDataPropertyValue(renderValue, "webhook") !== value) {
+    return false;
+  }
+  if (
+    ownDataPropertyValue(entry, "channelId") !== "teams" ||
+    ownDataPropertyValue(entry, "renderId") !== "teams-openclaw-channel" ||
+    ownDataPropertyValue(entry, "hookId") !== "teams-openclaw-channel" ||
+    ownDataPropertyValue(entry, "handler") !== "common.staticOutputs" ||
+    ownDataPropertyValue(entry, "kind") !== "json-fragment" ||
+    ownDataPropertyValue(entry, "agent") !== "openclaw" ||
+    ownDataPropertyValue(entry, "target") !== "openclaw.json" ||
+    ownDataPropertyValue(entry, "path") !== "channels.msteams" ||
+    !isPlainObject(value)
+  ) {
+    return false;
+  }
+
+  const keys = Object.getOwnPropertyNames(value);
+  if (keys.length !== 2 || !keys.includes("port") || !keys.includes("path")) return false;
+  const port = ownDataPropertyValue(value, "port");
+  return (
+    typeof port === "number" &&
+    Number.isInteger(port) &&
+    port >= 1 &&
+    port <= 65_535 &&
+    ownDataPropertyValue(value, "path") === "/api/messages"
+  );
 }
 
 function isCanonicalMessagingRuntimeEnvAlias(
@@ -1464,6 +1540,7 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
     path: readonly string[];
   }> = [{ value: root, depth: 0, path: [] }];
   const allowedRuntimeAliasIndexes = new Set<string>();
+  const allowedBuildStepPlaceholders = new Set<string>();
   const selectedAgent = isPlainObject(root) ? ownDataPropertyValue(root, "agent") : undefined;
   let discoveredNodes = 1;
   let observedBytes = 0;
@@ -1493,7 +1570,11 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
       observeText(current.value);
       if (
         !isAllowedMessagingRuntimeAliasStringPath(current.path, allowedRuntimeAliasIndexes) &&
-        !isMessagingCredentialPlaceholder(current.path, current.value) &&
+        !isMessagingCredentialPlaceholder(
+          current.path,
+          current.value,
+          allowedBuildStepPlaceholders,
+        ) &&
         !isMessagingCredentialPlaceholderAssignment(
           selectedAgent,
           current.path,
@@ -1559,6 +1640,19 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
       if (isCanonicalMessagingRuntimeEnvAlias(current.path, current.value)) {
         allowedRuntimeAliasIndexes.add(current.path[4] as string);
       }
+      if (
+        current.path.length === 4 &&
+        current.path[0] === "messaging" &&
+        current.path[1] === "plan" &&
+        current.path[2] === "buildSteps" &&
+        JSON_ARRAY_INDEX_SEGMENT_RE.test(current.path[3] ?? "")
+      ) {
+        for (const authorization of authorizeMessagingManagedStartupPlaceholders(current.value)) {
+          allowedBuildStepPlaceholders.add(
+            buildStepPlaceholderKey([...current.path, ...authorization.path], authorization.value),
+          );
+        }
+      }
       const keys = Object.getOwnPropertyNames(current.value);
       if (
         Object.getOwnPropertySymbols(current.value).length > 0 ||
@@ -1588,8 +1682,13 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
         const child = descriptor.value;
         if (
           isCredentialShapedName(key) &&
-          !isMessagingCredentialPlaceholder([...current.path, key], child) &&
-          !isMessagingPackagePin([...current.path, key], child)
+          !isMessagingCredentialPlaceholder(
+            [...current.path, key],
+            child,
+            allowedBuildStepPlaceholders,
+          ) &&
+          !isMessagingPackagePin([...current.path, key], child) &&
+          !isStockTeamsOpenClawWebhook(root, [...current.path, key], child)
         ) {
           invalid(
             `payload field ${payloadPath([...current.path, key])} has a credential-shaped field name`,

@@ -14,7 +14,10 @@ import * as registry from "../../state/registry";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { executeSandboxCommand } from "./process-recovery";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
-import { refreshMutableOpenClawConfigHashAfterPostRestoreWrites } from "./rebuild-config-hash";
+import {
+  refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
+  verifyFinalMutableOpenClawConfigHash,
+} from "./rebuild-config-hash";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import {
@@ -41,6 +44,8 @@ export {
   recoverHermesCronRestore,
   runHermesCronRestoreTransaction,
 } from "./rebuild-hermes-post-restore";
+
+const OPENCLAW_DOCTOR_TIMEOUT_MS = 5 * 60_000;
 
 export function printHermesCronRestoreRecoveryCommand(
   sandboxName: string,
@@ -223,6 +228,7 @@ export async function runRebuildPostRestorePhase(
   const rebuiltAgentName = agentDef.displayName;
   let mutablePermsRepairUnverified = false;
   let mutableConfigHashRefreshUnverified = false;
+  let finalMutableConfigHashUnverified = false;
   let messagingHostForwardUnverified = false;
   const policyPresetRestoreIncomplete =
     failedPresets.length > 0 ||
@@ -231,7 +237,11 @@ export async function runRebuildPostRestorePhase(
 
   if (targetAgentName === "openclaw") {
     log("Running openclaw doctor --fix inside sandbox for post-upgrade structure repair");
-    const doctorResult = executeSandboxCommand(sandboxName, "openclaw doctor --fix");
+    const doctorResult = executeSandboxCommand(
+      sandboxName,
+      "openclaw doctor --fix",
+      OPENCLAW_DOCTOR_TIMEOUT_MS,
+    );
     log(
       `doctor --fix: exit=${doctorResult?.status}, stdout=${(doctorResult?.stdout || "").substring(0, 200)}`,
     );
@@ -396,13 +406,17 @@ export async function runRebuildPostRestorePhase(
   if (!ensureMessagingHostForwardAfterRebuild(sandboxName, messagingPlan)) {
     messagingHostForwardUnverified = true;
   }
+  if (targetAgentName === "openclaw" && !verifyFinalMutableOpenClawConfigHash(sandboxName, log)) {
+    finalMutableConfigHashUnverified = true;
+  }
 
   console.log("");
   const postRestoreComplete = postRestoreCompleted({
     hermesGatewayRestoreUnverified,
     messagingHostForwardUnverified,
     mcpBridgeRestoreUnverified,
-    mutableConfigHashRefreshUnverified,
+    mutableConfigHashRefreshUnverified:
+      mutableConfigHashRefreshUnverified || finalMutableConfigHashUnverified,
     mutablePermsRepairUnverified,
     policyPresetRestoreIncomplete,
     restoreSucceeded,
@@ -435,6 +449,11 @@ export async function runRebuildPostRestorePhase(
         `    Mutable OpenClaw config hash was not refreshed \u2014 restart the sandbox or re-run \`${CLI_NAME} ${sandboxName} rebuild\` before relying on config integrity checks`,
       );
     }
+    if (finalMutableConfigHashUnverified && !mutableConfigHashRefreshUnverified) {
+      console.log(
+        `    Final OpenClaw configuration hash verification failed after post-restore finalization \u2014 restart the sandbox or re-run \`${CLI_NAME} ${sandboxName} rebuild\` before relying on config integrity checks`,
+      );
+    }
     if (messagingHostForwardUnverified) {
       console.log(
         `    Messaging webhook forward was not verified \u2014 run \`${CLI_NAME} ${sandboxName} connect\` after resolving the port conflict`,
@@ -463,6 +482,13 @@ export async function runRebuildPostRestorePhase(
   }
   if (failedPresetRemovals.length > 0 || !policyPresetReconciliationVerified) {
     bail(`Rebuild completed with unverified live policy reconciliation for '${sandboxName}'.`);
+    return;
+  }
+  if (
+    targetAgentName === "openclaw" &&
+    (mutableConfigHashRefreshUnverified || finalMutableConfigHashUnverified)
+  ) {
+    bail("OpenClaw config integrity verification failed after rebuild.");
     return;
   }
   if (

@@ -27,6 +27,7 @@ type PolicyEndpoint = {
   tls?: string;
   allowed_ips?: string[];
   request_body_credential_rewrite?: boolean;
+  credential_binding?: { provider?: string };
   rules?: PolicyRule[];
 };
 
@@ -148,6 +149,7 @@ describe("initial sandbox policy real preset merge", () => {
       path: ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
       agent: "langchain-deepagents-code",
     },
+    { path: ["agents", "nemocua", "policy-additions.yaml"], agent: "nemocua" },
   ])(
     "keeps $agent on the provider-neutral inference.local route without host-native inference egress",
     ({ path: policyPath, agent }) => {
@@ -171,10 +173,48 @@ describe("initial sandbox policy real preset merge", () => {
     },
   );
 
+  it("limits NemoCUA managed inference to the prepared image clients (#9649)", () => {
+    const effective = readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(
+        repoPath("agents", "nemocua", "policy-additions.yaml"),
+        [],
+        { agentName: "nemocua" },
+      ),
+    );
+
+    const managedInference = effective.network_policies?.managed_inference;
+
+    expect(effective.filesystem_policy?.read_only).toContain(MANAGED_STARTUP_MERGED_CA_FILE);
+    expect(managedInference).toEqual({
+      name: "managed_inference",
+      endpoints: [
+        {
+          host: "inference.local",
+          port: 443,
+          protocol: "rest",
+          enforcement: "enforce",
+          rules: [
+            { allow: { method: "POST", path: "/v1/chat/completions" } },
+            { allow: { method: "POST", path: "/v1/responses" } },
+            { allow: { method: "GET", path: "/v1/models" } },
+            { allow: { method: "GET", path: "/v1/models/**" } },
+          ],
+        },
+      ],
+      binaries: [
+        { path: "/usr/bin/python3" },
+        { path: "/usr/local/bin/python3" },
+        { path: "/usr/bin/curl" },
+      ],
+    });
+    expect(managedInference?.endpoints?.[0]).not.toHaveProperty("access");
+  });
+
   it("uses Hermes channel YAML when the Hermes base policy path implies the agent", () => {
     const prepared = prepareInitialSandboxCreatePolicy(
       repoPath("agents", "hermes", "policy-additions.yaml"),
       ["discord", "slack"],
+      { sandboxName: "hermes-channel" },
     );
     const policy = readPreparedPolicy(prepared);
 
@@ -313,6 +353,46 @@ describe("initial sandbox policy real preset merge", () => {
       protocol: "rest",
       request_body_credential_rewrite: true,
     });
+  });
+
+  it("materializes Hermes Discord credential bindings from the target sandbox name", () => {
+    const sandboxName = "hermes-discord-e2e";
+    const effective = readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(
+        repoPath("agents", "hermes", "policy-additions.yaml"),
+        ["discord"],
+        { agentName: "hermes", sandboxName },
+      ),
+    );
+    const endpoints = effective.network_policies?.discord?.endpoints ?? [];
+    const credentialEndpoints = endpoints.filter((endpoint) =>
+      ["discord.com", "gateway.discord.gg", "*.discord.gg"].includes(endpoint.host ?? ""),
+    );
+
+    expect(credentialEndpoints.map((endpoint) => endpoint.host).sort()).toEqual([
+      "*.discord.gg",
+      "discord.com",
+      "gateway.discord.gg",
+    ]);
+    expect(credentialEndpoints.map((endpoint) => endpoint.credential_binding?.provider)).toEqual([
+      `${sandboxName}-discord-bridge`,
+      `${sandboxName}-discord-bridge`,
+      `${sandboxName}-discord-bridge`,
+    ]);
+    expect(JSON.stringify(effective)).not.toContain("{sandboxName}");
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["unsafe", "bad:provider"],
+  ])("rejects a Hermes Discord create policy with a %s target sandbox name", (_case, sandboxName) => {
+    expect(() =>
+      prepareInitialSandboxCreatePolicy(
+        repoPath("agents", "hermes", "policy-additions.yaml"),
+        ["discord"],
+        { agentName: "hermes", sandboxName },
+      ),
+    ).toThrow("a valid sandbox name is required to materialize credential bindings");
   });
 
   it.each(shippingPolicyCases.slice(0, 3).concat(shippingPolicyCases.slice(4)))(

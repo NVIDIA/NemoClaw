@@ -97,12 +97,15 @@ the provider and sandbox identities, plan and profile
 fingerprints, exact original and replacement IDs, rollback target, and phase.
 Exact commit and cleanup receipts are durable terminal records, so adapter
 recreation does not depend on process-local transaction sets or tombstone maps.
-Rollback retains an `owner-cleanup-required` phase only after image-owned shared
-state is restored and the exact replacement is absent. That phase keeps the
-restored original quiescent and preserves the journal without a terminal
-receipt until the owning sandbox service removes the exact runtime and the
-provider proves its absence. Unknown runtime presence is a retryable durable
-cleanup failure, never evidence of absence.
+Rollback retains an `owner-cleanup-required` phase after image-owned shared
+state is restored and the exact replacement is absent. If
+`DockerManagedStartupSharedStateRestoreError` reports a restoration failure,
+rollback can retain the same phase only after it removes the exact replacement.
+This path restores the exact original to its canonical name and keeps it
+stopped. In both cases, the durable journal remains without a terminal receipt.
+The owning sandbox service remains responsible for `destroy`, and the provider
+must prove the exact runtime is absent. Unknown runtime presence is a retryable
+durable cleanup failure, never evidence of absence.
 
 The dormant Podman candidate keeps the same provider-neutral coordinator
 boundary but owns its engine-specific authority internally. It binds one

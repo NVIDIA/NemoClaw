@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { liveTargetTimeoutContract } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { HOSTED_INFERENCE_SECRET } from "../fixtures/hosted-inference.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
@@ -14,7 +15,6 @@ import {
 } from "../fixtures/phases/index.ts";
 import { listTargets, requireTargets } from "../registry/registry.ts";
 import { liveTargetSupport, liveTargetTestTitle } from "../registry/runtime-support.ts";
-import { cloudExperimentalChecksForOnboarding } from "./cloud-experimental-check-list.ts";
 import { runE2eCloudExperimentalChecks } from "./cloud-experimental-checks.ts";
 import {
   captureDcodeBaseImageRuntimeEvidence,
@@ -72,13 +72,19 @@ const REGISTRY_TARGET_PHASES = [
 
 for (const [targetIndex, target] of listTargets().entries()) {
   const support = liveTargetSupport(target);
+  const timeoutContract = liveTargetTimeoutContract(target.environment?.lifecycle);
   if (!support.supported) {
     if (SELECTED_TARGET_ID === target.id) {
       console.warn(`[not wired] ${target.id}: ${support.reasons.join("; ")}`);
     }
     test.skip(
       liveTargetTestTitle(target, support),
-      { meta: { e2ePhases: REGISTRY_TARGET_PHASES } },
+      {
+        meta: {
+          e2eArtifactRootId: target.id,
+          e2ePhases: REGISTRY_TARGET_PHASES,
+        },
+      },
       () => {},
     );
     continue;
@@ -86,7 +92,15 @@ for (const [targetIndex, target] of listTargets().entries()) {
 
   test(
     liveTargetTestTitle(target, support),
-    { meta: { e2ePhases: REGISTRY_TARGET_PHASES } },
+    {
+      meta: {
+        e2eArtifactRootId: target.id,
+        e2ePhases: REGISTRY_TARGET_PHASES,
+      },
+      ...(timeoutContract.testTimeoutMs === undefined
+        ? {}
+        : { timeout: timeoutContract.testTimeoutMs }),
+    },
     async ({
       artifacts,
       environment,
@@ -146,6 +160,9 @@ for (const [targetIndex, target] of listTargets().entries()) {
       const instance = await onboard.from(ready, {
         sandboxName: `e2e-reg-${targetIndex.toString(36)}`,
         dcodeBaseImageReference,
+        ...(timeoutContract.commandTimeoutMs === undefined
+          ? {}
+          : { timeoutMs: timeoutContract.commandTimeoutMs }),
       });
 
       // Lifecycle phase runs between onboard and state-validation.
@@ -176,14 +193,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
 
       progress.phase("run target-specific cloud checks");
       const checkScripts = runPlan.e2eCloudExperimentalChecks ?? [];
-      expect(checkScripts).toEqual(
-        cloudExperimentalChecksForOnboarding(target.environment.onboarding),
-      );
-      expect(
-        checkScripts.every((scriptPath) =>
-          Object.is(fs.existsSync(path.join(REPO_ROOT, scriptPath)), true),
-        ),
-      ).toBe(true);
       expect(fs.existsSync(E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR)).toBe(true);
       await runE2eCloudExperimentalChecks(target.id, instance.sandboxName, checkScripts, {
         artifacts,

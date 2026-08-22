@@ -54,7 +54,10 @@ function composePresets(
   presetNames: string[],
   agent: "openclaw" | "hermes" = "openclaw",
 ): PolicyDocument {
-  const result = policies.mergePresetNamesIntoPolicy(EXISTING_POLICY, presetNames, { agent });
+  const result = policies.mergePresetNamesIntoPolicy(EXISTING_POLICY, presetNames, {
+    agent,
+    sandboxName: "effective-policy",
+  });
   expect(result.appliedPresets).toEqual([...new Set(presetNames)]);
   expect(result.missingPresets).toEqual([]);
 

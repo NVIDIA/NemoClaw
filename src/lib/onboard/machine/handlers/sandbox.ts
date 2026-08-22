@@ -102,7 +102,7 @@ import {
 } from "../../sandbox-registration";
 
 import { withSandboxPhaseTrace } from "../../tracing";
-import type { SandboxCreateIntent } from "../../types";
+import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
 import * as dcodeResume from "./sandbox-dcode-resume";
 import {
@@ -187,6 +187,8 @@ export interface SandboxStateOptions<
 > {
   resume: boolean;
   fresh: boolean;
+  /** Exact schema-5 lifecycle selection owned by the locked portable runtime. */
+  hermesPortableLifecycle?: boolean;
   /** Internal rebuild mode: null web-search state is an authoritative disable, not a prompt. */
   authoritativeResumeConfig?: boolean;
   /** Internal rebuild tier that must govern create-time and resumed policy selection. */
@@ -199,6 +201,7 @@ export interface SandboxStateOptions<
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
   rebuildPreservedEnv?: readonly import("../../../state/preserved-env").PreservedEnvFile[];
+  rebuildPolicyPresets?: readonly string[];
   hostMounts?: readonly import("../../../state/registry/types").SandboxHostMount[];
   recreateSandbox: (requested?: boolean) => boolean;
   gatewayName: string;
@@ -348,6 +351,7 @@ export interface SandboxStateOptions<
       resourceProfile: ResourceProfile | null,
       hermesToolGateways: string[],
       hermesAuthMethod: HermesAuthMethod | null,
+      inferenceRouteReservationAuthority: InferenceRouteReservationAuthority | null,
       createIntent: CompleteSandboxCreateIntent,
     ): Promise<string>;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
@@ -467,14 +471,50 @@ function hasResourceProfileEnvOverride(env: NodeJS.ProcessEnv): boolean {
 function endpointSourceForCreateIntent(
   fresh: boolean,
   endpointSource: InferenceEndpointSource | null | undefined,
+  preserveSelectedEndpointSource: boolean,
 ): InferenceEndpointSource | null {
-  return fresh ? "onboard" : (endpointSource ?? null);
+  return fresh && !preserveSelectedEndpointSource ? "onboard" : (endpointSource ?? null);
 }
 
 function compatibleEndpointReasoningForCreateIntent(
   value: string | null,
 ): Pick<SandboxCreateIntent, "compatibleEndpointReasoning"> {
   return value === "true" || value === "false" ? { compatibleEndpointReasoning: value } : {};
+}
+
+function rebuildPolicyPresetsForCreateIntent(
+  value: readonly string[] | undefined,
+  session: Session | null,
+  sandboxName: string,
+): Pick<SandboxCreateIntent, "rebuildPolicyPresets"> {
+  // A later `onboard --resume` no longer has the outer rebuild's in-memory
+  // options. The matching recreate journal makes its filtered session value
+  // the durable replacement target instead of the preserved source row.
+  const journaledValue =
+    session?.checkpoint?.sandboxRecreate?.sandboxName === sandboxName &&
+    Array.isArray(session.policyPresets)
+      ? session.policyPresets
+      : undefined;
+  const selectedValue = Array.isArray(value) ? value : journaledValue;
+  return Array.isArray(selectedValue) ? { rebuildPolicyPresets: [...selectedValue] } : {};
+}
+
+/** Replace a resumed create-plan snapshot with the outer rebuild's normalized built-ins. */
+function applyAuthoritativeRebuildPolicyPresets(
+  intent: ResolvedSandboxCreateIntent,
+  rebuildPolicyPresets: readonly string[] | undefined,
+): ResolvedSandboxCreateIntent {
+  if (!Array.isArray(rebuildPolicyPresets)) return intent;
+  return {
+    ...intent,
+    policy: {
+      ...intent.policy,
+      options: {
+        ...intent.policy.options,
+        additionalPresets: [...rebuildPolicyPresets],
+      },
+    },
+  };
 }
 
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
@@ -764,7 +804,16 @@ class SandboxStateFlow<
       this.options,
       credentialValidatedDecision,
     );
-    return this.applyCheckpointCrashRecovery(managedDcodeDecision, state, sandboxReuseState);
+    return this.resolveCheckpointCrashRecovery(managedDcodeDecision, state, sandboxReuseState);
+  }
+
+  private resolveCheckpointCrashRecovery(
+    decision: SandboxResumeDecision,
+    state: SandboxStepState<WebSearchConfig>,
+    sandboxReuseState: string,
+  ): SandboxResumeDecision {
+    if (this.options.recreateSandbox(false)) return decision;
+    return this.applyCheckpointCrashRecovery(decision, state, sandboxReuseState);
   }
 
   // A "create" decision from decideSandboxResume means only that the sandbox
@@ -1545,25 +1594,33 @@ class SandboxStateFlow<
     hermesToolGateways: readonly string[],
   ): Promise<CompleteSandboxCreateIntent> {
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
-    const resolved = await this.deps.resolveSandboxCreateIntent({
+    const rebuildPolicyPresetSelection = rebuildPolicyPresetsForCreateIntent(
+      this.options.rebuildPolicyPresets,
+      state.session,
       sandboxName,
-      inferenceProvider: this.options.provider,
-      hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
-      enabledChannels: state.selectedMessagingChannels,
-      webSearchConfig: state.webSearchConfig,
-      agent: this.options.agent,
-      sandboxGpuConfig: this.options.sandboxGpuConfig,
-      resourceProfile,
-      hermesToolGateways,
-      extraProviders,
-      staleExtraProviders,
-      hostMounts: this.options.hostMounts,
-      baselineExclusions: baselineExclusionsForCreate(sandboxName),
-      ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
-      ...(this.options.authoritativePolicyTier !== undefined
-        ? { policyTier: this.options.authoritativePolicyTier }
-        : {}),
-    });
+    );
+    const resolved = applyAuthoritativeRebuildPolicyPresets(
+      await this.deps.resolveSandboxCreateIntent({
+        sandboxName,
+        inferenceProvider: this.options.provider,
+        hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
+        enabledChannels: state.selectedMessagingChannels,
+        webSearchConfig: state.webSearchConfig,
+        agent: this.options.agent,
+        sandboxGpuConfig: this.options.sandboxGpuConfig,
+        resourceProfile,
+        hermesToolGateways,
+        extraProviders,
+        staleExtraProviders,
+        hostMounts: this.options.hostMounts,
+        baselineExclusions: baselineExclusionsForCreate(sandboxName),
+        ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
+        ...(this.options.authoritativePolicyTier !== undefined
+          ? { policyTier: this.options.authoritativePolicyTier }
+          : {}),
+      }),
+      rebuildPolicyPresetSelection.rebuildPolicyPresets,
+    );
     return {
       resolved,
       recreate: requiresSandboxRecreation(decision, this.options.recreateSandbox(false)),
@@ -1575,6 +1632,8 @@ class SandboxStateFlow<
       endpointSource: endpointSourceForCreateIntent(
         this.options.fresh,
         this.options.endpointSource,
+        this.options.hostLocalInferenceRouteOnly === true ||
+          this.options.hermesPortableLifecycle === true,
       ),
       ...(state.session?.observabilityRequestedExplicitly === true
         ? { observabilityRequestedExplicitly: true as const }
@@ -1589,6 +1648,7 @@ class SandboxStateFlow<
       ...(this.options.rebuildPreservedEnv
         ? { rebuildPreservedEnv: this.options.rebuildPreservedEnv }
         : {}),
+      ...rebuildPolicyPresetSelection,
       extraProviders,
     };
   }
@@ -1898,6 +1958,7 @@ class SandboxStateFlow<
               resourceProfile,
               effectiveHermesToolGateways,
               this.options.hermesAuthMethod,
+              this.options.session ? { sessionId: this.options.session.sessionId } : null,
               effectiveCreateIntent,
             ),
         );

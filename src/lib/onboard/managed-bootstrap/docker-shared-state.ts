@@ -89,6 +89,13 @@ export class DockerManagedStartupSharedStateCommitIndeterminateError extends Err
   }
 }
 
+export class DockerManagedStartupSharedStateRestoreError extends Error {
+  constructor(detail: string) {
+    super(detail);
+    this.name = "DockerManagedStartupSharedStateRestoreError";
+  }
+}
+
 export function probeDockerManagedStartupSharedState(
   input: {
     readonly transaction: DockerManagedBootstrapSharedStateTransaction;
@@ -511,6 +518,10 @@ function rollbackManagedStartupSharedState(
         "DAC_OVERRIDE",
         "--cap-add",
         "FOWNER",
+        // Hermes keeps its shared state root setgid. FSETID lets this isolated
+        // helper restore that bit after CHOWN changes the directory group.
+        "--cap-add",
+        "FSETID",
         ...NEUTRALIZED_PRE_ENTRYPOINT_ENV,
         "--volumes-from",
         transaction.containerId,
@@ -526,7 +537,7 @@ function rollbackManagedStartupSharedState(
       DOCKER_MUTATION_OPTIONS,
     );
     if (!hasZeroDockerExitStatus(helper)) {
-      throw new Error(
+      throw new DockerManagedStartupSharedStateRestoreError(
         `Immutable managed-startup helper could not restore and verify shared state: ${commandDetail(helper)}. ` +
           `Protected receipt retained at ${receiptPath}`,
       );

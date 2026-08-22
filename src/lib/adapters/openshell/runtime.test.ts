@@ -53,7 +53,7 @@ describe("runOpenshell", () => {
 });
 
 describe("captureResolvedOpenshell", () => {
-  it("invokes the exact canonical executable supplied by CUA authority", () => {
+  it("invokes the exact canonical executable supplied by the caller", () => {
     const decoy = executable("decoy", "decoy");
     const snapshot = executable("snapshot", "snapshot");
 

@@ -9,7 +9,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  FIXED_TAR_INTEGRITY,
+  FIXED_TAR_TARBALL,
   FIXED_TAR_VERSION,
+  MINIMUM_SAFE_TAR_VERSION,
   patchBundledNpmTar,
   patchBundledNpmTarFromRegistry,
   verifyBundledNpmTar,
@@ -28,14 +31,17 @@ function writeJson(file: string, value: object): void {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function fixture(npmVersion: "10.9.7" | "11.13.0" | "11.16.0", tarVersion: string) {
+function fixture(npmVersion: "10.9.7" | "11.13.0" | "11.16.0" | "11.18.0", tarVersion: string) {
   const root = temporaryDirectory();
   const npmRoot = path.join(root, "npm");
   const replacementRoot = path.join(root, "replacement");
   writeJson(path.join(npmRoot, "package.json"), {
     name: "npm",
     version: npmVersion,
-    dependencies: { tar: npmVersion.startsWith("10.") ? "^7.5.11" : "^7.5.13" },
+    dependencies: {
+      tar:
+        npmVersion === "11.18.0" ? "^7.5.19" : npmVersion.startsWith("10.") ? "^7.5.11" : "^7.5.13",
+    },
     bundleDependencies: ["other", "tar"],
   });
   writeJson(path.join(npmRoot, "node_modules", "tar", "package.json"), {
@@ -59,13 +65,25 @@ afterEach(() => {
 });
 
 describe("npm bundled node-tar remediation", () => {
+  it("binds the replacement and safety floor to the first patched tar release", () => {
+    expect(FIXED_TAR_VERSION).toBe("7.5.21");
+    expect(MINIMUM_SAFE_TAR_VERSION).toBe("7.5.21");
+    expect(FIXED_TAR_INTEGRITY).toBe(
+      "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==",
+    );
+    expect(FIXED_TAR_TARBALL).toBe("https://registry.npmjs.org/tar/-/tar-7.5.21.tgz");
+  });
+
   it.each([
     ["Node 22 npm", "10.9.7", "7.5.11"],
     ["Node.js 24.16 npm", "11.13.0", "7.5.13"],
     ["Node.js 24.18 npm", "11.16.0", "7.5.15"],
+    ["reviewed npm advisory release", "11.18.0", "7.5.19"],
+    ["reviewed npm affected boundary", "11.18.0", "7.5.20"],
   ] as const)("replaces the complete affected tree for %s", (_label, npmVersion, tarVersion) => {
     const target = fixture(npmVersion, tarVersion);
 
+    expect(() => verifyBundledNpmTar(target.npmRoot)).toThrow(`bundles affected tar@${tarVersion}`);
     expect(patchBundledNpmTar(target)).toMatchObject({
       npmVersion,
       state: "fixed",

@@ -67,6 +67,8 @@ export interface SandboxOnboardFlowPhaseOptions<
   ResourceProfile = unknown,
 > {
   gatewayName: string;
+  /** Internal schema-5 lifecycle selection from the locked portable runtime. */
+  hermesPortableLifecycle?: boolean;
   authoritativeResumeConfig?: boolean;
   authoritativePolicyTier?: string | null;
 
@@ -75,6 +77,7 @@ export interface SandboxOnboardFlowPhaseOptions<
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
   rebuildPreservedEnv?: readonly import("../../state/preserved-env").PreservedEnvFile[];
+  rebuildPolicyPresets?: readonly string[];
   hostMounts?: readonly import("../../state/registry/types").SandboxHostMount[];
   endpointProvenance: EndpointProvenanceOptions;
   recreateSandbox: (requested?: boolean) => boolean;
@@ -224,6 +227,7 @@ export function createSandboxOnboardFlowPhase<
       resume: context.resume,
       fresh: context.fresh,
       gatewayName: options.gatewayName,
+      hermesPortableLifecycle: options.hermesPortableLifecycle === true,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       authoritativePolicyTier: options.authoritativePolicyTier,
 
@@ -233,6 +237,7 @@ export function createSandboxOnboardFlowPhase<
       requestedObservabilityEnabled: options.requestedObservabilityEnabled,
       requestedDcodeAutoApprovalMode: options.requestedDcodeAutoApprovalMode,
       rebuildPreservedEnv: options.rebuildPreservedEnv,
+      rebuildPolicyPresets: options.rebuildPolicyPresets,
       hostMounts: options.hostMounts,
       recreateSandbox: options.recreateSandbox,
       session: context.session,

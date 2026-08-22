@@ -4,19 +4,24 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
-import Ajv2020, { type AnySchema, type ValidateFunction } from "ajv/dist/2020.js";
+import Ajv2020, {
+  type AnySchema,
+  type ValidateFunction,
+} from "ajv/dist/2020.js";
 import { parseDocument } from "yaml";
 
 import { compileLlamaCppGgufCachePlan } from "../llama-cpp/gguf-cache-plan";
 import type {
   CompiledServingCatalog,
   CompiledServingCatalogPayload,
+  HostLocalInferenceServingRecipe,
   LlamaCppServingRecipe,
   ServingCatalogRegistries,
   ServingCatalogSchemas,
   ServingCatalogSource,
   ServingCatalogSourceProvenance,
   ServingDefinitionKind,
+  ServingModelDefinition,
   ServingPreset,
   ServingReadinessComparison,
   ServingReadinessObservationRole,
@@ -27,18 +32,22 @@ import type {
 } from "./types";
 
 const API_VERSION = "nemoclaw.nvidia.com/managed-inference/v1" as const;
-const CATALOG_SCHEMA_VERSION = "1.0.0" as const;
-const COMPILER_VERSION = "1.2.0" as const;
+const CATALOG_SCHEMA_VERSION = "1.1.0" as const;
+const COMPILER_VERSION = "1.4.0" as const;
 const READINESS_SCHEMA_REF =
   "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json" as const;
 const RECIPE_SCHEMA_ID =
   "https://github.com/NVIDIA/NemoClaw/managed-inference/schemas/recipe.schema.json";
+const MODEL_SCHEMA_ID =
+  "https://github.com/NVIDIA/NemoClaw/managed-inference/schemas/model.schema.json";
 const PRESET_SCHEMA_ID =
   "https://github.com/NVIDIA/NemoClaw/managed-inference/schemas/preset.schema.json";
-const CATALOG_SOURCE_PATTERN = /^managed-inference\/(recipes|presets)\/.+\.ya?ml$/;
+const CATALOG_SOURCE_PATTERN =
+  /^managed-inference\/(models|recipes|presets)\/.+\.ya?ml$/;
 
 interface CatalogValidators {
   catalog: ValidateFunction;
+  model: ValidateFunction;
   preset: ValidateFunction;
   recipe: ValidateFunction;
 }
@@ -55,6 +64,35 @@ export class ServingCatalogValidationError extends Error {
     super(message);
     this.name = "ServingCatalogValidationError";
   }
+}
+
+export type ServingCatalogSchemaCompatibility =
+  | {
+      readonly compatible: true;
+      readonly version: typeof CATALOG_SCHEMA_VERSION;
+    }
+  | { readonly compatible: false; readonly reason: string };
+
+/** Compiled catalogs are build artifacts. Rebuild any version other than the reader's exact contract. */
+export function checkServingCatalogSchemaVersion(
+  schemaVersion: unknown,
+): ServingCatalogSchemaCompatibility {
+  if (
+    typeof schemaVersion !== "string" ||
+    !/^\d+\.\d+\.\d+$/u.test(schemaVersion)
+  ) {
+    return {
+      compatible: false,
+      reason: "serving catalog schemaVersion must use major.minor.patch",
+    };
+  }
+  if (schemaVersion !== CATALOG_SCHEMA_VERSION) {
+    return {
+      compatible: false,
+      reason: `serving catalog schema ${schemaVersion} must be rebuilt as ${CATALOG_SCHEMA_VERSION}`,
+    };
+  }
+  return { compatible: true, version: CATALOG_SCHEMA_VERSION };
 }
 
 function compareCanonicalText(left: string, right: string): number {
@@ -83,19 +121,31 @@ export function servingCatalogDigest(value: unknown): string {
 
 function createValidators(schemas: ServingCatalogSchemas): CatalogValidators {
   const ajv = new Ajv2020({ allErrors: true, strict: true });
+  ajv.addSchema(schemas.model as AnySchema);
   ajv.addSchema(schemas.recipe as AnySchema);
   ajv.addSchema(schemas.preset as AnySchema);
+  const model = ajv.getSchema(MODEL_SCHEMA_ID);
   const recipe = ajv.getSchema(RECIPE_SCHEMA_ID);
   const preset = ajv.getSchema(PRESET_SCHEMA_ID);
-  if (!recipe || !preset) {
-    throw new ServingCatalogValidationError("Serving catalog schemas have invalid identifiers.");
+  if (!model || !recipe || !preset) {
+    throw new ServingCatalogValidationError(
+      "Serving catalog schemas have invalid identifiers.",
+    );
   }
-  return { recipe, preset, catalog: ajv.compile(schemas.catalog as AnySchema) };
+  return {
+    model,
+    recipe,
+    preset,
+    catalog: ajv.compile(schemas.catalog as AnySchema),
+  };
 }
 
 function validationDetails(validate: ValidateFunction): string {
   return (validate.errors ?? [])
-    .map((error) => `${error.instancePath || "/"} ${error.message ?? "is invalid"}`)
+    .map(
+      (error) =>
+        `${error.instancePath || "/"} ${error.message ?? "is invalid"}`,
+    )
     .join("; ");
 }
 
@@ -103,10 +153,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function parseTrustedYaml(source: ServingCatalogSource): Record<string, unknown> {
+function parseTrustedYaml(
+  source: ServingCatalogSource,
+): Record<string, unknown> {
   let document;
   try {
-    document = parseDocument(source.contents, { strict: true, uniqueKeys: true });
+    document = parseDocument(source.contents, {
+      strict: true,
+      uniqueKeys: true,
+    });
   } catch (error) {
     throw new ServingCatalogValidationError(
       `${source.path} is not valid YAML: ${error instanceof Error ? error.message : String(error)}`,
@@ -126,7 +181,9 @@ function parseTrustedYaml(source: ServingCatalogSource): Record<string, unknown>
     );
   }
   if (!isRecord(value)) {
-    throw new ServingCatalogValidationError(`${source.path} must contain one YAML mapping.`);
+    throw new ServingCatalogValidationError(
+      `${source.path} must contain one YAML mapping.`,
+    );
   }
   return value;
 }
@@ -138,22 +195,43 @@ function definitionIdentity(
   const kind = value.kind;
   const metadata = value.metadata;
   const id = isRecord(metadata) ? metadata.id : undefined;
-  if ((kind !== "ServingRecipe" && kind !== "ServingPreset") || typeof id !== "string") {
+  if (
+    (kind !== "ServingModel" &&
+      kind !== "ServingRecipe" &&
+      kind !== "ServingPreset") ||
+    typeof id !== "string"
+  ) {
     throw new ServingCatalogValidationError(
-      `${source.path} must declare a ServingRecipe or ServingPreset with metadata.id.`,
+      `${source.path} must declare a ServingModel, ServingRecipe, or ServingPreset with metadata.id.`,
     );
   }
   return { kind, id };
 }
 
-function isLlamaCppServingRecipe(recipe: ServingRecipe): recipe is LlamaCppServingRecipe {
+function isLlamaCppServingRecipe(
+  recipe: ServingRecipe,
+): recipe is LlamaCppServingRecipe {
   return recipe.spec.providerId === "llama-cpp-local";
+}
+
+function isHostLocalVllmRecipe(
+  recipe: ServingRecipe,
+): recipe is HostLocalInferenceServingRecipe {
+  return (
+    recipe.spec.backend === "vllm" &&
+    recipe.spec.execution.materializerRef === "vllm.host-local/v1" &&
+    recipe.spec.execution.lifecycleRef === "vllm.host-local.lifecycle/v1"
+  );
 }
 
 function isReadinessRegistryEntry(
   registered: ServingReadinessRegistryValue,
 ): registered is ServingReadinessRegistryEntry {
-  return typeof registered === "object" && registered !== null && "kind" in registered;
+  return (
+    typeof registered === "object" &&
+    registered !== null &&
+    "kind" in registered
+  );
 }
 
 function readinessKindMatches(
@@ -175,7 +253,8 @@ function readinessDescriptor(
   registered: ServingReadinessRegistryValue | undefined,
   kind: ServingReadinessRequirement["readiness"]["kind"],
 ): ServingReadinessRegistryEntry | undefined {
-  if (registered === undefined || !readinessKindMatches(registered, kind)) return undefined;
+  if (registered === undefined || !readinessKindMatches(registered, kind))
+    return undefined;
   return isReadinessRegistryEntry(registered) ? registered : { kind };
 }
 
@@ -199,9 +278,34 @@ function validateRecipeSemantics(
       `Recipe ${recipe.metadata.id} references unknown lifecycle adapter ${lifecycleRef}.`,
     );
   }
+  const orchestrationRef = recipe.spec.execution.orchestrationRef;
+  if (orchestrationRef && !registries.orchestrations?.has(orchestrationRef)) {
+    throw new ServingCatalogValidationError(
+      `Recipe ${recipe.metadata.id} references unknown orchestration ${orchestrationRef}.`,
+    );
+  }
+  const stationPair = recipe.spec.execution.stationPair;
+  if (
+    (orchestrationRef === "vllm.station-pair-optional/v1") !==
+    (stationPair !== undefined)
+  ) {
+    throw new ServingCatalogValidationError(
+      `Recipe ${recipe.metadata.id} must declare Station-pair configuration exactly when it selects the Station-pair orchestration.`,
+    );
+  }
+
+  const probePolicyRef = recipe.spec.model.probePolicyRef;
+  if (probePolicyRef && !registries.probePolicies?.has(probePolicyRef)) {
+    throw new ServingCatalogValidationError(
+      `Recipe ${recipe.metadata.id} references unknown probe policy ${probePolicyRef}.`,
+    );
+  }
 
   const readinessContractRef = recipe.spec.readiness?.contractRef;
-  if (readinessContractRef && !registries.readinessContracts.has(readinessContractRef)) {
+  if (
+    readinessContractRef &&
+    !registries.readinessContracts.has(readinessContractRef)
+  ) {
     throw new ServingCatalogValidationError(
       `Recipe ${recipe.metadata.id} references unknown readiness contract ${readinessContractRef}.`,
     );
@@ -263,7 +367,12 @@ function validateRecipeSemantics(
         );
       }
       agents.add(agent.id);
-      if (!readinessDescriptor(registries.readiness.get(agent.qualificationRef), "qualification")) {
+      if (
+        !readinessDescriptor(
+          registries.readiness.get(agent.qualificationRef),
+          "qualification",
+        )
+      ) {
         throw new ServingCatalogValidationError(
           `Recipe ${recipe.metadata.id} references unknown agent qualification ${agent.qualificationRef} for ${agent.id}.`,
         );
@@ -278,7 +387,9 @@ function validateRecipeSemantics(
     registrationError = "does not satisfy its registered adapter contract";
   }
   if (registrationError) {
-    throw new ServingCatalogValidationError(`Recipe ${recipe.metadata.id}: ${registrationError}.`);
+    throw new ServingCatalogValidationError(
+      `Recipe ${recipe.metadata.id}: ${registrationError}.`,
+    );
   }
 }
 
@@ -287,14 +398,19 @@ function comparisonValueType(
 ): "boolean" | "number" | "string" | "version" | "mixed" {
   if (comparison.operator === "at-least") return "number";
   if (comparison.operator === "version-at-least") return "version";
-  const values = comparison.operator === "one-of" ? comparison.values : [comparison.value];
+  const values =
+    comparison.operator === "one-of" ? comparison.values : [comparison.value];
   const types = new Set(values.map((value) => typeof value));
   if (types.size !== 1) return "mixed";
   const [type] = types;
-  return type === "boolean" || type === "number" || type === "string" ? type : "mixed";
+  return type === "boolean" || type === "number" || type === "string"
+    ? type
+    : "mixed";
 }
 
-function readinessRequirementKey(requirement: ServingReadinessRequirement): string {
+function readinessRequirementKey(
+  requirement: ServingReadinessRequirement,
+): string {
   const readiness = requirement.readiness;
   return `${readiness.scope}:${readiness.kind}:${readiness.id}`;
 }
@@ -303,12 +419,21 @@ function validatePresetRequirements(
   preset: ServingPreset,
   registries: ServingCatalogRegistries,
 ): void {
+  if (
+    preset.metadata.supportState === "supported" &&
+    preset.metadata.validation?.level !== "hardware"
+  ) {
+    throw new ServingCatalogValidationError(
+      `Preset ${preset.metadata.id} cannot be supported without hardware validation evidence.`,
+    );
+  }
   const requirements = new Set<string>();
   const requirementsByEntity = new Map<string, string>();
   for (const requirement of preset.spec.requirements?.all ?? []) {
     const requirementKey = canonicalServingCatalogJson(requirement);
     if (requirements.has(requirementKey)) {
-      const requirementLabel = "readiness" in requirement ? "readiness requirement" : "requirement";
+      const requirementLabel =
+        "readiness" in requirement ? "readiness requirement" : "requirement";
       throw new ServingCatalogValidationError(
         `Preset ${preset.metadata.id} repeats ${requirementLabel} ${requirementKey}.`,
       );
@@ -358,7 +483,10 @@ function validatePresetRequirements(
       continue;
     }
     const key = `${requirement.topologyQualification.id}@${String(requirement.topologyQualification.schemaVersion)}`;
-    if (registries.topologyQualifications && !registries.topologyQualifications.has(key)) {
+    if (
+      registries.topologyQualifications &&
+      !registries.topologyQualifications.has(key)
+    ) {
       throw new ServingCatalogValidationError(
         `Preset ${preset.metadata.id} references unknown topology qualification ${key}.`,
       );
@@ -366,12 +494,18 @@ function validatePresetRequirements(
   }
 }
 
-function canonicalReadinessComparison(comparison: ServingReadinessComparison): string {
-  if (comparison.operator !== "one-of") return canonicalServingCatalogJson(comparison);
+function canonicalReadinessComparison(
+  comparison: ServingReadinessComparison,
+): string {
+  if (comparison.operator !== "one-of")
+    return canonicalServingCatalogJson(comparison);
   return canonicalServingCatalogJson({
     ...comparison,
     values: [...comparison.values].sort((left, right) =>
-      compareCanonicalText(canonicalServingCatalogJson(left), canonicalServingCatalogJson(right)),
+      compareCanonicalText(
+        canonicalServingCatalogJson(left),
+        canonicalServingCatalogJson(right),
+      ),
     ),
   });
 }
@@ -383,7 +517,10 @@ function llamaCppReadinessComparisonMatches(
   expected: ServingReadinessComparison,
 ): boolean {
   if (role !== "architecture" || actual.operator !== "equals") {
-    return canonicalReadinessComparison(actual) === canonicalReadinessComparison(expected);
+    return (
+      canonicalReadinessComparison(actual) ===
+      canonicalReadinessComparison(expected)
+    );
   }
   const architecture = actual.value === "x64" ? "amd64" : actual.value;
   return (
@@ -399,20 +536,34 @@ function validateLlamaCppPreset(
   preset: ServingPreset,
   registries: ServingCatalogRegistries,
 ): void {
-  const expectedComparisons = new Map<ServingReadinessObservationRole, ServingReadinessComparison>([
+  const expectedComparisons = new Map<
+    ServingReadinessObservationRole,
+    ServingReadinessComparison
+  >([
     ["operating-system", { operator: "equals", value: "linux" }],
     [
       "architecture",
       {
         operator: "one-of",
-        values: recipe.spec.runtime.platforms.map((platform) => platform.slice("linux/".length)),
+        values: recipe.spec.runtime.platforms.map((platform) =>
+          platform.slice("linux/".length),
+        ),
       },
     ],
-    ["container-runtime", { operator: "equals", value: recipe.spec.runtime.containerRuntime }],
-    ["gpu-count", { operator: "at-least", value: recipe.spec.runtime.gpu.count }],
+    [
+      "container-runtime",
+      { operator: "equals", value: recipe.spec.runtime.containerRuntime },
+    ],
+    [
+      "gpu-count",
+      { operator: "at-least", value: recipe.spec.runtime.gpu.count },
+    ],
     [
       "driver-version",
-      { operator: "version-at-least", value: recipe.spec.runtime.cuda.minimumDriverVersion },
+      {
+        operator: "version-at-least",
+        value: recipe.spec.runtime.cuda.minimumDriverVersion,
+      },
     ],
   ]);
   const seenRoles = new Set<ServingReadinessObservationRole>();
@@ -421,12 +572,17 @@ function validateLlamaCppPreset(
   for (const requirement of preset.spec.requirements?.all ?? []) {
     if (!("readiness" in requirement)) continue;
     const { readiness } = requirement;
-    if (readiness.kind === "qualification" && readiness.status === "qualified") {
+    if (
+      readiness.kind === "qualification" &&
+      readiness.status === "qualified"
+    ) {
       qualified.add(readiness.id);
     }
     const registered = registries.readiness.get(readiness.id);
-    if (registered === undefined || !isReadinessRegistryEntry(registered)) continue;
-    if (registered.kind !== "observation" || registered.role === undefined) continue;
+    if (registered === undefined || !isReadinessRegistryEntry(registered))
+      continue;
+    if (registered.kind !== "observation" || registered.role === undefined)
+      continue;
     const expected = expectedComparisons.get(registered.role);
     if (!expected) continue;
     if (seenRoles.has(registered.role)) {
@@ -437,7 +593,12 @@ function validateLlamaCppPreset(
     seenRoles.add(registered.role);
     if (
       !("comparison" in readiness) ||
-      !llamaCppReadinessComparisonMatches(recipe, registered.role, readiness.comparison, expected)
+      !llamaCppReadinessComparisonMatches(
+        recipe,
+        registered.role,
+        readiness.comparison,
+        expected,
+      )
     ) {
       throw new ServingCatalogValidationError(
         `Preset ${preset.metadata.id} must require ${registered.role} matching llama.cpp recipe ${recipe.metadata.id}.`,
@@ -502,7 +663,9 @@ function validateCatalogSemantics(
   presets: readonly ServingPreset[],
   registries: ServingCatalogRegistries,
 ): void {
-  const recipesById = new Map(recipes.map((recipe) => [recipe.metadata.id, recipe]));
+  const recipesById = new Map(
+    recipes.map((recipe) => [recipe.metadata.id, recipe]),
+  );
   for (const preset of presets) {
     const recipe = recipesById.get(preset.spec.plan.recipeRef);
     if (!recipe) {
@@ -515,6 +678,20 @@ function validateCatalogSemantics(
         `Preset ${preset.metadata.id} selects backend ${preset.spec.plan.backend}, but recipe ${recipe.metadata.id} uses ${recipe.spec.backend}.`,
       );
     }
+    const installPolicyRef = preset.spec.plan.installPolicyRef;
+    if (
+      installPolicyRef &&
+      !registries.installPolicies?.has(installPolicyRef)
+    ) {
+      throw new ServingCatalogValidationError(
+        `Preset ${preset.metadata.id} references unknown install policy ${installPolicyRef}.`,
+      );
+    }
+    if (installPolicyRef && !isHostLocalVllmRecipe(recipe)) {
+      throw new ServingCatalogValidationError(
+        `Preset ${preset.metadata.id} can only select an install policy for a host-local vLLM recipe.`,
+      );
+    }
     if (isLlamaCppServingRecipe(recipe)) {
       if ((preset.spec.requirements?.all.length ?? 0) === 0) {
         throw new ServingCatalogValidationError(
@@ -522,6 +699,20 @@ function validateCatalogSemantics(
         );
       }
       validateLlamaCppPreset(recipe, preset, registries);
+    }
+    if (isHostLocalVllmRecipe(recipe)) {
+      const platform = preset.spec.plan.platform;
+      if (!platform) {
+        throw new ServingCatalogValidationError(
+          `Preset ${preset.metadata.id} must declare its vLLM platform.`,
+        );
+      }
+      const architecture = recipe.spec.runtime?.architecture;
+      if (platform !== "linux" && architecture !== "arm64") {
+        throw new ServingCatalogValidationError(
+          `Preset ${preset.metadata.id} requires an arm64 recipe for ${platform}.`,
+        );
+      }
     }
     validateBindings(preset, recipe, registries);
     const nodeCount = (preset.spec.requirements?.all ?? []).find(
@@ -531,7 +722,11 @@ function validateCatalogSemantics(
         requirement.operator === "equals" &&
         typeof requirement.value === "number",
     );
-    if (nodeCount && "fact" in nodeCount && recipe.spec.execution.nodeCount !== nodeCount.value) {
+    if (
+      nodeCount &&
+      "fact" in nodeCount &&
+      recipe.spec.execution.nodeCount !== nodeCount.value
+    ) {
       throw new ServingCatalogValidationError(
         `Preset ${preset.metadata.id} node-count requirement does not match recipe ${recipe.metadata.id}.`,
       );
@@ -557,9 +752,39 @@ function validateCatalogSemantics(
     }
     automaticSelectors.set(key, preset.metadata.id);
   }
+
+  const modelVariants = new Map<string, string>();
+  for (const preset of presets) {
+    if (
+      preset.spec.selection === "disabled" ||
+      preset.spec.plan.backend !== "vllm"
+    )
+      continue;
+    const recipe = recipesById.get(preset.spec.plan.recipeRef);
+    if (!recipe || !isHostLocalVllmRecipe(recipe)) continue;
+    const environmentValue = recipe.spec.model.environmentValue;
+    const platform = preset.spec.plan.platform;
+    const architecture = recipe.spec.runtime?.architecture;
+    if (!environmentValue || !platform || !architecture) continue;
+    const key = canonicalServingCatalogJson({
+      environmentValue,
+      platform,
+      architecture,
+      priority: preset.spec.priority,
+    });
+    const previous = modelVariants.get(key);
+    if (previous) {
+      throw new ServingCatalogValidationError(
+        `vLLM presets ${previous} and ${preset.metadata.id} define the same model and hardware priority.`,
+      );
+    }
+    modelVariants.set(key, preset.metadata.id);
+  }
 }
 
-function catalogPayload(catalog: CompiledServingCatalog): CompiledServingCatalogPayload {
+function catalogPayload(
+  catalog: CompiledServingCatalog,
+): CompiledServingCatalogPayload {
   const { catalogDigest: _catalogDigest, ...payload } = catalog;
   return payload;
 }
@@ -568,7 +793,10 @@ export function compileTrustedServingCatalog(
   options: CompileServingCatalogOptions,
 ): CompiledServingCatalog {
   const validators = createValidators(options.schemas);
+  const models: ServingModelDefinition[] = [];
+  const recipeValues: Record<string, unknown>[] = [];
   const recipes: ServingRecipe[] = [];
+  const presetValues: Record<string, unknown>[] = [];
   const presets: ServingPreset[] = [];
   const sources: ServingCatalogSourceProvenance[] = [];
   const definitionIds = new Set<string>();
@@ -583,47 +811,137 @@ export function compileTrustedServingCatalog(
       .some((segment) => segment === "" || segment === "." || segment === "..");
     if (!sourceMatch || hasUnsafeSegment) {
       throw new ServingCatalogValidationError(
-        `Catalog source ${source.path} is outside managed-inference/recipes or managed-inference/presets.`,
+        `Catalog source ${source.path} is outside managed-inference/models, managed-inference/recipes, or managed-inference/presets.`,
       );
     }
     if (sourcePaths.has(source.path)) {
-      throw new ServingCatalogValidationError(`Catalog source path ${source.path} is duplicated.`);
+      throw new ServingCatalogValidationError(
+        `Catalog source path ${source.path} is duplicated.`,
+      );
     }
     sourcePaths.add(source.path);
 
     const value = parseTrustedYaml(source);
     const { kind, id } = definitionIdentity(source, value);
-    const expectedDirectory = kind === "ServingRecipe" ? "recipes" : "presets";
+    const expectedDirectory =
+      kind === "ServingModel"
+        ? "models"
+        : kind === "ServingRecipe"
+          ? "recipes"
+          : "presets";
     if (sourceMatch[1] !== expectedDirectory) {
       throw new ServingCatalogValidationError(
         `${source.path} must place ${kind} definitions under managed-inference/${expectedDirectory}.`,
       );
     }
-    const validate = kind === "ServingRecipe" ? validators.recipe : validators.preset;
+    const validate =
+      kind === "ServingModel"
+        ? validators.model
+        : kind === "ServingRecipe"
+          ? validators.recipe
+          : validators.preset;
     if (!validate(value)) {
       throw new ServingCatalogValidationError(
         `${source.path} does not satisfy the ${kind} schema: ${validationDetails(validate)}`,
       );
     }
     if (definitionIds.has(id)) {
-      throw new ServingCatalogValidationError(`Serving definition ID ${id} is duplicated.`);
+      throw new ServingCatalogValidationError(
+        `Serving definition ID ${id} is duplicated.`,
+      );
     }
     definitionIds.add(id);
 
-    if (kind === "ServingRecipe") {
-      const recipe = value as unknown as ServingRecipe;
-      validateRecipeSemantics(recipe, options.registries);
-      recipes.push(recipe);
-    } else {
-      const preset = value as unknown as ServingPreset;
-      validatePresetRequirements(preset, options.registries);
-      presets.push(preset);
-    }
-    sources.push({ path: source.path, kind, id, digest: servingCatalogDigest(value) });
+    if (kind === "ServingModel")
+      models.push(value as unknown as ServingModelDefinition);
+    else if (kind === "ServingRecipe") recipeValues.push(value);
+    else presetValues.push(value);
+    sources.push({
+      path: source.path,
+      kind,
+      id,
+      digest: servingCatalogDigest(value),
+    });
   }
 
-  recipes.sort((left, right) => compareCanonicalText(left.metadata.id, right.metadata.id));
-  presets.sort((left, right) => compareCanonicalText(left.metadata.id, right.metadata.id));
+  const modelsById = new Map(models.map((model) => [model.metadata.id, model]));
+  const modelAliases = new Map<string, string>();
+  for (const model of models) {
+    for (const [field, value] of [
+      ["id", model.spec.id],
+      ["environmentValue", model.spec.environmentValue],
+      ["servedName", model.spec.servedName],
+    ] as const) {
+      const key = value.toLowerCase();
+      const previous = modelAliases.get(key);
+      if (previous && previous !== model.metadata.id) {
+        throw new ServingCatalogValidationError(
+          `Serving models ${previous} and ${model.metadata.id} share selection alias ${value} (${field}).`,
+        );
+      }
+      modelAliases.set(key, model.metadata.id);
+    }
+  }
+  const referencedModels = new Set<string>();
+  for (const value of recipeValues) {
+    const spec = value.spec;
+    if (!isRecord(spec)) {
+      throw new ServingCatalogValidationError(
+        "Serving recipe spec must be an object.",
+      );
+    }
+    const modelRef = spec.modelRef;
+    let resolved = value;
+    if (typeof modelRef === "string") {
+      const model = modelsById.get(modelRef);
+      if (!model) {
+        throw new ServingCatalogValidationError(
+          `Recipe ${String((value.metadata as { id?: unknown } | undefined)?.id ?? "(unknown)")} references unknown model ${modelRef}.`,
+        );
+      }
+      referencedModels.add(modelRef);
+      if (
+        spec.model &&
+        canonicalServingCatalogJson(spec.model) !==
+          canonicalServingCatalogJson(model.spec)
+      ) {
+        throw new ServingCatalogValidationError(
+          `Recipe ${String((value.metadata as { id?: unknown } | undefined)?.id ?? "(unknown)")} model does not match ${modelRef}.`,
+        );
+      }
+      resolved = { ...value, spec: { ...spec, model: model.spec } };
+      if (!validators.recipe(resolved)) {
+        throw new ServingCatalogValidationError(
+          `Expanded recipe ${String((value.metadata as { id?: unknown } | undefined)?.id ?? "(unknown)")} is invalid: ${validationDetails(validators.recipe)}`,
+        );
+      }
+    }
+    const recipe = resolved as unknown as ServingRecipe;
+    validateRecipeSemantics(recipe, options.registries);
+    recipes.push(recipe);
+  }
+  for (const value of presetValues) {
+    const preset = value as unknown as ServingPreset;
+    validatePresetRequirements(preset, options.registries);
+    presets.push(preset);
+  }
+  for (const model of models) {
+    if (!referencedModels.has(model.metadata.id)) {
+      throw new ServingCatalogValidationError(
+        `Serving model ${model.metadata.id} is not referenced by a recipe.`,
+      );
+    }
+  }
+
+  models.sort((left, right) =>
+    compareCanonicalText(left.metadata.id, right.metadata.id),
+  );
+  recipes.sort((left, right) =>
+    compareCanonicalText(left.metadata.id, right.metadata.id),
+  );
+  presets.sort((left, right) =>
+    compareCanonicalText(left.metadata.id, right.metadata.id),
+  );
   validateCatalogSemantics(recipes, presets, options.registries);
 
   const payload: CompiledServingCatalogPayload = {
@@ -631,6 +949,7 @@ export function compileTrustedServingCatalog(
     compilerVersion: COMPILER_VERSION,
     sourceRevision: options.sourceRevision,
     readinessSchemaRef: READINESS_SCHEMA_REF,
+    models,
     recipes,
     presets,
     sources,
@@ -659,6 +978,12 @@ export function parseCompiledServingCatalogJson(
       `Compiled serving catalog is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+  const compatibility = checkServingCatalogSchemaVersion(
+    isRecord(value) ? value.schemaVersion : undefined,
+  );
+  if (!compatibility.compatible) {
+    throw new ServingCatalogValidationError(compatibility.reason);
+  }
   const validators = createValidators(schemas);
   if (!validators.catalog(value)) {
     throw new ServingCatalogValidationError(
@@ -675,7 +1000,9 @@ export function parseCompiledServingCatalogJson(
   return catalog;
 }
 
-export function serializeCompiledServingCatalog(catalog: CompiledServingCatalog): string {
+export function serializeCompiledServingCatalog(
+  catalog: CompiledServingCatalog,
+): string {
   return `${canonicalServingCatalogJson(catalog)}\n`;
 }
 

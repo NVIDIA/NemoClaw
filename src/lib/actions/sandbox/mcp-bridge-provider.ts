@@ -9,13 +9,17 @@ export type {
 export {
   assertMcpProviderRecoverable,
   assertNoAttachedProviderCredentialCollisions,
+  assertNoProviderCredentialCollisions,
+  assertNoRegisteredProviderCredentialCollisions,
   inspectMcpProvider,
   inspectMcpProviderAttachments,
+  MCP_BRIDGE_PROVIDER_TYPE,
   parseMcpProviderAttachmentNames,
   parseMcpProviderMetadata,
   preflightMcpEntryTargets,
   providerAttached,
   providerMatchesCredential,
+  providerMatchesManagedCredential,
   providerShapeDetail,
 } from "./mcp-bridge-provider-inspection";
 export type { ProviderDetachOutcome } from "./mcp-bridge-provider-mutation";
@@ -25,6 +29,8 @@ export {
   deleteProvider,
   detachMissingProviderReference,
   detachProvider,
+  ensureMcpBridgeProviderProfile,
+  refreshMcpProviderEnvironment,
   providerDetachChangedState,
   upsertMcpProvider,
 } from "./mcp-bridge-provider-mutation";

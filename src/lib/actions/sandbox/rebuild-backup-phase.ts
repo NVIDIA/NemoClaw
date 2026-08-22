@@ -47,6 +47,18 @@ export interface RebuildBackupPhaseResult {
   sessionPolicyPresets: string[] | null;
 }
 
+export function excludePolicyPresetsByName(
+  presets: readonly string[],
+  excludedNames: readonly (string | undefined)[],
+): string[] {
+  const excluded = new Set(
+    excludedNames.filter(
+      (name): name is string => typeof name === "string" && name.length > 0,
+    ),
+  );
+  return presets.filter((name) => !excluded.has(name));
+}
+
 function bailForUnsafeOpenClawPluginProvenance(input: RebuildBackupPhaseInput): never {
   console.error(
     "  Custom-image OpenClaw plugin provenance is missing or invalid; rebuild cannot safely distinguish image-owned plugins from user state.",
