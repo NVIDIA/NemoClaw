@@ -113,6 +113,30 @@ describe("PR review advisor OpenShell workflow boundary", () => {
     );
   });
 
+  it.each([
+    [
+      "missing",
+      (workflow: Record<string, any>) => {
+        delete workflow.jobs["review-synthesis-shadow"].strategy.matrix.advisor;
+      },
+    ],
+    [
+      "non-array",
+      (workflow: Record<string, any>) => {
+        workflow.jobs["review-synthesis-shadow"].strategy.matrix.advisor = {};
+      },
+    ],
+    [
+      "empty",
+      (workflow: Record<string, any>) => {
+        workflow.jobs["review-synthesis-shadow"].strategy.matrix.advisor = [];
+      },
+    ],
+  ])("rejects a %s synthesis advisor matrix (#9968)", (_case, mutate) => {
+    const errors = validateMutation((source) => mutateWorkflowSource(source, mutate));
+    expect(errors).toContain("synthesis matrix must declare a non-empty advisor array");
+  });
+
   it("requires specialist success to include the native session upload (#9968)", () => {
     const errors = validateMutation((source) =>
       mutateWorkflowSource(source, (workflow) => {

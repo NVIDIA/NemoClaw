@@ -451,7 +451,11 @@ function checkSandboxNames(
   const sandboxNames: string[] = [];
   for (const { name, job } of jobs) {
     const advisor = asRecord(asRecord(job.strategy).matrix).advisor;
-    const entries = Array.isArray(advisor) ? advisor.map(asRecord) : [];
+    if (!Array.isArray(advisor) || advisor.length === 0) {
+      errors.push(`${name} matrix must declare a non-empty advisor array`);
+      continue;
+    }
+    const entries = advisor.map(asRecord);
     for (const [index, entry] of entries.entries()) {
       const sandboxName = stringValue(entry.sandbox_name);
       sandboxNames.push(sandboxName);
