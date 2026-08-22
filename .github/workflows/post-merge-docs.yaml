@@ -32,7 +32,7 @@ jobs:
           owner="$(
             gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&base=main&per_page=100" |
               jq --slurp -r '
-                [.[][] | select((.head.ref | startswith("automation/post-merge-docs-")) and .head.repo.full_name == "NVIDIA/NemoClaw")] |
+                [.[][] | select((.head.ref | test("^automation/post-merge-docs-[0-9a-f]{12}$")) and .head.repo.full_name == "NVIDIA/NemoClaw")] |
                 if length > 1 then "invalid"
                 elif length == 0 or .[0].draft == true then "automation"
                 elif .[0].draft == false then "maintainer"
@@ -109,9 +109,12 @@ jobs:
       - name: Validate the documentation candidate
         working-directory: author/repo
         run: |
+          before_status="$(git status --porcelain=v1 --untracked-files=all)"
+          before_diff="$(git diff --no-ext-diff --binary HEAD | sha256sum)"
           npm ci --ignore-scripts --no-audit --no-fund
           npm run docs
-          git diff --exit-code
+          [[ "$(git status --porcelain=v1 --untracked-files=all)" == "$before_status" ]]
+          [[ "$(git diff --no-ext-diff --binary HEAD | sha256sum)" == "$before_diff" ]]
 
       - id: review
         name: Independently review the candidate

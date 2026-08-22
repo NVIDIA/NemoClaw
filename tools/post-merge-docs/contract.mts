@@ -50,6 +50,7 @@ export function validatePostMergeDocsWorkflowBoundary(value: unknown): string[] 
     isDeepStrictEqual(gate.outputs, { automate: "${{ steps.scan.outputs.automate }}" }) &&
     scanSteps.length === 1 &&
     typeof scan.run === "string" &&
+    scan.run.includes('test("^automation/post-merge-docs-[0-9a-f]{12}$")') &&
     scan.run.includes('elif length == 0 or .[0].draft == true then "automation"') &&
     scan.run.includes('elif .[0].draft == false then "maintainer"') &&
     scan.run.includes('echo "automate=false" >> "$GITHUB_OUTPUT"') &&
@@ -70,12 +71,18 @@ export function validatePostMergeDocsWorkflowBoundary(value: unknown): string[] 
     validationSteps.length === 1 &&
     validation["working-directory"] === "author/repo" &&
     validation.run ===
-      "npm ci --ignore-scripts --no-audit --no-fund\nnpm run docs\ngit diff --exit-code\n" &&
+      'before_status="$(git status --porcelain=v1 --untracked-files=all)"\n' +
+        'before_diff="$(git diff --no-ext-diff --binary HEAD | sha256sum)"\n' +
+        "npm ci --ignore-scripts --no-audit --no-fund\n" +
+        "npm run docs\n" +
+        '[[ "$(git status --porcelain=v1 --untracked-files=all)" == "$before_status" ]]\n' +
+        '[[ "$(git diff --no-ext-diff --binary HEAD | sha256sum)" == "$before_diff" ]]\n' &&
     reviewSteps.length === 1 &&
     rejectionSteps.length === 1 &&
     rejection.if === "${{ failure() && steps.review.outcome == 'failure' }}" &&
     object(rejection.with)?.path === "${{ github.workspace }}/approved/review-report.txt" &&
     object(rejection.with)?.["if-no-files-found"] === "ignore" &&
+    object(rejection.with)?.["retention-days"] === 3 &&
     !strings(publish).some((text) => /(?:POST_MERGE_DOCS|OPENAI)_API_KEY/u.test(text));
   return valid ? [] : ["workflow must separate the model credential from repository writes"];
 }

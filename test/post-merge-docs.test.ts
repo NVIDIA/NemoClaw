@@ -781,6 +781,15 @@ describe("post-merge documentation workflow boundary", () => {
     (candidate) =>
       (candidate.jobs.gate.steps.find((step: Record<string, any>) => step.id === "scan").run =
         "echo automate=true"),
+    (candidate) => {
+      const scan = candidate.jobs.gate.steps.find(
+        (step: Record<string, any>) => step.id === "scan",
+      );
+      scan.run = scan.run.replace(
+        'test("^automation/post-merge-docs-[0-9a-f]{12}$")',
+        'startswith("automation/post-merge-docs-")',
+      );
+    },
     (candidate) =>
       (candidate.jobs.author.if =
         "${{ github.repository == 'NVIDIA/NemoClaw' && needs.gate.outputs.pending != 'true' }}"),
@@ -792,6 +801,10 @@ describe("post-merge documentation workflow boundary", () => {
       (candidate.jobs.author.steps.find(
         (step: Record<string, any>) => step.name === "Upload the independent review report",
       ).with.path = "${{ github.workspace }}/candidate/docs.patch"),
+    (candidate) =>
+      (candidate.jobs.author.steps.find(
+        (step: Record<string, any>) => step.name === "Upload the independent review report",
+      ).with["retention-days"] = 30),
     (candidate) => (candidate.jobs.publish.permissions.issues = "write"),
     (candidate) => (candidate.jobs.gate.secrets = "inherit"),
     (candidate) =>
