@@ -48,7 +48,7 @@ describe("collectGatewayWedgeDiagnostics wedge signature (#4710)", () => {
       stderr: "",
     }));
     expect(lines[0]).toBe("gateway startup failed: Authorization: Bearer [REDACTED] rejected");
-    expect(lines[1]).toBe('gateway startup failed: api_key="[REDACTED]" invalid');
+    expect(lines[1]).toBe('gateway startup failed: api_key="<REDACTED>" invalid');
     // Terminal escape sequences are stripped so sandbox output cannot forge
     // operator-terminal content.
     expect(lines[2]).toBe("gateway startup failed: [31mboom[0m Process will stay alive");
@@ -63,13 +63,14 @@ describe("collectGatewayWedgeDiagnostics wedge signature (#4710)", () => {
 });
 
 describe("sanitizeWedgeLogLine", () => {
-  it("redacts nvapi keys and token assignments", () => {
-    expect(sanitizeWedgeLogLine("auth with nvapi-AbC123xyz failed")).toBe(
-      "auth with [REDACTED] failed",
-    );
-    expect(sanitizeWedgeLogLine("retry token=sk-live-456 now")).toBe("retry token=[REDACTED] now");
+  it("keeps the wedge-specific short nvapi fallback", () => {
+    expect(sanitizeWedgeLogLine("auth with nvapi-x failed")).toBe("auth with [REDACTED] failed");
+  });
+
+  it("uses the shared redactor for generic credential assignments", () => {
+    expect(sanitizeWedgeLogLine("retry token=sk-live-456 now")).toBe("retry token=<REDACTED> now");
     expect(sanitizeWedgeLogLine("PASSWORD: hunter2 rejected")).toBe(
-      "PASSWORD: [REDACTED] rejected",
+      "PASSWORD: <REDACTED> rejected",
     );
   });
 
@@ -89,17 +90,17 @@ describe("sanitizeWedgeLogLine", () => {
   });
 
   it.each([
-    ["double-quoted", 'api_key="opaque first second', 'api_key="[REDACTED]"'],
-    ["single-quoted", "token='opaque first second", "token='[REDACTED]'"],
+    ["double-quoted", 'api_key="opaque first second', 'api_key="<REDACTED>"'],
+    ["single-quoted", "token='opaque first second", "token='<REDACTED>'"],
     [
       "double-quoted with a dangling backslash",
       'api_key="opaque first second\\',
-      'api_key="[REDACTED]"',
+      'api_key="<REDACTED>"',
     ],
     [
       "single-quoted with a dangling backslash",
       "token='opaque first second\\",
-      "token='[REDACTED]'",
+      "token='<REDACTED>'",
     ],
   ])(
     "fails closed for an unterminated %s wedge-log secret assignment (#9863)",
