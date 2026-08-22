@@ -1570,65 +1570,94 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
       String(identity.deviceId),
       "pending pairing settlement list",
     );
-    if (process.platform !== "linux") {
-      proofPhase = "ordinary-stored-device-approval";
-      const ordinaryApproval = runCli(["devices", "approve", requestId, "--json"]);
-      requireSuccess(ordinaryApproval, "approve the ordinary stored-device scope upgrade");
-      const pendingAfterOrdinaryApproval = readJsonObject(
-        pendingPath,
-        "real pending state after ordinary approval",
-      );
-      proofPhase = "ordinary-stored-device-approval-post-state";
-      requireLiveProof(
-        !(requestId in pendingAfterOrdinaryApproval),
-        "ordinary stored-device approval left the request pending",
-      );
-      const pairedAfterOrdinaryApproval = readJsonObject(
-        pairedPath,
-        "real paired state after ordinary approval",
-      );
-      const pairedDeviceAfterOrdinaryApproval = asRecord(
-        pairedAfterOrdinaryApproval[String(identity.deviceId)],
-      );
-      requireLiveProof(
-        pairedDeviceAfterOrdinaryApproval,
-        "ordinary stored-device approval removed the paired device",
-      );
-      requireExactScopes(
-        pairedDeviceAfterOrdinaryApproval.scopes,
-        ["operator.pairing", "operator.write"],
-        "ordinary stored-device approval paired scopes",
-      );
-      const ordinaryPairedOperator = requireOperatorToken(
-        pairedDeviceAfterOrdinaryApproval,
-        "ordinary paired device",
-      );
-      const authAfterOrdinaryApproval = readJsonObject(
-        deviceAuthPath,
-        "real stored device auth after ordinary approval",
-      );
-      const ordinaryAuthOperator = requireOperatorToken(
-        authAfterOrdinaryApproval,
-        "ordinary stored device auth",
-      );
-      requireLiveProof(
-        authAfterOrdinaryApproval.deviceId === identity.deviceId &&
-          ordinaryAuthOperator.token === ordinaryPairedOperator.token &&
-          ordinaryAuthOperator.token !== storedTokenBefore,
-        "ordinary stored-device approval did not publish the rotated paired token",
-      );
-      requireExactScopes(
-        ordinaryPairedOperator.scopes,
-        ["operator.pairing", "operator.read", "operator.write"],
-        "ordinary paired operator scopes",
-      );
-      requireExactScopes(
-        ordinaryAuthOperator.scopes,
-        ["operator.pairing", "operator.read", "operator.write"],
-        "ordinary stored-device approval auth scopes",
-      );
-      return;
-    }
+    const pendingBeforeOrdinaryApproval = fs.readFileSync(pendingPath, "utf8");
+    const pairedBeforeOrdinaryApproval = fs.readFileSync(pairedPath, "utf8");
+    const authBeforeOrdinaryApproval = fs.readFileSync(deviceAuthPath, "utf8");
+    proofPhase = "ordinary-stored-device-approval";
+    const ordinaryApproval = runCli(["devices", "approve", requestId, "--json"]);
+    requireSuccess(ordinaryApproval, "approve the ordinary stored-device scope upgrade");
+    const pendingAfterOrdinaryApproval = readJsonObject(
+      pendingPath,
+      "real pending state after ordinary approval",
+    );
+    proofPhase = "ordinary-stored-device-approval-post-state";
+    requireLiveProof(
+      !(requestId in pendingAfterOrdinaryApproval),
+      "ordinary stored-device approval left the request pending",
+    );
+    const pairedAfterOrdinaryApproval = readJsonObject(
+      pairedPath,
+      "real paired state after ordinary approval",
+    );
+    const pairedDeviceAfterOrdinaryApproval = asRecord(
+      pairedAfterOrdinaryApproval[String(identity.deviceId)],
+    );
+    requireLiveProof(
+      pairedDeviceAfterOrdinaryApproval,
+      "ordinary stored-device approval removed the paired device",
+    );
+    requireExactScopes(
+      pairedDeviceAfterOrdinaryApproval.scopes,
+      ["operator.pairing", "operator.write"],
+      "ordinary stored-device approval paired scopes",
+    );
+    const ordinaryPairedOperator = requireOperatorToken(
+      pairedDeviceAfterOrdinaryApproval,
+      "ordinary paired device",
+    );
+    const authAfterOrdinaryApproval = readJsonObject(
+      deviceAuthPath,
+      "real stored device auth after ordinary approval",
+    );
+    const ordinaryAuthOperator = requireOperatorToken(
+      authAfterOrdinaryApproval,
+      "ordinary stored device auth",
+    );
+    requireLiveProof(
+      authAfterOrdinaryApproval.deviceId === identity.deviceId &&
+        ordinaryAuthOperator.token === ordinaryPairedOperator.token &&
+        ordinaryAuthOperator.token !== storedTokenBefore,
+      "ordinary stored-device approval did not publish the rotated paired token",
+    );
+    requireExactScopes(
+      ordinaryPairedOperator.scopes,
+      ["operator.pairing", "operator.read", "operator.write"],
+      "ordinary paired operator scopes",
+    );
+    requireExactScopes(
+      ordinaryAuthOperator.scopes,
+      ["operator.pairing", "operator.read", "operator.write"],
+      "ordinary stored-device approval auth scopes",
+    );
+    proofPhase = "ordinary-stored-device-approval-output";
+    const ordinaryApprovalOutput = `${String(ordinaryApproval.stdout ?? "")}\n${String(ordinaryApproval.stderr ?? "")}`;
+    requireLiveProof(
+      ![gatewayToken, serverTokenBefore, storedTokenBefore, ordinaryPairedOperator.token].some(
+        (token) => ordinaryApprovalOutput.includes(String(token)),
+      ),
+      "ordinary stored-device approval exposed a device or gateway token",
+    );
+    proofPhase = "ordinary-stored-device-approval-client-auth";
+    const ordinaryApprovalVerifier = runCli([
+      "gateway",
+      "call",
+      "sessions.create",
+      "--params",
+      "{}",
+      "--json",
+    ]);
+    requireSuccess(
+      ordinaryApprovalVerifier,
+      "authorize sessions.create with the rotated stored device token",
+    );
+    if (process.platform !== "linux") return;
+    proofPhase = "ordinary-stored-device-approval-state-reset";
+    await stopChild(gateway);
+    fs.writeFileSync(pendingPath, pendingBeforeOrdinaryApproval);
+    fs.writeFileSync(pairedPath, pairedBeforeOrdinaryApproval);
+    fs.writeFileSync(deviceAuthPath, authBeforeOrdinaryApproval);
+    gateway = startGateway({ ...env, OPENCLAW_GATEWAY_TOKEN: gatewayToken }, true);
+    await waitForGatewayReady(gateway, port, options.timeoutMs);
     // The remaining restored-clone proof pins inherited /proc/self/fd
     // descriptors. Linux CI exercises that boundary; other hosts stop after
     // the ordinary approval and matching stored-auth check above.
