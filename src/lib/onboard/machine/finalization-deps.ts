@@ -3,6 +3,8 @@
 
 import type { OpenClawPairingSettlementObservation } from "../../actions/sandbox/launch-readiness/openclaw-pairing-qualification";
 import type { OpenClawPairingSettlementTarget } from "../../actions/sandbox/launch-readiness";
+import { WARMUP_TIMEOUT_MS } from "../../actions/sandbox/auto-pair-warmup";
+import { CONNECT_AUTO_PAIR_TIMEOUT_MS } from "../../actions/sandbox/connect-autopair-budget";
 
 // The lazy `require` calls avoid an import cycle because connect.ts and
 // process-recovery.ts both import onboarding helpers.
@@ -10,13 +12,21 @@ type ProcessRecoveryDeps = Pick<
   typeof import("../../actions/sandbox/process-recovery"),
   "checkAndRecoverSandboxProcesses" | "waitForRecreatedSandboxOpenShellReady"
 >;
-type SandboxLifecycleLock =
-  typeof import("../../state/mcp-lifecycle-lock").withMcpLifecycleLock;
+type SandboxLifecycleLock = typeof import("../../state/mcp-lifecycle-lock").withMcpLifecycleLock;
 type GatewayRouteLock =
   typeof import("../../inference/gateway-route-mutation-lock").withGatewayRouteMutationLock;
 
 export const OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS = 30_000;
 export const OPENCLAW_ONBOARDING_PAIRING_POLL_MS = 1_000;
+export const OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS = 30_000;
+// Keep one fixed outer cap while reserving the full published cap of each
+// bounded child. Pairing appearance retains its existing 30-second limit, and
+// a capped warm-up can no longer consume the approval or final-read budget.
+export const OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS =
+  OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS +
+  WARMUP_TIMEOUT_MS +
+  CONNECT_AUTO_PAIR_TIMEOUT_MS +
+  OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS;
 
 export type OrdinaryOpenClawPairingSettlementResult =
   | { readonly kind: "settled" }
@@ -187,12 +197,16 @@ export async function settleOrdinaryOpenClawPairing(
           if (!samePairingTarget(firstTarget, target)) {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
-          const deadline = deps.now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS;
+          const settlementDeadline = deps.now() + OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS;
+          const pairingAppearanceDeadline = Math.min(
+            settlementDeadline,
+            deps.now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
+          );
 
           const baseline = await waitForPairingObservation(
             name,
             target,
-            deadline,
+            pairingAppearanceDeadline,
             () => true,
             deps,
           );
@@ -206,7 +220,7 @@ export async function settleOrdinaryOpenClawPairing(
           if (!samePairingTarget(target, deps.getTarget(name))) {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
-          if (deps.now() >= deadline) {
+          if (deps.now() >= settlementDeadline) {
             return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
           }
 
@@ -219,7 +233,7 @@ export async function settleOrdinaryOpenClawPairing(
           if (!samePairingTarget(target, deps.getTarget(name))) {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
-          if (warmupFailed || deps.now() >= deadline) {
+          if (warmupFailed || deps.now() >= settlementDeadline) {
             return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
           }
 
@@ -236,10 +250,14 @@ export async function settleOrdinaryOpenClawPairing(
             return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
           }
 
+          const finalObservationDeadline = Math.min(
+            settlementDeadline,
+            deps.now() + OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
+          );
           const final = await waitForPairingObservation(
             name,
             target,
-            deadline,
+            finalObservationDeadline,
             (value) =>
               value.state === "settled" &&
               value.deviceIdentitySha256 === baseline.value.deviceIdentitySha256,
