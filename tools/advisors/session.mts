@@ -24,6 +24,8 @@ import {
 } from "./provider-constants.mts";
 import { createRepoConfinedReadOnlyTools } from "./repo-read-only-tools.mts";
 import {
+  assistantTextRepairErrors,
+  assistantTextRepairPrompt,
   type AdvisorContextToolResult,
   type AdvisorPromptTurn,
   type AdvisorTurnFlowEvent,
@@ -35,6 +37,7 @@ import {
   normalizedToolNames,
   promptWithRequiredContextTools,
   READ_ONLY_TOOLS,
+  repairableAssistantText,
   repairableAtomicTerminalToolName,
   repairableTerminalSubmitToolName,
   resolveAdvisorTurnTools,
@@ -576,6 +579,22 @@ export async function runReadOnlyAdvisor(
             await Promise.race([agentEndPromise, timeoutPromise]);
           };
           await promptAndWait(promptWithRequiredContextTools(turn.prompt, contextToolNames));
+          const initialFlow = currentTurnFlow;
+          if (
+            repairableAssistantText(turn, initialFlow, tools, successfulToolNames, currentTurnError)
+          ) {
+            contextTools.deactivate();
+            session.setActiveToolsByName([]);
+            currentTurnFlow = [];
+            raw.append(`\n[${options.logPrefix}] assistant_text_repair_start ${turn.name}\n`);
+            options.logProgress(`Advisor SDK repairing required analysis for ${turn.name}`);
+            await promptAndWait(assistantTextRepairPrompt(turn));
+            const repairFlow = currentTurnFlow;
+            const repairErrors = assistantTextRepairErrors(turn.name, repairFlow);
+            if (repairErrors.length > 0) throw new Error(repairErrors.join("; "));
+            currentTurnFlow = [...initialFlow, ...repairFlow];
+            raw.append(`[${options.logPrefix}] assistant_text_repair_end ${turn.name} ok\n`);
+          }
           const originalFlow = currentTurnFlow;
           const repairToolName = repairableAtomicTerminalToolName(
             turn,
@@ -611,6 +630,7 @@ export async function runReadOnlyAdvisor(
             tools,
             currentTurnError,
           );
+          let terminalSubmitValidationFlow = currentTurnFlow;
           const submitRepairToolName = repairableTerminalSubmitToolName(
             turn,
             currentTurnFlow,
@@ -638,7 +658,8 @@ export async function runReadOnlyAdvisor(
               tools.terminalSubmitRepairToolNames ?? [],
             );
             if (repairErrors.length > 0) throw new Error(repairErrors.join("; "));
-            terminalSubmitRepaired = true;
+            terminalSubmitRepaired = false;
+            terminalSubmitValidationFlow = repairFlow;
             currentTurnFlow = [...originalSubmitFlow, ...repairFlow];
             raw.append(
               `[${options.logPrefix}] terminal_submit_repair_end ${turn.name} ${submitRepairToolName} ok\n`,
@@ -653,6 +674,7 @@ export async function runReadOnlyAdvisor(
             currentTurnFlow,
             tools,
             terminalSubmitRepaired,
+            terminalSubmitValidationFlow,
           );
           if (missing.length > 0)
             flowErrors.unshift(`omitted required tool result(s): ${missing.join(", ")}`);
@@ -765,6 +787,10 @@ function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTu
     requiredToolNames: normalizedToolNames(turn.requiredToolNames),
     requireToolsBeforeText: normalizedToolNames(turn.requireToolsBeforeText),
     requireAssistantText: turn.requireAssistantText === true,
+    assistantTextRepairPrompt:
+      typeof turn.assistantTextRepairPrompt === "string" && turn.assistantTextRepairPrompt.trim()
+        ? turn.assistantTextRepairPrompt.trim()
+        : undefined,
     atomicTerminalToolName: normalizedToolNames(
       turn.atomicTerminalToolName ? [turn.atomicTerminalToolName] : undefined,
     )[0],

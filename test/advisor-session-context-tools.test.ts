@@ -12,7 +12,9 @@ import {
   resolveAdvisorTurnTools,
 } from "../tools/advisors/session.mts";
 import {
+  assistantTextRepairErrors,
   hasCompletedTerminalSubmitRepair,
+  repairableAssistantText,
   repairableTerminalSubmitToolName,
   terminalSubmitRepairErrors,
 } from "../tools/advisors/turn-protocol.mts";
@@ -235,8 +237,6 @@ describe("advisor session context tool flow", () => {
   });
 
   it.each([
-    ["omission", [], undefined, new Set<string>()],
-    ["prose only", [analysisEvent], undefined, new Set<string>()],
     [
       "an unexpected tool with a failed submit",
       [
@@ -250,6 +250,7 @@ describe("advisor session context tool flow", () => {
     ],
     ["provider error", [ledgerStart, ledgerFailure], "provider failed", new Set<string>()],
     ["unsettled call", [ledgerStart], undefined, new Set<string>()],
+    ["malformed call", [ledgerFailure, ledgerStart], undefined, new Set<string>()],
     ["prior success", [ledgerStart, ledgerSuccess], undefined, new Set([ledgerToolName])],
   ] as const)(
     "does not repair terminal submit after %s",
@@ -261,25 +262,25 @@ describe("advisor session context tool flow", () => {
     },
   );
 
-  it("repairs terminal submit after exactly one settled failed submit", () => {
+  it.each([0, 1, 2, 3])(
+    "repairs a submit after %i settled failed attempt(s) (#9963)",
+    (failureCount) => {
+      const { turn, tools } = terminalSubmitRepairContract();
+      const events = Array.from({ length: failureCount }, () => [
+        ledgerStart,
+        ledgerFailure,
+      ]).flat();
+      expect(repairableTerminalSubmitToolName(turn, events, tools, new Set(), undefined)).toBe(
+        ledgerToolName,
+      );
+    },
+  );
+
+  it("does not repair a submit after four settled failed attempts (#9963)", () => {
     const { turn, tools } = terminalSubmitRepairContract();
+    const fourFailures = Array.from({ length: 4 }, () => [ledgerStart, ledgerFailure]).flat();
     expect(
-      repairableTerminalSubmitToolName(
-        turn,
-        [ledgerStart, ledgerFailure],
-        tools,
-        new Set(),
-        undefined,
-      ),
-    ).toBe(ledgerToolName);
-    expect(
-      repairableTerminalSubmitToolName(
-        turn,
-        [ledgerStart, ledgerFailure, ledgerStart, ledgerFailure],
-        tools,
-        new Set(),
-        undefined,
-      ),
+      repairableTerminalSubmitToolName(turn, fourFailures, tools, new Set(), undefined),
     ).toBeUndefined();
   });
 
@@ -287,6 +288,19 @@ describe("advisor session context tool flow", () => {
     const { turn, tools } = terminalSubmitRepairContract();
     const events = [ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess];
 
+    expect(hasCompletedTerminalSubmitRepair(turn, events, tools, undefined)).toBe(true);
+    expect(advisorTurnFlowErrors("prepare", events, tools, true)).toEqual([]);
+  });
+
+  it.each([
+    {
+      events: [ledgerStart, ledgerSuccess, ledgerStart, ledgerFailure, ledgerStart, ledgerFailure],
+    },
+    {
+      events: [ledgerStart, ledgerFailure, ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess],
+    },
+  ])("accepts up to two failed duplicate submits around one success (#9963)", ({ events }) => {
+    const { turn, tools } = terminalSubmitRepairContract();
     expect(hasCompletedTerminalSubmitRepair(turn, events, tools, undefined)).toBe(true);
     expect(advisorTurnFlowErrors("prepare", events, tools, true)).toEqual([]);
   });
@@ -320,8 +334,17 @@ describe("advisor session context tool flow", () => {
     ["the second attempt is unsettled", [ledgerStart, ledgerFailure, ledgerStart]],
     ["attempt events overlap", [ledgerStart, ledgerStart, ledgerFailure, ledgerSuccess]],
     [
-      "a third attempt succeeds",
-      [ledgerStart, ledgerFailure, ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess],
+      "four attempts are made",
+      [
+        ledgerStart,
+        ledgerSuccess,
+        ledgerStart,
+        ledgerFailure,
+        ledgerStart,
+        ledgerFailure,
+        ledgerStart,
+        ledgerFailure,
+      ],
     ],
     [
       "activity follows success",
@@ -333,6 +356,65 @@ describe("advisor session context tool flow", () => {
     const repaired = hasCompletedTerminalSubmitRepair(turn, events, tools, undefined);
     expect(repaired).toBe(false);
     expect(advisorTurnFlowErrors("prepare", events, tools, repaired)).not.toEqual([]);
+  });
+
+  it("repairs required assistant text only after every required tool succeeds (#9963)", () => {
+    const turn: AdvisorPromptTurn = {
+      ...contextTurn("investigate", "{}"),
+      requireAssistantText: true,
+      assistantTextRepairPrompt: "Return the investigation receipt.",
+    };
+    const tools = resolveAdvisorTurnTools(
+      turn,
+      ["pr_review_context"],
+      new Set(["pr_review_context"]),
+    );
+    const completedContext: AdvisorTurnFlowEvent[] = [
+      { type: "tool_start", toolName: "pr_review_context" },
+      { type: "tool_end", toolName: "pr_review_context", isError: false },
+    ];
+
+    expect(
+      repairableAssistantText(
+        turn,
+        completedContext,
+        tools,
+        new Set(["pr_review_context"]),
+        undefined,
+      ),
+    ).toBe(true);
+    expect(repairableAssistantText(turn, completedContext, tools, new Set(), undefined)).toBe(
+      false,
+    );
+    expect(assistantTextRepairErrors("investigate", [{ type: "text", text: "receipt" }])).toEqual(
+      [],
+    );
+    expect(assistantTextRepairErrors("investigate", [])).toContain(
+      "investigate assistant-text repair omitted required analysis",
+    );
+    expect(
+      assistantTextRepairErrors("investigate", [
+        { type: "tool_start", toolName: "pr_review_context" },
+      ]),
+    ).toContain("investigate assistant-text repair called unexpected tool pr_review_context");
+    expect(
+      repairableAssistantText(
+        turn,
+        [...completedContext, { type: "tool_end", toolName: "read", isError: true }],
+        tools,
+        new Set(["pr_review_context"]),
+        undefined,
+      ),
+    ).toBe(false);
+    expect(
+      repairableAssistantText(
+        turn,
+        [...completedContext, { type: "tool_start", toolName: "read" }],
+        tools,
+        new Set(["pr_review_context"]),
+        undefined,
+      ),
+    ).toBe(false);
   });
 
   it("rejects prose, unconfigured tools, and multiple submits during terminal-submit repair", () => {

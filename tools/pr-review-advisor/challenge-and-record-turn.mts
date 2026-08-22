@@ -22,7 +22,7 @@ export function buildChallengeAndRecordTurn(): AdvisorPromptTurn {
     requiredToolNames: recordingTools,
     terminalSubmitToolName: SUBMIT_REVIEW_TOOL,
     terminalSubmitRepairPrompt:
-      "The nonmutating submit_review validation was rejected. You have one repair only: follow the validation error's exact correction, replace only the invalid draft sections, and submit once more. Set findingId=null when the entry does not report a concern; never reuse an unrelated finding. If you replace findings, record the receipt again afterward because it is bound to the latest findings revision.",
+      "The challenge-and-record response did not complete a valid submission. You have one repair only: complete or replace the required draft sections in this exact order: record_findings, record_review_receipt, recommend_e2e, then submit_review. Follow each validation error's exact correction. Set findingId=null when the entry does not report a concern; never reuse an unrelated finding. If you replace findings, record the receipt again afterward because it is bound to the latest findings revision.",
     terminalSubmitRepairToolNames: recordingTools,
     prompt: `Turn 2/2 — challenge-and-record.
 
