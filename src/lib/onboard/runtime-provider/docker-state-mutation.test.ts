@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -22,6 +23,7 @@ import {
 } from "../../../../test/helpers/docker-state-mutation-harness";
 import { createDockerOperationAuthority } from "./docker-operation-authority";
 import {
+  DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE,
   createDockerStateMutationOwner,
   createDockerStateMutationSurface,
 } from "./docker-state-mutation";
@@ -53,6 +55,50 @@ afterEach(() => {
 });
 
 describe("Docker runtime-provider state mutation surface", () => {
+  it("preserves safe broker diagnostics after request validation", () => {
+    const definitionsEnd = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.indexOf(
+      "\nhelper = sys.argv[1]\n",
+    );
+    expect(definitionsEnd).toBeGreaterThan(0);
+    const definitions = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.slice(
+      0,
+      definitionsEnd,
+    );
+    const probe = `${definitions}
+helper = "/definitely-missing/nemoclaw-runtime-state-mutation-control.py"
+try:
+    run_helper("acquire", b"{}\\n")
+except (OSError, RuntimeError, UnicodeError, ValueError) as error:
+    missing_helper = post_validation_failure_code(error)
+print(json.dumps({
+    "missingHelper": missing_helper,
+    "permission": post_validation_failure_code(PermissionError()),
+    "encoding": post_validation_failure_code(UnicodeDecodeError("utf-8", b"x", 0, 1, "invalid")),
+    "invalidResponse": post_validation_failure_code(ValueError()),
+    "helperProcess": json.loads(normalize_helper_stderr("acquire", 2, b"raw python error"))["code"],
+    "helperProtocol": json.loads(normalize_helper_stderr("acquire", 0, b"unexpected stderr"))["code"],
+    "timeout": json.loads(failure_stderr("acquire", "helper-timeout"))["code"],
+}, separators=(",", ":")))
+`;
+
+    expect(
+      JSON.parse(
+        execFileSync("python3", ["-I", "-c", probe], {
+          encoding: "utf8",
+          timeout: 5_000,
+        }),
+      ),
+    ).toEqual({
+      missingHelper: "helper-file-missing",
+      permission: "transport-permission-denied",
+      encoding: "transport-response-encoding-invalid",
+      invalidResponse: "transport-response-invalid",
+      helperProcess: "helper-process-failed",
+      helperProtocol: "helper-protocol-stderr",
+      timeout: "helper-timeout",
+    });
+  });
+
   it("uses one harness-owned absolute Docker executable", () => {
     const runtime = harness();
     runtime.authority.engine.capture(["version"]);

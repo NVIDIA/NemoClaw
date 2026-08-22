@@ -77,7 +77,7 @@ const POSITIVE_DECIMAL = /^[1-9][0-9]*$/u;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 const helperTransportPoll = new Int32Array(new SharedArrayBuffer(4));
 
-const HELPER_TRANSPORT_BROKER = String.raw`
+export const DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE = String.raw`
 import fcntl
 import hashlib
 import json
@@ -163,6 +163,41 @@ def response_payload(action, identity, status, stdout, stderr):
         "status": status, "stdout": stdout, "stderr": stderr},
         ensure_ascii=True, separators=(",", ":")).encode("utf-8") + b"\n"
 
+def failure_stderr(action, code):
+    return json.dumps({"schemaVersion": 1, "action": action, "status": "failed", "code": code},
+        ensure_ascii=True, separators=(",", ":")) + "\n"
+
+def post_validation_failure_code(error):
+    if isinstance(error, RuntimeError):
+        code = str(error)
+        if code in ("helper-file-missing", "helper-file-invalid", "transport-response-too-large"):
+            return code
+        return "transport-runtime-failed"
+    if isinstance(error, UnicodeError):
+        return "transport-response-encoding-invalid"
+    if isinstance(error, FileNotFoundError):
+        return "transport-resource-missing"
+    if isinstance(error, PermissionError):
+        return "transport-permission-denied"
+    if isinstance(error, OSError):
+        return "transport-io-failed"
+    return "transport-response-invalid"
+
+def normalize_helper_stderr(action, status, stderr):
+    if not stderr:
+        return stderr
+    try:
+        failure = json.loads(stderr.decode("utf-8", "strict"))
+        if (isinstance(failure, dict) and failure.get("schemaVersion") == 1 and
+            failure.get("action") == action and failure.get("status") == "failed" and
+            isinstance(failure.get("code"), str) and
+            re.fullmatch(r"[a-z][a-z0-9-]{0,127}", failure["code"]) is not None):
+            return stderr
+    except (UnicodeError, ValueError):
+        pass
+    code = "helper-process-failed" if status != 0 else "helper-protocol-stderr"
+    return failure_stderr(action, code).encode("utf-8")
+
 def publisher_phase_failure(action, stderr):
     if action != "publish":
         return stderr
@@ -185,6 +220,13 @@ def publisher_phase_failure(action, stderr):
         return stderr
 
 def run_helper(action, request):
+    try:
+        metadata = os.lstat(helper)
+    except FileNotFoundError:
+        fail("helper-file-missing")
+    if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_gid != 0 or
+        stat.S_IMODE(metadata.st_mode) & 0o022):
+        fail("helper-file-invalid")
     completed = None
     for attempt in range(2):
         completed = subprocess.run([sys.executable, "-I", helper, action], input=request,
@@ -259,11 +301,12 @@ while True:
                 fail("transport-response-too-large")
             status = completed.returncode if completed.returncode >= 0 else 128 - completed.returncode
             stderr = publisher_phase_failure(action, completed.stderr)
+            stderr = normalize_helper_stderr(action, status, stderr)
             response = response_payload(action, identity, status,
                 completed.stdout.decode("utf-8", "strict"), stderr.decode("utf-8", "strict"))
         except subprocess.TimeoutExpired:
-            response = response_payload(action, identity, 1, "", "helper-timeout")
-        except (OSError, RuntimeError, UnicodeError, ValueError):
+            response = response_payload(action, identity, 1, "", failure_stderr(action, "helper-timeout"))
+        except (OSError, RuntimeError, UnicodeError, ValueError) as error:
             if not validated:
                 first_observed = pending.setdefault(name, time.monotonic())
                 if time.monotonic() - first_observed < PUBLICATION_SETTLE_SECONDS:
@@ -273,9 +316,13 @@ while True:
                     os.unlink(request_path)
                 except FileNotFoundError:
                     pass
-                response = response_payload(action, identity, 1, "", "transport-request-invalid")
+                response = response_payload(action, identity, 1, "",
+                    failure_stderr(action, "transport-request-invalid"))
             else:
-                response = response_payload(action, identity, 1, "", "transport-failed")
+                # Preserve a safe, actionable failure class without returning
+                # exception text, host paths, or request contents to the caller.
+                response = response_payload(action, identity, 1, "",
+                    failure_stderr(action, post_validation_failure_code(error)))
         atomic(response_path, response)
     for name in names:
         if not name.endswith(".ack"):
@@ -1275,7 +1322,7 @@ function helperTransportBrokerCommand(
       "-I",
       "-c",
       "import base64,sys;source=base64.b64decode(sys.argv.pop(1));exec(compile(source,'<nemoclaw-state-mutation-transport>','exec'))",
-      Buffer.from(HELPER_TRANSPORT_BROKER, "utf8").toString("base64"),
+      Buffer.from(DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE, "utf8").toString("base64"),
       HELPER_PATH,
       transactionId,
     ]),
