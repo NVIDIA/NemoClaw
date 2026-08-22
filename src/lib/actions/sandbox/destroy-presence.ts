@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  OPENSHELL_MANAGED_BY_LABEL,
-  OPENSHELL_MANAGED_BY_VALUE,
   OPENSHELL_SANDBOX_ID_LABEL,
   OPENSHELL_SANDBOX_NAME_LABEL,
   removeExactOpenShellDockerSandboxContainer,
+  resolveOpenShellSandboxOwnershipLabel,
 } from "../../onboard/openshell-docker-sandbox-containers";
 import { sanitizeReadinessText } from "../../readiness/sanitize";
 import {
@@ -53,8 +52,9 @@ export type DestroyContainerIdentityProof = {
 };
 
 function observeDockerSandboxIdentities(sandboxName: string): DockerSandboxIdentityObservation {
+  const ownership = resolveOpenShellSandboxOwnershipLabel();
   return inspectDockerSandboxIdentities(`${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`, {
-    managedBy: OPENSHELL_MANAGED_BY_LABEL,
+    managedBy: ownership.label,
     workspace: OPENSHELL_SANDBOX_WORKSPACE_LABEL,
     sandboxId: OPENSHELL_SANDBOX_ID_LABEL,
   });
@@ -95,8 +95,9 @@ export function classifyDestroyContainerIdentity(
   }
 
   const { malformedRows, rows } = observation;
-  const managed = rows.filter((row) => row.managedBy === OPENSHELL_MANAGED_BY_VALUE);
-  const foreign = rows.filter((row) => row.managedBy !== OPENSHELL_MANAGED_BY_VALUE);
+  const ownership = resolveOpenShellSandboxOwnershipLabel();
+  const managed = rows.filter((row) => row.managedBy === ownership.value);
+  const foreign = rows.filter((row) => row.managedBy !== ownership.value);
 
   if (malformedRows > 0) {
     return {
@@ -114,8 +115,7 @@ export function classifyDestroyContainerIdentity(
       sandboxName,
       reason:
         `${String(foreign.length)} container(s) carry the '${OPENSHELL_SANDBOX_NAME_LABEL}=` +
-        `${sandboxName}' label without the '${OPENSHELL_MANAGED_BY_LABEL}=` +
-        `${OPENSHELL_MANAGED_BY_VALUE}' marker`,
+        `${sandboxName}' label without the '${ownership.label}=${ownership.value}' marker`,
       foreign,
       managed,
     };
@@ -169,11 +169,12 @@ export function formatAmbiguousDestroyIdentity(
   verdict: Extract<DestroyContainerIdentityVerdict, { status: "ambiguous" }>,
   cliName: string,
 ): string[] {
+  const ownership = resolveOpenShellSandboxOwnershipLabel();
   const display = (value: string, fallback = "<none>"): string =>
     sanitizeReadinessText(value || fallback, IDENTITY_VALUE_MAX_LENGTH);
   const displayLabel = (value: string): string => JSON.stringify(display(value));
   const describe = (row: SandboxNameLabeledContainer): string =>
-    `${display(row.id).slice(0, 12)} (${OPENSHELL_MANAGED_BY_LABEL}=${displayLabel(row.managedBy)}, ` +
+    `${display(row.id).slice(0, 12)} (${ownership.label}=${displayLabel(row.managedBy)}, ` +
     `${OPENSHELL_SANDBOX_WORKSPACE_LABEL}=${displayLabel(row.workspace)}, ` +
     `${OPENSHELL_SANDBOX_ID_LABEL}=${displayLabel(row.sandboxId)})`;
   const sandboxName = display(verdict.sandboxName);

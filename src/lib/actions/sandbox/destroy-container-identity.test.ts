@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   classifyDestroyContainerIdentity,
@@ -51,6 +51,10 @@ function expectAmbiguous(
 }
 
 describe("classifyDestroyContainerIdentity", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("is clear when no container carries the sandbox-name label", () => {
     expect(classifyDestroyContainerIdentity("destroytest", observeRows([]))).toEqual({
       status: "clear",
@@ -62,6 +66,18 @@ describe("classifyDestroyContainerIdentity", () => {
     expect(classifyDestroyContainerIdentity("destroytest", observeRows([MANAGED]))).toEqual({
       status: "clear",
       identity: MANAGED,
+    });
+  });
+
+  it("is clear for the exact native Podman ownership marker", () => {
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+    const podmanManaged = { ...MANAGED, managedBy: "true" };
+
+    expect(
+      classifyDestroyContainerIdentity("destroytest", observeRows([podmanManaged])),
+    ).toEqual({
+      status: "clear",
+      identity: podmanManaged,
     });
   });
 

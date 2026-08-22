@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   queryOpenShellDockerSandboxRuntimeSnapshot,
   removeExactOpenShellDockerSandboxContainer,
+  resolveOpenShellSandboxOwnershipLabel,
 } from "./openshell-docker-sandbox-containers";
 
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
@@ -12,6 +13,21 @@ const BOOKKEEPING_IMAGE_REF = "openshell/sandbox-from:alpha";
 const EMPTY_RUNTIME_FIELDS = [IMAGE_ID, BOOKKEEPING_IMAGE_REF, "", null, [], "runc"];
 const ACTIVATED_CONTAINER_ID = "b".repeat(64);
 const ROLLBACK_CONTAINER_ID = "c".repeat(64);
+
+describe("resolveOpenShellSandboxOwnershipLabel", () => {
+  it("selects the native Podman ownership marker without changing the Docker default", () => {
+    expect(resolveOpenShellSandboxOwnershipLabel({})).toEqual({
+      label: "openshell.ai/managed-by",
+      value: "openshell",
+    });
+    expect(
+      resolveOpenShellSandboxOwnershipLabel({ NEMOCLAW_GATEWAY_RUNTIME: "podman" }),
+    ).toEqual({
+      label: "openshell.managed",
+      value: "true",
+    });
+  });
+});
 
 describe("removeExactOpenShellDockerSandboxContainer", () => {
   it("fails when Docker cannot confirm the exact container is absent after removal (#9073)", () => {

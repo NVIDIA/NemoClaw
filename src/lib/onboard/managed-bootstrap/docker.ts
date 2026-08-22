@@ -42,11 +42,11 @@ import {
 } from "../docker-gpu-supervisor-reconnect";
 import { openshellSandboxCommandEnvValue } from "../docker-startup-command-env";
 import {
-  OPENSHELL_MANAGED_BY_LABEL,
-  OPENSHELL_MANAGED_BY_VALUE,
+  hasOpenShellSandboxOwnership,
   OPENSHELL_SANDBOX_ID_LABEL,
   OPENSHELL_SANDBOX_NAME_LABEL,
   queryOpenShellDockerSandboxContainers,
+  resolveOpenShellSandboxOwnershipLabel,
 } from "../openshell-docker-sandbox-containers";
 import { cleanupTempDir, secureTempFile } from "../temp-files";
 import {
@@ -493,7 +493,7 @@ function assertMetadata(
 ): void {
   const labels = inspect.Config?.Labels ?? {};
   if (
-    labels[OPENSHELL_MANAGED_BY_LABEL] !== OPENSHELL_MANAGED_BY_VALUE ||
+    !hasOpenShellSandboxOwnership(labels) ||
     labels[OPENSHELL_SANDBOX_NAME_LABEL] !== sandbox.sandboxName ||
     labels[OPENSHELL_SANDBOX_ID_LABEL] !== sandbox.sandboxId
   ) {
@@ -1385,6 +1385,7 @@ function retainOwnedWorkloadForOwnerCleanup(
       ? `sandbox ${sandbox.sandboxId} with no previously resolved runtime ID`
       : `sandbox ${sandbox.sandboxId} expected runtime ${expectedRuntimeId}`;
   let containers: DockerCommandResult;
+  const ownership = resolveOpenShellSandboxOwnershipLabel();
   try {
     containers = deps.dockerRun(
       [
@@ -1392,7 +1393,7 @@ function retainOwnedWorkloadForOwnerCleanup(
         "-a",
         "--no-trunc",
         "--filter",
-        `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
+        `label=${ownership.label}=${ownership.value}`,
         "--filter",
         `label=${OPENSHELL_SANDBOX_ID_LABEL}=${sandbox.sandboxId}`,
         "--format",
@@ -1447,7 +1448,7 @@ function retainOwnedWorkloadForOwnerCleanup(
   }
   const labels = inspect.Config?.Labels ?? {};
   if (
-    labels[OPENSHELL_MANAGED_BY_LABEL] !== OPENSHELL_MANAGED_BY_VALUE ||
+    !hasOpenShellSandboxOwnership(labels) ||
     labels[OPENSHELL_SANDBOX_NAME_LABEL] !== sandbox.sandboxName ||
     labels[OPENSHELL_SANDBOX_ID_LABEL] !== sandbox.sandboxId
   ) {

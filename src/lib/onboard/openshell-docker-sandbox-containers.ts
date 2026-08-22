@@ -3,11 +3,34 @@
 
 import { dockerCapture, dockerRun } from "../adapters/docker";
 import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
+import { isPodmanGatewayRuntimeEnabled } from "./gateway-runtime-selection";
+import { PODMAN_MANAGED_LABEL } from "./runtime-provider/podman-lifecycle";
 
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
 export const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 export const OPENSHELL_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
+
+export type OpenShellSandboxOwnershipLabel = {
+  readonly label: string;
+  readonly value: string;
+};
+
+export function resolveOpenShellSandboxOwnershipLabel(
+  env: NodeJS.ProcessEnv = process.env,
+): OpenShellSandboxOwnershipLabel {
+  return isPodmanGatewayRuntimeEnabled(env)
+    ? { label: PODMAN_MANAGED_LABEL, value: "true" }
+    : { label: OPENSHELL_MANAGED_BY_LABEL, value: OPENSHELL_MANAGED_BY_VALUE };
+}
+
+export function hasOpenShellSandboxOwnership(
+  labels: Readonly<Record<string, string>>,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const ownership = resolveOpenShellSandboxOwnershipLabel(env);
+  return labels[ownership.label] === ownership.value;
+}
 
 const DOCKER_SANDBOX_QUERY_TIMEOUT_MS = 30_000;
 const STALE_DOCKER_ORPHAN_TIMEOUT_MS = 30_000;
@@ -15,12 +38,13 @@ const STALE_DOCKER_ORPHAN_TIMEOUT_MS = 30_000;
 type DockerSandboxContainerQueryDeps = Pick<DockerGpuPatchDeps, "dockerCapture" | "dockerRun">;
 
 function sandboxContainerFilterArgs(sandboxName: string): string[] {
+  const ownership = resolveOpenShellSandboxOwnershipLabel();
   return [
     "ps",
     "-a",
     "--no-trunc",
     "--filter",
-    `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
+    `label=${ownership.label}=${ownership.value}`,
     "--filter",
     `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
   ];
