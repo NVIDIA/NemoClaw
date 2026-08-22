@@ -214,6 +214,24 @@ function mockStandaloneGatewayTeardownAuthority() {
   });
 }
 
+function mockDockerSandboxLifecycleReleaseFromRunner() {
+  const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
+  const run = runner.run;
+  let lifecycleReleased = false;
+  runner.run = (command, options) => {
+    const normalized = normalizeCommand(command);
+    if (normalized.startsWith("docker rm ")) lifecycleReleased = true;
+    if (lifecycleReleased && normalized.includes("sandbox list")) {
+      return {
+        status: 0,
+        stdout: Buffer.from("No sandboxes found\n"),
+        stderr: Buffer.alloc(0),
+      };
+    }
+    return run(command, options);
+  };
+}
+
 function mockManagedImageFallback() {
   const catalog = require(
     path.resolve(__dirname, "../../src/lib/onboard/managed-image/catalog.ts"),
@@ -247,6 +265,7 @@ process.env.NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK === "1" && mockManagedImageFall
 
 module.exports = {
   isOpenClawSecurityInventoryProbe,
+  mockDockerSandboxLifecycleReleaseFromRunner,
   mockManagedImageFallback,
   mockOnboardRunCapture,
   mockSandboxExecCurl,
