@@ -665,6 +665,44 @@ describe("host-local model cleanup", () => {
     }
   });
 
+  it("does not prepare sandbox deletion against a live lifecycle execution lease (#9888)", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine, { phase: "started" });
+    const store = createHostLocalCreateJournalStore(managedLlamaCppStatePaths(homeDir).stateDir);
+    const lease = store.acquireExecution(TRANSACTION_ID);
+    try {
+      expect(() =>
+        prepareManagedLlamaCppRuntimeCleanupForSandbox("spark-agent", {
+          homeDir,
+          engine: harness.engine,
+        }),
+      ).toThrow("live process");
+      expect(harness.capture).not.toHaveBeenCalled();
+    } finally {
+      store.releaseExecution(lease);
+    }
+  });
+
+  it("retains cleanup execution ownership until sandbox deletion is aborted (#9888)", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine, { phase: "started" });
+    const prepared = prepareManagedLlamaCppRuntimeCleanupForSandbox("spark-agent", {
+      homeDir,
+      engine: harness.engine,
+    });
+    const contender = createHostLocalCreateJournalStore(
+      managedLlamaCppStatePaths(homeDir).stateDir,
+    );
+
+    expect(() => contender.acquireExecution(TRANSACTION_ID)).toThrow("live process");
+    prepared?.abort();
+    const replacement = contender.acquireExecution(TRANSACTION_ID);
+    contender.assertExecution(replacement);
+    contender.releaseExecution(replacement);
+  });
+
   it("re-inspects after removal and retains authority when the container remains", () => {
     const homeDir = temporaryHome();
     const harness = engineHarness({ removalLeavesContainer: true });

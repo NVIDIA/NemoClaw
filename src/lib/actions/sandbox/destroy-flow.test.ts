@@ -109,7 +109,7 @@ describe("destroySandbox flow", () => {
       const harness = createDestroyHarness({
         provider: "llama-cpp-local",
         hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
-        preparedManagedLlamaCppRuntimeCleanup: { cleanup },
+        preparedManagedLlamaCppRuntimeCleanup: { abort: vi.fn(), cleanup },
         onPrepareManagedLlamaCppRuntimeCleanup: () => trace.push("prepare"),
       });
       harness.runOpenshellSpy.mockImplementation((args: unknown) => {
@@ -139,64 +139,72 @@ describe("destroySandbox flow", () => {
     },
   );
 
-  it("runs the real retained llama.cpp cleanup capability after sandbox deletion (#9888)", async () => {
-    const homeDir = fs.realpathSync(
-      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-destroy-cleanup-")),
-    );
-    try {
-      const qualified = engineHarness({ authorityId: "docker:qualified" });
-      const drifted = engineHarness({ authorityId: "docker:drifted" });
-      createManagedState(homeDir, qualified.engine, {
-        gatewayPort: 19080,
-        sandboxName: "alpha",
-      });
-      let crossedDeleteBoundary = false;
-      const createEngine = vi
-        .spyOn(dockerLlamaCppOperation, "createManagedLlamaCppEngine")
-        .mockImplementation(() => (crossedDeleteBoundary ? drifted.engine : qualified.engine));
-      const prepared = prepareManagedLlamaCppRuntimeCleanupForSandbox("alpha", {
-        gatewayPort: 19080,
-        homeDir,
-      });
-      const harness = createDestroyHarness({
-        provider: "llama-cpp-local",
-        hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
-        preparedManagedLlamaCppRuntimeCleanup: prepared,
-      });
-      harness.runOpenshellSpy.mockImplementation((args: unknown) => {
-        const argv = Array.isArray(args) ? args : [];
-        switch (`${String(argv[0])}:${String(argv[1])}`) {
-          case "sandbox:delete":
-            crossedDeleteBoundary = true;
-            return { status: 0, stdout: "", stderr: "" };
-          case "sandbox:list":
-            return {
-              status: 0,
-              stdout: '[{"name":"alpha","phase":"Ready"}]',
-              stderr: "",
-            };
-          default:
-            return { status: 0, stdout: "", stderr: "" };
-        }
-      });
-
-      await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
-
-      expect(createEngine).toHaveBeenCalledOnce();
-      expect(qualified.capture).toHaveBeenCalledWith(
-        ["rm", "--force", RUNTIME_ID],
-        expect.any(Number),
+  it.each([
+    ["--yes", false],
+    ["--yes --force", true],
+  ] as const)(
+    "runs the real retained llama.cpp cleanup capability after sandbox deletion with %s (#9888)",
+    async (_flags, force) => {
+      const homeDir = fs.realpathSync(
+        fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-destroy-cleanup-")),
       );
-      expect(qualified.capture).toHaveBeenCalledWith(
-        ["network", "rm", NETWORK_ID],
-        expect.any(Number),
-      );
-      expect(drifted.capture).not.toHaveBeenCalled();
-      expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-    } finally {
-      fs.rmSync(homeDir, { force: true, recursive: true });
-    }
-  });
+      try {
+        const qualified = engineHarness({ authorityId: "docker:qualified" });
+        const drifted = engineHarness({ authorityId: "docker:drifted" });
+        createManagedState(homeDir, qualified.engine, {
+          gatewayPort: 19080,
+          sandboxName: "alpha",
+        });
+        let crossedDeleteBoundary = false;
+        const createEngine = vi
+          .spyOn(dockerLlamaCppOperation, "createManagedLlamaCppEngine")
+          .mockImplementation(() => (crossedDeleteBoundary ? drifted.engine : qualified.engine));
+        const prepared = prepareManagedLlamaCppRuntimeCleanupForSandbox("alpha", {
+          gatewayPort: 19080,
+          homeDir,
+        });
+        const harness = createDestroyHarness({
+          provider: "llama-cpp-local",
+          hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
+          preparedManagedLlamaCppRuntimeCleanup: prepared,
+        });
+        harness.runOpenshellSpy.mockImplementation((args: unknown) => {
+          const argv = Array.isArray(args) ? args : [];
+          switch (`${String(argv[0])}:${String(argv[1])}`) {
+            case "sandbox:delete":
+              crossedDeleteBoundary = true;
+              return { status: 0, stdout: "", stderr: "" };
+            case "sandbox:list":
+              return {
+                status: 0,
+                stdout: '[{"name":"alpha","phase":"Ready"}]',
+                stderr: "",
+              };
+            default:
+              return { status: 0, stdout: "", stderr: "" };
+          }
+        });
+
+        await expect(
+          harness.destroySandbox("alpha", { yes: true, force }),
+        ).resolves.toBeUndefined();
+
+        expect(createEngine).toHaveBeenCalledOnce();
+        expect(qualified.capture).toHaveBeenCalledWith(
+          ["rm", "--force", RUNTIME_ID],
+          expect.any(Number),
+        );
+        expect(qualified.capture).toHaveBeenCalledWith(
+          ["network", "rm", NETWORK_ID],
+          expect.any(Number),
+        );
+        expect(drifted.capture).not.toHaveBeenCalled();
+        expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+      } finally {
+        fs.rmSync(homeDir, { force: true, recursive: true });
+      }
+    },
+  );
 
   it("does not let legacy llama.cpp state block an unrelated provider destroy (#9888)", async () => {
     const harness = createDestroyHarness({
@@ -246,6 +254,7 @@ describe("destroySandbox flow", () => {
       provider: "llama-cpp-local",
       hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
       preparedManagedLlamaCppRuntimeCleanup: {
+        abort: vi.fn(),
         cleanup: () => ({
           ok: false,
           reason: "qualified cleanup failed",
@@ -264,16 +273,18 @@ describe("destroySandbox flow", () => {
   });
 
   it("does not run prepared managed llama.cpp cleanup when OpenShell deletion fails (#9888)", async () => {
+    const abort = vi.fn();
     const cleanup = vi.fn(() => ({ ok: true as const, removed: [], preserved: [] }));
     const harness = createDestroyHarness({
       deleteStatus: 7,
       provider: "llama-cpp-local",
       hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
-      preparedManagedLlamaCppRuntimeCleanup: { cleanup },
+      preparedManagedLlamaCppRuntimeCleanup: { abort, cleanup },
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(7)");
 
+    expect(abort).toHaveBeenCalledOnce();
     expect(cleanup).not.toHaveBeenCalled();
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
   });
@@ -284,7 +295,7 @@ describe("destroySandbox flow", () => {
       sandboxPresent: false,
       provider: "llama-cpp-local",
       hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
-      preparedManagedLlamaCppRuntimeCleanup: { cleanup },
+      preparedManagedLlamaCppRuntimeCleanup: { abort: vi.fn(), cleanup },
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
@@ -300,7 +311,7 @@ describe("destroySandbox flow", () => {
     const harness = createDestroyHarness({
       registryEntryPresent: false,
       sandboxPresent: false,
-      preparedManagedLlamaCppRuntimeCleanup: { cleanup },
+      preparedManagedLlamaCppRuntimeCleanup: { abort: vi.fn(), cleanup },
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();

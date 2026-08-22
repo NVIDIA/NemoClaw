@@ -21,7 +21,9 @@ import {
   HOST_LOCAL_CREATE_JOURNAL_DIRECTORY,
   reconcileAndReadHostLocalCreateJournalRecords,
   serializeHostLocalCreateJournalRecord,
+  type HostLocalCreateJournalExecutionLease,
   type HostLocalCreateJournalRecord,
+  type HostLocalCreateJournalStore,
 } from "../../onboard/runtime-provider/host-local-create-journal";
 import {
   createFilePersistedEngineAuthorityStore,
@@ -438,6 +440,42 @@ interface ManagedLlamaCppPrivateAuthority {
   readonly staticStateSha256: string;
 }
 
+interface ManagedLlamaCppExecutionOwnership {
+  readonly lease: HostLocalCreateJournalExecutionLease;
+  readonly assert: () => void;
+  readonly release: () => void;
+}
+
+function acquireManagedLlamaCppExecutionOwnership(
+  store: HostLocalCreateJournalStore,
+  transactionId: string,
+  stateDir: string,
+): ManagedLlamaCppExecutionOwnership {
+  const lease = store.acquireExecution(transactionId);
+  const leasePath = path.join(
+    stateDir,
+    HOST_LOCAL_CREATE_JOURNAL_DIRECTORY,
+    ".execution-lease.json",
+  );
+  let held = true;
+  return Object.freeze({
+    lease,
+    assert: () => {
+      if (!held) throw new Error("managed llama.cpp execution ownership was already released");
+      store.assertExecution(lease);
+    },
+    release: () => {
+      if (!held) return;
+      if (!statePathExists(leasePath)) {
+        held = false;
+        return;
+      }
+      store.releaseExecution(lease);
+      held = false;
+    },
+  });
+}
+
 interface ManagedLlamaCppPrivateStateEntry {
   readonly path: string;
   readonly kind: "directory" | "file";
@@ -741,6 +779,7 @@ function cleanupLlamaCpp(
     engine?: ContainerEngine;
     privateBridge?: DockerLlamaCppPrivateBridgeController;
     expectedPrivateAuthority?: ManagedLlamaCppPrivateAuthority;
+    executionOwnership?: ManagedLlamaCppExecutionOwnership;
   } = {},
 ): boolean {
   const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
@@ -831,9 +870,14 @@ function cleanupLlamaCpp(
     }
   }
 
-  const lease = journalStore.acquireExecution(journal.transactionId);
+  const executionOwnership =
+    options.executionOwnership ??
+    acquireManagedLlamaCppExecutionOwnership(journalStore, journal.transactionId, paths.stateDir);
+  if (executionOwnership.lease.transactionId !== journal.transactionId) {
+    throw new Error("managed llama.cpp execution ownership changed after cleanup preparation");
+  }
   try {
-    journalStore.assertExecution(lease);
+    executionOwnership.assert();
     requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthority);
     const privateBridge =
       options.privateBridge ??
@@ -842,17 +886,17 @@ function cleanupLlamaCpp(
       privateBridge.stopTransaction(journal.transactionId);
       privateBridge.assertStopped(journal.transactionId);
     }
-    journalStore.assertExecution(lease);
+    executionOwnership.assert();
     const engine = options.engine ?? createManagedLlamaCppEngine(options.env ?? process.env);
     requireQualifiedEngine(receipt?.engineAuthority ?? journal.engineAuthority, engine);
     requireEngineSuccess(
       "engine availability check",
       engine.capture(["info"], DOCKER_INSPECT_TIMEOUT_MS),
     );
-    journalStore.assertExecution(lease);
+    executionOwnership.assert();
     requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthority);
     removeExactContainerForJournal(engine, journal, removed);
-    journalStore.assertExecution(lease);
+    executionOwnership.assert();
     requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthority);
     let network = inspectExactNetworkForJournal(engine, journal);
     if (network.kind === "owned") {
@@ -868,12 +912,12 @@ function cleanupLlamaCpp(
     if (network.kind !== "absent") {
       throw new Error("managed llama.cpp network removal was not proven exact and absent");
     }
-    journalStore.assertExecution(lease);
+    executionOwnership.assert();
     requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthority);
     journalStore.retire(journal.transactionId);
-    journalStore.assertExecution(lease);
+    executionOwnership.assert();
   } finally {
-    journalStore.releaseExecution(lease);
+    executionOwnership.release();
   }
 
   requirePrivateManagedState(paths, deps.currentUserId);
@@ -910,7 +954,25 @@ export interface ManagedLlamaCppLifecycleCleanupOptions extends ManagedLlamaCppS
 }
 
 export interface PreparedManagedLlamaCppRuntimeCleanup {
+  readonly abort: () => void;
   readonly cleanup: () => LocalModelRuntimeCleanupResult;
+}
+
+function managedLlamaCppJournalRecords(paths: ManagedLlamaCppStatePaths): {
+  readonly records: readonly HostLocalCreateJournalRecord[];
+  readonly journals: readonly HostLocalCreateJournalRecord[];
+} {
+  const records = reconcileAndReadHostLocalCreateJournalRecords(paths.stateDir);
+  const journals = records.filter(
+    ({ providerId, service }) => providerId === "docker" && service === "llama-cpp",
+  );
+  if (records.length > 1) {
+    throw new Error("managed llama.cpp has more than one lifecycle journal");
+  }
+  if (records.length !== journals.length) {
+    throw new Error("managed llama.cpp has an incompatible lifecycle journal");
+  }
+  return { records, journals };
 }
 
 /**
@@ -936,81 +998,113 @@ export function prepareManagedLlamaCppRuntimeCleanupForSandbox(
   if (!fs.existsSync(paths.ownerPath)) return null;
   const owner = loadManagedLlamaCppOwner(paths);
   if (!owner || owner.sandboxName !== sandboxName) return null;
-  // Pin the complete private-state baseline before proving any external
-  // resource. Recheck it after proof so a concurrent lifecycle replacement
-  // cannot become the accepted post-proof baseline.
-  const expectedPrivateAuthority = managedLlamaCppPrivateAuthority(paths);
-  const engine = options.engine ?? createManagedLlamaCppEngine(options.env ?? process.env);
-  const receipt = loadManagedLlamaCppReceipt(paths);
-  const journalRecords = reconcileAndReadHostLocalCreateJournalRecords(paths.stateDir);
-  const journals = journalRecords.filter(
-    ({ providerId, service }) => providerId === "docker" && service === "llama-cpp",
-  );
-  if (journalRecords.length > 1) {
-    throw new Error("managed llama.cpp has more than one lifecycle journal");
-  }
-  if (journalRecords.length !== journals.length) {
-    throw new Error("managed llama.cpp has an incompatible lifecycle journal");
-  }
-  if (receipt !== null) {
-    const journal = journals[0];
-    if (!journal) {
-      throw new Error("managed llama.cpp receipt exists without lifecycle authority");
+  const initial = managedLlamaCppJournalRecords(paths);
+  const journalStore = createHostLocalCreateJournalStore(paths.stateDir);
+  const executionOwnership = initial.journals[0]
+    ? acquireManagedLlamaCppExecutionOwnership(
+        journalStore,
+        initial.journals[0].transactionId,
+        paths.stateDir,
+      )
+    : undefined;
+  try {
+    // Pin private state while holding lifecycle execution ownership, then
+    // recheck it after external proof so the capability owns one generation.
+    const expectedPrivateAuthority = managedLlamaCppPrivateAuthority(paths);
+    const engine = options.engine ?? createManagedLlamaCppEngine(options.env ?? process.env);
+    const receipt = loadManagedLlamaCppReceipt(paths);
+    const { journals } = managedLlamaCppJournalRecords(paths);
+    if (
+      executionOwnership &&
+      journals[0]?.transactionId !== executionOwnership.lease.transactionId
+    ) {
+      throw new Error("managed llama.cpp lifecycle journal changed during cleanup preparation");
     }
-    requireManagedLlamaReceiptJournalAgreement(receipt, journal, owner.recipeId);
-    prepareManagedLlamaCppLifecycleCleanup(owner.sandboxName, receipt, {
-      ...options,
-      homeDir,
-      engine,
-    });
-  } else {
-    const authority =
-      journals[0]?.engineAuthority ??
-      openFilePersistedEngineAuthorityStore(paths.stateDir).load("host-local-inference");
-    if (authority === null) {
-      throw new Error("managed llama.cpp engine authority is missing while ownership remains");
-    }
-    if (journals[0]) {
-      requireManagedLlamaJournal(journals[0], owner.recipeId);
-      if (journals[0].phase === "finalized") {
-        throw new Error("managed llama.cpp finalized receipt is missing");
+    if (receipt !== null) {
+      const journal = journals[0];
+      if (!journal) {
+        throw new Error("managed llama.cpp receipt exists without lifecycle authority");
       }
-    }
-    requireQualifiedEngine(authority, engine);
-    requireEngineSuccess(
-      "engine availability check",
-      engine.capture(["info"], DOCKER_INSPECT_TIMEOUT_MS),
-    );
-    if (journals[0]) {
-      inspectExactContainerForJournal(engine, journals[0]);
-      inspectExactNetworkForJournal(engine, journals[0]);
-    } else {
-      const container = inspectOwnedLlamaResource(
+      requireManagedLlamaReceiptJournalAgreement(receipt, journal, owner.recipeId);
+      prepareManagedLlamaCppLifecycleCleanup(owner.sandboxName, receipt, {
+        ...options,
+        homeDir,
         engine,
-        "container",
-        MANAGED_LLAMA_CPP_CONTAINER_NAME,
+      });
+    } else {
+      const authority =
+        journals[0]?.engineAuthority ??
+        openFilePersistedEngineAuthorityStore(paths.stateDir).load("host-local-inference");
+      if (authority === null) {
+        throw new Error("managed llama.cpp engine authority is missing while ownership remains");
+      }
+      if (journals[0]) {
+        requireManagedLlamaJournal(journals[0], owner.recipeId);
+        if (journals[0].phase === "finalized") {
+          throw new Error("managed llama.cpp finalized receipt is missing");
+        }
+      }
+      requireQualifiedEngine(authority, engine);
+      requireEngineSuccess(
+        "engine availability check",
+        engine.capture(["info"], DOCKER_INSPECT_TIMEOUT_MS),
       );
-      const network = inspectOwnedLlamaResource(engine, "network", MANAGED_LLAMA_CPP_NETWORK_NAME);
-      if (container.kind !== "absent" || network.kind !== "absent") {
-        throw new Error(
-          "managed llama.cpp pre-start cleanup cannot prove its fixed runtime names absent",
+      if (journals[0]) {
+        inspectExactContainerForJournal(engine, journals[0]);
+        inspectExactNetworkForJournal(engine, journals[0]);
+      } else {
+        const container = inspectOwnedLlamaResource(
+          engine,
+          "container",
+          MANAGED_LLAMA_CPP_CONTAINER_NAME,
         );
+        const network = inspectOwnedLlamaResource(
+          engine,
+          "network",
+          MANAGED_LLAMA_CPP_NETWORK_NAME,
+        );
+        if (container.kind !== "absent" || network.kind !== "absent") {
+          throw new Error(
+            "managed llama.cpp pre-start cleanup cannot prove its fixed runtime names absent",
+          );
+        }
       }
     }
+    requireManagedLlamaCppPrivateAuthority(paths, expectedPrivateAuthority);
+    executionOwnership?.assert();
+    let settled = false;
+    return Object.freeze({
+      abort: () => {
+        if (settled) return;
+        executionOwnership?.release();
+        settled = true;
+      },
+      cleanup: () => {
+        if (settled) {
+          return {
+            ok: false,
+            reason: "managed llama.cpp cleanup capability was already settled",
+            removed: [],
+            preserved: [],
+          };
+        }
+        settled = true;
+        try {
+          return cleanupManagedLlamaCppRuntimeForSandboxInternal(
+            sandboxName,
+            { ...options, homeDir, engine },
+            expectedPrivateAuthority,
+            executionOwnership,
+          );
+        } finally {
+          executionOwnership?.release();
+        }
+      },
+    });
+  } catch (error) {
+    executionOwnership?.release();
+    throw error;
   }
-  requireManagedLlamaCppPrivateAuthority(paths, expectedPrivateAuthority);
-  return Object.freeze({
-    cleanup: () =>
-      cleanupManagedLlamaCppRuntimeForSandboxInternal(
-        sandboxName,
-        {
-          ...options,
-          homeDir,
-          engine,
-        },
-        expectedPrivateAuthority,
-      ),
-  });
 }
 
 function requireManagedLlamaCppLifecycleCleanupReceipt(
@@ -1258,6 +1352,7 @@ function cleanupManagedLlamaCppRuntimeForSandboxInternal(
   sandboxName: string,
   options: ManagedLlamaCppSandboxCleanupOptions = {},
   expectedPrivateAuthority?: ManagedLlamaCppPrivateAuthority,
+  executionOwnership?: ManagedLlamaCppExecutionOwnership,
 ): LocalModelRuntimeCleanupResult {
   const deps: CleanupDeps = {
     capture: options.deps?.capture ?? dockerCapture,
@@ -1302,6 +1397,7 @@ function cleanupManagedLlamaCppRuntimeForSandboxInternal(
       engine: options.engine,
       privateBridge: options.privateBridge,
       expectedPrivateAuthority,
+      executionOwnership,
     });
     preserveSharedHuggingFaceCache(homeDir, preserved);
     return { ok: true, removed, preserved };

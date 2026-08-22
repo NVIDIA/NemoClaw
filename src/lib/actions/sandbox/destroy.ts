@@ -522,8 +522,14 @@ async function destroySandboxUnlocked(
       process.exit(1);
     }
   }
-  const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } =
-    prepareSandboxDestroy(sandboxName);
+  let destroyPreflight: ReturnType<typeof prepareSandboxDestroy>;
+  try {
+    destroyPreflight = prepareSandboxDestroy(sandboxName);
+  } catch (error) {
+    preparedManagedLlamaCppCleanup?.abort();
+    throw error;
+  }
+  const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } = destroyPreflight;
   // Recheck identity after pre-delete qualification and recoverable journal
   // publication reconciliation, before any sandbox runtime mutation.
   const preMutationIdentity = inspectContainerIdentity();
@@ -536,6 +542,7 @@ async function destroySandboxUnlocked(
         `  Refusing to destroy sandbox '${sandboxName}': Container identity changed during preflight. No sandbox runtime resources were removed.`,
       );
     }
+    preparedManagedLlamaCppCleanup?.abort();
     process.exit(1);
   }
   const priorHttpsPinRouteId = parseHttpsPinRouteId(sandbox?.endpointUrl);
@@ -603,6 +610,7 @@ async function destroySandboxUnlocked(
         );
       }
     }
+    preparedManagedLlamaCppCleanup?.abort();
     process.exit(destructiveResult.exitCode);
   }
   const {
@@ -648,6 +656,9 @@ async function destroySandboxUnlocked(
   // forcedLocalCleanup — so a forced cleanup of the last registered sandbox does
   // not shut down services for a sandbox we never confirmed deleted (#6046).
   const deleteSucceededOrAlreadyGone = deleteResult.status === 0 || alreadyGone;
+  if (!deleteSucceededOrAlreadyGone) {
+    preparedManagedLlamaCppCleanup?.abort();
+  }
   if (deleteSucceededOrAlreadyGone && sandbox) {
     const stateVolumeCleanup = removeManagedHermesStateVolume({
       agentName: sandbox.agent,
@@ -660,6 +671,7 @@ async function destroySandboxUnlocked(
         `  Sandbox '${sandboxName}' is gone, but its managed Hermes state volume '${stateVolumeCleanup.volumeName}' could not be removed: ${redactDestroyError(stateVolumeCleanup.detail)}`,
       );
       console.error("  The sandbox registry entry was preserved so exact cleanup can be retried.");
+      preparedManagedLlamaCppCleanup?.abort();
       process.exit(1);
     }
     if (stateVolumeCleanup.status === "not-owned") {
@@ -679,7 +691,9 @@ async function destroySandboxUnlocked(
   cleanupSandboxServices(sandboxName, {
     stopHostServices: shouldStopHostServices,
   });
-  if (deleteSucceededOrAlreadyGone && commonLlamaCppAuthorityRetired !== true) {
+  if (deleteSucceededOrAlreadyGone && commonLlamaCppAuthorityRetired === true) {
+    preparedManagedLlamaCppCleanup?.abort();
+  } else if (deleteSucceededOrAlreadyGone) {
     // A null pre-delete result proves that no matching legacy owner state was
     // present. Never discover and qualify newly appeared state only after the
     // sandbox boundary; a later destroy retry must preflight that state first.
