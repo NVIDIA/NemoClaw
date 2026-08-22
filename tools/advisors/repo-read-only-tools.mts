@@ -86,19 +86,26 @@ function createGuardedLsOperations(guard: RepoPathGuard): LsOperations {
  * Preserve Pi's read-only tool contracts while confining every requested root to cwd.
  * Canonical paths are delegated to Pi so a checked symlink cannot redirect the operation.
  */
-export function createRepoConfinedReadOnlyTools(cwd: string): ToolDefinition[] {
+export function createRepoConfinedReadOnlyTools(
+  cwd: string,
+  onRead?: (path: string) => void,
+): ToolDefinition[] {
   const guard = createRepoPathGuard(cwd);
 
   const read = createReadToolDefinition(cwd);
   const executeRead = read.execute;
-  read.execute = async (toolCallId, input, signal, onUpdate, context) =>
-    executeRead(
+  read.execute = async (toolCallId, input, signal, onUpdate, context) => {
+    const resolvedPath = await guard.resolveExisting(input.path);
+    const result = await executeRead(
       toolCallId,
-      { ...input, path: await guard.resolveExisting(input.path) },
+      { ...input, path: resolvedPath },
       signal,
       onUpdate,
       context,
     );
+    onRead?.(resolvedPath);
+    return result;
+  };
 
   const grep = createGrepToolDefinition(cwd);
   const executeGrep = grep.execute;

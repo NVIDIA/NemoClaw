@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { advisorTurnFlowErrors, resolveAdvisorTurnTools } from "../tools/advisors/session.mts";
 import { buildSynthesisTurn } from "../tools/pr-review-advisor/synthesis-turn.mts";
 import { ADVISOR_INTERESTS } from "../tools/pr-review-advisor/specialists.mts";
 import {
@@ -85,6 +86,31 @@ describe("specialist Pi session inputs", () => {
     expect(turn.prompt).not.toContain(specialistSessionFileName("documentation"));
     expect(turn.prompt).toContain("documentation: specialist trace unavailable");
     expect(turn.prompt).toContain("explicit review-completeness limitation");
+  });
+
+  it("requires a successful ordinary read of every available trace before synthesis text", () => {
+    const turn = buildSynthesisTurn(validateSpecialistSessionDirectory(fixture()));
+    const tools = resolveAdvisorTurnTools(turn, [], new Set(["read", "grep", "find", "ls"]));
+    const paths = turn.requiredReadPaths ?? [];
+    const complete = paths.flatMap((readPath) => [
+      { type: "tool_start" as const, toolName: "read" },
+      { type: "tool_end" as const, toolName: "read", isError: false },
+      { type: "read" as const, path: readPath },
+    ]);
+
+    expect(
+      advisorTurnFlowErrors("synthesize", [...complete, { type: "text", text: "receipt" }], tools),
+    ).toEqual([]);
+    expect(
+      advisorTurnFlowErrors(
+        "synthesize",
+        [...complete.slice(0, -3), { type: "text", text: "receipt" }],
+        tools,
+      ),
+    ).toContain(`synthesize omitted required read: ${paths.at(-1)}`);
+    expect(
+      advisorTurnFlowErrors("synthesize", [{ type: "text", text: "early" }, ...complete], tools),
+    ).toContain(`synthesize emitted text before required read completed: ${paths[0]}`);
   });
 
   it("rejects unexpected files", () => {

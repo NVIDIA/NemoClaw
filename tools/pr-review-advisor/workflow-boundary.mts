@@ -1187,6 +1187,15 @@ function checkShadowAnalysisTrustBoundary(
   requireWith(errors, trustedCheckout, "lfs", false);
   requireWith(errors, trustedCheckout, "submodules", false);
 
+  const dispatchCheckout = requireStep(
+    errors,
+    steps,
+    "Checkout dispatch workspace (read-only data)",
+  );
+  requireWith(errors, dispatchCheckout, "ref", "${{ github.sha }}");
+  requireWith(errors, dispatchCheckout, "path", "pr-workdir");
+  requireWith(errors, dispatchCheckout, "persist-credentials", false);
+
   const canonicalCommands = [
     ["Prepare isolated analysis workspace", CANONICAL_PREPARE_TARGET_PR],
     ["Prepare advisor sandbox inputs", CANONICAL_PREPARE_SANDBOX],

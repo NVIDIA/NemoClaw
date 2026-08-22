@@ -583,6 +583,30 @@ describe("PR review advisor workflow boundary", () => {
     },
   );
 
+  it.each(["review-specialists", "review-synthesis-shadow"])(
+    "rejects changing the existing dispatch checkout to place the PR head in advisor for %s",
+    (jobName) => {
+      const errors = validateMutation((source) =>
+        mutateWorkflowSource(source, (workflow) => {
+          const checkout = workflow.jobs[jobName].steps.find(
+            (candidate: { name?: string }) =>
+              candidate.name === "Checkout dispatch workspace (read-only data)",
+          );
+          checkout.with.ref = "${{ github.event.pull_request.head.sha }}";
+          checkout.with.path = "advisor";
+          checkout.with["persist-credentials"] = true;
+        }),
+      );
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "step 'Checkout dispatch workspace (read-only data)' expected with.ref=${{ github.sha }}",
+          "step 'Checkout dispatch workspace (read-only data)' expected with.path=pr-workdir",
+          "step 'Checkout dispatch workspace (read-only data)' expected with.persist-credentials=false",
+        ]),
+      );
+    },
+  );
+
   it("rejects a second checkout that replaces trusted advisor code with the PR head", () => {
     const errors = validateMutation((source) =>
       mutateWorkflowSource(source, (workflow) => {

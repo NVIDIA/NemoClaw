@@ -362,8 +362,11 @@ export async function runReadOnlyAdvisor(
 
   const promptTurns = normalizePromptTurns(options.promptTurns);
   const contextTools = createAdvisorContextToolRuntime(promptTurns);
+  let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
   const customTools = [
-    ...createRepoConfinedReadOnlyTools(options.cwd),
+    ...createRepoConfinedReadOnlyTools(options.cwd, (readPath) => {
+      currentTurnFlow.push({ type: "read", path: readPath });
+    }),
     ...contextTools.customTools,
   ];
   const availableToolNames = new Set(READ_ONLY_TOOLS);
@@ -441,7 +444,6 @@ export async function runReadOnlyAdvisor(
   let currentTurnName = "";
   let currentTurnError: string | undefined;
   let successfulToolNames = new Set<string>();
-  let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
   let resolveCurrentAgentEnd: (() => void) | undefined;
 
   const captureTurnError = (source: string, message: string | undefined): void => {
