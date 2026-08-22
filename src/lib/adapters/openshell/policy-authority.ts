@@ -170,7 +170,7 @@ export function inspectSandboxPolicyAuthority({
     "machine-readable policy",
   );
   if (raw.trim().length === 0) {
-    failInspection("sandbox", "OpenShell returned empty policy metadata");
+    return { authority: "nemoclaw-managed", effectivePolicy: {} };
   }
   const metadata = parsePolicyMetadata(raw, "sandbox");
   if (metadata.scope !== "sandbox") {

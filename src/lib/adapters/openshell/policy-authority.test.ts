@@ -297,9 +297,22 @@ describe("OpenShell policy authority inspection", () => {
   it.each([
     ["empty", captureResult("")],
     ["whitespace-only", captureResult(" \n\t")],
-    ["malformed", captureResult('{"secret":"captured-stdout-secret"')],
-  ])("fails closed when sandbox metadata is %s (#9833)", (_case, result) => {
-    const runCaptureEx = vi.fn<PolicyAuthorityCapture>(() => result);
+  ])(
+    "recognizes NemoClaw-managed authority when sandbox policy output is %s (#9833)",
+    (_case, result) => {
+      const runCaptureEx = vi.fn<PolicyAuthorityCapture>(() => result);
+
+      expect(inspectSandboxPolicyAuthority({ sandboxName: "alpha", runCaptureEx })).toEqual({
+        authority: "nemoclaw-managed",
+        effectivePolicy: {},
+      });
+    },
+  );
+
+  it("fails closed when sandbox metadata is malformed (#9833)", () => {
+    const runCaptureEx = vi.fn<PolicyAuthorityCapture>(() =>
+      captureResult('{"secret":"captured-stdout-secret"'),
+    );
 
     const error = errorFrom(() =>
       inspectSandboxPolicyAuthority({ sandboxName: "alpha", runCaptureEx }),

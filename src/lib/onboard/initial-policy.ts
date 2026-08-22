@@ -322,6 +322,7 @@ type InitialPolicyOptions = {
   stationGb300SysfsReadOnlyPaths?: readonly string[];
   additionalPresets?: string[];
   agentName?: string | null;
+  sandboxName?: string;
   policyTier?: string | null;
   baselineExclusions?: readonly BaselineExclusionRequest[];
 };
@@ -536,6 +537,7 @@ function resolveInitialSandboxCreatePolicy(
 
     const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets, {
       agent: policyAgent,
+      sandboxName: options.sandboxName,
       excludedBaselineKeys: baselineExclusions.map((exclusion) => exclusion.key),
     });
     if (mergedPolicy.missingPresets.length > 0) {

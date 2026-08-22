@@ -16,6 +16,7 @@ import type {
   ExactManagedMcpPolicy,
   ManagedMcpPolicyOmission,
 } from "../actions/sandbox/mcp-bridge-policy";
+import { materializeMessagingPolicySandboxName } from "../messaging/channels/policy";
 import { cleanupTempDir, secureTempFile } from "../onboard/temp-files";
 
 export { assertLegacyMcpPolicyRestoreSafe, isManagedMcpPolicyKey } from "./mcp-policy-transition";
@@ -94,6 +95,10 @@ export interface PermissiveRuntimeDeps {
   // coordinator. These entries remain active while the static policy replaces
   // the rest of the complete gateway policy.
   managedMcpPolicies?: readonly ExactManagedMcpPolicy[];
+  // Hermes permissive Discord routes carry a sandbox-scoped credential
+  // binding. Supplying the target name makes composition fail closed unless
+  // every placeholder can be materialized before the policy is staged.
+  sandboxName?: string;
 }
 
 export function buildRuntimePermissivePolicy(
@@ -112,7 +117,8 @@ export function buildRuntimePermissivePolicy(
     liveRw.length === 0 &&
     liveRo.length === 0 &&
     live?.landlock === undefined &&
-    managedMcpPolicies.length === 0
+    managedMcpPolicies.length === 0 &&
+    deps.sandboxName === undefined
   ) {
     return basePermissivePath;
   }
@@ -126,12 +132,27 @@ export function buildRuntimePermissivePolicy(
         cause: error,
       });
     }
+    if (deps.sandboxName !== undefined) {
+      throw new Error("Cannot read the Shields-down policy with credential provider bindings", {
+        cause: error,
+      });
+    }
     return basePermissivePath;
+  }
+  if (deps.sandboxName !== undefined) {
+    const materialized = materializeMessagingPolicySandboxName(baseYaml, deps.sandboxName);
+    if (materialized === null) {
+      throw new Error("Cannot materialize the Shields-down credential provider binding");
+    }
+    baseYaml = materialized;
   }
   const base = safeYamlObject(baseYaml);
   if (!base) {
     if (managedMcpPolicies.length > 0) {
       throw new Error("Cannot parse the Shields-down policy while managed MCP policies are active");
+    }
+    if (deps.sandboxName !== undefined) {
+      throw new Error("Cannot parse the Shields-down policy with credential provider bindings");
     }
     return basePermissivePath;
   }
@@ -179,6 +200,11 @@ export function buildRuntimePermissivePolicy(
           { cause: error },
         );
       }
+      if (deps.sandboxName !== undefined) {
+        throw new Error("Cannot stage the Shields-down credential provider binding", {
+          cause: error,
+        });
+      }
       return basePermissivePath;
     }
   }
@@ -197,6 +223,11 @@ export function buildRuntimePermissivePolicy(
         "Cannot stage the Shields-down policy while managed MCP policies are active",
         { cause: error },
       );
+    }
+    if (deps.sandboxName !== undefined) {
+      throw new Error("Cannot stage the Shields-down credential provider binding", {
+        cause: error,
+      });
     }
     return basePermissivePath;
   }

@@ -242,8 +242,23 @@ export function materializeSandboxCreatePlan({
 }: MaterializeSandboxCreatePlanInput): SandboxCreatePlan {
   const enabledMessagingTokenDefs = validateSandboxCreateIntentBindings(intent, messagingTokenDefs);
   const driverConfig = buildSandboxDriverConfig(intent, managedStateMount);
-  const { initialSandboxPolicy, compatibilityPolicyPath } = prepareSandboxCreatePolicy(
-    intent,
+  const { initialSandboxPolicy, compatibilityPolicyPath } = prepareSandboxGpuRoutePolicies(
+    intent.policy.basePolicyPath,
+    [...intent.policy.activeMessagingChannels],
+    {
+      directGpu: intent.policy.options.directGpu,
+      hostGpuAvailable: intent.policy.options.hostGpuAvailable,
+      additionalPresets: intent.policy.options.hostLocalInferenceRouteOnly
+        ? intent.policy.options.additionalPresets.filter((name) => name !== "local-inference")
+        : [...intent.policy.options.additionalPresets],
+      agentName: intent.policy.options.agentName,
+      sandboxName: intent.sandboxName,
+      policyTier: intent.policy.options.policyTier,
+      baselineExclusions: intent.policy.options.baselineExclusions.map((exclusion) => ({
+        ...exclusion,
+      })),
+    },
+    intent.gpuRoutePlan,
     prepareInitialSandboxCreatePolicy,
   );
   if (policyAuthority === "nemoclaw-managed") {

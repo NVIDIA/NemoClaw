@@ -18,9 +18,13 @@ type MessagingProviderUpsertOptions = {
   replaceExisting?: boolean;
   bestEffort?: boolean;
   revalidatePolicyRequirements?(operation: string): void;
+  requireExactBindings?: boolean;
 };
 
 type LegacyOnboardProvidersModule = {
+  isMessagingProviderBindingConflict(
+    error: unknown,
+  ): error is Error & { readonly mutatedProviderNames: readonly string[] };
   upsertMessagingProviders(
     tokenDefs: MessagingProviderTokenDefinition[],
     run: typeof defaultRunOpenshell,
@@ -53,6 +57,12 @@ export const policyChannelDependencies = {
   isPolicyAuthorityRefusalError,
   preflightSandboxPolicyAuthority,
   runOpenshell: (...args: Parameters<typeof defaultRunOpenshell>) => defaultRunOpenshell(...args),
+  isMessagingProviderBindingConflict(
+    error: unknown,
+  ): error is Error & { readonly mutatedProviderNames: readonly string[] } {
+    const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
+    return providers.isMessagingProviderBindingConflict(error);
+  },
   upsertMessagingProviders(
     tokenDefs: MessagingProviderTokenDefinition[],
     options?: MessagingProviderUpsertOptions,

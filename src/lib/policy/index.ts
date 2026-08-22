@@ -24,6 +24,7 @@ import {
   listMessagingChannelPolicyPresets,
   listMessagingPolicyPresetMetadata,
   loadMessagingChannelPolicyPreset,
+  materializeMessagingPolicySandboxName,
 } from "../messaging/channels";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
@@ -96,6 +97,7 @@ type SelectionOptions = {
 
 type PresetLoadOptions = {
   agent?: string | null;
+  sandboxName?: string;
 };
 
 type PresetListOptions = {
@@ -104,6 +106,7 @@ type PresetListOptions = {
 
 type MergePresetNamesOptions = {
   agent?: string | null;
+  sandboxName?: string;
   excludedBaselineKeys?: readonly string[];
 };
 
@@ -165,7 +168,10 @@ function loadCentralPreset(name: string, options: { reportMissing?: boolean } = 
 }
 
 function loadPresetForAgent(name: string, options: PresetLoadOptions = {}): string | null {
-  const channelPreset = loadMessagingChannelPolicyPreset(name, { agent: options.agent });
+  const channelPreset = loadMessagingChannelPolicyPreset(name, {
+    agent: options.agent,
+    sandboxName: options.sandboxName,
+  });
   if (channelPreset) return channelPreset;
   if (isMessagingChannelPolicyPreset(name)) return null;
   return loadCentralPreset(name);
@@ -334,6 +340,7 @@ function loadPresetForSandbox(sandboxName: string, presetName: string): string |
 
   const channelPresetContent = loadMessagingChannelPolicyPreset(presetName, {
     agent: sandboxAgent,
+    sandboxName,
   });
   if (channelPresetContent) return channelPresetContent;
   if (isMessagingChannelPolicyPreset(presetName)) return null;
@@ -1294,9 +1301,23 @@ function mergePresetNamesIntoPolicy(
   const missingPresets: string[] = [];
 
   for (const presetName of [...new Set(presetNames)]) {
-    const presetContent = loadPresetForAgent(presetName, { agent: options.agent });
+    const presetContent = loadPresetForAgent(presetName, {
+      agent: options.agent,
+      sandboxName: options.sandboxName,
+    });
     const presetEntries = extractPresetEntries(presetContent);
     if (!presetEntries) {
+      const materializesWithSandboxName =
+        isMessagingChannelPolicyPreset(presetName) &&
+        loadMessagingChannelPolicyPreset(presetName, {
+          agent: options.agent,
+          sandboxName: "policy-probe",
+        }) !== null;
+      if (materializesWithSandboxName) {
+        throw new Error(
+          `Cannot compose messaging policy preset '${presetName}': a valid sandbox name is required to materialize credential bindings.`,
+        );
+      }
       missingPresets.push(presetName);
       continue;
     }
@@ -3229,10 +3250,14 @@ function applyPermissivePolicy(sandboxName: string): void {
     throw new Error(`Permissive policy not found: ${policyPath}`);
   }
   const policyDocument = fs.readFileSync(policyPath, "utf-8");
+  const materializedPolicy = materializeMessagingPolicySandboxName(policyDocument, sandboxName);
+  if (materializedPolicy === null) {
+    throw new Error("Cannot materialize the permissive policy credential provider binding");
+  }
 
   console.log("  Applying permissive policy...");
   assertOpenshellResolvable();
-  setPolicyDocument(sandboxName, policyDocument, { gatewayName: authority.gatewayName });
+  setPolicyDocument(sandboxName, materializedPolicy, { gatewayName: authority.gatewayName });
   const observed = inspectPolicyAuthority(sandboxName, operation, authority.gatewayName, true);
   policyAuthorityModule.assertRecordedPolicyAuthority(
     authority.authority,
