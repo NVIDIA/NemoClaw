@@ -10,7 +10,6 @@ import {
   MANAGED_LLAMA_CPP_CONTAINER_NAME,
   MANAGED_LLAMA_CPP_NETWORK_NAME,
 } from "../../../src/lib/inference/llama-cpp/managed-installer.ts";
-import { LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH } from "../../../src/lib/inference/llama-cpp/host-local-runtime.ts";
 import {
   loadManagedLlamaCppApiKey,
   loadManagedLlamaCppOwner,
@@ -32,6 +31,8 @@ import {
 } from "./gpu-e2e-helpers.ts";
 
 const TIMEOUT_MS = 110 * 60_000;
+const EXPECTED_LLAMA_CPP_REQUEST_GUARD_PATH =
+  "/usr/local/bin/nemoclaw-llama-cpp-request-guard";
 const RECIPE_ID = "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
 const PRESET_ID = "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-llamacpp-gpu";
@@ -221,7 +222,7 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
   expect(runtime?.State?.Running).toBe(true);
   expect(runtime?.State?.Pid).toEqual(expect.any(Number));
   expect(runtime?.Config?.Image).toBe(recipe.spec.runtime.image);
-  expect(runtime?.Config?.Entrypoint).toEqual([LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH]);
+  expect(runtime?.Config?.Entrypoint).toEqual([EXPECTED_LLAMA_CPP_REQUEST_GUARD_PATH]);
   const containerPid = runtime?.State?.Pid as number;
   expect(containerPid).toBeGreaterThan(0);
   expect(runtime?.Config?.Cmd).toEqual(expect.any(Array));
