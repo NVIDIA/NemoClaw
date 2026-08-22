@@ -8,6 +8,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { advisorTurnFlowErrors, resolveAdvisorTurnTools } from "../tools/advisors/session.mts";
+import {
+  requiredReadPreparationErrors,
+  requiredReadPreparationPrompt,
+} from "../tools/advisors/turn-protocol.mts";
 import { buildSynthesisTurn } from "../tools/pr-review-advisor/synthesis-turn.mts";
 import { ADVISOR_INTERESTS } from "../tools/pr-review-advisor/specialists.mts";
 import {
@@ -116,6 +120,36 @@ describe("specialist Pi session inputs", () => {
       { type: "tool_start" as const, toolName },
       { type: "tool_end" as const, toolName, isError: false },
     ];
+
+    const preparationTurn = { ...turn, requiredReadPaths: [paths[0]!] };
+    expect(requiredReadPreparationPrompt(preparationTurn)).toContain(
+      `Required files:\n- ${paths[0]}`,
+    );
+    expect(requiredReadPreparationPrompt(preparationTurn)).not.toContain(paths[1]!);
+    expect(
+      requiredReadPreparationErrors("synthesize", [complete[0]!], {
+        ...tools,
+        requiredReadPaths: [paths[0]!],
+      }),
+    ).toEqual([]);
+    expect(
+      requiredReadPreparationErrors("synthesize", [receipt, complete[0]!], {
+        ...tools,
+        requiredReadPaths: [paths[0]!],
+      }),
+    ).toContain("synthesize required-read preparation emitted text");
+    expect(
+      requiredReadPreparationErrors("synthesize", [...toolCall("grep"), complete[0]!], {
+        ...tools,
+        requiredReadPaths: [paths[0]!],
+      }),
+    ).toContain("synthesize required-read preparation called grep");
+    expect(
+      requiredReadPreparationErrors("synthesize", [complete[1]!, complete[0]!], {
+        ...tools,
+        requiredReadPaths: [paths[0]!],
+      }),
+    ).toContain(`synthesize required-read preparation read unexpected path: ${paths[1]}`);
 
     expect(advisorTurnFlowErrors("synthesize", [...complete, receipt], tools)).toEqual([]);
     expect(
