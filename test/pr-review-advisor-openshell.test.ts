@@ -571,6 +571,27 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(gatewayConfig).toContain("enable_bind_mounts = true");
   });
 
+  it("staggers and retries transient inference configuration failures", async () => {
+    const env = advisorEnvironment();
+    let inferenceAttempts = 0;
+    const tools = advisorTools((command, args) => {
+      if (command === "which") return "/trusted/bin/openshell-sandbox";
+      if (command === "openshell" && args.slice(0, 2).join(" ") === "inference set") {
+        inferenceAttempts += 1;
+        if (inferenceAttempts < 3) throw new Error("HTTP 429 Too Many Requests");
+      }
+      return "";
+    });
+
+    await configureAdvisorOpenShellInference(env, tools);
+
+    expect(inferenceAttempts).toBe(3);
+    expect(vi.mocked(tools.wait)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(tools.wait).mock.calls.every(([milliseconds]) => milliseconds >= 2000)).toBe(
+      true,
+    );
+  });
+
   it.each(["GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "PR_REVIEW_ADVISOR_API_KEY"])(
     "writes unavailable artifacts through a credential-free trusted host fallback [case %#]",
     (name) => {
