@@ -473,9 +473,12 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     !isDeepStrictEqual(record(managedCatalog.env), {
       CANDIDATE_SHA: "${{ inputs.candidate_sha }}",
       MANAGED_IMAGE_CATALOG: "${{ inputs.managed_image_catalog }}",
+      RESTORE_CLI: "${{ inputs.restore_cli && 'true' || 'false' }}",
     }) ||
+    !managedCatalogRun.includes('[[ "$RESTORE_CLI" == "true" ]]') ||
     !managedCatalogRun.includes(".source.revision == $revision") ||
     !managedCatalogRun.includes(".source.release == $release") ||
+    !managedCatalogRun.includes("[.[] | .source.release] | unique | length == 1") ||
     !managedCatalogRun.includes(
       "managed-image catalog source identity does not match the candidate",
     ) ||
