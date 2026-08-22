@@ -31,13 +31,15 @@
  * so they use the CLI device credential. For a restored pairing-only clone,
  * the approval child also pins the clone's loopback URL and accepts only its
  * descriptor-backed identity and pairing snapshots. The reviewed dist patch
- * uses only the descriptor-backed
- * pairing token for the pinned loopback gateway and disables pathname-backed
- * stored authentication for that exact self-repair shape. It requires a
- * matching live preflight before one canonical approval, then synchronizes the
- * rotated token into the clone's client-auth store. Remove this compatibility
- * path when OpenClaw can complete scope upgrades natively through device-token
- * auth using operator.pairing.
+ * uses only the descriptor-backed pairing token for the pinned loopback
+ * gateway and disables pathname-backed stored authentication for that exact
+ * self-repair shape. It requires a matching live preflight before one canonical
+ * approval. The canonical writer binds the authenticated token to the paired
+ * and stored-auth before-images, then journals pending, paired, and stored-auth
+ * publication together. The wrapper verifies the resulting transition and
+ * rewrites the same rotated token to the clone's client-auth store. Remove this
+ * compatibility path when OpenClaw can complete scope upgrades natively
+ * through device-token auth using operator.pairing.
  */
 
 import { spawnSync } from "node:child_process";

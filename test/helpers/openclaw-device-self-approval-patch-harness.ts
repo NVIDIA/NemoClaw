@@ -563,6 +563,7 @@ const writes = [];
 let delayedPairedWrite = null;
 let failNextPendingWrite = false;
 let failCommittedJournalAfterWrite = false;
+let failNextIdleJournalWrite = false;
 let driftOnBuild = null;
 function cloneJson(value) { return value === null || value === undefined ? value : JSON.parse(JSON.stringify(value)); }
 function createAsyncLock() {
@@ -575,9 +576,10 @@ function createAsyncLock() {
     try { return await fn(); } finally { release(); }
   };
 }
-function resolvePairingPaths(baseDir) {
+function resolvePairingPaths(baseDir, subdir = "devices") {
   const root = baseDir ?? "/fixture";
-  return { pendingPath: \`\${root}/pending.json\`, pairedPath: \`\${root}/paired.json\` };
+  const dir = \`\${root}/\${subdir}\`;
+  return { dir, pendingPath: \`\${dir}/pending.json\`, pairedPath: \`\${dir}/paired.json\` };
 }
 function coercePairingStateRecord(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
 function pruneExpiredPending() {}
@@ -595,6 +597,10 @@ async function writeJson(file, value, options) {
     delayed.started();
     await delayed.gate;
   }
+  if (file.endsWith(".nemoclaw-self-approval-journal") && value?.phase === "idle" && failNextIdleJournalWrite) {
+    failNextIdleJournalWrite = false;
+    throw new Error("idle journal cleanup failed");
+  }
   files.set(file, cloneJson(value));
   if (file.endsWith(".nemoclaw-self-approval-journal") && value?.phase === "committed" && failCommittedJournalAfterWrite) {
     failCommittedJournalAfterWrite = false;
@@ -603,14 +609,38 @@ async function writeJson(file, value, options) {
 }
 function setPairingState(pendingById, pairedByDeviceId, baseDir = "/fixture") {
   const { pendingPath, pairedPath } = resolvePairingPaths(baseDir, "devices");
+  const authPath = \`\${resolvePairingPaths(baseDir, "identity").dir}/device-auth.json\`;
   files.set(pendingPath, cloneJson(pendingById));
   files.set(pairedPath, cloneJson(pairedByDeviceId));
+  const pairedDevice = Object.values(pairedByDeviceId)[0];
+  const tokens = pairedDevice?.tokens;
+  const operator = Array.isArray(tokens)
+    ? tokens.find((entry) => entry?.role === "operator")
+    : tokens?.operator;
+  if (typeof operator?.token === "string" && operator.token) {
+    files.set(authPath, cloneJson({
+      version: 1,
+      deviceId: pairedDevice.deviceId,
+      tokens: {
+        operator: {
+          token: operator.token,
+          role: "operator",
+          scopes: operator.scopes,
+          updatedAtMs: 1,
+        },
+      },
+    }));
+  }
 }
 function setFile(file, value) { files.set(file, cloneJson(value)); }
 function getFile(file) { return files.has(file) ? cloneJson(files.get(file)) : null; }
 function getPairingPaths(baseDir = "/fixture") {
   const paths = resolvePairingPaths(baseDir, "devices");
-  return { ...paths, journalPath: \`\${paths.pendingPath}.nemoclaw-self-approval-journal\` };
+  return {
+    ...paths,
+    authPath: \`\${resolvePairingPaths(baseDir, "identity").dir}/device-auth.json\`,
+    journalPath: \`\${paths.pendingPath}.nemoclaw-self-approval-journal\`,
+  };
 }
 function armLateWriterFailure() {
   failNextPendingWrite = true;
@@ -623,6 +653,7 @@ function armLateWriterFailure() {
 }
 function releaseLateWriter() { delayedPairedWrite?.release(); }
 function armCommittedJournalFailure() { failCommittedJournalAfterWrite = true; }
+function armIdleJournalFailure() { failNextIdleJournalWrite = true; }
 function armStateDrift(file, value) { driftOnBuild = { file, value: cloneJson(value) }; }
 async function loadState(baseDir) {
   const { pendingPath, pairedPath } = resolvePairingPaths(baseDir, "devices");
@@ -766,6 +797,47 @@ export function runFixture<T>(source: string, expression: string): T {
   return vm.runInNewContext(`${source}\n${expression}`, { Buffer, URL }) as T;
 }
 
+export interface PairingFixtureRuntime {
+  writes: Array<{ file: string; value: unknown; options?: Record<string, unknown> }>;
+  setPairingState(
+    pendingById: Record<string, unknown>,
+    pairedByDeviceId: Record<string, unknown>,
+    baseDir?: string,
+  ): void;
+  setFile(file: string, value: unknown): void;
+  getFile(file: string): unknown;
+  getPairingPaths(baseDir?: string): {
+    authPath: string;
+    pendingPath: string;
+    pairedPath: string;
+    journalPath: string;
+  };
+  listDevicePairing(baseDir?: string): Promise<{
+    pending: Array<Record<string, unknown>>;
+    paired: Array<Record<string, unknown>>;
+  }>;
+  getPairedDevice(deviceId: string, baseDir?: string): Promise<Record<string, unknown> | null>;
+  getPendingDevicePairing(
+    requestId: string,
+    baseDir?: string,
+  ): Promise<Record<string, unknown> | null>;
+  approveDevicePairing(
+    requestId: string,
+    options: Record<string, unknown>,
+    baseDir?: string,
+  ): Promise<Record<string, unknown> | null>;
+  approveBootstrapDevicePairing(
+    requestId: string,
+    bootstrapProfile: Record<string, unknown>,
+    baseDir?: string,
+  ): Promise<Record<string, unknown> | null>;
+  armLateWriterFailure(): Promise<void>;
+  releaseLateWriter(): void;
+  armCommittedJournalFailure(): void;
+  armIdleJournalFailure(): void;
+  armStateDrift(file: string, value: unknown): void;
+}
+
 export function validPending(overrides: Record<string, unknown> = {}) {
   return {
     requestId: "request-1",
@@ -796,6 +868,91 @@ export function validPaired(overrides: Record<string, unknown> = {}) {
   };
 }
 
+export function selfApprovalTransactionSnapshots() {
+  const pending = validPending({ ts: 100 });
+  const pairedBefore = validPaired({
+    approvedAtMs: 100,
+    tokens: {
+      operator: { token: "token-before", role: "operator", scopes: ["operator.pairing"] },
+    },
+  });
+  const pairedAfter = validPaired({
+    approvedAtMs: 200,
+    scopes: ["operator.pairing", "operator.read", "operator.write"],
+    approvedScopes: ["operator.pairing", "operator.read", "operator.write"],
+    tokens: {
+      operator: {
+        token: "token-after",
+        role: "operator",
+        scopes: ["operator.pairing", "operator.read", "operator.write"],
+      },
+    },
+  });
+  return {
+    before: {
+      auth: {
+        version: 1,
+        deviceId: "device-1",
+        tokens: {
+          operator: {
+            token: "token-before",
+            role: "operator",
+            scopes: ["operator.pairing"],
+            updatedAtMs: 1,
+          },
+        },
+      },
+      pendingById: { "request-1": pending },
+      pairedByDeviceId: { "device-1": pairedBefore },
+    },
+    after: {
+      auth: {
+        version: 1,
+        deviceId: "device-1",
+        tokens: {
+          operator: {
+            token: "token-after",
+            role: "operator",
+            scopes: ["operator.pairing", "operator.read", "operator.write"],
+            updatedAtMs: 1,
+          },
+        },
+      },
+      pendingById: {},
+      pairedByDeviceId: { "device-1": pairedAfter },
+    },
+  };
+}
+
+export function selfApprovalTransactionJournal(
+  phase: "prepared" | "committed",
+  snapshots: ReturnType<typeof selfApprovalTransactionSnapshots>,
+) {
+  return {
+    version: 2,
+    kind: "nemoclaw-self-approval",
+    phase,
+    requestId: "request-1",
+    deviceId: "device-1",
+    before: snapshots.before,
+    after: snapshots.after,
+  };
+}
+
+export function selfApprovalOptions() {
+  return {
+    callerScopes: ["operator.pairing"],
+    nemoclawSelfApprovalIdentity: {
+      deviceId: "device-1",
+      publicKey: "public-key-1",
+      role: "operator",
+      clientId: "cli",
+      clientMode: "cli",
+      deviceToken: "token-before",
+    },
+  };
+}
+
 export function validClient(overrides: Record<string, unknown> = {}) {
   return {
     isDeviceTokenAuth: true,
@@ -807,6 +964,7 @@ export function validClient(overrides: Record<string, unknown> = {}) {
     connect: {
       role: "operator",
       scopes: ["operator.pairing"],
+      auth: { token: "token-before" },
       device: { id: "device-1", publicKey: "public-key-1" },
       client: { id: "cli", mode: "cli" },
     },
