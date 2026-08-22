@@ -9,14 +9,15 @@ import { BaseSequencer, type TestSpecification } from "vitest/node";
 
 interface TimingHintSource {
   runId: number;
+  artifactId: number;
   headSha: string;
   recordedAt: string;
 }
 
 export interface CliTestTimingHints {
-  schemaVersion: 1;
+  schemaVersion: 2;
   defaultDurationMs: number;
-  source: TimingHintSource;
+  sources: readonly TimingHintSource[];
   files: Readonly<Record<string, number>>;
 }
 
@@ -38,8 +39,8 @@ const cliCoverageProjects = new Set(["cli", "integration", "e2e-support"]);
 // Changing either salt intentionally remaps that lane's tests. These values
 // are calibrated against the timing-hint source profile, then kept fixed so
 // ordinary roster changes preserve ownership between profile refreshes.
-const stableShardSalt = "6096";
-const e2eSupportShardSalt = "2045";
+const stableShardSalt = "9041";
+const e2eSupportShardSalt = "5899";
 // Only measured outliers are stored; new and ordinary files share the
 // conservative fallback used to estimate each stable shard's load.
 const timingHintsUrl = new URL("../../ci/cli-test-timing-hints.json", import.meta.url);
@@ -49,26 +50,32 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function parseCliTestTimingHints(value: unknown): CliTestTimingHints {
-  if (!isRecord(value) || value.schemaVersion !== 1) {
-    throw new Error("CLI test timing hints must use schemaVersion 1");
+  if (!isRecord(value) || value.schemaVersion !== 2) {
+    throw new Error("CLI test timing hints must use schemaVersion 2");
   }
   if (!Number.isSafeInteger(value.defaultDurationMs) || Number(value.defaultDurationMs) <= 0) {
     throw new Error("CLI test timing hints require a positive integer defaultDurationMs");
   }
-  if (!isRecord(value.source)) {
+  if (!Array.isArray(value.sources) || value.sources.length === 0) {
     throw new Error("CLI test timing hints require source metadata");
   }
-
-  const { runId, headSha, recordedAt } = value.source;
-  if (!Number.isSafeInteger(runId) || Number(runId) <= 0) {
-    throw new Error("CLI test timing hint source requires a positive runId");
-  }
-  if (typeof headSha !== "string" || !/^[0-9a-f]{40}$/u.test(headSha)) {
-    throw new Error("CLI test timing hint source requires a full commit SHA");
-  }
-  if (typeof recordedAt !== "string" || Number.isNaN(Date.parse(recordedAt))) {
-    throw new Error("CLI test timing hint source requires an ISO timestamp");
-  }
+  const sources = value.sources.map((source) => {
+    if (!isRecord(source)) throw new Error("Invalid CLI test timing hint source");
+    const { runId, artifactId, headSha, recordedAt } = source;
+    if (
+      !Number.isSafeInteger(runId) ||
+      Number(runId) <= 0 ||
+      !Number.isSafeInteger(artifactId) ||
+      Number(artifactId) <= 0 ||
+      typeof headSha !== "string" ||
+      !/^[0-9a-f]{40}$/u.test(headSha) ||
+      typeof recordedAt !== "string" ||
+      Number.isNaN(Date.parse(recordedAt))
+    ) {
+      throw new Error("Invalid CLI test timing hint source");
+    }
+    return { runId: Number(runId), artifactId: Number(artifactId), headSha, recordedAt };
+  });
   if (!isRecord(value.files)) {
     throw new Error("CLI test timing hints require a files map");
   }
@@ -91,9 +98,9 @@ export function parseCliTestTimingHints(value: unknown): CliTestTimingHints {
   }
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     defaultDurationMs,
-    source: { runId: Number(runId), headSha, recordedAt },
+    sources,
     files,
   };
 }
