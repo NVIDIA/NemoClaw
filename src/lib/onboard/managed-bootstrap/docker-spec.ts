@@ -383,6 +383,10 @@ function normalizedHostConfig(
   if (normalized.PortBindings === null || normalized.PortBindings === undefined) {
     normalized.PortBindings = {};
   }
+  // Podman reports its default private PID namespace as `private`, while the
+  // Docker CLI represents the same default by omitting `--pid` and rejects
+  // `--pid private`.
+  if (normalized.PidMode === "private") normalized.PidMode = "";
   for (const key of ["Binds", "MaskedPaths", "ReadonlyPaths"] as const) {
     if (key in normalized) normalized[key] = canonicalStringSet(normalized[key], key);
   }
