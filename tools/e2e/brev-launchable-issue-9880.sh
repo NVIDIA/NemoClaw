@@ -38,10 +38,19 @@ write_cleanup_evidence() {
 }
 cleanup_owned_workspace() {
   local existing="" workspace_id="" absent=0
+  if [ ! -e "$OWNER_FILE" ]; then
+    existing="$(workspace || true)"
+    if [ -z "$existing" ]; then
+      write_cleanup_evidence ABSENT
+      return
+    fi
+    write_cleanup_evidence NOT_OWNED "$(jq -r '.id // ""' <<<"$existing")"
+    fail "cleanup refused because a matching workspace exists without an ownership receipt"
+  fi
   if ! jq -e --arg name "$INSTANCE_NAME" '.workspaceName == $name and .owned == true' \
     "$OWNER_FILE" >/dev/null 2>&1; then
     write_cleanup_evidence NOT_OWNED
-    fail "cleanup refused because the ownership receipt is absent or invalid"
+    fail "cleanup refused because the ownership receipt is invalid"
   fi
   existing="$(workspace || true)"
   workspace_id="$(jq -r '.id // ""' <<<"${existing:-{}}")"
@@ -154,6 +163,7 @@ jq -e '.status == "RUNNING" and (.shell_status // .shellStatus) == "READY" and
   || fail "workspace readiness timed out"
 workspace_id="$(jq -r '.id // ""' <<<"$ready")"
 log "Workspace $INSTANCE_NAME ($workspace_id) is ready"
+timeout 60s brev refresh >/dev/null || fail "Brev SSH configuration refresh failed"
 
 # The remote shell expands the single-quoted command.
 # shellcheck disable=SC2016
@@ -253,6 +263,7 @@ PY
   tail -c 4096 "$output"
   rm -f "$output"
   if [[ "$classification" == reproduced-* ]]; then reproduced=1; break; fi
+  [ "$classification" != inconclusive-timeout ] || exit 87
   [ "$classification" = completed ] || exit 2
 done
 if [ "$reproduced" -eq 1 ]; then exit 86; fi
@@ -265,6 +276,8 @@ redact_file "$raw_log" "$WORK_DIR/issue-9880.log"
 classification="completed"
 if [ "$scenario_status" -eq 86 ]; then
   classification="reproduced"
+elif [ "$scenario_status" -eq 87 ]; then
+  classification="timeout"
 elif [ "$scenario_status" -ne 0 ]; then classification="setup-or-unexpected-failure"; fi
 jq -n --arg launchableId "$BREV_LAUNCHABLE_ID" --arg workspaceName "$INSTANCE_NAME" \
   --arg workspaceId "$workspace_id" --arg classification "$classification" \
@@ -275,5 +288,6 @@ jq -n --arg launchableId "$BREV_LAUNCHABLE_ID" --arg workspaceName "$INSTANCE_NA
 case "$classification" in
   reproduced) fail "issue #9880 reproduced on the standing staging Launchable" ;;
   completed) log "Five fresh CLI sessions completed without reproducing issue #9880" ;;
+  timeout) fail "issue #9880 trial timed out without issue-specific loop evidence" ;;
   *) fail "issue #9880 scenario failed before a conclusive result" ;;
 esac
