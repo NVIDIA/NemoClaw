@@ -131,6 +131,25 @@ describe("probeHostServiceSandboxReachability", () => {
     expect(capturedArgs).not.toContain("host.openshell.internal:10.89.0.1");
   });
 
+  it("routes native Podman probes through the sandbox host gateway", async () => {
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+    let capturedArgs: readonly string[] = [];
+
+    const result = await probeHostServiceSandboxReachability({
+      port: 11435,
+      inspectNetworkImpl: () => ({ subnet: "10.89.0.0/24", gatewayIp: "10.89.0.1" }),
+      usesHostGatewayRouteImpl: () => false,
+      runImpl: (args) => {
+        capturedArgs = args;
+        return { status: 0 };
+      },
+    });
+
+    expect(result).toMatchObject({ ok: true, reason: "ok" });
+    expect(capturedArgs).toContain(`host.openshell.internal:${PORTABLE_HOST_GATEWAY_IP}`);
+    expect(capturedArgs).not.toContain("host.openshell.internal:10.89.0.1");
+  });
+
   it("keeps portable host-gateway failures credential-free and inconclusive", async () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
     vi.spyOn(process, "platform", "get").mockReturnValue("linux");

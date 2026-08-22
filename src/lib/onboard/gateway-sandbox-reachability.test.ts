@@ -150,6 +150,28 @@ describe("isSandboxBridgeGatewayReachable", () => {
     expect(seen.args).not.toContain("host.openshell.internal:10.87.0.1");
   });
 
+  it("reaches the native Podman host gateway without selecting the portable profile", async () => {
+    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+    const seen: { args: readonly string[] } = { args: [] };
+
+    const result = await isSandboxBridgeGatewayReachable({
+      inspectNetworkImpl: () => ({ subnet: "10.89.0.0/24", gatewayIp: "10.89.0.1" }),
+      usesHostGatewayRouteImpl: () => false,
+      runImpl: (args) => {
+        seen.args = args;
+        return { status: 0 };
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      gatewayIp: PORTABLE_HOST_GATEWAY_IP,
+      routeKind: "portable_host_gateway",
+    });
+    expect(seen.args).toContain(`host.openshell.internal:${PORTABLE_HOST_GATEWAY_IP}`);
+    expect(seen.args).not.toContain("host.openshell.internal:10.89.0.1");
+  });
+
   it("does not call a missing Docker network a firewall failure", async () => {
     const result = await isSandboxBridgeGatewayReachable({
       inspectNetworkImpl: () => undefined,

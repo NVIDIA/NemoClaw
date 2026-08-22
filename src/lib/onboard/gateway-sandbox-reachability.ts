@@ -27,6 +27,7 @@ import {
   isPortableExperimentalProfile,
   PORTABLE_HOST_GATEWAY_IP,
 } from "./experimental/portable-profile";
+import { isPodmanGatewayRuntimeEnabled } from "./gateway-runtime-selection";
 import {
   DOCKER_DESKTOP_WSL_INTEGRATION_HINT,
   ensureProbeImageCached,
@@ -309,6 +310,7 @@ export async function isSandboxBridgeGatewayReachable(
   const runImpl = opts.runImpl ?? defaultRunImpl;
 
   const portableProfile = isPortableExperimentalProfile();
+  const podmanRuntime = portableProfile || isPodmanGatewayRuntimeEnabled();
   const runtimeProbe = opts.runtimeProbeImpl ?? defaultRunImpl;
 
   const network = inspectNetwork(networkName);
@@ -316,7 +318,7 @@ export async function isSandboxBridgeGatewayReachable(
     networkName,
     network,
     usesHostGatewayRoute(),
-    portableProfile ? PORTABLE_HOST_GATEWAY_IP : undefined,
+    podmanRuntime ? PORTABLE_HOST_GATEWAY_IP : undefined,
   );
   if (!route) {
     if (portableProfile) {

@@ -29,6 +29,7 @@ import {
   isPortableExperimentalProfile,
   PORTABLE_HOST_GATEWAY_IP,
 } from "./experimental/portable-profile";
+import { isPodmanGatewayRuntimeEnabled } from "./gateway-runtime-selection";
 
 export const DEFAULT_PROBE_NETWORK = DEFAULT_DOCKER_DRIVER_NETWORK_NAME;
 const HOST_INTERNAL_NAME = "host.openshell.internal";
@@ -152,8 +153,9 @@ export async function probeHostServiceSandboxReachability(
   }
 
   const portableProfile = isPortableExperimentalProfile();
-  const isHostGateway = portableProfile ? false : usesHostGatewayRoute();
-  const usesNonBridgeRoute = portableProfile || isHostGateway;
+  const podmanRuntime = portableProfile || isPodmanGatewayRuntimeEnabled();
+  const isHostGateway = podmanRuntime ? false : usesHostGatewayRoute();
+  const usesNonBridgeRoute = podmanRuntime || isHostGateway;
 
   if (!usesNonBridgeRoute && !network.gatewayIp) {
     return {
@@ -166,7 +168,7 @@ export async function probeHostServiceSandboxReachability(
     };
   }
 
-  const hostInternalTarget = portableProfile
+  const hostInternalTarget = podmanRuntime
     ? PORTABLE_HOST_GATEWAY_IP
     : isHostGateway
       ? "host-gateway"
