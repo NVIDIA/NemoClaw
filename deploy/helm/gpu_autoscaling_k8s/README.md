@@ -304,7 +304,7 @@ The chart does not create, rotate, or delete the TLS Secret.
 
 ### Scheduling
 
-- Unset `NEMOCLAW_TARGET_NODE` for portable scheduling. Multi-node needs RWX (or disable Ollama persistence); default `values.yaml` hostPath is single-node only.
+- Unset `NEMOCLAW_TARGET_NODE` for portable scheduling. Multi-node needs RWX (or disable persistence for the selected runtime — see [Persistence](#persistence)); default `values.yaml` hostPath is single-node only.
 - Pin with `export NEMOCLAW_TARGET_NODE=<exact-node-name>` after confirming Ready + GPU label + allocatable GPUs ≥ `MAX_REPLICAS`.
 - Both `MAX_REPLICAS` and `TARGET_PODS` must not exceed allocatable GPUs in scope. Host `nvidia-smi` processes outside Kubernetes are not reserved by the chart.
 - Keep `HPA_VALUES`, `INGRESS_HOST`, `ENABLE_ENVOY_LB`, and `NEMOCLAW_TARGET_NODE` consistent across `install-hpa.sh`, `hpa-reset.sh`, and `hpa-load-test.sh`.
@@ -320,10 +320,6 @@ When Envoy is enabled:
 - Auth Secrets (`nemoclaw-gpu-metrics-proxy-inference-api`, `nemoclaw-gpu-metrics-proxy-ingress-auth`) use Helm `keep`. Delete explicitly to rotate; never commit keys. Optional operator Secret: `inference.auth.existingSecret`.
 
 When Envoy is disabled (`ENABLE_ENVOY_LB=0`): no Gateway objects; clients use the metrics-proxy Service; protect with network policy and the inference API key.
-
-### Ollama storage
-
-Default persistence is single-node hostPath in `values.yaml` (`/var/lib/nemoclaw-gpu/ollama`). Multi-node: clear `hostPath` and use RWX StorageClass, or disable persistence (`emptyDir` per pod → re-pull on replace). vLLM and NIM use the equivalent `vllm.persistence` / `nim.persistence` blocks with their own default hostPaths (`/var/lib/nemoclaw-gpu/vllm`, `/var/lib/nemoclaw-gpu/nim`).
 
 ### Inference runtimes
 
@@ -392,6 +388,10 @@ export INFERENCE_MODEL=nemotron-3-nano:30b
 ```
 
 Helm fields: `inference.runtime` (ollama|vllm|nim) and `inference.model` in `values.yaml` / `HPA_VALUES`. Env for scripts: `INFERENCE_RUNTIME`, `INFERENCE_MODEL`.
+
+#### Persistence
+
+All three runtimes persist their model cache the same way, each via its own `values.yaml` block: `ollama.persistence` (`/var/lib/nemoclaw-gpu/ollama`, the default runtime), `vllm.persistence` (`/var/lib/nemoclaw-gpu/vllm`), `nim.persistence` (`/var/lib/nemoclaw-gpu/nim`). Default persistence for all three is single-node hostPath. Multi-node: clear `hostPath` and use an RWX StorageClass, or disable persistence (`emptyDir` per pod → re-pull/re-download on replace).
 
 ### Kubernetes HPA metrics
 

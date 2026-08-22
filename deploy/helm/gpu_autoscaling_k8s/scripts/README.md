@@ -153,8 +153,8 @@ source versions.env
 kubectl apply -f \
   "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml"
 
-export AGENT_NAME=openclaw   # or hermes | deepagents — see ../agents/README.md
-export AGENT_SANDBOX_IMAGE=registry.example.com/team/nemoclaw-openclaw-k8s:v0.0.104
+export AGENT_NAME=openclaw   # or hermes | deepagents — see ../agents/README.md#comparison
+export AGENT_SANDBOX_IMAGE=registry.example.com/team/nemoclaw-${AGENT_NAME}-k8s:v0.0.104
 ./scripts/build-agent-sandbox-image.sh
 
 export OPENSHELL_OIDC_ISSUER=https://idp.example.com/realms/openshell
@@ -172,14 +172,18 @@ Terminal 1 — keep running:
 kubectl -n nemoclaw-sandboxes port-forward service/openshell 8080:8080
 ```
 
-Terminal 2 — client TLS + gateway (OIDC flags in [OpenShell details](#openshell-details)), then:
+Terminal 2 — client TLS + gateway (OIDC flags in [OpenShell details](#openshell-details)), then create/verify/run the sandbox for the `AGENT_NAME` you picked in step 4 (re-export it here if this is a fresh shell):
 
 ```bash
-export AGENT_SANDBOX_IMAGE=registry.example.com/team/nemoclaw-openclaw-k8s:v0.0.104
+export AGENT_SANDBOX_IMAGE=registry.example.com/team/nemoclaw-${AGENT_NAME}-k8s:v0.0.104
 export INFERENCE_MODEL=llama3.2:3b
 ./scripts/create-agent-sandbox.sh
 ./scripts/verify-agent-sandbox.sh
-./scripts/run-agent-sandbox.sh   # keep in foreground (deepagents: use run-agent-prompt.sh)
+
+# OpenClaw / Hermes — long-running gateway, keep this terminal in the foreground:
+./scripts/run-agent-sandbox.sh
+# Deep Agents Code — no gateway; run one-shot prompts instead:
+# ./scripts/run-agent-prompt.sh "Explain this repository in one sentence."
 ```
 
 Users do not paste an inference API key; the chart generates it and OpenShell injects Bearer auth.
@@ -235,7 +239,7 @@ The chart does not create, rotate, or delete the TLS Secret.
 
 ### Scheduling
 
-- Unset `NEMOCLAW_TARGET_NODE` for portable scheduling. Multi-node needs RWX (or disable Ollama persistence); default `values.yaml` hostPath is single-node only.
+- Unset `NEMOCLAW_TARGET_NODE` for portable scheduling. Multi-node needs RWX (or disable persistence for the selected runtime — see [Persistence](#persistence)); default `values.yaml` hostPath is single-node only.
 - Pin with `export NEMOCLAW_TARGET_NODE=<exact-node-name>` after confirming Ready + GPU label + allocatable GPUs ≥ `MAX_REPLICAS`.
 - Both `MAX_REPLICAS` and `TARGET_PODS` must not exceed allocatable GPUs in scope. Host `nvidia-smi` processes outside Kubernetes are not reserved by the chart.
 - Keep `HPA_VALUES`, `INGRESS_HOST`, `ENABLE_ENVOY_LB`, and `NEMOCLAW_TARGET_NODE` consistent across `install-hpa.sh`, `hpa-reset.sh`, and `hpa-load-test.sh`.
@@ -252,9 +256,9 @@ When Envoy is enabled:
 
 When Envoy is disabled (`ENABLE_ENVOY_LB=0`): no Gateway objects; clients use the metrics-proxy Service; protect with network policy and the inference API key.
 
-### Ollama storage
+### Persistence
 
-Default persistence off (`emptyDir` per pod → re-pull on replace). Single-node hostPath: see `values.yaml` / `ollama.persistence`. Multi-node: RWX StorageClass + `persistence.enabled=true`.
+Default persistence is single-node hostPath for all three runtimes (`ollama.persistence`, `vllm.persistence`, `nim.persistence` in `values.yaml`). Multi-node: clear `hostPath` and use an RWX StorageClass, or disable persistence (`persistence.enabled=false` → `emptyDir` per pod → re-pull/re-download on replace).
 
 ### Recovery
 
@@ -386,7 +390,7 @@ sum by (pod) (
 
 ## Uninstall
 
-Stop the running agent (`run-agent-sandbox.sh` for OpenClaw/Hermes; Deep Agents Code exits after each `run-agent-prompt.sh` call — nothing to stop). With OpenShell port-forward still up:
+Stop the running agent (`run-agent-sandbox.sh` for OpenClaw/Hermes; Deep Agents Code exits after each `run-agent-prompt.sh` call — nothing to stop). With OpenShell port-forward still up (substitute your agent's sandbox/provider name — `nemoclaw-onprem`/`onprem-ollama` for OpenClaw, `hermes-onprem`/`onprem-hermes` for Hermes, `deepagents-onprem`/`onprem-deepagents` for Deep Agents Code):
 
 ```bash
 openshell sandbox delete nemoclaw-onprem
