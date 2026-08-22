@@ -135,26 +135,26 @@ describe("PR review advisor specialist prompts", () => {
 
     await Promise.all(
       ADVISOR_INTERESTS.map((interest) =>
-        runSpecialistAdvisor(
-          interest,
-          { baseRef, headRef },
-          options,
-          async (runnerOptions) => {
-            captured.push([interest, runnerOptions.customTools ?? []]);
-            return result;
-          },
-        ),
+        runSpecialistAdvisor(interest, { baseRef, headRef }, options, async (runnerOptions) => {
+          captured.push([interest, runnerOptions.customTools ?? []]);
+          return result;
+        }),
       ),
     );
 
-    expect(captured.map(([interest, tools]) => [interest, tools.map(({ name }) => name)])).toEqual([
-      ["behavior", []],
-      ["trust", []],
-      ["design-architecture", []],
-      ["operations", []],
-      ["documentation", [TERMINOLOGY_TRACE_TOOL]],
-    ]);
-    const documentationTools = captured.find(([interest]) => interest === "documentation")?.[1] ?? [];
+    expect(
+      Object.fromEntries(
+        captured.map(([interest, tools]) => [interest, tools.map(({ name }) => name)]),
+      ),
+    ).toEqual({
+      behavior: [],
+      trust: [],
+      "design-architecture": [],
+      operations: [],
+      documentation: [TERMINOLOGY_TRACE_TOOL],
+    });
+    const documentationTools =
+      captured.find(([interest]) => interest === "documentation")?.[1] ?? [];
     const trace = documentationTools[0] as CallableTool;
     const evidence = await trace.execute(
       "trace-1",
