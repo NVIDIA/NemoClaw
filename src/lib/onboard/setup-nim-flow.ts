@@ -57,7 +57,10 @@ import { promptForInferenceProviderSelection } from "./provider-selection-prompt
 import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-route-handoff";
 import type { RuntimeProviderBundle } from "./runtime-provider/contract";
 
-export { resolveCurrentRuntimeProviderBundle } from "./runtime-provider/current";
+export {
+  resolveCurrentRuntimeProviderBundle,
+  resolveRegisteredRuntimeProviderBundle as resolveRegisteredRuntimeProvider,
+} from "./runtime-provider/current";
 export { createHermesPortableOllamaInferenceResolver } from "./experimental/hermes-portable-ollama-inference";
 
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
@@ -225,9 +228,7 @@ export interface SetupNimFlowDeps {
   resolveRequestedServingProfileModel?(
     env?: NodeJS.ProcessEnv,
   ): RequestedServingProfileModel | null;
-  selectVllmModelFromEnv?(
-    env?: NodeJS.ProcessEnv,
-  ): { id: string; servedModelId?: string } | null;
+  selectVllmModelFromEnv?(env?: NodeJS.ProcessEnv): { id: string; servedModelId?: string } | null;
   handleRoutedSelection(state: SetupNimSelectionState): Promise<SetupNimSelectionResult>;
   coerceAgentInferenceApi(
     agent: AgentDefinition | null,

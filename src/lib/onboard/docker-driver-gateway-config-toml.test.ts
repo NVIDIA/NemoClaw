@@ -30,6 +30,7 @@ import {
   buildDockerDriverGatewayRuntimeMarker,
   writeDockerDriverGatewayRuntimeMarker,
 } from "./docker-driver-gateway-runtime-marker";
+import { prepareNativePodmanGatewayHostRuntime } from "./runtime-provider/podman-runtime-surfaces";
 
 const SCOPED_NAMESPACE_PROOF_DRIVER = path.join(
   process.cwd(),
@@ -67,11 +68,20 @@ function writePreScopedGatewayConfig(
   );
   const gatewayId = legacyGatewayIdForStateDir(stateDir);
   const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+  const gatewayRuntime =
+    driver === "podman"
+      ? prepareNativePodmanGatewayHostRuntime({
+          environment: { ...process.env, ...env },
+          platform: "linux",
+          socketPath: env.OPENSHELL_PODMAN_SOCKET,
+        })
+      : undefined;
   let toml = buildDockerDriverGatewayConfigToml(
     env,
     "/usr/bin/openshell-sandbox",
     jwtBundle,
     gatewayId,
+    gatewayRuntime,
   );
   toml = toml.replace(
     /^sandbox_namespace = .*\n/m,
@@ -333,7 +343,9 @@ describe("docker-driver-gateway config TOML", () => {
 
       expect(() =>
         prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox"),
-      ).toThrow(/cannot prove its generated gateway identity \(the config could not be read safely:/);
+      ).toThrow(
+        /cannot prove its generated gateway identity \(the config could not be read safely:/,
+      );
       expect(fs.readFileSync(configPath, "utf-8")).toBe(oversizedToml);
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
@@ -484,9 +496,7 @@ describe("docker-driver-gateway config TOML", () => {
       const config = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8");
       expect(parseTomlString(config, "gateway_id")).toBe(gatewayIdForStateDir(stateDir));
       expect(parseTomlString(config, "sandbox_namespace")).toBe(gatewayIdForStateDir(stateDir));
-      expect(fs.readFileSync(path.join(stateDir, "openshell.db"), "utf-8")).toBe(
-        "legacy-database",
-      );
+      expect(fs.readFileSync(path.join(stateDir, "openshell.db"), "utf-8")).toBe("legacy-database");
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
@@ -614,7 +624,13 @@ describe("docker-driver-gateway config TOML", () => {
       });
       env.OPENSHELL_PODMAN_SOCKET = path.join(stateDir, "new-podman.sock");
 
-      prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox");
+      prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox", {
+        gatewayRuntime: prepareNativePodmanGatewayHostRuntime({
+          environment: { ...process.env, ...env },
+          platform: "linux",
+          socketPath: env.OPENSHELL_PODMAN_SOCKET,
+        }),
+      });
 
       const rewritten = fs.readFileSync(configPath, "utf-8");
       expect(rewritten).toContain('compute_drivers = ["podman"]');

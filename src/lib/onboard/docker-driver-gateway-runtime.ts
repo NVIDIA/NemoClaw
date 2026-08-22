@@ -29,7 +29,6 @@ import {
 import { HOST_GATEWAY_PGREP_PATTERN } from "./host-gateway-process";
 import * as dockerDriverGatewayRuntimeMarker from "./docker-driver-gateway-runtime-marker";
 import { isPortableExperimentalProfile } from "./docker-driver-platform";
-import { isPodmanGatewayRuntimeEnabled } from "./gateway-runtime-selection";
 import * as gatewayBinding from "./gateway-binding";
 import {
   gatewayProcessCmdlineMatches,
@@ -250,7 +249,6 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     const dockerHost = process.env.DOCKER_HOST;
     let podmanSocketPath: string | undefined;
     const portable = isPortableExperimentalProfile();
-    const nativePodman = !portable && isPodmanGatewayRuntimeEnabled();
     if (portable) {
       const candidate = dockerHost?.trim();
       if (!candidate || !isSupportedGatewayDockerHost(dockerHost)) {
@@ -259,32 +257,18 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
         );
       }
       podmanSocketPath = candidate.slice("unix://".length);
-    } else if (nativePodman) {
-      if (platform !== "linux") {
-        throw new Error("Native Podman gateway runtime is supported only on Linux.");
-      }
-      const explicitSocket = process.env.OPENSHELL_PODMAN_SOCKET;
-      if (explicitSocket !== undefined) {
-        podmanSocketPath = explicitSocket;
-      } else if (dockerHost !== undefined) {
-        if (!isSupportedGatewayDockerHost(dockerHost)) {
-          throw new Error(
-            "Native Podman gateway requires an absolute unix:// DOCKER_HOST or OPENSHELL_PODMAN_SOCKET.",
-          );
-        }
-        podmanSocketPath = dockerHost.trim().slice("unix://".length);
-      } else {
-        const uid = process.getuid?.() ?? os.userInfo().uid;
-        const runtimeDirectory = process.env.XDG_RUNTIME_DIR?.trim() || `/run/user/${String(uid)}`;
-        podmanSocketPath = path.join(runtimeDirectory, "podman", "podman.sock");
-      }
     }
+    const gatewayHostRuntime = dockerDriverGatewayEnv.prepareConfiguredGatewayHostRuntime({
+      environment: process.env,
+      platform,
+      socketPath: podmanSocketPath,
+    });
     const gatewayEnv = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
       platform,
       gatewayPort: currentGatewayPort(),
       stateDir: getDockerDriverGatewayStateDir(),
       dockerNetworkName: process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
-      podmanSocketPath,
+      gatewayHostRuntime,
       getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
       resolveSandboxBin: resolveOpenShellSandboxBinary,
       enableBindMounts: deps.enableBindMounts?.() === true,
@@ -415,7 +399,13 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       normalizeGatewayExecutablePath,
     });
     if (identityDrift) return identityDrift;
-    if (platform === "darwin" && desiredEnv.OPENSHELL_DRIVERS === "docker") {
+    const usesVmDriver =
+      platform === "darwin" &&
+      dockerDriverGatewayEnv.prepareConfiguredGatewayHostRuntime({
+        environment: process.env,
+        platform,
+      }).sandboxHostAddress === null;
+    if (usesVmDriver) {
       const markerDrift =
         dockerDriverGatewayRuntimeMarker.getDockerDriverGatewayRuntimeMarkerDriftForStateDir(
           getDockerDriverGatewayStateDir(),
@@ -464,9 +454,14 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
         gatewayBin,
       });
     }
-    if (
+    const usesVmDriver =
       platform === "darwin" &&
-      desiredEnv.OPENSHELL_DRIVERS === "docker" &&
+      dockerDriverGatewayEnv.prepareConfiguredGatewayHostRuntime({
+        environment: process.env,
+        platform,
+      }).sandboxHostAddress === null;
+    if (
+      usesVmDriver &&
       vmDriverProcess.hasOpenShellVmDriverChildProcess(pid, (args) =>
         deps.runCapture([...args], { ignoreError: true }),
       )

@@ -124,6 +124,7 @@ const {
 const {
   HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_PATH,
   hasActiveHermesRuntimeProviderStateMutation,
+  hasHermesRuntimeProviderStateMutationAuthority,
   runHermesRuntimeProviderStateMutation,
   supportsHermesRuntimeProviderStateMutation,
 }: typeof import("./hermes-runtime-state-mutation") = require("./hermes-runtime-state-mutation");
@@ -1047,18 +1048,11 @@ function inspectHermesShieldsProtocol(
   if (hasActiveRuntimeProviderStateMutation(sandboxName)) {
     return "provider-state-mutation-v2";
   }
-  if (
-    sandbox.openshellDriver?.trim().toLowerCase() === "docker" &&
-    sandbox.workload?.kind === "managed-image" &&
-    !sandbox.lifecycleGeneration
-  ) {
-    throw new Error("Managed Hermes Docker registry authority has no lifecycle generation");
+  const providerStateMutation = hasHermesRuntimeProviderStateMutationAuthority(sandbox);
+  if (providerStateMutation && !sandbox.lifecycleGeneration) {
+    throw new Error("Managed Hermes runtime-provider authority has no lifecycle generation");
   }
-  if (
-    sandbox.openshellDriver?.trim().toLowerCase() === "docker" &&
-    sandbox.workload?.kind === "managed-image" &&
-    sandbox.lifecycleGeneration
-  ) {
+  if (providerStateMutation && sandbox.lifecycleGeneration) {
     const capabilityPresence = privilegedSandboxExecCapture(sandboxName, [
       HERMES_PYTHON,
       "-I",
@@ -1285,12 +1279,12 @@ function requireHermesRuntimeProviderSandbox(sandboxName: string) {
   if (
     !sandbox ||
     sandbox.agent !== "hermes" ||
-    sandbox.openshellDriver?.trim().toLowerCase() !== "docker" ||
     sandbox.workload?.kind !== "managed-image" ||
-    !sandbox.lifecycleGeneration
+    !sandbox.lifecycleGeneration ||
+    !hasHermesRuntimeProviderStateMutationAuthority(sandbox)
   ) {
     throw new Error(
-      "Hermes runtime-provider state mutation lost its exact managed Docker registry authority",
+      "Hermes runtime-provider state mutation lost its exact managed provider registry authority",
     );
   }
   return sandbox;

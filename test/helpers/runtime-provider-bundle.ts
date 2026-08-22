@@ -115,6 +115,31 @@ export function createInMemoryRuntimeProviderBundle({
       supported: true,
       launcher: gatewayLauncher,
       inspectLegacyContainer: false,
+      prepareHostRuntime: () => ({
+        providerId,
+        openShellDriver: "memory",
+        bindAddress: "127.0.0.1",
+        grpcHost: "127.0.0.1",
+        sshGatewayHost: "127.0.0.1",
+        portCheckHost: "127.0.0.1",
+        socketPath: null,
+        requiredServerIpSans: [],
+        sandboxHostAddress: null,
+        usesHostGatewayRoute: false,
+        resourceOwnership: { label: "test.managed", value: providerId },
+        gatewayConfig: {
+          sandboxNamespace: "scoped",
+          hostGatewayIp: null,
+          includeSupervisorBin: true,
+          processOwnership: "scoped-namespace",
+        },
+        network: {
+          inspect: () => undefined,
+          usesHostGatewayRoute: () => false,
+          run: () => ({ status: 0 }),
+          ensureProbeImageCached: () => ({ ok: true, alreadyCached: true }),
+        },
+      }),
     },
     workload: {
       providerId,
@@ -230,6 +255,7 @@ export function createInMemoryRuntimeProviderBundle({
         { operation: "sandbox-lifecycle", engineId: "memory", displayName: "In-memory" },
         { operation: "workload-cleanup", engineId: "memory", displayName: "In-memory" },
       ],
+      capture: () => ({ status: 0, stdout: "", stderr: "" }),
     },
   };
 }

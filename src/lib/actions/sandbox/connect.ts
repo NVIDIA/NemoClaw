@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
   captureOpenshell,
   captureResolvedOpenshell,
   getOpenshellBinary,
+  resolveOpenshell,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
 import {
@@ -35,6 +35,7 @@ import { withGatewayRouteMutationLock } from "../../inference/gateway-route-muta
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
 import { ensureOllamaAuthProxy, probeOllamaAuthProxyHealth } from "../../inference/ollama/proxy";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import {
   assertNoOpenShellGatewayEndpointOverride,
   OpenShellGatewayEndpointOverrideError,
@@ -641,10 +642,11 @@ function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
   // runs the gateway as `nemoclaw-openshell-gateway` with host networking, and
   // the vm driver has no cluster container either, so both recover the route via
   // `openshell inference set` instead of the cluster CoreDNS patch. Mirrors
-  // usesGatewayMetadataProbe (snapshot.ts) and the `!== "docker"` guard on the
-  // snapshot DNS-proxy step. (#3403)
+  // usesGatewayMetadataProbe (snapshot.ts). (#3403)
   const driver = sb?.openshellDriver;
-  return driver !== "vm" && driver !== "docker";
+  if (!driver || driver === "vm") return false;
+  const provider = resolveRegisteredRuntimeProvider(driver);
+  return provider ? provider.gateway.launcher !== "nemoclaw" : true;
 }
 
 function reapplyVmInferenceRoute(

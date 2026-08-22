@@ -33,8 +33,9 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 
 type JsonRecord = Record<string, unknown>;
 
-interface PodmanManagedContainer {
+export interface PodmanManagedContainer {
   readonly containerId: string;
+  readonly inspect: Readonly<JsonRecord>;
   readonly labels: Readonly<Record<string, string>>;
   readonly name: string;
   readonly paused: boolean;
@@ -178,6 +179,7 @@ function parsePodmanManagedContainer(
   }
   return {
     containerId,
+    inspect: entry,
     labels: containerLabels,
     name,
     running: state.Running,
@@ -201,9 +203,12 @@ function commandFailure(operation: string, result: ContainerEngineCommandResult)
   );
 }
 
-function requireLifecycleEngine(engine: ContainerEngine): void {
-  if (engine.operation !== "sandbox-lifecycle" || engine.engineId !== "podman") {
-    throw new Error("Podman lifecycle requires an operation-scoped Podman engine.");
+function requireObservationEngine(engine: ContainerEngine): void {
+  if (
+    engine.engineId !== "podman" ||
+    (engine.operation !== "sandbox-lifecycle" && engine.operation !== "gateway-inspection")
+  ) {
+    throw new Error("Podman runtime observation requires an operation-scoped Podman engine.");
   }
 }
 
@@ -225,11 +230,11 @@ function inspectExactContainer(
   return parsePodmanManagedContainer(inspected.stdout, expected);
 }
 
-function resolveManagedContainer(
+export function observePodmanManagedContainer(
   engine: ContainerEngine,
   sandboxName: string,
-): PodmanManagedContainer {
-  requireLifecycleEngine(engine);
+): PodmanManagedContainer | null {
+  requireObservationEngine(engine);
   if (!isValidName(sandboxName)) {
     throw new Error("Podman lifecycle requires a valid sandbox name.");
   }
@@ -255,9 +260,7 @@ function resolveManagedContainer(
     .map((line) => line.trim())
     .filter(Boolean);
   if (rows.length === 0) {
-    throw new Error(
-      `No Podman container found for sandbox '${sandboxName}'. Run '${cliName()} ${sandboxName} rebuild' if its workload was removed.`,
-    );
+    return null;
   }
   if (rows.length !== 1) {
     throw new Error(
@@ -266,6 +269,17 @@ function resolveManagedContainer(
   }
   const containerId = fullContainerId(rows[0], "Podman managed container ID");
   return inspectExactContainer(engine, { sandboxName, containerId });
+}
+
+function resolveManagedContainer(
+  engine: ContainerEngine,
+  sandboxName: string,
+): PodmanManagedContainer {
+  const container = observePodmanManagedContainer(engine, sandboxName);
+  if (container) return container;
+  throw new Error(
+    `No Podman container found for sandbox '${sandboxName}'. Run '${cliName()} ${sandboxName} rebuild' if its workload was removed.`,
+  );
 }
 
 function resultForFailure(error: unknown): RuntimeProviderLifecycleResult {

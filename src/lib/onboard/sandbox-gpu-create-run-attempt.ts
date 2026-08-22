@@ -200,6 +200,7 @@ class ManagedBootstrapCreateStreamFailure extends Error {
 export function createSandboxGpuCreateAttemptRunner(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
+  reverifyManagedBridgeReachability: () => Promise<void>,
 ) {
   const portableLifecycle = input.portableLifecycle === true;
   const printCreateFailureDiagnostics =
@@ -288,6 +289,7 @@ export function createSandboxGpuCreateAttemptRunner(
             inferenceProvider: input.provider,
             gatewayUsesContainerBridge: input.dockerDriverGateway,
             gatewayPort: input.gatewayPort,
+            reverifyBridgeReachability: reverifyManagedBridgeReachability,
           },
           dependencies: {
             runCaptureOpenshell: deps.runCaptureOpenshell,

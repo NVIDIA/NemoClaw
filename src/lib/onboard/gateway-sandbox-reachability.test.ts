@@ -15,6 +15,7 @@ import {
   PORTABLE_DOCKER_NETWORK_SUBNET,
   PORTABLE_HOST_GATEWAY_IP,
 } from "./experimental/portable-profile";
+import { prepareNativePodmanGatewayHostRuntime } from "./runtime-provider/podman-runtime-surfaces";
 
 describe("gateway sandbox reachability route modeling", () => {
   it("parses Docker network IPAM config for subnet and gateway", () => {
@@ -151,23 +152,40 @@ describe("isSandboxBridgeGatewayReachable", () => {
   });
 
   it("reaches the native Podman host gateway without selecting the portable profile", async () => {
-    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
     const seen: { args: readonly string[] } = { args: [] };
+    const inspect = vi.fn(() => ({ subnet: "10.89.0.0/24", gatewayIp: "10.89.0.1" }));
+    const run = vi.fn((args: readonly string[]) => {
+      seen.args = args;
+      return { status: 0 };
+    });
+    const ensureProbeImageCached = vi.fn(() => ({ ok: true, alreadyCached: true }));
+    const gatewayRuntime = {
+      ...prepareNativePodmanGatewayHostRuntime({
+        environment: {},
+        platform: "linux",
+        socketPath: "/run/user/1000/podman/podman.sock",
+      }),
+      network: {
+        inspect,
+        usesHostGatewayRoute: vi.fn(() => false),
+        run,
+        ensureProbeImageCached,
+      },
+    };
 
     const result = await isSandboxBridgeGatewayReachable({
-      inspectNetworkImpl: () => ({ subnet: "10.89.0.0/24", gatewayIp: "10.89.0.1" }),
-      usesHostGatewayRouteImpl: () => false,
-      runImpl: (args) => {
-        seen.args = args;
-        return { status: 0 };
-      },
+      gatewayRuntime,
+      platform: "linux",
     });
 
     expect(result).toMatchObject({
       ok: true,
       gatewayIp: PORTABLE_HOST_GATEWAY_IP,
-      routeKind: "portable_host_gateway",
+      routeKind: "provider_host_gateway",
     });
+    expect(inspect).toHaveBeenCalledWith("openshell-docker");
+    expect(ensureProbeImageCached).toHaveBeenCalledOnce();
+    expect(run).toHaveBeenCalledOnce();
     expect(seen.args).toContain(`host.openshell.internal:${PORTABLE_HOST_GATEWAY_IP}`);
     expect(seen.args).not.toContain("host.openshell.internal:10.89.0.1");
   });

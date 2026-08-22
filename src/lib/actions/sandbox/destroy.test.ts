@@ -124,6 +124,30 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
     expect(classify).not.toHaveBeenCalled();
   });
 
+  it("uses a provider-owned destroy identity without the Docker classifier", () => {
+    const classify = vi.fn();
+    const providerIdentity = {
+      schemaVersion: 1 as const,
+      providerId: "podman",
+      resourceHandle: "a".repeat(64),
+      ownershipSha256: "b".repeat(64),
+    };
+    const captureProviderIdentity = vi.fn(() => providerIdentity);
+    const sandbox = { name: "destroytest", agent: "openclaw" as const, openshellDriver: "podman" };
+
+    expect(
+      assertUnambiguousDestroyContainerIdentity("destroytest", {
+        providerId: "podman",
+        redact: String,
+        sandbox,
+        captureProviderIdentity,
+        classify: classify as never,
+      }),
+    ).toEqual({ identity: undefined, providerIdentity });
+    expect(captureProviderIdentity).toHaveBeenCalledWith(sandbox, "destroytest");
+    expect(classify).not.toHaveBeenCalled();
+  });
+
   it("refuses when the Docker probe cannot prove identity", () => {
     const error = vi.fn();
     const proceed = assertUnambiguousDestroyContainerIdentity("destroytest", {

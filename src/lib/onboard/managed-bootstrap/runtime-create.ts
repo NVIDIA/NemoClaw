@@ -102,6 +102,7 @@ export interface ManagedBootstrapRuntimeCreateLifecycleInput {
     readonly inferenceProvider: string;
     readonly gatewayUsesContainerBridge: boolean;
     readonly gatewayPort: number;
+    readonly reverifyBridgeReachability: () => void | Promise<void>;
   };
   readonly dependencies: ManagedBootstrapRuntimeDependencies;
 }

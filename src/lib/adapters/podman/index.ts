@@ -30,9 +30,12 @@ const EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL = 64;
 export interface PodmanContainerEngineOptions {
   readonly operation:
     | "host-doctor"
+    | "gateway-inspection"
     | "host-local-inference"
+    | "managed-bootstrap"
     | "sandbox-lifecycle"
-    | "state-mutation";
+    | "state-mutation"
+    | "workload-cleanup";
   readonly socketAuthority: PodmanSocketAuthority;
   readonly executable?: string;
   readonly executableAuthority?: PodmanExecutableAuthority;
@@ -133,7 +136,10 @@ export function createPodmanContainerEngine(
 ): PodmanBoundContainerEngine {
   const assertAuthority = options.assertAuthority ?? assertPodmanSocketAuthority;
   const protectsRuntimeMutation =
-    options.operation === "host-local-inference" || options.operation === "state-mutation";
+    options.operation === "host-local-inference" ||
+    options.operation === "managed-bootstrap" ||
+    options.operation === "state-mutation" ||
+    options.operation === "workload-cleanup";
   const executable =
     options.executable ??
     options.executableAuthority?.executablePath ??

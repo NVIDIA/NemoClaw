@@ -3,7 +3,13 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { PodmanContainerEngine } from "../../adapters/podman";
 import { createHermesStateVolumeDockerHarness as dockerHarness } from "../__test-helpers__/hermes-state-volume";
+import {
+  createDockerRuntimeProviderBundle,
+  createKubernetesRuntimeProviderBundle,
+} from "../runtime-provider/docker";
+import { createPodmanRuntimeProviderBundle } from "../runtime-provider/podman";
 import {
   MANAGED_HERMES_STATE_ROOT,
   managedHermesStateVolumeName,
@@ -52,6 +58,75 @@ describe("managed Hermes state volume", () => {
     exitCleanup!();
     expect(docker.volume).toBeNull();
     expect(unregister).not.toHaveBeenCalled();
+  });
+
+  it("uses the registered native provider for the same managed Hermes volume contract", () => {
+    const runtime = dockerHarness();
+    const scope = prepareManagedHermesStateVolume(
+      { ...context, runtimeProviderId: "podman" },
+      {
+        runDocker: runtime.runDocker as never,
+        registerExitCleanup: () => () => undefined,
+      },
+    );
+
+    expect(scope?.mount).toMatchObject({
+      source: "nemoclaw-hermes-state-v1-alpha",
+      target: MANAGED_HERMES_STATE_ROOT,
+    });
+  });
+
+  it("dispatches native volume lifecycle through the selected provider operation", () => {
+    const runtime = dockerHarness();
+    const sandboxLifecycleCapture = vi.fn((args: readonly string[]) => {
+      expect(args[0]).toBe("volume");
+      const result = runtime.runDocker(args.slice(1)) as {
+        status: number | null;
+        stdout?: string | Buffer;
+        stderr?: string | Buffer;
+        error?: Error;
+      };
+      return {
+        status: result.status ?? 1,
+        stdout: String(result.stdout ?? ""),
+        stderr: String(result.stderr ?? ""),
+        ...(result.error ? { error: result.error } : {}),
+      };
+    });
+    const engine = (
+      operation: PodmanContainerEngine["operation"],
+      capture: PodmanContainerEngine["capture"] = vi.fn(() => ({
+        status: 0,
+        stdout: "",
+        stderr: "",
+      })),
+    ): PodmanContainerEngine => ({
+      operation,
+      engineId: "podman",
+      displayName: "Podman",
+      authorityId: `podman:${operation}`,
+      endpointAuthorityId: "podman:test-endpoint",
+      capture,
+      captureHost: capture,
+    });
+    const provider = createPodmanRuntimeProviderBundle({
+      engines: {
+        hostDoctor: engine("host-doctor"),
+        sandboxLifecycle: engine("sandbox-lifecycle", sandboxLifecycleCapture),
+      },
+    });
+
+    const scope = prepareManagedHermesStateVolume(
+      { ...context, runtimeProviderId: "podman" },
+      {
+        runtimeProviders: { podman: provider },
+        registerExitCleanup: () => () => undefined,
+      },
+    );
+
+    expect(scope?.mount.source).toBe("nemoclaw-hermes-state-v1-alpha");
+    expect(sandboxLifecycleCapture).toHaveBeenCalled();
+    expect(sandboxLifecycleCapture.mock.calls.every(([args]) => args[0] === "volume")).toBe(true);
   });
 
   it("commits a newly created volume after registration so exit cleanup preserves it", () => {
@@ -132,12 +207,21 @@ describe("managed Hermes state volume", () => {
     ["agent", { ...context, agentName: "openclaw" }],
     ["provider", { ...context, runtimeProviderId: "kubernetes" }],
     ["workload", { ...context, workloadKind: "legacy-dockerfile" }],
-  ])("does not provision outside the managed Docker Hermes %s boundary", (_boundary, input) => {
-    const docker = dockerHarness();
+  ])(
+    "does not provision outside the managed container-engine Hermes %s boundary",
+    (_boundary, input) => {
+      const docker = dockerHarness();
 
-    expect(
-      prepareManagedHermesStateVolume(input, { runDocker: docker.runDocker as never }),
-    ).toBeNull();
-    expect(docker.calls).toEqual([]);
-  });
+      expect(
+        prepareManagedHermesStateVolume(input, {
+          runDocker: docker.runDocker as never,
+          runtimeProviders: {
+            docker: createDockerRuntimeProviderBundle(),
+            kubernetes: createKubernetesRuntimeProviderBundle(),
+          },
+        }),
+      ).toBeNull();
+      expect(docker.calls).toEqual([]);
+    },
+  );
 });

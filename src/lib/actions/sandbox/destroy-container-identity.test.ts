@@ -69,16 +69,13 @@ describe("classifyDestroyContainerIdentity", () => {
     });
   });
 
-  it("is clear for the exact native Podman ownership marker", () => {
-    vi.stubEnv("NEMOCLAW_GATEWAY_RUNTIME", "podman");
+  it("does not treat native Podman ownership as Docker compatibility", () => {
     const podmanManaged = { ...MANAGED, managedBy: "true" };
 
     expect(
-      classifyDestroyContainerIdentity("destroytest", observeRows([podmanManaged])),
-    ).toEqual({
-      status: "clear",
-      identity: podmanManaged,
-    });
+      expectAmbiguous(classifyDestroyContainerIdentity("destroytest", observeRows([podmanManaged])))
+        .foreign,
+    ).toEqual([podmanManaged]);
   });
 
   it("refuses when a foreign container shares the sandbox-name label (#8999)", () => {

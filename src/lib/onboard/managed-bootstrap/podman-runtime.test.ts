@@ -1,0 +1,439 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { describe, expect, it, vi } from "vitest";
+
+import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import type { PodmanBoundContainerEngine } from "../../adapters/podman";
+import { encodeManagedStartupProfile } from "../managed-startup/profile";
+import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
+
+const coordinator = vi.hoisted(() => ({
+  activate: vi.fn<typeof import("./adapter").activateManagedBootstrapSequence>(),
+  finalize: vi.fn<typeof import("./adapter").finalizeManagedBootstrapSequence>(),
+  prepare: vi.fn<typeof import("./adapter").prepareManagedBootstrapSequence>(),
+}));
+
+vi.mock("./adapter", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./adapter")>()),
+  activateManagedBootstrapSequence: coordinator.activate,
+  finalizeManagedBootstrapSequence: coordinator.finalize,
+  prepareManagedBootstrapSequence: coordinator.prepare,
+}));
+
+import type {
+  ManagedBootstrapActivatedTransaction,
+  ManagedBootstrapAdapter,
+  ManagedBootstrapPreparedTransaction,
+} from "./adapter";
+import {
+  createFilePodmanBootstrapJournalStore,
+  PODMAN_BOOTSTRAP_JOURNAL_SCHEMA_VERSION,
+  type PodmanBootstrapJournal,
+} from "./podman-bootstrap-journal";
+import {
+  buildPodmanStandaloneGatewayEnvironmentAuthority,
+  createPodmanManagedBootstrapAdapter,
+  createPodmanManagedBootstrapSurface,
+  finishCommittedPodmanBootstrap,
+} from "./podman-runtime";
+import type { PodmanGatewayWatcherLease } from "./podman-watcher-lease";
+import { PODMAN_WATCHER_LEASE_SCHEMA_VERSION } from "./podman-watcher-lease";
+
+const IDENTITY = "1".repeat(64);
+const MANIFEST_DIGEST = `sha256:${"2".repeat(64)}` as const;
+const ORIGINAL_RUNTIME_ID = "2".repeat(64);
+const REPLACEMENT_RUNTIME_ID = "3".repeat(64);
+const LEASE_ID = "123e4567-e89b-42d3-a456-426614174000";
+const ENGINE_AUTHORITY_ID = `podman-sha256:${"4".repeat(64)}`;
+
+function committedJournal(): PodmanBootstrapJournal {
+  return {
+    schemaVersion: PODMAN_BOOTSTRAP_JOURNAL_SCHEMA_VERSION,
+    phase: "preparing-replacement",
+    bootstrapIdentity: IDENTITY,
+    engineAuthorityId: ENGINE_AUTHORITY_ID,
+    watcherLeaseId: LEASE_ID,
+    sandboxName: "alpha",
+    sandboxId: "sandbox-alpha",
+    originalRuntimeId: ORIGINAL_RUNTIME_ID,
+    originalContainerName: "openshell-default--alpha-sandbox-alpha",
+    originalImageContentId: `sha256:${"5".repeat(64)}`,
+    originalSpecFingerprint: "6".repeat(64),
+    replacementStateVolumeName: "openshell-alpha-bootstrap-state",
+    replacementStateVolumeMountpoint: null,
+    replacementRuntimeId: null,
+    replacementStagingName: "openshell-alpha-bootstrap",
+    replacementImageContentId: `sha256:${"7".repeat(64)}`,
+    replacementSpecFingerprint: "8".repeat(64),
+  };
+}
+
+function runtimeInspect(runtimeId: string, name: string, image: string) {
+  return {
+    Id: runtimeId,
+    Name: name,
+    Image: image,
+    Config: {
+      Labels: {
+        "openshell.managed": "true",
+        "openshell.ai/sandbox-id": "sandbox-alpha",
+        "openshell.ai/sandbox-name": "alpha",
+        "openshell.ai/sandbox-namespace": "",
+        "openshell.ai/sandbox-workspace": "default",
+      },
+    },
+  };
+}
+
+function engine(): PodmanBoundContainerEngine {
+  return {
+    operation: "managed-bootstrap",
+    engineId: "podman",
+    displayName: "Podman",
+    authorityId: "test:podman-authority",
+    endpointAuthorityId: "test:podman-endpoint",
+    capture: vi.fn(),
+    captureHost: vi.fn(),
+    assertAuthority: vi.fn(),
+  };
+}
+
+function adapter() {
+  const recoverUnfinishedTransactions = vi.fn(async () => ({ receipts: [], failures: [] }));
+  return {
+    value: { recoverUnfinishedTransactions } as unknown as ManagedBootstrapAdapter,
+    recoverUnfinishedTransactions,
+  };
+}
+
+function lifecycleInput(adapterOverride: ManagedBootstrapAdapter) {
+  const request = createManagedStartupRootApplyRequest({
+    agent: "hermes",
+    encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile("hermes", false, false)),
+  });
+  return {
+    providerId: "podman",
+    stateRoot: "/unused/provider-state",
+    bootstrapIdentity: IDENTITY,
+    request,
+    image: {
+      repository: "registry.example/nemoclaw/hermes",
+      manifestDigest: MANIFEST_DIGEST,
+    },
+    agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+    intendedWorkloadArgv: ["/usr/local/bin/nemoclaw-start"],
+    expectedSupervisorArgv: ["/opt/openshell/bin/supervisor"],
+    launchArgv: ["openshell", "sandbox", "create", "--name", "alpha"],
+    heldWorkloadArgv: ["/usr/local/bin/nemoclaw-managed-startup-hold"],
+    authorityStore: { recordPreparedAuthority: vi.fn() },
+    adapterOverride,
+    route: "none" as const,
+    persistStartupCommand: false,
+    sandboxName: "alpha",
+    sandboxGpuConfig: {
+      mode: "0" as const,
+      hostGpuDetected: false,
+      hostGpuPlatform: null,
+      sandboxGpuEnabled: false,
+      sandboxGpuDevice: null,
+      errors: [],
+    },
+    requiredLimits: [],
+    timeoutSecs: 30,
+    network: {
+      inferenceProvider: "openai",
+      gatewayUsesContainerBridge: false,
+      gatewayPort: 8080,
+      reverifyBridgeReachability: () => undefined,
+    },
+    dependencies: {},
+  };
+}
+
+function installCoordinatorMocks() {
+  const prepared = Object.freeze({}) as ManagedBootstrapPreparedTransaction;
+  const activated = Object.freeze({}) as ManagedBootstrapActivatedTransaction;
+  coordinator.prepare.mockImplementation(async (_adapter, input) => {
+    await input.create.launch({
+      heldWorkloadArgv: ["/usr/local/bin/nemoclaw-managed-startup-hold"],
+      bootstrapIdentity: IDENTITY,
+    });
+    return prepared;
+  });
+  coordinator.activate.mockResolvedValue(activated);
+  coordinator.finalize.mockResolvedValue({} as never);
+  return { activated, prepared };
+}
+
+describe("Podman managed-bootstrap runtime surface", () => {
+  it("persists only non-secret native gateway launch environment", () => {
+    const first = buildPodmanStandaloneGatewayEnvironmentAuthority({
+      PATH: "/usr/bin",
+      OPENSHELL_DRIVERS: "podman",
+      OPENSHELL_PODMAN_SOCKET: "/run/user/1000/podman/podman.sock",
+      DOCKER_HOST: "unix:///var/run/docker.sock",
+      NVIDIA_API_KEY: "first-secret",
+      GH_TOKEN: "first-token",
+      NEMOCLAW_BOOTSTRAP_PAYLOAD: "first-bootstrap-payload",
+    });
+    const changedSecrets = buildPodmanStandaloneGatewayEnvironmentAuthority({
+      PATH: "/usr/bin",
+      OPENSHELL_DRIVERS: "podman",
+      OPENSHELL_PODMAN_SOCKET: "/run/user/1000/podman/podman.sock",
+      DOCKER_HOST: "tcp://unrelated-docker:2375",
+      NVIDIA_API_KEY: "changed-secret",
+      GH_TOKEN: "changed-token",
+      NEMOCLAW_BOOTSTRAP_PAYLOAD: "changed-bootstrap-payload",
+    });
+
+    expect(changedSecrets).toEqual(first);
+    expect(first.map((entry) => entry.key)).toEqual([
+      "OPENSHELL_DRIVERS",
+      "OPENSHELL_PODMAN_SOCKET",
+      "PATH",
+    ]);
+    expect(JSON.stringify(first)).not.toContain("secret");
+    expect(JSON.stringify(first)).not.toContain("token");
+    expect(JSON.stringify(first)).not.toContain("DOCKER_HOST");
+    expect(JSON.stringify(first)).not.toContain("NEMOCLAW_BOOTSTRAP_PAYLOAD");
+    expect(JSON.stringify(first)).not.toContain(
+      createHash("sha256").update("first-bootstrap-payload", "utf8").digest("hex"),
+    );
+  });
+
+  it.each([
+    ["after original removal", "openshell-alpha-bootstrap", true],
+    ["after replacement rename", "openshell-default--alpha-sandbox-alpha", false],
+  ])("finishes an authorized commit crash %s", (_label, replacementName, expectsRename) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-runtime-commit-"));
+    try {
+      const store = createFilePodmanBootstrapJournalStore(root);
+      const initial = committedJournal();
+      store.create(initial);
+      store.recordStateVolume(IDENTITY, "/var/lib/containers/storage/volumes/alpha/_data");
+      store.recordReplacement(IDENTITY, REPLACEMENT_RUNTIME_ID);
+      store.recordOriginalStopped(IDENTITY);
+      const authorized = store.authorizeCommit(IDENTITY, ["original-stopped"]);
+      const runtimes = new Map([
+        [
+          REPLACEMENT_RUNTIME_ID,
+          runtimeInspect(REPLACEMENT_RUNTIME_ID, replacementName, `sha256:${"7".repeat(64)}`),
+        ],
+      ]);
+      const capture = vi.fn((args: readonly string[]) => {
+        const [kind, command, runtimeId, renameTarget] = args;
+        const exactRuntimeId = typeof runtimeId === "string" ? runtimeId : "";
+        const unsupported = () => ({
+          status: 2,
+          stdout: "",
+          stderr: "unsupported",
+          error: undefined,
+        });
+        const handlers: Record<string, () => ReturnType<typeof unsupported>> = {
+          exists: () => ({
+            status: runtimes.has(exactRuntimeId) ? 0 : 1,
+            stdout: "",
+            stderr: "",
+            error: undefined,
+          }),
+          inspect: () => {
+            const inspected = runtimes.get(exactRuntimeId);
+            return {
+              status: inspected ? 0 : 1,
+              stdout: inspected ? JSON.stringify([inspected]) : "",
+              stderr: "",
+              error: undefined,
+            };
+          },
+          rm: () => {
+            runtimes.delete(exactRuntimeId);
+            return { status: 0, stdout: "", stderr: "", error: undefined };
+          },
+          rename: () => {
+            const inspected = runtimes.get(exactRuntimeId);
+            const target = typeof renameTarget === "string" ? renameTarget : "";
+            inspected && (inspected.Name = target);
+            return {
+              status: inspected && target ? 0 : 1,
+              stdout: "",
+              stderr: "",
+              error: undefined,
+            };
+          },
+        };
+        return kind === "container" && exactRuntimeId
+          ? (handlers[command ?? ""] ?? unsupported)()
+          : unsupported();
+      });
+      const commitEngine = {
+        ...engine(),
+        authorityId: ENGINE_AUTHORITY_ID,
+        capture,
+      } as PodmanBoundContainerEngine;
+      const lease = {
+        record: {
+          schemaVersion: PODMAN_WATCHER_LEASE_SCHEMA_VERSION,
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          launchIdentity: "launch",
+          ownerIdentity: "owner",
+          ownerKind: "standalone",
+          pid: 4100,
+          processStartIdentity: "start",
+          holder: { pid: 9100, processStartIdentity: "holder" },
+          leaseId: LEASE_ID,
+          phase: "stopped",
+        },
+        assertStillStopped: vi.fn(),
+        resumeAndProve: vi.fn(),
+      } satisfies PodmanGatewayWatcherLease;
+
+      expect(
+        finishCommittedPodmanBootstrap({
+          engine: commitEngine,
+          journalStore: store,
+          journal: authorized,
+          watcherLease: lease,
+        }).phase,
+      ).toBe("committed");
+      expect(store.load(IDENTITY)).toBeNull();
+      expect(runtimes.get(REPLACEMENT_RUNTIME_ID)?.Name).toBe(
+        "openshell-default--alpha-sandbox-alpha",
+      );
+      expect(capture.mock.calls.some(([args]) => Array.isArray(args) && args[1] === "rename")).toBe(
+        expectsRename,
+      );
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("recovers a terminal cleanup crash that left only the watcher lease", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-runtime-recovery-"));
+    const recoverUnfinishedLease = vi.fn();
+    try {
+      const adapter = createPodmanManagedBootstrapAdapter({
+        engine: engine(),
+        stateRoot: root,
+        environment: {},
+        gatewayPort: 8080,
+        watcherController: {
+          recoverUnfinishedLease,
+          reclaimStoppedLease: vi.fn(),
+          quiesceAndProve: vi.fn(),
+        },
+      });
+
+      await expect(adapter.recoverUnfinishedTransactions()).resolves.toEqual({
+        receipts: [],
+        failures: [],
+      });
+      expect(recoverUnfinishedLease).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("selects the Podman provider and keeps compatibility routing disabled", () => {
+    const operationEngine = engine();
+    const surface = createPodmanManagedBootstrapSurface(operationEngine);
+    const routing = surface.createOnboardRouting({
+      sandboxName: "alpha",
+      openshellArgv: (args) => args,
+      nativeFallbackEnabled: true,
+    });
+
+    expect(surface.providerId).toBe("podman");
+    expect(surface.supported).toBe(true);
+    expect(routing.nativeFallbackHasCleanBaseline).toBe(false);
+    expect(routing.inspectNativeRuntime()).toBeNull();
+    expect(routing.isNativeCreateRoutingFailure("failure", true)).toBe(false);
+    expect(() =>
+      routing.prepareCompatibilityLaunch({
+        createArgs: [],
+        currentRegistryImageRef: null,
+        prebuildImageId: null,
+        allowUnbuiltSource: false,
+        compatibilityPolicyPath: "/unused/policy.yaml",
+        startupCommand: [],
+        runtimeSnapshot: null,
+      }),
+    ).toThrow("does not use Docker compatibility fallback");
+    expect(operationEngine.capture).not.toHaveBeenCalled();
+  });
+
+  it("wires recovery and commit through the selected provider without eager engine dispatch", async () => {
+    vi.clearAllMocks();
+    installCoordinatorMocks();
+    const operationEngine = engine();
+    const injected = adapter();
+    const lifecycle = createPodmanManagedBootstrapSurface(operationEngine).createLifecycle(
+      lifecycleInput(injected.value),
+    );
+
+    await expect(lifecycle.recoverUnfinished()).resolves.toEqual({ receipts: [], failures: [] });
+    await expect(
+      lifecycle.runCreate(async ({ bootstrapIdentity }) => ({
+        value: "created",
+        receipt: {
+          sandbox: { sandboxName: "alpha", sandboxId: "sandbox-alpha", driverId: "podman" },
+          ready: true,
+          readyAt: "2026-08-22T00:00:00.000Z",
+        },
+        bootstrapIdentity,
+      })),
+    ).resolves.toBe("created");
+    await lifecycle.patch.commitAfterReady();
+
+    expect(injected.recoverUnfinishedTransactions).toHaveBeenCalledOnce();
+    expect(coordinator.prepare).toHaveBeenCalledOnce();
+    expect(coordinator.activate).toHaveBeenCalledOnce();
+    expect(coordinator.finalize).toHaveBeenCalledExactlyOnceWith(
+      injected.value,
+      expect.objectContaining({ outcome: "commit" }),
+    );
+    expect(operationEngine.capture).not.toHaveBeenCalled();
+  });
+
+  it("wires rollback through the same provider-owned terminal transaction", async () => {
+    vi.clearAllMocks();
+    installCoordinatorMocks();
+    const operationEngine = engine();
+    const injected = adapter();
+    const lifecycle = createPodmanManagedBootstrapSurface(operationEngine).createLifecycle(
+      lifecycleInput(injected.value),
+    );
+
+    await lifecycle.runCreate(async () => ({
+      value: "created",
+      receipt: {
+        sandbox: { sandboxName: "alpha", sandboxId: "sandbox-alpha", driverId: "podman" },
+        ready: true,
+        readyAt: "2026-08-22T00:00:00.000Z",
+      },
+    }));
+    await lifecycle.patch.rollbackManagedStartupAfterCreateFailure();
+
+    expect(coordinator.finalize).toHaveBeenCalledExactlyOnceWith(
+      injected.value,
+      expect.objectContaining({ outcome: "rollback" }),
+    );
+    expect(operationEngine.capture).not.toHaveBeenCalled();
+  });
+
+  it("rejects lifecycle construction for another provider identity", () => {
+    const injected = adapter();
+    expect(() =>
+      createPodmanManagedBootstrapSurface(engine()).createLifecycle({
+        ...lifecycleInput(injected.value),
+        providerId: "docker",
+      }),
+    ).toThrow("another provider identity");
+  });
+});

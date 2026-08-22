@@ -1,16 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { DockerRunOptions, DockerRunResult } from "../../adapters/docker/run";
+import type {
+  RuntimeProviderBundle,
+  RuntimeProviderBundleRegistry,
+} from "../runtime-provider/contract";
+import {
+  requireRuntimeProviderBundle,
+  runtimeProviderContainerEngineIdentity,
+  runtimeProviderSupportsContainerEngineOperation,
+} from "../runtime-provider/registry";
 
 /**
  * SOURCE_OF_TRUTH_REVIEW
  * invalidState: a managed-image Hermes sandbox starts without durable writable state, or a
- *   same-named foreign Docker volume is mistaken for NemoClaw-owned state during cleanup.
+ *   same-named foreign runtime volume is mistaken for NemoClaw-owned state during cleanup.
  * sourceBoundary: the managed image does not declare a provider volume and OpenShell keeps
- *   state-mutation validation strict; this module is the sole owner of the Docker volume name,
+ *   state-mutation validation strict; this module is the sole owner of the runtime volume name,
  *   exact four-label ownership contract, create/reuse verification, and removal decision.
- * whyNotSourceFix: the provider-neutral image cannot name a sandbox-scoped Docker volume, while
+ * whyNotSourceFix: the provider-neutral image cannot name a sandbox-scoped runtime volume, while
  *   weakening provider validation would accept absent, ambiguous, or read-only state mounts.
  * regressionTest: hermes-state-volume.test.ts covers create, reuse, ownership refusal, and
  *   removal; sandbox-create-plan.test.ts and destroy-flow.test.ts cover lifecycle integration.
@@ -49,10 +57,29 @@ export type ManagedHermesStateVolumeCleanupResult =
       readonly volumeName: string;
     };
 
-type DockerRun = (args: readonly string[], options?: DockerRunOptions) => DockerRunResult;
+type ContainerEngineRunOptions = {
+  readonly ignoreError?: boolean;
+  readonly maxBuffer?: number;
+  readonly suppressOutput?: boolean;
+  readonly timeout?: number;
+};
+
+type ContainerEngineRunResult = {
+  readonly status: number | null;
+  readonly stdout?: string | Buffer;
+  readonly stderr?: string | Buffer;
+  readonly error?: Error;
+};
+
+type ContainerEngineRun = (
+  args: readonly string[],
+  options?: ContainerEngineRunOptions,
+) => ContainerEngineRunResult;
 
 export type ManagedHermesStateVolumeDeps = {
-  readonly runDocker?: DockerRun;
+  readonly runDocker?: ContainerEngineRun;
+  readonly runtimeProvider?: RuntimeProviderBundle;
+  readonly runtimeProviders?: RuntimeProviderBundleRegistry;
   readonly registerExitCleanup?: (cleanup: () => void) => () => void;
 };
 
@@ -69,10 +96,13 @@ type VolumeObservation =
   | { readonly status: "observed"; readonly labels: Readonly<Record<string, string>> }
   | { readonly status: "failed"; readonly detail: string };
 
-function defaultDockerRun(args: readonly string[], options?: DockerRunOptions): DockerRunResult {
-  const { dockerVolumeRun } =
-    require("../../adapters/docker/volume") as typeof import("../../adapters/docker/volume");
-  return dockerVolumeRun(args, options);
+function defaultRuntimeVolumeRun(provider: RuntimeProviderBundle): ContainerEngineRun {
+  const containerEngine = provider.containerEngine;
+  if (containerEngine.supported !== true) {
+    throw new Error("The selected runtime provider does not expose container-engine authority.");
+  }
+  return (args, options) =>
+    containerEngine.capture("sandbox-lifecycle", ["volume", ...args], options?.timeout);
 }
 
 function defaultRegisterExitCleanup(cleanup: () => void): () => void {
@@ -80,11 +110,11 @@ function defaultRegisterExitCleanup(cleanup: () => void): () => void {
   return () => process.removeListener("exit", cleanup);
 }
 
-function commandOutput(result: DockerRunResult): string {
+function commandOutput(result: ContainerEngineRunResult): string {
   return `${String(result.stdout ?? "")}\n${String(result.stderr ?? "")}`.trim();
 }
 
-function boundedDetail(result: DockerRunResult): string {
+function boundedDetail(result: ContainerEngineRunResult): string {
   return commandOutput(result).replace(/\s+/gu, " ").slice(0, 500) || "Docker command failed";
 }
 
@@ -104,7 +134,7 @@ function labelsMatch(
   return Object.entries(expected).every(([name, value]) => observed[name] === value);
 }
 
-function inspectVolume(volumeName: string, runDocker: DockerRun): VolumeObservation {
+function inspectVolume(volumeName: string, runDocker: ContainerEngineRun): VolumeObservation {
   const result = runDocker(["inspect", "--format", "{{json .}}", volumeName], {
     ignoreError: true,
     maxBuffer: 256 * 1024,
@@ -121,16 +151,22 @@ function inspectVolume(volumeName: string, runDocker: DockerRun): VolumeObservat
     .map((line) => line.trim())
     .filter(Boolean);
   if (lines.length !== 1) {
-    return { status: "failed", detail: "Docker returned an ambiguous volume inspection." };
+    return {
+      status: "failed",
+      detail: "Container engine returned an ambiguous volume inspection.",
+    };
   }
   try {
     const value = JSON.parse(lines[0]!) as unknown;
     if (!value || typeof value !== "object" || Array.isArray(value)) {
-      return { status: "failed", detail: "Docker returned a malformed volume inspection." };
+      return {
+        status: "failed",
+        detail: "Container engine returned a malformed volume inspection.",
+      };
     }
     const record = value as Record<string, unknown>;
     if (record.Name !== volumeName) {
-      return { status: "failed", detail: "Docker returned the wrong volume identity." };
+      return { status: "failed", detail: "Container engine returned the wrong volume identity." };
     }
     const labelsValue = record.Labels;
     if (!labelsValue || typeof labelsValue !== "object" || Array.isArray(labelsValue)) {
@@ -139,13 +175,16 @@ function inspectVolume(volumeName: string, runDocker: DockerRun): VolumeObservat
     const labels: Record<string, string> = {};
     for (const [name, labelValue] of Object.entries(labelsValue)) {
       if (typeof labelValue !== "string") {
-        return { status: "failed", detail: "Docker returned malformed volume labels." };
+        return { status: "failed", detail: "Container engine returned malformed volume labels." };
       }
       labels[name] = labelValue;
     }
     return { status: "observed", labels: Object.freeze(labels) };
   } catch {
-    return { status: "failed", detail: "Docker returned invalid JSON for the volume inspection." };
+    return {
+      status: "failed",
+      detail: "Container engine returned invalid JSON for the volume inspection.",
+    };
   }
 }
 
@@ -155,17 +194,28 @@ export function managedHermesStateVolumeName(sandboxName: string): string {
 
 export function requiresManagedHermesStateVolume(
   context: ManagedHermesStateVolumeContext,
+  providers?: RuntimeProviderBundleRegistry,
+  runtimeProvider?: RuntimeProviderBundle,
 ): boolean {
+  const hasLifecycleAuthority = runtimeProvider
+    ? runtimeProviderContainerEngineIdentity(runtimeProvider, "sandbox-lifecycle") !== null
+    : providers
+      ? runtimeProviderSupportsContainerEngineOperation(
+          context.runtimeProviderId,
+          providers,
+          "sandbox-lifecycle",
+        )
+      : true;
   return (
     context.agentName === "hermes" &&
-    context.runtimeProviderId === "docker" &&
+    hasLifecycleAuthority &&
     context.workloadKind === "managed-image"
   );
 }
 
 function removeOwnedVolume(
   sandboxName: string,
-  runDocker: DockerRun,
+  runDocker: ContainerEngineRun,
 ): ManagedHermesStateVolumeCleanupResult {
   const volumeName = managedHermesStateVolumeName(sandboxName);
   const observation = inspectVolume(volumeName, runDocker);
@@ -194,8 +244,18 @@ export function prepareManagedHermesStateVolume(
   context: ManagedHermesStateVolumeContext,
   deps: ManagedHermesStateVolumeDeps = {},
 ): ManagedHermesStateVolumeScope | null {
-  if (!requiresManagedHermesStateVolume(context)) return null;
-  const runDocker = deps.runDocker ?? defaultDockerRun;
+  const providers = deps.runtimeProviders;
+  if (!requiresManagedHermesStateVolume(context, providers, deps.runtimeProvider)) return null;
+  const provider =
+    deps.runtimeProvider ??
+    (providers ? requireRuntimeProviderBundle(context.runtimeProviderId, providers) : null);
+  const runDocker =
+    deps.runDocker ??
+    (provider
+      ? defaultRuntimeVolumeRun(provider)
+      : (() => {
+          throw new Error("Managed Hermes state volume requires runtime provider authority.");
+        })());
   const volumeName = managedHermesStateVolumeName(context.sandboxName);
   const labels = expectedLabels(context.sandboxName);
   const before = inspectVolume(volumeName, runDocker);
@@ -265,8 +325,25 @@ export function prepareManagedHermesStateVolume(
 
 export function removeManagedHermesStateVolume(
   context: ManagedHermesStateVolumeContext,
-  deps: Pick<ManagedHermesStateVolumeDeps, "runDocker"> = {},
+  deps: Pick<
+    ManagedHermesStateVolumeDeps,
+    "runDocker" | "runtimeProvider" | "runtimeProviders"
+  > = {},
 ): ManagedHermesStateVolumeCleanupResult {
-  if (!requiresManagedHermesStateVolume(context)) return { status: "not-applicable" };
-  return removeOwnedVolume(context.sandboxName, deps.runDocker ?? defaultDockerRun);
+  const providers = deps.runtimeProviders;
+  if (!requiresManagedHermesStateVolume(context, providers, deps.runtimeProvider)) {
+    return { status: "not-applicable" };
+  }
+  const provider =
+    deps.runtimeProvider ??
+    (providers ? requireRuntimeProviderBundle(context.runtimeProviderId, providers) : null);
+  return removeOwnedVolume(
+    context.sandboxName,
+    deps.runDocker ??
+      (provider
+        ? defaultRuntimeVolumeRun(provider)
+        : (() => {
+            throw new Error("Managed Hermes state volume requires runtime provider authority.");
+          })()),
+  );
 }

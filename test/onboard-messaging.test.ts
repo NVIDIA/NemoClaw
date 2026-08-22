@@ -651,7 +651,7 @@ const { createSandbox } = require(${onboardPath});
       assert.deepEqual(deniedPayload.temporaryCreateSources, []);
       assert.match(
         deniedPayload.error,
-        /did not publish attached provider 'my-assistant-extra-telegram-bot-token-agent-b' before Docker sandbox creation/,
+        /did not publish attached provider 'my-assistant-extra-telegram-bot-token-agent-b' before managed sandbox creation/,
       );
       const combinedOutput = result.stdout + result.stderr + denied.stdout + denied.stderr;
       assert.equal(

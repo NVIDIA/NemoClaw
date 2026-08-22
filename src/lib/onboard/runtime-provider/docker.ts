@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { captureHostCommand } from "../../actions/sandbox/doctor-host-command";
+import { dockerCapture, dockerRun } from "../../adapters/docker/run";
+import { GATEWAY_BIND_ADDRESS, getGatewayConnectHost } from "../../core/gateway-address";
 import {
   isDockerRuntimeDown,
   printDockerRuntimeDownGuidance,
@@ -13,6 +15,10 @@ import {
   recoverDockerDriverSandbox,
 } from "../docker-driver-sandbox-recovery";
 import { createDockerManagedBootstrapSurface } from "../managed-bootstrap/docker-runtime";
+import {
+  DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
+  parseDockerNetworkIpamEntries,
+} from "../experimental/docker-network-authority";
 import {
   hasPortableAgentSandboxLifecycleReceipt,
   recoverPortableAgentSandboxLifecycle,
@@ -31,6 +37,7 @@ import {
   type RuntimeProviderBundle,
   type RuntimeProviderCleanupInput,
   type RuntimeProviderCommandCapture,
+  type RuntimeProviderContainerEngineOperation,
   type RuntimeProviderDoctorCheck,
   type RuntimeProviderLifecycleInput,
   type RuntimeProviderLifecycleResult,
@@ -74,6 +81,76 @@ export interface DockerRuntimeProviderDependencies {
 
 const DOCKER_OPERATION_TIMEOUT_MS = 30_000;
 const AT_REST_STATUS_PREFIXES = ["Exited", "Created", "Dead"] as const;
+
+function inspectDockerGatewayNetwork(networkName: string) {
+  const raw = dockerCapture(
+    ["network", "inspect", "--format", DOCKER_NETWORK_IPAM_INSPECT_FORMAT, networkName],
+    { ignoreError: true },
+  );
+  for (const entry of parseDockerNetworkIpamEntries(raw) ?? []) {
+    if (entry.gatewayIp && !entry.gatewayIp.includes(":")) return entry;
+  }
+  return undefined;
+}
+
+function dockerGatewayUsesHostGatewayRoute(): boolean {
+  if (process.platform !== "linux") return true;
+  const info = dockerCapture(
+    ["info", "--format", "{{.OperatingSystem}}\n{{range .Labels}}{{.}}\n{{end}}"],
+    { ignoreError: true },
+  );
+  return /Docker Desktop|com\.docker\.desktop\./iu.test(info);
+}
+
+function runDockerGatewayCommand(args: readonly string[], timeoutMs: number) {
+  const result = dockerRun([...args], {
+    timeout: timeoutMs,
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  const error = result.error as NodeJS.ErrnoException | undefined;
+  return {
+    status: result.status ?? null,
+    signal: result.signal,
+    error: error?.message,
+    errorCode: error?.code ?? null,
+    timedOut: error?.code === "ETIMEDOUT",
+    stderr: result.stderr,
+    stdout: result.stdout,
+  };
+}
+
+function ensureDockerGatewayProbeImageCached(image: string) {
+  const inspect = runDockerGatewayCommand(["image", "inspect", image], 10_000);
+  if (inspect.status === 0) return { ok: true as const, alreadyCached: true };
+  if (inspect.status === null || inspect.errorCode) {
+    return {
+      ok: false as const,
+      reason: "inspect_unavailable" as const,
+      details: inspect.error ?? String(inspect.stderr ?? "").trim(),
+    };
+  }
+  const pull = runDockerGatewayCommand(["pull", image], 120_000);
+  if (pull.status === 0) return { ok: true as const, alreadyCached: false };
+  return {
+    ok: false as const,
+    reason: pull.timedOut ? ("pull_timeout" as const) : ("pull_failed" as const),
+    details: pull.error ?? String(pull.stderr ?? "").trim(),
+  };
+}
+
+function captureDockerContainerEngineOperation(
+  deps: DockerRuntimeProviderDependencies,
+  supportedOperations: ReadonlySet<RuntimeProviderContainerEngineOperation>,
+  operation: RuntimeProviderContainerEngineOperation,
+  args: readonly string[],
+  timeoutMs?: number,
+): RuntimeProviderCommandCapture {
+  if (!supportedOperations.has(operation)) {
+    throw new Error(`Docker provider does not register the '${operation}' engine operation.`);
+  }
+  return deps.captureHostCommand("docker", [...args], timeoutMs);
+}
 
 function loadDockerStop(): DockerStop {
   return (require("../../adapters/docker") as { dockerStop: DockerStop }).dockerStop;
@@ -420,6 +497,13 @@ export function createDockerRuntimeProviderBundle(
 ): RuntimeProviderBundle {
   const providerId = "docker";
   const deps = resolveDependencies(overrides);
+  const containerEngineOperations = new Set<RuntimeProviderContainerEngineOperation>([
+    "host-doctor",
+    "gateway-inspection",
+    "host-local-inference",
+    "sandbox-lifecycle",
+    "workload-cleanup",
+  ]);
   const futureReason = "This operation is intentionally deferred to a later provider slice.";
   return {
     identity: {
@@ -448,6 +532,34 @@ export function createDockerRuntimeProviderBundle(
       supported: true,
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
+      prepareHostRuntime: () => ({
+        providerId,
+        openShellDriver: "docker",
+        bindAddress: GATEWAY_BIND_ADDRESS,
+        grpcHost: getGatewayConnectHost(),
+        sshGatewayHost: getGatewayConnectHost(),
+        portCheckHost: GATEWAY_BIND_ADDRESS,
+        socketPath: null,
+        requiredServerIpSans: [],
+        sandboxHostAddress: null,
+        usesHostGatewayRoute: false,
+        resourceOwnership: {
+          label: "openshell.ai/managed-by",
+          value: "openshell",
+        },
+        gatewayConfig: {
+          sandboxNamespace: "scoped",
+          hostGatewayIp: null,
+          includeSupervisorBin: true,
+          processOwnership: "scoped-namespace",
+        },
+        network: {
+          inspect: inspectDockerGatewayNetwork,
+          usesHostGatewayRoute: dockerGatewayUsesHostGatewayRoute,
+          run: runDockerGatewayCommand,
+          ensureProbeImageCached: ensureDockerGatewayProbeImageCached,
+        },
+      }),
     },
     workload: {
       providerId,
@@ -508,6 +620,14 @@ export function createDockerRuntimeProviderBundle(
         { operation: "sandbox-lifecycle", engineId: "docker", displayName: "Docker" },
         { operation: "workload-cleanup", engineId: "docker", displayName: "Docker" },
       ],
+      capture: (operation, args, timeoutMs) =>
+        captureDockerContainerEngineOperation(
+          deps,
+          containerEngineOperations,
+          operation,
+          args,
+          timeoutMs,
+        ),
     },
   };
 }
@@ -517,6 +637,11 @@ export function createKubernetesRuntimeProviderBundle(
 ): RuntimeProviderBundle {
   const providerId = "kubernetes";
   const deps = resolveDependencies(overrides);
+  const containerEngineOperations = new Set<RuntimeProviderContainerEngineOperation>([
+    "host-doctor",
+    "gateway-inspection",
+    "workload-cleanup",
+  ]);
   const futureReason = "This operation is intentionally deferred to a later provider slice.";
   const profile = {
     support: null,
@@ -555,6 +680,9 @@ export function createKubernetesRuntimeProviderBundle(
       supported: true,
       launcher: "openshell",
       inspectLegacyContainer: true,
+      prepareHostRuntime: () => {
+        throw new Error("The Kubernetes provider does not launch a host-managed gateway.");
+      },
     },
     workload: {
       providerId,
@@ -604,6 +732,14 @@ export function createKubernetesRuntimeProviderBundle(
         { operation: "gateway-inspection", engineId: "docker", displayName: "Docker" },
         { operation: "workload-cleanup", engineId: "docker", displayName: "Docker" },
       ],
+      capture: (operation, args, timeoutMs) =>
+        captureDockerContainerEngineOperation(
+          deps,
+          containerEngineOperations,
+          operation,
+          args,
+          timeoutMs,
+        ),
     },
   };
 }

@@ -3,8 +3,6 @@
 
 import { dockerCapture, dockerRun } from "../adapters/docker";
 import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
-import { isPodmanGatewayRuntimeEnabled } from "./gateway-runtime-selection";
-import { PODMAN_MANAGED_LABEL } from "./runtime-provider/podman-lifecycle";
 
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
@@ -17,11 +15,9 @@ export type OpenShellSandboxOwnershipLabel = {
 };
 
 export function resolveOpenShellSandboxOwnershipLabel(
-  env: NodeJS.ProcessEnv = process.env,
+  _env: NodeJS.ProcessEnv = process.env,
 ): OpenShellSandboxOwnershipLabel {
-  return isPodmanGatewayRuntimeEnabled(env)
-    ? { label: PODMAN_MANAGED_LABEL, value: "true" }
-    : { label: OPENSHELL_MANAGED_BY_LABEL, value: OPENSHELL_MANAGED_BY_VALUE };
+  return { label: OPENSHELL_MANAGED_BY_LABEL, value: OPENSHELL_MANAGED_BY_VALUE };
 }
 
 export function hasOpenShellSandboxOwnership(

@@ -58,6 +58,7 @@ export {
   requireRuntimeProviderStateMutationSurface,
   resolveRuntimeProviderBundle,
   runtimeProviderContainerEngineIdentity,
+  runtimeProviderSupportsContainerEngineOperation,
 } from "./registry";
 export {
   prepareAgentDefinitionProtectionTransitionPlan,

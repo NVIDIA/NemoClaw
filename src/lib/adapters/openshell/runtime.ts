@@ -18,6 +18,7 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 type CommandArgs = string[];
 
 export { buildOpenShellSubprocessEnv };
+export { resolveOpenshell } from "./resolve";
 
 type RunnerOptions = {
   /** Exact canonical executable selected by the caller. */

@@ -29,7 +29,6 @@ import {
   isLinuxDockerDriverGatewayEnabled,
   isPortableExperimentalProfile,
 } from "./docker-driver-platform";
-import { isPodmanGatewayRuntimeEnabled } from "./gateway-runtime-selection";
 import { warnIfHostProxyMissesLoopback } from "./http-proxy-preflight";
 import { assessHost, type HostAssessment, planHostAdvisories } from "./preflight";
 import {
@@ -39,6 +38,7 @@ import {
 } from "./preflight-messages";
 import { printRemediationActions } from "./remediation";
 import { resolveSandboxGpuConfig, type SandboxGpuConfig } from "./sandbox-gpu-mode";
+import { resolveConfiguredRuntimeProvider } from "./runtime-provider/selection";
 import {
   exitOnSandboxGpuConfigErrors,
   printJetsonNvidiaRuntimeUnavailableError,
@@ -163,12 +163,24 @@ export function assertOnboardSystemReadiness(
   options: OnboardHostReadinessOptions,
 ): SystemReadinessReport {
   const exitProcess = options.exitProcess ?? exitProcessByDefault;
+  const portable = isPortableExperimentalProfile();
+  const selectedRuntimeUsesProviderHostRoute =
+    !portable && isLinuxDockerDriverGatewayEnabled()
+      ? (() => {
+          const provider = resolveConfiguredRuntimeProvider();
+          return (
+            provider.gateway.supported &&
+            provider.gateway.prepareHostRuntime({
+              environment: process.env,
+              platform: process.platform,
+            }).sandboxHostAddress !== null
+          );
+        })()
+      : false;
   const admission = evaluateOnboardReadinessAdmission(readinessReport, {
     explicitlyOptedOutGpuPassthrough: options.explicitlyOptedOutGpuPassthrough,
     allowUnsupportedRuntime:
-      isPortableExperimentalProfile() ||
-      isPodmanGatewayRuntimeEnabled() ||
-      !isLinuxDockerDriverGatewayEnabled(),
+      portable || selectedRuntimeUsesProviderHostRoute || !isLinuxDockerDriverGatewayEnabled(),
     allowStorageRemediation: options.allowStorageRemediation === true,
     allowPortableHostPreparation: options.allowPortableHostPreparation,
     allowDeferredN1xManagedVllm:

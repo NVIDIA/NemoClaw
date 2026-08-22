@@ -9,7 +9,9 @@ import {
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   requireRuntimeProviderDestructiveCleanupAuthority,
+  resolveRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
+import type { RuntimeProviderDestroyIdentityReceipt } from "../../onboard/runtime-provider/contract";
 import {
   type HostLocalInferenceLifecycleOptions,
   type PreparedHostLocalInferenceAuthority,
@@ -63,6 +65,7 @@ type SandboxDestroyExecutionInput = {
   // `null` records confirmed absence; an object records the one managed
   // container observed by the pre-destroy guard.
   expectedContainerIdentity?: SandboxNameLabeledContainer | null;
+  expectedRuntimeProviderIdentity?: RuntimeProviderDestroyIdentityReceipt;
   stopInferenceResources: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   deps?: {
@@ -281,6 +284,7 @@ export async function executeSandboxDestroy({
   sandboxConfirmedAbsent,
   sandboxName,
   expectedContainerIdentity,
+  expectedRuntimeProviderIdentity,
   stopInferenceResources,
   runtimeProviders = CURRENT_RUNTIME_PROVIDER_BUNDLES,
   deps = {},
@@ -291,7 +295,33 @@ export async function executeSandboxDestroy({
       | { status: "changed" }
       | { status: "ambiguous"; detail: string }
       | { status: "probe-failed"; detail: string };
+    const identityProvider = sandbox
+      ? resolveRuntimeProviderBundle(sandbox.openshellDriver, runtimeProviders)
+      : null;
     const inspectIdentityContinuity = (): IdentityContinuity => {
+      if (expectedRuntimeProviderIdentity) {
+        if (
+          !sandbox ||
+          identityProvider?.cleanup.supported !== true ||
+          !identityProvider.cleanup.captureDestroyIdentity
+        ) {
+          return {
+            status: "probe-failed",
+            detail: "the selected runtime provider has no destroy identity observer",
+          };
+        }
+        try {
+          const actual = identityProvider.cleanup.captureDestroyIdentity({ sandbox, sandboxName });
+          return actual.schemaVersion === expectedRuntimeProviderIdentity.schemaVersion &&
+            actual.providerId === expectedRuntimeProviderIdentity.providerId &&
+            actual.resourceHandle === expectedRuntimeProviderIdentity.resourceHandle &&
+            actual.ownershipSha256 === expectedRuntimeProviderIdentity.ownershipSha256
+            ? { status: "match" }
+            : { status: "changed" };
+        } catch (error) {
+          return { status: "probe-failed", detail: redactDestroyError(error) };
+        }
+      }
       if (expectedContainerIdentity === undefined) return { status: "match" };
       const verdict = classifyDestroyContainerIdentity(
         sandboxName,

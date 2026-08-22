@@ -481,14 +481,15 @@ async function destroySandboxUnlocked(
   if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
   const destroySession = onboardSession.loadSession();
 
-  const inspectContainerIdentity = () =>
-    assertUnambiguousDestroyContainerIdentity(sandboxName, {
+  const inspectContainerIdentity = () => {
+    const registeredSandbox = registry.getSandbox(sandboxName);
+    return assertUnambiguousDestroyContainerIdentity(sandboxName, {
       cliName: CLI_NAME,
-      providerId: normalizeRuntimeProviderIdentity(
-        registry.getSandbox(sandboxName)?.openshellDriver,
-      ),
+      providerId: normalizeRuntimeProviderIdentity(registeredSandbox?.openshellDriver),
       redact: redactDestroyError,
+      sandbox: registeredSandbox,
     });
+  };
   const initialIdentity = inspectContainerIdentity();
   if (initialIdentity === false) {
     process.exit(1);
@@ -520,6 +521,7 @@ async function destroySandboxUnlocked(
     sandboxConfirmedAbsent,
     sandboxName,
     expectedContainerIdentity: initialIdentity.identity,
+    expectedRuntimeProviderIdentity: initialIdentity.providerIdentity,
     stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
   });
   if (!destructiveResult.ok) {
@@ -620,12 +622,17 @@ async function destroySandboxUnlocked(
   // not shut down services for a sandbox we never confirmed deleted (#6046).
   const deleteSucceededOrAlreadyGone = deleteResult.status === 0 || alreadyGone;
   if (deleteSucceededOrAlreadyGone && sandbox) {
-    const stateVolumeCleanup = removeManagedHermesStateVolume({
-      agentName: sandbox.agent,
-      runtimeProviderId: normalizeRuntimeProviderIdentity(sandbox.openshellDriver),
-      sandboxName,
-      workloadKind: sandbox.workload?.kind ?? "",
-    });
+    const stateVolumeCleanup = removeManagedHermesStateVolume(
+      {
+        agentName: sandbox.agent,
+        runtimeProviderId: normalizeRuntimeProviderIdentity(sandbox.openshellDriver),
+        sandboxName,
+        workloadKind: sandbox.workload?.kind ?? "",
+      },
+      {
+        runtimeProviders: CURRENT_RUNTIME_PROVIDER_BUNDLES,
+      },
+    );
     if (stateVolumeCleanup.status === "failed") {
       console.error(
         `  Sandbox '${sandboxName}' is gone, but its managed Hermes state volume '${stateVolumeCleanup.volumeName}' could not be removed: ${redactDestroyError(stateVolumeCleanup.detail)}`,

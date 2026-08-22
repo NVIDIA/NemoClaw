@@ -213,6 +213,31 @@ function bundle(providerId: string): RuntimeProviderBundle {
       supported: true,
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
+      prepareHostRuntime: () => ({
+        providerId,
+        openShellDriver: "memory",
+        bindAddress: "127.0.0.1",
+        grpcHost: "127.0.0.1",
+        sshGatewayHost: "127.0.0.1",
+        portCheckHost: "127.0.0.1",
+        socketPath: null,
+        requiredServerIpSans: [],
+        sandboxHostAddress: null,
+        usesHostGatewayRoute: false,
+        resourceOwnership: { label: "test.managed", value: providerId },
+        gatewayConfig: {
+          sandboxNamespace: "scoped",
+          hostGatewayIp: null,
+          includeSupervisorBin: true,
+          processOwnership: "scoped-namespace",
+        },
+        network: {
+          inspect: () => undefined,
+          usesHostGatewayRoute: () => false,
+          run: () => ({ status: 0 }),
+          ensureProbeImageCached: () => ({ ok: true, alreadyCached: true }),
+        },
+      }),
     },
     workload: {
       providerId,
@@ -631,41 +656,44 @@ describe("managed workload rebuild transaction", () => {
         PLATFORMS.map((platform) => [agent, provider, platform] as const),
       ),
     ),
-  )("atomically rebuilds %s through the socket-free %s provider contract on %s", async (agent, provider, platform) => {
-    const harness = transactionHarness(agent, provider, null, platform);
+  )(
+    "atomically rebuilds %s through the socket-free %s provider contract on %s",
+    async (agent, provider, platform) => {
+      const harness = transactionHarness(agent, provider, null, platform);
 
-    const result = await harness.run();
+      const result = await harness.run();
 
-    expect(result).toMatchObject({
-      status: "committed",
-      previousCleanup: "complete",
-      entry: {
-        agent,
-        openshellDriver: provider,
-        model: "nvidia/nemotron-new",
-        fromDockerfile: null,
-        lifecycleGeneration: "generation-new",
-        lifecycleLiveIdentityFingerprint: "fingerprint-new",
-        workload: {
-          kind: "managed-image",
-          platform,
-          release: NEW_RELEASE,
-          shared: true,
+      expect(result).toMatchObject({
+        status: "committed",
+        previousCleanup: "complete",
+        entry: {
+          agent,
+          openshellDriver: provider,
+          model: "nvidia/nemotron-new",
+          fromDockerfile: null,
+          lifecycleGeneration: "generation-new",
+          lifecycleLiveIdentityFingerprint: "fingerprint-new",
+          workload: {
+            kind: "managed-image",
+            platform,
+            release: NEW_RELEASE,
+            shared: true,
+          },
         },
-      },
-    });
-    expect(harness.events).toEqual([
-      "prepare",
-      "create",
-      "readiness",
-      "restore",
-      "provider-rebind",
-      "registry-commit",
-      "retire:runtime-old-exact",
-    ]);
-    expect(harness.currentEntry()).toEqual(result.entry);
-    expect(harness.currentEntry().imageTag).not.toBe(harness.oldEntry.imageTag);
-  });
+      });
+      expect(harness.events).toEqual([
+        "prepare",
+        "create",
+        "readiness",
+        "restore",
+        "provider-rebind",
+        "registry-commit",
+        "retire:runtime-old-exact",
+      ]);
+      expect(harness.currentEntry()).toEqual(result.entry);
+      expect(harness.currentEntry().imageTag).not.toBe(harness.oldEntry.imageTag);
+    },
+  );
 
   it.each([
     ["prepare", false],
@@ -705,27 +733,23 @@ describe("managed workload rebuild transaction", () => {
     expect(harness.currentEntry().lifecycleGeneration).toBe("generation-old");
   });
 
-  it.each(INVALID_PROVIDER_ARTIFACT_CASES)("$name and stops at the invalid transition", async ({
-    phase,
-    install,
-    events,
-    notCalled,
-    abortCalls,
-    rollbackCalls,
-  }) => {
-    const harness = transactionHarness("langchain-deepagents-code", "mxc");
-    install(harness.operations);
+  it.each(INVALID_PROVIDER_ARTIFACT_CASES)(
+    "$name and stops at the invalid transition",
+    async ({ phase, install, events, notCalled, abortCalls, rollbackCalls }) => {
+      const harness = transactionHarness("langchain-deepagents-code", "mxc");
+      install(harness.operations);
 
-    await expect(harness.run()).rejects.toMatchObject({ phase });
+      await expect(harness.run()).rejects.toMatchObject({ phase });
 
-    expect(harness.currentEntry()).toEqual(harness.oldEntry);
-    expect(harness.events).toEqual(events);
-    expect(harness.operations.abortPreparation).toHaveBeenCalledTimes(abortCalls);
-    expect(harness.operations.rollback).toHaveBeenCalledTimes(rollbackCalls);
-    notCalled.forEach((operation) => {
-      expect(harness.operations[operation]).not.toHaveBeenCalled();
-    });
-  });
+      expect(harness.currentEntry()).toEqual(harness.oldEntry);
+      expect(harness.events).toEqual(events);
+      expect(harness.operations.abortPreparation).toHaveBeenCalledTimes(abortCalls);
+      expect(harness.operations.rollback).toHaveBeenCalledTimes(rollbackCalls);
+      notCalled.forEach((operation) => {
+        expect(harness.operations[operation]).not.toHaveBeenCalled();
+      });
+    },
+  );
 
   it("aborts preparation when durable registry metadata drifts during preparation", async () => {
     const events: string[] = [];

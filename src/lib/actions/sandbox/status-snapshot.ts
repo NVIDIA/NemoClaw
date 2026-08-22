@@ -49,8 +49,10 @@ import {
 } from "./inference-route-health";
 import {
   getSandboxStatusPreflight,
+  hasLegacyStatusRuntimeObservation,
   type SandboxStatusFailureLayer,
   type SandboxStatusPreflightResult,
+  usesManagedProviderGateway,
   withoutTerminalPhasePreflight,
 } from "./status-preflight";
 import {
@@ -269,7 +271,7 @@ export function resolveSandboxStatusAgent(agentName = "openclaw"): SandboxStatus
 type ReconcileSandboxGatewayState = (sandboxName: string) => Promise<SandboxGatewayState>;
 type ProbeTerminalRuntimeHealth = (sandboxName: string) => TerminalRuntimeOomProbeResult;
 type RecoverSandboxProcesses =
-  typeof import("./status/process-recovery")["checkAndRecoverSandboxProcesses"];
+  (typeof import("./status/process-recovery"))["checkAndRecoverSandboxProcesses"];
 type SandboxProcessRecoveryResult = ReturnType<RecoverSandboxProcesses>;
 
 type SandboxProcessRecoveryFailure = {
@@ -428,7 +430,8 @@ export async function collectSandboxStatusSnapshot(
   const dockerRecovered = lookup.recoveredSandbox === true;
   const managedOpenClawDeliveryMustBeProven =
     lookup.state === "present" &&
-    sb?.openshellDriver === "docker" &&
+    sb !== null &&
+    usesManagedProviderGateway(sb) &&
     (sb.agent ?? "openclaw") === "openclaw" &&
     parseSandboxPhase(lookup.output || "") === "Ready" &&
     !opts.preflight?.failure;
@@ -530,13 +533,13 @@ export async function collectSandboxStatusSnapshot(
           recorded: routeDriftPlan.recorded,
           canConnect: Boolean(
             sb &&
-              gatewayName &&
-              canSandboxGatewayRouteRealign(
-                sandboxName,
-                sb,
-                gatewayName,
-                (opts.deps?.listSandboxes ?? registry.listSandboxes)().sandboxes,
-              ),
+            gatewayName &&
+            canSandboxGatewayRouteRealign(
+              sandboxName,
+              sb,
+              gatewayName,
+              (opts.deps?.listSandboxes ?? registry.listSandboxes)().sandboxes,
+            ),
           ),
         }
       : null;
@@ -706,7 +709,10 @@ async function buildSandboxStatusReport(
     inferenceHealth,
     terminalRuntimeHealth,
   } = snapshot;
-  const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
+  const dockerRuntime =
+    lookup.state === "present" && hasLegacyStatusRuntimeObservation(sb)
+      ? getSandboxDockerRuntime(sandboxName)
+      : null;
   const phase = lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
   const effectivePreflight = withoutTerminalPhasePreflight(
     snapshot.postRecoveryPreflight ?? preflight,

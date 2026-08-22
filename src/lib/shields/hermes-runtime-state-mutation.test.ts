@@ -189,6 +189,18 @@ describe("Hermes runtime-provider state mutation consumer", () => {
     testTimeout(30_000),
   );
 
+  it("selects the registered native provider state-mutation surface without a provider-name branch", () => {
+    expect(
+      supportsHermesRuntimeProviderStateMutation(
+        { ...sandbox, openshellDriver: "podman" },
+        {
+          content: HERMES_RUNTIME_STATE_MUTATION_CAPABILITY,
+          metadata: HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_METADATA,
+        },
+      ),
+    ).toBe(true);
+  });
+
   it("selects only an exact current managed Hermes Docker image capability", () => {
     const capability = {
       content: HERMES_RUNTIME_STATE_MUTATION_CAPABILITY,
@@ -269,137 +281,138 @@ describe("Hermes runtime-provider state mutation consumer", () => {
   it.each([
     ["locked", "mutable", fence],
     ["mutable", "locked", mutableFence],
-  ] as const)("executes a same-%s transition with a synthetic %s rollback", (target, expectedRollback, acquiredFence) => {
-    const calls: string[] = [];
-    let acquiredPlan: RuntimeProviderPreparedStateMutationPlan | undefined;
-    const result = run(
-      providers({
-        recover: () => {
-          calls.push("recover");
-          return null;
-        },
-        acquire: (input) => {
-          calls.push("acquire");
-          acquiredPlan = input.plan;
-          return acquiredFence;
-        },
-        assertFenced: () => calls.push("assert"),
-        publish: () => calls.push("publish"),
-        activate: () => {
-          calls.push("activate");
-          return proof;
-        },
-        release: () => calls.push("release"),
-      }),
-      target,
-      target,
-    );
-
-    expect(acquiredPlan?.plan).toMatchObject({ target, rollback: expectedRollback });
-    expect(calls).toEqual([
-      "recover",
-      "acquire",
-      "assert",
-      "publish",
-      "assert",
-      "activate",
-      "release",
-    ]);
-    expect(result).toEqual({ fence: acquiredFence, proof });
-  });
-
-  it.each([
-    "publication",
-    "verification",
-    "activation",
-  ] as const)("rolls a same-mutable transition back to locked after %s failure", (failureStage) => {
-    const calls: string[] = [];
-    const failure = new Error(`${failureStage} failed`);
-    const failureController = createHermesTransitionFailureController(failureStage, failure, {
-      failOnlyFirstActivation: true,
-    });
-    let acquiredPlan: RuntimeProviderPreparedStateMutationPlan | undefined;
-
-    expect(() =>
-      run(
+  ] as const)(
+    "executes a same-%s transition with a synthetic %s rollback",
+    (target, expectedRollback, acquiredFence) => {
+      const calls: string[] = [];
+      let acquiredPlan: RuntimeProviderPreparedStateMutationPlan | undefined;
+      const result = run(
         providers({
+          recover: () => {
+            calls.push("recover");
+            return null;
+          },
           acquire: (input) => {
             calls.push("acquire");
             acquiredPlan = input.plan;
-            return mutableFence;
+            return acquiredFence;
           },
-          assertFenced: () => {
-            calls.push("assert");
-            failureController.afterAssertion();
-          },
-          publish: () => {
-            calls.push("publish");
-            failureController.afterPublication();
-          },
-          rollback: (_context, value) => {
-            calls.push("rollback");
-            expect(value).toMatchObject({ target: "mutable", rollback: "locked" });
-          },
+          assertFenced: () => calls.push("assert"),
+          publish: () => calls.push("publish"),
           activate: () => {
             calls.push("activate");
-            failureController.beforeActivation();
             return proof;
           },
           release: () => calls.push("release"),
         }),
-        "mutable",
-        "mutable",
-      ),
-    ).toThrow(failure);
+        target,
+        target,
+      );
 
-    expect(acquiredPlan?.plan).toMatchObject({ target: "mutable", rollback: "locked" });
-    expect(calls.filter((call) => call === "rollback")).toHaveLength(1);
-    expect(calls.at(-1)).toBe("release");
-  });
+      expect(acquiredPlan?.plan).toMatchObject({ target, rollback: expectedRollback });
+      expect(calls).toEqual([
+        "recover",
+        "acquire",
+        "assert",
+        "publish",
+        "assert",
+        "activate",
+        "release",
+      ]);
+      expect(result).toEqual({ fence: acquiredFence, proof });
+    },
+  );
 
-  it.each([
-    "publication",
-    "verification",
-    "activation",
-  ] as const)("retains a same-locked restrictive fence after %s failure", (failureStage) => {
-    const calls: string[] = [];
-    const failure = new Error(`${failureStage} failed`);
-    const failureController = createHermesTransitionFailureController(failureStage, failure);
-    let acquiredPlan: RuntimeProviderPreparedStateMutationPlan | undefined;
+  it.each(["publication", "verification", "activation"] as const)(
+    "rolls a same-mutable transition back to locked after %s failure",
+    (failureStage) => {
+      const calls: string[] = [];
+      const failure = new Error(`${failureStage} failed`);
+      const failureController = createHermesTransitionFailureController(failureStage, failure, {
+        failOnlyFirstActivation: true,
+      });
+      let acquiredPlan: RuntimeProviderPreparedStateMutationPlan | undefined;
 
-    expect(() =>
-      run(
-        providers({
-          acquire: (input) => {
-            calls.push("acquire");
-            acquiredPlan = input.plan;
-            return fence;
-          },
-          assertFenced: () => {
-            calls.push("assert");
-            failureController.afterAssertion();
-          },
-          publish: () => {
-            calls.push("publish");
-            failureController.afterPublication();
-          },
-          rollback: () => calls.push("rollback"),
-          activate: () => {
-            calls.push("activate");
-            failureController.beforeActivation();
-            return proof;
-          },
-          release: () => calls.push("release"),
-        }),
-        "locked",
-        "locked",
-      ),
-    ).toThrow(failure);
+      expect(() =>
+        run(
+          providers({
+            acquire: (input) => {
+              calls.push("acquire");
+              acquiredPlan = input.plan;
+              return mutableFence;
+            },
+            assertFenced: () => {
+              calls.push("assert");
+              failureController.afterAssertion();
+            },
+            publish: () => {
+              calls.push("publish");
+              failureController.afterPublication();
+            },
+            rollback: (_context, value) => {
+              calls.push("rollback");
+              expect(value).toMatchObject({ target: "mutable", rollback: "locked" });
+            },
+            activate: () => {
+              calls.push("activate");
+              failureController.beforeActivation();
+              return proof;
+            },
+            release: () => calls.push("release"),
+          }),
+          "mutable",
+          "mutable",
+        ),
+      ).toThrow(failure);
 
-    expect(acquiredPlan?.plan).toMatchObject({ target: "locked", rollback: "mutable" });
-    expect(calls).not.toContain("rollback");
-    expect(calls).not.toContain("release");
-  });
+      expect(acquiredPlan?.plan).toMatchObject({ target: "mutable", rollback: "locked" });
+      expect(calls.filter((call) => call === "rollback")).toHaveLength(1);
+      expect(calls.at(-1)).toBe("release");
+    },
+  );
+
+  it.each(["publication", "verification", "activation"] as const)(
+    "retains a same-locked restrictive fence after %s failure",
+    (failureStage) => {
+      const calls: string[] = [];
+      const failure = new Error(`${failureStage} failed`);
+      const failureController = createHermesTransitionFailureController(failureStage, failure);
+      let acquiredPlan: RuntimeProviderPreparedStateMutationPlan | undefined;
+
+      expect(() =>
+        run(
+          providers({
+            acquire: (input) => {
+              calls.push("acquire");
+              acquiredPlan = input.plan;
+              return fence;
+            },
+            assertFenced: () => {
+              calls.push("assert");
+              failureController.afterAssertion();
+            },
+            publish: () => {
+              calls.push("publish");
+              failureController.afterPublication();
+            },
+            rollback: () => calls.push("rollback"),
+            activate: () => {
+              calls.push("activate");
+              failureController.beforeActivation();
+              return proof;
+            },
+            release: () => calls.push("release"),
+          }),
+          "locked",
+          "locked",
+        ),
+      ).toThrow(failure);
+
+      expect(acquiredPlan?.plan).toMatchObject({ target: "locked", rollback: "mutable" });
+      expect(calls).not.toContain("rollback");
+      expect(calls).not.toContain("release");
+    },
+  );
 
   it("rolls back and releases a recovered prior fence before acquiring a new one", () => {
     const calls: string[] = [];

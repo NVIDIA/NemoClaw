@@ -503,6 +503,9 @@ function validateRecoverySurface(surface: Record<string, unknown>): void {
 
 function validateCleanupSurface(surface: Record<string, unknown>): void {
   if (surface.supported === true) {
+    if (surface.captureDestroyIdentity !== undefined) {
+      requireFunction(surface, "captureDestroyIdentity", "cleanup");
+    }
     requireFunction(surface, "prepareDestroy", "cleanup");
     requireFunction(surface, "planOwnedWorkloadCleanup", "cleanup");
     requireFunction(surface, "removeOwnedWorkload", "cleanup");
@@ -514,6 +517,7 @@ function validateContainerEngineSurface(
   surface: Record<string, unknown>,
 ): void {
   if (surface.supported === true) {
+    requireFunction(surface, "capture", "containerEngine");
     const identities = surface.identities;
     if (!Array.isArray(identities)) {
       throw new RuntimeProviderRegistrationError(
@@ -779,6 +783,20 @@ export function runtimeProviderContainerEngineIdentity(
     (candidate) => candidate.operation === operation,
   );
   return identity ? { engineId: identity.engineId, displayName: identity.displayName } : null;
+}
+
+/**
+ * Report whether the selected provider registered the operation-scoped engine
+ * authority required by generic orchestration. Provider identities stay
+ * opaque: adding a provider changes registration, not the caller's branches.
+ */
+export function runtimeProviderSupportsContainerEngineOperation(
+  driverName: string | null | undefined,
+  providers: RuntimeProviderBundleRegistry,
+  operation: RuntimeProviderContainerEngineOperation,
+): boolean {
+  const bundle = resolveRuntimeProviderBundle(driverName, providers);
+  return bundle !== null && runtimeProviderContainerEngineIdentity(bundle, operation) !== null;
 }
 
 export function requireRuntimeProviderHostLocalInferenceOperation(

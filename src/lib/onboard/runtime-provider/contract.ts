@@ -68,6 +68,72 @@ export interface RuntimeProviderPlanDefinition {
   readonly gatewayLauncher: RuntimeProviderGatewayLauncher;
 }
 
+export interface RuntimeProviderGatewayHostRuntimeInput {
+  readonly environment: NodeJS.ProcessEnv;
+  readonly platform: NodeJS.Platform;
+  /** Optional exact socket supplied by a caller that already prepared provider authority. */
+  readonly socketPath?: string;
+}
+
+export interface RuntimeProviderGatewayNetworkInfo {
+  readonly subnet?: string;
+  readonly gatewayIp?: string;
+}
+
+export interface RuntimeProviderGatewayCommandResult {
+  readonly status: number | null;
+  readonly stdout?: string | Buffer | null;
+  readonly stderr?: string | Buffer | null;
+  readonly signal?: NodeJS.Signals | null;
+  readonly error?: string;
+  readonly errorCode?: string | null;
+  readonly timedOut?: boolean;
+}
+
+export interface RuntimeProviderGatewayImageCacheResult {
+  readonly ok: boolean;
+  readonly alreadyCached?: boolean;
+  readonly reason?: "inspect_unavailable" | "pull_failed" | "pull_timeout";
+  readonly details?: string;
+}
+
+/**
+ * Provider-owned gateway behavior projected into generic orchestration. None of
+ * these values identify a provider; callers consume the behavior without
+ * branching on the bundle identity.
+ */
+export interface RuntimeProviderGatewayHostRuntime {
+  /** Opaque identity persisted for provider-owned runtime observation. */
+  readonly providerId: string;
+  readonly openShellDriver: string;
+  readonly bindAddress: string;
+  /** Host advertised to the gateway's sandbox-facing gRPC transport. */
+  readonly grpcHost: string;
+  /** Host used by the local SSH gateway client. */
+  readonly sshGatewayHost: string;
+  readonly portCheckHost: string;
+  readonly socketPath: string | null;
+  readonly requiredServerIpSans: readonly string[];
+  readonly sandboxHostAddress: string | null;
+  readonly usesHostGatewayRoute: boolean;
+  readonly resourceOwnership: {
+    readonly label: string;
+    readonly value: string;
+  };
+  readonly gatewayConfig: {
+    readonly sandboxNamespace: "scoped" | "omitted";
+    readonly hostGatewayIp: string | null;
+    readonly includeSupervisorBin: boolean;
+    readonly processOwnership: "scoped-namespace" | "runtime-marker";
+  };
+  readonly network: {
+    inspect(networkName: string): RuntimeProviderGatewayNetworkInfo | undefined;
+    usesHostGatewayRoute(): boolean;
+    run(args: readonly string[], timeoutMs: number): RuntimeProviderGatewayCommandResult;
+    ensureProbeImageCached(image: string): RuntimeProviderGatewayImageCacheResult;
+  };
+}
+
 export type RuntimeProviderReadOnlyHostMountCapability =
   | {
       readonly supported: true;
@@ -152,6 +218,14 @@ export type RuntimeProviderProviderDetachResult = {
 export interface RuntimeProviderCleanupInput {
   readonly sandbox: SandboxEntry;
   readonly sandboxName: string;
+}
+
+/** Provider-owned proof for the exact runtime resource targeted by destroy. */
+export interface RuntimeProviderDestroyIdentityReceipt {
+  readonly schemaVersion: 1;
+  readonly providerId: string;
+  readonly resourceHandle: string | null;
+  readonly ownershipSha256: string | null;
 }
 
 export type RuntimeProviderWorkloadCleanupPlan =
@@ -364,6 +438,9 @@ export type RuntimeProviderPreflightDoctorSurface = RuntimeProviderSupportedSurf
 export type RuntimeProviderGatewaySurface = RuntimeProviderSupportedSurface<{
   readonly launcher: RuntimeProviderGatewayLauncher;
   readonly inspectLegacyContainer: boolean;
+  prepareHostRuntime(
+    input: RuntimeProviderGatewayHostRuntimeInput,
+  ): RuntimeProviderGatewayHostRuntime;
 }>;
 
 export type RuntimeProviderWorkloadSurface = RuntimeProviderSupportedSurface<{
@@ -492,6 +569,10 @@ export type RuntimeProviderRecoverySurface =
 
 export type RuntimeProviderCleanupSurface =
   | RuntimeProviderSupportedSurface<{
+      /** Observe immutable runtime identity and ownership without mutation. */
+      captureDestroyIdentity?(
+        input: RuntimeProviderCleanupInput,
+      ): RuntimeProviderDestroyIdentityReceipt;
       prepareDestroy(
         input: RuntimeProviderCleanupInput,
         operations: RuntimeProviderCleanupOperations,
@@ -515,6 +596,11 @@ export type RuntimeProviderContainerEngineSurface =
         readonly engineId: string;
         readonly displayName: string;
       }[];
+      capture(
+        operation: RuntimeProviderContainerEngineOperation,
+        args: readonly string[],
+        timeoutMs?: number,
+      ): RuntimeProviderCommandCapture;
     }>
   | RuntimeProviderUnsupportedSurface;
 

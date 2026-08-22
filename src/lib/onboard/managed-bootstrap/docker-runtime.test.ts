@@ -119,6 +119,7 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
         inferenceProvider: "openai",
         gatewayUsesContainerBridge: false,
         gatewayPort: 0,
+        reverifyBridgeReachability: () => undefined,
       },
       dependencies: {},
     });
@@ -217,6 +218,7 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
         inferenceProvider: "openai",
         gatewayUsesContainerBridge: false,
         gatewayPort: 0,
+        reverifyBridgeReachability: () => undefined,
       },
       dependencies: {},
     });

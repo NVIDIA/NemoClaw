@@ -164,9 +164,8 @@ function createDockerLifecycle(
     },
     async prepareNetwork() {
       if (input.route !== "compatibility") return;
-      const { enforceDockerGpuPatchPreserveNetwork } = await import(
-        "../docker-gpu-local-inference"
-      );
+      const { enforceDockerGpuPatchPreserveNetwork } =
+        await import("../docker-gpu-local-inference");
       await enforceDockerGpuPatchPreserveNetwork(
         input.network.inferenceProvider,
         input.sandboxGpuConfig,
@@ -175,6 +174,7 @@ function createDockerLifecycle(
           selectedRoute: input.route,
           gatewayPort: input.network.gatewayPort,
           log: console.log,
+          reverifyBridgeReachability: input.network.reverifyBridgeReachability,
         },
       );
     },

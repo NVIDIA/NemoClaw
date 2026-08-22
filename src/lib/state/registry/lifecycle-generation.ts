@@ -2,9 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import { withLock } from "./lock";
 import { load, save } from "./persistence";
 import type { SandboxEntry } from "./types";
+
+export function usesLegacyRuntimeLifecycleCompatibility(entry: SandboxEntry): boolean {
+  const driverName = entry.openshellDriver?.trim().toLowerCase();
+  if (!driverName) return false;
+  const provider = resolveRegisteredRuntimeProvider(driverName);
+  if (!provider || provider.identity.id !== driverName || provider.lifecycle.supported !== true) {
+    return false;
+  }
+  try {
+    return (
+      provider.gateway.prepareHostRuntime({
+        environment: process.env,
+        platform: process.platform,
+      }).socketPath === null
+    );
+  } catch {
+    return false;
+  }
+}
 
 /** Claim a lifecycle generation for one unchanged legacy Docker registry row. */
 export function compareAndSetLegacySandboxLifecycleGeneration(
@@ -12,7 +32,7 @@ export function compareAndSetLegacySandboxLifecycleGeneration(
   lifecycleGeneration: string,
 ): boolean {
   if (
-    expected.openshellDriver !== "docker" ||
+    !usesLegacyRuntimeLifecycleCompatibility(expected) ||
     expected.lifecycleGeneration !== undefined ||
     lifecycleGeneration.length === 0 ||
     lifecycleGeneration.length > 256 ||

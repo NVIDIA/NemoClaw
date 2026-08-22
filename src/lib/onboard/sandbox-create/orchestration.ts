@@ -15,6 +15,7 @@ import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../types";
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
+import { resolveRegisteredRuntimeProvider } from "../runtime-provider/selection";
 
 type SandboxRecreateReasonInput = {
   sandboxName: string;
@@ -113,9 +114,7 @@ export function hasManagedMcpRebuildHandoff(
   createIntent: SandboxCreateIntent | null | undefined,
 ): boolean {
   const handoff = createIntent?.recreateJournalTargetIntentFingerprint;
-  return Boolean(
-    handoff && createIntent?.recreateTransaction?.targetIntentFingerprint === handoff,
-  );
+  return Boolean(handoff && createIntent?.recreateTransaction?.targetIntentFingerprint === handoff);
 }
 
 function shouldRefuseManagedMcpRecreate(
@@ -144,7 +143,11 @@ function publishAttachedProvidersBeforeDockerSandboxCreation(
     readonly cleanupCreateSources: () => void;
   },
 ): void {
-  if (input.openshellDriver === "docker") {
+  const runtimeProvider = resolveRegisteredRuntimeProvider(input.openshellDriver);
+  if (
+    runtimeProvider?.gateway.launcher === "nemoclaw" &&
+    runtimeProvider.bootstrap.supported === true
+  ) {
     const providersRequiringExistenceProbe = new Set(
       [input.inferenceProvider, ...input.messagingProviders].filter(
         (provider): provider is string => Boolean(provider),
@@ -170,7 +173,7 @@ function publishAttachedProvidersBeforeDockerSandboxCreation(
       if (refreshed.status !== 0) {
         deps.cleanupCreateSources();
         throw new Error(
-          `OpenShell did not publish attached provider '${attachedProvider}' before Docker sandbox creation.`,
+          `OpenShell did not publish attached provider '${attachedProvider}' before managed sandbox creation.`,
         );
       }
     }

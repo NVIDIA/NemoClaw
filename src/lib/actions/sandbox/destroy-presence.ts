@@ -8,10 +8,16 @@ import {
   resolveOpenShellSandboxOwnershipLabel,
 } from "../../onboard/openshell-docker-sandbox-containers";
 import { sanitizeReadinessText } from "../../readiness/sanitize";
+import type { SandboxEntry } from "../../state/registry";
+import type { RuntimeProviderDestroyIdentityReceipt } from "../../onboard/runtime-provider/contract";
 import {
   type DockerSandboxIdentityObservation,
   inspectDockerSandboxIdentities,
 } from "../../adapters/docker/inspect";
+import {
+  registeredRuntimeProviderSupportsContainerEngineOperation,
+  resolveRegisteredRuntimeProvider,
+} from "../../onboard/runtime-provider/selection";
 
 /** Workspace label OpenShell stamps on every managed sandbox container. */
 export const OPENSHELL_SANDBOX_WORKSPACE_LABEL = "openshell.ai/sandbox-workspace";
@@ -42,6 +48,11 @@ export type DestroyContainerIdentityVerdict =
 export type AssertUnambiguousDestroyIdentityDeps = {
   providerId: string;
   redact: (detail: string) => string;
+  sandbox?: SandboxEntry | null;
+  captureProviderIdentity?: (
+    sandbox: SandboxEntry,
+    sandboxName: string,
+  ) => RuntimeProviderDestroyIdentityReceipt;
   cliName?: string;
   classify?: (sandboxName: string) => DestroyContainerIdentityVerdict;
   error?: (message: string) => void;
@@ -49,6 +60,7 @@ export type AssertUnambiguousDestroyIdentityDeps = {
 
 export type DestroyContainerIdentityProof = {
   identity: SandboxNameLabeledContainer | null | undefined;
+  providerIdentity?: RuntimeProviderDestroyIdentityReceipt;
 };
 
 function observeDockerSandboxIdentities(sandboxName: string): DockerSandboxIdentityObservation {
@@ -203,12 +215,57 @@ export function assertUnambiguousDestroyContainerIdentity(
   sandboxName: string,
   deps: AssertUnambiguousDestroyIdentityDeps,
 ): DestroyContainerIdentityProof | false {
+  const provider = resolveRegisteredRuntimeProvider(deps.providerId);
+  const providerCapture =
+    provider?.cleanup.supported === true ? provider.cleanup.captureDestroyIdentity : undefined;
+  const captureProviderIdentity =
+    deps.captureProviderIdentity ??
+    (providerCapture
+      ? (sandbox: SandboxEntry, name: string) => providerCapture({ sandbox, sandboxName: name })
+      : undefined);
+  if (deps.sandbox && captureProviderIdentity) {
+    try {
+      return {
+        identity: undefined,
+        providerIdentity: captureProviderIdentity(deps.sandbox, sandboxName),
+      };
+    } catch (error) {
+      const detail = deps.redact(error instanceof Error ? error.message : String(error));
+      (deps.error ?? ((message: string) => console.error(`  ${message}`)))(
+        `Refusing to destroy sandbox '${sandboxName}': Runtime provider identity could not be inspected (${detail}). No sandbox resources were removed.`,
+      );
+      return false;
+    }
+  }
+  if (
+    !provider ||
+    !registeredRuntimeProviderSupportsContainerEngineOperation(
+      deps.providerId,
+      "gateway-inspection",
+    )
+  ) {
+    return { identity: undefined };
+  }
+  try {
+    // Exact identity inspection below is the retained default-engine
+    // compatibility guard. Socket-backed providers prove and remove their
+    // own runtime identity through the selected bundle's cleanup surface.
+    if (
+      provider.gateway.prepareHostRuntime({
+        environment: process.env,
+        platform: process.platform,
+      }).socketPath !== null
+    ) {
+      return { identity: undefined };
+    }
+  } catch {
+    return { identity: undefined };
+  }
   const classify =
     deps.classify ??
     ((name: string) =>
       classifyDestroyContainerIdentity(name, observeDestroyContainerIdentity(name)));
   const error = deps.error ?? ((message: string) => console.error(`  ${message}`));
-  if (deps.providerId !== "docker") return { identity: undefined };
 
   const verdict = classify(sandboxName);
   if (verdict.status === "ambiguous") {
@@ -233,6 +290,18 @@ export function isSameDestroyContainerIdentityProof(
   expected: DestroyContainerIdentityProof,
   actual: DestroyContainerIdentityProof,
 ): boolean {
+  if (expected.providerIdentity || actual.providerIdentity) {
+    const left = expected.providerIdentity;
+    const right = actual.providerIdentity;
+    return (
+      left !== undefined &&
+      right !== undefined &&
+      left.schemaVersion === right.schemaVersion &&
+      left.providerId === right.providerId &&
+      left.resourceHandle === right.resourceHandle &&
+      left.ownershipSha256 === right.ownershipSha256
+    );
+  }
   if (expected.identity === undefined || actual.identity === undefined) {
     return expected.identity === actual.identity;
   }

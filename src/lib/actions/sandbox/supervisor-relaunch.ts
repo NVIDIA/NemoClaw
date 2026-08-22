@@ -15,6 +15,7 @@ import {
 } from "../../onboard/docker-gpu-patch-finalize";
 import { recreateOpenShellDockerSandboxWithStartupCommand } from "../../onboard/docker-startup-command-patch";
 import { buildSandboxRuntimeEnvArgs } from "../../onboard/sandbox-create-launch";
+import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import { resolveDirectSandboxContainer } from "../../sandbox/privileged-exec";
 import { redact, redactFull } from "../../security/redact";
 import * as registry from "../../state/registry";
@@ -58,6 +59,41 @@ export type ManagedSupervisorRelaunchDeps = {
   recreate?: typeof recreateOpenShellDockerSandboxWithStartupCommand;
   finalize?: typeof finalizeDockerGpuPatchBackup;
 };
+
+export type RegisteredRuntimeRecoveryResult = {
+  readonly exitCode: number;
+  readonly message?: string;
+};
+
+/** Whether retained default-engine gateway compatibility logic applies. */
+export function usesLegacyManagedGatewayRecovery(entry: registry.SandboxEntry): boolean {
+  const provider = resolveRegisteredRuntimeProvider(entry.openshellDriver);
+  if (
+    !provider ||
+    provider.lifecycle.supported !== true ||
+    provider.gateway.launcher !== "nemoclaw"
+  ) {
+    return false;
+  }
+  try {
+    return (
+      provider.gateway.prepareHostRuntime({
+        environment: process.env,
+        platform: process.platform,
+      }).socketPath === null
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Execute provider-owned recovery when the persisted provider registers it. */
+export function recoverRegisteredRuntimeProviderSandbox(
+  entry: registry.SandboxEntry,
+): RegisteredRuntimeRecoveryResult | null {
+  const provider = resolveRegisteredRuntimeProvider(entry.openshellDriver);
+  return provider?.recovery.supported === true ? provider.recovery.recover(entry) : null;
+}
 
 function inspectContainer(containerId: string): DockerContainerInspect {
   return parseDockerInspectJson(
@@ -133,7 +169,7 @@ export function relaunchManagedSupervisorSession(
   const entry = getSandbox(sandboxName);
   if (!entry) return null;
   const driver = entry.openshellDriver?.trim().toLowerCase() ?? null;
-  if (driver !== null && driver !== "docker" && driver !== "vm") return null;
+  if (!usesLegacyManagedGatewayRecovery(entry)) return null;
   const startupCommand = reconstructSupervisorLaunchCommand(sandboxName, entry, deps);
   if (startupCommand === null) return null;
 

@@ -11,6 +11,10 @@ import {
   OPENSHELL_MANAGED_BY_VALUE,
   OPENSHELL_SANDBOX_NAME_LABEL,
 } from "../../onboard/docker-driver-sandbox-recovery";
+import {
+  registeredRuntimeProviderSupportsContainerEngineOperation,
+  resolveRegisteredRuntimeProvider,
+} from "../../onboard/runtime-provider/selection";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import * as snapshotBackup from "./snapshot/backup-authority";
@@ -22,6 +26,32 @@ function readSandboxDriver(name: string): string | null | undefined {
     return registry.getSandbox(name)?.openshellDriver;
   } catch {
     return undefined;
+  }
+}
+
+function hasLegacyContainerLifecycle(driverName: string | null | undefined): boolean {
+  const normalized = driverName?.trim().toLowerCase();
+  if (!normalized) return false;
+  const provider = resolveRegisteredRuntimeProvider(normalized);
+  if (
+    !provider ||
+    provider.identity.id !== normalized ||
+    !registeredRuntimeProviderSupportsContainerEngineOperation(normalized, "sandbox-lifecycle")
+  ) {
+    return false;
+  }
+  try {
+    // These helpers retain the default-engine stopped-container workaround.
+    // Socket-backed providers own lifecycle and snapshot recovery through
+    // their registered bundle surfaces.
+    return (
+      provider.gateway.prepareHostRuntime({
+        environment: process.env,
+        platform: process.platform,
+      }).socketPath === null
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -73,7 +103,7 @@ export function startStoppedSandboxContainerForBackup(
   depsOverride: Partial<StartDeps> = {},
 ): StartedForBackup | null {
   const deps: StartDeps = { ...defaultStartDeps, ...depsOverride };
-  if (deps.getSandboxDriver(sandboxName) !== "docker") return null;
+  if (!hasLegacyContainerLifecycle(deps.getSandboxDriver(sandboxName))) return null;
   const labeledContainerNames = deps.listLabeledContainerNames(sandboxName);
   // Lifecycle mutation must fail closed on missing or ambiguous ownership.
   // Name matching alone is insufficient because starting a container executes
@@ -149,7 +179,7 @@ export function isSandboxContainerDefinitivelyAbsent(
   depsOverride: Partial<ContainerAbsenceDeps> = {},
 ): boolean {
   const deps: ContainerAbsenceDeps = { ...defaultContainerAbsenceDeps, ...depsOverride };
-  if (deps.getSandboxDriver(sandboxName) !== "docker") return false;
+  if (!hasLegacyContainerLifecycle(deps.getSandboxDriver(sandboxName))) return false;
   const labeledContainerNames = deps.listLabeledContainerNames(sandboxName);
   return labeledContainerNames !== null && labeledContainerNames.length === 0;
 }

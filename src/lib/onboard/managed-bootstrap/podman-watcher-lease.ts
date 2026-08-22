@@ -92,6 +92,8 @@ export interface PodmanGatewayWatcherLease {
 export interface PodmanManagedGatewayWatcherController {
   /** Recover a crash-left lease before another Podman transaction may start. */
   readonly recoverUnfinishedLease: () => void;
+  /** Reclaim the exact stopped lease referenced by an unfinished bootstrap journal. */
+  readonly reclaimStoppedLease: (expectedLeaseId: string) => PodmanGatewayWatcherLease;
   /** Durably acquire exclusive authority and prove the exact owner is stopped. */
   readonly quiesceAndProve: () => PodmanGatewayWatcherLease;
 }
@@ -444,6 +446,42 @@ function sameLease(
   );
 }
 
+function createHeldLease(
+  stopped: PodmanGatewayWatcherLeaseRecord,
+  deps: PodmanManagedGatewayWatcherControllerDeps,
+): PodmanGatewayWatcherLease {
+  let released = false;
+  return Object.freeze({
+    record: stopped,
+    assertStillStopped: () => {
+      if (released) {
+        throw new PodmanGatewayWatcherLeaseError("Podman watcher lease was already released.");
+      }
+      const durable = readLease(deps);
+      if (!durable || !sameLease(stopped, durable) || durable.phase !== "stopped") {
+        throw new PodmanGatewayWatcherLeaseError(
+          "Durable Podman watcher lease changed while it was held.",
+          true,
+        );
+      }
+      assertStopped(stopped, deps);
+    },
+    resumeAndProve: () => {
+      if (released) return;
+      const durable = readLease(deps);
+      if (!durable || !sameLease(stopped, durable)) {
+        throw new PodmanGatewayWatcherLeaseError(
+          "Durable Podman watcher lease changed before release.",
+          true,
+        );
+      }
+      resumeAndProve(stopped, deps);
+      deps.store.clear(stopped.leaseId);
+      released = true;
+    },
+  });
+}
+
 /**
  * Build the inert watcher authority needed by native Podman replacement.
  *
@@ -470,6 +508,31 @@ export function createPodmanManagedGatewayWatcherController(
 
   return Object.freeze({
     recoverUnfinishedLease,
+    reclaimStoppedLease: (expectedLeaseId: string) => {
+      if (!SAFE_LEASE_ID.test(expectedLeaseId)) {
+        throw new PodmanGatewayWatcherLeaseError("Podman watcher lease identity is invalid.");
+      }
+      const record = readLease(deps);
+      if (!record || record.leaseId !== expectedLeaseId || record.phase !== "stopped") {
+        throw new PodmanGatewayWatcherLeaseError(
+          "The exact stopped Podman watcher lease referenced by bootstrap recovery is absent.",
+          true,
+        );
+      }
+      if (deps.isLeaseHolderAlive(record.holder)) {
+        throw new PodmanGatewayWatcherLeaseError(
+          "Durable Podman watcher lease is still owned by a live transaction process.",
+          true,
+        );
+      }
+      assertStopped(record, deps);
+      const reclaimed = Object.freeze({
+        ...record,
+        holder: normalizeHolder(deps.captureLeaseHolder()),
+      });
+      deps.store.advance(expectedLeaseId, reclaimed);
+      return createHeldLease(reclaimed, deps);
+    },
     quiesceAndProve: () => {
       recoverUnfinishedLease();
 
@@ -531,36 +594,7 @@ export function createPodmanManagedGatewayWatcherController(
         );
       }
 
-      let released = false;
-      return Object.freeze({
-        record: stopped,
-        assertStillStopped: () => {
-          if (released) {
-            throw new PodmanGatewayWatcherLeaseError("Podman watcher lease was already released.");
-          }
-          const durable = readLease(deps);
-          if (!durable || !sameLease(stopped, durable) || durable.phase !== "stopped") {
-            throw new PodmanGatewayWatcherLeaseError(
-              "Durable Podman watcher lease changed while it was held.",
-              true,
-            );
-          }
-          assertStopped(stopped, deps);
-        },
-        resumeAndProve: () => {
-          if (released) return;
-          const durable = readLease(deps);
-          if (!durable || !sameLease(stopped, durable)) {
-            throw new PodmanGatewayWatcherLeaseError(
-              "Durable Podman watcher lease changed before release.",
-              true,
-            );
-          }
-          resumeAndProve(stopped, deps);
-          deps.store.clear(leaseId);
-          released = true;
-        },
-      });
+      return createHeldLease(stopped, deps);
     },
   });
 }

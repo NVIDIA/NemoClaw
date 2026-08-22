@@ -14,16 +14,17 @@ import type { OpenShellComputePlan } from "../compute/plan";
 import { resolveCorporateCa } from "../corporate-ca";
 import { enforceDockerGpuPatchPreserveNetwork } from "../docker-gpu-local-inference";
 import {
+  isSandboxBridgeGatewayReachable,
+  verifySandboxBridgeGatewayReachableOrExit,
+} from "../gateway-sandbox-reachability";
+import {
   initialDockerGpuRoute,
   renderSandboxCreateArgsForGpuRoute,
   type SelectedDockerGpuRoute,
 } from "../docker-gpu-route";
 import type { HermesDashboardOnboardState } from "../hermes-dashboard";
 import type { InitialSandboxPolicy } from "../initial-policy";
-import {
-  isShippedManagedImageAgent,
-  managedImageRuntimeIdentity,
-} from "../managed-image/contract";
+import { isShippedManagedImageAgent, managedImageRuntimeIdentity } from "../managed-image/contract";
 import {
   type BuiltManagedStartupOnboardProfile,
   buildManagedStartupOnboardProfile,
@@ -103,7 +104,10 @@ export function createManagedHermesStateVolumeOnboardLifecycle(
       sandboxName: input.sandboxName,
       workloadKind: input.workloadKind,
     },
-    deps,
+    {
+      ...deps,
+      ...(input.runtimeProvider ? { runtimeProvider: input.runtimeProvider } : {}),
+    },
   );
   return {
     materializeSandboxCreatePlan(input, materialize) {
@@ -443,11 +447,23 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   let dashboardRemoteBindPrepared = false;
   let launch: SandboxCreateLaunchWithPrebuild;
   if (input.workload.source.kind === "managed-image") {
+    const runtimeProvider = requireBootstrapProvider(input.runtime.runtimeProvider);
+    const gatewayRuntime = runtimeProvider.gateway.prepareHostRuntime({
+      environment: process.env,
+      platform: process.platform,
+    });
     await enforceDockerGpuPatchPreserveNetwork(input.gpu.provider, input.gpu.config, {
       dockerDriverGateway: input.gpu.dockerDriverGateway,
       selectedRoute: initialGpuRoute,
       gatewayPort: input.gpu.gatewayPort,
       log,
+      reverifyBridgeReachability: () =>
+        verifySandboxBridgeGatewayReachableOrExit(true, {
+          skip: false,
+          port: input.gpu.gatewayPort,
+          reachabilityImpl: (options) =>
+            isSandboxBridgeGatewayReachable({ ...options, gatewayRuntime }),
+        }),
     });
     const profile = input.runtime.ensurePreparedProfile(input.workload);
     if (!profile) throw new Error("Managed sandbox workload is missing its startup profile.");

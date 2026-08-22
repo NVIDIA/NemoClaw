@@ -104,6 +104,7 @@ function harness(overrides: Partial<PodmanManagedGatewayWatcherControllerDeps> =
   return {
     alive,
     controller: createPodmanManagedGatewayWatcherController(deps),
+    deps,
     durable: () => durable,
     healthy,
     ownerStopped: () => ownerStopped,
@@ -196,6 +197,25 @@ describe("durable Podman OpenShell watcher lease", () => {
     expect(fake.resumeSameOwner).not.toHaveBeenCalled();
     expect(fake.store.clear).not.toHaveBeenCalled();
     expect(fake.durable()).toEqual(record("stopped"));
+  });
+
+  it("lets a fresh controller reclaim the exact crash-left stopped lease", () => {
+    const fake = harness();
+    fake.setDurable(record("stopped"));
+    fake.setHolderAlive(false);
+    fake.stopExactOwner();
+
+    const freshController = createPodmanManagedGatewayWatcherController(fake.deps);
+    const lease = freshController.reclaimStoppedLease(LEASE_ID);
+
+    expect(fake.store.advance).toHaveBeenCalledWith(
+      LEASE_ID,
+      expect.objectContaining({ leaseId: LEASE_ID, phase: "stopped" }),
+    );
+    lease.assertStillStopped();
+    lease.resumeAndProve();
+    expect(fake.resumeSameOwner).toHaveBeenCalledOnce();
+    expect(fake.durable()).toBeNull();
   });
 
   it("refuses ambiguous watcher ownership before persisting or stopping", () => {

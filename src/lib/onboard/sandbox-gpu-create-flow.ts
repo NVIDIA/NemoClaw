@@ -8,6 +8,10 @@ import type { CheckpointPortableRuntimeAuthority } from "../state/onboard-checkp
 import { parsePortableRuntimeAuthority } from "../state/onboard/portable-runtime-authority";
 import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
+import {
+  isSandboxBridgeGatewayReachable,
+  verifySandboxBridgeGatewayReachableOrExit,
+} from "./gateway-sandbox-reachability";
 import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch";
 import type { DockerGpuPatchDeps, DockerUlimit } from "./docker-gpu-patch-types";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
@@ -331,6 +335,22 @@ export async function runSandboxGpuCreateFlow(
           installPortableDemoLifecycle: () => input.lifecycleGeneration!,
         }
       : deps,
+    () => {
+      const managedBootstrap = input.managedBootstrap;
+      if (!managedBootstrap) {
+        throw new Error("Managed bridge reachability requires a selected runtime provider.");
+      }
+      const gatewayRuntime = managedBootstrap.runtimeProvider.gateway.prepareHostRuntime({
+        environment: input.hostEnv ?? process.env,
+        platform: process.platform,
+      });
+      return verifySandboxBridgeGatewayReachableOrExit(true, {
+        skip: false,
+        port: input.gatewayPort,
+        reachabilityImpl: (options) =>
+          isSandboxBridgeGatewayReachable({ ...options, gatewayRuntime }),
+      });
+    },
   );
   const gpuCreateOutcome = await sandboxGpuCreateAttempt
     .executeSandboxGpuCreatePlan(input.gpuRoutePlan, {
@@ -376,10 +396,7 @@ export async function runSandboxGpuCreateFlow(
             ),
           ];
           const prepared = attemptRunner.managedRouting.prepareCompatibilityLaunch({
-            createArgs: managedBootstrapCreateArgs(
-              input.prebuild.createArgs,
-              bootstrapIdentity,
-            ),
+            createArgs: managedBootstrapCreateArgs(input.prebuild.createArgs, bootstrapIdentity),
             currentRegistryImageRef: registryImageRef,
             prebuildImageId: input.prebuild.imageId,
             allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
@@ -435,6 +452,11 @@ export async function runSandboxGpuCreateFlow(
               selectedRoute: "compatibility",
               gatewayPort: input.gatewayPort,
               log: console.log,
+              reverifyBridgeReachability: () =>
+                verifySandboxBridgeGatewayReachableOrExit(true, {
+                  skip: false,
+                  port: input.gatewayPort,
+                }),
             },
           );
         }

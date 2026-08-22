@@ -230,7 +230,7 @@ function providerHarness(agent: (typeof AGENTS)[number]) {
   return { entry, lifecycle, providers, sandboxName };
 }
 
-describe("dormant Podman runtime provider", () => {
+describe("managed Podman runtime provider", () => {
   it.each(AGENTS)(
     "runs basic CPU start and stop for %s through an injected bundle",
     async (agent) => {
@@ -292,9 +292,13 @@ describe("dormant Podman runtime provider", () => {
     ).toBe(true);
   });
 
-  it("stays outside the production-selectable registry", () => {
-    expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual(["docker", "kubernetes"]);
-    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
+  it("is available through the production-selectable registry", () => {
+    expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual([
+      "docker",
+      "kubernetes",
+      "podman",
+    ]);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.identity.id).toBe("podman");
   });
 
   it("declares read-only host mounts unsupported until Podman qualification lands", () => {
@@ -406,7 +410,7 @@ describe("dormant Podman runtime provider", () => {
         env: inference.env,
       }),
     ).toThrow("service 'llama-cpp' is not enabled");
-    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.identity.id).toBe("podman");
   });
 
   it("composes real operation engines on one socket without dropping executable authority", () => {
@@ -455,7 +459,7 @@ describe("dormant Podman runtime provider", () => {
         ]),
       },
     });
-    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.identity.id).toBe("podman");
   });
 
   it("rejects real operation engines when one socket endpoint drifts", () => {

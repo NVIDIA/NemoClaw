@@ -70,7 +70,9 @@ import {
 } from "./sandbox-exec-output";
 import {
   type ManagedSupervisorRelaunch,
+  recoverRegisteredRuntimeProviderSandbox,
   relaunchManagedSupervisorSession,
+  usesLegacyManagedGatewayRecovery,
 } from "./supervisor-relaunch";
 export type { SandboxForwardHealth, SandboxForwardListEntry } from "./forward-health";
 export {
@@ -632,8 +634,7 @@ export function confirmRecoveredSandboxGatewayManaged(
   const persistedAgent = entry.agent ?? "openclaw";
   if (persistedAgent !== "openclaw" && persistedAgent !== "hermes") return null;
 
-  const driver = entry.openshellDriver?.trim().toLowerCase() ?? null;
-  if (driver !== null && driver !== "docker" && driver !== "vm") return null;
+  if (!usesLegacyManagedGatewayRecovery(entry)) return null;
 
   const getSessionAgent = options.getSessionAgentImpl ?? agentRuntime.getSessionAgent;
   const agent = getSessionAgent(sandboxName);
@@ -674,6 +675,7 @@ export async function isSandboxGatewayRunningForStatus(
 type SandboxProcessRecovery =
   | { kind: "managed"; managedControlCompletion?: ManagedGatewayControlCompletion }
   | { kind: "custom" }
+  | { kind: "provider" }
   | { kind: "relaunched"; relaunch: ManagedSupervisorRelaunch };
 
 function recoverSandboxProcesses(
@@ -704,6 +706,15 @@ function recoverSandboxProcesses(
         : "Sandbox agent lookup failed.";
     quiet || printGatewayRestartFailure(sandboxName, "unsupported agent", detail);
     return null;
+  }
+  const persistedSandbox = registry.getSandbox(sandboxName);
+  if (persistedSandbox) {
+    const result = recoverRegisteredRuntimeProviderSandbox(persistedSandbox);
+    if (result) {
+      if (result.exitCode === 0) return { kind: "provider" };
+      if (!quiet && result.message) console.error(result.message);
+      return null;
+    }
   }
   const recoveredSsh = (result: SandboxCommandResult | null): SandboxProcessRecovery | null =>
     result && result.status === 0 && hasGatewayRecoveryMarker(result) ? { kind: "custom" } : null;
@@ -819,32 +830,32 @@ export function restartSandboxGateway(
   return withUnsupportedHermesPortableGatewayRestartFence(sandboxName, () => {
     return withTimerBoundShieldsMutationLock(sandboxName, "gateway restart", () =>
       restartSandboxGatewayWithDeps(sandboxName, {
-      quiet,
-      deps: {
-        getSessionAgent: agentRuntime.getSessionAgent,
-        getSandbox: registry.getSandbox,
-        resolveSandboxDashboardPort,
-        requestGatewaySupervisorAction: executeGatewaySupervisorAction,
-        executeSandboxExecCommand,
-        waitForRecoveredSandboxGateway: (name, options) =>
-          waitForRecoveredSandboxGateway(name, {
-            ...options,
-            initialManagedHealthPassed: true,
-            timeoutSeconds: gatewayRecoveryTimeoutSeconds(agentRuntime.getSessionAgent(name)),
-            managedProbeImpl: (sandboxName) =>
-              confirmRecoveredSandboxGatewayManaged(sandboxName, {
-                requestGatewaySupervisorActionImpl:
-                  deps.requestGatewaySupervisorAction ?? executeGatewaySupervisorAction,
-              }),
-          }),
-        ensureSandboxPortForward,
-        ensureHermesDashboardPortForwardIfEnabled,
-        recoverMessagingHostForward,
-        recoverDeclaredAgentForwardPorts,
-        printGatewayWedgeDiagnostics,
-        inspectHermesMcpReconciliationRefusal,
-        ...deps,
-      },
+        quiet,
+        deps: {
+          getSessionAgent: agentRuntime.getSessionAgent,
+          getSandbox: registry.getSandbox,
+          resolveSandboxDashboardPort,
+          requestGatewaySupervisorAction: executeGatewaySupervisorAction,
+          executeSandboxExecCommand,
+          waitForRecoveredSandboxGateway: (name, options) =>
+            waitForRecoveredSandboxGateway(name, {
+              ...options,
+              initialManagedHealthPassed: true,
+              timeoutSeconds: gatewayRecoveryTimeoutSeconds(agentRuntime.getSessionAgent(name)),
+              managedProbeImpl: (sandboxName) =>
+                confirmRecoveredSandboxGatewayManaged(sandboxName, {
+                  requestGatewaySupervisorActionImpl:
+                    deps.requestGatewaySupervisorAction ?? executeGatewaySupervisorAction,
+                }),
+            }),
+          ensureSandboxPortForward,
+          ensureHermesDashboardPortForwardIfEnabled,
+          recoverMessagingHostForward,
+          recoverDeclaredAgentForwardPorts,
+          printGatewayWedgeDiagnostics,
+          inspectHermesMcpReconciliationRefusal,
+          ...deps,
+        },
       }),
     );
   });
@@ -868,7 +879,10 @@ const OPENSHELL_RELAY_TARGET_NOT_FOUND = 'message: "No such file or directory (o
 const OPENSHELL_RELAY_TARGET_REFUSED = 'message: "Connection refused (os error 111)"';
 
 function normalizeOpenshellStructuredError(value: string): string {
-  return stripAnsi(value).replace(/[×│]/gu, " ").replace(/\s+/gu, " ").trim();
+  return stripAnsi(value)
+    .replace(/[×│]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 function hasRetryableOpenshellFailureShape(result: ReturnType<typeof captureOpenshell>): boolean {
@@ -1673,7 +1687,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     // Host-forward recovery requires an OpenShell-ready sandbox. Managed
     // recovery has already passed its authenticated control and health gates;
     // a replacement also rechecks its pinned identity before readiness.
-    const recoveryRequiresReadiness = recovery.kind === "managed" || relaunch;
+    const recoveryRequiresReadiness =
+      recovery.kind === "managed" || recovery.kind === "provider" || relaunch;
     const waitForRecoveryReadiness = () => {
       const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
         beforeProbe: relaunch

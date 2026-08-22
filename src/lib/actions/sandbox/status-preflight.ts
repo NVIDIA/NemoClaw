@@ -4,10 +4,13 @@
 import { isTerminalSandboxPhase } from "../../state/gateway";
 import type * as registry from "../../state/registry";
 import {
+  registeredRuntimeProviderSupportsContainerEngineOperation,
+  resolveRegisteredRuntimeProvider,
+} from "../../onboard/runtime-provider/selection";
+import {
   classifyGatewayFailure,
   classifySandboxContainerFailure,
   getLayerHeader,
-  isDockerDaemonReachable,
   type SandboxContainerFailureResult,
 } from "./gateway-failure-classifier";
 
@@ -61,6 +64,48 @@ const defaultSandboxContainerFailureProbe: SandboxContainerFailureProbe = (
   dashboardPort,
 ) => classifySandboxContainerFailure(sandboxName, { dashboardPort });
 
+export function hasLegacyStatusRuntimeObservation(sb: registry.SandboxEntry | null): boolean {
+  const driverName = sb?.openshellDriver?.trim().toLowerCase();
+  if (!driverName) return false;
+  const provider = resolveRegisteredRuntimeProvider(driverName);
+  if (!provider || provider.identity.id !== driverName) return false;
+  if (
+    !registeredRuntimeProviderSupportsContainerEngineOperation(driverName, "gateway-inspection")
+  ) {
+    return false;
+  }
+  try {
+    // Socket-backed native providers own observation through their provider
+    // implementation. This legacy classifier remains only for the default
+    // container-engine transport until the status contract grows an
+    // operation-bearing provider observation surface.
+    return (
+      provider.gateway.prepareHostRuntime({
+        environment: process.env,
+        platform: process.platform,
+      }).socketPath === null
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function usesManagedProviderGateway(sb: registry.SandboxEntry | null): boolean {
+  if (!sb || !sb.openshellDriver?.trim()) return false;
+  const provider = resolveRegisteredRuntimeProvider(sb.openshellDriver);
+  return provider?.gateway.launcher === "nemoclaw" && provider.bootstrap.supported === true;
+}
+
+function isSelectedRuntimeReachable(sb: registry.SandboxEntry): boolean {
+  const provider = resolveRegisteredRuntimeProvider(sb.openshellDriver);
+  if (!provider) return false;
+  try {
+    return provider.preflightDoctor.inspectHost().status !== "fail";
+  } catch {
+    return false;
+  }
+}
+
 export interface ClassifySandboxStatusPreflightFailureDeps {
   dockerProbe?: DockerInfoProbe;
   sandboxContainerProbe?: SandboxContainerFailureProbe;
@@ -68,9 +113,9 @@ export interface ClassifySandboxStatusPreflightFailureDeps {
 
 export function isDockerDaemonUnreachableForStatus(
   sb: registry.SandboxEntry | null,
-  probe: DockerInfoProbe = isDockerDaemonReachable,
+  probe: DockerInfoProbe = () => (sb ? isSelectedRuntimeReachable(sb) : false),
 ): boolean {
-  if (!sb || sb.openshellDriver !== "docker") return false;
+  if (!sb || !hasLegacyStatusRuntimeObservation(sb)) return false;
   return !probe();
 }
 
@@ -78,7 +123,7 @@ export async function classifySandboxContainerFailureForStatus(
   sb: registry.SandboxEntry | null,
   probe: SandboxContainerFailureProbe = defaultSandboxContainerFailureProbe,
 ): Promise<SandboxContainerFailureResult | null> {
-  if (!sb || sb.openshellDriver !== "docker") return null;
+  if (!sb || !hasLegacyStatusRuntimeObservation(sb)) return null;
   return probe(sb.name, sb.dashboardPort ?? null);
 }
 
