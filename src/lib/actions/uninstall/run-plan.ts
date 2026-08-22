@@ -87,7 +87,7 @@ import {
   type UninstallPlan,
 } from "./plan";
 import {
-  assertHermesPortableUninstallAvailable,
+  HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE,
   hasPortableRuntimeCleanup,
   PORTABLE_RETIREMENT_STATE_ENTRIES,
   portableRetirementPreservationEntries,
@@ -126,6 +126,7 @@ export interface UninstallRunDeps {
   readProcessArgv?: (pid: number) => readonly string[] | null;
   readProcessExecutable?: (pid: number) => string | null;
   readProcessEnvironment?: (pid: number) => Record<string, string> | null;
+  readProcessIdentity?: (pid: number, fresh?: boolean) => string | null;
   readLine?: () => string | null;
   requireCompleteGatewayProcessCleanup?: boolean;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
@@ -485,6 +486,7 @@ interface UninstallRuntime {
   readProcessArgv: ((pid: number) => readonly string[] | null) | undefined;
   readProcessExecutable: ((pid: number) => string | null) | undefined;
   readProcessEnvironment: ((pid: number) => Record<string, string> | null) | undefined;
+  readProcessIdentity: ((pid: number, fresh?: boolean) => string | null) | undefined;
   readLine: () => string | null;
   requireCompleteGatewayProcessCleanup: boolean;
   resolveGatewayTeardownAuthority: GatewayTeardownAuthorityResolver;
@@ -538,6 +540,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     readProcessArgv: deps.readProcessArgv,
     readProcessExecutable: deps.readProcessExecutable,
     readProcessEnvironment: deps.readProcessEnvironment,
+    readProcessIdentity: deps.readProcessIdentity,
     readLine: deps.readLine ?? readLineFromStdin,
     requireCompleteGatewayProcessCleanup: deps.requireCompleteGatewayProcessCleanup ?? false,
     resolveGatewayTeardownAuthority:
@@ -1724,8 +1727,7 @@ function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): v
     const versionDir = path.join(nodeVersionsDir, version.name);
     const modulesDir = path.join(versionDir, "lib", "node_modules");
     const packageEntry = dirEntries(modulesDir).find(
-      (entry) =>
-        (entry.isDirectory() || entry.isSymbolicLink()) && entry.name === "nemoclaw",
+      (entry) => (entry.isDirectory() || entry.isSymbolicLink()) && entry.name === "nemoclaw",
     );
     const packageDir = packageEntry ? path.join(modulesDir, packageEntry.name) : null;
     const packageBins = packageDir ? nvmPackageBinTargets(packageDir) : new Map<string, string>();
@@ -2110,6 +2112,20 @@ function recordManagedModelCleanup(
   return result.ok;
 }
 
+function stopBedrockRuntimeAdapterForUninstall(
+  paths: UninstallPaths,
+  runtime: UninstallRuntime,
+  scopedToSelectedGateway: boolean,
+): void {
+  const result = stopBedrockRuntimeAdapter(paths, runtime, {
+    gatewayPort: GATEWAY_PORT,
+    scanOrphans: !scopedToSelectedGateway,
+  });
+  if (result.ok) return;
+  runtime.error(result.message);
+  throw new IncompleteBedrockRuntimeAdapterCleanupError();
+}
+
 function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string): void {
   const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], {
     env: runtime.env,
@@ -2302,7 +2318,9 @@ function removeHostModelStores(
   preserveForFailedLlamaCleanup: boolean,
 ): boolean {
   if (preserveForFailedLlamaCleanup) {
-    runtime.log("Managed llama.cpp cleanup did not complete. NemoClaw kept model stores for retry.");
+    runtime.log(
+      "Managed llama.cpp cleanup did not complete. NemoClaw kept model stores for retry.",
+    );
     return true;
   }
   if (scopedToSelectedGateway) {
@@ -2786,7 +2804,9 @@ function executePlan(
         "portable-demo-lifecycle",
         "sandboxes.json",
         "sandboxes.json.lock",
+        "portable-inference",
         "state",
+        HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE,
         ...PORTABLE_RETIREMENT_STATE_ENTRIES,
         ...portableRetirementEntries.stateRoot,
       ]
@@ -2888,15 +2908,13 @@ function executePlan(
       stopOpenRouterRuntimeAdapter(paths, runtime, {
         scanOrphans: !scopedToSelectedGateway,
       });
-      stopBedrockRuntimeAdapter(paths, runtime, {
-        scanOrphans: !scopedToSelectedGateway,
-      });
       if (scopedToSelectedGateway) {
         runtime.log("Sibling gateways remain; kept the shared HTTPS Pin Runtime adapter.");
       } else {
         stopHttpsPinRuntimeAdapter(paths, runtime);
       }
       stopModelRouter(paths, runtime, !scopedToSelectedGateway);
+      stopBedrockRuntimeAdapterForUninstall(paths, runtime, scopedToSelectedGateway);
     } else if (step.name === "OpenShell resources") {
       if (
         !executeOpenShellResourceCleanup(
@@ -3083,12 +3101,13 @@ function completePortablePlan(
   )
     return { ok: false };
   runtime.log(
-    "Kept ~/.nemoclaw/portable-uninstall-retirement.json until a later completed onboarding; it contains dictionary-testable pseudonymous fingerprints, not raw sandbox names or configuration, and another process running as this user can change it.",
+    "Kept secret-free portable cleanup evidence for exact retry and lifecycle reconciliation.",
   );
   return { ok };
 }
 
 class IncompleteHostGatewayCleanupError extends Error {}
+class IncompleteBedrockRuntimeAdapterCleanupError extends Error {}
 
 function stopHostGatewayProcessesForUninstall(
   runtime: UninstallRuntime,
@@ -3249,7 +3268,12 @@ export function runUninstallPlan(
       portableRetirementEntries,
     ));
   } catch (error) {
-    if (!(error instanceof IncompleteHostGatewayCleanupError)) throw error;
+    if (
+      !(error instanceof IncompleteHostGatewayCleanupError) &&
+      !(error instanceof IncompleteBedrockRuntimeAdapterCleanupError)
+    ) {
+      throw error;
+    }
   }
   if (ok) {
     printBye(runtime);
@@ -3270,7 +3294,6 @@ export async function runUninstallPlanProduction(
   const home = env.HOME || os.homedir();
   try {
     return await (deps.withPortableHostFence ?? withPortableHostFence)(home, () => {
-      assertHermesPortableUninstallAvailable(env);
       return runUninstallPlan(options, { ...deps, env });
     });
   } catch (error) {

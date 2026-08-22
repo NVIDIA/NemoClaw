@@ -108,9 +108,12 @@ dcode
 dcode -n "Summarize this repository"
 dcode -n "Summarize this repository" --json
 dcode status
+printf '%s\n' '{"worker":"worker-17"}' | dcode tools call-read-only worker_task_context --json
 ```
 
-For the JSON schema, status and exit behavior, and 1 MiB output limit, refer to [Run Deep Agents Code](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code).
+`dcode tools call-read-only TOOL --json` invokes one exact, coherently read-only managed MCP tool without model participation.
+It requires one JSON object on standard input and writes one bounded JSON result envelope.
+For the JSON schema, status and exit behavior, output limit, and read-only MCP call requirements, refer to [Run Deep Agents Code](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code).
 
 </AgentOnly>
 
@@ -1070,7 +1073,8 @@ On Jetson/Tegra hosts, the compatibility path uses the NVIDIA runtime and adds e
 These include selected `/dev/nvmap`, `/dev/nvhost-*`, and `/dev/nvgpu/igpu0/*` nodes plus real `/dev/dri/renderD*` character devices.
 After compatibility recreation starts, onboarding keeps the pre-patch container as a rollback backup until the replacement passes the Ready, GPU, and applicable local-inference checks.
 If one of those checks fails before backup removal, onboarding prints failure diagnostics and attempts to restore the pre-patch container.
-To commit the replacement, NemoClaw stops it, removes the rollback backup, starts the replacement as the final container lifecycle event, and verifies OpenShell supervisor readiness again.
+To commit the replacement, NemoClaw stops it, removes the rollback backup, and waits until a successful OpenShell sandbox list has no row with that sandbox name.
+NemoClaw then starts the replacement as the final container lifecycle event and verifies OpenShell supervisor readiness again within the same handoff deadline.
 If that final handoff cannot be confirmed, onboarding exits with the container diagnostics and cleanup guidance instead of reporting success.
 If rollback fails, onboarding reports that the pre-patch container was not restored and prints container-cleanup guidance.
 GPU-proof diagnostics are captured before rollback and can print that guidance before the final container state is known, so inspect the sandbox and its labeled Docker containers before running a deletion command.
@@ -2508,6 +2512,8 @@ Pass `--cleanup-gateway` to force removal, or `--no-cleanup-gateway` to force pr
 These flags always override both `NEMOCLAW_CLEANUP_GATEWAY` and the platform default.
 If the pre-delete workspace wipe cannot run, use a different sandbox name for a clean start.
 Cleaning up the gateway after the last sandbox also purges the shared cluster volume that retains the per-name persistent volume.
+If NemoClaw detects active SSH sessions before destroy, it warns that destroy terminates them with a Broken pipe error and lists their process IDs.
+This warning prints before the confirmation prompt and when `--yes` or `--force` skips that prompt.
 If final gateway cleanup finds a live PID-file process whose command line does not prove it owns the target gateway, `destroy` exits non-zero after sandbox and registry deletion and skips gateway and volume removal.
 NemoClaw preserves the per-gateway PID file and runtime marker so you can inspect the process.
 Stop only the listener that matches the target gateway, then rerun `destroy` to converge cleanup.
@@ -3520,6 +3526,8 @@ Mismatched `--agent` plus canonical-key combinations are refused before any down
 Session keys that begin with `-` are rejected at the command boundary instead of being silently dropped.
 Session JSONL can contain pasted secrets, such as API keys or tokens, so exported files are written owner-only (`0600`).
 The in-sandbox staging artefact is additionally created with `umask 077` and removed after the host download completes.
+If the staging cleanup fails, the command warns with the retained path and a manual removal command.
+The retained artifact can contain session JSONL with pasted secrets.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -3546,6 +3554,8 @@ $$nemoclaw my-assistant sessions export --json
 
 Session JSONL can contain pasted secrets, such as API keys or tokens, so exported files are written owner-only (`0600`).
 The in-sandbox staging artefact is additionally created with `umask 077` and removed after the host download completes.
+If the staging cleanup fails, the command warns with the retained path and a manual removal command.
+The retained artifact can contain session JSONL with pasted secrets.
 
 </AgentOnly>
 

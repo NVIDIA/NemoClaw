@@ -93,29 +93,24 @@ export function isSubprocessEnvNameAllowed(name: string): boolean {
 export function withLocalNoProxy(env: Record<string, string>): void {
   const hasProxy = env.HTTP_PROXY || env.HTTPS_PROXY || env.http_proxy || env.https_proxy;
   if (!hasProxy) return;
-  for (const key of ["NO_PROXY", "no_proxy"] as const) {
-    const current = env[key] ?? "";
-    const parts = current
+  // Canonicalize the union of both spellings, then write both, so a consumer's
+  // case precedence cannot discard exclusions configured through the other one.
+  const parts = new Set([
+    ...`${env.NO_PROXY ?? ""},${env.no_proxy ?? ""}`
       .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    let changed = false;
-    for (const host of [
-      "localhost",
-      "127.0.0.1",
-      "host.docker.internal",
-      "host.containers.internal",
-      "::1",
-      "0.0.0.0",
-      "inference.local",
-    ]) {
-      if (!parts.includes(host)) {
-        parts.push(host);
-        changed = true;
-      }
-    }
-    if (changed) env[key] = parts.join(",");
-  }
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+    "localhost",
+    "127.0.0.1",
+    "host.docker.internal",
+    "host.containers.internal",
+    "::1",
+    "0.0.0.0",
+    "inference.local",
+  ]);
+  const noProxy = [...parts].join(",");
+  env.NO_PROXY = noProxy;
+  env.no_proxy = noProxy;
 }
 
 export function buildSubprocessEnv(extra?: Record<string, string>): Record<string, string> {

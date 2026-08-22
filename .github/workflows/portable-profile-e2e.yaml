@@ -144,7 +144,7 @@ jobs:
 
   portable-launch:
     if: ${{ github.ref == 'refs/heads/main' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 75
     env:
       E2E_JOB: "1"
@@ -157,6 +157,7 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_EXPERIMENTAL_PROFILE: portable
       NEMOCLAW_SANDBOX_NAME: portable-launch
+      PODMAN_APT_VERSION: "5.7.0+ds2-3build1"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -171,7 +172,29 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --yes fuse-overlayfs passt podman slirp4netns uidmap
+          sudo apt-get install --yes \
+            apparmor \
+            fuse-overlayfs \
+            passt \
+            slirp4netns \
+            uidmap \
+            "podman=$PODMAN_APT_VERSION"
+          uid="$(id -u)"
+          receipt="${RUNNER_TEMP}/nemoclaw-portable-cpu-delegation.receipt"
+          : >"$receipt"
+          if sudo systemctl is-active --quiet "user@${uid}.service"; then
+            printf 'manager-active\t%s\n' "$uid" >>"$receipt"
+          fi
+          package_version="$(dpkg-query --show --showformat='${Version}' podman)"
+          runtime_path="$(readlink -f "$(command -v podman)")"
+          runtime_version="$(podman --version)"
+          if [ "$package_version" != "$PODMAN_APT_VERSION" ] || \
+            [ "$runtime_path" != "/usr/bin/podman" ] || \
+            [ "$runtime_version" != "podman version 5.7.0" ]; then
+            printf 'Portable Podman runtime identity mismatch: package version=%s; executable path=%s; client version=%s\n' \
+              "${package_version:-empty}" "${runtime_path:-empty}" "${runtime_version:-empty}" >&2
+            exit 1
+          fi
           runtime_dir="/run/user/$(id -u)"
           sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" "$runtime_dir"
           sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" /run/nemoclaw
@@ -182,15 +205,11 @@ jobs:
             sudo usermod --add-subgids 100000-165535 "$USER"
           fi
 
-          uid="$(id -u)"
-          receipt="${RUNNER_TEMP}/nemoclaw-portable-cpu-delegation.receipt"
           containers_conf="/run/nemoclaw/portable-containers.conf"
           delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
           app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
           podman_service_drop_in="/etc/systemd/user/podman.service.d/90-nemoclaw-cgroup-manager.conf"
           user_slice_drop_in="/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf"
-          : >"$receipt"
-
           install_fixture_drop_in() {
             local receipt_name="$1"
             local target="$2"
@@ -246,9 +265,6 @@ jobs:
             "$podman_service_drop_in" \
             "[Service]"$'\n'"Environment=CONTAINERS_CONF=${containers_conf}"$'\n'
 
-          if sudo systemctl is-active --quiet "user@${uid}.service"; then
-            printf 'manager-active\t%s\n' "$uid" >>"$receipt"
-          fi
           if [ "$(loginctl show-user "$USER" --property=Linger --value 2>/dev/null || true)" != "yes" ]; then
             printf 'linger\t%s\n' "$USER" >>"$receipt"
             sudo loginctl enable-linger "$USER"
@@ -289,6 +305,28 @@ jobs:
           podman --version
           docker --version
           docker --host "$DOCKER_HOST" info
+          service_version="$(docker --host "$DOCKER_HOST" version --format '{{.Server.Version}}')"
+          if [ "$service_version" != "5.7.0" ]; then
+            printf 'Portable Podman service version mismatch: expected 5.7.0; observed: %s\n' \
+              "${service_version:-empty}" >&2
+            exit 1
+          fi
+
+      - name: Apply Ubuntu pasta signal policy correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          pasta_profile="/etc/apparmor.d/usr.bin.pasta"
+          signal_rule='^[[:space:]]*signal[[:space:]]+\(receive\)[[:space:]]+peer=podman,[[:space:]]*$'
+          test -f "$pasta_profile"
+          test "$(grep -Fc 'include <abstractions/pasta>' "$pasta_profile")" -eq 1
+          if ! grep -Eq "$signal_rule" "$pasta_profile"; then
+            sudo sed -i \
+              '/^[[:space:]]*include <abstractions\/pasta>[[:space:]]*$/a\  signal (receive) peer=podman,' \
+              "$pasta_profile"
+          fi
+          test "$(grep -Ec "$signal_rule" "$pasta_profile")" -eq 1
+          sudo apparmor_parser -r "$pasta_profile"
 
       - name: Prove nested BuildKit on the portable Podman socket
         shell: bash
