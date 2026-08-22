@@ -23,6 +23,7 @@ import {
   detectMessagingChannelsFromEnv,
   detectUnconfiguredMessagingChannels,
 } from "../../messaging-channel-setup";
+import { staticMessagingProviderTypeForChannel } from "../../messaging-bridge-provider";
 import { getActiveChannelsFromPlan, getChannelsFromPlan } from "../../messaging-plan-session";
 
 export {
@@ -517,6 +518,7 @@ async function selectionFromDivergedMessagingCheckpoint<Agent>(
 
 function missingCredentialNeedsValidation(
   binding: SandboxMessagingPlan["credentialBindings"][number],
+  agent: SandboxMessagingPlan["agent"],
   validateMissingCredentials: boolean,
   stagedProviderNames: ReadonlySet<string>,
   deps: Pick<SandboxMessagingDeps<unknown>, "providerMatchesGatewayCredential">,
@@ -524,7 +526,7 @@ function missingCredentialNeedsValidation(
   if (validateMissingCredentials && !stagedProviderNames.has(binding.providerName)) return true;
   const providerMatches = deps.providerMatchesGatewayCredential(
     binding.providerName,
-    "generic",
+    staticMessagingProviderTypeForChannel(binding.channelId, agent) ?? "generic",
     binding.providerEnvKey,
   );
   return validateMissingCredentials && !providerMatches;
@@ -550,6 +552,7 @@ function channelsNeedingCredentialValidation(
       !credentialHash &&
       missingCredentialNeedsValidation(
         binding,
+        plan.agent,
         validateMissingCredentials,
         stagedProviderNames,
         deps,

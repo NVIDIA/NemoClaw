@@ -46,6 +46,7 @@ import {
   bridgeProviderNamesForChannel,
   bridgeSecretEnvsForChannel,
   collectMessagingBridgeTokenDefs,
+  staticMessagingProviderTypeForChannel,
 } from "../../onboard/messaging-bridge-provider";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import type { MessagingTokenDef } from "../../onboard/messaging-prep";
@@ -846,10 +847,13 @@ async function applyChannelAddToGatewayAndRegistry(
   prepareMutation?: () => void,
   rollbackTokens: Readonly<Record<string, string>> = {},
 ): Promise<boolean> {
+  const sandboxAgent = registry.getSandbox(sandboxName)?.agent;
+  const staticProviderType = staticMessagingProviderTypeForChannel(channelName, sandboxAgent);
   const tokenDefs: MessagingTokenDef[] = Object.entries(acquired).map(([envKey, token]) => ({
     name: bridgeProviderName(sandboxName, channelName, envKey),
     envKey,
     token,
+    ...(staticProviderType ? { providerType: staticProviderType } : {}),
   }));
   // Bridge channels declare no manifest credentials, so the loop above yields
   // nothing for them. Their provider must be created HERE (same seam onboarding
@@ -859,7 +863,7 @@ async function applyChannelAddToGatewayAndRegistry(
     sandboxName,
     // Unnormalized: the bridge profile filter owns the unset default and rejects
     // an agent no profile declares.
-    agent: registry.getSandbox(sandboxName)?.agent,
+    agent: sandboxAgent,
     enabledChannels: [channelName],
     disabledChannelNames: new Set<string>(),
     getCredential,
@@ -907,6 +911,7 @@ async function applyChannelAddToGatewayAndRegistry(
     policyChannelDependencies.upsertMessagingProviders(tokenDefs, {
       bestEffort: true,
       revalidatePolicyRequirements: () => prepareMutation?.(),
+      requireExactBindings: true,
     });
   } catch (err) {
     console.error(
@@ -917,6 +922,16 @@ async function applyChannelAddToGatewayAndRegistry(
     const channel = getChannelDef(channelName);
     if (channel) clearChannelTokens(channel);
     persistChannelTokens({ ...rollbackTokens });
+    if (policyChannelDependencies.isMessagingProviderBindingConflict(err)) {
+      if (err.mutatedProviderNames.length > 0) {
+        console.error(
+          `  ${YW}⚠${R} Provider state changed before the identity conflict; inspect ${err.mutatedProviderNames.join(", ")} before retrying.`,
+        );
+      }
+      // Exact-binding preflight does not mutate an incompatible provider. Do
+      // not run generic teardown here: it could delete that existing provider.
+      process.exit(1);
+    }
     const teardown = await applyChannelRemoveToGatewayAndRegistry(
       sandboxName,
       channelName,
@@ -1529,8 +1544,9 @@ async function addSandboxChannelUnlocked(
     }
   };
   preflightChannelPolicyAuthority(sandboxName, canonical, "add", presetPreflight.content);
-  // After gateway recovery, recheck authority and persist credentials at the
-  // same boundary as provider mutation.
+  // Register every provider before credentials or durable channel state are
+  // saved. Exact-binding preflight occurs before mutation; authority is
+  // revalidated before each gateway command.
   let registeredBridge: boolean;
   try {
     registeredBridge = await applyChannelAddToGatewayAndRegistry(
@@ -1549,6 +1565,7 @@ async function addSandboxChannelUnlocked(
     await revalidateAfterOwnedMutation();
     console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
   }
+  persistChannelTokens(acquired);
 
   let presetApplied: boolean;
   try {

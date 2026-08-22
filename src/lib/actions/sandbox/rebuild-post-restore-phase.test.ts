@@ -128,6 +128,11 @@ describe("rebuild post-restore phase", () => {
     await runRebuildPostRestorePhase(input());
 
     expect(order).toEqual(["doctor", "reconcile", "messaging", "config-hash", "config-hash-final"]);
+    expect(processRecovery.executeSandboxCommand).toHaveBeenCalledWith(
+      "alpha",
+      "openclaw doctor --fix",
+      300_000,
+    );
   });
 
   it("stops post-restore service and registry effects when authority changed (#9833)", async () => {

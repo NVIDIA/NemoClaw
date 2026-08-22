@@ -536,7 +536,7 @@ const trustAlternateRelease = (source: string): string => {
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v9.9.9/openshell.rb",
     },
     installerTemplateSha256: [
-      "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
+      "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
     ],
     manifests: [
 ${manifests}
@@ -1052,7 +1052,7 @@ describe("installer hash verification", () => {
   it("accepts the reviewed product and qualification release cohorts", () => {
     const result = runFixture("reviewed-release-cohorts", "0.0.101", true);
 
-    expect(result.status).toBe(0);
+    expect(result.status, result.stdout).toBe(0);
     expect(result.stdout).toContain("Checking OpenShell v0.0.101 release assets");
     expect(result.stdout).toContain("Checking OpenShell v0.0.106 release assets");
     expect(result.stdout).toContain("All installer hashes are current");

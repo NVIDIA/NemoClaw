@@ -388,7 +388,10 @@ function resolveCloneDashboardEnvArgs(
   return envArgs;
 }
 
-async function prepareSnapshotClonePolicy(srcEntry: SandboxEntry): Promise<{
+async function prepareSnapshotClonePolicy(
+  srcEntry: SandboxEntry,
+  targetSandbox: string,
+): Promise<{
   policyContent: string;
   policyPath: string;
   cleanup?: () => boolean;
@@ -416,6 +419,7 @@ async function prepareSnapshotClonePolicy(srcEntry: SandboxEntry): Promise<{
   const { prepareInitialSandboxCreatePolicy } = await import("../../onboard/initial-policy");
   const prepared = prepareInitialSandboxCreatePolicy(baseline.policyPath, activeMessagingChannels, {
     agentName,
+    sandboxName: targetSandbox,
     baselineExclusions,
   });
   return {
@@ -1544,7 +1548,7 @@ async function runSnapshotRestoreUnlocked(
         operation,
         sandboxName,
       });
-      const targetBasePolicy = await prepareSnapshotClonePolicy(currentSourceEntry);
+      const targetBasePolicy = await prepareSnapshotClonePolicy(currentSourceEntry, targetSandbox);
       try {
         const requiredPolicies = resolveSnapshotPolicyRequirements({
           basePolicyContent: targetBasePolicy.policyContent,
@@ -1847,7 +1851,7 @@ async function runSnapshotRestoreUnlocked(
         snapshotExit(1);
       }
       const operation = `clone snapshot '${sandboxName}' into sandbox '${targetSandbox}'`;
-      const clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry);
+      const clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry, targetSandbox);
       let clonePolicyAuthorityReceipt: SnapshotPolicyAuthorityReceipt | null = null;
       try {
         const managedMcpPolicyContents = await resolveManagedMcpPolicyRequirementContents(
