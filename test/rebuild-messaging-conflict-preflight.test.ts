@@ -272,6 +272,7 @@ describe("rebuild messaging credential conflict preflight (#5954)", () => {
       expect(result.status).not.toBe(0);
       expect(output).toContain("uses the same teams credential");
       expect(output).toContain("Aborting");
+      expect(output).not.toContain("Sandbox configuration changed before rebuild lock acquisition");
 
       // Nothing destructive ran: the sandbox is untouched and still registered.
       expect(output).not.toContain("Backing up sandbox state");

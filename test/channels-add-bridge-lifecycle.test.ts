@@ -129,6 +129,9 @@ beforeEach(() => {
   vi.spyOn(policies, "loadPresetForSandbox").mockReturnValue(
     "network_policies:\n  stub:\n    egress:\n      - host: example.com\n",
   );
+  vi.spyOn(policies, "getPresetContentGatewayState").mockImplementation(() =>
+    appliedPresets.includes("googlechat") ? "match" : "absent",
+  );
   vi.spyOn(policies, "applyPreset").mockImplementation((_sandboxName, preset) => {
     appliedPresets = [...new Set([...appliedPresets, preset])];
     return true;
@@ -369,7 +372,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
       ]),
     );
     expect(policies.applyPreset).toHaveBeenCalledWith("test-sb", "googlechat", {
-      disclosedPresetState: null,
+      disclosedPresetState: "match",
     });
     expect(appliedPresets).toContain("googlechat");
     expect(session.policyPresets).toContain("googlechat");

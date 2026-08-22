@@ -109,7 +109,6 @@ describe("rebuildSandbox flow: lifecycle", () => {
       sandboxEntry: {
         policies: [],
         policyAuthority: "externally-managed",
-        policyTier: "restricted",
       },
       policyAuthorityInspection: {
         authority: "externally-managed",
