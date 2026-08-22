@@ -387,6 +387,29 @@ function normalizedHostConfig(
   // Docker CLI represents the same default by omitting `--pid` and rejects
   // `--pid private`.
   if (normalized.PidMode === "private") normalized.PidMode = "";
+  if (
+    typeof normalized.NanoCpus === "number" &&
+    normalized.NanoCpus > 0 &&
+    ((typeof normalized.CpuPeriod === "number" && normalized.CpuPeriod !== 0) ||
+      (typeof normalized.CpuQuota === "number" && normalized.CpuQuota !== 0))
+  ) {
+    if (
+      !Number.isSafeInteger(normalized.NanoCpus) ||
+      !Number.isSafeInteger(normalized.CpuPeriod) ||
+      !Number.isSafeInteger(normalized.CpuQuota) ||
+      (normalized.CpuPeriod as number) <= 0 ||
+      (normalized.CpuQuota as number) <= 0 ||
+      normalized.NanoCpus * (normalized.CpuPeriod as number) !==
+        (normalized.CpuQuota as number) * 1_000_000_000
+    ) {
+      throw new Error("Managed bootstrap Docker CPU limit representations conflict.");
+    }
+    // Podman exposes the quota derived from NanoCpus in all three fields. The
+    // Docker create API rejects receiving NanoCpus together with that exact
+    // derived period/quota pair, so retain the canonical NanoCpus form only.
+    normalized.CpuPeriod = 0;
+    normalized.CpuQuota = 0;
+  }
   for (const key of ["Binds", "MaskedPaths", "ReadonlyPaths"] as const) {
     if (key in normalized) normalized[key] = canonicalStringSet(normalized[key], key);
   }

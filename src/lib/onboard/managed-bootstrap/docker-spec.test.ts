@@ -25,6 +25,8 @@ describe("managed bootstrap Docker launch spec", () => {
       "/run/podman/old/merge:/opt/openshell/bin:lowerdir=/run/podman/old/lower,private",
     ];
     first.HostConfig!.PidMode = "private";
+    first.HostConfig!.CpuPeriod = 100_000;
+    first.HostConfig!.CpuQuota = 250_000;
     const second = structuredClone(first);
     second.Id = "another-runtime-id";
     second.HostConfig!.Binds = second.HostConfig!.Binds!.map((bind) =>
@@ -51,6 +53,8 @@ describe("managed bootstrap Docker launch spec", () => {
       ReadOnly: true,
     });
     expect(expected.spec.inspect.HostConfig?.PidMode).toBe("");
+    expect(expected.spec.inspect.HostConfig?.CpuPeriod).toBe(0);
+    expect(expected.spec.inspect.HostConfig?.CpuQuota).toBe(0);
     expect(parseDockerManagedBootstrapLaunchSpec(expected.canonicalJson)).toEqual(expected.spec);
   });
 
