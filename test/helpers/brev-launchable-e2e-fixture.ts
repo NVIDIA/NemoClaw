@@ -454,7 +454,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
 `,
   );
 
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     PATH: `${bin}:${process.env.PATH ?? ""}`,
     BREV_DELETE_TIMEOUT_SECONDS: "5",
@@ -522,6 +522,14 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     RUNNER_TEMP: root,
     WORK_DIR: workDir,
   };
+  for (const key of [
+    "BREV_CREATE_RECONCILE_SECONDS",
+    "NEMOCLAW_BREV_DEFER_CLEANUP",
+    "NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY",
+    "NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY",
+  ]) {
+    delete env[key];
+  }
   return { calls, env, refreshAttempts, sshAttempts, state, workDir };
 }
 

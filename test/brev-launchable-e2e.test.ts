@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   candidateSha,
@@ -13,7 +13,10 @@ import {
   run,
 } from "./helpers/brev-launchable-e2e-fixture";
 
-afterEach(cleanupFixtures);
+afterEach(() => {
+  cleanupFixtures();
+  vi.unstubAllEnvs();
+});
 
 function identitySmokeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = {
@@ -25,6 +28,35 @@ function identitySmokeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 describe("focused staging Brev Launchable lane", () => {
+  it("runs the strict lane without inherited lane controls (#9925)", () => {
+    vi.stubEnv("BREV_CREATE_RECONCILE_SECONDS", "0");
+    vi.stubEnv("NEMOCLAW_BREV_DEFER_CLEANUP", "1");
+    vi.stubEnv("NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY", "1");
+    vi.stubEnv("NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY", "1");
+
+    const { calls, env } = fixture();
+    expect(env).not.toHaveProperty("BREV_CREATE_RECONCILE_SECONDS");
+    expect(env).not.toHaveProperty("NEMOCLAW_BREV_DEFER_CLEANUP");
+    expect(env).not.toHaveProperty("NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY");
+    expect(env).not.toHaveProperty("NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY");
+
+    const result = run(env);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(fs.readFileSync(calls, "utf8")).toContain("ssh preinstalled full-e2e.test.ts");
+  });
+
+  it("rejects explicit deferred cleanup when ambient identity mode is set (#9925)", () => {
+    vi.stubEnv("NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY", "1");
+
+    const { calls, env, workDir } = fixture();
+    const result = run({ ...env, NEMOCLAW_BREV_DEFER_CLEANUP: "1" });
+    expect(result.status).not.toBe(0);
+    expect(emittedOutput(result, workDir)).toContain(
+      "deferred cleanup is accepted only in identity-smoke mode",
+    );
+    expect(fs.existsSync(calls)).toBe(false);
+  });
+
   it("publishes exact image evidence without Brev or inference access (#8924)", () => {
     const { calls, env, state, workDir } = fixture();
     const imageOnlyEnv: NodeJS.ProcessEnv = {
