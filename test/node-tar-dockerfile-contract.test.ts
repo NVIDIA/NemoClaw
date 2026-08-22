@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH } from "../scripts/patch-bundled-npm-tar.mts";
 import {
+  dockerfileRunCommandPositions,
   requireReviewedDockerfileRunCommands,
   requireSingleReviewedDockerfileRunCommand,
 } from "./helpers/dockerfile-run-commands";
@@ -48,7 +49,7 @@ const dockerfiles = [
   {
     file: "agents/pi/Dockerfile.base",
     installsPatchDownloader: true,
-    installsWithNpm: false,
+    installsWithNpm: true,
     patchCount: 2,
   },
   {
@@ -64,8 +65,157 @@ const pinnedBaseDockerfiles = [
   "Dockerfile.base",
   "agents/hermes/Dockerfile.base",
   "agents/langchain-deepagents-code/Dockerfile.base",
+  "agents/pi/Dockerfile.base",
 ] as const;
 const reviewedNodeBases = new Set<string>(NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH);
+
+interface ShellToken {
+  end: number;
+  staticValue: string | undefined;
+}
+
+function isShellTokenBoundary(character: string): boolean {
+  return (
+    character === " " ||
+    character === "\t" ||
+    character === "\r" ||
+    character === "\n" ||
+    ";&|(){}<>".includes(character)
+  );
+}
+
+function readShellToken(source: string, start: number): ShellToken | undefined {
+  let cursor = start;
+  while (cursor < source.length && isShellTokenBoundary(source[cursor]!)) cursor += 1;
+  const tokenStart = cursor;
+  let quote: "'" | '"' | "`" | null = null;
+  let escaped = false;
+  let expanded = false;
+  let staticValue = "";
+  token: while (cursor < source.length) {
+    const character = source[cursor]!;
+    switch (true) {
+      case escaped:
+        escaped = false;
+        staticValue += character;
+        cursor += 1;
+        continue;
+      case character === "\\" &&
+        quote !== "'" &&
+        (quote !== '"' || ["$", "`", '"', "\\"].includes(source[cursor + 1]!)):
+        escaped = true;
+        cursor += 1;
+        continue;
+      case quote !== null:
+        switch (quote === "`" || (quote === '"' && character === "$")) {
+          case true:
+            expanded = true;
+        }
+        switch (character === quote) {
+          case true:
+            quote = null;
+            break;
+          default:
+            staticValue += character;
+        }
+        cursor += 1;
+        continue;
+      case character === "'" || character === '"' || character === "`":
+        expanded = expanded || character === "`";
+        quote = character;
+        cursor += 1;
+        continue;
+      case isShellTokenBoundary(character):
+        break token;
+      default:
+        switch (character === "$" || "*?[~".includes(character)) {
+          case true:
+            expanded = true;
+            break;
+          default:
+            staticValue += character;
+        }
+        cursor += 1;
+    }
+  }
+  switch (cursor === tokenStart) {
+    case true:
+      return undefined;
+  }
+  return {
+    end: cursor,
+    staticValue: quote === null && !escaped && !expanded ? staticValue : undefined,
+  };
+}
+
+type NpmSubcommand = { kind: "known"; value: string } | { kind: "none" } | { kind: "unclassified" };
+
+function npmSubcommand(source: string, start: number): NpmSubcommand {
+  let token = readShellToken(source, start);
+  while (token !== undefined) {
+    const value = token.staticValue;
+    switch (value) {
+      case undefined:
+        return { kind: "unclassified" };
+    }
+    switch (value.startsWith("-")) {
+      case false:
+        return { kind: "known", value };
+    }
+    switch (value) {
+      case "--silent":
+        token = readShellToken(source, token.end);
+        continue;
+      case "--prefix": {
+        const prefix = readShellToken(source, token.end);
+        switch (prefix) {
+          case undefined:
+            return { kind: "unclassified" };
+          default: {
+            const prefixValue = prefix.staticValue;
+            switch (
+              prefixValue === undefined ||
+              prefixValue === "" ||
+              prefixValue.startsWith("-")
+            ) {
+              case true:
+                return { kind: "unclassified" };
+            }
+            token = readShellToken(source, prefix.end);
+            continue;
+          }
+        }
+      }
+      default: {
+        const inlinePrefix = value.startsWith("--prefix=")
+          ? value.slice("--prefix=".length)
+          : undefined;
+        switch (inlinePrefix) {
+          case undefined:
+          case "":
+            return { kind: "unclassified" };
+          default:
+            token = readShellToken(source, token.end);
+            continue;
+        }
+      }
+    }
+  }
+  return { kind: "none" };
+}
+
+function npmConsumerPositions(source: string): number[] {
+  const executableSource = source.replace(/\\\s*\n/gu, (continuation) =>
+    " ".repeat(continuation.length),
+  );
+  return dockerfileRunCommandPositions(source, "npm").filter((index) => {
+    const subcommand = npmSubcommand(executableSource, index + "npm".length);
+    return (
+      subcommand.kind === "unclassified" ||
+      (subcommand.kind === "known" && (subcommand.value === "ci" || subcommand.value === "install"))
+    );
+  });
+}
 
 function nodeBaseReferences(source: string): string[] {
   return [
@@ -207,12 +357,7 @@ describe("node-tar image remediation contract", () => {
           aptInstallCleanup < firstPatchRun,
         file,
       ).toBe(installsPatchDownloader);
-      const executableSource = source.replace(/^\s*#.*$/gmu, (comment) =>
-        " ".repeat(comment.length),
-      );
-      const npmConsumers = [...executableSource.matchAll(/\bnpm\s+(?:ci|install)\b/gu)].map(
-        (match) => match.index,
-      );
+      const npmConsumers = npmConsumerPositions(source);
       expect(npmConsumers.length > 0, file).toBe(installsWithNpm);
       expect(
         npmConsumers.every((index) => index > lastPatchRun),
@@ -224,10 +369,84 @@ describe("node-tar image remediation contract", () => {
 
 describe("reviewed npm image remediation contract", () => {
   it.each([
+    ["a flag-only global option", "npm --silent ci"],
+    ["mixed global options", "npm --prefix /work --silent install"],
+    ["repeated flag-only global options", "npm --silent --silent ci"],
+    ["a nonempty inline global option operand", "npm --prefix=/work install"],
+    ["a quoted global option operand", 'npm --prefix "/tmp/npm cache" ci'],
+    ["an escaped-space global option operand", "npm --prefix /tmp/npm\\ cache install"],
+    ["a quoted subcommand", 'npm "ci"'],
+    ["an escaped subcommand", "npm in\\stall"],
+    ["a dynamic subcommand", 'npm "$NPM_SUBCOMMAND"'],
+    ["an incomplete inline global option operand", 'npm --prefix="/tmp/npm cache install'],
+    ["a missing global option operand", "npm --prefix --silent ci"],
+    ["an empty inline global option operand", "npm --prefix= --silent ci"],
+    ["an unknown global option", "npm --future-option ci"],
+  ])("discovers npm consumers with %s (#9933)", (_label, body) => {
+    const source = `RUN ${body}\n`;
+
+    expect(npmConsumerPositions(source)).toEqual([source.indexOf("npm")]);
+  });
+
+  it.each([
+    "npm --silent view",
+    "npm --prefix /work view",
+    "npm --silent --silent view",
+    "npm --prefix=/work view",
+    'npm "view"',
+  ])("ignores a supported global option before a non-consumer subcommand in %s (#9933)", (body) => {
+    expect(npmConsumerPositions(`RUN ${body}\n`)).toEqual([]);
+  });
+
+  it("does not treat an assignment value as a pre-remediation npm consumer (#9933)", () => {
+    const source = [
+      "RUN VALUE=npm ci",
+      `RUN ${patchCommand} ${npmRootArguments.join(" ")}`,
+      "",
+    ].join("\n");
+
+    expect(npmConsumerPositions(source)).toEqual([]);
+  });
+
+  it.each([
+    ["an if condition", "if npm ci; then true; fi"],
+    ["an elif condition", "if false; then true; elif npm install; then true; fi"],
+    ["a while condition", "while npm ci; do true; done"],
+    ["an until condition", "until npm install; do true; done"],
+    ["a subshell group", "( npm ci )"],
+    ["a brace group", "{ npm install; }"],
+    ["a case branch", "case value in value) npm ci ;; esac"],
+    ["a negated command", "! npm install"],
+    ["a quoted assignment value", 'NPM_CONFIG_CACHE="/tmp/npm cache" npm ci'],
+    ["an escaped-space assignment value", "NPM_CONFIG_CACHE=/tmp/npm\\ cache npm install"],
+    ["a flag-only global option", "npm --silent ci"],
+    ["mixed global options", "npm --prefix /work --silent install"],
+    ["a quoted global option operand", 'npm --prefix "/tmp/npm cache" ci'],
+    ["an escaped-space global option operand", "npm --prefix /tmp/npm\\ cache install"],
+    ["a quoted subcommand", 'npm "ci"'],
+    ["an escaped subcommand", "npm in\\stall"],
+    ["a dynamic subcommand", 'npm "$NPM_SUBCOMMAND"'],
+    ["an incomplete inline global option operand", 'npm --prefix="/tmp/npm cache install'],
+  ])("detects npm consumers in %s before the final patch (#9933)", (_label, body) => {
+    const source = [`RUN ${body}`, `RUN ${patchCommand} ${npmRootArguments.join(" ")}`, ""].join(
+      "\n",
+    );
+    const patchRun = requireSingleReviewedDockerfileRunCommand(
+      source,
+      patchCommand,
+      npmRootArguments,
+    );
+    const npmConsumers = npmConsumerPositions(source);
+
+    expect(npmConsumers).toEqual([source.indexOf(" npm") + 1]);
+    expect(npmConsumers.every((index) => index > patchRun.commandStart)).toBe(false);
+  });
+
+  it.each([
     { file: "Dockerfile.base", installsWithNpm: true },
     { file: "agents/hermes/Dockerfile.base", installsWithNpm: true },
     { file: "agents/langchain-deepagents-code/Dockerfile.base", installsWithNpm: false },
-    { file: "agents/pi/Dockerfile.base", installsWithNpm: false },
+    { file: "agents/pi/Dockerfile.base", installsWithNpm: true },
   ])(
     "patches tar before and after upgrading the complete npm tree in $file",
     ({ file, installsWithNpm }) => {
@@ -252,12 +471,7 @@ describe("reviewed npm image remediation contract", () => {
       expect(upgradeRun, file).toBeGreaterThan(patchRuns[0]!.commandStart);
       expect(patchRuns[1]!.commandStart, file).toBeGreaterThan(upgradeRun);
 
-      const executableSource = source.replace(/^\s*#.*$/gmu, (comment) =>
-        " ".repeat(comment.length),
-      );
-      const npmConsumers = [...executableSource.matchAll(/\bnpm\s+(?:ci|install)\b/gu)].map(
-        (match) => match.index,
-      );
+      const npmConsumers = npmConsumerPositions(source);
       expect(npmConsumers.length > 0, file).toBe(installsWithNpm);
       expect(
         npmConsumers.every((index) => index > patchRuns[1]!.commandStart),

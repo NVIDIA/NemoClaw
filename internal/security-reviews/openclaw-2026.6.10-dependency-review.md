@@ -9,6 +9,8 @@ Review date: 2026-07-03
 
 Advisory audit revalidated: 2026-07-21
 
+Retained remediation revalidated: 2026-08-21
+
 WeChat locked-graph audit revalidated: 2026-07-12
 
 Scope: NemoClaw runtime pin `openclaw@2026.6.10`, the locked `mcporter@0.7.3` runtime graph, runtime helper pin `@zed-industries/codex-acp@0.11.1`, optional OpenClaw plugins, and built-in messaging OpenClaw plugins.
@@ -86,10 +88,11 @@ The OpenClaw 2026.6.10 bump does not newly introduce an unfrozen OpenClaw transi
 ### Transitive Remediation Boundary
 
 This section is a point-in-time record of the remediation shipped for the
-2026.6.10 runtime. The current 2026.7.1 path installs the reviewed core archive
-directly because its core graph already contains the fixed versions, and keeps
-only the version-scoped Slack and Microsoft Teams Axios remediation plus the
-diagnostics Jaeger remediation added for the 2026.7.1 archive. See
+2026.6.10 runtime. The retained compatibility branch now replaces its affected
+`tar` dependency with `7.5.21` after `GHSA-r292-9mhp-454m` affected releases
+through `7.5.20`. The current 2026.7.1 path also remediates its source `tar` and
+`fs-safe` graph, while retaining the version-scoped Slack and Microsoft Teams
+Axios remediation and the diagnostics Jaeger remediation. See
 [`openclaw-2026.7.1-dependency-review.md`](./openclaw-2026.7.1-dependency-review.md)
 for the active source and validation boundary.
 
@@ -100,14 +103,14 @@ It also rejects unsafe archive members before extraction and after repacking.
 
 For `openclaw@2026.6.10`, the helper makes these changes:
 
-- Replaces `tar@7.5.16` with `tar@7.5.19`.
+- Replaces `tar@7.5.16` with `tar@7.5.21`.
 - Replaces `brace-expansion@5.0.6` with `brace-expansion@5.0.7`.
-- Bundles the reviewed `@openclaw/fs-safe@0.3.0` package and removes its duplicate optional `tar` and `jszip` declarations. The bundled package resolves OpenClaw's reviewed direct `tar@7.5.19` and `jszip@3.10.1` dependencies instead, including during a global npm install.
+- Bundles the reviewed `@openclaw/fs-safe@0.3.0` package and removes its duplicate optional `tar` and `jszip` declarations. The bundled package resolves OpenClaw's reviewed direct `tar@7.5.21` and `jszip@3.10.1` dependencies instead, including during a global npm install.
 - Verifies the installed global dependency tree before either the reviewed base image or production image can complete.
 
 For the E2E-only `openclaw@2026.3.11` identity, the helper requires the exact `tar@7.5.11` declaration, no bundled dependencies, no bundled tar package, and no npm shrinkwrap.
 The reviewed source archive SRI binds the remainder of the source manifest and package bytes.
-The helper then verifies the exact `tar@7.5.19` registry SRI and tarball URL, copies that reviewed package into the remediated archive, and declares it as a bundled dependency so the later global install cannot resolve the replacement tar package from mutable registry state.
+The helper then verifies the exact `tar@7.5.21` registry SRI and tarball URL, copies that reviewed package into the remediated archive, and declares it as a bundled dependency so the later global install cannot resolve the replacement tar package from mutable registry state.
 The committed patched-metadata hash binds the OpenClaw identity, replacement declaration, bundled-dependency marker, and bundled tar identity.
 
 For `@openclaw/slack@2026.6.10` and `@openclaw/msteams@2026.6.10`, the helper makes these changes:
@@ -130,7 +133,7 @@ The replacement packages are bound to these registry identities:
 
 | Package | Reviewed npm integrity | Reviewed npm tarball URL |
 |---|---|---|
-| `tar@7.5.19` | `sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==` | `https://registry.npmjs.org/tar/-/tar-7.5.19.tgz` |
+| `tar@7.5.21` | `sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==` | `https://registry.npmjs.org/tar/-/tar-7.5.21.tgz` |
 | `brace-expansion@5.0.7` | `sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==` | `https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz` |
 | `@openclaw/fs-safe@0.3.0` | `sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==` | `https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz` |
 | `axios@1.18.0` | `sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==` | `https://registry.npmjs.org/axios/-/axios-1.18.0.tgz` |
@@ -143,8 +146,8 @@ The helper extracts reviewed archives without invoking package lifecycle scripts
 It binds each patched package manifest and shrinkwrap to a committed SHA-512 metadata value.
 The core value also covers the bundled `@openclaw/fs-safe` package manifest.
 The diagnostics value also covers the bundled SDK, Jaeger propagator, and nested core package manifests.
-The expected values are `sha512-B5O6Gu3YGY52w+Px8diL5zBtk8mj0u7E1ZvVK7KOLWX9H+S3B7kYUxnGfyB239mVYSluecfiWGvFFMk5eFhwKg==` for OpenClaw core, `sha512-ByLYBs3KXz3u0mPuj9DcP/xPTJNgQaLTPxazybhyIC1VjyftEmKQuoZufPZ8z8CjwBsOPm6NbjMQB2BfX36TTg==` for diagnostics OTEL, `sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==` for Slack, and `sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==` for Microsoft Teams.
-The E2E-only `openclaw@2026.3.11` value is `sha512-1i30XSb/2NEcuTcuhXfR/x3YKaXVhWq6ttecFBSD9nrCKrzjNxSNMfK1y3qRcnblNOzRWmHtJZwZKeej02s/EQ==`.
+The expected values are `sha512-XMycUUV7gCzUYbjgwrglER0AQEtfuKUz6wyo4ilm/7nSSkLocYUYVkrJuBFYPW3no8Y5FW/1+2hWCssIyjxn3g==` for OpenClaw core, `sha512-ByLYBs3KXz3u0mPuj9DcP/xPTJNgQaLTPxazybhyIC1VjyftEmKQuoZufPZ8z8CjwBsOPm6NbjMQB2BfX36TTg==` for diagnostics OTEL, `sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==` for Slack, and `sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==` for Microsoft Teams.
+The E2E-only `openclaw@2026.3.11` value is `sha512-Yz/7GyAgLSPtJkijdUsVzxnjhATMPLRSFFMhl2H565aW7tReHZmuPeExBq0K4EEFkvg7zM2sFm2CP3f2oNw32Q==`.
 Both the library and command-line entry points enforce the same committed values.
 `Dockerfile.base` records `ignore-scripts+reviewed-lifecycle+transitive-remediation-v1` in its protected provenance marker.
 The production Dockerfile rejects stale base provenance and repeats the remediation when the marker does not match.
@@ -163,7 +166,7 @@ The following concerns record the failure mode, completed disposition, and remai
 | `DEP-3` | The diagnostics OTEL archive bundles a Jaeger propagator that throws for malformed percent-encoded trace or baggage headers. A remote header can terminate extraction through an unhandled exception. | The `migrate`, `guard`, and `test` dispositions replace Jaeger with `2.9.0`, isolate its exact `2.9.0` core dependency, bind the patched metadata, and reject upstream graph drift. | Full E2E and the reviewed npm audit must pass for the PR SHA. |
 | `DEP-4` | `body-parser` retains one low root finding, while Hono and `protobufjs` retain moderate root findings. Expanding this patch to their package graphs without review can cause silent dependency drift. | The `document` disposition records each package, consumer, severity, and fix availability in the raw reports. The configured `high` threshold passes. | Re-review the affected package shrinkwraps before a later change remediates these findings. |
 | `DEP-5` | A previously built base image can claim the unremediated install recipe. | The `guard` and `test` dispositions change the protected provenance recipe. A stale or mismatched marker takes the complete reviewed install path. | Base-image and production-image CI must pass for the PR SHA. |
-| `DEP-6` | The replacement graph has no repository-generated lock-derived SBOM. The `https-proxy-agent@5.0.1` and `agent-base@6.0.2` tarballs declare MIT in package metadata but contain no license file. | The `document` disposition records reviewed registry metadata, SRI, tarball URL, declared license, and packaged license-file inventory. The other replacement tarballs include license files. `tar@7.5.19` declares BlueOak-1.0.0, the OpenTelemetry packages declare Apache-2.0, and the other packages declare MIT. | Maintainers must retain this notice and SBOM limitation or add generated attribution evidence before release policy requires it. |
+| `DEP-6` | The replacement graph has no repository-generated lock-derived SBOM. The `https-proxy-agent@5.0.1` and `agent-base@6.0.2` tarballs declare MIT in package metadata but contain no license file. | The `document` disposition records reviewed registry metadata, SRI, tarball URL, declared license, and packaged license-file inventory. The other replacement tarballs include license files. `tar@7.5.21` declares BlueOak-1.0.0, the OpenTelemetry packages declare Apache-2.0, and the other packages declare MIT. | Maintainers must retain this notice and SBOM limitation or add generated attribution evidence before release policy requires it. |
 
 ## Slack Source Review
 

@@ -93,6 +93,8 @@ export type RunAdvisorResult = {
   /** Assistant text from the final turn. For single-turn callers, this is the full response. */
   text: string;
   raw: string;
+  /** Native Pi JSONL session path when persistence is enabled. */
+  sessionFile?: string;
   turnTexts: string[];
   turnErrors: string[];
   turnCallbackErrors: string[];
@@ -360,8 +362,11 @@ export async function runReadOnlyAdvisor(
 
   const promptTurns = normalizePromptTurns(options.promptTurns);
   const contextTools = createAdvisorContextToolRuntime(promptTurns);
+  let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
   const customTools = [
-    ...createRepoConfinedReadOnlyTools(options.cwd),
+    ...createRepoConfinedReadOnlyTools(options.cwd, (observation) => {
+      currentTurnFlow.push({ type: "read", ...observation });
+    }),
     ...contextTools.customTools,
   ];
   const availableToolNames = new Set(READ_ONLY_TOOLS);
@@ -420,6 +425,7 @@ export async function runReadOnlyAdvisor(
     settingsManager,
   });
 
+  const sessionFile = session.sessionFile;
   const rawHeader = [
     modelFallbackMessage ? `[${options.logPrefix}] ${modelFallbackMessage}` : undefined,
     `[${options.logPrefix}] model=${model.provider}/${model.id}`,
@@ -438,7 +444,6 @@ export async function runReadOnlyAdvisor(
   let currentTurnName = "";
   let currentTurnError: string | undefined;
   let successfulToolNames = new Set<string>();
-  let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
   let resolveCurrentAgentEnd: (() => void) | undefined;
 
   const captureTurnError = (source: string, message: string | undefined): void => {
@@ -728,6 +733,7 @@ export async function runReadOnlyAdvisor(
   return {
     text: turnTexts.at(-1) || "",
     raw: raw.toStringWithTrailingNewline(),
+    sessionFile,
     turnTexts,
     turnErrors,
     turnCallbackErrors,
@@ -764,6 +770,7 @@ function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTu
     activeToolNames: normalizedToolNames(turn.activeToolNames),
     requiredToolNames: normalizedToolNames(turn.requiredToolNames),
     requireToolsBeforeText: normalizedToolNames(turn.requireToolsBeforeText),
+    requiredReadPaths: turn.requiredReadPaths,
     requireAssistantText: turn.requireAssistantText === true,
     atomicTerminalToolName: normalizedToolNames(
       turn.atomicTerminalToolName ? [turn.atomicTerminalToolName] : undefined,

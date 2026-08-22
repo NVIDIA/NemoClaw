@@ -240,18 +240,20 @@ The workflow selects \`${target}\` by incrementing the patch component of \`${ra
 
 - Each push to \`main\` that changes a path outside the allowed documentation paths starts a cumulative authoring and independent review run.
 - An approved patch creates a verified merge commit and fast-forwards this branch.
-- The workflow never force-pushes. It stops if a person changes the branch or PR metadata.
-- Keep this PR open as a draft while code PRs merge for \`${target}\`.
+- Keep this PR as a draft while code PRs merge for \`${target}\`. The workflow owns the draft branch.
+- Mark this PR ready for review only at release cutoff. Ready status transfers branch ownership to maintainers, and later workflow runs leave the PR unchanged.
+- The workflow never force-pushes. While the PR is a draft, it stops if a person changes the branch or PR metadata.
 
 ## Release cutoff
 
 1. Stop merging code PRs intended for \`${target}\`.
-2. Add the dated \`## ${target}\` changelog entry and final documentation to this PR.
-3. Run \`npm run docs\` and complete the final review.
-4. Merge this PR. Its docs-only merge does not start another catch-up run.
-5. Ask the tag session to show this PR's coverage point, later commits and PRs, checks, reviews, and any open managed docs PR.
-6. Decide whether to proceed, create or update a docs PR for the uncovered range, or stop.
-7. Cut \`${target}\` only after you choose to proceed with the displayed documentation coverage.
+2. Mark this PR ready for review to transfer branch ownership to maintainers.
+3. Add the dated \`## ${target}\` changelog entry and final documentation to this PR.
+4. Run \`npm run docs\` and complete the final review.
+5. Merge this PR. Its docs-only merge does not start another catch-up run.
+6. Ask the tag session to show this PR's coverage point, later commits and PRs, checks, reviews, and any open managed docs PR.
+7. Decide whether to proceed, create or update a docs PR for the uncovered range, or stop.
+8. Cut \`${target}\` only after you choose to proceed with the displayed documentation coverage.
 
 ## Verification
 

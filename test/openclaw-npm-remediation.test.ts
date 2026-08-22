@@ -352,9 +352,9 @@ function writeLegacyCoreArchiveFixtures(): {
   mkdirSync(tarDirectory, { recursive: true });
   writeFileSync(
     path.join(tarDirectory, "package.json"),
-    `${JSON.stringify({ name: "tar", version: "7.5.19" }, null, 2)}\n`,
+    `${JSON.stringify({ name: "tar", version: "7.5.21" }, null, 2)}\n`,
   );
-  const tarArchive = path.join(root, "tar-7.5.19-source.tgz");
+  const tarArchive = path.join(root, "tar-7.5.21-source.tgz");
   packFixture(tarDirectory, tarArchive);
 
   const npmExecutable = path.join(root, "npm-fixture.sh");
@@ -365,9 +365,9 @@ function writeLegacyCoreArchiveFixtures(): {
       "set -euo pipefail",
       `tar_archive=${JSON.stringify(tarArchive)}`,
       'case "$1:$2:${3:-}" in',
-      '  "view:tar@7.5.19:dist.integrity") value="sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==" ;;',
-      '  "view:tar@7.5.19:dist.tarball") value="https://registry.npmjs.org/tar/-/tar-7.5.19.tgz" ;;',
-      '  "pack:https://registry.npmjs.org/tar/-/tar-7.5.19.tgz:--pack-destination") ;;',
+      '  "view:tar@7.5.21:dist.integrity") value="sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==" ;;',
+      '  "view:tar@7.5.21:dist.tarball") value="https://registry.npmjs.org/tar/-/tar-7.5.21.tgz" ;;',
+      '  "pack:https://registry.npmjs.org/tar/-/tar-7.5.21.tgz:--pack-destination") ;;',
       '  *) echo "unexpected npm fixture invocation: $*" >&2; exit 1 ;;',
       "esac",
       'if [ "$1" = "view" ]; then printf "%s\\n" "$value"; exit 0; fi',
@@ -376,8 +376,8 @@ function writeLegacyCoreArchiveFixtures(): {
       '  if [ "$1" = "--pack-destination" ]; then destination="$2"; shift 2; continue; fi',
       "  shift",
       "done",
-      'cp "$tar_archive" "$destination/tar-7.5.19.tgz"',
-      'printf \'[{"filename":"tar-7.5.19.tgz","integrity":"sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw=="}]\\n\'',
+      'cp "$tar_archive" "$destination/tar-7.5.21.tgz"',
+      'printf \'[{"filename":"tar-7.5.21.tgz","integrity":"sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA=="}]\\n\'',
       "",
     ].join("\n"),
     { mode: 0o700 },
@@ -632,18 +632,21 @@ describe("OpenClaw npm remediation", () => {
     ["fast-uri", "3.1.1", "fast-uri layout changed after review"],
     ["undici", "8.4.0", "dependency boundary changed after review"],
     ["ip-address", "10.1.1", "ip-address layout changed after review"],
-  ])("rejects a current OpenClaw %s graph that changed after review", (dependency, version, error) => {
-    const directory =
-      dependency === "brace-expansion"
-        ? writeCurrentCoreFixture(version)
-        : dependency === "fast-uri"
-          ? writeCurrentCoreFixture("5.0.7", version)
-          : dependency === "undici"
-            ? writeCurrentCoreFixture("5.0.7", "3.1.2", version)
-            : writeCurrentCoreFixture("5.0.7", "3.1.2", "8.5.0", version);
+  ])(
+    "rejects a current OpenClaw %s graph that changed after review",
+    (dependency, version, error) => {
+      const directory =
+        dependency === "brace-expansion"
+          ? writeCurrentCoreFixture(version)
+          : dependency === "fast-uri"
+            ? writeCurrentCoreFixture("5.0.7", version)
+            : dependency === "undici"
+              ? writeCurrentCoreFixture("5.0.7", "3.1.2", version)
+              : writeCurrentCoreFixture("5.0.7", "3.1.2", "8.5.0", version);
 
-    expect(() => patchCurrentOpenClawCorePackageGraph(directory)).toThrow(error);
-  });
+      expect(() => patchCurrentOpenClawCorePackageGraph(directory)).toThrow(error);
+    },
+  );
 
   it.each([
     ["resolved", "https://registry.npmjs.org/undici/-/undici-8.4.0.tgz"],
@@ -767,11 +770,11 @@ describe("OpenClaw npm remediation", () => {
         bundledDependencies?: string[];
         dependencies?: Record<string, string>;
       }>(path.join(extracted, "package", "package.json")),
-    ).toMatchObject({ bundledDependencies: ["tar"], dependencies: { tar: "7.5.19" } });
+    ).toMatchObject({ bundledDependencies: ["tar"], dependencies: { tar: "7.5.21" } });
     expect(
       readJson<{ name?: string; version?: string }>(
         path.join(extracted, "package", "node_modules", "tar", "package.json"),
       ),
-    ).toMatchObject({ name: "tar", version: "7.5.19" });
+    ).toMatchObject({ name: "tar", version: "7.5.21" });
   }, 60_000);
 });
