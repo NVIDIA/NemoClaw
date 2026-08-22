@@ -786,6 +786,7 @@ describe("parseVllmExtraServeArgs", () => {
         [VLLM_EXTRA_ARGS_ENV]: '["line\\nbreak"]',
       } as NodeJS.ProcessEnv),
     ).toThrow(/control characters/);
+
   });
 });
 

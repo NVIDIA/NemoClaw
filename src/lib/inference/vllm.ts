@@ -517,7 +517,7 @@ function selectedGpuMemoryDevice(
   // Fixed host-local recipes use one tensor-parallel worker, so vLLM starts
   // on the first visible device even when Docker exposes every GPU.
   if (request === "all" || request === "device=all") {
-    return devices.find((device) => device.index === 0) ?? devices[0] ?? null;
+    return devices.find((device) => device.index === 0) ?? null;
   }
   if (!request.startsWith("device=")) return null;
   const selector = request.slice("device=".length).split(",")[0]?.trim();
@@ -1293,6 +1293,13 @@ function verifyDualStationVllmAuthBoundary(
   }
 }
 
+function sanitizeContainerLogOutput(output: string): string {
+  return redact(redactFull(stripVTControlCharacters(output.replace(/\r\n?/g, "\n")))).replace(
+    /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g,
+    "",
+  );
+}
+
 function readContainerLogTail(
   profile: VllmProfile,
   lineCount = 80,
@@ -1304,7 +1311,7 @@ function readContainerLogTail(
     includeStderr: true,
   }).trim();
   if (!output) return [];
-  const safeOutput = redact(redactFull(stripVTControlCharacters(output)));
+  const safeOutput = sanitizeContainerLogOutput(output);
   return safeOutput.split(/\r?\n/).slice(-lineCount);
 }
 
@@ -1860,9 +1867,7 @@ async function runVllmInstall(
 ): Promise<{ ok: boolean }> {
   const selection = resolveVllmInstallSelectionEnv(opts.modelIntent);
   if (!selection.ok) {
-    console.error(
-      "  vLLM install failed: the resumed model conflicts with NEMOCLAW_VLLM_MODEL.",
-    );
+    console.error("  vLLM install failed: the resumed model conflicts with NEMOCLAW_VLLM_MODEL.");
     return { ok: false };
   }
   const { env: selectionEnv, explicitModel } = selection;
