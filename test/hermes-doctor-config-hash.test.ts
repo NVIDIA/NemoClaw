@@ -149,6 +149,7 @@ describe("Hermes doctor and config hash boundary", () => {
         path.join(binDir, "nemoclaw-managed-startup-hold"),
         path.join(binDir, "nemoclaw-managed-bootstrap"),
         path.join(binDir, "nemoclaw-gateway-control"),
+        path.join(libDir, "corporate-ca-runtime.sh"),
         path.join(libDir, "entrypoint-env-wrapper.sh"),
         path.join(libDir, "sandbox-init.sh"),
         path.join(libDir, "gateway-supervisor.sh"),

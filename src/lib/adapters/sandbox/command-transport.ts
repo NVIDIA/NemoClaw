@@ -51,6 +51,7 @@ export function executeSandboxCommandTransport(
   deps: CommandTransportDependencies,
   sandboxName: string,
   command: string,
+  timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
 ): SandboxCommandResult | null {
   return deps.withPrivilegedSandboxExecutionLease(
     sandboxName,
@@ -87,7 +88,7 @@ export function executeSandboxCommandTransport(
             encoding: "utf-8",
             env: deps.buildSubprocessEnv(),
             stdio: ["ignore", "pipe", "pipe"],
-            timeout: DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+            timeout,
           },
         );
         return {
