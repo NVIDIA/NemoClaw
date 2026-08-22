@@ -56,6 +56,7 @@ describe("managed bootstrap Docker launch spec", () => {
     second.NetworkSettings!.Networks!["openshell-docker"]!.Aliases = [
       second.Id.slice(0, 12),
       "openshell-alpha",
+      `openshell-alpha-nemoclaw-staged-${"1".repeat(20)}`,
     ];
 
     const expected = normalizeDockerManagedBootstrapLaunchSpec(first);
