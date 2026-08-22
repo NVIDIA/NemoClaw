@@ -489,6 +489,11 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Checkout trusted protected runtime qualification" &&
         step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
+      const trustedManagedImageMultiarchResolverCheckout =
+        jobName === "managed-image-multiarch-startup" &&
+        step.name === "Checkout trusted Hermes resolver" &&
+        step.with?.repository === "${{ github.repository }}" &&
+        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
       const trustedLlamaCppPlanCheckout =
         jobName === "llama-cpp-dgx-spark-plan" &&
         step.name === "Checkout trusted llama.cpp plan compiler" &&
@@ -554,6 +559,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         trustedRelevantE2eCheckout ||
         trustedLaunchableLaneCheckout ||
         trustedPublicationCheckout ||
+        trustedManagedImageMultiarchResolverCheckout ||
         trustedManagedImageRuntimeCheckout ||
         trustedLlamaCppPlanCheckout ||
         trustedLlamaCppQualificationCheckout ||
