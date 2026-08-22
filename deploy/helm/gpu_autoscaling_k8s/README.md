@@ -168,16 +168,19 @@ Optional example test: [Example test](#example-test).
 
 ### 4. Agent Sandbox, image, OpenShell
 
+Pick your agent once here — everything below (and step 5) reuses the same `AGENT_NAME`. See [`agents/README.md`](agents/README.md#comparison) for how OpenClaw, Hermes, and Deep Agents Code differ.
+
 ```bash
 source versions.env
 kubectl apply -f \
   "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml"
 
+export AGENT_NAME=openclaw   # or hermes | deepagents
+
 # MicroK8s local registry (validated path) — see [MicroK8s local registry](#microk8s-local-registry)
 microk8s enable registry   # if not already on
-export AGENT_NAME=openclaw   # or hermes | deepagents — see agents/README.md
-export AGENT_SANDBOX_IMAGE=localhost:32000/nemoclaw-openclaw-k8s:${NEMOCLAW_VERSION}
-# Or any registry nodes can pull: export AGENT_SANDBOX_IMAGE=registry.example.com/team/nemoclaw-openclaw-k8s:v0.0.104
+export AGENT_SANDBOX_IMAGE=localhost:32000/nemoclaw-${AGENT_NAME}-k8s:${NEMOCLAW_VERSION}
+# Or any registry nodes can pull: export AGENT_SANDBOX_IMAGE=registry.example.com/team/nemoclaw-${AGENT_NAME}-k8s:v0.0.104
 ./scripts/build-agent-sandbox-image.sh
 
 export OPENSHELL_OIDC_ISSUER=https://idp.example.com/realms/openshell
@@ -195,14 +198,18 @@ Terminal 1 — keep running:
 kubectl -n nemoclaw-sandboxes port-forward service/openshell 8080:8080
 ```
 
-Terminal 2 — client TLS + gateway (OIDC flags in [OpenShell details](#openshell-details)), then (`AGENT_NAME` still `openclaw` from step 4; set it to `hermes` or `deepagents` instead — see [`agents/README.md`](agents/README.md)):
+Terminal 2 — client TLS + gateway (OIDC flags in [OpenShell details](#openshell-details)), then create/verify/run the sandbox for the `AGENT_NAME` you picked in step 4 (re-export it here if this is a fresh shell):
 
 ```bash
-export AGENT_SANDBOX_IMAGE=localhost:32000/nemoclaw-openclaw-k8s:${NEMOCLAW_VERSION}
+export AGENT_SANDBOX_IMAGE=localhost:32000/nemoclaw-${AGENT_NAME}-k8s:${NEMOCLAW_VERSION}
 export INFERENCE_MODEL=llama3.2:3b   # must match the GPU chart model
 ./scripts/create-agent-sandbox.sh
 ./scripts/verify-agent-sandbox.sh   # example: "In one sentence, what is an AI agent sandbox?" — see [Example test](#example-test)
-./scripts/run-agent-sandbox.sh   # keep in foreground (deepagents: use scripts/run-agent-prompt.sh instead)
+
+# OpenClaw / Hermes — long-running gateway, keep this terminal in the foreground:
+./scripts/run-agent-sandbox.sh
+# Deep Agents Code — no gateway; run one-shot prompts instead:
+# ./scripts/run-agent-prompt.sh "Explain this repository in one sentence."
 ```
 
 Users do not paste an inference API key; the chart generates it and OpenShell injects Bearer auth.
@@ -441,15 +448,15 @@ Ports (do not mix them up):
 
 ### From the OpenShell sandbox (recommended)
 
-With the OpenShell port-forward on **8080** running and the sandbox Ready for whichever
-`AGENT_NAME` you created (`nemoclaw-onprem` for `openclaw` shown below; see
-[`agents/README.md`](agents/README.md) for Hermes / Deep Agents Code):
+With the OpenShell port-forward on **8080** running and the sandbox Ready for the
+`AGENT_NAME` you created in step 4:
 
 ```bash
 ./scripts/verify-agent-sandbox.sh
 ```
 
-Example printout:
+Example printout (`openclaw` shown; `hermes` and `deepagents` print a slightly different
+health-check step — see [`agents/README.md`](agents/README.md#example-verify-output)):
 
 ```text
 [verify] Inspecting nemoclaw plugin (timeout 90s)...
@@ -511,8 +518,8 @@ microk8s enable registry
 # ["localhost:32000","127.0.0.1:32000"] — then restart Docker).
 
 source versions.env
-export AGENT_NAME=openclaw   # or hermes | deepagents — see agents/README.md
-export AGENT_SANDBOX_IMAGE=localhost:32000/nemoclaw-openclaw-k8s:${NEMOCLAW_VERSION}
+export AGENT_NAME=openclaw   # or hermes | deepagents — see agents/README.md#comparison
+export AGENT_SANDBOX_IMAGE=localhost:32000/nemoclaw-${AGENT_NAME}-k8s:${NEMOCLAW_VERSION}
 ./scripts/build-agent-sandbox-image.sh
 
 # If a node cannot pull, pre-load into containerd:
@@ -524,7 +531,7 @@ Use the same `AGENT_SANDBOX_IMAGE` (and `AGENT_NAME`) for `scripts/create-agent-
 ### Gateway and sandbox
 
 - Agent Sandbox CRDs are cluster-scoped; `install-openshell-k8s.sh` never installs them — apply the pinned manifest yourself.
-- Build image: `AGENT_NAME=… AGENT_SANDBOX_IMAGE=… ./scripts/build-agent-sandbox-image.sh` (versioned, non-`latest` tag; no API key in the image; see [`agents/README.md`](agents/README.md) for the three `AGENT_NAME` values). Prefer [MicroK8s local registry](#microk8s-local-registry) on MicroK8s.
+- Build image: `AGENT_NAME=… AGENT_SANDBOX_IMAGE=… ./scripts/build-agent-sandbox-image.sh` (versioned, non-`latest` tag; no API key in the image; see [`agents/README.md`](agents/README.md#comparison) for the three `AGENT_NAME` values). Prefer [MicroK8s local registry](#microk8s-local-registry) on MicroK8s.
 - OIDC is default. Unauthenticated mode is dedicated-cluster + port-forward only (`ALLOW_UNAUTHENTICATED_OPENSHELL=1` + ACK). ClusterIP does not isolate from other pods/users.
 - Client mTLS after port-forward:
 

@@ -35,54 +35,21 @@ Code, especially on `dgx02`-class (8×H100) hardware.
 | Default OpenShell provider name | `onprem-ollama` | `onprem-hermes` | `onprem-deepagents` |
 | Upstream policy grants `integrate.api.nvidia.com`? | Yes — removed by `create-agent-sandbox.sh` | Yes — removed by `create-agent-sandbox.sh` | No — nothing to remove |
 
-## Prerequisites
+## Selecting an agent
 
-Everything in the recipe root [Prerequisites](../README.md#prerequisites) — no agent adds
-anything beyond the shared OpenShell-path requirements (Docker Buildx + a registry every
-node can pull from, the OpenShell CLI, and Agent Sandbox CRDs).
-
-## Quick start
-
-Run from the recipe root (`examples/recipes/nvidia/kubernetes-gpu-autoscaling/`) after
-completing [steps 1–3](../README.md#quick-start) (clone, GPUs/DCGM, GPU inference + HPA)
-and the shared [Agent Sandbox CRDs + OpenShell gateway](../README.md#openshell-details)
-setup — both identical regardless of which agent you pick below.
+There is only **one** Quick start to run — the recipe root [`README.md`](../README.md#quick-start).
+This page has no commands of its own to copy-paste; it's reference material for whichever
+`AGENT_NAME` you set in [step 4](../README.md#4-agent-sandbox-image-openshell) of that
+Quick start (`openclaw`, `hermes`, or `deepagents` — see [Comparison](#comparison) below).
+The only place the three agents' commands actually diverge is the last line of
+[step 5](../README.md#5-connect-cli-and-create-sandbox): OpenClaw/Hermes keep
+`run-agent-sandbox.sh` in the foreground, Deep Agents Code runs one-shot prompts with
+`run-agent-prompt.sh "<prompt>"` instead (there's also `openshell sandbox exec -n
+deepagents-onprem -- dcode` for an interactive session — needs a TTY).
 
 Only run one agent's sandbox at a time unless you deliberately want to compare them side
 by side (each uses its own sandbox/provider name by default, so running more than one
 concurrently is possible but untested by this recipe).
-
-```bash
-# OpenClaw (default, most exercised by this recipe)
-export AGENT_NAME=openclaw
-export AGENT_SANDBOX_IMAGE=registry.example.com/team/nemoclaw-openclaw-k8s:v0.0.104
-./scripts/build-agent-sandbox-image.sh
-./scripts/create-agent-sandbox.sh
-./scripts/verify-agent-sandbox.sh
-./scripts/run-agent-sandbox.sh   # keep in foreground
-```
-
-```bash
-# Hermes
-export AGENT_NAME=hermes
-export AGENT_SANDBOX_IMAGE=registry.example.com/team/nemoclaw-hermes-k8s:v0.0.104
-./scripts/build-agent-sandbox-image.sh
-./scripts/create-agent-sandbox.sh
-./scripts/verify-agent-sandbox.sh
-./scripts/run-agent-sandbox.sh   # keep in foreground
-```
-
-```bash
-# Deep Agents Code — no gateway to keep running; run one-shot prompts instead
-export AGENT_NAME=deepagents
-export AGENT_SANDBOX_IMAGE=registry.example.com/team/nemoclaw-deepagents-k8s:v0.0.104
-./scripts/build-agent-sandbox-image.sh
-./scripts/create-agent-sandbox.sh
-./scripts/verify-agent-sandbox.sh
-./scripts/run-agent-prompt.sh "Explain this repository in one sentence."
-# Interactive session instead of one-shot prompts (needs a TTY):
-openshell sandbox exec -n deepagents-onprem -- dcode
-```
 
 Users do not paste an inference API key; the chart generates it and OpenShell injects
 Bearer auth. `create-agent-sandbox.sh` strips `integrate.api.nvidia.com` from OpenClaw's
@@ -188,16 +155,5 @@ is absent.
 
 ## Uninstall
 
-Stop the running agent (`run-agent-sandbox.sh` for OpenClaw/Hermes; Deep Agents Code exits
-after each `run-agent-prompt.sh` call — nothing to stop). With the OpenShell port-forward
-still up:
-
-```bash
-openshell sandbox delete "${AGENT_SANDBOX_NAME:?set to the sandbox you created}"
-openshell provider delete "${OPENSHELL_PROVIDER_NAME:?set to the provider you created}"
-openshell gateway remove nemoclaw-k8s
-rm -r -- "${XDG_CONFIG_HOME:-${HOME}/.config}/openshell/gateways/nemoclaw-k8s/mtls"
-```
-
-Then, if no other sandboxes/agents are using the shared OpenShell gateway, see the recipe
-root [Uninstall](../README.md#uninstall) for `helm uninstall openshell` and the GPU chart.
+See the recipe root [Uninstall](../README.md#uninstall) — it already covers all three
+agents' default sandbox/provider names.
