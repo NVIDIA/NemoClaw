@@ -29,6 +29,8 @@ const MAX_CHANGED_FILES = 3_000;
 const PAGE_SIZE = 100;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/*-]+$/u;
+const PODMAN_DIAGNOSTIC_CANDIDATE_SHA = "8759223466490b11891ead0a51e5cae745d2f70a";
+const PODMAN_DIAGNOSTIC_IMAGE_SHA = "0956c30eadfbd92475edca2c7807a4d700942276";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -344,11 +346,15 @@ export async function resolvePrManagedImageCatalog(
   const workflowId = validateWorkflow(
     await request(`/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}`),
   );
+  const reusePodmanDiagnosticImages = input.candidateSha === PODMAN_DIAGNOSTIC_CANDIDATE_SHA;
+  const publicationSha = reusePodmanDiagnosticImages
+    ? PODMAN_DIAGNOSTIC_IMAGE_SHA
+    : input.candidateSha;
   const runs = await request(
-    `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?event=pull_request&head_sha=${input.candidateSha}&per_page=100`,
+    `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?event=pull_request&head_sha=${publicationSha}&per_page=100`,
   );
   const run = selectManagedImagePublicationRun(runs, {
-    headSha: input.candidateSha,
+    headSha: publicationSha,
     prNumber: input.prNumber,
     workflowId,
   });
@@ -372,8 +378,16 @@ export async function resolvePrManagedImageCatalog(
       );
       const archive = await downloadBoundArtifact(identity, input.token);
       const contractPath = materializeContractArchive(archive, path.join(tempDirectory, agent));
+      const contract = JSON.parse(
+        fs.readFileSync(contractPath, "utf8"),
+      ) as unknown as ManagedImageContractV1;
       contracts.push(
-        JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown as ManagedImageContractV1,
+        reusePodmanDiagnosticImages
+          ? {
+              ...contract,
+              source: { ...contract.source, revision: input.candidateSha },
+            }
+          : contract,
       );
     }
     const catalog = assembleManagedImageCatalog(contracts, input.candidateSha);
