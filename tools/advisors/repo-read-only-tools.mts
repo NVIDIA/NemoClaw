@@ -21,6 +21,14 @@ type RepoPathGuard = {
   resolveExisting(candidate: string): Promise<string>;
 };
 
+export type AdvisorReadObservation = Readonly<{
+  path: string;
+  offset: number;
+  endOffset: number | null;
+  fileSize: number;
+  reachesEnd: boolean;
+}>;
+
 function isContainedPath(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
   return (
@@ -88,7 +96,7 @@ function createGuardedLsOperations(guard: RepoPathGuard): LsOperations {
  */
 export function createRepoConfinedReadOnlyTools(
   cwd: string,
-  onRead?: (path: string) => void,
+  onRead?: (observation: AdvisorReadObservation) => void,
 ): ToolDefinition[] {
   const guard = createRepoPathGuard(cwd);
 
@@ -103,7 +111,16 @@ export function createRepoConfinedReadOnlyTools(
       onUpdate,
       context,
     );
-    onRead?.(resolvedPath);
+    const truncation = result.details?.truncation;
+    const offset = Math.max(1, input.offset ?? 1);
+    const returnedLines = truncation?.outputLines ?? input.limit;
+    onRead?.({
+      path: resolvedPath,
+      offset,
+      endOffset: returnedLines === undefined ? null : offset + returnedLines - 1,
+      fileSize: (await fs.promises.stat(resolvedPath)).size,
+      reachesEnd: input.limit === undefined && !truncation?.truncated,
+    });
     return result;
   };
 

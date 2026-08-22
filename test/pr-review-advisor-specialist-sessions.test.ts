@@ -88,29 +88,78 @@ describe("specialist Pi session inputs", () => {
     expect(turn.prompt).toContain("explicit review-completeness limitation");
   });
 
-  it("requires a successful ordinary read of every available trace before synthesis text", () => {
+  it("requires complete contiguous ordinary-read coverage before synthesis text", () => {
     const turn = buildSynthesisTurn(validateSpecialistSessionDirectory(fixture()));
     const tools = resolveAdvisorTurnTools(turn, [], new Set(["read", "grep", "find", "ls"]));
     const paths = turn.requiredReadPaths ?? [];
-    const complete = paths.flatMap((readPath) => [
-      { type: "tool_start" as const, toolName: "read" },
-      { type: "tool_end" as const, toolName: "read", isError: false },
-      { type: "read" as const, path: readPath },
-    ]);
+    const read = (
+      readPath: string,
+      offset: number,
+      endOffset: number | null,
+      reachesEnd: boolean,
+    ) => ({
+      type: "read" as const,
+      path: readPath,
+      offset,
+      endOffset,
+      fileSize: 256,
+      reachesEnd,
+    });
+    const complete = paths.map((readPath) => read(readPath, 1, null, true));
+    const receipt = { type: "text" as const, text: "receipt" };
 
-    expect(
-      advisorTurnFlowErrors("synthesize", [...complete, { type: "text", text: "receipt" }], tools),
-    ).toEqual([]);
+    expect(advisorTurnFlowErrors("synthesize", [...complete, receipt], tools)).toEqual([]);
+    const incompleteError = `synthesize incompletely read required path: ${paths[0]}`;
     expect(
       advisorTurnFlowErrors(
         "synthesize",
-        [...complete.slice(0, -3), { type: "text", text: "receipt" }],
+        [read(paths[0]!, 1, 1, false), ...complete.slice(1), receipt],
         tools,
       ),
-    ).toContain(`synthesize omitted required read: ${paths.at(-1)}`);
+    ).toContain(incompleteError);
     expect(
-      advisorTurnFlowErrors("synthesize", [{ type: "text", text: "early" }, ...complete], tools),
+      advisorTurnFlowErrors(
+        "synthesize",
+        [read(paths[0]!, 1, 10, false), ...complete.slice(1), receipt],
+        tools,
+      ),
+    ).toContain(incompleteError);
+    expect(
+      advisorTurnFlowErrors(
+        "synthesize",
+        [
+          read(paths[0]!, 1, 10, false),
+          read(paths[0]!, 12, null, true),
+          ...complete.slice(1),
+          receipt,
+        ],
+        tools,
+      ),
+    ).toContain(incompleteError);
+    expect(
+      advisorTurnFlowErrors(
+        "synthesize",
+        [
+          read(paths[0]!, 1, 10, false),
+          receipt,
+          read(paths[0]!, 11, null, true),
+          ...complete.slice(1),
+        ],
+        tools,
+      ),
     ).toContain(`synthesize emitted text before required read completed: ${paths[0]}`);
+    expect(
+      advisorTurnFlowErrors(
+        "synthesize",
+        [
+          read(paths[0]!, 1, 10, false),
+          read(paths[0]!, 11, null, true),
+          ...complete.slice(1),
+          receipt,
+        ],
+        tools,
+      ),
+    ).toEqual([]);
   });
 
   it("rejects unexpected files", () => {

@@ -87,7 +87,14 @@ export type AdvisorTurnTools = {
 
 export type AdvisorTurnFlowEvent =
   | { type: "text"; text: string }
-  | { type: "read"; path: string }
+  | {
+      type: "read";
+      path: string;
+      offset: number;
+      endOffset: number | null;
+      fileSize: number;
+      reachesEnd: boolean;
+    }
   | { type: "tool_start"; toolName: string }
   | { type: "tool_end"; toolName: string; isError: boolean };
 
@@ -329,9 +336,34 @@ export function advisorTurnFlowErrors(
     }
   }
   for (const requiredPath of tools.requiredReadPaths ?? []) {
-    const read = events.findIndex((event) => event.type === "read" && event.path === requiredPath);
-    if (read < 0) errors.push(`${turnName} omitted required read: ${requiredPath}`);
-    else if (firstText >= 0 && read > firstText) {
+    const reads = events.flatMap((event, index) =>
+      event.type === "read" && event.path === requiredPath ? [{ event, index }] : [],
+    );
+    if (reads.length === 0) {
+      errors.push(`${turnName} omitted required read: ${requiredPath}`);
+      continue;
+    }
+    const fileSizes = new Set(reads.map(({ event }) => event.fileSize));
+    const ranges = reads
+      .filter(({ event }) => event.endOffset !== null)
+      .map(({ event }) => ({ start: event.offset, end: event.endOffset! }))
+      .sort((left, right) => left.start - right.start);
+    let coveredThrough = 0;
+    for (const range of ranges) {
+      if (range.start > coveredThrough + 1) break;
+      coveredThrough = Math.max(coveredThrough, range.end);
+    }
+    const complete =
+      fileSizes.size === 1 &&
+      reads.some(
+        ({ event }) => event.reachesEnd && event.offset <= coveredThrough + 1 && event.fileSize > 0,
+      );
+    if (!complete) errors.push(`${turnName} incompletely read required path: ${requiredPath}`);
+    let completedAt: number | undefined;
+    for (const { event, index } of reads) {
+      if (event.reachesEnd && event.offset <= coveredThrough + 1) completedAt = index;
+    }
+    if (firstText >= 0 && (completedAt === undefined || completedAt > firstText)) {
       errors.push(`${turnName} emitted text before required read completed: ${requiredPath}`);
     }
   }

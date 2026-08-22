@@ -364,8 +364,8 @@ export async function runReadOnlyAdvisor(
   const contextTools = createAdvisorContextToolRuntime(promptTurns);
   let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
   const customTools = [
-    ...createRepoConfinedReadOnlyTools(options.cwd, (readPath) => {
-      currentTurnFlow.push({ type: "read", path: readPath });
+    ...createRepoConfinedReadOnlyTools(options.cwd, (observation) => {
+      currentTurnFlow.push({ type: "read", ...observation });
     }),
     ...contextTools.customTools,
   ];
