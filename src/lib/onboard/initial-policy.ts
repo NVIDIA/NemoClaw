@@ -324,6 +324,10 @@ type InitialPolicyOptions = {
   agentName?: string | null;
   policyTier?: string | null;
   baselineExclusions?: readonly BaselineExclusionRequest[];
+  runtimeProcessIdentity?: {
+    readonly runAsUser: string;
+    readonly runAsGroup: string;
+  } | null;
 };
 
 type PolicyMaterializer = (content: string, prefix: string) => InitialSandboxPolicy;
@@ -358,6 +362,34 @@ export function getNetworkPolicyNames(policyContent: string): Set<string> | null
   } catch {
     return null;
   }
+}
+
+const POLICY_PROCESS_IDENTITY = /^(?:[a-z_][a-z0-9_-]{0,31}|[0-9]{1,10})$/u;
+
+export function buildRuntimeProcessPolicyYaml(
+  policyContent: string,
+  identity: Readonly<{ runAsUser: string; runAsGroup: string }>,
+): string {
+  if (
+    !POLICY_PROCESS_IDENTITY.test(identity.runAsUser) ||
+    !POLICY_PROCESS_IDENTITY.test(identity.runAsGroup)
+  ) {
+    throw new Error("Runtime provider sandbox process identity is invalid.");
+  }
+  const parsed = YAML.parse(policyContent) as unknown;
+  if (!isObjectRecord(parsed)) {
+    throw new Error("Cannot prepare runtime provider sandbox policy; base policy is not a mapping.");
+  }
+  const configuredProcess = parsed.process;
+  if (configuredProcess !== undefined && !isObjectRecord(configuredProcess)) {
+    throw new Error("Cannot prepare runtime provider sandbox policy; process is not a mapping.");
+  }
+  parsed.process = {
+    ...(configuredProcess ?? {}),
+    run_as_user: identity.runAsUser,
+    run_as_group: identity.runAsGroup,
+  };
+  return YAML.stringify(parsed);
 }
 
 function filterHermesInactiveMessagingPolicies(
@@ -419,6 +451,12 @@ function resolveInitialSandboxCreatePolicy(
     effectivePolicy = next;
     basePolicy = content;
   };
+  if (options.runtimeProcessIdentity) {
+    adoptPolicy(
+      buildRuntimeProcessPolicyYaml(basePolicy, options.runtimeProcessIdentity),
+      "nemoclaw-runtime-policy",
+    );
+  }
   if (options.directGpu) {
     adoptPolicy(
       buildDirectGpuPolicyYaml(basePolicy, {

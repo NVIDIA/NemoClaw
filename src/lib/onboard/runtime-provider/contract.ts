@@ -120,6 +120,11 @@ export interface RuntimeProviderGatewayHostRuntime {
     readonly label: string;
     readonly value: string;
   };
+  /** Provider-owned OpenShell process identity required for a managed bootstrap hold. */
+  readonly sandboxPolicyProcessIdentity?: {
+    readonly runAsUser: string;
+    readonly runAsGroup: string;
+  } | null;
   readonly gatewayConfig: {
     readonly sandboxNamespace: "scoped" | "omitted";
     readonly hostGatewayIp: string | null;
