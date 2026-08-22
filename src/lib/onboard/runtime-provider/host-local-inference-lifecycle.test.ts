@@ -390,12 +390,10 @@ describe("host-local inference lifecycle authority", () => {
     );
 
     expect(
-      retirePreparedHostLocalInferenceAuthority(
-        runtimeProvider.bundle,
+      retirePreparedHostLocalInferenceAuthority(runtimeProvider.bundle, alpha, prepared, [
+        beta,
         alpha,
-        prepared,
-        [beta, alpha],
-      ).status,
+      ]).status,
     ).toBe("shared");
     expect(runtimeProvider.destroy).not.toHaveBeenCalled();
   });
@@ -425,17 +423,27 @@ describe("host-local inference lifecycle authority", () => {
     );
 
     expect(
-      retirePreparedHostLocalInferenceAuthority(
-        qualified.bundle,
-        entry,
-        prepared,
-        [entry],
-      ).status,
+      retirePreparedHostLocalInferenceAuthority(qualified.bundle, entry, prepared, [entry]).status,
     ).toBe("removed");
     expect(qualified.createOperation).toHaveBeenCalledOnce();
     expect(qualified.assertAuthority).toHaveBeenCalledTimes(2);
     expect(qualified.destroy).toHaveBeenCalledOnce();
     expect(drifted.destroy).not.toHaveBeenCalled();
+  });
+
+  it.each(SERVICES)("reuses the pre-delete %s operation during retirement (#9888)", (service) => {
+    const runtimeProvider = provider();
+    const entry = sandbox("alpha", receipt(service));
+    const prepared = requiredPrepared(
+      prepareSandboxHostLocalInferenceDestroyAuthority(runtimeProvider.bundle, entry),
+    );
+
+    expect(
+      retirePreparedHostLocalInferenceAuthority(runtimeProvider.bundle, entry, prepared, [entry])
+        .status,
+    ).toBe(service === "ollama" ? "retained" : "removed");
+    expect(runtimeProvider.createOperation).toHaveBeenCalledOnce();
+    expect(runtimeProvider.assertAuthority).toHaveBeenCalledTimes(2);
   });
 
   it("refuses provenance-tracked retirement when prepared authority drifts (#9888)", () => {
@@ -490,12 +498,10 @@ describe("host-local inference lifecycle authority", () => {
     );
 
     expect(() =>
-      retirePreparedHostLocalInferenceAuthority(
-        runtimeProvider.bundle,
+      retirePreparedHostLocalInferenceAuthority(runtimeProvider.bundle, alpha, prepared, [
         alpha,
-        prepared,
-        [alpha, beta],
-      ),
+        beta,
+      ]),
     ).toThrow(/conflicting gateway, route, or provenance authority/);
     expect(runtimeProvider.destroy).not.toHaveBeenCalled();
   });
@@ -526,12 +532,10 @@ describe("host-local inference lifecycle authority", () => {
     );
 
     expect(() =>
-      retirePreparedHostLocalInferenceAuthority(
-        runtimeProvider.bundle,
+      retirePreparedHostLocalInferenceAuthority(runtimeProvider.bundle, alpha, prepared, [
         alpha,
-        prepared,
-        [alpha, beta],
-      ),
+        beta,
+      ]),
     ).toThrow(/conflicting gateway, route, or provenance authority/);
     expect(runtimeProvider.destroy).not.toHaveBeenCalled();
   });
@@ -562,12 +566,10 @@ describe("host-local inference lifecycle authority", () => {
     );
 
     expect(() =>
-      retirePreparedHostLocalInferenceAuthority(
-        runtimeProvider.bundle,
+      retirePreparedHostLocalInferenceAuthority(runtimeProvider.bundle, alpha, prepared, [
         alpha,
-        prepared,
-        [alpha, beta],
-      ),
+        beta,
+      ]),
     ).toThrow(/conflicting gateway, route, or provenance authority/);
     expect(runtimeProvider.destroy).not.toHaveBeenCalled();
   });

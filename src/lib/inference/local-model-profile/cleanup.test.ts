@@ -9,14 +9,16 @@ import { afterEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import * as dockerLlamaCppOperation from "../../onboard/runtime-provider/docker-llama-cpp-operation";
 import { privateBridgeFixture } from "../../onboard/runtime-provider/docker-llama-cpp-private-bridge.test-support";
-import { createHostLocalCreateJournalStore } from "../../onboard/runtime-provider/host-local-create-journal";
+import {
+  createHostLocalCreateJournalStore,
+  HOST_LOCAL_CREATE_JOURNAL_DIRECTORY,
+} from "../../onboard/runtime-provider/host-local-create-journal";
 import { serializeHostLocalInferenceReceipt } from "../../onboard/runtime-provider/host-local-inference";
 import {
   loadManagedLlamaCppReceipt,
   managedLlamaCppStatePaths,
   reserveManagedLlamaCppOwner,
 } from "../llama-cpp/managed-state";
-import { HOST_LOCAL_CREATE_JOURNAL_DIRECTORY } from "../../onboard/runtime-provider/host-local-create-journal";
 import { PERSISTED_ENGINE_AUTHORITY_DIRECTORY } from "../../onboard/runtime-provider/persisted-engine-authority";
 import { runtimeAuthFingerprint } from "../serving/runtime-auth-fingerprint";
 import {
@@ -858,6 +860,28 @@ describe("host-local model cleanup", () => {
       expect.any(Number),
     );
     expect(fs.existsSync(paths.stateDir)).toBe(true);
+  });
+
+  it("refuses missing private state after cleanup preparation (#9888)", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine);
+    const paths = managedLlamaCppStatePaths(homeDir);
+    const prepared = prepareManagedLlamaCppRuntimeCleanupForSandbox("spark-agent", {
+      homeDir,
+      engine: harness.engine,
+    });
+    fs.rmSync(paths.stateDir, { recursive: true });
+    harness.capture.mockClear();
+
+    expect(prepared?.cleanup()).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("private authority changed after cleanup preparation"),
+    });
+    expect(harness.capture).not.toHaveBeenCalledWith(
+      ["rm", "--force", RUNTIME_ID],
+      expect.any(Number),
+    );
   });
 
   it("rejects receipt and journal disagreement during pre-delete qualification (#9888)", () => {

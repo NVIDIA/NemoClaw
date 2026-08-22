@@ -302,7 +302,7 @@ This authority includes Docker endpoint selection and identity, Docker executabl
 When cleanup relies on private managed llama.cpp state, NemoClaw proves Docker availability and the exact container and network before any OpenShell command.
 It retains the identity of that private lifecycle state across sandbox deletion and rejects cleanup if the identity changes.
 If any pre-delete proof fails, NemoClaw reports the error and stops the destroy operation.
-If `$$nemoclaw list` no longer shows the sandbox, `destroy` can still reconcile leftover managed llama.cpp state that names it.
+If `$$nemoclaw list` no longer shows the sandbox, `destroy` can still reconcile leftover managed llama.cpp state that names it when the command uses the original `NEMOCLAW_GATEWAY_PORT`.
 
 If the reported Docker operation authority mismatch involves endpoint selection, inspect the current Docker configuration and selectors:
 
