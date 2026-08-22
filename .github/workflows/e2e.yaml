@@ -2539,7 +2539,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@390607132e74cac168764f511775c281fca4a557
         with:
           enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
@@ -2728,7 +2728,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@390607132e74cac168764f511775c281fca4a557
         with:
           enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
@@ -2898,7 +2898,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@390607132e74cac168764f511775c281fca4a557
         with:
           enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
@@ -3164,7 +3164,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@390607132e74cac168764f511775c281fca4a557
         with:
           enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
@@ -3468,7 +3468,7 @@ jobs:
         run: npx tsx tools/e2e/runner-comparison.mts initialize
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@390607132e74cac168764f511775c281fca4a557
         with:
           enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
@@ -3602,7 +3602,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@390607132e74cac168764f511775c281fca4a557
         with:
           enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
@@ -3861,7 +3861,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@390607132e74cac168764f511775c281fca4a557
         with:
           enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
@@ -4033,7 +4033,7 @@ jobs:
           build-cli: "false"
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@390607132e74cac168764f511775c281fca4a557
         with:
           enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
@@ -4679,7 +4679,7 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@390607132e74cac168764f511775c281fca4a557
         with:
           enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
@@ -4947,7 +4947,7 @@ jobs:
         run: npx tsx tools/e2e/runner-comparison.mts initialize
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@390607132e74cac168764f511775c281fca4a557
         with:
           enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
@@ -5113,7 +5113,7 @@ jobs:
           node-version: "22"
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@390607132e74cac168764f511775c281fca4a557
         with:
           enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
@@ -5361,7 +5361,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@390607132e74cac168764f511775c281fca4a557
         with:
           enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
@@ -5490,7 +5490,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@390607132e74cac168764f511775c281fca4a557
         with:
           enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
@@ -5574,7 +5574,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@390607132e74cac168764f511775c281fca4a557
         with:
           enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
@@ -5655,7 +5655,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@f438e5428a0d11125eb1e91398d7612e0a8e3292
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@390607132e74cac168764f511775c281fca4a557
         with:
           enabled: ${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}
 
