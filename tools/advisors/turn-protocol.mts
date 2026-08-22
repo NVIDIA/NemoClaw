@@ -335,6 +335,7 @@ export function advisorTurnFlowErrors(
       errors.push(`${turnName} emitted text before ${toolName} completed`);
     }
   }
+  const requiredReadCompletionIndexes = new Map<string, number>();
   for (const requiredPath of tools.requiredReadPaths ?? []) {
     const reads = events.flatMap((event, index) =>
       event.type === "read" && event.path === requiredPath ? [{ event, index }] : [],
@@ -344,27 +345,47 @@ export function advisorTurnFlowErrors(
       continue;
     }
     const fileSizes = new Set(reads.map(({ event }) => event.fileSize));
-    const ranges = reads
-      .filter(({ event }) => event.endOffset !== null)
-      .map(({ event }) => ({ start: event.offset, end: event.endOffset! }))
-      .sort((left, right) => left.start - right.start);
-    let coveredThrough = 0;
-    for (const range of ranges) {
-      if (range.start > coveredThrough + 1) break;
-      coveredThrough = Math.max(coveredThrough, range.end);
-    }
-    const complete =
-      fileSizes.size === 1 &&
-      reads.some(
-        ({ event }) => event.reachesEnd && event.offset <= coveredThrough + 1 && event.fileSize > 0,
-      );
-    if (!complete) errors.push(`${turnName} incompletely read required path: ${requiredPath}`);
+    const ranges: Array<{ start: number; end: number }> = [];
+    const endOffsets: number[] = [];
     let completedAt: number | undefined;
     for (const { event, index } of reads) {
-      if (event.reachesEnd && event.offset <= coveredThrough + 1) completedAt = index;
+      if (event.endOffset !== null) {
+        ranges.push({ start: event.offset, end: event.endOffset });
+        ranges.sort((left, right) => left.start - right.start);
+      }
+      if (event.reachesEnd && event.fileSize > 0) endOffsets.push(event.offset);
+      let coveredThrough = 0;
+      for (const range of ranges) {
+        if (range.start > coveredThrough + 1) break;
+        coveredThrough = Math.max(coveredThrough, range.end);
+      }
+      if (fileSizes.size === 1 && endOffsets.some((offset) => offset <= coveredThrough + 1)) {
+        completedAt ??= index;
+      }
+    }
+    if (completedAt === undefined) {
+      errors.push(`${turnName} incompletely read required path: ${requiredPath}`);
+    } else {
+      requiredReadCompletionIndexes.set(requiredPath, completedAt);
     }
     if (firstText >= 0 && (completedAt === undefined || completedAt > firstText)) {
       errors.push(`${turnName} emitted text before required read completed: ${requiredPath}`);
+    }
+  }
+  if ((tools.requiredReadPaths?.length ?? 0) > 0) {
+    const allReadsCompletedAt =
+      requiredReadCompletionIndexes.size === tools.requiredReadPaths!.length
+        ? Math.max(...requiredReadCompletionIndexes.values())
+        : Number.POSITIVE_INFINITY;
+    const earlyTool = events.find(
+      (event, index) =>
+        index < allReadsCompletedAt &&
+        event.type !== "text" &&
+        event.type !== "read" &&
+        event.toolName !== "read",
+    );
+    if (earlyTool && earlyTool.type !== "text" && earlyTool.type !== "read") {
+      errors.push(`${turnName} called ${earlyTool.toolName} before required reads completed`);
     }
   }
   if (tools.atomicTerminalToolName) {

@@ -92,6 +92,11 @@ describe("specialist Pi session inputs", () => {
     const turn = buildSynthesisTurn(validateSpecialistSessionDirectory(fixture()));
     const tools = resolveAdvisorTurnTools(turn, [], new Set(["read", "grep", "find", "ls"]));
     const paths = turn.requiredReadPaths ?? [];
+    expect(turn.activeToolNames).toEqual(["read", "grep", "find", "ls"]);
+    expect(turn.prompt).toContain(
+      "Before you write any text, read each available file contiguously from line 1 through EOF",
+    );
+    expect(turn.prompt).toContain("Until every available file reaches EOF, emit only `read` calls");
     const read = (
       readPath: string,
       offset: number,
@@ -107,8 +112,32 @@ describe("specialist Pi session inputs", () => {
     });
     const complete = paths.map((readPath) => read(readPath, 1, null, true));
     const receipt = { type: "text" as const, text: "receipt" };
+    const toolCall = (toolName: string) => [
+      { type: "tool_start" as const, toolName },
+      { type: "tool_end" as const, toolName, isError: false },
+    ];
 
     expect(advisorTurnFlowErrors("synthesize", [...complete, receipt], tools)).toEqual([]);
+    expect(
+      ["grep", "find", "ls", "other_tool"].map((toolName) =>
+        advisorTurnFlowErrors(
+          "synthesize",
+          [read(paths[0]!, 1, 10, false), ...toolCall(toolName), ...complete, receipt],
+          tools,
+        ),
+      ),
+    ).toEqual(
+      ["grep", "find", "ls", "other_tool"].map((toolName) =>
+        expect.arrayContaining([`synthesize called ${toolName} before required reads completed`]),
+      ),
+    );
+    expect(
+      advisorTurnFlowErrors(
+        "synthesize",
+        [...complete, ...["grep", "find", "ls"].flatMap(toolCall), receipt],
+        tools,
+      ),
+    ).toEqual([]);
     const incompleteError = `synthesize incompletely read required path: ${paths[0]}`;
     expect(
       advisorTurnFlowErrors(
