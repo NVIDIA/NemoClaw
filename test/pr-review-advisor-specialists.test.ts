@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { TERMINOLOGY_TRACE_TOOL } from "../tools/pr-review-advisor/terminology.mts";
 import { runSpecialistAdvisor } from "../tools/pr-review-advisor/run-specialist.mts";
@@ -13,6 +18,16 @@ import {
   type AdvisorInterest,
 } from "../tools/pr-review-advisor/specialists.mts";
 import type { InvestigateTurnContext } from "../tools/pr-review-advisor/investigate-turn.mts";
+
+type CallableTool = ToolDefinition & {
+  execute(
+    toolCallId: string,
+    params: Record<string, unknown>,
+    signal: AbortSignal | undefined,
+    onUpdate: undefined,
+    context: never,
+  ): Promise<{ content: Array<{ type: string; text?: string }> }>;
+};
 
 const context: InvestigateTurnContext = {
   scopeRisk: { riskPlan: { invariants: ["preserve identity"] } },
@@ -81,7 +96,22 @@ describe("PR review advisor specialist prompts", () => {
   );
 
   it("passes terminology tracing only to the documentation specialist runner (#9968)", async () => {
-    const captured: Array<[AdvisorInterest, string[]]> = [];
+    const directory = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-runner-"));
+    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const git = (args: string[]) =>
+      execFileSync("git", args, { cwd: directory, encoding: "utf8" }).trim();
+    git(["init", "--quiet"]);
+    git(["config", "user.name", "Specialist Test"]);
+    git(["config", "user.email", "specialist@example.invalid"]);
+    fs.writeFileSync(path.join(directory, "guide.md"), "# Guide\n");
+    git(["add", "guide.md"]);
+    git(["-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "base"]);
+    const baseRef = git(["rev-parse", "HEAD"]);
+    fs.appendFileSync(path.join(directory, "guide.md"), "Checkout-bound terminology.\n");
+    git(["add", "guide.md"]);
+    git(["-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "head"]);
+    const headRef = git(["rev-parse", "HEAD"]);
+    const captured: Array<[AdvisorInterest, ToolDefinition[]]> = [];
     const result: RunAdvisorResult = {
       text: "",
       raw: "",
@@ -90,7 +120,7 @@ describe("PR review advisor specialist prompts", () => {
       turnCallbackErrors: [],
     };
     const options: Omit<RunReadOnlyAdvisorOptions, "customTools"> = {
-      cwd: process.cwd(),
+      cwd: directory,
       promptTurns: [],
       systemPrompt: "system",
       configDir: "/tmp/advisor-config",
@@ -107,23 +137,34 @@ describe("PR review advisor specialist prompts", () => {
       ADVISOR_INTERESTS.map((interest) =>
         runSpecialistAdvisor(
           interest,
-          { baseRef: "origin/main", headRef: "HEAD" },
+          { baseRef, headRef },
           options,
           async (runnerOptions) => {
-            captured.push([interest, runnerOptions.customTools?.map(({ name }) => name) ?? []]);
+            captured.push([interest, runnerOptions.customTools ?? []]);
             return result;
           },
         ),
       ),
     );
 
-    expect(captured).toEqual([
+    expect(captured.map(([interest, tools]) => [interest, tools.map(({ name }) => name)])).toEqual([
       ["behavior", []],
       ["trust", []],
       ["design-architecture", []],
       ["operations", []],
       ["documentation", [TERMINOLOGY_TRACE_TOOL]],
     ]);
+    const documentationTools = captured.find(([interest]) => interest === "documentation")?.[1] ?? [];
+    const trace = documentationTools[0] as CallableTool;
+    const evidence = await trace.execute(
+      "trace-1",
+      { term: "checkout-bound" },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+    const evidenceText = evidence.content.find((item) => item.type === "text")?.text;
+    expect(evidenceText).toContain("Checkout-bound terminology.");
   });
 
   it.each(ADVISOR_INTERESTS)(

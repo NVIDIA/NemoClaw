@@ -56,7 +56,10 @@ export function runSpecialistAdvisor(
   options: Omit<RunReadOnlyAdvisorOptions, "customTools">,
   run: (options: RunReadOnlyAdvisorOptions) => Promise<RunAdvisorResult> = runReadOnlyAdvisor,
 ): Promise<RunAdvisorResult> {
-  return run({ ...options, customTools: documentationSpecialistTools(interest, refs) });
+  return run({
+    ...options,
+    customTools: documentationSpecialistTools(interest, { ...refs, cwd: options.cwd }),
+  });
 }
 
 async function main(): Promise<void> {
