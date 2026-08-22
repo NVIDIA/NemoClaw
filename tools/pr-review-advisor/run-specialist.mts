@@ -13,10 +13,18 @@ import {
   DEFAULT_ADVISOR_PROVIDER,
   advisorRunErrors,
   runReadOnlyAdvisor,
+  type RunAdvisorResult,
+  type RunReadOnlyAdvisorOptions,
 } from "../advisors/session.mts";
 import { collectDeterministicContext } from "./deterministic-context.mts";
 import { collectGitHubReviewContext } from "./github-context.mts";
-import { buildSpecialistInvestigateTurn, parseAdvisorInterest } from "./specialists.mts";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import {
+  buildSpecialistInvestigateTurn,
+  parseAdvisorInterest,
+  type AdvisorInterest,
+} from "./specialists.mts";
+import { createTerminologyToolController } from "./terminology.mts";
 import {
   buildSystemPrompt,
   readParsedTrustedSecurityRubric,
@@ -32,6 +40,27 @@ import {
 } from "./turn-context.mts";
 
 const CREDENTIAL_ENV = ["PR", "REVIEW", "ADVISOR", "API", "KEY"].join("_");
+
+export function documentationSpecialistTools(
+  interest: AdvisorInterest,
+  { baseRef, headRef, cwd = process.cwd() }: { baseRef: string; headRef: string; cwd?: string },
+): ToolDefinition[] {
+  return interest === "documentation"
+    ? createTerminologyToolController({ baseRef, headRef, cwd }).tools
+    : [];
+}
+
+export function runSpecialistAdvisor(
+  interest: AdvisorInterest,
+  refs: { baseRef: string; headRef: string },
+  options: Omit<RunReadOnlyAdvisorOptions, "customTools">,
+  run: (options: RunReadOnlyAdvisorOptions) => Promise<RunAdvisorResult> = runReadOnlyAdvisor,
+): Promise<RunAdvisorResult> {
+  return run({
+    ...options,
+    customTools: documentationSpecialistTools(interest, { ...refs, cwd: options.cwd }),
+  });
+}
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
@@ -75,24 +104,28 @@ async function main(): Promise<void> {
     operations: buildOperationsTurnContext(deterministic),
     reconciliation: buildReconciliationTurnContext(deterministic),
   });
-  const run = await runReadOnlyAdvisor({
-    cwd: process.cwd(),
-    promptTurns: [turn],
-    systemPrompt: buildSystemPrompt(readParsedTrustedSecurityRubric()),
-    configDir,
-    htmlExportPath: path.join(outDir, `pr-review-${interest}-session.html`),
-    timeoutMs: parsePositiveInt(process.env.PR_REVIEW_ADVISOR_TIMEOUT_MS, 900000),
-    heartbeatMs: parsePositiveInt(process.env.PR_REVIEW_ADVISOR_HEARTBEAT_MS, 60000),
-    maxCaptureBytes: parsePositiveInt(
-      process.env.PR_REVIEW_ADVISOR_MAX_CAPTURE_BYTES,
-      5 * 1024 * 1024,
-    ),
-    provider: DEFAULT_ADVISOR_PROVIDER,
-    modelId: process.env.PR_REVIEW_ADVISOR_MODEL || DEFAULT_ADVISOR_MODEL,
-    credentialEnv: CREDENTIAL_ENV,
-    logPrefix: `pr-review-${interest}`,
-    logProgress: (message) => console.log(`[pr-review-${interest}] ${message}`),
-  });
+  const run = await runSpecialistAdvisor(
+    interest,
+    { baseRef, headRef },
+    {
+      cwd: process.cwd(),
+      promptTurns: [turn],
+      systemPrompt: buildSystemPrompt(readParsedTrustedSecurityRubric()),
+      configDir,
+      htmlExportPath: path.join(outDir, `pr-review-${interest}-session.html`),
+      timeoutMs: parsePositiveInt(process.env.PR_REVIEW_ADVISOR_TIMEOUT_MS, 900000),
+      heartbeatMs: parsePositiveInt(process.env.PR_REVIEW_ADVISOR_HEARTBEAT_MS, 60000),
+      maxCaptureBytes: parsePositiveInt(
+        process.env.PR_REVIEW_ADVISOR_MAX_CAPTURE_BYTES,
+        5 * 1024 * 1024,
+      ),
+      provider: DEFAULT_ADVISOR_PROVIDER,
+      modelId: process.env.PR_REVIEW_ADVISOR_MODEL || DEFAULT_ADVISOR_MODEL,
+      credentialEnv: CREDENTIAL_ENV,
+      logPrefix: `pr-review-${interest}`,
+      logProgress: (message) => console.log(`[pr-review-${interest}] ${message}`),
+    },
+  );
   const errors = advisorRunErrors(run);
   if (errors.length > 0) throw new Error(errors.join("; "));
   if (!run.sessionFile) throw new Error("Pi did not persist a specialist JSONL session");
