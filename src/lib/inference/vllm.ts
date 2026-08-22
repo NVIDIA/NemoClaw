@@ -518,7 +518,7 @@ function selectedGpuMemoryDevice(
   // Fixed host-local recipes use one tensor-parallel worker, so vLLM starts
   // on the first visible device even when Docker exposes every GPU.
   if (request === "all" || request === "device=all") {
-    return devices.find((device) => device.index === 0) ?? devices[0] ?? null;
+    return devices.find((device) => device.index === 0) ?? null;
   }
   if (!request.startsWith("device=")) return null;
   const selector = request.slice("device=".length).split(",")[0]?.trim();
@@ -534,9 +534,16 @@ export function gpuMemoryPreflight(
   devices: readonly GpuMemoryDevice[] = readGpuMemoryDevices(),
 ): { ok: true } | { ok: false; reason: string } {
   const utilization = profile.gpuMemoryUtilization;
-  if (utilization === undefined || devices.length === 0) return { ok: true };
+  if (utilization === undefined) return { ok: true };
   const device = selectedGpuMemoryDevice(profile, devices);
-  if (!device) return { ok: true };
+  if (!device) {
+    return {
+      ok: false,
+      reason:
+        `${model.label} could not read valid NVIDIA memory telemetry for the first GPU selected by Docker. ` +
+        "Check nvidia-smi and free the selected GPU, then resume onboarding.",
+    };
+  }
   const requiredBytes = BigInt(Math.ceil(Number(device.totalBytes) * utilization));
   if (device.freeBytes >= requiredBytes) return { ok: true };
   const missingBytes = requiredBytes - device.freeBytes;
@@ -1252,6 +1259,13 @@ function verifyDualStationVllmAuthBoundary(
   }
 }
 
+function sanitizeContainerLogOutput(output: string): string {
+  return redact(redactFull(stripVTControlCharacters(output.replace(/\r\n?/g, "\n")))).replace(
+    /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g,
+    "",
+  );
+}
+
 function readContainerLogTail(
   profile: VllmProfile,
   lineCount = 80,
@@ -1263,7 +1277,7 @@ function readContainerLogTail(
     includeStderr: true,
   }).trim();
   if (!output) return [];
-  const safeOutput = redact(redactFull(stripVTControlCharacters(output)));
+  const safeOutput = sanitizeContainerLogOutput(output);
   return safeOutput.split(/\r?\n/).slice(-lineCount);
 }
 
@@ -1819,9 +1833,7 @@ async function runVllmInstall(
 ): Promise<{ ok: boolean }> {
   const selection = resolveVllmInstallSelectionEnv(opts.modelIntent);
   if (!selection.ok) {
-    console.error(
-      "  vLLM install failed: the resumed model conflicts with NEMOCLAW_VLLM_MODEL.",
-    );
+    console.error("  vLLM install failed: the resumed model conflicts with NEMOCLAW_VLLM_MODEL.");
     return { ok: false };
   }
   const { env: selectionEnv, explicitModel } = selection;

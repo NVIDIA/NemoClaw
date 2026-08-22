@@ -283,9 +283,7 @@ function catalogModelVariant(
       serveEnv,
       installFastSafetensors: recipe.spec.model.installFastSafetensors,
       ...(directInstall.fixedArguments ? { fixedServeCommand: true as const } : {}),
-      ...(directInstall.authentication === "bearer"
-        ? { managedBearerAuth: true as const }
-        : {}),
+      ...(directInstall.authentication === "bearer" ? { managedBearerAuth: true as const } : {}),
       trustRemoteCode: false,
       selection: preset.spec.selection === "automatic" ? "automatic" : "explicit-only",
       interactive: preset.spec.plan.interactive !== false,
@@ -349,9 +347,7 @@ export function vllmModelsFromCatalog(
       const supportedPlatforms = new Set(ordered.map(({ platform }) => platform));
       const platforms = platformOrder.filter((platform) => supportedPlatforms.has(platform));
       const pickerPlatformSet = new Set(
-        ordered
-          .filter(({ variant }) => variant.interactive)
-          .map(({ platform }) => platform),
+        ordered.filter(({ variant }) => variant.interactive).map(({ platform }) => platform),
       );
       const pickerPlatforms = [
         ...platformOrder.filter((platform) => pickerPlatformSet.has(platform)),
@@ -668,6 +664,11 @@ export function parseVllmExtraServeArgs(env: NodeJS.ProcessEnv = process.env): s
     if (/[\u0000-\u001f\u007f]/.test(trimmed)) {
       throw new Error(
         `${VLLM_EXTRA_ARGS_ENV}[${String(index)}] must not contain control characters.`,
+      );
+    }
+    if (/^--gpu-memory-utilization(?:=|$)/.test(trimmed)) {
+      throw new Error(
+        `${VLLM_EXTRA_ARGS_ENV}[${String(index)}] must not override --gpu-memory-utilization.`,
       );
     }
     return trimmed;

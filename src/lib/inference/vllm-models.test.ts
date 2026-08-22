@@ -785,6 +785,12 @@ describe("parseVllmExtraServeArgs", () => {
         [VLLM_EXTRA_ARGS_ENV]: '["line\\nbreak"]',
       } as NodeJS.ProcessEnv),
     ).toThrow(/control characters/);
+
+    expect(() =>
+      parseVllmExtraServeArgs({
+        [VLLM_EXTRA_ARGS_ENV]: '["--gpu-memory-utilization=0.5"]',
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/must not override --gpu-memory-utilization/);
   });
 });
 

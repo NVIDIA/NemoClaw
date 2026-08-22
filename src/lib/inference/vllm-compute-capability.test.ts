@@ -97,7 +97,7 @@ function mockHostCommands(options: {
         return "/usr/bin/tool\n";
       case "nvidia-smi":
         return cmd.includes("--query-gpu=index,uuid,memory.total,memory.free")
-          ? (options.gpuMemory ?? "")
+          ? (options.gpuMemory ?? "0, GPU-1234, 97887, 90000\n")
           : options.computeCap;
       case "curl":
         return options.curl ?? READY_MODELS_RESPONSE;
@@ -236,8 +236,7 @@ describe("managed vLLM GPU compute capability preflight", () => {
   it.each(quantizedModels)("declares a minimum compute capability for $id (#8307)", (model) => {
     // NVIDIA's published Lightning recipe explicitly covers A100 (8.0);
     // device-specific runtime variants may raise this floor (Spark uses 12.1).
-    const expectedMinimum =
-      model.envValue === "nemotron-3.5-lightning-30b" ? 80 : 89;
+    const expectedMinimum = model.envValue === "nemotron-3.5-lightning-30b" ? 80 : 89;
     expect(model.minComputeCapability).toBeGreaterThanOrEqual(expectedMinimum);
   });
 });
@@ -323,6 +322,23 @@ describe("managed vLLM GPU memory preflight", () => {
       },
     ]);
   });
+
+  it("rejects missing telemetry for Docker's first selected GPU", () => {
+    const detected = detectVllmProfile({ type: "nvidia" })!;
+    const model = VLLM_MODELS.find((entry) => entry.envValue === "muse-glimmer-30b")!;
+    const profile = { ...detected, gpuMemoryUtilization: 0.75 };
+
+    expect(
+      gpuMemoryPreflight(model, profile, [
+        { index: 1, uuid: "GPU-1", totalBytes: 96n, freeBytes: 96n },
+      ]),
+    ).toEqual(
+      expect.objectContaining({
+        ok: false,
+        reason: expect.stringContaining("could not read valid NVIDIA memory telemetry"),
+      }),
+    );
+  });
 });
 
 describe("managed vLLM crash-loop watchdog", () => {
@@ -352,7 +368,7 @@ describe("managed vLLM crash-loop watchdog", () => {
     mockDockerDaemon(
       profile!.containerName,
       "3",
-      "\u001b[31mValueError: insufficient free GPU memory\u001b[0m\nOPENAI_API_KEY=secret-value",
+      "\u001b[31mValueError: insufficient free GPU memory\u001b[0m\r\nOPENAI_API_KEY=secret-value\u0007\u0000",
     );
 
     const result = await installVllm(profile!, {
@@ -373,6 +389,7 @@ describe("managed vLLM crash-loop watchdog", () => {
     expect(printedTail).toContain("ValueError: insufficient free GPU memory");
     expect(printedTail).not.toContain("\u001b");
     expect(printedTail).not.toContain("secret-value");
+    expect(printedTail).not.toMatch(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/);
   });
 
   it("keeps waiting below the startup restart limit (#8307)", async () => {
