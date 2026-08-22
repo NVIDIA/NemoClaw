@@ -639,10 +639,13 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       providerSpy.mock.calls[0][0].map((definition: { envKey: string }) => definition.envKey),
     ).toEqual(["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"]);
     expect(callOrder.indexOf("slackProbe:app")).toBeLessThan(
+      callOrder.indexOf("upsertMessagingProviders"),
+    );
+    expect(callOrder.indexOf("upsertMessagingProviders")).toBeLessThan(
       callOrder.indexOf("saveCredential:SLACK_BOT_TOKEN"),
     );
-    expect(callOrder.indexOf("saveCredential:SLACK_APP_TOKEN")).toBeLessThan(
-      callOrder.indexOf("upsertMessagingProviders"),
+    expect(callOrder.indexOf("upsertMessagingProviders")).toBeLessThan(
+      callOrder.indexOf("saveCredential:SLACK_APP_TOKEN"),
     );
   });
 
@@ -660,8 +663,8 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(
       providerSpy.mock.calls[0][0].map((definition: { envKey: string }) => definition.envKey),
     ).toEqual(["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"]);
-    expect(callOrder.indexOf("saveCredential:SLACK_APP_TOKEN")).toBeLessThan(
-      callOrder.indexOf("upsertMessagingProviders"),
+    expect(callOrder.indexOf("upsertMessagingProviders")).toBeLessThan(
+      callOrder.indexOf("saveCredential:SLACK_APP_TOKEN"),
     );
   });
 

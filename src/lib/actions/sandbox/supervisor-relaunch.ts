@@ -13,6 +13,7 @@ import {
   type DockerGpuPatchFinalizeOutcome,
   finalizeDockerGpuPatchBackup,
 } from "../../onboard/docker-gpu-patch-finalize";
+import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../onboard/docker-gpu-supervisor-reconnect";
 import { recreateOpenShellDockerSandboxWithStartupCommand } from "../../onboard/docker-startup-command-patch";
 import { buildSandboxRuntimeEnvArgs } from "../../onboard/sandbox-create-launch";
 import { resolveDirectSandboxContainer } from "../../sandbox/privileged-exec";
@@ -57,6 +58,7 @@ export type ManagedSupervisorRelaunchDeps = {
   removeBackup?: typeof sandboxState.removeSandboxStateBackup;
   recreate?: typeof recreateOpenShellDockerSandboxWithStartupCommand;
   finalize?: typeof finalizeDockerGpuPatchBackup;
+  runOpenshell?: NonNullable<Parameters<typeof finalizeDockerGpuPatchBackup>[1]>["runOpenshell"];
 };
 
 function inspectContainer(containerId: string): DockerContainerInspect {
@@ -284,8 +286,22 @@ export function relaunchManagedSupervisorSession(
           // both succeed.
           return finalizeFailure();
         }
+        const runLifecycleProbe = deps.runOpenshell;
+        if (!runLifecycleProbe) return finalizeFailure();
+        const lifecycleDeps = {
+          runOpenshell: runLifecycleProbe,
+          ...(deps.sleep ? { sleep: deps.sleep } : {}),
+        };
         const outcome = {
-          ...finalize({ result, supervisorReady: true }),
+          ...finalize(
+            {
+              result,
+              supervisorReady: true,
+              sandboxName,
+              lifecycleReleaseTimeoutSecs: getDockerGpuSupervisorReconnectTimeoutSecs(1),
+            },
+            lifecycleDeps,
+          ),
           stateRestored: true,
           stateBackupRemoved: removeSettledStateBackup(),
         };

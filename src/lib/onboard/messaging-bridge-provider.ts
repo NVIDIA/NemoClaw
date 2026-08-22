@@ -1,25 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Generic messaging-channel "bridge provider" wiring.
+// Messaging-channel custom provider-profile wiring.
 //
-// A messaging channel that mints its outbound token gateway-side (so the
-// secret never enters the sandbox) declares an OpenShell provider profile
+// A messaging channel that needs a custom OpenShell credential boundary or
+// mints its outbound token gateway-side declares an OpenShell provider profile
 // co-located with the channel at
 //   src/lib/messaging/channels/<channel>/provider-profile/<agent>.yaml
 // (the same per-channel convention as policy presets, <channel>/policy/<agent>.yaml).
 //
-// The profile YAML is the single source of truth: it declares the provider `id`
-// (used as `provider create --type <id>`), the injectable credential env var, and
-// the credential-refresh strategy + material shape. This module discovers those
-// profiles by convention and drives the two OpenShell steps that bracket provider
-// creation — `provider profile import` (before) and `provider refresh configure`
-// (after) — for ANY channel that has one, so no channel-specific logic lives in
-// the generic provider-upsert path. Today only Google Chat uses this; a second
-// minted-token channel needs only its own profile YAML.
+// The profile YAML is the single source of truth for the provider type and
+// injectable credential env var. A refresh block additionally marks a
+// gateway-minted bridge credential. This module imports every active custom
+// profile before provider creation and configures refresh only for profiles that
+// declare it.
 
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 import { compactText } from "../core/url-utils";
@@ -62,14 +60,22 @@ export interface MessagingBridgeProfile {
   readonly profileId: string;
   /** Injectable credential env var the gateway mints + the L7 proxy injects. */
   readonly credentialKey: string;
-  /** Credential-refresh strategy (OpenShell kebab-case, e.g. google-service-account-jwt). */
-  readonly strategy: string;
+  /** Credential-refresh strategy, or null for a caller-supplied static credential. */
+  readonly strategy: string | null;
   /** OAuth scope(s) declared in the profile's refresh block. */
   readonly scopes: readonly string[];
   /** Material names the profile marks `secret: true` (ingested through --secret-material-env). */
   readonly secretMaterialKeys: readonly string[];
   /** Env var holding the pasted secret material (the channel's primary required secret). */
   readonly sourceSecretEnv: string;
+}
+
+type RefreshingMessagingBridgeProfile = MessagingBridgeProfile & { readonly strategy: string };
+
+function hasRefreshStrategy(
+  profile: MessagingBridgeProfile,
+): profile is RefreshingMessagingBridgeProfile {
+  return profile.strategy !== null;
 }
 
 export interface ListMessagingBridgeProfilesDeps {
@@ -106,6 +112,14 @@ export interface EnsureMessagingBridgeProfilesDeps {
   readonly log?: (message?: string) => void;
   readonly exit?: (code?: number) => never;
   readonly profiles?: readonly MessagingBridgeProfile[];
+  readonly readFileSync?: (file: string) => string;
+}
+
+export interface MatchRegisteredStaticMessagingProfileDeps {
+  readonly root: string;
+  readonly runOpenshell: RunOpenshell;
+  readonly profiles?: readonly MessagingBridgeProfile[];
+  readonly readFileSync?: (file: string) => string;
 }
 
 export interface ConfigureMessagingBridgeRefreshesDeps extends MessagingBridgeSecretResolveDeps {
@@ -125,6 +139,86 @@ function bufferOrStringToText(value: string | Buffer | null | undefined): string
   if (value && typeof (value as Buffer).toString === "function")
     return (value as Buffer).toString();
   return "";
+}
+
+function credentialBoundary(doc: Record<string, unknown>): Record<string, unknown> | null {
+  if (
+    typeof doc.id !== "string" ||
+    !Array.isArray(doc.credentials) ||
+    !Array.isArray(doc.endpoints) ||
+    !Array.isArray(doc.binaries) ||
+    typeof doc.inference_capable !== "boolean"
+  ) {
+    return null;
+  }
+  const credentials = doc.credentials.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const credential = entry as Record<string, unknown>;
+    return {
+      name: credential.name,
+      env_vars: credential.env_vars,
+      required: credential.required,
+      auth_style: credential.auth_style,
+      header_name: credential.header_name,
+      query_param: credential.query_param,
+      refresh: credential.refresh ?? null,
+    };
+  });
+  if (credentials.some((entry) => entry === null)) return null;
+  return {
+    id: doc.id,
+    credentials,
+    endpoints: doc.endpoints,
+    binaries: doc.binaries,
+    inference_capable: doc.inference_capable,
+  };
+}
+
+function staticProfileMatchesCheckedInBoundary(
+  profile: MessagingBridgeProfile,
+  exported: string,
+  readFileSync: (file: string) => string,
+): boolean {
+  try {
+    const actual = JSON.parse(exported) as Record<string, unknown>;
+    const expected = YAML.parse(readFileSync(profile.profilePath)) as Record<string, unknown>;
+    const actualBoundary = credentialBoundary(actual);
+    const expectedBoundary = credentialBoundary(expected);
+    return (
+      actualBoundary !== null &&
+      expectedBoundary !== null &&
+      expectedBoundary.id === profile.profileId &&
+      Array.isArray(expectedBoundary.endpoints) &&
+      expectedBoundary.endpoints.length === 0 &&
+      Array.isArray(expectedBoundary.binaries) &&
+      expectedBoundary.binaries.length === 0 &&
+      expectedBoundary.inference_capable === false &&
+      isDeepStrictEqual(actualBoundary, expectedBoundary)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Compare a registered static profile with its checked-in credential boundary. */
+export function matchesRegisteredStaticMessagingProfile(
+  providerType: string,
+  deps: MatchRegisteredStaticMessagingProfileDeps,
+): boolean | null {
+  const profile = (deps.profiles ?? listMessagingBridgeProfiles({ root: deps.root })).find(
+    (candidate) => candidate.profileId === providerType && candidate.strategy === null,
+  );
+  if (!profile) return null;
+  const exported = deps.runOpenshell(
+    ["provider", "profile", "export", profile.profileId, "--output", "json"],
+    { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  if (exported.status !== 0) return false;
+  return staticProfileMatchesCheckedInBoundary(
+    profile,
+    bufferOrStringToText(exported.stdout),
+    deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8")),
+  );
 }
 
 function isSafeChannelId(value: string): boolean {
@@ -170,14 +264,17 @@ function parseProfileYaml(
   if (!credential) return null;
   const envVars = Array.isArray(credential.env_vars) ? credential.env_vars : [];
   const credentialKey = typeof envVars[0] === "string" ? envVars[0] : null;
+  if (!credentialKey) return null;
   const refresh = credential.refresh as Record<string, unknown> | undefined;
-  if (!credentialKey || !refresh) return null;
-  const strategy = refresh.strategy;
-  if (typeof strategy !== "string" || !strategy) return null;
-  const scopes = Array.isArray(refresh.scopes)
+  const strategy =
+    typeof refresh?.strategy === "string" && refresh.strategy ? refresh.strategy : null;
+  if (strategy === null && (!Array.isArray(doc?.endpoints) || doc.endpoints.length !== 0)) {
+    return null;
+  }
+  const scopes = Array.isArray(refresh?.scopes)
     ? refresh.scopes.filter((s): s is string => typeof s === "string")
     : [];
-  const material = Array.isArray(refresh.material) ? refresh.material : [];
+  const material = Array.isArray(refresh?.material) ? refresh.material : [];
   const secretMaterialKeys = material
     .filter(
       (m): m is { name: string; secret: true } =>
@@ -246,6 +343,19 @@ function bridgeProfilesForTokenDefs(
   return profiles.filter((profile) => presentProfileIds.has(profile.profileId));
 }
 
+/** Static custom provider type for one channel in the selected agent, if declared. */
+export function staticMessagingProviderTypeForChannel(
+  channelId: string,
+  agent: string | null | undefined,
+  profiles: readonly MessagingBridgeProfile[] = listMessagingBridgeProfiles(),
+): string | null {
+  return (
+    messagingBridgeProfilesForAgent(agent, profiles).find(
+      (profile) => profile.channelId === channelId && profile.strategy === null,
+    )?.profileId ?? null
+  );
+}
+
 /** Gateway-minted bridge provider name for a channel (sandbox-scoped). */
 function bridgeProviderNameFor(sandboxName: string, channelId: string): string {
   return `${sandboxName}-${channelId}-bridge`;
@@ -261,7 +371,9 @@ function bridgeProviderNameFor(sandboxName: string, channelId: string): string {
 export function collectMessagingBridgeTokenDefs(
   input: CollectMessagingBridgeTokenDefsInput,
 ): { name: string; envKey: string; token: string; providerType: string }[] {
-  const profiles = messagingBridgeProfilesForAgent(input.agent, input.profiles);
+  const profiles = messagingBridgeProfilesForAgent(input.agent, input.profiles).filter(
+    hasRefreshStrategy,
+  );
   const defs: { name: string; envKey: string; token: string; providerType: string }[] = [];
   for (const profile of profiles) {
     if (input.disabledChannelNames.has(profile.channelId)) continue;
@@ -307,7 +419,7 @@ export function bridgeProviderNamesForChannel(
   return [
     ...new Set(
       profiles
-        .filter((profile) => profile.channelId === channelName)
+        .filter((profile) => profile.channelId === channelName && hasRefreshStrategy(profile))
         .map((profile) => bridgeProviderNameFor(sandboxName, profile.channelId)),
     ),
   ];
@@ -324,7 +436,7 @@ export function bridgeSecretEnvsForChannel(
   return [
     ...new Set(
       profiles
-        .filter((profile) => profile.channelId === channelName)
+        .filter((profile) => profile.channelId === channelName && hasRefreshStrategy(profile))
         .map((profile) => profile.sourceSecretEnv),
     ),
   ];
@@ -346,6 +458,15 @@ export function ensureMessagingBridgeProfiles(
 
   const errorLog = deps.log ?? console.error;
   const exit = deps.exit ?? ((code?: number) => process.exit(code));
+  const readFileSync = deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8"));
+
+  const rejectMismatchedStaticProfile = (profile: MessagingBridgeProfile): void => {
+    errorLog(
+      `\n  ✗ OpenShell provider profile '${profile.profileId}' does not match NemoClaw's endpointless ${profile.channelId} credential contract.`,
+    );
+    errorLog("    Remove the conflicting profile and re-run onboarding.");
+    exit(1);
+  };
 
   for (const profile of active) {
     // Onboard registers each bridge provider twice: once up front so an
@@ -355,17 +476,30 @@ export function ensureMessagingBridgeProfiles(
     // "not found" that suppressOutput hides — only the exit status says whether
     // the profile already exists.
     const alreadyRegistered = deps.runOpenshell(
-      ["provider", "profile", "export", profile.profileId],
+      ["provider", "profile", "export", profile.profileId, "--output", "json"],
       { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
     );
-    if (alreadyRegistered.status === 0) continue;
+    if (alreadyRegistered.status === 0) {
+      if (
+        profile.strategy === null &&
+        !staticProfileMatchesCheckedInBoundary(
+          profile,
+          bufferOrStringToText(alreadyRegistered.stdout),
+          readFileSync,
+        )
+      ) {
+        rejectMismatchedStaticProfile(profile);
+        return;
+      }
+      continue;
+    }
     // Probe failed for something other than "not found" (gateway down, auth, …):
     // surface it instead of masking a real problem.
     const probeDiagnostic = `${bufferOrStringToText(alreadyRegistered.stderr)} ${bufferOrStringToText(
       alreadyRegistered.stdout,
     )}`;
     if (probeDiagnostic.trim() && !/not found/i.test(probeDiagnostic)) {
-      errorLog(`\n  ⚠ Unexpected error probing the ${profile.channelId} bridge provider profile:`);
+      errorLog(`\n  ⚠ Unexpected error probing the ${profile.channelId} provider profile:`);
       const probeText = compactText(deps.redact(probeDiagnostic));
       if (probeText) errorLog(`    ${probeText.slice(0, 500)}`);
     }
@@ -376,13 +510,31 @@ export function ensureMessagingBridgeProfiles(
     );
     if (result.status === 0) continue;
 
-    // Tolerate a lost race: the probe saw no profile but a concurrent import made it.
+    // Reconcile a lost race: the probe saw no profile but a concurrent import made it.
     const rawDiagnostic = `${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`;
-    if (/already exists/i.test(rawDiagnostic)) continue;
+    if (/already exists/i.test(rawDiagnostic)) {
+      if (profile.strategy !== null) continue;
+      const racedProfile = deps.runOpenshell(
+        ["provider", "profile", "export", profile.profileId, "--output", "json"],
+        { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      if (
+        racedProfile.status !== 0 ||
+        !staticProfileMatchesCheckedInBoundary(
+          profile,
+          bufferOrStringToText(racedProfile.stdout),
+          readFileSync,
+        )
+      ) {
+        rejectMismatchedStaticProfile(profile);
+        return;
+      }
+      continue;
+    }
 
     const diagnostic = compactText(deps.redact(rawDiagnostic));
     errorLog(
-      `\n  ✗ Failed to register the ${profile.channelId} bridge provider profile with OpenShell.`,
+      `\n  ✗ Failed to register the ${profile.channelId} provider profile with OpenShell.`,
     );
     if (diagnostic) errorLog(`    ${diagnostic.slice(0, 500)}`);
     errorLog("    Update OpenShell with scripts/install-openshell.sh and re-run onboarding.");
@@ -392,7 +544,7 @@ export function ensureMessagingBridgeProfiles(
 }
 
 function buildRefreshMaterial(
-  profile: MessagingBridgeProfile,
+  profile: RefreshingMessagingBridgeProfile,
   secret: string,
 ):
   | { ok: true; material: { key: string; value: string }[]; secretKeys: string[] }
@@ -447,7 +599,7 @@ export function configureMessagingBridgeRefreshes(
   deps: ConfigureMessagingBridgeRefreshesDeps,
 ): MessagingBridgeRefreshResult {
   const profiles = deps.profiles ?? listMessagingBridgeProfiles();
-  const active = bridgeProfilesForTokenDefs(tokenDefs, profiles);
+  const active = bridgeProfilesForTokenDefs(tokenDefs, profiles).filter(hasRefreshStrategy);
   if (active.length === 0) return { ok: true };
 
   const warn = deps.log ?? console.error;

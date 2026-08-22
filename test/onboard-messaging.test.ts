@@ -87,7 +87,7 @@ const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null }); if (_n(command).includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   // provider-get returns not-found so messaging providers are created fresh
   if (_n(command).includes("provider get")) return { status: 1 };
   return _n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
@@ -366,7 +366,7 @@ const commands = [];
 let registeredSandbox = null;
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
-  commands.push({ command: normalized, env: opts.env || null });
+  commands.push({ command: normalized, env: opts.env || null }); if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (normalized.includes("provider get")) return { status: 1 };
   return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
@@ -536,7 +536,7 @@ registry.registerSandbox({ name: "my-assistant", messaging: { schemaVersion: 1, 
 registry.addExtraProvider("my-assistant-extra-telegram-bot-token-agent-a"); registry.addExtraProvider("my-assistant-extra-telegram-bot-token-agent-b");
 runner.run = (command) => {
   const normalized = _n(command);
-  commands.push({ command: normalized });
+  commands.push({ command: normalized }); if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   const providerGet = normalized.match(/provider get -g nemoclaw ([^ ]+)$/)?.[1]; if (providerGet === process.env.NEMOCLAW_TEST_FAIL_PROVIDER) return { status: 2, stderr: "transport unavailable" };
   if (providerGet && revisions.has(providerGet)) return { status: 0, stdout: "Name: " + providerGet + "\nType: " + (providerGet === "compatible-endpoint" ? "openai" : "generic") + "\nCredential keys: " + credentialKeys[providerGet] + "\nConfig keys: " + (providerGet === "compatible-endpoint" ? "OPENAI_BASE_URL" : "<none>") + "\n" };
   const refresh = normalized.match(/provider update -g nemoclaw ([^ ]+)$/)?.[1];
@@ -706,7 +706,7 @@ registry.registerSandbox({
 });
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
-  commands.push({ command: normalized, env: opts.env || null });
+  commands.push({ command: normalized, env: opts.env || null }); if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0, stdout: "Name: my-assistant-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n" };
   if (normalized.includes("provider get")) return { status: 1 };
   return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
@@ -859,7 +859,7 @@ const commands = []; let dockerfileContent;
 const registerCalls = [];
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
-  commands.push({ command: normalized, env: opts.env || null });
+  commands.push({ command: normalized, env: opts.env || null }); if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (normalized.includes("provider get")) return { status: 1 };
   return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
@@ -1020,7 +1020,7 @@ const commands = []; let dockerfileContent;
 const registerCalls = [];
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
-  commands.push({ command: normalized, env: opts.env || null });
+  commands.push({ command: normalized, env: opts.env || null }); if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (normalized.includes("provider get")) return { status: 1 };
   return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
@@ -1348,7 +1348,7 @@ const { EventEmitter } = require("node:events");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null }); if (_n(command).includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   // provider-get returns not-found so messaging providers are created fresh
   if (_n(command).includes("provider get")) return { status: 1 };
   return _n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
@@ -1485,7 +1485,7 @@ const { EventEmitter } = require("node:events");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null }); if (_n(command).includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   return _n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
