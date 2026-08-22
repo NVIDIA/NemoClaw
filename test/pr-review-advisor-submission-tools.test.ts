@@ -1,205 +1,55 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import reviewSchema from "../tools/pr-review-advisor/schema.json" with { type: "json" };
-import {
-  applyReviewSubmissionTurn,
-  persistSuccessfulReview,
-} from "../tools/pr-review-advisor/analyze.mts";
-import type { ArtifactPaths } from "../tools/pr-review-advisor/artifacts.mts";
+import { applyReviewSubmissionTurn } from "../tools/pr-review-advisor/analyze.mts";
 import {
   ACCEPTANCE_FINDING_REFERENCE_PAIRS,
-  createReviewSubmissionController,
+  COMMIT_REVIEW_TOOL,
   RECORD_FINDINGS_TOOL,
   RECORD_REVIEW_RECEIPT_TOOL,
   RECOMMEND_E2E_TOOL,
   SUBMIT_REVIEW_TOOL,
-  type ReviewSubmissionController,
 } from "../tools/pr-review-advisor/review-submission.mts";
-import type { TerminologyTrace } from "../tools/pr-review-advisor/terminology.mts";
-import { readParsedTrustedSecurityRubric } from "../tools/pr-review-advisor/trusted-guidance.mts";
-
-const ROOT = path.resolve(import.meta.dirname, "..");
-const HEAD = "a".repeat(40);
-const SECURITY_CATEGORY_NAMES = readParsedTrustedSecurityRubric().categories;
-function controller(
-  traces = new Map<string, TerminologyTrace>(),
-  normalizeE2e = (draft: Record<string, unknown>) => draft,
-  securityCategoryNames: readonly string[] = SECURITY_CATEGORY_NAMES,
-  hasOpenPrReplacement = false,
-) {
-  return createReviewSubmissionController({
-    metadata: {
-      baseRef: "origin/main",
-      headRef: "HEAD",
-      headSha: HEAD,
-      changedFiles: ["tools/pr-review-advisor/review-submission.mts"],
-      deterministic: {
-        testDepth: {
-          verdict: "runtime_validation_recommended",
-          rationale: "A runtime boundary changed.",
-          suggestedTests: ["deterministic runtime test"],
-        },
-        hasOpenPrReplacement,
-      },
-    },
-    schema: reviewSchema,
-    repositoryRoot: ROOT,
-    securityCategoryNames,
-    terminologyTraces: traces,
-    normalizeE2e,
-  });
-}
-function getTool(value: ReturnType<typeof controller>, name: string) {
-  const found = value.tools.find((candidate) => candidate.name === name);
-  expect(found, `Missing tool ${name}`).toBeDefined();
-  return found!;
-}
-function execute(value: ReturnType<typeof controller>, name: string, input: unknown) {
-  return getTool(value, name).execute(name, input, undefined, undefined, undefined as never);
-}
-function finding(title = "The refusal is hidden") {
-  return {
-    severity: "warning",
-    category: "correctness",
-    file: "tools/pr-review-advisor/review-submission.mts",
-    line: 7,
-    title,
-    description: "The changed return path reports success after a refusal.",
-    impact: "Callers cannot distinguish refusal from success.",
-    recommendation: "Return the refusal status.",
-    verificationHint: "Assert the refusal result.",
-    missingRegressionTest: "Add a refusal-path test.",
-    evidence: ["tools/pr-review-advisor/review-submission.mts:7 returns success"],
-    receiptConcerns: [
-      "acceptance:Propagate refusal",
-      "acceptance:Cover refusal regression",
-      "acceptance:Clause",
-      `security:${SECURITY_CATEGORY_NAMES[0]}`,
-      "source-of-truth:config",
-    ],
-    basis: {
-      kind: "behavior_mismatch",
-      observed: "The refusal path returns success.",
-      expected: "The refusal path returns refusal.",
-    },
-  };
-}
-function receipt(
-  terminologyReview: unknown = {
-    decisions: [],
-    noChangesReason: "No changed term adds a new meaning.",
-  },
-) {
-  return {
-    summary: {
-      recommendation: "merge_as_is",
-      confidence: "high",
-      oneLine: "One finding remains.",
-    },
-    terminologyReview,
-    acceptanceCoverage: [
-      {
-        clause: "Propagate refusal",
-        status: "met",
-        evidence: "tools/pr-review-advisor/review-submission.mts:7",
-        findingId: null,
-      },
-    ] as Array<{ clause: string; status: string; evidence: string; findingId: string | null }>,
-    securityCategories: SECURITY_CATEGORY_NAMES.map((category) => ({
-      category,
-      verdict: "pass",
-      justification: `${category} passed.`,
-      findingId: null as string | null,
-    })),
-    sourceOfTruthReview: [] as Array<{
-      surface: string;
-      status: string;
-      findingId: string | null;
-      invalidState: string;
-      sourceBoundary: string;
-      whyNotSourceFix: string;
-      regressionTest: string;
-      removalCondition: string;
-      evidence: string;
-    }>,
-    testDepth: {
-      verdict: "unit_sufficient",
-      rationale: "The behavior is deterministic.",
-      suggestedTests: ["focused unit test"],
-    },
-    positives: ["The change keeps the interface small."],
-    reviewCompleteness: { limitations: [], requiresHumanReview: true },
-  };
-}
-function terminologyDecision(traceId: string) {
-  return {
-    term: "review receipt",
-    change: "introduced",
-    disposition: "justified",
-    meaning: "The complete structured review sections.",
-    contrast: "Unlike drafts, this is complete.",
-    existingTerm: null,
-    semanticImpact: "evidence",
-    recommendation: "Keep the contrast explicit.",
-    traceId,
-    source: { file: "tools/pr-review-advisor/review-submission.mts", line: 9 },
-  };
-}
-function e2e() {
-  return {
-    coverage: {
-      classifiedDomains: [],
-      requiredTests: [],
-      optionalTests: [],
-      newE2eRecommendations: [],
-      noE2eReason: "No runtime boundary changed.",
-      confidence: "high",
-    },
-    targets: {
-      relevantChangedFiles: [],
-      changedCredentialFreeTests: [],
-      required: [],
-      optional: [],
-      noTargetE2eReason: "No E2E target is needed.",
-      confidence: "high",
-    },
-  };
-}
-
-const ARTIFACTS: ArtifactPaths = {
-  result: "result.json",
-  finalResult: "final-result.json",
-  summary: "summary.md",
-  sessionHtml: "session.html",
-};
-
-function completedSubmission(result: unknown): ReviewSubmissionController {
-  return {
-    tools: [],
-    result: () => result,
-    findingSnapshot: () => ({ version: 1, findings: [] }),
-    terminologySnapshot: () => ({
-      version: 1,
-      revision: 1,
-      headSha: HEAD,
-      review: { status: "clear", decisions: [], noChangesReason: "No terminology changes." },
-    }),
-    finalize: vi.fn(),
-    discard: vi.fn(),
-  };
-}
-
+import {
+  HEAD,
+  SECURITY_CATEGORY_NAMES,
+  executeSubmissionTool as execute,
+  reviewE2e as e2e,
+  reviewFinding as finding,
+  reviewReceipt as receipt,
+  submissionController as controller,
+  terminologyDecision,
+} from "./helpers/pr-review-advisor-submission-fixtures";
 describe("PR review advisor submission tools", () => {
-  it("exposes only the four two-turn batch tools", () => {
+  it("exposes the four preparation tools and one terminal commit tool", () => {
     expect(controller().tools.map((candidate) => candidate.name)).toEqual([
       RECORD_FINDINGS_TOOL,
       RECORD_REVIEW_RECEIPT_TOOL,
       RECOMMEND_E2E_TOOL,
       SUBMIT_REVIEW_TOOL,
+      COMMIT_REVIEW_TOOL,
     ]);
+  });
+
+  it("keeps validation repairable and reserves termination for commit_review", async () => {
+    const submission = controller();
+    await expect(execute(submission, COMMIT_REVIEW_TOOL, {})).rejects.toThrow(
+      "commit_review requires a successful submit_review validation",
+    );
+    await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
+    await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, receipt());
+    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
+
+    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.not.toHaveProperty(
+      "terminate",
+    );
+    await expect(execute(submission, COMMIT_REVIEW_TOOL, {})).resolves.toMatchObject({
+      terminate: true,
+    });
+    expect(submission.result()).toBeNull();
+    submission.finalize();
+    expect(submission.result()).not.toBeNull();
   });
 
   it.each(["needs_rework", "blocked"])(
@@ -307,9 +157,9 @@ describe("PR review advisor submission tools", () => {
     );
 
     await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, receipt());
-    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.toMatchObject({
-      terminate: true,
-    });
+    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.not.toHaveProperty(
+      "terminate",
+    );
   });
 
   it("invalidates positional receipt links when compatible findings are reordered", async () => {
@@ -381,9 +231,9 @@ describe("PR review advisor submission tools", () => {
     ];
     await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft);
     await execute(submission, RECOMMEND_E2E_TOOL, e2e());
-    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.toMatchObject({
-      terminate: true,
-    });
+    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.not.toHaveProperty(
+      "terminate",
+    );
   });
 
   it.each(["post-success prose", "duplicate submit"])(
@@ -561,7 +411,7 @@ describe("PR review advisor submission tools", () => {
       validated: true,
       pending: true,
     });
-    expect(submitted.terminate).toBe(true);
+    expect(submitted).not.toHaveProperty("terminate");
     expect(normalizeE2e).toHaveBeenCalledOnce();
     expect(submission.result()).toBeNull();
     expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
@@ -652,9 +502,9 @@ describe("PR review advisor submission tools", () => {
       "review receipt (missing or stale for current findings revision)",
     );
     await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, receipt());
-    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.toMatchObject({
-      terminate: true,
-    });
+    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.not.toHaveProperty(
+      "terminate",
+    );
     expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
     expect(submission.result()).toBeNull();
     submission.finalize();
@@ -722,9 +572,9 @@ describe("PR review advisor submission tools", () => {
     });
     await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, receipt());
     await execute(submission, RECOMMEND_E2E_TOOL, e2e());
-    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.toMatchObject({
-      terminate: true,
-    });
+    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.not.toHaveProperty(
+      "terminate",
+    );
   });
 
   it("rejects unsupported E2E selectors through the trusted normalizer without canonical mutation", async () => {
@@ -1113,9 +963,9 @@ describe("PR review advisor submission tools", () => {
 
     returnInvalidE2e = false;
     await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, receipt());
-    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.toMatchObject({
-      terminate: true,
-    });
+    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.not.toHaveProperty(
+      "terminate",
+    );
   });
 
   it.each([
@@ -1140,269 +990,4 @@ describe("PR review advisor submission tools", () => {
     },
   );
 
-  it("uses the injected security inventory for receipt schema and validation", async () => {
-    const injected = ["Injected Security Category"];
-    const submission = controller(new Map(), (draft) => draft, injected);
-    const draft = receipt();
-    draft.securityCategories = [
-      {
-        category: injected[0]!,
-        verdict: "pass",
-        justification: "The injected category passed.",
-        findingId: null,
-      },
-    ];
-    await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
-    await expect(execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft)).resolves.toBeDefined();
-    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
-    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.toBeDefined();
-
-    const rejected = controller(new Map(), (value) => value, injected);
-    await execute(rejected, RECORD_FINDINGS_TOOL, { findings: [finding()] });
-    await expect(execute(rejected, RECORD_REVIEW_RECEIPT_TOOL, receipt())).rejects.toThrow(
-      "record_review_receipt failed schema validation",
-    );
-    expect(rejected.findingSnapshot()).toEqual({ version: 1, findings: [] });
-  });
-
-  const acceptanceMissing = (draft: ReturnType<typeof receipt>) => {
-    draft.acceptanceCoverage = [
-      { clause: "Clause", status: "missing", evidence: "evidence", findingId: "F-001" },
-    ];
-  };
-  const acceptancePartial = (draft: ReturnType<typeof receipt>) => {
-    draft.acceptanceCoverage = [
-      { clause: "Clause", status: "partial", evidence: "evidence", findingId: "F-001" },
-    ];
-  };
-  const securityFail = (draft: ReturnType<typeof receipt>) => {
-    draft.acceptanceCoverage = [];
-    draft.securityCategories[0] = {
-      ...draft.securityCategories[0],
-      verdict: "fail",
-      findingId: "F-001",
-    };
-  };
-  const securityWarning = (draft: ReturnType<typeof receipt>) => {
-    draft.acceptanceCoverage = [];
-    draft.securityCategories[0] = {
-      ...draft.securityCategories[0],
-      verdict: "warning",
-      findingId: "F-001",
-    };
-  };
-  const sourceMissing = (draft: ReturnType<typeof receipt>) => {
-    draft.acceptanceCoverage = [];
-    draft.sourceOfTruthReview = [
-      {
-        surface: "config",
-        status: "missing",
-        findingId: "F-001",
-        invalidState: "stale",
-        sourceBoundary: "source",
-        whyNotSourceFix: "none",
-        regressionTest: "test",
-        removalCondition: "fixed",
-        evidence: "evidence",
-      },
-    ];
-  };
-  const sourceFollowup = (draft: ReturnType<typeof receipt>) => {
-    draft.acceptanceCoverage = [];
-    draft.sourceOfTruthReview = [
-      {
-        surface: "config",
-        status: "needs_followup",
-        findingId: "F-001",
-        invalidState: "stale",
-        sourceBoundary: "source",
-        whyNotSourceFix: "none",
-        regressionTest: "test",
-        removalCondition: "fixed",
-        evidence: "evidence",
-      },
-    ];
-  };
-
-  it.each([
-    ["acceptance missing", "acceptance", "unmet_acceptance", "blocker", acceptanceMissing],
-    ["acceptance partial minimum", "acceptance", "unmet_acceptance", "warning", acceptancePartial],
-    ["acceptance partial blocker", "acceptance", "unmet_acceptance", "blocker", acceptancePartial],
-    ["security fail", "security", "security_violation", "blocker", securityFail],
-    ["security warning minimum", "security", "security_violation", "warning", securityWarning],
-    ["security warning blocker", "security", "security_violation", "blocker", securityWarning],
-    ["source missing suggestion", "architecture", "behavior_mismatch", "suggestion", sourceMissing],
-    [
-      "source follow-up suggestion",
-      "architecture",
-      "behavior_mismatch",
-      "suggestion",
-      sourceFollowup,
-    ],
-  ] as const)(
-    "accepts %s linked finding severity",
-    async (_name, category, basisKind, severity, mutateReceipt) => {
-      const accepted = controller();
-      const draft = receipt();
-      mutateReceipt(draft);
-      await execute(accepted, RECORD_FINDINGS_TOOL, {
-        findings: [
-          { ...finding(), severity, category, basis: { ...finding().basis, kind: basisKind } },
-        ],
-      });
-      await execute(accepted, RECORD_REVIEW_RECEIPT_TOOL, draft);
-      await execute(accepted, RECOMMEND_E2E_TOOL, e2e());
-      await expect(execute(accepted, SUBMIT_REVIEW_TOOL, {})).resolves.toBeDefined();
-    },
-  );
-
-  it.each([
-    ["acceptance missing", "acceptance", "unmet_acceptance", "warning", acceptanceMissing],
-    ["acceptance partial", "acceptance", "unmet_acceptance", "suggestion", acceptancePartial],
-    ["security fail", "security", "security_violation", "warning", securityFail],
-    ["security warning", "security", "security_violation", "suggestion", securityWarning],
-  ] as const)(
-    "rejects weaker %s linked finding severity atomically",
-    async (_name, category, basisKind, severity, mutateReceipt) => {
-      const rejected = controller();
-      const draft = receipt();
-      mutateReceipt(draft);
-      await execute(rejected, RECORD_FINDINGS_TOOL, {
-        findings: [
-          { ...finding(), severity, category, basis: { ...finding().basis, kind: basisKind } },
-        ],
-      });
-      await execute(rejected, RECORD_REVIEW_RECEIPT_TOOL, draft);
-      await execute(rejected, RECOMMEND_E2E_TOOL, e2e());
-      await expect(execute(rejected, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow("requires");
-      expect(rejected.findingSnapshot()).toEqual({ version: 1, findings: [] });
-      expect(rejected.result()).toBeNull();
-    },
-  );
-
-  it("resolves terminology traces lazily at submission time", async () => {
-    let traces = new Map<string, TerminologyTrace>();
-    const submission = createReviewSubmissionController({
-      metadata: {
-        baseRef: "origin/main",
-        headRef: "HEAD",
-        headSha: HEAD,
-        changedFiles: ["tools/pr-review-advisor/review-submission.mts"],
-        deterministic: {
-          testDepth: {
-            verdict: "unit_sufficient",
-            rationale: "Unit coverage is sufficient.",
-            suggestedTests: ["focused unit test"],
-          },
-          hasOpenPrReplacement: false,
-        },
-      },
-      schema: reviewSchema,
-      repositoryRoot: ROOT,
-      securityCategoryNames: SECURITY_CATEGORY_NAMES,
-      terminologyTraces: () => traces,
-      normalizeE2e: (draft) => draft,
-    });
-    const trace: TerminologyTrace = {
-      id: "lazy-trace",
-      term: "review receipt",
-      variants: ["review receipt"],
-      baseSha: "b".repeat(40),
-      headSha: HEAD,
-      baseOccurrences: 0,
-      headOccurrences: 1,
-      baseEvidenceTruncated: false,
-      headEvidenceTruncated: false,
-      changedLocations: [
-        { file: "tools/pr-review-advisor/review-submission.mts", line: 9, text: "review receipt" },
-      ],
-      baseSamples: [],
-      headSamples: [],
-      firstCommitSha: HEAD,
-    };
-    traces = new Map([[trace.id, trace]]);
-    await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
-    await execute(
-      submission,
-      RECORD_REVIEW_RECEIPT_TOOL,
-      receipt({
-        decisions: [terminologyDecision(trace.id)],
-        noChangesReason: null,
-      }),
-    );
-    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
-    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.toMatchObject({
-      terminate: true,
-    });
-  });
-
-  it("preserves traced terminology provenance in the canonical result", async () => {
-    const trace: TerminologyTrace = {
-      id: "term-trace",
-      term: "review receipt",
-      variants: ["review receipt"],
-      baseSha: "b".repeat(40),
-      headSha: HEAD,
-      baseOccurrences: 0,
-      headOccurrences: 1,
-      baseEvidenceTruncated: false,
-      headEvidenceTruncated: false,
-      changedLocations: [
-        { file: "tools/pr-review-advisor/review-submission.mts", line: 9, text: "review receipt" },
-      ],
-      baseSamples: [],
-      headSamples: [],
-      firstCommitSha: HEAD,
-    };
-    const submission = controller(new Map([[trace.id, trace]]));
-    await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
-    await execute(
-      submission,
-      RECORD_REVIEW_RECEIPT_TOOL,
-      receipt({
-        decisions: [terminologyDecision(trace.id)],
-        noChangesReason: null,
-      }),
-    );
-    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
-    await execute(submission, SUBMIT_REVIEW_TOOL, {});
-    submission.finalize();
-    const result = submission.result() as Record<string, any>;
-    expect(result.terminologyReview.decisions[0]).toMatchObject({
-      id: "T-001",
-      traceId: trace.id,
-      source: { file: "tools/pr-review-advisor/review-submission.mts", line: 9, headSha: HEAD },
-    });
-  });
-
-  it.each([
-    [
-      "SDK execution errors",
-      ["provider failed"],
-      completedSubmission({ submitted: true }),
-      "PR review advisor SDK execution failed: provider failed",
-    ],
-    [
-      "missing atomic submission",
-      [],
-      completedSubmission(null),
-      "PR review advisor did not atomically submit a review result",
-    ],
-  ] as const)("writes no canonical artifacts for %s", (_name, errors, submission, reason) => {
-    const write = vi.fn();
-    expect(() => persistSuccessfulReview(errors, submission, ARTIFACTS, write)).toThrow(reason);
-    expect(write).not.toHaveBeenCalled();
-  });
-
-  it("writes each canonical artifact exactly once after finalized success", () => {
-    const result = { submitted: true };
-    const submission = completedSubmission(result);
-    const write = vi.fn();
-
-    expect(persistSuccessfulReview([], submission, ARTIFACTS, write)).toBe(result);
-    expect(write.mock.calls).toEqual([
-      [ARTIFACTS.result, result],
-      [ARTIFACTS.finalResult, result],
-    ]);
-  });
 });

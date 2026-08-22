@@ -262,6 +262,32 @@ describe("advisor session context tool flow", () => {
     expect(advisorTurnFlowErrors("prepare", events, tools)).toEqual([]);
   });
 
+  it("allows validation retries before one deterministic terminal commit", () => {
+    const tools = {
+      activeToolNames: ["submit_review", "commit_review"],
+      requiredToolNames: ["submit_review", "commit_review"],
+      requireToolsBeforeText: [],
+      requireAssistantText: false,
+      atomicTerminalToolName: undefined,
+      terminalSubmitToolName: "commit_review",
+      terminalSubmitRepairToolNames: [],
+    };
+    const events: AdvisorTurnFlowEvent[] = [
+      { type: "tool_start", toolName: "submit_review" },
+      { type: "tool_end", toolName: "submit_review", isError: true },
+      { type: "tool_start", toolName: "submit_review" },
+      { type: "tool_end", toolName: "submit_review", isError: true },
+      { type: "tool_start", toolName: "submit_review" },
+      { type: "tool_end", toolName: "submit_review", isError: true },
+      { type: "tool_start", toolName: "submit_review" },
+      { type: "tool_end", toolName: "submit_review", isError: false },
+      { type: "tool_start", toolName: "commit_review" },
+      { type: "tool_end", toolName: "commit_review", isError: false },
+    ];
+
+    expect(advisorTurnFlowErrors("challenge-and-record", events, tools)).toEqual([]);
+  });
+
   it.each([
     ["omission", [], undefined, new Set<string>()],
     ["prose only", [analysisEvent], undefined, new Set<string>()],
