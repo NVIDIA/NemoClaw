@@ -14,6 +14,7 @@ describe("maintainer merge-gate contributor compliance", () => {
         files: [
           { path: "docs/inference/set-up-vllm.mdx", status: "modified" },
           { path: "docs/policy/network-access.mdx", status: "modified" },
+          { path: "fern/assets/inference-policy.svg", status: "modified" },
         ],
       }).stdout,
     );
