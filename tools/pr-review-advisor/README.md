@@ -154,6 +154,25 @@ The parallel Nemotron Ultra lane writes the same filenames under
 `artifacts/pr-review-advisor-nemotron-ultra/` and uploads them as the
 `pr-review-advisor-nemotron-ultra` artifact.
 
+## Specialist synthesis shadow
+
+The specialist shadow runs five focused, read-only Pi sessions for Behavior, Trust, Design /
+Architecture, Operations, and Documentation. Each cell uses the primary model and uploads Pi's
+unchanged native JSONL session. Specialists have ordinary repository read tools and cannot record or
+submit the canonical review.
+
+The shadow synthesis job places the five traces beside the read-only repository inside OpenShell. It
+reads them with the ordinary Pi filesystem tools, treats their model-authored content as advisory and
+untrusted, verifies retained concerns against repository evidence, and uses the existing atomic
+submission tools to create a candidate result. It does not concatenate, resume, project, or translate
+the specialist sessions. The shadow synthesis job runs only after all five validated traces are
+available. It rejects a missing or invalid trace and produces no synthesis candidate.
+
+The existing primary lane remains the published authority during shadow evaluation. The publisher
+keeps sole pull-request write permission and receives neither the model credential nor specialist
+traces. Promotion of specialist synthesis requires separate maintainer acceptance of exact-commit
+quality, false-positive, latency, runner-use, and provider-cost evidence.
+
 ## Manual run
 
 ```bash

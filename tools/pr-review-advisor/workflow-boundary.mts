@@ -1130,6 +1130,79 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
   }
 }
 
+function checkShadowTopology(
+  errors: string[],
+  specialistJob: WorkflowRecord,
+  synthesisJob: WorkflowRecord,
+): void {
+  const readPermissions = {
+    actions: "read",
+    checks: "read",
+    contents: "read",
+    issues: "read",
+    "pull-requests": "read",
+  };
+  requirePermissions(errors, "review-specialists", specialistJob, readPermissions);
+  requirePermissions(errors, "review-synthesis-shadow", synthesisJob, readPermissions);
+  if (booleanValue(specialistJob["continue-on-error"]) !== true) {
+    errors.push("specialist failures must remain non-blocking in shadow mode");
+  }
+  const strategy = asRecord(specialistJob.strategy);
+  if (booleanValue(strategy["fail-fast"]) !== false) {
+    errors.push("specialist matrix must disable fail-fast");
+  }
+  const entries = asRecord(strategy.matrix).advisor;
+  const expected = ["behavior", "trust", "design-architecture", "operations", "documentation"];
+  if (!Array.isArray(entries) || entries.length !== expected.length) {
+    errors.push("specialist matrix must declare exactly five interests");
+  } else {
+    const records = entries.map(asRecord);
+    if (records.map((entry) => stringValue(entry.interest)).join(",") !== expected.join(",")) {
+      errors.push("specialist matrix interests must match the trusted five-interest order");
+    }
+    if (new Set(records.map((entry) => stringValue(entry.model))).size !== 1) {
+      errors.push("specialists must use one primary model");
+    }
+  }
+  requireEnv(
+    errors,
+    "specialist job",
+    specialistJob,
+    "PR_REVIEW_ADVISOR_INTEREST",
+    "${{ matrix.advisor.interest }}",
+  );
+  requireEnv(errors, "specialist job", specialistJob, "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR", "");
+  requireEnv(
+    errors,
+    "synthesis job",
+    synthesisJob,
+    "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR",
+    "${{ github.workspace }}/pr-workdir/.pr-review-advisor-sessions",
+  );
+  if (synthesisJob.needs !== "review-specialists") {
+    errors.push("shadow synthesis must depend only on the specialist matrix");
+  }
+  const specialistSteps = asSteps(specialistJob.steps);
+  const synthesisSteps = asSteps(synthesisJob.steps);
+  requireActionPins(errors, "review-specialists", specialistSteps);
+  requireActionPins(errors, "review-synthesis-shadow", synthesisSteps);
+  const upload = requireStep(errors, specialistSteps, "Upload native specialist session");
+  requireWith(errors, upload, "name", "${{ matrix.advisor.artifact_name }}");
+  requireWith(
+    errors,
+    upload,
+    "path",
+    "artifacts/${{ matrix.advisor.artifact_dir }}/pr-review-${{ matrix.advisor.interest }}-session.jsonl",
+  );
+  const download = requireStep(errors, synthesisSteps, "Download specialist session artifacts");
+  requireWith(errors, download, "pattern", "pr-review-specialist-*");
+  requireWith(errors, download, "path", "pr-workdir/.pr-review-advisor-sessions");
+  requireWith(errors, download, "merge-multiple", true);
+  if (JSON.stringify(synthesisJob).includes("pull-requests: write")) {
+    errors.push("shadow synthesis must not receive PR-write permission");
+  }
+}
+
 export function validatePrReviewAdvisorWorkflowBoundary(
   workflowPath = DEFAULT_WORKFLOW_PATH,
   packageLockPath = DEFAULT_PACKAGE_LOCK_PATH,
@@ -1156,11 +1229,16 @@ export function validatePrReviewAdvisorWorkflowBoundary(
 
   const jobs = asRecord(workflow.jobs);
   const reviewJob = asRecord(jobs.review);
+  const specialistJob = asRecord(jobs["review-specialists"]);
+  const synthesisJob = asRecord(jobs["review-synthesis-shadow"]);
   const publishJob = asRecord(jobs.publish);
   if (Object.keys(reviewJob).length === 0) errors.push("workflow must declare the review job");
+  if (Object.keys(specialistJob).length === 0) errors.push("workflow must declare the specialist matrix");
+  if (Object.keys(synthesisJob).length === 0) errors.push("workflow must declare shadow synthesis");
   if (Object.keys(publishJob).length === 0) errors.push("workflow must declare the publish job");
   checkPrivilegeDomains(errors, workflow, reviewJob, publishJob);
   checkAnalysisJob(errors, reviewJob);
+  checkShadowTopology(errors, specialistJob, synthesisJob);
   checkPublishJob(errors, publishJob);
   return errors;
 }

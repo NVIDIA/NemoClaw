@@ -42,6 +42,8 @@ import {
   type DeterministicReviewContext,
 } from "./deterministic-context.mts";
 import { buildInvestigateTurn } from "./investigate-turn.mts";
+import { validateSpecialistSessionDirectory } from "./specialist-sessions.mts";
+import { buildSynthesisTurn } from "./synthesis-turn.mts";
 import { renderSummary } from "./render-result.mts";
 import {
   buildCorrectnessTurnContext,
@@ -424,7 +426,13 @@ export function preparePromptArtifacts({
   try {
     const securityRubric = readParsedTrustedSecurityRubric();
     const systemPrompt = buildSystemPrompt(securityRubric);
-    const promptTurns = buildPromptTurns({ metadata, diff });
+    const specialistSessionDirectory = process.env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR;
+    if (specialistSessionDirectory) {
+      validateSpecialistSessionDirectory(specialistSessionDirectory);
+    }
+    const promptTurns = specialistSessionDirectory
+      ? [buildSynthesisTurn(specialistSessionDirectory), buildChallengeAndRecordTurn()]
+      : buildPromptTurns({ metadata, diff });
     return { systemPrompt, promptTurns, securityCategoryNames: securityRubric.categories };
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
