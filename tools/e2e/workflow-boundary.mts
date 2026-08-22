@@ -2142,7 +2142,6 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
 
   const trustedDispatch =
     "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'";
-  const privateHome = "${{ runner.temp }}/nemoclaw-brev-launchable-identity-home";
   const prepareEnv = asRecord(prepare?.env);
   if (
     !isDeepStrictEqual(Object.keys(prepareEnv).sort(), [
@@ -2150,7 +2149,6 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
       "BREV_CLI_SHA256",
       "BREV_CLI_VERSION",
       "BREV_ORG_ID",
-      "HOME",
     ])
   ) {
     errors.push(`${jobName} preparation step must receive only its reviewed environment`);
@@ -2163,9 +2161,6 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
     if (prepareEnv[key] !== expected) {
       errors.push(`${jobName} ${key} must use the trusted manual-dispatch guard`);
     }
-  }
-  if (prepareEnv.HOME !== privateHome) {
-    errors.push(`${jobName} must keep Brev credentials in its private runner home`);
   }
   if (
     !/^0\.\d+\.\d+$/u.test(stringValue(prepareEnv.BREV_CLI_VERSION)) ||
@@ -2180,7 +2175,6 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
   }
   const prepareRun = stringValue(prepare?.run);
   for (const required of [
-    'install -d -m 0700 "$HOME"',
     "sha256sum -c -",
     'brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"',
   ]) {
@@ -2193,7 +2187,6 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
     !isDeepStrictEqual(Object.keys(executeEnv).sort(), [
       "BREV_LAUNCHABLE_ID",
       "GH_TOKEN",
-      "HOME",
       "NEMOCLAW_BREV_DEFER_CLEANUP",
       "NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY",
       "WORK_DIR",
@@ -2214,13 +2207,12 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
     errors.push(`${jobName} image dispatch token must use the trusted manual-dispatch guard`);
   }
   if (
-    executeEnv.HOME !== privateHome ||
     executeEnv.NEMOCLAW_BREV_DEFER_CLEANUP !== "1" ||
     executeEnv.NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY !== "1" ||
     executeEnv.WORK_DIR !== "${{ steps.workspace.outputs.work_dir }}"
   ) {
     errors.push(
-      `${jobName} must bind its private home, deferred cleanup, identity mode, and evidence directory`,
+      `${jobName} must bind deferred cleanup, identity mode, and its evidence directory`,
     );
   }
   for (const forbidden of [
@@ -2242,7 +2234,6 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
     !isDeepStrictEqual(resourceCleanupEnv, {
       BREV_CREATE_RECONCILE_SECONDS: "120",
       BREV_DELETE_TIMEOUT_SECONDS: "600",
-      HOME: privateHome,
       POLL_SECONDS: "15",
       WORK_DIR: "${{ steps.workspace.outputs.work_dir }}",
     })
@@ -2263,10 +2254,16 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
     }
   }
 
+  if (steps.some((currentStep) => Object.hasOwn(asRecord(currentStep.env), "HOME"))) {
+    errors.push(
+      `${jobName} steps must use the runner account home so Brev and OpenSSH share SSH configuration`,
+    );
+  }
+
   const cleanupEnv = asRecord(credentialCleanup?.env);
   if (
     credentialCleanup?.if !== "always()" ||
-    !isDeepStrictEqual(cleanupEnv, { HOME: privateHome }) ||
+    !isDeepStrictEqual(cleanupEnv, {}) ||
     !stringValue(credentialCleanup?.run).includes("$HOME/.brev/credentials.json") ||
     !stringValue(credentialCleanup?.run).includes('rm -f -- "$credentials"') ||
     !stringValue(credentialCleanup?.run).includes('test ! -e "$credentials"')

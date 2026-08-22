@@ -69,14 +69,14 @@ const workflowMutations: Array<[string, (value: Workflow) => void, string]> = [
       delete step(value, "Build, boot, and verify identity").env!
         .NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY;
     },
-    `${JOB} must bind its private home, deferred cleanup, identity mode, and evidence directory`,
+    `${JOB} must bind deferred cleanup, identity mode, and its evidence directory`,
   ],
   [
     "inline workspace cleanup",
     (value) => {
       delete step(value, "Build, boot, and verify identity").env!.NEMOCLAW_BREV_DEFER_CLEANUP;
     },
-    `${JOB} must bind its private home, deferred cleanup, identity mode, and evidence directory`,
+    `${JOB} must bind deferred cleanup, identity mode, and its evidence directory`,
   ],
   [
     "unreserved workspace cleanup",
@@ -117,9 +117,28 @@ const workflowMutations: Array<[string, (value: Workflow) => void, string]> = [
     },
     `${JOB} steps must not receive NVIDIA_INFERENCE_API_KEY or GCP_/GOOGLE_ environment identifiers`,
   ],
+  [
+    "a HOME override that separates Brev from OpenSSH",
+    (value) => {
+      delete step(value, "Prepare the trusted identity lane").env!.HOME;
+      delete step(value, "Verify identity workspace cleanup").env!.HOME;
+      delete step(value, "Remove Brev credentials").env!.HOME;
+    },
+    `${JOB} steps must use the runner account home so Brev and OpenSSH share SSH configuration`,
+  ],
 ];
 
 describe("exact staging Brev Launchable identity workflow boundary", () => {
+  it("accepts the runner account home for Brev and OpenSSH (#9925)", () => {
+    const value = workflow();
+    delete step(value, "Prepare the trusted identity lane").env!.HOME;
+    delete step(value, "Build, boot, and verify identity").env!.HOME;
+    delete step(value, "Verify identity workspace cleanup").env!.HOME;
+    delete step(value, "Remove Brev credentials").env!.HOME;
+
+    expect(validateE2eWorkflow(value)).toEqual([]);
+  });
+
   it("keeps the explicit trusted-main identity job valid (#9925)", () => {
     expect(validateE2eWorkflow(workflow())).toEqual([]);
   });
