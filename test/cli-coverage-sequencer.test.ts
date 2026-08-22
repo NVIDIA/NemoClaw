@@ -115,11 +115,11 @@ describe("stable CLI coverage sharding", () => {
     );
 
     expect(Object.fromEntries(owners)).toEqual({
-      "cli:src/lib/example.test.ts": 8,
-      "e2e-support:test/e2e/support/example.test.ts": 1,
-      "integration:test/hermes-restart-config-seal-write-lock.test.ts": 2,
-      "integration:test/local-credential-helper-fields.test.ts": 3,
-      "integration:test/regular-0.test.ts": 5,
+      "cli:src/lib/example.test.ts": 6,
+      "e2e-support:test/e2e/support/example.test.ts": 8,
+      "integration:test/hermes-restart-config-seal-write-lock.test.ts": 6,
+      "integration:test/local-credential-helper-fields.test.ts": 7,
+      "integration:test/regular-0.test.ts": 6,
     });
   });
 
@@ -129,6 +129,18 @@ describe("stable CLI coverage sharding", () => {
     const averageWeight = weights.reduce((total, weight) => total + weight, 0) / weights.length;
 
     expect(Math.max(...weights)).toBeLessThanOrEqual(averageWeight * 1.05);
+  });
+
+  it("balances the serialized integration lane across the twelve CI shards (#6237)", () => {
+    const integrationEntries = currentCliCoverageEntries().filter((entry) =>
+      entry.key.startsWith("integration:"),
+    );
+    const weights = assignStableShards(integrationEntries, 12).map(
+      (shard) => shard.totalWeightMs,
+    );
+    const averageWeight = weights.reduce((total, weight) => total + weight, 0) / weights.length;
+
+    expect(Math.max(...weights)).toBeLessThanOrEqual(averageWeight * 1.1);
   });
 
   it("uses stable sharding only for projects owned by the CLI coverage matrix", () => {
