@@ -10,10 +10,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const sdk = vi.hoisted(() => {
   type Listener = (event: unknown) => void;
-  type TerminalResponse = "omit" | "fail-once" | "fail-twice" | "fail-then-success" | "success";
+  type TerminalResponse =
+    | "omit"
+    | "unsettled"
+    | "fail-once"
+    | "fail-twice"
+    | "fail-then-success"
+    | "success";
   type AnalysisResponse = "empty" | "length" | "success";
   const terminalPlans: Record<TerminalResponse, { failureCount: number; succeeds: boolean }> = {
     omit: { failureCount: 0, succeeds: false },
+    unsettled: { failureCount: 0, succeeds: false },
     "fail-once": { failureCount: 1, succeeds: false },
     "fail-twice": { failureCount: 2, succeeds: false },
     "fail-then-success": { failureCount: 1, succeeds: true },
@@ -39,6 +46,7 @@ const sdk = vi.hoisted(() => {
     emitAnalysisError: false,
     emitCommitProse: false,
     emitRepairProse: false,
+    terminalOutputLimits: [] as boolean[],
     omitAnalysis: false,
     prompts: [] as string[],
     retryResponses: [] as Array<"exhausted" | "success">,
@@ -54,6 +62,7 @@ const sdk = vi.hoisted(() => {
     state.emitAnalysisError = false;
     state.emitCommitProse = false;
     state.emitRepairProse = false;
+    state.terminalOutputLimits = [];
     state.omitAnalysis = false;
     state.prompts = [];
     state.retryResponses = [];
@@ -124,12 +133,18 @@ const sdk = vi.hoisted(() => {
         const analysisResponse = terminalTool
           ? "success"
           : (state.analysisResponses.shift() ?? (state.omitAnalysis ? "empty" : "success"));
+        const terminalOutputLimited = terminalTool
+          ? (state.terminalOutputLimits.shift() ?? false)
+          : false;
         await (contextTool && !state.omitContextTool
           ? executeContextTool(contextTool, emit)
           : Promise.resolve());
         Array.from({ length: terminalTool ? terminalPlan.failureCount : 0 }).forEach(() =>
           failTerminalTool(terminalTool as MockTool, emit),
         );
+        terminalTool &&
+          terminalResponse === "unsettled" &&
+          emit({ type: "tool_execution_start", toolName: terminalTool.name });
         const isRepairPrompt =
           prompt.includes("Call `turn_action` now") || prompt.includes("Complete the repair");
         const retryError = "429 status code (no body)";
@@ -188,6 +203,11 @@ const sdk = vi.hoisted(() => {
             },
           });
         analysisResponse === "length" &&
+          emit({
+            type: "message_end",
+            message: { role: "assistant", stopReason: "length" },
+          });
+        terminalOutputLimited &&
           emit({
             type: "message_end",
             message: { role: "assistant", stopReason: "length" },
@@ -270,6 +290,7 @@ function submitTurn(name: string): AdvisorPromptTurn {
     ...turn(name, '{"submit":true}'),
     activeToolNames: ["turn_action", "draft_action"],
     terminalSubmitToolName: "turn_action",
+    terminalSubmitOutputLimitPrompt: "Continue the bounded terminal submit once.",
     terminalSubmitRepairPrompt: "Repair the failed draft and submit it.",
     terminalSubmitRepairToolNames: ["repair_action"],
   };
@@ -461,6 +482,83 @@ describe("advisor session runner", () => {
 
     expect(result.fatalError).toContain("must make exactly 1 turn_action submit attempt");
     expect(result.raw).not.toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(1);
+  });
+
+  it("continues once when a preparatory terminal submit reaches its output limit", async () => {
+    sdk.state.terminalResponses = ["omit", "success"];
+    sdk.state.terminalOutputLimits = [true, false];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).toContain(
+      "terminal_submit_output_limit_continuation_start prepare-and-submit",
+    );
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("accepts an output limit after a validated terminal submit", async () => {
+    sdk.state.terminalResponses = ["success"];
+    sdk.state.terminalOutputLimits = [true];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).toContain(
+      "terminal_submit_output_limit_after_success_accepted prepare-and-submit",
+    );
+    expect(result.raw).not.toContain("terminal_submit_output_limit_continuation_start");
+    expect(sdk.state.prompts).toHaveLength(1);
+  });
+
+  it("accepts an output limit after a validated terminal-submit repair", async () => {
+    sdk.state.terminalResponses = ["fail-once", "success"];
+    sdk.state.terminalOutputLimits = [false, true];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).toContain("terminal_submit_repair_end prepare-and-submit turn_action ok");
+    expect(result.raw).toContain(
+      "terminal_submit_output_limit_after_success_accepted prepare-and-submit",
+    );
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("fails closed when the terminal output-limit continuation also exhausts", async () => {
+    sdk.state.terminalResponses = ["omit", "omit"];
+    sdk.state.terminalOutputLimits = [true, true];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toContain("assistant response reached the model output limit");
+    expect(result.raw).toContain(
+      "terminal_submit_output_limit_continuation_start prepare-and-submit",
+    );
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("does not continue an output-limited terminal submit without an explicit contract", async () => {
+    sdk.state.terminalResponses = ["omit"];
+    sdk.state.terminalOutputLimits = [true];
+    const turnWithoutContinuation = {
+      ...submitTurn("prepare-and-submit"),
+      terminalSubmitOutputLimitPrompt: undefined,
+    };
+    const result = await run([turnWithoutContinuation]);
+
+    expect(result.fatalError).toContain("assistant response reached the model output limit");
+    expect(result.raw).not.toContain("terminal_submit_output_limit_continuation_start");
+    expect(sdk.state.prompts).toHaveLength(1);
+  });
+
+  it("does not continue while an output-limited terminal tool call is unsettled", async () => {
+    sdk.state.terminalResponses = ["unsettled", "success"];
+    sdk.state.terminalOutputLimits = [true, false];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toContain("assistant response reached the model output limit");
+    expect(result.raw).not.toContain("terminal_submit_output_limit_continuation_start");
     expect(sdk.state.prompts).toHaveLength(1);
   });
 

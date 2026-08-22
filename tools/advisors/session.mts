@@ -613,6 +613,31 @@ export async function runReadOnlyAdvisor(
             }
             raw.append(`[${options.logPrefix}] assistant_text_repair_end ${turn.name}\n`);
           }
+          const terminalSubmitToolName = tools.terminalSubmitToolName;
+          const terminalSubmitOutputLimitPrompt = turn.terminalSubmitOutputLimitPrompt;
+          if (
+            currentTurnError === ADVISOR_OUTPUT_LIMIT_ERROR &&
+            terminalSubmitOutputLimitPrompt &&
+            terminalSubmitToolName &&
+            !successfulToolNames.has(terminalSubmitToolName) &&
+            !hasUnsettledAdvisorToolCall(currentTurnFlow)
+          ) {
+            contextTools.deactivate();
+            session.setActiveToolsByName([
+              ...new Set([...(tools.terminalSubmitRepairToolNames ?? []), terminalSubmitToolName]),
+            ]);
+            currentTurnError = undefined;
+            raw.append(
+              `\n[${options.logPrefix}] terminal_submit_output_limit_continuation_start ${turn.name}\n`,
+            );
+            options.logProgress(
+              `Advisor SDK continuing output-limited terminal submit for ${turn.name}`,
+            );
+            await promptAndWait(terminalSubmitOutputLimitPrompt);
+            raw.append(
+              `[${options.logPrefix}] terminal_submit_output_limit_continuation_end ${turn.name}\n`,
+            );
+          }
           const originalFlow = currentTurnFlow;
           const repairToolName = repairableAtomicTerminalToolName(
             turn,
@@ -642,11 +667,15 @@ export async function runReadOnlyAdvisor(
               `[${options.logPrefix}] atomic_terminal_repair_end ${turn.name} ${repairToolName} ok\n`,
             );
           }
+          let outputLimitedAfterSuccessfulSubmit =
+            currentTurnError === ADVISOR_OUTPUT_LIMIT_ERROR &&
+            terminalSubmitToolName !== undefined &&
+            successfulToolNames.has(terminalSubmitToolName);
           let terminalSubmitRepaired = hasCompletedTerminalSubmitRepair(
             turn,
             currentTurnFlow,
             tools,
-            currentTurnError,
+            outputLimitedAfterSuccessfulSubmit ? undefined : currentTurnError,
           );
           const submitRepairToolName = repairableTerminalSubmitToolName(
             turn,
@@ -681,6 +710,18 @@ export async function runReadOnlyAdvisor(
               `[${options.logPrefix}] terminal_submit_repair_end ${turn.name} ${submitRepairToolName} ok\n`,
             );
           }
+          outputLimitedAfterSuccessfulSubmit =
+            currentTurnError === ADVISOR_OUTPUT_LIMIT_ERROR &&
+            terminalSubmitToolName !== undefined &&
+            successfulToolNames.has(terminalSubmitToolName);
+          if (outputLimitedAfterSuccessfulSubmit) {
+            terminalSubmitRepaired = hasCompletedTerminalSubmitRepair(
+              turn,
+              currentTurnFlow,
+              tools,
+              undefined,
+            );
+          }
           const missing = missingRequiredAdvisorToolNames(
             tools.requiredToolNames,
             successfulToolNames,
@@ -693,6 +734,12 @@ export async function runReadOnlyAdvisor(
           );
           if (missing.length > 0)
             flowErrors.unshift(`omitted required tool result(s): ${missing.join(", ")}`);
+          if (outputLimitedAfterSuccessfulSubmit && flowErrors.length === 0) {
+            currentTurnError = undefined;
+            raw.append(
+              `\n[${options.logPrefix}] terminal_submit_output_limit_after_success_accepted ${turn.name}\n`,
+            );
+          }
           if (flowErrors.length > 0) throw new Error(flowErrors.join("; "));
         },
         readText: () => currentTurnText?.toString() ?? "",
@@ -817,12 +864,33 @@ function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTu
     terminalSubmitToolName: normalizedToolNames(
       turn.terminalSubmitToolName ? [turn.terminalSubmitToolName] : undefined,
     )[0],
+    terminalSubmitOutputLimitPrompt:
+      typeof turn.terminalSubmitOutputLimitPrompt === "string" &&
+      turn.terminalSubmitOutputLimitPrompt.trim()
+        ? turn.terminalSubmitOutputLimitPrompt.trim()
+        : undefined,
     terminalSubmitRepairPrompt:
       typeof turn.terminalSubmitRepairPrompt === "string" && turn.terminalSubmitRepairPrompt.trim()
         ? turn.terminalSubmitRepairPrompt.trim()
         : undefined,
     terminalSubmitRepairToolNames: normalizedToolNames(turn.terminalSubmitRepairToolNames),
   }));
+}
+
+function hasUnsettledAdvisorToolCall(events: AdvisorTurnFlowEvent[]): boolean {
+  const activeCalls = new Map<string, number>();
+  for (const event of events) {
+    if (event.type === "text") continue;
+    const active = activeCalls.get(event.toolName) ?? 0;
+    if (event.type === "tool_start") {
+      activeCalls.set(event.toolName, active + 1);
+    } else if (active === 0) {
+      return true;
+    } else {
+      activeCalls.set(event.toolName, active - 1);
+    }
+  }
+  return [...activeCalls.values()].some((count) => count !== 0);
 }
 
 function sanitizeTurnName(name: string): string {

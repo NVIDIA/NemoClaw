@@ -55,6 +55,8 @@ export type AdvisorPromptTurn = {
    * Nothing may follow a success.
    */
   terminalSubmitToolName?: string;
+  /** Opt into one continuation when a preparatory terminal-submit turn reaches its output limit. */
+  terminalSubmitOutputLimitPrompt?: string;
   /** Opt into one repair in the same SDK turn or one continuation after a settled failure. */
   terminalSubmitRepairPrompt?: string;
   /** Tools available during the terminal-submit repair continuation. */
@@ -133,6 +135,11 @@ export function resolveAdvisorTurnTools(
   if (terminalSubmitRepairToolNames.length > 0 && !terminalSubmitToolName) {
     throw new Error(
       `Advisor turn ${turn.name} terminal submit repair tools require a terminal submit tool`,
+    );
+  }
+  if (turn.terminalSubmitOutputLimitPrompt?.trim() && !terminalSubmitToolName) {
+    throw new Error(
+      `Advisor turn ${turn.name} terminal submit output-limit continuation requires a terminal submit tool`,
     );
   }
   if (turn.assistantTextRepairPrompt?.trim() && turn.requireAssistantText !== true) {

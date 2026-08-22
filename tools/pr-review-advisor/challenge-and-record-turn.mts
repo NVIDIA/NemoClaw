@@ -21,6 +21,8 @@ export function buildChallengeAndRecordTurn(): AdvisorPromptTurn {
     activeToolNames: ["read", "grep", "find", "ls", ...recordingTools],
     requiredToolNames: recordingTools,
     terminalSubmitToolName: SUBMIT_REVIEW_TOOL,
+    terminalSubmitOutputLimitPrompt:
+      "Continue once after the output limit using the prior evidence and accepted draft state. Complete only the missing recording steps in their required order, finish with submit_review, and emit no prose after it. Do not repeat an accepted draft call unless replacing invalid data.",
     terminalSubmitRepairPrompt:
       "The nonmutating submit_review validation was rejected. You have one repair only: follow the validation error's exact correction, replace only the invalid draft sections, and submit once more. Set findingId=null when the entry does not report a concern; never reuse an unrelated finding. If you replace findings, record the receipt again afterward because it is bound to the latest findings revision.",
     terminalSubmitRepairToolNames: recordingTools,

@@ -200,6 +200,20 @@ describe("advisor session context tool flow", () => {
     ).toThrow("assistant text repair requires a required assistant-text contract");
   });
 
+  it("requires a terminal submit before enabling its output-limit continuation", () => {
+    expect(() =>
+      resolveAdvisorTurnTools(
+        {
+          name: "invalid-terminal-continuation",
+          prompt: "review",
+          terminalSubmitOutputLimitPrompt: "continue",
+        },
+        [],
+        new Set(),
+      ),
+    ).toThrow("output-limit continuation requires a terminal submit tool");
+  });
+
   it.each(invalidFinalMutationFlows)(
     "rejects %s for an atomic mutation tool (#6446)",
     (_case, events, expectedError) => {
