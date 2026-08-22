@@ -253,12 +253,12 @@ describe("portable lifecycle recovery timing output", () => {
   it("preserves recovery when the diagnostic writer throws (#9200)", () => {
     const stateDir = temporaryStateDir();
     const podman = createPodman(true);
-    const log = vi
-      .fn()
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => {
-        throw new Error("diagnostic writer failed");
-      });
+    const timingWrite = vi.fn((_line: string) => {
+      throw new Error("diagnostic writer failed");
+    });
+    const log = vi.fn((line: string) =>
+      line.startsWith("  Portable lifecycle timing:") ? timingWrite(line) : undefined,
+    );
     installReceipt(stateDir, podman);
 
     expect(
@@ -270,6 +270,6 @@ describe("portable lifecycle recovery timing output", () => {
         now: () => 0,
       }),
     ).toEqual({ kind: "already-running" });
-    expect(log).toHaveBeenCalledTimes(2);
+    expect(timingWrite).toHaveBeenCalledOnce();
   });
 });
