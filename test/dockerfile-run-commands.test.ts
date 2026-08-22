@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { requireSingleReviewedDockerfileRunCommand } from "./helpers/dockerfile-run-commands";
+import {
+  dockerfileRunCommandPositions,
+  requireSingleReviewedDockerfileRunCommand,
+} from "./helpers/dockerfile-run-commands";
 
 const command = "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts";
 const corporateCaPath = "/usr/local/share/nemoclaw/corporate-ca.pem";
@@ -11,6 +14,60 @@ const invocation = [command, ...requiredArguments].join(" ");
 const splicedCommand = command.replace("strip-types", "strip-\\\ntypes");
 
 describe("Dockerfile RUN command discovery", () => {
+  it("finds only executable unquoted npm command words in RUN instructions (#9933)", () => {
+    const source = [
+      "# npm install",
+      'LABEL example="npm install"',
+      'RUN echo "npm install"',
+      "RUN echo npm install # npm ci",
+      "RUN true && \\",
+      "    # install from the reviewed lock",
+      "    npm --prefix /runtime ci",
+      "RUN if true; then npm --prefix=/runtime install; fi",
+      "RUN true && NPM_CONFIG_OFFLINE=true OTHER=value npm ci --prefix /runtime",
+      "RUN if npm ci --prefix /if; then true; fi",
+      "RUN if false; then true; elif npm install --prefix /elif; then true; fi",
+      "RUN while npm ci --prefix /while; do true; done",
+      "RUN until npm install --prefix /until; do true; done",
+      "RUN ( npm ci --prefix /subshell )",
+      "RUN { npm install --prefix /group; }",
+      "RUN case value in value) npm ci --prefix /case ;; esac",
+      "RUN ! npm install --prefix /negated",
+      'RUN NPM_CONFIG_CACHE="/tmp/npm cache" npm ci --prefix /quoted-assignment',
+      "RUN NPM_CONFIG_CACHE=/tmp/npm\\ cache npm install --prefix /escaped-assignment",
+      "",
+    ].join("\n");
+
+    expect(dockerfileRunCommandPositions(source, "npm")).toEqual([
+      source.indexOf("npm --prefix /runtime"),
+      source.indexOf("npm --prefix=/runtime"),
+      source.indexOf("npm ci --prefix"),
+      source.indexOf("npm ci --prefix /if"),
+      source.indexOf("npm install --prefix /elif"),
+      source.indexOf("npm ci --prefix /while"),
+      source.indexOf("npm install --prefix /until"),
+      source.indexOf("npm ci --prefix /subshell"),
+      source.indexOf("npm install --prefix /group"),
+      source.indexOf("npm ci --prefix /case"),
+      source.indexOf("npm install --prefix /negated"),
+      source.indexOf("npm ci --prefix /quoted-assignment"),
+      source.indexOf("npm install --prefix /escaped-assignment"),
+    ]);
+  });
+
+  it("ignores npm assignment values, redirection operands, and here-document delimiters (#9933)", () => {
+    const source = [
+      "RUN VALUE=npm ci",
+      "RUN echo ok > npm",
+      "RUN cat <<npm",
+      "payload",
+      "npm",
+      "",
+    ].join("\n");
+
+    expect(dockerfileRunCommandPositions(source, "npm")).toEqual([]);
+  });
+
   it("ignores command text in comments, strings, and non-RUN instructions", () => {
     const source = [
       `# ${command}`,
