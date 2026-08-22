@@ -120,6 +120,7 @@ describe("the staging Launchable reproduces the bounded OpenClaw CLI scenario", 
     expect(script).toContain("Brev SSH configuration refresh failed");
     expect(script).toContain('classification="timeout"');
     expect(script).toContain('brev delete "$INSTANCE_NAME"');
+    expect(script).toContain('jq -e --arg run "$producer_run"');
     expect(script).toContain("standing Launchable runtime identity does not match");
     expect(script).toContain("NEMOCLAW_REDACTION_SECRET");
     expect(script).not.toContain("--count");

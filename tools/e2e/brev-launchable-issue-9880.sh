@@ -128,7 +128,7 @@ producer_run="$(jq -er '[.workflow_runs[] | select(.display_title | startswith("
 gh run download "$producer_run" --repo brevdev/nemoclaw-image \
   --name "nemoclaw-image-handoff-v1-${producer_run}-1" --dir "$handoff_dir"
 manifest="$handoff_dir/nemoclaw-image-manifest.v1.json"
-jq -e --argjson run "$producer_run" '
+jq -e --arg run "$producer_run" '
   .schemaVersion == 1 and .kind == "nemoclaw-exact-image-manifest" and
   .imageRepository == "brevdev/nemoclaw-image" and
   .producerWorkflow == ".github/workflows/build-launchable-e2e-image.yml" and
