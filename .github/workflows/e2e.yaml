@@ -2792,6 +2792,7 @@ jobs:
                             NanoCpus: .HostConfig.NanoCpus,
                             CpuPeriod: .HostConfig.CpuPeriod,
                             CpuQuota: .HostConfig.CpuQuota,
+                            OomScoreAdj: .HostConfig.OomScoreAdj,
                             NetworkMode: .HostConfig.NetworkMode,
                             Mounts: .HostConfig.Mounts
                           },
@@ -2838,6 +2839,7 @@ jobs:
                     NanoCpus: .HostConfig.NanoCpus,
                     CpuPeriod: .HostConfig.CpuPeriod,
                     CpuQuota: .HostConfig.CpuQuota,
+                    OomScoreAdj: .HostConfig.OomScoreAdj,
                     Mounts: .HostConfig.Mounts
                   },
                   Mounts,
