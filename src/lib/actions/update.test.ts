@@ -68,7 +68,7 @@ describe("runUpdateAction", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Current NemoHermes version: 0.1.0"));
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining(
-        "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash",
+        "curl -fsSL --proto '=https' --proto-redir '=https' https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash",
       ),
     );
   });
@@ -94,7 +94,7 @@ describe("runUpdateAction", () => {
     );
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining(
-        "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code bash",
+        "curl -fsSL --proto '=https' --proto-redir '=https' https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code bash",
       ),
     );
   });
@@ -351,29 +351,32 @@ describe("runUpdateAction", () => {
     ["1.0.0", "01.0.0", "maintained release component"],
     ["1.0.0-01", "1.0.0-1", "installed prerelease identifier"],
     ["1.0.0-1", "1.0.0-01", "maintained prerelease identifier"],
-  ])("fails closed on --fresh for a leading zero in the %s (%s; %s) (#8306)", async (currentVersion, latestVersion) => {
-    const spawnSyncImpl = vi.fn();
-    const error = vi.fn();
+  ])(
+    "fails closed on --fresh for a leading zero in the %s (%s; %s) (#8306)",
+    async (currentVersion, latestVersion) => {
+      const spawnSyncImpl = vi.fn();
+      const error = vi.fn();
 
-    const result = await runUpdateAction(
-      { fresh: true, yes: true },
-      {
-        currentVersion: () => currentVersion,
-        error,
-        getMaintainedTarget: () => maintainedTarget(latestVersion),
-        isSourceCheckout: () => false,
-        log: vi.fn(),
-        spawnSyncImpl,
-      },
-    );
+      const result = await runUpdateAction(
+        { fresh: true, yes: true },
+        {
+          currentVersion: () => currentVersion,
+          error,
+          getMaintainedTarget: () => maintainedTarget(latestVersion),
+          isSourceCheckout: () => false,
+          log: vi.fn(),
+          spawnSyncImpl,
+        },
+      );
 
-    expect(result.ranInstaller).toBe(false);
-    expect(result.status).toBe(1);
-    expect(result.updateAvailable).toBeNull();
-    expect(spawnSyncImpl).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Cannot order"));
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("--allow-downgrade"));
-  });
+      expect(result.ranInstaller).toBe(false);
+      expect(result.status).toBe(1);
+      expect(result.updateAvailable).toBeNull();
+      expect(spawnSyncImpl).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("Cannot order"));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("--allow-downgrade"));
+    },
+  );
 
   it("fails closed on --fresh when the maintained tag cannot be resolved (#8306)", async () => {
     const spawnSyncImpl = vi.fn();
@@ -867,5 +870,12 @@ describe("getMaintainedNemoClawVersionFromGitTag", () => {
     );
 
     expect(getMaintainedNemoClawTargetFromGitTag({ spawnSyncImpl })).toBeNull();
+  });
+});
+
+describe("NEMOCLAW_UPDATE_COMMAND", () => {
+  it("pins the installer fetch to HTTPS so a redirect cannot downgrade it (#9861)", () => {
+    expect(NEMOCLAW_UPDATE_COMMAND).toContain("--proto '=https'");
+    expect(NEMOCLAW_UPDATE_COMMAND).toContain("--proto-redir '=https'");
   });
 });

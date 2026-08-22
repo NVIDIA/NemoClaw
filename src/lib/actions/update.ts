@@ -11,8 +11,18 @@ import { normalizeVersion } from "../domain/installer/version";
 
 export const NEMOCLAW_INSTALLER_URL = "https://www.nvidia.com/nemoclaw.sh";
 export const NEMOCLAW_REPO_URL = "https://github.com/NVIDIA/NemoClaw.git";
-export const NEMOCLAW_UPDATE_COMMAND = `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | bash`;
 export const NEMOCLAW_MAINTAINED_INSTALL_TAG = "lkg";
+
+// `--proto '=https' --proto-redir '=https'` makes the transfer fail closed on
+// a downgrade redirect, so a compromised or misconfigured hop cannot smuggle
+// plaintext bytes into `bash` (#9861). Same hardening as
+// src/lib/onboard/install-ollama-linux.ts.
+function curlPipeBashCommand(agentEnvAssignment?: string): string {
+  const envPrefix = agentEnvAssignment ? `${agentEnvAssignment} ` : "";
+  return `curl -fsSL --proto '=https' --proto-redir '=https' ${NEMOCLAW_INSTALLER_URL} | ${envPrefix}bash`;
+}
+
+export const NEMOCLAW_UPDATE_COMMAND = curlPipeBashCommand();
 
 type LogFn = (message?: string) => void;
 type PromptFn = (question: string) => Promise<string>;
@@ -87,14 +97,14 @@ function updateBranding(env: NodeJS.ProcessEnv): UpdateBranding {
     return {
       cliName: "nemohermes",
       displayName: "NemoHermes",
-      maintainedUpdateCommand: `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | NEMOCLAW_AGENT=hermes bash`,
+      maintainedUpdateCommand: curlPipeBashCommand("NEMOCLAW_AGENT=hermes"),
     };
   }
   if (agent === "langchain-deepagents-code") {
     return {
       cliName: "nemo-deepagents",
       displayName: "NemoDeepAgents",
-      maintainedUpdateCommand: `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | NEMOCLAW_AGENT=langchain-deepagents-code bash`,
+      maintainedUpdateCommand: curlPipeBashCommand("NEMOCLAW_AGENT=langchain-deepagents-code"),
     };
   }
   return {
