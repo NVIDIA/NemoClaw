@@ -203,4 +203,30 @@ describe("stable CLI coverage sharding", () => {
       }),
     ).toThrow(/Invalid CLI test timing hint/u);
   });
+
+  it.each([
+    { name: "no sources", sources: [] },
+    {
+      name: "a source without an artifact ID",
+      sources: [
+        {
+          runId: 32538808045,
+          headSha: "9577b175338d6cf1ead335452ade76470f1593a9",
+          recordedAt: "2026-08-22T00:40:44Z",
+        },
+      ],
+    },
+    {
+      name: "a non-positive artifact ID",
+      sources: [{ ...cliTestTimingHints.sources[0], artifactId: 0 }],
+    },
+    {
+      name: "a non-integer artifact ID",
+      sources: [{ ...cliTestTimingHints.sources[0], artifactId: 1.5 }],
+    },
+  ])("rejects timing hint manifests with $name", ({ sources }) => {
+    expect(() => parseCliTestTimingHints({ ...cliTestTimingHints, sources })).toThrow(
+      /timing hints? (?:require source metadata|source)/u,
+    );
+  });
 });
