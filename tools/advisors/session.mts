@@ -887,7 +887,7 @@ function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTu
 function hasUnsettledAdvisorToolCall(events: AdvisorTurnFlowEvent[]): boolean {
   const activeCalls = new Map<string, number>();
   for (const event of events) {
-    if (event.type === "text") continue;
+    if (event.type === "text" || event.type === "read") continue;
     const active = activeCalls.get(event.toolName) ?? 0;
     if (event.type === "tool_start") {
       activeCalls.set(event.toolName, active + 1);
