@@ -2771,6 +2771,21 @@ jobs:
         run: |
           set -euo pipefail
           cat "${RUNNER_TEMP}/native-podman-e2e-service.log" >&2
+          docker ps --all --no-trunc --format '{{json .}}' >&2 || true
+          while IFS= read -r container_id; do
+            [[ -n "$container_id" ]] || continue
+            docker inspect --format \
+              'state={{json .State}} labels={{json .Config.Labels}} runtime={{json .HostConfig.Runtime}} networks={{json .NetworkSettings.Networks}}' \
+              "$container_id" >&2 || true
+            docker logs --tail 300 "$container_id" 2>&1 \
+              | grep -Ei 'error|failed|failure|fatal|panic|permission|denied|not found|unsupported|timeout|timed out' \
+              | tail -n 120 >&2 || true
+          done < <(docker ps --all --quiet --filter 'label=openshell.ai/sandbox-name')
+          gateway_log="${HOME}/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.log"
+          if [[ -f "$gateway_log" && ! -L "$gateway_log" ]]; then
+            grep -Ei 'error|failed|failure|fatal|panic|permission|denied|not found|unsupported|timeout|timed out|terminal_failure_phase' \
+              "$gateway_log" | tail -n 160 >&2 || true
+          fi
           sudo dmesg | grep -E 'apparmor=.*DENIED' | tail -n 40 >&2 || true
 
       # The sanitizer reads raw traces only after checking the workflow-owned
