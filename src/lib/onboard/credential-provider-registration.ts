@@ -6,6 +6,7 @@ import type { CheckpointProviderBinding } from "../state/onboard-checkpoint-type
 import type { Session } from "../state/onboard-session";
 import * as braveProviderProfile from "./brave-provider-profile";
 import * as gatewayProviderMetadata from "./gateway-provider-metadata";
+import * as messagingBridgeProvider from "./messaging-bridge-provider";
 import type { MessagingTokenDef } from "./messaging-prep";
 import type { OpenshellCliHelpers } from "./openshell-cli";
 import { createGatewayScopedOpenshellRunner } from "./setup-inference";
@@ -186,15 +187,33 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     return upserted;
   }
 
+  function credentialBindingMatchesGateway(
+    binding: CheckpointProviderBinding,
+    runOpenshell: OpenshellCliHelpers["runOpenshell"],
+  ): boolean {
+    const staticProfileMatches = messagingBridgeProvider.matchesRegisteredStaticMessagingProfile(
+      binding.type,
+      { root: deps.root, runOpenshell },
+    );
+    if (staticProfileMatches === false) return false;
+    return gatewayProviderMetadata.matchesGatewayCredentialOnlyProviderBinding(
+      providers.readGatewayProviderMetadata(binding.name, runOpenshell, deps.getGatewayName()),
+      {
+        name: binding.name,
+        type: binding.type,
+        credentialKey: binding.credentialEnv,
+      },
+    );
+  }
+
   function providerMatchesGatewayCredential(
     name: string,
     type: string,
     credentialEnv: string,
   ): boolean {
-    const runOpenshell = gatewayRunner();
-    return gatewayProviderMetadata.matchesGatewayCredentialOnlyProviderBinding(
-      providers.readGatewayProviderMetadata(name, runOpenshell, deps.getGatewayName()),
-      { name, type, credentialKey: credentialEnv },
+    return credentialBindingMatchesGateway(
+      { name, type, credentialEnv },
+      gatewayRunner(),
     );
   }
 
@@ -211,14 +230,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
         }
         continue;
       }
-      const matches = gatewayProviderMetadata.matchesGatewayCredentialOnlyProviderBinding(
-        providers.readGatewayProviderMetadata(binding.name, runOpenshell, deps.getGatewayName()),
-        {
-          name: binding.name,
-          type: binding.type,
-          credentialKey: binding.credentialEnv,
-        },
-      );
+      const matches = credentialBindingMatchesGateway(binding, runOpenshell);
       if (!matches) throw new Error(EXISTING_BINDING_ERROR);
     }
   }

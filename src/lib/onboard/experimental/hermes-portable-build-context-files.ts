@@ -185,6 +185,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/channels/discord/manifest.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/discord/policy/hermes.yaml", mode: "100644" },
   { path: "src/lib/messaging/channels/discord/policy/openclaw.yaml", mode: "100644" },
+  { path: "src/lib/messaging/channels/discord/provider-profile/hermes.yaml", mode: "100644" },
   { path: "src/lib/messaging/channels/discord/rendered-config-parser.test.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/discord/rendered-config-parser.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/discord/template-resolver.ts", mode: "100644" },

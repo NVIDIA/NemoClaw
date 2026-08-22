@@ -112,6 +112,7 @@
     "bin/",
     "dist/",
     "src/lib/messaging/channels/**/policy/*.{yaml,yml}",
+    "src/lib/messaging/channels/**/provider-profile/*.{yaml,yml}",
     "nemoclaw/dist/",
     "nemoclaw/openclaw.plugin.json",
     "nemoclaw/package.json",
