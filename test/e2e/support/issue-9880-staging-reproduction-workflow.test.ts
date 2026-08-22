@@ -116,6 +116,7 @@ describe("the staging Launchable reproduces the bounded OpenClaw CLI scenario", 
     expect(script).toContain("meta/llama-3.3-70b-instruct");
     expect(script).toContain("for attempt in 1 2 3 4 5");
     expect(script).toContain("cleanup-owned-workspace");
+    expect(script).toContain("cleanup could not inspect workspace inventory");
     expect(script).toContain("Brev SSH configuration refresh failed");
     expect(script).toContain('classification="timeout"');
     expect(script).toContain('brev delete "$INSTANCE_NAME"');

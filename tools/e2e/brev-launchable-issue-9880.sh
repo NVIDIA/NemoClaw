@@ -39,7 +39,10 @@ write_cleanup_evidence() {
 cleanup_owned_workspace() {
   local existing="" workspace_id="" absent=0
   if [ ! -e "$OWNER_FILE" ]; then
-    existing="$(workspace || true)"
+    if ! existing="$(workspace)"; then
+      write_cleanup_evidence UNKNOWN
+      fail "cleanup could not inspect workspace inventory without an ownership receipt"
+    fi
     if [ -z "$existing" ]; then
       write_cleanup_evidence ABSENT
       return
