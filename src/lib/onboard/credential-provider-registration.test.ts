@@ -3,7 +3,9 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { Session } from "../state/onboard-session";
+import { requiredMessagingProviderBindings } from "./checkpoint-replay";
 import {
   type CredentialProviderRegistrationDeps,
   createCredentialProviderRegistration,
@@ -12,6 +14,23 @@ import type { MessagingTokenDef } from "./messaging-prep";
 
 const BRAVE_SECRET = "brv-resume-secret";
 const DISCORD_SECRET = "discord-resume-secret";
+
+const DISCORD_STATIC_PROFILE = {
+  id: "discord-hermes-static-v1",
+  credentials: [
+    {
+      name: "bot_token",
+      env_vars: ["DISCORD_BOT_TOKEN"],
+      required: true,
+      auth_style: "header",
+      header_name: "Authorization",
+      query_param: "",
+    },
+  ],
+  endpoints: [],
+  binaries: [],
+  inference_capable: false,
+};
 
 function providerMetadata(
   name: string,
@@ -70,6 +89,149 @@ function sandboxInput(bindings: ReturnType<typeof requiredBindings>) {
 }
 
 describe("credential provider registration", () => {
+  it.each([
+    { condition: "matches", endpoints: [], expected: true },
+    {
+      condition: "has endpoint authority",
+      endpoints: [{ host: "gateway.discord.gg", port: 443 }],
+      expected: false,
+    },
+  ])(
+    "reuses a tokenless Hermes Discord provider only when its static profile $condition",
+    ({ endpoints, expected }) => {
+      const session = { stagedCredentialProviders: [] } as unknown as Session;
+      const runOpenshell = vi.fn((args: string[]) =>
+        args.includes("profile") && args.includes("export")
+          ? {
+            status: 0,
+            stdout: JSON.stringify({ ...DISCORD_STATIC_PROFILE, endpoints }),
+            stderr: "",
+            }
+          : providerMetadata(
+              "alpha-discord-bridge",
+              "discord-hermes-static-v1",
+              "DISCORD_BOT_TOKEN",
+            ),
+      );
+      const deps = registrationDeps(runOpenshell, session);
+      deps.root = process.cwd();
+      const registration = createCredentialProviderRegistration(deps);
+
+      expect(
+        registration.providerMatchesGatewayCredential(
+          "alpha-discord-bridge",
+          "discord-hermes-static-v1",
+          "DISCORD_BOT_TOKEN",
+        ),
+      ).toBe(expected);
+      expect(runOpenshell).toHaveBeenCalledWith(
+        [
+          "provider",
+          "profile",
+          "-g",
+          "test-gateway",
+          "export",
+          "discord-hermes-static-v1",
+          "--output",
+          "json",
+        ],
+        expect.objectContaining({ suppressOutput: true }),
+      );
+      expect(
+        runOpenshell.mock.calls
+          .map(([args]) => args)
+          .filter((args) => args[0] === "provider" && ["create", "update"].includes(args[1] ?? "")),
+      ).toEqual([]);
+    },
+  );
+
+  it("uses one selected gateway for static profile and provider identity", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const commandResults = new Map([
+      [
+        "provider profile -g test-gateway export discord-hermes-static-v1 --output json",
+        { status: 0, stdout: JSON.stringify(DISCORD_STATIC_PROFILE), stderr: "" },
+      ],
+      [
+        "provider get -g test-gateway alpha-discord-bridge",
+        providerMetadata(
+          "alpha-discord-bridge",
+          "discord-hermes-static-v1",
+          "DISCORD_BOT_TOKEN",
+        ),
+      ],
+    ]);
+    const ambientProfileMismatch = {
+      status: 0,
+      stdout: JSON.stringify({
+        ...DISCORD_STATIC_PROFILE,
+        endpoints: [{ host: "gateway.discord.gg", port: 443 }],
+      }),
+      stderr: "",
+    };
+    const runOpenshell = vi.fn(
+      (args: string[]) => commandResults.get(args.join(" ")) ?? ambientProfileMismatch,
+    );
+    const deps = registrationDeps(runOpenshell, session);
+    deps.root = process.cwd();
+    const registration = createCredentialProviderRegistration(deps);
+
+    expect(
+      registration.providerMatchesGatewayCredential(
+        "alpha-discord-bridge",
+        "discord-hermes-static-v1",
+        "DISCORD_BOT_TOKEN",
+      ),
+    ).toBe(true);
+    expect(runOpenshell.mock.calls.map(([args]) => args.join(" "))).toEqual([
+      "provider profile -g test-gateway export discord-hermes-static-v1 --output json",
+      "provider get -g test-gateway alpha-discord-bridge",
+    ]);
+  });
+
+  it("rejects tokenless Hermes Discord profile drift before provider mutation", async () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn((args: string[]) =>
+      args.includes("profile") && args.includes("export")
+        ? {
+          status: 0,
+          stdout: JSON.stringify({
+            ...DISCORD_STATIC_PROFILE,
+            binaries: ["/usr/bin/curl"],
+          }),
+          stderr: "",
+          }
+        : providerMetadata(
+            "alpha-discord-bridge",
+            "discord-hermes-static-v1",
+            "DISCORD_BOT_TOKEN",
+          ),
+    );
+    const deps = registrationDeps(runOpenshell, session);
+    deps.root = process.cwd();
+    const registration = createCredentialProviderRegistration(deps);
+    const tokenDef: MessagingTokenDef = {
+      name: "alpha-discord-bridge",
+      envKey: "DISCORD_BOT_TOKEN",
+      token: null,
+      providerType: "discord-hermes-static-v1",
+    };
+
+    await expect(
+      registration.stageSandboxCredentialProviders(
+        sandboxInput(requiredBindings([tokenDef])),
+        async () => ({ messagingTokenDefs: [tokenDef] }),
+      ),
+    ).rejects.toThrow("existing credential provider does not match");
+
+    expect(deps.updateSession).not.toHaveBeenCalled();
+    expect(
+      runOpenshell.mock.calls
+        .map(([args]) => args)
+        .filter((args) => args[0] === "provider" && ["create", "update"].includes(args[1] ?? "")),
+    ).toEqual([]);
+  });
+
   it.each([
     {
       condition: "the explicit environment contains the staged value",
@@ -262,6 +424,101 @@ describe("credential provider registration", () => {
         "alpha-discord-bridge",
         "--type",
         "generic",
+        "--credential",
+        "DISCORD_BOT_TOKEN",
+      ],
+      expect.objectContaining({ env: { DISCORD_BOT_TOKEN: DISCORD_SECRET } }),
+    );
+  });
+
+  it("registers one static Hermes Discord provider from the checkpoint binding", async () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const missing = { status: 1, stdout: "", stderr: "not found" };
+    const success = { status: 0, stdout: "", stderr: "" };
+    const runOpenshell = vi.fn((args: string[]) =>
+      (args[0] === "provider" && args.includes("profile") && args.includes("export")) ||
+      (args[0] === "provider" && args[1] === "get")
+        ? missing
+        : success,
+    );
+    const registration = createCredentialProviderRegistration(
+      registrationDeps(runOpenshell, session),
+    );
+    const plan: SandboxMessagingPlan = {
+      schemaVersion: 1,
+      sandboxName: "alpha",
+      agent: "hermes",
+      workflow: "onboard",
+      channels: [
+        {
+          channelId: "discord",
+          displayName: "Discord",
+          authMode: "token-paste",
+          active: true,
+          selected: true,
+          configured: true,
+          disabled: false,
+          inputs: [],
+          hooks: [],
+        },
+      ],
+      disabledChannels: [],
+      credentialBindings: [
+        {
+          channelId: "discord",
+          credentialId: "discordBotToken",
+          sourceInput: "botToken",
+          providerName: "alpha-discord-bridge",
+          providerEnvKey: "DISCORD_BOT_TOKEN",
+          placeholder: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+          credentialAvailable: true,
+        },
+      ],
+      networkPolicy: { presets: [], entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    };
+    const required = requiredMessagingProviderBindings("alpha", plan);
+    const tokenDefs: MessagingTokenDef[] = [
+      {
+        name: "alpha-discord-bridge",
+        envKey: "DISCORD_BOT_TOKEN",
+        token: DISCORD_SECRET,
+        providerType: "discord-hermes-static-v1",
+      },
+    ];
+
+    const registered = await registration.stageSandboxCredentialProviders(
+      {
+        sandboxName: "alpha",
+        enabledChannels: ["discord"],
+        webSearchConfig: null,
+        agent: { name: "hermes" },
+        requiredBindings: required,
+      },
+      async () => ({ messagingTokenDefs: tokenDefs }),
+    );
+
+    expect(required).toEqual([
+      {
+        name: "alpha-discord-bridge",
+        type: "discord-hermes-static-v1",
+        credentialEnv: "DISCORD_BOT_TOKEN",
+      },
+    ]);
+    expect(registered).toEqual(required);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      [
+        "provider",
+        "create",
+        "-g",
+        "test-gateway",
+        "--name",
+        "alpha-discord-bridge",
+        "--type",
+        "discord-hermes-static-v1",
         "--credential",
         "DISCORD_BOT_TOKEN",
       ],

@@ -39,6 +39,7 @@ function successfulOpenshellResult(): ReturnType<typeof runtime.runOpenshell> {
 
 const TELEGRAM_TOKEN = "123456:AAH-secret-bot-token-value";
 const TELEGRAM_HASH = hashCredential(TELEGRAM_TOKEN) as string;
+const DISCORD_TOKEN = "discord-test-token";
 
 // Build a minimal plan-backed SandboxEntry for conflict-detection fixtures.
 // Callers supply credential bindings as { providerEnvKey, credentialHash? }.
@@ -225,6 +226,7 @@ let errSpy: MockInstance;
 let exitMock: MockInstance;
 let promptMock: MockInstance;
 let getCredentialMock: MockInstance;
+let saveCredentialMock: MockInstance;
 let updateSandboxMock: MockInstance;
 let upsertMock: MockInstance;
 let runOpenshellMock: MockInstance;
@@ -274,6 +276,7 @@ beforeEach(() => {
   delete process.env.SLACK_APP_TOKEN;
   delete process.env.SLACK_ALLOWED_USERS;
   delete process.env.SLACK_ALLOWED_CHANNELS;
+  delete process.env.DISCORD_BOT_TOKEN;
   delete process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY;
   delete process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION;
   delete process.env.WECHAT_BOT_TOKEN;
@@ -322,7 +325,7 @@ beforeEach(() => {
   // Credentials store: staged token (no real prompt) + controllable prompt.
   getCredentialMock = vi.spyOn(store, "getCredential").mockReturnValue(null);
   promptMock = vi.spyOn(store, "prompt").mockResolvedValue("");
-  vi.spyOn(store, "saveCredential").mockImplementation(() => undefined);
+  saveCredentialMock = vi.spyOn(store, "saveCredential").mockImplementation(() => undefined);
 
   // Agent gate: OpenClaw support is derived from channel manifests.
   vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("openclaw"));
@@ -521,6 +524,92 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(conflictPromptShown()).toBe(false);
     expect(upsertMock).toHaveBeenCalledTimes(1);
     expect(updateSandboxMock).toHaveBeenCalledWith("alpha", expect.any(Object));
+  });
+
+  it("registers Hermes Discord with the exact static provider binding", async () => {
+    arrangeRegistry({
+      current: { ...makeEmptyEntry("alpha"), agent: "hermes" } as SandboxEntry,
+    });
+    vi.mocked(defs.loadAgent).mockReturnValue(agentFixture("hermes"));
+    getCredentialMock.mockImplementation((key: string) =>
+      key === "DISCORD_BOT_TOKEN" ? DISCORD_TOKEN : null,
+    );
+
+    await addSandboxChannel("alpha", { channel: "discord" });
+
+    expect(upsertMock).toHaveBeenCalledWith(
+      [
+        {
+          name: "alpha-discord-bridge",
+          envKey: "DISCORD_BOT_TOKEN",
+          token: DISCORD_TOKEN,
+          providerType: "discord-hermes-static-v1",
+        },
+      ],
+      { bestEffort: true, requireExactBindings: true },
+    );
+  });
+
+  it("does not remove a pre-existing provider after a Hermes Discord identity conflict", async () => {
+    const originalEntry = { ...makeEmptyEntry("alpha"), agent: "hermes" } as SandboxEntry;
+    arrangeRegistry({ current: originalEntry });
+    vi.mocked(defs.loadAgent).mockReturnValue(agentFixture("hermes"));
+    getCredentialMock.mockImplementation((key: string) =>
+      key === "DISCORD_BOT_TOKEN" ? DISCORD_TOKEN : null,
+    );
+    upsertMock.mockImplementationOnce(() => {
+      throw Object.assign(
+        new Error("alpha-discord-bridge does not match the required binding"),
+        {
+          code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
+          mutatedProviderNames: [],
+        },
+      );
+    });
+
+    await expect(addSandboxChannel("alpha", { channel: "discord" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(updateSandboxMock).not.toHaveBeenCalled();
+    expect(registry.getSandbox("alpha")).toBe(originalEntry);
+    expect(
+      runOpenshellMock.mock.calls
+        .map(([args]) => (args as string[]).join(" "))
+        .filter((command) => command.includes("provider detach") || command.includes("delete")),
+    ).toEqual([]);
+  });
+
+  it("does not persist a multi-provider add when identity preflight fails", async () => {
+    const originalEntry = makeEmptyEntry("alpha");
+    arrangeRegistry({ current: originalEntry });
+    const slackBot = "xoxb-alpha-slack-bot-token";
+    const slackApp = "xapp-alpha-slack-app-token";
+    getCredentialMock.mockImplementation((key: string) =>
+      key === "SLACK_BOT_TOKEN" ? slackBot : key === "SLACK_APP_TOKEN" ? slackApp : null,
+    );
+    upsertMock.mockImplementationOnce(() => {
+      throw Object.assign(new Error("alpha-slack-app does not match the required binding"), {
+        code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
+        mutatedProviderNames: [],
+      });
+    });
+
+    await expect(addSandboxChannel("alpha", { channel: "slack" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(upsertMock.mock.calls[0]?.[0]).toHaveLength(2);
+    expect(saveCredentialMock).not.toHaveBeenCalled();
+    expect(applyPresetMock).not.toHaveBeenCalled();
+    expect(updateSandboxMock).not.toHaveBeenCalled();
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
+    expect(registry.getSandbox("alpha")).toBe(originalEntry);
+    expect(
+      runOpenshellMock.mock.calls
+        .map(([args]) => (args as string[]).join(" "))
+        .filter((command) => command.includes("provider detach") || command.includes("delete")),
+    ).toEqual([]);
   });
 
   // Scenario 6

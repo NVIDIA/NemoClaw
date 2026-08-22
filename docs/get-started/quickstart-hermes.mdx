@@ -146,7 +146,11 @@ Use these details when your first-run path needs more control.
     Before the provider-selection step completes, NemoClaw creates the receipt-owned runner, sends one validation request for the selected model, and confirms that the exact model is loaded.
     NemoClaw records the provider selection only after those checks pass.
 
-    This onboarding path does not establish complete `destroy` or `uninstall` cleanup for the Portable Ollama runner.
+    Run `nemohermes uninstall` for full cleanup of a receipt-owned Portable Ollama runner.
+    NemoClaw revalidates the exact lifecycle receipt, sandbox and Podman container identities, committed gateway provider revision, inference runtime, socket, and Portable network before it removes an owned resource.
+    If cleanup is interrupted, preserve the reported state and rerun the same command.
+    NemoClaw resumes the recorded phase without deleting a same-name replacement, shared provider or inference runtime, or Podman image.
+    Per-sandbox `destroy` remains outside this full-uninstall cleanup contract.
     Refer to [Set Up Ollama](../inference/local-inference/set-up-ollama#use-portable-ollama-with-hermes) for the fail-closed uninstall boundary.
   </Accordion>
 
