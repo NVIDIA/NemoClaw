@@ -139,6 +139,7 @@ runs:
         ensure_subordinate_range /etc/subuid --add-subuids
         ensure_subordinate_range /etc/subgid --add-subgids
 
+        podman_command=("$podman_executable")
         if [[ -r /sys/module/apparmor/parameters/enabled ]] && grep -q '^Y' /sys/module/apparmor/parameters/enabled; then
           profile="$RUNNER_TEMP/nemoclaw-native-podman-e2e.apparmor"
           pasta_profile="$RUNNER_TEMP/nemoclaw-native-pasta-e2e.apparmor"
@@ -150,6 +151,8 @@ runs:
             '  userns,' \
             '}' >"$profile"
           sudo apparmor_parser -r "$profile"
+          command -v aa-exec >/dev/null
+          podman_command=(aa-exec -p nemoclaw-native-podman-e2e -- "$podman_executable")
           printf '%s\n' \
             'abi <abi/4.0>,' \
             'include <tunables/global>' \
@@ -179,11 +182,11 @@ runs:
         export CONTAINERS_STORAGE_CONF="$storage_config"
         export XDG_RUNTIME_DIR="$runtime_directory"
         service_log="$RUNNER_TEMP/native-podman-e2e-service.log"
-        "$podman_executable" system service --time=0 "unix://$socket_path" >"$service_log" 2>&1 &
+        "${podman_command[@]}" system service --time=0 "unix://$socket_path" >"$service_log" 2>&1 &
         service_pid="$!"
         service_ready=false
         for attempt in $(seq 1 30); do
-          if "$podman_executable" --url "unix://$socket_path" info --format json \
+          if "${podman_command[@]}" --url "unix://$socket_path" info --format json \
             >"$RUNNER_TEMP/native-podman-e2e-info.json" 2>>"$service_log"; then
             service_ready=true
             break
