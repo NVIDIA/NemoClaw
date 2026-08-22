@@ -9,12 +9,14 @@ keywords: ["nemoclaw host files", "nemoclaw state directory", "nemoclaw sandboxe
 content:
   type: "reference"
 ---
-NemoClaw stores host-side configuration, registry metadata, operational state, transient install state, and local backups under `~/.nemoclaw/`.
+NemoClaw stores most host-side configuration, registry metadata, operational state, transient install state, and local backups under `~/.nemoclaw/`.
+Some lifecycle journals live under `~/.local/state/` so they remain available when an operation removes a selected state root.
 Managed local inference profiles also use the cache paths listed on this page.
 Use this page when you need to identify what a file does before deleting, backing up, or sharing diagnostics.
 
-The default OpenShell gateway stores managed llama.cpp state under `~/.nemoclaw/managed-llama-cpp/`.
+The default gateway stores managed llama.cpp state under `~/.nemoclaw/managed-llama-cpp/`.
 A non-default gateway port stores the same files under `~/.nemoclaw/gateways/<port>/managed-llama-cpp/`.
+For the Amazon Bedrock adapter rows below, `<selected-state-root>` is `~/.nemoclaw/` for port `8080` or `~/.nemoclaw/gateways/<port>/` for another port.
 
 <AgentOnly variant="deepagents">
 The `nemo-deepagents` alias uses the same host-side `~/.nemoclaw/` configuration, sandbox registry, operational state, backup, and mount directories as the default NemoClaw CLI.
@@ -37,6 +39,10 @@ Unless a row says otherwise, full-uninstall removal behavior in this table appli
 | `~/.nemoclaw/portable-uninstall-retirement.json` | Current-user-owned portable cleanup recovery authority, written at mode `0600` under the current-user-owned, mode-`0700` `~/.nemoclaw/` directory. It binds exact cleanup targets and remains after cleanup until a later completed onboarding durably supersedes it. Its hashes are dictionary-testable pseudonymous fingerprints, not secrets. | No while cleanup, retry, or supersession recovery may be needed. Do not remove it manually; later completed onboarding retires it. |
 | `~/.nemoclaw/onboard-session.json` | Resume marker for an onboarding attempt that failed before completion. | Yes, when you intentionally want to discard the failed session and start over. Prefer `$$nemoclaw onboard --fresh` when available. |
 | `~/.nemoclaw/usage-notice.json` | Records the third-party software notice version in `acceptedVersion` and the acceptance time in `acceptedAt`. Install, onboarding, and rebuild flows consult this file and prompt again when its recorded version differs from the current notice or the file is absent. | Yes; deleting it makes the next applicable install, onboarding, or rebuild flow prompt for acceptance again. |
+| `<selected-state-root>/bedrock-runtime-adapter.pid` | Mode-`0600` canonical PID for the selected gateway's host-local Amazon Bedrock Runtime adapter. Uninstall correlates it with the lifecycle state and journal before it signals a process. | No while the adapter or an unfinished uninstall journal exists. Uninstall retires it only after it proves the recorded process is absent. |
+| `<selected-state-root>/bedrock-runtime-adapter-token` | Mode-`0600` local bearer token that authenticates requests to the selected gateway's Amazon Bedrock Runtime adapter. This token is separate from the upstream AWS credential held by the adapter process. | No while the adapter or an unfinished uninstall journal exists. Uninstall removes it only after process absence and lifecycle generation match the journal. |
+| `<selected-state-root>/bedrock-runtime-adapter.json` | Mode-`0600` lifecycle state that binds the adapter generation, canonical PID, process start identity, current user, executable and launcher paths, adapter port, and token hash. It does not contain the bearer token. | No while the adapter or an unfinished uninstall journal exists. Keep it for fail-closed uninstall recovery. |
+| `~/.local/state/nemoclaw-bedrock-runtime-adapter/<gateway-port>/uninstall.json` | Mode-`0600` per-gateway phase journal for Amazon Bedrock adapter cleanup. It remains outside the selected state root so an interrupted uninstall can resume the exact generation. Onboarding refuses to start another generation while this journal remains unfinished. | No. Rerun uninstall with the same gateway port and let successful cleanup retire the journal. |
 | `~/.nemoclaw/ollama-proxy-token` | Host-global auth token used by the host-side Ollama auth proxy. Every gateway port on the host uses this one file. | Yes, but rerun onboarding for every gateway port that uses Local Ollama afterward, because a new token invalidates the shared proxy for all of them. |
 | `~/.nemoclaw/ollama-backend` | Host-global legacy route URL used to restart the Ollama auth proxy and retained for compatibility with earlier releases. | No while any gateway uses the shared proxy. Rerun onboarding if this file is missing or damaged. |
 | `~/.nemoclaw/ollama-backend.json` | Mode-`0600`, versioned descriptor that identifies whether the matching legacy route fronts Ollama or a compatible endpoint. Recovery trusts its kind only when both files contain the same URL. | Yes, but recovery uses neutral remediation until onboarding recreates the descriptor. |
@@ -137,6 +143,12 @@ Uninstall scopes cleanup to one gateway port: it operates on the selected state 
 It names the environments it left behind and prints the command that removes one of them.
 Pass `--all-gateway-ports`, or set `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS=1`, to remove every gateway port in one run.
 Outside portable cleanup, the shared host state is eligible for removal only when `--keep-openshell` is absent, no port fails or survives, and the selected gateway is not externally supervised.
+
+Before it removes a selected state root, uninstall must prove that its state-bound Amazon Bedrock adapter process is absent.
+It revalidates the process identity and lifecycle generation before each signal and revalidates the evidence before deletion.
+If a stop remains unresolved after journal preparation, uninstall exits nonzero and preserves the PID, token, any lifecycle state that was published, and per-gateway journal.
+An earlier evidence conflict also exits nonzero and preserves every existing lifecycle file.
+Only full uninstall performs adapter-port orphan discovery; selected-gateway cleanup does not inspect sibling gateway state.
 
 Portable cleanup instead retires only exact receipt-owned portable resources. It preserves model stores, Podman images, shared OpenShell providers and gateway registrations, the gateway service and process, and shared OpenShell binaries and configuration. It retains `~/.nemoclaw/portable-uninstall-retirement.json` even with `--destroy-user-data` so a retry or later completed onboarding can finish recovery.
 
