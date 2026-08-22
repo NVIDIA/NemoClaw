@@ -15,6 +15,7 @@ import type {
 } from "./host-local-inference";
 import { serializeHostLocalInferenceReceipt } from "./host-local-inference";
 import {
+  assertPreparedHostLocalInferenceRuntimePresent,
   confirmHostLocalInferenceAuthority,
   type ManagedHostLocalInferenceService,
   type PreparedHostLocalInferenceAuthority,
@@ -636,6 +637,19 @@ describe("host-local inference lifecycle authority", () => {
     ).toBe(service === "ollama" ? "retained" : "removed");
     expect(runtimeProvider.destroy).toHaveBeenCalledOnce();
     expect(runtimeProvider.prepareDestroy).toHaveBeenCalledTimes(2);
+  });
+
+  it("inspects prepared runtime presence without another destroy preflight", () => {
+    const entry = sandbox();
+    const runtimeProvider = provider();
+    const prepared = requiredPrepared(
+      prepareSandboxHostLocalInferenceDestroyAuthority(runtimeProvider.bundle, entry),
+    );
+
+    assertPreparedHostLocalInferenceRuntimePresent(runtimeProvider.bundle, entry, prepared);
+
+    expect(runtimeProvider.prepareDestroy).toHaveBeenCalledOnce();
+    expect(runtimeProvider.runtime.inspectManaged).toHaveBeenCalledWith(prepared.receipt);
   });
 
   it("retains an exact runtime referenced by a coherent peer sandbox", () => {
