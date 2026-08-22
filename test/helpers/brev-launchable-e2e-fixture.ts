@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const SCRIPT = path.join(REPO_ROOT, "tools", "e2e", "brev-launchable-e2e.sh");
 const REAL_CUT = spawnSync("which", ["cut"], { encoding: "utf8" }).stdout.trim();
@@ -30,7 +31,7 @@ export function gatewayChildJournal(
 }
 
 export function cleanupFixtures(): void {
-  roots.splice(0).forEach((root) => fs.rmSync(root, { recursive: true, force: true }));
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 }
 
 function executable(file: string, source: string): void {
@@ -41,6 +42,8 @@ export function fixture(
   options: {
     bootImage?: string;
     brevExecStatus?: number;
+    createAppearsAfterRefresh?: number;
+    createStatus?: number;
     deleteFails?: boolean;
     e2eDiagnosticTimesOut?: boolean;
     e2eFails?: boolean;
@@ -321,8 +324,11 @@ case "$1" in
     if [ -f "$FAKE_STATE" ]; then cat "$FAKE_STATE"; else printf '{"workspaces":[]}\\n'; fi ;;
   create)
     if [ "$FAKE_READY" = 1 ]; then shell=READY; build=COMPLETED; else shell=STARTING; build=BUILDING; fi
-    jq -cn --arg name "$INSTANCE_NAME" --arg shell "$shell" --arg build "$build" \
-      '{workspaces:[{id:"ws-1",name:$name,status:"RUNNING",shell_status:$shell,build_status:$build}]}' > "$FAKE_STATE" ;;
+    if [ "$FAKE_CREATE_APPEARS_AFTER_REFRESH" -eq 0 ]; then
+      jq -cn --arg name "$INSTANCE_NAME" --arg shell "$shell" --arg build "$build" \
+        '{workspaces:[{id:"ws-1",name:$name,status:"RUNNING",shell_status:$shell,build_status:$build}]}' > "$FAKE_STATE"
+    fi
+    exit "$FAKE_CREATE_STATUS" ;;
   exec)
     if [ "\${3:-}" = true ]; then
       [ "$FAKE_BREV_EXEC_STATUS" -eq 0 ] || printf '%s\n' "$FAKE_BREV_EXEC_ERROR" >&2
@@ -353,6 +359,11 @@ case "$1" in
     [ ! -f "$FAKE_REFRESH_ATTEMPTS" ] || attempts="$(cat "$FAKE_REFRESH_ATTEMPTS")"
     attempts=$((attempts + 1))
     printf '%s\n' "$attempts" > "$FAKE_REFRESH_ATTEMPTS"
+    if [ "$FAKE_CREATE_APPEARS_AFTER_REFRESH" -gt 0 ] && \
+      [ "$attempts" -eq "$FAKE_CREATE_APPEARS_AFTER_REFRESH" ] && [ ! -f "$FAKE_STATE" ]; then
+      jq -cn --arg name "$INSTANCE_NAME" \
+        '{workspaces:[{id:"ws-1",name:$name,status:"RUNNING",shell_status:"READY",build_status:"COMPLETED"}]}' > "$FAKE_STATE"
+    fi
     if [ "$FAKE_REFRESH_STATUS" -ne 0 ]; then
       if [ "$attempts" -eq 1 ]; then
         printf 'stale refresh detail\n' >&2
@@ -463,7 +474,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
 `,
   );
 
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     PATH: `${bin}:${process.env.PATH ?? ""}`,
     BREV_DELETE_TIMEOUT_SECONDS: "5",
@@ -477,6 +488,8 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
       "Brev execution safe detail; credential=exec-secret; endpoint=exec.hidden.internal",
     FAKE_BREV_EXEC_STATUS: String(options.brevExecStatus ?? 31),
     FAKE_CALLS: calls,
+    FAKE_CREATE_APPEARS_AFTER_REFRESH: String(options.createAppearsAfterRefresh ?? 0),
+    FAKE_CREATE_STATUS: String(options.createStatus ?? 0),
     FAKE_DELETE_FAILS: options.deleteFails ? "1" : "0",
     FAKE_DIAGNOSTIC_PHASE: diagnosticPhase,
     FAKE_E2E_DIAGNOSTIC_TIMES_OUT: options.e2eDiagnosticTimesOut ? "1" : "0",
@@ -540,19 +553,19 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     RUNNER_TEMP: root,
     WORK_DIR: workDir,
   };
-  return {
-    calls,
-    env,
-    gatewayLifecycleCommand,
-    refreshAttempts,
-    sshAttempts,
-    state,
-    workDir,
-  };
+  for (const key of [
+    "BREV_CREATE_RECONCILE_SECONDS",
+    "NEMOCLAW_BREV_DEFER_CLEANUP",
+    "NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY",
+    "NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY",
+  ]) {
+    delete env[key];
+  }
+  return { calls, env, gatewayLifecycleCommand, refreshAttempts, sshAttempts, state, workDir };
 }
 
-export function run(env: NodeJS.ProcessEnv) {
-  return spawnSync("bash", [SCRIPT], { cwd: REPO_ROOT, encoding: "utf8", env });
+export function run(env: NodeJS.ProcessEnv, args: string[] = []) {
+  return spawnSync("bash", [SCRIPT, ...args], { cwd: REPO_ROOT, encoding: "utf8", env });
 }
 
 export function emittedOutput(result: ReturnType<typeof run>, workDir: string): string {

@@ -23,6 +23,10 @@ before those targets run; local runners must provide it themselves.
   rerun; retry decisions belong to bounded operation-level policies.
 - The `staging-brev-launchable` job in `.github/workflows/e2e.yaml` validates
   the baked candidate without installing or copying NemoClaw source.
+- The explicit-only `staging-brev-launchable-identity` job verifies a real
+  Launchable boot, SSH access, the exact image, and the baked runtime identity.
+  It does not run onboarding or inference and does not satisfy release
+  qualification.
 - `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Evidence` for Ubuntu 26.04, macOS, and WSL.
   On shard 1, its macOS and WSL live E2E run only when the workflow tests `main` and Docker is available.
   This workflow does not publish or satisfy `Release qualification`.
@@ -779,6 +783,33 @@ test ! -e "$evidence_dir"
 A manual run with `jobs=staging-brev-launchable` runs only `Exact staging Brev Launchable`.
 Push runs do not select this job.
 
+A manual trusted-`main` run with
+`jobs=staging-brev-launchable-identity` and an empty `targets` selector runs
+only `Exact staging Brev Launchable identity`. It builds the exact candidate
+image, deploys the standing Launchable, waits for workspace and SSH readiness,
+checks the concrete boot image and baked runtime identity, and confirms two
+consecutive absent workspace observations during cleanup. A passing run uploads
+`lane.log`, `launchable-identity.json`, and `cleanup.json`. A failed run uploads
+the bounded evidence produced before failure only when preparation created the
+evidence directory; a preparation failure produces no lane artifact. After
+workspace preparation, `cleanup.json` records the final cleanup result. The
+identity receipt records onboarding, inference, and full E2E as `not-run`.
+
+`BREV_API_KEY` and `BREV_ORG_ID` are environment values only in the preparation
+step on the GitHub-hosted runner. `brev login` writes them to
+`$HOME/.brev/credentials.json` under a job-private `HOME`; later Brev steps read
+that file through cleanup.
+The workflow then removes the file and verifies its absence before artifact
+upload. The image dispatch token is available as `GH_TOKEN` only to the identity
+validation step on the GitHub-hosted runner. Ending that step removes its
+process access. Removing the local Brev file and ending the token-bearing step
+do not revoke the issuer-side credentials; they remain valid until they expire
+or an administrator revokes them. These credentials are not sent to the
+Launchable workspace, and the job does not receive an inference credential.
+After the identity validation step, a reserved cleanup step rechecks only the exact
+workflow-owned workspace name. The job is absent from push, default, full, and
+release-required selections.
+
 A manual run with `include_staging_brev_launchable=true` and empty `jobs` and
 `targets` selectors runs the default workflow E2E selection plus `Exact staging
 Brev Launchable`. The workflow names this selection `E2E full main`, with the
@@ -789,12 +820,13 @@ Each full dispatch uses `github.run_id` in its workflow concurrency identity, so
 another full dispatch cannot supersede it while it waits. The trusted `main`
 workflow dispatch verifies that the dispatching and rerunning actors have
 repository `maintain` or `admin` permission before the Launchable path's source
-checkout. That automatic role check authorizes `staging-brev-launchable`; the job
-does not use GitHub environment approval.
+checkout. That automatic role check authorizes `staging-brev-launchable` and
+`staging-brev-launchable-identity`; neither job uses GitHub environment
+approval.
 
-The job uses the `staging-brev-launchable-cpu` concurrency group without
-cancelling a running job. GitHub keeps at most one pending job in that group, so
-a newer job can replace an older pending job.
+Both Launchable jobs use the `staging-brev-launchable-cpu` concurrency group
+without cancelling a running job. GitHub keeps at most one pending job in that
+group, so a newer job can replace an older pending job.
 
 For a full manual run dispatched against `main`, `Release qualification` waits
 for every E2E job that does not require a separate opt-in, including `Exact

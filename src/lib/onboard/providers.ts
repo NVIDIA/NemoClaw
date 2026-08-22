@@ -21,7 +21,25 @@ const {
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
 } = require("../inference/llama-cpp/contract");
-const { readGatewayProviderMetadata } = require("./gateway-provider-metadata");
+const {
+  matchesGatewayCredentialOnlyProviderBinding,
+  readGatewayProviderMetadata,
+} = require("./gateway-provider-metadata");
+
+const MESSAGING_PROVIDER_BINDING_CONFLICT = "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT";
+
+class MessagingProviderBindingConflictError extends Error {
+  constructor(message, mutatedProviderNames = []) {
+    super(message);
+    this.name = "MessagingProviderBindingConflictError";
+    this.code = MESSAGING_PROVIDER_BINDING_CONFLICT;
+    this.mutatedProviderNames = mutatedProviderNames;
+  }
+}
+
+function isMessagingProviderBindingConflict(error) {
+  return error instanceof Error && error.code === MESSAGING_PROVIDER_BINDING_CONFLICT;
+}
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -451,10 +469,27 @@ function providerExistsInGateway(name, _runOpenshell) {
  * @param {Record<string, string>} env - Environment variables for the openshell command.
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
  * @param {{replaceExisting?: boolean}} options - Optional replacement controls.
- * @returns {{ ok: boolean, status?: number, message?: string }}
+ * @returns {{ ok: boolean, status?: number, message?: string, reason?: string }}
  */
 function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
   const exists = providerExistsInGateway(name, _runOpenshell);
+  if (
+    exists &&
+    options.requireExactBinding &&
+    !options.replaceExisting &&
+    !matchesGatewayCredentialOnlyProviderBinding(readGatewayProviderMetadata(name, _runOpenshell), {
+      name,
+      type,
+      credentialKey: credentialEnv,
+    })
+  ) {
+    return {
+      ok: false,
+      status: 1,
+      reason: "binding-conflict",
+      message: `Existing provider '${name}' does not match the required '${type}' credential binding.`,
+    };
+  }
   if (exists && options.replaceExisting) {
     const { deleteProviderWithRecovery } = require("./sandbox-provider-cleanup");
     const r = deleteProviderWithRecovery(name, { runOpenshell: _runOpenshell });
@@ -492,6 +527,23 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
   return { ok: true };
 }
 
+function preflightMessagingProviderBindings(tokenDefs, _runOpenshell) {
+  const failures = [];
+  for (const { name, envKey, token, providerType } of tokenDefs) {
+    if (!token || !providerType || !providerExistsInGateway(name, _runOpenshell)) continue;
+    const matches = matchesGatewayCredentialOnlyProviderBinding(
+      readGatewayProviderMetadata(name, _runOpenshell),
+      { name, type: providerType, credentialKey: envKey },
+    );
+    if (matches) continue;
+    failures.push({
+      name,
+      message: `Existing provider '${name}' does not match the required '${providerType}' credential binding.`,
+    });
+  }
+  return failures;
+}
+
 /**
  * Upsert all messaging providers that have tokens configured.
  * Returns the list of provider names that were successfully created/updated.
@@ -505,7 +557,7 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
  * of terminating the CLI.
  * @param {Array<{name: string, envKey: string, token: string|null, providerType?: string}>} tokenDefs
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean, bestEffort?: boolean}} options - Forwarded to every upsertProvider call.
+ * @param {{replaceExisting?: boolean, bestEffort?: boolean, requireExactBindings?: boolean}} options - Forwarded to every upsertProvider call.
  * @returns {string[]} Provider names that were upserted.
  */
 function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
@@ -528,6 +580,20 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   // A channel is a bridge by the PRESENCE of a co-located
   // channels/<channel>/provider-profile/<agent>.yaml (not a flag inside it); both
   // bracket steps self-gate when no bridge token def is present.
+  if (options.requireExactBindings && !options.replaceExisting) {
+    const bindingFailures = preflightMessagingProviderBindings(tokenDefs, _runOpenshell);
+    if (bindingFailures.length > 0) {
+      const message = bindingFailures
+        .map(({ name, message: failure }) => `${name}: ${failure}`)
+        .join("; ");
+      if (options.bestEffort) {
+        throw new MessagingProviderBindingConflictError(message);
+      }
+      console.error(`\n  ✗ Failed to create messaging provider: ${message}`);
+      process.exit(1);
+    }
+  }
+
   const messagingBridgeProvider = require("./messaging-bridge-provider");
   messagingBridgeProvider.ensureMessagingBridgeProfiles(tokenDefs, {
     root: ROOT,
@@ -545,11 +611,14 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
       null,
       { [envKey]: token },
       _runOpenshell,
-      { replaceExisting: Boolean(options.replaceExisting) },
+      {
+        replaceExisting: Boolean(options.replaceExisting),
+        requireExactBinding: Boolean(options.requireExactBindings && providerType),
+      },
     );
     if (!result.ok) {
       if (options.bestEffort) {
-        failures.push(`${name}: ${result.message}`);
+        failures.push({ name, message: result.message, reason: result.reason });
         continue;
       }
       console.error(`\n  ✗ Failed to create messaging provider '${name}': ${result.message}`);
@@ -558,7 +627,11 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
     upserted.push(name);
   }
   if (failures.length > 0) {
-    throw new Error(failures.join("; "));
+    const message = failures.map(({ name, message }) => `${name}: ${message}`).join("; ");
+    if (failures.every(({ reason }) => reason === "binding-conflict")) {
+      throw new MessagingProviderBindingConflictError(message, upserted);
+    }
+    throw new Error(message);
   }
   // Gateway-side token minting is configured AFTER the providers exist (best-effort,
   // self-gates without a bridge token def). Secret material stays gateway-side —
@@ -588,6 +661,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
 }
 
 module.exports = {
+  isMessagingProviderBindingConflict,
   BUILD_ENDPOINT_URL,
   OPENAI_ENDPOINT_URL,
   ANTHROPIC_ENDPOINT_URL,

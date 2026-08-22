@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   candidateSha,
@@ -13,8 +13,50 @@ import {
   run,
 } from "./helpers/brev-launchable-e2e-fixture";
 
-afterEach(cleanupFixtures);
+afterEach(() => {
+  cleanupFixtures();
+  vi.unstubAllEnvs();
+});
+
+function identitySmokeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const result: NodeJS.ProcessEnv = {
+    ...env,
+    NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY: "1",
+  };
+  delete result.NVIDIA_INFERENCE_API_KEY;
+  return result;
+}
+
 describe("focused staging Brev Launchable lane", () => {
+  it("runs the strict lane without inherited lane controls (#9925)", () => {
+    vi.stubEnv("BREV_CREATE_RECONCILE_SECONDS", "0");
+    vi.stubEnv("NEMOCLAW_BREV_DEFER_CLEANUP", "1");
+    vi.stubEnv("NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY", "1");
+    vi.stubEnv("NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY", "1");
+
+    const { calls, env } = fixture();
+    expect(env).not.toHaveProperty("BREV_CREATE_RECONCILE_SECONDS");
+    expect(env).not.toHaveProperty("NEMOCLAW_BREV_DEFER_CLEANUP");
+    expect(env).not.toHaveProperty("NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY");
+    expect(env).not.toHaveProperty("NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY");
+
+    const result = run(env);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(fs.readFileSync(calls, "utf8")).toContain("ssh preinstalled full-e2e.test.ts");
+  });
+
+  it("rejects explicit deferred cleanup when ambient identity mode is set (#9925)", () => {
+    vi.stubEnv("NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY", "1");
+
+    const { calls, env, workDir } = fixture();
+    const result = run({ ...env, NEMOCLAW_BREV_DEFER_CLEANUP: "1" });
+    expect(result.status).not.toBe(0);
+    expect(emittedOutput(result, workDir)).toContain(
+      "deferred cleanup is accepted only in identity-smoke mode",
+    );
+    expect(fs.existsSync(calls)).toBe(false);
+  });
+
   it("publishes exact image evidence without Brev or inference access (#8924)", () => {
     const { calls, env, state, workDir } = fixture();
     const imageOnlyEnv: NodeJS.ProcessEnv = {
@@ -78,6 +120,135 @@ describe("focused staging Brev Launchable lane", () => {
     expect(emittedOutput(result, workDir)).toContain(
       "NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY must be 0 or 1",
     );
+    expect(fs.existsSync(calls)).toBe(false);
+  });
+
+  it("boots the exact Launchable image, verifies its identity, and confirms workspace absence without inference (#9925)", () => {
+    const { calls, env, state, workDir } = fixture();
+    const result = run(identitySmokeEnv(env));
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+
+    const commands = fs.readFileSync(calls, "utf8");
+    expect(commands.match(/\/dispatches/gu)).toHaveLength(1);
+    expect(commands).toContain("create nclaw-e2e-test-1 --launchable env-staging123");
+    expect(commands).toContain("ssh readiness attempt 1");
+    expect(commands).toContain("NEMOCLAW_BOOT_IMAGE");
+    expect(commands).toContain("repo_clean");
+    expect(commands).not.toMatch(/full-e2e\.test\.ts|nvapi-test-value/u);
+    expect(fs.existsSync(state)).toBe(false);
+    expect(fs.readdirSync(workDir).sort()).toEqual([
+      "cleanup.json",
+      "lane.log",
+      "launchable-identity.json",
+    ]);
+
+    const evidence = JSON.parse(
+      fs.readFileSync(path.join(workDir, "launchable-identity.json"), "utf8"),
+    );
+    expect(evidence).toMatchObject({
+      schemaVersion: 1,
+      kind: "nemoclaw-staging-launchable-identity-v1",
+      candidateSha,
+      producer: {
+        repository: "brevdev/nemoclaw-image",
+        workflow: ".github/workflows/build-launchable-e2e-image.yml",
+        runId: "123",
+        status: "success",
+      },
+      image: {
+        uri: "projects/brevdevprod/global/images/nemoclaw-test-image",
+        imageRepositorySha: "b".repeat(40),
+      },
+      workspace: { name: "nclaw-e2e-test-1", id: "ws-1" },
+      validation: {
+        workspaceReadiness: "passed",
+        ssh: "passed",
+        imageSelection: { status: "passed" },
+        runtimeIdentity: { status: "passed" },
+        onboarding: "not-run",
+        inference: "not-run",
+        fullE2E: "not-run",
+      },
+    });
+    expect(evidence.validation.runtimeIdentity.checks).toHaveLength(8);
+    expect(
+      evidence.validation.runtimeIdentity.checks.every(
+        (check: { status: string }) => check.status === "passed",
+      ),
+    ).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      workspaceName: "nclaw-e2e-test-1",
+      workspaceId: "ws-1",
+      status: "ABSENT",
+    });
+    expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).toContain(
+      "Onboarding, inference, and full E2E did not run",
+    );
+  });
+
+  it("defers identity workspace deletion to the reserved cleanup operation (#9925)", () => {
+    const { calls, env, state, workDir } = fixture();
+    const result = run({
+      ...identitySmokeEnv(env),
+      NEMOCLAW_BREV_DEFER_CLEANUP: "1",
+    });
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(fs.existsSync(state)).toBe(true);
+    expect(fs.readFileSync(calls, "utf8")).not.toContain("brev delete");
+    expect(fs.existsSync(`${workDir}.workspace-owner`)).toBe(true);
+
+    const cleanupResult = run({ ...env, BREV_DELETE_TIMEOUT_SECONDS: "3", POLL_SECONDS: "1" }, [
+      "cleanup-owned-workspace",
+    ]);
+    expect(cleanupResult.status, `${cleanupResult.stdout}\n${cleanupResult.stderr}`).toBe(0);
+    expect(fs.existsSync(state)).toBe(false);
+    expect(fs.existsSync(`${workDir}.workspace-owner`)).toBe(false);
+    expect(
+      fs
+        .readFileSync(calls, "utf8")
+        .split("\n")
+        .filter((call) => call === "brev delete nclaw-e2e-test-1"),
+    ).toHaveLength(1);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      deleteAttempts: 1,
+      status: "ABSENT",
+    });
+  });
+
+  it.each([
+    {
+      name: "invalid identity mode",
+      overrides: { NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY: "yes" },
+      expected: "NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY must be 0 or 1",
+    },
+    {
+      name: "conflicting modes",
+      overrides: {
+        NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY: "1",
+        NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY: "1",
+      },
+      expected: "image-only and identity-smoke modes are mutually exclusive",
+    },
+    {
+      name: "invalid deferred cleanup mode",
+      overrides: { NEMOCLAW_BREV_DEFER_CLEANUP: "yes" },
+      expected: "NEMOCLAW_BREV_DEFER_CLEANUP must be 0 or 1",
+    },
+    {
+      name: "deferred cleanup outside identity mode",
+      overrides: { NEMOCLAW_BREV_DEFER_CLEANUP: "1" },
+      expected: "deferred cleanup is accepted only in identity-smoke mode",
+    },
+    {
+      name: "inference credential",
+      overrides: { NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY: "1" },
+      expected: "identity-smoke mode must not receive NVIDIA_INFERENCE_API_KEY",
+    },
+  ])("rejects $name before dispatch (#9925)", ({ overrides, expected }) => {
+    const { calls, env, workDir } = fixture();
+    const result = run({ ...env, ...overrides });
+    expect(result.status).not.toBe(0);
+    expect(emittedOutput(result, workDir)).toContain(expected);
     expect(fs.existsSync(calls)).toBe(false);
   });
 
@@ -237,13 +408,15 @@ describe("focused staging Brev Launchable lane", () => {
     const wrongImage = fixture({
       bootImage: "projects/brevdevprod/global/images/wrong-image",
     });
-    const wrongImageResult = run(wrongImage.env);
+    const wrongImageResult = run(identitySmokeEnv(wrongImage.env));
     expect(wrongImageResult.status).not.toBe(0);
     expect(wrongImageResult.stderr).toContain("booted image does not match the producer handoff");
     expect(fs.readFileSync(wrongImage.calls, "utf8")).not.toContain("full-e2e.test.ts");
     expect(fs.existsSync(wrongImage.state)).toBe(false);
     expect(
-      JSON.parse(fs.readFileSync(path.join(wrongImage.workDir, "launchable-e2e.json"), "utf8")),
+      JSON.parse(
+        fs.readFileSync(path.join(wrongImage.workDir, "launchable-identity.json"), "utf8"),
+      ),
     ).toMatchObject({
       validation: {
         imageSelection: {
@@ -251,13 +424,15 @@ describe("focused staging Brev Launchable lane", () => {
           expected: "projects/brevdevprod/global/images/nemoclaw-test-image",
           observed: "<redacted>",
         },
-        runtimeProvenance: { status: "not-run", checks: [] },
+        runtimeIdentity: { status: "not-run", checks: [] },
+        onboarding: "not-run",
+        inference: "not-run",
         fullE2E: "not-run",
       },
     });
   });
 
-  it("records and reports each runtime provenance mismatch before full E2E", () => {
+  it("records and reports each runtime identity mismatch before onboarding (#9925)", () => {
     const cases = [
       {
         options: { repoSha: "b".repeat(40) },
@@ -301,28 +476,26 @@ describe("focused staging Brev Launchable lane", () => {
 
     cases.forEach(({ options, field, expected, observed }) => {
       const boot = fixture(options);
-      const bootResult = run(boot.env);
+      const bootResult = run(identitySmokeEnv(boot.env));
       expect(bootResult.status).not.toBe(0);
       expect(emittedOutput(bootResult, boot.workDir)).toContain(
-        `Runtime provenance check failed: ${field} expected ${JSON.stringify(expected)}, observed ${JSON.stringify(observed)}`,
+        `Runtime identity check failed: ${field} expected ${JSON.stringify(expected)}, observed ${JSON.stringify(observed)}`,
       );
       expect(fs.readFileSync(boot.calls, "utf8")).not.toContain("full-e2e.test.ts");
       expect(fs.existsSync(boot.state)).toBe(false);
       const evidence = JSON.parse(
-        fs.readFileSync(path.join(boot.workDir, "launchable-e2e.json"), "utf8"),
+        fs.readFileSync(path.join(boot.workDir, "launchable-identity.json"), "utf8"),
       );
-      expect(evidence.boot).toMatchObject({
-        bootImage: "projects/brevdevprod/global/images/nemoclaw-test-image",
-        [String(field)]: observed,
-      });
       expect(evidence.validation).toMatchObject({
         imageSelection: { status: "passed" },
-        runtimeProvenance: { status: "failed" },
+        runtimeIdentity: { status: "failed" },
+        onboarding: "not-run",
+        inference: "not-run",
         fullE2E: "not-run",
       });
-      expect(evidence.validation.runtimeProvenance.checks).toHaveLength(8);
+      expect(evidence.validation.runtimeIdentity.checks).toHaveLength(8);
       expect(
-        evidence.validation.runtimeProvenance.checks.filter(
+        evidence.validation.runtimeIdentity.checks.filter(
           (check: { status: string }) => check.status === "failed",
         ),
       ).toEqual([{ field, expected, observed, status: "failed" }]);
@@ -333,12 +506,12 @@ describe("focused staging Brev Launchable lane", () => {
       repoSha: "b".repeat(40),
       runtimeOverrides: true,
     });
-    const multipleResult = run(multiple.env);
+    const multipleResult = run(identitySmokeEnv(multiple.env));
     const multipleOutput = emittedOutput(multipleResult, multiple.workDir);
     expect(multipleResult.status).not.toBe(0);
-    expect(multipleOutput).toContain("Runtime provenance check failed: repoSha");
-    expect(multipleOutput).toContain("Runtime provenance check failed: repoClean");
-    expect(multipleOutput).toContain("Runtime provenance check failed: runtimeOverrides");
+    expect(multipleOutput).toContain("Runtime identity check failed: repoSha");
+    expect(multipleOutput).toContain("Runtime identity check failed: repoClean");
+    expect(multipleOutput).toContain("Runtime identity check failed: runtimeOverrides");
     expect(fs.readFileSync(multiple.calls, "utf8")).not.toContain("full-e2e.test.ts");
   }, 90_000);
 
@@ -391,6 +564,291 @@ describe("focused staging Brev Launchable lane", () => {
       expected: "NVIDIA/NemoClaw",
       observed: "<redacted>",
       status: "failed",
+    });
+  });
+
+  it("retains bounded redacted host diagnostics before failed-workspace cleanup (#6409)", () => {
+    const { calls, env, state, workDir } = fixture({ e2eFails: true });
+    const result = run(env);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("full E2E failed");
+    const commands = fs.readFileSync(calls, "utf8");
+    expect(commands.indexOf("ssh preinstalled full-e2e.test.ts")).toBeLessThan(
+      commands.indexOf("ssh full-e2e diagnostic gateway state"),
+    );
+    expect(commands.indexOf("ssh full-e2e diagnostic gateway state")).toBeLessThan(
+      commands.indexOf("brev delete nclaw-e2e-test-1"),
+    );
+    expect(commands.match(/ssh full-e2e diagnostic/gu)).toHaveLength(6);
+
+    const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
+    expect(laneLog).toContain("Full E2E failure diagnostics budget: up to 30 seconds");
+    expect(laneLog).toContain("Full E2E failure diagnostic gateway state: status 0; output:");
+    expect(laneLog).toContain("ActiveState : inactive");
+    expect(laneLog).toContain("NRestarts : 0");
+    expect(laneLog).toContain("restart-policy is always: true");
+    expect(laneLog).toContain("exec-start matches packaged gateway service: true");
+    expect(laneLog).toContain("fragment-path is packaged unit path: true");
+    expect(laneLog).toContain("drop-ins: absent");
+    expect(laneLog).toContain("Full E2E failure diagnostic platform state: status 0; output:");
+    expect(laneLog).toContain("gateway service requires Docker service: present");
+    expect(laneLog).toContain("gateway service ordered after Docker service: present");
+    expect(laneLog).toContain("Docker service wants gateway service: present");
+    expect(laneLog).not.toContain("boot-id-prefix");
+    expect(laneLog).toContain("boot-uptime-seconds 180");
+    expect(laneLog).toContain("gateway-state-dir type=directory uid=1000 gid=1000 mode=750");
+    expect(laneLog).toContain("Full E2E failure diagnostic gateway lifecycle: status 0; output:");
+    expect(laneLog).toContain("1000 starting");
+    expect(laneLog).toContain("1100 started");
+    expect(laneLog).toContain("1200 other-systemd-event");
+    expect(laneLog).toContain("1300 start-limit-hit");
+    expect(laneLog).toContain("1400 restart-scheduled");
+    expect(laneLog).toContain("1500 main-exited");
+    expect(laneLog).toContain("1600 failed-result");
+    expect(laneLog).toContain("1700 dependency-failed");
+    expect(laneLog).toContain("2200 stopping");
+    expect(laneLog).toContain("2300 deactivated");
+    expect(laneLog).toContain("2400 stopped");
+    expect(laneLog).toContain("Full E2E failure diagnostic Docker lifecycle: status 0; output:");
+    expect(laneLog).toContain("900 docker-service starting");
+    expect(laneLog).toContain("950 docker-service started");
+    expect(laneLog).toContain("960 docker-socket started");
+    expect(laneLog).toContain("970 docker-unit other-systemd-event");
+    expect(laneLog).toContain("Full E2E failure diagnostic cloud-final state: status 0; output:");
+    expect(laneLog).toContain("SubState : exited");
+    expect(laneLog).toContain("active-enter-us: 1200");
+    expect(laneLog).toContain("inactive-enter-us: 0");
+    expect(laneLog).toContain("listener presence: present");
+    expect(laneLog).toContain("listener owner: unexpected");
+    expect(laneLog).not.toContain("s3cr3t");
+    const diagnosticLines = laneLog
+      .split("\n")
+      .filter((line) => line.startsWith("Full E2E failure diagnostic "));
+    expect(diagnosticLines).toHaveLength(6);
+    diagnosticLines
+      .filter((line) => line.includes("; output: "))
+      .forEach((line) => {
+        const payload = line.split("; output: ", 2)[1] ?? "";
+        expect(Buffer.byteLength(payload)).toBeLessThanOrEqual(512);
+      });
+    const output = emittedOutput(result, workDir);
+    expect(
+      [
+        "brev-test-secret",
+        "github-test-token",
+        "journal-test-secret",
+        "nvapi-test-value",
+        "private-key-material",
+        "203.0.113.20",
+        "workspace.hidden.internal",
+        "s3cr3t",
+      ].filter((secretOrAddress) => output.includes(secretOrAddress)),
+    ).toEqual([]);
+    expect(output).not.toContain("\u001B");
+    expect(fs.existsSync(state)).toBe(false);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(workDir, "launchable-e2e.json"), "utf8")),
+    ).toMatchObject({
+      fullE2e: "failed",
+      validation: {
+        imageSelection: { status: "passed" },
+        runtimeProvenance: { status: "passed" },
+        fullE2E: "failed",
+      },
+    });
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
+  it("continues bounded diagnostics and cleanup after a probe error (#6409)", () => {
+    const { calls, env, state, workDir } = fixture({
+      e2eFails: true,
+      platformDiagnosticFails: true,
+    });
+    const result = run(env);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("full E2E failed");
+    const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
+    expect(laneLog).toContain("Full E2E failure diagnostic platform state: status 42; output:");
+    expect(laneLog).toContain("platform diagnostic safe detail");
+    expect(laneLog).toContain("[REDACTED PRIVATE KEY]");
+    expect(laneLog).toContain("[REDACTED LONG LINE]");
+    expect(laneLog).toContain("Full E2E failure diagnostic gateway lifecycle: status 0; output:");
+    expect(laneLog).toContain("Full E2E failure diagnostic port 8080 listener: status 0; output:");
+    const commands = fs.readFileSync(calls, "utf8");
+    expect(commands.indexOf("ssh full-e2e diagnostic platform state")).toBeLessThan(
+      commands.indexOf("ssh full-e2e diagnostic gateway lifecycle"),
+    );
+    expect(commands.indexOf("ssh full-e2e diagnostic gateway lifecycle")).toBeLessThan(
+      commands.indexOf("brev delete nclaw-e2e-test-1"),
+    );
+    const output = emittedOutput(result, workDir);
+    expect(
+      [
+        "brev-test-secret",
+        "github-test-token",
+        "journal-test-secret",
+        "nvapi-test-value",
+        "private-key-material",
+        "203.0.113.20",
+        "workspace.hidden.internal",
+      ].filter((secretOrAddress) => output.includes(secretOrAddress)),
+    ).toEqual([]);
+    expect(output).not.toContain("\u001B");
+    expect(fs.existsSync(state)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
+  it.each([
+    ["absent", "", ["listener presence: absent"]],
+    [
+      "expected owner",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3))',
+      ["listener presence: present", "listener owner: openshell-gateway"],
+    ],
+    [
+      "expected owner in a v2 descendant cgroup",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=97,fd=3))',
+      ["listener presence: present", "listener owner: openshell-gateway"],
+    ],
+    [
+      "expected owner in an exact v1 cgroup",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=96,fd=3))',
+      ["listener presence: present", "listener owner: openshell-gateway"],
+    ],
+    [
+      "expected owner in a v1 descendant cgroup",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=95,fd=3))',
+      ["listener presence: present", "listener owner: openshell-gateway"],
+    ],
+    [
+      "mixed owners",
+      [
+        'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3))',
+        'LISTEN 0 4096 172.18.0.1:8080 0.0.0.0:* users:(("s3cr3t",pid=99,fd=4))',
+      ].join("\n"),
+      ["listener presence: present", "listener owner: mixed"],
+    ],
+    [
+      "mixed owners in one socket record",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3),("s3cr3t",pid=99,fd=4))',
+      ["listener presence: present", "listener owner: mixed"],
+    ],
+    [
+      "unexpected owner",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gatew",pid=94,fd=3))',
+      ["listener presence: present", "listener owner: unexpected"],
+    ],
+    [
+      "unrelated cgroup",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("other-process",pid=93,fd=3))',
+      ["listener presence: present", "listener owner: unexpected"],
+    ],
+    [
+      "owner unavailable",
+      "LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:*",
+      ["listener presence: present", "listener owner: unavailable"],
+    ],
+    [
+      "PID-like text inside a process label",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("s3cr3t,pid=7,fd=8",pid=98,fd=3))',
+      ["listener presence: present", "listener owner: openshell-gateway"],
+    ],
+    [
+      "an injected owner tuple inside a process label",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("s3cr3t",pid=98,fd=3",pid=99,fd=4))',
+      ["listener presence: present", "listener owner: unavailable"],
+    ],
+    [
+      "one socket record without owner metadata",
+      [
+        'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3))',
+        "LISTEN 0 4096 172.18.0.1:8080 0.0.0.0:*",
+      ].join("\n"),
+      ["listener presence: present", "listener owner: unavailable"],
+    ],
+  ])(
+    "classifies port 8080 listener evidence with %s (#6409)",
+    (_name, listenerOutput, expectedEvidence) => {
+      const { env, workDir } = fixture({
+        e2eFails: true,
+        listenerOutput,
+      });
+      const result = run(env);
+
+      expect(result.status).not.toBe(0);
+      const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
+      expectedEvidence.forEach((entry) => expect(laneLog).toContain(entry));
+      expect(laneLog).not.toContain("s3cr3t");
+      expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject(
+        { status: "ABSENT" },
+      );
+    },
+  );
+
+  it.each([
+    [
+      "a similarly prefixed executable",
+      "{ path=/usr/local/bin/nemoclaw-openshell-gateway-service-wrapper ; argv[]=/usr/local/bin/nemoclaw-openshell-gateway-service-wrapper ; ignore_errors=no ; }",
+      "nemoclaw-openshell-gateway-service-wrapper",
+    ],
+    [
+      "an extra argument",
+      "{ path=/usr/local/bin/nemoclaw-openshell-gateway-service ; argv[]=/usr/local/bin/nemoclaw-openshell-gateway-service --extra ; ignore_errors=no ; }",
+      "--extra",
+    ],
+    [
+      "a second serialized command",
+      "{ path=/usr/local/bin/nemoclaw-openshell-gateway-service ; argv[]=/usr/local/bin/nemoclaw-openshell-gateway-service ; ignore_errors=no ; } { path=/usr/bin/true ; argv[]=/usr/bin/true ; ignore_errors=no ; }",
+      "/usr/bin/true",
+    ],
+  ])("rejects gateway ExecStart with %s (#6409)", (_name, gatewayExecStart, rawValue) => {
+    const { env, workDir } = fixture({ e2eFails: true, gatewayExecStart });
+    const result = run(env);
+
+    expect(result.status).not.toBe(0);
+    const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
+    expect(laneLog).toContain("exec-start matches packaged gateway service: false");
+    expect(laneLog).not.toContain(rawValue);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
+  it("keeps the E2E failure and cleanup when the diagnostic budget expires (#6409)", () => {
+    const { calls, env, state, workDir } = fixture({
+      e2eDiagnosticTimesOut: true,
+      e2eFails: true,
+    });
+    const result = run({
+      ...env,
+      FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS: "1",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("full E2E failed");
+    const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
+    expect(laneLog).toContain(
+      "Full E2E failure diagnostic gateway state: status 124; output: probe timed out",
+    );
+    expect(laneLog).toContain(
+      "Full E2E failure diagnostic platform state: not run; output: diagnostic budget exhausted",
+    );
+    expect(laneLog).toContain(
+      "Full E2E failure diagnostic port 8080 listener: not run; output: diagnostic budget exhausted",
+    );
+    const commands = fs.readFileSync(calls, "utf8");
+    expect(commands).not.toContain("ssh full-e2e diagnostic platform state");
+    expect(commands.indexOf("ExecMainCode")).toBeLessThan(
+      commands.indexOf("brev delete nclaw-e2e-test-1"),
+    );
+    expect(fs.existsSync(state)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
     });
   });
 
@@ -548,6 +1006,7 @@ describe("focused staging Brev Launchable lane", () => {
     ["BREV_SSH_TIMEOUT_SECONDS", "0"],
     ["BREV_SSH_TIMEOUT_SECONDS", ""],
     ["BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS", "0"],
+    ["BREV_CREATE_RECONCILE_SECONDS", "0"],
     ["FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS", "0"],
     ["POLL_SECONDS", "0"],
     ["POLL_SECONDS", ""],
@@ -669,11 +1128,180 @@ describe("focused staging Brev Launchable lane", () => {
     });
   });
 
-  it("fails the lane when workspace deletion cannot be verified", () => {
-    const { env, state } = fixture({ deleteFails: true });
-    const result = run({ ...env, BREV_DELETE_TIMEOUT_SECONDS: "1", POLL_SECONDS: "1" });
+  it("deletes only the exact identity workspace named by its ownership receipt (#9925)", () => {
+    const owned = fixture();
+    fs.writeFileSync(
+      owned.state,
+      JSON.stringify({
+        workspaces: [
+          {
+            id: "ws-1",
+            name: owned.env.INSTANCE_NAME,
+            status: "RUNNING",
+            shell_status: "READY",
+            build_status: "COMPLETED",
+          },
+        ],
+      }),
+    );
+    const ownershipReceipt = `${owned.workDir}.workspace-owner`;
+    fs.writeFileSync(
+      ownershipReceipt,
+      JSON.stringify({
+        workspaceName: owned.env.INSTANCE_NAME,
+        createState: "accepted",
+        deleteAttempts: 0,
+      }),
+      { mode: 0o600 },
+    );
+    const ownedResult = run({ ...owned.env, BREV_DELETE_TIMEOUT_SECONDS: "3", POLL_SECONDS: "1" }, [
+      "cleanup-owned-workspace",
+    ]);
+    expect(ownedResult.status, `${ownedResult.stdout}\n${ownedResult.stderr}`).toBe(0);
+    expect(fs.existsSync(owned.state)).toBe(false);
+    expect(fs.existsSync(ownershipReceipt)).toBe(false);
+    expect(fs.readFileSync(owned.calls, "utf8")).toContain("brev delete nclaw-e2e-test-1");
+    expect(
+      JSON.parse(fs.readFileSync(path.join(owned.workDir, "cleanup.json"), "utf8")),
+    ).toMatchObject({ workspaceId: "ws-1", status: "ABSENT" });
+
+    const acceptedDelayed = fixture({ createAppearsAfterRefresh: 3 });
+    const acceptedDelayedReceipt = `${acceptedDelayed.workDir}.workspace-owner`;
+    fs.writeFileSync(
+      acceptedDelayedReceipt,
+      JSON.stringify({
+        workspaceName: acceptedDelayed.env.INSTANCE_NAME,
+        createState: "accepted",
+        deleteAttempts: 0,
+      }),
+      { mode: 0o600 },
+    );
+    const acceptedDelayedResult = run(
+      {
+        ...acceptedDelayed.env,
+        BREV_CREATE_RECONCILE_SECONDS: "2",
+        BREV_DELETE_TIMEOUT_SECONDS: "3",
+        POLL_SECONDS: "1",
+      },
+      ["cleanup-owned-workspace"],
+    );
+    expect(
+      acceptedDelayedResult.status,
+      `${acceptedDelayedResult.stdout}\n${acceptedDelayedResult.stderr}`,
+    ).toBe(0);
+    expect(fs.existsSync(acceptedDelayed.state)).toBe(false);
+    expect(fs.readFileSync(acceptedDelayed.calls, "utf8")).toContain(
+      "brev delete nclaw-e2e-test-1",
+    );
+    expect(
+      JSON.parse(fs.readFileSync(path.join(acceptedDelayed.workDir, "cleanup.json"), "utf8")),
+    ).toMatchObject({ workspaceId: "ws-1", status: "ABSENT" });
+
+    const notOwned = fixture();
+    fs.writeFileSync(
+      notOwned.state,
+      JSON.stringify({
+        workspaces: [
+          {
+            id: "foreign-1",
+            name: notOwned.env.INSTANCE_NAME,
+            status: "RUNNING",
+            shell_status: "READY",
+            build_status: "COMPLETED",
+          },
+        ],
+      }),
+    );
+    const notOwnedResult = run(notOwned.env, ["cleanup-owned-workspace"]);
+    expect(notOwnedResult.status).toBe(0);
+    expect(fs.existsSync(notOwned.state)).toBe(true);
+    expect(fs.existsSync(notOwned.calls)).toBe(false);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(notOwned.workDir, "cleanup.json"), "utf8")),
+    ).toMatchObject({ workspaceId: "", status: "NOT_OWNED" });
+
+    const preexisting = fixture();
+    fs.writeFileSync(
+      preexisting.state,
+      JSON.stringify({
+        workspaces: [
+          {
+            id: "foreign-2",
+            name: preexisting.env.INSTANCE_NAME,
+            status: "RUNNING",
+            shell_status: "READY",
+            build_status: "COMPLETED",
+          },
+        ],
+      }),
+    );
+    const preexistingResult = run(identitySmokeEnv(preexisting.env));
+    expect(preexistingResult.status).not.toBe(0);
+    expect(preexistingResult.stderr).toContain("workspace name already exists");
+    expect(fs.existsSync(preexisting.state)).toBe(true);
+    expect(fs.existsSync(`${preexisting.workDir}.workspace-owner`)).toBe(false);
+    expect(fs.readFileSync(preexisting.calls, "utf8")).not.toMatch(/brev create|brev delete/u);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(preexisting.workDir, "cleanup.json"), "utf8")),
+    ).toMatchObject({ workspaceId: "foreign-2", status: "NOT_OWNED" });
+  });
+
+  it("reconciles and deletes an identity workspace after an ambiguous create failure (#9925)", () => {
+    const { calls, env, state, workDir } = fixture({
+      createAppearsAfterRefresh: 3,
+      createStatus: 17,
+    });
+    const result = run({
+      ...identitySmokeEnv(env),
+      BREV_CREATE_RECONCILE_SECONDS: "2",
+      BREV_DELETE_TIMEOUT_SECONDS: "3",
+      POLL_SECONDS: "1",
+    });
+    expect(result.status).toBe(17);
+    expect(fs.existsSync(state)).toBe(false);
+    expect(fs.readFileSync(calls, "utf8")).toContain("brev delete nclaw-e2e-test-1");
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      workspaceName: "nclaw-e2e-test-1",
+      workspaceId: "ws-1",
+      status: "ABSENT",
+    });
+  });
+
+  it("does not repeat a failed workspace deletion in reserved cleanup (#9925)", () => {
+    const { calls, env, state, workDir } = fixture({ deleteFails: true });
+    const result = run({
+      ...identitySmokeEnv(env),
+      BREV_DELETE_TIMEOUT_SECONDS: "1",
+      POLL_SECONDS: "1",
+    });
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("still exists after deletion");
+    expect(result.stderr).toContain("cleanup ended with PRESENT");
     expect(fs.existsSync(state)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      workspaceName: "nclaw-e2e-test-1",
+      workspaceId: "ws-1",
+      status: "PRESENT",
+    });
+
+    const reservedCleanup = run({ ...env, BREV_DELETE_TIMEOUT_SECONDS: "1", POLL_SECONDS: "1" }, [
+      "cleanup-owned-workspace",
+    ]);
+    expect(reservedCleanup.status).not.toBe(0);
+    const deleteCalls = () =>
+      fs
+        .readFileSync(calls, "utf8")
+        .split("\n")
+        .filter((call) => call === "brev delete nclaw-e2e-test-1");
+    expect(deleteCalls()).toHaveLength(1);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      deleteAttempts: 1,
+      status: "PRESENT",
+    });
+
+    const exhaustedCleanup = run({ ...env, BREV_DELETE_TIMEOUT_SECONDS: "1", POLL_SECONDS: "1" }, [
+      "cleanup-owned-workspace",
+    ]);
+    expect(exhaustedCleanup.status).not.toBe(0);
+    expect(deleteCalls()).toHaveLength(1);
   });
 });
