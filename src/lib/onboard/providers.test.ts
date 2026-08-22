@@ -115,6 +115,8 @@ const {
     runOpenshell: RunOpenshell,
     options?: {
       allowedSandboxes?: readonly string[];
+      bestEffort?: boolean;
+      replaceExisting?: boolean;
       requireExactBindings?: boolean;
     },
   ) => string[];
