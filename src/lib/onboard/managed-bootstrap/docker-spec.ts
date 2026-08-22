@@ -343,7 +343,35 @@ function normalizedStructuredMounts(value: unknown): unknown {
   });
 }
 
-function normalizedHostConfig(hostConfig: Record<string, unknown>): Record<string, unknown> {
+function normalizedImageMounts(value: DockerContainerInspect["Mounts"]): Array<{
+  Type: "image";
+  Source: string;
+  Target: string;
+  ReadOnly: boolean;
+}> {
+  return (value ?? [])
+    .filter((mount) => mount.Type === "image")
+    .map((mount) => {
+      const source = String(mount.Source ?? "").trim();
+      const target = String(mount.Destination ?? "").trim();
+      if (!source || !target.startsWith("/") || typeof mount.RW !== "boolean") {
+        throw new Error("Managed bootstrap Docker image mount is invalid.");
+      }
+      return { Type: "image", Source: source, Target: target, ReadOnly: !mount.RW };
+    });
+}
+
+function dockerBindTarget(bind: string): string {
+  const sourceDelimiter = bind.indexOf(":");
+  if (sourceDelimiter < 0) return "";
+  const optionsDelimiter = bind.indexOf(":", sourceDelimiter + 1);
+  return bind.slice(sourceDelimiter + 1, optionsDelimiter < 0 ? undefined : optionsDelimiter);
+}
+
+function normalizedHostConfig(
+  hostConfig: Record<string, unknown>,
+  imageMounts: ReturnType<typeof normalizedImageMounts>,
+): Record<string, unknown> {
   const normalized = { ...hostConfig };
   for (const key of NULLABLE_HOST_CONFIG_ARRAY_KEYS) {
     if (normalized[key] === null) normalized[key] = [];
@@ -357,6 +385,18 @@ function normalizedHostConfig(hostConfig: Record<string, unknown>): Record<strin
   }
   for (const key of ["Binds", "MaskedPaths", "ReadonlyPaths"] as const) {
     if (key in normalized) normalized[key] = canonicalStringSet(normalized[key], key);
+  }
+  if (imageMounts.length > 0) {
+    const imageTargets = new Set(imageMounts.map((mount) => mount.Target));
+    const binds = Array.isArray(normalized.Binds) ? (normalized.Binds as string[]) : [];
+    normalized.Binds = binds.filter(
+      (bind) => !imageTargets.has(dockerBindTarget(bind)),
+    );
+    const existingMounts = normalizedStructuredMounts(normalized.Mounts ?? []);
+    if (!Array.isArray(existingMounts)) {
+      throw new Error("Managed bootstrap Docker HostConfig.Mounts must be an array.");
+    }
+    normalized.Mounts = [...existingMounts, ...imageMounts];
   }
   for (const key of ["CapAdd", "CapDrop"] as const) {
     if (key in normalized) normalized[key] = canonicalCapabilities(normalized[key], key);
@@ -392,6 +432,7 @@ export function normalizeDockerManagedBootstrapLaunchSpec(inspect: DockerContain
   const raw = inspect as DockerContainerInspect & Record<string, unknown>;
   const config = exactObject(raw.Config, "Config");
   const hostConfig = exactObject(raw.HostConfig, "HostConfig");
+  const imageMounts = normalizedImageMounts(inspect.Mounts);
   assertKnownKeys(config, CONFIG_KEYS, "Config");
   assertKnownKeys(hostConfig, HOST_CONFIG_KEYS, "HostConfig");
   const unsupportedConfig = [...UNSUPPORTED_CONFIG_KEYS].filter(
@@ -427,7 +468,10 @@ export function normalizeDockerManagedBootstrapLaunchSpec(inspect: DockerContain
     inspect: {
       Name: inspect.Name,
       Config: normalizedConfig(config) as DockerContainerInspect["Config"],
-      HostConfig: normalizedHostConfig(hostConfig) as DockerContainerInspect["HostConfig"],
+      HostConfig: normalizedHostConfig(
+        hostConfig,
+        imageMounts,
+      ) as DockerContainerInspect["HostConfig"],
       NetworkSettings: normalizedNetworkSettings(inspect.NetworkSettings),
       ...("Platform" in raw && typeof raw.Platform === "string" ? { Platform: raw.Platform } : {}),
     },

@@ -12,8 +12,25 @@ import {
 describe("managed bootstrap Docker launch spec", () => {
   it("hashes reproducible launch state while excluding runtime ID, phase, IP, and gateway", () => {
     const first = createDockerGpuInspectFixture();
+    first.Mounts = [
+      {
+        Type: "image",
+        Source: "ghcr.io/nvidia/openshell/sandbox:v0.0.106",
+        Destination: "/opt/openshell/bin",
+        RW: false,
+      },
+    ];
+    first.HostConfig!.Binds = [
+      ...first.HostConfig!.Binds!,
+      "/run/podman/old/merge:/opt/openshell/bin:lowerdir=/run/podman/old/lower,private",
+    ];
     const second = structuredClone(first);
     second.Id = "another-runtime-id";
+    second.HostConfig!.Binds = second.HostConfig!.Binds!.map((bind) =>
+      bind.includes("/opt/openshell/bin")
+        ? "/run/podman/new/merge:/opt/openshell/bin:lowerdir=/run/podman/new/lower,private"
+        : bind,
+    );
     Object.assign(second, { State: { Running: false, Dead: true } });
     second.NetworkSettings!.Networks!["openshell-docker"]!.IPAddress = "172.18.0.99";
     second.NetworkSettings!.Networks!["openshell-docker"]!.Gateway = "172.18.0.254";
@@ -23,6 +40,15 @@ describe("managed bootstrap Docker launch spec", () => {
 
     expect(observed.hash).toBe(expected.hash);
     expect(observed.canonicalJson).toBe(expected.canonicalJson);
+    expect(expected.spec.inspect.HostConfig?.Binds).not.toContainEqual(
+      expect.stringContaining("/opt/openshell/bin"),
+    );
+    expect(expected.spec.inspect.HostConfig?.Mounts).toContainEqual({
+      Type: "image",
+      Source: "ghcr.io/nvidia/openshell/sandbox:v0.0.106",
+      Target: "/opt/openshell/bin",
+      ReadOnly: true,
+    });
     expect(parseDockerManagedBootstrapLaunchSpec(expected.canonicalJson)).toEqual(expected.spec);
   });
 

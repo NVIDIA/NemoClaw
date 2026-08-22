@@ -166,6 +166,12 @@ describe("Docker GPU clone envelope", () => {
   it("builds clone args that preserve OpenShell labels, mounts, and runtime settings", () => {
     const inspect = inspectFixture();
     inspect.HostConfig!.Annotations = { "io.container.manager": "libpod" };
+    inspect.HostConfig!.Mounts!.push({
+      Type: "image",
+      Source: "ghcr.io/nvidia/openshell/sandbox:v0.0.106",
+      Target: "/opt/openshell/bin",
+      ReadOnly: true,
+    });
     const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("gpus"));
 
     expect(args).toEqual(
@@ -190,6 +196,8 @@ describe("Docker GPU clone envelope", () => {
         "/host:/container:rw",
         "--mount",
         "type=tmpfs,dst=/tmp/nemoclaw-exact-main-driver-config,tmpfs-size=16777216,tmpfs-mode=1777",
+        "--mount",
+        "type=image,src=ghcr.io/nvidia/openshell/sandbox:v0.0.106,dst=/opt/openshell/bin,readonly",
         "--network",
         "openshell-docker",
         "--network-alias",

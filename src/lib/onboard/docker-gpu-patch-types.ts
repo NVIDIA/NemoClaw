@@ -223,6 +223,12 @@ export type DockerContainerInspect = {
     Restarting?: boolean;
     Dead?: boolean;
   } | null;
+  Mounts?: Array<{
+    Type?: string;
+    Source?: string;
+    Destination?: string;
+    RW?: boolean;
+  }> | null;
   HostConfig?: {
     Annotations?: Record<string, string> | null;
     Binds?: string[] | null;

@@ -229,6 +229,27 @@ function dockerVolumeMountValue(mount: DockerStructuredMount): string {
   return values.join(",");
 }
 
+function dockerImageMountValue(mount: DockerStructuredMount): string {
+  if (String(mount.Consistency ?? "") !== "") {
+    throw new Error("Docker image mount consistency is not supported during recreation.");
+  }
+  assertUnusedMountOption(mount.BindOptions, "BindOptions for an image mount");
+  assertUnusedMountOption(mount.VolumeOptions, "VolumeOptions for an image mount");
+  assertUnusedMountOption(mount.TmpfsOptions, "TmpfsOptions for an image mount");
+
+  const source = String(mount.Source ?? "").trim();
+  if (!source || /[\0,]/u.test(source)) {
+    throw new Error("Docker image mount source is invalid.");
+  }
+  const target = mountValue(mount.Target, "target");
+  if (!target.startsWith("/")) {
+    throw new Error("Docker structured mount target must be an absolute container path.");
+  }
+  const values = [`type=image`, `src=${source}`, `dst=${target}`];
+  if (optionalMountBoolean(mount.ReadOnly, "ReadOnly")) values.push("readonly");
+  return values.join(",");
+}
+
 function dockerStructuredMountArgs(inspect: DockerContainerInspect): string[] {
   const args: string[] = [];
   for (const mount of inspect.HostConfig?.Mounts ?? []) {
@@ -241,6 +262,9 @@ function dockerStructuredMountArgs(inspect: DockerContainerInspect): string[] {
         break;
       case "volume":
         args.push("--mount", dockerVolumeMountValue(mount));
+        break;
+      case "image":
+        args.push("--mount", dockerImageMountValue(mount));
         break;
       default:
         throw new Error(`Unsupported Docker structured mount type '${String(mount.Type)}'.`);
