@@ -158,8 +158,9 @@ The parallel Nemotron Ultra lane writes the same filenames under
 
 The specialist shadow runs five focused, read-only Pi sessions for Behavior, Trust, Design /
 Architecture, Operations, and Documentation. Each cell uses the primary model and uploads Pi's
-unchanged native JSONL session. Specialists have ordinary repository read tools and cannot record or
-submit the canonical review.
+unchanged native JSONL session. A specialist succeeds when its Pi turn completes and that native session
+is uploaded; it does not produce or validate the broad advisor result schema. Specialists have ordinary
+repository read tools and cannot record or submit the canonical review.
 
 The shadow synthesis job places the available traces beside the read-only repository inside OpenShell.
 It reads them with the ordinary Pi filesystem tools, treats their model-authored content as advisory and

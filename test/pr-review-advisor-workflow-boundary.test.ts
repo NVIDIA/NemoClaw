@@ -627,6 +627,31 @@ describe("PR review advisor workflow boundary", () => {
     );
   });
 
+  it.skipIf(!CAN_RUN_BASH)(
+    "accepts a successful specialist native session without broad result artifacts (#9968)",
+    () => {
+      const result = spawnSync(
+        "/bin/bash",
+        ["-c", workflowStepScript("review-specialists", "Verify advisor analysis outcome")],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            ADVISOR_INTEREST: "behavior",
+            ANALYSIS_OUTCOME: "success",
+            ANALYSIS_REQUESTED: "1",
+            CONFIGURE_OUTCOME: "success",
+            DOWNLOAD_OUTCOME: "success",
+            SPECIALIST_UPLOAD_OUTCOME: "success",
+            UNAVAILABLE_OUTCOME: "skipped",
+          },
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
+
   it("requires all specialist models to match the unique publishing review model", () => {
     const errors = validateMutation((source) =>
       mutateWorkflowSource(source, (workflow) => {

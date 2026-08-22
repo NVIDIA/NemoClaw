@@ -444,6 +444,36 @@ function checkPrivilegeDomains(
   }
 }
 
+function checkSandboxNames(
+  errors: string[],
+  jobs: Array<{ name: string; job: WorkflowRecord }>,
+): void {
+  const sandboxNames: string[] = [];
+  for (const { name, job } of jobs) {
+    const advisor = asRecord(asRecord(job.strategy).matrix).advisor;
+    if (!Array.isArray(advisor) || advisor.length === 0) {
+      errors.push(`${name} matrix must declare a non-empty advisor array`);
+      continue;
+    }
+    const entries = advisor.map(asRecord);
+    for (const [index, entry] of entries.entries()) {
+      const sandboxName = stringValue(entry.sandbox_name);
+      sandboxNames.push(sandboxName);
+      if (
+        sandboxName.length > OPENSHELL_SANDBOX_NAME_MAX_LENGTH ||
+        !OPENSHELL_SANDBOX_NAME_PATTERN.test(sandboxName)
+      ) {
+        errors.push(
+          `${name} matrix entry ${index + 1} sandbox_name must satisfy the OpenShell sandbox-name contract (max 19 characters)`,
+        );
+      }
+    }
+  }
+  if (new Set(sandboxNames).size !== sandboxNames.length) {
+    errors.push("advisor, specialist, and synthesis sandbox_name values must be unique");
+  }
+}
+
 function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
   if (stringValue(reviewJob["runs-on"]) !== "ubuntu-24.04") {
     errors.push("review job must pin the Ubuntu runner used by runtime package versions");
@@ -481,15 +511,6 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
   for (const [index, entry] of entries.entries()) {
     if (!/^[a-z0-9][a-z0-9-]*$/u.test(stringValue(entry.artifact_dir))) {
       errors.push(`advisor matrix entry ${index + 1} artifact_dir must be a simple directory name`);
-    }
-    const sandboxName = stringValue(entry.sandbox_name);
-    if (
-      sandboxName.length > OPENSHELL_SANDBOX_NAME_MAX_LENGTH ||
-      !OPENSHELL_SANDBOX_NAME_PATTERN.test(sandboxName)
-    ) {
-      errors.push(
-        `advisor matrix entry ${index + 1} sandbox_name must satisfy the OpenShell 0.0.99 sandbox-name contract`,
-      );
     }
   }
 
@@ -1326,6 +1347,9 @@ function checkShadowTopology(
   checkShadowAnalysisTrustBoundary(errors, "review-specialists", specialistJob, specialistSteps);
   checkShadowAnalysisTrustBoundary(errors, "review-synthesis-shadow", synthesisJob, synthesisSteps);
   const upload = requireStep(errors, specialistSteps, "Upload native specialist session");
+  if (stringValue(upload?.id) !== "upload-specialist-session") {
+    errors.push("Upload native specialist session id must be upload-specialist-session");
+  }
   requireWith(errors, upload, "name", "${{ matrix.advisor.artifact_name }}");
   requireWith(
     errors,
@@ -1333,6 +1357,20 @@ function checkShadowTopology(
     "path",
     "artifacts/${{ matrix.advisor.artifact_dir }}/pr-review-${{ matrix.advisor.interest }}-session.jsonl",
   );
+  requireWith(errors, upload, "if-no-files-found", "error");
+  const specialistOutcome = requireStep(errors, specialistSteps, "Verify advisor analysis outcome");
+  const specialistOutcomeEnv = asRecord(specialistOutcome?.env);
+  if (specialistOutcomeEnv.ADVISOR_INTEREST !== "${{ matrix.advisor.interest }}") {
+    errors.push("specialist outcome must use the matrix interest");
+  }
+  if (
+    specialistOutcomeEnv.SPECIALIST_UPLOAD_OUTCOME !==
+    "${{ steps.upload-specialist-session.outcome }}"
+  ) {
+    errors.push("specialist outcome must use the native session upload outcome");
+  }
+  requireRunContains(errors, specialistOutcome, 'if [ -n "$ADVISOR_INTEREST" ]');
+  requireRunContains(errors, specialistOutcome, 'if [ "$SPECIALIST_UPLOAD_OUTCOME" != "success" ]');
   const download = requireStep(errors, synthesisSteps, "Download specialist session artifacts");
   requireWith(errors, download, "pattern", "pr-review-specialist-*");
   requireWith(errors, download, "path", "pr-workdir/.pr-review-advisor-sessions");
@@ -1377,6 +1415,11 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   if (Object.keys(synthesisJob).length === 0) errors.push("workflow must declare shadow synthesis");
   if (Object.keys(publishJob).length === 0) errors.push("workflow must declare the publish job");
   checkPrivilegeDomains(errors, workflow, reviewJob, publishJob);
+  checkSandboxNames(errors, [
+    { name: "advisor", job: reviewJob },
+    { name: "specialist", job: specialistJob },
+    { name: "synthesis", job: synthesisJob },
+  ]);
   checkAnalysisJob(errors, reviewJob);
   checkShadowTopology(errors, reviewJob, specialistJob, synthesisJob);
   checkPublishJob(errors, publishJob);
