@@ -1078,11 +1078,13 @@ describe("Hermes sandbox provisioning", () => {
     );
     const managedGatewayControlPath = path.join(localLib, "managed-gateway-control.py");
     const hermesCronRestoreControlPath = path.join(localLib, "hermes-cron-restore-control.py");
+    const corporateCaRuntimePath = path.join(localLib, "corporate-ca-runtime.sh");
     const files = [
       path.join(localBin, "nemoclaw-start"),
       path.join(localBin, "nemoclaw-managed-startup-hold"),
       path.join(localBin, "nemoclaw-managed-bootstrap"),
       gatewayControlPath,
+      corporateCaRuntimePath,
       path.join(localLib, "entrypoint-env-wrapper.sh"),
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "validate-hermes-env-secret-boundary.py"),
@@ -1149,6 +1151,7 @@ describe("Hermes sandbox provisioning", () => {
       expect((fs.statSync(buildMcpDigestPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(managedPolicyReaderPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
+      expect((fs.statSync(corporateCaRuntimePath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(stateDirGuardPath).mode & 0o777).toString(8)).toBe("500");
       expect((fs.statSync(runtimeStateMutationControlPath).mode & 0o777).toString(8)).toBe("500");
       expect((fs.statSync(runtimeStateMutationStartupGatePath).mode & 0o777).toString(8)).toBe(

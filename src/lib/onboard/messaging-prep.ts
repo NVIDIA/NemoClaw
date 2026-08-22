@@ -10,6 +10,7 @@ import {
   bridgeProviderNamesForChannel,
   collectMessagingBridgeTokenDefs,
   messagingBridgeProfilesForAgent,
+  staticMessagingProviderTypeForChannel,
 } from "./messaging-bridge-provider";
 
 export type NamedMessagingChannel = { name: string } & ChannelDef;
@@ -78,13 +79,22 @@ export function prepareCreateSandboxMessaging(
       .filter((c) => disabledChannelNames.has(c.name))
       .flatMap((c) => getChannelTokenKeys(c)),
   );
+  const messagingProviderProfiles = messagingBridgeProfilesForAgent(input.agentName);
 
   const messagingTokenDefs: MessagingTokenDef[] = listMessagingCredentialMetadata()
-    .map((credential) => ({
-      name: credential.providerNameTemplate.replaceAll("{sandboxName}", input.sandboxName),
-      envKey: credential.providerEnvKey,
-      token: input.getValidatedMessagingTokenByEnvKey(input.channels, credential.providerEnvKey),
-    }))
+    .map((credential) => {
+      const providerType = staticMessagingProviderTypeForChannel(
+        credential.channelId,
+        input.agentName,
+        messagingProviderProfiles,
+      );
+      return {
+        name: credential.providerNameTemplate.replaceAll("{sandboxName}", input.sandboxName),
+        envKey: credential.providerEnvKey,
+        token: input.getValidatedMessagingTokenByEnvKey(input.channels, credential.providerEnvKey),
+        ...(providerType ? { providerType } : {}),
+      };
+    })
     .filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey))
     .filter(({ envKey }) => !disabledEnvKeys.has(envKey));
 
@@ -144,7 +154,7 @@ export function prepareCreateSandboxMessaging(
   // upsertMessagingProviders wrapper). Today only Google Chat uses this.
   // Resolve the agent instead of defaulting it: an agent no manifest supports
   // must configure no bridge, not the OpenClaw one.
-  const bridgeProfiles = messagingBridgeProfilesForAgent(input.agentName);
+  const bridgeProfiles = messagingProviderProfiles.filter((profile) => profile.strategy !== null);
   messagingTokenDefs.push(
     ...collectMessagingBridgeTokenDefs({
       sandboxName: input.sandboxName,
@@ -154,6 +164,7 @@ export function prepareCreateSandboxMessaging(
       normalizeCredentialValue: input.normalizeCredentialValue,
       enabledChannels: input.enabledChannels,
       disabledChannelNames,
+      profiles: messagingProviderProfiles,
     }),
   );
 
@@ -168,13 +179,15 @@ export function prepareCreateSandboxMessaging(
   const reusableMessagingChannels: string[] = [];
 
   if (input.enabledChannels != null) {
-    for (const { name, envKey, token } of messagingTokenDefs) {
+    for (const { name, envKey, token, providerType } of messagingTokenDefs) {
       if (token) continue;
       const channel = input.getMessagingChannelForEnvKey(envKey);
       if (!channel || !input.enabledChannels.includes(channel)) continue;
-      const providerReusable = requiresExactOpenClawProviderBinding
-        ? input.providerMatchesGatewayCredential(name, "generic", envKey)
-        : input.providerExistsInGateway(name);
+      const providerReusable = providerType
+        ? input.providerMatchesGatewayCredential(name, providerType, envKey)
+        : requiresExactOpenClawProviderBinding
+          ? input.providerMatchesGatewayCredential(name, "generic", envKey)
+          : input.providerExistsInGateway(name);
       if (!providerReusable) continue;
       reusableMessagingProviders.push(name);
       if (!reusableMessagingChannels.includes(channel)) {

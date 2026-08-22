@@ -33,6 +33,11 @@ const MAX_UINT64 = (1n << 64n) - 1n;
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 
 export const PORTABLE_RETIREMENT_STATE_ENTRIES = Object.values(NAMES);
+
+export function isPortableUninstallMissingPathError(error: unknown): boolean {
+  return isErrnoException(error) && error.code === "ENOENT";
+}
+
 type Role = "config" | "receipt" | "registry";
 type Target = readonly [
   Role,
