@@ -414,6 +414,16 @@ function normalizedHostConfig(
     delete annotations[PODMAN_PIDS_LIMIT_ANNOTATION];
     normalized.Annotations = annotations;
   }
+  // The native Podman provider is rootless. Podman preserves an Engine API
+  // request of zero while stopped, then rewrites it to the current user's
+  // effective floor (500) on start. Both values describe that same enforced
+  // runtime setting; use the stable effective value in the launch contract.
+  if (
+    annotations?.["io.container.manager"] === "libpod" &&
+    normalized.OomScoreAdj === 0
+  ) {
+    normalized.OomScoreAdj = 500;
+  }
   const tmpfs =
     typeof normalized.Tmpfs === "object" &&
     normalized.Tmpfs !== null &&

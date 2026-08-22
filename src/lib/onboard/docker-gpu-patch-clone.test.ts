@@ -323,6 +323,7 @@ describe("Docker GPU clone envelope", () => {
       StopTimeout: 45,
     });
     Object.assign(inspect.HostConfig!, {
+      Annotations: { "io.container.manager": "libpod" },
       NetworkMode: "bridge",
       OomScoreAdj: 0,
       PortBindings: {
@@ -363,7 +364,7 @@ describe("Docker GPU clone envelope", () => {
         "--stop-timeout",
         "45",
         "--oom-score-adj",
-        "0",
+        "500",
         "--network",
         "openshell-docker",
       ]),

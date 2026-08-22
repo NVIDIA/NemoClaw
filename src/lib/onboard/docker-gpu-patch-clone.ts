@@ -629,7 +629,15 @@ export function buildDockerGpuCloneRunArgs(
       ) {
         throw new Error("Managed bootstrap Docker OOM score adjustment is invalid.");
       }
-      args.push("--oom-score-adj", String(host.OomScoreAdj));
+      // Native Podman is rootless and clamps an inspected request of zero to
+      // the API-service user's effective floor when the container starts.
+      // Request that stable effective value up front so stopped and running
+      // inspection report one launch contract.
+      const oomScoreAdj =
+        host.Annotations?.["io.container.manager"] === "libpod" && host.OomScoreAdj === 0
+          ? 500
+          : host.OomScoreAdj;
+      args.push("--oom-score-adj", String(oomScoreAdj));
     }
   }
 

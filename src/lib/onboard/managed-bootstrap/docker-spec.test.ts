@@ -31,6 +31,7 @@ describe("managed bootstrap Docker launch spec", () => {
     first.HostConfig!.CpuQuota = 250_000;
     first.HostConfig!.NetworkMode = "bridge";
     first.HostConfig!.Annotations = { "io.container.manager": "libpod" };
+    first.HostConfig!.OomScoreAdj = 0;
     first.HostConfig!.Tmpfs = {
       "/run/netns": "rw,nosuid,nodev,rprivate,tmpcopyup",
     };
@@ -51,6 +52,7 @@ describe("managed bootstrap Docker launch spec", () => {
       "io.podman.annotations.pids-limit": "2048",
     };
     second.HostConfig!.Tmpfs = {};
+    second.HostConfig!.OomScoreAdj = 500;
     second.NetworkSettings!.Networks!["openshell-docker"]!.IPAddress = "172.18.0.99";
     second.NetworkSettings!.Networks!["openshell-docker"]!.Gateway = "172.18.0.254";
     second.NetworkSettings!.Networks!["openshell-docker"]!.Aliases = [
