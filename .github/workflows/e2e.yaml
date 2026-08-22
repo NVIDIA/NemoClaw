@@ -2763,6 +2763,52 @@ jobs:
           TARGET_ID: ${{ matrix.id }}
         run: |
           set -euo pipefail
+          spec_monitor_pid=""
+          if [[ "${{ inputs.gateway_runtime }}" == "podman" ]]; then
+            (
+              previous=""
+              while true; do
+                mapfile -t container_ids < <(docker ps --all --quiet)
+                if (( ${#container_ids[@]} > 0 )); then
+                  snapshot="$(docker inspect "${container_ids[@]}" 2>/dev/null \
+                    | jq -c '[.[]
+                      | select(
+                          .Config.Labels["openshell.ai/sandbox-name"] != null or
+                          .Config.Labels["openshell.managed"] == "true" or
+                          (.Name | contains("e2e-reg-6"))
+                        )
+                      | {
+                          Id,
+                          Name,
+                          Config: {
+                            ExposedPorts: .Config.ExposedPorts,
+                            Healthcheck: .Config.Healthcheck,
+                            StopTimeout: .Config.StopTimeout
+                          },
+                          HostConfig: {
+                            Annotations: .HostConfig.Annotations,
+                            PortBindings: .HostConfig.PortBindings,
+                            Tmpfs: .HostConfig.Tmpfs,
+                            NanoCpus: .HostConfig.NanoCpus,
+                            CpuPeriod: .HostConfig.CpuPeriod,
+                            CpuQuota: .HostConfig.CpuQuota,
+                            Mounts: .HostConfig.Mounts
+                          },
+                          Mounts,
+                          Networks: .NetworkSettings.Networks
+                        }
+                    ]')"
+                  if [[ "$snapshot" != "$previous" && "$snapshot" != "[]" ]]; then
+                    printf '%s\n' "$snapshot"
+                    previous="$snapshot"
+                  fi
+                fi
+                sleep 1
+              done
+            ) >"${RUNNER_TEMP}/native-podman-e2e-spec-monitor.jsonl" 2>/dev/null &
+            spec_monitor_pid="$!"
+            trap 'kill "$spec_monitor_pid" 2>/dev/null || true' EXIT
+          fi
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/registry-targets.test.ts --selector "^${TARGET_ID}:"
 
       - name: Diagnose native Podman API failure
@@ -2771,6 +2817,7 @@ jobs:
         run: |
           set -euo pipefail
           cat "${RUNNER_TEMP}/native-podman-e2e-service.log" >&2
+          cat "${RUNNER_TEMP}/native-podman-e2e-spec-monitor.jsonl" >&2 || true
           docker ps --all --no-trunc --format '{{json .}}' >&2 || true
           while IFS= read -r container_id; do
             [[ -n "$container_id" ]] || continue
