@@ -197,7 +197,7 @@ describe("Docker GPU clone envelope", () => {
         "--mount",
         "type=tmpfs,dst=/tmp/nemoclaw-exact-main-driver-config,tmpfs-size=16777216,tmpfs-mode=1777",
         "--mount",
-        "type=image,src=ghcr.io/nvidia/openshell/sandbox:v0.0.106,dst=/opt/openshell/bin,readonly",
+        "type=image,src=ghcr.io/nvidia/openshell/sandbox:v0.0.106,dst=/opt/openshell/bin",
         "--network",
         "openshell-docker",
         "--network-alias",

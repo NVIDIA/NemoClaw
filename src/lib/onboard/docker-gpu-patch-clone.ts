@@ -245,8 +245,13 @@ function dockerImageMountValue(mount: DockerStructuredMount): string {
   if (!target.startsWith("/")) {
     throw new Error("Docker structured mount target must be an absolute container path.");
   }
+  if (!optionalMountBoolean(mount.ReadOnly, "ReadOnly")) {
+    throw new Error("Docker image mounts must remain read-only during recreation.");
+  }
   const values = [`type=image`, `src=${source}`, `dst=${target}`];
-  if (optionalMountBoolean(mount.ReadOnly, "ReadOnly")) values.push("readonly");
+  // Podman's Docker-compatible API translates Docker's `readonly` flag to
+  // `ro=true`, which its image-mount parser rejects. Image mounts default to
+  // read-only when the option is omitted.
   return values.join(",");
 }
 
