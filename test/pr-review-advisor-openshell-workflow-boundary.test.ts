@@ -79,9 +79,84 @@ describe("PR review advisor OpenShell workflow boundary", () => {
         "review job env.OPENSHELL_GATEWAY_ENDPOINT must be http://127.0.0.1:8080",
         "review job env.PI_IMAGE must be ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd",
         "review job env.SANDBOX_NAME must be ${{ matrix.advisor.sandbox_name }}",
-        "advisor matrix entry 1 sandbox_name must satisfy the OpenShell 0.0.99 sandbox-name contract",
+        "advisor matrix entry 1 sandbox_name must satisfy the OpenShell sandbox-name contract (max 19 characters)",
         "advisor matrix entry 1 artifact_dir must be a simple directory name",
         "Prepare isolated analysis workspace must use the fixed pr-workdir upload directory",
+      ]),
+    );
+  });
+
+  it("rejects overlong and duplicate specialist and synthesis sandbox names (#9968)", () => {
+    const overlong = validateMutation((source) =>
+      mutateWorkflowSource(source, (workflow) => {
+        workflow.jobs["review-specialists"].strategy.matrix.advisor[0].sandbox_name =
+          "pr-advisor-sp-behavior";
+        workflow.jobs["review-synthesis-shadow"].strategy.matrix.advisor[0].sandbox_name =
+          "pr-advisor-synthesis";
+      }),
+    );
+    expect(overlong).toEqual(
+      expect.arrayContaining([
+        "specialist matrix entry 1 sandbox_name must satisfy the OpenShell sandbox-name contract (max 19 characters)",
+        "synthesis matrix entry 1 sandbox_name must satisfy the OpenShell sandbox-name contract (max 19 characters)",
+      ]),
+    );
+
+    const duplicate = validateMutation((source) =>
+      mutateWorkflowSource(source, (workflow) => {
+        workflow.jobs["review-synthesis-shadow"].strategy.matrix.advisor[0].sandbox_name =
+          workflow.jobs["review-specialists"].strategy.matrix.advisor[0].sandbox_name;
+      }),
+    );
+    expect(duplicate).toContain(
+      "advisor, specialist, and synthesis sandbox_name values must be unique",
+    );
+  });
+
+  it.each([
+    [
+      "missing",
+      (workflow: Record<string, any>) => {
+        delete workflow.jobs["review-synthesis-shadow"].strategy.matrix.advisor;
+      },
+    ],
+    [
+      "non-array",
+      (workflow: Record<string, any>) => {
+        workflow.jobs["review-synthesis-shadow"].strategy.matrix.advisor = {};
+      },
+    ],
+    [
+      "empty",
+      (workflow: Record<string, any>) => {
+        workflow.jobs["review-synthesis-shadow"].strategy.matrix.advisor = [];
+      },
+    ],
+  ])("rejects a %s synthesis advisor matrix (#9968)", (_case, mutate) => {
+    const errors = validateMutation((source) => mutateWorkflowSource(source, mutate));
+    expect(errors).toContain("synthesis matrix must declare a non-empty advisor array");
+  });
+
+  it("requires specialist success to include the native session upload (#9968)", () => {
+    const errors = validateMutation((source) =>
+      mutateWorkflowSource(source, (workflow) => {
+        const steps = workflow.jobs["review-specialists"].steps;
+        const upload = steps.find(
+          (step: { name?: string }) => step.name === "Upload native specialist session",
+        );
+        upload.id = "detached-upload";
+        upload.with["if-no-files-found"] = "warn";
+        const outcome = steps.find(
+          (step: { name?: string }) => step.name === "Verify advisor analysis outcome",
+        );
+        outcome.env.SPECIALIST_UPLOAD_OUTCOME = "success";
+      }),
+    );
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "Upload native specialist session id must be upload-specialist-session",
+        "step 'Upload native specialist session' expected with.if-no-files-found=error",
+        "specialist outcome must use the native session upload outcome",
       ]),
     );
   });
