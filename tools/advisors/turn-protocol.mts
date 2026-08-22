@@ -38,6 +38,8 @@ export type AdvisorPromptTurn = {
   requiredToolNames?: string[];
   /** Tools that must finish before the assistant emits text. Context tools are included. */
   requireToolsBeforeText?: string[];
+  /** Ordinary read-tool paths that must finish successfully before assistant text. */
+  requiredReadPaths?: string[];
   /** Fail the turn when it completes without non-whitespace assistant analysis. */
   requireAssistantText?: boolean;
   /**
@@ -76,6 +78,7 @@ export type AdvisorTurnTools = {
   activeToolNames: string[];
   requiredToolNames: string[];
   requireToolsBeforeText: string[];
+  requiredReadPaths?: string[];
   requireAssistantText: boolean;
   atomicTerminalToolName?: string;
   terminalSubmitToolName?: string;
@@ -84,6 +87,14 @@ export type AdvisorTurnTools = {
 
 export type AdvisorTurnFlowEvent =
   | { type: "text"; text: string }
+  | {
+      type: "read";
+      path: string;
+      offset: number;
+      endOffset: number | null;
+      fileSize: number;
+      reachesEnd: boolean;
+    }
   | { type: "tool_start"; toolName: string }
   | { type: "tool_end"; toolName: string; isError: boolean };
 
@@ -151,6 +162,7 @@ export function resolveAdvisorTurnTools(
     activeToolNames,
     requiredToolNames,
     requireToolsBeforeText,
+    requiredReadPaths: [...new Set(turn.requiredReadPaths ?? [])],
     requireAssistantText: turn.requireAssistantText === true,
     atomicTerminalToolName,
     terminalSubmitToolName,
@@ -214,7 +226,9 @@ function hasActivityAfterSuccessfulTerminalSubmit(
 
 function unexpectedAtomicToolEvent(events: AdvisorTurnFlowEvent[], toolName: string) {
   return events.find((event) =>
-    event.type === "text" ? Boolean(event.text.trim()) : event.toolName !== toolName,
+    event.type === "text"
+      ? Boolean(event.text.trim())
+      : event.type !== "read" && event.toolName !== toolName,
   );
 }
 
@@ -284,7 +298,7 @@ function atomicTerminalToolErrors(
   const unexpected = unexpectedAtomicToolEvent(events, toolName);
   if (unexpected?.type === "text") {
     errors.push(`${turnName} emitted prose during atomic ${toolName} commit`);
-  } else if (unexpected) {
+  } else if (unexpected && unexpected.type !== "read") {
     errors.push(`${turnName} called unexpected tool ${unexpected.toolName} during atomic commit`);
   }
   const successIndex = events.findIndex(
@@ -319,6 +333,38 @@ export function advisorTurnFlowErrors(
     const end = successfulEnd(toolName);
     if (firstText >= 0 && (end < 0 || end > firstText)) {
       errors.push(`${turnName} emitted text before ${toolName} completed`);
+    }
+  }
+  for (const requiredPath of tools.requiredReadPaths ?? []) {
+    const reads = events.flatMap((event, index) =>
+      event.type === "read" && event.path === requiredPath ? [{ event, index }] : [],
+    );
+    if (reads.length === 0) {
+      errors.push(`${turnName} omitted required read: ${requiredPath}`);
+      continue;
+    }
+    const fileSizes = new Set(reads.map(({ event }) => event.fileSize));
+    const ranges = reads
+      .filter(({ event }) => event.endOffset !== null)
+      .map(({ event }) => ({ start: event.offset, end: event.endOffset! }))
+      .sort((left, right) => left.start - right.start);
+    let coveredThrough = 0;
+    for (const range of ranges) {
+      if (range.start > coveredThrough + 1) break;
+      coveredThrough = Math.max(coveredThrough, range.end);
+    }
+    const complete =
+      fileSizes.size === 1 &&
+      reads.some(
+        ({ event }) => event.reachesEnd && event.offset <= coveredThrough + 1 && event.fileSize > 0,
+      );
+    if (!complete) errors.push(`${turnName} incompletely read required path: ${requiredPath}`);
+    let completedAt: number | undefined;
+    for (const { event, index } of reads) {
+      if (event.reachesEnd && event.offset <= coveredThrough + 1) completedAt = index;
+    }
+    if (firstText >= 0 && (completedAt === undefined || completedAt > firstText)) {
+      errors.push(`${turnName} emitted text before required read completed: ${requiredPath}`);
     }
   }
   if (tools.atomicTerminalToolName) {
@@ -366,7 +412,12 @@ export function repairableTerminalSubmitToolName(
   const toolName = tools.terminalSubmitToolName;
   if (!toolName || successfulToolNames.has(toolName)) return undefined;
   const expectedTools = new Set([...READ_ONLY_TOOLS, ...tools.activeToolNames]);
-  if (events.some((event) => event.type !== "text" && !expectedTools.has(event.toolName))) {
+  if (
+    events.some(
+      (event) =>
+        event.type !== "text" && event.type !== "read" && !expectedTools.has(event.toolName),
+    )
+  ) {
     return undefined;
   }
   const counts = terminalToolEventCounts(events, toolName);
@@ -405,12 +456,14 @@ export function terminalSubmitRepairErrors(
 ): string[] {
   const repairName = `${turnName} terminal-submit repair`;
   const allowed = new Set([...(repairToolNames ?? []), toolName]);
-  const unexpected = events.find((event) => event.type !== "text" && !allowed.has(event.toolName));
+  const unexpected = events.find(
+    (event) => event.type !== "text" && event.type !== "read" && !allowed.has(event.toolName),
+  );
   const errors = terminalSubmitToolErrors(repairName, events, toolName);
   if (events.some((event) => event.type === "text" && event.text.trim())) {
     errors.push(`${repairName} emitted prose during repair`);
   }
-  if (unexpected && unexpected.type !== "text") {
+  if (unexpected && unexpected.type !== "text" && unexpected.type !== "read") {
     errors.push(`${repairName} called unexpected tool ${unexpected.toolName}`);
   }
   return errors;

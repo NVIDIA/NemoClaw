@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -56,10 +56,17 @@ function requireRecord(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function createPrivateStateFile(directory: string, fileName: string, label: string) {
-  ensureConfigDir(directory);
+function openPrivateStateFile(directory: string, fileName: string, label: string) {
   rejectSymlinksOnPath(directory);
-  const directoryMetadata = fs.lstatSync(directory, { bigint: true });
+  let directoryMetadata: fs.BigIntStats;
+  try {
+    directoryMetadata = fs.lstatSync(directory, { bigint: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(`Hermes Portable inference ${label} directory is missing.`);
+    }
+    throw error;
+  }
   const uid = BigInt(process.getuid?.() ?? directoryMetadata.uid);
   if (
     !directoryMetadata.isDirectory() ||
@@ -228,6 +235,11 @@ function createPrivateStateFile(directory: string, fileName: string, label: stri
   return Object.freeze({ publishExclusive, readExact, replaceExact });
 }
 
+function createPrivateStateFile(directory: string, fileName: string, label: string) {
+  ensureConfigDir(directory);
+  return openPrivateStateFile(directory, fileName, label);
+}
+
 type GatewayProviderAuthority = Readonly<{
   id: string;
   resourceVersion: number;
@@ -265,8 +277,9 @@ type GatewayProviderJournal = Readonly<{
 function createGatewayProviderJournalStore(
   directory: string,
   intent: GatewayProviderJournalIntent,
+  mode: "create" | "open-existing" = "create",
 ) {
-  const stateFile = createPrivateStateFile(
+  const stateFile = (mode === "create" ? createPrivateStateFile : openPrivateStateFile)(
     directory,
     GATEWAY_PROVIDER_JOURNAL_FILE,
     "gateway provider journal",
@@ -433,6 +446,76 @@ function createReceiptWriter(
   });
 }
 
+type GatewayProviderObservation =
+  | { readonly kind: "absent" }
+  | {
+      readonly kind: "present";
+      readonly id: string;
+      readonly resourceVersion: number;
+    };
+
+function gatewayCommandText(result: GatewayCommandResult): string {
+  const stdout = Buffer.isBuffer(result.stdout)
+    ? result.stdout.toString("utf8")
+    : (result.stdout ?? "");
+  const stderr = Buffer.isBuffer(result.stderr)
+    ? result.stderr.toString("utf8")
+    : (result.stderr ?? "");
+  return Buffer.from(`${stdout}\n${stderr}`, "utf8")
+    .subarray(0, MAX_GATEWAY_PROVIDER_OUTPUT_BYTES)
+    .toString("utf8");
+}
+
+function gatewayReportsProviderAbsent(output: string, provider: string): boolean {
+  const escaped = provider.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return (
+    new RegExp(`provider\\s+['\"\`]${escaped}['\"\`]\\s+(?:was\\s+)?not found`, "iu").test(
+      output,
+    ) ||
+    (/code:\s*['"]some requested entity was not found['"]/iu.test(output) &&
+      /message:\s*['"]provider not found['"]/iu.test(output))
+  );
+}
+
+function observeExactGatewayProvider(
+  runGatewayOpenshell: HermesPortableOllamaGatewayRunner,
+  provider: string,
+  expectedProviderCredentialEnv: string,
+): GatewayProviderObservation {
+  const result = runGatewayOpenshell(["provider", "get", provider], {
+    ignoreError: true,
+    suppressOutput: true,
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: GATEWAY_PROVIDER_PROBE_TIMEOUT_MS,
+  });
+  const output = gatewayCommandText(result);
+  if (result.status !== 0) {
+    if (gatewayReportsProviderAbsent(output, provider)) return { kind: "absent" };
+    throw new Error("Hermes Portable inference could not prove gateway provider absence.");
+  }
+  const metadata = parseGatewayProviderMetadata(output);
+  const cleanOutput = stripAnsi(output);
+  const ids = Array.from(cleanOutput.matchAll(/^\s*Id:\s*([A-Za-z0-9._:-]{1,128})\s*$/gimu));
+  const versions = Array.from(cleanOutput.matchAll(/^\s*Resource version:\s*([0-9]+)\s*$/gimu));
+  const id = ids.length === 1 ? ids[0]![1]! : "";
+  const resourceVersion = versions.length === 1 ? Number(versions[0]![1]) : Number.NaN;
+  if (
+    !metadata ||
+    metadata.name !== provider ||
+    metadata.type !== "openai" ||
+    metadata.credentialKeys.length !== 1 ||
+    metadata.credentialKeys[0] !== expectedProviderCredentialEnv ||
+    metadata.configKeys.length !== 1 ||
+    metadata.configKeys[0] !== "OPENAI_BASE_URL" ||
+    !GATEWAY_PROVIDER_ID.test(id) ||
+    !Number.isSafeInteger(resourceVersion) ||
+    resourceVersion < 1
+  ) {
+    throw new Error("Hermes Portable inference found ambiguous gateway provider authority.");
+  }
+  return { kind: "present", id, resourceVersion };
+}
+
 function exactGatewayMutation(
   runGatewayOpenshell: HermesPortableOllamaGatewayRunner,
   expectedModel: string,
@@ -445,76 +528,18 @@ function exactGatewayMutation(
   prepareGatewayMutation: HostLocalInferenceStartupSelection["prepareGatewayMutation"];
   recoverUnpublishedRoute: boolean;
 }> {
-  type ProviderObservation =
-    | { readonly kind: "absent" }
-    | {
-        readonly kind: "present";
-        readonly id: string;
-        readonly resourceVersion: number;
-      };
-  const commandText = (result: GatewayCommandResult): string => {
-    const stdout = Buffer.isBuffer(result.stdout)
-      ? result.stdout.toString("utf8")
-      : (result.stdout ?? "");
-    const stderr = Buffer.isBuffer(result.stderr)
-      ? result.stderr.toString("utf8")
-      : (result.stderr ?? "");
-    return Buffer.from(`${stdout}\n${stderr}`, "utf8")
-      .subarray(0, MAX_GATEWAY_PROVIDER_OUTPUT_BYTES)
-      .toString("utf8");
-  };
-  const reportsAbsent = (output: string, provider: string): boolean => {
-    const escaped = provider.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-    return (
-      new RegExp(`provider\\s+['\"\`]${escaped}['\"\`]\\s+(?:was\\s+)?not found`, "iu").test(
-        output,
-      ) ||
-      (/code:\s*['"]some requested entity was not found['"]/iu.test(output) &&
-        /message:\s*['"]provider not found['"]/iu.test(output))
-    );
-  };
-  const readExact = (provider: string): ProviderObservation => {
-    const result = runGatewayOpenshell(["provider", "get", provider], {
-      ignoreError: true,
-      suppressOutput: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: GATEWAY_PROVIDER_PROBE_TIMEOUT_MS,
-    });
-    const output = commandText(result);
-    if (result.status !== 0) {
-      if (reportsAbsent(output, provider)) return { kind: "absent" };
-      throw new Error("Hermes Portable inference could not prove gateway provider absence.");
-    }
-    const metadata = parseGatewayProviderMetadata(output);
-    const cleanOutput = stripAnsi(output);
-    const ids = Array.from(cleanOutput.matchAll(/^\s*Id:\s*([A-Za-z0-9._:-]{1,128})\s*$/gimu));
-    const versions = Array.from(cleanOutput.matchAll(/^\s*Resource version:\s*([0-9]+)\s*$/gimu));
-    const id = ids.length === 1 ? ids[0]![1]! : "";
-    const resourceVersion = versions.length === 1 ? Number(versions[0]![1]) : Number.NaN;
-    if (
-      !metadata ||
-      metadata.name !== provider ||
-      metadata.type !== "openai" ||
-      metadata.credentialKeys.length !== 1 ||
-      metadata.credentialKeys[0] !== expectedProviderCredentialEnv ||
-      metadata.configKeys.length !== 1 ||
-      metadata.configKeys[0] !== "OPENAI_BASE_URL" ||
-      !GATEWAY_PROVIDER_ID.test(id) ||
-      !Number.isSafeInteger(resourceVersion) ||
-      resourceVersion < 1
-    ) {
-      throw new Error("Hermes Portable inference found ambiguous gateway provider authority.");
-    }
-    return { kind: "present", id, resourceVersion };
-  };
+  const readExact = (provider: string): GatewayProviderObservation =>
+    observeExactGatewayProvider(runGatewayOpenshell, provider, expectedProviderCredentialEnv);
   const matchesAuthority = (
-    observation: ProviderObservation,
+    observation: GatewayProviderObservation,
     authority: GatewayProviderAuthority,
-  ): observation is Extract<ProviderObservation, { kind: "present" }> =>
+  ): observation is Extract<GatewayProviderObservation, { kind: "present" }> =>
     observation.kind === "present" &&
     observation.id === authority.id &&
     observation.resourceVersion === authority.resourceVersion;
-  const createdAuthority = (observation: ProviderObservation): GatewayProviderAuthority | null =>
+  const createdAuthority = (
+    observation: GatewayProviderObservation,
+  ): GatewayProviderAuthority | null =>
     observation.kind === "present" && observation.resourceVersion === 1
       ? Object.freeze({ id: observation.id, resourceVersion: observation.resourceVersion })
       : null;
@@ -841,6 +866,123 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
     publishedReceipt,
     recoverUnpublishedRoute: gatewayMutation.recoverUnpublishedRoute,
     prepareGatewayMutation: gatewayMutation.prepareGatewayMutation,
+  });
+}
+
+export interface PreparedHermesPortableOllamaProviderRetirement {
+  readonly authority: Readonly<{
+    id: string;
+    resourceVersion: number;
+    journalSha256: string;
+  }>;
+  readonly present: boolean;
+  readonly removeAndVerify: () => void;
+  readonly verifyAbsent: () => void;
+}
+
+/** Bind and retire only the exact committed schema-5 gateway provider authority. */
+export function prepareHermesPortableOllamaProviderRetirement(options: {
+  readonly directory: string;
+  readonly transactionId: string;
+  readonly targetSha256: string;
+  readonly sandboxName: string;
+  readonly model: string;
+  readonly credentialEnv: string;
+  readonly runGatewayOpenshell: HermesPortableOllamaGatewayRunner;
+  readonly allowAbsent?: boolean;
+}): PreparedHermesPortableOllamaProviderRetirement {
+  const providerCredentialEnv = `${options.credentialEnv}_${options.transactionId.toUpperCase()}`;
+  if (providerCredentialEnv.length > 128 || !SAFE_CREDENTIAL_ENV.test(providerCredentialEnv)) {
+    throw new Error("Hermes Portable Ollama transaction credential authority is invalid.");
+  }
+  const store = createGatewayProviderJournalStore(
+    options.directory,
+    Object.freeze({
+      transactionId: options.transactionId,
+      targetSha256: options.targetSha256,
+      gatewayName: "nemoclaw",
+      sandboxName: options.sandboxName,
+      provider: "ollama-local",
+      model: options.model,
+      type: "openai",
+      credentialEnv: options.credentialEnv,
+      providerCredentialEnv,
+      baseUrl: "http://host.openshell.internal:11434/v1",
+    }),
+    "open-existing",
+  );
+  const journal = store.load();
+  if (journal?.phase !== "committed" || !journal.providerAuthority) {
+    throw new Error("Hermes Portable uninstall requires committed gateway provider authority.");
+  }
+  const expectedJournal = `${JSON.stringify(journal)}\n`;
+  const expected = journal.providerAuthority;
+  const observe = () =>
+    observeExactGatewayProvider(options.runGatewayOpenshell, "ollama-local", providerCredentialEnv);
+  const matches = (
+    observation: GatewayProviderObservation,
+  ): observation is Extract<GatewayProviderObservation, { kind: "present" }> =>
+    observation.kind === "present" &&
+    observation.id === expected.id &&
+    observation.resourceVersion === expected.resourceVersion;
+  const requireJournal = (): void => {
+    const current = store.load();
+    if (!current || `${JSON.stringify(current)}\n` !== expectedJournal) {
+      throw new Error("Hermes Portable gateway provider journal authority changed.");
+    }
+  };
+  const initial = observe();
+  if (initial.kind === "present" && !matches(initial)) {
+    throw new Error("Hermes Portable gateway provider authority changed before uninstall.");
+  }
+  if (initial.kind === "absent" && !options.allowAbsent) {
+    throw new Error("Hermes Portable gateway provider disappeared before uninstall journaled it.");
+  }
+  const verifyAbsent = (): void => {
+    requireJournal();
+    const current = observe();
+    if (current.kind === "present") {
+      throw new Error(
+        matches(current)
+          ? "Hermes Portable gateway provider remained after uninstall."
+          : "Hermes Portable gateway provider was replaced during uninstall.",
+      );
+    }
+  };
+  return Object.freeze({
+    authority: Object.freeze({
+      id: expected.id,
+      resourceVersion: expected.resourceVersion,
+      journalSha256: createHash("sha256").update(expectedJournal, "utf8").digest("hex"),
+    }),
+    present: initial.kind === "present",
+    removeAndVerify() {
+      requireJournal();
+      const current = observe();
+      if (current.kind === "absent") return;
+      if (!matches(current)) {
+        throw new Error("Hermes Portable refused to remove changed gateway provider authority.");
+      }
+      const removed = options.runGatewayOpenshell(["provider", "delete", "ollama-local"], {
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS,
+      });
+      const after = observe();
+      if (after.kind === "absent") {
+        requireJournal();
+        return;
+      }
+      if (!matches(after)) {
+        throw new Error("Hermes Portable gateway provider changed during uninstall.");
+      }
+      if (removed.status !== 0) {
+        throw new Error("Hermes Portable could not remove its exact gateway provider.");
+      }
+      throw new Error("Hermes Portable gateway provider remained after uninstall.");
+    },
+    verifyAbsent,
   });
 }
 

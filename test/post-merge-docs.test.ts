@@ -34,18 +34,20 @@ The workflow selects \`v1.0.1\` by incrementing the patch component of \`v1.0.0\
 
 - Each push to \`main\` that changes a path outside the allowed documentation paths starts a cumulative authoring and independent review run.
 - An approved patch creates a verified merge commit and fast-forwards this branch.
-- The workflow never force-pushes. It stops if a person changes the branch or PR metadata.
-- Keep this PR open as a draft while code PRs merge for \`v1.0.1\`.
+- Keep this PR as a draft while code PRs merge for \`v1.0.1\`. The workflow owns the draft branch.
+- Mark this PR ready for review only at release cutoff. Ready status transfers branch ownership to maintainers, and later workflow runs leave the PR unchanged.
+- The workflow never force-pushes. While the PR is a draft, it stops if a person changes the branch or PR metadata.
 
 ## Release cutoff
 
 1. Stop merging code PRs intended for \`v1.0.1\`.
-2. Add the dated \`## v1.0.1\` changelog entry and final documentation to this PR.
-3. Run \`npm run docs\` and complete the final review.
-4. Merge this PR. Its docs-only merge does not start another catch-up run.
-5. Ask the tag session to show this PR's coverage point, later commits and PRs, checks, reviews, and any open managed docs PR.
-6. Decide whether to proceed, create or update a docs PR for the uncovered range, or stop.
-7. Cut \`v1.0.1\` only after you choose to proceed with the displayed documentation coverage.
+2. Mark this PR ready for review to transfer branch ownership to maintainers.
+3. Add the dated \`## v1.0.1\` changelog entry and final documentation to this PR.
+4. Run \`npm run docs\` and complete the final review.
+5. Merge this PR. Its docs-only merge does not start another catch-up run.
+6. Ask the tag session to show this PR's coverage point, later commits and PRs, checks, reviews, and any open managed docs PR.
+7. Decide whether to proceed, create or update a docs PR for the uncovered range, or stop.
+8. Cut \`v1.0.1\` only after you choose to proceed with the displayed documentation coverage.
 
 ## Verification
 
@@ -340,7 +342,8 @@ function runnerFixture(phase: "author" | "review", startTag = rangeStartTag) {
 function runnerTools(
   input: ReturnType<typeof runnerFixture>,
   failure?: RunnerStage,
-  decision = "approved",
+  decision: "approved" | "rejected" = "approved",
+  reviewReport = "The candidate omits one user-visible change.\n",
 ) {
   const { env, root } = input;
   const sandbox = path.join(root, "sandbox");
@@ -360,11 +363,17 @@ function runnerTools(
       state.agentArgs = args;
       const agents = {
         author: () => fs.writeFileSync(path.join(sandbox, "docs/guide.mdx"), "authored\n"),
-        review: () =>
+        review: () => {
+          const reports = {
+            approved: () => undefined,
+            rejected: () => fs.writeFileSync(path.join(output, "review-report.txt"), reviewReport),
+          };
           fs.writeFileSync(
             path.join(output, "decision.json"),
             JSON.stringify({ outcome: decision }),
-          ),
+          );
+          reports[decision]();
+        },
       };
       agents[env.POST_MERGE_DOCS_PHASE]();
     },
@@ -424,6 +433,9 @@ describe("post-merge documentation publisher", () => {
     );
     expect(api.openPulls[0]?.body).toMatch(
       /`v1[.]0[.]0`[\s\S]*never force-pushes[\s\S]*`npm run docs`[\s\S]*`v1[.]0[.]1`/u,
+    );
+    expect(api.openPulls[0]?.body).toContain(
+      "Ready status transfers branch ownership to maintainers",
     );
   });
   it("creates no writes for an approved empty patch without an active PR", async () => {
@@ -727,6 +739,16 @@ describe("post-merge documentation runner", () => {
     const input = runnerFixture("review");
     const { state, tools } = runnerTools(input, undefined, "rejected");
     expect(() => executePostMergeDocs(input.env, tools)).toThrow("did not approve");
+    expect(fs.readFileSync(path.join(input.root, "artifact/review-report.txt"), "utf8")).toBe(
+      "The candidate omits one user-visible change.\n",
+    );
+    expect(fs.existsSync(path.join(input.root, "artifact/review.json"))).toBe(false);
+    expect(state.deleted).toBe(true);
+  });
+  it("rejects an oversized independent review report and deletes the sandbox", () => {
+    const input = runnerFixture("review");
+    const { state, tools } = runnerTools(input, undefined, "rejected", "x".repeat(1_025));
+    expect(() => executePostMergeDocs(input.env, tools)).toThrow("bounded regular file");
     expect(state.deleted).toBe(true);
   });
   it.each<RunnerStage>(["create", "agent", "export", "download"])(
@@ -755,9 +777,34 @@ describe("post-merge documentation workflow boundary", () => {
 
   it.each<(candidate: Record<string, any>) => void>([
     (candidate) => (candidate.jobs.author.permissions = { contents: "write" }),
+    (candidate) => (candidate.jobs.gate.outputs.automate = "false"),
+    (candidate) =>
+      (candidate.jobs.gate.steps.find((step: Record<string, any>) => step.id === "scan").run =
+        "echo automate=true"),
+    (candidate) => {
+      const scan = candidate.jobs.gate.steps.find(
+        (step: Record<string, any>) => step.id === "scan",
+      );
+      scan.run = scan.run.replace(
+        'test("^automation/post-merge-docs-[0-9a-f]{12}$")',
+        'startswith("automation/post-merge-docs-")',
+      );
+    },
     (candidate) =>
       (candidate.jobs.author.if =
         "${{ github.repository == 'NVIDIA/NemoClaw' && needs.gate.outputs.pending != 'true' }}"),
+    (candidate) =>
+      (candidate.jobs.author.steps.find(
+        (step: Record<string, any>) => step.name === "Validate the documentation candidate",
+      ).run = "npm run docs"),
+    (candidate) =>
+      (candidate.jobs.author.steps.find(
+        (step: Record<string, any>) => step.name === "Upload the independent review report",
+      ).with.path = "${{ github.workspace }}/candidate/docs.patch"),
+    (candidate) =>
+      (candidate.jobs.author.steps.find(
+        (step: Record<string, any>) => step.name === "Upload the independent review report",
+      ).with["retention-days"] = 30),
     (candidate) => (candidate.jobs.publish.permissions.issues = "write"),
     (candidate) => (candidate.jobs.gate.secrets = "inherit"),
     (candidate) =>
@@ -769,7 +816,7 @@ describe("post-merge documentation workflow boundary", () => {
         OPENAI_API_KEY: "${{ secrets.POST_MERGE_DOCS_API_KEY }}",
       }),
     (candidate) => (candidate.on.push["paths-ignore"] = ["docs/**"]),
-  ])("rejects credential and permission boundary mutation %#", (mutate) => {
+  ])("rejects workflow boundary mutation %#", (mutate) => {
     const candidate = structuredClone(workflow);
     mutate(candidate);
     expect(validatePostMergeDocsWorkflowBoundary(candidate)).not.toEqual([]);

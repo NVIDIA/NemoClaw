@@ -154,6 +154,26 @@ describe("repo-confined advisor read-only tools", () => {
     );
   });
 
+  it("reports ordinary read ranges and file size (#9949)", async () => {
+    fs.writeFileSync(path.join(workspace, "ranges.txt"), "one\ntwo\nthree\n", "utf8");
+    const observations: Parameters<
+      NonNullable<Parameters<typeof createRepoConfinedReadOnlyTools>[1]>
+    >[0][] = [];
+    tools = new Map(
+      createRepoConfinedReadOnlyTools(workspace, (observation) => observations.push(observation)).map(
+        (tool) => [tool.name, tool],
+      ),
+    );
+
+    await execute("read", { path: "ranges.txt", offset: 1, limit: 2 });
+    await execute("read", { path: "ranges.txt", offset: 3 });
+
+    expect(observations).toEqual([
+      { path: path.join(workspace, "ranges.txt"), offset: 1, endOffset: 2, fileSize: 14, reachesEnd: false },
+      { path: path.join(workspace, "ranges.txt"), offset: 3, endOffset: null, fileSize: 14, reachesEnd: true },
+    ]);
+  });
+
   it("keeps ordinary read, grep, find, and ls behavior inside the workspace (#6446)", async () => {
     await expect(execute("read", { path: "safe.txt" })).resolves.toMatchObject({
       content: [{ type: "text", text: "safe needle\n" }],

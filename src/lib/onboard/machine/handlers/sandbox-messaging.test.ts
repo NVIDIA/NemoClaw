@@ -156,9 +156,13 @@ function telegramPlan(credentialHash: string): SandboxMessagingPlan {
   };
 }
 
-function discordPlan(credentialHash: string): SandboxMessagingPlan {
+function discordPlan(
+  credentialHash: string,
+  agent: SandboxMessagingPlan["agent"] = "openclaw",
+): SandboxMessagingPlan {
   return {
     ...telegramPlan(credentialHash),
+    agent,
     channels: [
       {
         channelId: "discord",
@@ -1143,6 +1147,54 @@ describe("reconcileSandboxMessaging completed checkpoint credentials", () => {
     );
     expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
     expect(result).toEqual({ plan: persistedPlan, selectedChannels: ["telegram"] });
+  });
+
+  it("reuses a missing Hermes Discord credential with the exact static provider binding", async () => {
+    const persistedPlan = discordPlan(hashCredential("previous-discord-token") ?? "", "hermes");
+    const deps = reconcileDeps([null, persistedPlan]);
+    deps.providerMatchesGatewayCredential.mockReturnValue(true);
+    vi.stubEnv("DISCORD_BOT_TOKEN", "");
+
+    const result = await reconcileSandboxMessaging({
+      resume: true,
+      session: completedCheckpointSession(persistedPlan, ["alpha-discord-bridge"]),
+      sandboxName: "alpha",
+      agent: {},
+      deps,
+    });
+
+    expect(deps.providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "alpha-discord-bridge",
+      "discord-hermes-static-v1",
+      "DISCORD_BOT_TOKEN",
+    );
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(result).toEqual({ plan: persistedPlan, selectedChannels: ["discord"] });
+  });
+
+  it("revalidates a missing Hermes Discord credential without the exact static binding", async () => {
+    const persistedPlan = discordPlan(hashCredential("previous-discord-token") ?? "", "hermes");
+    const deps = reconcileDeps([null, persistedPlan]);
+    deps.providerMatchesGatewayCredential.mockReturnValue(false);
+    deps.setupMessagingChannels.mockResolvedValue(["discord"]);
+    vi.stubEnv("DISCORD_BOT_TOKEN", "");
+
+    await reconcileSandboxMessaging({
+      resume: true,
+      session: completedCheckpointSession(persistedPlan, ["alpha-discord-bridge"]),
+      sandboxName: "alpha",
+      agent: {},
+      deps,
+    });
+
+    expect(deps.providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "alpha-discord-bridge",
+      "discord-hermes-static-v1",
+      "DISCORD_BOT_TOKEN",
+    );
+    expect(deps.setupMessagingChannels).toHaveBeenCalledWith({}, ["discord"], "alpha", {
+      selectionCompleted: true,
+    });
   });
 
   it("does not reconcile when the checkpointed channel selection matches the durable plan (#7022)", async () => {

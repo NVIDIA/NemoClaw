@@ -188,9 +188,17 @@ function currentUid(fallback: number | bigint): bigint {
   return BigInt(typeof process.getuid === "function" ? process.getuid() : fallback);
 }
 
-function requirePrivateDirectory(directory: string): void {
-  fs.mkdirSync(directory, { recursive: true, mode: DIRECTORY_MODE });
-  const metadata = fs.lstatSync(directory);
+function requirePrivateDirectory(directory: string, createIfMissing: boolean): void {
+  if (createIfMissing) fs.mkdirSync(directory, { recursive: true, mode: DIRECTORY_MODE });
+  let metadata: fs.Stats;
+  try {
+    metadata = fs.lstatSync(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      fail("authority directory is missing");
+    }
+    throw error;
+  }
   if (
     !metadata.isDirectory() ||
     metadata.isSymbolicLink() ||
@@ -302,19 +310,21 @@ function writeExclusiveRecord(directory: string, target: string, serialized: str
   }
 }
 
-export function createFilePersistedEngineAuthorityStore(
+function filePersistedEngineAuthorityStore(
   stateDir: string,
+  createIfMissing: boolean,
 ): PersistedEngineAuthorityStore {
   const directory = path.join(stateDir, PERSISTED_ENGINE_AUTHORITY_DIRECTORY);
-  requirePrivateDirectory(directory);
+  requirePrivateDirectory(directory, createIfMissing);
   const load = (operation: ContainerEngineOperationScope): PersistedEngineAuthority | null => {
-    requirePrivateDirectory(directory);
+    requirePrivateDirectory(directory, createIfMissing);
     const serialized = readPrivateRecord(path.join(directory, operationFileName(operation)));
     return serialized === null ? null : parsePersistedEngineAuthority(serialized);
   };
   return Object.freeze({
     load,
     record(authority: PersistedEngineAuthority) {
+      if (!createIfMissing) fail("read-only authority store cannot record authority");
       const normalized = normalizePersistedEngineAuthority(authority);
       const serialized = serializePersistedEngineAuthority(normalized);
       const target = path.join(directory, operationFileName(normalized.operation));
@@ -329,4 +339,17 @@ export function createFilePersistedEngineAuthorityStore(
       throw new Error(`Persisted engine authority already exists for '${normalized.operation}'.`);
     },
   });
+}
+
+export function createFilePersistedEngineAuthorityStore(
+  stateDir: string,
+): PersistedEngineAuthorityStore {
+  return filePersistedEngineAuthorityStore(stateDir, true);
+}
+
+/** Open an existing authority store without creating or repairing filesystem state. */
+export function openFilePersistedEngineAuthorityStore(
+  stateDir: string,
+): PersistedEngineAuthorityStore {
+  return filePersistedEngineAuthorityStore(stateDir, false);
 }
