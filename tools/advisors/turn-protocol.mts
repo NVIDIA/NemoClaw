@@ -327,11 +327,14 @@ export function requiredReadPreparationErrors(
   if (events.some((event) => event.type === "text" && event.text.trim())) {
     errors.push(`${turnName} required-read preparation emitted text`);
   }
-  const unexpected = events.find(
-    (event) => event.type !== "text" && event.type !== "read" && event.toolName !== "read",
-  );
-  if (unexpected && unexpected.type !== "text" && unexpected.type !== "read") {
-    errors.push(`${turnName} required-read preparation called ${unexpected.toolName}`);
+  const requiredPaths = new Set(tools.requiredReadPaths ?? []);
+  for (const event of events) {
+    if (event.type === "read" && !requiredPaths.has(event.path)) {
+      errors.push(`${turnName} required-read preparation read unexpected path: ${event.path}`);
+    }
+    if (event.type !== "text" && event.type !== "read" && event.toolName !== "read") {
+      errors.push(`${turnName} required-read preparation called ${event.toolName}`);
+    }
   }
   return [...new Set(errors)];
 }

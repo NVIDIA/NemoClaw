@@ -144,6 +144,12 @@ describe("specialist Pi session inputs", () => {
         requiredReadPaths: [paths[0]!],
       }),
     ).toContain("synthesize required-read preparation called grep");
+    expect(
+      requiredReadPreparationErrors("synthesize", [complete[1]!, complete[0]!], {
+        ...tools,
+        requiredReadPaths: [paths[0]!],
+      }),
+    ).toContain(`synthesize required-read preparation read unexpected path: ${paths[1]}`);
 
     expect(advisorTurnFlowErrors("synthesize", [...complete, receipt], tools)).toEqual([]);
     expect(
