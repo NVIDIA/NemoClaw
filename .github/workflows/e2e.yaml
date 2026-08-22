@@ -2766,10 +2766,12 @@ jobs:
           spec_monitor_pid=""
           if [[ "${{ inputs.gateway_runtime }}" == "podman" ]]; then
             (
-              capture_container() {
-                local container_id="$1"
-                docker inspect "$container_id" 2>/dev/null \
-                  | jq -c '[.[]
+              previous=""
+              while true; do
+                mapfile -t container_ids < <(docker ps --all --quiet)
+                if (( ${#container_ids[@]} > 0 )); then
+                  snapshot="$(docker inspect "${container_ids[@]}" 2>/dev/null \
+                    | jq -c '[.[]
                       | select(
                           .Config.Labels["openshell.ai/sandbox-name"] != null or
                           .Config.Labels["openshell.managed"] == "true" or
@@ -2790,32 +2792,20 @@ jobs:
                             NanoCpus: .HostConfig.NanoCpus,
                             CpuPeriod: .HostConfig.CpuPeriod,
                             CpuQuota: .HostConfig.CpuQuota,
+                            NetworkMode: .HostConfig.NetworkMode,
                             Mounts: .HostConfig.Mounts
                           },
                           Mounts,
                           Networks: .NetworkSettings.Networks
                         }
-                    ]'
-              }
-              mapfile -t container_ids < <(docker ps --all --quiet)
-              for container_id in "${container_ids[@]}"; do
-                capture_container "$container_id"
+                    ]')"
+                  if [[ "$snapshot" != "$previous" && "$snapshot" != "[]" ]]; then
+                    printf '%s\n' "$snapshot"
+                    previous="$snapshot"
+                  fi
+                fi
+                sleep 0.02
               done
-              docker events \
-                --filter type=container \
-                --filter event=create \
-                --format '{{json .}}' \
-                | while IFS= read -r event; do
-                    container_id="$(jq -r '.Actor.ID // .id // empty' <<<"$event")"
-                    [[ -n "$container_id" ]] || continue
-                    for _attempt in {1..20}; do
-                      if snapshot="$(capture_container "$container_id")"; then
-                        [[ "$snapshot" == "[]" ]] || printf '%s\n' "$snapshot"
-                        break
-                      fi
-                      sleep 0.05
-                    done
-                  done
             ) >"${RUNNER_TEMP}/native-podman-e2e-spec-monitor.jsonl" 2>/dev/null &
             spec_monitor_pid="$!"
             trap 'kill "$spec_monitor_pid" 2>/dev/null || true' EXIT
