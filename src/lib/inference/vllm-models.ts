@@ -674,6 +674,52 @@ export function parseVllmExtraServeArgs(env: NodeJS.ProcessEnv = process.env): s
   });
 }
 
+const VLLM_GPU_MEMORY_UTILIZATION_ARG = "--gpu-memory-utilization";
+
+function validateVllmGpuMemoryUtilization(utilization: number): number {
+  if (!Number.isFinite(utilization) || utilization <= 0 || utilization > 1) {
+    throw new Error(
+      `${VLLM_GPU_MEMORY_UTILIZATION_ARG} must be a decimal number greater than 0 and at most 1.`,
+    );
+  }
+  return utilization;
+}
+
+function parseVllmGpuMemoryUtilization(value: string): number {
+  if (!/^(?:0(?:\.[0-9]+)?|1(?:\.0+)?)$/.test(value)) {
+    throw new Error(
+      `${VLLM_GPU_MEMORY_UTILIZATION_ARG} must be a decimal number greater than 0 and at most 1.`,
+    );
+  }
+  return validateVllmGpuMemoryUtilization(Number(value));
+}
+
+/** Resolve the last operator override exactly as the appended vLLM argv does. */
+export function resolveVllmGpuMemoryUtilization(
+  recipeUtilization: number | undefined,
+  extraServeArgs: readonly string[],
+): number | undefined {
+  let utilization =
+    recipeUtilization === undefined
+      ? undefined
+      : validateVllmGpuMemoryUtilization(recipeUtilization);
+  for (let index = 0; index < extraServeArgs.length; index += 1) {
+    const argument = extraServeArgs[index]!;
+    let value: string | undefined;
+    if (argument === VLLM_GPU_MEMORY_UTILIZATION_ARG) {
+      value = extraServeArgs[index + 1];
+      if (value === undefined) {
+        throw new Error(`${VLLM_GPU_MEMORY_UTILIZATION_ARG} requires a value.`);
+      }
+      index += 1;
+    } else if (argument.startsWith(`${VLLM_GPU_MEMORY_UTILIZATION_ARG}=`)) {
+      value = argument.slice(VLLM_GPU_MEMORY_UTILIZATION_ARG.length + 1);
+    }
+    if (value !== undefined) utilization = parseVllmGpuMemoryUtilization(value);
+  }
+  return utilization;
+}
+
 const SHARED_VLLM_ARGS: readonly string[] = [
   "--tensor-parallel-size",
   "1",

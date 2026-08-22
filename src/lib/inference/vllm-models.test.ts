@@ -16,6 +16,7 @@ import {
   modelsForPlatform,
   parseVllmExtraServeArgs,
   preflightVllmModelEnv,
+  resolveVllmGpuMemoryUtilization,
   selectVllmModelFromEnv,
   STATION_PAIR_OPTIONAL_ORCHESTRATION,
   VLLM_EXTRA_ARGS_ENV,
@@ -786,6 +787,34 @@ describe("parseVllmExtraServeArgs", () => {
       } as NodeJS.ProcessEnv),
     ).toThrow(/control characters/);
   });
+});
+
+describe("resolveVllmGpuMemoryUtilization", () => {
+  it("uses the last appended override in either supported argv form", () => {
+    expect(
+      resolveVllmGpuMemoryUtilization(0.7, [
+        "--gpu-memory-utilization=0.8",
+        "--gpu-memory-utilization",
+        "0.5",
+      ]),
+    ).toBe(0.5);
+    expect(resolveVllmGpuMemoryUtilization(undefined, ["--max-num-seqs", "2"])).toBeUndefined();
+  });
+
+  it("rejects a missing utilization value", () => {
+    expect(() => resolveVllmGpuMemoryUtilization(0.7, ["--gpu-memory-utilization"])).toThrow(
+      /requires a value/,
+    );
+  });
+
+  it.each(["", ".5", "0", "1.1", "0x1", "NaN", "--max-num-seqs"])(
+    "rejects invalid utilization value %j",
+    (value) => {
+      expect(() =>
+        resolveVllmGpuMemoryUtilization(0.7, ["--gpu-memory-utilization", value]),
+      ).toThrow(/decimal number greater than 0 and at most 1/);
+    },
+  );
 });
 
 describe("preflightVllmModelEnv", () => {

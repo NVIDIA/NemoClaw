@@ -76,6 +76,7 @@ import {
   mockDockerSpawnSuccess,
   resetVllmInstallEnv,
   type VllmInstallSpies,
+  vllmHostCommandCapture,
   withVllmInstallTestReadiness,
 } from "./vllm-install.test-support";
 import { VLLM_MODELS } from "./vllm-models";
@@ -89,22 +90,11 @@ function installVllm(profile: VllmProfile, options: InstallVllmOptions) {
 function mockHostCommands(options: {
   computeCap: string;
   curl?: string;
-  gpuMemory?: string;
+  gpuMemory?: string | readonly string[];
 }): void {
-  mocks.runCapture.mockImplementation((cmd: readonly string[]) => {
-    switch (cmd[0]) {
-      case "sh":
-        return "/usr/bin/tool\n";
-      case "nvidia-smi":
-        return cmd.includes("--query-gpu=index,uuid,memory.total,memory.free")
-          ? (options.gpuMemory ?? "")
-          : options.computeCap;
-      case "curl":
-        return options.curl ?? READY_MODELS_RESPONSE;
-      default:
-        return "";
-    }
-  });
+  mocks.runCapture.mockImplementation(
+    vllmHostCommandCapture({ curl: READY_MODELS_RESPONSE, ...options }),
+  );
 }
 
 function mockDockerDaemon(containerName: string, restartCount = "0", logTail = ""): void {
@@ -291,6 +281,102 @@ describe("managed vLLM GPU memory preflight", () => {
     expect(errors).toContain("then resume onboarding");
   });
 
+  it("uses the effective appended memory override for the early preflight", async () => {
+    const profile = detectVllmProfile({ type: "nvidia" })!;
+    process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-27b";
+    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify([
+      "--gpu-memory-utilization",
+      "0.9",
+    ]);
+    mockHostCommands({
+      computeCap: "9.0\n",
+      gpuMemory: "0, GPU-1234, 100000, 80000\n",
+    });
+    mockDockerDaemon(profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("sets --gpu-memory-utilization=0.9"),
+    );
+  });
+
+  it("does not apply the recipe default after a lower appended override", async () => {
+    const profile = detectVllmProfile({ type: "nvidia" })!;
+    process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-27b";
+    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify([
+      "--gpu-memory-utilization=0.5",
+    ]);
+    mockHostCommands({
+      computeCap: "9.0\n",
+      gpuMemory: "0, GPU-1234, 100000, 60000\n",
+    });
+    mockDockerDaemon(profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
+    expect(JSON.stringify(mocks.dockerRunDetached.mock.calls[0]?.[0])).toContain(
+      "--gpu-memory-utilization=0.5",
+    );
+  });
+
+  it("rechecks free memory after downloads and immediately before launch", async () => {
+    const profile = detectVllmProfile({ type: "nvidia" })!;
+    process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-27b";
+    mockHostCommands({
+      computeCap: "9.0\n",
+      gpuMemory: [
+        "0, GPU-1234, 100000, 80000\n",
+        "0, GPU-1234, 100000, 60000\n",
+      ],
+    });
+    mockDockerDaemon(profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledOnce();
+    expect(mocks.dockerSpawn).toHaveBeenCalledOnce();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("sets --gpu-memory-utilization=0.7"),
+    );
+  });
+
+  it("fails closed when nvidia-smi returns no valid memory telemetry", async () => {
+    const profile = detectVllmProfile({ type: "nvidia" })!;
+    mockHostCommands({ computeCap: "9.0\n", gpuMemory: "malformed\n" });
+    mockDockerDaemon(profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Could not read valid GPU memory telemetry"),
+    );
+  });
+
   it("checks the first GPU selected by Docker instead of aggregating every device", () => {
     const detected = detectVllmProfile({ type: "nvidia" })!;
     const model = VLLM_MODELS.find((entry) => entry.envValue === "muse-glimmer-30b")!;
@@ -306,6 +392,25 @@ describe("managed vLLM GPU memory preflight", () => {
 
     expect(profile.gpuMemoryUtilization).toBe(0.75);
     expect(gpuMemoryPreflight(model, profile, devices)).toEqual({ ok: true });
+  });
+
+  it("fails closed when Docker's selected GPU is absent from telemetry", () => {
+    const detected = detectVllmProfile({ type: "nvidia" })!;
+    const model = VLLM_MODELS.find((entry) => entry.envValue === "muse-glimmer-30b")!;
+    const resolved = resolveVllmModelRuntime(detected, model, "x64");
+    const profile = {
+      ...resolved.profile,
+      dockerRunFlags: ["--gpus", '"device=2"'],
+    };
+
+    expect(
+      gpuMemoryPreflight(model, profile, [
+        { index: 0, uuid: "GPU-1234", totalBytes: 96n, freeBytes: 96n },
+      ]),
+    ).toEqual({
+      ok: false,
+      reason: expect.stringContaining("did not report that device"),
+    });
   });
 
   it("ignores malformed nvidia-smi memory rows and keeps valid per-device telemetry", () => {

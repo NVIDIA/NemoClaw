@@ -63,6 +63,7 @@ import {
   defaultVllmRuntimeForPlatform,
   STATION_PAIR_OPTIONAL_ORCHESTRATION,
   parseVllmExtraServeArgs,
+  resolveVllmGpuMemoryUtilization,
   VLLM_EXTRA_ARGS_ENV,
   VLLM_MODELS,
   vllmModelForOrchestration,
@@ -510,11 +511,9 @@ function profileGpuRequest(profile: VllmProfile): string | null {
 }
 
 function selectedGpuMemoryDevice(
-  profile: VllmProfile,
+  request: string,
   devices: readonly GpuMemoryDevice[],
 ): GpuMemoryDevice | null {
-  const request = profileGpuRequest(profile);
-  if (!request) return null;
   // Fixed host-local recipes use one tensor-parallel worker, so vLLM starts
   // on the first visible device even when Docker exposes every GPU.
   if (request === "all" || request === "device=all") {
@@ -534,9 +533,33 @@ export function gpuMemoryPreflight(
   devices: readonly GpuMemoryDevice[] = readGpuMemoryDevices(),
 ): { ok: true } | { ok: false; reason: string } {
   const utilization = profile.gpuMemoryUtilization;
-  if (utilization === undefined || devices.length === 0) return { ok: true };
-  const device = selectedGpuMemoryDevice(profile, devices);
-  if (!device) return { ok: true };
+  if (utilization === undefined) return { ok: true };
+  if (devices.length === 0) {
+    return {
+      ok: false,
+      reason:
+        `Could not read valid GPU memory telemetry for ${model.label} with nvidia-smi. ` +
+        "Verify NVIDIA driver access and GPU health, then resume onboarding.",
+    };
+  }
+  const request = profileGpuRequest(profile);
+  if (!request) {
+    return {
+      ok: false,
+      reason:
+        `Could not determine which GPU ${profile.name} will expose to ${model.label}. ` +
+        "Verify the managed vLLM GPU configuration, then resume onboarding.",
+    };
+  }
+  const device = selectedGpuMemoryDevice(request, devices);
+  if (!device) {
+    return {
+      ok: false,
+      reason:
+        `${profile.name} selects GPU '${request}', but nvidia-smi did not report that device. ` +
+        "Verify the Docker GPU selection and NVIDIA driver state, then resume onboarding.",
+    };
+  }
   const requiredBytes = BigInt(Math.ceil(Number(device.totalBytes) * utilization));
   if (device.freeBytes >= requiredBytes) return { ok: true };
   const missingBytes = requiredBytes - device.freeBytes;
@@ -575,6 +598,24 @@ function installGpuMemoryPreflight(
     };
   }
   return { ok: true };
+}
+
+function sameDualStationTopology(
+  left: DualStationVllmPlan,
+  right: DualStationVllmPlan,
+): boolean {
+  const withoutVolatileMemory = (plan: DualStationVllmPlan): DualStationVllmPlan => ({
+    ...plan,
+    local: {
+      ...plan.local,
+      gpu: { ...plan.local.gpu, freeMemoryMiB: 0 },
+    },
+    peer: {
+      ...plan.peer,
+      gpu: { ...plan.peer.gpu, freeMemoryMiB: 0 },
+    },
+  });
+  return isDeepStrictEqual(withoutVolatileMemory(left), withoutVolatileMemory(right));
 }
 
 export async function pullImage(
@@ -2077,6 +2118,19 @@ async function runVllmInstall(
     }
   }
 
+  try {
+    runtimeProfile = {
+      ...runtimeProfile,
+      gpuMemoryUtilization: resolveVllmGpuMemoryUtilization(
+        runtimeProfile.gpuMemoryUtilization,
+        extraServeArgs,
+      ),
+    };
+  } catch (error) {
+    console.error(`  vLLM install failed: ${(error as Error).message}`);
+    return { ok: false };
+  }
+
   // Reject a held serving port before anything durable happens. In
   // particular, managed bearer auth persists a host credential below and
   // beforeInstall publishes the selected model to onboarding state. Running
@@ -2139,20 +2193,11 @@ async function runVllmInstall(
     : isAffirmativeAnswer(await opts.promptFn("  Continue? [y/N]: "));
   if (!proceed) return { ok: false };
 
-  opts.checkpointInstallIntent?.(explicitModel || model.id);
   let hostLocalApiKey: string | null = null;
-  if (!dualStationPlan && model.managedBearerAuth) {
-    try {
-      hostLocalApiKey = ensureDualStationVllmApiKey();
-    } catch (error) {
-      console.error(`  vLLM install failed: ${(error as Error).message}`);
-      return { ok: false };
-    }
-  }
-  const localDockerEnv = dualStationPlan
+  let localDockerEnv = dualStationPlan
     ? buildLocalDualStationDockerEnv()
-    : hostLocalApiKey
-      ? buildLocalManagedVllmDockerEnv({ VLLM_API_KEY: hostLocalApiKey })
+    : model.managedBearerAuth
+      ? buildLocalManagedVllmDockerEnv()
       : buildVllmDockerEnv();
 
   console.log("");
@@ -2179,6 +2224,11 @@ async function runVllmInstall(
     console.error(`  vLLM install failed: ${memory.reason}`);
     return { ok: false };
   }
+
+  // Only publish resumable install intent after every read-only hardware
+  // guard passes. A rejected preflight must not create credentials or durable
+  // onboarding state.
+  opts.checkpointInstallIntent?.(explicitModel || model.id);
 
   // Fail before large downloads when either daemon has an ambiguous or
   // foreign fixed-name container. Each launch path repeats this ownership
@@ -2281,7 +2331,7 @@ async function runVllmInstall(
             reason: `dual-Station capability changed: ${reason}`,
           };
         }
-        if (!isDeepStrictEqual(refreshedCapability.plan, stagingPlan)) {
+        if (!sameDualStationTopology(refreshedCapability.plan, stagingPlan)) {
           return {
             ok: false as const,
             reason:
@@ -2294,6 +2344,12 @@ async function runVllmInstall(
             reason: "peer pinned model snapshot was not verified after staging.",
           };
         }
+        const memory = installGpuMemoryPreflight(
+          model,
+          runtimeProfile,
+          refreshedCapability.plan,
+        );
+        if (!memory.ok) return { ok: false as const, reason: memory.reason };
         return { ok: true as const, plan: refreshedCapability.plan };
       });
       if (!verification.ok) {
@@ -2309,29 +2365,52 @@ async function runVllmInstall(
     }
   }
 
-  let dualStationApiKey: string | null = null;
   if (dualStationPlan) {
-    try {
-      const existingManagedBaseUrl = getDualStationManagedVllmBaseUrl();
-      const existingApiKey = existingManagedBaseUrl ? loadDualStationVllmApiKey() : null;
-      // If the key file alone was lost, create a new host-global key. The
-      // lifecycle fingerprint then forces a coordinated pair replacement
-      // under its lock instead of reusing containers bound to an unknown key.
-      dualStationApiKey = existingApiKey ?? ensureDualStationVllmApiKey();
-    } catch (err) {
-      console.error(`  vLLM install failed: ${(err as Error).message}`);
-      return { ok: false };
-    }
-  }
-
-  if (dualStationPlan) {
-    if (!dualStationApiKey) {
-      console.error("  vLLM install failed: dual-Station API key was not provisioned");
-      return { ok: false };
-    }
+    const plannedPair = dualStationPlan;
     try {
       return await withDualStationManagedVllmLifecycle(async () => {
-        const start = await startDualStationManagedVllm(dualStationPlan, {
+        const launchCapability = probeDualStationVllmCapability();
+        if (launchCapability.kind !== "ready") {
+          const reason =
+            launchCapability.kind === "unavailable"
+              ? launchCapability.reason
+              : "the explicit peer configuration disappeared";
+          console.error(`  vLLM install failed: dual-Station capability changed: ${reason}`);
+          return { ok: false };
+        }
+        if (!sameDualStationTopology(launchCapability.plan, plannedPair)) {
+          console.error(
+            "  vLLM install failed: dual-Station topology changed before launch; rerun setup against a stable pair.",
+          );
+          return { ok: false };
+        }
+        if (launchCapability.peerModelSnapshot !== "ready") {
+          console.error(
+            "  vLLM install failed: peer pinned model snapshot was not verified before launch.",
+          );
+          return { ok: false };
+        }
+        const launchPlan = launchCapability.plan;
+        const launchMemory = installGpuMemoryPreflight(model, runtimeProfile, launchPlan);
+        if (!launchMemory.ok) {
+          console.error(`  vLLM install failed: ${launchMemory.reason}`);
+          return { ok: false };
+        }
+
+        let dualStationApiKey: string;
+        try {
+          const existingManagedBaseUrl = getDualStationManagedVllmBaseUrl();
+          const existingApiKey = existingManagedBaseUrl ? loadDualStationVllmApiKey() : null;
+          // If the key file alone was lost, create a new host-global key. The
+          // lifecycle fingerprint then forces a coordinated pair replacement
+          // under its lock instead of reusing containers bound to an unknown key.
+          dualStationApiKey = existingApiKey ?? ensureDualStationVllmApiKey();
+        } catch (error) {
+          console.error(`  vLLM install failed: ${(error as Error).message}`);
+          return { ok: false };
+        }
+
+        const start = await startDualStationManagedVllm(launchPlan, {
           apiKey: dualStationApiKey,
         });
         if (!start.ok) {
@@ -2346,7 +2425,7 @@ async function runVllmInstall(
           if (start.reusedExisting) return;
           if (start.legacyMigration) {
             const rollback = await rollbackDualStationLegacyMigration(
-              dualStationPlan,
+              launchPlan,
               start.legacyMigration,
             );
             if (!rollback.ok) {
@@ -2356,7 +2435,7 @@ async function runVllmInstall(
             }
             return;
           }
-          const cleanup = await cleanupDualStationManagedVllm(dualStationPlan);
+          const cleanup = await cleanupDualStationManagedVllm(launchPlan);
           if (!cleanup.ok) console.error(`  vLLM rollback warning: ${cleanup.reason}`);
         };
 
@@ -2384,7 +2463,7 @@ async function runVllmInstall(
           return { ok: false };
         }
 
-        if (!areDualStationManagedVllmContainersRunning(dualStationPlan)) {
+        if (!areDualStationManagedVllmContainersRunning(launchPlan)) {
           await rollbackStartedPair();
           console.error("  vLLM distributed containers exited unexpectedly after readiness");
           return { ok: false };
@@ -2393,7 +2472,7 @@ async function runVllmInstall(
         let legacyMigrationCommitted = false;
         if (start.legacyMigration) {
           const commit = await commitDualStationLegacyMigration(
-            dualStationPlan,
+            launchPlan,
             start.legacyMigration,
           );
           if (!commit.ok) {
@@ -2408,10 +2487,10 @@ async function runVllmInstall(
         }
 
         try {
-          persistDualStationVllmRuntimeReceipt(dualStationPlan);
+          persistDualStationVllmRuntimeReceipt(launchPlan);
         } catch (error) {
           if (legacyMigrationCommitted) {
-            const cleanup = await cleanupDualStationManagedVllm(dualStationPlan);
+            const cleanup = await cleanupDualStationManagedVllm(launchPlan);
             if (!cleanup.ok) console.error(`  vLLM rollback warning: ${cleanup.reason}`);
           } else {
             await rollbackStartedPair();
@@ -2429,6 +2508,22 @@ async function runVllmInstall(
       console.error(
         `  vLLM install failed: dual-Station lifecycle lock failed: ${(error as Error).message}`,
       );
+      return { ok: false };
+    }
+  }
+
+  const launchMemory = installGpuMemoryPreflight(model, runtimeProfile, null);
+  if (!launchMemory.ok) {
+    console.error(`  vLLM install failed: ${launchMemory.reason}`);
+    return { ok: false };
+  }
+
+  if (model.managedBearerAuth) {
+    try {
+      hostLocalApiKey = ensureDualStationVllmApiKey();
+      localDockerEnv = buildLocalManagedVllmDockerEnv({ VLLM_API_KEY: hostLocalApiKey });
+    } catch (error) {
+      console.error(`  vLLM install failed: ${(error as Error).message}`);
       return { ok: false };
     }
   }
