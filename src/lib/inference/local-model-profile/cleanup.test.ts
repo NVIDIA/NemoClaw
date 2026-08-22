@@ -862,6 +862,53 @@ describe("host-local model cleanup", () => {
     expect(fs.existsSync(paths.stateDir)).toBe(true);
   });
 
+  it("refuses API-key replacement after cleanup preparation (#9888)", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine);
+    const paths = managedLlamaCppStatePaths(homeDir);
+    const prepared = prepareManagedLlamaCppRuntimeCleanupForSandbox("spark-agent", {
+      homeDir,
+      engine: harness.engine,
+    });
+    fs.writeFileSync(paths.apiKeyPath, `${"f".repeat(64)}\n`, { mode: 0o600 });
+    harness.capture.mockClear();
+
+    expect(prepared?.cleanup()).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("private authority changed after cleanup preparation"),
+    });
+    expect(fs.existsSync(paths.apiKeyPath)).toBe(true);
+    expect(harness.capture).not.toHaveBeenCalledWith(
+      ["rm", "--force", RUNTIME_ID],
+      expect.any(Number),
+    );
+  });
+
+  it("refuses a new private-state entry after cleanup preparation (#9888)", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine);
+    const paths = managedLlamaCppStatePaths(homeDir);
+    const prepared = prepareManagedLlamaCppRuntimeCleanupForSandbox("spark-agent", {
+      homeDir,
+      engine: harness.engine,
+    });
+    const concurrentState = path.join(paths.stateDir, "concurrent-state.json");
+    fs.writeFileSync(concurrentState, "{}\n", { mode: 0o600 });
+    harness.capture.mockClear();
+
+    expect(prepared?.cleanup()).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("private authority changed after cleanup preparation"),
+    });
+    expect(fs.existsSync(concurrentState)).toBe(true);
+    expect(harness.capture).not.toHaveBeenCalledWith(
+      ["rm", "--force", RUNTIME_ID],
+      expect.any(Number),
+    );
+  });
+
   it("refuses missing private state after cleanup preparation (#9888)", () => {
     const homeDir = temporaryHome();
     const harness = engineHarness();

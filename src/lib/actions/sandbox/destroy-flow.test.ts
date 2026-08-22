@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import {
@@ -28,6 +32,14 @@ import {
 import { serializedLlamaCppHostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
 import { createSandboxHostLocalInferenceProvenance } from "../../state/registry/host-local-inference";
 import type { SandboxWorkloadReceipt } from "../../state/registry";
+import * as dockerLlamaCppOperation from "../../onboard/runtime-provider/docker-llama-cpp-operation";
+import { prepareManagedLlamaCppRuntimeCleanupForSandbox } from "../../inference/local-model-profile/cleanup";
+import {
+  createManagedState,
+  engineHarness,
+  NETWORK_ID,
+  RUNTIME_ID,
+} from "../../inference/local-model-profile/cleanup.test-support";
 
 const managedHermesWorkload = {
   schemaVersion: 1,
@@ -126,6 +138,65 @@ describe("destroySandbox flow", () => {
       expect(exitSpy).not.toHaveBeenCalled();
     },
   );
+
+  it("runs the real retained llama.cpp cleanup capability after sandbox deletion (#9888)", async () => {
+    const homeDir = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-destroy-cleanup-")),
+    );
+    try {
+      const qualified = engineHarness({ authorityId: "docker:qualified" });
+      const drifted = engineHarness({ authorityId: "docker:drifted" });
+      createManagedState(homeDir, qualified.engine, {
+        gatewayPort: 19080,
+        sandboxName: "alpha",
+      });
+      let crossedDeleteBoundary = false;
+      const createEngine = vi
+        .spyOn(dockerLlamaCppOperation, "createManagedLlamaCppEngine")
+        .mockImplementation(() => (crossedDeleteBoundary ? drifted.engine : qualified.engine));
+      const prepared = prepareManagedLlamaCppRuntimeCleanupForSandbox("alpha", {
+        gatewayPort: 19080,
+        homeDir,
+      });
+      const harness = createDestroyHarness({
+        provider: "llama-cpp-local",
+        hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
+        preparedManagedLlamaCppRuntimeCleanup: prepared,
+      });
+      harness.runOpenshellSpy.mockImplementation((args: unknown) => {
+        const argv = Array.isArray(args) ? args : [];
+        switch (`${String(argv[0])}:${String(argv[1])}`) {
+          case "sandbox:delete":
+            crossedDeleteBoundary = true;
+            return { status: 0, stdout: "", stderr: "" };
+          case "sandbox:list":
+            return {
+              status: 0,
+              stdout: '[{"name":"alpha","phase":"Ready"}]',
+              stderr: "",
+            };
+          default:
+            return { status: 0, stdout: "", stderr: "" };
+        }
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+      expect(createEngine).toHaveBeenCalledOnce();
+      expect(qualified.capture).toHaveBeenCalledWith(
+        ["rm", "--force", RUNTIME_ID],
+        expect.any(Number),
+      );
+      expect(qualified.capture).toHaveBeenCalledWith(
+        ["network", "rm", NETWORK_ID],
+        expect.any(Number),
+      );
+      expect(drifted.capture).not.toHaveBeenCalled();
+      expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    } finally {
+      fs.rmSync(homeDir, { force: true, recursive: true });
+    }
+  });
 
   it("does not let legacy llama.cpp state block an unrelated provider destroy (#9888)", async () => {
     const harness = createDestroyHarness({
@@ -236,6 +307,21 @@ describe("destroySandbox flow", () => {
 
     expect(harness.prepareManagedLlamaCppRuntimeCleanupSpy).toHaveBeenCalledWith("alpha", {});
     expect(cleanup).toHaveBeenCalledOnce();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not discover unprepared llama.cpp state after sandbox deletion (#9888)", async () => {
+    const harness = createDestroyHarness({
+      provider: "llama-cpp-local",
+      hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
+      preparedManagedLlamaCppRuntimeCleanup: null,
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.prepareManagedLlamaCppRuntimeCleanupSpy).toHaveBeenCalledOnce();
+    expect(harness.cleanupManagedLlamaCppRuntimeForSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
     expect(exitSpy).not.toHaveBeenCalled();
   });
 

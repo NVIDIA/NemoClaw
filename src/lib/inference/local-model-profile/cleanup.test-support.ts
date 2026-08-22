@@ -134,13 +134,14 @@ export function createManagedState(
     phase?: HostLocalCreateJournalPhase;
     gatewayPort?: number;
     createIntentUnixMs?: number;
+    sandboxName?: string;
   } = {},
 ): void {
   const phase = options.phase ?? "finalized";
   const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
   reserveManagedLlamaCppOwner(paths, {
     schemaVersion: 1,
-    sandboxName: "spark-agent",
+    sandboxName: options.sandboxName ?? "spark-agent",
     catalogDigest: `sha256:${"5".repeat(64)}`,
     presetDigest: `sha256:${"6".repeat(64)}`,
     recipeDigest: `sha256:${"7".repeat(64)}`,

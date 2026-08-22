@@ -65,7 +65,7 @@ function loadGenericGpuSetting() {
 }
 
 test(
-  "installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real agent turn (#8144)",
+  "installs managed llama.cpp, routes a real agent turn, and destroys its runtime (#8144, #9888)",
   {
     timeout: TIMEOUT_MS,
     meta: {

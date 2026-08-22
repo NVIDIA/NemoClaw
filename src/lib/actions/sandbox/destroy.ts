@@ -21,10 +21,7 @@ import {
   parseHttpsPinRouteId,
   revokeHttpsPinRuntimeAdapterRoute,
 } from "../../inference/https-pin-runtime-adapter";
-import {
-  cleanupManagedLlamaCppRuntimeForSandbox,
-  prepareManagedLlamaCppRuntimeCleanupForSandbox,
-} from "../../inference/local-model-profile/cleanup";
+import { prepareManagedLlamaCppRuntimeCleanupForSandbox } from "../../inference/local-model-profile/cleanup";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   normalizeRuntimeProviderIdentity,
@@ -683,12 +680,11 @@ async function destroySandboxUnlocked(
     stopHostServices: shouldStopHostServices,
   });
   if (deleteSucceededOrAlreadyGone && commonLlamaCppAuthorityRetired !== true) {
-    const managedLlamaCppCleanup =
-      preparedManagedLlamaCppCleanup?.cleanup() ??
-      cleanupManagedLlamaCppRuntimeForSandbox(sandboxName, {
-        ...(typeof sandbox?.gatewayPort === "number" ? { gatewayPort: sandbox.gatewayPort } : {}),
-      });
-    if (!managedLlamaCppCleanup.ok) {
+    // A null pre-delete result proves that no matching legacy owner state was
+    // present. Never discover and qualify newly appeared state only after the
+    // sandbox boundary; a later destroy retry must preflight that state first.
+    const managedLlamaCppCleanup = preparedManagedLlamaCppCleanup?.cleanup();
+    if (managedLlamaCppCleanup && !managedLlamaCppCleanup.ok) {
       console.error(
         `  Managed llama.cpp cleanup failed for '${sandboxName}': ${managedLlamaCppCleanup.reason}`,
       );

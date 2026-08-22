@@ -37,6 +37,7 @@ export type DestroyHarness = {
   prepareMcpBridgesForAbsentSandboxDestroySpy: MockInstance;
   prepareMcpBridgesForDestroySpy: MockInstance;
   prepareManagedLlamaCppRuntimeCleanupSpy: MockInstance;
+  cleanupManagedLlamaCppRuntimeForSandboxSpy: MockInstance;
   promptSpy: MockInstance;
   removeManagedHermesStateVolumeSpy: MockInstance;
   removeSandboxSpy: MockInstance;
@@ -221,6 +222,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       options.onPrepareManagedLlamaCppRuntimeCleanup?.();
       return options.preparedManagedLlamaCppRuntimeCleanup ?? null;
     });
+  const cleanupManagedLlamaCppRuntimeForSandboxSpy = vi
+    .spyOn(localModelProfileCleanup, "cleanupManagedLlamaCppRuntimeForSandbox")
+    .mockReturnValue({ ok: true, removed: [], preserved: [] });
 
   const assertHermesPortableCommandUnavailableSpy = vi
     .spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable")
@@ -557,6 +561,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     prepareMcpBridgesForAbsentSandboxDestroySpy,
     prepareMcpBridgesForDestroySpy,
     prepareManagedLlamaCppRuntimeCleanupSpy,
+    cleanupManagedLlamaCppRuntimeForSandboxSpy,
     promptSpy,
     removeManagedHermesStateVolumeSpy,
     removeSandboxSpy,

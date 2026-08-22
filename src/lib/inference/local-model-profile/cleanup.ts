@@ -18,6 +18,7 @@ import {
 } from "../../onboard/runtime-provider/docker-llama-cpp-private-bridge";
 import {
   createHostLocalCreateJournalStore,
+  HOST_LOCAL_CREATE_JOURNAL_DIRECTORY,
   reconcileAndReadHostLocalCreateJournalRecords,
   serializeHostLocalCreateJournalRecord,
   type HostLocalCreateJournalRecord,
@@ -38,6 +39,9 @@ import {
 import {
   loadManagedLlamaCppOwner,
   loadManagedLlamaCppReceipt,
+  MANAGED_LLAMA_CPP_API_KEY_FILE,
+  MANAGED_LLAMA_CPP_OWNER_FILE,
+  MANAGED_LLAMA_CPP_RECEIPT_FILE,
   type ManagedLlamaCppStatePaths,
   managedLlamaCppStatePaths,
 } from "../llama-cpp/managed-state";
@@ -71,6 +75,12 @@ const LLAMA_TRANSACTION_LABEL = "io.nvidia.nemoclaw.host-local-inference.transac
 const LLAMA_NETWORK_TRANSACTION_LABEL =
   "io.nvidia.nemoclaw.host-local-inference.network-transaction-sha256";
 const HUGGING_FACE_CREDENTIAL_ENTRIES = new Set(["stored_tokens", "token"]);
+const MANAGED_LLAMA_CPP_PRIVATE_FILE_MAX_BYTES = 64 * 1024;
+const HOST_LOCAL_CREATE_JOURNAL_RECORD_FILE = /^[a-f0-9]{64}\.json$/u;
+const HOST_LOCAL_CREATE_JOURNAL_TRANSIENT_FILES = new Set([
+  ".execution-lease.json",
+  ".execution-recovery.json",
+]);
 
 interface CleanupDeps {
   capture: typeof dockerCapture;
@@ -423,21 +433,156 @@ function requireManagedLlamaReceiptJournalAgreement(
   }
 }
 
-function managedLlamaCppPrivateAuthoritySha256(paths: ManagedLlamaCppStatePaths): string {
+interface ManagedLlamaCppPrivateAuthority {
+  readonly sha256: string;
+  readonly staticStateSha256: string;
+}
+
+interface ManagedLlamaCppPrivateStateEntry {
+  readonly path: string;
+  readonly kind: "directory" | "file";
+  readonly mode: number;
+  readonly uid: number;
+  readonly contentSha256?: string;
+}
+
+function readManagedLlamaCppPrivateFileEntry(
+  target: string,
+  relativePath: string,
+): ManagedLlamaCppPrivateStateEntry {
+  const noFollow = fs.constants.O_NOFOLLOW;
+  if (typeof noFollow !== "number") {
+    throw new Error("managed llama.cpp private state requires no-follow file reads");
+  }
+  const descriptor = fs.openSync(
+    target,
+    fs.constants.O_RDONLY | noFollow | (fs.constants.O_NONBLOCK ?? 0),
+  );
+  try {
+    const before = fs.fstatSync(descriptor);
+    if (
+      !before.isFile() ||
+      before.nlink !== 1 ||
+      (typeof process.getuid === "function" && before.uid !== process.getuid()) ||
+      (before.mode & 0o077) !== 0 ||
+      before.size > MANAGED_LLAMA_CPP_PRIVATE_FILE_MAX_BYTES
+    ) {
+      throw new Error("managed llama.cpp private state contains an unsafe file");
+    }
+    const content = fs.readFileSync(descriptor);
+    const after = fs.fstatSync(descriptor);
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.mode !== after.mode ||
+      before.nlink !== after.nlink ||
+      before.uid !== after.uid ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs
+    ) {
+      throw new Error("managed llama.cpp private state changed while it was read");
+    }
+    return Object.freeze({
+      path: relativePath,
+      kind: "file" as const,
+      mode: before.mode & 0o777,
+      uid: before.uid,
+      contentSha256: createHash("sha256").update(content).digest("hex"),
+    });
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function readManagedLlamaCppPrivateDirectoryEntry(
+  target: string,
+  relativePath: string,
+): ManagedLlamaCppPrivateStateEntry {
+  const status = fs.lstatSync(target);
+  if (
+    !status.isDirectory() ||
+    status.isSymbolicLink() ||
+    (typeof process.getuid === "function" && status.uid !== process.getuid()) ||
+    (status.mode & 0o077) !== 0
+  ) {
+    throw new Error("managed llama.cpp private state contains an unsafe directory");
+  }
+  return Object.freeze({
+    path: relativePath,
+    kind: "directory" as const,
+    mode: status.mode & 0o777,
+    uid: status.uid,
+  });
+}
+
+function managedLlamaCppStaticStateSha256(paths: ManagedLlamaCppStatePaths): string {
+  const entries: ManagedLlamaCppPrivateStateEntry[] = [];
+  const rootFiles = new Set<string>([
+    MANAGED_LLAMA_CPP_API_KEY_FILE,
+    MANAGED_LLAMA_CPP_OWNER_FILE,
+    MANAGED_LLAMA_CPP_RECEIPT_FILE,
+  ]);
+  const rootDirectories = new Set<string>([
+    HOST_LOCAL_CREATE_JOURNAL_DIRECTORY,
+    PERSISTED_ENGINE_AUTHORITY_DIRECTORY,
+  ]);
+  for (const name of fs.readdirSync(paths.stateDir).sort()) {
+    const target = path.join(paths.stateDir, name);
+    if (rootFiles.has(name)) {
+      entries.push(readManagedLlamaCppPrivateFileEntry(target, name));
+      continue;
+    }
+    if (!rootDirectories.has(name)) {
+      throw new Error(`managed llama.cpp private state contains unexpected entry '${name}'`);
+    }
+    entries.push(readManagedLlamaCppPrivateDirectoryEntry(target, name));
+    for (const child of fs.readdirSync(target).sort()) {
+      const relativePath = `${name}/${child}`;
+      const childTarget = path.join(target, child);
+      if (name === HOST_LOCAL_CREATE_JOURNAL_DIRECTORY) {
+        if (
+          HOST_LOCAL_CREATE_JOURNAL_RECORD_FILE.test(child) ||
+          HOST_LOCAL_CREATE_JOURNAL_TRANSIENT_FILES.has(child)
+        ) {
+          const childStatus = fs.lstatSync(childTarget);
+          if (!childStatus.isFile() || childStatus.isSymbolicLink()) {
+            throw new Error("managed llama.cpp lifecycle authority contains an unsafe entry");
+          }
+          continue;
+        }
+        throw new Error(
+          `managed llama.cpp lifecycle authority contains unexpected entry '${child}'`,
+        );
+      }
+      if (child !== "host-local-inference.json") {
+        throw new Error(`managed llama.cpp engine authority contains unexpected entry '${child}'`);
+      }
+      entries.push(readManagedLlamaCppPrivateFileEntry(childTarget, relativePath));
+    }
+  }
+  return createHash("sha256").update(JSON.stringify(entries)).digest("hex");
+}
+
+function managedLlamaCppPrivateAuthority(
+  paths: ManagedLlamaCppStatePaths,
+): ManagedLlamaCppPrivateAuthority {
   const owner = loadManagedLlamaCppOwner(paths);
   const receipt = loadManagedLlamaCppReceipt(paths);
   const journals = reconcileAndReadHostLocalCreateJournalRecords(paths.stateDir);
   const authority = serializedManagedLlamaCppPersistedAuthority(paths);
-  return createHash("sha256")
+  const staticStateSha256 = managedLlamaCppStaticStateSha256(paths);
+  const sha256 = createHash("sha256")
     .update(
       JSON.stringify({
         owner,
         receipt: receipt === null ? null : serializeHostLocalInferenceReceipt(receipt),
         journals: journals.map(serializeHostLocalCreateJournalRecord),
         authority,
+        staticStateSha256,
       }),
     )
     .digest("hex");
+  return Object.freeze({ sha256, staticStateSha256 });
 }
 
 function serializedManagedLlamaCppPersistedAuthority(
@@ -452,14 +597,28 @@ function serializedManagedLlamaCppPersistedAuthority(
 
 function requireManagedLlamaCppPrivateAuthority(
   paths: ManagedLlamaCppStatePaths,
-  expectedSha256: string | undefined,
+  expected: ManagedLlamaCppPrivateAuthority | undefined,
 ): void {
-  if (
-    expectedSha256 !== undefined &&
-    managedLlamaCppPrivateAuthoritySha256(paths) !== expectedSha256
-  ) {
-    throw new Error("managed llama.cpp private authority changed after cleanup preparation");
+  if (expected === undefined) return;
+  try {
+    if (managedLlamaCppPrivateAuthority(paths).sha256 === expected.sha256) return;
+  } catch {
+    // A malformed, missing, or newly introduced entry is authority drift too.
   }
+  throw new Error("managed llama.cpp private authority changed after cleanup preparation");
+}
+
+function requireManagedLlamaCppStaticState(
+  paths: ManagedLlamaCppStatePaths,
+  expected: ManagedLlamaCppPrivateAuthority | undefined,
+): void {
+  if (expected === undefined) return;
+  try {
+    if (managedLlamaCppStaticStateSha256(paths) === expected.staticStateSha256) return;
+  } catch {
+    // Preserve the same fail-closed boundary for malformed or unexpected entries.
+  }
+  throw new Error("managed llama.cpp private authority changed after cleanup preparation");
 }
 
 function requireQualifiedEngine(
@@ -581,19 +740,19 @@ function cleanupLlamaCpp(
     env?: NodeJS.ProcessEnv;
     engine?: ContainerEngine;
     privateBridge?: DockerLlamaCppPrivateBridgeController;
-    expectedPrivateAuthoritySha256?: string;
+    expectedPrivateAuthority?: ManagedLlamaCppPrivateAuthority;
   } = {},
 ): boolean {
   const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
   if (!statePathExists(paths.stateDir)) {
-    if (options.expectedPrivateAuthoritySha256 !== undefined) {
+    if (options.expectedPrivateAuthority !== undefined) {
       throw new Error("managed llama.cpp private authority changed after cleanup preparation");
     }
     return false;
   }
   requirePrivateManagedState(paths, deps.currentUserId);
   if (!fs.existsSync(paths.ownerPath)) {
-    if (options.expectedPrivateAuthoritySha256 !== undefined) {
+    if (options.expectedPrivateAuthority !== undefined) {
       throw new Error("managed llama.cpp private authority changed after cleanup preparation");
     }
     return false;
@@ -601,12 +760,12 @@ function cleanupLlamaCpp(
   const owner = loadManagedLlamaCppOwner(paths);
   if (!owner) throw new Error("managed llama.cpp owner state is missing");
   if (options.sandboxName !== undefined && owner.sandboxName !== options.sandboxName) {
-    if (options.expectedPrivateAuthoritySha256 !== undefined) {
+    if (options.expectedPrivateAuthority !== undefined) {
       throw new Error("managed llama.cpp private authority changed after cleanup preparation");
     }
     return false;
   }
-  requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthoritySha256);
+  requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthority);
 
   const receipt = loadManagedLlamaCppReceipt(paths);
   const persistedAuthority = serializedManagedLlamaCppPersistedAuthority(paths);
@@ -656,7 +815,8 @@ function cleanupLlamaCpp(
     ) {
       throw new Error("managed llama.cpp state changed during pre-start cleanup");
     }
-    requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthoritySha256);
+    requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthority);
+    requireManagedLlamaCppStaticState(paths, options.expectedPrivateAuthority);
     fs.rmSync(paths.stateDir, { recursive: true });
     removed.push(`state:${paths.stateDir}`);
     return true;
@@ -674,7 +834,7 @@ function cleanupLlamaCpp(
   const lease = journalStore.acquireExecution(journal.transactionId);
   try {
     journalStore.assertExecution(lease);
-    requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthoritySha256);
+    requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthority);
     const privateBridge =
       options.privateBridge ??
       (process.platform === "linux" ? createDockerLlamaCppPrivateBridgeController() : undefined);
@@ -690,10 +850,10 @@ function cleanupLlamaCpp(
       engine.capture(["info"], DOCKER_INSPECT_TIMEOUT_MS),
     );
     journalStore.assertExecution(lease);
-    requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthoritySha256);
+    requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthority);
     removeExactContainerForJournal(engine, journal, removed);
     journalStore.assertExecution(lease);
-    requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthoritySha256);
+    requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthority);
     let network = inspectExactNetworkForJournal(engine, journal);
     if (network.kind === "owned") {
       requireEngineSuccess(
@@ -709,7 +869,7 @@ function cleanupLlamaCpp(
       throw new Error("managed llama.cpp network removal was not proven exact and absent");
     }
     journalStore.assertExecution(lease);
-    requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthoritySha256);
+    requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthority);
     journalStore.retire(journal.transactionId);
     journalStore.assertExecution(lease);
   } finally {
@@ -730,6 +890,7 @@ function cleanupLlamaCpp(
   ) {
     throw new Error("managed llama.cpp state changed during exact cleanup");
   }
+  requireManagedLlamaCppStaticState(paths, options.expectedPrivateAuthority);
   fs.rmSync(paths.stateDir, { recursive: true });
   removed.push(`state:${paths.stateDir}`);
   return true;
@@ -775,6 +936,10 @@ export function prepareManagedLlamaCppRuntimeCleanupForSandbox(
   if (!fs.existsSync(paths.ownerPath)) return null;
   const owner = loadManagedLlamaCppOwner(paths);
   if (!owner || owner.sandboxName !== sandboxName) return null;
+  // Pin the complete private-state baseline before proving any external
+  // resource. Recheck it after proof so a concurrent lifecycle replacement
+  // cannot become the accepted post-proof baseline.
+  const expectedPrivateAuthority = managedLlamaCppPrivateAuthority(paths);
   const engine = options.engine ?? createManagedLlamaCppEngine(options.env ?? process.env);
   const receipt = loadManagedLlamaCppReceipt(paths);
   const journalRecords = reconcileAndReadHostLocalCreateJournalRecords(paths.stateDir);
@@ -833,7 +998,7 @@ export function prepareManagedLlamaCppRuntimeCleanupForSandbox(
       }
     }
   }
-  const expectedPrivateAuthoritySha256 = managedLlamaCppPrivateAuthoritySha256(paths);
+  requireManagedLlamaCppPrivateAuthority(paths, expectedPrivateAuthority);
   return Object.freeze({
     cleanup: () =>
       cleanupManagedLlamaCppRuntimeForSandboxInternal(
@@ -843,7 +1008,7 @@ export function prepareManagedLlamaCppRuntimeCleanupForSandbox(
           homeDir,
           engine,
         },
-        expectedPrivateAuthoritySha256,
+        expectedPrivateAuthority,
       ),
   });
 }
@@ -1092,7 +1257,7 @@ export function resolveManagedLlamaCppCleanupTarget(
 function cleanupManagedLlamaCppRuntimeForSandboxInternal(
   sandboxName: string,
   options: ManagedLlamaCppSandboxCleanupOptions = {},
-  expectedPrivateAuthoritySha256?: string,
+  expectedPrivateAuthority?: ManagedLlamaCppPrivateAuthority,
 ): LocalModelRuntimeCleanupResult {
   const deps: CleanupDeps = {
     capture: options.deps?.capture ?? dockerCapture,
@@ -1111,21 +1276,21 @@ function cleanupManagedLlamaCppRuntimeForSandboxInternal(
     const homeDir = canonicalCleanupHomeDir(options.homeDir ?? os.homedir());
     const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
     if (!statePathExists(paths.stateDir)) {
-      if (expectedPrivateAuthoritySha256 !== undefined) {
+      if (expectedPrivateAuthority !== undefined) {
         throw new Error("managed llama.cpp private authority changed after cleanup preparation");
       }
       return { ok: true, removed, preserved };
     }
     requirePrivateManagedState(paths, deps.currentUserId);
     if (!fs.existsSync(paths.ownerPath)) {
-      if (expectedPrivateAuthoritySha256 !== undefined) {
+      if (expectedPrivateAuthority !== undefined) {
         throw new Error("managed llama.cpp private authority changed after cleanup preparation");
       }
       return { ok: true, removed, preserved };
     }
     const owner = loadManagedLlamaCppOwner(paths);
     if (!owner || owner.sandboxName !== sandboxName) {
-      if (expectedPrivateAuthoritySha256 !== undefined) {
+      if (expectedPrivateAuthority !== undefined) {
         throw new Error("managed llama.cpp private authority changed after cleanup preparation");
       }
       return { ok: true, removed, preserved };
@@ -1136,7 +1301,7 @@ function cleanupManagedLlamaCppRuntimeForSandboxInternal(
       env: options.env,
       engine: options.engine,
       privateBridge: options.privateBridge,
-      expectedPrivateAuthoritySha256,
+      expectedPrivateAuthority,
     });
     preserveSharedHuggingFaceCache(homeDir, preserved);
     return { ok: true, removed, preserved };
