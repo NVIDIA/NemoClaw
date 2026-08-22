@@ -198,6 +198,17 @@ describe("rebuild post-restore phase", () => {
 
     await runRebuildPostRestorePhase(args);
 
+    expect(
+      sessionModels.reconcileStalePinnedSessionModelsAfterRebuild,
+    ).not.toHaveBeenCalled();
+    expect(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).not.toHaveBeenCalled();
+    expect(shields.repairMutableConfigPerms).not.toHaveBeenCalled();
+    expect(
+      rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore,
+    ).not.toHaveBeenCalled();
+    expect(
+      rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore,
+    ).not.toHaveBeenCalled();
     expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
     expect(
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
