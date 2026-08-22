@@ -22,7 +22,9 @@ export default async function reply_and_resolve_pr_review_thread(input: {
   pagesRead: Integer;
   wouldReply: boolean;
   wouldResolve: boolean;
+  replyCommentId: Integer | null;
   replyUrl: string | null;
+  resolutionError: string | null;
   resolved: boolean;
 }> {
   const repo = input.repo ?? "NVIDIA/NemoClaw";
@@ -102,41 +104,120 @@ export default async function reply_and_resolve_pr_review_thread(input: {
       ...base,
       wouldReply: !input.apply && !thread.isResolved,
       wouldResolve: !input.apply && !thread.isResolved,
+      replyCommentId: null,
       replyUrl: null,
+      resolutionError: null,
       resolved: Boolean(thread.isResolved),
     };
-  await requireExpectedCommit();
-  const replyResult = await tools.run_github_cli({
+  const viewerResult = await tools.run_github_cli({
     workdir: input.workdir,
-    args: [
-      "api",
-      "--method",
-      "POST",
-      "repos/" + repo + "/pulls/" + input.number + "/comments/" + input.commentId + "/replies",
-      "-f",
-      "body=" + input.body,
-    ],
-    apply: true,
+    args: ["api", "user", "--jq", ".login"],
   });
-  const replyJson = JSON.parse(replyResult.stdout);
+  const viewerLogin = viewerResult.stdout.trim();
+  if (!/^[A-Za-z0-9-]{1,39}$/u.test(viewerLogin))
+    throw new Error("GitHub did not return a valid authenticated user login");
   await requireExpectedCommit();
-  const mutation =
-    "mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{id isResolved}}}";
-  const resolveResult = await tools.run_github_cli({
-    workdir: input.workdir,
-    args: ["api", "graphql", "-f", "query=" + mutation, "-f", "threadId=" + thread.id],
-    apply: true,
-  });
-  const resolvedThread = JSON.parse(resolveResult.stdout).data?.resolveReviewThread?.thread;
-  if (!resolvedThread?.isResolved)
-    throw new Error("GitHub accepted the reply but did not resolve review thread " + thread.id);
-  return {
-    applied: true,
-    mutated: true,
-    ...base,
-    wouldReply: false,
-    wouldResolve: false,
-    replyUrl: replyJson.html_url ?? null,
-    resolved: true,
-  };
+  const existingReply = thread.comments.findLast(
+    (comment) =>
+      comment.databaseId !== input.commentId &&
+      comment.author === viewerLogin &&
+      comment.body === input.body,
+  );
+  let replyCommentId = existingReply?.databaseId ?? null;
+  let replyUrl = existingReply?.url ?? null;
+  if (!existingReply) {
+    const replyResult = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: [
+        "api",
+        "--method",
+        "POST",
+        "repos/" + repo + "/pulls/" + input.number + "/comments/" + input.commentId + "/replies",
+        "-f",
+        "body=" + input.body,
+      ],
+      apply: true,
+    });
+    const replyJson = JSON.parse(replyResult.stdout);
+    if (!Number.isSafeInteger(replyJson.id) || typeof replyJson.html_url !== "string")
+      throw new Error("GitHub accepted the reply but returned an invalid reply identity");
+    replyCommentId = replyJson.id;
+    replyUrl = replyJson.html_url;
+  }
+  try {
+    await requireExpectedCommit();
+    const mutation =
+      "mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{id isResolved}}}";
+    const resolveResult = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: ["api", "graphql", "-f", "query=" + mutation, "-f", "threadId=" + thread.id],
+      apply: true,
+    });
+    const resolvedThread = JSON.parse(resolveResult.stdout).data?.resolveReviewThread?.thread;
+    if (!resolvedThread?.isResolved)
+      throw new Error("GitHub did not resolve review thread " + thread.id);
+    return {
+      applied: true,
+      mutated: true,
+      ...base,
+      wouldReply: false,
+      wouldResolve: false,
+      replyCommentId,
+      replyUrl,
+      resolutionError: null,
+      resolved: true,
+    };
+  } catch (error) {
+    const resolutionError = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
+    try {
+      const after = await tools.read_nemoclaw_review_threads({
+        workdir: input.workdir,
+        number: input.number,
+        repository: repo,
+        expectedHeadSha: input.expectedHeadSha,
+        pageLimit: 10,
+      });
+      if (!after.complete)
+        throw new Error("Review threads exceeded 10 bounded pages for PR #" + input.number);
+      const currentThread = after.threads.find((candidate) => candidate.id === thread.id);
+      if (!currentThread)
+        throw new Error("Review thread " + thread.id + " was not found after the reply");
+      const reconciledReply = currentThread.comments.findLast(
+        (comment) =>
+          comment.databaseId !== input.commentId &&
+          comment.author === viewerLogin &&
+          comment.body === input.body,
+      );
+      replyCommentId = reconciledReply?.databaseId ?? replyCommentId;
+      replyUrl = reconciledReply?.url ?? replyUrl;
+      return {
+        applied: true,
+        mutated: true,
+        ...base,
+        wouldReply: false,
+        wouldResolve: !currentThread.isResolved,
+        replyCommentId,
+        replyUrl,
+        resolutionError: currentThread.isResolved ? null : resolutionError,
+        resolved: currentThread.isResolved,
+      };
+    } catch (reconciliationError) {
+      const detail = (
+        reconciliationError instanceof Error
+          ? reconciliationError.message
+          : String(reconciliationError)
+      ).slice(0, 2000);
+      return {
+        applied: true,
+        mutated: true,
+        ...base,
+        wouldReply: false,
+        wouldResolve: true,
+        replyCommentId,
+        replyUrl,
+        resolutionError: resolutionError + "; reconciliation failed: " + detail,
+        resolved: false,
+      };
+    }
+  }
 }

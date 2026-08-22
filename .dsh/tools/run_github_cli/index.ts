@@ -34,17 +34,24 @@ export default async function run_github_cli(input: {
     throw new Error("GitHub CLI command is outside the audited transport allowlist");
   if ((command === "auth" && operation !== "status") || input.args.includes("--show-token"))
     throw new Error("credential-exporting GitHub CLI operations are not allowed");
-  const attachedMethod = input.args.find((arg) => /^(?:--method=|-X).+/u.test(arg));
-  const methodIndex = input.args.findIndex((arg) => arg === "--method" || arg === "-X");
-  if (methodIndex >= 0 && !input.args[methodIndex + 1])
-    throw new Error("GitHub API method option requires a value");
-  const method = (
-    attachedMethod
-      ? attachedMethod.replace(/^(?:--method=|-X)/u, "")
-      : methodIndex >= 0
-        ? input.args[methodIndex + 1]
-        : "GET"
-  ).toUpperCase();
+  const methods = [];
+  for (let index = 0; index < input.args.length; index += 1) {
+    const arg = input.args[index];
+    if (arg === "--method" || arg === "-X") {
+      const value = input.args[index + 1];
+      if (!value || value.startsWith("-"))
+        throw new Error("GitHub API method option requires a value");
+      methods.push(value);
+      index += 1;
+    } else if (/^--method=/u.test(arg) || /^-X.+/u.test(arg)) {
+      const value = arg.replace(/^(?:--method=|-X)/u, "");
+      if (!value) throw new Error("GitHub API method option requires a value");
+      methods.push(value);
+    }
+  }
+  if (methods.length > 1)
+    throw new Error("GitHub API method option must not be specified more than once");
+  const method = (methods[0] ?? "GET").toUpperCase();
   const fieldFlags = input.args.some((arg) => /^(?:-f|-F|--field|--raw-field)(?:=|$)/u.test(arg));
   const queryArgument = input.args.find((arg) =>
     /^(?:query=|--raw-field=query=|--field=query=)/u.test(arg),
@@ -64,7 +71,7 @@ export default async function run_github_cli(input: {
     (command === "api" &&
       (operation === "graphql"
         ? !graphQlRead
-        : method !== "GET" || (fieldFlags && methodIndex < 0 && attachedMethod === undefined))) ||
+        : method !== "GET" || (fieldFlags && methods.length === 0))) ||
     (command === "pr" && new Set(["create", "merge", "ready", "review"]).has(operation));
   if (mutating && input.apply !== true)
     throw new Error("mutating GitHub CLI operations require apply: true");
