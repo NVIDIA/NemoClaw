@@ -181,6 +181,9 @@ runs:
           "graphroot = \"$storage_directory/graphroot\"" >"$storage_config"
         containers_config="$RUNNER_TEMP/native-podman-e2e-containers.conf"
         printf '%s\n' \
+          '[containers]' \
+          'log_driver = "k8s-file"' \
+          '' \
           '[engine]' \
           'runtime = "runc"' \
           '' \
