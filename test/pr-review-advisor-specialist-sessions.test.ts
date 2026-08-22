@@ -92,6 +92,11 @@ describe("specialist Pi session inputs", () => {
     const turn = buildSynthesisTurn(validateSpecialistSessionDirectory(fixture()));
     const tools = resolveAdvisorTurnTools(turn, [], new Set(["read", "grep", "find", "ls"]));
     const paths = turn.requiredReadPaths ?? [];
+    expect(turn.activeToolNames).toEqual(["read", "grep", "find", "ls"]);
+    expect(turn.prompt).toContain(
+      "Before you write any text, read each available file contiguously from line 1 through EOF",
+    );
+    expect(turn.prompt).toContain("Until every available file reaches EOF, emit only `read` calls");
     const read = (
       readPath: string,
       offset: number,

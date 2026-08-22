@@ -16,7 +16,13 @@ import {
 } from "../advisors/session.mts";
 import { collectDeterministicContext } from "./deterministic-context.mts";
 import { collectGitHubReviewContext } from "./github-context.mts";
-import { buildSpecialistInvestigateTurn, parseAdvisorInterest } from "./specialists.mts";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import {
+  buildSpecialistInvestigateTurn,
+  parseAdvisorInterest,
+  type AdvisorInterest,
+} from "./specialists.mts";
+import { createTerminologyToolController } from "./terminology.mts";
 import {
   buildSystemPrompt,
   readParsedTrustedSecurityRubric,
@@ -32,6 +38,15 @@ import {
 } from "./turn-context.mts";
 
 const CREDENTIAL_ENV = ["PR", "REVIEW", "ADVISOR", "API", "KEY"].join("_");
+
+export function documentationSpecialistTools(
+  interest: AdvisorInterest,
+  { baseRef, headRef, cwd = process.cwd() }: { baseRef: string; headRef: string; cwd?: string },
+): ToolDefinition[] {
+  return interest === "documentation"
+    ? createTerminologyToolController({ baseRef, headRef, cwd }).tools
+    : [];
+}
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
@@ -92,6 +107,7 @@ async function main(): Promise<void> {
     credentialEnv: CREDENTIAL_ENV,
     logPrefix: `pr-review-${interest}`,
     logProgress: (message) => console.log(`[pr-review-${interest}] ${message}`),
+    customTools: documentationSpecialistTools(interest, { baseRef, headRef }),
   });
   const errors = advisorRunErrors(run);
   if (errors.length > 0) throw new Error(errors.join("; "));
