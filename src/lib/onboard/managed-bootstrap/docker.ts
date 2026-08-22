@@ -1212,6 +1212,28 @@ function assertTransactionReplacement(
   }
 }
 
+function assertPreparedReplacementSpec(
+  transaction: DockerBootstrapTransaction,
+  inspect: DockerContainerInspect,
+  expectedCanonicalJson: string,
+  phase: string,
+): void {
+  const normalized = normalizeDockerManagedBootstrapLaunchSpec({
+    ...inspect,
+    Name: `/${transaction.originalName}`,
+  });
+  if (normalized.hash === transaction.replacementSpecHash) return;
+  const changedPaths = differingJsonPaths(
+    JSON.parse(expectedCanonicalJson),
+    JSON.parse(normalized.canonicalJson),
+  )
+    .sort()
+    .slice(0, 16);
+  throw new Error(
+    `Managed bootstrap refused mutation because the exact replacement launch spec changed during ${phase}: ${changedPaths.join(", ")}.`,
+  );
+}
+
 function assertCompletedCutoverRuntimeState(
   transaction: DockerBootstrapTransaction,
   deps: ResolvedDeps,
@@ -3712,6 +3734,12 @@ export function createDockerManagedBootstrapAdapter(
           options,
         );
         const afterReplacementRename = inspectExact(prepared.preparedRuntimeId, deps);
+        assertPreparedReplacementSpec(
+          journal,
+          afterReplacementRename,
+          prepared.expectedActivatedSpecCanonicalJson,
+          "Podman rename",
+        );
         assertTransactionReplacement(journal, afterReplacementRename);
         if (dockerContainerName(afterReplacementRename) !== journal.originalName) {
           throw new Error(
@@ -3722,6 +3750,12 @@ export function createDockerManagedBootstrapAdapter(
 
         const started = deps.dockerStart(prepared.preparedRuntimeId, options);
         const running = inspectExact(prepared.preparedRuntimeId, deps);
+        assertPreparedReplacementSpec(
+          journal,
+          running,
+          prepared.expectedActivatedSpecCanonicalJson,
+          "Podman start",
+        );
         assertTransactionReplacement(journal, running);
         if (!isStableRunning(running)) {
           throw replacementNotStableError(
