@@ -9,11 +9,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { VerifyDeploymentResult } from "../../verify-deployment";
 import type { OpenClawPairingSettlementObservation } from "../../actions/sandbox/launch-readiness/openclaw-pairing-qualification";
+import { WARMUP_TIMEOUT_MS } from "../../actions/sandbox/auto-pair-warmup";
+import { CONNECT_AUTO_PAIR_TIMEOUT_MS } from "../../actions/sandbox/connect-autopair-budget";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import {
   finalizationHandlerDeps,
   finalizationHandlerRuntime,
+  OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
+  OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
+  OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
   ordinaryOpenClawPairingIncompleteMessage,
   settleOrdinaryOpenClawPairing,
 } from "./finalization-deps";
@@ -329,7 +334,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
     expect(scope.deps.observePairing).toHaveBeenCalledOnce();
   });
 
-  it("shares one bounded deadline across baseline and final observations (#9844)", async () => {
+  it("keeps pairing appearance and final observation independently bounded (#9844)", async () => {
     let attempts = 0;
     const unavailable = () => {
       throw new Error("not published");
@@ -342,9 +347,52 @@ describe("ordinary OpenClaw pairing settlement", () => {
       kind: "incomplete",
       reason: "scope-upgrade-incomplete",
     });
-    expect(scope.deps.sleep).toHaveBeenCalledTimes(30);
+    expect(scope.deps.sleep).toHaveBeenCalledTimes(40);
     expect(scope.deps.runWarmup).toHaveBeenCalledOnce();
     expect(scope.deps.runApproval).toHaveBeenCalledOnce();
+  });
+
+  it("reserves approval and final observation after bounded child caps (#9844)", async () => {
+    let now = 0;
+    const scope = ordinaryPairingDeps({
+      now: vi.fn(() => now),
+      sleep: vi.fn(async () => {
+        now += OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS - 1_000;
+      }),
+      observePairing: vi
+        .fn()
+        .mockImplementationOnce(() => {
+          throw new Error("not published");
+        })
+        .mockReturnValueOnce(PAIRING_ONLY)
+        .mockReturnValue(SETTLED),
+      runWarmup: vi.fn(() => {
+        now += WARMUP_TIMEOUT_MS;
+      }),
+      runApproval: vi.fn(() => {
+        now += CONNECT_AUTO_PAIR_TIMEOUT_MS;
+      }),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+
+    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(scope.deps.runApproval).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
+    expect(scope.deps.observePairing).toHaveBeenCalledTimes(3);
+    expect(now).toBe(
+      OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS -
+        1_000 +
+        WARMUP_TIMEOUT_MS +
+        CONNECT_AUTO_PAIR_TIMEOUT_MS,
+    );
+    expect(OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS).toBe(
+      OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS +
+        WARMUP_TIMEOUT_MS +
+        CONNECT_AUTO_PAIR_TIMEOUT_MS +
+        OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
+    );
   });
 
   it("rejects an observation that finishes after the shared deadline (#9844)", async () => {
