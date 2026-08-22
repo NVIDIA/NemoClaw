@@ -203,6 +203,11 @@ export default defineConfig({
           ...vitestStateIsolation,
           name: "installer-integration",
           alias: canonicalSourceAliases,
+          // Installer fixtures spawn nested shell, Node, Python, and SSH
+          // processes. Use the same bounded scheduling as the other process
+          // fixtures so CI cannot turn a transient spawn failure into a
+          // fail-closed single-host result.
+          ...integrationProjectScheduling,
           env: controlledNonLiveEnv,
           setupFiles: [fixtureUmaskSetup, isolatedTestStateSetup],
           include: [
