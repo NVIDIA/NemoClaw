@@ -423,9 +423,7 @@ main --non-interactive --yes-i-accept-third-party-software
     expect(fs.statSync(path.join(artifactDirectory, "installer.sh")).size).toBeLessThanOrEqual(
       524288,
     );
-    for (const receiptName of receiptNames.filter((name) => name.endsWith(".json"))) {
-      expect(fs.statSync(path.join(artifactDirectory, receiptName)).size).toBeLessThanOrEqual(4096);
-    }
+    expect(receiptNames.filter((name) => name.endsWith(".json")).every((receiptName) => fs.statSync(path.join(artifactDirectory, receiptName)).size <= 4096)).toBe(true);
     expect(
       JSON.parse(fs.readFileSync(path.join(artifactDirectory, "invocation.json"), "utf-8")),
     ).toMatchObject({

@@ -14,6 +14,30 @@ import {
   prepareManagedDcodeRebuildImage,
 } from "../../src/lib/actions/sandbox/rebuild-managed-image-preflight";
 import { loadAgent } from "../../src/lib/agent/defs";
+import type { SandboxBaseImageResolutionMetadata } from "../../src/lib/sandbox-base-image";
+
+const DCODE_BASE_DIGEST = `sha256:${"a".repeat(64)}`;
+const DCODE_BASE_IMAGE_RESOLUTION_METADATA = {
+  schema: 1,
+  key: "dcode-preflight-base",
+  imageName: "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
+  ref: `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@${DCODE_BASE_DIGEST}`,
+  digest: DCODE_BASE_DIGEST,
+  source: "override",
+  imageId: `sha256:${"b".repeat(64)}`,
+  os: "linux",
+  architecture: "amd64",
+  glibcVersion: "2.41",
+  requireOpenshellSandboxAbi: true,
+  minGlibcVersion: "2.39",
+} satisfies SandboxBaseImageResolutionMetadata;
+
+export function writeDcodeRebuildDockerfile(
+  stagedDockerfile: string,
+  metadata: SandboxBaseImageResolutionMetadata = DCODE_BASE_IMAGE_RESOLUTION_METADATA,
+): void {
+  fs.writeFileSync(stagedDockerfile, `ARG BASE_IMAGE=${metadata.ref}\nFROM \${BASE_IMAGE}\n`);
+}
 
 export const NO_FOLLOW_FLAG =
   typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
@@ -38,6 +62,7 @@ export function dcodeInput(
     compatibleEndpointReasoning: "false",
     compatibleEndpointReasoningEffort: null,
     dcodeAutoApprovalMode: "disabled",
+    preResolvedBaseImageMetadata: DCODE_BASE_IMAGE_RESOLUTION_METADATA,
     toolDisclosure: "progressive",
     webSearchConfig: null,
     sandboxGpuConfig: {
@@ -61,7 +86,7 @@ export async function createPreparedDcodeImageFixture(
   const stagedDockerfile = path.join(buildCtx, "Dockerfile");
   const originalDockerfile = path.join(testRoot, "Dockerfile.original");
   const replacementDockerfile = path.join(testRoot, "Dockerfile.replacement");
-  fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
+  writeDcodeRebuildDockerfile(stagedDockerfile, overrides.preResolvedBaseImageMetadata);
   const stableDockerfileTime = new Date("2026-01-01T00:00:00.000Z");
   fs.utimesSync(stagedDockerfile, stableDockerfileTime, stableDockerfileTime);
   fs.writeFileSync(replacementDockerfile, "FROM attacker-controlled\n");

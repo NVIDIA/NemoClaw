@@ -144,7 +144,7 @@ describe("reviewed npm cache seed", () => {
     const sharedVersions = ["3.1.2", "5.0.1"] as const;
     const archives = new Map<string, string>();
     const packages: Record<string, unknown> = { "": {} };
-    for (const [index, version] of sharedVersions.entries()) {
+    [...sharedVersions.entries()].forEach(([index, version]) => {
       const bytes = Buffer.from(`shared archive ${version}`);
       const archivePath = path.join(input.root, `shared-${version}.tgz`);
       fs.writeFileSync(archivePath, bytes);
@@ -154,7 +154,7 @@ describe("reviewed npm cache seed", () => {
         resolved: `https://registry.npmjs.org/shared/-/shared-${version}.tgz`,
         version,
       };
-    }
+    });
     fs.writeFileSync(input.lockfilePath, JSON.stringify({ lockfileVersion: 3, packages }), "utf8");
     const calls: PutCall[] = [];
 

@@ -150,8 +150,9 @@ describe("probeOllamaProxySandboxReachability (#3340)", () => {
     expect(result.reason).toBe("probe_unavailable");
   });
 
-  it("returns probe_unavailable for unexpected non-0/non-1 exit codes", async () => {
-    for (const code of [2, 127, 255]) {
+  it.each([2, 127, 255])(
+    "returns probe_unavailable for unexpected non-0/non-1 exit codes [case %#]",
+    async (code) => {
       const result = await probeOllamaProxySandboxReachability({
         inspectNetworkImpl: () => makeNetwork(),
         usesHostGatewayRouteImpl: () => false,
@@ -159,8 +160,8 @@ describe("probeOllamaProxySandboxReachability (#3340)", () => {
       });
       expect(result.ok).toBe(false);
       expect(result.reason).toBe("probe_unavailable");
-    }
-  });
+    },
+  );
 
   it("returns probe_unavailable when the container runner reports an error", async () => {
     const result = await probeOllamaProxySandboxReachability({

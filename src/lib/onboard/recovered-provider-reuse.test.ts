@@ -54,34 +54,38 @@ describe("assessRecoveredProviderCredentialReuse", () => {
     });
   });
 
-  it("requires the exact endpoint-config binding for built-in provider recovery", () => {
-    const builtInOpenAi = {
-      ...completeRecovery,
-      selectedKey: "openai",
-      selectedProvider: "openai-api",
-      recoveredProvider: "openai-api",
-      expectedCredentialEnv: "OPENAI_API_KEY",
-      gatewayProvider: {
-        name: "openai-api",
-        type: "openai",
-        credentialKeys: ["OPENAI_API_KEY"],
-        configKeys: ["OPENAI_BASE_URL"],
-      },
-      endpointIdentity: undefined,
-    };
+  it.each(
+    Array.from([[], ["WRONG_BASE_URL"], ["OPENAI_BASE_URL", "EXTRA_FLAG"]], (value) => [value]),
+  )(
+    "requires the exact endpoint-config binding for built-in provider recovery [case %#]",
+    (configKeys) => {
+      const builtInOpenAi = {
+        ...completeRecovery,
+        selectedKey: "openai",
+        selectedProvider: "openai-api",
+        recoveredProvider: "openai-api",
+        expectedCredentialEnv: "OPENAI_API_KEY",
+        gatewayProvider: {
+          name: "openai-api",
+          type: "openai",
+          credentialKeys: ["OPENAI_API_KEY"],
+          configKeys: ["OPENAI_BASE_URL"],
+        },
+        endpointIdentity: undefined,
+      };
 
-    expect(assessRecoveredProviderCredentialReuse(builtInOpenAi)).toMatchObject({
-      kind: "reuse-gateway-credential",
-    });
-    for (const configKeys of [[], ["WRONG_BASE_URL"], ["OPENAI_BASE_URL", "EXTRA_FLAG"]]) {
+      expect(assessRecoveredProviderCredentialReuse(builtInOpenAi)).toMatchObject({
+        kind: "reuse-gateway-credential",
+      });
+
       expect(
         assessRecoveredProviderCredentialReuse({
           ...builtInOpenAi,
           gatewayProvider: { ...builtInOpenAi.gatewayProvider, configKeys },
         }),
       ).toMatchObject({ kind: "reject" });
-    }
-  });
+    },
+  );
 
   it("reuses OpenRouter when its distinct provider name is registered as OpenAI-compatible (#5826)", () => {
     expect(
@@ -245,16 +249,14 @@ describe("assessRecoveredProviderCredentialReuse", () => {
     ).toMatchObject({ kind: "reject", reason: expect.stringContaining("endpoint identity") });
   });
 
-  it("rejects mismatched recovered provider and model combinations", () => {
-    for (const override of [
-      { recoveredProvider: "another-provider" },
-      { recoveredModel: "another-model" },
-    ]) {
+  it.each([{ recoveredProvider: "another-provider" }, { recoveredModel: "another-model" }])(
+    "rejects mismatched recovered provider and model combinations [case %#]",
+    (override) => {
       expect(
         assessRecoveredProviderCredentialReuse({ ...completeRecovery, ...override }),
       ).toMatchObject({ kind: "reject" });
-    }
-  });
+    },
+  );
 
   it("rejects an unsupported API for the recovered provider type", () => {
     expect(
@@ -268,26 +270,30 @@ describe("assessRecoveredProviderCredentialReuse", () => {
     });
   });
 
-  it("rejects oversized recovered provider, model, and endpoint values", () => {
-    const oversizedProvider = "p".repeat(129);
-    const oversizedModel = "m".repeat(513);
-    const oversizedEndpoint = `https://inference.example/${"x".repeat(2049)}`;
-    for (const override of [
-      { selectedProvider: oversizedProvider, recoveredProvider: oversizedProvider },
-      { selectedModel: oversizedModel, recoveredModel: oversizedModel },
-      {
-        endpointIdentity: {
-          ...completeRecovery.endpointIdentity,
-          selected: oversizedEndpoint,
-          recovered: oversizedEndpoint,
-        },
-      },
-    ]) {
+  it.each([{ scenario: "provider" }, { scenario: "model" }, { scenario: "endpoint" }])(
+    "rejects oversized recovered provider, model, and endpoint values [$scenario]",
+    ({ scenario }) => {
+      const oversizedProvider = "p".repeat(129);
+      const oversizedModel = "m".repeat(513);
+      const oversizedEndpoint = `https://inference.example/${"x".repeat(2049)}`;
+      const override = (
+        {
+          provider: { selectedProvider: oversizedProvider, recoveredProvider: oversizedProvider },
+          model: { selectedModel: oversizedModel, recoveredModel: oversizedModel },
+          endpoint: {
+            endpointIdentity: {
+              ...completeRecovery.endpointIdentity,
+              selected: oversizedEndpoint,
+              recovered: oversizedEndpoint,
+            },
+          },
+        } as const
+      )[scenario]!;
       expect(
         assessRecoveredProviderCredentialReuse({ ...completeRecovery, ...override }),
       ).toMatchObject({ kind: "reject" });
-    }
-  });
+    },
+  );
 
   it("rejects recovered credential reuse when the registry route is missing", () => {
     expect(

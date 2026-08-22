@@ -26,16 +26,19 @@ import {
   DUAL_STATION_VLLM_GPU_SMOKE_LABEL,
   DUAL_STATION_VLLM_HEAD_CONTAINER_NAME,
   DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL,
+  DUAL_STATION_VLLM_LAUNCH_SCHEMA,
   DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL,
   DUAL_STATION_VLLM_MANAGED_LABEL,
   DUAL_STATION_VLLM_ROLE_LABEL,
   DUAL_STATION_VLLM_TRANSACTION_LABEL,
   DUAL_STATION_VLLM_WORKER_CONTAINER_NAME,
+  PREVIOUS_DUAL_STATION_VLLM_LAUNCH_SCHEMA,
   type DualStationVllmLifecycleDeps,
   dualStationVllmApiKeyFingerprint,
   dualStationVllmClusterId,
   dualStationVllmLaunchContract,
   getDualStationManagedVllmBaseUrl,
+  previousDualStationVllmLaunchContract,
   preflightDualStationGpuRuntime,
   preflightDualStationManagedVllm,
   rollbackDualStationLegacyMigration,
@@ -160,7 +163,7 @@ function fakeContainer(
       [DUAL_STATION_VLLM_CLUSTER_LABEL]: dualStationVllmClusterId(fixturePlan()),
       [DUAL_STATION_VLLM_GPU_LABEL]:
         role === "head" ? fixturePlan().local.gpu.uuid : fixturePlan().peer.gpu.uuid,
-      [DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL]: "2",
+      [DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL]: DUAL_STATION_VLLM_LAUNCH_SCHEMA,
       [DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL]: dualStationVllmLaunchContract(fixturePlan(), role),
       [DUAL_STATION_VLLM_API_KEY_FINGERPRINT_LABEL]: API_KEY_FINGERPRINT,
       [DUAL_STATION_VLLM_TRANSACTION_LABEL]: TRANSACTION_ID,
@@ -195,6 +198,15 @@ function seedLegacyHead(fake: LifecycleHarness): void {
       labels: { [DUAL_STATION_VLLM_MANAGED_LABEL]: "true" },
     }),
   );
+}
+
+function previousSchemaContainer(role: "head" | "worker"): FakeContainer {
+  const container = fakeContainer(role);
+  container.labels[DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL] =
+    PREVIOUS_DUAL_STATION_VLLM_LAUNCH_SCHEMA;
+  container.labels[DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL] =
+    previousDualStationVllmLaunchContract(fixturePlan(), role);
+  return container;
 }
 
 function expectRestoredLegacyHead(fake: LifecycleHarness): void {
@@ -304,7 +316,7 @@ describe("dual-Station managed vLLM run argv", () => {
     expect(args).toContain(plan.runtime.image);
     expect(dockerValues(args, "--label")).toEqual(
       expect.arrayContaining([
-        `${DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL}=2`,
+        `${DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL}=${DUAL_STATION_VLLM_LAUNCH_SCHEMA}`,
         `${DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL}=${dualStationVllmLaunchContract(plan, role)}`,
         `${DUAL_STATION_VLLM_API_KEY_FINGERPRINT_LABEL}=${API_KEY_FINGERPRINT}`,
         `${DUAL_STATION_VLLM_TRANSACTION_LABEL}=${TRANSACTION_ID}`,
@@ -423,17 +435,17 @@ describe("dual-Station managed vLLM run argv", () => {
     ).toThrow("runtime identity must use non-root UID and GID values");
   });
 
-  it.each([
-    "/dev/infiniband/rdma_cm",
-    "/dev/infiniband/uverbs0",
-  ])("rejects an unsafe or duplicate verbs character device: %s", (uverbsDevice) => {
-    const plan = fixturePlan();
-    plan.rails[1].local.uverbsDevice = uverbsDevice;
+  it.each(["/dev/infiniband/rdma_cm", "/dev/infiniband/uverbs0"])(
+    "rejects an unsafe or duplicate verbs character device: %s",
+    (uverbsDevice) => {
+      const plan = fixturePlan();
+      plan.rails[1].local.uverbsDevice = uverbsDevice;
 
-    expect(() =>
-      buildDualStationVllmRunArgs(plan, "head", TRANSACTION_ID, API_KEY_FINGERPRINT),
-    ).toThrow(/rails must use two distinct devices|rail endpoint is invalid/u);
-  });
+      expect(() =>
+        buildDualStationVllmRunArgs(plan, "head", TRANSACTION_ID, API_KEY_FINGERPRINT),
+      ).toThrow(/rails must use two distinct devices|rail endpoint is invalid/u);
+    },
+  );
 });
 
 describe("dual-Station managed vLLM lifecycle", () => {
@@ -536,14 +548,12 @@ describe("dual-Station managed vLLM lifecycle", () => {
         (operation) => operation.kind === "capture" && operation.value.startsWith("image:"),
       ),
     ).toHaveLength(2);
-    for (const call of fake.runCalls) {
+    fake.runCalls.forEach((call) => {
       expect(call.args).toContain("--pull=never");
       expect(call.args).toContain(DUAL_STATION_VLLM_RUNTIME.image);
       expect(call.options?.env?.VLLM_API_KEY).toBeUndefined();
-    }
-    for (const options of [...fake.captureOptions, ...fake.rmOptions]) {
-      expect(options?.env?.VLLM_API_KEY).toBeUndefined();
-    }
+    });
+    expect([...fake.captureOptions, ...fake.rmOptions].every((options) => options?.env?.VLLM_API_KEY === undefined)).toBe(true);
   });
 
   it("does not mutate either daemon unless both exact pinned images are present", async () => {
@@ -571,18 +581,20 @@ describe("dual-Station managed vLLM lifecycle", () => {
     ]);
   });
 
-  it.each([
-    "short",
-    "A".repeat(64),
-  ])("rejects an unsafe API key before probing: %s", async (apiKey) => {
-    const fake = harness();
+  it.each(["short", "A".repeat(64)])(
+    "rejects an unsafe API key before probing: %s",
+    async (apiKey) => {
+      const fake = harness();
 
-    expect(await startDualStationManagedVllm(fixturePlan(), { apiKey }, fake.deps)).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining("64 lowercase hexadecimal"),
-    });
-    expect(fake.operations).toEqual([]);
-  });
+      expect(await startDualStationManagedVllm(fixturePlan(), { apiKey }, fake.deps)).toMatchObject(
+        {
+          ok: false,
+          reason: expect.stringContaining("64 lowercase hexadecimal"),
+        },
+      );
+      expect(fake.operations).toEqual([]);
+    },
+  );
 
   it("starts the worker before the head and returns validated exact IDs", async () => {
     const fake = harness();
@@ -614,13 +626,11 @@ describe("dual-Station managed vLLM lifecycle", () => {
     expect(headRun?.options?.env?.VLLM_API_KEY).toBe(API_KEY);
     expect(headRun?.args).toContain("VLLM_API_KEY");
     expect(headRun?.args).not.toContain(API_KEY);
-    for (const call of fake.runCalls.filter((call) => call !== headRun)) {
+    fake.runCalls.filter((call) => call !== headRun).forEach((call) => {
       expect(call.options?.env?.VLLM_API_KEY).toBeUndefined();
       expect(call.args).not.toContain(API_KEY);
-    }
-    for (const options of [...fake.captureOptions, ...fake.rmOptions]) {
-      expect(options?.env?.VLLM_API_KEY).toBeUndefined();
-    }
+    });
+    expect([...fake.captureOptions, ...fake.rmOptions].every((options) => options?.env?.VLLM_API_KEY === undefined)).toBe(true);
     expect(fake.buildRemoteDockerEnv).toHaveBeenCalledWith(sshFixture.binding);
   });
 
@@ -640,6 +650,48 @@ describe("dual-Station managed vLLM lifecycle", () => {
       { kind: "rm", target: "peer", value: WORKER_SMOKE_ID },
       { kind: "rm", target: "local", value: HEAD_SMOKE_ID },
     ]);
+  });
+
+  it("authenticates and replaces an exact schema-2 pair instead of treating it as foreign", async () => {
+    const fake = harness();
+    fake.seed("local", previousSchemaContainer("head"));
+    fake.seed("peer", previousSchemaContainer("worker"));
+
+    expect(preflightDualStationManagedVllm(fixturePlan(), fake.deps)).toEqual({ ok: true });
+    expect(await startDualStationManagedVllm(fixturePlan(), START_CONFIG, fake.deps)).toMatchObject({
+      ok: true,
+      reusedExisting: false,
+    });
+    expect(fake.operations.filter((operation) => operation.kind === "rm")).toEqual(
+      expect.arrayContaining([
+        { kind: "rm", target: "local", value: HEAD_ID },
+        { kind: "rm", target: "peer", value: WORKER_ID },
+      ]),
+    );
+    expect(
+      fake.containers.get(`local:${DUAL_STATION_VLLM_HEAD_CONTAINER_NAME}`)?.[0]?.labels[
+        DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL
+      ],
+    ).toBe(DUAL_STATION_VLLM_LAUNCH_SCHEMA);
+    expect(
+      fake.containers.get(`peer:${DUAL_STATION_VLLM_WORKER_CONTAINER_NAME}`)?.[0]?.labels[
+        DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL
+      ],
+    ).toBe(DUAL_STATION_VLLM_LAUNCH_SCHEMA);
+  });
+
+  it("refuses a schema-2 pair whose historical launch contract does not match", () => {
+    const fake = harness();
+    const head = previousSchemaContainer("head");
+    head.labels[DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL] = "f".repeat(64);
+    fake.seed("local", head);
+    fake.seed("peer", previousSchemaContainer("worker"));
+
+    expect(preflightDualStationManagedVllm(fixturePlan(), fake.deps)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("foreign"),
+    });
+    expect(fake.operations.some((operation) => operation.kind === "rm")).toBe(false);
   });
 
   it.each([
@@ -848,28 +900,31 @@ describe("dual-Station managed vLLM lifecycle", () => {
       "dual-Station containers did not remain running",
       true,
     ],
-  ] as const)("restores the exact legacy head after %s failure", async (_case, options, reason, ranHead) => {
-    const fake = harness(options);
-    seedLegacyHead(fake);
-    expect(await startDualStationManagedVllm(fixturePlan(), START_CONFIG, fake.deps)).toEqual({
-      ok: false,
-      reason,
-      rollbackErrors: [],
-    });
-    expectRestoredLegacyHead(fake);
-    expect(fake.operations).toEqual(
-      expect.arrayContaining([
-        { kind: "rm", target: "peer", value: WORKER_ID },
-        { kind: "start", target: "local", value: LEGACY_HEAD_ID },
-      ]),
-    );
-    expect(fake.operations.some(({ kind, value }) => kind === "rm" && value === HEAD_ID)).toBe(
-      ranHead,
-    );
-    expect(
-      fake.operations.some(({ kind, value }) => kind === "rm" && value === LEGACY_HEAD_ID),
-    ).toBe(false);
-  });
+  ] as const)(
+    "restores the exact legacy head after %s failure",
+    async (_case, options, reason, ranHead) => {
+      const fake = harness(options);
+      seedLegacyHead(fake);
+      expect(await startDualStationManagedVllm(fixturePlan(), START_CONFIG, fake.deps)).toEqual({
+        ok: false,
+        reason,
+        rollbackErrors: [],
+      });
+      expectRestoredLegacyHead(fake);
+      expect(fake.operations).toEqual(
+        expect.arrayContaining([
+          { kind: "rm", target: "peer", value: WORKER_ID },
+          { kind: "start", target: "local", value: LEGACY_HEAD_ID },
+        ]),
+      );
+      expect(fake.operations.some(({ kind, value }) => kind === "rm" && value === HEAD_ID)).toBe(
+        ranHead,
+      );
+      expect(
+        fake.operations.some(({ kind, value }) => kind === "rm" && value === LEGACY_HEAD_ID),
+      ).toBe(false);
+    },
+  );
 
   it("keeps the validated new pair when legacy backup removal is ambiguous", async () => {
     const fake = harness({ failLegacyBackupRemoval: true });
@@ -1080,6 +1135,15 @@ describe("managed dual-Station base URL recovery", () => {
     expect(fake.captureOptions.at(-1)?.env?.VLLM_API_KEY).toBeUndefined();
   });
 
+  it("recovers the endpoint from an owned launch-schema-2 head", () => {
+    const fake = harness();
+    const head = fakeContainer("head");
+    head.labels[DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL] = "2";
+    fake.seed("local", head);
+
+    expect(getDualStationManagedVllmBaseUrl(fake.deps)).toBe("http://192.168.240.1:8000");
+  });
+
   it("reports a structurally managed running head before API-key fingerprint validation", () => {
     const fake = harness();
     const head = fakeContainer("head");
@@ -1110,25 +1174,24 @@ describe("managed dual-Station base URL recovery", () => {
     expect(getDualStationManagedVllmBaseUrl({ ...fake.deps, ...overrides })).toBeNull();
   });
 
-  it.each([
-    "http://8.8.8.8:8000",
-    "http://0.0.0.0:8000",
-    "http://192.168.240.1:8000/",
-  ])("rejects unsafe or non-canonical endpoint label %s", (endpoint) => {
-    const fake = harness();
-    fake.seed(
-      "local",
-      fakeContainer("head", {
-        labels: {
-          [DUAL_STATION_VLLM_MANAGED_LABEL]: "true",
-          [DUAL_STATION_VLLM_ROLE_LABEL]: "head",
-          [DUAL_STATION_VLLM_ENDPOINT_LABEL]: endpoint,
-        },
-      }),
-    );
+  it.each(["http://8.8.8.8:8000", "http://0.0.0.0:8000", "http://192.168.240.1:8000/"])(
+    "rejects unsafe or non-canonical endpoint label %s",
+    (endpoint) => {
+      const fake = harness();
+      fake.seed(
+        "local",
+        fakeContainer("head", {
+          labels: {
+            [DUAL_STATION_VLLM_MANAGED_LABEL]: "true",
+            [DUAL_STATION_VLLM_ROLE_LABEL]: "head",
+            [DUAL_STATION_VLLM_ENDPOINT_LABEL]: endpoint,
+          },
+        }),
+      );
 
-    expect(getDualStationManagedVllmBaseUrl(fake.deps)).toBeNull();
-  });
+      expect(getDualStationManagedVllmBaseUrl(fake.deps)).toBeNull();
+    },
+  );
 
   it("rejects an owned-looking head that does not use the pinned runtime image", () => {
     const fake = harness();

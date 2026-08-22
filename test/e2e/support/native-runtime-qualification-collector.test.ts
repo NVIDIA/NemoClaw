@@ -22,7 +22,7 @@ import type { NativeRuntimeQualificationEvidenceEnvelope } from "../registry/nat
 
 const REPOSITORY = "NVIDIA/NemoClaw";
 const ACTOR = "maintainer";
-const WORKFLOW = ".github/workflows/native-runtime-qualification.yaml";
+const WORKFLOW = ".github/workflows/e2e.yaml";
 const JOB_NAME = "Aggregate native runtime qualification evidence";
 const ARTIFACT_NAME = "native-runtime-qualification-9143";
 
@@ -137,7 +137,7 @@ function githubFixture(
     [`repos/${REPOSITORY}/pulls/9143`, pull],
     [`repos/${REPOSITORY}/commits/main`, { sha: NATIVE_QUALIFICATION_BASE_SHA }],
     [
-      `repos/${REPOSITORY}/actions/workflows/native-runtime-qualification.yaml`,
+      `repos/${REPOSITORY}/actions/workflows/${WORKFLOW.split("/").at(-1)!}`,
       { id: 101, path: WORKFLOW, state: "active" },
     ],
     [`repos/${REPOSITORY}/actions/runs/7001`, run],

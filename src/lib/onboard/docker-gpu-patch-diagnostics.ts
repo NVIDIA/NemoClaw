@@ -13,9 +13,9 @@ import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redac
 import { fullDockerContainerId } from "./docker-gpu-patch-clone";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import { getDockerGpuPatchFailureContext } from "./docker-gpu-patch-recreate";
+import { formatDockerContainerState } from "./managed-bootstrap/docker-container-failure-evidence";
 import type {
   DockerContainerInspect,
-  DockerContainerState,
   DockerGpuPatchDeps,
   DockerGpuPatchDiagnostics,
   DockerGpuPatchFailureClassification,
@@ -108,22 +108,6 @@ export function formatDockerInspectNetworkSummary(
     }
   }
   return lines.join("\n");
-}
-
-function describePatchedContainerState(state: DockerContainerState | null): string[] {
-  if (!state) return [];
-  const lines: string[] = [];
-  if (state.Status) lines.push(`patched_container_status=${state.Status}`);
-  if (typeof state.ExitCode === "number") {
-    lines.push(`patched_container_exit_code=${state.ExitCode}`);
-  }
-  if (state.OOMKilled) lines.push("patched_container_oom_killed=true");
-  if (state.Error) lines.push(`patched_container_error=${state.Error}`);
-  if (state.Health?.Status) lines.push(`patched_container_health=${state.Health.Status}`);
-  if (state.FinishedAt && state.FinishedAt !== "0001-01-01T00:00:00Z") {
-    lines.push(`patched_container_finished_at=${state.FinishedAt}`);
-  }
-  return lines;
 }
 
 export function dockerGpuPatchCleanupCommands(sandboxName: string): string[] {
@@ -297,7 +281,9 @@ export function collectDockerGpuPatchDiagnostics(
       summaryLines.push(`sandbox_list_row=${redactor.redactText(snapshot.sandboxListLine)}`);
     }
     summaryLines.push(
-      ...describePatchedContainerState(snapshot.patchedContainerState).map(redactor.redactText),
+      ...formatDockerContainerState(snapshot.patchedContainerState, "patched_container_").map(
+        redactor.redactText,
+      ),
     );
   }
   writeDiagnosticText("summary.txt", summaryLines.join("\n"));

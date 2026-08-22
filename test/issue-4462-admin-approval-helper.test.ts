@@ -118,13 +118,14 @@ describe("prepared connect-shell administrative approval", () => {
     expect(() => extractPendingRequestId("requestId: not-a-canonical-uuid")).toThrow("found 0");
   });
 
-  it("selects only the cron requestId on its exact paired CLI device and bounded scopes (#5324)", () => {
-    for (const tokenShape of ["array", "object"] as const) {
+  it.each(["array", "object"] as const)(
+    "selects only the cron requestId on its exact paired CLI device and bounded scopes [case %#] (#5324)",
+    (tokenShape) => {
       const result = runSelector(adminState(tokenShape));
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout.trim()).toBe(EXPECTED_REQUEST_ID);
-    }
-  });
+    },
+  );
 
   it("accepts compact device grants when the active token includes implied read scope (#5324)", () => {
     const state = adminState("object");

@@ -61,7 +61,7 @@ describe("native runtime qualification contract", () => {
     expect(new Set(qualification.cases.map((entry) => entry.inference))).toEqual(
       new Set(["ollama", "nim", "vllm"]),
     );
-    for (const entry of qualification.cases) {
+    qualification.cases.forEach((entry) => {
       expect(entry).toMatchObject({
         platform: "linux",
         rootMode: "rootless",
@@ -73,7 +73,7 @@ describe("native runtime qualification contract", () => {
       expect(entry.capabilities).toContain("transport.socket-free");
       expect(entry.capabilities).not.toContain("transport.docker-socket");
       expect(entry.evidenceKinds.includes("nvidia-cdi")).toBe(entry.acceleration === "nvidia-gpu");
-    }
+    });
   });
 
   it("preserves the provider-neutral socket-free seam without a Podman branch", () => {

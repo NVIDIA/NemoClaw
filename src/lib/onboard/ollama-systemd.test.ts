@@ -183,6 +183,36 @@ describe("ensureOllamaLoopbackSystemdOverride non-interactive sudo (#5716)", () 
     }
   });
 
+  it("refuses the loopback-only shortcut on an upgrade because the service must restart onto the new binary (#9276)", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exit = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit ${code}`);
+    }) as never);
+    const loopbackOnly = vi.fn(() => true);
+    try {
+      expect(() =>
+        ensureOllamaLoopbackSystemdOverride({
+          platformImpl: () => "linux",
+          hasOllamaSystemdUnitImpl: () => true,
+          isNonInteractive: () => true,
+          hasPasswordlessSudoImpl: () => false,
+          isOllamaLoopbackOnlyImpl: loopbackOnly,
+          isUpgrade: true,
+        }),
+      ).toThrow("exit 1");
+      expect(loopbackOnly).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining("cannot be restarted onto the newly installed binary"),
+      );
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining("keep serving the old version"),
+      );
+    } finally {
+      exit.mockRestore();
+      error.mockRestore();
+    }
+  });
+
   it("fails before override commands when sudo is unavailable and loopback-only binding is unverified", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const exit = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
@@ -200,6 +230,35 @@ describe("ensureOllamaLoopbackSystemdOverride non-interactive sudo (#5716)", () 
       ).toThrow("exit 1");
       expect(error).toHaveBeenCalledWith(expect.stringContaining("could not be verified"));
       expect(error).toHaveBeenCalledWith(expect.stringContaining("potentially exposed"));
+    } finally {
+      exit.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it("stops before every override command when the service-user execution proof fails (#9728)", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exit = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit ${code}`);
+    }) as never);
+    const runShellImpl = vi.fn();
+    try {
+      expect(() =>
+        ensureOllamaLoopbackSystemdOverride({
+          platformImpl: () => "linux",
+          hasOllamaSystemdUnitImpl: () => true,
+          isNonInteractive: () => true,
+          hasPasswordlessSudoImpl: () => true,
+          proveOllamaServiceExecutableImpl: () => ({
+            classification: "repair-outside-authority",
+            message: "service user exited 126",
+            ok: false,
+          }),
+          runShellImpl,
+        }),
+      ).toThrow("exit 1");
+      expect(runShellImpl).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("repair-outside-authority"));
     } finally {
       exit.mockRestore();
       error.mockRestore();

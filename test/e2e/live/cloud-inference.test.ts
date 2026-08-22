@@ -32,6 +32,7 @@ import {
   parseCloudChatResponse,
   type PreContractExternalProviderFailure,
 } from "./cloud-inference-provider-skip.ts";
+import { buildSandboxCredentialScanCommand } from "./cloud-inference-credential-boundary.ts";
 
 const REPO_SKILL_VALIDATOR = path.join(
   REPO_ROOT,
@@ -302,50 +303,7 @@ async function expectSandboxCredentialBoundary(
     "",
   );
 
-  const secretScanCommand = [
-    "for dir in /sandbox/.openclaw /sandbox/.nemoclaw; do",
-    '  [ -d "$dir" ] || continue',
-    `  matches=$(grep -rIlE 'nvapi-|ghp_|npm_' "$dir")`,
-    "  scan_status=$?",
-    '  case "$scan_status" in',
-    `    0) filtered=$(printf '%s\\n' "$matches" | grep -Ev '/policies/|/plugin-runtime-deps/|/extensions/[^/]+/(dist|node_modules)/')`,
-    "       filter_status=$?",
-    '       case "$filter_status" in',
-    "         0) filtered_file=$(mktemp)",
-    "            temp_status=$?",
-    '            case "$temp_status" in 0) ;; *) exit "$temp_status" ;; esac',
-    `            trap 'rm -f "$filtered_file"' EXIT HUP INT TERM`,
-    `            printf '%s\\n' "$filtered" > "$filtered_file"`,
-    "            write_status=$?",
-    '            case "$write_status" in 0) ;; *) exit "$write_status" ;; esac',
-    "            while IFS= read -r file; do",
-    `              matching_lines=$(grep -IE 'nvapi-|ghp_|npm_' "$file")`,
-    "              match_status=$?",
-    '              case "$match_status" in',
-    `                0) printf '%s' "$matching_lines" | grep -qv 'STRIPPED'`,
-    "                   unstripped_status=$?",
-    '                   case "$unstripped_status" in',
-    `                     0) printf '%s\\n' "$file" ;;`,
-    "                     1) ;;",
-    '                     *) exit "$unstripped_status" ;;',
-    "                   esac",
-    "                   ;;",
-    "                1) ;;",
-    '                *) exit "$match_status" ;;',
-    "              esac",
-    '            done < "$filtered_file"',
-    '            rm -f "$filtered_file"',
-    "            trap - EXIT HUP INT TERM",
-    "            ;;",
-    "         1) ;;",
-    '         *) exit "$filter_status" ;;',
-    "       esac",
-    "       ;;",
-    "    1) ;;",
-    '    *) exit "$scan_status" ;;',
-    "  esac",
-    "done",
-  ].join("\n");
+  const secretScanCommand = buildSandboxCredentialScanCommand();
 
   const secretProbe = await sandbox.exec(SANDBOX_NAME, ["sh", "-lc", secretScanCommand], {
     artifactName: "phase-3-sandbox-secret-pattern-probe",

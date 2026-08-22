@@ -411,6 +411,7 @@ async function collectOnboardFailureDockerDiagnostics(
     await Promise.allSettled(
       containerIds.map(async (containerId, index) => {
         const logs = await host.command("docker", ["logs", "--tail", "1000", containerId], {
+          artifactName: `managed-activation-onboard-failure-${agent}-container-${index + 1}-logs`,
           captureLimitBytes: 2 * 1024 * 1024,
           env,
           persistArtifacts: false,

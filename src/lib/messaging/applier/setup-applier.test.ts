@@ -57,6 +57,14 @@ const ALL_CHANNEL_ENV = {
   MSTEAMS_TENANT_ID: "teams-tenant-id",
   TEAMS_ALLOWED_USERS: "00000000-0000-0000-0000-000000000001",
   MSTEAMS_PORT: "3978",
+  // The service-account validator only requires non-empty client_email and
+  // private_key, so keep the fixture free of PEM markers: a real-looking key
+  // block trips the detect-private-key pre-commit hook.
+  GOOGLECHAT_SERVICE_ACCOUNT:
+    '{"client_email":"bot@demo.iam.gserviceaccount.com","private_key":"test-key-material","project_id":"demo"}',
+  GOOGLE_CHAT_PROJECT_ID: "demo",
+  GOOGLE_CHAT_SUBSCRIPTION_NAME: "projects/demo/subscriptions/hermes-chat-events-sub",
+  GOOGLECHAT_ALLOWED_USERS: "user@example.com",
 } as const;
 
 const ALL_CHANNELS = createBuiltInChannelManifestRegistry()
@@ -621,6 +629,7 @@ describe("MessagingSetupApplier", () => {
       "slack",
       "whatsapp",
       "teams",
+      "googlechat_hermes",
     ]);
     expect(renderResult.appliedTargets).toEqual([
       "/sandbox/.hermes/.env",
@@ -928,23 +937,23 @@ describe("MessagingSetupApplier", () => {
     expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
   });
 
-  it("rejects render targets outside the selected agent config root", async () => {
-    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" }, [
-      "telegram",
-    ]);
-    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
-      if (args.includes("cat") && options?.input === undefined) {
-        return { status: 0, stdout: "{}" };
-      }
-      return { status: 0 };
-    };
-    const unsafeTargets = [
-      { target: "/tmp/openclaw.json", error: "must stay inside /sandbox/.openclaw" },
-      { target: "~/.openclaw/../openclaw.json", error: "must not traverse directories" },
-      { target: "~/.hermes/config.yaml", error: "Cannot apply Hermes messaging target" },
-    ];
+  it.each([
+    { target: "/tmp/openclaw.json", error: "must stay inside /sandbox/.openclaw" },
+    { target: "~/.openclaw/../openclaw.json", error: "must not traverse directories" },
+    { target: "~/.hermes/config.yaml", error: "Cannot apply Hermes messaging target" },
+  ])(
+    "rejects render target $target outside the selected agent config root",
+    async ({ target, error }) => {
+      const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" }, [
+        "telegram",
+      ]);
+      const runOpenshell: MessagingOpenShellRunner = (args, options) => {
+        if (args.includes("cat") && options?.input === undefined) {
+          return { status: 0, stdout: "{}" };
+        }
+        return { status: 0 };
+      };
 
-    for (const { target, error } of unsafeTargets) {
       const unsafePlan = {
         ...plan,
         agentRender: [
@@ -963,10 +972,38 @@ describe("MessagingSetupApplier", () => {
       await expect(
         MessagingSetupApplier.applyAgentConfigAtOpenShell(unsafePlan, { runOpenshell }),
       ).rejects.toThrow(error);
-    }
-  });
+    },
+  );
 
-  it("rejects unsafe build-file hook output paths and modes", async () => {
+  it.each([
+    {
+      value: { path: "openclaw-weixin/accounts/../../openclaw.json", content: {} },
+      error: "must not traverse directories",
+    },
+    {
+      value: { path: "/tmp/openclaw.json", content: {} },
+      error: "must be a safe relative path",
+    },
+    {
+      value: { path: "openclaw-weixin//accounts.json", content: {} },
+      error: "must not contain empty segments",
+    },
+    {
+      value: { path: "openclaw-weixin/\u0001accounts.json", content: {} },
+      error: "must be a safe relative path",
+    },
+    {
+      value: { path: "openclaw-weixin/accounts.json", mode: "0777", content: {} },
+      error: "must not be group/world writable",
+    },
+    {
+      value: { path: "openclaw-weixin/accounts.json", mode: "u+s", content: {} },
+      error: "mode must be an octal file mode",
+    },
+  ] as ReadonlyArray<{
+    readonly value: MessagingSerializableObject;
+    readonly error: string;
+  }>)("rejects an unsafe build-file hook output: $error", async ({ value, error }) => {
     const plan = await buildOnboardPlan(
       {
         WECHAT_BOT_TOKEN: "wechat-token",
@@ -980,51 +1017,20 @@ describe("MessagingSetupApplier", () => {
       }
       return { status: 0 };
     };
-    const unsafeFiles: Array<{
-      readonly value: MessagingSerializableObject;
-      readonly error: string;
-    }> = [
-      {
-        value: { path: "openclaw-weixin/accounts/../../openclaw.json", content: {} },
-        error: "must not traverse directories",
-      },
-      {
-        value: { path: "/tmp/openclaw.json", content: {} },
-        error: "must be a safe relative path",
-      },
-      {
-        value: { path: "openclaw-weixin//accounts.json", content: {} },
-        error: "must not contain empty segments",
-      },
-      {
-        value: { path: "openclaw-weixin/\u0001accounts.json", content: {} },
-        error: "must be a safe relative path",
-      },
-      {
-        value: { path: "openclaw-weixin/accounts.json", mode: "0777", content: {} },
-        error: "must not be group/world writable",
-      },
-      {
-        value: { path: "openclaw-weixin/accounts.json", mode: "u+s", content: {} },
-        error: "mode must be an octal file mode",
-      },
-    ];
 
-    for (const { value, error } of unsafeFiles) {
-      await expect(
-        MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, {
-          runOpenshell,
-          runHook: () => ({
-            outputs: {
-              openclawWeixinAccountFile: {
-                kind: "build-file",
-                value,
-              },
+    await expect(
+      MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, {
+        runOpenshell,
+        runHook: () => ({
+          outputs: {
+            openclawWeixinAccountFile: {
+              kind: "build-file",
+              value,
             },
-          }),
+          },
         }),
-      ).rejects.toThrow(error);
-    }
+      }),
+    ).rejects.toThrow(error);
   });
 
   it("applies policy presets directly from the serializable plan", async () => {

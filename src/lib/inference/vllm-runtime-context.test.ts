@@ -36,25 +36,27 @@ describe("vLLM runtime context helpers", () => {
     ).toBe("262144");
   });
 
-  it("treats omitted max_model_len values as compatibility no-ops", () => {
-    for (const value of [undefined, null, "   "]) {
+  it.each([undefined, null, "   "])(
+    "treats omitted max_model_len value %# as a compatibility no-op",
+    (value) => {
       const { env, messages } = applyContextWindow({
         data: [{ id: "model-a", max_model_len: value }],
       });
       expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
       expect(messages).toEqual([]);
-    }
-  });
+    },
+  );
 
-  it("warns and ignores malformed or non-positive max_model_len values", () => {
-    for (const value of ["bogus", "1.5", 1.5, 0, -1]) {
+  it.each(["bogus", "1.5", 1.5, 0, -1])(
+    "warns and ignores malformed max_model_len value %#",
+    (value) => {
       const { env, messages } = applyContextWindow({
         data: [{ id: "model-a", max_model_len: value }],
       });
       expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
       expect(messages.at(-1)).toContain("non-positive or malformed max_model_len");
-    }
-  });
+    },
+  );
 
   it("warns and ignores implausibly large max_model_len values", () => {
     const { env, messages } = applyContextWindow({

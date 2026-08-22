@@ -31,11 +31,12 @@ function workflowFiles(): string[] {
 }
 
 describe("retired shell E2E entrypoints", () => {
-  it("keeps retired standalone Ollama lanes deleted", () => {
-    for (const relativePath of FORBIDDEN_REPO_PATHS) {
+  it.each([...FORBIDDEN_REPO_PATHS])(
+    "keeps retired standalone Ollama lanes deleted [case %#]",
+    (relativePath) => {
       expect(fs.existsSync(path.join(REPO_ROOT, relativePath)), relativePath).toBe(false);
-    }
-  });
+    },
+  );
 
   it("keeps shell E2E entrypoints out of test/e2e recursively", () => {
     const shellEntrypoints = fs
@@ -46,25 +47,29 @@ describe("retired shell E2E entrypoints", () => {
     expect(shellEntrypoints).toEqual([]);
   });
 
-  it("keeps workflows from referencing retired shell lanes", () => {
-    const workflowText = workflowFiles()
-      .map((file) => fs.readFileSync(file, "utf8"))
-      .join("\n");
+  it.each(FORBIDDEN_WORKFLOW_REFERENCES)(
+    "keeps workflows from referencing retired shell lanes [case %#]",
+    (reference) => {
+      const workflowText = workflowFiles()
+        .map((file) => fs.readFileSync(file, "utf8"))
+        .join("\n");
 
-    for (const reference of FORBIDDEN_WORKFLOW_REFERENCES) {
       expect(workflowText).not.toContain(reference);
-    }
-    expect(workflowText).not.toMatch(/test\/e2e\/test-[A-Za-z0-9_.-]+\.sh/u);
-  });
 
-  it("keeps review-advisor configuration from recommending retired shell lanes", () => {
-    const advisorText = REVIEW_ADVISOR_CONFIGS.map((file) => fs.readFileSync(file, "utf8")).join(
-      "\n",
-    );
+      expect(workflowText).not.toMatch(/test\/e2e\/test-[A-Za-z0-9_.-]+\.sh/u);
+    },
+  );
 
-    for (const reference of FORBIDDEN_WORKFLOW_REFERENCES) {
+  it.each(FORBIDDEN_WORKFLOW_REFERENCES)(
+    "keeps review-advisor configuration from recommending retired shell lanes [case %#]",
+    (reference) => {
+      const advisorText = REVIEW_ADVISOR_CONFIGS.map((file) => fs.readFileSync(file, "utf8")).join(
+        "\n",
+      );
+
       expect(advisorText).not.toContain(reference);
-    }
-    expect(advisorText).not.toMatch(/test\/e2e\/test-[A-Za-z0-9_.-]+\.sh/u);
-  });
+
+      expect(advisorText).not.toMatch(/test\/e2e\/test-[A-Za-z0-9_.-]+\.sh/u);
+    },
+  );
 });

@@ -85,16 +85,16 @@ describe("probeLlamaCppAttachment", () => {
     });
   });
 
-  it.each([
-    "http://127.0.0.1:8082",
-    "http://192.0.2.10:8081",
-  ])("rejects attachment endpoint %s outside fixed loopback port 8081 (#8161)", (baseUrl) => {
-    const probe = vi.fn();
-    expect(
-      probeLlamaCppAttachment("secret-token", { baseUrl, runCurlProbeImpl: probe }),
-    ).toMatchObject({ ok: false, reason: "invalid-endpoint" });
-    expect(probe).not.toHaveBeenCalled();
-  });
+  it.each(["http://127.0.0.1:8082", "http://192.0.2.10:8081"])(
+    "rejects attachment endpoint %s outside fixed loopback port 8081 (#8161)",
+    (baseUrl) => {
+      const probe = vi.fn();
+      expect(
+        probeLlamaCppAttachment("secret-token", { baseUrl, runCurlProbeImpl: probe }),
+      ).toMatchObject({ ok: false, reason: "invalid-endpoint" });
+      expect(probe).not.toHaveBeenCalled();
+    },
+  );
 
   it("accepts a bounded authenticated native llama.cpp fingerprint (#8161)", () => {
     const probe = scriptedProbe(nativeResponses());
@@ -104,10 +104,10 @@ describe("probeLlamaCppAttachment", () => {
       model: "team/model-alias",
     });
     expect(probe).toHaveBeenCalledTimes(5);
-    for (const [argv, options] of probe.mock.calls) {
+    probe.mock.calls.forEach(([argv, options]) => {
       expect(argv).toEqual(expect.arrayContaining(["--max-time", "5", "--max-filesize", "262144"]));
       expect(options).toEqual(expect.objectContaining({ maxResponseBytes: 262144 }));
-    }
+    });
   });
 
   it("accepts llama.cpp's native metrics-disabled response (#8161)", () => {
@@ -281,18 +281,19 @@ describe("probeLlamaCppAttachment", () => {
     expect(result).toMatchObject({ ok: false, reason: "not-llama-cpp" });
   });
 
-  it.each([
-    401, 403,
-  ])("rejects an authenticated model catalog response with HTTP %s (#8161)", (status) => {
-    const result = probeLlamaCppAttachment("secret-token", {
-      runCurlProbeImpl: scriptedProbe([
-        response(401, '{"error":"unauthorized"}'),
-        response(status, '{"error":"unauthorized"}'),
-      ]),
-    });
+  it.each([401, 403])(
+    "rejects an authenticated model catalog response with HTTP %s (#8161)",
+    (status) => {
+      const result = probeLlamaCppAttachment("secret-token", {
+        runCurlProbeImpl: scriptedProbe([
+          response(401, '{"error":"unauthorized"}'),
+          response(status, '{"error":"unauthorized"}'),
+        ]),
+      });
 
-    expect(result).toMatchObject({ ok: false, reason: "authentication-rejected" });
-  });
+      expect(result).toMatchObject({ ok: false, reason: "authentication-rejected" });
+    },
+  );
 
   it("rejects an oversized fingerprint response (#8161)", () => {
     const result = probeLlamaCppAttachment("secret-token", {
@@ -347,6 +348,86 @@ describe("probeLlamaCppAttachment", () => {
     ).toMatchObject({ ok: false, reason: "conflicting-fingerprint" });
   });
 
+  it("attaches a native server whose properties omit the served model alias (#9603)", () => {
+    const responses = nativeResponses();
+    responses[3] = response(
+      200,
+      JSON.stringify({
+        model_path: "/models/model.gguf",
+        total_slots: 2,
+        default_generation_settings: { params: {} },
+      }),
+    );
+
+    expect(
+      probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: scriptedProbe(responses) }),
+    ).toEqual({ ok: true, model: "team/model-alias" });
+  });
+
+  it("rejects properties that report a null served model alias (#9603)", () => {
+    const responses = nativeResponses();
+    responses[3] = response(
+      200,
+      JSON.stringify({
+        model_alias: null,
+        model_path: "/models/model.gguf",
+        total_slots: 2,
+        default_generation_settings: { params: {} },
+      }),
+    );
+
+    expect(
+      probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: scriptedProbe(responses) }),
+    ).toMatchObject({ ok: false, reason: "conflicting-fingerprint" });
+  });
+
+  it("names the health endpoint when the server reports a loading model (#9603)", () => {
+    const responses = nativeResponses();
+    responses[2] = response(200, '{"status":"loading model"}');
+
+    expect(
+      probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: scriptedProbe(responses) }),
+    ).toMatchObject({
+      ok: false,
+      reason: "conflicting-fingerprint",
+      message: expect.stringContaining("health endpoint"),
+    });
+  });
+
+  it("names the properties endpoint when model_alias differs from the served model alias (#9603)", () => {
+    const responses = nativeResponses();
+    responses[3] = response(
+      200,
+      JSON.stringify({
+        model_alias: "different/model",
+        model_path: "/models/model.gguf",
+        total_slots: 2,
+        default_generation_settings: { params: {} },
+      }),
+    );
+
+    expect(
+      probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: scriptedProbe(responses) }),
+    ).toMatchObject({
+      ok: false,
+      reason: "conflicting-fingerprint",
+      message: expect.stringContaining("properties endpoint"),
+    });
+  });
+
+  it("names the metrics endpoint when the response has no llama.cpp metrics (#9603)", () => {
+    const responses = nativeResponses();
+    responses[4] = response(200, "# TYPE go_gc_duration_seconds summary\ngo_goroutines 12\n");
+
+    expect(
+      probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: scriptedProbe(responses) }),
+    ).toMatchObject({
+      ok: false,
+      reason: "conflicting-fingerprint",
+      message: expect.stringContaining("metrics endpoint"),
+    });
+  });
+
   it.each([
     "/models/model.gguf",
     "C:\\models\\model.gguf",
@@ -367,9 +448,9 @@ describe("probeLlamaCppAttachment", () => {
     const configModes: number[] = [];
     let index = 0;
     const probe = vi.fn((argv: string[], options?: CurlProbeOptions) => {
-      for (const configPath of options?.trustedConfigFiles ?? []) {
+      (options?.trustedConfigFiles ?? []).forEach((configPath) => {
         configModes.push(fs.statSync(configPath).mode & 0o777);
-      }
+      });
       const current = responses[index++];
       expect(current, `unexpected probe ${index}`).toBeDefined();
       return current!;
@@ -378,12 +459,11 @@ describe("probeLlamaCppAttachment", () => {
     const result = probeLlamaCppAttachment(token, { runCurlProbeImpl: probe });
 
     expect(JSON.stringify(result)).not.toContain(token);
-    for (const [argv, options] of probe.mock.calls) {
+    probe.mock.calls.forEach(([argv, options]) => {
       expect(JSON.stringify(argv)).not.toContain(token);
-      for (const configPath of options?.trustedConfigFiles ?? []) {
-        expect(fs.existsSync(configPath)).toBe(false);
-      }
-    }
+      expect((options?.trustedConfigFiles ?? []).every((configPath) =>
+          Object.is(fs.existsSync(configPath), false))).toBe(true);
+    });
     expect(configModes).toEqual([0o600, 0o600, 0o600, 0o600]);
   });
 });

@@ -55,6 +55,16 @@ class DirectSandboxFallbackUnavailableError extends Error {
   }
 }
 
+class PinnedSandboxContainerIdentityChangedError extends Error {
+  constructor(sandboxName: string) {
+    super(
+      `OpenShell container identity changed for sandbox '${sandboxName}'; ` +
+        "refusing privileged execution against a different container.",
+    );
+    this.name = "PinnedSandboxContainerIdentityChangedError";
+  }
+}
+
 function normalizeDriver(driver: unknown): string | null {
   return typeof driver === "string" && driver.trim() ? driver.trim().toLowerCase() : null;
 }
@@ -192,6 +202,12 @@ function isDirectSandboxFallbackUnavailableError(
   return error instanceof DirectSandboxFallbackUnavailableError;
 }
 
+function isPinnedSandboxContainerIdentityChangedError(
+  error: unknown,
+): error is PinnedSandboxContainerIdentityChangedError {
+  return error instanceof PinnedSandboxContainerIdentityChangedError;
+}
+
 function missingRegistryEntryError(sandboxName: string): Error {
   return new Error(
     `No NemoClaw registry entry found for '${sandboxName}'; ` +
@@ -276,10 +292,7 @@ function privilegedSandboxExecArgv(
       : null;
   if (portableTarget) {
     if (expectedContainerId !== undefined && portableTarget.containerId !== expectedContainerId) {
-      throw new Error(
-        `OpenShell container identity changed for sandbox '${sandboxName}'; ` +
-          "refusing privileged execution against a different container.",
-      );
+      throw new PinnedSandboxContainerIdentityChangedError(sandboxName);
     }
     const sanitizedEnvArgs = sanitizeEnvironment
       ? SANITIZED_PRIVILEGED_ENV.flatMap((value) => ["--env", value])
@@ -303,10 +316,7 @@ function privilegedSandboxExecArgv(
   const container = findDirectSandboxContainer(sandboxName);
   if (container) {
     if (expectedContainerId !== undefined && container !== expectedContainerId) {
-      throw new Error(
-        `OpenShell container identity changed for sandbox '${sandboxName}'; ` +
-          "refusing privileged execution against a different container.",
-      );
+      throw new PinnedSandboxContainerIdentityChangedError(sandboxName);
     }
     const sanitizedEnvArgs = sanitizeEnvironment
       ? SANITIZED_PRIVILEGED_ENV.flatMap((value) => ["--env", value])
@@ -328,6 +338,7 @@ function privilegedSandboxExecArgv(
 export {
   containerNameMatchesSandbox,
   isDirectSandboxFallbackUnavailableError,
+  isPinnedSandboxContainerIdentityChangedError,
   privilegedSandboxExecArgv,
   resolveDirectSandboxContainer,
   selectDirectSandboxContainer,

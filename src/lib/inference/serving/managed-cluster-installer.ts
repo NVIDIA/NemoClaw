@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { resolveVllmPort } from "../../core/vllm-port.js";
 import { isAffirmativeAnswer } from "../../onboard/prompt-helpers.js";
 import type { VllmProfile } from "../vllm.js";
 import { ensureManagedVllmApiKey } from "../vllm-api-key.js";
@@ -52,6 +53,7 @@ export interface ManagedClusterInstallerOptions {
   readonly platform: VllmProfile["platform"];
   readonly promptFn: (question: string) => Promise<string>;
   readonly beforeInstall?: (modelId: string) => void;
+  readonly checkpointInstallIntent?: (modelId: string) => void;
 }
 
 export interface ManagedClusterInstallerEffects {
@@ -184,8 +186,8 @@ function selectedHostStorageFailure(
 function selectedRecipeAdmissionFailure(
   capability: ManagedClusterDetectedManagedServingCapability,
   recipe: ManagedInferenceServingRecipe,
+  apiPort = recipeApiPort(recipe),
 ): SelectedRecipeAdmissionFailure | null {
-  const apiPort = recipeApiPort(recipe);
   if (apiPort === null) {
     return { code: "runtime-unknown", reason: "The selected recipe serving port is invalid." };
   }
@@ -396,6 +398,7 @@ export async function tryInstallManagedClusterManagedVllm(
 ): Promise<ManagedClusterInstallerResult> {
   if (options.platform !== "spark") return { kind: "not-selected" };
   const env = options.env ?? process.env;
+  const apiPort = resolveVllmPort(env);
   const deferToLegacy = automaticIntentDefersToLegacy(env);
 
   const deps = { ...DEFAULT_DEPS, ...overrides };
@@ -434,14 +437,18 @@ export async function tryInstallManagedClusterManagedVllm(
     if (!("topologyQualification" in previewResolution)) {
       return { kind: "not-selected" };
     }
-    const previewAdmission = selectedRecipeAdmissionFailure(detected, previewResolution.recipe);
+    const previewAdmission = selectedRecipeAdmissionFailure(
+      detected,
+      previewResolution.recipe,
+      apiPort,
+    );
     if (previewAdmission) {
       return admissionFailure(previewAdmission, detected.selectionIntent, true, deps);
     }
 
     let previewPlan: ManagedClusterVllmPlan;
     try {
-      previewPlan = deps.materializePlan(previewResolution);
+      previewPlan = deps.materializePlan(previewResolution, { apiPort });
     } catch (error) {
       deps.error(`  Managed-cluster vLLM setup stopped: ${(error as Error).message}`);
       return { kind: "handled", result: { ok: false } };
@@ -488,6 +495,7 @@ export async function tryInstallManagedClusterManagedVllm(
     const revalidatedAdmission = selectedRecipeAdmissionFailure(
       revalidated,
       revalidatedResolution.recipe,
+      apiPort,
     );
     if (revalidatedAdmission) {
       return admissionFailure(revalidatedAdmission, revalidated.selectionIntent, false, deps);
@@ -513,7 +521,7 @@ export async function tryInstallManagedClusterManagedVllm(
 
     let plan: ManagedClusterVllmPlan;
     try {
-      plan = deps.materializePlan(resolution);
+      plan = deps.materializePlan(resolution, { apiPort });
     } catch (error) {
       deps.error(`  Managed-cluster vLLM setup stopped: ${(error as Error).message}`);
       return { kind: "handled", result: { ok: false } };
@@ -533,6 +541,9 @@ export async function tryInstallManagedClusterManagedVllm(
 
     const profile = managedProfile(plan, resolution.recipe);
     const model = managedModel(plan, resolution.recipe);
+    options.checkpointInstallIntent?.(
+      String(options.env?.NEMOCLAW_VLLM_MODEL ?? "").trim() || plan.model.id,
+    );
     options.beforeInstall?.(plan.model.servedName);
 
     const prerequisites = effects.prerequisites();

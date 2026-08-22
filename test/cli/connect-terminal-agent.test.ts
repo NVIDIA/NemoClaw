@@ -55,7 +55,7 @@ describe("CLI dispatch for terminal agents", () => {
         // so the stub does not depend on how many flags precede it (#8624).
         '  cmd="${*: -1}"',
         '  case "$cmd" in',
-        '    *"dcode --version"*) echo "NEMOCLAW_AGENT_SMOKE_BEGIN"; echo "dcode 0.1.34"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
+        '    *"dcode --version"*) echo "NEMOCLAW_AGENT_SMOKE_BEGIN"; echo "dcode 0.1.55"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
         '    *"config.toml"*) echo "NEMOCLAW_AGENT_SMOKE_BEGIN"; echo "NEMOCLAW_DEEPAGENTS_CONFIG_OK"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
         '    *"NEMOCLAW_DCODE_EMPTY_PROMPT_OK"*) echo "NEMOCLAW_AGENT_SMOKE_BEGIN"; echo "NEMOCLAW_DCODE_EMPTY_PROMPT_OK"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
         "  esac",
@@ -70,7 +70,8 @@ describe("CLI dispatch for terminal agents", () => {
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
-    expect(r.code).toBe(process.platform === "darwin" ? 1 : 0);
+    // Evidence unavailability on macOS is a note, not a failure (#9278).
+    expect(r.code).toBe(0);
     expect(r.out.includes(PLATFORM_EVIDENCE_UNAVAILABLE)).toBe(process.platform === "darwin");
     expect(r.out).toContain("terminal smoke checks passed");
     const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);

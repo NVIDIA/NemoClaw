@@ -7,9 +7,18 @@ import nodePath from "node:path";
 import { OLLAMA_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
 import { resolveOllamaContextWindowFloor } from "../inference/ollama-runtime-context";
+import {
+  proveOllamaSystemdServiceExecutable,
+  type OllamaServiceExecutableProof,
+} from "./ollama-systemd/executable-proof";
 import { cleanupTempDir, secureTempFile } from "./temp-files";
 
-const { runCapture, runShell, shellQuote }: typeof import("../runner") = require("../runner");
+const {
+  runCapture,
+  runCaptureEx,
+  runShell,
+  shellQuote,
+}: typeof import("../runner") = require("../runner");
 const {
   findReachableOllamaHost,
   resetOllamaHostCache,
@@ -26,6 +35,12 @@ type OllamaLoopbackSystemdOverrideOptions = {
   enableService?: boolean;
   /** Minimum daemon context length to preserve or apply in the systemd override. */
   contextWindowFloor?: number;
+  /**
+   * Set when the caller has just replaced the Ollama binary. The service must
+   * then be restarted onto it, so an already-loopback-only listener is not
+   * evidence that this step can be skipped.
+   */
+  isUpgrade?: boolean;
   detectNvidiaPlatformImpl?: () => string;
   hasOllamaCudaV13LibraryImpl?: () => boolean;
   /**
@@ -51,6 +66,12 @@ type OllamaLoopbackSystemdOverrideOptions = {
    * only to loopback. Defaults to a non-privileged `systemctl` + `ss` probe.
    */
   isOllamaLoopbackOnlyImpl?: () => boolean;
+  /** Service-user execution proof that must pass before the systemd restart. */
+  proveOllamaServiceExecutableImpl?: (
+    sudoPrefix: "sudo" | "sudo -n",
+  ) => OllamaServiceExecutableProof;
+  /** Test seam for the systemd override and restart commands. */
+  runShellImpl?: typeof runShell;
 };
 
 function isEnvNonInteractive(): boolean {
@@ -205,6 +226,17 @@ export function ensureOllamaLoopbackSystemdOverride(
   const sudoPrefix = getSudoPrefix((options.isNonInteractive ?? isEnvNonInteractive)());
   const hasPasswordlessSudo = options.hasPasswordlessSudoImpl ?? defaultHasPasswordlessSudo;
   if (shouldSkipOllamaLoopbackForMissingSudo(sudoPrefix, hasPasswordlessSudo)) {
+    if (options.isUpgrade) {
+      console.error(
+        "  Passwordless sudo is not available, so the Ollama service cannot be restarted onto the " +
+          "newly installed binary.",
+      );
+      console.error(
+        `  The running daemon would keep serving the old version. Set ${NON_INTERACTIVE_SUDO_MODE_ENV}=prompt ` +
+          "with a terminal, configure passwordless sudo, or run 'sudo systemctl restart ollama' and rerun onboarding.",
+      );
+      process.exit(1);
+    }
     const loopbackOnly =
       options.isOllamaLoopbackOnlyImpl?.() ?? isActiveOllamaListenerLoopbackOnly();
     if (loopbackOnly) {
@@ -226,13 +258,38 @@ export function ensureOllamaLoopbackSystemdOverride(
     process.exit(1);
   }
 
+  console.log(
+    "  Verifying the configured Ollama systemd user can execute its binary and ELF interpreter...",
+  );
+  if (sudoPrefix === "sudo") {
+    console.log("  The execution proof uses sudo and may ask for your password.");
+  }
+  const executionProof = (
+    options.proveOllamaServiceExecutableImpl ??
+    ((prefix) =>
+      proveOllamaSystemdServiceExecutable({ runCaptureExImpl: runCaptureEx, sudoPrefix: prefix }))
+  )(sudoPrefix);
+  if (!executionProof.ok) {
+    console.error(
+      `  Ollama service execution proof failed [${executionProof.classification}]: ${executionProof.message}.`,
+    );
+    console.error("  NemoClaw did not restart the Ollama service.");
+    process.exit(1);
+  }
+  if (executionProof.repaired) {
+    console.log(
+      `  Repaired the installer-owned Ollama executable mode and verified '${executionProof.executablePath} --version' as systemd User '${executionProof.serviceUser}'.`,
+    );
+  }
+
   console.log("  Configuring Ollama systemd loopback override...");
   console.log(
     `  Applying an Ollama systemd override (OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT}). ` +
       "The next steps use sudo to write the drop-in, reload systemd, and restart the service; " +
       "you may be prompted for your password.",
   );
-  const existingDropInResult = runShell(
+  const runShellImpl = options.runShellImpl ?? runShell;
+  const existingDropInResult = runShellImpl(
     [
       `if [ -r ${shellQuote(OLLAMA_SYSTEMD_OVERRIDE_PATH)} ]; then`,
       `  cat ${shellQuote(OLLAMA_SYSTEMD_OVERRIDE_PATH)}`,
@@ -285,7 +342,7 @@ export function ensureOllamaLoopbackSystemdOverride(
       "done",
       "exit 1",
     );
-    const overrideResult = runShell(overrideCommands.join("\n"), {
+    const overrideResult = runShellImpl(overrideCommands.join("\n"), {
       ignoreError: true,
       timeout: 45_000,
     });

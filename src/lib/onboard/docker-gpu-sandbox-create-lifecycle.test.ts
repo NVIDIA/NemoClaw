@@ -50,6 +50,8 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const finalizeBackup = vi.fn(() => ({
       backupRemoved: true,
       rolledBack: false,
+      lifecycleReleaseObserved: true,
+      replacementRestarted: true,
     }));
     const capturePreRollbackDiagnostics = vi.fn(() => null);
     const onPatchFailureExit = vi.fn();
@@ -70,7 +72,9 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
       },
     });
 
+    expect(patch.replacementRuntimeId()).toBeNull();
     patch.maybeApplyDuringCreate();
+    expect(patch.replacementRuntimeId()).toBe(result.newContainerId);
     expect(recreatePatch).toHaveBeenCalledWith(
       expect.objectContaining({ waitForSupervisor: false }),
       expect.objectContaining({
@@ -88,9 +92,118 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
 
     await patch.commitAfterReady();
     expect(finalizeBackup).toHaveBeenCalledTimes(1);
-    expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: true }, deps);
+    expect(finalizeBackup).toHaveBeenCalledWith(
+      {
+        result,
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 900,
+      },
+      deps,
+    );
+    expect(waitForSupervisor).toHaveBeenCalledTimes(2);
     expect(capturePreRollbackDiagnostics).not.toHaveBeenCalled();
     expect(onPatchFailureExit).not.toHaveBeenCalled();
+  });
+
+  it("accepts a backup that the patch helper already finalized after reconnect", async () => {
+    const deps = makeDeps();
+    const result = { ...deferredCreateResult(), backupRemoved: true };
+    const waitForSupervisor = vi.fn(() => true);
+    const finalizeBackup = vi.fn(() => ({
+      backupRemoved: true,
+      rolledBack: false,
+    }));
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        waitForSupervisor,
+        finalizeBackup,
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    patch.waitForSupervisorReconnectIfNeeded();
+    await expect(patch.commitAfterReady()).resolves.toBeUndefined();
+
+    expect(finalizeBackup).toHaveBeenCalledWith(
+      {
+        result,
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 900,
+      },
+      deps,
+    );
+    expect(waitForSupervisor).toHaveBeenCalledTimes(1);
+    expect(onPatchFailureExit).not.toHaveBeenCalled();
+  });
+
+  it("rejects an explicit replacement restart failure after backup removal", async () => {
+    const deps = makeDeps();
+    const result = deferredCreateResult();
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        waitForSupervisor: vi.fn(() => true),
+        finalizeBackup: vi.fn(() => ({
+          backupRemoved: true,
+          rolledBack: false,
+          replacementRestarted: false,
+        })),
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    patch.waitForSupervisorReconnectIfNeeded();
+    await expect(patch.commitAfterReady()).rejects.toThrow("final runtime handoff");
+    expect(onPatchFailureExit).toHaveBeenCalledOnce();
+  });
+
+  it("rejects final handoff when OpenShell never releases the deleting lifecycle record (#9531)", async () => {
+    const deps = makeDeps();
+    const result = deferredCreateResult();
+    const waitForSupervisor = vi.fn(() => true);
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        waitForSupervisor,
+        finalizeBackup: vi.fn(() => ({
+          backupRemoved: true,
+          rolledBack: false,
+          lifecycleReleaseObserved: false,
+          replacementRestarted: true,
+        })),
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    patch.waitForSupervisorReconnectIfNeeded();
+    await expect(patch.commitAfterReady()).rejects.toThrow("final runtime handoff");
+
+    expect(waitForSupervisor).toHaveBeenCalledOnce();
+    expect(onPatchFailureExit).toHaveBeenCalledOnce();
   });
 
   it("reports a failed post-Ready rollback instead of treating it as restored", async () => {
@@ -159,13 +272,13 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     patch.waitForSupervisorReconnectIfNeeded();
     expect(onPatchFailureExit).not.toHaveBeenCalled();
 
-    await expect(patch.commitAfterReady()).rejects.toThrow("rollback backup");
-    await expect(patch.commitAfterReady()).rejects.toThrow("rollback backup");
+    await expect(patch.commitAfterReady()).rejects.toThrow("final runtime handoff");
+    await expect(patch.commitAfterReady()).rejects.toThrow("final runtime handoff");
 
     expect(onPatchFailureExit).toHaveBeenCalledOnce();
     expect(onPatchFailureExit.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
-        message: expect.stringContaining("rollback backup"),
+        message: expect.stringContaining("final runtime handoff"),
       }),
     );
     expect(onPatchFailureExit.mock.calls[0]?.[2]).toEqual(

@@ -349,133 +349,135 @@ describe("messaging-build-applier.mts: agent-install", () => {
     );
   });
 
-  it.each([
-    "openclaw",
-    "hermes",
-  ] as const)("writes a reduced %s runtime plan artifact for entrypoint startup (#5896)", (agent) => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-${agent}-runtime-plan-artifact-`));
-    const artifactPath = path.join(tmp, "runtime", "messaging-runtime-plan.json");
-    const plan = {
-      schemaVersion: 1,
-      sandboxName: "test-sandbox",
-      agent,
-      workflow: "rebuild",
-      channels: [
-        {
-          channelId: "telegram",
-          active: true,
-          disabled: false,
-          inputs: [{ value: "do-not-persist-input-value" }],
-        },
-        { channelId: "slack", active: false, disabled: true },
-      ],
-      disabledChannels: ["slack"],
-      credentialBindings: [
-        {
-          channelId: "telegram",
-          credentialId: "telegram-bot-token",
-          providerName: "telegram-provider-name",
-          providerEnvKey: "TELEGRAM_BOT_TOKEN",
-          placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
-          credentialHash: "do-not-persist-hash",
-        },
-      ],
-      agentRender: [
-        {
-          channelId: "telegram",
-          agent,
-          target: agent === "openclaw" ? "openclaw.json" : "config.yaml",
-          kind: "json-fragment",
-          path: "channels.telegram",
-          value: { token: "do-not-persist-render-value" },
-        },
-      ],
-      buildSteps: [
-        {
-          channelId: "telegram",
-          kind: "build-file",
-          outputId: "seed-file",
-          value: { content: "do-not-persist-build-step" },
-        },
-      ],
-      runtimeSetup: {
-        nodePreloads: [
-          {
-            channelId: "telegram",
-            module: "telegram-diagnostics",
-            source: "/usr/local/lib/nemoclaw/preloads/telegram-diagnostics.js",
-            target: "/tmp/nemoclaw-telegram-diagnostics.js",
-            injectInto: ["boot", "connect"],
-            optional: false,
-            installMessage: "[channels] install telegram diagnostics",
-            installedMessage: "[channels] installed telegram diagnostics",
-          },
-        ],
-        envAliases: [],
-        secretScans: [],
-      },
-    };
-
-    try {
-      const result = spawnSync(
-        "node",
-        [
-          "--experimental-strip-types",
-          SCRIPT_PATH,
-          "--agent",
-          agent,
-          "--phase",
-          "runtime-setup",
-          "--mode",
-          "apply",
-        ],
-        {
-          encoding: "utf-8",
-          stdio: ["pipe", "pipe", "pipe"],
-          env: {
-            PATH: TEST_PATH,
-            NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH: artifactPath,
-            NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(JSON.stringify(plan)).toString("base64"),
-          },
-          timeout: 10_000,
-        },
+  it.each(["openclaw", "hermes"] as const)(
+    "writes a reduced %s runtime plan artifact for entrypoint startup (#5896)",
+    (agent) => {
+      const tmp = fs.mkdtempSync(
+        path.join(os.tmpdir(), `nemoclaw-${agent}-runtime-plan-artifact-`),
       );
-
-      expect(result.status, result.stderr).toBe(0);
-      const artifact = JSON.parse(fs.readFileSync(artifactPath, "utf-8"));
-      expect(artifact).toMatchObject({
+      const artifactPath = path.join(tmp, "runtime", "messaging-runtime-plan.json");
+      const plan = {
         schemaVersion: 1,
         sandboxName: "test-sandbox",
         agent,
         workflow: "rebuild",
         channels: [
-          { channelId: "telegram", active: true, disabled: false },
+          {
+            channelId: "telegram",
+            active: true,
+            disabled: false,
+            inputs: [{ value: "do-not-persist-input-value" }],
+          },
           { channelId: "slack", active: false, disabled: true },
         ],
         disabledChannels: ["slack"],
-        credentialBindings: [{ channelId: "telegram", providerEnvKey: "TELEGRAM_BOT_TOKEN" }],
+        credentialBindings: [
+          {
+            channelId: "telegram",
+            credentialId: "telegram-bot-token",
+            providerName: "telegram-provider-name",
+            providerEnvKey: "TELEGRAM_BOT_TOKEN",
+            placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+            credentialHash: "do-not-persist-hash",
+          },
+        ],
+        agentRender: [
+          {
+            channelId: "telegram",
+            agent,
+            target: agent === "openclaw" ? "openclaw.json" : "config.yaml",
+            kind: "json-fragment",
+            path: "channels.telegram",
+            value: { token: "do-not-persist-render-value" },
+          },
+        ],
+        buildSteps: [
+          {
+            channelId: "telegram",
+            kind: "build-file",
+            outputId: "seed-file",
+            value: { content: "do-not-persist-build-step" },
+          },
+        ],
         runtimeSetup: {
           nodePreloads: [
             {
               channelId: "telegram",
+              module: "telegram-diagnostics",
               source: "/usr/local/lib/nemoclaw/preloads/telegram-diagnostics.js",
               target: "/tmp/nemoclaw-telegram-diagnostics.js",
               injectInto: ["boot", "connect"],
               optional: false,
+              installMessage: "[channels] install telegram diagnostics",
+              installedMessage: "[channels] installed telegram diagnostics",
             },
           ],
           envAliases: [],
           secretScans: [],
         },
-      });
-      expect(JSON.stringify(artifact)).not.toContain("do-not-persist");
-      expect(JSON.stringify(artifact)).not.toContain("openshell:resolve:env");
-      expect(artifact.runtimeSetup.nodePreloads[0]).not.toHaveProperty("module");
-      expect((fs.statSync(artifactPath).mode & 0o777).toString(8)).toBe("644");
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+      };
+
+      try {
+        const result = spawnSync(
+          "node",
+          [
+            "--experimental-strip-types",
+            SCRIPT_PATH,
+            "--agent",
+            agent,
+            "--phase",
+            "runtime-setup",
+            "--mode",
+            "apply",
+          ],
+          {
+            encoding: "utf-8",
+            stdio: ["pipe", "pipe", "pipe"],
+            env: {
+              PATH: TEST_PATH,
+              NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH: artifactPath,
+              NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(JSON.stringify(plan)).toString("base64"),
+            },
+            timeout: 10_000,
+          },
+        );
+
+        expect(result.status, result.stderr).toBe(0);
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, "utf-8"));
+        expect(artifact).toMatchObject({
+          schemaVersion: 1,
+          sandboxName: "test-sandbox",
+          agent,
+          workflow: "rebuild",
+          channels: [
+            { channelId: "telegram", active: true, disabled: false },
+            { channelId: "slack", active: false, disabled: true },
+          ],
+          disabledChannels: ["slack"],
+          credentialBindings: [{ channelId: "telegram", providerEnvKey: "TELEGRAM_BOT_TOKEN" }],
+          runtimeSetup: {
+            nodePreloads: [
+              {
+                channelId: "telegram",
+                source: "/usr/local/lib/nemoclaw/preloads/telegram-diagnostics.js",
+                target: "/tmp/nemoclaw-telegram-diagnostics.js",
+                injectInto: ["boot", "connect"],
+                optional: false,
+              },
+            ],
+            envAliases: [],
+            secretScans: [],
+          },
+        });
+        expect(JSON.stringify(artifact)).not.toContain("do-not-persist");
+        expect(JSON.stringify(artifact)).not.toContain("openshell:resolve:env");
+        expect(artifact.runtimeSetup.nodePreloads[0]).not.toHaveProperty("module");
+        expect((fs.statSync(artifactPath).mode & 0o777).toString(8)).toBe("644");
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("skips runtime plan artifact output when messaging is not configured", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-empty-runtime-plan-artifact-"));
@@ -878,9 +880,37 @@ describe("messaging-build-applier.mts: agent-install", () => {
     }
   });
 
-  it(
-    "runs pinned installs during agent-install without doctor env injection",
-    async () => {
+  it.each(
+    [
+        [
+          "@openclaw/discord@2026.7.1",
+          "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.7.1.tgz",
+          "discord-2026.7.1.tgz",
+        ],
+        [
+          "@tencent-weixin/openclaw-weixin@2.4.3",
+          "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
+          "openclaw-weixin-2.4.3.tgz",
+        ],
+        [
+          "@openclaw/slack@2026.7.1",
+          "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.7.1.tgz",
+          "slack-2026.7.1.tgz",
+        ],
+        [
+          "@openclaw/whatsapp@2026.7.1",
+          "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.7.1.tgz",
+          "whatsapp-2026.7.1.tgz",
+        ],
+        [
+          "@openclaw/msteams@2026.7.1",
+          "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.7.1.tgz",
+          "msteams-2026.7.1.tgz",
+        ],
+    ] as const,
+  )(
+    "runs pinned installs during agent-install without doctor env injection [case %#]",
+    async (packageSpec, tarballUrl, archiveName) => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-message-plugins-"));
       const tracePath = path.join(tmp, "openclaw.trace");
       const fakeOpenclaw = path.join(tmp, "openclaw");
@@ -955,39 +985,13 @@ describe("messaging-build-applier.mts: agent-install", () => {
 
         expect(applyMessagingBuildPhase(plan, "agent-install", planEnv)).toEqual([]);
         const trace = fs.readFileSync(tracePath, "utf-8");
-        for (const [packageSpec, tarballUrl, archiveName] of [
-          [
-            "@openclaw/discord@2026.7.1",
-            "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.7.1.tgz",
-            "discord-2026.7.1.tgz",
-          ],
-          [
-            "@tencent-weixin/openclaw-weixin@2.4.3",
-            "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
-            "openclaw-weixin-2.4.3.tgz",
-          ],
-          [
-            "@openclaw/slack@2026.7.1",
-            "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.7.1.tgz",
-            "slack-2026.7.1.tgz",
-          ],
-          [
-            "@openclaw/whatsapp@2026.7.1",
-            "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.7.1.tgz",
-            "whatsapp-2026.7.1.tgz",
-          ],
-          [
-            "@openclaw/msteams@2026.7.1",
-            "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.7.1.tgz",
-            "msteams-2026.7.1.tgz",
-          ],
-        ] as const) {
-          expect(trace).toContain(`npm|view|${packageSpec}|dist.integrity`);
-          expect(trace).toContain(`npm|view|${packageSpec}|dist.tarball`);
-          expect(trace).toContain(`npm|pack|${tarballUrl}|--pack-destination`);
-          expect(trace).toContain("plugins|install|npm-pack:");
-          expect(trace).toContain(`${archiveName}||||`);
-        }
+
+        expect(trace).toContain(`npm|view|${packageSpec}|dist.integrity`);
+        expect(trace).toContain(`npm|view|${packageSpec}|dist.tarball`);
+        expect(trace).toContain(`npm|pack|${tarballUrl}|--pack-destination`);
+        expect(trace).toContain("plugins|install|npm-pack:");
+        expect(trace).toContain(`${archiveName}||||`);
+
         expect(trace).toContain(
           "verify|/usr/local/lib/nemoclaw/wechat-runtime/package-lock.json|/sandbox/.openclaw/npm/projects",
         );

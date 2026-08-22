@@ -40,6 +40,8 @@ export interface HostLocalInferenceEndpointInput {
   readonly networkId: string;
   /** Exact bridge gateway listener used by provider-network probes. */
   readonly networkGatewayIp: string;
+  /** Optional qualified host listener when it differs from the bridge IPAM gateway. */
+  readonly networkListenerIp?: string;
   readonly hostPort: number;
   readonly probeImageRef: string;
   /** Secret-free provider-native model identity used for a real inference proof. */
@@ -62,7 +64,7 @@ export interface HostLocalInferenceMount {
 }
 
 export interface HostLocalManagedInferenceInput extends HostLocalInferenceEndpointInput {
-  readonly service: "nim" | "vllm";
+  readonly service: "ollama" | "nim" | "vllm";
   readonly containerName: string;
   readonly containerPort: number;
   readonly imageRef: string;
@@ -85,6 +87,8 @@ export interface HostLocalInferenceProofEndpointAuthority
   extends HostLocalInferenceLegacyEndpointAuthority {
   readonly networkId: string;
   readonly networkGatewayIp: string;
+  /** Qualified host listener used by Portable sandboxes and provider probes. */
+  readonly networkListenerIp?: string;
   /** Digest of the exact inspected bridge configuration and ownership labels. */
   readonly networkAuthoritySha256: string;
 }
@@ -126,6 +130,8 @@ export type HostLocalInferenceRuntimeAuthority =
       readonly specSha256: string;
       /** Digest of the exact provider-translated create argv recorded by the engine. */
       readonly launchSha256?: string;
+      /** Provider-native digest of the exact model placed inside managed Ollama. */
+      readonly modelDigest?: string;
       /**
        * Declarative model identity for runtimes that bind one verified local
        * artifact. Host paths and executor-only filesystem identity never enter
@@ -433,7 +439,17 @@ function normalizeEndpoint(
   exactKeys(
     endpoint,
     proofReceipt
-      ? ["host", "networkAuthoritySha256", "networkGatewayIp", "networkId", "networkName", "port"]
+      ? "networkListenerIp" in endpoint
+        ? [
+            "host",
+            "networkAuthoritySha256",
+            "networkGatewayIp",
+            "networkId",
+            "networkListenerIp",
+            "networkName",
+            "port",
+          ]
+        : ["host", "networkAuthoritySha256", "networkGatewayIp", "networkId", "networkName", "port"]
       : ["host", "networkName", "port"],
     "endpoint authority",
   );
@@ -447,6 +463,9 @@ function normalizeEndpoint(
     ...common,
     networkId: exactText(endpoint.networkId, SHA256, "endpoint network identity"),
     networkGatewayIp: exactIpv4(endpoint.networkGatewayIp, "endpoint network gateway"),
+    ...("networkListenerIp" in endpoint
+      ? { networkListenerIp: exactIpv4(endpoint.networkListenerIp, "endpoint network listener") }
+      : {}),
     networkAuthoritySha256: exactText(
       endpoint.networkAuthoritySha256,
       SHA256,
@@ -522,21 +541,32 @@ function normalizeRuntime(
     runtime,
     service === "llama-cpp"
       ? ["gpu", "imageRef", "kind", "model", "name", "probeImageRef", "runtimeId", "specSha256"]
-      : proofReceipt
+      : service === "ollama"
         ? [
             "gpu",
             "imageRef",
             "kind",
             "launchSha256",
+            "modelDigest",
             "name",
             "probeImageRef",
             "runtimeId",
             "specSha256",
           ]
-        : ["gpu", "imageRef", "kind", "name", "probeImageRef", "runtimeId", "specSha256"],
+        : proofReceipt
+          ? [
+              "gpu",
+              "imageRef",
+              "kind",
+              "launchSha256",
+              "name",
+              "probeImageRef",
+              "runtimeId",
+              "specSha256",
+            ]
+          : ["gpu", "imageRef", "kind", "name", "probeImageRef", "runtimeId", "specSha256"],
     "container authority",
   );
-  if (service === "ollama") fail("Ollama must use host-process authority");
   const gpu = exactRecord(runtime.gpu, "GPU authority");
   exactKeys(
     gpu,
@@ -597,6 +627,9 @@ function normalizeRuntime(
           ),
         }),
     ...(model ? { model } : {}),
+    ...(service === "ollama"
+      ? { modelDigest: exactText(runtime.modelDigest, SHA256_DIGEST, "Ollama model digest") }
+      : {}),
     gpu: normalizedGpu,
   });
 }
@@ -648,10 +681,13 @@ export function normalizeHostLocalInferenceReceipt(value: unknown): HostLocalInf
     fail("provider identity does not match engine authority");
   }
   const publication = proofReceipt ? normalizePublicationAuthority(receipt.publication) : undefined;
+  const runtime = normalizeRuntime(service, receipt.runtime, proofReceipt);
   if (
     publication !== undefined &&
-    ((service === "ollama" && publication.priorState !== "host-process") ||
-      ((service === "nim" || service === "vllm") && publication.priorState === "host-process"))
+    ((service === "ollama" &&
+      runtime.kind === "host" &&
+      publication.priorState !== "host-process") ||
+      (runtime.kind === "container" && publication.priorState === "host-process"))
   ) {
     fail("receipt publication prior state does not match the service lifecycle");
   }
@@ -661,7 +697,7 @@ export function normalizeHostLocalInferenceReceipt(value: unknown): HostLocalInf
     service,
     engineAuthority,
     endpoint: normalizeEndpoint(receipt.endpoint, proofReceipt),
-    runtime: normalizeRuntime(service, receipt.runtime, proofReceipt),
+    runtime,
     ...(!proofReceipt
       ? {}
       : {

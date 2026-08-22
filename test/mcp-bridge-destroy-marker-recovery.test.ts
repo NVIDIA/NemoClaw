@@ -238,7 +238,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     return providerExists
       ? {
           status: 0,
-          stdout: "Id: " + expectedId + "\nType: generic\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
+          stdout: "Id: " + expectedId + "\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
           stderr: "",
         }
       : { status: 1, stdout: "", stderr: "NotFound: provider" };
@@ -248,7 +248,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     return {
       status: 0,
       stdout: attached
-        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n" + providerName + " generic 1 0\n"
+        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n" + providerName + " nemoclaw-mcp-v1 1 0\n"
         : "No providers attached to sandbox stuck-sandbox.\n",
       stderr: "",
     };
@@ -374,19 +374,19 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
     const providerDelete = parsed.events.indexOf("provider:delete");
     expect(initialProviderInspection).toBeGreaterThanOrEqual(0);
     expect(adapterRemoval).toBeGreaterThan(initialProviderInspection);
-    expect(providerDetach).toBeGreaterThan(adapterRemoval);
+    expect(policyRemoval).toBeGreaterThan(adapterRemoval);
+    expect(providerDetach).toBeGreaterThan(policyRemoval);
     expect(credentialRevocation).toBeGreaterThan(providerDetach);
-    expect(policyRemoval).toBeGreaterThan(credentialRevocation);
-    expect(providerDelete).toBeGreaterThan(policyRemoval);
+    expect(providerDelete).toBeGreaterThan(credentialRevocation);
     expect(
       parsed.events
         .slice(policyRemoval + 1, providerDelete)
         .filter((event) => event === "provider:get:present"),
-    ).toHaveLength(2);
+    ).toHaveLength(4);
     expect(parsed.events.slice(providerDelete + 1)).toContain("provider:get:absent");
     expect(
       parsed.commands.filter((command) => command === "provider get stuck-sandbox-mcp-github"),
-    ).toHaveLength(5);
+    ).toHaveLength(6);
   });
 
   it("does NOT clear the prepared marker on a wrong-server --force no-op (other entries remain)", async () => {

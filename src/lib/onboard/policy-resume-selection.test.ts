@@ -10,9 +10,14 @@ type Preset = { name: string; access?: string };
 function policies(
   options: { applied?: string[]; custom?: string[]; customOwnsObservability?: boolean } = {},
 ) {
-  const setupPresets = ["npm", "brave", "tavily", "slack", "observability-otlp-local"].map(
-    (name) => ({ name }),
-  );
+  const setupPresets = [
+    "npm",
+    "brave",
+    "tavily",
+    "slack",
+    "observability-otlp-local",
+    "personal-open-internet",
+  ].map((name) => ({ name }));
   const customPresets = (options.custom ?? []).map((name) => ({ name }));
   return {
     setupPolicyPresetSupported: () => true,
@@ -88,6 +93,47 @@ describe("preparePolicyPresetResumeSelection web search reconciliation", () => {
 });
 
 describe("preparePolicyPresetResumeSelection required preset reconciliation", () => {
+  it.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"])(
+    "repairs a Personal recording missing its tier-defining preset: %s",
+    (agent) => {
+      const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
+        recordedPolicyPresets: ["npm"],
+        agent,
+        tierName: "personal",
+        webSearchConfig: null,
+        webSearchSupported: true,
+      });
+
+      expect(result.policyPresets).toEqual(["personal-open-internet", "npm"]);
+      expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+    },
+  );
+
+  it("returns the Personal requirement when the legacy recording is null", () => {
+    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
+      recordedPolicyPresets: null,
+      agent: "pi",
+      tierName: "personal",
+      webSearchConfig: null,
+      webSearchSupported: true,
+    });
+
+    expect(result.policyPresets).toEqual(["personal-open-internet"]);
+  });
+
+  it("marks an explicit empty Personal recording for reconciliation", () => {
+    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
+      recordedPolicyPresets: [],
+      agent: "pi",
+      tierName: "personal",
+      webSearchConfig: null,
+      webSearchSupported: true,
+    });
+
+    expect(result.policyPresets).toEqual(["personal-open-internet"]);
+    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+  });
+
   it("marks an empty recording for reconciliation when Slack becomes required (#6042)", () => {
     const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
       recordedPolicyPresets: [],

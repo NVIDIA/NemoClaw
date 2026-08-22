@@ -511,9 +511,9 @@ describe("probeDualStationVllmCapability", () => {
   it("uses the lowest common RoCEv2 IPv4 GID when preferred index 3 is unavailable", () => {
     const local = hostFixture("local");
     const peer = hostFixture("peer");
-    for (const item of [...local.rails, ...peer.rails]) {
+    [...local.rails, ...peer.rails].forEach((item) => {
       item.roceV2Ipv4Gids = item.roceV2Ipv4Gids.map((gid) => ({ ...gid, index: 5 }));
-    }
+    });
 
     expect(runWith(fixtureDeps(local, peer))).toMatchObject({
       kind: "ready",

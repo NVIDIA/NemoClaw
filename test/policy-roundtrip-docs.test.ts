@@ -41,8 +41,9 @@ describe("policy round-trip documentation examples", () => {
     expect(section).toContain("Widening this allowlist does not fix");
   });
 
-  it("uses the NemoClaw base-policy export instead of a metadata-stripping pipeline", () => {
-    for (const docPath of ROUND_TRIP_DOCS) {
+  it.each(Array.from(ROUND_TRIP_DOCS, (value) => [value]))(
+    "uses the NemoClaw base-policy export in %s",
+    (docPath) => {
       const text = readDoc(docPath);
       expect(text, docPath).toContain("OpenShell 0.0.72+");
       expect(text, docPath).toMatch(
@@ -53,8 +54,8 @@ describe("policy round-trip documentation examples", () => {
       );
       expect(text, docPath).not.toContain("tmp_policy=$(mktemp)");
       expect(text, docPath).not.toContain("awk 'found { print }");
-    }
-  });
+    },
+  );
 
   it("documents raw output as diagnostic-only", () => {
     const commands = readDoc("docs/reference/commands.mdx");
@@ -64,11 +65,12 @@ describe("policy round-trip documentation examples", () => {
     expect(commands).toContain("Do not pass `--raw` output to `openshell policy set`");
   });
 
-  it("defines the matching policy states after a restore warning (#8210)", () => {
-    for (const docPath of SNAPSHOT_RESTORE_DOCS) {
+  it.each(Array.from(SNAPSHOT_RESTORE_DOCS, (value) => [value]))(
+    "defines matching policy states in %s after a restore warning (#8210)",
+    (docPath) => {
       expect(readDoc(docPath), docPath).toContain(
         "recorded in the sandbox registry and active on the gateway, or absent from both",
       );
-    }
-  });
+    },
+  );
 });

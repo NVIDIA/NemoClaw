@@ -21,6 +21,9 @@ type Settings = {
   providerKey: string;
   upstreamProvider: string;
   inferenceApi: string;
+  contextWindow: number | null;
+  maxTokens: number | null;
+  reasoning: boolean | null;
 };
 
 type ManagedPiConfig = {
@@ -75,6 +78,27 @@ function normalizeInferenceBaseUrl(value: string): string {
   return text;
 }
 
+function normalizePositiveInteger(value: string | undefined, name: string): number | null {
+  const text = (value ?? "").trim();
+  if (!text) return null;
+  if (!/^\d+$/u.test(text)) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+  const parsed = Number(text);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+  return parsed;
+}
+
+function normalizeReasoning(value: string | undefined): boolean | null {
+  const text = (value ?? "").trim();
+  if (!text) return null;
+  if (text === "true") return true;
+  if (text === "false") return false;
+  throw new Error('NEMOCLAW_REASONING must be "true" or "false".');
+}
+
 function readSettings(env: NodeJS.ProcessEnv): Settings {
   const providerKey = normalizeMetadata(
     env.NEMOCLAW_INFERENCE_PROVIDER_ID || env.NEMOCLAW_PROVIDER_KEY || "inference",
@@ -91,7 +115,18 @@ function readSettings(env: NodeJS.ProcessEnv): Settings {
       "NEMOCLAW_UPSTREAM_PROVIDER",
     ),
     inferenceApi: normalizeInferenceApi(env.NEMOCLAW_INFERENCE_API),
+    contextWindow: normalizePositiveInteger(env.NEMOCLAW_CONTEXT_WINDOW, "NEMOCLAW_CONTEXT_WINDOW"),
+    maxTokens: normalizePositiveInteger(env.NEMOCLAW_MAX_TOKENS, "NEMOCLAW_MAX_TOKENS"),
+    reasoning: normalizeReasoning(env.NEMOCLAW_REASONING),
   };
+}
+
+function buildModel(settings: Settings): Record<string, unknown> {
+  const model: Record<string, unknown> = { id: settings.model };
+  if (settings.contextWindow !== null) model.contextWindow = settings.contextWindow;
+  if (settings.maxTokens !== null) model.maxTokens = settings.maxTokens;
+  if (settings.reasoning !== null) model.reasoning = settings.reasoning;
+  return model;
 }
 
 function buildConfig(settings: Settings): ManagedPiConfig {
@@ -103,7 +138,7 @@ function buildConfig(settings: Settings): ManagedPiConfig {
         api: settings.inferenceApi,
         apiKey: MANAGED_PROVIDER_API_KEY,
         baseUrl: settings.baseUrl,
-        models: [{ id: settings.model }],
+        models: [buildModel(settings)],
       },
     },
   };

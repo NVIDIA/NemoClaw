@@ -31,14 +31,11 @@ import {
 } from "./docker-startup-command-sandbox-create";
 import { findOpenShellDockerSandboxContainerIds } from "./openshell-docker-sandbox-containers";
 
-export type {
-  DockerGpuRoutePlan,
-  SelectedDockerGpuRoute,
-} from "./docker-gpu-route";
+export type { DockerGpuRoutePlan, SelectedDockerGpuRoute } from "./docker-gpu-route";
 export {
   isDockerDesktopWslRuntime,
   resetIsDockerDesktopWslRuntimeCache,
-  resolveAgentPlan,
+  resolveProfileGpuCreatePlan,
   resolveDockerGpuSandboxCreatePlan,
 } from "./docker-gpu-sandbox-create-plan";
 
@@ -118,6 +115,8 @@ export interface DockerManagedBootstrapDeferredCutover {
 
 export type DockerGpuSandboxCreatePatch = {
   maybeApplyDuringCreate: () => void;
+  /** Full Docker container ID owned by the transaction, or null until it records a replacement. */
+  replacementRuntimeId: () => string | null;
   createFailureMessage: () => string | null;
   exitOnPatchError: () => Promise<void>;
   attachManagedBootstrapCutover: (cutover: DockerManagedBootstrapDeferredCutover) => void;
@@ -295,6 +294,10 @@ export function createDockerGpuSandboxCreatePatch(
       }
     },
 
+    replacementRuntimeId() {
+      return result?.newContainerId ?? null;
+    },
+
     createFailureMessage() {
       if (!patchError) return null;
       return routeAdapter.enabled
@@ -465,13 +468,51 @@ export function createDockerGpuSandboxCreatePatch(
             throw failure;
           }
         }
+        const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(
+          options.timeoutSecs,
+        );
+        const finalHandoffDeadlineMs = Date.now() + supervisorReconnectTimeoutSecs * 1000;
         const finalizeOutcome = result
-          ? finalizeBackup({ result, supervisorReady: true }, options.deps)
+          ? finalizeBackup(
+              {
+                result,
+                supervisorReady: true,
+                sandboxName: options.sandboxName,
+                lifecycleReleaseTimeoutSecs: supervisorReconnectTimeoutSecs,
+              },
+              options.deps,
+            )
           : null;
         cutoverFinalized = true;
-        if (!finalizeOutcome || finalizeOutcome.backupRemoved) return;
+        if (!finalizeOutcome) return;
+        if (finalizeOutcome.backupRemoved && finalizeOutcome.replacementRestarted === undefined) {
+          return;
+        }
+        if (
+          finalizeOutcome.backupRemoved &&
+          finalizeOutcome.replacementRestarted &&
+          finalizeOutcome.lifecycleReleaseObserved === true
+        ) {
+          const remainingReconnectTimeoutSecs = Math.max(
+            0,
+            Math.ceil((finalHandoffDeadlineMs - Date.now()) / 1000),
+          );
+          console.log(
+            `  Waiting for OpenShell supervisor to confirm the final container handoff (up to ${remainingReconnectTimeoutSecs}s)...`,
+          );
+          if (
+            remainingReconnectTimeoutSecs > 0 &&
+            waitForSupervisor(options.sandboxName, remainingReconnectTimeoutSecs, {
+              runOpenshell: options.deps.runOpenshell,
+              runCaptureOpenshell: options.deps.runCaptureOpenshell,
+              sleep: options.deps.sleep,
+            })
+          ) {
+            return;
+          }
+        }
         const failure = new Error(
-          "Managed startup passed Ready, but its rollback backup could not be removed.",
+          "Managed startup passed Ready, but its final runtime handoff did not converge.",
         );
         cutoverFinalizationFailure = failure;
         onPatchFailureExit(options.sandboxName, failure, {

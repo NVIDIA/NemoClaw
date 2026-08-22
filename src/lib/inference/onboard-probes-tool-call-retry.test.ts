@@ -68,9 +68,9 @@ exit 0
           JSON.parse(fs.readFileSync(path.join(tmpDir, `request-${n}.json`), "utf8")),
         );
         expect(payloads.map((payload) => payload.max_tokens)).toEqual([256, 1024, 4096]);
-        for (const payload of payloads) {
+        payloads.forEach((payload) => {
           expect(payload).toMatchObject({ tool_choice: "required" });
-        }
+        });
         const maxTimes = [1, 2, 3].map((n) =>
           Number(fs.readFileSync(path.join(tmpDir, `maxtime-${n}`), "utf8")),
         );

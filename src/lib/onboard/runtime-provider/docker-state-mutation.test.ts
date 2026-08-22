@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -51,6 +52,16 @@ afterEach(() => {
 });
 
 describe("Docker runtime-provider state mutation surface", () => {
+  it("uses one harness-owned absolute Docker executable", () => {
+    const runtime = harness();
+    runtime.authority.engine.capture(["version"]);
+    const executable = runtime.capture.mock.calls[0]?.[0] as string;
+
+    expect(path.isAbsolute(executable)).toBe(true);
+    expect(executable).toBe(fs.realpathSync(path.join(runtime.root, "bin", "docker")));
+    expect(runtime.context.environment).toMatchObject({ PATH: path.join(runtime.root, "bin") });
+  });
+
   it("resolves one full labeled runtime and records authority only on synchronous acquire", () => {
     const runtime = harness();
     const surface = createDockerStateMutationSurface({
@@ -534,8 +545,13 @@ describe("Docker state mutation owner", () => {
     expect(runtime.lifecycleStore.listUnfinished()[0]?.phase).toBe("fence-established");
   });
 
-  it("converges when an orphan acquire writes its marker before recovery", () => {
-    const runtime = harness({ loseAcquireResponseOnce: true });
+  it("recovers a durable-volume fence when acquire succeeds after its response is lost (#9485)", () => {
+    const runtime = harness({ loseAcquireResponseOnce: true, stateMountType: "volume" });
+    expect(runtime.state).toMatchObject({
+      mountDriver: "local",
+      mountName: "nemoclaw-hermes-alpha-state",
+      mountType: "volume",
+    });
 
     expect(() => runtime.owner.acquire({ ...runtime.context, plan: plan() })).toThrow(
       "root helper acquire did not complete successfully",

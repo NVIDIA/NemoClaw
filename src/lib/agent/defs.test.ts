@@ -28,6 +28,7 @@ import {
   resolveAgentName,
   resolveAgentNameAlias,
 } from "./defs";
+import { resolveAgent } from "./onboard";
 
 const tempAgentDirs: string[] = [];
 
@@ -43,6 +44,7 @@ const qualificationFixtures: CandidateQualificationFixture[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.NEMOCLAW_AGENT;
+  delete process.env.NEMOCLAW_CUA_ENABLED;
   authority.digests.splice(0, authority.digests.length);
   while (qualificationFixtures.length > 0) qualificationFixtures.pop()?.cleanup();
   while (tempAgentDirs.length > 0) {
@@ -54,25 +56,31 @@ afterEach(() => {
 });
 
 describe("agent definitions", () => {
-  it("cannot discover or load a local NemoCUA manifest while the feature is disabled (#7755)", () => {
-    const realExistsSync = fs.existsSync.bind(fs);
-    vi.spyOn(fs, "existsSync").mockImplementation((candidate) =>
-      candidate === path.join(AGENTS_DIR, "nemocua", "manifest.yaml")
-        ? true
-        : realExistsSync(candidate),
-    );
-    vi.spyOn(fs, "readdirSync").mockReturnValue([
-      { name: "nemocua", isDirectory: () => true } as fs.Dirent,
-    ] as never);
-    const disabledEnv = {
-      NEMOCLAW_CUA_RUNTIME_MANIFEST: "/private/untrusted/runtime-manifest.json",
-      NEMOCLAW_CUA_RUNTIME_MANIFEST_SHA256: "a".repeat(64),
-    };
+  it("exposes NemoCUA only behind the exact experimental feature flag (#9649)", () => {
+    expect(fs.existsSync(path.join(AGENTS_DIR, "nemocua", "manifest.yaml"))).toBe(true);
+    expect(listAgents({})).not.toContain("nemocua");
+    expect(listAgents({ NEMOCLAW_CUA_ENABLED: "true" })).not.toContain("nemocua");
+    expect(() => loadAgent("nemocua", {})).toThrow("NemoCUA is disabled");
 
-    expect(listAgents(disabledEnv)).not.toContain("nemocua");
-    expect(() => loadAgent("nemocua", disabledEnv)).toThrow(
-      "use the controlled Brev Launchable activation",
-    );
+    const enabledEnv = { NEMOCLAW_CUA_ENABLED: "1" };
+    expect(listAgents(enabledEnv)).toContain("nemocua");
+    expect(loadAgent("nemocua", enabledEnv)).toMatchObject({
+      name: "nemocua",
+      runtime: {
+        kind: "terminal",
+        headless_command: "python3 /app/run_with_harness.py",
+      },
+    });
+  });
+
+  it("keeps NemoCUA out of choices and direct resolution until enabled (#9649)", () => {
+    expect(getAgentChoices().map((choice) => choice.name)).not.toContain("nemocua");
+    expect(() => resolveAgent({ agentFlag: "nemocua" })).toThrow("Unknown agent 'nemocua'");
+
+    vi.stubEnv("NEMOCLAW_CUA_ENABLED", "1");
+
+    expect(getAgentChoices().map((choice) => choice.name)).toContain("nemocua");
+    expect(resolveAgent({ agentFlag: "nemocua" })?.name).toBe("nemocua");
   });
 
   it("keeps the Pi candidate manifest out of agent selection by default (#7925)", () => {
@@ -136,15 +144,12 @@ describe("agent definitions", () => {
     expect(manifest.expected_version).toBe("0.84.1");
     expect(manifest.runtime.kind).toBe("terminal");
     expect(manifest.config.dir).toBe("/sandbox/.pi/agent");
-    expect(manifest.state_dirs.filter(({ backup }) => backup !== false).map(({ path }) => path)).toEqual([
-      "sessions",
-      "prompts",
-      "themes",
-    ]);
-    expect(manifest.state_dirs.filter(({ backup }) => backup === false).map(({ path }) => path)).toEqual([
-      "tools",
-      "bin",
-    ]);
+    expect(
+      manifest.state_dirs.filter(({ backup }) => backup !== false).map(({ path }) => path),
+    ).toEqual(["sessions", "prompts", "themes"]);
+    expect(
+      manifest.state_dirs.filter(({ backup }) => backup === false).map(({ path }) => path),
+    ).toEqual(["tools", "bin"]);
     expect(manifest.state_files.map((file) => file.path)).toEqual(["settings.json"]);
     const restore = manifest.state_files[0]?.restore as {
       merge?: string;
@@ -294,18 +299,16 @@ describe("agent definitions", () => {
     expect(() => loadAgent(agentName)).toThrow(/config\.shields_files/);
   });
 
-  it("rejects invalid forward_ports values in manifests", () => {
-    for (const port of [1023, 70000]) {
-      const agentName = `invalid-forward-port-${String(port)}-${String(Date.now())}`;
-      writeTempAgentManifest(
-        agentName,
-        [`name: ${agentName}`, "display_name: Broken Ports", "forward_ports:", `  - ${port}`].join(
-          "\n",
-        ),
-      );
+  it.each([1023, 70000])("rejects invalid forward_ports value %s in manifests", (port) => {
+    const agentName = `invalid-forward-port-${String(port)}-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [`name: ${agentName}`, "display_name: Broken Ports", "forward_ports:", `  - ${port}`].join(
+        "\n",
+      ),
+    );
 
-      expect(() => loadAgent(agentName)).toThrow(/forward_ports\[0\]/);
-    }
+    expect(() => loadAgent(agentName)).toThrow(/forward_ports\[0\]/);
   });
 
   it("rejects invalid health_probe.port values in manifests", () => {
@@ -407,23 +410,23 @@ describe("agent definitions", () => {
     expect(() => loadAgent(agentName)).toThrow(/inference\.provider_type/);
   });
 
-  it.each([
-    "42",
-    '"bad model"',
-  ])("rejects invalid inference default models in manifests (%s)", (defaultModel) => {
-    const agentName = `invalid-inference-default-model-${String(Date.now())}-${defaultModel.length}`;
-    writeTempAgentManifest(
-      agentName,
-      [
-        `name: ${agentName}`,
-        "display_name: Broken Inference Default",
-        "inference:",
-        `  default_model: ${defaultModel}`,
-      ].join("\n"),
-    );
+  it.each(["42", '"bad model"'])(
+    "rejects invalid inference default models in manifests (%s)",
+    (defaultModel) => {
+      const agentName = `invalid-inference-default-model-${String(Date.now())}-${defaultModel.length}`;
+      writeTempAgentManifest(
+        agentName,
+        [
+          `name: ${agentName}`,
+          "display_name: Broken Inference Default",
+          "inference:",
+          `  default_model: ${defaultModel}`,
+        ].join("\n"),
+      );
 
-    expect(() => loadAgent(agentName)).toThrow(/inference\.default_model/);
-  });
+      expect(() => loadAgent(agentName)).toThrow(/inference\.default_model/);
+    },
+  );
 
   it("rejects invalid MCP bridge adapter declarations in manifests", () => {
     const agentName = `invalid-mcp-adapter-${String(Date.now())}`;

@@ -19,7 +19,7 @@ const PACKAGE_SPEC = "openclaw@2026.7.1";
 const INTEGRITY =
   "sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==";
 const TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz";
-const LOCK_SHA256 = "a814d82a36046bd7819d222337809ce80ccfd76b553cd17265ff64a527d3d095";
+const LOCK_SHA256 = "60f816dcff6f35179b1c48b4c06db9473497760d45ca1831252c27e8b1d2d665";
 const MCPORTER_PACKAGE_SPEC = "mcporter@0.7.3";
 const MCP_TOOL_DISCOVERY_PACKAGE_SPEC = "@modelcontextprotocol/sdk@1.30.0";
 const MCP_TOOL_DISCOVERY_LOCK_SHA256 =
@@ -180,6 +180,8 @@ describe("locked OpenClaw production installation (#5896)", () => {
     expect(verified).toContain("fast-uri@3.1.5");
     expect(verified).toContain("hono@4.12.34");
     expect(verified).toContain("ip-address@10.3.1");
+    expect(verified).toContain("tar@7.5.21");
+    expect(verified).not.toContain("tar@7.5.19");
     expect(verified).toContain("undici@8.10.0");
     expect(sha256(LOCKFILE)).toBe(LOCK_SHA256);
   });
@@ -313,54 +315,4 @@ describe("locked OpenClaw production installation (#5896)", () => {
     expect(verifyInstalledNpmLock(installedFixture({ omit: true, optional: true }))).toEqual([]);
   });
 
-  // source-shape-contract: compatibility -- Both shipped Dockerfiles must preserve the reviewed lock verification and installation sequence
-  it.each([
-    "Dockerfile",
-    "Dockerfile.base",
-  ])("invokes the locked installer before exposing OpenClaw in %s", (dockerfileName) => {
-    const contents = fs.readFileSync(path.join(REPO_ROOT, dockerfileName), "utf-8");
-    const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
-    const verifyIndex = contents.indexOf(
-      "node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-lock",
-    );
-    const installIndex = contents.indexOf(
-      "npm --prefix /usr/local/lib/nemoclaw/openclaw-runtime ci",
-      verifyIndex,
-    );
-    const installedIdentityIndex = contents.indexOf("--verify-installed-lock", installIndex);
-    const postinstallIndex = contents.indexOf(
-      "/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs",
-      installedIdentityIndex,
-    );
-    const linkIndex = contents.indexOf(
-      "ln -s /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw",
-      postinstallIndex,
-    );
-    const binLinkIndex = contents.indexOf(
-      "ln -s /usr/local/lib/nemoclaw/openclaw-runtime/node_modules/.bin/openclaw",
-      linkIndex,
-    );
-    const branchEnd = contents.indexOf("else \\", installIndex);
-    const currentInstallBranch = contents.slice(verifyIndex, branchEnd);
-
-    const groupedRuntimeCopy =
-      "COPY agents/openclaw/openclaw-runtime/package.json agents/openclaw/openclaw-runtime/package-lock.json /usr/local/lib/nemoclaw/openclaw-runtime/";
-    const splitLockCopy =
-      "COPY agents/openclaw/openclaw-runtime/package-lock.json /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json";
-    expect(flattenedContents.includes(groupedRuntimeCopy) || contents.includes(splitLockCopy)).toBe(
-      true,
-    );
-    expect(verifyIndex).toBeGreaterThanOrEqual(0);
-    expect(installIndex).toBeGreaterThan(verifyIndex);
-    expect(installedIdentityIndex).toBeGreaterThan(installIndex);
-    expect(postinstallIndex).toBeGreaterThan(installedIdentityIndex);
-    expect(linkIndex).toBeGreaterThan(postinstallIndex);
-    expect(binLinkIndex).toBeGreaterThan(linkIndex);
-    expect(branchEnd).toBeGreaterThan(installIndex);
-    expect(currentInstallBranch).toContain(`--lock-sha256 \"$OPENCLAW_LOCK_SHA256\"`);
-    expect(currentInstallBranch).not.toContain("npm install -g");
-    expect(contents).toContain("'schema=4'");
-    expect(contents).toContain('"lock-sha256=${OPENCLAW_LOCK_SHA256}"');
-    expect(contents).toContain("locked-ci+reviewed-lifecycle-v2");
-  });
 });

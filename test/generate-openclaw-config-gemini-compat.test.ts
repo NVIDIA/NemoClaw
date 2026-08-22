@@ -76,40 +76,39 @@ describe("generate-openclaw-config.mts: Gemini 3 managed-route compat", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it.each(["gemini-3.6-flash", "google/gemini-3.1-pro-preview"])(
+    "loads Gemini compatibility for %s managed inference (#8474)",
+    (model) => {
+      const config = runConfigScript({
+        NEMOCLAW_MODEL: model,
+        NEMOCLAW_PROVIDER_KEY: "inference",
+        NEMOCLAW_PRIMARY_MODEL_REF: `inference/${model}`,
+        NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+        NEMOCLAW_INFERENCE_API: "openai-completions",
+      });
+
+      expect(config.models.providers.inference).toMatchObject({
+        baseUrl: "https://inference.local/v1",
+        api: "openai-completions",
+      });
+      expect(config.plugins.entries["nemoclaw-gemini-inference-compat"]).toEqual({
+        enabled: true,
+      });
+      expect(config.plugins.allow).toEqual(["nemoclaw", "nemoclaw-gemini-inference-compat"]);
+      expect(config.plugins.load.paths).toEqual([
+        "/usr/local/share/nemoclaw/openclaw-plugins/gemini-inference-compat",
+      ]);
+    },
+  );
+
   it.each([
-    "gemini-3.6-flash",
-    "google/gemini-3.1-pro-preview",
-  ])("loads Gemini compatibility for %s managed inference (#8474)", (model) => {
-    const config = runConfigScript({
-      NEMOCLAW_MODEL: model,
-      NEMOCLAW_PROVIDER_KEY: "inference",
-      NEMOCLAW_PRIMARY_MODEL_REF: `inference/${model}`,
-      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
-      NEMOCLAW_INFERENCE_API: "openai-completions",
-    });
-
-    expect(config.models.providers.inference).toMatchObject({
-      baseUrl: "https://inference.local/v1",
-      api: "openai-completions",
-    });
-    expect(config.plugins.entries["nemoclaw-gemini-inference-compat"]).toEqual({
-      enabled: true,
-    });
-    expect(config.plugins.allow).toEqual(["nemoclaw", "nemoclaw-gemini-inference-compat"]);
-    expect(config.plugins.load.paths).toEqual([
-      "/usr/local/share/nemoclaw/openclaw-plugins/gemini-inference-compat",
-    ]);
-  });
-
-  it("does not load Gemini compatibility for non-Gemini-3 models or non-managed routes (#8474)", () => {
-    const cases = [
-      { NEMOCLAW_MODEL: "gemini-2.5-flash" },
-      { NEMOCLAW_PROVIDER_KEY: "openai" },
-      { NEMOCLAW_INFERENCE_API: "openai-responses" },
-      { NEMOCLAW_INFERENCE_BASE_URL: "https://generativelanguage.googleapis.com/v1beta" },
-    ];
-
-    for (const envCase of cases) {
+    { NEMOCLAW_MODEL: "gemini-2.5-flash" },
+    { NEMOCLAW_PROVIDER_KEY: "openai" },
+    { NEMOCLAW_INFERENCE_API: "openai-responses" },
+    { NEMOCLAW_INFERENCE_BASE_URL: "https://generativelanguage.googleapis.com/v1beta" },
+  ])(
+    "does not load Gemini compatibility for non-Gemini-3 models or non-managed routes [case %#] (#8474)",
+    (envCase) => {
       const config = runConfigScript({
         NEMOCLAW_MODEL: "gemini-3.6-flash",
         NEMOCLAW_PROVIDER_KEY: "inference",
@@ -121,6 +120,6 @@ describe("generate-openclaw-config.mts: Gemini 3 managed-route compat", () => {
 
       expect(config.plugins.entries["nemoclaw-gemini-inference-compat"]).toBeUndefined();
       expect(config.plugins.load).toBeUndefined();
-    }
-  });
+    },
+  );
 });

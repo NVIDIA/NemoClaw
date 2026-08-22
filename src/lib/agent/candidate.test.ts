@@ -36,20 +36,25 @@ afterEach(() => {
 });
 
 describe("candidate agent gate", () => {
-  it("treats every declared candidate managed-image agent as a candidate (#7927)", () => {
-    for (const agent of CANDIDATE_MANAGED_IMAGE_AGENTS) {
+  it.each(CANDIDATE_MANAGED_IMAGE_AGENTS)(
+    "treats the declared %s managed-image agent as a candidate (#7927)",
+    (agent) => {
       expect(isCandidateAgent(agent)).toBe(true);
-    }
+    },
+  );
+
+  it("keeps shipped agents outside the candidate classification (#7927)", () => {
     expect(isCandidateAgent("openclaw")).toBe(false);
     expect(isCandidateAgent("hermes")).toBe(false);
     expect(isCandidateAgent("langchain-deepagents-code")).toBe(false);
   });
 
-  it("publishes no qualified candidate receipt in this release (#7927)", () => {
-    for (const agent of CANDIDATE_MANAGED_IMAGE_AGENTS) {
+  it.each(CANDIDATE_MANAGED_IMAGE_AGENTS)(
+    "publishes no qualified %s candidate receipt in this release (#7927)",
+    (agent) => {
       expect(CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS[agent]).toEqual([]);
-    }
-  });
+    },
+  );
 
   it("never activates a candidate from the protected flag alone (#7927)", () => {
     expect(isCandidateAgentSelectable("pi", { [CANDIDATE_AGENT_FEATURE_ENV]: "1" })).toBe(false);
@@ -100,12 +105,13 @@ describe("candidate agent gate", () => {
     );
   });
 
-  it("never refuses a shipped agent through the candidate gate (#7927)", () => {
-    for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"])(
+    "never refuses the shipped %s agent through the candidate gate (#7927)",
+    (agent) => {
       expect(() => requireCandidateAgentSelectable(agent, {})).not.toThrow();
       expect(() => requireCandidateQualificationEnabled(agent, {})).not.toThrow();
-    }
-  });
+    },
+  );
 
   it("refuses to start a candidate without qualification authority (#7927)", () => {
     expect(() => requireCandidateQualificationEnabled("pi", {})).toThrow(

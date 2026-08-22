@@ -183,6 +183,9 @@ interface BackupRetryDeps {
   delayMs: number;
 }
 
+const STARTED_BACKUP_READY_TIMEOUT_MS = 90_000;
+const STARTED_BACKUP_RETRY_DELAY_MS = 2_000;
+
 const defaultBackupRetryDeps: BackupRetryDeps = {
   backup: (name) =>
     snapshotBackup.backupSandboxStateWithManagedAuthority(
@@ -193,13 +196,16 @@ const defaultBackupRetryDeps: BackupRetryDeps = {
       },
     ),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  attempts: 5,
-  delayMs: 2000,
+  // Managed-profile containers run their provider-owned startup before the
+  // OpenShell SSH transport becomes reachable. Keep this inside backup-all's
+  // 180-second command budget while allowing a cold managed restart to finish.
+  attempts: Math.floor(STARTED_BACKUP_READY_TIMEOUT_MS / STARTED_BACKUP_RETRY_DELAY_MS) + 1,
+  delayMs: STARTED_BACKUP_RETRY_DELAY_MS,
 };
 
 /**
  * Back up a sandbox whose container was just started. The container's SSH
- * endpoint can take a few seconds to answer after `docker start`, so retry
+ * endpoint can take up to the managed cold-start window after `docker start`, so retry
  * while — and only while — the result is a transport-level `unreachable`
  * failure. Every other outcome (success, permission failure, precondition)
  * is returned as-is on first sight.

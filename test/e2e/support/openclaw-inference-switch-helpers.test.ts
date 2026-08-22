@@ -20,8 +20,9 @@ describe("openclaw-inference-switch post-switch retry classification", () => {
     productMatched: false,
   };
 
-  it("retries only explicit transport and HTTP failures", () => {
-    for (const exitCode of [6, 7, 28, 35, 52, 56]) {
+  it.each([6, 7, 28, 35, 52, 56])(
+    "retries only explicit transport and HTTP failures [%s]",
+    (exitCode) => {
       expect(
         classifyOpenClawPostSwitchInferenceAttempt({
           ...attempt,
@@ -29,23 +30,24 @@ describe("openclaw-inference-switch post-switch retry classification", () => {
           output: "curl transport failed",
         }),
       ).toEqual({ outcome: "failed", failureClass: "transient-external" });
-    }
-    expect(
-      classifyOpenClawPostSwitchInferenceAttempt({
-        ...attempt,
-        exitCode: 0,
-        httpStatus: "503",
-        output: "service unavailable",
-      }),
-    ).toEqual({ outcome: "failed", failureClass: "transient-external" });
-    expect(
-      classifyOpenClawPostSwitchInferenceAttempt({
-        ...attempt,
-        exitCode: 1,
-        output: "ETIMEDOUT",
-      }),
-    ).toEqual({ outcome: "failed", failureClass: "deterministic" });
-  });
+
+      expect(
+        classifyOpenClawPostSwitchInferenceAttempt({
+          ...attempt,
+          exitCode: 0,
+          httpStatus: "503",
+          output: "service unavailable",
+        }),
+      ).toEqual({ outcome: "failed", failureClass: "transient-external" });
+      expect(
+        classifyOpenClawPostSwitchInferenceAttempt({
+          ...attempt,
+          exitCode: 1,
+          output: "ETIMEDOUT",
+        }),
+      ).toEqual({ outcome: "failed", failureClass: "deterministic" });
+    },
+  );
 
   it("keeps terminal and successful product mismatches out of retries", () => {
     expect(

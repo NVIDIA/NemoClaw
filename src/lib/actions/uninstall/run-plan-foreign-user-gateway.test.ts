@@ -49,6 +49,7 @@ function uninstallWithHostGatewayOwnedBy(uid: number): {
         env: { HOME: tmpHome, NO_COLOR: "1" },
         error: (message) => errors.push(message),
         existsSync: () => false,
+        hasPortableRuntimeCleanup: () => false,
         isTty: false,
         kill: () => false,
         log: vi.fn(),

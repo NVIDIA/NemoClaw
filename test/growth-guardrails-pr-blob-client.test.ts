@@ -9,7 +9,7 @@ import {
   type FetchLike,
   GRAPHQL_BATCH_SIZE,
   isTransientStatus,
-} from "../tools/growth-guardrails/pr-blob-client.mts";
+} from "./helpers/pr-blob-client";
 
 const DETERMINISTIC = { sleep: async () => {}, random: () => 0 } as const;
 

@@ -146,6 +146,26 @@ describe("sandbox command transport privileged execution lease", () => {
     ]);
   });
 
+  it("uses the caller's bounded SSH command timeout", () => {
+    const deps = createDependencies();
+    mocks.resolveOpenshellSandboxSshHost.mockReturnValue("openshell-alpha.default");
+    mocks.createTempSshConfig.mockReturnValue({
+      cleanup: vi.fn(),
+      dir: "/tmp/nemoclaw-ssh-test",
+      file: "/tmp/nemoclaw-ssh-test/ssh_config",
+    });
+    mocks.spawnSync.mockReturnValue(spawnResult("ok\n"));
+
+    expect(executeSandboxCommandTransport(deps, "alpha", "openclaw doctor --fix", 300_000)).toEqual(
+      {
+        status: 0,
+        stderr: "",
+        stdout: "ok",
+      },
+    );
+    expect(mocks.spawnSync.mock.calls[0]?.[2]).toMatchObject({ timeout: 300_000 });
+  });
+
   it("does not resolve SSH state or spawn when lease acquisition is rejected", () => {
     const rejection = new Error("provider fence active");
     const deps = createDependencies({
@@ -165,6 +185,45 @@ describe("sandbox command transport privileged execution lease", () => {
     expect(mocks.resolveOpenshellSandboxSshHost).not.toHaveBeenCalled();
     expect(mocks.createTempSshConfig).not.toHaveBeenCalled();
     expect(mocks.spawnSync).not.toHaveBeenCalled();
+  });
+
+  it("pins OpenShell exec to the requested gateway (#9834)", () => {
+    const deps = createDependencies();
+    mocks.spawnSync.mockReturnValue(spawnResult("ok"));
+
+    expect(
+      executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {
+        gatewayName: "recorded-gateway",
+      }),
+    ).toEqual({ status: 0, stdout: "ok", stderr: "" });
+    expect(mocks.spawnSync.mock.calls[0]?.[1]).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "alpha",
+      "-g",
+      "recorded-gateway",
+      "--",
+      "sh",
+      "-c",
+      "marked:id",
+    ]);
+  });
+
+  it("does not use local Docker fallback for gateway-pinned exec (#9834)", () => {
+    const deps = createDependencies({
+      extractSandboxExecCommandStdout: vi.fn(() => null),
+    });
+    mocks.spawnSync.mockReturnValue(spawnResult("untrusted-output", { status: 1 }));
+
+    expect(
+      executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {
+        gatewayName: "recorded-gateway",
+        allowLocalDockerFallback: false,
+      }),
+    ).toBeNull();
+    expect(deps.privilegedSandboxExecArgv).not.toHaveBeenCalled();
+    expect(deps.dockerSpawnSync).not.toHaveBeenCalled();
   });
 
   it("holds one lease across OpenShell failure and the complete local fallback", () => {

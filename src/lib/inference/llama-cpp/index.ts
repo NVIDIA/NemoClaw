@@ -122,7 +122,8 @@ function hasHealthyNativeResponse(result: CurlProbeResult): boolean {
 function hasMatchingNativeProps(result: CurlProbeResult, model: string): boolean {
   if (!result.ok) return false;
   const body = parseJsonObject(result.body);
-  if (!body || body.model_alias !== model || typeof body.model_path !== "string") return false;
+  if (!body || typeof body.model_path !== "string") return false;
+  if (body.model_alias !== undefined && body.model_alias !== model) return false;
   if (typeof body.total_slots !== "number" || body.total_slots <= 0) return false;
   const defaults = body.default_generation_settings;
   return (
@@ -348,14 +349,22 @@ export function probeLlamaCppAttachment(
       const boundFailure = boundedProbeFailure(result);
       if (boundFailure) return boundFailure;
     }
-    if (
-      !hasHealthyNativeResponse(health) ||
-      !hasMatchingNativeProps(props, model) ||
-      !hasNativeMetricsResponse(metrics)
-    ) {
+    if (!hasHealthyNativeResponse(health)) {
       return failure(
         "conflicting-fingerprint",
-        "The server returned conflicting or incomplete native llama.cpp evidence.",
+        "The llama.cpp health endpoint did not report the native status ok.",
+      );
+    }
+    if (!hasMatchingNativeProps(props, model)) {
+      return failure(
+        "conflicting-fingerprint",
+        "The llama.cpp properties endpoint did not return complete native evidence for the selected served model.",
+      );
+    }
+    if (!hasNativeMetricsResponse(metrics)) {
+      return failure(
+        "conflicting-fingerprint",
+        "The llama.cpp metrics endpoint returned neither llama.cpp metrics nor the native metrics-not-supported response.",
       );
     }
     return { ok: true, model };

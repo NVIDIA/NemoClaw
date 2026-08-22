@@ -6,18 +6,18 @@ import { createHash } from "node:crypto";
 export {
   NATIVE_RUNTIME_QUALIFICATION_PRODUCER_WORKFLOW,
   NATIVE_RUNTIME_QUALIFICATION_PROTECTED_REPOSITORY,
-} from "../../../src/lib/onboard/runtime-provider/native-qualification-authority";
+} from "../../../src/lib/onboard/runtime-provider/native-qualification-authority.ts";
 import type {
   NativeRuntimeQualificationAuthority,
   NativeRuntimeQualificationExpectedSource,
   NativeRuntimeQualificationProtectedRun,
-} from "../../../src/lib/onboard/runtime-provider/native-qualification-authority";
+} from "../../../src/lib/onboard/runtime-provider/native-qualification-authority.ts";
 
 export type {
   NativeRuntimeQualificationAuthority,
   NativeRuntimeQualificationExpectedSource,
   NativeRuntimeQualificationProtectedRun,
-} from "../../../src/lib/onboard/runtime-provider/native-qualification-authority";
+} from "../../../src/lib/onboard/runtime-provider/native-qualification-authority.ts";
 
 export const NATIVE_RUNTIME_QUALIFICATION_AGENTS = [
   "openclaw",
@@ -436,7 +436,9 @@ function validatedArtifactReceipt(
   }
   const contents = readReceipt(artifactPath);
   if (contents === null) {
-    throw new Error(`${label} receipt '${artifactPath}' is missing from the authenticated artifact`);
+    throw new Error(
+      `${label} receipt '${artifactPath}' is missing from the authenticated artifact`,
+    );
   }
   const actualSha256 = createHash("sha256").update(contents).digest("hex");
   if (actualSha256 !== artifact.sha256) {

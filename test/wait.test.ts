@@ -50,10 +50,11 @@ describe("wait utility", () => {
   });
 
   const throwWhenSelected = (selected: boolean, error: Error): void =>
-    selected ? (() => {
-      throw error;
-    })() : undefined;
-
+    selected
+      ? (() => {
+          throw error;
+        })()
+      : undefined;
 
   const retryCases = [
     { label: "accepts the first result", acceptAt: 1, delays: [10, 20], attempt: 1 },
@@ -466,17 +467,19 @@ describe("buildLoopbackProbeEnv (#4181)", () => {
     assert.strictEqual(env.no_proxy, undefined);
   });
 
-  it("adds localhost and 127.0.0.1 to NO_PROXY when HTTP_PROXY is set", () => {
-    snapshotAndClear();
-    process.env.HTTP_PROXY = "http://127.0.0.1:8118";
-    process.env.http_proxy = "http://127.0.0.1:8118";
-    const env = buildLoopbackProbeEnv();
-    for (const key of ["NO_PROXY", "no_proxy"]) {
+  it.each(["NO_PROXY", "no_proxy"])(
+    "adds localhost and 127.0.0.1 to NO_PROXY when HTTP_PROXY is set [%s]",
+    (key) => {
+      snapshotAndClear();
+      process.env.HTTP_PROXY = "http://127.0.0.1:8118";
+      process.env.http_proxy = "http://127.0.0.1:8118";
+      const env = buildLoopbackProbeEnv();
+
       const parts = (env[key] ?? "").split(",").map((s) => s.trim());
       assert.ok(parts.includes("localhost"), `${key} missing localhost: ${env[key]}`);
       assert.ok(parts.includes("127.0.0.1"), `${key} missing 127.0.0.1: ${env[key]}`);
-    }
-  });
+    },
+  );
 
   it("preserves existing NO_PROXY entries when augmenting", () => {
     snapshotAndClear();

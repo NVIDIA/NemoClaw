@@ -143,6 +143,23 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
+  it("rejects an unguarded qualification credential", () => {
+    const value = workflow();
+    const qualification = namedStep(
+      value,
+      "Run all-agent GPU, local inference, rollback, and cleanup qualification",
+    );
+    qualification.env = { NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}" };
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "managed-image-protected-runtime qualification env must bind NVIDIA_API_KEY",
+        ),
+      ]),
+    );
+  });
+
   it("prevents the credentialed qualification step from executing .candidate-runtime files", () => {
     const value = workflow();
     const qualification = namedStep(

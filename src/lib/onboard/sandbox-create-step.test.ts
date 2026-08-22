@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { streamSandboxCreate } from "../sandbox/create-stream";
 import {
@@ -15,6 +15,10 @@ import {
   type SandboxCreateStepContext,
   type SandboxCreateStepDeps,
 } from "./sandbox-create-step";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 function makeLaunch(overrides: Record<string, unknown> = {}) {
   return {
@@ -164,6 +168,35 @@ describe("runSandboxCreateStep", () => {
         route: "native",
         persistStartupCommand: true,
         openshellSandboxCommand: ["env", "CHAT_UI_URL=http://127.0.0.1:8642", "nemoclaw-start"],
+      }),
+    );
+  });
+
+  it("gates restart-safe persistence on the step's own portable env, not process.env (#9462)", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "default");
+    const launch = makeLaunch({
+      sandboxStartupCommand: ["env", "nemoclaw-start"],
+    });
+    const patch = makePatch();
+    const deps = makeDeps(launch, patch, { status: 0, output: "created" });
+
+    await runSandboxCreateStep(
+      makeContext({
+        agent: { name: "hermes" } as SandboxCreateStepContext["agent"],
+        env: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        prebuild: {
+          buildCtx: "/tmp/ctx",
+          buildId: "b1",
+          dockerDriverGateway: true,
+          origin: "generated",
+        },
+      }),
+      deps,
+    );
+
+    expect(deps.createDockerGpuPatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        persistStartupCommand: false,
       }),
     );
   });

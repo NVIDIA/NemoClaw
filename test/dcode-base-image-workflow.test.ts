@@ -29,15 +29,19 @@ function pinnedAptVersion(dockerfile: string, packageName: string): string {
 }
 
 describe("base-image dependency contracts", () => {
-  it("keeps shared apt dependencies pinned and aligned across base images (#6679)", () => {
-    const curlVersions = baseDockerfiles.map((dockerfile) => pinnedAptVersion(dockerfile, "curl"));
+  it.each(Array.from(baseDockerfiles, (value) => [value]))(
+    "keeps shared apt dependencies in %s pinned and aligned (#6679)",
+    (dockerfile) => {
+      const curlVersions = baseDockerfiles.map((dockerfile) =>
+        pinnedAptVersion(dockerfile, "curl"),
+      );
 
-    expect(new Set(curlVersions).size).toBe(1);
-    for (const dockerfile of baseDockerfiles) {
+      expect(new Set(curlVersions).size).toBe(1);
+
       const source = fs.readFileSync(path.join(repoRoot, dockerfile), "utf8");
       expect(source, dockerfile).toMatch(/^FROM\s+\S+@sha256:[0-9a-f]{64}\s*$/m);
-    }
-  });
+    },
+  );
 
   it("executes dos2unix from each Deep Agents Code platform image before manifest publication (#8870)", () => {
     const action = YAML.parse(

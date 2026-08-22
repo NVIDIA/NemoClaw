@@ -91,7 +91,7 @@ if (cmd.startsWith("{ ") && cmd.includes("printf")) {
 // Backup: pre-backup symlink/hardlink audit — fixture has none.
 if (cmd.includes("-printf")) { process.exit(0); }
 // Backup: tar download of state dirs.
-if (cmd.startsWith("tar -cf - -C ")) {
+if (cmd.startsWith("tar ") && cmd.includes("-cf - -C ")) {
   const names = [...cmd.matchAll(/'([^']+)'/g)].map((m) => m[1]);
   const result = spawnSync("tar", ["-cf", "-", "-C", mapPath(names[0]), "--", ...names.slice(1)], {
     stdio: ["ignore", "pipe", "pipe"],

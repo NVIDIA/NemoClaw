@@ -21,6 +21,7 @@ export const RISKY_PATTERNS: RegExp[] = [
   /^scripts\/.*\.sh$/,
   /^bin\/lib\/onboard\.js$/,
   /^bin\/.*\.js$/,
+  /^src\/lib\/onboard\//,
   /^nemoclaw\/src\/blueprint\//,
   /^nemoclaw-blueprint\//,
   /^\.github\/workflows\//,

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as agentRuntime from "../../../agent/runtime";
+import { inspectPortableAgentReceiptDisposition } from "../../../onboard/experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock";
 import { connectSandbox } from "../connect";
 import {
@@ -16,6 +17,14 @@ export async function recoverSandboxWithHermesCronRestore(sandboxName: string): 
   await withMcpLifecycleLock(
     sandboxName,
     async () => {
+      const portable = inspectPortableAgentReceiptDisposition(sandboxName);
+      if (portable.kind === "hermes") {
+        await connectSandbox(sandboxName, {
+          probeOnly: true,
+          requireLaunchReadinessPublication: false,
+        });
+        return;
+      }
       const agent = agentRuntime.getSessionAgent(sandboxName);
       if (agent?.name === "hermes") {
         prepareHermesCronRestoreRecovery(sandboxName);

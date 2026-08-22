@@ -259,30 +259,34 @@ describe("rebuild-Hermes direct bootstrap", () => {
     expect(writeJson).not.toHaveBeenCalled();
   });
 
-  it("requires the exact compatible-endpoint provider and model (#7144)", async () => {
-    const expectedModel = "nvidia/example-model";
-    const routeOutput = [
-      "Gateway inference:",
-      "",
-      "  Provider: compatible-endpoint",
-      `  Model: ${expectedModel}`,
-    ].join("\n");
-    const exactHost = fakeHost([probe(routeOutput)]);
-    await expect(
-      requireRebuildHermesHostedInferenceRoute(
-        exactHost.host,
-        envFactory,
-        "secret",
-        expectedModel,
-        "route",
-        ["secret"],
-      ),
-    ).resolves.toEqual({ provider: "compatible-endpoint", model: expectedModel });
+  it.each([{ scenario: "wrong provider" }, { scenario: "wrong model" }])(
+    "requires the exact compatible-endpoint provider and model [$scenario] (#7144)",
+    async ({ scenario }) => {
+      const expectedModel = "nvidia/example-model";
+      const routeOutput = [
+        "Gateway inference:",
+        "",
+        "  Provider: compatible-endpoint",
+        `  Model: ${expectedModel}`,
+      ].join("\n");
+      const exactHost = fakeHost([probe(routeOutput)]);
+      await expect(
+        requireRebuildHermesHostedInferenceRoute(
+          exactHost.host,
+          envFactory,
+          "secret",
+          expectedModel,
+          "route",
+          ["secret"],
+        ),
+      ).resolves.toEqual({ provider: "compatible-endpoint", model: expectedModel });
 
-    for (const output of [
-      routeOutput.replace("compatible-endpoint", "nvidia-prod"),
-      routeOutput.replace(expectedModel, "wrong/model"),
-    ]) {
+      const output = (
+        {
+          "wrong provider": routeOutput.replace("compatible-endpoint", "nvidia-prod"),
+          "wrong model": routeOutput.replace(expectedModel, "wrong/model"),
+        } as const
+      )[scenario]!;
       const driftedHost = fakeHost([probe(output)]);
       await expect(
         requireRebuildHermesHostedInferenceRoute(
@@ -294,20 +298,20 @@ describe("rebuild-Hermes direct bootstrap", () => {
           ["secret"],
         ),
       ).rejects.toThrow(/gateway route drifted/);
-    }
 
-    const failedHost = fakeHost([probe("", 1, "gateway unavailable")]);
-    await expect(
-      requireRebuildHermesHostedInferenceRoute(
-        failedHost.host,
-        envFactory,
-        "secret",
-        expectedModel,
-        "route",
-        ["secret"],
-      ),
-    ).rejects.toThrow(/gateway unavailable/);
-  });
+      const failedHost = fakeHost([probe("", 1, "gateway unavailable")]);
+      await expect(
+        requireRebuildHermesHostedInferenceRoute(
+          failedHost.host,
+          envFactory,
+          "secret",
+          expectedModel,
+          "route",
+          ["secret"],
+        ),
+      ).rejects.toThrow(/gateway unavailable/);
+    },
+  );
 
   it("uses Hermes dashboard port 18789 or a safe alternate, never API port 8642 (#7144)", () => {
     expect(

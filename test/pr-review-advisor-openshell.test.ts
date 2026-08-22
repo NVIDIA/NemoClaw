@@ -11,6 +11,8 @@ import {
   ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
   ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
   advisorInferenceBaseUrl,
+  DEFAULT_ADVISOR_MODEL,
+  NEMOTRON_ULTRA_ADVISOR_MODEL,
   openAiAdvisorProviderConfig,
 } from "../tools/advisors/session.mts";
 import type { OpenShellTools } from "../tools/openshell-agent/runtime.mts";
@@ -100,21 +102,22 @@ afterEach(() => {
 });
 
 describe("PR review advisor OpenShell wrapper", () => {
-  it("keeps credential-bearing host commands out of the Pi SDK import graph", () => {
-    for (const relativePath of [
-      "tools/pr-review-advisor/openshell.mts",
-      "tools/pr-review-advisor/github-context.mts",
-      "tools/advisors/provider-constants.mts",
-      "tools/advisors/github.mts",
-      "tools/advisors/json.mts",
-      "tools/openshell-agent/runtime.mts",
-    ]) {
+  it.each([
+    "tools/pr-review-advisor/openshell.mts",
+    "tools/pr-review-advisor/github-context.mts",
+    "tools/advisors/provider-constants.mts",
+    "tools/advisors/github.mts",
+    "tools/advisors/json.mts",
+    "tools/openshell-agent/runtime.mts",
+  ])(
+    "keeps credential-bearing host commands out of the Pi SDK import graph [case %#]",
+    (relativePath) => {
       const source = fs.readFileSync(path.resolve(import.meta.dirname, "..", relativePath), "utf8");
       expect(source, relativePath).not.toMatch(
         /(?:@earendil-works\/pi-coding-agent|\btypebox\b|\/session\.mts|\/analyze\.mts)/u,
       );
-    }
-  });
+    },
+  );
 
   it("allows only the hosted service and OpenShell inference gateway", () => {
     expect(advisorInferenceBaseUrl({})).toBe(ADVISOR_OPENAI_COMPATIBLE_BASE_URL);
@@ -138,11 +141,42 @@ describe("PR review advisor OpenShell wrapper", () => {
     ).toThrow("must use an approved advisor inference endpoint");
   });
 
-  it("recognizes advisor models declared in the extracted provider constants", () => {
+  it.each([DEFAULT_ADVISOR_MODEL, NEMOTRON_ULTRA_ADVISOR_MODEL])(
+    "preserves hosted provider compatibility for %s",
+    (modelId) => {
+      const config = openAiAdvisorProviderConfig("PR_REVIEW_ADVISOR_API_KEY") as {
+        apiKey: string;
+        baseUrl: string;
+        models: Array<{
+          id: string;
+          compat?: Record<string, unknown>;
+          reasoning: boolean;
+        }>;
+      };
+
+      expect(config.apiKey).toBe("PR_REVIEW_ADVISOR_API_KEY");
+      expect(config.baseUrl).toBe(ADVISOR_OPENAI_COMPATIBLE_BASE_URL);
+      expect(config.models).toContainEqual(
+        expect.objectContaining({
+          id: modelId,
+          reasoning: false,
+          compat: expect.objectContaining({
+            supportsDeveloperRole: false,
+            supportsReasoningEffort: false,
+            supportsStore: false,
+            supportsStrictMode: false,
+            supportsUsageInStreaming: false,
+            maxTokensField: "max_tokens",
+          }),
+        }),
+      );
+    },
+  );
+
+  it("runs the Nemotron matrix model through the analyzer directly", () => {
     const runNode = vi.fn(
       (_script: string, _args: string[], _env: NodeJS.ProcessEnv, _cwd: string) => 0,
     );
-    const appendEnv = vi.fn();
 
     runPrReviewAdvisorAnalysis(
       {
@@ -151,15 +185,17 @@ describe("PR review advisor OpenShell wrapper", () => {
         outDir: path.join(temporaryDirectory(), "artifacts"),
         baseRef: "origin/main",
         headRef: "HEAD",
-        model: "nvidia/nvidia/nemotron-3-ultra",
+        model: NEMOTRON_ULTRA_ADVISOR_MODEL,
         title: "PR Review Advisor",
         runAnalysis: "0",
       },
-      { appendEnv, runNode },
+      { runNode },
     );
 
-    expect(appendEnv).toHaveBeenCalledWith("PR_REVIEW_ADVISOR_SUPPORTED", "1");
     expect(runNode).toHaveBeenCalledTimes(1);
+    expect(runNode.mock.calls[0]?.[2]).toMatchObject({
+      PR_REVIEW_ADVISOR_MODEL: NEMOTRON_ULTRA_ADVISOR_MODEL,
+    });
     expect(runNode.mock.calls[0]?.[2].PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toBeUndefined();
   });
 
@@ -210,8 +246,7 @@ describe("PR review advisor OpenShell wrapper", () => {
       GH_TOKEN: "host-token",
       GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
       PR_NUMBER: "7542",
-      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: "false",
-    });
+          });
     const pullRequest = context?.pullRequest as Record<string, unknown>;
     expect(pullRequest.author_association).toBe("MEMBER");
     expect(pullRequest).not.toHaveProperty("authorAssociation");
@@ -229,9 +264,9 @@ describe("PR review advisor OpenShell wrapper", () => {
     const longFiles = Array.from({ length: 300 }, (_, index) => ({
       filename: `deep/${String(index).padStart(3, "0")}/${"segment/".repeat(480)}file.ts`,
     }));
-    const openPulls = Array.from({ length: 5 }, (_, index) => ({
+    const openPulls = Array.from({ length: 30 }, (_, index) => ({
       number: 8_000 + index,
-      title: `Overlapping PR ${index}`,
+      title: index === 29 ? "Replaces PR #7542" : `Concurrent PR ${index}`,
       body: "",
       labels: [],
     }));
@@ -272,14 +307,16 @@ describe("PR review advisor OpenShell wrapper", () => {
       GH_TOKEN: "host-token",
       GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
       PR_NUMBER: "7542",
-      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: "false",
-    });
-    expect(context?.openPrOverlaps).toHaveLength(5);
-    for (const overlap of context?.openPrOverlaps ?? []) {
+          });
+    expect(context?.openPrOverlaps).toHaveLength(25);
+    (context?.openPrOverlaps ?? []).forEach((overlap) => {
       expect(overlap.sameFileCount).toBe(300);
       expect(overlap.sameFiles).toHaveLength(20);
       expect(overlap.sameFiles.every((file) => file.length <= 300)).toBe(true);
-    }
+    });
+    expect(context?.openPrOverlaps?.filter((overlap) => overlap.replacesCurrentPr)).toEqual([
+      expect.objectContaining({ number: 8_029 }),
+    ]);
     expect(() => serializePreparedGitHubContext(context)).not.toThrow();
   });
 
@@ -519,11 +556,11 @@ describe("PR review advisor OpenShell wrapper", () => {
     );
     expect(providerCalls).toHaveLength(1);
     expect(providerCalls[0]?.[2].env.OPENAI_API_KEY).toBe("model-host-secret");
-    for (const [command, args, options] of calls) {
+    calls.forEach(([command, args, options]) => {
       expect(options.env.GH_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.GITHUB_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.PR_REVIEW_ADVISOR_API_KEY, `${command} ${args.join(" ")}`).toBeUndefined();
-    }
+    });
     expect(calls.filter(([, , options]) => options.env.OPENAI_API_KEY)).toHaveLength(1);
     expect(vi.mocked(tools.start).mock.calls[0]?.[2].env.OPENAI_API_KEY).toBeUndefined();
     const gatewayConfig = fs.readFileSync(
@@ -534,35 +571,34 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(gatewayConfig).toContain("enable_bind_mounts = true");
   });
 
-  it("writes unavailable artifacts through a credential-free trusted host fallback", () => {
-    const env = advisorEnvironment();
-    env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON = "provider configuration failed";
-    const tools = advisorTools();
+  it.each(["GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "PR_REVIEW_ADVISOR_API_KEY"])(
+    "writes unavailable artifacts through a credential-free trusted host fallback [case %#]",
+    (name) => {
+      const env = advisorEnvironment();
+      env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON = "provider configuration failed";
+      const tools = advisorTools();
 
-    writeUnavailableAdvisorArtifacts(env, tools);
+      writeUnavailableAdvisorArtifacts(env, tools);
 
-    expect(tools.run).toHaveBeenCalledTimes(1);
-    const [command, args, options] = vi.mocked(tools.run).mock.calls[0]!;
-    expect(command).toBe(process.execPath);
-    expect(args).toEqual([
-      "--experimental-strip-types",
-      "--no-warnings",
-      path.join(env.ADVISOR_DIR as string, "tools", "pr-review-advisor", "run-analysis.mts"),
-    ]);
-    expect(options.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS).toBe("0");
-    expect(options.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toBe("provider configuration failed");
-    expect(options.env.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH).toBe(
-      path.join(env.RUNNER_TEMP as string, "pr-review-advisor-context", "github-context.json"),
-    );
-    for (const name of [
-      "GH_TOKEN",
-      "GITHUB_TOKEN",
-      "OPENAI_API_KEY",
-      "PR_REVIEW_ADVISOR_API_KEY",
-    ]) {
+      expect(tools.run).toHaveBeenCalledTimes(1);
+      const [command, args, options] = vi.mocked(tools.run).mock.calls[0]!;
+      expect(command).toBe(process.execPath);
+      expect(args).toEqual([
+        "--experimental-strip-types",
+        "--no-warnings",
+        path.join(env.ADVISOR_DIR as string, "tools", "pr-review-advisor", "run-analysis.mts"),
+      ]);
+      expect(options.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS).toBe("0");
+      expect(options.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toBe(
+        "provider configuration failed",
+      );
+      expect(options.env.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH).toBe(
+        path.join(env.RUNNER_TEMP as string, "pr-review-advisor-context", "github-context.json"),
+      );
+
       expect(options.env[name]).toBeUndefined();
-    }
-  });
+    },
+  );
 
   it("creates, runs, downloads, and deletes the sandbox without host credentials", () => {
     const env = advisorEnvironment();
@@ -717,12 +753,12 @@ describe("PR review advisor OpenShell wrapper", () => {
           command === "openshell" && args.slice(0, 2).join(" ") === "sandbox delete",
       )?.[1],
     ).toEqual(["sandbox", "delete", "pr-advisor-test"]);
-    for (const [command, args, options] of calls) {
+    calls.forEach(([command, args, options]) => {
       expect(options.env.GH_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.GITHUB_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.OPENAI_API_KEY, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.PR_REVIEW_ADVISOR_API_KEY, `${command} ${args.join(" ")}`).toBeUndefined();
-    }
+    });
   });
 
   it("rejects artifact paths that could escape the sandbox runtime directory", () => {

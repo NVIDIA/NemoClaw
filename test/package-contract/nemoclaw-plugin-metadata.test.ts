@@ -123,8 +123,6 @@ describe("packed NemoClaw plugin metadata", () => {
     const packedPaths = new Set((report[0]?.files ?? []).map((entry) => entry.path));
 
     expect(packedPaths).toContain("openclaw.plugin.json");
-    for (const extension of extensions) {
-      expect(packedPaths).toContain(extension.replace(/^\.\//, ""));
-    }
+    expect(extensions.every((extension) => packedPaths.has(extension.replace(/^\.\//, "")))).toBe(true);
   });
 });

@@ -239,8 +239,9 @@ describe("openclaw managed restart respawn (#6868)", () => {
     expect(observed.lease_cleared_after_wait).toBe(true);
   });
 
-  it("respawns a clean gateway exit that the root controller leased", () => {
-    const guards = extractRespawnGuards(fs.readFileSync(START_SCRIPT, "utf-8"));
+  it.each(
+    Array.from(extractRespawnGuards(fs.readFileSync(START_SCRIPT, "utf-8")), (value) => [value]),
+  )("respawns a clean gateway exit that the root controller leased [case %#]", (guard) => {
     const outcome = (guard: string, authorized: boolean, watchdogKilled = false) =>
       runBash([
         `consume_gateway_watchdog_kill() { return ${watchdogKilled ? 0 : 1}; }`,
@@ -251,14 +252,13 @@ describe("openclaw managed restart respawn (#6868)", () => {
         guard,
         'printf "respawned\\n"',
       ]).stdout;
-    for (const guard of guards) {
-      // A leased exit is a host-requested restart: relaunch it.
-      expect(outcome(guard, true)).toContain("respawned");
-      // An unleased clean exit is still an intentional shutdown: stop.
-      expect(outcome(guard, false)).not.toContain("respawned");
-      // The watchdog's own kill must keep respawning independently of the lease.
-      expect(outcome(guard, false, true)).toContain("respawned");
-    }
+
+    // A leased exit is a host-requested restart: relaunch it.
+    expect(outcome(guard, true)).toContain("respawned");
+    // An unleased clean exit is still an intentional shutdown: stop.
+    expect(outcome(guard, false)).not.toContain("respawned");
+    // The watchdog's own kill must keep respawning independently of the lease.
+    expect(outcome(guard, false, true)).toContain("respawned");
   });
 
   it("accepts only a lease for the exact gateway and a live root controller", () => {

@@ -70,6 +70,7 @@ export function createGpuFlowDeps(): SandboxGpuCreateFlowDeps {
 export function createGpuPatchFixture() {
   return {
     maybeApplyDuringCreate: vi.fn(),
+    replacementRuntimeId: vi.fn(() => null),
     createFailureMessage: vi.fn(() => null),
     exitOnPatchError: vi.fn(),
     rollbackManagedStartupAfterCreateFailure: vi.fn(),

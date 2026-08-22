@@ -50,3 +50,37 @@ describe("verifyInferenceRoute", () => {
     );
   });
 });
+
+describe("readInferenceRouteState", () => {
+  it("reports a matched route", () => {
+    const helpers = createInferenceRouteHelpers(() =>
+      gatewayRoute("compatible-endpoint", "test-model"),
+    );
+
+    expect(helpers.readInferenceRouteState("nemoclaw", "compatible-endpoint", "test-model")).toBe(
+      "matched",
+    );
+  });
+
+  it.each([
+    ["openai-api", "test-model"],
+    ["compatible-endpoint", "other-model"],
+  ])("reports a route answered as %s/%s as mismatched", (provider, model) => {
+    const helpers = createInferenceRouteHelpers(() => gatewayRoute(provider, model));
+
+    expect(helpers.readInferenceRouteState("nemoclaw", "compatible-endpoint", "test-model")).toBe(
+      "mismatched",
+    );
+  });
+
+  it("separates a gateway that cannot answer from a mismatched route (#9310)", () => {
+    const helpers = createInferenceRouteHelpers(() => null);
+
+    expect(helpers.readInferenceRouteState("nemoclaw", "compatible-endpoint", "test-model")).toBe(
+      "unanswered",
+    );
+    expect(helpers.isInferenceRouteReady("nemoclaw", "compatible-endpoint", "test-model")).toBe(
+      false,
+    );
+  });
+});

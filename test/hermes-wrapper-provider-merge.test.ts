@@ -80,8 +80,9 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge",
     expect(run.realArgv).toEqual(["-m", "opencode-zen/already-prefixed"]);
   });
 
-  it("merges after value-less short and long continue flags (#7361)", () => {
-    for (const continueFlag of ["-c", "--continue"]) {
+  it.each(["-c", "--continue"])(
+    "merges after value-less short and long continue flags [case %#] (#7361)",
+    (continueFlag) => {
       const run = runWrapper(
         [continueFlag, "--provider", "nvidia-prod", "--model", "nvidia/nemotron-3-super-120b-a12b"],
         {},
@@ -93,8 +94,8 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge",
         "--model",
         "nvidia-prod/nvidia/nemotron-3-super-120b-a12b",
       ]);
-    }
-  });
+    },
+  );
 
   it("rejects an ambiguous unquoted multi-word continue form (#8011)", () => {
     const argv = [

@@ -6,8 +6,63 @@ import { describe, expect, it, vi } from "vitest";
 import {
   getDockerGpuSupervisorReconnectErrorDebouncePolls,
   getDockerGpuSupervisorReconnectTimeoutSecs,
+  waitForOpenShellSandboxLifecycleRelease,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-supervisor-reconnect";
+
+describe("Docker GPU final lifecycle release", () => {
+  it.each([
+    ["an explicit empty list", "No sandboxes found.\n"],
+    ["another phase-bearing sandbox", "beta  2026-08-21 05:53:18  Ready\n"],
+  ])("accepts %s as a release receipt (#9531)", (_receipt, stdout) => {
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout }));
+
+    expect(
+      waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
+        runOpenshell,
+        sleep: vi.fn(),
+      }),
+    ).toBe(true);
+    expect(runOpenshell).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["a header", "NAME  CREATED  PHASE\n"],
+    ["a gateway error", "Error: gateway unavailable\n"],
+    ["a phase-free row", "beta  2026-08-21 05:53:18\n"],
+    ["an unrecognized phase", "beta  2026-08-21 05:53:18  Retiring\n"],
+    ["the selected sandbox in Deleting", "alpha  2026-08-21 05:53:18  Deleting\n"],
+    ["the selected sandbox in Ready", "alpha  2026-08-21 05:53:18  Ready\n"],
+    ["the selected sandbox in Provisioning", "alpha  2026-08-21 05:53:18  Provisioning\n"],
+    ["the selected sandbox in Error", "alpha  2026-08-21 05:53:18  Error\n"],
+    ["the selected sandbox in Failed", "alpha  2026-08-21 05:53:18  Failed\n"],
+  ])("rejects %s as a release receipt (#9531)", (_case, stdout) => {
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout }));
+
+    expect(
+      waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
+        runOpenshell,
+        sleep: vi.fn(),
+      }),
+    ).toBe(false);
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["a failed probe", { status: 1, stderr: "gateway unavailable" }],
+    ["a probe without an exit status", { status: null, stderr: "timed out" }],
+  ])("rejects %s as a release receipt (#9531)", (_case, result) => {
+    const runOpenshell = vi.fn(() => result);
+
+    expect(
+      waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
+        runOpenshell,
+        sleep: vi.fn(),
+      }),
+    ).toBe(false);
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+  });
+});
 
 // The Docker GPU patch supervisor-reconnect wait must absorb a transient
 // Error phase reported while OpenShell's sandbox-list cache catches up to
@@ -203,12 +258,9 @@ describe("docker-gpu-supervisor-reconnect Error-phase debounce", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("falls back to the env-backed default when an injected override is non-finite", () => {
-    // NaN / +Infinity / -Infinity overrides must not silently neutralise the
-    // fast-fail loop. A NaN comparison would always be false and `Infinity`
-    // would never satisfy `>= debouncePolls`, leaving the wait to burn the
-    // full timeout window.
-    for (const bogus of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "falls back to the env-backed default when an injected override is non-finite [case %#]",
+    (bogus) => {
       const runOpenshell = vi.fn(() => ({ status: 1, stderr: "sandbox not ready" }));
       const runCaptureOpenshell = vi.fn(() => "alpha   Error   1s ago");
       const sleep = vi.fn();
@@ -224,6 +276,6 @@ describe("docker-gpu-supervisor-reconnect Error-phase debounce", () => {
       // Default K=60 from the env-backed helper: 60 polls + 59 sleeps before fast-fail.
       expect(runOpenshell).toHaveBeenCalledTimes(60);
       expect(sleep).toHaveBeenCalledTimes(59);
-    }
-  });
+    },
+  );
 });

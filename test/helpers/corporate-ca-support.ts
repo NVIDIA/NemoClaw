@@ -19,7 +19,15 @@ export function sliceBlock(scriptPath: string, startMarker: string, endMarker: s
   if (start === -1 || end === -1 || end <= start) {
     throw new Error(`Failed to extract block [${startMarker} .. ${endMarker}] from ${scriptPath}`);
   }
-  return src.slice(start, end);
+  const block = src.slice(start, end);
+  const sourceCommand = 'source "$_NEMOCLAW_CORPORATE_CA_HELPER"';
+  if (!block.includes(sourceCommand)) return block;
+
+  const helperPath = path.join(import.meta.dirname, "../../scripts/lib/corporate-ca-runtime.sh");
+  const helperSource = fs.readFileSync(helperPath, "utf-8");
+  return block
+    .replaceAll("/usr/local/lib/nemoclaw/corporate-ca-runtime.sh", helperPath)
+    .replace(sourceCommand, helperSource);
 }
 
 export interface CaMaterial {
@@ -319,4 +327,48 @@ export function runShellLines(dir: string, lines: string[]): string {
     mode: 0o700,
   });
   return execFileSync("bash", [script], { encoding: "utf-8" });
+}
+
+/** Execute the shipped helper guard with an unavailable fallback. */
+export function runCorporateCaHelperGuard(
+  scriptPath: string,
+  dir: string,
+  deployedMode: "missing" | "symlink",
+  endMarker: string,
+): { status: number; stderr: string; mergedPath: string; secret: string } {
+  const src = fs.readFileSync(scriptPath, "utf-8");
+  const startMarker =
+    '_NEMOCLAW_CORPORATE_CA_HELPER="/usr/local/lib/nemoclaw/corporate-ca-runtime.sh"';
+  const start = src.indexOf(startMarker);
+  const end = src.indexOf(endMarker, start);
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error(`Failed to extract corporate CA helper guard from ${scriptPath}`);
+  }
+
+  const deployedPath = path.join(dir, "deployed-corporate-ca-runtime.sh");
+  const mergedPath = path.join(dir, "merged-ca.pem");
+  const secret = "CA-MATERIAL-MUST-NOT-LEAK";
+  if (deployedMode === "symlink") {
+    const sentinelHelper = path.join(dir, "sentinel-helper.sh");
+    fs.writeFileSync(
+      sentinelHelper,
+      [
+        `printf '%s\\n' ${JSON.stringify(secret)} >&2`,
+        `printf 'sourced\\n' >${JSON.stringify(mergedPath)}`,
+        `merge_corporate_proxy_ca() { printf 'merged\\n' >${JSON.stringify(mergedPath)}; }`,
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    fs.symlinkSync(sentinelHelper, deployedPath);
+  }
+
+  const block = src
+    .slice(start, end)
+    .replaceAll("/usr/local/lib/nemoclaw/corporate-ca-runtime.sh", deployedPath);
+  const wrapper = path.join(dir, "helper-guard.sh");
+  fs.writeFileSync(wrapper, ["#!/usr/bin/env bash", "set -euo pipefail", block].join("\n"), {
+    mode: 0o700,
+  });
+  const result = spawnSync("bash", [wrapper], { encoding: "utf-8" });
+  return { status: result.status ?? -1, stderr: result.stderr ?? "", mergedPath, secret };
 }

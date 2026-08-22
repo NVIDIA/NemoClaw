@@ -2,58 +2,37 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { isCanonicalNemoClawRemote } from "./release/remote.mts";
+import { isCanonicalNemoClawRemote, isLocalReleaseFixtureRemote } from "./release/remote.mts";
 
-type Bump = "patch" | "minor" | "major";
+const SEMVER_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 type Options = {
-  bump: Bump;
+  version: string;
   output?: string;
 };
 
-type RemoteTag = {
-  tag: string;
-  objectSha: string;
-  peeledSha?: string;
-};
-
 type ReleasePlan = {
-  schemaVersion: 1;
-  mode: "tag-only";
   previousTag: string;
+  previousTagObject: string;
+  previousTagCommit: string;
   nextTag: string;
-  bump: Bump;
-  originRemote: string;
   originMainCommit: string;
   originMainHeadline: string;
-  compareRange: string;
-  latestBefore: RemoteTag | null;
-  lkgBefore: RemoteTag | null;
-  createdAt: string;
-  planPath: string;
-  confirmationPhrase: string;
-  operations: string[];
-  forbiddenOperations: string[];
-  planHash: string;
 };
 
-function run(command: string, args: string[], options: { allowFailure?: boolean } = {}): string {
+function run(command: string, args: string[]): string {
   try {
     return execFileSync(command, args, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (error) {
-    if (options.allowFailure) {
-      return "";
-    }
-    const e = error as { stdout?: Buffer | string; stderr?: Buffer | string };
-    const stdout = e.stdout ? String(e.stdout).trim() : "";
-    const stderr = e.stderr ? String(e.stderr).trim() : "";
+    const commandError = error as { stdout?: Buffer | string; stderr?: Buffer | string };
+    const stdout = commandError.stdout ? String(commandError.stdout).trim() : "";
+    const stderr = commandError.stderr ? String(commandError.stderr).trim() : "";
     throw new Error(
       [`Command failed: ${command} ${args.join(" ")}`, stdout, stderr].filter(Boolean).join("\n"),
     );
@@ -61,26 +40,22 @@ function run(command: string, args: string[], options: { allowFailure?: boolean 
 }
 
 function parseArgs(argv: string[]): Options {
-  let bump: Bump = "patch";
+  let version = "";
   let output: string | undefined;
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg === "--bump") {
-      const value = argv[++i];
-      if (value !== "patch" && value !== "minor" && value !== "major") {
-        throw new Error(`Invalid --bump value: ${value}`);
-      }
-      bump = value;
-    } else if (arg.startsWith("--bump=")) {
-      const value = arg.slice("--bump=".length);
-      if (value !== "patch" && value !== "minor" && value !== "major") {
-        throw new Error(`Invalid --bump value: ${value}`);
-      }
-      bump = value;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--version") {
+      version = argv[++index] ?? "";
+    } else if (arg.startsWith("--version=")) {
+      version = arg.slice("--version=".length);
     } else if (arg === "--output") {
-      output = argv[++i];
+      output = argv[++index];
+      if (!output || output.startsWith("--")) {
+        throw new Error("--output requires a path");
+      }
     } else if (arg.startsWith("--output=")) {
       output = arg.slice("--output=".length);
+      if (!output) throw new Error("--output requires a path");
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -88,83 +63,53 @@ function parseArgs(argv: string[]): Options {
       throw new Error(`Unknown argument: ${arg}`);
     }
   }
-  return { bump, output };
+  if (!SEMVER_TAG.test(version)) {
+    throw new Error("--version must be an exact vX.Y.Z tag");
+  }
+  return { version, output };
 }
 
 function printHelp(): void {
   console.log(
-    `Usage: tsx scripts/release-plan.mts [--bump patch|minor|major] [--output PATH]\n\nCreates a deterministic tag-only release plan for origin/main.`,
+    "Usage: tsx scripts/release-plan.mts --version vX.Y.Z [--output PATH]\n\nCaptures an exact release version and candidate commit from origin/main.",
   );
 }
 
-function semverParts(tag: string): [number, number, number] {
-  const match = /^v(\d+)\.(\d+)\.(\d+)$/.exec(tag);
+function semverParts(tag: string): [bigint, bigint, bigint] {
+  const match = SEMVER_TAG.exec(tag);
   if (!match) {
     throw new Error(`Invalid semver tag: ${tag}`);
   }
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
+  return [BigInt(match[1]), BigInt(match[2]), BigInt(match[3])];
 }
 
-function compareSemverDesc(a: string, b: string): number {
-  const pa = semverParts(a);
-  const pb = semverParts(b);
-  for (let i = 0; i < 3; i += 1) {
-    if (pa[i] !== pb[i]) {
-      return pb[i] - pa[i];
+function compareSemverDescending(left: string, right: string): number {
+  const leftParts = semverParts(left);
+  const rightParts = semverParts(right);
+  for (let index = 0; index < leftParts.length; index += 1) {
+    if (leftParts[index] !== rightParts[index]) {
+      return leftParts[index] > rightParts[index] ? -1 : 1;
     }
   }
   return 0;
 }
 
-function bumpTag(tag: string, bump: Bump): string {
-  const [major, minor, patch] = semverParts(tag);
-  if (bump === "major") {
-    return `v${major + 1}.0.0`;
+function readRemoteSemverTags(): Array<{ name: string; object?: string; commit?: string }> {
+  const tags = new Map<string, { object?: string; commit?: string }>();
+  for (const line of run("git", ["ls-remote", "--tags", "origin", "refs/tags/v*"]).split("\n")) {
+    const [object, ref = ""] = line.trim().split(/\s+/);
+    const match = /^refs\/tags\/(v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))(\^\{\})?$/.exec(
+      ref,
+    );
+    if (!match || !object) continue;
+    const entry = tags.get(match[1]) ?? {};
+    if (match[2]) entry.commit = object;
+    else entry.object = object;
+    tags.set(match[1], entry);
   }
-  if (bump === "minor") {
-    return `v${major}.${minor + 1}.0`;
-  }
-  return `v${major}.${minor}.${patch + 1}`;
-}
-
-function readRemoteSemverTags(): string[] {
-  return Array.from(
-    new Set(
-      run("git", ["ls-remote", "--tags", "origin", "v*"])
-        .split("\n")
-        .map((line) => line.trim().split(/\s+/)[1] ?? "")
-        .map((ref) => ref.replace(/^refs\/tags\//, "").replace(/\^\{\}$/, ""))
-        .filter((tag) => /^v\d+\.\d+\.\d+$/.test(tag)),
-    ),
-  ).sort(compareSemverDesc);
-}
-
-function readRemoteTag(tag: string): RemoteTag | null {
-  const lines = run("git", ["ls-remote", "--tags", "origin", tag, `${tag}^{}`], {
-    allowFailure: true,
-  })
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (lines.length === 0) {
-    return null;
-  }
-  const result: RemoteTag = { tag, objectSha: "" };
-  for (const line of lines) {
-    const [sha, ref] = line.split(/\s+/);
-    if (ref.endsWith("^{}")) {
-      result.peeledSha = sha;
-    } else {
-      result.objectSha = sha;
-    }
-  }
-  return result.objectSha ? result : null;
-}
-
-function stablePlanHash(planWithoutHash: Omit<ReleasePlan, "planHash">): string {
-  return createHash("sha256")
-    .update(JSON.stringify(planWithoutHash, null, 2))
-    .digest("hex");
+  return [...tags]
+    .sort(([left], [right]) => compareSemverDescending(left, right))
+    .map(([name, entry]) => ({ name, object: entry.object, commit: entry.commit }));
 }
 
 function main(): void {
@@ -172,88 +117,87 @@ function main(): void {
   const repoRoot = run("git", ["rev-parse", "--show-toplevel"]).trim();
   process.chdir(repoRoot);
 
-  const status = run("git", ["status", "--short"]);
-  if (status.trim()) {
-    throw new Error("Release planning requires a clean worktree");
+  const fetchUrlOutput = run("git", ["remote", "get-url", "--all", "origin"]).trim();
+  const pushUrlOutput = run("git", ["remote", "get-url", "--push", "--all", "origin"]).trim();
+  if (!fetchUrlOutput) {
+    throw new Error("origin has no fetch URL");
   }
-
-  const originRemote = run("git", ["remote", "get-url", "origin"]).trim();
+  if (!pushUrlOutput) {
+    throw new Error("origin has no push URL");
+  }
+  const fetchUrls = fetchUrlOutput.split("\n");
+  const pushUrls = pushUrlOutput.split("\n");
+  const allCanonical = [...fetchUrls, ...pushUrls].every(isCanonicalNemoClawRemote);
+  const oneMatchingUrl =
+    fetchUrls.length === 1 && pushUrls.length === 1 && fetchUrls[0] === pushUrls[0];
   if (
-    process.env.NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL !== "1" &&
-    !isCanonicalNemoClawRemote(originRemote)
+    !allCanonical &&
+    !(
+      process.env.NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL === "1" &&
+      oneMatchingUrl &&
+      isLocalReleaseFixtureRemote(fetchUrls[0]!)
+    )
   ) {
-    throw new Error(`Unexpected origin remote: ${originRemote}`);
+    if (oneMatchingUrl) {
+      throw new Error(`Unexpected origin remote: ${fetchUrls[0]}`);
+    }
+    throw new Error("Unexpected origin fetch or push URL");
   }
 
-  run("git", ["fetch", "origin", "main", "--tags", "--force"]);
+  run("git", ["fetch", "--no-tags", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
 
   const semverTags = readRemoteSemverTags();
   if (semverTags.length === 0) {
     throw new Error("No remote semver tags found");
   }
 
-  const previousTag = semverTags[0];
-  const nextTag = bumpTag(previousTag, options.bump);
-  const followingTag = bumpTag(nextTag, "patch");
-  if (readRemoteTag(nextTag)) {
-    throw new Error(`Remote tag already exists: ${nextTag}`);
+  const previousTag = semverTags[0].name;
+  const previousTagObject = semverTags[0].object;
+  const previousTagCommit = semverTags[0].commit;
+  if (!previousTagObject || !previousTagCommit) {
+    throw new Error(`Latest remote release tag must be annotated: ${previousTag}`);
+  }
+  if (semverTags.some(({ name }) => name === options.version)) {
+    throw new Error(`Remote tag already exists: ${options.version}`);
+  }
+  if (compareSemverDescending(options.version, previousTag) >= 0) {
+    throw new Error(`Release tag ${options.version} must be newer than ${previousTag}`);
   }
 
   const originMainCommit = run("git", ["rev-parse", "origin/main"]).trim();
   const originMainHeadline = run("git", ["log", "--oneline", "-1", "origin/main"]).trim();
   const output = path.resolve(
-    options.output ?? path.join(repoRoot, "..", `nemoclaw-release-${nextTag}`, "plan.json"),
+    options.output ?? path.join(repoRoot, "..", `nemoclaw-release-${options.version}`, "plan.json"),
   );
-  const planPath = output;
-
-  const planWithoutHash: Omit<ReleasePlan, "planHash"> = {
-    schemaVersion: 1,
-    mode: "tag-only",
+  const plan: ReleasePlan = {
     previousTag,
-    nextTag,
-    bump: options.bump,
-    originRemote,
+    previousTagObject,
+    previousTagCommit,
+    nextTag: options.version,
     originMainCommit,
     originMainHeadline,
-    compareRange: `${previousTag}...${nextTag}`,
-    latestBefore: readRemoteTag("latest"),
-    lkgBefore: readRemoteTag("lkg"),
-    createdAt: new Date().toISOString(),
-    planPath,
-    confirmationPhrase: `CONFIRM RELEASE ${nextTag} ${originMainCommit}`,
-    operations: [
-      `create signed annotated ${nextTag} tag at ${originMainCommit}`,
-      `push ${nextTag}`,
-      "wait for release-latest-tag workflow to move latest",
-      `have release-latest-tag workflow carry open ${nextTag} items forward to ${followingTag}`,
-      `have release-latest-tag workflow delete released ${nextTag} label after carry-forward succeeds`,
-      "draft release notes from live compare data",
-    ],
-    forbiddenOperations: [
-      "push latest from the agent",
-      "push or move lkg",
-      "move existing remote semver tags",
-      "delete tags",
-      "commit version bumps",
-      "open a release PR",
-      "create a GitHub Discussion",
-    ],
-  };
-  const plan: ReleasePlan = {
-    ...planWithoutHash,
-    planHash: stablePlanHash(planWithoutHash),
   };
 
-  mkdirSync(path.dirname(planPath), { recursive: true });
-  writeFileSync(planPath, `${JSON.stringify(plan, null, 2)}\n`, "utf8");
+  mkdirSync(path.dirname(output), { recursive: true });
+  try {
+    writeFileSync(output, `${JSON.stringify(plan, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error(
+        `Release plan already exists: ${output}. Reuse it or choose a new --output path; it was not overwritten.`,
+      );
+    }
+    throw error;
+  }
 
-  console.log(`Release plan written: ${planPath}`);
-  console.log(`Plan hash: ${plan.planHash}`);
+  console.log(`Release plan written: ${output}`);
   console.log(`Previous tag: ${previousTag}`);
-  console.log(`Next tag: ${nextTag}`);
-  console.log(`Target commit: ${originMainHeadline}`);
+  console.log(`Previous tag object: ${previousTagObject}`);
+  console.log(`Previous tag commit: ${previousTagCommit}`);
+  console.log(`Next tag: ${options.version}`);
+  console.log(`Candidate commit: ${originMainHeadline}`);
   console.log("Confirmation phrase:");
-  console.log(plan.confirmationPhrase);
+  console.log(`CONFIRM RELEASE ${options.version} ${originMainCommit}`);
 }
 
 main();

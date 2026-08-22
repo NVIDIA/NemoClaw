@@ -36,8 +36,11 @@ const normalize = (command) => (Array.isArray(command) ? command.join(" ") : Str
 runner.run = () => ({ status: 0 });
 runner.runCapture = (command) => {
   const value = normalize(command);
-  if (value.includes("sandbox get alpha")) return "alpha";
+  if (value.includes("sandbox get --gateway nemoclaw alpha")) return "alpha";
   if (value.includes("sandbox list")) return "alpha Ready";
+  if (value.includes("/usr/local/bin/dcode identity")) {
+    return "Route: inference\nProvider: provider\nModel: openai:model\nEndpoint: https://inference.local/v1";
+  }
   const mocked = require(${mocksPath}).mockOnboardRunCapture(command, { defaultCurlOutput: "ok" });
   return mocked === null ? "" : mocked;
 };
@@ -68,6 +71,7 @@ const { createSandbox } = require(${onboardPath});
 createSandbox(
   null, "model", "provider", "openai-completions", "alpha", null, null, null,
   { name: "langchain-deepagents-code", policyAdditionsPath: ${dcodePolicyPath} }, null, null, null, [], null,
+  null,
   {
     recreate: true,
     toolDisclosure: "progressive",

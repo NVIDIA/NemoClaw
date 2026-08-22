@@ -24,11 +24,10 @@ import type {
   DockerGpuPatchFailureContext,
   DockerGpuPatchResult,
 } from "./docker-gpu-patch-types";
+import { captureDockerContainerFailureEvidence } from "./managed-bootstrap/docker-container-failure-evidence";
 
 const PRE_ROLLBACK_DIAGNOSTICS_TOTAL_BUDGET_MS = 10_000;
 const PRE_ROLLBACK_DIAGNOSTICS_CALL_TIMEOUT_MS = 2_000;
-const MISSING_MANAGED_STARTUP_COMMAND_LOG =
-  /(?:^|\n)(?:\/usr\/bin\/)?env: (?:[\u0027\u2018]?nemoclaw-start[\u0027\u2019]?|can't execute 'nemoclaw-start'): No such file or directory(?:\r?\n|$)/u;
 
 type PreRollbackDiagnosticsDeps = Pick<
   DockerGpuPatchDeps,
@@ -50,7 +49,9 @@ type PreRollbackDiagnosticsDeps = Pick<
  * removalCondition: remove only when the replacement path emits equivalent bounded, redacted
  *   evidence before rollback, or no longer replaces a container.
  */
-function boundedDiagnosticsDeps(deps: PreRollbackDiagnosticsDeps): PreRollbackDiagnosticsDeps {
+function boundedDiagnosticsDeps(
+  deps: PreRollbackDiagnosticsDeps,
+): PreRollbackDiagnosticsDeps & Required<Pick<DockerGpuPatchDeps, "dockerCapture" | "dockerLogs">> {
   const capture = deps.dockerCapture ?? defaultDockerCapture;
   const logs = deps.dockerLogs ?? defaultDockerLogs;
   const deadline = Date.now() + PRE_ROLLBACK_DIAGNOSTICS_TOTAL_BUDGET_MS;
@@ -135,10 +136,6 @@ export type DockerGpuPreRollbackDiagnostics = {
   diagnostics: DockerGpuPatchDiagnostics | null;
 };
 
-function logsShowMissingManagedStartupCommand(logs: string): boolean {
-  return MISSING_MANAGED_STARTUP_COMMAND_LOG.test(logs);
-}
-
 export function captureDockerGpuPreRollbackDiagnostics(
   sandboxName: string,
   result: DockerGpuPatchResult,
@@ -155,28 +152,22 @@ export function captureDockerGpuPreRollbackDiagnostics(
   // Preserve the short-lived failure verdict before optional inspect
   // enrichment can consume the shared capture budget. The replacement State
   // is the only source of its exit code once rollback removes the container.
-  const snapshot = captureDockerGpuPatchSandboxSnapshot(
-    sandboxName,
-    { patchedContainerId: result.newContainerId },
+  const failureEvidence = captureDockerContainerFailureEvidence(
+    result.newContainerId,
     diagnosticDeps,
+    { enrichInspect: false },
   );
+  const snapshot = {
+    ...captureDockerGpuPatchSandboxSnapshot(sandboxName, {}, diagnosticDeps),
+    patchedContainerState: failureEvidence.state,
+  };
   const additionalSensitiveValues = primeSensitiveDiagnosticValues(
     sandboxName,
     result,
     diagnosticDeps,
   );
-  let patchedContainerLogs = "";
-  try {
-    const logs = diagnosticDeps.dockerLogs ?? defaultDockerLogs;
-    patchedContainerLogs = logs(result.newContainerId, {
-      tail: 120,
-      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-    });
-  } catch {
-    // An unavailable log does not establish a missing startup command.
-  }
   const classification = classifyDockerGpuPatchFailure(snapshot, result.mode, {
-    managedStartupCommandMissing: logsShowMissingManagedStartupCommand(patchedContainerLogs),
+    managedStartupCommandMissing: failureEvidence.managedStartupCommandMissing,
   });
   const redactedClassification = createDockerGpuDiagnosticRedactor(
     additionalSensitiveValues,

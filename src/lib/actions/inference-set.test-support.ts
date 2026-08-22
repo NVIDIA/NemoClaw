@@ -135,8 +135,10 @@ export function createDeps(options: {
   resolveCredentialValue?: InferenceSetDeps["resolveCredentialValue"];
   ensureHttpsPinRuntimeAdapter?: EnsureHttpsPinRuntimeAdapterFn;
   revokeHttpsPinRuntimeAdapterRoute?: InferenceSetDeps["revokeHttpsPinRuntimeAdapterRoute"];
+  probeSandboxRoute?: InferenceSetDeps["probeSandboxRoute"];
   updateSandbox?: InferenceSetDeps["updateSandbox"];
   restartSandboxGateway?: InferenceSetDeps["restartSandboxGateway"];
+  settleOpenClawPairing?: InferenceSetDeps["settleOpenClawPairing"];
   seedHermesDashboardConfigResult?: "converged" | "absent" | "failed";
   withGatewayRouteMutationLock?: InferenceSetDeps["withGatewayRouteMutationLock"];
 }): InferenceSetDeps & {
@@ -158,7 +160,10 @@ export function createDeps(options: {
     resolveCredentialValue: ReturnType<typeof vi.fn>;
     ensureHttpsPinRuntimeAdapter: ReturnType<typeof vi.fn>;
     revokeHttpsPinRuntimeAdapterRoute: ReturnType<typeof vi.fn>;
+    probeSandboxRoute: ReturnType<typeof vi.fn>;
+    sleep: ReturnType<typeof vi.fn>;
     restartSandboxGateway: ReturnType<typeof vi.fn>;
+    settleOpenClawPairing: ReturnType<typeof vi.fn>;
     withGatewayRouteMutationLock: ReturnType<typeof vi.fn>;
   };
   getSession: () => Session | null;
@@ -218,6 +223,8 @@ export function createDeps(options: {
     revokeHttpsPinRuntimeAdapterRoute: vi.fn(
       options.revokeHttpsPinRuntimeAdapterRoute ?? (async () => true),
     ),
+    probeSandboxRoute: vi.fn(options.probeSandboxRoute ?? (() => ({ ok: true }) as const)),
+    sleep: vi.fn(async () => {}),
     restartSandboxGateway: vi.fn(
       options.restartSandboxGateway ??
         ((): ReturnType<InferenceSetDeps["restartSandboxGateway"]> => ({
@@ -227,6 +234,7 @@ export function createDeps(options: {
           forwardRecovered: true,
         })),
     ),
+    settleOpenClawPairing: vi.fn(options.settleOpenClawPairing ?? (() => ({ ok: true }) as const)),
     withGatewayRouteMutationLock: vi.fn(
       options.withGatewayRouteMutationLock ??
         (async (_gatewayName: string, operation: () => Promise<unknown> | unknown) =>
@@ -262,9 +270,12 @@ export function createDeps(options: {
       calls.ensureHttpsPinRuntimeAdapter as unknown as EnsureHttpsPinRuntimeAdapterFn,
     revokeHttpsPinRuntimeAdapterRoute:
       calls.revokeHttpsPinRuntimeAdapterRoute as InferenceSetDeps["revokeHttpsPinRuntimeAdapterRoute"],
+    probeSandboxRoute: calls.probeSandboxRoute as InferenceSetDeps["probeSandboxRoute"],
+    sleep: calls.sleep,
     withGatewayRouteMutationLock:
       calls.withGatewayRouteMutationLock as InferenceSetDeps["withGatewayRouteMutationLock"],
     restartSandboxGateway: calls.restartSandboxGateway,
+    settleOpenClawPairing: calls.settleOpenClawPairing,
     calls,
     getSession: () => session,
   };

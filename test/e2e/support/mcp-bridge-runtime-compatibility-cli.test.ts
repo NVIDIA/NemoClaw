@@ -214,24 +214,25 @@ describe.skipIf(process.platform === "win32")("MCP bridge compatibility CLI", ()
     }
   });
 
-  it("reports missing workflow output paths without probing OpenShell (#6426)", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-compat-cli-"));
-    try {
-      const probeMarker = path.join(root, "openshell-probed");
-      const openshellPath = path.join(root, "openshell");
-      fs.writeFileSync(
-        openshellPath,
-        [
-          `#!${process.execPath}`,
-          `require("node:fs").writeFileSync(${JSON.stringify(probeMarker)}, "probed");`,
-          'process.stdout.write("openshell 0.0.72\\n");',
-          "",
-        ].join("\n"),
-        { mode: 0o755 },
-      );
-      fs.chmodSync(openshellPath, 0o755);
+  it.each(["E2E_ARTIFACT_DIR", "GITHUB_OUTPUT"])(
+    "reports missing workflow output paths without probing OpenShell [%s] (#6426)",
+    (missingName) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-compat-cli-"));
+      try {
+        const probeMarker = path.join(root, "openshell-probed");
+        const openshellPath = path.join(root, "openshell");
+        fs.writeFileSync(
+          openshellPath,
+          [
+            `#!${process.execPath}`,
+            `require("node:fs").writeFileSync(${JSON.stringify(probeMarker)}, "probed");`,
+            'process.stdout.write("openshell 0.0.72\\n");',
+            "",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+        fs.chmodSync(openshellPath, 0o755);
 
-      for (const missingName of ["E2E_ARTIFACT_DIR", "GITHUB_OUTPUT"]) {
         const env: Record<string, string> = {
           PATH: process.env.PATH ?? "",
           HOME: root,
@@ -261,9 +262,9 @@ describe.skipIf(process.platform === "win32")("MCP bridge compatibility CLI", ()
         expect(result.stderr).toContain("E2E_ARTIFACT_DIR and GITHUB_OUTPUT are required");
         expect(result.stderr).not.toContain("OpenShell credential boundary runtime version check");
         expect(fs.existsSync(probeMarker)).toBe(false);
+      } finally {
+        fs.rmSync(root, { force: true, recursive: true });
       }
-    } finally {
-      fs.rmSync(root, { force: true, recursive: true });
-    }
-  });
+    },
+  );
 });

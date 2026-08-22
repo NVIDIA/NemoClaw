@@ -28,7 +28,8 @@
 //       * Host-side: `src/lib/actions/sandbox/sessions/export.test.ts`
 //         covers tar argv construction, index parser shape tolerance, key
 //         canonicalisation, agent-scope refusal, leading-dash session id
-//         rejection, download-failure cleanup, and JSON manifest shape.
+//         rejection, download-failure cleanup, the remote cleanup warning on
+//         a non-zero `rm -f` exit, and JSON manifest shape.
 //       * E2E (stub openshell): `test/sandbox-sessions-export-cli.test.ts`
 //         exercises the full CLI through dispatch with a fake openshell
 //         binary, proving the `exec tar`, `download`, and `exec rm` wire
@@ -43,6 +44,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { captureOpenshell, runOpenshell } from "../../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../../cli/branding";
+import {
+  deferSandboxLifecycleExit,
+  runWithDeferredSandboxLifecycleExit,
+} from "../../../core/process-exit";
+import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
+import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../../state/registry";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { resolveHostPathFromCwd } from "../host-path";
@@ -106,6 +113,17 @@ const STAGING_DIR_IN_SANDBOX = "/sandbox/.nemoclaw-staging";
 export async function exportSandboxSessions(
   opts: SessionsExportOptions,
 ): Promise<SessionsExportResult> {
+  return runWithDeferredSandboxLifecycleExit(() =>
+    withMcpLifecycleLock(opts.sandboxName, () => {
+      assertHermesPortableCommandUnavailable(opts.sandboxName, "sandbox:sessions:export");
+      return exportSandboxSessionsUnlocked(opts);
+    }),
+  );
+}
+
+async function exportSandboxSessionsUnlocked(
+  opts: SessionsExportOptions,
+): Promise<SessionsExportResult> {
   if (registry.getSandbox(opts.sandboxName)?.agent === "hermes") {
     return exportHermesSessions(opts);
   }
@@ -113,7 +131,10 @@ export async function exportSandboxSessions(
   const trimmedKeys = (opts.keys ?? []).map((value) => validateSessionKey(value));
   enforceAgentScope(agent, trimmedKeys);
 
-  await ensureLiveSandboxOrExit(opts.sandboxName, { allowNonReadyPhase: true });
+  await ensureLiveSandboxOrExit(opts.sandboxName, {
+    allowNonReadyPhase: true,
+    exit: deferSandboxLifecycleExit,
+  });
 
   const format: SessionsExportFormat = opts.format === "tar" ? "tar" : "dir";
   const sourceDir = `/sandbox/.openclaw/agents/${agent}/sessions`;
@@ -195,10 +216,12 @@ export async function exportSandboxSessions(
       // Best-effort cleanup of the in-sandbox staging tarball. Runs even when
       // tar/download fail so a partial export cannot leave a bundle of session
       // JSONL behind in the in-sandbox staging directory.
-      runOpenshell(
-        ["sandbox", "exec", "--name", opts.sandboxName, "--", "rm", "-f", tarballRemote],
-        { ignoreError: true, stdio: "ignore" },
-      );
+      removeRemoteStagingArtifact({
+        sandboxName: opts.sandboxName,
+        remotePath: tarballRemote,
+        artifactLabel: "staging tarball",
+        retainedDataNote: "The tarball may still contain session JSONL with pasted secrets",
+      });
       removeHostStagingDir(hostStagingDir);
     }
 
@@ -329,7 +352,10 @@ export async function exportSandboxSessions(
 //     staging + download orchestration unnecessary.
 async function exportHermesSessions(opts: SessionsExportOptions): Promise<SessionsExportResult> {
   rejectOpenClawOnlyOptions(opts);
-  await ensureLiveSandboxOrExit(opts.sandboxName, { allowNonReadyPhase: true });
+  await ensureLiveSandboxOrExit(opts.sandboxName, {
+    allowNonReadyPhase: true,
+    exit: deferSandboxLifecycleExit,
+  });
 
   const hostDest = resolveHermesHostDestination(opts.out, opts.sandboxName);
   const stagingRemote = hermesStagingPath();
@@ -371,15 +397,12 @@ async function exportHermesSessions(opts: SessionsExportOptions): Promise<Sessio
     // Best-effort cleanup of the in-sandbox staging JSONL. The host throw (if
     // any) is already in flight, so a console.warn here cannot mask it — the
     // primary error still propagates once the `finally` block returns.
-    const remoteCleanup = runOpenshell(
-      ["sandbox", "exec", "--name", opts.sandboxName, "--", "rm", "-f", stagingRemote],
-      { ignoreError: true, stdio: "ignore" },
-    );
-    if (remoteCleanup.status !== 0) {
-      console.warn(
-        `  Warning: failed to remove in-sandbox staging file '${stagingRemote}' from sandbox '${opts.sandboxName}' (exit ${remoteCleanup.status}). The file may still contain a session JSONL with pasted secrets; remove it manually with \`${CLI_NAME} sandbox exec --name ${opts.sandboxName} -- rm -f ${stagingRemote}\`.`,
-      );
-    }
+    removeRemoteStagingArtifact({
+      sandboxName: opts.sandboxName,
+      remotePath: stagingRemote,
+      artifactLabel: "staging file",
+      retainedDataNote: "The file may still contain a session JSONL with pasted secrets",
+    });
     removeHostStagingDir(hostStagingDir);
   }
 
@@ -460,6 +483,31 @@ function hardenPermissions(target: string): void {
   } catch {
     console.error(
       `  Warning: could not restrict permissions on ${target}; treat it as sensitive — it may contain session secrets.`,
+    );
+  }
+}
+
+// Best-effort removal of the in-sandbox staging artefact left by an export.
+// Both export paths run the same `rm -f` under `stdio: "ignore"`, which
+// discards the `rm` diagnostics and leaves the exit status as the only signal,
+// so both must capture it and warn: otherwise a failed cleanup reports a clean
+// export while a mode-0600 artefact of session JSONL survives in the sandbox.
+// Warns instead of throwing so it cannot mask a primary error already in flight
+// from the caller's `try`. Each caller keeps its own `finally` placement and
+// supplies the wording for the artefact it staged.
+function removeRemoteStagingArtifact(input: {
+  sandboxName: string;
+  remotePath: string;
+  artifactLabel: string;
+  retainedDataNote: string;
+}): void {
+  const remoteCleanup = runOpenshell(
+    ["sandbox", "exec", "--name", input.sandboxName, "--", "rm", "-f", input.remotePath],
+    { ignoreError: true, stdio: "ignore" },
+  );
+  if (remoteCleanup.status !== 0) {
+    console.warn(
+      `  Warning: failed to remove in-sandbox ${input.artifactLabel} '${input.remotePath}' from sandbox '${input.sandboxName}' (exit ${remoteCleanup.status}). ${input.retainedDataNote}; remove it manually with \`${CLI_NAME} sandbox exec --name ${input.sandboxName} -- rm -f ${input.remotePath}\`.`,
     );
   }
 }

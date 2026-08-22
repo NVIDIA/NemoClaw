@@ -49,9 +49,9 @@ function harness(overrides: StopHarnessOverrides = {}) {
   const hasPortableLifecycleReceipt = vi.fn<
     DockerRuntimeProviderDependencies["hasPortableLifecycleReceipt"]
   >(() => false);
-  const stopPortableSandbox = vi.fn<
-    DockerRuntimeProviderDependencies["stopPortableSandbox"]
-  >(() => ({ kind: "not-installed" }));
+  const stopPortableSandbox = vi.fn<DockerRuntimeProviderDependencies["stopPortableSandbox"]>(
+    () => ({ kind: "not-installed" }),
+  );
   const stopSandboxChannels = vi.fn<NonNullable<SandboxStopDeps["stopSandboxChannels"]>>();
   const dockerStop = vi.fn<DockerRuntimeProviderDependencies["stopContainer"]>(
     dockerStopOverride ?? (() => ({ status: 0 })),
@@ -83,6 +83,7 @@ function harness(overrides: StopHarnessOverrides = {}) {
     warn,
     exclusivelyHeldOllamaModel,
     withOllamaModelOwnershipLock: (operation) => operation(),
+    withLifecycleLockSync: (_sandboxName, operation) => operation(),
     ...actionOverrides,
   };
   return {
@@ -297,12 +298,35 @@ describe("stopSandbox", () => {
       expect.any(Function),
       expect.objectContaining({ env: process.env }),
     );
-    expect(h.stopSandboxChannels).toHaveBeenCalledExactlyOnceWith(
-      "my-sandbox",
-      expect.any(Object),
-    );
+    expect(h.stopSandboxChannels).toHaveBeenCalledExactlyOnceWith("my-sandbox", expect.any(Object));
     expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
     expect(h.dockerStop).not.toHaveBeenCalled();
+  });
+
+  it("keeps active Hermes stop out of Docker and Docker-capable channel transport (#9203)", () => {
+    const unloadOllamaModels = vi.fn();
+    const h = harness({ unloadOllamaModels });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        agent: "hermes",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-alpha",
+        lifecycleLiveIdentityFingerprint: "identity-alpha",
+        openshellDriver: "docker",
+        provider: "ollama/qwen3-vl:4b",
+      }),
+    );
+    h.hasPortableLifecycleReceipt.mockReturnValue(true);
+    h.stopPortableSandbox.mockReturnValue({ kind: "stopped", portableAgent: "hermes" });
+
+    expect(stopSandbox("my-sandbox", h.deps)).toEqual({ exitCode: 0 });
+
+    expect(h.isDockerRuntimeDown).not.toHaveBeenCalled();
+    expect(h.stopSandboxChannels).not.toHaveBeenCalled();
+    expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
+    expect(h.dockerStop).not.toHaveBeenCalled();
+    expect(h.teardownSandboxDashboardForward).not.toHaveBeenCalled();
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
   });
 
   it("succeeds idempotently when the container is already stopped (#6026)", () => {

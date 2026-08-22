@@ -21,12 +21,14 @@ NemoClaw keeps the credential on the host and uses provider-aware validation dur
 
 The onboarding wizard offers these curated model IDs.
 
+- `gemini-3.6-flash`.
 - `gemini-3.1-pro-preview`.
 - `gemini-3.1-flash-lite-preview`.
 - `gemini-3-flash-preview`.
 - `gemini-2.5-pro`.
-- `gemini-2.5-flash`.
 - `gemini-2.5-flash-lite`.
+
+The wizard selects `gemini-3.6-flash` by default.
 
 ## Onboard
 
@@ -74,6 +76,11 @@ Model validation can fail with these messages:
   The validation request failed.
   The output shows the provider, model, and API base URL.
   Compare these values with your configuration.
+- `Validation probe summary: Chat Completions API: HTTP 404.`
+  This result comes from Google's OpenAI-compatible `/v1beta/openai/chat/completions` runtime route, not the native `/v1beta/models` catalog.
+  A model appearing in the native catalog does not prove that the runtime route can serve it.
+  NemoClaw stops because the sandbox uses the Chat Completions route for inference.
+  Retry the request, then verify that the same key and model can invoke Google's OpenAI-compatible Chat Completions endpoint.
 
 ## Related Topics
 

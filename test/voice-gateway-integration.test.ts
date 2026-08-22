@@ -1,12 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import http, { type Server } from "node:http";
+import os from "node:os";
+import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createVoiceGatewayServer } from "../src/lib/adapters/http/voice-gateway-server";
 import type { AgentTurnClient, AgentTurnEvent } from "../src/lib/voice-gateway/contracts";
+import { readPrivateBearerDescriptors } from "../src/lib/voice-gateway/credential-file";
 import { OpenClawVoiceClient } from "../src/lib/voice-gateway/openclaw-client";
 import { VoiceSessionService } from "../src/lib/voice-gateway/session-service";
 import { PinnedOpenClawGateway } from "./fixtures/voice-gateway/pinned-openclaw-gateway";
@@ -119,10 +123,62 @@ afterEach(async () => {
 });
 
 describe("experimental voice gateway composed boundary", () => {
-  it("recovers an omitted OpenClaw delta before completing the pinned runtime turn (#8482)", async () => {
+  it("fails closed when the launcher swaps the fixed credential roles (#9235)", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-voice-swapped-"));
+    try {
+      const deploymentPath = path.join(directory, "deployment");
+      const openClawPath = path.join(directory, "openclaw");
+      fs.writeFileSync(deploymentPath, DEPLOYMENT_BEARER, { mode: 0o600 });
+      fs.writeFileSync(openClawPath, OPENCLAW_CREDENTIAL, { mode: 0o600 });
+      const credentials = readPrivateBearerDescriptors({
+        deployment: fs.openSync(
+          openClawPath,
+          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+        ),
+        openClaw: fs.openSync(
+          deploymentPath,
+          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+        ),
+      });
+      let clientsCreated = 0;
+      const service = new VoiceSessionService({
+        runtimeIdentity: "voiceclaw-local",
+        runtimeProfile: "voiceclaw-pinned",
+        sandbox: "repository-fixture",
+        agent: "main",
+        createClient: () => {
+          clientsCreated += 1;
+          return new FakeOpenClawGatewayClient(credentials.openClawCredential);
+        },
+      });
+      const port = await listen(
+        createVoiceGatewayServer({
+          deploymentCredential: credentials.deploymentCredential,
+          service,
+        }),
+      );
+
+      const response = await requestJson({
+        port,
+        method: "POST",
+        path: "/v1/voice/sessions",
+        bearer: DEPLOYMENT_BEARER,
+        body: { runtimeConversationId: "runtime-conversation" },
+      });
+
+      expect(response).toEqual({ status: 401, body: '{"error":"authentication_failed"}' });
+      expect(clientsCreated).toBe(0);
+      expect(JSON.stringify(response)).not.toContain(DEPLOYMENT_BEARER);
+      expect(JSON.stringify(response)).not.toContain(OPENCLAW_CREDENTIAL);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("recovers an omitted delta when a final event repeats the last sequence (#9243)", async () => {
     let pinnedOpenClaw: PinnedOpenClawGateway | undefined;
     const diagnostics: object[] = [];
-    const ids = ["voice-session", "agent-session", "turn", "response"];
+    const ids = ["voice-session", "turn", "response"];
     const service = new VoiceSessionService({
       runtimeIdentity: "voiceclaw-local",
       runtimeProfile: "voiceclaw-pinned",
@@ -156,7 +212,7 @@ describe("experimental voice gateway composed boundary", () => {
     const events = await runtime.commitTurn(session, "runtime-commit", "repository status");
     await runtime.closeSession(session);
 
-    expect(output).toEqual(["Hello world"]);
+    expect(output).toEqual(["Hello world!"]);
     expect(events.map((event) => (event as { type: string }).type)).toEqual([
       "response.started",
       "response.text.delta",
@@ -178,7 +234,7 @@ describe("experimental voice gateway composed boundary", () => {
 
   it("routes one committed turn into the pinned runtime output without exposing OpenClaw authority (#8378)", async () => {
     const fakeOpenClaw = new FakeOpenClawGatewayClient(OPENCLAW_CREDENTIAL);
-    const ids = ["voice-session", "agent-session", "turn", "response"];
+    const ids = ["voice-session", "turn", "response"];
     const service = new VoiceSessionService({
       runtimeIdentity: "voiceclaw-local",
       runtimeProfile: "voiceclaw-pinned",
@@ -207,7 +263,7 @@ describe("experimental voice gateway composed boundary", () => {
       {
         idempotencyKey: "turn",
         message: "repository status",
-        sessionKey: "agent:main:nemoclaw-voice:agent-session",
+        sessionKey: expect.stringMatching(/^agent:main:nemoclaw-voice:.+$/u),
         credential: OPENCLAW_CREDENTIAL,
       },
     ]);
@@ -224,7 +280,86 @@ describe("experimental voice gateway composed boundary", () => {
     expect(fakeOpenClaw.closed).toBe(true);
   });
 
-  it("authenticates before admission or turn parsing and rejects runtime-selected authority (#8378)", async () => {
+  it("preserves agent context across separate admissions for one runtime conversation (#9411)", async () => {
+    const context = new Map<string, string>();
+    const pinnedOpenClaws: PinnedOpenClawGateway[] = [];
+    const ids = [
+      "voice-session-one",
+      "turn-one",
+      "response-one",
+      "voice-session-two",
+      "turn-two",
+      "response-two",
+      "voice-session-three",
+      "turn-three",
+      "response-three",
+    ];
+    const service = new VoiceSessionService({
+      runtimeIdentity: "voiceclaw-local",
+      runtimeProfile: "voiceclaw-pinned",
+      sandbox: "repository-fixture",
+      agent: "main",
+      createClient: () =>
+        new OpenClawVoiceClient({
+          gatewayUrl: "ws://127.0.0.1:18789/ws",
+          credential: OPENCLAW_CREDENTIAL,
+          webSocketFactory: () => {
+            const pinnedOpenClaw = new PinnedOpenClawGateway(context);
+            pinnedOpenClaws.push(pinnedOpenClaw);
+            return pinnedOpenClaw;
+          },
+        }),
+      randomId: () => ids.shift() ?? "extra",
+      randomGrant: () => Buffer.alloc(32, 9),
+    });
+    const port = await listen(
+      createVoiceGatewayServer({
+        deploymentCredential: DEPLOYMENT_BEARER,
+        service,
+      }),
+    );
+    const output: string[] = [];
+    const runtime = new PinnedVoiceRuntimeAdapter(port, DEPLOYMENT_BEARER, (text) =>
+      output.push(text),
+    );
+
+    const first = await runtime.createSession("voice-call-one");
+    const firstEvents = await runtime.commitTurn(
+      first,
+      "runtime-commit-one",
+      "My project name is Apollo.",
+    );
+    await runtime.closeSession(first);
+    const second = await runtime.createSession("voice-call-one");
+    const secondEvents = await runtime.commitTurn(
+      second,
+      "runtime-commit-two",
+      "What is my project name?",
+    );
+    await runtime.closeSession(second);
+    const third = await runtime.createSession("voice-call-two");
+    const thirdEvents = await runtime.commitTurn(
+      third,
+      "runtime-commit-three",
+      "What is my project name?",
+    );
+    await runtime.closeSession(third);
+
+    expect(output).toEqual(["I will remember Apollo.", "Apollo", "I do not know."]);
+    const sessionKeys = pinnedOpenClaws.map((gateway) => {
+      const request = gateway.sent.find((entry) => entry.method === "chat.send");
+      return String(request?.params.sessionKey ?? "");
+    });
+    expect(sessionKeys).toHaveLength(3);
+    expect(sessionKeys[1]).toBe(sessionKeys[0]);
+    expect(sessionKeys[2]).not.toBe(sessionKeys[0]);
+    expect(pinnedOpenClaws.every((gateway) => gateway.closed)).toBe(true);
+    expect(
+      JSON.stringify({ first, firstEvents, second, secondEvents, third, thirdEvents }),
+    ).not.toContain("nemoclaw-voice");
+  });
+
+  it("authenticates before admission parsing and rejects invalid or runtime-selected authority (#9411)", async () => {
     const fakeOpenClaw = new FakeOpenClawGatewayClient(OPENCLAW_CREDENTIAL);
     let clientsCreated = 0;
     const service = new VoiceSessionService({
@@ -256,18 +391,36 @@ describe("experimental voice gateway composed boundary", () => {
       body: '{"error":"authentication_failed"}',
     });
 
-    const override = await requestJson({
-      port,
-      method: "POST",
-      path: "/v1/voice/sessions",
-      bearer: DEPLOYMENT_BEARER,
-      body: {
+    const invalidAdmissions = [
+      { runtimeConversationId: "../namespace-escape" },
+      { runtimeConversationId: "x".repeat(129) },
+      {
+        runtimeConversationId: "runtime-conversation",
+        sessionKey: "agent:main:nemoclaw-voice:runtime-selected",
+      },
+      {
         runtimeConversationId: "runtime-conversation",
         agent: "runtime-selected",
         gatewayUrl: "ws://attacker.invalid/ws",
       },
-    });
-    expect(override.status).toBe(400);
+    ];
+    const rejectedAdmissions = await Promise.all(
+      invalidAdmissions.map((body) =>
+        requestJson({
+          port,
+          method: "POST",
+          path: "/v1/voice/sessions",
+          bearer: DEPLOYMENT_BEARER,
+          body,
+        }),
+      ),
+    );
+    expect(rejectedAdmissions).toEqual([
+      { status: 400, body: '{"error":"invalid_request"}' },
+      { status: 400, body: '{"error":"invalid_request"}' },
+      { status: 400, body: '{"error":"invalid_request"}' },
+      { status: 400, body: '{"error":"invalid_request"}' },
+    ]);
     expect(clientsCreated).toBe(0);
 
     const runtime = new PinnedVoiceRuntimeAdapter(port, DEPLOYMENT_BEARER, () => {});

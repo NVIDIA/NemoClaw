@@ -35,7 +35,7 @@ Runtime identity profiles may use DNS-backed HTTPS only within a provider type's
 NemoClaw resolves every destination before import and rejects private or internal addresses.
 OpenShell performs connect-time server-side request forgery (SSRF) and L7 enforcement before it injects the provider credential.
 
-OpenShell 0.0.101 verifies the original hostname's certificate but does not pin the address that NemoClaw resolved during import.
+OpenShell 0.0.106 verifies the original hostname's certificate but does not pin the address that NemoClaw resolved during import.
 Only identity-platform-controlled DNS namespaces such as `okta.com`, `login.microsoftonline.com`, and `graph.microsoft.com` belong in this trust table.
 An attacker-controlled or customer-controlled suffix requires a pinning-capable upstream refresh boundary and new conformance evidence.
 </Warning>

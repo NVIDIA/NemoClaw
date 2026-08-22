@@ -13,6 +13,10 @@ import {
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
+import {
+  withMcpLifecycleLock,
+  withMcpLifecycleLockSync,
+} from "../../state/mcp-lifecycle-lock-acquisition";
 import { selectSandboxOwningGateway } from "./gateway-select";
 import {
   gatewayNamePattern,
@@ -50,9 +54,15 @@ import {
   recoverDockerDriverSandbox,
 } from "../../onboard/docker-driver-sandbox-recovery";
 import {
-  type PortableDemoLifecycleRecoveryResult,
-  recoverPortableDemoSandboxLifecycle,
-} from "../../onboard/experimental/portable-demo-lifecycle";
+  assertHermesPortableAgentLifecycleAuthority,
+  buildHermesPortableCommandEnvironment,
+  buildHermesPortableCommandAuthority,
+  inspectPortableAgentReceiptDisposition,
+  qualifyPortableAgentLifecycleAuthority,
+  recoverPortableAgentSandboxLifecycle,
+  requireHermesPortableActiveLifecycleAuthority,
+} from "../../onboard/experimental/portable-agent-lifecycle";
+import type { PortableDemoLifecycleRecoveryResult } from "../../onboard/experimental/portable-demo-lifecycle";
 import { compareAndSetLegacySandboxLifecycleGeneration } from "../../state/registry/lifecycle-generation";
 import type { SandboxEntry } from "../../state/registry/types";
 import { getSandboxDockerRuntime } from "./docker-health";
@@ -81,6 +91,22 @@ export type SandboxGatewayState = {
   recoverySandboxVia?: string | null;
 };
 
+export type {
+  HermesPortableActiveLifecycleAuthority,
+  HermesPortableAgentLifecycleAuthority,
+  PortableAgentReceiptDisposition,
+} from "../../onboard/experimental/portable-agent-lifecycle";
+export {
+  buildHermesPortableCommandAuthority,
+  buildHermesPortableCommandEnvironment,
+  inspectPortableAgentReceiptDisposition,
+  qualifyPortableAgentLifecycleAuthority,
+  requireHermesPortableActiveLifecycleAuthority,
+};
+export const withSandboxLifecycleLock = withMcpLifecycleLock;
+export const withSandboxLifecycleLockSync = withMcpLifecycleLockSync;
+export const withConnectSandboxLifecycleLock = withMcpLifecycleLock;
+
 type SandboxGatewayStateLookup = (
   sandboxName: string,
   gatewayName?: string,
@@ -97,19 +123,22 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
   sandbox: SandboxEntry | null,
   gatewayName: string,
 ): PortableDemoLifecycleRecoveryResult {
-  if (!sandbox || sandbox.openshellDriver !== "docker") return { kind: "not-installed" };
-  return recoverPortableDemoSandboxLifecycle(
+  return recoverPortableAgentSandboxLifecycle(
     sandboxName,
     {
-      agent: sandbox.agent,
+      agent: sandbox?.agent,
       gatewayName,
-      lifecycleGeneration: sandbox.lifecycleGeneration,
-      openshellDriver: sandbox.openshellDriver,
-      provider: sandbox.provider,
+      lifecycleGeneration: sandbox?.lifecycleGeneration,
+      openshellDriver: sandbox?.openshellDriver,
+      provider: sandbox?.provider,
     },
     {
-      backfillRegistryGeneration: (generation) =>
-        compareAndSetLegacySandboxLifecycleGeneration(sandbox, generation),
+      ...(sandbox
+        ? {
+            backfillRegistryGeneration: (generation: string) =>
+              compareAndSetLegacySandboxLifecycleGeneration(sandbox, generation),
+          }
+        : {}),
       openshellBinary: getOpenshellBinary(),
       captureOpenshell: (args, timeoutMs) => {
         const result = captureOpenshell([...args], {
@@ -124,7 +153,27 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
           error: result.error,
         };
       },
+      readRegistry: (name) => (sandbox?.name === name ? sandbox : null),
     },
+  );
+}
+
+/** Requalify Hermes receipt authority without starting or mutating its sandbox. */
+export function assertHermesPortableLifecycleForConnect(
+  sandboxName: string,
+  sandbox: SandboxEntry,
+  gatewayName: string,
+): void {
+  assertHermesPortableAgentLifecycleAuthority(
+    sandboxName,
+    {
+      agent: sandbox.agent,
+      gatewayName,
+      lifecycleGeneration: sandbox.lifecycleGeneration,
+      openshellDriver: sandbox.openshellDriver,
+      provider: sandbox.provider,
+    },
+    { readRegistry: (name: string) => (name === sandboxName ? sandbox : null) },
   );
 }
 
@@ -528,14 +577,18 @@ export type GatewayRecoveryMode = "observe" | "recover";
 
 export async function getReconciledSandboxGatewayState(
   sandboxName: string,
-  opts: { getState?: SandboxGatewayStateLookup; gatewayRecovery?: GatewayRecoveryMode } = {},
+  opts: {
+    getState?: SandboxGatewayStateLookup;
+    gatewayRecovery?: GatewayRecoveryMode;
+    selectOwningGateway?: boolean;
+  } = {},
 ): Promise<SandboxGatewayState> {
   const getState = opts.getState ?? getSandboxGatewayState;
   const gatewayRecovery: GatewayRecoveryMode = opts.gatewayRecovery ?? "recover";
   let targetGatewayName = getKnownSandboxTargetGatewayName(sandboxName) ?? undefined;
   const endpointOverride = gatewayEndpointOverrideState();
   if (endpointOverride) return endpointOverride;
-  if (targetGatewayName) {
+  if (targetGatewayName && opts.selectOwningGateway !== false) {
     // Keep OpenShell's active selection aligned for downstream operations, but
     // never trust that process-global state for this lookup: another CLI can
     // change it immediately after selection. The explicit gateway argument
@@ -654,9 +707,19 @@ export async function ensureLiveSandboxOrExit(
   {
     allowNonReadyPhase = false,
     gatewayRecovery = "recover",
-  }: { allowNonReadyPhase?: boolean; gatewayRecovery?: GatewayRecoveryMode } = {},
+    selectOwningGateway = true,
+    exit = process.exit,
+  }: {
+    allowNonReadyPhase?: boolean;
+    gatewayRecovery?: GatewayRecoveryMode;
+    selectOwningGateway?: boolean;
+    exit?: (code: number) => never;
+  } = {},
 ): Promise<SandboxGatewayState> {
-  const lookup = await getReconciledSandboxGatewayState(sandboxName, { gatewayRecovery });
+  const lookup = await getReconciledSandboxGatewayState(sandboxName, {
+    gatewayRecovery,
+    selectOwningGateway,
+  });
   if (lookup.state === "present") {
     const phase = parseSandboxPhase(lookup.output || "");
     if (!allowNonReadyPhase && phase && phase !== "Ready" && phase !== "Running") {
@@ -666,14 +729,14 @@ export async function ensureLiveSandboxOrExit(
       // keep the rebuild guidance so a genuine failure is never masked.
       if (!isTerminalSandboxPhase(phase) && isDockerRuntimeDown(sandboxName)) {
         printDockerRuntimeDownGuidance(sandboxName);
-        process.exit(1);
+        exit(1);
       }
       const dockerRuntime = getSandboxDockerRuntime(sandboxName);
       if (dockerRuntime.containerName && !dockerRuntime.running && !dockerRuntime.paused) {
         console.error(`  Sandbox '${sandboxName}' is stopped.`);
         console.error("  Workspace state is preserved.");
         console.error(`  Start it again with \`${CLI_NAME} ${sandboxName} start\`.`);
-        process.exit(1);
+        exit(1);
       }
       if (phase === "Error" && dockerRuntime.paused && dockerRuntime.containerName) {
         console.error(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
@@ -686,7 +749,7 @@ export async function ensureLiveSandboxOrExit(
         );
         console.error("  Resume it to restore the running phase:");
         console.error(`    ${D}docker unpause ${dockerRuntime.containerName}${R}`);
-        process.exit(1);
+        exit(1);
       }
       console.error(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
       console.error(
@@ -705,13 +768,13 @@ export async function ensureLiveSandboxOrExit(
           `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the sandbox (--yes skips the confirmation prompt; workspace state will be preserved).`,
         );
       }
-      process.exit(1);
+      exit(1);
     }
     return lookup;
   }
   if (lookup.state === "gateway_schema_mismatch") {
     console.error(lookup.output);
-    process.exit(1);
+    exit(1);
   }
   if (lookup.state === "missing") {
     const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
@@ -722,7 +785,7 @@ export async function ensureLiveSandboxOrExit(
       } else {
         printGatewayLifecycleHint(guard.status || "", sandboxName, console.error);
       }
-      process.exit(1);
+      exit(1);
     }
     // The sandbox is absent from a healthy NemoClaw gateway, but the local
     // registry entry still holds the metadata that `rebuild` / `onboard
@@ -742,11 +805,11 @@ export async function ensureLiveSandboxOrExit(
     console.error(
       `  If the sandbox was intentionally deleted, run \`${CLI_NAME} ${sandboxName} destroy\` to remove the stale local entry, or \`${CLI_NAME} onboard\` to create a new one.`,
     );
-    process.exit(1);
+    exit(1);
   }
   if (lookup.state === "wrong_gateway_active") {
     printWrongGatewayActiveGuidance(sandboxName, lookup.activeGateway, console.error);
-    process.exit(1);
+    exit(1);
   }
   if (lookup.state === "identity_drift") {
     console.error("  Gateway SSH identity changed after restart — clearing stale host keys...");
@@ -758,7 +821,10 @@ export async function ensureLiveSandboxOrExit(
     } catch {
       /* best-effort cleanup */
     }
-    const retry = await getReconciledSandboxGatewayState(sandboxName, { gatewayRecovery });
+    const retry = await getReconciledSandboxGatewayState(sandboxName, {
+      gatewayRecovery,
+      selectOwningGateway,
+    });
     if (retry.state === "present") {
       console.error("  ✓ Reconnected after clearing stale SSH host keys.");
       return retry;
@@ -772,7 +838,7 @@ export async function ensureLiveSandboxOrExit(
     console.error(
       `  Recreate this sandbox with \`${CLI_NAME} onboard\` once the gateway runtime is stable.`,
     );
-    process.exit(1);
+    exit(1);
   }
   if (lookup.state === "gateway_unreachable_after_restart") {
     console.error(
@@ -787,7 +853,7 @@ export async function ensureLiveSandboxOrExit(
     console.error(
       "  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.",
     );
-    process.exit(1);
+    exit(1);
   }
   if (lookup.state === "gateway_error" && gatewayRecovery === "observe") {
     console.error(
@@ -800,7 +866,7 @@ export async function ensureLiveSandboxOrExit(
     console.error(
       `  This sandbox-scoped command will not restart the shared host gateway. ${gatewayStartGuidance(getSandboxTargetGatewayName(sandboxName))} Then retry this command.`,
     );
-    process.exit(1);
+    exit(1);
   }
   if (lookup.state === "gateway_missing_after_restart") {
     console.error(
@@ -813,7 +879,7 @@ export async function ensureLiveSandboxOrExit(
     console.error(
       "  If the gateway had to be rebuilt from scratch, recreate the affected sandbox afterward.",
     );
-    process.exit(1);
+    exit(1);
   }
   console.error(`  Unable to verify sandbox '${sandboxName}' against the live OpenShell gateway.`);
   if (lookup.output) {
@@ -821,5 +887,5 @@ export async function ensureLiveSandboxOrExit(
   }
   printGatewayLifecycleHint(lookup.output, sandboxName);
   console.error("  Check `openshell status` and the active gateway, then retry.");
-  process.exit(1);
+  return exit(1);
 }

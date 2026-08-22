@@ -42,10 +42,11 @@ function installerCanonicalAgentName(input: string): string {
 }
 
 describe("agent alias parity", () => {
-  it("keeps installer canonical_agent_name aligned with TypeScript alias resolution", () => {
-    for (const [input, expected] of ALIAS_CASES) {
+  it.each(ALIAS_CASES.map(([input, expected]) => ({ input, expected })))(
+    "keeps installer canonical_agent_name aligned for $input",
+    ({ input, expected }) => {
       expect(resolveAgentNameAlias(input, AVAILABLE_AGENTS), input).toBe(expected);
       expect(installerCanonicalAgentName(input), input).toBe(expected);
-    }
-  });
+    },
+  );
 });

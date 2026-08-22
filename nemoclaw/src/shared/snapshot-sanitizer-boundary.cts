@@ -55,9 +55,7 @@ export function resolveTrustedSnapshotSanitizerPythonPath(): string | null {
 }
 
 /** @visibleForTesting Install an explicit helper substitute without weakening production lookup. */
-export function setSnapshotSanitizerPythonPathForTest(
-  pythonPath: string | null | undefined,
-): void {
+export function setSnapshotSanitizerPythonPathForTest(pythonPath: string | null | undefined): void {
   if (process.env.VITEST !== "true") {
     throw new Error("Snapshot sanitizer Python substitution is only available under Vitest");
   }
@@ -67,11 +65,23 @@ export function setSnapshotSanitizerPythonPathForTest(
   snapshotSanitizerPythonPathForTest = pythonPath;
 }
 
+/** Resolve the interpreter the helpers will actually run, including the test substitute. */
 function snapshotSanitizerPythonPath(): string | null {
   if (process.env.VITEST === "true" && snapshotSanitizerPythonPathForTest !== undefined) {
     return snapshotSanitizerPythonPathForTest;
   }
   return resolveTrustedSnapshotSanitizerPythonPath();
+}
+
+/** No trusted python3 interpreter resolved, so no descriptor-relative helper can run. (#8202) */
+export class SnapshotSanitizerPrerequisiteError extends Error {
+  readonly snapshotPath: string;
+
+  constructor(snapshotPath: string) {
+    super("python3 is required for snapshot sanitization; install python3 and rerun");
+    this.name = "SnapshotSanitizerPrerequisiteError";
+    this.snapshotPath = snapshotPath;
+  }
 }
 
 export interface SnapshotFileIdentity {
@@ -720,7 +730,7 @@ export function scanDescriptorSnapshot(
 ): DescriptorSnapshotScan | null {
   const mode = targetName === undefined ? "scan-tree" : "scan-file";
   const pythonPath = snapshotSanitizerPythonPath();
-  if (pythonPath === null) return null;
+  if (pythonPath === null) throw new SnapshotSanitizerPrerequisiteError(root.canonicalPath);
   const result = spawnSync(
     pythonPath,
     [
@@ -752,7 +762,7 @@ export function applyDescriptorSnapshotActions(
 ): boolean {
   if (actions.length === 0) return true;
   const pythonPath = snapshotSanitizerPythonPath();
-  if (pythonPath === null) return false;
+  if (pythonPath === null) throw new SnapshotSanitizerPrerequisiteError(root.canonicalPath);
   const result = spawnSync(
     pythonPath,
     ["-I", "-c", SNAPSHOT_SANITIZER_PYTHON, "apply", root.canonicalPath],

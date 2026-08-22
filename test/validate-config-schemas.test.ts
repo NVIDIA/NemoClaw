@@ -120,23 +120,24 @@ function registerOpenShellJsonRpcMcpMatcherTests(
     expect(validate(fixture)).toBe(false);
   });
 
-  it("rejects wildcard tool selectors when strict tool names are disabled", () => {
-    const exact = l7SchemaFixture(kind, {
-      protocol: "mcp",
-      mcp: { strict_tool_names: false },
-      rules: [{ allow: { method: "tools/call", tool: "search" } }],
-    });
-    expectValid(validate, exact, `${kind} exact MCP tool selector`);
+  it.each(["search*", { any: ["search", "admin?"] }])(
+    "rejects the wildcard MCP tool selector %# when strict names are disabled",
+    (tool) => {
+      const exact = l7SchemaFixture(kind, {
+        protocol: "mcp",
+        mcp: { strict_tool_names: false },
+        rules: [{ allow: { method: "tools/call", tool: "search" } }],
+      });
+      expectValid(validate, exact, `${kind} exact MCP tool selector`);
 
-    for (const tool of ["search*", { any: ["search", "admin?"] }]) {
       const wildcard = l7SchemaFixture(kind, {
         protocol: "mcp",
         mcp: { strict_tool_names: false },
         rules: [{ allow: { method: "tools/call", tool } }],
       });
       expect(validate(wildcard)).toBe(false);
-    }
-  });
+    },
+  );
 
   it("allows empty MCP matchers only under the allow-all method profile", () => {
     const profiled = l7SchemaFixture(kind, {
@@ -175,39 +176,45 @@ function registerOpenShellJsonRpcMcpMatcherTests(
     expect(validate(fixture)).toBe(false);
   });
 
-  it("keeps MCP-only options off non-MCP protocols while retaining the body-size alias", () => {
-    const bodySizeAlias = l7SchemaFixture(kind, {
-      protocol: "json-rpc",
-      mcp: { max_body_bytes: 131072 },
-      rules: [{ allow: { method: "ping" } }],
-    });
-    expectValid(validate, bodySizeAlias, `${kind} non-MCP body-size alias`);
-
-    for (const option of ["strict_tool_names", "allow_all_known_mcp_methods"]) {
+  it.each(["strict_tool_names", "allow_all_known_mcp_methods"])(
+    "keeps the %s MCP option off non-MCP protocols",
+    (option) => {
       const invalid = l7SchemaFixture(kind, {
         protocol: "json-rpc",
         mcp: { max_body_bytes: 131072, [option]: true },
         rules: [{ allow: { method: "ping" } }],
       });
       expect(validate(invalid)).toBe(false);
-    }
+    },
+  );
+
+  it("retains the body-size alias on non-MCP protocols", () => {
+    const bodySizeAlias = l7SchemaFixture(kind, {
+      protocol: "json-rpc",
+      mcp: { max_body_bytes: 131072 },
+      rules: [{ allow: { method: "ping" } }],
+    });
+    expectValid(validate, bodySizeAlias, `${kind} non-MCP body-size alias`);
   });
 
-  it("accepts only exact JSON-RPC methods or the sole wildcard sentinel", () => {
+  it("accepts the sole JSON-RPC wildcard sentinel", () => {
     const wildcard = l7SchemaFixture(kind, {
       protocol: "json-rpc",
       rules: [{ allow: { method: "*" } }],
     });
     expectValid(validate, wildcard, `${kind} JSON-RPC wildcard sentinel`);
+  });
 
-    for (const method of ["reports.*", "reports?", "reports[0]", "reports{admin}"]) {
+  it.each(["reports.*", "reports?", "reports[0]", "reports{admin}"])(
+    "rejects the JSON-RPC method glob %s",
+    (method) => {
       const glob = l7SchemaFixture(kind, {
         protocol: "json-rpc",
         rules: [{ allow: { method } }],
       });
       expect(validate(glob)).toBe(false);
-    }
-  });
+    },
+  );
 }
 
 // ── Validation target discovery ─────────────────────────────────────────────
@@ -1431,14 +1438,15 @@ describe("model-specific-setup/schema.json", () => {
     expect(validate(bad)).toBe(false);
   });
 
-  it("rejects OpenClaw plugin paths outside the staged plugin trees", () => {
-    for (const [pathValue, loadPathValue] of [
-      ["/etc/passwd", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
-      ["../secrets", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
-      ["openclaw-plugins/subdir/../escape", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
-      ["openclaw-plugins/fixture", "/etc/passwd"],
-      ["openclaw-plugins/fixture", "/usr/local/share/nemoclaw/openclaw-plugins/subdir/../escape"],
-    ]) {
+  it.each([
+    ["/etc/passwd", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
+    ["../secrets", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
+    ["openclaw-plugins/subdir/../escape", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
+    ["openclaw-plugins/fixture", "/etc/passwd"],
+    ["openclaw-plugins/fixture", "/usr/local/share/nemoclaw/openclaw-plugins/subdir/../escape"],
+  ])(
+    "rejects the OpenClaw plugin path pair %# outside the staged trees",
+    (pathValue, loadPathValue) => {
       const bad = {
         ...cloneObject(exactModelFixture),
         effects: {
@@ -1452,8 +1460,8 @@ describe("model-specific-setup/schema.json", () => {
         },
       };
       expect(validate(bad)).toBe(false);
-    }
-  });
+    },
+  );
 
   it("accepts OpenClaw plugin paths inside the staged plugin trees", () => {
     const valid = {

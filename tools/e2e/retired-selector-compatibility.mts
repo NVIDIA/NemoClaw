@@ -53,7 +53,7 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
     legacyFile: "test/e2e/live/credential-sanitization.test.ts",
     tests: [
       {
-        files: ["src/lib/security/credential-filter-secret-patterns.test.ts"],
+        files: ["src/lib/security/credential-filter.test.ts"],
         project: "cli",
       },
     ],

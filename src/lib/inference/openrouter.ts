@@ -3,10 +3,12 @@
 
 import { OPENROUTER_RUNTIME_ADAPTER_PORT } from "../core/ports";
 
-export const OPENROUTER_ENDPOINT_URL = "https://openrouter.ai/api/v1";
+export {
+  OPENROUTER_ENDPOINT_URL,
+  OPENROUTER_PROVIDER_NAME,
+} from "./managed-dcode/identity";
 export const OPENROUTER_HELP_URL = "https://openrouter.ai/workspaces/default/keys";
 export const OPENROUTER_CREDENTIAL_ENV = "OPENROUTER_API_KEY";
-export const OPENROUTER_PROVIDER_NAME = "openrouter-api";
 // OpenShell does not expose a native OpenRouter provider profile yet. Register
 // OpenRouter through the OpenAI-compatible provider profile while keeping a
 // distinct provider name and credential binding in NemoClaw.

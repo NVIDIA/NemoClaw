@@ -568,10 +568,18 @@ function mapPiProfile(
 
   const configurationEnvironment: MutableEnvironment = {
     ...commonConfigurationEnvironment(profile),
+    NEMOCLAW_CONTEXT_WINDOW:
+      profile.tuning.contextWindow === null ? "" : String(profile.tuning.contextWindow),
+    NEMOCLAW_MAX_TOKENS: profile.tuning.maxTokens === null ? "" : String(profile.tuning.maxTokens),
+    NEMOCLAW_REASONING:
+      profile.tuning.reasoning === null ? "" : String(profile.tuning.reasoning),
   };
   appendHostProxyEnvironment(configurationEnvironment, profile);
   const runtimeEnvironment: MutableEnvironment = { ...configurationEnvironment };
   delete runtimeEnvironment.NEMOCLAW_INFERENCE_BASE_URL;
+  delete runtimeEnvironment.NEMOCLAW_CONTEXT_WINDOW;
+  delete runtimeEnvironment.NEMOCLAW_MAX_TOKENS;
+  delete runtimeEnvironment.NEMOCLAW_REASONING;
   for (const name of [
     "HTTP_PROXY",
     "HTTPS_PROXY",

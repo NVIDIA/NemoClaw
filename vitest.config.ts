@@ -21,8 +21,14 @@ const { isCi, silent } = resolveVitestFeedback();
 const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
 const runLiveE2E = shouldRunLiveE2E();
 const canonicalBannerBoundary = path.resolve("nemoclaw/src/shared/banner-boundary.cts");
+const canonicalCredentialFilterBoundary = path.resolve(
+  "nemoclaw/src/shared/credential-filter-boundary.cts",
+);
 const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
+);
+const canonicalPrivateNetworksBoundary = path.resolve(
+  "nemoclaw/src/shared/private-networks-boundary.cts",
 );
 const canonicalSandboxName = path.resolve("nemoclaw/src/shared/sandbox-name.cts");
 const canonicalSnapshotSanitizerBoundary = path.resolve(
@@ -37,8 +43,16 @@ const canonicalSourceAliases = [
     replacement: canonicalBannerBoundary,
   },
   {
+    find: /^.*credential-filter-boundary\.cjs$/,
+    replacement: canonicalCredentialFilterBoundary,
+  },
+  {
     find: /^.*openshell-policy-boundary\.cjs$/,
     replacement: canonicalOpenShellPolicyBoundary,
+  },
+  {
+    find: /^.*private-networks-boundary\.cjs$/,
+    replacement: canonicalPrivateNetworksBoundary,
   },
   {
     find: /^.*sandbox-name\.cjs$/,
@@ -164,6 +178,7 @@ export default defineConfig({
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",
             "test/install-forward-restore-diagnostics.test.ts",
+            "test/install-hermes-portable-active.test.ts",
             "test/install-hermes-forward-restore.test.ts",
             "test/install-managed-cli-reuse.test.ts",
             "test/install-preflight.test.ts",
@@ -197,6 +212,7 @@ export default defineConfig({
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",
             "test/install-forward-restore-diagnostics.test.ts",
+            "test/install-hermes-portable-active.test.ts",
             "test/install-hermes-forward-restore.test.ts",
             "test/install-managed-cli-reuse.test.ts",
             "test/install-preflight.test.ts",

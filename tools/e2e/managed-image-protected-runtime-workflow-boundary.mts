@@ -19,6 +19,8 @@ const ACTIVATION_PATH = "ci/protected-managed-image-runtime-activation-v1.json";
 const LIVE_TEST_PATH = "test/e2e/live/managed-image-protected-runtime.test.ts";
 const REGISTRY_IMAGE =
   "docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373";
+const GUARDED_NVIDIA_API_KEY =
+  "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_API_KEY || '' }}";
 
 // Keep lane-specific trust assertions explicit: the multiarch lane executes
 // candidate code directly, while this GPU lane keeps secrets in trusted code
@@ -298,7 +300,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Run all-agent GPU, local inference, rollback, and cleanup qualification",
   );
   requireValues(errors, `${JOB_ID} qualification env`, record(qualification?.env), {
-    NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
+    NVIDIA_API_KEY: GUARDED_NVIDIA_API_KEY,
   });
   const secretBearingSteps = workflowSteps.filter(
     (step) => record(step.env).NVIDIA_API_KEY !== undefined,

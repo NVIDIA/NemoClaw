@@ -11,6 +11,7 @@ import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { hardenPodmanSocketDirectory, type PodmanSocketAuthorityDeps } from "../../adapters/podman";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { parsePortableRuntimeAuthority } from "../../state/onboard/portable-runtime-authority";
+import { defaultPortableStateDir } from "../../state/portable-uninstall-retirement";
 import {
   inspectPortablePodmanReadiness,
   portablePodmanCommandEnvironment,
@@ -41,6 +42,27 @@ export interface PortableRuntimeReceiptReadinessDeps {
   readonly hardenSocketDirectory?: (socketPath: string, uid: number) => void;
 }
 
+export type PortableLifecycleReceiptClassification =
+  | { readonly kind: "absent" }
+  | {
+      readonly kind: "current";
+      readonly registryGeneration: string;
+      readonly runtimeAuthority: CheckpointPortableRuntimeAuthority;
+    }
+  | { readonly kind: "invalid-or-legacy" };
+
+/** Prove that a current Portable receipt owns the selected registry generation. */
+export function portableLifecycleReceiptMatchesGeneration(
+  receipt: PortableLifecycleReceiptClassification,
+  lifecycleGeneration: string | undefined,
+): receipt is Extract<PortableLifecycleReceiptClassification, { readonly kind: "current" }> {
+  return (
+    receipt.kind === "current" &&
+    typeof lifecycleGeneration === "string" &&
+    lifecycleGeneration === receipt.registryGeneration
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -50,16 +72,12 @@ export function portableDemoReceiptPath(sandboxName: string, stateDir: string): 
   return path.join(stateDir, RECEIPT_DIRECTORY, fileName);
 }
 
+export function portableDemoReceiptDirectory(stateDir: string): string {
+  return path.join(stateDir, RECEIPT_DIRECTORY);
+}
+
 export function defaultPortableDemoStateDir(env: NodeJS.ProcessEnv): string {
-  if (
-    env.VITEST === "true" &&
-    (env.HOME ?? "") === env.NEMOCLAW_TEST_BASE_HOME &&
-    env.NEMOCLAW_TEST_STATE_DIR &&
-    path.isAbsolute(env.NEMOCLAW_TEST_STATE_DIR)
-  ) {
-    return env.NEMOCLAW_TEST_STATE_DIR;
-  }
-  return path.join(env.HOME ?? os.homedir(), ".nemoclaw");
+  return defaultPortableStateDir(env);
 }
 
 function exactReceiptKeys(receipt: Record<string, unknown>): boolean {
@@ -108,7 +126,13 @@ function parseReceiptAuthority(
 function loadReceiptAuthority(
   sandboxName: string,
   stateDir: string,
-): CheckpointPortableRuntimeAuthority | "legacy" | null {
+):
+  | {
+      readonly registryGeneration: string;
+      readonly runtimeAuthority: CheckpointPortableRuntimeAuthority;
+    }
+  | "legacy"
+  | null {
   let file;
   try {
     file = openRegularFileNoFollow(portableDemoReceiptPath(sandboxName, stateDir));
@@ -117,7 +141,13 @@ function loadReceiptAuthority(
     throw error;
   }
   try {
-    return parseReceiptAuthority(JSON.parse(file.readUtf8(MAX_RECEIPT_BYTES)), sandboxName);
+    const parsed = JSON.parse(file.readBytes(MAX_RECEIPT_BYTES).toString("utf8")) as unknown;
+    const runtimeAuthority = parseReceiptAuthority(parsed, sandboxName);
+    if (runtimeAuthority === "legacy") return runtimeAuthority;
+    return {
+      registryGeneration: (parsed as Record<string, unknown>).registryGeneration as string,
+      runtimeAuthority,
+    };
   } catch (error) {
     if (error instanceof SyntaxError) {
       throw new Error("Portable demo lifecycle receipt is malformed");
@@ -125,6 +155,40 @@ function loadReceiptAuthority(
     throw error;
   } finally {
     file.close();
+  }
+}
+
+/**
+ * Classify the durable Portable lifecycle discriminator without probing its
+ * runtime. Invalid and legacy receipts deliberately share one fail-closed
+ * result so callers cannot infer ordinary-sandbox behavior from stale state.
+ */
+export function classifyPortableLifecycleReceipt(
+  sandboxName: string,
+  deps: Pick<
+    PortableRuntimeReceiptReadinessDeps,
+    "env" | "platform" | "runtimeReadiness" | "stateDir"
+  > = {},
+): PortableLifecycleReceiptClassification {
+  const commandEnv = deps.env ?? process.env;
+  const stateDir = deps.stateDir ?? defaultPortableDemoStateDir(commandEnv);
+  try {
+    const authority = loadReceiptAuthority(sandboxName, stateDir);
+    if (authority === null) return { kind: "absent" };
+    if (authority === "legacy") return { kind: "invalid-or-legacy" };
+    const uid = deps.runtimeReadiness?.uid ?? process.geteuid?.() ?? process.getuid?.();
+    const home = deps.runtimeReadiness?.home ?? os.userInfo().homedir;
+    if (
+      (deps.platform ?? process.platform) !== "linux" ||
+      !Number.isSafeInteger(uid) ||
+      authority.runtimeAuthority.uid !== uid ||
+      authority.runtimeAuthority.homeDir !== home
+    ) {
+      return { kind: "invalid-or-legacy" };
+    }
+    return { kind: "current", ...authority };
+  } catch {
+    return { kind: "invalid-or-legacy" };
   }
 }
 
@@ -167,9 +231,15 @@ export function inspectPortableRuntimeReceiptReadiness(
 ): PortablePodmanReadinessResult | null {
   const commandEnv = deps.env ?? process.env;
   const stateDir = deps.stateDir ?? defaultPortableDemoStateDir(commandEnv);
-  let authority: CheckpointPortableRuntimeAuthority | "legacy" | null;
+  let receipt:
+    | {
+        readonly registryGeneration: string;
+        readonly runtimeAuthority: CheckpointPortableRuntimeAuthority;
+      }
+    | "legacy"
+    | null;
   try {
-    authority = loadReceiptAuthority(sandboxName, stateDir);
+    receipt = loadReceiptAuthority(sandboxName, stateDir);
   } catch {
     return {
       ok: false,
@@ -179,8 +249,8 @@ export function inspectPortableRuntimeReceiptReadiness(
       timing: { mode: "warm", activationMs: 0, apiMs: 0, totalMs: 0 },
     };
   }
-  if (!authority) return null;
-  if (authority === "legacy") {
+  if (!receipt) return null;
+  if (receipt === "legacy") {
     return {
       ok: false,
       stage: "socket authority",
@@ -190,11 +260,11 @@ export function inspectPortableRuntimeReceiptReadiness(
       timing: { mode: "warm", activationMs: 0, apiMs: 0, totalMs: 0 },
     };
   }
-  const podmanEnv = portablePodmanCommandEnvironment(authority, commandEnv);
+  const podmanEnv = portablePodmanCommandEnvironment(receipt.runtimeAuthority, commandEnv);
   const capture = deps.podman
     ? podmanCapture(deps.podman, podmanEnv)
     : defaultPodmanCapture(podmanEnv);
-  return inspectPortablePodmanReadiness(authority, {
+  return inspectPortablePodmanReadiness(receipt.runtimeAuthority, {
     platform: deps.platform,
     env: commandEnv,
     socketAuthorityDeps: deps.podmanSocketAuthorityDeps,

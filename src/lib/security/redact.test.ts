@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { redactForLog, redactFull, redactLogSequence, redactSensitiveText } from "./redact.js";
 
 describe("redactForLog", () => {
-  it("redacts pass aliases in structured keys and canonical text assignments", () => {
+  it("redacts pass aliases in structured keys", () => {
     const payload = "opaqueCredentialPayloadZ1234567890";
 
     expect(
@@ -30,35 +30,36 @@ describe("redactForLog", () => {
       "db-pass": "<REDACTED>",
       replyToken: "<REDACTED>",
     });
-    for (const [assignment, expected] of [
-      [`CUSTOM_PASS=${payload}`, "CUSTOM_PASS=<REDACTED>"],
-      [`CUSTOM_PASSWD=${payload}`, "CUSTOM_PASSWD=<REDACTED>"],
-      [`CUSTOM_PASS ${payload}`, "CUSTOM_PASS <REDACTED>"],
-      ["CUSTOM_PASS=!OpaquePassword123", "CUSTOM_PASS=<REDACTED>"],
-      ["CUSTOM_PASS=abcdefghij!tail-secret", "CUSTOM_PASS=<REDACTED>"],
-      ["CUSTOM_PASS=,OpaquePassword123", "CUSTOM_PASS=<REDACTED>"],
-      ["CUSTOM_PASS=OpaquePassword123,", "CUSTOM_PASS=<REDACTED>"],
-      [`PASS: ${payload}`, "PASS: <REDACTED>"],
-      [`PASS = ${payload}`, "PASS = <REDACTED>"],
-      [`{"PASS":"${payload}"}`, '{"PASS":"<REDACTED>"}'],
-      [`api-key=${payload}`, "api-key=<REDACTED>"],
-      [`X-Api-Key=${payload}`, "X-Api-Key=<REDACTED>"],
-      [`clientSecret=${payload}`, "clientSecret=<REDACTED>"],
-      [`replyToken=${payload}`, "replyToken=<REDACTED>"],
-      [`{"replyToken":"${payload}"}`, '{"replyToken":"<REDACTED>"}'],
-      [`githubToken=${payload}`, "githubToken=<REDACTED>"],
-      [`webhookSecret=${payload}`, "webhookSecret=<REDACTED>"],
-      [`databaseCredential=${payload}`, "databaseCredential=<REDACTED>"],
-      [`customPass=${payload}`, "customPass=<REDACTED>"],
-      [`DBPass=${payload}`, "DBPass=<REDACTED>"],
-    ]) {
-      expect(redactSensitiveText(assignment)).toBe(expected);
-      expect(redactFull(assignment)).toBe(expected);
-      expect(redactForLog(assignment)).toBe(expected);
-    }
   });
 
-  it("preserves benign structured keys and assignments containing pass", () => {
+  it.each([
+    ["CUSTOM_PASS=opaqueCredentialPayloadZ1234567890", "CUSTOM_PASS=<REDACTED>"],
+    ["CUSTOM_PASSWD=opaqueCredentialPayloadZ1234567890", "CUSTOM_PASSWD=<REDACTED>"],
+    ["CUSTOM_PASS opaqueCredentialPayloadZ1234567890", "CUSTOM_PASS <REDACTED>"],
+    ["CUSTOM_PASS=!OpaquePassword123", "CUSTOM_PASS=<REDACTED>"],
+    ["CUSTOM_PASS=abcdefghij!tail-secret", "CUSTOM_PASS=<REDACTED>"],
+    ["CUSTOM_PASS=,OpaquePassword123", "CUSTOM_PASS=<REDACTED>"],
+    ["CUSTOM_PASS=OpaquePassword123,", "CUSTOM_PASS=<REDACTED>"],
+    ["PASS: opaqueCredentialPayloadZ1234567890", "PASS: <REDACTED>"],
+    ["PASS = opaqueCredentialPayloadZ1234567890", "PASS = <REDACTED>"],
+    ['{"PASS":"opaqueCredentialPayloadZ1234567890"}', '{"PASS":"<REDACTED>"}'],
+    ["api-key=opaqueCredentialPayloadZ1234567890", "api-key=<REDACTED>"],
+    ["X-Api-Key=opaqueCredentialPayloadZ1234567890", "X-Api-Key=<REDACTED>"],
+    ["clientSecret=opaqueCredentialPayloadZ1234567890", "clientSecret=<REDACTED>"],
+    ["replyToken=opaqueCredentialPayloadZ1234567890", "replyToken=<REDACTED>"],
+    ['{"replyToken":"opaqueCredentialPayloadZ1234567890"}', '{"replyToken":"<REDACTED>"}'],
+    ["githubToken=opaqueCredentialPayloadZ1234567890", "githubToken=<REDACTED>"],
+    ["webhookSecret=opaqueCredentialPayloadZ1234567890", "webhookSecret=<REDACTED>"],
+    ["databaseCredential=opaqueCredentialPayloadZ1234567890", "databaseCredential=<REDACTED>"],
+    ["customPass=opaqueCredentialPayloadZ1234567890", "customPass=<REDACTED>"],
+    ["DBPass=opaqueCredentialPayloadZ1234567890", "DBPass=<REDACTED>"],
+  ])("redacts canonical assignment vector %#", (assignment, expected) => {
+    expect(redactSensitiveText(assignment)).toBe(expected);
+    expect(redactFull(assignment)).toBe(expected);
+    expect(redactForLog(assignment)).toBe(expected);
+  });
+
+  it("preserves benign structured keys containing pass", () => {
     const benign = {
       compass: "north",
       bypass: false,
@@ -76,19 +77,20 @@ describe("redactForLog", () => {
     };
 
     expect(redactForLog(benign)).toEqual(benign);
-    for (const text of [
-      "COMPASS=opaqueNonSecretPayload123 BYPASS=allowedValue123",
-      "TOPSECRET=opaqueNonSecretPayload123 SUBTOKEN=opaqueNonSecretPayload123",
-      "publicKey=opaqueVerificationMaterial123 customKey=opaqueNonSecretPayload123",
-      "public-key=opaqueVerificationMaterial123 custom-key=opaqueNonSecretPayload123",
-      "passRate=opaqueNonSecretPayload123",
-      '{"key":"agent:main:main"}',
-      '{"correlationMarker":"reply-correlation-marker-123"}',
-    ]) {
-      expect(redactSensitiveText(text), text).toBe(text);
-      expect(redactFull(text), text).toBe(text);
-      expect(redactForLog(text), text).toBe(text);
-    }
+  });
+
+  it.each([
+    "COMPASS=opaqueNonSecretPayload123 BYPASS=allowedValue123",
+    "TOPSECRET=opaqueNonSecretPayload123 SUBTOKEN=opaqueNonSecretPayload123",
+    "publicKey=opaqueVerificationMaterial123 customKey=opaqueNonSecretPayload123",
+    "public-key=opaqueVerificationMaterial123 custom-key=opaqueNonSecretPayload123",
+    "passRate=opaqueNonSecretPayload123",
+    '{"key":"agent:main:main"}',
+    '{"correlationMarker":"reply-correlation-marker-123"}',
+  ])("preserves benign text vector %# containing credential substrings", (text) => {
+    expect(redactSensitiveText(text), text).toBe(text);
+    expect(redactFull(text), text).toBe(text);
+    expect(redactForLog(text), text).toBe(text);
   });
 
   it("redacts sensitive object keys recursively while preserving safe fields", () => {
@@ -261,7 +263,21 @@ describe("redactForLog", () => {
     ]);
   });
 
-  it("redacts Basic, Digest, proxy-auth, and cookie text without matching safe labels", () => {
+  it.each([
+    "opaque-basic-value",
+    "opaque-user",
+    "opaque-response",
+    "opaque-basic-plus",
+    "opaque-bearer-plus",
+    "opaque-digest-v2",
+    "opaque-equals-auth",
+    "opaque-equals-proxy",
+    "opaque-equals-cookie",
+    "opaque-equals-set-cookie",
+    "opaque-cookie-value",
+    "opaque-set-cookie-value",
+    "opaque-json-value",
+  ])("redacts HTTP credential vector %# without matching a safe label", (secret) => {
     const text = [
       "Authorization: Basic opaque-basic-value",
       "Proxy-Authorization: Digest username=opaque-user, response=opaque-response",
@@ -279,23 +295,7 @@ describe("redactForLog", () => {
     ].join("\n");
 
     const result = redactFull(text);
-    for (const secret of [
-      "opaque-basic-value",
-      "opaque-user",
-      "opaque-response",
-      "opaque-basic-plus",
-      "opaque-bearer-plus",
-      "opaque-digest-v2",
-      "opaque-equals-auth",
-      "opaque-equals-proxy",
-      "opaque-equals-cookie",
-      "opaque-equals-set-cookie",
-      "opaque-cookie-value",
-      "opaque-set-cookie-value",
-      "opaque-json-value",
-    ]) {
-      expect(result).not.toContain(secret);
-    }
+    expect(result).not.toContain(secret);
     expect(result).toContain("author: safe-author");
   });
 
@@ -305,24 +305,29 @@ describe("redactForLog", () => {
     );
   });
 
-  it("redacts folded credential headers without consuming the next diagnostic line", () => {
-    for (const header of ["Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie"]) {
+  it.each(["Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie"])(
+    "redacts folded %s headers without consuming the next diagnostic line",
+    (header) => {
       const result = redactFull(`${header}:\r\n\topaque-folded-value\r\nnext diagnostic`);
       expect(result).toBe(`${header}: <REDACTED>\r\nnext diagnostic`);
-    }
+    },
+  );
+
+  it("redacts a bare carriage return in a folded credential header", () => {
     expect(redactFull("Authorization:\ropaque-bare-cr\rnext diagnostic")).toBe(
       "Authorization: <REDACTED>\rnext diagnostic",
     );
   });
 
-  it("fails closed for malformed quoted credential fields", () => {
-    for (const input of [
-      '{"Authorization":"Basic opaque-unterminated',
-      '{"Cookie":"session=opaque-unterminated',
-      '{"Authorization": Basic opaque-unquoted}',
-    ]) {
-      expect(redactFull(input)).not.toContain("opaque-");
-    }
+  it.each([
+    '{"Authorization":"Basic opaque-unterminated',
+    '{"Cookie":"session=opaque-unterminated',
+    '{"Authorization": Basic opaque-unquoted}',
+  ])("fails closed for malformed quoted credential field vector %#", (input) => {
+    expect(redactFull(input)).not.toContain("opaque-");
+  });
+
+  it("redacts a complete quoted credential field", () => {
     expect(redactFull('{"Authorization":"Basic opaque-complete","status":"kept"}')).toBe(
       '{"Authorization":"Basic <REDACTED>","status":"kept"}',
     );

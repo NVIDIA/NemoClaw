@@ -39,6 +39,7 @@ import { normalizeReasoningEffort, type ReasoningEffort } from "../onboard/reaso
 import {
   assertStationExpressInstallerResumeMatches,
   bindStationExpressProviderSelection,
+  isValidStationExpressProviderState,
   isValidStationExpressReceiptGeneration,
   parseStationExpressResumeIntent,
   reconcileStationExpressInstallerResumeRetirement,
@@ -67,6 +68,7 @@ const INVALID_HOST_MOUNT_SESSIONS = new WeakSet<object>();
 export const SESSION_DIR = nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT);
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
+const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
 
 // Session-specific aliases for the shared JSON types.
 type SessionJsonValue = JsonValue;
@@ -203,6 +205,8 @@ export interface Session {
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
+  /** Secret-free model intent retained only while a managed vLLM install is unfinished. */
+  vllmInstallModel: string | null;
   /** Exact secret-free serving recipe identity selected before runtime side effects. */
   servingProfileProvenance: ServingProfileProvenance | null;
   /** Secret-free installer choices needed to retry an interrupted DGX Station Express run. */
@@ -329,6 +333,7 @@ export interface DebugSessionSummary {
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
+  vllmInstallModel: string | null;
   servingProfileProvenance: ServingProfileProvenance | null;
   endpointUrl: string | null;
   credentialEnv: string | null;
@@ -380,6 +385,14 @@ export function isObject(value: unknown): value is UnknownRecord {
 
 function readString(value: SessionJsonValue | undefined): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function parseVllmInstallModel(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const model = value.trim();
+  return model.length > 0 && model.length <= 512 && SAFE_VLLM_INSTALL_MODEL.test(model)
+    ? model
+    : null;
 }
 
 function readHermesAuthMethod(value: SessionJsonValue | undefined): HermesAuthMethod | null {
@@ -735,6 +748,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     sandboxName: overrides.sandboxName ?? null,
     provider: overrides.provider ?? null,
     model: overrides.model ?? null,
+    vllmInstallModel: parseVllmInstallModel(overrides.vllmInstallModel),
     servingProfileProvenance: parseServingProfileProvenance(overrides.servingProfileProvenance),
     stationExpressIntent: parseStationExpressResumeIntent(overrides.stationExpressIntent),
     stationExpressReceiptRetirement: isValidStationExpressReceiptGeneration(
@@ -800,6 +814,10 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   ) {
     return null;
   }
+  const vllmInstallModel = parseVllmInstallModel(data.vllmInstallModel);
+  if (hasOwn(data, "vllmInstallModel") && data.vllmInstallModel !== null && !vllmInstallModel) {
+    return null;
+  }
   const compatibleEndpointReasoningEffort = normalizeReasoningEffort(
     data.compatibleEndpointReasoningEffort,
   );
@@ -839,6 +857,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     sandboxName: readString(data.sandboxName),
     provider: readString(data.provider),
     model: readString(data.model),
+    vllmInstallModel,
     servingProfileProvenance,
     stationExpressIntent,
     stationExpressReceiptRetirement,
@@ -899,25 +918,25 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     }
   }
 
+  if (
+    normalized.vllmInstallModel &&
+    (!normalized.resumable ||
+      (normalized.status !== "in_progress" && normalized.status !== "failed") ||
+      (normalized.steps.provider_selection?.status !== "in_progress" &&
+        normalized.steps.provider_selection?.status !== "failed"))
+  ) {
+    return null;
+  }
+
   if (normalized.stationExpressIntent) {
     const intent = normalized.stationExpressIntent;
-    const providerComplete = normalized.steps.provider_selection?.status === "complete";
-    const providerBound = Boolean(
-      intent.kind !== "spark" && intent.servedModel && intent.checkpointModel,
-    );
-    const incompleteProviderStateValid =
-      (normalized.provider === null && normalized.model === null) ||
-      (intent.kind === "spark" &&
-        normalized.provider === "vllm-local" &&
-        normalized.model !== null &&
-        normalized.model.trim().length > 0);
     if (
-      providerComplete !== providerBound ||
-      (providerComplete &&
-        (intent.kind === "spark" ||
-          normalized.provider !== "vllm-local" ||
-          normalized.model !== intent.servedModel)) ||
-      (!providerComplete && !incompleteProviderStateValid)
+      !isValidStationExpressProviderState(
+        intent,
+        normalized.steps.provider_selection?.status,
+        normalized.provider,
+        normalized.model,
+      )
     ) {
       return null;
     }
@@ -1560,6 +1579,7 @@ export function markStepComplete(stepName: string, updates: SessionUpdates = {})
     session.lastCompletedStep = stepName;
     session.failure = null;
     Object.assign(session, safeUpdates);
+    if (stepName === "provider_selection") session.vllmInstallModel = null;
     if (stationExpressIntent) session.stationExpressIntent = stationExpressIntent;
     else if (sparkExpressComplete) session.stationExpressIntent = null;
     return session;
@@ -1593,6 +1613,7 @@ export function markStepRejected(stepName: string): Session {
     if (stepName === "provider_selection") {
       session.provider = null;
       session.model = null;
+      session.vllmInstallModel = null;
       session.endpointUrl = null;
       session.credentialEnv = null;
       session.hermesAuthMethod = null;
@@ -1626,6 +1647,19 @@ export function markStepFailed(stepName: string, message: string | null = null):
     step.completedAt = null;
     step.error = redactSensitiveText(message);
     return session;
+  });
+}
+
+/** Persist the validated model needed to retry an interrupted managed-vLLM install. */
+export function checkpointVllmInstallModel(modelId: string): Session {
+  const model = parseVllmInstallModel(modelId);
+  if (!model) throw new Error("Managed vLLM install produced an invalid model checkpoint.");
+  return updateSession((session) => {
+    const providerStep = session.steps.provider_selection;
+    if (providerStep?.status !== "in_progress") {
+      throw new Error("Managed vLLM install intent can only be checkpointed during provider selection.");
+    }
+    session.vllmInstallModel = model;
   });
 }
 
@@ -1719,6 +1753,7 @@ export function completeSession(
     Object.assign(session, safeUpdates);
     session.status = "complete";
     session.resumable = false;
+    session.vllmInstallModel = null;
     session.stationExpressIntent = null;
     session.stationExpressReceiptRetirement = receiptGeneration;
     session.failure = null;
@@ -1811,6 +1846,7 @@ export function summarizeForDebug(
     sandboxName: session.sandboxName,
     provider: session.provider,
     model: session.model,
+    vllmInstallModel: session.vllmInstallModel,
     servingProfileProvenance: session.servingProfileProvenance,
     endpointUrl: redactUrl(session.endpointUrl),
     credentialEnv: session.credentialEnv,

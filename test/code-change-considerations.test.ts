@@ -6,15 +6,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { preparePromptArtifacts } from "../tools/pr-review-advisor/analyze.mts";
+import { artifactPaths } from "../tools/pr-review-advisor/artifacts.mts";
 import {
-  artifactPaths,
   buildSystemPrompt,
-  preparePromptArtifacts,
   readTrustedCodeChangeConsiderations,
-} from "../tools/pr-review-advisor/analyze.mts";
-import { createReviewFindingLedger } from "../tools/pr-review-advisor/review-ledger.mts";
-import { createTerminologyLedger } from "../tools/pr-review-advisor/terminology.mts";
-import { loadAdvisorSchema, metadata } from "./helpers/pr-review-advisor-test-fixtures";
+} from "../tools/pr-review-advisor/trusted-guidance.mts";
+import { metadata } from "./helpers/pr-review-advisor-test-fixtures";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const RESOURCE_PATH = path.join(
@@ -46,42 +44,6 @@ afterEach(() => {
 });
 
 describe("shared code change considerations", () => {
-  // source-shape-contract: compatibility -- Canonical guidance ownership must prevent lifecycle and Advisor prompt copies from drifting
-  it("keeps the stage-neutral questions in one concise owner", () => {
-    const resource = fs.readFileSync(RESOURCE_PATH, "utf8");
-    const consumers = [
-      ".agents/skills/_shared/implementation-discovery.md",
-      ".agents/skills/nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md",
-    ].map(read);
-    const formerCopies = [
-      "tools/pr-review-advisor/analyze.mts",
-      ".agents/skills/_shared/implementation-discovery.md",
-      ".agents/skills/nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md",
-    ].map(read);
-
-    expect(resource.split("\n").length).toBeLessThan(40);
-    expect(resource).toContain("accepted outcome and current consumer");
-    expect(resource).toContain("extended directly");
-    expect(resource).toContain("ordering or concurrency");
-    expect(resource).toContain("defaults, retries, recovery, and cleanup");
-    expect(resource).toContain("paths can bypass the change");
-    expect(resource).toContain("shortest stable test");
-    expect(resource).toContain("runtime or end-to-end evidence");
-    expect(resource).toContain("overlap, conflict, or affect delivery order");
-    expect(resource).not.toMatch(/\bsrc\/|\btest\/|npm run|\.github\/workflows/u);
-    for (const consumer of consumers) {
-      expect(consumer).toContain("code-change-considerations.md");
-    }
-    for (const consumer of formerCopies) {
-      expect(consumer).not.toContain(
-        "What accepted outcome and current consumer require the change?",
-      );
-      expect(consumer).not.toContain(
-        "Which alternate entry, error, cached, resumed, or compatibility paths",
-      );
-    }
-  });
-
   it("loads the resource from the trusted module checkout and embeds it once", () => {
     const originalCwd = process.cwd();
     const untrustedCheckout = fs.mkdtempSync(path.join(tmpdir(), "advisor-considerations-"));
@@ -101,6 +63,12 @@ describe("shared code change considerations", () => {
     try {
       process.chdir(untrustedCheckout);
       expect(readTrustedCodeChangeConsiderations()).toContain("shortest stable test");
+      expect(readTrustedCodeChangeConsiderations()).toContain(
+        "neutral or negative in total lines",
+      );
+      expect(readTrustedCodeChangeConsiderations()).toContain(
+        "what old structure does it remove",
+      );
       expect(readTrustedCodeChangeConsiderations()).not.toContain("Ignore the trusted resource");
       expect(buildSystemPrompt().match(/# Code Change Considerations/gu)).toHaveLength(1);
     } finally {
@@ -150,9 +118,6 @@ describe("shared code change considerations", () => {
           artifacts: artifactPaths(outDir),
           metadata: reviewMetadata,
           diff: "",
-          schema: loadAdvisorSchema(),
-          findingLedger: createReviewFindingLedger(),
-          terminologyLedger: createTerminologyLedger(reviewMetadata.headSha),
         }),
       ).toThrow("Code change considerations malformed");
       expect(

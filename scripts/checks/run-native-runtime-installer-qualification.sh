@@ -98,6 +98,7 @@ verify_checkout() {
     *) fail "$label has an unexpected origin repository." ;;
   esac
   assert_checkout_has_no_git_credentials "$checkout" "$label"
+  printf '%s\n' "$revision"
 }
 
 verify_committed_file() {
@@ -191,14 +192,51 @@ assert_docker_unavailable() {
     [[ ! -S "$socket_path" ]] \
       || fail "A Docker socket exists during the ${phase} check."
   done < <(docker_socket_paths)
+
+  printf '%s\n' \
+    '{"dockerCommandGuarded":true,"dockerEnvironmentVariablesUnset":true,"dockerServiceInactive":true,"dockerSocketUnitInactive":true,"dockerdProcessNameAbsent":true,"defaultSocketPathsAbsent":true}'
 }
 
-run_native_runtime_installer_qualification() {
-  candidate_checkout=""
-  candidate_sha=""
-  expected_installer_sha256=""
-  expected_architecture=""
-  artifact_dir_input=""
+run_native_runtime_installer_qualification() (
+  local candidate_checkout=""
+  local candidate_sha=""
+  local expected_installer_sha256=""
+  local expected_architecture=""
+  local artifact_dir_input=""
+  local artifact_parent=""
+  local artifact_name=""
+  local artifact_dir=""
+  local runner_architecture=""
+  local candidate_installer=""
+  local candidate_setup_script=""
+  local qualification_root=""
+  local qualification_home=""
+  local qualification_tmp=""
+  local docker_guard_dir=""
+  local managed_payload_root=""
+  local verified_script_dir=""
+  local verified_installer=""
+  local verified_setup_script=""
+  local installed_checkout=""
+  local receipt_stage=""
+  local docker_guard=""
+  local docker_guard_sha256=""
+  local candidate_status=0
+  local verified_candidate_revision=""
+  local installed_revision=""
+  local pre_execution_docker_posture=""
+  local post_execution_docker_posture=""
+
+  cleanup() {
+    if [[ -n "$receipt_stage" && -d "$receipt_stage" && ! -L "$receipt_stage" ]]; then
+      rm -rf -- "$receipt_stage"
+    fi
+    if [[ -n "$qualification_root" && -d "$qualification_root" && ! -L "$qualification_root" ]]; then
+      rm -rf -- "$qualification_root"
+    fi
+  }
+  trap cleanup EXIT
+
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
       --candidate-checkout)
@@ -272,7 +310,9 @@ run_native_runtime_installer_qualification() {
 
   candidate_installer="${candidate_checkout}/scripts/install.sh"
   candidate_setup_script="${candidate_checkout}/scripts/setup-jetson.sh"
-  verify_checkout "$candidate_checkout" "$candidate_sha" "The candidate checkout"
+  verified_candidate_revision="$(
+    verify_checkout "$candidate_checkout" "$candidate_sha" "The candidate checkout"
+  )"
   verify_installer \
     "$candidate_checkout" \
     "$candidate_sha" \
@@ -303,16 +343,6 @@ run_native_runtime_installer_qualification() {
     "$managed_payload_root" \
     "$verified_script_dir"
 
-  cleanup() {
-    if [[ -n "${receipt_stage:-}" && -d "$receipt_stage" && ! -L "$receipt_stage" ]]; then
-      rm -rf -- "$receipt_stage"
-    fi
-    if [[ -n "${qualification_root:-}" && -d "$qualification_root" && ! -L "$qualification_root" ]]; then
-      rm -rf -- "$qualification_root"
-    fi
-  }
-  trap cleanup EXIT
-
   cp -- "$candidate_installer" "$verified_installer"
   cp -- "$candidate_setup_script" "$verified_setup_script"
   chmod 500 "$verified_installer" "$verified_setup_script"
@@ -336,9 +366,10 @@ run_native_runtime_installer_qualification() {
   PATH="${docker_guard_dir}:${PATH}"
   export PATH
 
-  assert_docker_unavailable "pre-execution" "$docker_guard" "$docker_guard_sha256"
+  pre_execution_docker_posture="$(
+    assert_docker_unavailable "pre-execution" "$docker_guard" "$docker_guard_sha256"
+  )"
 
-  candidate_status=0
   # The child shell expands positional parameters inside this literal program.
   # shellcheck disable=SC2016
   env -i \
@@ -366,11 +397,15 @@ run_native_runtime_installer_qualification() {
     install_nemoclaw_before_onboarding
   ' _ "$verified_installer" "$verified_script_dir" || candidate_status=$?
 
-  assert_docker_unavailable "post-execution" "$docker_guard" "$docker_guard_sha256"
+  post_execution_docker_posture="$(
+    assert_docker_unavailable "post-execution" "$docker_guard" "$docker_guard_sha256"
+  )"
   [[ "$candidate_status" -eq 0 ]] \
     || fail "The candidate installer phase executor exited with status ${candidate_status}."
 
-  verify_checkout "$installed_checkout" "$candidate_sha" "The installed checkout"
+  installed_revision="$(
+    verify_checkout "$installed_checkout" "$candidate_sha" "The installed checkout"
+  )"
   verify_installer \
     "$installed_checkout" \
     "$candidate_sha" \
@@ -382,16 +417,16 @@ run_native_runtime_installer_qualification() {
     "$expected_installer_sha256" "$candidate_sha" "$runner_architecture" \
     >"${receipt_stage}/invocation.json"
   printf '{"receiptVersion":1,"repository":"%s","revision":"%s","installerSha256":"%s"}\n' \
-    "$CANONICAL_REPOSITORY" "$candidate_sha" "$expected_installer_sha256" \
+    "$CANONICAL_REPOSITORY" "$verified_candidate_revision" "$expected_installer_sha256" \
     >"${receipt_stage}/candidate-source.json"
   printf '{"receiptVersion":1,"repository":"%s","requestedRevision":"%s","installedRevision":"%s","installMode":"managed","installerSha256":"%s"}\n' \
-    "$CANONICAL_REPOSITORY" "$candidate_sha" "$candidate_sha" "$expected_installer_sha256" \
+    "$CANONICAL_REPOSITORY" "$candidate_sha" "$installed_revision" "$expected_installer_sha256" \
     >"${receipt_stage}/installed-source.json"
   printf '{"receiptVersion":1,"requested":"%s","runner":"%s"}\n' \
     "$expected_architecture" "$runner_architecture" \
     >"${receipt_stage}/architecture.json"
-  printf '%s\n' \
-    '{"receiptVersion":1,"preExecution":{"dockerCommandGuarded":true,"dockerEnvironmentVariablesUnset":true,"dockerServiceInactive":true,"dockerSocketUnitInactive":true,"dockerdProcessNameAbsent":true,"defaultSocketPathsAbsent":true},"postExecution":{"dockerCommandGuarded":true,"dockerEnvironmentVariablesUnset":true,"dockerServiceInactive":true,"dockerSocketUnitInactive":true,"dockerdProcessNameAbsent":true,"defaultSocketPathsAbsent":true}}' \
+  printf '{"receiptVersion":1,"preExecution":%s,"postExecution":%s}\n' \
+    "$pre_execution_docker_posture" "$post_execution_docker_posture" \
     >"${receipt_stage}/docker-absence.json"
 
   bounded_file "${receipt_stage}/installer.sh" "$MAX_INSTALLER_BYTES"
@@ -409,7 +444,10 @@ run_native_runtime_installer_qualification() {
   receipt_stage=""
 
   printf 'Native runtime installer qualification receipts: %s\n' "$artifact_dir"
-}
+  cleanup
+  trap - EXIT
+  unset -f cleanup
+)
 
 if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
   run_native_runtime_installer_qualification "$@"

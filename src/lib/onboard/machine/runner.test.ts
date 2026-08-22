@@ -244,8 +244,9 @@ describe("runOnboardMachine", () => {
     ).rejects.toThrow(OnboardMachineTransitionLimitError);
   });
 
-  it("uses the default transition limit for non-finite maxTransitions values", async () => {
-    for (const maxTransitions of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "uses the default transition limit for non-finite maxTransitions values [case %#]",
+    async (maxTransitions) => {
       const runtime = createRuntime();
 
       await expect(
@@ -262,6 +263,6 @@ describe("runOnboardMachine", () => {
           maxTransitions,
         }),
       ).rejects.toMatchObject({ maxTransitions: 100 });
-    }
-  });
+    },
+  );
 });

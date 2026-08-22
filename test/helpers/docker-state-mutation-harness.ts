@@ -32,6 +32,7 @@ export const DOCKER_STATE_MUTATION_PROJECTION_SHA256 = "b".repeat(64);
 export const DOCKER_STATE_MUTATION_STATE_ROOT = "/sandbox/.hermes";
 export const DOCKER_STATE_MUTATION_LIFECYCLE_GENERATION = "generation-7";
 const SANDBOX_ID = "sandbox-alpha-id";
+const DOCKER_EXECUTABLE_SOURCE = "#!/bin/sh\nexit 1\n";
 const PODMAN_EXECUTABLE_BYTES = Buffer.from("qualified-podman-state-mutation", "utf8");
 const PODMAN_SOCKET_AUTHORITY = {
   directoryChain: [],
@@ -80,6 +81,13 @@ function temporaryRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-state-mutation-"));
   roots.push(root);
   return root;
+}
+
+function createDockerExecutableSearchPath(root: string): string {
+  const directory = path.join(root, "bin");
+  fs.mkdirSync(directory, { mode: 0o700 });
+  fs.writeFileSync(path.join(directory, "docker"), DOCKER_EXECUTABLE_SOURCE, { mode: 0o700 });
+  return directory;
 }
 
 export function cleanupDockerStateMutationRoots(): void {
@@ -139,11 +147,15 @@ export interface DockerStateMutationHarnessOptions {
   readonly lifecycleGeneration?: string;
   readonly loseAcquireResponseOnce?: boolean;
   readonly loseReleaseResponseOnce?: boolean;
+  readonly stateMountType?: "bind" | "volume";
 }
 
 export interface DockerStateMutationHarnessState {
+  mountDriver: string | null;
+  mountName: string | null;
   runtimePid: number;
   mountSource: string;
+  mountType: "bind" | "volume";
   sandboxId: string;
   pidMode: string;
   privileged: boolean;
@@ -156,9 +168,16 @@ function createContainerStateMutationHarness(
 ) {
   const lifecycleGeneration =
     options.lifecycleGeneration ?? DOCKER_STATE_MUTATION_LIFECYCLE_GENERATION;
+  const stateMountType = options.stateMountType ?? "bind";
+  const usesManagedVolume = stateMountType === "volume";
   const state: DockerStateMutationHarnessState = {
+    mountDriver: usesManagedVolume ? "local" : null,
+    mountName: usesManagedVolume ? "nemoclaw-hermes-alpha-state" : null,
     runtimePid: 4812,
-    mountSource: "/var/lib/openshell/alpha/hermes",
+    mountSource: usesManagedVolume
+      ? "/var/lib/docker/volumes/nemoclaw-hermes-alpha-state/_data"
+      : "/var/lib/openshell/alpha/hermes",
+    mountType: stateMountType,
     sandboxId: SANDBOX_ID,
     pidMode: "",
     privileged: false,
@@ -229,9 +248,11 @@ function createContainerStateMutationHarness(
           state.privileged,
           [
             {
-              Type: "bind",
+              Type: state.mountType,
               Source: state.mountSource,
+              ...(state.mountName === null ? {} : { Name: state.mountName }),
               Destination: DOCKER_STATE_MUTATION_STATE_ROOT,
+              ...(state.mountDriver === null ? {} : { Driver: state.mountDriver }),
               Mode: "",
               RW: true,
               Propagation: "rprivate",
@@ -362,6 +383,7 @@ function createContainerStateMutationHarness(
           HOME: "/tmp/nemoclaw-home",
           DOCKER_CONFIG: "/tmp/nemoclaw-docker",
           DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+          PATH: createDockerExecutableSearchPath(root),
         }
       : { HOME: "/tmp/nemoclaw-home" };
   const dockerAuthority =

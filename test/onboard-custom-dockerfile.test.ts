@@ -351,23 +351,27 @@ const { createSandbox } = require(${onboardPath});
     },
   );
 
-  it("rejects an invalid tool-disclosure contract before mutating a live or stale sandbox", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-contract-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "contract-preflight.js");
-    const outcomePath = path.join(tmpDir, "outcome.json");
-    const customDockerfile = path.join(tmpDir, "Dockerfile.custom");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+  it.each(["1", "0"])(
+    "rejects an invalid tool-disclosure contract before mutating a live or stale sandbox [%s]",
+    (sandboxLive) => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-contract-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "contract-preflight.js");
+      const outcomePath = path.join(tmpDir, "outcome.json");
+      const customDockerfile = path.join(tmpDir, "Dockerfile.custom");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+      const registryPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "registry.ts"),
+      );
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
-    fs.writeFileSync(customDockerfile, "FROM scratch\n");
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+      fs.writeFileSync(customDockerfile, "FROM scratch\n");
 
-    const script = String.raw`
+      const script = String.raw`
 const fs = require("node:fs");
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
@@ -429,9 +433,8 @@ createSandbox(
   originalExit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    for (const sandboxLive of ["1", "0"]) {
       fs.rmSync(outcomePath, { force: true });
       const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
@@ -451,8 +454,8 @@ createSandbox(
       const outcome = JSON.parse(fs.readFileSync(outcomePath, "utf8"));
       assert.deepEqual(outcome.destructive, []);
       assert.match(outcome.errors.join("\n"), /tool-disclosure contract is invalid/);
-    }
-  });
+    },
+  );
 
   it("exits with an error when the --from Dockerfile path does not exist", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");

@@ -744,29 +744,32 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.model.api_key).toBe(HERMES_PROXY_REWRITE_SENTINEL);
   });
 
-  it("preserves Hermes remote platform toolsets while keeping CLI defaults unpinned", async () => {
-    const { config } = await runConfigScriptWithMessaging({
-      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([
-        "discord",
-        "slack",
-        "telegram",
-        "wechat",
-        "whatsapp",
-      ]),
-      NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({
-        accountId: "test_account_42",
-        baseUrl: "https://ilinkai.wechat.com",
-        userId: "operator_self_id",
-      }),
-    });
+  it.each(
+    ["api_server", "discord", "slack", "telegram", "weixin", "whatsapp"],
+  )(
+    "preserves Hermes remote platform toolsets while keeping CLI defaults unpinned [%s]",
+    async (platform) => {
+      const { config } = await runConfigScriptWithMessaging({
+        NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([
+          "discord",
+          "slack",
+          "telegram",
+          "wechat",
+          "whatsapp",
+        ]),
+        NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({
+          accountId: "test_account_42",
+          baseUrl: "https://ilinkai.wechat.com",
+          userId: "operator_self_id",
+        }),
+      });
 
-    for (const platform of ["api_server", "discord", "slack", "telegram", "weixin", "whatsapp"]) {
       expectRemotePlatformToolsets(config.platform_toolsets[platform]);
-    }
 
-    // The local Hermes CLI keeps upstream defaults.
-    expect(config.platform_toolsets.cli).toBeUndefined();
-  });
+      // The local Hermes CLI keeps upstream defaults.
+      expect(config.platform_toolsets.cli).toBeUndefined();
+    },
+  );
 
   it("generates managed-tool gateway config and env for selected Nous presets", () => {
     const { config, envFile } = runConfigScript({
@@ -1013,26 +1016,28 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(Object.keys(config.platforms)).toEqual(["api_server"]);
   });
 
-  it("keeps every managed-image messaging platform explicitly disabled before first start (#7744)", () => {
-    const { config, envFile } = generateBaseConfig({
-      NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
-    });
+  it.each([
+    "TELEGRAM_BOT_TOKEN",
+    "DISCORD_BOT_TOKEN",
+    "WEIXIN_TOKEN",
+    "SLACK_BOT_TOKEN",
+    "WHATSAPP_ENABLED",
+    "TEAMS_CLIENT_SECRET",
+  ])(
+    "keeps every managed-image messaging platform explicitly disabled before first start [%s] (#7744)",
+    (credential) => {
+      const { config, envFile } = generateBaseConfig({
+        NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+      });
 
-    for (const platform of MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS) {
-      expect(config.platforms[platform], platform).toEqual({ enabled: false });
-      expect(config.platform_toolsets[platform], platform).toBeUndefined();
-    }
-    for (const credential of [
-      "TELEGRAM_BOT_TOKEN",
-      "DISCORD_BOT_TOKEN",
-      "WEIXIN_TOKEN",
-      "SLACK_BOT_TOKEN",
-      "WHATSAPP_ENABLED",
-      "TEAMS_CLIENT_SECRET",
-    ]) {
+      MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS.forEach((platform) => {
+        expect(config.platforms[platform], platform).toEqual({ enabled: false });
+        expect(config.platform_toolsets[platform], platform).toBeUndefined();
+      });
+
       expect(envFile, credential).not.toContain(`${credential}=`);
-    }
-  });
+    },
+  );
 
   it("enables Slack under platforms even when the slack token allowlist is empty", async () => {
     const { config } = await runConfigScriptWithMessaging({
@@ -1233,24 +1238,30 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(JSON.stringify(config)).not.toContain("future");
   });
 
-  it("matches bounded bare model-family prefixes for Hermes manifests", () => {
-    const blueprintDir = path.join(tmpDir, "fixture-blueprint");
-    const registryDir = writeRegistryManifest(blueprintDir, "hermes/family.json", {
-      id: "fixture-hermes-family",
-      agent: "hermes",
-      description: "Fixture Hermes model family",
-      match: { modelIdPrefixes: ["gpt-5", "o3"] },
-      effects: { hermesCompat: {} },
-    });
-    const env = buildHermesTestEnv({ NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir });
+  it.each(
+    Array.from(
+      [
+        ["gpt-5.4-turbo", 1],
+        ["azure/gpt-5.4", 1],
+        ["openai/o3-mini", 1],
+        ["gpt-50", 0],
+        ["o30", 0],
+      ] as const,
+      (value) => [value],
+    ),
+  )(
+    "matches bounded bare model-family prefixes for Hermes manifests [case %#]",
+    ([model, expectedMatches]) => {
+      const blueprintDir = path.join(tmpDir, "fixture-blueprint");
+      const registryDir = writeRegistryManifest(blueprintDir, "hermes/family.json", {
+        id: "fixture-hermes-family",
+        agent: "hermes",
+        description: "Fixture Hermes model family",
+        match: { modelIdPrefixes: ["gpt-5", "o3"] },
+        effects: { hermesCompat: {} },
+      });
+      const env = buildHermesTestEnv({ NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir });
 
-    for (const [model, expectedMatches] of [
-      ["gpt-5.4-turbo", 1],
-      ["azure/gpt-5.4", 1],
-      ["openai/o3-mini", 1],
-      ["gpt-50", 0],
-      ["o30", 0],
-    ] as const) {
       const matches = discoverModelSpecificSetups(
         "hermes",
         {
@@ -1262,8 +1273,8 @@ describe("agents/hermes/generate-config.ts", () => {
         { env, scriptDir: SCRIPT_DIR },
       );
       expect(matches, model).toHaveLength(expectedMatches);
-    }
-  });
+    },
+  );
 
   it("discovers the bundled registry from the script path when cwd differs", () => {
     const sourceRegistryDir = path.join(

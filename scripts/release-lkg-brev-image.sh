@@ -82,9 +82,10 @@ fi
 payload="$(printf '{"ref":"%s","inputs":{"nemoclaw_ref":"%s"},"return_run_details":true}' "$TARGET_REF" "$release_tag")"
 endpoint="repos/$TARGET_REPOSITORY/actions/workflows/$TARGET_WORKFLOW/dispatches"
 
+unset GH_DEBUG
 if ! dispatch_details="$(
   printf '%s\n' "$payload" \
-    | env -u GH_DEBUG GH_TOKEN="$NEMOCLAW_IMAGE_DISPATCH_TOKEN" gh api \
+    | GH_TOKEN="$NEMOCLAW_IMAGE_DISPATCH_TOKEN" gh api \
       --method POST \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2026-03-10" \

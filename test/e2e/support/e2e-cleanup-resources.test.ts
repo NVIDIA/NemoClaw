@@ -109,8 +109,9 @@ describe("cleanup resources", () => {
     expect(calls).toBe(1);
   });
 
-  it("registers sandbox cleanup before installer side effects (#7146)", () => {
-    for (const fileName of ["full-e2e.test.ts", "hermes-e2e.test.ts"]) {
+  it.each(["full-e2e.test.ts", "hermes-e2e.test.ts"])(
+    "registers sandbox cleanup before installer side effects [case %#] (#7146)",
+    (fileName) => {
       const source = fs.readFileSync(
         path.resolve(import.meta.dirname, "..", "live", fileName),
         "utf8",
@@ -125,8 +126,8 @@ describe("cleanup resources", () => {
       expect(installerStart, `${fileName} must invoke install.sh`).toBeGreaterThan(
         cleanupRegistration,
       );
-    }
-  });
+    },
+  );
 
   it("continues typed cleanup after a resource failure", async () => {
     const calls: string[] = [];

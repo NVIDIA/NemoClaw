@@ -4,8 +4,8 @@
 title: "Apply Policy Presets"
 sidebar-title: "Apply Policy Presets"
 description: "Add, reapply, list, or remove policy presets for a running NemoClaw sandbox."
-description-agent: "Applies and manages policy presets for a running sandbox. Use when adding maintained integration access, previewing preset scope, reapplying an edited preset, or removing access."
-keywords: ["nemoclaw policy presets", "policy add", "policy remove"]
+description-agent: "Applies and manages policy presets for a running sandbox. Use when adding maintained integration access, previewing preset scope, reapplying an edited preset, removing access, or removing a preset the gateway enforces without a local record."
+keywords: ["nemoclaw policy presets", "policy add", "policy remove", "active on gateway missing from local state"]
 content:
   type: "how_to"
 skill:
@@ -111,12 +111,43 @@ $$nemoclaw my-assistant policy remove weather --yes
 
 `policy remove` accepts maintained and custom preset names.
 
+## Remove a Preset the Gateway Enforces Without a Local Record
+
+`policy list` marks a preset that the OpenShell gateway enforces while no local record explains it:
+
+```bash
+$$nemoclaw my-assistant policy list
+```
+
+Expected output:
+
+```text
+    ● github [source unverified] — GitHub.com and GitHub API access (git) (active on gateway, missing from local state)
+```
+
+`policy remove` accepts that preset:
+
+```bash
+$$nemoclaw my-assistant policy remove github --yes
+```
+
+It narrows the live policy and clears whatever local record remains.
+
+When NemoClaw cannot reach the gateway, `policy remove <preset>` has only the local record to check.
+It refuses an unrecorded preset and reports that it could not query the gateway, rather than treating an unanswered query as absence.
+The interactive picker lists the recorded presets only in that case.
+
 ## Understand Persistence
 
 Dynamic changes apply to the current live policy.
 NemoClaw also records maintained presets and custom presets applied through `--from-file` or `--from-dir`.
 The custom preset record includes the full YAML content.
 Snapshot restore and rebuild replay the recorded presets, even when the original custom file no longer exists.
+
+A sandbox that is absent from the local registry has nothing to record a preset against.
+For a maintained preset, `policy add` still applies it to the gateway and warns that `policy list` reports it as active on gateway, missing from local state.
+For a custom preset applied with `--from-file` or `--from-dir`, `policy add` reaches the gateway but exits non-zero, because a custom preset is discoverable only through the registry and would appear in neither `policy list` nor `status`.
+Recover or re-onboard the sandbox to restore the record, then re-apply any custom preset that failed this way.
 
 `$$nemoclaw <name> rebuild` reapplies every recorded policy preset to the recreated sandbox.
 For baseline changes that apply to every future sandbox, follow [Change the Baseline Network Policy](change-baseline-network-policy).

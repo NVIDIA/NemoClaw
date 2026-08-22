@@ -35,15 +35,13 @@
       "fast": [
         "src/lib/inference/llama-cpp/managed-selection.test.ts",
         "src/lib/inference/llama-cpp/managed-installer.test.ts",
-        "src/lib/onboard/setup-nim-flow.test.ts",
-        "test/e2e/support/e2e-workflow.test.ts"
+        "src/lib/onboard/setup-nim-flow.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/managed-image-multiarch-startup.test.ts",
       "fast": [
         "test/e2e/support/base-image-publication.test.ts",
-        "test/e2e/support/e2e-workflow.test.ts",
         "test/e2e/support/managed-image-multiarch-startup-helpers.test.ts",
         "test/managed-image-publication-workflow.test.ts",
         "test/pr-risk-plan.test.ts",
@@ -78,8 +76,24 @@
         "src/lib/onboard/runtime-provider/podman-lifecycle.test.ts",
         "src/lib/onboard/runtime-provider/podman-preflight.test.ts",
         "src/lib/onboard/runtime-provider/podman.test.ts",
-        "test/e2e/support/podman-cpu-proof-workflow.test.ts",
-        "test/runtime-provider-source-shape.test.ts"
+        "test/e2e/support/podman-cpu-proof-workflow.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/native-runtime-qualification-case.test.ts",
+      "fast": [
+        "test/e2e/support/native-runtime-qualification-case-helpers.test.ts",
+        "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
+        "test/e2e/support/native-runtime-qualification.test.ts",
+        "test/install-native-runtime-qualification.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/podman-portable-uninstall.test.ts",
+      "fast": [
+        "src/lib/actions/uninstall/portable-runtime-cleanup.test.ts",
+        "src/lib/actions/uninstall/run-plan-portable-runtime.test.ts",
+        "test/e2e/support/podman-cpu-proof-workflow.test.ts"
       ]
     },
     {
@@ -100,6 +114,7 @@
         "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
         "test/blueprint-runtime-identity-lifecycle.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts",
         "test/onboard-inference-gateway-scope.test.ts"
       ]
     },
@@ -110,6 +125,7 @@
     {
       "live": "test/e2e/live/full-e2e.test.ts",
       "fast": [
+        "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
         "test/e2e/support/onboard-performance.test.ts",
@@ -177,9 +193,7 @@
     },
     {
       "live": "test/e2e/live/openshell-gateway-auth-source-contract.test.ts",
-      "fast": [
-        "test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"
-      ]
+      "fast": ["test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"]
     },
     {
       "live": "test/e2e/live/openshell-credential-generation-window.test.ts",
@@ -203,9 +217,7 @@
     },
     {
       "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
-      "fast": [
-        "test/e2e/support/workflow-plan.test.ts"
-      ]
+      "fast": ["test/e2e/support/workflow-plan.test.ts"]
     },
     {
       "live": "test/e2e/live/sandbox-operations.test.ts",
@@ -235,19 +247,17 @@
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/onboard-policy-preset-sequencing.test.ts",
-      "fast": [
-        "test/e2e/support/onboard-interactive-pty.test.ts"
-      ]
+      "fast": ["test/e2e/support/onboard-interactive-pty.test.ts"]
     },
     {
       "live": "test/e2e/live/snapshot-commands.test.ts",
       "fast": [
-        "test/e2e/support/e2e-workflow.test.ts",
         "test/e2e/support/snapshot-commands-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -279,6 +289,7 @@
     {
       "live": "test/e2e/live/channels-add-remove.test.ts",
       "fast": [
+        "test/e2e/support/channels-add-remove-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -301,7 +312,8 @@
       "live": "test/e2e/live/common-egress-agent.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/common-egress-agent-helpers.test.ts"
       ]
     },
     {
@@ -364,6 +376,8 @@
     {
       "live": "test/e2e/live/hermes-inference-switch.test.ts",
       "fast": [
+        "src/lib/actions/inference-set-compatible-provider.test.ts",
+        "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -448,6 +462,8 @@
     {
       "live": "test/e2e/live/openclaw-inference-switch.test.ts",
       "fast": [
+        "src/lib/actions/inference-set-compatible-provider.test.ts",
+        "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -585,6 +601,7 @@
     {
       "live": "test/e2e/live/channels-stop-start.test.ts",
       "fast": [
+        "test/e2e/support/channels-stop-start-config-state.test.ts",
         "test/e2e/support/channels-stop-start-googlechat-entry.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
@@ -631,9 +648,13 @@
     {
       "live": "test/e2e/live/registry-targets.test.ts",
       "fast": [
+        "test/e2e/support/e2e-matrix.test.ts",
+        "test/e2e/support/e2e-phase-onboarding.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts",
+        "test/e2e/support/workflow-plan.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     },

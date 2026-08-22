@@ -82,6 +82,13 @@ export interface SandboxCreateIntent {
   };
   /** Validated non-secret Hermes environment assignments carried by a rebuild. */
   readonly rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
+  /** Built-in policy presets owned by the outer authoritative rebuild lifecycle. */
+  readonly rebuildPolicyPresets?: readonly string[];
+}
+
+/** Durable onboarding-session identity that owns the pending inference route. */
+export interface InferenceRouteReservationAuthority {
+  readonly sessionId: string;
 }
 
 export type OnboardOptions = {
@@ -117,12 +124,16 @@ export type OnboardOptions = {
   rebuildProviderReconfigure?: import("./rebuild-route-handoff").RebuildProviderReconfigureHandoff;
   /** Internal one-shot authority to recover the recorded provider during a locked rebuild resume. */
   providerRecoveryReceipt?: import("./rebuild-route-handoff").ProviderRecoveryReceipt;
+  /** Internal rebuild handoff for a recorded managed-vLLM N1x preview selection. */
+  allowDeferredN1xManagedVllm?: true;
   /** Internal one-shot handoff for the exact image context validated before rebuild deletion. */
   preparedImageRebuild?: import("./prepared-dcode-rebuild").PreparedImageRebuildHandoff;
   /** Internal immutable managed-image/profile handoff validated before rebuild deletion. */
   managedWorkloadRebuild?: import("./workload/rebuild").ManagedWorkloadRebuildHandoff;
   /** Internal validated non-secret Hermes environment assignments carried by a rebuild. */
   rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
+  /** Internal authoritative policy selection carried across sandbox recreation. */
+  rebuildPolicyPresets?: readonly string[];
   /** Internal hint for resolving the sandbox base image without repeating remote discovery. */
   baseImageResolutionHint?:
     | import("../sandbox-base-image").SandboxBaseImageResolutionMetadata

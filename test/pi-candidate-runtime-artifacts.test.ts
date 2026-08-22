@@ -11,6 +11,7 @@ import YAML from "yaml";
 import {
   type PiArtifactSources,
   verifyPiCandidateArtifacts,
+  verifyPiTrustBoundary,
 } from "../scripts/checks/pi-candidate-artifacts.mts";
 import {
   CANDIDATE_MANAGED_IMAGE_AGENTS,
@@ -34,7 +35,28 @@ function currentSources(): PiArtifactSources {
     managedImagesWorkflow: readRepoFile(".github/workflows/managed-images.yaml"),
     manifest: readRepoFile("agents/pi/manifest.yaml"),
     packageJson: readRepoFile("agents/pi/pi-runtime/package.json"),
+    policyAdditions: readRepoFile("agents/pi/policy-additions.yaml"),
+    startScript: readRepoFile("agents/pi/start.sh"),
   };
+}
+
+function withStartScript(mutate: (startScript: string) => string): PiArtifactSources {
+  const sources = currentSources();
+  return { ...sources, startScript: mutate(sources.startScript) };
+}
+
+function withPolicy(mutate: (policy: Record<string, any>) => void): PiArtifactSources {
+  const sources = currentSources();
+  const policy = YAML.parse(sources.policyAdditions);
+  mutate(policy);
+  return { ...sources, policyAdditions: YAML.stringify(policy) };
+}
+
+function withManifest(mutate: (manifest: Record<string, any>) => void): PiArtifactSources {
+  const sources = currentSources();
+  const manifest = YAML.parse(sources.manifest);
+  mutate(manifest);
+  return { ...sources, manifest: YAML.stringify(manifest) };
 }
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
@@ -161,168 +183,6 @@ describe("Pi release cohort separation", () => {
     expect(CANDIDATE_MANAGED_IMAGE_AGENTS).toContain("pi");
     expect(SHIPPED_MANAGED_IMAGE_AGENTS).not.toContain("pi");
   });
-
-  // source-shape-contract: security -- A published Pi candidate digest must never reach the atomic all-agent release cohort, and the artifact names are the only boundary between the two publication lanes
-  it("publishes candidate contracts outside the all-agent activation pattern", () => {
-    const workflow = YAML.parse(readRepoFile(".github/workflows/managed-images.yaml")) as {
-      jobs: Record<string, { steps?: Array<Record<string, unknown>> }>;
-    };
-    const candidateSteps = workflow.jobs["pi-candidate"]?.steps ?? [];
-    const uploadNames = candidateSteps
-      .map((step) => (step.with as { name?: string } | undefined)?.name)
-      .filter((name): name is string => typeof name === "string");
-    expect(uploadNames.some((name) => name.startsWith("managed-candidate-contract-"))).toBe(true);
-    expect(uploadNames.some((name) => name.startsWith("managed-pr-contract-"))).toBe(false);
-    const activationSteps = workflow.jobs["pr-managed-activation"]?.steps ?? [];
-    const downloadPatterns = activationSteps
-      .map((step) => (step.with as { pattern?: string } | undefined)?.pattern)
-      .filter((pattern): pattern is string => typeof pattern === "string");
-    expect(downloadPatterns.some((pattern) => pattern.startsWith("managed-pr-contract-"))).toBe(
-      true,
-    );
-    expect(
-      downloadPatterns.some((pattern) => pattern.startsWith("managed-candidate-contract-")),
-    ).toBe(false);
-  });
-
-  // source-shape-contract: security -- Pull-request candidate builds must not inherit package-write authority from the trusted publication job
-  it("does not grant package write permission to pull request candidate builds", () => {
-    const workflow = YAML.parse(readRepoFile(".github/workflows/managed-images.yaml")) as {
-      jobs: Record<
-        string,
-        {
-          if?: string;
-          permissions?: Record<string, string>;
-          steps?: Array<Record<string, unknown>>;
-        }
-      >;
-    };
-    const candidateJob = workflow.jobs["pi-candidate"];
-    const publishJob = workflow.jobs["pi-candidate-publish"];
-    expect(candidateJob?.if).toContain("github.event_name == 'pull_request'");
-    expect(candidateJob?.permissions).toEqual({ contents: "read" });
-    expect(publishJob?.if).toContain("github.event_name != 'pull_request'");
-    expect(publishJob?.permissions).toEqual({ contents: "read", packages: "write" });
-    expect(publishJob?.steps).toEqual(candidateJob?.steps);
-  });
-
-  // source-shape-contract: security -- Candidate and publication builds must import one digest-bound OCI base through a Buildx driver that supports digest-only outputs
-  it("imports the local base into Buildx for digest-only candidate publication", () => {
-    type WorkflowStep = {
-      id?: string;
-      name?: string;
-      run?: string;
-      with?: Record<string, unknown>;
-    };
-    const workflow = YAML.parse(readRepoFile(".github/workflows/managed-images.yaml")) as {
-      jobs: Record<string, { steps?: WorkflowStep[] }>;
-    };
-    const steps = workflow.jobs["pi-candidate"]?.steps ?? [];
-    const requiredStep = (name: string): WorkflowStep => {
-      const selected = steps.find((step) => step.name === name);
-      expect(selected, `missing workflow step: ${name}`).toBeDefined();
-      return selected ?? {};
-    };
-
-    const buildx = requiredStep("Set up Docker Buildx");
-    expect(buildx.id).toBe("buildx");
-    expect(buildx.with?.["driver"]).not.toBe("docker");
-
-    const baseBuild = requiredStep("Build the exact Pi candidate base").run ?? "";
-    expect(baseBuild).toContain('--output "type=docker,dest=${local_base_archive}"');
-    expect(baseBuild).toContain('--output "type=oci,dest=${local_base_oci_archive}"');
-    expect(baseBuild).toContain('docker load --input "$local_base_archive"');
-    expect(baseBuild).toContain('tar -C "$local_base_oci" -xf "$local_base_oci_archive"');
-    expect(baseBuild).toContain("if length == 1 then .[0].digest");
-    expect(baseBuild).toContain(
-      'printf \'oci=%s@%s\\n\' "$local_base_oci" "$local_base_oci_digest"',
-    );
-
-    const expectedContext = "nemoclaw-pi-base=oci-layout://${{ steps.base.outputs.oci }}";
-    for (const name of [
-      "Build the Pi candidate managed image",
-      "Publish the Pi candidate image by digest",
-    ]) {
-      const build = requiredStep(name);
-      expect(build.with?.builder).toBe("${{ steps.buildx.outputs.name }}");
-      expect(build.with?.["build-contexts"]).toBe(expectedContext);
-      expect(build.with?.["build-args"]).toContain("BASE_IMAGE=nemoclaw-pi-base");
-    }
-    expect(requiredStep("Publish the Pi candidate image by digest").with?.outputs).toContain(
-      "push-by-digest=true",
-    );
-  });
-
-  // source-shape-contract: security -- Pull-request and published-digest qualification must bind the declared OCI entrypoint and empty command to the held-state contract
-  it("qualifies local and published candidates through the declared entrypoint", () => {
-    const workflow = readRepoFile(".github/workflows/managed-images.yaml");
-    const dockerfile = readRepoFile("agents/pi/Dockerfile");
-    const entrypointStep = workflow.slice(
-      workflow.indexOf("- name: Exercise the Pi candidate through its declared entrypoint"),
-      workflow.indexOf("- name: Record the exact Pi candidate contract"),
-    );
-    expect(entrypointStep).not.toContain("if: github.event_name");
-    expect(entrypointStep).toContain("EVENT_NAME: ${{ github.event_name }}");
-    expect(entrypointStep).toContain(
-      "IMAGE_REFERENCE: nemoclaw-managed-candidate/pi:${{ github.sha }}",
-    );
-    expect(entrypointStep).toContain('if [ "$EVENT_NAME" = "pull_request" ]; then');
-    expect(entrypointStep).toContain('reference="$IMAGE_REFERENCE"');
-    const publishedReference = 'reference="$' + "{REPOSITORY}@$" + '{DIGEST}"';
-    expect(entrypointStep).toContain(publishedReference);
-    expect(entrypointStep).not.toContain("--entrypoint /usr/local/bin/nemoclaw-start");
-    expect(dockerfile).toContain('ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]');
-    expect(dockerfile).toContain("CMD []");
-    expect(dockerfile).not.toContain('CMD ["/bin/bash"]');
-    expect(entrypointStep).toContain("openssl req -x509 -newkey rsa:2048");
-    expect(entrypointStep).toContain("dst=/usr/local/share/nemoclaw/corporate-ca.pem,readonly");
-    expect(entrypointStep).toContain("docker exec --user 999:999");
-    for (const name of [
-      "SSL_CERT_FILE",
-      "CURL_CA_BUNDLE",
-      "REQUESTS_CA_BUNDLE",
-      "GIT_SSL_CAINFO",
-      "NODE_EXTRA_CA_CERTS",
-    ]) {
-      expect(entrypointStep).toContain(name);
-    }
-    expect(entrypointStep).toContain("source /tmp/nemoclaw-proxy-env.sh");
-    expect(entrypointStep).toContain(
-      "for proxy_variable in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy",
-    );
-    expect(entrypointStep).toContain("for no_proxy_variable in NO_PROXY no_proxy");
-    expect(entrypointStep).toContain("merged_ca=/tmp/nemoclaw-ca-bundle.pem");
-    expect(entrypointStep).toContain("merged_ca_status");
-    expect(entrypointStep).toContain('!= "0:0:444"');
-    expect(entrypointStep).toContain(
-      'fs.readFileSync("/usr/local/share/nemoclaw/corporate-ca.pem")',
-    );
-    expect(entrypointStep).toContain('fs.readFileSync(process.argv[1], "utf8")');
-    expect(entrypointStep).toContain("new X509Certificate(block).fingerprint256");
-    expect(entrypointStep).toContain("mounted.fingerprint256");
-  });
-
-  // source-shape-contract: compatibility -- The accepted Pi launch matrix requires candidate qualification on both supported Linux architectures
-  it("builds and validates the candidate image for linux/amd64 and linux/arm64", () => {
-    const workflow = YAML.parse(readRepoFile(".github/workflows/managed-images.yaml")) as {
-      jobs: Record<string, { strategy?: { matrix?: { include?: Array<{ platform?: string }> } } }>;
-    };
-    const platforms = (workflow.jobs["pi-candidate"]?.strategy?.matrix?.include ?? []).map(
-      (entry) => entry.platform,
-    );
-    expect(platforms).toEqual(["linux/amd64", "linux/arm64"]);
-  });
-
-  // source-shape-contract: compatibility -- The candidate image can only build on an architecture whose base image the publisher produces
-  it("publishes a Pi base image for linux/amd64 and linux/arm64", () => {
-    const workflow = YAML.parse(readRepoFile(".github/workflows/base-image.yaml")) as {
-      jobs: Record<string, { strategy?: { matrix?: { include?: Array<{ platform?: string }> } } }>;
-    };
-    const platforms = (workflow.jobs["build-pi-platforms"]?.strategy?.matrix?.include ?? []).map(
-      (entry) => entry.platform,
-    );
-    expect(platforms).toEqual(["linux/amd64", "linux/arm64"]);
-  });
 });
 
 describe("Pi candidate contract validation", () => {
@@ -352,58 +212,351 @@ describe("Pi candidate contract validation", () => {
 });
 
 describe("Pi runtime boundaries", () => {
-  const APPROVED_MANAGED_INFERENCE_BINARY_PATHS = [
-    "/usr/local/bin/pi",
-    "/usr/local/bin/node",
-    "/usr/local/lib/nemoclaw/pi-runtime/**",
-  ];
-
-  // source-shape-contract: security -- An agent-writable binary path in the baseline policy would give the agent an attacker-controlled egress channel
-  it("grants network capability only to the approved image-owned binaries", () => {
-    const policy = YAML.parse(readRepoFile("agents/pi/policy-additions.yaml")) as {
-      network_policies: Record<string, { binaries?: Array<{ path: string }> }>;
-    };
-    expect(Object.keys(policy.network_policies)).toEqual(["managed_inference"]);
-    const binaries = policy.network_policies.managed_inference.binaries ?? [];
-    expect(binaries.map((binary) => binary.path)).toEqual(APPROVED_MANAGED_INFERENCE_BINARY_PATHS);
+  it("accepts the Pi trust boundary committed in this repository (#7924)", () => {
+    expect(verifyPiTrustBoundary(currentSources())).toEqual([]);
   });
 
-  it("excludes an agent-writable binary path from the approved allowlist", () => {
-    expect(APPROVED_MANAGED_INFERENCE_BINARY_PATHS).not.toContain("/tmp/agent-proxy");
-    expect(APPROVED_MANAGED_INFERENCE_BINARY_PATHS).not.toContain("/sandbox/agent-proxy");
+  it("rejects a direct provider endpoint added beside the managed route (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints.push({
+        host: "api.openai.com",
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+        allow_encoded_slash: false,
+        rules: [{ allow: { method: "POST", path: "/v1/chat/completions" } }],
+      });
+    });
+    expect(verifyPiTrustBoundary(sources)).toEqual([
+      "agents/pi/policy-additions.yaml: managed_inference must declare exactly one endpoint",
+      "agents/pi/policy-additions.yaml: the baseline permits only inference.local:443",
+      "agents/pi/policy-additions.yaml: the managed inference routes must stay GET /v1/models, GET /v1/models/**, POST /v1/chat/completions, POST /v1/completions, found POST /v1/chat/completions",
+    ]);
   });
 
-  // source-shape-contract: security -- A corporate CA baked into the image but never merged into the runtime trust bundle leaves external TLS unverifiable through a corporate proxy
-  it("merges a baked corporate CA into the trust bundle Node reads", () => {
-    const startSh = readRepoFile("agents/pi/start.sh");
-    expect(startSh).toContain("merge_corporate_proxy_ca");
-    expect(startSh).toContain('export SSL_CERT_FILE="$_merged"');
-    expect(startSh).toContain('export NODE_EXTRA_CA_CERTS="$_merged"');
-    expect(startSh.indexOf("merge_corporate_proxy_ca()")).toBeLessThan(
-      startSh.indexOf("prepare_runtime_env()"),
+  it("rejects a package registry policy added to the Pi baseline (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.npm_registry = {
+        name: "npm_registry",
+        endpoints: [{ host: "registry.npmjs.org", port: 443, enforcement: "enforce", rules: [] }],
+      };
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: the baseline must declare only managed_inference, found managed_inference, npm_registry",
     );
-    expect(startSh.indexOf("\nmerge_corporate_proxy_ca\n")).toBeLessThan(
-      startSh.indexOf("exec /usr/bin/setpriv"),
-    );
-    expect(startSh).toContain('!= "0:0:444"');
   });
 
-  // source-shape-contract: security -- A merged CA variable that prepare_runtime_env does not persist is unavailable to independent login and exec shells, which read only the persisted runtime-env file
-  it("persists every merged CA variable into the runtime environment file", () => {
-    const startSh = readRepoFile("agents/pi/start.sh");
-    const prepareRuntimeEnv = startSh.slice(
-      startSh.indexOf("prepare_runtime_env()"),
-      startSh.indexOf("\nprepare_runtime_env\n", startSh.indexOf("prepare_runtime_env()")),
+  it("rejects an agent-writable binary in the network policy (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.binaries.push({ path: "/sandbox/agent-proxy" });
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: network capability must stay on the root-owned image binaries /usr/local/bin/node, /usr/local/bin/pi, /usr/local/lib/nemoclaw/pi-runtime/**",
     );
-    for (const name of [
-      "SSL_CERT_FILE",
-      "CURL_CA_BUNDLE",
-      "REQUESTS_CA_BUNDLE",
-      "GIT_SSL_CAINFO",
-      "NODE_EXTRA_CA_CERTS",
-    ]) {
-      expect(prepareRuntimeEnv).toContain(`write_export_if_set ${name}`);
-    }
+  });
+
+  it("rejects a managed inference rule that allows a path outside /v1/ (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints[0].rules.push({
+        allow: { method: "GET", path: "/**" },
+      });
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: the managed inference routes must stay GET /v1/models, GET /v1/models/**, POST /v1/chat/completions, POST /v1/completions, found GET /**, GET /v1/models, GET /v1/models/**, POST /v1/chat/completions, POST /v1/completions",
+    );
+  });
+
+  it.each([
+    ["access", "full"],
+    ["credential_source", "sandbox"],
+  ])(
+    "rejects the unapproved managed inference endpoint field %s (#7924)",
+    (field, value) => {
+      const sources = withPolicy((policy) => {
+        policy.network_policies.managed_inference.endpoints[0][field] = value;
+      });
+      expect(verifyPiTrustBoundary(sources).join("\n")).toContain(
+        "agents/pi/policy-additions.yaml: managed inference endpoint fields must stay allow_encoded_slash, enforcement, host, port, protocol, rules",
+      );
+    },
+  );
+
+  it("rejects a managed inference rule with an unapproved field (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints[0].rules[0].access = "full";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: the managed inference routes must stay GET /v1/models, GET /v1/models/**, POST /v1/chat/completions, POST /v1/completions, found GET /v1/models, GET /v1/models/**, POST /v1/completions, a malformed rule",
+    );
+  });
+
+  it("rejects a managed inference allow rule with an unapproved field (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints[0].rules[0].allow.headers = {
+        authorization: "credential-placeholder",
+      };
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: the managed inference routes must stay GET /v1/models, GET /v1/models/**, POST /v1/chat/completions, POST /v1/completions, found GET /v1/models, GET /v1/models/**, POST /v1/completions, a malformed rule",
+    );
+  });
+
+  it("rejects a managed inference endpoint that is observed instead of enforced (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints[0].enforcement = "observe";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: inference.local must stay enforced, not observed",
+    );
+  });
+
+  it("rejects a managed inference endpoint that permits encoded slashes (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints[0].allow_encoded_slash = true;
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: inference.local must set allow_encoded_slash to false",
+    );
+  });
+
+  it("rejects a managed inference endpoint without the encoded-slash restriction (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      delete policy.network_policies.managed_inference.endpoints[0].allow_encoded_slash;
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: inference.local must set allow_encoded_slash to false",
+    );
+  });
+
+  it("rejects a managed inference endpoint with its protocol removed (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      delete policy.network_policies.managed_inference.endpoints[0].protocol;
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: inference.local must enforce protocol rest, not an unset protocol",
+    );
+  });
+
+  it("rejects a managed inference endpoint with a non-REST protocol (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints[0].protocol = "tcp";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: inference.local must enforce protocol rest, not tcp",
+    );
+  });
+
+  it("rejects a managed inference endpoint with an empty rule set (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints[0].rules = [];
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: the managed inference routes must stay GET /v1/models, GET /v1/models/**, POST /v1/chat/completions, POST /v1/completions, found none",
+    );
+  });
+
+  it("rejects a managed inference endpoint with its rule set removed (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      delete policy.network_policies.managed_inference.endpoints[0].rules;
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: the managed inference routes must stay GET /v1/models, GET /v1/models/**, POST /v1/chat/completions, POST /v1/completions, found none",
+    );
+  });
+
+  it("rejects a manifest that enables device pairing (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.device_pairing = true;
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: device_pairing must stay false",
+    );
+  });
+
+  it("rejects a container-runtime socket added to the read-write paths (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.filesystem_policy.read_write.push("/var/run/docker.sock");
+    });
+    expect(verifyPiTrustBoundary(sources).join("\n")).toContain(
+      "read-write paths must stay /dev/null, /sandbox, /sandbox/.pi, /tmp",
+    );
+  });
+
+  it("rejects a filesystem policy that excludes the workspace (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.filesystem_policy.include_workdir = false;
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: filesystem_policy.include_workdir must stay true",
+    );
+  });
+
+  it("rejects a credential-bearing path added to the read-only set (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.filesystem_policy.read_only.push("/run/credentials");
+    });
+    expect(verifyPiTrustBoundary(sources).join("\n")).toContain(
+      "read-only paths must stay /dev/urandom, /etc, /lib, /proc, /usr, /var/lib/dpkg, /var/log",
+    );
+  });
+
+  it("rejects a Landlock compatibility that does not fail closed (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.landlock.compatibility = "best-effort";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: landlock.compatibility must be strict so filesystem policy fails closed",
+    );
+  });
+
+  it("rejects a root process identity in the Pi policy (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.process.run_as_user = "root";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: Pi must run as the sandbox user and group",
+    );
+  });
+
+  it("rejects a headless command that omits --no-approve (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.runtime.headless_command = "pi --print";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: runtime.headless_command must stay pi --no-approve --print",
+    );
+  });
+
+  it("rejects an arbitrary headless command that contains --no-approve (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.runtime.headless_command = "sh -c collect-credentials --no-approve";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: runtime.headless_command must stay pi --no-approve --print",
+    );
+  });
+
+  it("rejects an enabled MCP surface in the Pi manifest (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.mcp.support = "enabled";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: mcp.support must stay disabled",
+    );
+  });
+
+  it("rejects a manifest that declares the trust.json project-trust store (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.state_files.push({ path: "trust.json" });
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: trust.json must stay undeclared so a restore cannot carry a project-trust decision",
+    );
+  });
+
+  it("rejects settings.json without its restore contract (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      delete manifest.state_files[0].restore;
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: state_files must contain only settings.json with its exact key-allowlist restore contract",
+    );
+  });
+
+  it("rejects a changed settings.json restore contract (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.state_files[0].restore.merge = "openclaw-config";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: state_files must contain only settings.json with its exact key-allowlist restore contract",
+    );
+  });
+
+  it("rejects a credential-bearing file added to portable state (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.state_files.push({ path: "auth.json" });
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: state_files must contain only settings.json with its exact key-allowlist restore contract",
+    );
+  });
+
+  it("rejects defaultProjectTrust in the restore allowlist (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.state_files[0].restore.user_keys.push({
+        key: "defaultProjectTrust",
+        type: "enum",
+        values: ["ask", "always", "never"],
+      });
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: defaultProjectTrust must stay outside the restore allowlist so a backup cannot widen project trust",
+    );
+  });
+
+  it("rejects a managed inference route set that widens beyond the approved routes (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints[0].rules = [
+        { allow: { method: "POST", path: "/v1/**" } },
+      ];
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: the managed inference routes must stay GET /v1/models, GET /v1/models/**, POST /v1/chat/completions, POST /v1/completions, found POST /v1/**",
+    );
+  });
+
+  it("rejects a state directory that drops its read-only trust classification (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.state_dirs.find((dir: Record<string, any>) => dir.path === "tools").shields =
+        "confidential";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: state_dirs.tools must stay shields read-only so its trust classification cannot widen",
+    );
+  });
+
+  it("rejects executable resource state entering backup (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.state_dirs.find((dir: Record<string, any>) => dir.path === "bin").backup = true;
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: state_dirs.bin must stay outside backup so executable resource state is reconstructed instead of restored",
+    );
+  });
+
+  it("rejects a skills directory added outside the approved manifest state directory set (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.state_dirs.push({ path: "skills", shields: "read-only" });
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: state_dirs must stay bin, prompts, sessions, themes, tools, found bin, prompts, sessions, skills, themes, tools",
+    );
+  });
+
+  it.each([
+    ["owner-only state", /^umask 077$/mu, "umask 022"],
+    ["offline startup", /^export PI_OFFLINE=1$/mu, "export PI_OFFLINE=0"],
+    ["telemetry refusal", /^export PI_TELEMETRY=0$/mu, "export PI_TELEMETRY=1"],
+    [
+      "root privilege drop",
+      "  _NEMOCLAW_PI_DROP_PRIVILEGES=1",
+      "  _NEMOCLAW_PI_DROP_PRIVILEGES=0",
+    ],
+    [
+      "privilege-drop target",
+      '/usr/local/bin/nemoclaw-start "$@"',
+      '/usr/local/bin/nemoclaw-start-tampered "$@"',
+    ],
+    [
+      "any otherwise-harmless edit",
+      "# NemoClaw sandbox entrypoint for Pi.",
+      "# NemoClaw sandbox entrypoint for Pi.\n# unexpected drift",
+    ],
+  ])("rejects %s drift in the exact entrypoint contract (#7924)", (_name, match, replacement) => {
+    const sources = withStartScript((startScript) => startScript.replace(match, replacement));
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/start.sh: entrypoint SHA-256 must stay 8d246d9988fd2fe4f61edce8498933cd6b37285c98746f3710058a2daae9dbb8 so its complete startup-hardening contract cannot drift",
+    );
   });
 });
 
@@ -486,5 +639,65 @@ describe("Pi managed model catalog generation", () => {
     });
     expect(status).not.toBe(0);
     expect(stderr).toContain("NEMOCLAW_INFERENCE_BASE_URL must not include credentials.");
+  });
+
+  function readManagedModel(home: string): Record<string, unknown> {
+    const config = JSON.parse(
+      fs.readFileSync(path.join(home, ".pi", "agent", "models.json"), "utf8"),
+    ) as { providers: Record<string, { models: Record<string, unknown>[] }> };
+    return config.providers.openshell.models[0] as Record<string, unknown>;
+  }
+
+  it("writes the context window, output limit, and reasoning support Pi documents (#7930)", () => {
+    const { home, status, stderr } = generate({
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_CONTEXT_WINDOW: "262144",
+      NEMOCLAW_MAX_TOKENS: "32000",
+      NEMOCLAW_REASONING: "true",
+    });
+    expect(status, stderr).toBe(0);
+    expect(readManagedModel(home)).toEqual({
+      id: "nvidia/nemotron-3-super-120b-a12b",
+      contextWindow: 262_144,
+      maxTokens: 32_000,
+      reasoning: true,
+    });
+  });
+
+  it("omits unset model tuning so Pi keeps its own defaults (#7930)", () => {
+    const { home, status, stderr } = generate({
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_CONTEXT_WINDOW: "",
+      NEMOCLAW_MAX_TOKENS: "",
+      NEMOCLAW_REASONING: "",
+    });
+    expect(status, stderr).toBe(0);
+    expect(readManagedModel(home)).toEqual({ id: "nvidia/nemotron-3-super-120b-a12b" });
+  });
+
+  it("records a disabled reasoning decision instead of dropping it (#7930)", () => {
+    const { home, status, stderr } = generate({
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_REASONING: "false",
+    });
+    expect(status, stderr).toBe(0);
+    expect(readManagedModel(home)).toEqual({
+      id: "nvidia/nemotron-3-super-120b-a12b",
+      reasoning: false,
+    });
+  });
+
+  it.each([
+    ["NEMOCLAW_CONTEXT_WINDOW", "128k", "NEMOCLAW_CONTEXT_WINDOW must be a positive integer."],
+    ["NEMOCLAW_MAX_TOKENS", "0", "NEMOCLAW_MAX_TOKENS must be a positive integer."],
+    ["NEMOCLAW_REASONING", "yes", 'NEMOCLAW_REASONING must be "true" or "false".'],
+  ])("rejects %s=%s before writing a catalog (#7930)", (name, value, message) => {
+    const { home, status, stderr } = generate({
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      [name]: value,
+    });
+    expect(status).not.toBe(0);
+    expect(stderr).toContain(message);
+    expect(fs.existsSync(path.join(home, ".pi", "agent", "models.json"))).toBe(false);
   });
 });

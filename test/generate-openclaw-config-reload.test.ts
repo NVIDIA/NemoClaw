@@ -59,45 +59,46 @@ describe("gateway.reload pin (#4710)", () => {
     expect(config.gateway.reload).toEqual({ mode: "hot" });
   });
 
-  it("keeps the pin across unrelated env permutations", () => {
-    const permutations: Record<string, string>[] = [
-      { NEMOCLAW_WEB_SEARCH_ENABLED: "1" },
-      { NEMOCLAW_OPENCLAW_MANAGED_PROXY: "0" },
-      { NEMOCLAW_AGENT_HEARTBEAT_EVERY: "5m" },
-      { CHAT_UI_URL: "http://127.0.0.1:18792" },
-    ];
-    for (const overrides of permutations) {
-      const config = buildConfigDirect(overrides);
-      expect(config.gateway.reload, JSON.stringify(overrides)).toEqual({ mode: "hot" });
-    }
+  it.each([
+    { NEMOCLAW_WEB_SEARCH_ENABLED: "1" },
+    { NEMOCLAW_OPENCLAW_MANAGED_PROXY: "0" },
+    { NEMOCLAW_AGENT_HEARTBEAT_EVERY: "5m" },
+    { CHAT_UI_URL: "http://127.0.0.1:18792" },
+  ])("keeps the pin across unrelated env permutations [case %#]", (overrides) => {
+    const config = buildConfigDirect(overrides);
+    expect(config.gateway.reload, JSON.stringify(overrides)).toEqual({ mode: "hot" });
   });
 
   // Generous timeout: main() does real file I/O and the suite shares a
   // worker pool with heavier integration files.
-  it("re-pins hot mode when an existing config carries a different reload mode", {
-    timeout: 20000,
-  }, () => {
-    // preserveExistingOpenClawState() merges plugin install records from an
-    // existing openclaw.json into the regenerated config; the gateway block
-    // (including reload) must come from the generator, not the old file.
-    const configDir = path.join(tmpDir, ".openclaw");
-    fs.mkdirSync(configDir, { recursive: true });
-    const configPath = path.join(configDir, "openclaw.json");
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({
-        gateway: { reload: { mode: "hybrid" }, auth: { token: "stale" } },
-        plugins: { installs: { "custom-plugin": { origin: "npm" } } },
-      }),
-    );
+  it(
+    "re-pins hot mode when an existing config carries a different reload mode",
+    {
+      timeout: 20000,
+    },
+    () => {
+      // preserveExistingOpenClawState() merges plugin install records from an
+      // existing openclaw.json into the regenerated config; the gateway block
+      // (including reload) must come from the generator, not the old file.
+      const configDir = path.join(tmpDir, ".openclaw");
+      fs.mkdirSync(configDir, { recursive: true });
+      const configPath = path.join(configDir, "openclaw.json");
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          gateway: { reload: { mode: "hybrid" }, auth: { token: "stale" } },
+          plugins: { installs: { "custom-plugin": { origin: "npm" } } },
+        }),
+      );
 
-    withConfigEnv({}, () => main());
+      withConfigEnv({}, () => main());
 
-    const written = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    expect(written.gateway.reload).toEqual({ mode: "hot" });
-    // The plugin-install carryover still works alongside the pin.
-    expect(written.plugins.installs["custom-plugin"]).toEqual({ origin: "npm" });
-  });
+      const written = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      expect(written.gateway.reload).toEqual({ mode: "hot" });
+      // The plugin-install carryover still works alongside the pin.
+      expect(written.plugins.installs["custom-plugin"]).toEqual({ origin: "npm" });
+    },
+  );
 
   it("preserves bounded OpenClaw write metadata across managed regeneration (#7744)", () => {
     const configDir = path.join(tmpDir, ".openclaw");

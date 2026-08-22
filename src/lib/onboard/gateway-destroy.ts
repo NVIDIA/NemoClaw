@@ -41,34 +41,36 @@ export type AbortGatewayTeardownDeps = {
   listSandboxes?: typeof listRegisteredSandboxes;
   resolveAuthority?: typeof resolveGatewayTeardownAuthority;
   releaseManagedGatewayPort?: typeof releaseManagedGatewayPort;
-  removeGatewayRegistration?: (gatewayName: string) => void;
+  removeGatewayRegistration?: (gatewayName: string) => boolean;
   log?: (message: string) => void;
   warn?: (message: string) => void;
 };
 
-function defaultRemoveGatewayRegistration(gatewayName: string): void {
+function defaultRemoveGatewayRegistration(gatewayName: string): boolean {
   // Lazy require keeps unit tests free of openshell binary resolution.
   const runtime =
     require("../adapters/openshell/runtime") as typeof import("../adapters/openshell/runtime");
-  runtime.runOpenshell(["gateway", "remove", gatewayName], {
-    ignoreError: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  return (
+    runtime.runOpenshell(["gateway", "remove", gatewayName], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).status === 0
+  );
 }
 
 /**
- * True when any registered sandbox is bound to `gatewayName`. An unreadable
- * binding fails closed (treat as owned) so abort teardown never guesses.
+ * True when a registered sandbox is bound to `gatewayName`, false when none
+ * are bound, and null when a binding cannot be resolved.
  */
 export function gatewayHasRegisteredSandbox(
   gatewayName: string,
   listSandboxes: typeof listRegisteredSandboxes = listRegisteredSandboxes,
-): boolean {
+): boolean | null {
   for (const sandbox of listSandboxes().sandboxes) {
     try {
       if (resolveSandboxGatewayName(sandbox) === gatewayName) return true;
     } catch {
-      return true;
+      return null;
     }
   }
   return false;
@@ -79,7 +81,7 @@ export function gatewayHasRegisteredSandbox(
  * registration when no sandbox still owns that gateway. Never throws — callers
  * on fatal exit paths must still be able to `process.exit(1)` after a warning.
  *
- * @returns true when a teardown attempt ran (stop and/or remove).
+ * @returns true when teardown completed or no teardown was required.
  */
 export function teardownOrphanManagedGatewayOnAbort(deps: AbortGatewayTeardownDeps = {}): boolean {
   const log = deps.log ?? ((message: string) => console.error(message));
@@ -94,8 +96,15 @@ export function teardownOrphanManagedGatewayOnAbort(deps: AbortGatewayTeardownDe
     const release = deps.releaseManagedGatewayPort ?? releaseManagedGatewayPort;
     const removeRegistration = deps.removeGatewayRegistration ?? defaultRemoveGatewayRegistration;
 
-    if (gatewayHasRegisteredSandbox(gatewayName, listSandboxes)) {
+    const hasRegisteredSandbox = gatewayHasRegisteredSandbox(gatewayName, listSandboxes);
+    if (hasRegisteredSandbox === null) {
+      warn(
+        "  Skipping gateway teardown after onboard abort: sandbox gateway binding is unreadable.",
+      );
       return false;
+    }
+    if (hasRegisteredSandbox) {
+      return true;
     }
 
     try {
@@ -104,7 +113,7 @@ export function teardownOrphanManagedGatewayOnAbort(deps: AbortGatewayTeardownDe
         log(
           `  Keeping externally supervised OpenShell gateway '${gatewayName}' running after onboard abort.`,
         );
-        return false;
+        return true;
       }
     } catch (error) {
       if (error instanceof GatewayAuthorityError) {
@@ -121,11 +130,9 @@ export function teardownOrphanManagedGatewayOnAbort(deps: AbortGatewayTeardownDe
       `  Onboard aborted before a sandbox was created; releasing managed gateway '${gatewayName}' so provider credentials do not remain in a live process.`,
     );
 
-    let attempted = false;
     let releaseConfirmed = false;
     try {
       const result = release({ port });
-      attempted = true;
       releaseConfirmed = result.released;
       if (result.released && result.stopped.length > 0) {
         log(
@@ -137,7 +144,6 @@ export function teardownOrphanManagedGatewayOnAbort(deps: AbortGatewayTeardownDe
         );
       }
     } catch (error) {
-      attempted = true;
       warn(
         `  Gateway process stop after onboard abort failed: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -145,18 +151,23 @@ export function teardownOrphanManagedGatewayOnAbort(deps: AbortGatewayTeardownDe
 
     // Keep the OpenShell registration when the listener may still be up — it is
     // the supported recovery handle for a credential-bearing process.
-    if (!releaseConfirmed) return attempted;
+    if (!releaseConfirmed) return false;
 
     try {
-      removeRegistration(gatewayName);
-      attempted = true;
+      if (!removeRegistration(gatewayName)) {
+        warn(
+          `  Gateway registration '${gatewayName}' was not confirmed removed after onboard abort.`,
+        );
+        return false;
+      }
     } catch (error) {
       warn(
         `  Gateway registration remove after onboard abort failed: ${error instanceof Error ? error.message : String(error)}`,
       );
+      return false;
     }
 
-    return attempted;
+    return true;
   } catch (error) {
     // Warn and continue to fatal exit; do not hide a still-live listener.
     warn(

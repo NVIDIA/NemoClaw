@@ -167,18 +167,21 @@ export class OpenClawVoiceClient implements AgentTurnClient {
       }
 
       const sequence = payload.seq;
+      const state = payload.state;
+      const finalSnapshot = state === "final" ? textFromAssistantMessage(payload.message) : null;
+      const repeatsLastSequence = lastSequence !== null && sequence === lastSequence;
       if (
         typeof sequence !== "number" ||
         !Number.isInteger(sequence) ||
         sequence < 0 ||
-        (lastSequence !== null && sequence <= lastSequence)
+        (lastSequence !== null && sequence < lastSequence) ||
+        (repeatsLastSequence && finalSnapshot === null)
       ) {
         finish({ outcome: "failed", reason: "agent_protocol_error" });
         return;
       }
       lastSequence = sequence;
 
-      const state = payload.state;
       if (state === "delta") {
         if (
           typeof payload.deltaText !== "string" ||
@@ -200,8 +203,7 @@ export class OpenClawVoiceClient implements AgentTurnClient {
       }
 
       if (state === "final") {
-        const snapshot = textFromAssistantMessage(payload.message);
-        if (snapshot !== null) projectedText = snapshot;
+        if (finalSnapshot !== null) projectedText = finalSnapshot;
         if (Buffer.byteLength(projectedText) > VOICE_GATEWAY_MAX_RESPONSE_BYTES) {
           finish({ outcome: "failed", reason: "response_too_large" });
           return;

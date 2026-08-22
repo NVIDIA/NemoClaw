@@ -601,14 +601,15 @@ describe("live onboard FSM slice boundaries", () => {
     ]);
   });
 
-  it("leaves ordinary policy tiers non-authoritative in the runOnboard machine", () => {
-    for (const policyTier of ["balanced", "restricted"] as const) {
+  it.each(["balanced", "restricted"] as const)(
+    "leaves ordinary policy tiers non-authoritative in the runOnboard machine [case %#]",
+    (policyTier) => {
       assert.deepEqual(runSliceProbe({ slice: "core", mode: "ordinary-policy-tier", policyTier }), [
         "initial:init",
         "authoritative-policy-tier:undefined",
       ]);
-    }
-  });
+    },
+  );
 
   it("preserves an explicit null policy tier for authoritative rebuilds", () => {
     const called = runSliceProbe({

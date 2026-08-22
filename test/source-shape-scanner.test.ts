@@ -620,8 +620,27 @@ describe("source-shape scanner", () => {
     expect(report.invalidContractExceptions).toEqual([]);
   });
 
-  it("rejects unsupported, short, and misplaced contract exceptions", () => {
-    const source = (annotation: string, separator = "") => `
+  it.each(
+    Array.from(
+      [
+        [
+          "// source-shape-contract: snapshot -- This reason is sufficiently detailed",
+          "",
+          "unsupported category",
+        ],
+        ["// source-shape-contract: security -- Trust anchor", "", "reason is too short"],
+        [
+          "// source-shape-contract: security -- This reason is sufficiently detailed",
+          "// not adjacent",
+          "immediately above",
+        ],
+      ],
+      (value) => [value],
+    ),
+  )(
+    "rejects unsupported, short, and misplaced contract exceptions [case %#]",
+    ([annotation, separator, reason]) => {
+      const source = (annotation: string, separator = "") => `
       import { readFileSync } from "node:fs";
       import { expect, it } from "vitest";
 
@@ -633,19 +652,6 @@ describe("source-shape scanner", () => {
       });
     `;
 
-    for (const [annotation, separator, reason] of [
-      [
-        "// source-shape-contract: snapshot -- This reason is sufficiently detailed",
-        "",
-        "unsupported category",
-      ],
-      ["// source-shape-contract: security -- Trust anchor", "", "reason is too short"],
-      [
-        "// source-shape-contract: security -- This reason is sufficiently detailed",
-        "// not adjacent",
-        "immediately above",
-      ],
-    ]) {
       const report = scanTextForTestReport(
         "test/virtual-source-shape.test.ts",
         source(annotation ?? "", separator),
@@ -653,8 +659,8 @@ describe("source-shape scanner", () => {
       expect(report.invalidContractExceptions[0]?.reason).toContain(reason);
       expect(report.cases).toHaveLength(1);
       expect(sourceShapeSummary(report).source_shape_invalid_contract_exceptions).toBe(1);
-    }
-  });
+    },
+  );
 
   it("rejects replacing an allowlisted exception with a same-count exception", () => {
     const allowed = [

@@ -16,18 +16,16 @@ import {
 } from "../live/snapshot-credential-scanner.ts";
 
 describe("snapshot credential scanner", () => {
-  it("keeps required provider aliases in the shared credential inventory", () => {
-    for (const name of [
-      "NVIDIA_API_KEY",
-      "OPENROUTER_API_KEY",
-      "GEMINI_API_KEY",
-      "GOOGLE_API_KEY",
-      "AWS_BEARER_TOKEN_BEDROCK",
-      "COMPATIBLE_ANTHROPIC_API_KEY",
-      "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
-    ]) {
-      expect(SUPPORTED_CREDENTIAL_ENV_NAMES.has(name), name).toBe(true);
-    }
+  it.each([
+    "NVIDIA_API_KEY",
+    "OPENROUTER_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "AWS_BEARER_TOKEN_BEDROCK",
+    "COMPATIBLE_ANTHROPIC_API_KEY",
+    "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+  ])("keeps required provider aliases in the shared credential inventory [case %#]", (name) => {
+    expect(SUPPORTED_CREDENTIAL_ENV_NAMES.has(name), name).toBe(true);
   });
 
   it("accepts only non-secret environment and secret-reference markers in models.json", () => {
@@ -46,18 +44,19 @@ describe("snapshot credential scanner", () => {
     expect(modelsJsonContainsCredentialLeak(body)).toBe(false);
   });
 
-  it.each([
-    ...MODELS_JSON_CREDENTIAL_ENV_REFERENCES,
-  ])("preserves the allowed bare and braced models.json reference marker %s", (name) => {
-    expect(
-      modelsJsonContainsCredentialLeak(JSON.stringify({ providers: { bare: { apiKey: name } } })),
-    ).toBe(false);
-    expect(
-      modelsJsonContainsCredentialLeak(
-        JSON.stringify({ providers: { braced: { apiKey: `\${${name}}` } } }),
-      ),
-    ).toBe(false);
-  });
+  it.each([...MODELS_JSON_CREDENTIAL_ENV_REFERENCES])(
+    "preserves the allowed bare and braced models.json reference marker %s",
+    (name) => {
+      expect(
+        modelsJsonContainsCredentialLeak(JSON.stringify({ providers: { bare: { apiKey: name } } })),
+      ).toBe(false);
+      expect(
+        modelsJsonContainsCredentialLeak(
+          JSON.stringify({ providers: { braced: { apiKey: `\${${name}}` } } }),
+        ),
+      ).toBe(false);
+    },
+  );
 
   it.each([
     ["NVIDIA key", { apiKey: "nvapi-concrete-secret" }],
@@ -72,19 +71,16 @@ describe("snapshot credential scanner", () => {
     ).toBe(true);
   });
 
-  it.each([
-    "access_token",
-    "secret_key",
-    "bearer_token",
-    "secretKey",
-    "apikey",
-  ])("rejects opaque values under the credential field %s", (field) => {
-    expect(
-      modelsJsonContainsCredentialLeak(
-        JSON.stringify({ providers: { test: { [field]: "opaque-concrete-value" } } }),
-      ),
-    ).toBe(true);
-  });
+  it.each(["access_token", "secret_key", "bearer_token", "secretKey", "apikey"])(
+    "rejects opaque values under the credential field %s",
+    (field) => {
+      expect(
+        modelsJsonContainsCredentialLeak(
+          JSON.stringify({ providers: { test: { [field]: "opaque-concrete-value" } } }),
+        ),
+      ).toBe(true);
+    },
+  );
 
   it("rejects credential assignments and malformed models.json", () => {
     expect(
@@ -100,14 +96,15 @@ describe("snapshot credential scanner", () => {
     expect(modelsJsonContainsCredentialLeak('{"providers":')).toBe(true);
   });
 
-  it.each([
-    ...SUPPORTED_CREDENTIAL_ENV_NAMES,
-  ])("rejects an opaque assignment for the supported credential name %s", (name) => {
-    expect(snapshotFileContainsCredentialLeak("runtime.env", `${name}=opaque-value`)).toBe(true);
-    expect(snapshotFileContainsCredentialLeak("runtime.env", `export ${name}=opaque-value`)).toBe(
-      true,
-    );
-  });
+  it.each([...SUPPORTED_CREDENTIAL_ENV_NAMES])(
+    "rejects an opaque assignment for the supported credential name %s",
+    (name) => {
+      expect(snapshotFileContainsCredentialLeak("runtime.env", `${name}=opaque-value`)).toBe(true);
+      expect(snapshotFileContainsCredentialLeak("runtime.env", `export ${name}=opaque-value`)).toBe(
+        true,
+      );
+    },
+  );
 
   it("preserves the existing non-model file boundaries", () => {
     expect(snapshotFileContainsCredentialLeak("openclaw.json", '{"apiKey":"unused"}')).toBe(false);

@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   dispatch-production-image:
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event.deleted == false }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event.deleted == false && github.run_attempt == 1 }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

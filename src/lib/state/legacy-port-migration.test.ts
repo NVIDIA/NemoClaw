@@ -148,63 +148,71 @@ describe("legacy non-default gateway state migration", () => {
     ).toBe(true);
   });
 
-  it("removes shared ownership before moves and resumes an interrupted migration", () => {
-    const home = makeHome();
-    const shared = path.join(home, ".nemoclaw");
-    const selected = path.join(shared, "gateways", "9123");
-    const legacyRegistry = path.join(shared, "sandboxes.json");
-    const selectedRegistry = path.join(selected, "sandboxes.json");
-    const backupSource = path.join(shared, "rebuild-backups", "port-box");
-    const backupDestination = path.join(selected, "rebuild-backups", "port-box");
-    writeJson(legacyRegistry, {
-      defaultSandbox: "default-box",
-      sandboxes: {
-        "default-box": { name: "default-box", gatewayName: "nemoclaw", gatewayPort: 8080 },
-        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
-      },
-    });
-    writeJson(path.join(backupSource, "snapshot", "manifest.json"), {});
+  it.each([
+    { scenario: "migration lock" },
+    { scenario: "legacy registry lock" },
+    { scenario: "selected registry lock" },
+  ])(
+    "removes shared ownership before moves and resumes an interrupted migration [$scenario]",
+    ({ scenario }) => {
+      const home = makeHome();
+      const shared = path.join(home, ".nemoclaw");
+      const selected = path.join(shared, "gateways", "9123");
+      const legacyRegistry = path.join(shared, "sandboxes.json");
+      const selectedRegistry = path.join(selected, "sandboxes.json");
+      const backupSource = path.join(shared, "rebuild-backups", "port-box");
+      const backupDestination = path.join(selected, "rebuild-backups", "port-box");
+      writeJson(legacyRegistry, {
+        defaultSandbox: "default-box",
+        sandboxes: {
+          "default-box": { name: "default-box", gatewayName: "nemoclaw", gatewayPort: 8080 },
+          "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+        },
+      });
+      writeJson(path.join(backupSource, "snapshot", "manifest.json"), {});
 
-    const renameSync = fs.renameSync.bind(fs);
-    const failMove = (): never => {
-      throw new Error("injected post-registry move failure");
-    };
-    const renameSpy = vi
-      .spyOn(fs, "renameSync")
-      .mockImplementation((source, destination) =>
-        String(source) === backupSource ? failMove() : renameSync(source, destination),
+      const renameSync = fs.renameSync.bind(fs);
+      const failMove = (): never => {
+        throw new Error("injected post-registry move failure");
+      };
+      const renameSpy = vi
+        .spyOn(fs, "renameSync")
+        .mockImplementation((source, destination) =>
+          String(source) === backupSource ? failMove() : renameSync(source, destination),
+        );
+
+      expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+        /injected post-registry move failure/,
+      );
+      renameSpy.mockRestore();
+
+      expect(Object.keys(readJson(legacyRegistry).sandboxes as object)).toEqual(["default-box"]);
+      expect(fs.existsSync(selectedRegistry)).toBe(false);
+      expect(fs.existsSync(path.join(shared, ".gateway-state-migration"))).toBe(true);
+      expect(() => migrateLegacyPortState({ home, gatewayPort: 8080 })).toThrow(
+        /recoverable migration for gateway port 9123 is pending/,
       );
 
-    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
-      /injected post-registry move failure/,
-    );
-    renameSpy.mockRestore();
-
-    expect(Object.keys(readJson(legacyRegistry).sandboxes as object)).toEqual(["default-box"]);
-    expect(fs.existsSync(selectedRegistry)).toBe(false);
-    expect(fs.existsSync(path.join(shared, ".gateway-state-migration"))).toBe(true);
-    expect(() => migrateLegacyPortState({ home, gatewayPort: 8080 })).toThrow(
-      /recoverable migration for gateway port 9123 is pending/,
-    );
-
-    for (const staleLock of [
-      path.join(shared, ".gateway-state-migration.lock"),
-      `${legacyRegistry}.lock`,
-      `${selectedRegistry}.lock`,
-    ]) {
+      const staleLock = (
+        {
+          "migration lock": path.join(shared, ".gateway-state-migration.lock"),
+          "legacy registry lock": `${legacyRegistry}.lock`,
+          "selected registry lock": `${selectedRegistry}.lock`,
+        } as const
+      )[scenario]!;
       fs.mkdirSync(staleLock, { recursive: true });
       fs.writeFileSync(path.join(staleLock, "owner"), String(Number.MAX_SAFE_INTEGER));
-    }
 
-    expect(migrateLegacyPortState({ home, gatewayPort: 9123 })).toEqual({
-      migratedSandboxNames: ["port-box"],
-      migratedSession: false,
-      warnings: [],
-    });
-    expect(Object.keys(readJson(selectedRegistry).sandboxes as object)).toEqual(["port-box"]);
-    expect(fs.existsSync(path.join(backupDestination, "snapshot", "manifest.json"))).toBe(true);
-    expect(fs.existsSync(path.join(shared, ".gateway-state-migration"))).toBe(false);
-  });
+      expect(migrateLegacyPortState({ home, gatewayPort: 9123 })).toEqual({
+        migratedSandboxNames: ["port-box"],
+        migratedSession: false,
+        warnings: [],
+      });
+      expect(Object.keys(readJson(selectedRegistry).sandboxes as object)).toEqual(["port-box"]);
+      expect(fs.existsSync(path.join(backupDestination, "snapshot", "manifest.json"))).toBe(true);
+      expect(fs.existsSync(path.join(shared, ".gateway-state-migration"))).toBe(false);
+    },
+  );
 
   it("partitions provable rows but leaves credentials whose gateway ownership is ambiguous", () => {
     const home = makeHome();
@@ -245,7 +253,9 @@ describe("legacy non-default gateway state migration", () => {
     expect(fs.existsSync(path.join(selected, "credentials.json"))).toBe(true);
   });
 
-  it("keeps host-shared Ollama proxy state out of a non-default gateway migration", () => {
+  it.each(
+    ["ollama-proxy-token", "ollama-proxy-port", "ollama-auth-proxy.pid"],
+  )("keeps host-shared Ollama proxy state out of a non-default gateway migration [%s]", (entry) => {
     const home = makeHome();
     const shared = path.join(home, ".nemoclaw");
     const selected = path.join(shared, "gateways", "9123");
@@ -263,37 +273,38 @@ describe("legacy non-default gateway state migration", () => {
     const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
 
     expect(result.warnings).toEqual([]);
-    for (const entry of ["ollama-proxy-token", "ollama-proxy-port", "ollama-auth-proxy.pid"]) {
-      expect(fs.existsSync(path.join(shared, entry))).toBe(true);
-      expect(fs.existsSync(path.join(selected, entry))).toBe(false);
-    }
+
+    expect(fs.existsSync(path.join(shared, entry))).toBe(true);
+    expect(fs.existsSync(path.join(selected, entry))).toBe(false);
+
     expect(fs.existsSync(path.join(shared, "credentials.json"))).toBe(false);
     expect(fs.existsSync(path.join(selected, "credentials.json"))).toBe(true);
   });
 
-  it.each([
-    8080, 9123,
-  ])("removes only generated stale migration-intent directories for gateway port %i", (gatewayPort) => {
-    const home = makeHome();
-    const shared = path.join(home, ".nemoclaw");
-    const preparing = path.join(shared, ".gateway-state-migration.preparing.999999.1");
-    const completed = path.join(shared, ".gateway-state-migration.completed.999999.2");
-    const unrelated = path.join(shared, ".gateway-state-migration.preparing.not-a-pid.3");
-    fs.mkdirSync(preparing, { recursive: true });
-    fs.mkdirSync(completed, { recursive: true });
-    fs.mkdirSync(unrelated, { recursive: true });
+  it.each([8080, 9123])(
+    "removes only generated stale migration-intent directories for gateway port %i",
+    (gatewayPort) => {
+      const home = makeHome();
+      const shared = path.join(home, ".nemoclaw");
+      const preparing = path.join(shared, ".gateway-state-migration.preparing.999999.1");
+      const completed = path.join(shared, ".gateway-state-migration.completed.999999.2");
+      const unrelated = path.join(shared, ".gateway-state-migration.preparing.not-a-pid.3");
+      fs.mkdirSync(preparing, { recursive: true });
+      fs.mkdirSync(completed, { recursive: true });
+      fs.mkdirSync(unrelated, { recursive: true });
 
-    expect(migrateLegacyPortState({ home, gatewayPort })).toEqual({
-      migratedSandboxNames: [],
-      migratedSession: false,
-      warnings: [],
-    });
+      expect(migrateLegacyPortState({ home, gatewayPort })).toEqual({
+        migratedSandboxNames: [],
+        migratedSession: false,
+        warnings: [],
+      });
 
-    expect(fs.existsSync(preparing)).toBe(false);
-    expect(fs.existsSync(completed)).toBe(false);
-    expect(fs.existsSync(unrelated)).toBe(true);
-    expect(fs.existsSync(path.join(shared, ".gateway-state-migration.lock"))).toBe(false);
-  });
+      expect(fs.existsSync(preparing)).toBe(false);
+      expect(fs.existsSync(completed)).toBe(false);
+      expect(fs.existsSync(unrelated)).toBe(true);
+      expect(fs.existsSync(path.join(shared, ".gateway-state-migration.lock"))).toBe(false);
+    },
+  );
 
   it("refuses to follow a stale-intent symlink", () => {
     const home = makeHome();

@@ -16,6 +16,9 @@ import { listSandboxes } from "../state/registry";
 
 type RunCaptureOpenshell = (args: string[], options?: { ignoreError?: boolean }) => string | null;
 
+/** A gateway that cannot answer is distinct from one that answers with another route. */
+export type InferenceRouteState = "matched" | "mismatched" | "unanswered";
+
 /** Resolve the exact portable inference route used by managed clone preparation. */
 export function resolveManagedStartupInferenceRoute(
   agentName: string,
@@ -50,11 +53,20 @@ export function createInferenceRouteHelpers(
     }
   }
 
-  function isInferenceRouteReady(gatewayName: string, provider: string, model: string): boolean {
+  function readInferenceRouteState(
+    gatewayName: string,
+    provider: string,
+    model: string,
+  ): InferenceRouteState {
     const live = parseGatewayInference(
       runCaptureOpenshell(["inference", "get", "-g", gatewayName], { ignoreError: true }),
     );
-    return Boolean(live && live.provider === provider && live.model === model);
+    if (!live) return "unanswered";
+    return live.provider === provider && live.model === model ? "matched" : "mismatched";
+  }
+
+  function isInferenceRouteReady(gatewayName: string, provider: string, model: string): boolean {
+    return readInferenceRouteState(gatewayName, provider, model) === "matched";
   }
 
   const checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck = (request) =>
@@ -72,6 +84,7 @@ export function createInferenceRouteHelpers(
   return {
     verifyInferenceRoute,
     isInferenceRouteReady,
+    readInferenceRouteState,
     checkGatewayRouteCompatibility,
     preflightGatewayRouteDiscovery,
   };

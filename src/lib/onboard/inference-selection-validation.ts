@@ -43,6 +43,7 @@ import { shouldForceCompletionsApi } from "../validation";
 import { getProbeRecovery } from "../validation-recovery";
 import { summarizeProbeForDisplay } from "./probe-diagnostics";
 import { normalizeReasoningFlag } from "./reasoning-mode";
+import { OnboardDeferredExitError } from "./session-bootstrap";
 
 export type EndpointValidationResult =
   | {
@@ -55,6 +56,27 @@ export type EndpointValidationResult =
       trustedPrivateCapability?: TrustedPrivateEndpointCapability;
     }
   | { ok: false; retry: "credential" | "selection" | "retry" | "model"; api?: undefined };
+
+export interface OpenAiSelectionValidationOptions {
+  /** In-memory credential for managed local endpoints; never read from ambient env. */
+  apiKey?: string | null;
+  /** Approved no-DNS endpoint pin; [] also disables ambient proxies for managed IP URLs. */
+  pinnedAddresses?: readonly string[];
+  trustedPrivateCapability?: TrustedPrivateEndpointCapability;
+  authMode?: "bearer" | "query-param";
+  extraHeaders?: readonly string[];
+  requireResponsesToolCalling?: boolean;
+  requireChatCompletionsToolCalling?: boolean;
+  retryChatCompletionsToolReadiness?: boolean;
+  /** Provider identity used only for safe, provider-specific diagnostics. */
+  provider?: string;
+
+  skipResponsesProbe?: boolean;
+  probeStreaming?: boolean;
+  allowHostDockerInternal?: boolean;
+  probeFromDocker?: { expectedPort: number } | null;
+  capabilityCache?: OnboardInferenceCapabilityCache;
+}
 
 export interface InferenceSelectionValidationDeps {
   isNonInteractive(): boolean;
@@ -70,7 +92,7 @@ export interface InferenceSelectionValidationDeps {
    * Optional abort teardown hook for tests. Production loads the helper lazily
    * so openshell binaries stay out of the validation unit graph.
    */
-  teardownOrphanManagedGatewayOnAbort?: () => void;
+  teardownOrphanManagedGatewayOnAbort?: () => boolean;
   promptValidationRecovery(
     label: string,
     recovery: ReturnType<typeof getProbeRecovery>,
@@ -87,24 +109,7 @@ export interface InferenceSelectionValidationHelpers {
     credentialEnv?: string | null,
     retryMessage?: string,
     helpUrl?: string | null,
-    options?: {
-      /** In-memory credential for managed local endpoints; never read from ambient env. */
-      apiKey?: string | null;
-      /** Approved no-DNS endpoint pin; [] also disables ambient proxies for managed IP URLs. */
-      pinnedAddresses?: readonly string[];
-      trustedPrivateCapability?: TrustedPrivateEndpointCapability;
-      authMode?: "bearer" | "query-param";
-      extraHeaders?: readonly string[];
-      requireResponsesToolCalling?: boolean;
-      requireChatCompletionsToolCalling?: boolean;
-      retryChatCompletionsToolReadiness?: boolean;
-
-      skipResponsesProbe?: boolean;
-      probeStreaming?: boolean;
-      allowHostDockerInternal?: boolean;
-      probeFromDocker?: { expectedPort: number } | null;
-      capabilityCache?: OnboardInferenceCapabilityCache;
-    },
+    options?: OpenAiSelectionValidationOptions,
   ): Promise<EndpointValidationResult>;
   validateAnthropicSelectionWithRetryMessage(
     label: string,
@@ -154,15 +159,16 @@ export function createInferenceSelectionValidationHelpers(
 
   function exitNonInteractiveValidationFailure(): never {
     // #8952: tear down an unowned managed gateway before fatal exit.
+    let gatewayCleanupComplete = false;
     try {
       const teardown =
         deps.teardownOrphanManagedGatewayOnAbort ??
         (() => {
           const { teardownOrphanManagedGatewayOnAbort } =
             require("./gateway-destroy") as typeof import("./gateway-destroy");
-          teardownOrphanManagedGatewayOnAbort();
+          return teardownOrphanManagedGatewayOnAbort();
         });
-      teardown();
+      gatewayCleanupComplete = teardown();
     } catch (error) {
       // Helper never throws; this covers require/load / inject failures.
       console.error(
@@ -170,8 +176,9 @@ export function createInferenceSelectionValidationHelpers(
       );
     }
     process.exitCode = 1;
-    (process.exit as (code?: number) => void)(1);
-    throw new Error("Non-interactive endpoint validation failed.");
+    throw new OnboardDeferredExitError(1, {
+      preserveIncompleteSession: gatewayCleanupComplete,
+    });
   }
 
   function printValidationFailure(
@@ -181,6 +188,29 @@ export function createInferenceSelectionValidationHelpers(
     console.error(`  ${label} endpoint validation failed.`);
     if (probe) console.error(`  Validation probe summary: ${summarizeProbeForDisplay(probe)}.`);
     console.error("  Validation details were omitted to avoid exposing credentials.");
+  }
+
+  function printGeminiRuntimeNotFoundGuidance(
+    provider: string | undefined,
+    probe: { failures?: unknown[] },
+  ): void {
+    if (provider !== "gemini-api" || !Array.isArray(probe.failures)) return;
+    const chatNotFound = probe.failures.some((failure) => {
+      if (!failure || typeof failure !== "object") return false;
+      const { name, httpStatus } = failure as Record<string, unknown>;
+      return (
+        typeof name === "string" &&
+        name.startsWith("Chat Completions API") &&
+        httpStatus === 404
+      );
+    });
+    if (!chatNotFound) return;
+    console.error(
+      "  This 404 came from Google's OpenAI-compatible Chat Completions runtime route, not the native /v1beta/models catalog.",
+    );
+    console.error(
+      "  NemoClaw cannot continue from catalog availability alone because the sandbox uses that Chat Completions route at runtime.",
+    );
   }
 
   // DNS-backed SSRF preflight for user-supplied custom endpoints. Resolves the
@@ -274,24 +304,9 @@ export function createInferenceSelectionValidationHelpers(
     credentialEnv: string | null = null,
     retryMessage = "Please choose a provider/model again.",
     helpUrl: string | null = null,
-    options: {
-      apiKey?: string | null;
-      pinnedAddresses?: readonly string[];
-      trustedPrivateCapability?: TrustedPrivateEndpointCapability;
-      authMode?: "bearer" | "query-param";
-      extraHeaders?: readonly string[];
-      requireResponsesToolCalling?: boolean;
-      requireChatCompletionsToolCalling?: boolean;
-      retryChatCompletionsToolReadiness?: boolean;
-
-      skipResponsesProbe?: boolean;
-      probeStreaming?: boolean;
-      allowHostDockerInternal?: boolean;
-      probeFromDocker?: { expectedPort: number } | null;
-      capabilityCache?: OnboardInferenceCapabilityCache;
-    } = {},
+    options: OpenAiSelectionValidationOptions = {},
   ): Promise<EndpointValidationResult> {
-    const { apiKey: explicitApiKey, ...probeOptions } = options;
+    const { apiKey: explicitApiKey, provider, ...probeOptions } = options;
     const apiKey =
       explicitApiKey !== undefined
         ? explicitApiKey
@@ -305,6 +320,7 @@ export function createInferenceSelectionValidationHelpers(
     if (!probe.ok) {
       probeOptions.capabilityCache?.invalidate();
       printValidationFailure(label, probe);
+      printGeminiRuntimeNotFoundGuidance(provider, probe);
       if (deps.isNonInteractive()) {
         exitNonInteractiveValidationFailure();
       }

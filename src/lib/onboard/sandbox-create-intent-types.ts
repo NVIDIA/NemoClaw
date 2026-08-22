@@ -5,6 +5,7 @@ import type { BaselineExclusionEntry } from "../state/registry";
 import type { SandboxHostMount } from "../state/registry/types";
 import type { DockerGpuRoutePlan } from "./docker-gpu-route";
 import type { InitialSandboxPolicy } from "./initial-policy";
+import type { ManagedHermesStateVolumeMount } from "./managed-workload/hermes-state-volume";
 import type { MessagingTokenDef } from "./messaging-prep";
 import type { MessagingChannel } from "./messaging-state";
 import type { SandboxGpuCreateConfig } from "./sandbox-gpu-create";
@@ -93,6 +94,7 @@ export type ResolveSandboxCreateIntentInput = {
 export type MaterializeSandboxCreatePlanInput = {
   intent: SandboxCreateIntent;
   fromRef: string;
+  managedStateMount?: ManagedHermesStateVolumeMount | null;
   messagingTokenDefs: MessagingTokenDef[];
   runProviderPreDeleteCleanup(): void;
   upsertMessagingProviders(

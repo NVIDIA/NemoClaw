@@ -4,6 +4,7 @@
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provider/current";
 import { requireRuntimeProviderBundleForSandbox } from "../../../onboard/runtime-provider/registry";
+import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
 import type { SandboxEntry } from "../../../state/registry/types";
 
 export {
@@ -57,4 +58,14 @@ export function requireCurrentSnapshotRuntimeProvider(
   sandbox: SandboxEntry,
 ): RuntimeProviderBundle {
   return requireRuntimeProviderBundleForSandbox(sandbox, CURRENT_RUNTIME_PROVIDER_BUNDLES);
+}
+
+export function assertSandboxSnapshotCommandAvailable(
+  sandboxName: string,
+  commandId:
+    | "sandbox:snapshot:create"
+    | "sandbox:snapshot:list"
+    | "sandbox:snapshot:restore",
+): void {
+  assertHermesPortableCommandUnavailable(sandboxName, commandId);
 }

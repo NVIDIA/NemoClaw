@@ -399,7 +399,9 @@ function isCredentialAvailable(
   context: ManifestCompilerContext,
 ): boolean {
   const availability = context.credentialAvailability ?? {};
-  const keys = [input.inputId, `${manifest.id}.${input.inputId}`, input.sourceEnv].filter(
+  // Input ids repeat across channels (`botToken` belongs to telegram, discord, slack and
+  // wechat), so an unqualified input id must never be an availability key.
+  const keys = [`${manifest.id}.${input.inputId}`, input.sourceEnv].filter(
     (key): key is string => typeof key === "string" && key.length > 0,
   );
 

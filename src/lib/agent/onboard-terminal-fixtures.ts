@@ -5,7 +5,7 @@ function recordDeepAgentsRuntimeCall(
   args: string[],
   calls: string[],
   probeOutput: string,
-  smokeVersion = "0.1.34",
+  smokeVersion = "0.1.55",
 ): string {
   calls.push(args.join(" "));
   const separatorIndex = args.indexOf("--");
@@ -34,7 +34,7 @@ function recordDeepAgentsRuntimeCall(
 }
 
 export function recordSuccessfulDeepAgentsRuntimeCall(args: string[], calls: string[]): string {
-  return recordDeepAgentsRuntimeCall(args, calls, "dcode 0.1.34");
+  return recordDeepAgentsRuntimeCall(args, calls, "dcode 0.1.55");
 }
 
 // Like recordSuccessfulDeepAgentsRuntimeCall, but the plain version-drift

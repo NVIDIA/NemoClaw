@@ -459,16 +459,18 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
     );
   });
 
-  test("uses an offline read-only least-privilege Docker boundary", () => {
+  test.each(
+    [
+        ["--network", "none"],
+        ["--cap-drop", "ALL"],
+        ["--security-opt", "no-new-privileges"],
+    ] as const,
+  )("uses an offline read-only least-privilege Docker boundary [case %#]", (option, value) => {
     const args = secureDockerRunArgs("security-e2e", "candidate:local");
-    for (const [option, value] of [
-      ["--network", "none"],
-      ["--cap-drop", "ALL"],
-      ["--security-opt", "no-new-privileges"],
-    ] as const) {
-      const optionIndex = args.indexOf(option);
-      expect(args.slice(optionIndex, optionIndex + 2)).toEqual([option, value]);
-    }
+
+    const optionIndex = args.indexOf(option);
+    expect(args.slice(optionIndex, optionIndex + 2)).toEqual([option, value]);
+
     expect(args).not.toContain("host");
     expect(args).toContain("--read-only");
     expect(args.join(" ")).not.toContain("docker.sock");
@@ -502,11 +504,11 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
         shrinkwrap: { ...good.shrinkwrap, hasNestedFsSafeTar: true },
       }),
     ).toThrow();
-    for (const compromisedJszip of [
+    [
       { integrity: "sha512-unreviewed" },
       { resolved: "https://registry.npmjs.org/jszip/-/jszip-3.10.0.tgz" },
       { version: "3.10.0" },
-    ]) {
+    ].forEach((compromisedJszip) => {
       expect(() =>
         requireExactRemediation({
           ...good,
@@ -516,8 +518,8 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
           },
         }),
       ).toThrow();
-    }
-    for (const packageName of ["tar", "braceExpansion", "jszip"] as const) {
+    });
+    (["tar", "braceExpansion", "jszip"] as const).forEach((packageName) => {
       for (const optionalDependencyState of [
         { hasOptionalDependencies: true },
         { optionalDependencies: { unreviewed: "1.0.0" } },
@@ -535,7 +537,7 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
           }),
         ).toThrow();
       }
-    }
+    });
     expect(() =>
       requireExactRemediation({
         ...good,

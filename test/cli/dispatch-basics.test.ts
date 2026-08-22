@@ -75,7 +75,7 @@ describe("CLI dispatch", () => {
   });
 
   it(
-    "start does not prompt for NVIDIA_INFERENCE_API_KEY before launching local services",
+    "deprecated start does not prompt for NVIDIA_INFERENCE_API_KEY or launch local services",
     testTimeoutOptions(35_000),
     () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-start-no-key-"));
@@ -112,7 +112,7 @@ describe("CLI dispatch", () => {
       );
 
       const r = runWithEnv(
-        "start",
+        "start 2>&1",
         {
           HOME: home,
           PATH: `${localBin}:${process.env.PATH || ""}`,
@@ -124,8 +124,9 @@ describe("CLI dispatch", () => {
 
       expect(r.code).toBe(0);
       expect(r.out).not.toContain("NVIDIA API Key required");
-      // Services module now runs in-process (no bash shelling)
-      expect(r.out).toContain("NemoClaw Services");
+      expect(r.out).toContain("nemoclaw <name> start");
+      expect(r.out).toContain("nemoclaw tunnel start");
+      expect(fs.existsSync(markerFile)).toBe(false);
     },
   );
 
@@ -348,41 +349,37 @@ describe("CLI dispatch", () => {
     );
   });
 
-  it("points OpenShell-only commands at openshell instead of sandbox connect (#3388)", async () => {
+  it.each([
+    {
+      argv: ["term"],
+      entered: "term",
+      command: "Run: openshell term",
+      notes: [],
+    },
+    {
+      argv: ["policy", "set"],
+      entered: "policy set",
+      command: "Run: openshell policy set --policy <policy-file> --wait <sandbox-name>",
+      notes: ["nemoclaw <sandbox-name> policy add <preset>"],
+    },
+    {
+      argv: ["gateway", "stop"],
+      entered: "gateway stop",
+      command: "Run: openshell gateway stop -g nemoclaw",
+      notes: [],
+    },
+  ])("points $entered at OpenShell instead of sandbox connect (#3388)", async (testCase) => {
     await withDirectPublicDispatch(async ({ dispatchCli, exitSpy, resetObservedCalls, stderr }) => {
-      const cases = [
-        {
-          argv: ["term"],
-          entered: "term",
-          command: "Run: openshell term",
-          notes: [],
-        },
-        {
-          argv: ["policy", "set"],
-          entered: "policy set",
-          command: "Run: openshell policy set --policy <policy-file> --wait <sandbox-name>",
-          notes: ["nemoclaw <sandbox-name> policy add <preset>"],
-        },
-        {
-          argv: ["gateway", "stop"],
-          entered: "gateway stop",
-          command: "Run: openshell gateway stop -g nemoclaw",
-          notes: [],
-        },
-      ];
+      resetObservedCalls();
 
-      for (const testCase of cases) {
-        resetObservedCalls();
+      await expect(dispatchCli(testCase.argv)).rejects.toThrow("process.exit:1");
 
-        await expect(dispatchCli(testCase.argv)).rejects.toThrow("process.exit:1");
-
-        const output = stderr.join("\n");
-        expect(output).toContain(`Unknown nemoclaw command: ${testCase.entered}`);
-        expect(output).toContain(testCase.command);
-        for (const note of testCase.notes) expect(output).toContain(note);
-        expect(output).not.toContain("Try: nemoclaw <sandbox-name> connect");
-        expect(exitSpy).toHaveBeenCalledWith(1);
-      }
+      const output = stderr.join("\n");
+      expect(output).toContain(`Unknown nemoclaw command: ${testCase.entered}`);
+      expect(output).toContain(testCase.command);
+      expect(testCase.notes.every((note) => output.includes(note))).toBe(true);
+      expect(output).not.toContain("Try: nemoclaw <sandbox-name> connect");
+      expect(exitSpy).toHaveBeenCalledWith(1);
     });
   });
 
@@ -459,9 +456,9 @@ describe("CLI dispatch", () => {
       );
 
       const childEnv: Record<string, string> = {};
-      for (const [key, value] of Object.entries(process.env)) {
+      Object.entries(process.env).forEach(([key, value]) => {
         if (value !== undefined) childEnv[key] = value;
-      }
+      });
       delete childEnv.HF_TOKEN;
       delete childEnv.HUGGING_FACE_HUB_TOKEN;
       childEnv.HOME = home;

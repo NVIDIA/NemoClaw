@@ -314,13 +314,54 @@ function resolveServingProfileLifecycle(
     );
   }
   const requested = explicit ?? installerProfile;
-  if (!resume) return requested;
-  return resolveResumedServingProfile(requested, deps);
+  const settled = resume ? resolveResumedServingProfile(requested, deps) : requested;
+  // Check the profile the run will actually apply, not just an explicit
+  // --profile: the installer and resume paths reach the same environment
+  // application, and an unmapped backend there would set the preset while
+  // leaving the provider unresolved — the silent fall-through to the provider
+  // menu this fixes (#9313).
+  return assertServingProfileProviderSupported(settled, deps);
+}
+
+function assertServingProfileProviderSupported(
+  provenance: ServingProfileProvenance | null,
+  deps: ResolveOnboardOptionsDeps,
+): ServingProfileProvenance | null {
+  const unsupported = provenance !== null && servingProfileProviderKey(provenance) === null;
+  return unsupported
+    ? fail(
+        deps,
+        `  Serving profile '${provenance.preset.id}' uses backend '${provenance.recipe.backend}', which onboarding cannot configure.`,
+      )
+    : provenance;
 }
 
 function activeServingProfileId(provenance: ServingProfileProvenance | null): string | null {
   if (!provenance || provenance.preset.supportState === "disabled") return null;
   return provenance.preset.id;
+}
+
+/**
+ * Provider the requested serving profile has to run through.
+ *
+ * The preset alone only tells provider selection *which* profile to serve once
+ * a local-inference provider has been chosen; it never chooses the provider.
+ * Because `--profile` also rejects an explicit `NEMOCLAW_PROVIDER`, leaving
+ * this unset dropped onboarding into the interactive provider menu with the
+ * requested profile unusable (#9313). Returns null for a backend that has no
+ * provider wired up, which the caller reports rather than silently ignoring.
+ */
+export function servingProfileProviderKey(provenance: ServingProfileProvenance): string | null {
+  switch (provenance.recipe.backend) {
+    // Kept as literals so this module does not take a dependency on the
+    // provider menu; `command.test.ts` asserts they match its exported keys.
+    case "vllm":
+      return "install-vllm";
+    case "install-llama-cpp":
+      return "install-llama-cpp";
+    default:
+      return null;
+  }
 }
 
 function resolveResumedServingProfile(
@@ -477,9 +518,23 @@ function applyServingProfileEnvironment(
   if (!options.servingProfile) return () => {};
   const previous = env[NEMOCLAW_SERVING_PRESET_ENV];
   env[NEMOCLAW_SERVING_PRESET_ENV] = options.servingProfile;
+  // The preset selects the model once a provider is chosen; the profile's
+  // backend is what selects the provider. Setting only the former left the
+  // provider unresolved and onboarding fell back to the menu (#9313).
+  // `validateServingProfileConflicts` already rejected an operator-supplied
+  // NEMOCLAW_PROVIDER, so nothing of the caller's is being overwritten here.
+  const providerKey = options.servingProfileProvenance
+    ? servingProfileProviderKey(options.servingProfileProvenance)
+    : null;
+  const previousProvider = env.NEMOCLAW_PROVIDER;
+  if (providerKey) env.NEMOCLAW_PROVIDER = providerKey;
   return () => {
     if (previous === undefined) delete env[NEMOCLAW_SERVING_PRESET_ENV];
     else env[NEMOCLAW_SERVING_PRESET_ENV] = previous;
+    if (providerKey) {
+      if (previousProvider === undefined) delete env.NEMOCLAW_PROVIDER;
+      else env.NEMOCLAW_PROVIDER = previousProvider;
+    }
   };
 }
 

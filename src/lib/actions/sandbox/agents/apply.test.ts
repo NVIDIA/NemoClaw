@@ -131,28 +131,26 @@ describe("parseOpenClawAgentsList", () => {
 });
 
 describe("validateAgentsManifestForApply", () => {
-  it("rejects ids that do not match the AGENT_ID regex", () => {
-    for (const id of [
-      "--help",
-      "-h",
-      "Alpha",
-      "ALPHA",
-      "1leading",
-      "alpha space",
-      "../escape",
-      "alpha/sub",
-      "a".repeat(33),
-    ]) {
-      expect(() =>
-        validateAgentsManifestForApply([
-          {
-            id,
-            workspace: `/sandbox/.openclaw/workspace-${id}`,
-            agentDir: `/sandbox/.openclaw/agents/${id}`,
-          },
-        ]),
-      ).toThrow(/must match/);
-    }
+  it.each([
+    "--help",
+    "-h",
+    "Alpha",
+    "ALPHA",
+    "1leading",
+    "alpha space",
+    "../escape",
+    "alpha/sub",
+    "a".repeat(33),
+  ])("rejects ids that do not match the AGENT_ID regex [case %#]", (id) => {
+    expect(() =>
+      validateAgentsManifestForApply([
+        {
+          id,
+          workspace: `/sandbox/.openclaw/workspace-${id}`,
+          agentDir: `/sandbox/.openclaw/agents/${id}`,
+        },
+      ]),
+    ).toThrow(/must match/);
   });
 
   it("rejects the reserved `main` id", () => {

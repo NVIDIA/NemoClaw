@@ -49,18 +49,16 @@ describe("non-resumed replacement target fingerprint (#7735)", () => {
     );
   });
 
-  it("changes when a recorded replacement input changes", () => {
-    for (const drift of [
-      { observabilityEnabled: true },
-      { toolDisclosure: "direct" },
-      { sandboxGpuConfig: { sandboxGpuEnabled: true, mode: "all" } },
-      { dcodeAutoApprovalMode: "thread-opt-in" },
-      { policyTier: "balanced" },
-    ]) {
-      expect(fingerprintOnboardRecreateTargetIntent({ ...BASE_INTENT, ...drift })).not.toBe(
-        fingerprintOnboardRecreateTargetIntent(BASE_INTENT),
-      );
-    }
+  it.each([
+    { observabilityEnabled: true },
+    { toolDisclosure: "direct" },
+    { sandboxGpuConfig: { sandboxGpuEnabled: true, mode: "all" } },
+    { dcodeAutoApprovalMode: "thread-opt-in" },
+    { policyTier: "balanced" },
+  ])("changes when a recorded replacement input changes [case %#]", (drift) => {
+    expect(fingerprintOnboardRecreateTargetIntent({ ...BASE_INTENT, ...drift })).not.toBe(
+      fingerprintOnboardRecreateTargetIntent(BASE_INTENT),
+    );
   });
 
   it("changes when the replacement targets another gateway", () => {
@@ -180,10 +178,17 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
   it("queries only the journaled gateway so a sibling gateway is never reached", () => {
     open();
 
-    for (const call of mocks.captureOpenshell.mock.calls) {
-      expect(call[0]).toEqual(["sandbox", "get", "-g", "nemoclaw-9090", "alpha"]);
-    }
-    expect(mocks.captureOpenshell).toHaveBeenCalled();
+    const expectedCommand = ["sandbox", "get", "-g", "nemoclaw-9090", "alpha"];
+    const expectedOptions = {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      timeout: 15_000,
+    };
+    expect(mocks.captureOpenshell.mock.calls).toEqual([
+      [expectedCommand, expectedOptions],
+      [expectedCommand, expectedOptions],
+    ]);
   });
 
   it("journals a not-ready repair before the delete boundary", () => {

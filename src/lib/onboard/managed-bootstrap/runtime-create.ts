@@ -40,6 +40,8 @@ export interface ManagedBootstrapRuntimeLimit {
 /** Provider-neutral lifecycle surface consumed by sandbox-create coordinators. */
 export interface ManagedBootstrapRuntimePatch {
   maybeApplyDuringCreate(): void | Promise<void>;
+  /** Exact runtime ID owned by the transaction, or null until it records a replacement. */
+  replacementRuntimeId?(): string | null;
   createFailureMessage(): string | null;
   exitOnPatchError(): void | Promise<void>;
   rollbackManagedStartupAfterCreateFailure(): void | Promise<void>;

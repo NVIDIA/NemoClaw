@@ -105,6 +105,7 @@ STARTUP_CANDIDATE_PROTOCOL = "nemoclaw-runtime-state-mutation-startup-complete-v
 STARTUP_RETRY_ACK_PROTOCOL = "nemoclaw-runtime-state-mutation-retry-ack-v1"
 OPENSHELL_ARGV0 = b"/opt/openshell/bin/openshell-sandbox"
 NEMOCLAW_START_PATH = b"/usr/local/bin/nemoclaw-start"
+BASH_ARGV0 = (b"bash", b"/bin/bash", b"/usr/bin/bash")
 HERMES_GATEWAY_PATHS = (b"/usr/local/bin/hermes", b"/usr/local/bin/hermes.real")
 HERMES_INTERNAL_PORT = 18642
 HERMES_HEALTH_PATH = "/health"
@@ -2402,10 +2403,12 @@ def _is_openshell_supervisor(process: ProcessIdentity) -> bool:
 
 
 def _is_nemoclaw_start(process: ProcessIdentity, sandbox_uid: int) -> bool:
-    direct = process.command == (NEMOCLAW_START_PATH,)
+    # Docker appends image CMD arguments after ENTRYPOINT. Authenticate the
+    # fixed startup-script position, then bind the complete argv to the fence.
+    direct = bool(process.command) and process.command[0] == NEMOCLAW_START_PATH
     interpreted = bool(
-        len(process.command) == 2
-        and process.command[0].rsplit(b"/", 1)[-1] == b"bash"
+        len(process.command) >= 2
+        and process.command[0] in BASH_ARGV0
         and process.command[1] == NEMOCLAW_START_PATH
     )
     return bool(

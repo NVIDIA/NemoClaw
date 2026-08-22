@@ -128,6 +128,16 @@ function hostDoctorEngine(authorityId = AUTHORITY_ID): PodmanContainerEngine {
                 arch: "amd64",
                 os: "linux",
                 cgroupVersion: "v2",
+                idMappings: {
+                  uidmap: [
+                    { container_id: 0, host_id: 1000, size: 1 },
+                    { container_id: 1, host_id: 100000, size: 65536 },
+                  ],
+                  gidmap: [
+                    { container_id: 0, host_id: 1000, size: 1 },
+                    { container_id: 1, host_id: 100000, size: 65536 },
+                  ],
+                },
                 networkBackend: "netavark",
                 security: { rootless: true },
               },
@@ -140,7 +150,7 @@ function hostDoctorEngine(authorityId = AUTHORITY_ID): PodmanContainerEngine {
     }),
     captureHost: vi.fn((args: readonly string[]) => ({
       status: 0,
-      stdout: args[0] === "--version" ? "podman version 5.6.2\n" : "0 1000 1\n1 100000 65536\n",
+      stdout: args[0] === "--version" ? "podman version 5.6.2\n" : "",
       stderr: "",
     })),
   };

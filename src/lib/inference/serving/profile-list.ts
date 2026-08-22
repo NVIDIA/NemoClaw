@@ -9,6 +9,7 @@ import { loadServingCatalog, managedInferenceCatalogFromServingCatalog } from ".
 import { resolveManagedInferenceServing } from "./resolver.js";
 import type {
   CompiledServingCatalog,
+  ManagedInferenceReadinessSource,
   ServingPreset,
   ServingRecipe,
   ServingSelectionPolicy,
@@ -23,6 +24,8 @@ export interface ServingProfileListEntry {
   readonly topology: string;
   readonly selectionMode: ServingSelectionPolicy;
   readonly supportState: ServingSupportState;
+  readonly validationLevel?: "schema" | "software" | "hardware" | "unverified";
+  readonly validationEvidence?: string | null;
   readonly estimatedImageDownloadBytes: number | null;
   readonly estimatedModelDownloadBytes: number | null;
   readonly compatible: boolean;
@@ -68,6 +71,7 @@ function compatibility(
   catalog: CompiledServingCatalog,
   preset: ServingPreset,
   recipe: ServingRecipe,
+  readinessReports: readonly ManagedInferenceReadinessSource[],
 ): { compatible: boolean; incompatibilityReason: string | null } {
   if (preset.spec.selection === "disabled" || supportState(preset) === "disabled") {
     return { compatible: false, incompatibilityReason: "Profile is disabled." };
@@ -80,12 +84,7 @@ function compatibility(
   }
   const resolution = resolveManagedInferenceServing(
     {
-      readinessReports: [
-        {
-          nodeId: os.hostname(),
-          report: createHostReadinessReport(getBuildIdentity()),
-        },
-      ],
+      readinessReports,
       topologyQualifications: [],
       intent: { preset: preset.metadata.id },
     },
@@ -98,6 +97,7 @@ function compatibility(
 
 export interface ListServingProfilesOptions {
   readonly evaluateCompatibility?: typeof compatibility;
+  readonly readinessReports?: readonly ManagedInferenceReadinessSource[];
 }
 
 export interface ResolveServingProfileOptions {
@@ -150,6 +150,12 @@ export function listServingProfiles(
   catalog: CompiledServingCatalog = loadServingCatalog(),
   options: ListServingProfilesOptions = {},
 ): ServingProfileListEntry[] {
+  const readinessReports = options.readinessReports ?? [
+    {
+      nodeId: os.hostname(),
+      report: createHostReadinessReport(getBuildIdentity()),
+    },
+  ];
   return [...catalog.presets]
     .sort((left, right) => left.metadata.id.localeCompare(right.metadata.id))
     .map((preset) => {
@@ -163,6 +169,8 @@ export function listServingProfiles(
           topology: "unknown",
           selectionMode: preset.spec.selection,
           supportState: supportState(preset),
+          validationLevel: preset.metadata.validation?.level ?? "unverified",
+          validationEvidence: preset.metadata.validation?.evidence ?? null,
           estimatedImageDownloadBytes: null,
           estimatedModelDownloadBytes: null,
           compatible: false,
@@ -182,9 +190,16 @@ export function listServingProfiles(
         topology: topologyLabel(recipe),
         selectionMode: preset.spec.selection,
         supportState: supportState(preset),
+        validationLevel: preset.metadata.validation?.level ?? "unverified",
+        validationEvidence: preset.metadata.validation?.evidence ?? null,
         estimatedImageDownloadBytes: imageDownloadBytes,
         estimatedModelDownloadBytes: modelDownloadBytes(recipe),
-        ...(options.evaluateCompatibility ?? compatibility)(catalog, preset, recipe),
+        ...(options.evaluateCompatibility ?? compatibility)(
+          catalog,
+          preset,
+          recipe,
+          readinessReports,
+        ),
       };
     });
 }
@@ -204,7 +219,7 @@ export function renderServingProfiles(entries: readonly ServingProfileListEntry[
       return [
         `${entry.id}  ${entry.displayName}`,
         `  backend=${entry.backend} model=${entry.model} topology=${entry.topology}`,
-        `  selection=${entry.selectionMode} support=${entry.supportState} image=${formatBytes(entry.estimatedImageDownloadBytes)} model-download=${formatBytes(entry.estimatedModelDownloadBytes)}`,
+        `  selection=${entry.selectionMode} support=${entry.supportState} validation=${entry.validationLevel ?? "unverified"}${entry.validationEvidence ? `:${entry.validationEvidence}` : ""} image=${formatBytes(entry.estimatedImageDownloadBytes)} model-download=${formatBytes(entry.estimatedModelDownloadBytes)}`,
         `  ${availability}`,
       ].join("\n");
     })

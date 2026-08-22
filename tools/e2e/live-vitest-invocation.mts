@@ -21,6 +21,7 @@ export const LIVE_VITEST_PROJECT = "e2e-live";
 export const LIVE_TEST_ROOT = "test/e2e/live/";
 export const RISK_SIGNAL_REPORTER = "test/e2e/risk-signal-reporter.ts";
 export const MCP_BRIDGE_TEST_PATH = "test/e2e/live/mcp-bridge.test.ts";
+export const INFERENCE_ROUTING_TEST_PATH = "test/e2e/live/inference-routing.test.ts";
 
 const SHELL_METACHARACTER = /[^A-Za-z0-9_./^$=:@+-]/u;
 const TEST_PATH_PATTERN = /^[A-Za-z0-9_./-]+$/u;
@@ -154,6 +155,7 @@ export function buildLiveVitestArgs(invocation: LiveVitestInvocation): string[] 
   const testPath = validateLiveTestPath(invocation.testPath);
   const selector = validateLiveSelector(invocation.selector);
   const selectorArgs = selector ? ["-t", selector] : [];
+  const bailArgs = testPath === INFERENCE_ROUTING_TEST_PATH ? ["--bail=1"] : [];
   return [
     "vitest",
     "run",
@@ -161,6 +163,7 @@ export function buildLiveVitestArgs(invocation: LiveVitestInvocation): string[] 
     project,
     testPath,
     ...selectorArgs,
+    ...bailArgs,
     "--silent=false",
     "--reporter=default",
     `--reporter=${RISK_SIGNAL_REPORTER}`,

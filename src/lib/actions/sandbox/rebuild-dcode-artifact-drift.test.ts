@@ -44,7 +44,11 @@ describe("rebuildSandbox DCode flow: prepared artifact drift", () => {
       agentName: "langchain-deepagents-code",
       sandboxEntry: makeDcodeSandboxEntry(),
       dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }],
-      dcodeBaseImageIds: ["sha256:dcode-base", "sha256:dcode-base", "sha256:changed"],
+      dcodeBaseImageIds: [
+        `sha256:${"a".repeat(64)}`,
+        `sha256:${"a".repeat(64)}`,
+        "sha256:changed",
+      ],
     });
     configureDcodeSession(harness);
 

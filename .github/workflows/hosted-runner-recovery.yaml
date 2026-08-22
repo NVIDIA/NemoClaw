@@ -30,7 +30,6 @@ jobs:
       }}
     concurrency:
       group: hosted-runner-recovery-${{ github.event.workflow_run.workflow_id }}
-      queue: max
       cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 15

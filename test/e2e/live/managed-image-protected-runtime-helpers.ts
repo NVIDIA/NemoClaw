@@ -810,10 +810,10 @@ async function qualifyRollback(
   );
   expect(result.exitCode, resultText(result)).toBe(0);
   expect(result.stdout).toContain(
-    `removed the failed exact ${contract.agent} sandbox before harness cleanup`,
+    `retained one exact quiescent ${contract.agent} sandbox for owner cleanup`,
   );
   expect(result.stdout).toContain(
-    `left no sandbox, container, network, or harness state orphan for ${contract.agent}`,
+    `retained only its exact quiescent sandbox until harness owner cleanup and left no sandbox, container, network, or harness state orphan for ${contract.agent}`,
   );
 }
 

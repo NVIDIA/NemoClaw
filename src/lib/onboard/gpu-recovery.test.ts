@@ -14,21 +14,28 @@ import { describe, expect, it, vi } from "vitest";
 import { gpuPassthroughRecoveryLines, reportGpuPassthroughRecovery } from "./gpu-recovery";
 
 describe("gpuPassthroughRecoveryLines", () => {
-  it("never emits a literal `<name>` placeholder for any input", () => {
-    for (const names of [null, [], ["alpha"], ["alpha", "beta"], ["alpha", "beta", "gamma"]]) {
-      const lines = gpuPassthroughRecoveryLines(names);
-      expect(lines.join("\n")).not.toMatch(/<name>/);
-    }
+  it.each(
+    [null, [], ["alpha"], ["alpha", "beta"], ["alpha", "beta", "gamma"]].map(
+      (names) => [names] as const,
+    ),
+  )("never emits a literal `<name>` placeholder for any input [case %#]", (names) => {
+    const lines = gpuPassthroughRecoveryLines(names);
+    expect(lines.join("\n")).not.toMatch(/<name>/);
   });
 
   // OpenShell dropped `gateway destroy` before 0.0.44 and now rejects it as an
   // unrecognized subcommand, so the command fails on every OpenShell version
   // NemoClaw installs (#8139).
-  it("omits openshell gateway destroy for every registered-sandbox count (#8139)", () => {
-    for (const names of [null, [], ["alpha"], ["alpha", "beta"], ["alpha", "beta", "gamma"]]) {
+  it.each(
+    [null, [], ["alpha"], ["alpha", "beta"], ["alpha", "beta", "gamma"]].map(
+      (names) => [names] as const,
+    ),
+  )(
+    "omits openshell gateway destroy for every registered-sandbox count [case %#] (#8139)",
+    (names) => {
       expect(gpuPassthroughRecoveryLines(names).join("\n")).not.toContain("gateway destroy");
-    }
-  });
+    },
+  );
 
   it("suggests targeted gateway cleanup when no sandboxes are registered (null input)", () => {
     const lines = gpuPassthroughRecoveryLines(null);

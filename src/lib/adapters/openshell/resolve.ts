@@ -4,7 +4,7 @@
 import { execSync } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 
-import { buildSubprocessEnv } from "../../subprocess-env";
+import { buildSubprocessEnv, isSubprocessEnvNameAllowed } from "../../subprocess-env";
 
 export interface ResolveOpenshellOptions {
   /** Mock result for `command -v` (undefined = run real command). */
@@ -13,6 +13,8 @@ export interface ResolveOpenshellOptions {
   checkExecutable?: (path: string) => boolean;
   /** HOME directory override. */
   home?: string;
+  /** Environment used only for an explicitly authority-bound resolution. */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -22,7 +24,8 @@ export interface ResolveOpenshellOptions {
  * injection), then falls back to common installation directories.
  */
 export function resolveOpenshell(opts: ResolveOpenshellOptions = {}): string | null {
-  const home = opts.home ?? process.env.HOME;
+  const sourceEnv = opts.env ?? process.env;
+  const home = opts.home ?? sourceEnv.HOME;
   const checkExecutable =
     opts.checkExecutable ??
     ((p: string): boolean => {
@@ -34,7 +37,7 @@ export function resolveOpenshell(opts: ResolveOpenshellOptions = {}): string | n
       }
     });
 
-  const override = process.env.NEMOCLAW_OPENSHELL_BIN;
+  const override = sourceEnv.NEMOCLAW_OPENSHELL_BIN;
   if (override?.startsWith("/") && checkExecutable(override)) {
     return override;
   }
@@ -42,9 +45,15 @@ export function resolveOpenshell(opts: ResolveOpenshellOptions = {}): string | n
   // Step 1: command -v
   if (opts.commandVResult === undefined) {
     try {
+      const resolutionEnv = Object.fromEntries(
+        Object.entries(sourceEnv).filter(
+          (entry): entry is [string, string] =>
+            entry[1] !== undefined && isSubprocessEnvNameAllowed(entry[0]),
+        ),
+      );
       const found = execSync("command -v openshell", {
         encoding: "utf-8",
-        env: buildSubprocessEnv(),
+        env: buildSubprocessEnv(resolutionEnv),
       }).trim();
       if (found.startsWith("/")) return found;
     } catch {

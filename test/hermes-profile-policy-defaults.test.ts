@@ -307,28 +307,33 @@ module._verify_session_reset_policy(reset_policy, expected)
     expect(result.status, result.stderr).toBe(0);
   });
 
-  it("hash-binds the reviewed source patch and probes a real config-less profile", () => {
-    const digest = createHash("sha256").update(fs.readFileSync(patcher)).digest("hex");
+  it.each(
+    [
+        "172b78ecb923048859ca177d96f5b010b44ec74bb1d13553577ff49bde1a071d",
+        "02b4a0a0c8fc8b204c8f818dff1dd64295a817e5543b8a643198bcedbfbbcba2",
+        "7221ee05798566ca7cf570035615a9b29034cf92ce5a6eaa5eec0693040c08aa",
+        "cbcf1780174a03b225508244575915225a36502f54ad4cddf1da644d9174fec4",
+        "5d00832327e4362ac75032f95003e1fa49aead4756cf7927dcfd66447b205a59",
+        "85b7cb13d6e6306e75d5eec46f193433df680425533b7d35ee99e0f7eab9512a",
+        "d6bf89a33fb708376a7ab354cff8081a3c3726dbfb91d84bbb679cd667db596c",
+      ],
+  )(
+    "hash-binds the reviewed source patch and probes a real config-less profile [%s]",
+    (expectedSourceHash) => {
+      const digest = createHash("sha256").update(fs.readFileSync(patcher)).digest("hex");
 
-    expect(dockerfile).toContain(`ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=${digest}`);
-    expect(dockerfile).toContain(
-      "COPY agents/hermes/patch-profile-policy-defaults.py " +
-        "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
-    );
-    for (const expectedSourceHash of [
-      "172b78ecb923048859ca177d96f5b010b44ec74bb1d13553577ff49bde1a071d",
-      "02b4a0a0c8fc8b204c8f818dff1dd64295a817e5543b8a643198bcedbfbbcba2",
-      "7221ee05798566ca7cf570035615a9b29034cf92ce5a6eaa5eec0693040c08aa",
-      "cbcf1780174a03b225508244575915225a36502f54ad4cddf1da644d9174fec4",
-      "5d00832327e4362ac75032f95003e1fa49aead4756cf7927dcfd66447b205a59",
-      "85b7cb13d6e6306e75d5eec46f193433df680425533b7d35ee99e0f7eab9512a",
-      "d6bf89a33fb708376a7ab354cff8081a3c3726dbfb91d84bbb679cd667db596c",
-    ]) {
+      expect(dockerfile).toContain(`ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=${digest}`);
+      expect(dockerfile).toContain(
+        "COPY agents/hermes/patch-profile-policy-defaults.py " +
+          "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
+      );
+
       expect(fs.readFileSync(patcher, "utf8")).toContain(expectedSourceHash);
-    }
-    expect(dockerfile).toContain("hermes profile create nemoclaw-policy-probe");
-    expect(dockerfile).toContain('test ! -e "$profile_probe_home/config.yaml"');
-    expect(dockerfile).toContain("/usr/local/share/nemoclaw/hermes-managed-policy.json");
-    expect(dockerfile).toMatch(/image-build-probes[.]py\s+profile-policy/u);
-  });
+
+      expect(dockerfile).toContain("hermes profile create nemoclaw-policy-probe");
+      expect(dockerfile).toContain('test ! -e "$profile_probe_home/config.yaml"');
+      expect(dockerfile).toContain("/usr/local/share/nemoclaw/hermes-managed-policy.json");
+      expect(dockerfile).toMatch(/image-build-probes[.]py\s+profile-policy/u);
+    },
+  );
 });

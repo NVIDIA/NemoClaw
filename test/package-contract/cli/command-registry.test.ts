@@ -28,13 +28,11 @@ describe("command-registry", () => {
       expect(new Set(usages).size).toBe(usages.length);
     });
 
-    it("every command has required fields", () => {
-      for (const cmd of COMMANDS) {
-        expect(cmd.usage).toBeTruthy();
-        expect(cmd.description).toBeTruthy();
-        expect(cmd.group).toBeTruthy();
-        expect(["global", "sandbox"]).toContain(cmd.scope);
-      }
+    it.each(COMMANDS)("$usage has the required command metadata", (cmd) => {
+      expect(cmd.usage).toBeTruthy();
+      expect(cmd.description).toBeTruthy();
+      expect(cmd.group).toBeTruthy();
+      expect(["global", "sandbox"]).toContain(cmd.scope);
     });
   });
 
@@ -48,10 +46,8 @@ describe("command-registry", () => {
       expect(usages).toContain("nemoclaw status");
     });
 
-    it("every entry has scope global", () => {
-      for (const cmd of globalCommands()) {
-        expect(cmd.scope).toBe("global");
-      }
+    it.each(globalCommands())("$usage has global scope", (cmd) => {
+      expect(cmd.scope).toBe("global");
     });
   });
 
@@ -69,10 +65,8 @@ describe("command-registry", () => {
       expect(sandboxCommands()).toHaveLength(62);
     });
 
-    it("every entry has scope sandbox", () => {
-      for (const cmd of sandboxCommands()) {
-        expect(cmd.scope).toBe("sandbox");
-      }
+    it.each(sandboxCommands())("$usage has sandbox scope", (cmd) => {
+      expect(cmd.scope).toBe("sandbox");
     });
   });
 
@@ -81,10 +75,8 @@ describe("command-registry", () => {
       expect(visibleCommands()).toEqual(COMMANDS.filter((cmd) => !cmd.hidden));
     });
 
-    it("no visible command has hidden=true", () => {
-      for (const cmd of visibleCommands()) {
-        expect(cmd.hidden).not.toBe(true);
-      }
+    it.each(visibleCommands())("$usage remains visible", (cmd) => {
+      expect(cmd.hidden).not.toBe(true);
     });
   });
 
@@ -113,26 +105,21 @@ describe("command-registry", () => {
   });
 
   describe("oclif discovery coverage", () => {
-    it("requires public leaf commands to have display metadata", () => {
-      const metadataById = getRegisteredOclifCommandsMetadata();
-      const discoveredIds = Object.keys(metadataById).sort();
+    const discoveredIds = Object.keys(getRegisteredOclifCommandsMetadata()).sort();
+    const publicLeafCommandIds = discoveredIds.filter(
+      (commandId) =>
+        !commandId.startsWith("internal:") &&
+        !discoveredIds.some((id) => id.startsWith(`${commandId}:`)),
+    );
+
+    it.each(publicLeafCommandIds)("%s has display metadata", (commandId) => {
       const displayCommandIds = new Set(COMMANDS.map((command) => command.commandId));
-
-      for (const commandId of discoveredIds) {
-        if (commandId.startsWith("internal:")) continue;
-
-        const hasSubcommands = discoveredIds.some((id) => id.startsWith(`${commandId}:`));
-        if (hasSubcommands) continue;
-
-        expect(displayCommandIds.has(commandId), commandId).toBe(true);
-      }
+      expect(displayCommandIds.has(commandId), commandId).toBe(true);
     });
 
-    it("keeps every public display entry attached to a discovered oclif command", () => {
+    it.each(COMMANDS)("$usage remains attached to a discovered oclif command", (command) => {
       const discoveredIds = new Set(Object.keys(getRegisteredOclifCommandsMetadata()));
-      for (const command of COMMANDS) {
-        expect(discoveredIds.has(command.commandId), command.usage).toBe(true);
-      }
+      expect(discoveredIds.has(command.commandId), command.usage).toBe(true);
     });
   });
 
@@ -155,22 +142,16 @@ describe("command-registry", () => {
       expect(list).toEqual(sorted);
     });
 
-    it("every entry starts with nemoclaw", () => {
-      for (const entry of canonicalUsageList()) {
-        expect(entry).toMatch(/^nemoclaw /);
-      }
+    it.each(canonicalUsageList())("%s starts with nemoclaw", (entry) => {
+      expect(entry).toMatch(/^nemoclaw /);
     });
 
-    it("no entry contains description text (double spaces)", () => {
-      for (const entry of canonicalUsageList()) {
-        expect(entry).not.toMatch(/\s{2,}/);
-      }
+    it.each(canonicalUsageList())("%s excludes description text", (entry) => {
+      expect(entry).not.toMatch(/\s{2,}/);
     });
 
-    it("keeps optional flags out of canonical usage strings", () => {
-      for (const entry of canonicalUsageList()) {
-        expect(entry).not.toContain("[");
-      }
+    it.each(canonicalUsageList())("%s excludes optional flags", (entry) => {
+      expect(entry).not.toContain("[");
     });
 
     it("excludes hidden commands", () => {
@@ -275,27 +256,22 @@ describe("command-registry", () => {
   });
 
   describe("commandsByGroup()", () => {
-    it("groups visible commands by group name", () => {
-      const grouped = commandsByGroup();
-      // All group keys should appear in GROUP_ORDER
-      for (const key of grouped.keys()) {
-        expect(GROUP_ORDER).toContain(key);
-      }
-      // Total visible commands across all groups
-      let total = 0;
-      for (const cmds of grouped.values()) {
-        total += cmds.length;
-      }
+    it.each([...commandsByGroup().keys()])(
+      "includes the %s group in the display order",
+      (group) => {
+        expect(GROUP_ORDER).toContain(group);
+      },
+    );
+
+    it("groups every visible command", () => {
+      const total = [...commandsByGroup().values()].reduce((count, commands) => {
+        return count + commands.length;
+      }, 0);
       expect(total).toBe(visibleCommands().length);
     });
 
-    it("no hidden commands in any group", () => {
-      const grouped = commandsByGroup();
-      for (const cmds of grouped.values()) {
-        for (const cmd of cmds) {
-          expect(cmd.hidden).not.toBe(true);
-        }
-      }
+    it.each([...commandsByGroup().values()].flat())("keeps $usage visible in its group", (cmd) => {
+      expect(cmd.hidden).not.toBe(true);
     });
 
     it("exposes the default-sandbox command in root help", () => {

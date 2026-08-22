@@ -14,128 +14,126 @@ const EXPORT_REDACTED_GATEWAY_LOG = path.join(
 );
 
 describe("OpenClaw gateway log redaction", () => {
-  it("redacts live-job secrets, auth headers, token URL fragments, and prompt text", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-redact-"));
-    const source = path.join(tmp, "gateway.log");
-    const output = path.join(tmp, "gateway.redacted.log");
-    const env = {
-      ...process.env,
-      NVIDIA_INFERENCE_API_KEY: "nvapi-live-secret-from-env",
-      COMPATIBLE_API_KEY: "compatible-live-secret-from-env",
-      GITHUB_TOKEN: "ghp_live_secret_from_env",
-      OPENCLAW_GATEWAY_AUTH_TOKEN: "gateway-live-secret-from-env",
-    };
-    fs.writeFileSync(
-      source,
-      [
-        "NVIDIA_INFERENCE_API_KEY=nvapi-live-secret-from-env",
-        "COMPATIBLE_API_KEY=compatible-live-secret-from-env",
-        "GITHUB_TOKEN=ghp_live_secret_from_env",
-        "gateway token gateway-live-secret-from-env",
-        "Authorization: Bearer bearer-secret-token",
-        "api-key: raw-api-key-token",
-        "GET /v1/chat?gateway_token=url-token-secret&other=1",
-        'prompt: "show me sensitive prompt text"',
-        "content=assistant reply text",
-        "standalone fallback nvapi-pattern-secret ghp_pattern_secret",
-      ].join("\n"),
-      "utf8",
-    );
+  it.each([
+    "nvapi-live-secret-from-env",
+    "compatible-live-secret-from-env",
+    "ghp_live_secret_from_env",
+    "gateway-live-secret-from-env",
+    "bearer-secret-token",
+    "raw-api-key-token",
+    "url-token-secret",
+    "sensitive prompt text",
+    "assistant reply text",
+    "nvapi-pattern-secret",
+    "ghp_pattern_secret",
+  ])(
+    "redacts live-job secrets, auth headers, token URL fragments, and prompt text [case %#]",
+    (leaked) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-redact-"));
+      const source = path.join(tmp, "gateway.log");
+      const output = path.join(tmp, "gateway.redacted.log");
+      const env = {
+        ...process.env,
+        NVIDIA_INFERENCE_API_KEY: "nvapi-live-secret-from-env",
+        COMPATIBLE_API_KEY: "compatible-live-secret-from-env",
+        GITHUB_TOKEN: "ghp_live_secret_from_env",
+        OPENCLAW_GATEWAY_AUTH_TOKEN: "gateway-live-secret-from-env",
+      };
+      fs.writeFileSync(
+        source,
+        [
+          "NVIDIA_INFERENCE_API_KEY=nvapi-live-secret-from-env",
+          "COMPATIBLE_API_KEY=compatible-live-secret-from-env",
+          "GITHUB_TOKEN=ghp_live_secret_from_env",
+          "gateway token gateway-live-secret-from-env",
+          "Authorization: Bearer bearer-secret-token",
+          "api-key: raw-api-key-token",
+          "GET /v1/chat?gateway_token=url-token-secret&other=1",
+          'prompt: "show me sensitive prompt text"',
+          "content=assistant reply text",
+          "standalone fallback nvapi-pattern-secret ghp_pattern_secret",
+        ].join("\n"),
+        "utf8",
+      );
 
-    execFileSync("bash", [REDACT_GATEWAY_LOG, source, output], { env, stdio: "pipe" });
+      execFileSync("bash", [REDACT_GATEWAY_LOG, source, output], { env, stdio: "pipe" });
 
-    const redacted = fs.readFileSync(output, "utf8");
-    expect(redacted).toContain("[REDACTED_NVIDIA_INFERENCE_API_KEY]");
-    expect(redacted).toContain("[REDACTED_COMPATIBLE_API_KEY]");
-    expect(redacted).toContain("[REDACTED_GITHUB_TOKEN]");
-    expect(redacted).toContain("[REDACTED_OPENCLAW_GATEWAY_AUTH_TOKEN]");
-    expect(redacted).toContain("Authorization: [REDACTED_AUTHORIZATION]");
-    expect(redacted).toContain("api-key: [REDACTED_API_KEY]");
-    expect(redacted).toContain("gateway_token=[REDACTED_TOKEN]");
-    expect(redacted).toContain("prompt: [REDACTED_TEXT]");
-    expect(redacted).toContain("content=[REDACTED_TEXT]");
+      const redacted = fs.readFileSync(output, "utf8");
+      expect(redacted).toContain("[REDACTED_NVIDIA_INFERENCE_API_KEY]");
+      expect(redacted).toContain("[REDACTED_COMPATIBLE_API_KEY]");
+      expect(redacted).toContain("[REDACTED_GITHUB_TOKEN]");
+      expect(redacted).toContain("[REDACTED_OPENCLAW_GATEWAY_AUTH_TOKEN]");
+      expect(redacted).toContain("Authorization: [REDACTED_AUTHORIZATION]");
+      expect(redacted).toContain("api-key: [REDACTED_API_KEY]");
+      expect(redacted).toContain("gateway_token=[REDACTED_TOKEN]");
+      expect(redacted).toContain("prompt: [REDACTED_TEXT]");
+      expect(redacted).toContain("content=[REDACTED_TEXT]");
 
-    for (const leaked of [
-      "nvapi-live-secret-from-env",
-      "compatible-live-secret-from-env",
-      "ghp_live_secret_from_env",
-      "gateway-live-secret-from-env",
-      "bearer-secret-token",
-      "raw-api-key-token",
-      "url-token-secret",
-      "sensitive prompt text",
-      "assistant reply text",
-      "nvapi-pattern-secret",
-      "ghp_pattern_secret",
-    ]) {
       expect(redacted).not.toContain(leaked);
-    }
-  });
+    },
+  );
 
-  it("redacts structured JSON authorization, api-key, token, and message fields", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-json-redact-"));
-    const source = path.join(tmp, "gateway.jsonl");
-    const output = path.join(tmp, "gateway.redacted.jsonl");
-    fs.writeFileSync(
-      source,
-      JSON.stringify({
-        Authorization: "Bearer bearer-secret-token",
-        "api-key": "raw-api-key-token",
-        gateway_token: "url-token-secret",
-        message: "sensitive prompt text",
-        content: "assistant reply text",
-      }),
-      "utf8",
-    );
+  it.each([
+    "bearer-secret-token",
+    "raw-api-key-token",
+    "url-token-secret",
+    "sensitive prompt text",
+    "assistant reply text",
+  ])(
+    "redacts structured JSON authorization, api-key, token, and message fields [case %#]",
+    (leaked) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-json-redact-"));
+      const source = path.join(tmp, "gateway.jsonl");
+      const output = path.join(tmp, "gateway.redacted.jsonl");
+      fs.writeFileSync(
+        source,
+        JSON.stringify({
+          Authorization: "Bearer bearer-secret-token",
+          "api-key": "raw-api-key-token",
+          gateway_token: "url-token-secret",
+          message: "sensitive prompt text",
+          content: "assistant reply text",
+        }),
+        "utf8",
+      );
 
-    execFileSync("bash", [REDACT_GATEWAY_LOG, source, output], { stdio: "pipe" });
+      execFileSync("bash", [REDACT_GATEWAY_LOG, source, output], { stdio: "pipe" });
 
-    const redacted = fs.readFileSync(output, "utf8");
-    expect(redacted).toContain('"Authorization":"[REDACTED_AUTHORIZATION]"');
-    expect(redacted).toContain('"api-key":"[REDACTED_API_KEY]"');
-    expect(redacted).toContain('"gateway_token":"[REDACTED_TOKEN]"');
-    expect(redacted).toContain('"message":"[REDACTED_TEXT]"');
-    expect(redacted).toContain('"content":"[REDACTED_TEXT]"');
+      const redacted = fs.readFileSync(output, "utf8");
+      expect(redacted).toContain('"Authorization":"[REDACTED_AUTHORIZATION]"');
+      expect(redacted).toContain('"api-key":"[REDACTED_API_KEY]"');
+      expect(redacted).toContain('"gateway_token":"[REDACTED_TOKEN]"');
+      expect(redacted).toContain('"message":"[REDACTED_TEXT]"');
+      expect(redacted).toContain('"content":"[REDACTED_TEXT]"');
 
-    for (const leaked of [
-      "bearer-secret-token",
-      "raw-api-key-token",
-      "url-token-secret",
-      "sensitive prompt text",
-      "assistant reply text",
-    ]) {
       expect(redacted).not.toContain(leaked);
-    }
-  });
+    },
+  );
 
-  it("redacts JSON message/content/text strings containing escaped quotes and trailing sensitive text", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-escaped-redact-"));
-    const source = path.join(tmp, "gateway.jsonl");
-    const output = path.join(tmp, "gateway.redacted.jsonl");
-    fs.writeFileSync(
-      source,
-      JSON.stringify({
-        message: 'secret before "quoted" secret after',
-        text: 'nested text before "quoted" nested text after',
-      }),
-      "utf8",
-    );
+  it.each(["secret before", "quoted", "secret after", "nested text before", "nested text after"])(
+    "redacts JSON message/content/text strings containing escaped quotes and trailing sensitive text [case %#]",
+    (leaked) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-escaped-redact-"));
+      const source = path.join(tmp, "gateway.jsonl");
+      const output = path.join(tmp, "gateway.redacted.jsonl");
+      fs.writeFileSync(
+        source,
+        JSON.stringify({
+          message: 'secret before "quoted" secret after',
+          text: 'nested text before "quoted" nested text after',
+        }),
+        "utf8",
+      );
 
-    execFileSync("bash", [REDACT_GATEWAY_LOG, source, output], { stdio: "pipe" });
+      execFileSync("bash", [REDACT_GATEWAY_LOG, source, output], { stdio: "pipe" });
 
-    const redacted = fs.readFileSync(output, "utf8");
-    expect(redacted).toContain('"message":"[REDACTED_TEXT]"');
-    expect(redacted).toContain('"text":"[REDACTED_TEXT]"');
-    for (const leaked of [
-      "secret before",
-      "quoted",
-      "secret after",
-      "nested text before",
-      "nested text after",
-    ]) {
+      const redacted = fs.readFileSync(output, "utf8");
+      expect(redacted).toContain('"message":"[REDACTED_TEXT]"');
+      expect(redacted).toContain('"text":"[REDACTED_TEXT]"');
+
       expect(redacted).not.toContain(leaked);
-    }
-  });
+    },
+  );
 
   it("redacts nested OpenClaw message.content text before gateway log upload", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-nested-redact-"));

@@ -15,6 +15,8 @@ const PROCESS_QUERY_TIMEOUT_MS = 5_000;
 const FIXTURE_PID_FILES = [
   ["nemoclaw-podman-socket-activator.pid", "activator"],
   ["nemoclaw-podman-service.pid", "service"],
+  ["nemoclaw-openshell-gateway-launch.pid", "gateway"],
+  ["nemoclaw-openshell-gateway.pid", "gateway"],
 ] as const;
 const FIXTURE_SOCKET_FILES = ["podman.sock", "nemoclaw-podman-service.sock"] as const;
 
@@ -218,4 +220,18 @@ export async function cleanupPortableProfileRootlessFixture(
 ): Promise<void> {
   await cleanupPortableProfileSystemctlFixture(runtimeDir);
   fs.rmSync(root, { force: true, recursive: true });
+}
+
+export function cleanupPortableHostGatewayAlias(
+  gatewayIp: string,
+  wasPresentBefore: boolean,
+  env: NodeJS.ProcessEnv,
+): void {
+  if (wasPresentBefore) return;
+  spawnSync("sudo", ["--", "ip", "address", "delete", `${gatewayIp}/32`, "dev", "lo"], {
+    env,
+    killSignal: "SIGKILL",
+    stdio: "ignore",
+    timeout: 15_000,
+  });
 }

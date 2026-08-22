@@ -451,106 +451,107 @@ describe("pull request and main workflow contracts", () => {
     }
   });
 
-  it("requires migrated .mts coverage entrypoints (#6918)", () => {
-    const cases = [
-      {
-        action: sharedActions.cliCoverageShard,
-        step: "Build CLI for coverage shard",
-        stem: "scripts/check-dist-sourcemaps",
-      },
-      {
-        action: sharedActions.cliCoverageMerge,
-        step: "Verify compiled CLI artifact",
-        stem: "scripts/check-dist-sourcemaps",
-      },
-      {
-        action: sharedActions.cliCoverageMerge,
-        step: "Merge CLI coverage",
-        stem: "scripts/check-coverage-ratchet",
-      },
-      {
-        action: sharedActions.pluginCoverage,
-        step: "Run plugin coverage",
-        stem: "scripts/check-coverage-ratchet",
-      },
-    ] as const;
-    const variants = [
-      {
-        fixtureExtension: "mts",
-        expectedEntrypointExtension: "mts",
-        expectedStatus: 0,
-      },
-      {
-        fixtureExtension: "missing",
-        expectedEntrypointExtension: "mts",
-        expectedStatus: 1,
-      },
-    ] as const;
+  const coverageEntrypointCases = [
+    {
+      action: sharedActions.cliCoverageShard,
+      step: "Build CLI for coverage shard",
+      stem: "scripts/check-dist-sourcemaps",
+    },
+    {
+      action: sharedActions.cliCoverageMerge,
+      step: "Verify compiled CLI artifact",
+      stem: "scripts/check-dist-sourcemaps",
+    },
+    {
+      action: sharedActions.cliCoverageMerge,
+      step: "Merge CLI coverage",
+      stem: "scripts/check-coverage-ratchet",
+    },
+    {
+      action: sharedActions.pluginCoverage,
+      step: "Run plugin coverage",
+      stem: "scripts/check-coverage-ratchet",
+    },
+  ] as const;
+  const coverageEntrypointVariants = [
+    {
+      fixtureExtension: "mts",
+      expectedEntrypointExtension: "mts",
+      expectedStatus: 0,
+    },
+    {
+      fixtureExtension: "missing",
+      expectedEntrypointExtension: "mts",
+      expectedStatus: 1,
+    },
+  ] as const;
 
-    for (const testCase of cases) {
-      for (const variant of variants) {
-        const temp = mkdtempSync(join(tmpdir(), "nemoclaw-coverage-entrypoint-"));
-        const fakeBin = join(temp, "bin");
-        mkdirSync(fakeBin);
-        mkdirSync(join(temp, "dist"));
-        mkdirSync(join(temp, "scripts"));
-        writeFileSync(join(temp, "dist", ["nemoclaw", "js"].join(".")), "built\n");
-        for (const command of ["node", "npm"]) {
-          writeFileSync(join(fakeBin, command), "#!/usr/bin/env bash\nexit 0\n", {
-            mode: 0o755,
-          });
-        }
-        writeFileSync(
-          join(fakeBin, "npx"),
-          [
-            "#!/usr/bin/env bash",
-            "set -euo pipefail",
-            'if [ "${1:-}" = "tsx" ] && [[ "${2:-}" == scripts/check-* ]]; then',
-            '  test "${2}" = "${EXPECTED_ENTRYPOINT}"',
-            '  test -f "${2}"',
-            "fi",
-          ].join("\n"),
-          { mode: 0o755 },
+  it.each(
+    coverageEntrypointCases.flatMap((testCase) =>
+      coverageEntrypointVariants.map((variant) => ({ testCase, variant })),
+    ),
+  )(
+    "requires the migrated $testCase.stem.$variant.expectedEntrypointExtension entrypoint",
+    ({ testCase, variant }) => {
+      const temp = mkdtempSync(join(tmpdir(), "nemoclaw-coverage-entrypoint-"));
+      const fakeBin = join(temp, "bin");
+      mkdirSync(fakeBin);
+      mkdirSync(join(temp, "dist"));
+      mkdirSync(join(temp, "scripts"));
+      writeFileSync(join(temp, "dist", ["nemoclaw", "js"].join(".")), "built\n");
+      writeFileSync(join(fakeBin, "node"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+      writeFileSync(join(fakeBin, "npm"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+      writeFileSync(
+        join(fakeBin, "npx"),
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          'if [ "${1:-}" = "tsx" ] && [[ "${2:-}" == scripts/check-* ]]; then',
+          '  test "${2}" = "${EXPECTED_ENTRYPOINT}"',
+          '  test -f "${2}"',
+          "fi",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      writeFileSync(join(temp, `${testCase.stem}.${variant.fixtureExtension}`), "// fixture\n");
+
+      try {
+        const result = runWorkflowShellStep(
+          requiredStep(testCase.action, testCase.step),
+          {
+            EXPECTED_ENTRYPOINT: `${testCase.stem}.${variant.expectedEntrypointExtension}`,
+            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          },
+          temp,
         );
-        writeFileSync(join(temp, `${testCase.stem}.${variant.fixtureExtension}`), "// fixture\n");
 
-        try {
-          const result = runWorkflowShellStep(
-            requiredStep(testCase.action, testCase.step),
-            {
-              EXPECTED_ENTRYPOINT: `${testCase.stem}.${variant.expectedEntrypointExtension}`,
-              PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-            },
-            temp,
-          );
-
-          expect(result.status, result.stderr).toBe(variant.expectedStatus);
-        } finally {
-          rmSync(temp, { force: true, recursive: true });
-        }
+        expect(result.status, result.stderr).toBe(variant.expectedStatus);
+      } finally {
+        rmSync(temp, { force: true, recursive: true });
       }
-    }
-  });
+    },
+  );
 
-  it("links every failed CLI shard and falls back safely when job metadata is unavailable", () => {
-    const runUrl = "https://github.com/NVIDIA/NemoClaw/actions/runs/123";
-    const failedShards = workflowJobListing([
-      workflowJob(101, "cli-test-shards (1)", "success"),
-      workflowJob(102, "cli-test-shards (2)", "failure"),
-      workflowJob(112, "cli-test-shards (12)", "cancelled"),
-      workflowJob(109, "plugin-tests", "success"),
-    ]);
-    const malformedShards = workflowJobListing([
-      workflowJob("not-a-number", "cli-test-shards (2)", "failure"),
-    ]);
-    const oversizedShards = workflowJobListing([
-      workflowJob(9_007_199_254_740_992, "cli-test-shards (2)", "failure"),
-    ]);
+  it.each([
+    ["pull_request", prWorkflow],
+    ["main", mainWorkflow],
+  ] as const)(
+    "links every failed %s CLI shard and falls back when job metadata is unavailable",
+    (workflowName, workflow) => {
+      const runUrl = "https://github.com/NVIDIA/NemoClaw/actions/runs/123";
+      const failedShards = workflowJobListing([
+        workflowJob(101, "cli-test-shards (1)", "success"),
+        workflowJob(102, "cli-test-shards (2)", "failure"),
+        workflowJob(112, "cli-test-shards (12)", "cancelled"),
+        workflowJob(109, "plugin-tests", "success"),
+      ]);
+      const malformedShards = workflowJobListing([
+        workflowJob("not-a-number", "cli-test-shards (2)", "failure"),
+      ]);
+      const oversizedShards = workflowJobListing([
+        workflowJob(9_007_199_254_740_992, "cli-test-shards (2)", "failure"),
+      ]);
 
-    for (const [workflowName, workflow] of [
-      ["pull_request", prWorkflow],
-      ["main", mainWorkflow],
-    ] as const) {
       const cliGate = requiredWorkflowStep(
         workflow.jobs["cli-tests"],
         "Verify CLI shards completed",
@@ -588,8 +589,8 @@ describe("pull request and main workflow contracts", () => {
       expect(oversized.stdout).not.toContain(`${runUrl}/job/`);
       expect(unavailable.status).not.toBe(0);
       expect(unavailable.stdout).toContain(`Expected success, got cancelled. Details: ${runUrl}`);
-    }
-  });
+    },
+  );
 
   it("accepts successful aggregate checks and rejects failed required lanes", () => {
     const prChecks = prWorkflow.jobs.checks;

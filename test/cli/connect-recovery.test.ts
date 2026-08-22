@@ -47,12 +47,13 @@ const launchReadinessObservationStubLines = [
   "fi",
 ];
 
-const expectedProbeOnlyExitCode = process.platform === "darwin" ? 1 : 0;
 const PLATFORM_EVIDENCE_UNAVAILABLE = "launch-readiness evidence is unavailable on this platform";
 
 function expectProbeOnlyPublicationOutcome(result: { code: number; out: string }): void {
-  expect(result.code, result.out).toBe(expectedProbeOnlyExitCode);
+  // Evidence unavailability on macOS is a note, not a failure (#9278).
+  expect(result.code, result.out).toBe(0);
   expect(result.out.includes(PLATFORM_EVIDENCE_UNAVAILABLE)).toBe(process.platform === "darwin");
+  expect(result.out.includes("Probe failed")).toBe(false);
 }
 
 function writeGatewayControlDockerStub(
@@ -374,7 +375,7 @@ describe("CLI connect recovery process contracts", () => {
     },
   );
 
-  it("recovers stopped Hermes agents through privileged Docker control instead of SSH", async () => {
+  it("recovers a stopped Hermes Agent gateway with its assigned forwards through privileged Docker control (#9716)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-agent-"));
     const localBin = path.join(home, "bin");
     const openshellCalls = path.join(home, "openshell-calls");
@@ -382,7 +383,12 @@ describe("CLI connect recovery process contracts", () => {
     const sshCalls = path.join(home, "ssh-calls");
     const stateFile = path.join(home, "probe-state");
     fs.mkdirSync(localBin, { recursive: true });
-    writeSandboxRegistry(home, { ...launchReadinessRegistryFixture(), agent: "hermes" });
+    writeSandboxRegistry(home, {
+      ...launchReadinessRegistryFixture(),
+      agent: "hermes",
+      dashboardPort: 18790,
+      hermesApiPort: 8643,
+    });
     fs.writeFileSync(stateFile, "stopped");
     fs.writeFileSync(
       path.join(localBin, "openshell"),
@@ -414,7 +420,7 @@ describe("CLI connect recovery process contracts", () => {
         '  echo UNEXPECTED_SSH_CONFIG >> "$calls"',
         "  exit 1",
         "fi",
-        'if [ "$1" = "forward" ] && [ "$2" = "list" ]; then { echo "alpha 127.0.0.1 18789 12345 running"; echo "alpha 127.0.0.1 8642 12346 running"; }; exit 0; fi',
+        'if [ "$1" = "forward" ] && [ "$2" = "list" ]; then { echo "control 127.0.0.1 18789 12345 running"; echo "control 127.0.0.1 8642 12346 running"; echo "alpha 127.0.0.1 18790 12347 running"; echo "alpha 127.0.0.1 8643 12348 running"; }; exit 0; fi',
         'if [ "$1" = "forward" ]; then exit 99; fi',
         ...launchReadinessObservationStubLines,
         "exit 0",
@@ -423,7 +429,7 @@ describe("CLI connect recovery process contracts", () => {
     );
     writeGatewayControlDockerStub(localBin, { callsFile: dockerCalls, stateFile });
     writeRecordingCommand(localBin, "ssh", sshCalls, 98);
-    const stopForwardListeners = await startForwardListeners([18789, 8642]);
+    const stopForwardListeners = await startForwardListeners([18790, 8643]);
 
     try {
       const result = runWithEnv("alpha connect --probe-only", {

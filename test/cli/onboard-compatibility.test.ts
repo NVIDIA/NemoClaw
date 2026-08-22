@@ -295,7 +295,7 @@ describe("CLI onboard compatibility", () => {
     const localBin = path.join(home, "bin");
     const nemoclawDir = path.join(home, ".nemoclaw");
     fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(nemoclawDir, { recursive: true });
+    fs.mkdirSync(nemoclawDir, { recursive: true, mode: 0o700 });
     writeOpenShellVersionStub(localBin);
     writeIncompleteResumeSession(nemoclawDir);
 

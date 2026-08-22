@@ -220,7 +220,9 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
       expect(strictHashIsValid(fixture)).toBe(true);
       expect(fs.existsSync(fixture.statePath)).toBe(false);
     } finally {
-      for (const openFd of mutableFd === undefined ? [] : [mutableFd]) fs.closeSync(openFd);
+      (mutableFd === undefined ? [] : [mutableFd]).forEach((openFd) => {
+        fs.closeSync(openFd);
+      });
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
@@ -377,15 +379,15 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
       expect(Number.isSafeInteger(sandboxUid)).toBe(true);
       expect(Number.isSafeInteger(sandboxGid)).toBe(true);
 
-      for (const pathname of [
+      [
         fixture.sandboxDir,
         fixture.hermesDir,
         fixture.configPath,
         fixture.envPath,
         fixture.compatHashPath,
-      ]) {
+      ].forEach((pathname) => {
         fs.chownSync(pathname, sandboxUid, sandboxGid);
-      }
+      });
       // chown clears setgid, so restore the canonical mutable Hermes mode.
       fs.chmodSync(fixture.hermesDir, 0o3770);
 
@@ -418,17 +420,17 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
 
       const unsealed = runGuard("unseal-restart", fixture);
       expect(unsealed.status, unsealed.stderr).toBe(0);
-      for (const pathname of [
+      [
         fixture.sandboxDir,
         fixture.hermesDir,
         fixture.configPath,
         fixture.envPath,
         fixture.compatHashPath,
-      ]) {
+      ].forEach((pathname) => {
         const restored = fs.statSync(pathname);
         expect(restored.uid).toBe(sandboxUid);
         expect(restored.gid).toBe(sandboxGid);
-      }
+      });
     } finally {
       try {
         fs.rmSync(fixture.root, { recursive: true, force: true });

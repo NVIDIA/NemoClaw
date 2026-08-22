@@ -198,55 +198,61 @@ describe("llama.cpp host-local runtime materializer", () => {
     expect(valuesAfter(argv, "--timeout")).toEqual(["600"]);
   });
 
-  it("materializes a declared container chat template and reasoning contract", () => {
-    const input = contract();
-    const templated = {
-      ...input,
-      serve: {
-        ...input.serve,
-        chatTemplate: "container-jinja-file",
-        chatTemplateFile:
-          "/usr/local/share/nemoclaw/llama-cpp/chat-templates/model-canonical.jinja",
-        reasoning: { format: "deepseek", mode: "auto" },
-      },
-    } satisfies LlamaCppHostLocalLaunchContract;
+  it.each([{ scenario: "host-local runtime" }, { scenario: "request guard" }])(
+    "materializes a declared container chat template and reasoning contract [$scenario]",
+    ({ scenario }) => {
+      const input = contract();
+      const templated = {
+        ...input,
+        serve: {
+          ...input.serve,
+          chatTemplate: "container-jinja-file",
+          chatTemplateFile:
+            "/usr/local/share/nemoclaw/llama-cpp/chat-templates/model-canonical.jinja",
+          reasoning: { format: "deepseek", mode: "auto" },
+        },
+      } satisfies LlamaCppHostLocalLaunchContract;
 
-    for (const argv of [
-      buildLlamaCppHostLocalDockerArgv(templated, bindings()),
-      buildLlamaCppRequestGuardDockerArgv(templated, bindings()),
-    ]) {
+      const argv = (
+        {
+          "host-local runtime": buildLlamaCppHostLocalDockerArgv(templated, bindings()),
+          "request guard": buildLlamaCppRequestGuardDockerArgv(templated, bindings()),
+        } as const
+      )[scenario]!;
       expect(valuesAfter(argv, "--chat-template-file")).toEqual([
         "/usr/local/share/nemoclaw/llama-cpp/chat-templates/model-canonical.jinja",
       ]);
       expect(valuesAfter(argv, "--reasoning-format")).toEqual(["deepseek"]);
       expect(valuesAfter(argv, "--reasoning")).toEqual(["auto"]);
       expect(argv).toContain("--jinja");
-    }
-  });
+    },
+  );
 
-  it("materializes a model-embedded Jinja template with typed Muse reasoning strength", () => {
-    const input = contract();
-    const templated = {
-      ...input,
-      serve: {
-        ...input.serve,
-        chatTemplate: "model-embedded-jinja",
-        chatTemplateArguments: { reasoningStrength: "low" },
-      },
-    } satisfies LlamaCppHostLocalLaunchContract;
+  it.each([{ scenario: "host-local runtime" }, { scenario: "request guard" }])(
+    "materializes a model-embedded Jinja template with typed Muse reasoning strength [$scenario]",
+    ({ scenario }) => {
+      const input = contract();
+      const templated = {
+        ...input,
+        serve: {
+          ...input.serve,
+          chatTemplate: "model-embedded-jinja",
+          chatTemplateArguments: { reasoningStrength: "low" },
+        },
+      } satisfies LlamaCppHostLocalLaunchContract;
 
-    for (const argv of [
-      buildLlamaCppHostLocalDockerArgv(templated, bindings()),
-      buildLlamaCppRequestGuardDockerArgv(templated, bindings()),
-    ]) {
+      const argv = (
+        {
+          "host-local runtime": buildLlamaCppHostLocalDockerArgv(templated, bindings()),
+          "request guard": buildLlamaCppRequestGuardDockerArgv(templated, bindings()),
+        } as const
+      )[scenario]!;
       expect(argv).toContain("--jinja");
-      expect(valuesAfter(argv, "--chat-template-kwargs")).toEqual([
-        '{"reasoning_strength":"low"}',
-      ]);
+      expect(valuesAfter(argv, "--chat-template-kwargs")).toEqual(['{"reasoning_strength":"low"}']);
       expect(argv).not.toContain("--chat-template-file");
       expect(argv).not.toContain("--reasoning-format");
-    }
-  });
+    },
+  );
 
   it.each([
     ["a missing container template file", { chatTemplate: "container-jinja-file" }],
@@ -478,27 +484,24 @@ describe("llama.cpp host-local runtime materializer", () => {
     );
   });
 
-  it.each([
-    "dev",
-    "ino",
-    "size",
-    "mtimeNs",
-    "ctimeNs",
-  ] as const)("rejects a forged %s field in the verified filesystem identity (#8279)", (field) => {
-    const runtime = bindings();
-    expect(() =>
-      buildLlamaCppHostLocalDockerArgv(contract(), {
-        ...runtime,
-        model: {
-          ...runtime.model,
-          filesystemIdentity: {
-            ...runtime.model.filesystemIdentity,
-            [field]: runtime.model.filesystemIdentity[field] + 1n,
+  it.each(["dev", "ino", "size", "mtimeNs", "ctimeNs"] as const)(
+    "rejects a forged %s field in the verified filesystem identity (#8279)",
+    (field) => {
+      const runtime = bindings();
+      expect(() =>
+        buildLlamaCppHostLocalDockerArgv(contract(), {
+          ...runtime,
+          model: {
+            ...runtime.model,
+            filesystemIdentity: {
+              ...runtime.model.filesystemIdentity,
+              [field]: runtime.model.filesystemIdentity[field] + 1n,
+            },
           },
-        },
-      }),
-    ).toThrow("does not match its verified filesystem identity");
-  });
+        }),
+      ).toThrow("does not match its verified filesystem identity");
+    },
+  );
 
   it("rejects a forged artifact that omits filesystem identity (#8279)", () => {
     const runtime = bindings();

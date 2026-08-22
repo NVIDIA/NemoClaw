@@ -24,8 +24,12 @@ import {
 } from "./messaging/hooks/status-runner";
 import type { MessagingAgentId } from "./messaging/manifest";
 import { resolveGatewayName } from "./onboard/gateway-binding";
+import { classifyHermesPortableRegistry } from "./onboard/experimental/hermes-portable-onboarding";
+import { inspectPortableAgentReceiptAuthority } from "./onboard/experimental/hermes-portable-receipt";
+import { defaultPortableDemoStateDir } from "./onboard/experimental/portable-runtime-receipt-readiness";
 import { summarizeForDebug } from "./state/onboard-session";
 import * as registry from "./state/registry";
+import { getHermesPortableHostAuthorityEntryCount } from "./state/portable-uninstall-retirement";
 import { createSystemDeps, parseSshProcesses } from "./state/sandbox-session";
 import { getServiceStatuses, showStatus as showServiceStatus } from "./tunnel/services";
 
@@ -248,6 +252,12 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
   // Cache the SSH process probe once per command invocation — avoids
   // spawning ps per sandbox row. #2604; mirrors buildListCommandDeps.
   let cachedSshOutput: string | null | undefined;
+
+  // Resolving a sandbox ID costs one OpenShell call, so only pay it when the
+  // process list actually contains a proxied connection that needs one (#9316).
+  const resolveSandboxIdForSessions = (sshOutput: string, name: string): string | null =>
+    sshOutput.includes("--sandbox-id") ? (sessionDeps?.resolveSandboxId?.(name) ?? null) : null;
+
   const getCachedSshOutput = (): string | null => {
     if (cachedSshOutput === undefined && sessionDeps) {
       try {
@@ -278,7 +288,8 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
           try {
             const sshOutput = getCachedSshOutput();
             if (sshOutput === null) return null;
-            return parseSshProcesses(sshOutput, name).length;
+            return parseSshProcesses(sshOutput, name, resolveSandboxIdForSessions(sshOutput, name))
+              .length;
           } catch {
             return null;
           }
@@ -288,6 +299,25 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
       checkMessagingBridgeHealth(rootDir, sandboxName, channels, agent),
     findMessagingOverlaps,
     readGatewayLog: (sandboxName) => readGatewayLog(rootDir, sandboxName),
+    getHermesPortablePhase: (sandboxName) => {
+      const authority = inspectPortableAgentReceiptAuthority(
+        sandboxName,
+        defaultPortableDemoStateDir(process.env),
+      );
+      if (authority.kind !== "hermes") return null;
+      const disposition = classifyHermesPortableRegistry(
+        authority.snapshot.receipt,
+        registry.getSandbox(sandboxName),
+      );
+      if (disposition.kind !== "matching") {
+        throw new Error(
+          "Global status found a Hermes portable receipt that disagrees with its registry row.",
+        );
+      }
+      return authority.snapshot.receipt.phase;
+    },
+    getHermesPortableHostAuthorityCount: () =>
+      getHermesPortableHostAuthorityEntryCount(defaultPortableDemoStateDir(process.env)),
     log: console.log,
   };
 }

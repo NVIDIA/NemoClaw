@@ -173,7 +173,7 @@ describe("onboard policy preset suggestions", () => {
         knownPresetNames: knownNames,
       }).filter((name) => channelPresetSet.has(name));
 
-    for (const channel of channels) {
+    channels.forEach((channel) => {
       // Compare set equality (sorted) rather than incidental array order, so a
       // channel later expanding to multiple presets can't fail this guard on a
       // harmless ordering difference between the two internal paths.
@@ -184,7 +184,7 @@ describe("onboard policy preset suggestions", () => {
       ).toEqual(expected);
       // ...and the suggestion path surfaces the same set.
       expect(channelPresetsFromSuggestions([channel]).slice().sort()).toEqual(expected);
-    }
+    });
 
     // All channels enabled together: both paths agree on the full set.
     const expectedAll = allMessagingChannelPolicyPresets(channels).slice().sort();
@@ -502,9 +502,8 @@ describe("onboard policy preset suggestions", () => {
       knownPresetNames: knownWithPricing,
       agent: "hermes",
     });
-    for (const preset of ["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"]) {
-      expect(hermesOpen).toContain(preset);
-    }
+    expect(["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"].every((preset) =>
+        hermesOpen.includes(preset))).toBe(true);
     expect(hermesOpen).toContain("weather");
     expect(hermesOpen).toContain("public-reference");
     expect(hermesOpen).not.toContain("openclaw-pricing");
@@ -514,9 +513,7 @@ describe("onboard policy preset suggestions", () => {
       knownPresetNames: knownWithPricing,
       agent: "openclaw",
     });
-    for (const preset of ["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"]) {
-      expect(openclawOpen).not.toContain(preset);
-    }
+    expect(["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"].every((preset) => !openclawOpen.includes(preset))).toBe(true);
     expect(openclawOpen).toContain("openclaw-pricing");
     expect(openclawOpen).toContain("weather");
     expect(openclawOpen).toContain("public-reference");
@@ -712,6 +709,11 @@ describe("onboard policy preset suggestions", () => {
       expect(suppressedAgentRequiredPresets("open", "openclaw")).toEqual([]);
     });
 
+    it("reports pricing as superseded by the Personal broad web route", () => {
+      expect(suppressedAgentRequiredPresets("personal", "openclaw")).toEqual(["openclaw-pricing"]);
+      expect(suppressedAgentRequiredPresets("personal", "hermes")).toEqual([]);
+    });
+
     it("returns no suppressed presets for non-OpenClaw agents on restricted", () => {
       expect(suppressedAgentRequiredPresets("restricted", "hermes")).toEqual([]);
     });
@@ -744,6 +746,16 @@ describe("onboard policy preset suggestions", () => {
       ).toEqual(["openclaw-pricing", "npm"]);
     });
 
+    it("removes the exact pricing route from Personal", () => {
+      expect(
+        filterSuppressedAgentRequiredPresets(
+          ["personal-open-internet", "openclaw-pricing"],
+          "personal",
+          "openclaw",
+        ),
+      ).toEqual(["personal-open-internet"]);
+    });
+
     it("returns the input unchanged when tierName is null or undefined", () => {
       expect(
         filterSuppressedAgentRequiredPresets(["openclaw-pricing", "npm"], null, "openclaw"),
@@ -765,6 +777,20 @@ describe("onboard policy preset suggestions", () => {
   });
 
   describe("mergeRequiredSetupPolicyPresets tier plumbing", () => {
+    it.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"])(
+      "requires Personal open internet independently of the selected agent: %s",
+      (agent) => {
+        expect(
+          mergeRequiredSetupPolicyPresets(["weather"], {
+            agent,
+            env: {},
+            knownPresetNames: ["personal-open-internet", "weather"],
+            tierName: " Personal ",
+          }),
+        ).toEqual(["personal-open-internet", "weather"]);
+      },
+    );
+
     it("adds enabled DCode observability and removes it when disabled or restricted", () => {
       const options = {
         agent: "langchain-deepagents-code",
@@ -793,13 +819,19 @@ describe("onboard policy preset suggestions", () => {
       ).toEqual(["npm"]);
     });
 
-    it("suppresses openclaw-pricing only when tierName is restricted", () => {
+    it("suppresses openclaw-pricing when Restricted forbids it or Personal supersedes it", () => {
       expect(
         mergeRequiredSetupPolicyPresets(["npm", "openclaw-pricing"], {
           agent: "openclaw",
           tierName: "restricted",
         }),
       ).toEqual(["npm"]);
+      expect(
+        mergeRequiredSetupPolicyPresets(["personal-open-internet", "openclaw-pricing"], {
+          agent: "openclaw",
+          tierName: "personal",
+        }),
+      ).toEqual(["personal-open-internet"]);
       expect(
         mergeRequiredSetupPolicyPresets(["npm", "openclaw-pricing"], {
           agent: "openclaw",
@@ -872,15 +904,16 @@ describe("onboard policy preset suggestions", () => {
       return union;
     }
 
-    it("includes every env-gated OpenClaw agent-required preset in the restricted suppression list", () => {
-      const additionsUnion = unionAdditionsAcrossOtelStates();
-      const restrictedSet = new Set(suppressedAgentRequiredPresets("restricted", "openclaw"));
-      for (const preset of additionsUnion) {
+    it.each(Array.from(unionAdditionsAcrossOtelStates(), (value) => [value]))(
+      "includes env-gated preset %s in the restricted suppression list",
+      (preset) => {
+        const restrictedSet = new Set(suppressedAgentRequiredPresets("restricted", "openclaw"));
+
         expect(
           restrictedSet.has(preset),
           `addition '${preset}' missing from restricted suppression list`,
         ).toBe(true);
-      }
-    });
+      },
+    );
   });
 });

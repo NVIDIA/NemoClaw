@@ -180,6 +180,7 @@ describe("sandbox base-image source identity", () => {
       "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
       "scripts/lib/openclaw-npm-remediation.mts",
       "scripts/lib/reviewed-npm-archive.mts",
+      "scripts/lib/bundled-npm-package.mts",
       "scripts/patch-bundled-npm-brace-expansion.mts",
       "scripts/lib/patch-bundled-npm-ip-address.mts",
       "scripts/patch-bundled-npm-tar.mts",

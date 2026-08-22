@@ -189,6 +189,20 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         : "OpenClaw";
   const agentBaseImageId = `sha256:${"a".repeat(64)}`;
   const agentBaseImageRef = `nemoclaw-${agentName}-sandbox-base-local:image-${agentBaseImageId.slice("sha256:".length)}`;
+  const agentBaseImageResolutionMetadata = {
+    schema: 1,
+    key: `${agentName}-rebuild-base`,
+    imageName: `ghcr.io/nvidia/nemoclaw/${agentName}-sandbox-base`,
+    ref: agentBaseImageRef,
+    digest: null,
+    source: "local" as const,
+    imageId: agentBaseImageId,
+    os: "linux",
+    architecture: "amd64",
+    glibcVersion: "2.41",
+    requireOpenshellSandboxAbi: true,
+    minGlibcVersion: "2.39",
+  };
   const agentDef = {
     name: agentName,
     displayName: agentDisplayName,
@@ -269,6 +283,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const ensureAgentBaseImageSpy = vi.spyOn(agentOnboard, "ensureAgentBaseImage").mockReturnValue({
     imageTag: agentBaseImageRef,
     built: true,
+    resolutionMetadata: agentBaseImageResolutionMetadata,
     trustedLocalOverride,
   });
   const restoreTrustedAgentBaseImageOverrideSpy = vi.fn();

@@ -69,6 +69,7 @@ ARG NEMOCLAW_CORPORATE_CA_B64
 COPY --from=perl-builder /out /tmp/nemoclaw-native-security
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
+COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
@@ -245,6 +246,12 @@ RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
 RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
+# npm 11.18.0 restores affected tar 7.5.19. Replace it from the exact
+# registry- and SRI-verified 7.5.21 archive before any npm consumers run.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+
 # Replace npm 11.18.0's private brace-expansion 5.0.7 package with the
 # registry- and SRI-pinned 5.0.9 release.
 # hadolint ignore=DL3059
@@ -338,7 +345,7 @@ RUN python3 -m venv --copies "$VIRTUAL_ENV" \
         -r /tmp/deepagents-code-requirements.lock \
     && "$VIRTUAL_ENV/bin/pip3" check \
     && "$VIRTUAL_ENV/bin/python3" -I -c \
-        "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0', 'deepagents-code': '0.1.34', 'langgraph-checkpoint-sqlite': '3.1.1', 'mcp': '1.28.1', 'pillow': '12.3.0', 'pyasn1': '0.6.4', 'uv': '0.11.33'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
+        "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0', 'deepagents-code': '0.1.55', 'langgraph-checkpoint-sqlite': '3.1.1', 'mcp': '1.28.1', 'pillow': '12.3.0', 'pyasn1': '0.6.4', 'uv': '0.11.33'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
     && ln -sf "$VIRTUAL_ENV/bin/dcode" /usr/local/bin/dcode \
     && ln -sf "$VIRTUAL_ENV/bin/deepagents-code" /usr/local/bin/deepagents-code \
     && rm -f /tmp/deepagents-code-requirements.lock \

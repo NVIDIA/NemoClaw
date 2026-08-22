@@ -6,6 +6,53 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { serializedHostLocalInferenceReceipt } from "../../../test/helpers/host-local-inference-receipt";
+import type { SandboxInferenceRouteReservationDisposition } from "./registry/route-reservation";
+
+function ownedReservation(disposition: SandboxInferenceRouteReservationDisposition) {
+  expect(disposition.kind).toBe("owned");
+  return (disposition as Extract<typeof disposition, { kind: "owned" }>).reservation;
+}
+
+const EXACT_ROUTE_SELECTION = {
+  provider: "ollama-local",
+  model: "qwen3-vl:4b",
+  endpointUrl: "http://127.0.0.1:11434/v1",
+  endpointSource: null,
+  credentialEnv: null,
+  preferredInferenceApi: "openai-completions",
+  compatibleEndpointReasoning: null,
+  compatibleEndpointReasoningEffort: null,
+  nimContainer: null,
+} as const;
+
+const EXACT_ROUTE_AUTHORITY = {
+  sandboxName: "alpha",
+  gatewayName: "nemoclaw",
+  sessionId: "session-owner",
+  selection: EXACT_ROUTE_SELECTION,
+} as const;
+
+const EXACT_ROUTE_RESERVATION = {
+  name: EXACT_ROUTE_AUTHORITY.sandboxName,
+  gatewayName: EXACT_ROUTE_AUTHORITY.gatewayName,
+  reservationSessionId: EXACT_ROUTE_AUTHORITY.sessionId,
+  pendingRouteReservation: true as const,
+  ...EXACT_ROUTE_SELECTION,
+};
+
+function reserveQualifiedRoute(registry: typeof import("./registry")) {
+  registry.reserveSandboxInferenceRoute(EXACT_ROUTE_AUTHORITY.sandboxName, {
+    ...EXACT_ROUTE_SELECTION,
+    gatewayName: EXACT_ROUTE_AUTHORITY.gatewayName,
+    reservationSessionId: EXACT_ROUTE_AUTHORITY.sessionId,
+  });
+  return ownedReservation(
+    registry.classifySandboxInferenceRouteReservation(
+      EXACT_ROUTE_AUTHORITY,
+      registry.getSandbox(EXACT_ROUTE_AUTHORITY.sandboxName),
+    ),
+  );
+}
 
 describe("sandbox inference route reservation", () => {
   afterEach(() => {
@@ -267,6 +314,106 @@ describe("sandbox inference route reservation", () => {
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }
+  });
+
+  it("atomically consumes only the exact qualified route reservation (#9203)", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const qualified = reserveQualifiedRoute(registry);
+
+      const registered = registry.registerSandbox(
+        {
+          name: "alpha",
+          ...EXACT_ROUTE_SELECTION,
+          agent: "hermes",
+          openshellDriver: "docker",
+          gatewayName: "nemoclaw",
+        },
+        qualified,
+      );
+
+      expect(registered).toMatchObject({
+        name: "alpha",
+        provider: "ollama-local",
+        model: "qwen3-vl:4b",
+        agent: "hermes",
+      });
+      expect(registered.pendingRouteReservation).toBeUndefined();
+      expect(registry.getSandbox("alpha")).toEqual(registered);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects route reservation replacement inside the registry lock (#9203)", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const qualified = reserveQualifiedRoute(registry);
+      registry.reserveSandboxInferenceRoute("alpha", {
+        ...EXACT_ROUTE_SELECTION,
+        model: "another-model",
+        gatewayName: "nemoclaw",
+        reservationSessionId: "another-session",
+      });
+
+      expect(() =>
+        registry.registerSandbox(
+          {
+            name: "alpha",
+            ...EXACT_ROUTE_SELECTION,
+            agent: "hermes",
+            openshellDriver: "docker",
+            gatewayName: "nemoclaw",
+          },
+          qualified,
+        ),
+      ).toThrow("Cannot register a sandbox after its inference route reservation changed");
+      expect(registry.getSandbox("alpha")).toMatchObject({
+        pendingRouteReservation: true,
+        reservationSessionId: "another-session",
+        model: "another-model",
+      });
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("sandbox inference route reservation qualification (#9203)", () => {
+  it.each([
+    ["missing", null, "missing"],
+    ["ownerless", { ...EXACT_ROUTE_RESERVATION, reservationSessionId: undefined }, "conflict"],
+    [
+      "foreign-session",
+      { ...EXACT_ROUTE_RESERVATION, reservationSessionId: "another-session" },
+      "conflict",
+    ],
+    ["mismatched-sandbox", { ...EXACT_ROUTE_RESERVATION, name: "beta" }, "conflict"],
+    [
+      "mismatched-gateway",
+      { ...EXACT_ROUTE_RESERVATION, gatewayName: "other-gateway" },
+      "conflict",
+    ],
+    ["mismatched-route", { ...EXACT_ROUTE_RESERVATION, model: "another-model" }, "conflict"],
+    ["malformed", { ...EXACT_ROUTE_RESERVATION, gatewayPort: 0 }, "conflict"],
+    [
+      "completed",
+      { ...EXACT_ROUTE_RESERVATION, createdAt: "2026-08-18T00:00:00.000Z" },
+      "conflict",
+    ],
+    ["sandbox-authority", { ...EXACT_ROUTE_RESERVATION, agent: "hermes" }, "conflict"],
+  ])("classifies %s reservation authority", async (_case, entry, expectedKind) => {
+    const { classifySandboxInferenceRouteReservation } =
+      await import("./registry/route-reservation");
+    expect(classifySandboxInferenceRouteReservation(EXACT_ROUTE_AUTHORITY, entry).kind).toBe(
+      expectedKind,
+    );
   });
 });
 

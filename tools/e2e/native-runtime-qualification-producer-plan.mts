@@ -31,6 +31,15 @@ export const NATIVE_RUNTIME_QUALIFICATION_FOCUSED_OPERATIONS = [
   "cleanup",
 ] as const;
 
+export const NATIVE_RUNTIME_QUALIFICATION_ID =
+  PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION.id;
+export const NATIVE_RUNTIME_QUALIFICATION_PROVIDER_ID =
+  PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION.providerId;
+
+export function nativeRuntimeQualificationOperationFile(id: string): string {
+  return `operation-${id.replaceAll(".", "-")}.json`;
+}
+
 export interface NativeRuntimeQualificationDispatchArtifact {
   readonly id: string;
   readonly name: string;
@@ -105,7 +114,7 @@ function validateSource(
     !COMMIT_SHA.test(value.baseSha) ||
     !COMMIT_SHA.test(value.workflowSha) ||
     value.candidateSha === value.baseSha ||
-    value.baseSha !== value.workflowSha ||
+    value.workflowSha !== value.baseSha ||
     !RUN_ID.test(value.producerRunId) ||
     value.producerRunAttempt !== 1
   ) {
@@ -120,7 +129,7 @@ function validateSource(
 function runnerForCase(entry: NativeRuntimeQualificationCase, arm64GpuRunner: string): string {
   if (entry.architecture === "amd64" && entry.acceleration === "cpu") return "ubuntu-26.04";
   if (entry.architecture === "arm64" && entry.acceleration === "cpu") {
-    return "ubuntu-24.04-arm";
+    return "ubuntu-26.04-arm";
   }
   if (entry.architecture === "amd64") return "linux-amd64-gpu-rtxpro6000-latest-1";
   if (!RUNNER_LABEL.test(arm64GpuRunner)) {
@@ -132,6 +141,12 @@ function runnerForCase(entry: NativeRuntimeQualificationCase, arm64GpuRunner: st
 }
 
 function immutableCase(value: NativeRuntimeQualificationCase): NativeRuntimeQualificationCase {
+  const operationFiles = value.obligations.map(nativeRuntimeQualificationOperationFile);
+  if (new Set(operationFiles).size !== operationFiles.length) {
+    throw new Error(
+      `Native runtime qualification case '${value.id}' has colliding operation files`,
+    );
+  }
   return Object.freeze({
     ...value,
     capabilities: Object.freeze([...value.capabilities]),

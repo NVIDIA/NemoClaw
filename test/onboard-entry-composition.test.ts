@@ -736,13 +736,13 @@ describe("onboarding entry composition boundary", () => {
   it.each(["ensure", "attach", "register", "reuse"])(
     "classifies the gateway lifecycle condition member %s",
     (member) => {
-      for (const expression of [`gateway.${member}()`, `gateway["${member}"]()`]) {
+      [`gateway.${member}()`, `gateway["${member}"]()`].forEach((expression) => {
         const actual = collectOnboardEntryDecisions(
           `function choose() { if (${expression}) return; }`,
         );
 
         expect(actual.gateway).toEqual({ choose: 1 });
-      }
+      });
     },
   );
 

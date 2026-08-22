@@ -16,11 +16,16 @@ import {
 import { readYaml, type Workflow, type WorkflowStep } from "../../helpers/e2e-workflow-contract.ts";
 
 const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "..", "..", "..", "scripts", "install.sh");
-
 interface FixtureScope {
   readonly binDir: string;
   readonly directory: string;
   readonly env: NodeJS.ProcessEnv;
+  readonly gatewayBin: string;
+  readonly gatewayCommandLog: string;
+  readonly gatewayPidFile: string;
+  readonly gatewayTlsDir: string;
+  readonly gatewayUnitPath: string;
+  readonly homeDir: string;
   readonly runtimeDir: string;
   readonly shim: string;
   readonly socketPath: string;
@@ -37,13 +42,40 @@ function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { encoding: "utf8", mode: 0o700 });
 }
 
+function gatewayServiceUnit(gatewayBin: string): string {
+  return `# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1
+[Service]
+StateDirectory=openshell/gateway
+Environment=OPENSHELL_LOCAL_TLS_DIR=%S/openshell/tls
+EnvironmentFile=-%E/openshell/gateway.env
+ExecStartPre=${gatewayBin} generate-certs --output-dir \${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal
+ExecStart=${gatewayBin}
+`;
+}
+
 function createFixture(): FixtureScope {
   const directory = fs.mkdtempSync("/tmp/portable-systemctl-shim-");
   const binDir = path.join(directory, "bin");
+  const homeDir = path.join(directory, "home");
+  const binHome = path.join(homeDir, ".local", "bin");
+  const configHome = path.join(homeDir, ".config");
+  const stateHome = path.join(homeDir, ".local", "state");
   const runtimeDir = path.join(directory, "runtime");
   const socketPath = path.join(runtimeDir, "podman", "podman.sock");
+  const gatewayBin = path.join(binHome, "openshell-gateway");
+  const gatewayCommandLog = path.join(directory, "gateway-commands.jsonl");
+  const gatewayPidFile = path.join(runtimeDir, "nemoclaw-openshell-gateway.pid");
+  const gatewayTlsDir = path.join(stateHome, "nemoclaw", "openshell-docker-gateway", "tls");
+  const gatewayUnitPath = path.join(
+    configHome,
+    "systemd",
+    "user",
+    "nemoclaw-openshell-gateway.service",
+  );
   fs.mkdirSync(binDir);
   fs.mkdirSync(runtimeDir);
+  fs.mkdirSync(path.dirname(gatewayBin), { recursive: true, mode: 0o700 });
+  fs.mkdirSync(path.dirname(gatewayUnitPath), { recursive: true, mode: 0o700 });
   const shim = installPortableProfileSystemctlShim(binDir);
   writeExecutable(
     path.join(binDir, "podman"),
@@ -52,6 +84,12 @@ const fs = require("node:fs");
 const net = require("node:net");
 const args = process.argv.slice(2);
 if (args[0] === "info") {
+  if (args.includes("{{.Host.CgroupManager}}")) {
+    const source = fs.readFileSync(process.env.CONTAINERS_CONF, "utf8");
+    const configured = source.match(/^cgroup_manager = "([^"]+)"$/m)?.[1] ?? "";
+    process.stdout.write((process.env.FAKE_PODMAN_CGROUP_MANAGER ?? configured) + "\\n");
+    process.exit(0);
+  }
   process.stdout.write(process.env.FAKE_PODMAN_SOCKET + "\\n");
   process.exit(0);
 }
@@ -89,16 +127,92 @@ process.on("SIGTERM", stop);
 `,
   );
   writeExecutable(path.join(binDir, "docker"), "#!/usr/bin/env bash\nexit 0\n");
+  writeExecutable(
+    gatewayBin,
+    `#!${process.execPath}
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const record = (value) => fs.appendFileSync(
+  process.env.FAKE_GATEWAY_COMMAND_LOG,
+  JSON.stringify(value) + "\\n",
+);
+if (
+  args.length === 5 &&
+  args[0] === "generate-certs" &&
+  args[1] === "--output-dir" &&
+  args[3] === "--server-san" &&
+  args[4] === "host.openshell.internal"
+) {
+  if (fs.existsSync(process.env.FAKE_GATEWAY_CERT_MARKER + ".fail")) {
+    console.error("test-only gateway certificate diagnostic");
+    process.exit(70);
+  }
+  fs.mkdirSync(args[2], { recursive: true, mode: 0o700 });
+  fs.writeFileSync(process.env.FAKE_GATEWAY_CERT_MARKER, "generated\\n", { mode: 0o600 });
+  record({
+    args,
+    kind: "generate-certs",
+    nvidiaInferenceApiKey: process.env.NVIDIA_INFERENCE_API_KEY ?? null,
+    path: process.env.PATH,
+    tls: process.env.OPENSHELL_LOCAL_TLS_DIR,
+  });
+  process.exit(0);
+}
+if (args.length !== 0) process.exit(64);
+record({
+  bindAddress: process.env.OPENSHELL_BIND_ADDRESS ?? null,
+  bindMounts: process.env.NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS ?? null,
+  disableGatewayAuth: process.env.OPENSHELL_DISABLE_GATEWAY_AUTH ?? null,
+  disableTls: process.env.OPENSHELL_DISABLE_TLS ?? null,
+  dockerHost: process.env.DOCKER_HOST,
+  drivers: process.env.OPENSHELL_DRIVERS,
+  kind: "serve",
+  nvidiaInferenceApiKey: process.env.NVIDIA_INFERENCE_API_KEY ?? null,
+  path: process.env.PATH,
+  pid: process.pid,
+  tls: process.env.OPENSHELL_LOCAL_TLS_DIR,
+});
+const stop = () => process.exit(0);
+process.on("SIGINT", stop);
+process.on("SIGTERM", stop);
+setInterval(() => undefined, 1000);
+`,
+  );
+  fs.writeFileSync(gatewayUnitPath, gatewayServiceUnit(gatewayBin), { mode: 0o600 });
+  const gatewayEnvFile = path.join(homeDir, ".config", "openshell", "gateway.env");
+  fs.mkdirSync(path.dirname(gatewayEnvFile), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(
+    gatewayEnvFile,
+    `DOCKER_HOST='unix://${socketPath}'\nOPENSHELL_DRIVERS=podman\nOPENSHELL_LOCAL_TLS_DIR=${gatewayTlsDir}\n`,
+    { mode: 0o600 },
+  );
   return {
     binDir,
     directory,
     env: {
       ...process.env,
+      FAKE_GATEWAY_CERT_MARKER: path.join(directory, "gateway-cert.marker"),
+      FAKE_GATEWAY_COMMAND_LOG: gatewayCommandLog,
       FAKE_PODMAN_PID_LOG: path.join(directory, "podman-pids.log"),
       FAKE_PODMAN_SOCKET: socketPath,
+      HOME: homeDir,
+      NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS: "1",
+      NVIDIA_INFERENCE_API_KEY: "test-only-hostile-inherited-key",
+      OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+      OPENSHELL_DISABLE_GATEWAY_AUTH: "1",
+      OPENSHELL_DISABLE_TLS: "1",
       PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      XDG_BIN_HOME: binHome,
+      XDG_CONFIG_HOME: configHome,
       XDG_RUNTIME_DIR: runtimeDir,
+      XDG_STATE_HOME: stateHome,
     },
+    gatewayBin,
+    gatewayCommandLog,
+    gatewayPidFile,
+    gatewayTlsDir,
+    gatewayUnitPath,
+    homeDir,
     runtimeDir,
     shim,
     socketPath,
@@ -123,6 +237,24 @@ function formatPsStartTime(scope: FixtureScope, startTime: string): ReturnType<t
       "portable-profile-ps-start-time",
       scope.shim,
       startTime,
+    ],
+    {
+      encoding: "utf8",
+      env: scope.env,
+      killSignal: "SIGKILL",
+      timeout: 15_000,
+    },
+  );
+}
+
+function readManagedGatewayBinaryPath(scope: FixtureScope): ReturnType<typeof spawnSync> {
+  return spawnSync(
+    "bash",
+    [
+      "-c",
+      'source "$1"\nread_managed_gateway_binary_path',
+      "portable-profile-gateway-binary",
+      scope.shim,
     ],
     {
       encoding: "utf8",
@@ -164,6 +296,10 @@ function systemctlAsync(
 
 function serviceStatus(scope: FixtureScope): number | null {
   return systemctl(scope, ["--user", "is-active", "--quiet", "podman.service"]).status;
+}
+
+function gatewayStatus(scope: FixtureScope): number | null {
+  return systemctl(scope, ["--user", "is-active", "--quiet", "nemoclaw-openshell-gateway"]).status;
 }
 
 function activateThroughSocket(socketPath: string): Promise<string> {
@@ -228,6 +364,28 @@ async function waitForFileText(filePath: string, text: string): Promise<void> {
     interval: 50,
     timeout: 5_000,
   });
+}
+
+function readGatewayCommands(scope: FixtureScope): Record<string, unknown>[] {
+  return fs
+    .readFileSync(scope.gatewayCommandLog, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+async function waitForGatewayCommands(
+  scope: FixtureScope,
+  expectedKinds: string[],
+): Promise<Record<string, unknown>[]> {
+  return vi.waitFor(
+    () => {
+      const commands = readGatewayCommands(scope);
+      expect(commands.map((command) => command.kind)).toEqual(expectedKinds);
+      return commands;
+    },
+    { timeout: 5_000 },
+  );
 }
 
 function pidIsActive(pid: number): boolean {
@@ -322,6 +480,37 @@ function portableLaunchStep(name: string): WorkflowStep {
 }
 
 describe("portable profile systemctl fixture", () => {
+  it.each(["/usr/local/bin/openshell-gateway", "/usr/bin/openshell-gateway"])(
+    "reads installer-selected OpenShell gateway binary %s from the managed user service (#9208)",
+    (gatewayBinary) => {
+      const scope = createFixture();
+      try {
+        fs.writeFileSync(scope.gatewayUnitPath, gatewayServiceUnit(gatewayBinary), { mode: 0o600 });
+        const result = readManagedGatewayBinaryPath(scope);
+        expect(result.status, String(result.stderr)).toBe(0);
+        expect(result.stdout).toBe(`${gatewayBinary}\n`);
+      } finally {
+        fs.rmSync(scope.directory, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it("rejects a managed OpenShell gateway user service that names an untrusted binary path (#9208)", () => {
+    const scope = createFixture();
+    try {
+      fs.writeFileSync(
+        scope.gatewayUnitPath,
+        gatewayServiceUnit("/opt/openshell/bin/openshell-gateway"),
+        { mode: 0o600 },
+      );
+      const result = readManagedGatewayBinaryPath(scope);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toBe("");
+    } finally {
+      fs.rmSync(scope.directory, { force: true, recursive: true });
+    }
+  });
+
   it("normalizes irregular ps fallback spacing to one process-start-time identity (#9006)", () => {
     const scope = createFixture();
     try {
@@ -453,9 +642,325 @@ describe("portable profile systemctl fixture", () => {
   );
 
   it(
-    "serializes try-restart with a public-socket request and leaves only the recorded backend process active (#9006)",
+    "runs the managed gateway user-service sequence and cleanup through the fixture (#9208)",
     { timeout: 30_000 },
     async () => {
+      const scope = createFixture();
+      try {
+        expect(gatewayStatus(scope)).toBe(3);
+        expect(systemctl(scope, ["--user", "daemon-reload"]).status).toBe(0);
+
+        const identity = systemctl(scope, [
+          "--user",
+          "show",
+          "nemoclaw-openshell-gateway",
+          "--property=FragmentPath",
+          "--property=ExecStart",
+        ]);
+        expect(identity.status, String(identity.stderr)).toBe(0);
+        expect(identity.stdout).toBe(
+          `FragmentPath=${scope.gatewayUnitPath}\nExecStart={ path=${scope.gatewayBin} ; argv[]=${scope.gatewayBin} ; }\n`,
+        );
+        expect(systemctl(scope, ["--user", "stop", "nemoclaw-openshell-gateway"]).status).toBe(0);
+        expect(systemctl(scope, ["--user", "enable", "nemoclaw-openshell-gateway"]).status).toBe(0);
+
+        const restart = systemctl(scope, ["--user", "restart", "nemoclaw-openshell-gateway"]);
+        expect(restart.status, String(restart.stderr)).toBe(0);
+        expect(gatewayStatus(scope)).toBe(0);
+        const gatewayProcess = readFixtureProcessRecord(scope.gatewayPidFile);
+        expectProcessActive(gatewayProcess.pid);
+
+        const activeIdentity = systemctl(scope, [
+          "--user",
+          "show",
+          "nemoclaw-openshell-gateway",
+          "--property=FragmentPath",
+          "--property=ExecStart",
+          "--property=ActiveState",
+          "--property=MainPID",
+        ]);
+        expect(activeIdentity.status, String(activeIdentity.stderr)).toBe(0);
+        expect(activeIdentity.stdout).toContain("ActiveState=active\n");
+        expect(activeIdentity.stdout).toContain(`MainPID=${String(gatewayProcess.pid)}\n`);
+
+        const commands = await waitForGatewayCommands(scope, ["generate-certs", "serve"]);
+        expect(commands[0]).toMatchObject({
+          args: [
+            "generate-certs",
+            "--output-dir",
+            scope.gatewayTlsDir,
+            "--server-san",
+            "host.openshell.internal",
+          ],
+          nvidiaInferenceApiKey: null,
+          path: "/usr/local/bin:/usr/bin:/bin",
+          tls: scope.gatewayTlsDir,
+        });
+        expect(commands[1]).toMatchObject({
+          bindAddress: null,
+          bindMounts: null,
+          disableGatewayAuth: null,
+          disableTls: null,
+          dockerHost: `unix://${scope.socketPath}`,
+          drivers: "podman",
+          nvidiaInferenceApiKey: null,
+          path: "/usr/local/bin:/usr/bin:/bin",
+          tls: scope.gatewayTlsDir,
+        });
+        expect(fs.readFileSync(scope.env.FAKE_GATEWAY_CERT_MARKER!, "utf8")).toBe("generated\n");
+
+        await cleanupPortableProfileSystemctlFixture(scope.runtimeDir);
+        expect(pidIsActive(gatewayProcess.pid)).toBe(false);
+        expect(fs.existsSync(scope.gatewayPidFile)).toBe(false);
+      } finally {
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it("does not emit gateway child output when certificate generation fails (#9208)", async () => {
+    const scope = createFixture();
+    try {
+      fs.writeFileSync(`${scope.env.FAKE_GATEWAY_CERT_MARKER!}.fail`, "fail\n", {
+        mode: 0o600,
+      });
+      const restart = systemctl(scope, ["--user", "restart", "nemoclaw-openshell-gateway"]);
+      expect(restart.status).toBe(1);
+      expect(String(restart.stderr)).toContain(
+        "Portable profile fixture could not generate gateway certificates.",
+      );
+      expect(String(restart.stderr)).not.toContain("test-only gateway certificate diagnostic");
+      expect(fs.existsSync(scope.gatewayPidFile)).toBe(false);
+      expect(
+        fs.statSync(path.join(scope.runtimeDir, "nemoclaw-openshell-gateway.log")).mode & 0o777,
+      ).toBe(0o600);
+    } finally {
+      fs.rmSync(`${scope.env.FAKE_GATEWAY_CERT_MARKER!}.fail`, { force: true });
+      await cleanFixture(scope);
+    }
+  });
+
+  it(
+    "preserves a launch record when initial gateway cleanup fails (#9208)",
+    { timeout: 30_000 },
+    async () => {
+      const scope = createFixture();
+      try {
+        const restart = systemctl(
+          {
+            ...scope,
+            env: {
+              ...scope.env,
+              NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_CLEANUP_FAILURE: "1",
+              NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_RECORD_FAILURE: "1",
+            },
+          },
+          ["--user", "restart", "nemoclaw-openshell-gateway"],
+        );
+        expect(restart.status).toBe(2);
+        expect(String(restart.stderr)).toContain(
+          "Portable profile fixture could not create the gateway process identity record.",
+        );
+        expect(String(restart.stderr)).toContain(
+          "Portable profile fixture could not stop the gateway launch process.",
+        );
+        const gatewayLaunchPidFile = path.join(
+          scope.runtimeDir,
+          "nemoclaw-openshell-gateway-launch.pid",
+        );
+        expect(fs.existsSync(scope.gatewayPidFile)).toBe(false);
+        expect(fs.existsSync(gatewayLaunchPidFile)).toBe(true);
+        const commands = await waitForGatewayCommands(scope, ["generate-certs", "serve"]);
+        const gatewayPid = commands[1]!.pid as number;
+        expect(readFixtureProcessRecord(gatewayLaunchPidFile).pid).toBe(gatewayPid);
+        expect(pidIsActive(gatewayPid)).toBe(true);
+        await cleanupPortableProfileSystemctlFixture(scope.runtimeDir);
+        expect(pidIsActive(gatewayPid)).toBe(false);
+        expect(fs.existsSync(gatewayLaunchPidFile)).toBe(false);
+      } finally {
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it(
+    "does not leave a gateway launch process when launch-record publication and cleanup fail (#9208)",
+    { timeout: 30_000 },
+    async () => {
+      const scope = createFixture();
+      try {
+        const restart = systemctl(
+          {
+            ...scope,
+            env: {
+              ...scope.env,
+              NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_LAUNCH_RECORD_FAILURE: "1",
+              NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_UNRECORDED_CLEANUP_FAILURE: "1",
+            },
+          },
+          ["--user", "restart", "nemoclaw-openshell-gateway"],
+        );
+        expect(restart.status).toBe(2);
+        expect(String(restart.stderr)).toContain(
+          "Portable profile fixture could not create the gateway launch identity record.",
+        );
+        expect(String(restart.stderr)).toContain(
+          "Portable profile fixture could not complete gateway launch cleanup.",
+        );
+        const gatewayLaunchPidFile = path.join(
+          scope.runtimeDir,
+          "nemoclaw-openshell-gateway-launch.pid",
+        );
+        expect(fs.existsSync(scope.gatewayPidFile)).toBe(false);
+        expect(fs.existsSync(gatewayLaunchPidFile)).toBe(false);
+        const gatewayLog = fs.readFileSync(
+          path.join(scope.runtimeDir, "nemoclaw-openshell-gateway.log"),
+          "utf8",
+        );
+        const launchedPid = /injected gateway launch-record failure for process ([0-9]+)/.exec(
+          gatewayLog,
+        );
+        expect(launchedPid).not.toBeNull();
+        const gatewayPid = Number(launchedPid![1]);
+        await vi.waitFor(() => expect(pidIsActive(gatewayPid)).toBe(false));
+        await waitForGatewayCommands(scope, ["generate-certs"]);
+      } finally {
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it(
+    "isolates the managed gateway user service from ambient XDG homes (#9208)",
+    { timeout: 30_000 },
+    async () => {
+      const ambientRoot = fs.mkdtempSync("/tmp/portable-systemctl-ambient-");
+      vi.stubEnv("XDG_BIN_HOME", path.join(ambientRoot, "bin"));
+      vi.stubEnv("XDG_CONFIG_HOME", path.join(ambientRoot, "config"));
+      vi.stubEnv("XDG_RUNTIME_DIR", path.join(ambientRoot, "runtime"));
+      vi.stubEnv("XDG_STATE_HOME", path.join(ambientRoot, "state"));
+      const scope = createFixture();
+      try {
+        expect(scope.env.XDG_BIN_HOME).not.toBe(path.join(ambientRoot, "bin"));
+        expect(scope.env.XDG_CONFIG_HOME).not.toBe(path.join(ambientRoot, "config"));
+        expect(scope.env.XDG_RUNTIME_DIR).not.toBe(path.join(ambientRoot, "runtime"));
+        expect(scope.env.XDG_STATE_HOME).not.toBe(path.join(ambientRoot, "state"));
+        const reload = systemctl(scope, ["--user", "daemon-reload"]);
+        expect(reload.status, String(reload.stderr)).toBe(0);
+        const restart = systemctl(scope, ["--user", "restart", "nemoclaw-openshell-gateway"]);
+        expect(restart.status, String(restart.stderr)).toBe(0);
+        expect(fs.existsSync(scope.gatewayPidFile)).toBe(true);
+        expect(fs.readdirSync(ambientRoot)).toEqual([]);
+      } finally {
+        vi.unstubAllEnvs();
+        fs.rmSync(ambientRoot, { force: true, recursive: true });
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it(
+    "preserves the gateway PID record when startup identity validation fails (#9208)",
+    { timeout: 30_000 },
+    async () => {
+      const scope = createFixture();
+      const originalRecordPath = `${scope.gatewayPidFile}.before-validation`;
+      try {
+        const result = systemctl(
+          {
+            ...scope,
+            env: {
+              ...scope.env,
+              NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_RECORD_DRIFT: "1",
+            },
+          },
+          ["--user", "restart", "nemoclaw-openshell-gateway"],
+        );
+        fs.accessSync(originalRecordPath, fs.constants.R_OK);
+        expect(result.status).toBe(1);
+        expect(String(result.stderr)).toContain("does not match process");
+        expect(fs.existsSync(scope.gatewayPidFile)).toBe(true);
+        expect(fs.existsSync(originalRecordPath)).toBe(true);
+        const driftedRecord = readFixtureProcessRecord(scope.gatewayPidFile);
+        expect(pidIsActive(driftedRecord.pid)).toBe(true);
+      } finally {
+        try {
+          fs.copyFileSync(originalRecordPath, scope.gatewayPidFile);
+          fs.chmodSync(scope.gatewayPidFile, 0o600);
+        } finally {
+          fs.rmSync(originalRecordPath, { force: true });
+          await cleanFixture(scope);
+        }
+      }
+    },
+  );
+
+  it(
+    "rejects a reused gateway PID during shared cleanup without signaling the unrelated process (#9208)",
+    { timeout: 30_000 },
+    async () => {
+      const scope = createFixture();
+      let originalRecord: FixtureProcessRecord | undefined;
+      let unrelated: ReturnType<typeof spawn> | undefined;
+      try {
+        expect(systemctl(scope, ["--user", "restart", "nemoclaw-openshell-gateway"]).status).toBe(
+          0,
+        );
+        originalRecord = readFixtureProcessRecord(scope.gatewayPidFile);
+        unrelated = spawnUnrelatedProcess();
+        await vi.waitFor(() => expect(pidIsActive(unrelated!.pid!)).toBe(true));
+        fs.writeFileSync(scope.gatewayPidFile, replaceRecordedPid(originalRecord, unrelated.pid!), {
+          mode: 0o600,
+        });
+
+        await expect(cleanupPortableProfileSystemctlFixture(scope.runtimeDir)).rejects.toThrow(
+          `Portable profile fixture PID file ${scope.gatewayPidFile} does not match process ${String(unrelated.pid)}.`,
+        );
+        expect(pidIsActive(unrelated.pid!)).toBe(true);
+        expect(fs.existsSync(scope.gatewayPidFile)).toBe(true);
+        expect(fs.existsSync(scope.directory)).toBe(true);
+      } finally {
+        restoreFixtureProcessRecord(scope.gatewayPidFile, originalRecord);
+        await stopUnrelatedProcess(unrelated);
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it(
+    "rejects gateway unit drift before restarting the managed process (#9208)",
+    { timeout: 30_000 },
+    async () => {
+      const scope = createFixture();
+      try {
+        const start = systemctl(scope, ["--user", "restart", "nemoclaw-openshell-gateway"]);
+        expect(start.status, String(start.stderr)).toBe(0);
+        const gatewayProcess = readFixtureProcessRecord(scope.gatewayPidFile);
+        expectProcessActive(gatewayProcess.pid);
+        fs.writeFileSync(scope.gatewayUnitPath, "[Service]\nExecStart=/tmp/foreign\n", {
+          mode: 0o600,
+        });
+
+        const restart = systemctl(scope, ["--user", "restart", "nemoclaw-openshell-gateway"]);
+        expect(restart.status).not.toBe(0);
+        expect(restart.stderr).toContain("rejected the foreign gateway user service");
+        expectProcessActive(gatewayProcess.pid);
+        expect(readFixtureProcessRecord(scope.gatewayPidFile).pid).toBe(gatewayProcess.pid);
+      } finally {
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it.each([
+    { scenario: "activator PID" },
+    { scenario: "service PID" },
+    { scenario: "public socket" },
+    { scenario: "backend socket" },
+  ])(
+    "serializes try-restart with a public-socket request and leaves only the recorded backend process active [$scenario] (#9006)",
+    { timeout: 30_000 },
+    async ({ scenario }) => {
       const scope = createFixture();
       const refreshGate = path.join(scope.directory, "refresh-gate");
       const servicePidFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.pid");
@@ -498,14 +1003,15 @@ describe("portable profile systemctl fixture", () => {
 
         await cleanupPortableProfileSystemctlFixture(scope.runtimeDir);
         expect(backendPids.every((pid) => !pidIsActive(pid))).toBe(true);
-        for (const artifact of [
-          activatorPidFile,
-          servicePidFile,
-          scope.socketPath,
-          backendSocketPath,
-        ]) {
-          expect(fs.existsSync(artifact), artifact).toBe(false);
-        }
+        const artifact = (
+          {
+            "activator PID": activatorPidFile,
+            "service PID": servicePidFile,
+            "public socket": scope.socketPath,
+            "backend socket": backendSocketPath,
+          } as const
+        )[scenario]!;
+        expect(fs.existsSync(artifact), artifact).toBe(false);
       } finally {
         await cleanFixture(scope);
       }
@@ -542,10 +1048,15 @@ describe("portable profile systemctl fixture", () => {
     },
   );
 
-  it(
-    "stops both fixture processes and removes both sockets during cleanup (#9006)",
+  it.each([
+    { scenario: "activator PID" },
+    { scenario: "service PID" },
+    { scenario: "public socket" },
+    { scenario: "backend socket" },
+  ])(
+    "stops both fixture processes and removes both sockets during cleanup [$scenario] (#9006)",
     { timeout: 30_000 },
-    async () => {
+    async ({ scenario }) => {
       const scope = createFixture();
       const activatorPidFile = path.join(scope.runtimeDir, "nemoclaw-podman-socket-activator.pid");
       const servicePidFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.pid");
@@ -569,14 +1080,15 @@ describe("portable profile systemctl fixture", () => {
         await cleanupPortableProfileSystemctlFixture(scope.runtimeDir);
 
         expect(pids.every((pid) => !pidIsActive(pid))).toBe(true);
-        for (const artifact of [
-          activatorPidFile,
-          servicePidFile,
-          scope.socketPath,
-          backendSocketPath,
-        ]) {
-          expect(fs.existsSync(artifact), artifact).toBe(false);
-        }
+        const artifact = (
+          {
+            "activator PID": activatorPidFile,
+            "service PID": servicePidFile,
+            "public socket": scope.socketPath,
+            "backend socket": backendSocketPath,
+          } as const
+        )[scenario]!;
+        expect(fs.existsSync(artifact), artifact).toBe(false);
       } finally {
         await cleanFixture(scope);
       }
@@ -848,34 +1360,141 @@ describe("portable profile systemctl fixture", () => {
         ["--user", "start", "podman.socket", "trailing"],
         ["--user", "enable", "podman.socket"],
       ];
-      for (const args of driftedCommands) {
+      driftedCommands.forEach((args) => {
         const result = systemctl(scope, args);
         expect(result.status, args.join(" ")).toBe(64);
         expect(result.stderr).toContain("unexpected user-service command:");
-      }
+      });
     } finally {
       fs.rmSync(scope.directory, { force: true, recursive: true });
     }
   });
 
-  it("binds portable-launch setup and always-run cleanup to the shared systemctl fixture (#9006)", () => {
+  it("rejects malformed or extended gateway user-service commands (#9208)", () => {
+    const scope = createFixture();
+    try {
+      const driftedCommands = [
+        ["--user", "daemon-reload", "trailing"],
+        ["--user", "show", "nemoclaw-openshell-gateway", "--property=ExecStart"],
+        ["--user", "restart", "nemoclaw-openshell-gateway", "trailing"],
+        ["--user", "enable", "--now", "nemoclaw-openshell-gateway"],
+        ["--user", "is-active", "nemoclaw-openshell-gateway", "--quiet"],
+      ];
+      driftedCommands.forEach((args) => {
+        const result = systemctl(scope, args);
+        expect(result.status, args.join(" ")).toBe(64);
+        expect(result.stderr).toContain("unexpected user-service command:");
+      });
+    } finally {
+      fs.rmSync(scope.directory, { force: true, recursive: true });
+    }
+  });
+
+  it("binds portable-launch to delegated systemd Podman and disposable BuildKit", () => {
     const provision = portableLaunchStep("Provision restricted rootless Linux runtime").run ?? "";
-    expect(provision).toContain(
-      'install -m 700 test/e2e/fixtures/portable-profile-systemctl-shim.sh "$shim_dir/systemctl"',
+    expect(provision).not.toContain("portable-profile-systemctl-shim.sh");
+    expect(provision).toContain('sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" /run/nemoclaw');
+    expect(provision).toContain('containers_conf="/run/nemoclaw/portable-containers.conf"');
+    expect(provision).toContain("podman.service.d/90-nemoclaw-cgroup-manager.conf");
+    expect(provision).toContain("user@.service.d/90-nemoclaw-cpu-delegation.conf");
+    expect(provision).toContain("/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf");
+    expect(provision).toContain("user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf");
+    expect(provision).toContain("Delegate=cpu memory pids");
+    expect(provision.match(/CPUWeight=100/gu)).toHaveLength(2);
+    expect(provision).toContain('sudo systemctl stop "user@${uid}.service"');
+    expect(provision).toContain("sudo systemctl daemon-reload");
+    expect(provision).toContain('sudo systemctl start "user@${uid}.service"');
+    expect(provision).toContain("/usr/bin/systemctl --user start podman.socket");
+    expect(provision).toContain("inspectPortableCpuDelegation");
+    const podmanConfigIndex = provision.indexOf('cgroup_manager = "systemd"');
+    expect(podmanConfigIndex).toBeGreaterThanOrEqual(0);
+    expect(podmanConfigIndex).toBeLessThan(
+      provision.indexOf('sudo systemctl start "user@${uid}.service"'),
     );
-    expect(provision).toContain("systemctl --user start podman.socket");
     const runtimeExportIndex = provision.indexOf("XDG_RUNTIME_DIR=%s");
     expect(runtimeExportIndex).toBeGreaterThanOrEqual(0);
     expect(runtimeExportIndex).toBeLessThan(
-      provision.indexOf("systemctl --user start podman.socket"),
+      provision.indexOf("/usr/bin/systemctl --user start podman.socket"),
     );
 
+    const buildkit = portableLaunchStep("Prove nested BuildKit on the portable Podman socket");
+    expect(buildkit.run).toContain("docker buildx create");
+    expect(buildkit.run).toContain("--driver docker-container");
+    expect(buildkit.run).toContain('"$DOCKER_HOST"');
+    expect(buildkit.run).toContain('docker buildx inspect "$builder_name" --bootstrap');
+    expect(buildkit.run).toContain("docker buildx build");
+
     const cleanup = portableLaunchStep("Clean up portable runtime");
+    const cleanupRun = cleanup.run ?? "";
     expect(cleanup.if).toBe("always()");
-    expect(cleanup.run).toContain('runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"');
-    expect(cleanup.run).toContain(
-      'import { cleanupPortableProfileSystemctlFixture } from "./test/e2e/fixtures/portable-profile-systemctl.ts"; await cleanupPortableProfileSystemctlFixture(process.argv[1]);',
+    expect(cleanupRun).toContain('docker buildx rm "$builder_name"');
+    expect(cleanupRun).toContain("Delegate=cpu memory pids\\n'");
+    expect(cleanupRun).toContain("CPUWeight=100\\n'");
+    expect(cleanupRun).toContain("sudo systemctl daemon-reload");
+    expect(cleanupRun.indexOf('docker buildx rm "$builder_name"')).toBeLessThan(
+      cleanupRun.indexOf("podman system reset"),
     );
-    expect(cleanup.run).toContain('"$runtime_dir"');
+    expect(cleanupRun).toContain(
+      "rm -f -- /run/nemoclaw/portable-inference.json /run/nemoclaw/.portable-inference.json.tmp",
+    );
+  });
+
+  it("creates the Portable Podman configuration and rejects a non-systemd cgroup manager", async () => {
+    const scope = createFixture();
+    const provision = portableLaunchStep("Provision restricted rootless Linux runtime").run ?? "";
+    const configStart = provision.indexOf('if test -e "$containers_conf"');
+    const configEnd = provision.indexOf("\n\ninstall_fixture_drop_in", configStart);
+    const managerStart = provision.indexOf('cgroup_manager="$(podman info');
+    const managerEnd = provision.indexOf("\npodman --version", managerStart);
+    expect([configStart, configEnd, managerStart, managerEnd]).not.toContain(-1);
+    const containersConf = path.join(scope.directory, "portable-containers.conf");
+    const receipt = path.join(scope.directory, "receipt");
+    try {
+      const configure = spawnSync(
+        "bash",
+        [
+          "-c",
+          `set -euo pipefail\ncontainers_conf="$1"\nreceipt="$2"\n${provision.slice(configStart, configEnd)}`,
+          "configure-podman",
+          containersConf,
+          receipt,
+        ],
+        { encoding: "utf8", env: scope.env },
+      );
+      expect(configure.status, configure.stderr).toBe(0);
+      expect(fs.readFileSync(containersConf, "utf8")).toBe(
+        '[engine]\ncgroup_manager = "systemd"\n',
+      );
+      expect(fs.statSync(containersConf).mode & 0o777).toBe(0o600);
+      expect(fs.readFileSync(receipt, "utf8")).toBe(`file\tpodman-config\t${containersConf}\n`);
+      expect(
+        systemctl(scope, [
+          "--user",
+          "set-environment",
+          "NETAVARK_FW=iptables",
+          `CONTAINERS_CONF=${containersConf}`,
+        ]).status,
+      ).toBe(0);
+      expect(systemctl(scope, ["--user", "start", "podman.socket"]).status).toBe(0);
+      expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
+      const managerCheck = provision.slice(managerStart, managerEnd);
+      const runManagerCheck = (manager?: string) =>
+        spawnSync("bash", ["-c", `set -euo pipefail\n${managerCheck}`], {
+          encoding: "utf8",
+          env: {
+            ...scope.env,
+            CONTAINERS_CONF: containersConf,
+            FAKE_PODMAN_CGROUP_MANAGER: manager,
+          },
+        });
+      expect(runManagerCheck().status).toBe(0);
+      const rejected = runManagerCheck("cgroupfs");
+      expect(rejected.status).not.toBe(0);
+      expect(rejected.stderr).toContain(
+        "Portable Podman must use the systemd cgroup manager; observed: cgroupfs",
+      );
+    } finally {
+      await cleanFixture(scope);
+    }
   });
 });

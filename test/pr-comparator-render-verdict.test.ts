@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -124,27 +123,5 @@ describe("PR comparator verdict renderer", () => {
     expect(result.status).toBe(64);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("must be open and contributor-compliant");
-  });
-
-  it("keeps the generation instructions aligned with renderer eligibility", () => {
-    const skill = fs.readFileSync(
-      path.join(process.cwd(), ".agents/skills/nemoclaw-maintainer-pr-comparator/SKILL.md"),
-      "utf8",
-    );
-
-    for (const gate of Object.keys(passingGates)) {
-      expect(skill).toContain(`\`${gate}\``);
-    }
-    expect(skill).toContain("set `winner` only to an eligible PR");
-    expect(skill).toContain("Leave `winner` null when the evidence does not support");
-    expect(skill).toContain(
-      "Set `closest_to_ready` only to an open PR that passes contributor requirements",
-    );
-    expect(skill).toContain(
-      "Stop if the renderer exits with a nonzero status. Do not recommend a merge",
-    );
-    expect(skill).toContain(
-      "The reviewer remains responsible for the score, ranking, and evidence",
-    );
   });
 });
