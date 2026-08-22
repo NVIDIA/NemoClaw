@@ -488,6 +488,39 @@ describe("ordinary OpenClaw pairing settlement", () => {
     );
   });
 
+  it("wires default warm-up and approval adapters to the finalized gateway (#9844)", async () => {
+    const observePairing = vi
+      .fn()
+      .mockReturnValueOnce(PAIRING_ONLY)
+      .mockReturnValueOnce(SETTLED);
+    const runSandboxScopeWarmupRun = vi.fn();
+    const runConnectAutoPairApprovalPass = vi.fn();
+    vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
+      resolveOrdinaryOpenClawPairingTarget: vi.fn(() => PAIRING_TARGET),
+    } as never);
+    vi.spyOn(finalizationHandlerRuntime, "loadPairingQualification").mockReturnValue({
+      observeOrdinaryOpenClawPairingSettlement: observePairing,
+    } as never);
+    vi.spyOn(finalizationHandlerRuntime, "loadAutoPairWarmup").mockReturnValue({
+      runSandboxScopeWarmupRun,
+    } as never);
+    vi.spyOn(finalizationHandlerRuntime, "loadAutoPairApproval").mockReturnValue({
+      runConnectAutoPairApprovalPass,
+    } as never);
+    vi.spyOn(finalizationHandlerRuntime, "loadSandboxLifecycleLock").mockReturnValue({
+      withMcpLifecycleLock: async (_name: string, operation: () => unknown) => operation(),
+    } as never);
+    vi.spyOn(finalizationHandlerRuntime, "loadGatewayRouteLock").mockReturnValue({
+      withGatewayRouteMutationLock: async (_name: string, operation: () => unknown) => operation(),
+    } as never);
+
+    await expect(finalizationHandlerDeps.settleOrdinaryOpenClawPairing("alpha")).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(runSandboxScopeWarmupRun).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(runConnectAutoPairApprovalPass).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
+  });
+
   it("explains the bounded failure without exposing runtime identifiers (#9844)", () => {
     expect(ordinaryOpenClawPairingIncompleteMessage("alpha", "pairing-unavailable")).toBe(
       "OpenClaw onboarding for 'alpha' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.",

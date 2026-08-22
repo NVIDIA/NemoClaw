@@ -3144,7 +3144,7 @@ while time.time() < DEADLINE:
     VALIDATED_REQUEST_IDS.intersection_update(pending_request_ids)
     FAST_REENTRY_BUMPED_REQUEST_IDS.intersection_update(pending_request_ids)
 
-    if not pending and not paired and APPROVED == 0 and not REQUEST_CREATION_WAITING_REPORTED:
+    if not normalized_pending and not paired and APPROVED == 0 and not REQUEST_CREATION_WAITING_REPORTED:
         print('[auto-pair] stage=request-creation waiting reason=no-request')
         REQUEST_CREATION_WAITING_REPORTED = True
 

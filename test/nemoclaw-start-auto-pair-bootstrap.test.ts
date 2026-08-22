@@ -554,7 +554,7 @@ exit 2
 
   it.each([
     ["command failure", 'echo "gateway restarting" >&2\n    exit 1', "command-failed", "10"],
-    ["timeout", "sleep 1", "timeout", "0.05"],
+    ["timeout", "sleep 1", "timeout", "0.5"],
   ])(
     "retries a transient initial CLI approve %s on the next gated-list poll (#6113)",
     (_name, firstAction, failureReason, runTimeoutSeconds) => {
@@ -996,7 +996,10 @@ printf '%s\n' ${JSON.stringify(response)}
         expect(run.stdout).toContain(
           "[auto-pair] stage=validation rejected reason=malformed-request-id",
         );
-        expect(run.stdout).not.toContain(secretMarker);
+        expect(run.stdout).toContain(
+          "[auto-pair] stage=request-creation waiting reason=no-request",
+        );
+        expect(`${run.stdout}\n${run.stderr}`).not.toContain(secretMarker);
         expect(fs.existsSync(approvalMarker)).toBe(false);
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -1089,7 +1092,7 @@ fi
       expect(
         run.stdout.match(/stage=validation rejected reason=malformed-request-id/g),
       ).toHaveLength(2);
-      expect(run.stdout).not.toContain("malformed-request-secret");
+      expect(`${run.stdout}\n${run.stderr}`).not.toContain("malformed-request-secret");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
