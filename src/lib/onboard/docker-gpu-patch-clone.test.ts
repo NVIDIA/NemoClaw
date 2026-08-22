@@ -164,7 +164,9 @@ describe("Docker GPU clone envelope", () => {
   });
 
   it("builds clone args that preserve OpenShell labels, mounts, and runtime settings", () => {
-    const args = buildDockerGpuCloneRunArgs(inspectFixture(), buildDockerGpuMode("gpus"));
+    const inspect = inspectFixture();
+    inspect.HostConfig!.Annotations = { "io.container.manager": "libpod" };
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("gpus"));
 
     expect(args).toEqual(
       expect.arrayContaining([
@@ -178,6 +180,8 @@ describe("Docker GPU clone envelope", () => {
         "OPENSHELL_ENDPOINT=http://host.openshell.internal:8080/",
         "--env",
         "OPENSHELL_TEST=1",
+        "--annotation",
+        "io.container.manager=libpod",
         "--label",
         "openshell.ai/managed-by=openshell",
         "--label",

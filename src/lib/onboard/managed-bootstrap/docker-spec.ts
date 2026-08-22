@@ -34,6 +34,7 @@ const CONFIG_KEYS = new Set([
 ]);
 
 const HOST_CONFIG_KEYS = new Set([
+  "Annotations",
   "AutoRemove",
   "Binds",
   "BlkioDeviceReadBps",

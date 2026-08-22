@@ -30,8 +30,13 @@ describe("managed bootstrap Docker launch spec", () => {
     const first = createDockerGpuInspectFixture();
     const second = structuredClone(first);
     Object.assign(second.Config!, { StopTimeout: 45 });
+    const annotated = structuredClone(first);
+    annotated.HostConfig!.Annotations = { "io.container.manager": "libpod" };
 
     expect(normalizeDockerManagedBootstrapLaunchSpec(second).hash).not.toBe(
+      normalizeDockerManagedBootstrapLaunchSpec(first).hash,
+    );
+    expect(normalizeDockerManagedBootstrapLaunchSpec(annotated).hash).not.toBe(
       normalizeDockerManagedBootstrapLaunchSpec(first).hash,
     );
   });

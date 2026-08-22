@@ -224,6 +224,7 @@ export type DockerContainerInspect = {
     Dead?: boolean;
   } | null;
   HostConfig?: {
+    Annotations?: Record<string, string> | null;
     Binds?: string[] | null;
     Mounts?: Array<{
       Type?: string;

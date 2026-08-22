@@ -506,6 +506,11 @@ export function buildDockerGpuCloneRunArgs(
     args.push("--env", `${OPENSHELL_SANDBOX_COMMAND_ENV}=${sandboxCommand}`);
   }
 
+  const annotations = host.Annotations || {};
+  for (const key of Object.keys(annotations).sort()) {
+    const value = annotations[key];
+    if (value !== undefined && value !== null) args.push("--annotation", `${key}=${value}`);
+  }
   const labels = config.Labels || {};
   for (const key of Object.keys(labels).sort()) {
     const value = labels[key];
