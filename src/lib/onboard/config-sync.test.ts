@@ -31,10 +31,15 @@ function runConfigSyncScript(
   try {
     writeFakeCommand(fakeBin, "id", fakeUid);
     writeFakeCommand(fakeBin, "stat", fakeOwnerUid);
-    const testScript = script.replace(
-      'nemoclaw_dir="/sandbox/.nemoclaw"',
-      `nemoclaw_dir=${JSON.stringify(path.join(homeDir, ".nemoclaw"))}`,
-    );
+    const testScript = script
+      .replace(
+        'nemoclaw_dir="/sandbox/.nemoclaw"',
+        `nemoclaw_dir=${JSON.stringify(path.join(homeDir, ".nemoclaw"))}`,
+      )
+      .replace(
+        "config_dir=/sandbox/.openclaw",
+        `config_dir=${JSON.stringify(path.join(homeDir, ".openclaw"))}`,
+      );
     const result = spawnSync("bash", ["-c", testScript], {
       cwd: homeDir,
       env: { ...process.env, HOME: homeDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
