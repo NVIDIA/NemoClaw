@@ -87,7 +87,7 @@ import {
   type UninstallPlan,
 } from "./plan";
 import {
-  assertHermesPortableUninstallAvailable,
+  HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE,
   hasPortableRuntimeCleanup,
   PORTABLE_RETIREMENT_STATE_ENTRIES,
   portableRetirementPreservationEntries,
@@ -2804,7 +2804,9 @@ function executePlan(
         "portable-demo-lifecycle",
         "sandboxes.json",
         "sandboxes.json.lock",
+        "portable-inference",
         "state",
+        HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE,
         ...PORTABLE_RETIREMENT_STATE_ENTRIES,
         ...portableRetirementEntries.stateRoot,
       ]
@@ -3099,7 +3101,7 @@ function completePortablePlan(
   )
     return { ok: false };
   runtime.log(
-    "Kept ~/.nemoclaw/portable-uninstall-retirement.json until a later completed onboarding; it contains dictionary-testable pseudonymous fingerprints, not raw sandbox names or configuration, and another process running as this user can change it.",
+    "Kept secret-free portable cleanup evidence for exact retry and lifecycle reconciliation.",
   );
   return { ok };
 }
@@ -3292,7 +3294,6 @@ export async function runUninstallPlanProduction(
   const home = env.HOME || os.homedir();
   try {
     return await (deps.withPortableHostFence ?? withPortableHostFence)(home, () => {
-      assertHermesPortableUninstallAvailable(env);
       return runUninstallPlan(options, { ...deps, env });
     });
   } catch (error) {

@@ -234,16 +234,44 @@ NemoClaw preserves either directory when it contains an unrelated entry.
 Other preserved user data follows the normal `--destroy-user-data` behavior.
 After NemoClaw releases the locks, later uninstall-plan cleanup never recursively revisits the canonical receipt, sandbox registry, or `~/.config/nemoclaw/portable/containers.conf` paths.
 This preserves any new lifecycle generation published after lock release.
+<AgentOnly variant="openclaw,deepagents">
 After successful portable cleanup with `--destroy-user-data`, the sole residual regular file under `~/.nemoclaw/` is `~/.nemoclaw/portable-uninstall-retirement.json`, written at mode `0600` under a current-UID-owned, mode-`0700` `~/.nemoclaw/` directory.
 Another same-user process can change the record, so this protection assumes cooperative NemoClaw writers under that UID.
 NemoClaw retains the record until a later completed onboarding durably supersedes it.
 It contains a random local cleanup ID, receipt basenames derived from SHA-256 hashes of sandbox names, and length-framed, transaction-scoped, dictionary-testable pseudonymous fingerprints, but no raw sandbox or gateway names, absolute paths, environment values, configuration bytes, or secrets.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+After successful schema `5` Portable Ollama cleanup with `--destroy-user-data`, `~/.nemoclaw/hermes-portable-uninstall-transaction.json` remains at mode `0600` under the current-UID-owned, mode-`0700` `~/.nemoclaw/` directory.
+Another same-user process can change the journal, so this protection assumes cooperative NemoClaw writers under that UID.
+The journal is credential-free.
+A completed journal remains as exact no-op evidence for a repeated uninstall.
+While the journal records an incomplete phase, Hermes Portable onboarding stops before it publishes replacement lifecycle authority.
+Rerun full uninstall to complete the recorded cleanup before you onboard again.
+If a later completed onboarding publishes a new schema `5` lifecycle, the next uninstall replaces the completed journal with that lifecycle's exact authority before mutation.
+</AgentOnly>
+
 A repeat invocation remains on portable cleanup and performs no Docker probe or mutation, implicit OpenShell cleanup, or model cleanup.
 If NemoClaw cannot prove the required portable authority or complete a cleanup step, uninstall exits nonzero.
 Before portable retirement completes, it also keeps the installed NemoClaw CLI and source so the same version-pinned command remains available for retry.
 It preserves any existing durable retirement record and any remaining receipts, `~/.config/nemoclaw/portable/containers.conf`, gateway state, and other retry evidence, even with `--destroy-user-data`.
 Resolve the reported authority or cleanup error, keep the preserved state intact, and rerun the same full uninstall command.
 This cleanup does not change Docker uninstall, externally supervised gateways, `--keep-openshell`, scoped sibling-gateway cleanup, or non-portable profiles.
+
+<AgentOnly variant="hermes">
+For a schema `5` Portable Ollama receipt, the full-uninstall transaction extends the Portable boundary to the committed gateway provider and receipt-owned inference runtime.
+While the host fence, sorted sandbox lifecycle locks, and process-bound registry lock remain held, NemoClaw binds the exact lifecycle receipt, registry row revision and lifecycle generation, sandbox and Podman container identities and labels, provider revision and profile, inference runtime, socket, and network.
+It writes the credential-free transaction journal before the first mutation, then records sandbox, provider, inference, registry, receipt, and completion phases.
+Before each phase, it revalidates the exact authority recorded in the journal.
+If a resource disappeared after an earlier recorded action but before its phase update, the retry proves that exact absence and continues without repeating the mutation.
+An unexpected absence, same-name replacement, sandbox phase other than `Ready` or `Stopped`, changed container label set, provider revision or profile change, socket or network change, or registry authority drift stops cleanup before an unproven mutation.
+When another recorded sandbox shares the provider or inference runtime, uninstall preserves that shared resource.
+The transaction removes exact receipt-owned resources before it retires the matching registry row and lifecycle receipt.
+When both the provider and inference runtime are exclusive, it then retires their private inference state.
+If either resource is shared, it preserves that recovery state for the sibling owner.
+It never removes a Podman image.
+</AgentOnly>
+
 For Docker, if any proof is absent, uninstall exits nonzero before it signals the host gateway.
 NemoClaw preserves the gateway runtime evidence and local state.
 Keep that state intact.

@@ -1073,7 +1073,8 @@ On Jetson/Tegra hosts, the compatibility path uses the NVIDIA runtime and adds e
 These include selected `/dev/nvmap`, `/dev/nvhost-*`, and `/dev/nvgpu/igpu0/*` nodes plus real `/dev/dri/renderD*` character devices.
 After compatibility recreation starts, onboarding keeps the pre-patch container as a rollback backup until the replacement passes the Ready, GPU, and applicable local-inference checks.
 If one of those checks fails before backup removal, onboarding prints failure diagnostics and attempts to restore the pre-patch container.
-To commit the replacement, NemoClaw stops it, removes the rollback backup, starts the replacement as the final container lifecycle event, and verifies OpenShell supervisor readiness again.
+To commit the replacement, NemoClaw stops it, removes the rollback backup, and waits until a successful OpenShell sandbox list has no row with that sandbox name.
+NemoClaw then starts the replacement as the final container lifecycle event and verifies OpenShell supervisor readiness again within the same handoff deadline.
 If that final handoff cannot be confirmed, onboarding exits with the container diagnostics and cleanup guidance instead of reporting success.
 If rollback fails, onboarding reports that the pre-patch container was not restored and prints container-cleanup guidance.
 GPU-proof diagnostics are captured before rollback and can print that guidance before the final container state is known, so inspect the sandbox and its labeled Docker containers before running a deletion command.
