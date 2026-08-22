@@ -68,6 +68,11 @@
     },
     {
       "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test": "pins the Portable launch runtime and rejects runtime identity drift (#9006)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
       "test": "selects exact-commit rootless evidence for Portable recovery changes (#9707)",
       "category": "security"
     },
