@@ -123,6 +123,32 @@ describe("npm bundled node-tar remediation", () => {
     expect(commands).toEqual(["curl", "tar", "npm", "npx", "cleanup"]);
   });
 
+  it("rejects mismatched tar@7.5.21 archive bytes before extraction or npm-tree mutation (#9933)", () => {
+    const target = fixture("11.18.0", "7.5.19");
+    const commands: string[] = [];
+
+    expect(() =>
+      patchBundledNpmTarFromRegistry(target.npmRoot, {
+        commandRunner(command, args) {
+          commands.push(command);
+          expect(command).toBe("curl");
+          expect(args).toContain(FIXED_TAR_TARBALL);
+          const outputIndex = args.indexOf("--output");
+          expect(outputIndex).toBeGreaterThanOrEqual(0);
+          fs.writeFileSync(args[outputIndex + 1]!, "mismatched archive bytes\n");
+        },
+      }),
+    ).toThrow("npm bundled tar replacement integrity mismatch");
+
+    expect(commands).toEqual(["curl"]);
+    expect(fs.existsSync(path.join(target.npmRoot, "node_modules", "tar", "old.js"))).toBe(true);
+    expect(
+      fs.existsSync(path.join(target.npmRoot, "node_modules", "tar", "lib", "fixed.js")),
+    ).toBe(false);
+    expect(fs.readdirSync(path.join(target.npmRoot, "node_modules"))).toEqual(["tar"]);
+    expect(() => verifyBundledNpmTar(target.npmRoot)).toThrow("bundles affected tar@7.5.19");
+  });
+
   it("is idempotent when npm already bundles a safe release", () => {
     const target = fixture("10.9.7", FIXED_TAR_VERSION);
     expect(patchBundledNpmTar(target)).toMatchObject({ state: "fixed" });

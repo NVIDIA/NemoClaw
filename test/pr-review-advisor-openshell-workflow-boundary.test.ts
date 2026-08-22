@@ -144,4 +144,27 @@ describe("PR review advisor OpenShell workflow boundary", () => {
     );
   });
 
+  it("rejects specialist count, fail-fast, permission, session-path, and synthesis-dependency changes (#9949)", () => {
+    const errors = validateMutation((source) =>
+      mutateWorkflowSource(source, (workflow) => {
+        workflow.jobs["review-specialists"].strategy["fail-fast"] = true;
+        workflow.jobs["review-specialists"].strategy.matrix.advisor.pop();
+        workflow.jobs["review-specialists"].permissions["pull-requests"] = "write";
+        workflow.jobs["review-synthesis-shadow"].needs = "review";
+        workflow.jobs["review-synthesis-shadow"].env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR =
+          "/tmp/sessions";
+      }),
+    );
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "review-specialists job permissions.pull-requests must be read",
+        "publish must be the only job with pull-requests: write",
+        "specialist matrix must disable fail-fast",
+        "specialist matrix must declare exactly five interests",
+        "synthesis job env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR must be ${{ github.workspace }}/pr-workdir/.pr-review-advisor-sessions",
+        "shadow synthesis must depend only on the specialist matrix",
+      ]),
+    );
+  });
 });

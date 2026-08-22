@@ -144,6 +144,18 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "staging-brev-launchable-identity",
+    {
+      name: "staging-brev-launchable-identity-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}",
+      path: [
+        "${{ steps.workspace.outputs.work_dir }}/lane.log",
+        "${{ steps.workspace.outputs.work_dir }}/launchable-identity.json",
+        "${{ steps.workspace.outputs.work_dir }}/cleanup.json",
+        "",
+      ].join("\n"),
+    },
+  ],
+  [
     "live",
     {
       name: "e2e-${{ matrix.id }}",
@@ -249,6 +261,7 @@ const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
   ["native-runtime-qualification-podman-toolchain", "success()"],
   ["native-runtime-qualification-producer", "success()"],
   ["staging-brev-launchable", "${{ always() && steps.workspace.outputs.work_dir != '' }}"],
+  ["staging-brev-launchable-identity", "${{ always() && steps.workspace.outputs.work_dir != '' }}"],
   ["mcp-bridge", MCP_SCANNED_UPLOAD_CONDITION],
   ["mcp-bridge-dev", MCP_SCANNED_UPLOAD_CONDITION],
   ["openshell-dev-artifact", "${{ always() }}"],
