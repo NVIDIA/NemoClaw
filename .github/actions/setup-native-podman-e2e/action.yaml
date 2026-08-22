@@ -179,6 +179,14 @@ runs:
           'driver = "overlay"' \
           "runroot = \"$storage_directory/runroot\"" \
           "graphroot = \"$storage_directory/graphroot\"" >"$storage_config"
+        containers_config="$RUNNER_TEMP/native-podman-e2e-containers.conf"
+        printf '%s\n' \
+          '[engine]' \
+          'runtime = "runc"' \
+          '' \
+          '[network]' \
+          'firewall_driver = "nftables"' >"$containers_config"
+        export CONTAINERS_CONF="$containers_config"
         export CONTAINERS_STORAGE_CONF="$storage_config"
         export XDG_RUNTIME_DIR="$runtime_directory"
         service_log="$RUNNER_TEMP/native-podman-e2e-service.log"
@@ -205,11 +213,13 @@ runs:
         [[ -S "$socket_path" ]]
         jq -e '
           (.host.security.rootless // .Host.Security.Rootless) == true and
-          ((.host.cgroupVersion // .Host.CgroupVersion) | ascii_downcase) == "v2"
+          ((.host.cgroupVersion // .Host.CgroupVersion) | ascii_downcase) == "v2" and
+          ((.host.ociRuntime.name // .Host.OCIRuntime.Name) | ascii_downcase) == "runc"
         ' "$RUNNER_TEMP/native-podman-e2e-info.json" >/dev/null
 
         sudo ip address replace 169.254.2.2/32 dev lo
         {
+          printf 'CONTAINERS_CONF=%s\n' "$containers_config"
           printf 'CONTAINERS_STORAGE_CONF=%s\n' "$storage_config"
           printf 'DOCKER_HOST=unix://%s\n' "$socket_path"
           printf 'NEMOCLAW_NATIVE_PODMAN_SERVICE_PID=%s\n' "$service_pid"
