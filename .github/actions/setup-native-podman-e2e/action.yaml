@@ -167,6 +167,17 @@ runs:
           sudo install -d --owner="$uid" --group="$gid" --mode=0700 "$runtime_directory"
         fi
         install -d -m 0700 "$runtime_directory/podman"
+        storage_directory="$RUNNER_TEMP/native-podman-e2e-storage"
+        storage_config="$RUNNER_TEMP/native-podman-e2e-storage.conf"
+        install -d -m 0700 "$storage_directory/runroot" "$storage_directory/graphroot"
+        printf '%s\n' \
+          '[storage]' \
+          'driver = "overlay"' \
+          "runroot = \"$storage_directory/runroot\"" \
+          "graphroot = \"$storage_directory/graphroot\"" \
+          "rootless_storage_path = \"$storage_directory/graphroot\"" >"$storage_config"
+        export CONTAINERS_STORAGE_CONF="$storage_config"
+        export XDG_RUNTIME_DIR="$runtime_directory"
         service_log="$RUNNER_TEMP/native-podman-e2e-service.log"
         podman system service --time=0 "unix://$socket_path" >"$service_log" 2>&1 &
         service_pid="$!"
@@ -195,6 +206,7 @@ runs:
 
         sudo ip address replace 169.254.2.2/32 dev lo
         {
+          printf 'CONTAINERS_STORAGE_CONF=%s\n' "$storage_config"
           printf 'DOCKER_HOST=unix://%s\n' "$socket_path"
           printf 'NEMOCLAW_NATIVE_PODMAN_SERVICE_PID=%s\n' "$service_pid"
           printf 'OPENSHELL_PODMAN_SOCKET=%s\n' "$socket_path"
