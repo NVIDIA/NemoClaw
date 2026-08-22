@@ -99,6 +99,72 @@ describe("destroySandbox flow", () => {
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
   });
 
+  it("revalidates schema-4 Portable identity at every destroy checkpoint without Docker preflight (#9189)", async () => {
+    const harness = createDestroyHarness({
+      dockerRunResult: { status: 0, stdout: `${"f".repeat(64)}\t\tforeign\t` },
+      portableDestroyAuthority: true,
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.preparePortableDestroyAuthoritySpy).toHaveBeenCalledOnce();
+    expect(harness.portableDestroyRevalidateSpy).toHaveBeenCalledTimes(6);
+    expect(harness.portableDestroyVerifyAbsentSpy).toHaveBeenCalledOnce();
+    expect(harness.dockerRunSpy).not.toHaveBeenCalled();
+    expect(harness.portableDestroyVerifyAbsentSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.removeSandboxSpy.mock.invocationCallOrder[0],
+    );
+    expect(harness.removeSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.retirePortableLifecycleReceiptSpy.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("fails closed on invalid schema-4 Portable receipt authority before Docker preflight (#9189)", async () => {
+    const harness = createDestroyHarness({
+      portableDestroyPrepareError: "portable receipt is invalid",
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+      "portable receipt is invalid",
+    );
+
+    expect(harness.dockerRunSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+  });
+
+  it("preserves the sandbox registry record and Portable receipt when Podman absence is unproven (#9189)", async () => {
+    const harness = createDestroyHarness({
+      portableDestroyAuthority: true,
+      portableDestroyVerifyAbsentError: "recorded Podman container remains",
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.events).toContain("delete");
+    expect(harness.portableDestroyVerifyAbsentSpy).toHaveBeenCalledOnce();
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses forced local cleanup while schema-4 Portable authority is retained (#9189)", async () => {
+    const harness = createDestroyHarness({
+      deleteStatus: 1,
+      deleteOutput: "error trying to connect: connection refused",
+      portableDestroyAuthority: true,
+    });
+
+    await expect(harness.destroySandbox("alpha", { force: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(errorOutput).toContain("--force cannot discard this ownership state");
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+  });
+
   it(
     "removes the owned managed Hermes state volume after confirmed sandbox deletion",
     { timeout: 30_000 },
