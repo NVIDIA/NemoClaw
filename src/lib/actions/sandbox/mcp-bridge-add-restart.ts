@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import crypto from "node:crypto";
+
 import type { AgentMcpAdapter } from "../../agent/defs";
 import * as policies from "../../policy";
 import {
@@ -253,10 +255,38 @@ async function addMcpBridgeUnlocked(
       2,
     );
   }
-  const providerName =
-    envNames.length > 0
-      ? (existingEntry?.providerName ?? buildMcpBridgeProviderName(sandboxName, options.server))
-      : undefined;
+  let providerName = existingEntry?.providerName;
+  if (envNames.length > 0 && !providerName) {
+    let providerInstanceId: string;
+    if (sandbox.policyAuthority === "nemoclaw-managed") {
+      providerInstanceId = crypto.randomBytes(8).toString("hex");
+    } else {
+      const lifecycleIdentity = sandbox.lifecycleGeneration ?? sandbox.createdAt;
+      if (!lifecycleIdentity) {
+        throw new McpBridgeError(
+          `Sandbox '${sandboxName}' has no durable lifecycle identity for MCP provider naming. Recreate the sandbox before adding an MCP server.`,
+          2,
+        );
+      }
+      // Bind external and unrecorded authority to durable lifecycle and
+      // provider intent. A refusal is retryable before a manifest exists,
+      // while sandbox recreation selects a different provider name.
+      providerInstanceId = crypto
+        .createHash("sha256")
+        .update(
+          JSON.stringify([
+            "nemoclaw-mcp-provider-v1",
+            sandboxName,
+            lifecycleIdentity,
+            options.server,
+            envNames[0],
+          ]),
+        )
+        .digest("hex")
+        .slice(0, 16);
+    }
+    providerName = buildMcpBridgeProviderName(sandboxName, options.server, providerInstanceId);
+  }
   const adapterEnvValues = resolveCredentialEnv(options.env);
   if (!existingEntry && !Object.hasOwn(adapterEnvValues, envNames[0])) {
     throw new McpBridgeError(
@@ -306,13 +336,26 @@ async function addMcpBridgeUnlocked(
     );
   }
   const requiredPolicyContent = buildRequiredMcpBridgePolicy(requestedEntry, target);
-  const recheckPolicyAuthority = () =>
-    preflightMcpPolicyAuthority({
-      externalPolicy: "verify",
-      operation: `add MCP server '${requestedEntry.server}'`,
-      requiredPolicyContents: [requiredPolicyContent],
-      sandboxName,
-    });
+  const recheckPolicyAuthority = () => {
+    try {
+      return preflightMcpPolicyAuthority({
+        externalPolicy: "verify",
+        operation: `add MCP server '${requestedEntry.server}'`,
+        requiredPolicyContents: [requiredPolicyContent],
+        sandboxName,
+      });
+    } catch (error) {
+      if (!(error instanceof McpPolicyAuthorityRefusalError) || !providerName) throw error;
+      throw new McpPolicyAuthorityRefusalError(
+        `${error.message} Required OpenShell provider name: '${providerName}'.`,
+        {
+          cause: error,
+          exitCode: error.exitCode,
+          reasonCode: error.reasonCode,
+        },
+      );
+    }
+  };
   // Qualify the exact external policy requirement before recording a bridge.
   // A later refusal keeps the prepared manifest as retry intent, but the first
   // refusal must leave the registry unchanged.

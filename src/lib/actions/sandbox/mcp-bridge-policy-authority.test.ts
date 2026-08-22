@@ -62,8 +62,16 @@ const inspectPolicyAuthority = (options) => {
     providerBinding: /\n\s+provider:\s+(\S+)/u.exec(requirement)?.[1] ?? null,
     requirementCount: options.requiredPolicyContents?.length ?? 0,
   });
+  if (
+    options.sandboxName === "alpha" &&
+    registry.getSandbox("alpha")?.policyAuthority === undefined
+  ) {
+    registry.updateSandbox("alpha", { policyAuthority: "externally-managed" });
+  }
   if (authorityMode === "missing") {
-    throw new Error("the externally managed policy has missing entries");
+    throw new policy.McpPolicyAuthorityRefusalError(
+      "the externally managed policy has missing entries",
+    );
   }
   if (authorityMode === "refuse") {
     throw new Error("this sandbox policy is externally managed");
@@ -177,8 +185,9 @@ replace(validation, "assertMcpCredentialBoundaryRuntimeVersion", () => {});
 registry.registerSandbox({
   name: "alpha",
   agent: "openclaw",
+  createdAt: "2026-08-20T00:00:00.000Z",
   gatewayName: "nemoclaw",
-  policyAuthority: "externally-managed",
+  lifecycleGeneration: "11111111-1111-4111-8111-111111111111",
 });
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 const addOptions = {
@@ -201,7 +210,23 @@ const addOptions = {
     bridgePresent: !!registry.getSandbox("alpha")?.mcp?.bridges?.example,
     customPolicies: registry.getCustomPolicies("alpha"),
     mutations: [...mutations],
+    policyAuthority: registry.getSandbox("alpha")?.policyAuthority,
   };
+  registry.removeSandbox("alpha");
+  registry.registerSandbox({
+    name: "alpha",
+    agent: "openclaw",
+    createdAt: "2026-08-20T00:00:00.000Z",
+    gatewayName: "nemoclaw",
+    lifecycleGeneration: "22222222-2222-4222-8222-222222222222",
+    policyAuthority: "externally-managed",
+  });
+  let nextLifecycleMessage = "";
+  try {
+    await bridge.addMcpBridge("alpha", addOptions);
+  } catch (error) {
+    nextLifecycleMessage = error instanceof Error ? error.message : String(error);
+  }
 
   registry.registerSandbox({
     name: "drift-add",
@@ -526,6 +551,7 @@ const addOptions = {
     driftRestartMessage,
     finalDriftMessage,
     missingMessages,
+    nextLifecycleMessage,
     preflights,
     removeMessage,
     removeDriftMessage,
@@ -557,6 +583,7 @@ const addOptions = {
           timeout: 30_000,
         });
         expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+        expect(`${result.stdout}\n${result.stderr}`).not.toContain("host-only-secret");
         const payload = JSON.parse(result.stdout.slice(result.stdout.indexOf("{"))) as {
           afterAdd: {
             bridge?: { addState?: string; providerName?: string };
@@ -581,6 +608,7 @@ const addOptions = {
             bridgePresent: boolean;
             customPolicies: unknown[];
             mutations: string[];
+            policyAuthority?: string;
           };
           afterRemove: {
             bridgePresent: boolean;
@@ -609,6 +637,7 @@ const addOptions = {
           driftRestartMessage: string;
           finalDriftMessage: string;
           missingMessages: string[];
+          nextLifecycleMessage: string;
           preflights: Array<{
             externalPolicy: string;
             hasBoundRequirement: boolean;
@@ -651,11 +680,26 @@ const addOptions = {
         ]);
         expect(
           payload.preflights.slice(0, 2).map(({ providerBinding }) => providerBinding),
-        ).toEqual(["alpha-mcp-example", "alpha-mcp-example"]);
+        ).toEqual([
+          expect.stringMatching(/^alpha-mcp-example-[a-f0-9]{16}$/u),
+          expect.stringMatching(/^alpha-mcp-example-[a-f0-9]{16}$/u),
+        ]);
+        expect(payload.preflights[0]?.providerBinding).toBe(payload.preflights[1]?.providerBinding);
+        expect(payload.preflights[2]?.providerBinding).toMatch(/^alpha-mcp-example-[a-f0-9]{16}$/u);
+        expect(payload.preflights[2]?.providerBinding).not.toBe(
+          payload.preflights[0]?.providerBinding,
+        );
+        expect(payload.nextLifecycleMessage).toContain("missing entries");
+        const stableProviderName = String(payload.preflights[0]?.providerBinding);
+        expect(payload.missingMessages).toEqual([
+          expect.stringContaining(`Required OpenShell provider name: '${stableProviderName}'.`),
+          expect.stringContaining(`Required OpenShell provider name: '${stableProviderName}'.`),
+        ]);
         expect(payload.afterMissing.bridgePresent).toBe(false);
         expect(payload.afterMissing.bridge).toBeUndefined();
         expect(payload.afterMissing.customPolicies).toEqual([]);
         expect(payload.afterMissing.mutations).not.toContain("registry:write");
+        expect(payload.afterMissing.policyAuthority).toBe("externally-managed");
         expect(
           payload.afterMissing.mutations.some((event) =>
             /^(adapter|policy|provider):/u.test(event),
@@ -801,6 +845,9 @@ const addOptions = {
           payload.preflights.filter(({ operation }) => operation === "add MCP server 'example'")
             .length,
         ).toBeGreaterThanOrEqual(7);
+        expect(payload.preflights).toContainEqual(
+          expect.objectContaining({ providerBinding: "resume-mcp-example-fixed" }),
+        );
         expect(
           payload.preflights.filter(({ operation }) => operation === "restart MCP server 'example'")
             .length,

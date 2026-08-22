@@ -291,6 +291,7 @@ if (initializeSandbox && !registry.getSandbox("crash-test")) {
     name: "crash-test",
     agent: "openclaw",
     gatewayName: "nemoclaw",
+    policyAuthority: "nemoclaw-managed",
   });
 }
 if (crashAfter === "registered-credential-collision") {
@@ -316,7 +317,7 @@ function initializeSandboxRegistry(home: string): void {
     process.execPath,
     [
       "-e",
-      `process.env.HOME = ${JSON.stringify(home)}; const registry = require("./src/lib/state/registry.js"); registry.registerSandbox({ name: "crash-test", agent: "openclaw", gatewayName: "nemoclaw" });`,
+      `process.env.HOME = ${JSON.stringify(home)}; const registry = require("./src/lib/state/registry.js"); registry.registerSandbox({ name: "crash-test", agent: "openclaw", gatewayName: "nemoclaw", policyAuthority: "nemoclaw-managed" });`,
     ],
     {
       cwd: process.cwd(),
@@ -604,7 +605,7 @@ describe("MCP add crash consistency", () => {
   it("commits one bridge and rejects one duplicate after delayed credential projection (#9764)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-concurrent-projection-"));
     try {
-// Create the fixture before either process loads the registry. The
+      // Create the fixture before either process loads the registry. The
       // behavior under test starts at the lifecycle lock, after fixture creation.
       initializeSandboxRegistry(home);
       const script = buildAddProcessScript(home, "credential-projection-coalesced", true, false);
@@ -693,6 +694,28 @@ describe("MCP add crash consistency", () => {
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
       expect(readBridge(home).addState).toBeUndefined();
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("uses a different randomized provider name after a completed remove (#566)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-name-lifecycle-"));
+    try {
+      const firstAdd = runAddProcess(home, "");
+      expect(firstAdd.status, `${firstAdd.stdout}\n${firstAdd.stderr}`).toBe(0);
+      const firstProviderName = String(readBridge(home).providerName);
+
+      const removed = runRemoveProcess(home, false);
+      expect(removed.status, `${removed.stdout}\n${removed.stderr}`).toBe(0);
+
+      const secondAdd = runAddProcess(home, "");
+      expect(secondAdd.status, `${secondAdd.stdout}\n${secondAdd.stderr}`).toBe(0);
+      const secondProviderName = String(readBridge(home).providerName);
+
+      expect(firstProviderName).toMatch(/^crash-test-mcp-fake-[a-f0-9]{16}$/u);
+      expect(secondProviderName).toMatch(/^crash-test-mcp-fake-[a-f0-9]{16}$/u);
+      expect(secondProviderName).not.toBe(firstProviderName);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
