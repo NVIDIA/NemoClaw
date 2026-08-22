@@ -3,7 +3,7 @@
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# Agents
+# Agent selection
 
 Pick one CPU-only agent to run inside the OpenShell sandbox:
 [OpenClaw](https://openclaw.ai) (default), [Hermes](https://github.com/NousResearch/hermes-agent),
@@ -12,11 +12,11 @@ three mirror [`NVIDIA/NemoClaw/agents`](https://github.com/NVIDIA/NemoClaw/tree/
 Selection is a single flag (`AGENT_NAME`) to the same generic scripts — there is no
 per-agent folder or duplicated chart. All three route inference identically — through
 OpenShell's `https://inference.local/v1` proxy to the GPU inference pods this recipe
-deploys (see the recipe root [`README.md`](../README.md#inference-runtimes)) — so the GPU
-HPA and monitoring stack are unaffected by which agent you choose.
+deploys (see [`README.md`](README.md#inference-runtimes)) — so the GPU HPA and monitoring
+stack are unaffected by which agent you choose.
 
 **Not yet independently validated end-to-end against a live cluster** (see
-[Validated hardware](../README.md#validated-hardware)); OpenClaw is the most exercised of
+[Validated hardware](README.md#validated-hardware)); OpenClaw is the most exercised of
 the three. Please file an issue with anything you find while trying Hermes or Deep Agents
 Code, especially on `dgx02`-class (8×H100) hardware.
 
@@ -37,12 +37,12 @@ Code, especially on `dgx02`-class (8×H100) hardware.
 
 ## Selecting an agent
 
-There is only **one** Quick start to run — the recipe root [`README.md`](../README.md#quick-start).
+There is only **one** Quick start to run — [`README.md`](README.md#quick-start).
 This page has no commands of its own to copy-paste; it's reference material for whichever
-`AGENT_NAME` you set in [step 4](../README.md#4-agent-sandbox-image-openshell) of that
+`AGENT_NAME` you set in [step 4](README.md#4-agent-sandbox-image-openshell) of that
 Quick start (`openclaw`, `hermes`, or `deepagents` — see [Comparison](#comparison) below).
 The only place the three agents' commands actually diverge is the last line of
-[step 5](../README.md#5-connect-cli-and-create-sandbox): OpenClaw/Hermes keep
+[step 5](README.md#5-connect-cli-and-create-sandbox): OpenClaw/Hermes keep
 `run-agent-sandbox.sh` in the foreground, Deep Agents Code runs one-shot prompts with
 `run-agent-prompt.sh "<prompt>"` instead (there's also `openshell sandbox exec -n
 deepagents-onprem -- dcode` for an interactive session — needs a TTY).
@@ -127,7 +127,7 @@ this recipe used them the same way it already used `openclaw-sandbox.yaml`.
 OpenClaw's and Hermes's upstream policies both grant `integrate.api.nvidia.com` as a
 default inference endpoint; `create-agent-sandbox.sh` removes it after sandbox creation
 because this recipe is on-premises-only (see `agent_common_grants_nvidia_endpoint` in
-[`../scripts/agent-common.sh`](../scripts/agent-common.sh)). Deep Agents Code's policy
+[`scripts/agent-common.sh`](scripts/agent-common.sh)). Deep Agents Code's policy
 does not grant that endpoint in the first place, so its script only verifies the endpoint
 is absent.
 
@@ -155,5 +155,5 @@ is absent.
 
 ## Uninstall
 
-See the recipe root [Uninstall](../README.md#uninstall) — it already covers all three
-agents' default sandbox/provider names.
+See [Uninstall](README.md#uninstall) — it already covers all three agents' default
+sandbox/provider names.

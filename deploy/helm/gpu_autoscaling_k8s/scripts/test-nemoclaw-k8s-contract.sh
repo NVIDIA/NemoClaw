@@ -78,7 +78,7 @@ fi
 
 # --- generic agent sandbox script contract -------------------------------------
 # One script per lifecycle step, shared by all three agents via AGENT_NAME — see
-# ../agents/README.md. No per-agent script files exist anymore.
+# ../AGENT-SELECTION.md. No per-agent script files exist anymore.
 
 BUILD_SCRIPT="${SCRIPT_DIR}/build-agent-sandbox-image.sh"
 CREATE_SCRIPT="${SCRIPT_DIR}/create-agent-sandbox.sh"
@@ -90,10 +90,10 @@ for script in "${BUILD_SCRIPT}" "${CREATE_SCRIPT}" "${VERIFY_SCRIPT}" "${RUN_SAN
   [[ -x "${script}" ]] || { echo "FAIL: $(basename "${script}") missing or not executable" >&2; exit 1; }
 done
 
-if [[ -d "${CHART_DIR}/agents/openclaw" || -d "${CHART_DIR}/agents/hermes" || -d "${CHART_DIR}/agents/langchain-deepagents-code" ]]; then
-  echo "FAIL: per-agent script folders must not exist; agent selection is the AGENT_NAME flag" >&2
-  exit 1
-fi
+[[ -f "${CHART_DIR}/AGENT-SELECTION.md" ]] \
+  || { echo "FAIL: AGENT-SELECTION.md missing at the recipe root" >&2; exit 1; }
+[[ ! -d "${CHART_DIR}/agents" ]] \
+  || { echo "FAIL: agents/ folder must not exist; agent selection is the AGENT_NAME flag and agent docs live in AGENT-SELECTION.md" >&2; exit 1; }
 
 grep -Fq 'agent_common_validate' "${BUILD_SCRIPT}"
 grep -Fq 'NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0' "${BUILD_SCRIPT}"

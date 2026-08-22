@@ -5,7 +5,7 @@
 # Test-drive wrapper for this recipe: install GPU inference (vLLM or NIM) + HPA, then
 # build/create/verify/run one CPU sandbox agent (OpenClaw, Hermes, or Deep Agents Code).
 # This just calls the recipe's own scripts in order with AGENT_NAME / INFERENCE_RUNTIME
-# wired through — see ../README.md and ../agents/README.md for what each step does and
+# wired through — see ../README.md and ../AGENT-SELECTION.md for what each step does and
 # for the non-shortcut (TLS + OIDC) path.
 #
 # Run this against a cluster kubectl already points at, from this directory:

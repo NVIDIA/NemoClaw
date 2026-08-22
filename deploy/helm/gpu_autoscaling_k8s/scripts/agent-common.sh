@@ -4,7 +4,7 @@
 #
 # Per-agent configuration for the generic build/create/verify/run-agent-*.sh scripts.
 # Adding a fourth agent means extending the case statements below — not adding new script
-# files. See ../agents/README.md for the agent comparison and shared policy notes.
+# files. See ../AGENT-SELECTION.md for the agent comparison and shared policy notes.
 
 agent_common_validate() {
   case "${1:-}" in

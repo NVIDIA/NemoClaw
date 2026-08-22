@@ -5,7 +5,7 @@
 
 # NemoClaw Kubernetes GPU autoscaling
 
-Experimental community recipe: a CPU-only NemoClaw sandbox (OpenShell) running OpenClaw, Hermes, or Deep Agents Code (see [`../agents/`](../agents/)) sends inference to authenticated GPU inference pods (Ollama, vLLM, or NVIDIA NIM — see `inference.runtime` in `../README.md#inference-runtimes`) in the same cluster. An HPA scales only those inference pods. This recipe's example signal is per-pod GPU utilization; you can switch the HPA to other or custom metrics. Unsupported / non-production.
+Experimental community recipe: a CPU-only NemoClaw sandbox (OpenShell) running OpenClaw, Hermes, or Deep Agents Code (see [`../AGENT-SELECTION.md`](../AGENT-SELECTION.md)) sends inference to authenticated GPU inference pods (Ollama, vLLM, or NVIDIA NIM — see `inference.runtime` in `../README.md#inference-runtimes`) in the same cluster. An HPA scales only those inference pods. This recipe's example signal is per-pod GPU utilization; you can switch the HPA to other or custom metrics. Unsupported / non-production.
 
 **Envoy Gateway is optional.** Use it for LeastRequest across GPU replicas; skip it when the metrics-proxy ClusterIP Service is enough:
 
@@ -99,7 +99,7 @@ kubectl get pods -n gpu-operator-resources \
 |--------|------------------------|
 | `./scripts/install-hpa.sh` | Prometheus (if missing), Prometheus Adapter + GPU metric rule, Envoy Gateway when `ENABLE_ENVOY_LB=1`, the `nemoclaw-gpu` chart, and the GPU HPA |
 | `./scripts/install-openshell-k8s.sh` | OpenShell Kubernetes gateway (after Agent Sandbox CRDs exist) |
-| `./scripts/build-agent-sandbox-image.sh` | Builds/pushes the pinned sandbox image for the agent selected by `AGENT_NAME` (needs your registry) — see [`../agents/README.md`](../agents/README.md) |
+| `./scripts/build-agent-sandbox-image.sh` | Builds/pushes the pinned sandbox image for the agent selected by `AGENT_NAME` (needs your registry) — see [`../AGENT-SELECTION.md`](../AGENT-SELECTION.md) |
 | `./scripts/create-agent-sandbox.sh` | Wires the chart inference API key into OpenShell and creates the sandbox for the selected agent |
 
 Use a dedicated evaluation cluster for the experimental OpenShell path. Do not paste kubeconfig files, registry credentials, OIDC secrets, or inference API keys into an issue or pull request.
@@ -153,7 +153,7 @@ source versions.env
 kubectl apply -f \
   "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml"
 
-export AGENT_NAME=openclaw   # or hermes | deepagents — see ../agents/README.md#comparison
+export AGENT_NAME=openclaw   # or hermes | deepagents — see ../AGENT-SELECTION.md#comparison
 export AGENT_SANDBOX_IMAGE=registry.example.com/team/nemoclaw-${AGENT_NAME}-k8s:v0.0.104
 ./scripts/build-agent-sandbox-image.sh
 
@@ -303,7 +303,7 @@ unset INFERENCE_API_KEY
 ## OpenShell details
 
 - Agent Sandbox CRDs are cluster-scoped; `install-openshell-k8s.sh` never installs them — apply the pinned manifest yourself.
-- Build image: `AGENT_NAME=… AGENT_SANDBOX_IMAGE=… ./scripts/build-agent-sandbox-image.sh` (versioned, non-`latest` tag; no API key in the image; see [`../agents/README.md`](../agents/README.md) for the three `AGENT_NAME` values).
+- Build image: `AGENT_NAME=… AGENT_SANDBOX_IMAGE=… ./scripts/build-agent-sandbox-image.sh` (versioned, non-`latest` tag; no API key in the image; see [`../AGENT-SELECTION.md`](../AGENT-SELECTION.md) for the three `AGENT_NAME` values).
 - OIDC is default. Unauthenticated mode is dedicated-cluster + port-forward only (`ALLOW_UNAUTHENTICATED_OPENSHELL=1` + ACK). ClusterIP does not isolate from other pods/users.
 - Client mTLS after port-forward:
 
@@ -324,7 +324,7 @@ openshell gateway add https://127.0.0.1:8080 \
 openshell status
 ```
 
-- `scripts/create-agent-sandbox.sh` stores the chart inference key in the OpenShell provider, strips `integrate.api.nvidia.com` from policy (where the selected agent's upstream policy grants it — see [`../agents/README.md`](../agents/README.md)), and runs an example chat (`In one sentence, what is an AI agent sandbox?`).
+- `scripts/create-agent-sandbox.sh` stores the chart inference key in the OpenShell provider, strips `integrate.api.nvidia.com` from policy (where the selected agent's upstream policy grants it — see [`../AGENT-SELECTION.md`](../AGENT-SELECTION.md)), and runs an example chat (`In one sentence, what is an AI agent sandbox?`).
 - OpenShell `0.0.85` leaves sandboxes idle (`sleep infinity`); `scripts/run-agent-sandbox.sh` (OpenClaw/Hermes) must stay attached and does not auto-restart — Deep Agents Code has no such gateway to keep running. Combined topology may require powerful capabilities (`SYS_ADMIN`, `NET_ADMIN`, …) — check admission policy.
 
 ## Test autoscaling and load balancing
@@ -361,7 +361,7 @@ Grafana is optional visualization; the script is the pass/fail check.
 | `cluster-recover.sh` | Destructive release recovery |
 | `get-metrics-proxy-pods.sh` / `get-hpa.sh` / `hpa-watch.sh` | Inspect / watch |
 | `install-openshell-k8s.sh` | OpenShell gateway |
-| `build-agent-sandbox-image.sh` / `create-agent-sandbox.sh` / `verify-agent-sandbox.sh` / `run-agent-sandbox.sh` / `run-agent-prompt.sh` | Agent sandbox lifecycle — pick the agent (`openclaw`, `hermes`, `deepagents`) via `AGENT_NAME`; see [`../agents/README.md`](../agents/README.md) |
+| `build-agent-sandbox-image.sh` / `create-agent-sandbox.sh` / `verify-agent-sandbox.sh` / `run-agent-sandbox.sh` / `run-agent-prompt.sh` | Agent sandbox lifecycle — pick the agent (`openclaw`, `hermes`, `deepagents`) via `AGENT_NAME`; see [`../AGENT-SELECTION.md`](../AGENT-SELECTION.md) |
 | `agent-common.sh` | Per-agent config table sourced by the scripts above |
 | `test-*-contract.*` | Static / local contract checks |
 
