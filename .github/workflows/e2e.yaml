@@ -2774,6 +2774,27 @@ jobs:
           docker ps --all --no-trunc --format '{{json .}}' >&2 || true
           while IFS= read -r container_id; do
             [[ -n "$container_id" ]] || continue
+            docker inspect "$container_id" \
+              | jq '.[0] | {
+                  Id,
+                  Name,
+                  Config: {
+                    ExposedPorts: .Config.ExposedPorts,
+                    Healthcheck: .Config.Healthcheck,
+                    StopTimeout: .Config.StopTimeout
+                  },
+                  HostConfig: {
+                    Annotations: .HostConfig.Annotations,
+                    PortBindings: .HostConfig.PortBindings,
+                    Tmpfs: .HostConfig.Tmpfs,
+                    NanoCpus: .HostConfig.NanoCpus,
+                    CpuPeriod: .HostConfig.CpuPeriod,
+                    CpuQuota: .HostConfig.CpuQuota,
+                    Mounts: .HostConfig.Mounts
+                  },
+                  Mounts,
+                  Networks: .NetworkSettings.Networks
+                }' >&2 || true
             docker inspect --format \
               'state={{json .State}} labels={{json .Config.Labels}} runtime={{json .HostConfig.Runtime}} networks={{json .NetworkSettings.Networks}}' \
               "$container_id" >&2 || true
