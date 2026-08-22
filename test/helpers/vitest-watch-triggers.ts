@@ -30,6 +30,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
   "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
+  "test/e2e/support/staging-brev-launchable-identity-workflow-boundary.test.ts",
   "test/e2e/support/standard-profile-workflow-boundary.test.ts",
   "test/e2e/support/trusted-hermes-swap-workflow-boundary.test.ts",
   "test/e2e/support/upload-e2e-artifacts-workflow-boundary.test.ts",
@@ -68,8 +69,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
-    pattern:
-      /(?:^|\/)internal\/security-reviews\/hermes-0\.19\.0-dependency-review\.md$/,
+    pattern: /(?:^|\/)internal\/security-reviews\/hermes-0\.19\.0-dependency-review\.md$/,
     testsToRun: runTests("test/hermes-dependency-review.test.ts"),
   },
   {
@@ -235,9 +235,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)test\/e2e\/live\/portable-profile-rootless-linux\.test\.ts$/,
-    testsToRun: runTests(
-      "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
-    ),
+    testsToRun: runTests("test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"),
   },
   {
     pattern: /(?:^|\/)test\/e2e\/fixtures\/portable-profile-systemctl-shim\.sh$/,

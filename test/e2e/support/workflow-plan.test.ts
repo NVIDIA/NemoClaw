@@ -109,9 +109,13 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.explicitOnlyJobs).toEqual(["llama-cpp-dgx-spark-qualification"]);
+    expect(plan.explicitOnlyJobs).toEqual([
+      "staging-brev-launchable-identity",
+      "llama-cpp-dgx-spark-qualification",
+    ]);
     expect(releaseRequiredWorkflowJobs()).toContain("live");
     expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");
+    expect(releaseRequiredWorkflowJobs()).not.toContain("staging-brev-launchable-identity");
     expect(releaseRequiredWorkflowJobs()).not.toContain("llama-cpp-dgx-spark-qualification");
   });
 
@@ -150,6 +154,32 @@ describe("E2E workflow plan", () => {
         coverageMatrix: [stagingRow, ...hermesPlan.coverageMatrix],
       }),
     ).toThrow("execution coverage that does not match its execution plan");
+  });
+
+  it("selects the Launchable identity smoke only when named explicitly (#9925)", () => {
+    const plan = buildE2eWorkflowPlan({ jobs: "staging-brev-launchable-identity" });
+
+    expect(plan.selectedJobs).toEqual(["staging-brev-launchable-identity"]);
+    expect(plan.coverageMatrix).toEqual([
+      expect.objectContaining({
+        id: "staging-brev-launchable-identity",
+        source: "staging",
+        agentRuntime: "none",
+      }),
+    ]);
+    expect(selectedWorkflowJobs(plan)).toEqual(["staging-brev-launchable-identity"]);
+    expect(buildE2eWorkflowPlan().selectedJobs).not.toContain("staging-brev-launchable-identity");
+    expect(() =>
+      buildE2eWorkflowPlan({
+        jobs: "staging-brev-launchable-identity,hermes-e2e",
+      }),
+    ).toThrow("staging-brev-launchable-identity must be selected by itself");
+    expect(() =>
+      buildE2eWorkflowPlan({
+        jobs: "staging-brev-launchable-identity",
+        targets: "ubuntu-repo-cloud-openclaw",
+      }),
+    ).toThrow("staging-brev-launchable-identity must be selected by itself");
   });
 
   it("validates jobs and selects only matching credential-free tests", () => {
