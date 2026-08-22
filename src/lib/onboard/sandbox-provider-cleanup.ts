@@ -67,13 +67,16 @@ export type SandboxRecreateCleanupDeps = DetachSandboxProvidersDeps & {
 };
 
 export const SANDBOX_PROVIDER_SUFFIXES = [
-  ...listMessagingProviderSuffixes().map((suffix) => suffix.replace(/^-/, "")),
-  // Bridge-profile channels mint their provider outside the manifest credentials
-  // (nothing is delivered into the sandbox), so the credential-derived suffixes
-  // above miss them and destroy would leave the provider still minting a token.
-  ...new Set(listMessagingBridgeProfiles().map((profile) => `${profile.channelId}-bridge`)),
-  "brave-search",
-  "tavily-search",
+  ...new Set([
+    ...listMessagingProviderSuffixes().map((suffix) => suffix.replace(/^-/, "")),
+    // Bridge-profile channels mint their provider outside the manifest credentials
+    // (nothing is delivered into the sandbox), so the credential-derived suffixes
+    // above can miss them. Some static profiles also describe a manifest provider,
+    // so deduplicate the combined inventory before cleanup issues detach commands.
+    ...listMessagingBridgeProfiles().map((profile) => `${profile.channelId}-bridge`),
+    "brave-search",
+    "tavily-search",
+  ]),
 ] as readonly string[];
 
 export type SandboxProviderSuffix = string;
