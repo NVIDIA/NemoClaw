@@ -281,9 +281,7 @@ function parseDockerfileSources(bytes: Buffer): readonly string[] {
       }
       continue;
     }
-    if (options.some((option) => option !== "--chmod=0444")) {
-      fail("Dockerfile has an unsupported local COPY option");
-    }
+    if (options.length > 0) fail("Dockerfile has a non-Portable local COPY option");
     local.push(...sources);
   }
   const expected = [...LOCAL_COPY_SOURCES].sort();
