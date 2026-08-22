@@ -172,20 +172,25 @@ describe("PR review advisor diff", () => {
     });
     const diffTool = controller.tools[0]!;
 
-    for (const [index, file] of changedFiles.slice(0, 8).entries()) {
-      const result = await diffTool.execute(
-        `page-${String(index)}`,
-        { path: file },
-        undefined,
-        undefined,
-        undefined as never,
-      );
-      const page = JSON.parse(
-        result.content[0]?.type === "text" ? result.content[0].text : "{}",
-      ) as { kind: string; characterBudget: { served: number; remaining: number } };
-      expect(page.kind).toBe("file_diff");
-      expect(page.characterBudget.served).toBe((index + 1) * PR_REVIEW_DIFF_PAGE_CHARACTER_LIMIT);
-    }
+    const pages = await Promise.all(
+      changedFiles.slice(0, 8).map(async (file, index) => {
+        const result = await diffTool.execute(
+          `page-${String(index)}`,
+          { path: file },
+          undefined,
+          undefined,
+          undefined as never,
+        );
+        return JSON.parse(result.content[0]?.type === "text" ? result.content[0].text : "{}") as {
+          kind: string;
+          characterBudget: { served: number; remaining: number };
+        };
+      }),
+    );
+    expect(pages.map((page) => page.kind)).toEqual(Array.from({ length: 8 }, () => "file_diff"));
+    expect(pages.map((page) => page.characterBudget.served)).toEqual(
+      Array.from({ length: 8 }, (_, index) => (index + 1) * PR_REVIEW_DIFF_PAGE_CHARACTER_LIMIT),
+    );
 
     const exhaustedResult = await diffTool.execute(
       "exhausted",
