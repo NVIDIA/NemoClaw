@@ -401,7 +401,6 @@ function currentHostLocalInferenceRuntime(
   provider: RuntimeProviderBundle,
   sandbox: HostLocalInferenceLifecycleSandbox,
   prepared: PreparedHostLocalInferenceAuthority,
-  options: HostLocalInferenceLifecycleOptions,
 ): {
   readonly receipt: ManagedHostLocalInferenceReceipt;
   readonly runtime: HostLocalInferenceRuntime;
@@ -420,14 +419,8 @@ function confirmHostLocalInferenceDestroyAuthority(
   provider: RuntimeProviderBundle,
   sandbox: HostLocalInferenceLifecycleSandbox,
   prepared: PreparedHostLocalInferenceAuthority,
-  options: HostLocalInferenceLifecycleOptions,
 ): HostLocalInferenceRuntime {
-  const { receipt, runtime } = currentHostLocalInferenceRuntime(
-    provider,
-    sandbox,
-    prepared,
-    options,
-  );
+  const { receipt, runtime } = currentHostLocalInferenceRuntime(provider, sandbox, prepared);
   requireExactReceipt(
     prepared.serializedReceipt,
     runtime.prepareDestroy(receipt),
@@ -441,14 +434,9 @@ export function assertPreparedHostLocalInferenceRuntimePresent(
   provider: RuntimeProviderBundle,
   sandbox: HostLocalInferenceLifecycleSandbox,
   prepared: PreparedHostLocalInferenceAuthority,
-  options: HostLocalInferenceLifecycleOptions = {},
+  _options: HostLocalInferenceLifecycleOptions = {},
 ): void {
-  const { receipt, runtime } = currentHostLocalInferenceRuntime(
-    provider,
-    sandbox,
-    prepared,
-    options,
-  );
+  const { receipt, runtime } = currentHostLocalInferenceRuntime(provider, sandbox, prepared);
   runtime.inspectManaged(receipt);
 }
 
@@ -586,9 +574,9 @@ export function retirePreparedHostLocalInferenceAuthority(
   sandbox: HostLocalInferenceLifecycleSandbox,
   prepared: PreparedHostLocalInferenceAuthority,
   peers: readonly HostLocalInferenceLifecycleSandbox[],
-  options: HostLocalInferenceLifecycleOptions = {},
+  _options: HostLocalInferenceLifecycleOptions = {},
 ): HostLocalInferenceRetirementResult {
-  const runtime = confirmHostLocalInferenceDestroyAuthority(provider, sandbox, prepared, options);
+  const runtime = confirmHostLocalInferenceDestroyAuthority(provider, sandbox, prepared);
   if (sharedPeerStatus(provider, sandbox, prepared, peers) === "shared") {
     return Object.freeze({ status: "shared" as const, receipt: prepared.receipt });
   }
