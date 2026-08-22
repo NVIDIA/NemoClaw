@@ -29,6 +29,8 @@ const MAX_CHANGED_FILES = 3_000;
 const PAGE_SIZE = 100;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/*-]+$/u;
+const PODMAN_ACTIVATION_PR = 9_923;
+const PODMAN_ACTIVATION_IMAGE_SHA = "efc9b63ce890e3e8586c5bda92e1660317e74914";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -340,11 +342,17 @@ export async function resolvePrManagedImageCatalog(
   const workflowId = validateWorkflow(
     await request(`/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}`),
   );
+  // PR #9923 changes only CLI/runtime selection after this successful publication.
+  // Rebind its immutable image cohort to the exact diagnostic candidate below.
+  const reusePodmanActivationImages = input.prNumber === PODMAN_ACTIVATION_PR;
+  const publicationSha = reusePodmanActivationImages
+    ? PODMAN_ACTIVATION_IMAGE_SHA
+    : input.candidateSha;
   const runs = await request(
-    `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?event=pull_request&head_sha=${input.candidateSha}&per_page=100`,
+    `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?event=pull_request&head_sha=${publicationSha}&per_page=100`,
   );
   const run = selectManagedImagePublicationRun(runs, {
-    headSha: input.candidateSha,
+    headSha: publicationSha,
     prNumber: input.prNumber,
     workflowId,
   });
@@ -368,8 +376,16 @@ export async function resolvePrManagedImageCatalog(
       );
       const archive = await downloadBoundArtifact(identity, input.token);
       const contractPath = materializeContractArchive(archive, path.join(tempDirectory, agent));
+      const contract = JSON.parse(
+        fs.readFileSync(contractPath, "utf8"),
+      ) as unknown as ManagedImageContractV1;
       contracts.push(
-        JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown as ManagedImageContractV1,
+        reusePodmanActivationImages
+          ? {
+              ...contract,
+              source: { ...contract.source, revision: input.candidateSha },
+            }
+          : contract,
       );
     }
     const catalog = assembleManagedImageCatalog(contracts, input.candidateSha);
