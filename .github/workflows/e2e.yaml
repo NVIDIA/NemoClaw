@@ -2765,6 +2765,14 @@ jobs:
           set -euo pipefail
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/registry-targets.test.ts --selector "^${TARGET_ID}:"
 
+      - name: Diagnose native Podman API failure
+        if: ${{ always() && inputs.gateway_runtime == 'podman' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat "${RUNNER_TEMP}/native-podman-e2e-service.log" >&2
+          sudo dmesg | grep -E 'apparmor=.*DENIED' | tail -n 40 >&2 || true
+
       # The sanitizer reads raw traces only after checking the workflow-owned
       # runner-temp path, then writes the timing-only file into upload roots.
       - name: Build trusted live E2E timing summary
