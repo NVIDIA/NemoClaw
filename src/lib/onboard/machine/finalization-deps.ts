@@ -11,7 +11,7 @@ type ProcessRecoveryDeps = Pick<
   "checkAndRecoverSandboxProcesses" | "waitForRecreatedSandboxOpenShellReady"
 >;
 type SandboxLifecycleLock =
-  typeof import("../../state/mcp-lifecycle-lock-acquisition").withMcpLifecycleLock;
+  typeof import("../../state/mcp-lifecycle-lock").withMcpLifecycleLock;
 type GatewayRouteLock =
   typeof import("../../inference/gateway-route-mutation-lock").withGatewayRouteMutationLock;
 
@@ -75,7 +75,7 @@ export const finalizationHandlerRuntime = {
   loadAutoPairWarmup: () =>
     require("../../actions/sandbox/auto-pair-warmup") as typeof import("../../actions/sandbox/auto-pair-warmup"),
   loadSandboxLifecycleLock: () =>
-    require("../../state/mcp-lifecycle-lock-acquisition") as typeof import("../../state/mcp-lifecycle-lock-acquisition"),
+    require("../../state/mcp-lifecycle-lock") as typeof import("../../state/mcp-lifecycle-lock"),
   loadGatewayRouteLock: () =>
     require("../../inference/gateway-route-mutation-lock") as typeof import("../../inference/gateway-route-mutation-lock"),
 };
