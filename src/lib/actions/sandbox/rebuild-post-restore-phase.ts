@@ -45,6 +45,8 @@ export {
   runHermesCronRestoreTransaction,
 } from "./rebuild-hermes-post-restore";
 
+const OPENCLAW_DOCTOR_TIMEOUT_MS = 5 * 60_000;
+
 export function printHermesCronRestoreRecoveryCommand(
   sandboxName: string,
   writeLine: (message: string) => void = console.error,
@@ -235,7 +237,11 @@ export async function runRebuildPostRestorePhase(
 
   if (targetAgentName === "openclaw") {
     log("Running openclaw doctor --fix inside sandbox for post-upgrade structure repair");
-    const doctorResult = executeSandboxCommand(sandboxName, "openclaw doctor --fix");
+    const doctorResult = executeSandboxCommand(
+      sandboxName,
+      "openclaw doctor --fix",
+      OPENCLAW_DOCTOR_TIMEOUT_MS,
+    );
     log(
       `doctor --fix: exit=${doctorResult?.status}, stdout=${(doctorResult?.stdout || "").substring(0, 200)}`,
     );

@@ -7,6 +7,23 @@ type RunResult = { status: number; stdout?: string; stderr?: string };
 type RunOptions = { env?: Record<string, string | undefined> };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
+const DISCORD_STATIC_PROFILE_EXPORT = JSON.stringify({
+  id: "discord-hermes-static-v1",
+  credentials: [
+    {
+      name: "bot_token",
+      env_vars: ["DISCORD_BOT_TOKEN"],
+      required: true,
+      auth_style: "header",
+      header_name: "Authorization",
+      query_param: "",
+    },
+  ],
+  endpoints: [],
+  binaries: [],
+  inference_capable: false,
+});
+
 const {
   HOSTED_INFERENCE_ENDPOINT_URL,
   HOSTED_INFERENCE_MODEL,
@@ -67,8 +84,8 @@ const {
     baseUrl: string | null,
     env: Record<string, string | undefined>,
     runOpenshell: RunOpenshell,
-    options?: { replaceExisting?: boolean },
-  ) => { ok: boolean; status?: number; message?: string };
+    options?: { replaceExisting?: boolean; requireExactBinding?: boolean },
+  ) => { ok: boolean; status?: number; message?: string; reason?: string };
   upsertMessagingProviders: (
     tokenDefs: Array<{
       name: string;
@@ -77,7 +94,11 @@ const {
       providerType?: string;
     }>,
     runOpenshell: RunOpenshell,
-    options?: { replaceExisting?: boolean; bestEffort?: boolean },
+    options?: {
+      replaceExisting?: boolean;
+      bestEffort?: boolean;
+      requireExactBindings?: boolean;
+    },
   ) => string[];
 };
 
@@ -662,6 +683,75 @@ describe("onboard provider helpers", () => {
     ]);
   });
 
+  it("rejects an existing generic provider when an exact credential binding is required", () => {
+    const commands: string[] = [];
+    const result = upsertProvider(
+      "alpha-discord-bridge",
+      "discord-hermes-static-v1",
+      "DISCORD_BOT_TOKEN",
+      null,
+      { DISCORD_BOT_TOKEN: "discord-test" },
+      (command) => {
+        commands.push(command.join(" "));
+        return {
+          status: 0,
+          stdout: [
+            "Name: alpha-discord-bridge",
+            "Type: generic",
+            "Credential keys: DISCORD_BOT_TOKEN",
+            "Config keys: <none>",
+            "",
+          ].join("\n"),
+        };
+      },
+      { requireExactBinding: true },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      status: 1,
+      reason: "binding-conflict",
+      message:
+        "Existing provider 'alpha-discord-bridge' does not match the required 'discord-hermes-static-v1' credential binding.",
+    });
+    expect(commands).toEqual([
+      "provider get alpha-discord-bridge",
+      "provider get alpha-discord-bridge",
+    ]);
+  });
+
+  it("updates an existing provider when its exact credential binding matches", () => {
+    const commands: string[] = [];
+    const result = upsertProvider(
+      "alpha-discord-bridge",
+      "discord-hermes-static-v1",
+      "DISCORD_BOT_TOKEN",
+      null,
+      { DISCORD_BOT_TOKEN: "discord-test" },
+      (command) => {
+        commands.push(command.join(" "));
+        return {
+          status: 0,
+          stdout: [
+            "Name: alpha-discord-bridge",
+            "Type: discord-hermes-static-v1",
+            "Credential keys: DISCORD_BOT_TOKEN",
+            "Config keys: <none>",
+            "",
+          ].join("\n"),
+        };
+      },
+      { requireExactBinding: true },
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(commands).toEqual([
+      "provider get alpha-discord-bridge",
+      "provider get alpha-discord-bridge",
+      "provider update alpha-discord-bridge --credential DISCORD_BOT_TOKEN",
+    ]);
+  });
+
   it("throws instead of exiting when best-effort messaging provider upsert fails", () => {
     const originalExit = process.exit;
     process.exit = ((code?: number | string | null) => {
@@ -687,6 +777,97 @@ describe("onboard provider helpers", () => {
     } finally {
       process.exit = originalExit;
     }
+  });
+
+  it("classifies an exact-binding conflict without mutating the existing provider", () => {
+    const commands: string[] = [];
+
+    expect(() =>
+      upsertMessagingProviders(
+        [
+          {
+            name: "alpha-discord-bridge",
+            envKey: "DISCORD_BOT_TOKEN",
+            token: "discord-test",
+            providerType: "discord-hermes-static-v1",
+          },
+        ],
+        (command) => {
+          commands.push(command.join(" "));
+          return command.includes("profile") && command.includes("export")
+            ? { status: 0, stdout: DISCORD_STATIC_PROFILE_EXPORT }
+            : {
+                status: 0,
+                stdout: [
+                  "Name: alpha-discord-bridge",
+                  "Type: generic",
+                  "Credential keys: DISCORD_BOT_TOKEN",
+                  "Config keys: <none>",
+                  "",
+                ].join("\n"),
+              };
+        },
+        { bestEffort: true, requireExactBindings: true },
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
+        mutatedProviderNames: [],
+      }),
+    );
+    expect(commands).not.toContain(
+      "provider update alpha-discord-bridge --credential DISCORD_BOT_TOKEN",
+    );
+  });
+
+  it("preflights every exact binding before creating any messaging provider", () => {
+    const commands: string[] = [];
+
+    expect(() =>
+      upsertMessagingProviders(
+        [
+          {
+            name: "alpha-discord-bridge",
+            envKey: "DISCORD_BOT_TOKEN",
+            token: "alpha-discord-test",
+            providerType: "discord-hermes-static-v1",
+          },
+          {
+            name: "beta-discord-bridge",
+            envKey: "DISCORD_BOT_TOKEN",
+            token: "beta-discord-test",
+            providerType: "discord-hermes-static-v1",
+          },
+        ],
+        (command) => {
+          commands.push(command.join(" "));
+          return command[1] === "get" && command[2] === "alpha-discord-bridge"
+            ? { status: 1, stdout: "", stderr: "not found" }
+            : {
+                status: 0,
+                stdout: [
+                  "Name: beta-discord-bridge",
+                  "Type: generic",
+                  "Credential keys: DISCORD_BOT_TOKEN",
+                  "Config keys: <none>",
+                  "",
+                ].join("\n"),
+              };
+        },
+        { bestEffort: true, requireExactBindings: true },
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
+        mutatedProviderNames: [],
+      }),
+    );
+    expect(commands).not.toContain(
+      "provider create --name alpha-discord-bridge --type discord-hermes-static-v1 --credential DISCORD_BOT_TOKEN",
+    );
+    expect(commands.some((command) => command.includes("provider create"))).toBe(false);
+    expect(commands.some((command) => command.includes("provider update"))).toBe(false);
+    expect(commands.some((command) => command.includes("profile import"))).toBe(false);
   });
 
   it("replaces existing providers when the caller opts in (post-sandbox-delete path)", () => {

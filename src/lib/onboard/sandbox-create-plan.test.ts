@@ -271,7 +271,7 @@ describe("resolveSandboxCreateIntent", () => {
     expect(preparePolicy).toHaveBeenCalledWith(
       "/repo/policy.yaml",
       [],
-      expect.objectContaining({ additionalPresets: [] }),
+      expect.objectContaining({ additionalPresets: [], sandboxName: "sandbox" }),
     );
     expect(plan.createArgs).toContain("vllm-local");
     expect(plan.createArgs).not.toContain("local-inference");

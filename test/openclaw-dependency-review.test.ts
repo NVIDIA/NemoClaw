@@ -422,15 +422,15 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("Transitive Dependency Graph Rationale");
     expect(review).toContain("Transitive Remediation Boundary");
     expect(review).toContain("point-in-time record of the remediation shipped for the");
-    expect(review).toContain("current 2026.7.1 path installs the reviewed core archive");
+    expect(review).toContain("current 2026.7.1 path also remediates its source `tar`");
     expect(review).toContain("openclaw-2026.7.1-dependency-review.md");
     expect(review).toContain("Transitive Remediation Concern Ledger");
     expect(review).toContain("`openclaw@2026.6.10`, the helper makes these changes");
-    expect(review).toContain("`tar@7.5.16` with `tar@7.5.19`");
+    expect(review).toContain("`tar@7.5.16` with `tar@7.5.21`");
     expect(review).toContain("`brace-expansion@5.0.6` with `brace-expansion@5.0.7`");
     expect(review).toContain("`@openclaw/fs-safe@0.3.0`");
     expect(review).toContain("removes its duplicate optional `tar` and `jszip` declarations");
-    expect(review).toContain("direct `tar@7.5.19` and `jszip@3.10.1` dependencies");
+    expect(review).toContain("direct `tar@7.5.21` and `jszip@3.10.1` dependencies");
     expect(review).toContain("`axios@1.16.0` with `axios@1.18.0`");
     expect(review).toContain("`https-proxy-agent@5.0.1` and `agent-base@6.0.2`");
     expect(review).toContain("`@opentelemetry/propagator-jaeger@2.8.0` with `2.9.0`");
@@ -449,7 +449,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "core value also covers the bundled `@openclaw/fs-safe` package manifest",
     );
     for (const integrity of [
-      "sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==",
+      "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==",
       "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==",
       "sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==",
       "sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==",
@@ -457,7 +457,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==",
       "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==",
       "sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==",
-      "sha512-B5O6Gu3YGY52w+Px8diL5zBtk8mj0u7E1ZvVK7KOLWX9H+S3B7kYUxnGfyB239mVYSluecfiWGvFFMk5eFhwKg==",
+      "sha512-XMycUUV7gCzUYbjgwrglER0AQEtfuKUz6wyo4ilm/7nSSkLocYUYVkrJuBFYPW3no8Y5FW/1+2hWCssIyjxn3g==",
       "sha512-ByLYBs3KXz3u0mPuj9DcP/xPTJNgQaLTPxazybhyIC1VjyftEmKQuoZufPZ8z8CjwBsOPm6NbjMQB2BfX36TTg==",
       "sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==",
       "sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==",
@@ -465,7 +465,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       expect(review).toContain(integrity);
     }
     for (const tarball of [
-      "https://registry.npmjs.org/tar/-/tar-7.5.19.tgz",
+      "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz",
       "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz",
       "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz",
       "https://registry.npmjs.org/axios/-/axios-1.18.0.tgz",
@@ -482,7 +482,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "`https-proxy-agent@5.0.1` and `agent-base@6.0.2` tarballs declare MIT in package metadata but contain no license file",
     );
     expect(review).toContain("The other replacement tarballs include license files");
-    expect(review).toContain("`tar@7.5.19` declares BlueOak-1.0.0");
+    expect(review).toContain("`tar@7.5.21` declares BlueOak-1.0.0");
     expect(review).toContain("the OpenTelemetry packages declare Apache-2.0");
     expect(review).toContain("the other packages declare MIT");
     expect(review).toContain(
