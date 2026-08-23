@@ -4,7 +4,10 @@
 import { vi } from "vitest";
 
 import type { ContainerEngine } from "../../adapters/container-engine";
-import { buildLlamaCppHostLocalServerArgv } from "../../inference/llama-cpp/host-local-runtime";
+import {
+  buildLlamaCppRequestGuardCommandArgv,
+  LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
+} from "../../inference/llama-cpp/host-local-runtime";
 import {
   contract,
   IMAGE,
@@ -32,6 +35,7 @@ export interface DockerFixture {
   }) => void;
   readonly setOpenShellBridgeSubnet: (value: string) => void;
   readonly driftHardening: () => void;
+  readonly driftEntrypoint: () => void;
   readonly dropTmpfs: () => void;
   readonly driftGpuRequest: (driver: string | undefined, count: number) => void;
   readonly driftExtraDeviceAuthority: (kind: "cap-add" | "legacy-device") => void;
@@ -99,6 +103,7 @@ export function createDockerFixture(
         status: string;
         transactionId: string;
         command: string[];
+        entrypoint: string[];
       }
     | undefined;
   const inspection = () => [
@@ -108,6 +113,7 @@ export function createDockerFixture(
       Config: {
         Image: IMAGE,
         User: "1001:1001",
+        Entrypoint: container?.entrypoint ?? [],
         Cmd: container?.command ?? [],
         Labels: container?.labels ?? {},
       },
@@ -292,6 +298,7 @@ export function createDockerFixture(
           status: "created",
           transactionId: labels["io.nvidia.nemoclaw.host-local-inference.transaction-sha256"] ?? "",
           command: args.slice(args.indexOf(IMAGE) + 1),
+          entrypoint: [String(args[args.indexOf("--entrypoint") + 1] ?? "")],
         };
         createHook?.();
         return { status: 0, stdout: createStdout, stderr: "" };
@@ -363,6 +370,10 @@ export function createDockerFixture(
     failSandboxBridgeProbe: (result) => (sandboxBridgeProbeFailure = result),
     setOpenShellBridgeSubnet: (value) => (openShellBridgeSubnet = value),
     driftHardening: () => (hardeningDrift = true),
+    driftEntrypoint: () => {
+      invariant(container !== undefined, "cannot drift an absent fixture container");
+      container.entrypoint = ["/usr/local/bin/llama-server"];
+    },
     dropTmpfs: () => (tmpfs = null),
     driftGpuRequest: (driver, count) => {
       gpuDriver = driver;
@@ -410,7 +421,8 @@ export function createDockerFixture(
         running,
         status: running ? "running" : "created",
         transactionId: journal.transactionId,
-        command: [...buildLlamaCppHostLocalServerArgv(contract())],
+        command: [...buildLlamaCppRequestGuardCommandArgv(contract())],
+        entrypoint: [LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH],
       };
     },
   };
