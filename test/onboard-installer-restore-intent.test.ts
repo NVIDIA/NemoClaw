@@ -66,6 +66,9 @@ runner.run = (command) => {
   events.push({ kind: "run", cmd });
   if (cmd.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (cmd.includes("sandbox delete")) sandboxDeleted = true;
+  if (cmd.includes("sandbox list")) {
+    return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
+  }
   return cmd.includes("sandbox get") && cmd.includes("my-assistant")
     ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
