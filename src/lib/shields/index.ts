@@ -1349,7 +1349,9 @@ function verifyHermesProviderMutablePosture(sandboxName: string, target: AgentCo
       "%a %U:%G",
       target.configDir,
     ]).split(" ");
-    if (mode !== "3770") issues.push(`${target.configDir} mode=${mode} (expected 3770)`);
+    if (mode !== "700" && mode !== "3770") {
+      issues.push(`${target.configDir} mode=${mode} (expected 700 or 3770)`);
+    }
     if (owner !== "sandbox:sandbox") {
       issues.push(`${target.configDir} owner=${owner} (expected sandbox:sandbox)`);
     }
@@ -5527,13 +5529,22 @@ function shieldsDownWithoutHostLock(
       assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
     }
     assertShieldsPolicyMutationAuthority(sandboxName, "unlock the Shields config");
-    unlockAgentConfig(
-      sandboxName,
-      target,
-      initialMode === "locked",
-      opts.allowLegacyHermesProtocol === true,
-      protocol,
-    );
+    if (
+      target.agentName === "hermes" &&
+      protocol === "provider-state-mutation-v2" &&
+      initialMode === "mutable_default" &&
+      !hasActiveRuntimeProviderStateMutation(sandboxName)
+    ) {
+      verifyHermesProviderMutablePosture(sandboxName, target);
+    } else {
+      unlockAgentConfig(
+        sandboxName,
+        target,
+        initialMode === "locked",
+        opts.allowLegacyHermesProtocol === true,
+        protocol,
+      );
+    }
     if (target.agentName === "hermes") {
       console.log("  Confirming Hermes inference route after policy transition...");
       const convergence = waitForHermesInferenceRouteConvergence(sandboxName, { run });

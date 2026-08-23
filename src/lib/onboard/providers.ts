@@ -22,9 +22,14 @@ const {
   LLAMA_CPP_PROVIDER_NAME,
 } = require("../inference/llama-cpp/contract");
 const {
+  inspectGatewayCredentialOnlyProviderBinding,
   matchesGatewayCredentialOnlyProviderBinding,
   readGatewayProviderMetadata,
 } = require("./gateway-provider-metadata");
+const {
+  ensureMessagingCredentialProviderProfile,
+  MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+} = require("../messaging/provider-profile");
 
 const MESSAGING_PROVIDER_BINDING_CONFLICT = "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT";
 
@@ -405,7 +410,7 @@ function getRequestedModelHint(nonInteractive, allowHostedInferenceStaging = tru
  * Build the argument array for an `openshell provider create` or `update` command.
  * @param {"create"|"update"} action - Whether to create or update.
  * @param {string} name - Provider name.
- * @param {string} type - Provider type (e.g. "openai", "anthropic", "generic").
+ * @param {string} type - Provider type (for example, "openai" or "nemoclaw-mcp-v1").
  * @param {string} credentialEnv - Credential environment variable name.
  * @param {string|null} baseUrl - Optional base URL for API-compatible endpoints.
  * @param {{ includeCredential?: boolean }} [opts] - When `includeCredential` is
@@ -474,18 +479,18 @@ function policyAuthorityCheckedRunner(runOpenshell, revalidatePolicyRequirements
  * Checks whether the provider already exists via `openshell provider get`;
  * uses `create` for new providers and `update` for existing ones. When
  * `options.replaceExisting` is true an existing provider is deleted and
- * recreated instead of updated — required for provider-type changes that
+ * recreated instead of updated. This is required for provider-type changes that
  * `provider update` cannot apply (e.g. the Brave Search migration from the
  * legacy `generic` type to the `brave` profile). The caller must guarantee
  * the provider is detached from any live sandbox before opting in: OpenShell
  * rejects `provider delete` on attached providers.
  * @param {string} name - Provider name (e.g. "discord-bridge", "inference").
- * @param {string} type - Provider type ("openai", "anthropic", "generic", "brave").
+ * @param {string} type - Provider type (for example, "openai", "brave", or "nemoclaw-mcp-v1").
  * @param {string} credentialEnv - Environment variable name for the credential.
  * @param {string|null} baseUrl - Optional base URL for the provider endpoint.
  * @param {Record<string, string>} env - Environment variables for the openshell command.
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean, requireExactBinding?: boolean, revalidatePolicyRequirements?: (operation: string) => void}} options - Optional replacement controls.
+ * @param {{replaceExisting?: boolean, knownExists?: boolean, allowedSandboxes?: readonly string[], requireExactBinding?: boolean, revalidatePolicyRequirements?: (operation: string) => void}} options - Optional replacement controls.
  * @returns {{ ok: boolean, status?: number, message?: string, reason?: string }}
  */
 function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
@@ -494,7 +499,7 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
     options.revalidatePolicyRequirements,
     `inspect or change provider ${JSON.stringify(name)}`,
   );
-  const exists = providerExistsInGateway(name, runOpenshell);
+  const exists = options.knownExists ?? providerExistsInGateway(name, runOpenshell);
   if (
     exists &&
     options.requireExactBinding &&
@@ -514,7 +519,10 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
   }
   if (exists && options.replaceExisting) {
     const { deleteProviderWithRecovery } = require("./sandbox-provider-cleanup");
-    const r = deleteProviderWithRecovery(name, { runOpenshell });
+    const r = deleteProviderWithRecovery(name, {
+      runOpenshell,
+      allowedSandboxes: options.allowedSandboxes,
+    });
     if (!r.ok) {
       const base =
         compactText(redact(r.stderr)) ||
@@ -579,10 +587,15 @@ function preflightMessagingProviderBindings(tokenDefs, _runOpenshell) {
  * of terminating the CLI.
  * @param {Array<{name: string, envKey: string, token: string|null, providerType?: string}>} tokenDefs
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean, bestEffort?: boolean, requireExactBindings?: boolean, revalidatePolicyRequirements?: (operation: string) => void}} options - Forwarded to every upsertProvider call.
+ * @param {{replaceExisting?: boolean, bestEffort?: boolean, allowedSandboxes?: readonly string[], requireExactBindings?: boolean, revalidatePolicyRequirements?: (operation: string) => void}} options - Forwarded to every upsertProvider call.
  * @returns {string[]} Provider names that were upserted.
  */
 function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
+  const runMessagingBridgeOpenshell = policyAuthorityCheckedRunner(
+    _runOpenshell,
+    options.revalidatePolicyRequirements,
+    "inspect or change a messaging bridge provider",
+  );
   // Provider creation order. Bridges (e.g. Google Chat) need two steps bracketing
   // the uniform create loop, ordered around `provider create`:
   //
@@ -592,7 +605,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   //     +----v-------------------------------------------------+
   //     |  for (tokenDef of tokenDefs)   <- THE LOOP           |
   //     |     upsertProvider(name, providerType || "generic")  |  bridge created
-  //     |       . slack       -> --type generic                |  with a sentinel
+  //     |       . slack       -> --type nemoclaw-mcp-v1        |  with a sentinel
   //     |       . googlechat  -> --type google-chat-bridge     |  token
   //     +----+-------------------------------------------------+
   //          |
@@ -603,7 +616,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   // channels/<channel>/provider-profile/<agent>.yaml (not a flag inside it); both
   // bracket steps self-gate when no bridge token def is present.
   if (options.requireExactBindings && !options.replaceExisting) {
-    const bindingFailures = preflightMessagingProviderBindings(tokenDefs, _runOpenshell);
+    const bindingFailures = preflightMessagingProviderBindings(tokenDefs, runMessagingBridgeOpenshell);
     if (bindingFailures.length > 0) {
       const message = bindingFailures
         .map(({ name, message: failure }) => `${name}: ${failure}`)
@@ -617,11 +630,19 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   }
 
   const messagingBridgeProvider = require("./messaging-bridge-provider");
-  const runMessagingBridgeOpenshell = policyAuthorityCheckedRunner(
-    _runOpenshell,
-    options.revalidatePolicyRequirements,
-    "inspect or change a messaging bridge provider",
-  );
+  if (tokenDefs.some(({ providerType }) => providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE)) {
+    try {
+      ensureMessagingCredentialProviderProfile({
+        root: ROOT,
+        runOpenshell: runMessagingBridgeOpenshell,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (options.bestEffort) throw new Error(message);
+      console.error(`\n  ✗ ${message}`);
+      process.exit(1);
+    }
+  }
   messagingBridgeProvider.ensureMessagingBridgeProfiles(tokenDefs, {
     root: ROOT,
     runOpenshell: runMessagingBridgeOpenshell,
@@ -631,7 +652,30 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   const failures = [];
   for (const { name, envKey, token, providerType } of tokenDefs) {
     if (!token) continue;
-    const result = upsertProvider(
+    let knownExists;
+    let result;
+    if (providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE) {
+      const inspection = inspectGatewayCredentialOnlyProviderBinding(
+        { name, type: providerType, credentialKey: envKey },
+        runMessagingBridgeOpenshell,
+      );
+      if (inspection.kind === "indeterminate") {
+        result = {
+          ok: false,
+          status: 1,
+          message: `Could not inspect messaging provider '${name}'; no provider mutation was attempted.`,
+        };
+      } else if (inspection.kind === "collision" && !options.replaceExisting) {
+        result = {
+          ok: false,
+          status: 1,
+          message: `Messaging provider '${name}' does not match the required endpointless credential binding.`,
+        };
+      } else {
+        knownExists = inspection.kind !== "missing";
+      }
+    }
+    result ??= upsertProvider(
       name,
       providerType || "generic",
       envKey,
@@ -640,10 +684,25 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
       _runOpenshell,
       {
         replaceExisting: Boolean(options.replaceExisting),
+        knownExists,
+        allowedSandboxes: options.allowedSandboxes,
         revalidatePolicyRequirements: options.revalidatePolicyRequirements,
         requireExactBinding: Boolean(options.requireExactBindings && providerType),
       },
     );
+    if (result.ok && providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE) {
+      const verified = inspectGatewayCredentialOnlyProviderBinding(
+        { name, type: providerType, credentialKey: envKey },
+        runMessagingBridgeOpenshell,
+      );
+      if (verified.kind !== "exact") {
+        result = {
+          ok: false,
+          status: 1,
+          message: `OpenShell did not confirm messaging provider '${name}' after mutation.`,
+        };
+      }
+    }
     if (!result.ok) {
       if (options.bestEffort) {
         failures.push({ name, message: result.message, reason: result.reason });

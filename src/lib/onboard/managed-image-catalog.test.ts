@@ -104,6 +104,7 @@ function registryFixture(agent: ShippedManagedImageAgent, options: RegistryFixtu
     ),
     "org.opencontainers.image.source": `https://github.com/${MANAGED_IMAGE_SOURCE_REPOSITORY}`,
     "org.opencontainers.image.revision": REVISION,
+    "org.opencontainers.image.version": RELEASE,
     "io.nvidia.nemoclaw.managed-image.cohort": COHORT,
     ...options.labels,
   };
@@ -469,6 +470,23 @@ describe("managed image GHCR catalog", () => {
         fetchImpl: fixture.fetchImpl,
       }),
     ).rejects.toThrow(/source revision does not match the expected revision/);
+  });
+
+  it("rejects a qualification revision from a different immutable release", async () => {
+    const fixture = catalogFixture({
+      openclaw: {
+        rootReference: REVISION,
+        labels: { "org.opencontainers.image.version": "v0.0.96" },
+      },
+    });
+
+    await expect(
+      resolveManagedImageCatalogFromGhcr({
+        release: RELEASE,
+        revision: REVISION,
+        fetchImpl: fixture.fetchImpl,
+      }),
+    ).rejects.toThrow(/image release does not match the expected release/);
   });
 
   it("fails closed when a dependent cohort alias is torn or absent", async () => {

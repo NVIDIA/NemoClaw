@@ -210,6 +210,8 @@ export interface Session {
   model: string | null;
   /** Secret-free model intent retained only while a managed vLLM install is unfinished. */
   vllmInstallModel: string | null;
+  /** GPU exposed to the host-side managed vLLM container for this onboarding attempt. */
+  vllmGpuDevice: string | null;
   /** Exact secret-free serving recipe identity selected before runtime side effects. */
   servingProfileProvenance: ServingProfileProvenance | null;
   /** Secret-free installer choices needed to retry an interrupted DGX Station Express run. */
@@ -340,6 +342,7 @@ export interface DebugSessionSummary {
   provider: string | null;
   model: string | null;
   vllmInstallModel: string | null;
+  vllmGpuDevice: string | null;
   servingProfileProvenance: ServingProfileProvenance | null;
   endpointUrl: string | null;
   credentialEnv: string | null;
@@ -399,6 +402,18 @@ function parseVllmInstallModel(value: unknown): string | null {
   const model = value.trim();
   return model.length > 0 && model.length <= 512 && SAFE_VLLM_INSTALL_MODEL.test(model)
     ? model
+    : null;
+}
+
+function parseVllmGpuDevice(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const candidate = value.trim();
+  if (/^\d+$/.test(candidate)) {
+    const index = Number(candidate);
+    if (Number.isSafeInteger(index)) return String(index);
+  }
+  return /^GPU-[A-Fa-f0-9]{8}(?:-[A-Fa-f0-9]{4}){3}-[A-Fa-f0-9]{12}$/.test(candidate)
+    ? `GPU-${candidate.slice("GPU-".length).toLowerCase()}`
     : null;
 }
 
@@ -761,6 +776,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     provider: overrides.provider ?? null,
     model: overrides.model ?? null,
     vllmInstallModel: parseVllmInstallModel(overrides.vllmInstallModel),
+    vllmGpuDevice: parseVllmGpuDevice(overrides.vllmGpuDevice),
     servingProfileProvenance: parseServingProfileProvenance(overrides.servingProfileProvenance),
     stationExpressIntent: parseStationExpressResumeIntent(overrides.stationExpressIntent),
     stationExpressReceiptRetirement: isValidStationExpressReceiptGeneration(
@@ -838,6 +854,10 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   if (hasOwn(data, "vllmInstallModel") && data.vllmInstallModel !== null && !vllmInstallModel) {
     return null;
   }
+  const vllmGpuDevice = parseVllmGpuDevice(data.vllmGpuDevice);
+  if (hasOwn(data, "vllmGpuDevice") && data.vllmGpuDevice !== null && !vllmGpuDevice) {
+    return null;
+  }
   const compatibleEndpointReasoningEffort = normalizeReasoningEffort(
     data.compatibleEndpointReasoningEffort,
   );
@@ -878,6 +898,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     provider: readString(data.provider),
     model: readString(data.model),
     vllmInstallModel,
+    vllmGpuDevice,
     servingProfileProvenance,
     stationExpressIntent,
     stationExpressReceiptRetirement,
@@ -1880,6 +1901,7 @@ export function summarizeForDebug(
     provider: session.provider,
     model: session.model,
     vllmInstallModel: session.vllmInstallModel,
+    vllmGpuDevice: session.vllmGpuDevice,
     servingProfileProvenance: session.servingProfileProvenance,
     endpointUrl: redactUrl(session.endpointUrl),
     credentialEnv: session.credentialEnv,

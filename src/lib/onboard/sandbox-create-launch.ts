@@ -91,7 +91,7 @@ export function renderSandboxCreateCommand(
   ])} 2>&1`;
 }
 
-function managedBootstrapCreateArgs(
+export function managedBootstrapCreateArgs(
   createArgs: readonly string[],
   bootstrapIdentity: string | null,
 ): string[] {

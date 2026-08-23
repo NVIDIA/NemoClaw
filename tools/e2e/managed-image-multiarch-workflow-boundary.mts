@@ -29,7 +29,7 @@ type WorkflowStep = WorkflowRecord & {
 
 const JOB_ID = PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID;
 const PROTECTED_RUNTIME_JOB_ID = "managed-image-protected-runtime";
-const SELECTOR = `\${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${JOB_ID}') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${PROTECTED_RUNTIME_JOB_ID}')) }}`;
+const SELECTOR = `\${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${JOB_ID}') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${PROTECTED_RUNTIME_JOB_ID}')) }}`;
 const ACTIVATION_PATH = PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH;
 const DIRECT_TEST_PATH = "test/e2e/live/managed-image-multiarch-startup.test.ts";
 const REGISTRY_IMAGE =
@@ -110,7 +110,9 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     return [`workflow missing ${JOB_ID} job`];
   }
 
-  if (job.needs !== "generate-matrix") errors.push(`${JOB_ID} must depend on generate-matrix`);
+  if (!isDeepStrictEqual(job.needs, ["base-image-publication", "generate-matrix"])) {
+    errors.push(`${JOB_ID} must depend on base-image-publication and generate-matrix`);
+  }
   if (job.if !== SELECTOR) errors.push(`${JOB_ID} must use the trusted execution plan`);
   if (job["runs-on"] !== "${{ matrix.runner }}") {
     errors.push(`${JOB_ID} must run on the native matrix runner`);
@@ -192,6 +194,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   requireFragments(errors, guard, [
     '"NVIDIA/NemoClaw"',
     '"refs/heads/main"',
+    '"$REF" == refs/heads/*',
     '"push"',
     '"workflow_dispatch"',
     '[[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]',
@@ -288,6 +291,11 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   ]);
 
   const bases = requireStep(errors, steps, "Resolve exact platform base images");
+  requireValues(errors, `${JOB_ID} exact base resolution`, record(bases?.env), {
+    DCODE_BASE_CONTRACT:
+      "${{ needs.base-image-publication.outputs.dcode_base_contract }}",
+    PLATFORM: "${{ matrix.platform }}",
+  });
   requireFragments(errors, bases, [
     'arch="${PLATFORM#linux/}"',
     'docker buildx imagetools inspect "$alias" --raw',
@@ -295,8 +303,18 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     'reference="${repository}@${digest}"',
     '"sha256:$(sha256sum "$exact_raw" | awk \'{print $1}\')" == "$digest"',
     "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
-    "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest",
+    "'.platformReferences[$platform]' <<< \"$DCODE_BASE_CONTRACT\"",
+    'docker buildx imagetools inspect "$dcode_reference" --raw',
+    '"sha256:$(sha256sum "$work_dir/dcode-exact.raw" | awk \'{print $1}\')" == "$dcode_digest"',
+    "printf 'dcode=%s\\n' \"$dcode_reference\" >> \"$GITHUB_OUTPUT\"",
   ]);
+  if (
+    text(bases?.run).includes(
+      "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest",
+    )
+  ) {
+    errors.push(`${JOB_ID} must not resolve the DCode base from a mutable alias`);
+  }
   if (text(bases?.run).includes("ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest")) {
     errors.push(`${JOB_ID} must resolve Hermes from the immutable reviewed Dockerfile index`);
   }

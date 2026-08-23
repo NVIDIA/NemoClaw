@@ -2,12 +2,37 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const LOCAL_INTEGRATION_WORKER_CAP = 4;
+const CLI_COVERAGE_SHARD_WORKER_CAP = 2;
 
 interface IntegrationProjectSchedulingContext {
   isCi: boolean;
   npmLifecycleEvent: string | undefined;
   argv: readonly string[];
   availableParallelism?: number;
+}
+
+interface CliCoverageShardSchedulingContext {
+  isCi: boolean;
+  cliShard: string | undefined;
+  cliShardCount: string | undefined;
+}
+
+function parsePositiveInteger(rawValue: string | undefined): number | null {
+  if (!rawValue || !/^\d+$/u.test(rawValue)) return null;
+  const parsed = Number(rawValue);
+  return Number.isSafeInteger(parsed) && parsed >= 1 ? parsed : null;
+}
+
+export function resolveCliCoverageShardScheduling({
+  isCi,
+  cliShard,
+  cliShardCount,
+}: CliCoverageShardSchedulingContext) {
+  const shard = parsePositiveInteger(cliShard);
+  const shardCount = parsePositiveInteger(cliShardCount);
+  return isCi && shard !== null && shardCount !== null && shard <= shardCount
+    ? { maxWorkers: CLI_COVERAGE_SHARD_WORKER_CAP }
+    : {};
 }
 
 function parseWorkerCount(rawValue: string, availableWorkers: number): number {

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -53,6 +55,13 @@ const platformRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${platformDiges
 const imageId = `sha256:${"b".repeat(64)}`;
 const createdBuildContexts: string[] = [];
 let trackedRef = "";
+let testRoot = "";
+
+function stageHermesSandbox() {
+  const result = createAgentSandbox(makeAgent(), { rootDir: testRoot });
+  createdBuildContexts.push(result.buildCtx);
+  return result;
+}
 
 describe("Hermes base-image resolver integration", () => {
   beforeEach(() => {
@@ -63,6 +72,7 @@ describe("Hermes base-image resolver integration", () => {
     sourceMocks.nearestTags.mockReturnValue([]);
     dockerMocks.infoFormat.mockReturnValue("linux/aarch64\n");
     dockerMocks.pull.mockReturnValue({ status: 1 });
+    testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-resolution-test-"));
 
     const dockerfile = fs.readFileSync(makeAgent().dockerfilePath ?? "", "utf8");
     trackedRef =
@@ -110,11 +120,11 @@ describe("Hermes base-image resolver integration", () => {
     for (const buildCtx of createdBuildContexts.splice(0)) {
       fs.rmSync(buildCtx, { force: true, recursive: true });
     }
+    fs.rmSync(testRoot, { force: true, recursive: true });
   });
 
   it("stages Hermes on aarch64 with a Dockerfile-pinned platform digest produced by the resolver path (#6313)", () => {
-    const result = createAgentSandbox(makeAgent());
-    createdBuildContexts.push(result.buildCtx);
+    const result = stageHermesSandbox();
 
     expect(fs.readFileSync(result.stagedDockerfile, "utf8")).toContain(
       `ARG BASE_IMAGE=${platformRef}`,
@@ -209,8 +219,7 @@ describe("Hermes base-image resolver integration", () => {
   }, 30_000);
 
   it("reuses an outer resolver's pinned platform digest only during its rebuild lease (#7144)", () => {
-    const outer = createAgentSandbox(makeAgent());
-    createdBuildContexts.push(outer.buildCtx);
+    const outer = stageHermesSandbox();
     const resolutionMetadata = outer.baseImageResolutionMetadata;
     expect(resolutionMetadata).not.toBeNull();
     vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", platformRef);
@@ -223,8 +232,7 @@ describe("Hermes base-image resolver integration", () => {
     );
 
     try {
-      const inner = createAgentSandbox(makeAgent());
-      createdBuildContexts.push(inner.buildCtx);
+      const inner = stageHermesSandbox();
       expect(fs.readFileSync(inner.stagedDockerfile, "utf8")).toContain(
         `ARG BASE_IMAGE=${platformRef}`,
       );
@@ -233,7 +241,7 @@ describe("Hermes base-image resolver integration", () => {
       restore();
     }
 
-    expect(() => createAgentSandbox(makeAgent())).toThrow(
+    expect(() => stageHermesSandbox()).toThrow(
       `Hermes final image does not accept base image ref '${platformRef}'`,
     );
   }, 30_000);

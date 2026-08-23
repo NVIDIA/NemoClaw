@@ -800,17 +800,29 @@ evidence directory; a preparation failure produces no lane artifact. After
 workspace preparation, `cleanup.json` records the final cleanup result. The
 identity receipt records onboarding, inference, and full E2E as `not-run`.
 
-`BREV_API_KEY` and `BREV_ORG_ID` are environment values only in the preparation
-step on the GitHub-hosted runner. `brev login` writes them to
-`$HOME/.brev/credentials.json` under a job-private `HOME`; later Brev steps read
-that file through cleanup.
-The workflow then removes the file and verifies its absence before artifact
-upload. The image dispatch token is available as `GH_TOKEN` only to the identity
+The identity job runs on `ubuntu-latest`. GitHub assigns a fresh hosted-runner VM
+to the job and decommissions the VM after the job finishes. `BREV_API_KEY` and
+`BREV_ORG_ID` are environment values only in the preparation step. `brev login`
+writes the raw API key and organization identifier to the runner account's
+`$HOME/.brev/credentials.json` inside an owner-only `.brev` directory. Later
+trusted Brev steps read that file through workspace cleanup.
+
+A successful `brev refresh` writes the Brev user SSH private key to
+`$HOME/.brev/brev.pem`, generated host entries to `$HOME/.brev/ssh_config`, and
+an include directive to `$HOME/.ssh/config`. Brev and OpenSSH use this runner
+account home so the SSH readiness check can read the host entry. The workflow
+removes the API credential file and verifies its absence before artifact upload.
+The SSH private key and configuration remain on the hosted-runner VM until
+GitHub decommissions it.
+
+The image dispatch token is available as `GH_TOKEN` only to the identity
 validation step on the GitHub-hosted runner. Ending that step removes its
-process access. Removing the local Brev file and ending the token-bearing step
-do not revoke the issuer-side credentials; they remain valid until they expire
-or an administrator revokes them. These credentials are not sent to the
-Launchable workspace, and the job does not receive an inference credential.
+process access. Removing the local Brev API credential file and ending the
+token-bearing step do not revoke the issuer-side credentials. They remain valid
+until they expire or an administrator revokes them. The job does not check out
+candidate code on the hosted runner. It does not send `BREV_API_KEY`,
+`BREV_ORG_ID`, `GH_TOKEN`, or the Brev user SSH private key to the Launchable
+workspace, and it does not receive an inference credential.
 After the identity validation step, a reserved cleanup step rechecks only the exact
 workflow-owned workspace name. The job is absent from push, default, full, and
 release-required selections.
@@ -858,11 +870,14 @@ artifact. A later early failure can retain only `lane.log`. A successful job
 contains `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`;
 `cleanup.json` exists only after the job confirms workspace absence.
 When the preinstalled full E2E fails after SSH succeeds, the job attempts to
-append bounded, redacted host state and PID 1 lifecycle classifications to
-`lane.log` before cleanup. If a probe fails or the shared budget expires,
-`lane.log` records that result and cleanup continues. The diagnostic phase is
-read-only, uses one 30-second budget, and does not retry the failed E2E or repair
-the workspace.
+append bounded, redacted host state and fixed lifecycle classifications to
+`lane.log` before cleanup. On the host, the SSH command reads the system journal
+and returns only fixed PID 1 lifecycle and OpenShell gateway bind
+classifications. Raw journal messages and credential values do not reach the
+GitHub-hosted runner or `lane.log`. If a probe fails or the shared budget
+expires, `lane.log` records that result and cleanup continues. The diagnostic
+phase is read-only, uses one 30-second budget, and does not retry the failed E2E
+or repair the workspace.
 
 Manual ordinary and full runs exclude the Jetson nvmap and DGX Spark llama.cpp
 jobs unless their independent opt-in flags are `true`.
@@ -1409,8 +1424,25 @@ When every deterministic cold-onboard budget passes and the real first turn exit
 successfully with the expected sentinel, a sole root-end-to-first-turn overage
 is recorded as a structured, non-blocking hosted-latency anomaly rather than a
 PR regression.
-The same overage remains blocking when accompanied by a root-start or
-phase-budget failure.
+The same overage remains blocking when accompanied by a root-start or phase-budget failure.
+
+The checked-in `nemoclaw.onboard.phase.sandbox` budget remains 208,000 ms.
+A sandbox-phase overage qualifies for anomaly classification only when it is the sole performance overage and the run uses the published-base build mode without the authoritative local base-build allowance.
+For a qualifying overage of at most 5,000 ms, `full-e2e` records a `sandbox-phase-tail` anomaly instead of a blocking performance violation.
+An overage greater than 5,000 ms remains blocking.
+A run that applies the authoritative local base-build allowance or has another performance violation also remains blocking.
+Every other performance contract remains blocking, as do the existing first-turn command exit, BuildKit, gateway-builder no-fallback, output-silence, sentinel, E2E job outcome, and cleanup contracts.
+
+For `sandbox-phase-tail`, the trusted push scorecard uses the latest five eligible samples from the same agent, setup mode, platform, base-build mode, and workload kind.
+A current anomaly passes only when four valid prior same-cohort samples exist and none contains a sandbox-phase anomaly.
+A current anomaly remains blocking in these cases:
+
+- One or more queried prior push summaries are unavailable.
+- Fewer than four valid prior same-cohort samples are available.
+- One prior sample in the five-sample window contains a sandbox-phase anomaly.
+
+The second anomaly in the five-sample window therefore blocks immediately.
+These sandbox-phase recurrence rules do not change the hosted first-turn policy described below.
 
 The trusted push scorecard stores the current eligible sample in the
 `e2e-runtime-summary` artifact.
@@ -1424,6 +1456,9 @@ A current sample without an anomaly does not fail because of an earlier anomaly.
 Missing, malformed, or functionally unsuccessful samples do not enter the window.
 The scorecard waits for 12 eligible samples when retained history is incomplete.
 The canonical E2E uploader retains each push summary for 14 days.
+
+The sandbox-phase recurrence rule does not recalibrate the checked-in budget.
+Recalibration remains deferred until five successful samples from the same commit are available.
 
 When changed base-image inputs require the authoritative local OpenClaw base
 build, the target applies the separately calibrated 90-second allowance only to

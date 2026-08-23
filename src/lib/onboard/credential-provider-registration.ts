@@ -24,6 +24,7 @@ export interface StageSandboxCredentialProvidersInput<Agent> {
 
 export interface MessagingProviderRegistrationOptions {
   replaceExisting?: boolean;
+  allowedSandboxes?: readonly string[];
   revalidatePolicyRequirements?(operation: string): void;
 }
 

@@ -548,6 +548,7 @@ test(
             : { compatibilityOnlyRouteVerified: true }),
         openshellReady: true,
         sandboxCudaVerified: true,
+        managedWorkloadAuthorityVerified: true,
         extraPlaceholderCommandRoundTripValid: true,
         stableSingleContainer: true,
         startupConfigHashesValid: true,

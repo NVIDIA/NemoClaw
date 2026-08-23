@@ -73,6 +73,7 @@ let credentialUpdatedThisProcess = false;
 let observedCredentialAbsentThisProcess = false;
 let credentialRepublishBeforeObservationCountThisProcess = 0;
 let credentialRepublishAfterAbsenceCountThisProcess = 0;
+let credentialFreeRefreshBeforeObservationCountThisProcess = 0;
 let credentialFreeRefreshAfterAbsenceCountThisProcess = 0;
 
 const registry = require("./src/lib/state/registry.js");
@@ -152,6 +153,14 @@ providerCommands.runOpenshellProviderCommand = (args) => {
       ) {
         credentialRepublishAfterAbsenceCountThisProcess += 1;
         fs.appendFileSync(marker("republish-after-observed-absence"), "republish\n", { mode: 0o600 });
+      }
+      if (
+        crashAfter === "credential-projection-delayed-hostless" &&
+        isCredentialFreeRefresh &&
+        !observedCredentialAbsentThisProcess
+      ) {
+        credentialFreeRefreshBeforeObservationCountThisProcess += 1;
+        fs.appendFileSync(marker("refresh-before-observed-absence"), "refresh\n", { mode: 0o600 });
       }
       if (
         crashAfter === "credential-projection-delayed-hostless" &&
@@ -285,7 +294,7 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
   if (command === "command -v mcporter") {
     return { status: 0, stdout: "/usr/local/bin/mcporter\n", stderr: "" };
   }
-  if (command.includes("config' 'add")) {
+  if (command.includes("config' 'add") || command.includes('"config", "add"')) {
     mark("adapter");
     if (crashAfter === "adapter") process.exit(86);
     return { status: 0, stdout: "", stderr: "" };
@@ -702,6 +711,7 @@ describe("MCP add crash consistency", () => {
       expect(resumed.status, `${resumed.stdout}\n${resumed.stderr}`).toBe(0);
       expect(`${resumed.stdout}\n${resumed.stderr}`).not.toContain("host-only-secret");
       expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "refresh-before-observed-absence.marker"))).toBe(false);
       const credentialFreeRefreshCount = fs
         .readFileSync(path.join(home, "refresh-after-observed-absence.marker"), "utf8")
         .split("\n")
@@ -744,6 +754,7 @@ describe("MCP add crash consistency", () => {
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(fs.existsSync(path.join(home, "observation.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "updated.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
       expect(readBridge(home).addState).toBeUndefined();

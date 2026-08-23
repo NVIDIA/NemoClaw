@@ -18,6 +18,10 @@ import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../types";
 import type { SandboxRecreateObservation } from "../sandbox-recreate-transaction";
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
+import {
+  publishAttachedProvidersBeforeDockerSandboxCreation,
+  validateAttachedMessagingProvidersBeforeSandboxCreation,
+} from "./provider-publication";
 
 export const createOnboardPolicyAuthorityBindings =
   policyAuthorityPreflight.createOnboardPolicyAuthorityBindings;
@@ -219,47 +223,27 @@ function assertHermesPortablePolicyAuthority(
   throw new Error("Hermes portable sandbox creation requires NemoClaw-managed policy authority.");
 }
 
-/** Publish Docker-visible providers before the sandbox resolves its startup credentials. */
-function publishAttachedProvidersBeforeDockerSandboxCreation(
-  input: {
-    readonly openshellDriver: SandboxEntry["openshellDriver"];
-    readonly inferenceProvider: string | null;
-    readonly messagingProviders: readonly string[];
-    readonly extraProviders: readonly string[];
-    readonly gatewayName: string;
-  },
-  deps: Pick<SandboxCreateOrchestrationRuntime, "providerExistsInGateway" | "runOpenshell"> & {
-    readonly cleanupCreateSources: () => void;
-    readonly revalidatePolicyAuthority: (operation: string) => void;
-  },
-): void {
-  if (input.openshellDriver !== "docker") return;
-  const providersRequiringExistenceProbe = new Set(
-    [input.inferenceProvider, ...input.messagingProviders].filter((provider): provider is string =>
-      Boolean(provider),
-    ),
+export function hasManagedMcpRebuildHandoff(
+  createIntent: SandboxCreateIntent | null | undefined,
+): boolean {
+  const handoff = createIntent?.recreateJournalTargetIntentFingerprint;
+  return Boolean(
+    handoff && createIntent?.recreateTransaction?.targetIntentFingerprint === handoff,
   );
-  const attachedProviders = new Set([...providersRequiringExistenceProbe, ...input.extraProviders]);
-  for (const attachedProvider of attachedProviders) {
-    if (
-      providersRequiringExistenceProbe.has(attachedProvider) &&
-      !deps.providerExistsInGateway(attachedProvider)
-    )
-      continue;
-    deps.revalidatePolicyAuthority(
-      `publishing provider '${attachedProvider}' before creating sandbox gateway '${input.gatewayName}'`,
-    );
-    const refreshed = deps.runOpenshell(
-      ["provider", "update", "-g", input.gatewayName, attachedProvider],
-      { ignoreError: true, suppressOutput: true },
-    );
-    if (refreshed.status !== 0) {
-      deps.cleanupCreateSources();
-      throw new Error(
-        `OpenShell did not publish attached provider '${attachedProvider}' before Docker sandbox creation.`,
-      );
-    }
-  }
+}
+
+function shouldRefuseManagedMcpRecreate(
+  preservedMcpState: unknown,
+  managedMcpRebuildHandoff: boolean,
+): boolean {
+  return Boolean(preservedMcpState) && !managedMcpRebuildHandoff;
+}
+
+function hasPreservedManagedMcpRebuildHandoff(
+  preservedMcpState: unknown,
+  createIntent: SandboxCreateIntent | null | undefined,
+): boolean {
+  return Boolean(preservedMcpState) && hasManagedMcpRebuildHandoff(createIntent);
 }
 
 function backfillExistingSandboxPolicyAuthority(input: {
@@ -611,7 +595,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       {
         computePlan,
         managedWorkloadRebuild,
-        tempManagedRuntime,
+        tempManagedRuntime:
+          tempManagedRuntime ||
+          managedWorkloadOnboard.shouldActivateStockManagedRuntime({
+            portableLifecycle: sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent),
+            hermesPortableLifecycle: agentCreateInput.hermesPortableLifecycle,
+            agentName: requestedAgentName,
+          }),
         tempManagedRuntimeCatalog,
         agentName: requestedAgentName,
         legacyDockerfilePath,
@@ -1031,7 +1021,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         },
         { formatSandboxAgentName, note },
       );
-      if (preservedMcpState) {
+      const managedMcpRebuildHandoff = hasPreservedManagedMcpRebuildHandoff(
+        preservedMcpState,
+        createIntent,
+      );
+      if (shouldRefuseManagedMcpRecreate(preservedMcpState, managedMcpRebuildHandoff)) {
         for (const hint of recreateJournal.managedMcpRecreateRefusalHints({
           sandboxName,
           cliName: cliName(),
@@ -1501,6 +1495,27 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
     });
 
+    const providerPreparationInput = {
+      openshellDriver: sandboxRuntimeFields.openshellDriver,
+      inferenceProvider: resolvedCreateIntent.inferenceProvider,
+      messagingProviders,
+      messagingProviderRequests: resolvedCreateIntent.messagingProviderRequests,
+      extraProviders: resolvedCreateIntent.extraProviders,
+      gatewayName: GATEWAY_NAME,
+    };
+    const providerPreparationDeps = {
+      providerExistsInGateway,
+      runOpenshell,
+      cleanupCreateSources: () => {
+        cleanupInitialCreateSource();
+        cleanupBuildContext();
+      },
+    };
+    validateAttachedMessagingProvidersBeforeSandboxCreation(
+      providerPreparationInput,
+      providerPreparationDeps,
+    );
+
     if (hermesPortableAuthority) {
       if (!portableRuntimeContext?.environmentScope) {
         throw new Error("Hermes portable onboarding is missing runtime environment authority.");
@@ -1577,23 +1592,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
       cleanupBuildContext();
     } else {
+      revalidatePolicyAuthority(
+        false,
+        `publishing providers before creating sandbox gateway '${GATEWAY_NAME}'`,
+      );
       publishAttachedProvidersBeforeDockerSandboxCreation(
-        {
-          openshellDriver: sandboxRuntimeFields.openshellDriver,
-          inferenceProvider: resolvedCreateIntent.inferenceProvider,
-          messagingProviders,
-          extraProviders: resolvedCreateIntent.extraProviders,
-          gatewayName: GATEWAY_NAME,
-        },
-        {
-          providerExistsInGateway,
-          runOpenshell,
-          cleanupCreateSources: () => {
-            cleanupInitialCreateSource();
-            cleanupBuildContext();
-          },
-          revalidatePolicyAuthority: (operation) => revalidatePolicyAuthority(false, operation),
-        },
+        providerPreparationInput,
+        providerPreparationDeps,
       );
       const created = await runCreateFlow(createArgv);
       cleanupInitialCreateSource();

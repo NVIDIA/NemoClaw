@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { decisionSelected, decisionUnset } from "../state/onboard-checkpoint-decision";
+import { NEMOCLAW_VLLM_GPU_DEVICE_ENV } from "../inference/vllm-models";
 import {
   CHECKPOINT_SCHEMA_VERSION,
   type CheckpointLoadResult,
@@ -245,6 +246,24 @@ describe("prepareOnboardSession", () => {
     );
 
     expect(result.session?.servingProfileProvenance).toEqual(SERVING_PROFILE_PROVENANCE);
+  });
+
+  it("checkpoints the managed vLLM GPU device before fresh onboarding effects", async () => {
+    vi.stubEnv(NEMOCLAW_VLLM_GPU_DEVICE_ENV, "GPU-69adb14e-820e-bfb4-0993-171e73f68504");
+    const { deps } = createDeps();
+    const result = await prepareOnboardSession(
+      {
+        resume: false,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: "gpu-test",
+        cannotPrompt: true,
+        nonInteractive: true,
+      },
+      deps,
+    );
+
+    expect(result.session?.vllmGpuDevice).toBe("GPU-69adb14e-820e-bfb4-0993-171e73f68504");
   });
 
   it("checkpoints Station Express choices before managed vLLM setup", async () => {

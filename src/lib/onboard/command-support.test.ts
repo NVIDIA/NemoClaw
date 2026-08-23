@@ -56,13 +56,13 @@ describe("buildOnboardFlags --events help", () => {
 });
 
 describe("buildOnboardFlags temporary managed runtime gate", () => {
-  it("accepts the activation flag without advertising it in CLI help", () => {
+  it("keeps candidate activation hidden while allowing exact stock qualification catalogs", () => {
     const flags = buildOnboardFlags({ includeEvents: true });
 
     expect(flags["temp-managed-runtime"].hidden).toBe(true);
     expect(flags["temp-managed-runtime"].description).toBeUndefined();
     expect(flags["temp-managed-runtime-catalog"].hidden).toBe(true);
-    expect(flags["temp-managed-runtime-catalog"].dependsOn).toEqual(["temp-managed-runtime"]);
+    expect(flags["temp-managed-runtime-catalog"].dependsOn).toBeUndefined();
     expect(flags.events.hidden).not.toBe(true);
   });
 });

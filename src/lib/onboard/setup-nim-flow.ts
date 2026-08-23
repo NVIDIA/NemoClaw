@@ -264,6 +264,26 @@ function requireSelectedProvider(
   return selected;
 }
 
+function assertVllmGpuProviderSelection(
+  selected: ProviderMenuChoice,
+  recoveredFromSandbox: boolean,
+  deps: Pick<
+    SetupNimFlowDeps,
+    "abortNonInteractive" | "error" | "exitProcess" | "isNonInteractive"
+  >,
+): void {
+  const requestedDevice = String(process.env.NEMOCLAW_VLLM_GPU_DEVICE ?? "").trim();
+  const resumedManagedVllm = recoveredFromSandbox && selected.key === "vllm";
+  if (!requestedDevice || selected.key === "install-vllm" || resumedManagedVllm) return;
+
+  const message =
+    `--vllm-gpu-device applies only when NemoClaw installs managed vLLM; ` +
+    `the selected provider is '${selected.key}'.`;
+  deps.error(`  ${message}`);
+  if (deps.isNonInteractive()) deps.abortNonInteractive(message);
+  deps.exitProcess(1);
+}
+
 function handleSelectedOllama(
   deps: Pick<SetupNimFlowDeps, "handleInstallOllamaSelection" | "handleRunningOllamaSelection">,
   args: {
@@ -974,6 +994,7 @@ export function createSetupNim(
         }
 
         selected = requireSelectedProvider(selected, deps);
+        assertVllmGpuProviderSelection(selected, recoveredFromSandbox, deps);
         if (selected.key !== "hermesProvider") {
           hermesAuthMethod = null;
           hermesToolGateways = [];

@@ -1,6 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  type ManagedWorkloadAuthority,
+  readManagedWorkloadAuthority,
+} from "../../../src/lib/onboard/workload/authority.ts";
+import { managedImageRuntimeIdentity } from "../../../src/lib/onboard/managed-image/contract.ts";
+import { assertManagedBootstrapIdentity } from "../../../src/lib/onboard/managed-bootstrap/adapter.ts";
+import { MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE } from "../../../src/lib/onboard/managed-bootstrap/docker.ts";
+import { MANAGED_BOOTSTRAP_REQUEST_FILE } from "../../../src/lib/onboard/managed-bootstrap/envelope.ts";
+import { fingerprintManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
+import { OPENSHELL_SANDBOX_SUPERVISOR_ARGV } from "../../../src/lib/onboard/sandbox-create-launch.ts";
+import { load as loadSandboxRegistry } from "../../../src/lib/state/registry/persistence.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   type HostCliClient,
@@ -35,6 +46,74 @@ interface HermesGpuStartupProofOptions {
   status: Pick<ShellProbeResult, "stdout" | "stderr">;
 }
 
+const IMMUTABLE_IMAGE_REFERENCE = /^[^@\s]+@sha256:[a-f0-9]{64}$/u;
+
+export function assertHermesGpuStartupOutputContract(
+  gpuRoute: HermesGpuStartupProofOptions["gpuRoute"],
+  installText: string,
+): void {
+  expect(installText).toContain("Starting OpenShell Docker-driver gateway...");
+  expect(installText).toContain("Docker-driver gateway is healthy");
+  expect(installText).not.toContain("Reusing healthy NemoClaw gateway.");
+  expect(installText).not.toContain("Reusing existing Docker-driver gateway");
+  expect(installText).not.toContain("[reuse] Skipping gateway (running)");
+  if (gpuRoute === "compatibility-fallback") {
+    expect(installText).toContain(
+      "Operator-authorized GPU fallback enabled; trying native OpenShell injection with one compatibility retry.",
+    );
+    for (const fragment of HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS) {
+      expect(installText).toContain(fragment);
+    }
+  } else {
+    for (const fragment of HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS) {
+      expect(installText).not.toContain(fragment);
+    }
+  }
+}
+
+export function assertHermesManagedWorkloadAuthority(
+  sandboxName: string,
+  registryImageTag: string | null | undefined,
+  authority: ManagedWorkloadAuthority | null,
+): string {
+  if (!authority) {
+    throw new Error(
+      `Hermes GPU sandbox '${sandboxName}' has no managed workload authority`,
+    );
+  }
+  if (
+    typeof registryImageTag !== "string" ||
+    typeof authority.receipt.reference !== "string" ||
+    !IMMUTABLE_IMAGE_REFERENCE.test(registryImageTag) ||
+    !IMMUTABLE_IMAGE_REFERENCE.test(authority.receipt.reference)
+  ) {
+    throw new Error(
+      `Hermes GPU sandbox '${sandboxName}' has no immutable image reference`,
+    );
+  }
+  const authorityReference = authority.receipt.reference;
+  expect(authority).toMatchObject({
+    agent: "hermes",
+    contract: {
+      agent: "hermes",
+      reference: authorityReference,
+    },
+    profile: { agent: "hermes" },
+    receipt: {
+      kind: "managed-image",
+      reference: registryImageTag,
+    },
+  });
+  return authorityReference;
+}
+
+export function assertHermesContainerImageAuthority(
+  containerImage: unknown,
+  authorityReference: string,
+): void {
+  expect(containerImage).toBe(authorityReference);
+}
+
 export async function assertHermesGpuStartupProof({
   env,
   gpuRoute,
@@ -45,46 +124,21 @@ export async function assertHermesGpuStartupProof({
   status,
 }: HermesGpuStartupProofOptions): Promise<void> {
   const installText = resultText(install);
-  expect(installText).toContain("Starting OpenShell Docker-driver gateway...");
-  expect(installText).toContain("Docker-driver gateway is healthy");
-  expect(installText).not.toContain("Reusing healthy NemoClaw gateway.");
-  expect(installText).not.toContain("Reusing existing Docker-driver gateway");
-  expect(installText).not.toContain("[reuse] Skipping gateway (running)");
-  if (gpuRoute === "compatibility-only") {
-    expect(installText).toContain("Docker container mode selected:");
-    for (const fragment of HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS) {
-      expect(installText).not.toContain(fragment);
-    }
-  } else if (gpuRoute === "compatibility-fallback") {
-    expect(installText).toContain(
-      "Operator-authorized GPU fallback enabled; trying native OpenShell injection with one compatibility retry.",
-    );
-    for (const fragment of HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS) {
-      expect(installText).toContain(fragment);
-    }
-    expect(installText).toContain("Docker container mode selected:");
-  } else {
-    expect(installText).toContain(
-      "Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment.",
-    );
-    expect(installText).toContain(
-      "Docker container mode selected: persistent sandbox startup command",
-    );
-    for (const fragment of HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS) {
-      expect(installText).not.toContain(fragment);
-    }
-  }
+  assertHermesGpuStartupOutputContract(gpuRoute, installText);
   const plainStatus = stripAnsi(resultText(status));
   expect(plainStatus).toMatch(/Phase:\s*Ready/i);
   expect(plainStatus).toContain("Sandbox GPU: enabled");
   expect(plainStatus).toContain("CUDA verified");
   expect(plainStatus).not.toMatch(/last CUDA proof failed|CUDA unverified/i);
 
-  const openshellState = await sandbox.openshell(["sandbox", "get", sandboxName], {
-    artifactName: "phase-4-openshell-sandbox-ready-gpu-startup",
-    env,
-    timeoutMs: 30_000,
-  });
+  const openshellState = await sandbox.openshell(
+    ["sandbox", "get", sandboxName],
+    {
+      artifactName: "phase-4-openshell-sandbox-ready-gpu-startup",
+      env,
+      timeoutMs: 30_000,
+    },
+  );
   expect(openshellState.exitCode, resultText(openshellState)).toBe(0);
   expect(stripAnsi(resultText(openshellState))).toMatch(/Phase:\s*Ready/i);
 
@@ -132,6 +186,19 @@ export async function assertHermesGpuStartupProof({
   const [containerId = ""] = containerRows[0].split(/\s+/, 1);
   expect(containerId).not.toBe("");
 
+  const registryEntry = loadSandboxRegistry().sandboxes[sandboxName];
+  if (!registryEntry) {
+    throw new Error(
+      `Hermes GPU sandbox '${sandboxName}' is missing from the registry`,
+    );
+  }
+  const managedAuthority = readManagedWorkloadAuthority(registryEntry);
+  const managedImageReference = assertHermesManagedWorkloadAuthority(
+    sandboxName,
+    registryEntry.imageTag,
+    managedAuthority,
+  );
+
   const expectedExtraPlaceholderAssignment = `NEMOCLAW_EXTRA_PLACEHOLDER_KEYS=${HERMES_GPU_EXTRA_PLACEHOLDER_KEYS.join(",")}`;
   const extraPlaceholderEnv = await host.command(
     "docker",
@@ -168,7 +235,9 @@ raise SystemExit(1)`,
     },
   );
   expect(extraPlaceholderEnv.exitCode, resultText(extraPlaceholderEnv)).toBe(0);
-  expect(extraPlaceholderEnv.stdout.trim()).toBe(expectedExtraPlaceholderAssignment);
+  expect(extraPlaceholderEnv.stdout.trim()).toBe(
+    expectedExtraPlaceholderAssignment,
+  );
 
   const guardWithoutStartupOwner = await sandbox.execShell(
     sandboxName,
@@ -218,7 +287,7 @@ raise SystemExit(1)`,
     "bash",
     [
       "-lc",
-      String.raw`docker inspect "$1" | python3 -c 'import json, sys; config=json.load(sys.stdin)[0]["Config"]; env=dict(item.split("=", 1) for item in (config.get("Env") or []) if "=" in item); command=env.get("OPENSHELL_SANDBOX_COMMAND", ""); tokens=command.split(); print(json.dumps({"cmd": config.get("Cmd"), "entrypoint": config.get("Entrypoint"), "has_openshell_sandbox_command": bool(command), "command_is_sleep_infinity": tokens == ["sleep", "infinity"], "command_ends_with_nemoclaw_start": bool(tokens) and tokens[-1] in ("nemoclaw-start", "/usr/local/bin/nemoclaw-start")}))'`,
+      String.raw`docker inspect "$1" | python3 -c 'import json, sys; config=json.load(sys.stdin)[0]["Config"]; env=dict(item.split("=", 1) for item in (config.get("Env") or []) if "=" in item); command=env.get("OPENSHELL_SANDBOX_COMMAND", ""); tokens=command.split(); print(json.dumps({"cmd": config.get("Cmd"), "entrypoint": config.get("Entrypoint"), "image": config.get("Image"), "has_openshell_sandbox_command": bool(command), "command_is_sleep_infinity": tokens == ["sleep", "infinity"], "command_ends_with_nemoclaw_start": bool(tokens) and tokens[-1] in ("nemoclaw-start", "/usr/local/bin/nemoclaw-start")}))'`,
       "hermes-gpu-command-boundary",
       containerId,
     ],
@@ -228,13 +297,43 @@ raise SystemExit(1)`,
       timeoutMs: 30_000,
     },
   );
-  expect(dockerCommandBoundary.exitCode, resultText(dockerCommandBoundary)).toBe(0);
+  expect(
+    dockerCommandBoundary.exitCode,
+    resultText(dockerCommandBoundary),
+  ).toBe(0);
   const commandBoundary = JSON.parse(dockerCommandBoundary.stdout);
-  expect(commandBoundary).toMatchObject({
-    cmd: ["--workdir", "/sandbox"],
-    entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
-    has_openshell_sandbox_command: true,
-  });
+  const verifiedManagedAuthority = managedAuthority!;
+  expect(verifiedManagedAuthority.agent).toBe("hermes");
+  const managedBootstrapCommand = commandBoundary.cmd;
+  expect(Array.isArray(managedBootstrapCommand)).toBe(true);
+  const bootstrapIdentity = managedBootstrapCommand[5];
+  expect(typeof bootstrapIdentity).toBe("string");
+  assertManagedBootstrapIdentity(bootstrapIdentity);
+  const agentIdentity = managedImageRuntimeIdentity(verifiedManagedAuthority.agent);
+  expect(commandBoundary.entrypoint).toEqual([MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE]);
+  expect(managedBootstrapCommand).toEqual([
+    "--agent",
+    verifiedManagedAuthority.agent,
+    "--profile-fingerprint",
+    fingerprintManagedStartupProfile(verifiedManagedAuthority.profile),
+    "--bootstrap-identity",
+    bootstrapIdentity,
+    "--agent-uid",
+    String(agentIdentity.uid),
+    "--agent-gid",
+    String(agentIdentity.gid),
+    "--agent-workdir",
+    agentIdentity.workdir,
+    "--request-file",
+    MANAGED_BOOTSTRAP_REQUEST_FILE,
+    "--",
+    ...OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
+  ]);
+  expect(commandBoundary.has_openshell_sandbox_command).toBe(true);
+  assertHermesContainerImageAuthority(
+    commandBoundary.image,
+    managedImageReference,
+  );
   expect(commandBoundary.command_ends_with_nemoclaw_start).toBe(true);
   expect(commandBoundary.command_is_sleep_infinity).toBe(false);
 
@@ -272,5 +371,7 @@ raise SystemExit(1)`,
     .map((line) => line.trim())
     .filter(Boolean);
   expect(allContainerNames).toHaveLength(1);
-  expect(allContainerNames.filter((name) => name.includes("-nemoclaw-gpu-backup-"))).toEqual([]);
+  expect(
+    allContainerNames.filter((name) => name.includes("-nemoclaw-gpu-backup-")),
+  ).toEqual([]);
 }

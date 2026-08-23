@@ -438,7 +438,7 @@ It offers the fixed local vLLM profile as option 2.
 When you select option 2, the serving catalog supplies the pinned model, runtime image, container port, and serve arguments.
 The installer rejects provider and model overrides for that fixed profile.
 `NEMOCLAW_VLLM_MODEL` can select a catalog model only when the catalog resolves it to the matching fixed recipe, but the dedicated onboarder rejects a model that does not resolve to that recipe and all serve-argument overrides before it starts the managed container.
-`NEMOCLAW_VLLM_PORT` may select another host listener.
+Set `NEMOCLAW_VLLM_PORT` to select another host listener port.
 Explicit `NEMOCLAW_MODEL` or `NEMOCLAW_VLLM_MODEL` intent retains the customizable managed-vLLM path and skips the fixed-profile choice.
 If onboarding stops after you select option 2, `$$nemoclaw onboard --resume` reuses the recorded fixed profile instead of returning to automatic serving-profile selection.
 Refer to [Choose a Local Inference Server](choose-local-inference-server#install-a-fixed-vllm-profile) for fixed-profile installation and verification.

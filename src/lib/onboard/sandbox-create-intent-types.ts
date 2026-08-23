@@ -104,6 +104,7 @@ export type MaterializeSandboxCreatePlanInput = {
     tokenDefs: MessagingTokenDef[],
     options: {
       replaceExisting: true;
+      allowedSandboxes: readonly [string];
       revalidatePolicyRequirements?(operation: string): void;
     },
   ): string[];

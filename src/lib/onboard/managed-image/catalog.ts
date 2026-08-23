@@ -442,6 +442,7 @@ function validateImageLabels(
   agent: ShippedManagedImageAgent,
   imageConfig: OciImageConfig,
   platform: ManagedImagePlatform,
+  expectedRelease?: string,
 ): {
   readonly cohort: ManagedImagePublicationCohort;
   readonly revision: string;
@@ -473,6 +474,12 @@ function validateImageLabels(
   if (typeof cohort !== "string" || !COHORT_PATTERN.test(cohort)) {
     return invalid(`'${agent}' image publication cohort is not a supported identity`);
   }
+  if (
+    expectedRelease !== undefined &&
+    labels["org.opencontainers.image.version"] !== expectedRelease
+  ) {
+    return invalid(`'${agent}' image release does not match the expected release`);
+  }
   return {
     cohort: cohort as ManagedImagePublicationCohort,
     revision,
@@ -493,6 +500,7 @@ async function resolveManagedImageContractAtReferenceFromGhcr(options: {
   readonly release: string;
   readonly fetchImpl: Fetch;
   readonly expectedCohort?: ManagedImagePublicationCohort;
+  readonly expectedRelease?: string;
   readonly expectedRevision?: string;
   readonly platform: ManagedImagePlatform;
 }): Promise<ManagedImageContractV1> {
@@ -513,7 +521,12 @@ async function resolveManagedImageContractAtReferenceFromGhcr(options: {
     configDigest(imageManifest),
     root.token,
   );
-  const identity = validateImageLabels(agent, imageConfig, options.platform);
+  const identity = validateImageLabels(
+    agent,
+    imageConfig,
+    options.platform,
+    options.expectedRelease,
+  );
   if (options.expectedCohort !== undefined && identity.cohort !== options.expectedCohort) {
     return invalid(`'${agent}' image publication cohort does not match the OpenClaw cohort`);
   }
@@ -593,6 +606,7 @@ export async function resolveManagedImageCatalogFromGhcr(options: {
       platform,
       fetchImpl,
       ...(revision === undefined ? {} : { expectedRevision: revision }),
+      ...(revision === undefined ? {} : { expectedRelease: release }),
     });
     const cohortReference = `cohort-${openclaw.source.cohort}`;
     const dependentResults = await Promise.allSettled(
@@ -607,6 +621,7 @@ export async function resolveManagedImageCatalogFromGhcr(options: {
               platform,
               fetchImpl,
               expectedCohort: openclaw.source.cohort,
+              ...(revision === undefined ? {} : { expectedRelease: release }),
               expectedRevision: openclaw.source.revision,
             }),
           ] as const,
