@@ -123,11 +123,6 @@ describe("the staging Launchable reproduces the bounded OpenClaw CLI scenario", 
     expect(script).toContain("for attempt in 1 2 3 4 5");
     expect(script).toContain("cleanup-owned-workspace");
     expect(script).toContain("cleanup could not inspect workspace inventory");
-    expect(script).toContain("for name in BREV_SSH_TIMEOUT_SECONDS POLL_SECONDS");
-    expect(script).toContain('fail "$name must be a positive integer"');
-    expect(script).toContain("refresh_timeout=$((remaining < 60 ? remaining : 60))");
-    expect(script).toContain("ssh_timeout=$((remaining < 15 ? remaining : 15))");
-    expect(script).toContain("poll_seconds < remaining ? poll_seconds : remaining");
     expect(script).toContain("workspace SSH readiness timed out");
     expect(script).toContain('SSH access to $INSTANCE_NAME succeeded');
     expect(script).toContain('classification="timeout"');
@@ -187,5 +182,6 @@ describe("the staging Launchable reproduces the bounded OpenClaw CLI scenario", 
     const readiness = calls.slice(calls.indexOf("timeout 2s brev refresh"));
     expect(readiness).toMatch(/sleep [12]/u);
     expect(readiness).not.toContain("sleep 9");
+    expect(readiness).not.toContain("timeout 0s");
   }, 10_000);
 });

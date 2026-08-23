@@ -176,6 +176,7 @@ ssh_deadline=$((SECONDS + ${BREV_SSH_TIMEOUT_SECONDS:-900}))
 ssh_ready=0
 while [ "$SECONDS" -lt "$ssh_deadline" ]; do
   remaining=$((ssh_deadline - SECONDS))
+  [ "$remaining" -gt 0 ] || break
   refresh_timeout=$((remaining < 60 ? remaining : 60))
   timeout "${refresh_timeout}s" brev refresh >/dev/null 2>&1 || true
   remaining=$((ssh_deadline - SECONDS))
