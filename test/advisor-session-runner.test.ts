@@ -542,6 +542,29 @@ describe("advisor session runner", () => {
     expect(result.raw).toContain("required_read_preparation_end prepare-and-submit ok");
   });
 
+  it("prepares every distinct required read before submission (#9963)", async () => {
+    sdk.state.terminalResponses = ["success"];
+    const result = await run(
+      [
+        {
+          ...submitTurn("prepare-and-submit"),
+          requiredReadPaths: ["first.txt", "second.txt"],
+        },
+      ],
+      (directory) => {
+        fs.writeFileSync(path.join(directory, "first.txt"), "first\n", "utf8");
+        fs.writeFileSync(path.join(directory, "second.txt"), "second\n", "utf8");
+      },
+    );
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(sdk.state.prompts).toHaveLength(3);
+    expect(sdk.state.prompts[0]).toMatch(/first\.txt/u);
+    expect(sdk.state.prompts[1]).toMatch(/second\.txt/u);
+    expect(result.raw).toContain("required_read_preparation_end prepare-and-submit ok");
+  });
+
   it("accepts an empty required file at EOF (#9963)", async () => {
     const requiredReadTurn: AdvisorPromptTurn = {
       name: "read-empty",
