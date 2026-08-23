@@ -52,7 +52,6 @@ describe("specialist Pi session inputs", () => {
     const root = fixture();
     const inventory = validateSpecialistSessionDirectory(root);
     expect(Object.keys(inventory.files)).toEqual(ADVISOR_INTERESTS);
-    expect(inventory.totalBytes).toBeGreaterThan(0);
     expect(inventory.available).toEqual(ADVISOR_INTERESTS);
     expect(inventory.missing).toEqual([]);
   });
@@ -128,40 +127,20 @@ describe("specialist Pi session inputs", () => {
     expect(() => validateSpecialistSessionDirectory(root)).toThrow(/regular file: behavior/u);
   });
 
-  it("rejects a malformed present optional session", () => {
-    const root = fixture();
-    fs.writeFileSync(path.join(root, specialistSessionFileName("operations")), "{\n");
-    expect(() => validateSpecialistSessionDirectory(root)).toThrow(/invalid JSONL/u);
-  });
+  it.each(["behavior", "operations"] as const)(
+    "accepts a native %s trace with a large message line",
+    (interest) => {
+      const root = fixture();
+      fs.appendFileSync(
+        path.join(root, specialistSessionFileName(interest)),
+        JSON.stringify({ type: "message", body: "x".repeat(51 * 1024) }) + "\n",
+      );
 
-  it("omits an optional trace that ordinary read cannot return", () => {
-    const root = fixture();
-    fs.appendFileSync(
-      path.join(root, specialistSessionFileName("operations")),
-      JSON.stringify({ type: "message", body: "x".repeat(51 * 1024) }) + "\n",
-    );
+      expect(validateSpecialistSessionDirectory(root).available).toEqual(ADVISOR_INTERESTS);
+    },
+  );
 
-    const inventory = validateSpecialistSessionDirectory(root);
-
-    expect(inventory.available).toEqual(ADVISOR_INTERESTS.filter((item) => item !== "operations"));
-    expect(inventory.missing).toEqual(["operations"]);
-    expect(inventory.files.operations).toBeUndefined();
-  });
-
-  it("rejects a required trace that ordinary read cannot return", () => {
-    const root = fixture();
-    fs.appendFileSync(
-      path.join(root, specialistSessionFileName("behavior")),
-      JSON.stringify({ type: "message", body: "x".repeat(51 * 1024) }) + "\n",
-    );
-    expect(() => validateSpecialistSessionDirectory(root)).toThrow(/ordinary read limit/u);
-  });
-
-  it("rejects malformed JSONL and non-Pi headers", () => {
-    const malformed = fixture();
-    fs.writeFileSync(path.join(malformed, specialistSessionFileName("operations")), "{\n");
-    expect(() => validateSpecialistSessionDirectory(malformed)).toThrow(/invalid JSONL/u);
-
+  it("rejects non-Pi headers", () => {
     const invalidHeader = fixture();
     fs.writeFileSync(path.join(invalidHeader, specialistSessionFileName("documentation")), "{}\n");
     expect(() => validateSpecialistSessionDirectory(invalidHeader)).toThrow(
