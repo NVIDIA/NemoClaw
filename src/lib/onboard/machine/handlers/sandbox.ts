@@ -2146,6 +2146,7 @@ class SandboxStateFlow<
       registryAuthoritySnapshot: registryMessagingAuthority,
       credentialValidationPlan: messagingCredentialChanged ? messagingCredentialBaseline : null,
       forceCredentialValidation: messagingCredentialChanged,
+      preserveGatewayHeldRegistrySelection: this.options.authoritativeResumeConfig === true,
       deps: this.deps,
     });
     const messagingProviderBindings = requiredMessagingProviderBindings(
