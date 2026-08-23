@@ -167,15 +167,10 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
-        credential_binding:
-          provider: "{sandboxName}-discord-bridge"
       - host: gateway.discord.gg
         port: 443
         protocol: websocket
         enforcement: enforce
-        websocket_credential_rewrite: true
-        credential_binding:
-          provider: "{sandboxName}-discord-bridge"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: WEBSOCKET_TEXT, path: "/**" }
@@ -183,9 +178,6 @@ network_policies:
         port: 443
         protocol: websocket
         enforcement: enforce
-        websocket_credential_rewrite: true
-        credential_binding:
-          provider: "{sandboxName}-discord-bridge"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: WEBSOCKET_TEXT, path: "/**" }

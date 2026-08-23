@@ -90,13 +90,15 @@ describe("applyPermissivePolicy", () => {
     ["success", 0],
     ["OpenShell rejection", 17],
   ])(
-    "materializes the Hermes Discord provider and removes staged policy material after %s",
+    "keeps Hermes Shields down free of inactive Discord credential bindings after %s (#9773)",
     (_case, policySetStatus) => {
       const observed = runHermesPermissivePolicy(policySetStatus);
       try {
         expect(observed.result.status).toBe(policySetStatus);
-        expect(observed.stagedMode).toBe("600");
-        expect(fs.existsSync(observed.stagedPath)).toBe(false);
+        expect(observed.stagedMode).toBe("644");
+        expect(observed.stagedPath).toBe(
+          path.join(REPO_ROOT, "agents", "hermes", "policy-permissive.yaml"),
+        );
         const policy = YAML.parse(observed.policy);
         const endpoints = policy.network_policies.discord.endpoints as Array<{
           host?: string;
@@ -110,14 +112,17 @@ describe("applyPermissivePolicy", () => {
           "discord.com",
           "gateway.discord.gg",
         ]);
-        expect(
-          credentialEndpoints.map((endpoint) => endpoint.credential_binding?.provider),
-        ).toEqual([
-          "hermes-sandbox-discord-bridge",
-          "hermes-sandbox-discord-bridge",
-          "hermes-sandbox-discord-bridge",
+        expect(credentialEndpoints.map((endpoint) => endpoint.credential_binding)).toEqual([
+          undefined,
+          undefined,
+          undefined,
         ]);
-        expect(observed.policy).not.toContain("{sandboxName}");
+        expect(
+          credentialEndpoints.map(
+            (endpoint) => (endpoint as { websocket_credential_rewrite?: boolean }).websocket_credential_rewrite,
+          ),
+        ).toEqual([undefined, undefined, undefined]);
+        expect(observed.policy).not.toContain("credential_binding");
       } finally {
         observed.cleanup();
       }
