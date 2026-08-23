@@ -521,6 +521,16 @@ describe("DGX Spark fresh-onboard readiness replay (#6043)", () => {
     );
   });
 
+  it("retains the terminal phase in managed-bootstrap readiness diagnostics (#9819)", () => {
+    expect(
+      formatCreatedSandboxReadinessFailureMessage(
+        NAME,
+        { ready: false, reason: "terminal_failure_phase", failurePhase: "Failed" },
+        1500,
+      ),
+    ).toContain("entered Failed phase before it became ready (waited up to 1500s)");
+  });
+
   it("recovers with the shipped default debounce: onboard continues to Ready", () => {
     const { runCaptureOpenshell, sleep } = replay(reporterSequence);
     const ready = waitForCreatedSandboxReadyWithTrace({

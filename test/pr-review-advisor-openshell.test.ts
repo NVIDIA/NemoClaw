@@ -761,6 +761,42 @@ describe("PR review advisor OpenShell wrapper", () => {
     });
   });
 
+  it("exposes validated specialist sessions inside the standard Pi workdir (#9949)", () => {
+    const env = advisorEnvironment();
+    const sessionDirectory = path.join(env.ADVISOR_WORKDIR as string, ".pr-review-advisor-sessions");
+    fs.mkdirSync(sessionDirectory);
+    const sessionEntries = {
+      behavior: "behavior",
+      trust: "trust",
+      "design-architecture": "design-architecture",
+      operations: "operations",
+      documentation: "documentation",
+    };
+    Object.entries(sessionEntries).forEach(([interest, id]) =>
+      fs.writeFileSync(
+        path.join(sessionDirectory, `pr-review-${interest}-session.jsonl`),
+        `${JSON.stringify({ type: "session", id })}\n`,
+      ),
+    );
+    env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR = sessionDirectory;
+    const tools = advisorTools();
+
+    createAdvisorSandbox(env, tools);
+    runAdvisorSandbox(env, tools);
+
+    const calls = vi.mocked(tools.run).mock.calls;
+    const createArgs = calls.find(([, args]) => args.slice(0, 2).join(" ") === "sandbox create")?.[1] ?? [];
+    const driverConfigIndex = createArgs.indexOf("--driver-config-json");
+    const driverConfig = JSON.parse(createArgs[driverConfigIndex + 1] as string);
+    expect(driverConfig.docker.mounts.filter((mount: { target?: string }) => mount.target === "/pr-workdir")).toEqual([
+      expect.objectContaining({ read_only: true }),
+    ]);
+    const runArgs = calls.find(([, args]) => args.includes("/advisor/tools/pr-review-advisor/run-analysis.mts"))?.[1] ?? [];
+    expect(runArgs).toContain(
+      "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR=/pr-workdir/.pr-review-advisor-sessions",
+    );
+    expect(runArgs).not.toContain(expect.stringContaining("session-reader"));
+  });
   it("rejects artifact paths that could escape the sandbox runtime directory", () => {
     const env = advisorEnvironment();
     env.PR_REVIEW_ADVISOR_ARTIFACT_DIR = "../../advisor";

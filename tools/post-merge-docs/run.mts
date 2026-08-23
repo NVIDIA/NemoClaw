@@ -25,7 +25,9 @@ import {
 import { allowedDocumentationPath, nextPatchReleaseTag, readBoundedFile } from "./contract.mts";
 
 const PATCH_FILE = "docs.patch";
+const REVIEW_REPORT_FILE = "review-report.txt";
 const MAX_PATCH_BYTES = 5_242_880;
+const MAX_REVIEW_REPORT_BYTES = 65_536;
 const MAX_FILE_BYTES = 1_048_576;
 const SHA = /^[0-9a-f]{40}$/u;
 const AGENT_FLAGS =
@@ -145,6 +147,7 @@ function prompt(env: NodeJS.ProcessEnv, current: Phase): string {
       "Inspect the committed range and staged candidate. Do not edit the repository.",
       "Approve only if it completely and accurately covers user-visible changes, follows DORI and writing rules, and makes no unsupported claim.",
       "An empty patch is valid only when no documentation update is needed.",
+      `If you reject the candidate, write a concise evidence-backed report to /sandbox/output/${REVIEW_REPORT_FILE}.`,
       'Write exactly {"outcome":"approved"} or {"outcome":"rejected"} to /sandbox/output/decision.json.',
     ].join("\n");
   }
@@ -292,11 +295,10 @@ function download(env: NodeJS.ProcessEnv, name: string, tools: OpenShellTools): 
     },
     tools,
   );
-  return readBoundedFile(
-    path.join(directory, name),
-    name === PATCH_FILE ? MAX_PATCH_BYTES : 1_024,
-    true,
-  );
+  let maximum = 1_024;
+  if (name === PATCH_FILE) maximum = MAX_PATCH_BYTES;
+  if (name === REVIEW_REPORT_FILE) maximum = MAX_REVIEW_REPORT_BYTES;
+  return readBoundedFile(path.join(directory, name), maximum, true);
 }
 
 function exportArtifact(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
@@ -326,7 +328,11 @@ function exportArtifact(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
     );
     return;
   }
-  if (download(env, "decision.json", tools).toString("utf8").trim() !== '{"outcome":"approved"}') {
+  const decision = download(env, "decision.json", tools).toString("utf8").trim();
+  if (decision !== '{"outcome":"approved"}') {
+    if (decision === '{"outcome":"rejected"}') {
+      write(path.join(artifact, REVIEW_REPORT_FILE), download(env, REVIEW_REPORT_FILE, tools));
+    }
     fail("Independent documentation review did not approve the candidate");
   }
   const patch = readBoundedFile(patchPath(env), MAX_PATCH_BYTES, true);
