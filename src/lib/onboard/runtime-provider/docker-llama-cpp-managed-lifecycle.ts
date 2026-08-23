@@ -15,9 +15,10 @@ import {
 } from "../../inference/llama-cpp/gguf-cache-plan";
 import {
   assertLlamaCppVerifiedLocalModelArtifact,
-  buildLlamaCppHostLocalDockerArgv,
-  buildLlamaCppHostLocalServerArgv,
+  buildLlamaCppRequestGuardCommandArgv,
+  buildLlamaCppRequestGuardDockerArgv,
   LLAMA_CPP_HOST_LOCAL_CONTAINER_API_KEY_PATH,
+  LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
   type LlamaCppHostLocalLaunchContract,
   type LlamaCppHostLocalRuntimeBindings,
 } from "../../inference/llama-cpp/host-local-runtime";
@@ -129,6 +130,7 @@ interface DockerContainerInspection {
     readonly capAddEmpty: boolean;
     readonly legacyDevicesEmpty: boolean;
     readonly privileged: boolean;
+    readonly entrypoint: readonly string[];
     readonly command: readonly string[];
     readonly tmpfs: Readonly<Record<string, string>>;
   };
@@ -488,6 +490,9 @@ function parseInspection(
       capAddEmpty,
       legacyDevicesEmpty,
       privileged: hostConfig.Privileged,
+      entrypoint: Object.freeze(
+        Array.isArray(config.Entrypoint) ? config.Entrypoint.map(String) : [],
+      ),
       command: Object.freeze(Array.isArray(config.Cmd) ? config.Cmd.map(String) : []),
       tmpfs: Object.freeze(
         Object.fromEntries(
@@ -763,7 +768,7 @@ function createArguments(
   specSha256: string,
   transactionId: string,
 ): readonly string[] {
-  const run = buildLlamaCppHostLocalDockerArgv(options.contract, options.bindings);
+  const run = buildLlamaCppRequestGuardDockerArgv(options.contract, options.bindings);
   if (run[0] !== "run" || run[1] !== "--detach") {
     throw new Error("Docker llama.cpp materializer returned an unsupported launch operation.");
   }
@@ -804,7 +809,7 @@ function createNetworkArguments(
 }
 
 function expectedCommand(options: DockerLlamaCppManagedLifecycleOptions): readonly string[] {
-  return buildLlamaCppHostLocalServerArgv(options.contract);
+  return buildLlamaCppRequestGuardCommandArgv(options.contract);
 }
 
 function specificationDigest(
@@ -881,6 +886,8 @@ function requireOwnedContainer(
     !container.hardening.capAddEmpty ||
     !container.hardening.legacyDevicesEmpty ||
     container.hardening.privileged ||
+    container.hardening.entrypoint.length !== 1 ||
+    container.hardening.entrypoint[0] !== LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH ||
     container.hardening.command.join("\0") !== expectedCommand(options).join("\0") ||
     Object.keys(container.hardening.tmpfs).length !== 1 ||
     container.hardening.tmpfs["/tmp"] !==

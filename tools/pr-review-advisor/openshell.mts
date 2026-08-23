@@ -300,8 +300,10 @@ export function createAdvisorSandbox(
   const sandboxName = required(env.SANDBOX_NAME, "SANDBOX_NAME");
   if (env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR) {
     const expected = path.join(advisorWorkdir, ".pr-review-advisor-sessions");
-    if (path.resolve(env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR) !== expected) {
-      throw new Error("PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR must use the fixed workdir input path");
+    if (fs.realpathSync(env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR) !== expected) {
+      throw new Error(
+        "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR must use the fixed workdir input path",
+      );
     }
     validateSpecialistSessionDirectory(expected);
   }
