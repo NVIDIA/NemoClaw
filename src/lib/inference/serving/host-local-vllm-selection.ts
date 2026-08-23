@@ -16,6 +16,7 @@ import {
 } from "./adapter-registry.js";
 import {
   hostLocalVllmDockerRunArguments,
+  hostLocalVllmGpuMemoryUtilization,
   hostLocalVllmModelArguments,
 } from "./host-local-vllm-materialization.js";
 import { resolveManagedInferenceServing } from "./resolver.js";
@@ -111,6 +112,7 @@ export function materializeHostLocalVllmSelection(
     HF_HUB_OFFLINE: "1",
     TRANSFORMERS_OFFLINE: "1",
   };
+  const gpuMemoryUtilization = hostLocalVllmGpuMemoryUtilization(recipe);
   const model: VllmModelDef = {
     id: recipe.spec.model.id,
     label: recipe.spec.model.displayName,
@@ -134,6 +136,7 @@ export function materializeHostLocalVllmSelection(
       pullTimeoutSec: runtime.pullTimeoutSeconds,
       minComputeCapability: runtime.minimumComputeCapability,
       minGpuMemoryBytes: runtime.minimumGpuMemoryBytes,
+      gpuMemoryUtilization,
       dockerRunArgs: hostLocalVllmDockerRunArguments(recipe),
       dockerRunArgsMode: "replace",
     },
@@ -163,6 +166,7 @@ export function materializeHostLocalVllmSelection(
       modelDownloadSizeBytes: recipe.spec.model.downloadSizeBytes,
       minComputeCapability: runtime.minimumComputeCapability,
       minGpuMemoryBytes: runtime.minimumGpuMemoryBytes,
+      gpuMemoryUtilization,
       defaultModel: model,
       servingCatalog: directInstall.catalogReceipt
         ? {

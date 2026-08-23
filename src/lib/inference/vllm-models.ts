@@ -34,6 +34,7 @@ import { managedInferenceDigest } from "./serving/catalog-integrity.js";
 import { loadManagedInferenceCatalog } from "./serving/catalog-loader.js";
 import {
   hostLocalVllmDockerRunArguments,
+  hostLocalVllmGpuMemoryUtilization,
   hostLocalVllmModelArguments,
 } from "./serving/host-local-vllm-materialization.js";
 import type {
@@ -47,6 +48,7 @@ import type {
 
 export type VllmPlatform = "spark" | "station" | "n1x" | "linux";
 export const STATION_PAIR_OPTIONAL_ORCHESTRATION = "vllm.station-pair-optional/v1";
+export const DUAL_STATION_VLLM_GPU_MEMORY_UTILIZATION = 0.9;
 
 export interface VllmServingCatalogIdentity {
   readonly catalogDigest: string;
@@ -77,6 +79,8 @@ export interface VllmRuntimeOverride {
   minComputeCapability?: number;
   /** Minimum GPU or unified-memory capacity declared by the recipe. */
   minGpuMemoryBytes?: number;
+  /** Fraction of one selected GPU that vLLM reserves during startup. */
+  gpuMemoryUtilization?: number;
   /** Catalog identity that produced this runtime. */
   servingCatalog?: VllmServingCatalogIdentity;
   /** Catalog preset that declared this runtime, independent of receipt ownership. */
@@ -222,6 +226,7 @@ function catalogModelVariant(
   if (!Number.isSafeInteger(maxModelLen) || maxModelLen <= 0) {
     throw new Error(`Managed vLLM recipe ${recipe.metadata.id} has no valid --max-model-len.`);
   }
+  const gpuMemoryUtilization = hostLocalVllmGpuMemoryUtilization(recipe);
   const platform = preset.spec.plan.platform;
   if (!platform) {
     throw new Error(`Managed vLLM preset ${preset.metadata.id} has no platform.`);
@@ -268,6 +273,7 @@ function catalogModelVariant(
           ? recipe.spec.runtime.minimumComputeCapability
           : undefined,
       minGpuMemoryBytes: recipe.spec.runtime.minimumGpuMemoryBytes,
+      gpuMemoryUtilization,
       dockerRunArgs: hostLocalVllmDockerRunArguments(recipe),
       dockerRunArgsMode: "replace",
       modelArgs: hostLocalVllmModelArguments(recipe),
@@ -277,9 +283,7 @@ function catalogModelVariant(
       serveEnv,
       installFastSafetensors: recipe.spec.model.installFastSafetensors,
       ...(directInstall.fixedArguments ? { fixedServeCommand: true as const } : {}),
-      ...(directInstall.authentication === "bearer"
-        ? { managedBearerAuth: true as const }
-        : {}),
+      ...(directInstall.authentication === "bearer" ? { managedBearerAuth: true as const } : {}),
       trustRemoteCode: false,
       selection: preset.spec.selection === "automatic" ? "automatic" : "explicit-only",
       interactive: preset.spec.plan.interactive !== false,
@@ -343,9 +347,7 @@ export function vllmModelsFromCatalog(
       const supportedPlatforms = new Set(ordered.map(({ platform }) => platform));
       const platforms = platformOrder.filter((platform) => supportedPlatforms.has(platform));
       const pickerPlatformSet = new Set(
-        ordered
-          .filter(({ variant }) => variant.interactive)
-          .map(({ platform }) => platform),
+        ordered.filter(({ variant }) => variant.interactive).map(({ platform }) => platform),
       );
       const pickerPlatforms = [
         ...platformOrder.filter((platform) => pickerPlatformSet.has(platform)),
@@ -363,6 +365,7 @@ export function vllmModelsFromCatalog(
               pullTimeoutSec: base.variant.pullTimeoutSec,
               minComputeCapability: base.variant.minComputeCapability,
               minGpuMemoryBytes: base.variant.minGpuMemoryBytes,
+              gpuMemoryUtilization: base.variant.gpuMemoryUtilization,
               orchestrationRef: base.variant.orchestrationRef,
               stationPair: base.variant.stationPair,
             }
@@ -667,6 +670,65 @@ export function parseVllmExtraServeArgs(env: NodeJS.ProcessEnv = process.env): s
   });
 }
 
+const VLLM_GPU_MEMORY_UTILIZATION_ARG = "--gpu-memory-utilization";
+
+function validateVllmGpuMemoryUtilization(utilization: number): number {
+  if (!Number.isFinite(utilization) || utilization <= 0 || utilization > 1) {
+    throw new Error(
+      `${VLLM_GPU_MEMORY_UTILIZATION_ARG} must be a decimal number greater than 0 and at most 1.`,
+    );
+  }
+  return utilization;
+}
+
+function parseVllmGpuMemoryUtilization(value: string): number {
+  if (!/^[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?)|(?:\.[0-9]+))(?:[eE][+-]?[0-9]+)?$/.test(value)) {
+    throw new Error(
+      `${VLLM_GPU_MEMORY_UTILIZATION_ARG} must be a decimal number greater than 0 and at most 1.`,
+    );
+  }
+  return validateVllmGpuMemoryUtilization(Number(value));
+}
+
+/** Resolve the last operator override exactly as the appended vLLM argv does. */
+export function resolveVllmGpuMemoryUtilization(
+  recipeUtilization: number | undefined,
+  extraServeArgs: readonly string[],
+): number | undefined {
+  let utilization =
+    recipeUtilization === undefined
+      ? undefined
+      : validateVllmGpuMemoryUtilization(recipeUtilization);
+  for (let index = 0; index < extraServeArgs.length; index += 1) {
+    const argument = extraServeArgs[index]!;
+    const separator = argument.indexOf("=");
+    const option = separator < 0 ? argument : argument.slice(0, separator);
+    const normalizedOption = option.replaceAll("_", "-");
+    if (
+      normalizedOption.length > 2 &&
+      VLLM_GPU_MEMORY_UTILIZATION_ARG.startsWith(normalizedOption) &&
+      normalizedOption !== VLLM_GPU_MEMORY_UTILIZATION_ARG
+    ) {
+      throw new Error(
+        `GPU memory utilization overrides must use the full ${VLLM_GPU_MEMORY_UTILIZATION_ARG} option name.`,
+      );
+    }
+    if (normalizedOption !== VLLM_GPU_MEMORY_UTILIZATION_ARG) continue;
+    let value: string | undefined;
+    if (separator < 0) {
+      value = extraServeArgs[index + 1];
+      if (value === undefined) {
+        throw new Error(`${VLLM_GPU_MEMORY_UTILIZATION_ARG} requires a value.`);
+      }
+      index += 1;
+    } else {
+      value = argument.slice(separator + 1);
+    }
+    utilization = parseVllmGpuMemoryUtilization(value);
+  }
+  return utilization;
+}
+
 const SHARED_VLLM_ARGS: readonly string[] = [
   "--tensor-parallel-size",
   "1",
@@ -794,7 +856,7 @@ export function buildNemotronUltraDistributedServeCommand(
     model.modelArgs,
     {
       "--max-num-seqs": "256",
-      "--gpu-memory-utilization": "0.9",
+      "--gpu-memory-utilization": String(DUAL_STATION_VLLM_GPU_MEMORY_UTILIZATION),
     },
     new Set([
       "--cpu-offload-gb",

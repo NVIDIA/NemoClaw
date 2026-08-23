@@ -8,6 +8,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { main } from "../scripts/generate-openclaw-config.mts";
 import { dockerSpawnSync } from "../src/lib/adapters/docker/exec";
+import {
+  ensureOpenClawGeminiRuntimeImage,
+  OPENCLAW_GEMINI_IMAGE_INSPECT_TIMEOUT_MS,
+  OPENCLAW_GEMINI_IMAGE_PULL_TIMEOUT_MS,
+} from "./helpers/openclaw-gemini-runtime-image";
 
 const OPENCLAW_RUNTIME_IMAGE =
   "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:f3f0184b96c208c7d50e5a46171a59a6e371f726b06d41972412c36b427a78d4";
@@ -263,6 +268,7 @@ function parseJsonOutput(output: string): unknown {
 suite("OpenClaw Gemini managed-route runtime compatibility", () => {
   beforeAll(() => {
     contextDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gemini-runtime-"));
+    ensureOpenClawGeminiRuntimeImage(OPENCLAW_RUNTIME_IMAGE);
     stagedPluginPath = path.join(contextDir, "plugin");
     fs.cpSync(PLUGIN_SOURCE_PATH, stagedPluginPath, { recursive: true });
     fs.chmodSync(stagedPluginPath, 0o755);
@@ -272,7 +278,7 @@ suite("OpenClaw Gemini managed-route runtime compatibility", () => {
     containerUser = `${pluginStat.uid}:${pluginStat.gid}`;
     generatedConfigPath = generateConfig();
     fs.chmodSync(generatedConfigPath, 0o444);
-  });
+  }, OPENCLAW_GEMINI_IMAGE_INSPECT_TIMEOUT_MS + OPENCLAW_GEMINI_IMAGE_PULL_TIMEOUT_MS + 10_000);
 
   afterAll(() => {
     fs.rmSync(contextDir, { recursive: true, force: true });

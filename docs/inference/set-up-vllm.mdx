@@ -570,6 +570,7 @@ The host checks the token before `docker pull`, so a missing or empty token stop
 
 Set `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` to a JSON array of individual non-blank `vllm serve` tokens for operator-owned options and overrides.
 NemoClaw trims and validates the array before downloads, shell-quotes each token, and appends the tokens after the registry defaults.
+When the array overrides `--gpu-memory-utilization`, NemoClaw validates the last value and uses that effective value for GPU-memory preflight, matching the final `vllm serve` command.
 
 ```bash
 NEMOCLAW_PROVIDER=install-vllm \
@@ -578,6 +579,10 @@ NEMOCLAW_PROVIDER=install-vllm \
 ```
 
 If the selected image does not support an argument, the managed container exits and NemoClaw prints the log tail.
+
+When the selected managed recipe defines a GPU-memory utilization value, NemoClaw requires valid `nvidia-smi` total/free-memory telemetry for the Docker-selected GPU before large downloads.
+It repeats the same check with fresh telemetry immediately before launch so another workload cannot consume the required free GPU memory unnoticed during the download.
+If telemetry is unavailable, the Docker-selected device cannot be resolved, or free memory is below the effective utilization requirement, onboarding stops with a diagnostic and can be resumed after the GPU state is corrected.
 
 To bound resource use while investigating long-context workflows on one DGX Spark or N1x host, select the Qwen profile.
 The following override disables async scheduling and lowers the context window, concurrent-sequence limit, and batch limit.
