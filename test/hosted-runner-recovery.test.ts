@@ -58,7 +58,7 @@ function sourceRun(overrides: SourceOverrides = {}) {
   const id = overrides.id ?? SOURCE_RUN_ID;
   return {
     id,
-    name: "CI / Platform Evidence",
+    name: "CI / Platform Compatibility",
     path: ".github/workflows/platform-vitest-main.yaml",
     workflow_id: 304_268_429,
     created_at: "2026-07-25T10:00:00Z",
@@ -81,7 +81,7 @@ function workflowForSource(source: ReturnType<typeof sourceRun>) {
     id: source.workflow_id,
     name:
       source.path === ".github/workflows/platform-vitest-main.yaml"
-        ? "CI / Platform Evidence"
+        ? "CI / Platform Compatibility"
         : "unknown",
     path: source.path,
     state: "active",
