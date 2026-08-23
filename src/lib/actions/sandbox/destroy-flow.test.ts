@@ -119,6 +119,28 @@ describe("destroySandbox flow", () => {
     );
   });
 
+  it("stops before OpenShell deletion when Portable identity changes at the delete boundary", async () => {
+    const harness = createDestroyHarness({ portableDestroyAuthority: true });
+    harness.portableDestroyRevalidateSpy
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("Portable receipt changed during destroy");
+      });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.portableDestroyRevalidateSpy).toHaveBeenCalledTimes(6);
+    expect(harness.events).not.toContain("delete");
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+  });
+
   it("redacts credentials from an invalid schema-4 Portable receipt refusal and releases the lifecycle lock before retry (#9189)", async () => {
     const harness = createDestroyHarness({
       portableDestroyPrepareError: "portable receipt API_KEY=opaque-portable-secret is invalid",
