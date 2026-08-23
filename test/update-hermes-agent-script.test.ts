@@ -71,10 +71,12 @@ describe("scripts/update-hermes-agent.sh", () => {
     fs.chmodSync(script, 0o755);
     fs.copyFileSync(HERMES_BASE_DOCKERFILE, path.join(repo, "agents", "hermes", "Dockerfile.base"));
     fs.copyFileSync(HERMES_MANIFEST, path.join(repo, "agents", "hermes", "manifest.yaml"));
+    const curlLog = path.join(tmp, "curl-argv.log");
     writeExecutable(
       path.join(fakeBin, "curl"),
       `#!/usr/bin/env bash
 set -euo pipefail
+printf '%s\\n' "$*" >> "$FAKE_CURL_LOG"
 output=""
 previous=""
 for arg in "$@"; do
@@ -122,6 +124,7 @@ fi
           HERMES_BASE_REF: baseRef,
           FAKE_DOCKER_LOG: dockerLog,
           FAKE_NEMOHERMES_LOG: nemohermesLog,
+          FAKE_CURL_LOG: curlLog,
           NEMOCLAW_SOURCE_ROOT: undefined,
         },
         timeout: 10_000,
@@ -131,6 +134,12 @@ fi
       expect(fs.readFileSync(dockerLog, "utf8")).toContain(`tag ${baseRef} ${pinnedRef}`);
       expect(fs.readFileSync(nemohermesLog, "utf8")).toContain(`${pinnedRef}|hermes rebuild`);
       expect(run.stdout).toContain("OK: sandbox reports Hermes Agent v0.19.0");
+      // #9979: the curl fetch must fail closed on a protocol-downgrade redirect.
+      const curlArgv = fs.readFileSync(curlLog, "utf8").trim();
+      const curlCallCount = curlArgv.split("\n").length;
+      const pinnedCallCount = curlArgv.split("--proto =https --proto-redir =https").length - 1;
+      expect(curlArgv).not.toBe("");
+      expect(pinnedCallCount).toBe(curlCallCount);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
