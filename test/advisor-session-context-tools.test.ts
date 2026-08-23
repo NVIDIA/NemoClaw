@@ -262,7 +262,7 @@ describe("advisor session context tool flow", () => {
     },
   );
 
-  it.each([0, 1, 2, 3, 4])(
+  it.each([0, 1, 2, 3, 4, 5, 20])(
     "repairs a submit after %i settled failed attempt(s) (#9963)",
     (failureCount) => {
       const { turn, tools } = terminalSubmitRepairContract();
@@ -276,14 +276,6 @@ describe("advisor session context tool flow", () => {
     },
   );
 
-  it("does not repair a submit after five settled failed attempts (#9963)", () => {
-    const { turn, tools } = terminalSubmitRepairContract();
-    const fiveFailures = Array.from({ length: 5 }, () => [ledgerStart, ledgerFailure]).flat();
-    expect(
-      repairableTerminalSubmitToolName(turn, fiveFailures, tools, new Set(), undefined),
-    ).toBeUndefined();
-  });
-
   it("accepts one settled same-turn terminal submit repair (#9630)", () => {
     const { turn, tools } = terminalSubmitRepairContract();
     const events = [ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess];
@@ -294,20 +286,22 @@ describe("advisor session context tool flow", () => {
 
   it.each([
     {
+      case: "many failures after success",
       events: [
         ledgerStart,
         ledgerSuccess,
-        ...Array.from({ length: 4 }, () => [ledgerStart, ledgerFailure]).flat(),
+        ...Array.from({ length: 20 }, () => [ledgerStart, ledgerFailure]).flat(),
       ],
     },
     {
+      case: "five failures before success",
       events: [
-        ...Array.from({ length: 4 }, () => [ledgerStart, ledgerFailure]).flat(),
+        ...Array.from({ length: 5 }, () => [ledgerStart, ledgerFailure]).flat(),
         ledgerStart,
         ledgerSuccess,
       ],
     },
-  ])("accepts up to four failed duplicate submits around one success (#9963)", ({ events }) => {
+  ])("accepts $case around one success (#9963)", ({ events }) => {
     const { turn, tools } = terminalSubmitRepairContract();
     expect(hasCompletedTerminalSubmitRepair(turn, events, tools, undefined)).toBe(true);
     expect(advisorTurnFlowErrors("prepare", events, tools, true)).toEqual([]);
@@ -362,14 +356,6 @@ describe("advisor session context tool flow", () => {
     ["all attempts fail", [ledgerStart, ledgerFailure, ledgerStart, ledgerFailure]],
     ["the second attempt is unsettled", [ledgerStart, ledgerFailure, ledgerStart]],
     ["attempt events overlap", [ledgerStart, ledgerStart, ledgerFailure, ledgerSuccess]],
-    [
-      "six attempts are made",
-      [
-        ledgerStart,
-        ledgerSuccess,
-        ...Array.from({ length: 5 }, () => [ledgerStart, ledgerFailure]).flat(),
-      ],
-    ],
     [
       "activity follows success",
       [ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess, analysisEvent],
@@ -464,6 +450,18 @@ describe("advisor session context tool flow", () => {
         undefined,
       ),
     ).toBe(false);
+  });
+
+  it("repairs required assistant text for a prose-only turn (#9963)", () => {
+    const turn: AdvisorPromptTurn = {
+      name: "prose-only",
+      prompt: "Analyze the evidence.",
+      requireAssistantText: true,
+      assistantTextRepairPrompt: "Return the analysis.",
+    };
+    const tools = resolveAdvisorTurnTools(turn, [], new Set());
+
+    expect(repairableAssistantText(turn, [], tools, new Set(), undefined)).toBe(true);
   });
 
   it("rejects prose, unconfigured tools, and multiple submits during terminal-submit repair", () => {

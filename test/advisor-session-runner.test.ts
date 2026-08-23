@@ -17,6 +17,8 @@ const sdk = vi.hoisted(() => {
     | "fail-thrice"
     | "fail-four-times"
     | "fail-four-times-then-success"
+    | "fail-five-times"
+    | "fail-five-times-then-success"
     | "fail-twice-then-success"
     | "fail-then-success"
     | "success";
@@ -27,6 +29,8 @@ const sdk = vi.hoisted(() => {
     "fail-thrice": { failureCount: 3, succeeds: false },
     "fail-four-times": { failureCount: 4, succeeds: false },
     "fail-four-times-then-success": { failureCount: 4, succeeds: true },
+    "fail-five-times": { failureCount: 5, succeeds: false },
+    "fail-five-times-then-success": { failureCount: 5, succeeds: true },
     "fail-twice-then-success": { failureCount: 2, succeeds: true },
     "fail-then-success": { failureCount: 1, succeeds: true },
     success: { failureCount: 0, succeeds: true },
@@ -472,6 +476,15 @@ describe("advisor session runner", () => {
     expect(sdk.state.prompts).toHaveLength(2);
   });
 
+  it("repairs five failed initial submit attempts (#9963)", async () => {
+    sdk.state.terminalResponses = ["fail-five-times", "success"];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.raw).toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
   it("accepts one failed submit followed by one same-turn success (#9630)", async () => {
     sdk.state.terminalResponses = ["fail-then-success"];
     const result = await run([submitTurn("prepare-and-submit")]);
@@ -494,6 +507,16 @@ describe("advisor session runner", () => {
 
   it("accepts four failed submits followed by one same-turn success (#9963)", async () => {
     sdk.state.terminalResponses = ["fail-four-times-then-success"];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).not.toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(1);
+  });
+
+  it("accepts five failed submits followed by one same-turn success (#9963)", async () => {
+    sdk.state.terminalResponses = ["fail-five-times-then-success"];
     const result = await run([submitTurn("prepare-and-submit")]);
 
     expect(result.fatalError).toBeUndefined();

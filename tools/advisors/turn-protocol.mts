@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
-const MAX_TERMINAL_SUBMIT_ATTEMPTS_WITH_REPAIR = 5;
+
+// Repairs preserve the completed turn when possible: missing prose gets one prose-only
+// continuation, a missing or failed atomic commit gets one tool-only continuation, and terminal
+// submission accepts settled validation failures around one success or grants one continuation.
 
 export type AdvisorContextToolContentType = "diff" | "json" | "text";
 
@@ -56,11 +59,11 @@ export type AdvisorPromptTurn = {
   atomicTerminalRepairPrompt?: string;
   /**
    * Terminal submit tool that may follow context, reads, prose, and other active draft tools.
-   * With repair enabled, the turn permits up to five attempts with exactly one success.
+   * With repair enabled, the turn permits settled failed attempts with exactly one success.
    * Only failed duplicate submit calls may follow a success.
    */
   terminalSubmitToolName?: string;
-  /** Opt into bounded repeated submits or one continuation after omission or settled failures. */
+  /** Opt into repeated submits or one continuation after omission or settled failures. */
   terminalSubmitRepairPrompt?: string;
   /** Tools available during the terminal-submit repair continuation. */
   terminalSubmitRepairToolNames?: string[];
@@ -269,7 +272,7 @@ function terminalSubmitToolErrors(
 ): string[] {
   const counts = terminalToolEventCounts(events, toolName);
   const minimumAttempts = repaired ? 2 : 1;
-  const maximumAttempts = repaired ? MAX_TERMINAL_SUBMIT_ATTEMPTS_WITH_REPAIR : 1;
+  const maximumAttempts = repaired ? undefined : 1;
   const errors: string[] = [];
   if (counts.starts !== counts.completions) {
     errors.push(
@@ -283,13 +286,13 @@ function terminalSubmitToolErrors(
   }
   if (
     counts.starts < minimumAttempts ||
-    counts.starts > maximumAttempts ||
+    (maximumAttempts !== undefined && counts.starts > maximumAttempts) ||
     counts.completions !== counts.starts ||
     counts.successfulCompletions !== 1 ||
     counts.failedCompletions !== counts.starts - 1
   ) {
     errors.push(
-      `${turnName} must make ${minimumAttempts === maximumAttempts ? `exactly ${minimumAttempts}` : `${minimumAttempts} to ${maximumAttempts}`} ${toolName} submit attempt(s), ` +
+      `${turnName} must make ${maximumAttempts === minimumAttempts ? `exactly ${minimumAttempts}` : `at least ${minimumAttempts}`} ${toolName} submit attempt(s), ` +
         `with exactly 1 successful completion and only failed duplicate attempts ` +
         `(observed ${counts.starts} starts, ${counts.successfulCompletions} successful, and ${counts.failedCompletions} failed completions)`,
     );
@@ -409,6 +412,7 @@ export function advisorTurnFlowErrors(
         ranges.push({ start: event.offset, end: event.endOffset });
         ranges.sort((left, right) => left.start - right.start);
       }
+      // An empty required file is complete when the first read reaches EOF.
       if (event.reachesEnd) endOffsets.push(event.offset);
       let coveredThrough = 0;
       for (const range of ranges) {
@@ -472,6 +476,7 @@ export function repairableAssistantText(
   }
   if (events.some((event) => event.type === "text" && event.text.trim())) return false;
   if (!hasOnlySettledSuccessfulToolCalls(events)) return false;
+  // Prose-only turns intentionally have no required tool prerequisite.
   return tools.requiredToolNames.every((toolName) => successfulToolNames.has(toolName));
 }
 
@@ -537,12 +542,7 @@ export function repairableTerminalSubmitToolName(
   const sequence = terminalSubmitAttemptSequence(events, toolName);
   if (sequence.malformed || sequence.unsettled) return undefined;
   const counts = terminalToolEventCounts(events, toolName);
-  if (
-    counts.starts !== counts.completions ||
-    counts.starts >= MAX_TERMINAL_SUBMIT_ATTEMPTS_WITH_REPAIR
-  ) {
-    return undefined;
-  }
+  if (counts.starts !== counts.completions) return undefined;
   if (counts.successfulCompletions !== 0) return undefined;
   if (counts.failedCompletions !== counts.starts) return undefined;
   return toolName;
@@ -562,7 +562,6 @@ export function hasCompletedTerminalSubmitRepair(
     !sequence.malformed &&
     !sequence.unsettled &&
     sequence.outcomes.length >= 2 &&
-    sequence.outcomes.length <= MAX_TERMINAL_SUBMIT_ATTEMPTS_WITH_REPAIR &&
     sequence.outcomes.filter((outcome) => outcome === "successful").length === 1 &&
     !hasActivityAfterSuccessfulTerminalSubmit(events, toolName)
   );
