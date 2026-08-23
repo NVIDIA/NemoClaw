@@ -68,6 +68,10 @@ export interface PreparedHostLocalInferenceAuthority {
   readonly sandboxAuthority: HostLocalInferenceSandboxAuthority;
   /** Stable compare-and-swap identity for the complete outer registry binding. */
   readonly sandboxAuthoritySha256: string;
+  /** In-memory capability pinned before a destructive sandbox boundary. */
+  readonly destroyRuntime?: HostLocalInferenceRuntime;
+  /** Revalidates the pinned provider operation immediately before destructive use. */
+  readonly assertDestroyRuntimeAuthority?: () => void;
 }
 
 export type HostLocalInferenceRetirementResult =
@@ -85,6 +89,11 @@ export interface HostLocalInferenceLifecycleOptions {
   ) => ManagedLlamaCppLifecycleAdapter;
 }
 
+export interface HostLocalInferenceSharingAuthority {
+  readonly disposition: "exclusive" | "shared";
+  readonly sha256: string;
+}
+
 type ManagedHostLocalInferenceReceipt = HostLocalInferenceReceipt & {
   readonly service: ManagedHostLocalInferenceService;
 };
@@ -94,6 +103,10 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 
 function fail(message: string): never {
   throw new Error(`Host-local inference lifecycle authority is invalid: ${message}`);
+}
+
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function exactText(value: unknown, label: string, maxBytes = 512): string {
@@ -201,7 +214,10 @@ function requireRuntime(
   receipt: ManagedHostLocalInferenceReceipt,
   sandbox: HostLocalInferenceLifecycleSandbox,
   options: HostLocalInferenceLifecycleOptions,
-): HostLocalInferenceRuntime {
+): {
+  readonly runtime: HostLocalInferenceRuntime;
+  readonly assertAuthority: () => void;
+} {
   const acceleration =
     receipt.runtime.kind === "host" ? receipt.runtime.acceleration : "nvidia-gpu";
   const operation = requireRuntimeProviderHostLocalInferenceOperation(provider, receipt.service, {
@@ -237,7 +253,7 @@ function requireRuntime(
     if (adapter.model !== sandbox.model) {
       fail("sandbox model differs from reconstructed llama.cpp authority");
     }
-    return adapter.runtime;
+    return Object.freeze({ runtime: adapter.runtime, assertAuthority: operation.assertAuthority });
   }
   const runtime = operation.managedRuntime;
   if (
@@ -251,7 +267,7 @@ function requireRuntime(
   ) {
     fail("provider returned an incomplete managed inference lifecycle");
   }
-  return runtime;
+  return Object.freeze({ runtime, assertAuthority: operation.assertAuthority });
 }
 
 function requireExactReceipt(
@@ -273,7 +289,8 @@ function prepare(
   const receipt = parseManagedReceipt(serialized, sandbox);
   if (!receipt) return null;
   const sandboxAuthority = captureSandboxAuthority(provider, sandbox, serialized, receipt);
-  const runtime = requireRuntime(provider, receipt, sandbox, options);
+  const required = requireRuntime(provider, receipt, sandbox, options);
+  const { runtime } = required;
   const reproved =
     mode === "destroy" ? runtime.prepareDestroy(receipt) : runtime.preserveForRebuild(receipt);
   requireExactReceipt(
@@ -291,6 +308,12 @@ function prepare(
     mode,
     sandboxAuthority,
     sandboxAuthoritySha256: sandboxAuthoritySha256(sandboxAuthority),
+    ...(mode === "destroy"
+      ? {
+          destroyRuntime: runtime,
+          assertDestroyRuntimeAuthority: required.assertAuthority,
+        }
+      : {}),
   });
 }
 
@@ -366,7 +389,7 @@ export function confirmHostLocalInferenceAuthority(
   requireCurrentSandboxAuthority(provider, sandbox, prepared, "preserve");
   const receipt = parseManagedReceipt(prepared.serializedReceipt, sandbox);
   if (!receipt) fail("prepared receipt no longer has a managed lifecycle");
-  const runtime = requireRuntime(provider, receipt, sandbox, options);
+  const { runtime } = requireRuntime(provider, receipt, sandbox, options);
   requireExactReceipt(
     prepared.serializedReceipt,
     runtime.preserveForRebuild(receipt),
@@ -374,22 +397,46 @@ export function confirmHostLocalInferenceAuthority(
   );
 }
 
+function currentHostLocalInferenceRuntime(
+  provider: RuntimeProviderBundle,
+  sandbox: HostLocalInferenceLifecycleSandbox,
+  prepared: PreparedHostLocalInferenceAuthority,
+): {
+  readonly receipt: ManagedHostLocalInferenceReceipt;
+  readonly runtime: HostLocalInferenceRuntime;
+} {
+  requireCurrentSandboxAuthority(provider, sandbox, prepared, "destroy");
+  const receipt = parseManagedReceipt(prepared.serializedReceipt, sandbox);
+  if (!receipt) fail("prepared receipt no longer has a managed lifecycle");
+  const runtime = prepared.destroyRuntime;
+  const assertAuthority = prepared.assertDestroyRuntimeAuthority;
+  if (!runtime || !assertAuthority) fail("prepared destroy runtime capability is missing");
+  assertAuthority();
+  return { receipt, runtime };
+}
+
 function confirmHostLocalInferenceDestroyAuthority(
   provider: RuntimeProviderBundle,
   sandbox: HostLocalInferenceLifecycleSandbox,
   prepared: PreparedHostLocalInferenceAuthority,
-  options: HostLocalInferenceLifecycleOptions,
 ): HostLocalInferenceRuntime {
-  requireCurrentSandboxAuthority(provider, sandbox, prepared, "destroy");
-  const receipt = parseManagedReceipt(prepared.serializedReceipt, sandbox);
-  if (!receipt) fail("prepared receipt no longer has a managed lifecycle");
-  const runtime = requireRuntime(provider, receipt, sandbox, options);
+  const { receipt, runtime } = currentHostLocalInferenceRuntime(provider, sandbox, prepared);
   requireExactReceipt(
     prepared.serializedReceipt,
     runtime.prepareDestroy(receipt),
     "provider authority changed before destroy mutation",
   );
   return runtime;
+}
+
+/** Require the prepared exact managed runtime to remain present, whether running or stopped. */
+export function assertPreparedHostLocalInferenceRuntimePresent(
+  provider: RuntimeProviderBundle,
+  sandbox: HostLocalInferenceLifecycleSandbox,
+  prepared: PreparedHostLocalInferenceAuthority,
+): void {
+  const { receipt, runtime } = currentHostLocalInferenceRuntime(provider, sandbox, prepared);
+  runtime.inspectManaged(receipt);
 }
 
 function sameImmutableRuntimeAuthority(
@@ -487,6 +534,36 @@ function sharedPeerStatus(
   return shared ? "shared" : "exclusive";
 }
 
+/** Bind the exact registry owners that decide whether one runtime can be removed. */
+export function inspectPreparedHostLocalInferenceSharingAuthority(
+  provider: RuntimeProviderBundle,
+  sandbox: HostLocalInferenceLifecycleSandbox,
+  prepared: PreparedHostLocalInferenceAuthority,
+  peers: readonly HostLocalInferenceLifecycleSandbox[],
+): HostLocalInferenceSharingAuthority {
+  const disposition = sharedPeerStatus(provider, sandbox, prepared, peers);
+  const authorities = peers
+    .filter(
+      (peer) =>
+        peer.name === sandbox.name || peer.hostLocalInferenceReceipt === prepared.serializedReceipt,
+    )
+    .map((peer) => {
+      const serialized =
+        peer.name === sandbox.name ? prepared.serializedReceipt : peer.hostLocalInferenceReceipt;
+      if (typeof serialized !== "string") {
+        fail("shared peer receipt disappeared while binding ownership");
+      }
+      const receipt = parseManagedReceipt(serialized, peer);
+      if (!receipt) fail("shared peer receipt no longer has a managed lifecycle");
+      return captureSandboxAuthority(provider, peer, serialized, receipt);
+    })
+    .sort((left, right) => compareCodeUnits(left.sandboxName, right.sandboxName));
+  return Object.freeze({
+    disposition,
+    sha256: createHash("sha256").update(JSON.stringify(authorities), "utf8").digest("hex"),
+  });
+}
+
 /**
  * Retire one exact managed runtime after the caller has confirmed sandbox
  * deletion. The durable row remains the retry journal until this returns.
@@ -496,9 +573,8 @@ export function retirePreparedHostLocalInferenceAuthority(
   sandbox: HostLocalInferenceLifecycleSandbox,
   prepared: PreparedHostLocalInferenceAuthority,
   peers: readonly HostLocalInferenceLifecycleSandbox[],
-  options: HostLocalInferenceLifecycleOptions = {},
 ): HostLocalInferenceRetirementResult {
-  const runtime = confirmHostLocalInferenceDestroyAuthority(provider, sandbox, prepared, options);
+  const runtime = confirmHostLocalInferenceDestroyAuthority(provider, sandbox, prepared);
   if (sharedPeerStatus(provider, sandbox, prepared, peers) === "shared") {
     return Object.freeze({ status: "shared" as const, receipt: prepared.receipt });
   }

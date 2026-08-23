@@ -12,6 +12,9 @@ import { resolveGatewayName, resolveGatewayPortFromName } from "../onboard/gatew
 import { GATEWAYS_SUBDIR, nemoclawStateRoot } from "./state-root";
 
 export { GATEWAYS_SUBDIR } from "./state-root";
+// The canonical lock for a `sandboxes.json` registry file, re-exported beside
+// the readers of that file so every writer guards it the same way.
+export { withRegistryLockAt } from "./registry/lock";
 
 const MAX_REGISTRY_BYTES = 16 * 1024 * 1024;
 const MAX_GATEWAY_ROOTS = 256;

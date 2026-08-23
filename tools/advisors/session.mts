@@ -9,6 +9,7 @@ import {
   AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
+  type ReadToolDetails,
   ModelRegistry,
   SessionManager,
   SettingsManager,
@@ -22,8 +23,10 @@ import {
   DEFAULT_ADVISOR_PROVIDER,
   NEMOTRON_ULTRA_ADVISOR_MODEL,
 } from "./provider-constants.mts";
-import { createRepoConfinedReadOnlyTools } from "./repo-read-only-tools.mts";
+import { canonicalRepoReadPath, createRepoConfinedReadOnlyTools } from "./repo-read-only-tools.mts";
 import {
+  assistantTextRepairErrors,
+  assistantTextRepairPrompt,
   type AdvisorContextToolResult,
   type AdvisorPromptTurn,
   type AdvisorTurnFlowEvent,
@@ -35,6 +38,9 @@ import {
   normalizedToolNames,
   promptWithRequiredContextTools,
   READ_ONLY_TOOLS,
+  requiredReadPreparationErrors,
+  requiredReadPreparationPrompt,
+  repairableAssistantText,
   repairableAtomicTerminalToolName,
   repairableTerminalSubmitToolName,
   resolveAdvisorTurnTools,
@@ -93,6 +99,8 @@ export type RunAdvisorResult = {
   /** Assistant text from the final turn. For single-turn callers, this is the full response. */
   text: string;
   raw: string;
+  /** Native Pi JSONL session path when persistence is enabled. */
+  sessionFile?: string;
   turnTexts: string[];
   turnErrors: string[];
   turnCallbackErrors: string[];
@@ -112,7 +120,7 @@ export type RunReadOnlyAdvisorOptions = {
   promptTurns: AdvisorPromptTurn[];
   systemPrompt: string;
   configDir: string;
-  htmlExportPath: string;
+  htmlExportPath?: string;
   timeoutMs: number;
   heartbeatMs: number;
   maxCaptureBytes: number;
@@ -336,6 +344,100 @@ export function createAdvisorContextToolRuntime(
   };
 }
 
+type AdvisorSessionMessage = Parameters<SessionManager["appendMessage"]>[0];
+
+type SeededReadHistory = Readonly<{
+  flow: AdvisorTurnFlowEvent[];
+  calls: number;
+}>;
+
+export async function seedRequiredReadHistory(
+  sessionManager: SessionManager,
+  readTool: ToolDefinition,
+  requiredPaths: string[],
+  model: Readonly<{ api: string; provider: string; id: string }>,
+): Promise<SeededReadHistory> {
+  const paths = [...new Set(requiredPaths)];
+  if (paths.length === 0) return { flow: [], calls: 0 };
+
+  sessionManager.appendMessage({
+    role: "user",
+    content: "Read the required specialist traces before synthesis.",
+    timestamp: Date.now(),
+  });
+  const flow: AdvisorTurnFlowEvent[] = [];
+  let calls = 0;
+  for (const requiredPath of paths) {
+    let offset = 1;
+    let reachesEnd = false;
+    while (!reachesEnd) {
+      const toolCallId = `seed-read-${calls + 1}`;
+      const arguments_ = { path: requiredPath, ...(offset === 1 ? {} : { offset }) };
+      sessionManager.appendMessage({
+        role: "assistant",
+        content: [{ type: "toolCall", id: toolCallId, name: "read", arguments: arguments_ }],
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "toolUse",
+        timestamp: Date.now(),
+      } as AdvisorSessionMessage);
+      const result = await readTool.execute(
+        toolCallId,
+        arguments_,
+        undefined,
+        undefined,
+        undefined as never,
+      );
+      sessionManager.appendMessage({
+        role: "toolResult",
+        toolCallId,
+        toolName: "read",
+        content: result.content ?? [],
+        details: result.details,
+        isError: false,
+        timestamp: Date.now(),
+      });
+      const truncation = (result.details as ReadToolDetails | undefined)?.truncation;
+      const outputLines = truncation?.outputLines;
+      reachesEnd = !truncation?.truncated;
+      flow.push({
+        type: "read",
+        path: requiredPath,
+        offset,
+        endOffset: outputLines === undefined ? null : offset + outputLines - 1,
+        fileSize: fs.statSync(requiredPath).size,
+        reachesEnd,
+      });
+      calls += 1;
+      if (!reachesEnd) {
+        if (!outputLines || outputLines < 1) {
+          throw new Error(`Could not advance seeded read for ${requiredPath}`);
+        }
+        offset += outputLines;
+      }
+    }
+  }
+  return { flow, calls };
+}
+
+export function seededReadFlowForTurn(
+  turn: AdvisorPromptTurn,
+  flow: AdvisorTurnFlowEvent[],
+): AdvisorTurnFlowEvent[] {
+  if (turn.seedRequiredReads !== true) return [];
+  const requiredPaths = new Set(turn.requiredReadPaths ?? []);
+  return flow.filter((event) => event.type === "read" && requiredPaths.has(event.path));
+}
+
 export async function runReadOnlyAdvisor(
   options: RunReadOnlyAdvisorOptions,
 ): Promise<RunAdvisorResult> {
@@ -359,9 +461,13 @@ export async function runReadOnlyAdvisor(
   }
 
   const promptTurns = normalizePromptTurns(options.promptTurns);
+  await canonicalizeRequiredReadPaths(promptTurns, options.cwd);
   const contextTools = createAdvisorContextToolRuntime(promptTurns);
+  let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
   const customTools = [
-    ...createRepoConfinedReadOnlyTools(options.cwd),
+    ...createRepoConfinedReadOnlyTools(options.cwd, (observation) => {
+      currentTurnFlow.push({ type: "read", ...observation });
+    }),
     ...contextTools.customTools,
   ];
   const availableToolNames = new Set(READ_ONLY_TOOLS);
@@ -406,6 +512,18 @@ export async function runReadOnlyAdvisor(
     options.cwd,
     path.join(options.configDir, "sessions"),
   );
+  const seededTurns = promptTurns.filter((turn) => turn.seedRequiredReads === true);
+  if (seededTurns.length > 1 || (seededTurns.length === 1 && seededTurns[0] !== promptTurns[0])) {
+    throw new Error("Seeded required reads are supported only for the first advisor turn");
+  }
+  const readTool = customTools.find((tool) => tool.name === "read");
+  if (!readTool) throw new Error("Advisor read tool is not registered");
+  const seededReadHistory = await seedRequiredReadHistory(
+    sessionManager,
+    readTool,
+    seededTurns.flatMap((turn) => turn.requiredReadPaths ?? []),
+    model,
+  );
   const { session, modelFallbackMessage } = await createAgentSession({
     cwd: options.cwd,
     agentDir: options.configDir,
@@ -420,6 +538,7 @@ export async function runReadOnlyAdvisor(
     settingsManager,
   });
 
+  const sessionFile = session.sessionFile;
   const rawHeader = [
     modelFallbackMessage ? `[${options.logPrefix}] ${modelFallbackMessage}` : undefined,
     `[${options.logPrefix}] model=${model.provider}/${model.id}`,
@@ -438,7 +557,6 @@ export async function runReadOnlyAdvisor(
   let currentTurnName = "";
   let currentTurnError: string | undefined;
   let successfulToolNames = new Set<string>();
-  let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
   let resolveCurrentAgentEnd: (() => void) | undefined;
 
   const captureTurnError = (source: string, message: string | undefined): void => {
@@ -546,7 +664,7 @@ export async function runReadOnlyAdvisor(
       currentTurnText = new CappedBuffer(options.maxCaptureBytes);
       currentTurnError = undefined;
       successfulToolNames = new Set();
-      currentTurnFlow = [];
+      currentTurnFlow = seededReadFlowForTurn(turn, seededReadHistory.flow);
       turnTextBuffers.push(currentTurnText);
       const turnIndex = `${index + 1}/${promptTurns.length}`;
       options.onTurnStart?.(turn);
@@ -575,7 +693,49 @@ export async function runReadOnlyAdvisor(
             await Promise.race([session.prompt(prompt), timeoutPromise]);
             await Promise.race([agentEndPromise, timeoutPromise]);
           };
+          if (turn.seedRequiredReads && (tools.requiredReadPaths?.length ?? 0) > 0) {
+            raw.append(
+              `\n[${options.logPrefix}] seeded_required_reads ${turn.name} calls=${seededReadHistory.calls}\n`,
+            );
+          } else if ((tools.requiredReadPaths?.length ?? 0) > 0) {
+            contextTools.deactivate();
+            session.setActiveToolsByName(["read"]);
+            currentTurnFlow = [];
+            raw.append(`\n[${options.logPrefix}] required_read_preparation_start ${turn.name}\n`);
+            for (const requiredPath of tools.requiredReadPaths!) {
+              const preparationTurn = { ...turn, requiredReadPaths: [requiredPath] };
+              const eventOffset = currentTurnFlow.length;
+              await promptAndWait(requiredReadPreparationPrompt(preparationTurn));
+              const preparationErrors = requiredReadPreparationErrors(
+                turn.name,
+                currentTurnFlow.slice(eventOffset),
+                { ...tools, requiredReadPaths: [requiredPath] },
+              );
+              if (preparationErrors.length > 0) throw new Error(preparationErrors.join("; "));
+            }
+            const preparationFlow = currentTurnFlow;
+            raw.append(`[${options.logPrefix}] required_read_preparation_end ${turn.name} ok\n`);
+            contextTools.activateTurn(turn);
+            session.setActiveToolsByName([READ_ONLY_TOOLS, tools.activeToolNames].flat());
+            currentTurnFlow = preparationFlow;
+          }
           await promptAndWait(promptWithRequiredContextTools(turn.prompt, contextToolNames));
+          const initialFlow = currentTurnFlow;
+          if (
+            repairableAssistantText(turn, initialFlow, tools, successfulToolNames, currentTurnError)
+          ) {
+            contextTools.deactivate();
+            session.setActiveToolsByName([]);
+            currentTurnFlow = [];
+            raw.append(`\n[${options.logPrefix}] assistant_text_repair_start ${turn.name}\n`);
+            options.logProgress(`Advisor SDK repairing required analysis for ${turn.name}`);
+            await promptAndWait(assistantTextRepairPrompt(turn));
+            const repairFlow = currentTurnFlow;
+            const repairErrors = assistantTextRepairErrors(turn.name, repairFlow);
+            if (repairErrors.length > 0) throw new Error(repairErrors.join("; "));
+            currentTurnFlow = [...initialFlow, ...repairFlow];
+            raw.append(`[${options.logPrefix}] assistant_text_repair_end ${turn.name} ok\n`);
+          }
           const originalFlow = currentTurnFlow;
           const repairToolName = repairableAtomicTerminalToolName(
             turn,
@@ -611,6 +771,7 @@ export async function runReadOnlyAdvisor(
             tools,
             currentTurnError,
           );
+          let terminalSubmitValidationFlow = currentTurnFlow;
           const submitRepairToolName = repairableTerminalSubmitToolName(
             turn,
             currentTurnFlow,
@@ -638,7 +799,8 @@ export async function runReadOnlyAdvisor(
               tools.terminalSubmitRepairToolNames ?? [],
             );
             if (repairErrors.length > 0) throw new Error(repairErrors.join("; "));
-            terminalSubmitRepaired = true;
+            terminalSubmitRepaired = false;
+            terminalSubmitValidationFlow = repairFlow;
             currentTurnFlow = [...originalSubmitFlow, ...repairFlow];
             raw.append(
               `[${options.logPrefix}] terminal_submit_repair_end ${turn.name} ${submitRepairToolName} ok\n`,
@@ -653,6 +815,7 @@ export async function runReadOnlyAdvisor(
             currentTurnFlow,
             tools,
             terminalSubmitRepaired,
+            terminalSubmitValidationFlow,
           );
           if (missing.length > 0)
             flowErrors.unshift(`omitted required tool result(s): ${missing.join(", ")}`);
@@ -700,14 +863,16 @@ export async function runReadOnlyAdvisor(
     unsubscribe();
     clearInterval(heartbeat);
     if (timeout) clearTimeout(timeout);
-    try {
-      const exportedPath = await session.exportToHtml(options.htmlExportPath);
-      raw.append(`\n[${options.logPrefix}] exported_session_html=${exportedPath}\n`);
-      options.logProgress(`Exported advisor session HTML: ${exportedPath}`);
-    } catch (error: unknown) {
-      const reason = error instanceof Error ? error.message : String(error);
-      raw.append(`\n[${options.logPrefix}] failed_to_export_session_html=${reason}\n`);
-      options.logProgress(`Failed to export advisor session HTML: ${reason}`);
+    if (options.htmlExportPath) {
+      try {
+        const exportedPath = await session.exportToHtml(options.htmlExportPath);
+        raw.append(`\n[${options.logPrefix}] exported_session_html=${exportedPath}\n`);
+        options.logProgress(`Exported advisor session HTML: ${exportedPath}`);
+      } catch (error: unknown) {
+        const reason = error instanceof Error ? error.message : String(error);
+        raw.append(`\n[${options.logPrefix}] failed_to_export_session_html=${reason}\n`);
+        options.logProgress(`Failed to export advisor session HTML: ${reason}`);
+      }
     }
     session.dispose();
   }
@@ -728,6 +893,7 @@ export async function runReadOnlyAdvisor(
   return {
     text: turnTexts.at(-1) || "",
     raw: raw.toStringWithTrailingNewline(),
+    sessionFile,
     turnTexts,
     turnErrors,
     turnCallbackErrors,
@@ -756,6 +922,23 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+async function canonicalizeRequiredReadPaths(
+  promptTurns: AdvisorPromptTurn[],
+  cwd: string,
+): Promise<void> {
+  await Promise.all(
+    promptTurns.map(async (turn) => {
+      if (turn.requiredReadPaths === undefined) return;
+      const canonicalPaths = await Promise.all(
+        [...new Set(turn.requiredReadPaths)].map((candidate) =>
+          canonicalRepoReadPath(cwd, candidate),
+        ),
+      );
+      turn.requiredReadPaths = [...new Set(canonicalPaths)];
+    }),
+  );
+}
+
 function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTurn[] {
   return promptTurns.map((turn, index) => ({
     name: sanitizeTurnName(turn.name || `turn-${index + 1}`),
@@ -764,7 +947,13 @@ function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTu
     activeToolNames: normalizedToolNames(turn.activeToolNames),
     requiredToolNames: normalizedToolNames(turn.requiredToolNames),
     requireToolsBeforeText: normalizedToolNames(turn.requireToolsBeforeText),
+    requiredReadPaths: turn.requiredReadPaths,
+    seedRequiredReads: turn.seedRequiredReads === true,
     requireAssistantText: turn.requireAssistantText === true,
+    assistantTextRepairPrompt:
+      typeof turn.assistantTextRepairPrompt === "string" && turn.assistantTextRepairPrompt.trim()
+        ? turn.assistantTextRepairPrompt.trim()
+        : undefined,
     atomicTerminalToolName: normalizedToolNames(
       turn.atomicTerminalToolName ? [turn.atomicTerminalToolName] : undefined,
     )[0],

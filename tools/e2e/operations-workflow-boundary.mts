@@ -263,7 +263,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   if (
     workflow.concurrency?.["cancel-in-progress"] !==
-    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !inputs.include_staging_brev_launchable }}"
+    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
   ) {
     errors.push(
       "Manual PR E2E concurrency must not cancel an active Jetson or Launchable dispatch",
@@ -337,6 +337,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
     '"$INCLUDE_LAUNCHABLE" == "true"',
     '",${JOBS}," == *",staging-brev-launchable,"*',
+    '",${JOBS}," == *",staging-brev-launchable-identity,"*',
+    "Launchable identity smoke runs only against trusted main",
     '"$nvidia_owned" == "true"',
     "Launchable PR E2E requires an NVIDIA-owned source repository",
     '"$CHECKOUT_REPOSITORY" == "NVIDIA/NemoClaw"',
@@ -468,8 +470,10 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Check out the E2E result evaluator" &&
         step.with?.ref === "${{ github.workflow_sha }}";
       const trustedLaunchableLaneCheckout =
-        jobName === "staging-brev-launchable" &&
-        step.name === "Checkout trusted Launchable lane" &&
+        ((jobName === "staging-brev-launchable" &&
+          step.name === "Checkout trusted Launchable lane") ||
+          (jobName === "staging-brev-launchable-identity" &&
+            step.name === "Checkout trusted Launchable identity lane")) &&
         step.with?.ref === "${{ github.workflow_sha }}";
       const trustedPublicationCheckout =
         jobName === "base-image-publication" &&
@@ -479,6 +483,11 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       const trustedManagedImageRuntimeCheckout =
         jobName === "managed-image-protected-runtime" &&
         step.name === "Checkout trusted protected runtime qualification" &&
+        step.with?.repository === "${{ github.repository }}" &&
+        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
+      const trustedManagedImageMultiarchResolverCheckout =
+        jobName === "managed-image-multiarch-startup" &&
+        step.name === "Checkout trusted Hermes resolver" &&
         step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
       const trustedLlamaCppPlanCheckout =
@@ -546,6 +555,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         trustedRelevantE2eCheckout ||
         trustedLaunchableLaneCheckout ||
         trustedPublicationCheckout ||
+        trustedManagedImageMultiarchResolverCheckout ||
         trustedManagedImageRuntimeCheckout ||
         trustedLlamaCppPlanCheckout ||
         trustedLlamaCppQualificationCheckout ||
@@ -695,6 +705,13 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   }
   if (!sameMembers(needs(workflow.jobs["staging-brev-launchable"] ?? {}), ["generate-matrix"])) {
     errors.push("staging-brev-launchable must wait only for generate-matrix");
+  }
+  if (
+    !sameMembers(needs(workflow.jobs["staging-brev-launchable-identity"] ?? {}), [
+      "generate-matrix",
+    ])
+  ) {
+    errors.push("staging-brev-launchable-identity must wait only for generate-matrix");
   }
   return errors;
 }

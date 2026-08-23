@@ -468,23 +468,41 @@ export function createDockerGpuSandboxCreatePatch(
             throw failure;
           }
         }
+        const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(
+          options.timeoutSecs,
+        );
+        const finalHandoffDeadlineMs = Date.now() + supervisorReconnectTimeoutSecs * 1000;
         const finalizeOutcome = result
-          ? finalizeBackup({ result, supervisorReady: true }, options.deps)
+          ? finalizeBackup(
+              {
+                result,
+                supervisorReady: true,
+                sandboxName: options.sandboxName,
+                lifecycleReleaseTimeoutSecs: supervisorReconnectTimeoutSecs,
+              },
+              options.deps,
+            )
           : null;
         cutoverFinalized = true;
         if (!finalizeOutcome) return;
         if (finalizeOutcome.backupRemoved && finalizeOutcome.replacementRestarted === undefined) {
           return;
         }
-        if (finalizeOutcome.backupRemoved && finalizeOutcome.replacementRestarted) {
-          const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(
-            options.timeoutSecs,
+        if (
+          finalizeOutcome.backupRemoved &&
+          finalizeOutcome.replacementRestarted &&
+          finalizeOutcome.lifecycleReleaseObserved === true
+        ) {
+          const remainingReconnectTimeoutSecs = Math.max(
+            0,
+            Math.ceil((finalHandoffDeadlineMs - Date.now()) / 1000),
           );
           console.log(
-            `  Waiting for OpenShell supervisor to confirm the final container handoff (up to ${supervisorReconnectTimeoutSecs}s)...`,
+            `  Waiting for OpenShell supervisor to confirm the final container handoff (up to ${remainingReconnectTimeoutSecs}s)...`,
           );
           if (
-            waitForSupervisor(options.sandboxName, supervisorReconnectTimeoutSecs, {
+            remainingReconnectTimeoutSecs > 0 &&
+            waitForSupervisor(options.sandboxName, remainingReconnectTimeoutSecs, {
               runOpenshell: options.deps.runOpenshell,
               runCaptureOpenshell: options.deps.runCaptureOpenshell,
               sleep: options.deps.sleep,

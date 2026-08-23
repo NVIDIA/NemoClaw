@@ -24,6 +24,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/inference-switch-workflow-boundary.test.ts",
   "test/e2e/support/llama-cpp-dgx-spark-qualification-workflow.test.ts",
   "test/e2e/support/jetson-workflow-boundary.test.ts",
+  "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
   "test/e2e/support/mcp-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-compatibility.test.ts",
   "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
@@ -35,6 +36,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
   "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
+  "test/e2e/support/staging-brev-launchable-identity-workflow-boundary.test.ts",
   "test/e2e/support/standard-profile-workflow-boundary.test.ts",
   "test/e2e/support/trusted-hermes-swap-workflow-boundary.test.ts",
   "test/e2e/support/upload-e2e-artifacts-workflow-boundary.test.ts",
@@ -51,6 +53,7 @@ const OPAQUE_INPUTS = [
   "managed-inference/recipes/vllm.example.managed-cluster.v1.yaml",
   "internal/security-reviews/hermes-0.19.0-dependency-review.md",
   ".github/actions/resolve-hermes-base-image/action.yaml",
+  ".github/actions/resolve-reviewed-hermes-platform/action.yaml",
   "Dockerfile",
   "agents/hermes/Dockerfile.base",
   "agents/hermes/Dockerfile",
@@ -137,11 +140,18 @@ describe("Vitest opaque-input watch triggers", () => {
       "src/lib/inference/serving/resolver.test.ts",
       "test/managed-inference-catalog-compiler.test.ts",
     ]);
-    expect(
-      triggeredBy("internal/security-reviews/hermes-0.19.0-dependency-review.md"),
-    ).toEqual(["test/hermes-dependency-review.test.ts"]);
+    expect(triggeredBy("internal/security-reviews/hermes-0.19.0-dependency-review.md")).toEqual([
+      "test/hermes-dependency-review.test.ts",
+    ]);
     expect(triggeredBy(".github/actions/resolve-hermes-base-image/action.yaml")).toEqual([
       "test/base-image-resolver-helper.test.ts",
+    ]);
+    expect(
+      triggeredBy(".github/actions/resolve-reviewed-hermes-platform/action.yaml"),
+    ).toEqual([
+      "test/reviewed-hermes-platform-action.test.ts",
+      "test/protected-managed-image-contract.test.ts",
+      "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
     ]);
     expect(triggeredBy("Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",

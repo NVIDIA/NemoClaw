@@ -54,6 +54,8 @@ describe("runSandboxSnapshot restore: observability policy replay", () => {
         name: "beta",
         observabilityEnabled: enabled,
       }),
+      undefined,
+      { pending: true },
     );
     expect(f.applyPresetMock).toHaveBeenCalledTimes(enabled ? 1 : 0);
   });

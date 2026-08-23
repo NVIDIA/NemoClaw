@@ -34,8 +34,8 @@ async function runSandboxMutationAction(
 }
 
 vi.mock("../state/registry", () => ({
-  isRouteOnlySandboxReservation: (entry: { pendingRouteReservation?: true; createdAt?: string }) =>
-    entry.pendingRouteReservation === true && entry.createdAt === undefined,
+  isPublishedSandboxRegistration: (entry: { pendingRouteReservation?: true }) =>
+    entry.pendingRouteReservation !== true,
   listSandboxes: mocks.listSandboxes,
   getSandbox: mocks.getSandbox,
 }));
@@ -195,7 +195,7 @@ describe("backupAll", () => {
     expect(logSpy.mock.calls.flat().join("\n")).toContain("No sandboxes registered");
   });
 
-  it("backs up real sandboxes while ignoring a route-only reservation (#6500)", async () => {
+  it("backs up published sandboxes while ignoring pending registrations (#9733)", async () => {
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [
         { name: "tm", pendingRouteReservation: true },
@@ -225,11 +225,11 @@ describe("backupAll", () => {
 
     await backupAll();
 
-    expect(mocks.backupSandboxState.mock.calls.map(([name]) => name)).toEqual(["alpha", "beta"]);
+    expect(mocks.backupSandboxState.mock.calls.map(([name]) => name)).toEqual(["alpha"]);
     expect(mocks.startStoppedSandboxContainerForBackup).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
     expect(logSpy.mock.calls.flat().join("\n")).toContain(
-      "Pre-upgrade backup: 2 backed up, 0 failed, 0 skipped",
+      "Pre-upgrade backup: 1 backed up, 0 failed, 0 skipped",
     );
   });
 

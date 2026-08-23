@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { loadAgent } from "../../agent/defs";
+import { assertHermesPortableUninstallCompleteForOnboarding } from "../../state/hermes-portable-uninstall/journal";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import {
   captureHermesPortablePolicySource,
@@ -109,6 +110,12 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(stateDir, { recursive: true, force: true }));
 
 describe("Hermes portable onboarding transaction", () => {
+  it("allows first onboarding when no uninstall state directory exists (#9608)", () => {
+    expect(() =>
+      assertHermesPortableUninstallCompleteForOnboarding(path.join(stateDir, "absent")),
+    ).not.toThrow();
+  });
+
   it("uses only the receipt-owned child environment and exact gateway observations (#9203)", () => {
     const runtimeAuthority = input().runtimeAuthority;
     const sourceEnv = {
@@ -724,20 +731,29 @@ describe("Hermes portable onboarding transaction", () => {
     expect(fixture.events).not.toContain("create");
   });
 
-  it("classifies absence only after a reachable gateway returns exact sandbox-not-found evidence (#9203)", () => {
-    const capture = vi
-      .fn()
-      .mockReturnValueOnce({ status: 0, stdout: "[]", stderr: "" })
-      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "sandbox 'alpha' not found" });
+  it.each([
+    ["named sandbox-not-found", "sandbox 'alpha' not found"],
+    [
+      "OpenShell 0.0.106 entity-not-found",
+      "Error:   × code: 'Some requested entity was not found', message: \"sandbox not found\"",
+    ],
+  ])(
+    "classifies absence after a reachable gateway returns %s evidence (#9203)",
+    (_label, stderr) => {
+      const capture = vi
+        .fn()
+        .mockReturnValueOnce({ status: 0, stdout: "[]", stderr: "" })
+        .mockReturnValueOnce({ status: 1, stdout: "", stderr });
 
-    expect(observeHermesPortableSandbox("alpha", "nemoclaw", capture)).toEqual({
-      kind: "absent",
-    });
-    expect(capture.mock.calls).toEqual([
-      [["sandbox", "list", "-g", "nemoclaw"]],
-      [["sandbox", "get", "-g", "nemoclaw", "alpha"]],
-    ]);
-  });
+      expect(observeHermesPortableSandbox("alpha", "nemoclaw", capture)).toEqual({
+        kind: "absent",
+      });
+      expect(capture.mock.calls).toEqual([
+        [["sandbox", "list", "-g", "nemoclaw"]],
+        [["sandbox", "get", "-g", "nemoclaw", "alpha"]],
+      ]);
+    },
+  );
 
   it("accepts Ready identity only from the exact receipt gateway (#9203)", () => {
     const capture = vi
@@ -796,6 +812,16 @@ describe("Hermes portable onboarding transaction", () => {
     ["gateway missing", { status: 1, stdout: "", stderr: "gateway not found" }, false],
     ["transport failure", { status: null, stdout: "", stderr: "transport unavailable" }, true],
     ["unnamed sandbox", { status: 1, stdout: "", stderr: "unknown sandbox" }, true],
+    [
+      "entity-not-found response for a different resource",
+      {
+        status: 1,
+        stdout: "",
+        stderr:
+          "Error:   × code: 'Some requested entity was not found', message: \"gateway not found\"",
+      },
+      true,
+    ],
     ["ambiguous absence", { status: 1, stdout: "", stderr: "no sandbox connection" }, true],
   ])(
     "keeps %s fail-closed instead of treating it as sandbox absence (#9203)",
