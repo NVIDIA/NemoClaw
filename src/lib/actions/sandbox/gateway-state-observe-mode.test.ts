@@ -97,4 +97,18 @@ describe("getReconciledSandboxGatewayState observe mode", () => {
     expect(recover).not.toHaveBeenCalled();
     expect(result).toMatchObject({ state: "present" });
   });
+
+  it("keeps receipt-owned observation scoped without changing global gateway selection (#9203)", async () => {
+    const getState = vi.fn().mockResolvedValue({ state: "present", output: "Phase: Ready" });
+
+    const result = await getReconciledSandboxGatewayState("beta", {
+      getState,
+      gatewayRecovery: "observe",
+      selectOwningGateway: false,
+    });
+
+    expect(gatewaySelect.selectSandboxOwningGateway).not.toHaveBeenCalled();
+    expect(getState).toHaveBeenCalledWith("beta", "nemoclaw-8091");
+    expect(result).toMatchObject({ state: "present" });
+  });
 });

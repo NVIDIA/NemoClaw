@@ -50,7 +50,10 @@ import {
 } from "../domain/backup-failure.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
-import { sanitizeSnapshotDirectory } from "../security/snapshot-sanitizer.js";
+import {
+  SnapshotSanitizerPrerequisiteError,
+  sanitizeSnapshotDirectory,
+} from "../security/snapshot-sanitizer.js";
 import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
@@ -175,6 +178,12 @@ export interface BackupOptions {
    * visible to restore and rebuild flows.
    */
   validateBeforePublish?: () => void;
+  /**
+   * Internal capture path for a declared state file that the sandbox-user SSH
+   * transport cannot read. The caller must independently enforce path,
+   * identity, and stable-read constraints before returning bytes.
+   */
+  captureStateFile?: StateFileCapture;
 }
 
 export interface InstanceBackup {
@@ -191,6 +200,19 @@ export interface StateFileSpec {
   path: string;
   strategy: StateFileStrategy;
 }
+
+export interface StateFileCaptureRequest {
+  sandboxName: string;
+  dir: string;
+  spec: StateFileSpec;
+}
+
+export type StateFileCaptureResult =
+  | { outcome: "backed_up"; data: Buffer }
+  | { outcome: "missing" }
+  | { outcome: "failed"; error?: string; unreachable?: boolean };
+
+export type StateFileCapture = (request: StateFileCaptureRequest) => StateFileCaptureResult | null;
 
 export interface BackupResult {
   success: boolean;
@@ -752,21 +774,42 @@ export function sanitizeBackupDirectory(
   try {
     operations.sanitizeDirectory(dirPath);
   } catch (error) {
+    // sanitizeBackupDirectory replaces the message, so an unmet prerequisite
+    // would otherwise survive only as `cause` and never reach the operator. (#8202)
+    const prerequisite =
+      error instanceof SnapshotSanitizerPrerequisiteError ? `${error.message}. ` : "";
+    const validatedSnapshotPath =
+      error instanceof SnapshotSanitizerPrerequisiteError ? error.snapshotPath : null;
     try {
       operations.removeBackup(dirPath);
     } catch (cleanupError) {
-      throw new Error("Credential sanitization failed and backup cleanup failed", {
-        cause: cleanupError,
-      });
+      const retainedPath =
+        validatedSnapshotPath === null
+          ? ""
+          : `; the incomplete backup may remain at ${validatedSnapshotPath}`;
+      throw new Error(
+        `${prerequisite}Credential sanitization failed and backup cleanup failed${retainedPath}`,
+        {
+          cause: new AggregateError(
+            [error, cleanupError],
+            "Snapshot sanitization and backup cleanup both failed",
+          ),
+        },
+      );
     }
     if (operations.backupExists(dirPath)) {
-      throw new Error("Credential sanitization failed and the incomplete backup remains", {
-        cause: error,
-      });
+      const retainedPath = validatedSnapshotPath === null ? "" : ` at ${validatedSnapshotPath}`;
+      throw new Error(
+        `${prerequisite}Credential sanitization failed and the incomplete backup remains${retainedPath}`,
+        { cause: error },
+      );
     }
-    throw new Error("Credential sanitization failed; removed the incomplete backup", {
-      cause: error,
-    });
+    throw new Error(
+      `${prerequisite}Credential sanitization failed; removed the incomplete backup`,
+      {
+        cause: error,
+      },
+    );
   }
 }
 
@@ -1082,6 +1125,7 @@ function backupStateFile(
   dir: string,
   spec: StateFileSpec,
   backupPath: string,
+  captureFallback?: StateFileCapture,
 ): StateFileBackupResult {
   const command = buildStateFileBackupCommand(dir, spec);
   _log(`Backing up state file ${spec.path} (${spec.strategy})`);
@@ -1093,8 +1137,25 @@ function backupStateFile(
 
   if (result.status === 2) return { outcome: "missing", unreachable: false };
   const emptySqliteBackup = spec.strategy === "sqlite_backup" && result.stdout?.length === 0;
-  if (result.status !== 0 || result.error || result.signal || !result.stdout || emptySqliteBackup) {
+  let captured: StateFileCaptureResult | null = null;
+  if (result.status === 1 && !result.error && !result.signal && captureFallback !== undefined) {
+    try {
+      captured = captureFallback({ sandboxName, dir, spec });
+    } catch (error) {
+      captured = {
+        outcome: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+  if (captured?.outcome === "missing") return { outcome: "missing", unreachable: false };
+  const capturedData = captured?.outcome === "backed_up" ? captured.data : null;
+  if (
+    (result.status !== 0 || result.error || result.signal || !result.stdout || emptySqliteBackup) &&
+    capturedData === null
+  ) {
     const detail =
+      (captured?.outcome === "failed" ? captured.error : undefined) ||
       (result.stderr?.toString() || "").trim() ||
       result.error?.message ||
       (result.signal
@@ -1103,7 +1164,12 @@ function backupStateFile(
           ? "empty output"
           : `exit ${String(result.status)}`);
     _log(`FAILED: state file backup ${spec.path}: ${detail.substring(0, 200)}`);
-    return { outcome: "failed", unreachable: isSshTransportFailure(result) };
+    return {
+      outcome: "failed",
+      unreachable:
+        (captured?.outcome === "failed" && captured.unreachable === true) ||
+        isSshTransportFailure(result),
+    };
   }
 
   const localPath = path.join(backupPath, spec.path);
@@ -1111,7 +1177,7 @@ function backupStateFile(
   rejectSymlinksOnPath(parent);
   mkdirSync(parent, { recursive: true, mode: 0o700 });
   rejectSymlinksOnPath(localPath);
-  writeFileSync(localPath, result.stdout);
+  writeFileSync(localPath, capturedData ?? result.stdout);
   chmodSync(localPath, 0o600);
   return { outcome: "backed_up", unreachable: false };
 }
@@ -1724,7 +1790,14 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     }
 
     for (const spec of stateFiles) {
-      const result = backupStateFile(configFile, sandboxName, dir, spec, backupPath);
+      const result = backupStateFile(
+        configFile,
+        sandboxName,
+        dir,
+        spec,
+        backupPath,
+        options.captureStateFile,
+      );
       if (result.outcome === "backed_up") {
         backedUpFiles.push(spec.path);
       } else if (result.outcome === "failed") {

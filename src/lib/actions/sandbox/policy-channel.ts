@@ -33,6 +33,7 @@ import {
   MessagingHostStateApplier,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
+  MESSAGING_CREDENTIAL_PROVIDER_TYPE,
   runMessagingHook,
   type SandboxMessagingChannelPlan,
   type SandboxMessagingPlan,
@@ -47,6 +48,7 @@ import {
   bridgeProviderNamesForChannel,
   bridgeSecretEnvsForChannel,
   collectMessagingBridgeTokenDefs,
+  staticMessagingProviderTypeForChannel,
 } from "../../onboard/messaging-bridge-provider";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import type { MessagingTokenDef } from "../../onboard/messaging-prep";
@@ -847,10 +849,13 @@ async function applyChannelAddToGatewayAndRegistry(
   channelName: string,
   acquired: Record<string, string>,
 ): Promise<boolean> {
+  const sandboxAgent = registry.getSandbox(sandboxName)?.agent;
+  const staticProviderType = staticMessagingProviderTypeForChannel(channelName, sandboxAgent);
   const tokenDefs: MessagingTokenDef[] = Object.entries(acquired).map(([envKey, token]) => ({
     name: bridgeProviderName(sandboxName, channelName, envKey),
     envKey,
     token,
+    providerType: staticProviderType ?? MESSAGING_CREDENTIAL_PROVIDER_TYPE,
   }));
   // Bridge channels declare no manifest credentials, so the loop above yields
   // nothing for them. Their provider must be created HERE (same seam onboarding
@@ -858,6 +863,9 @@ async function applyChannelAddToGatewayAndRegistry(
   // deferred rebuild cannot configure it.
   const bridgeDefs = collectMessagingBridgeTokenDefs({
     sandboxName,
+    // Unnormalized: the bridge profile filter owns the unset default and rejects
+    // an agent no profile declares.
+    agent: sandboxAgent,
     enabledChannels: [channelName],
     disabledChannelNames: new Set<string>(),
     getCredential,
@@ -894,13 +902,24 @@ async function applyChannelAddToGatewayAndRegistry(
   try {
     // bestEffort: failures throw (instead of process.exit inside the helper)
     // so a partial add can be torn down below before exiting.
-    policyChannelDependencies.upsertMessagingProviders(tokenDefs, { bestEffort: true });
+    policyChannelDependencies.upsertMessagingProviders(tokenDefs, {
+      bestEffort: true,
+      requireExactBindings: true,
+    });
   } catch (err) {
     console.error(
       `  ✗ Failed to register '${channelName}' providers with the gateway: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );
+    if (policyChannelDependencies.isMessagingProviderBindingConflict(err)) {
+      if (err.mutatedProviderNames.length > 0) {
+        console.error(
+          `  ${YW}⚠${R} Provider state changed before the identity conflict; inspect ${err.mutatedProviderNames.join(", ")} before retrying.`,
+        );
+      }
+      process.exit(1);
+    }
     const teardown = await applyChannelRemoveToGatewayAndRegistry(
       sandboxName,
       channelName,
@@ -1207,7 +1226,6 @@ function buildCredentialAvailability(channelIds: readonly string[]): Record<stri
     for (const input of manifest.inputs) {
       if (input.kind !== "secret" || !input.envKey) continue;
       if (!getMessagingToken(input.envKey)) continue;
-      availability[input.id] = true;
       availability[`${manifest.id}.${input.id}`] = true;
       availability[input.envKey] = true;
     }
@@ -1433,12 +1451,10 @@ async function addSandboxChannelUnlocked(
     const existing = getCredential(key);
     if (existing != null) priorCreds[key] = existing;
   }
-  persistChannelTokens(acquired);
-  // Push to the gateway and update the registry NOW so that answering
-  // "rebuild later" (or running non-interactively) does not silently
-  // discard the change. Pre-fix this was safe because saveCredential()
-  // wrote credentials.json; with env-only persistence, exiting before
-  // the rebuild used to drop the queued token.
+  // Register every provider before credentials or durable channel state are
+  // saved. Exact-binding preflight can then reject the complete set without
+  // leaving a partial add behind. Credentials still persist before the policy
+  // and rebuild steps, so choosing "rebuild later" keeps the queued token.
   const registeredBridge = await applyChannelAddToGatewayAndRegistry(
     sandboxName,
     canonical,
@@ -1447,6 +1463,7 @@ async function addSandboxChannelUnlocked(
   if (registeredBridge) {
     console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
   }
+  persistChannelTokens(acquired);
 
   if (
     !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
@@ -1509,6 +1526,7 @@ async function rollbackChannelAdd(
           name: bridgeProviderName(sandboxName, canonical, envKey),
           envKey,
           token,
+          providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         }));
         policyChannelDependencies.upsertMessagingProviders(priorTokenDefs, {
           bestEffort: true,
@@ -1981,7 +1999,15 @@ async function removeSandboxPolicyUnlocked(
   const builtinPresets = policies.listPresets();
   const customPresets = policies.listCustomPresets(sandboxName);
   const allPresets = [...builtinPresets, ...customPresets];
+  // `policy list` reports a preset as active when either the registry or the
+  // gateway holds it, so removal has to accept the same set. A preset the
+  // gateway enforces but the registry never recorded is exactly the state
+  // `policy list` flags as "active on gateway, missing from local state", and
+  // removePreset() reconciles it without needing the registry entry. Null means
+  // the gateway could not be queried, which is not evidence of absence. (#9295)
   const applied = policies.getAppliedPresets(sandboxName);
+  const gatewayPresets = policies.getGatewayPresets(sandboxName);
+  const removable = gatewayPresets ? [...new Set([...applied, ...gatewayPresets])] : applied;
 
   const presetArg = options.preset;
   let answer = null;
@@ -1995,8 +2021,11 @@ async function removeSandboxPolicyUnlocked(
       );
       process.exit(1);
     }
-    if (!applied.includes(preset.name)) {
+    if (!removable.includes(preset.name)) {
       console.error(`  Preset '${preset.name}' is not applied.`);
+      if (gatewayPresets === null) {
+        console.error("  Could not query the gateway, so only local state was checked.");
+      }
       process.exit(1);
     }
     answer = preset.name;
@@ -2009,7 +2038,7 @@ async function removeSandboxPolicyUnlocked(
       exitPromptStdinClosed(usage);
     }
     answer = await pickPresetOrExit(
-      () => policies.selectForRemoval(allPresets, { applied }),
+      () => policies.selectForRemoval(allPresets, { applied: removable }),
       usage,
     );
   }

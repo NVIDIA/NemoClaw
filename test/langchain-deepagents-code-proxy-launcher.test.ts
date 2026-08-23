@@ -123,6 +123,50 @@ function shellValidatorAccepts(source: string, name: string, value: string): boo
 }
 
 describe("Deep Agents Code direct-exec proxy launcher", () => {
+  it("uses the live OpenShell CA bundle before the pre-resume fallback (#9360)", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-live-ca-"));
+    try {
+      const liveCaFile = path.join(tempDir, "openshell-live-ca.pem");
+      const fallbackCaFile = path.join(tempDir, "managed-startup-ca.pem");
+      fs.writeFileSync(liveCaFile, "live OpenShell CA\n", { mode: 0o444 });
+      fs.writeFileSync(fallbackCaFile, "pre-resume fallback CA\n", { mode: 0o444 });
+      const { envFile, scriptPath } = makeStartScriptFixture(tempDir, {
+        liveCaFile,
+        fallbackCaFile,
+      });
+
+      const liveResult = spawnSync("bash", [scriptPath, "true"], {
+        env: {
+          PATH: DEFAULT_TEST_PATH,
+          SSL_CERT_FILE: "/ambient-live-ca.pem",
+          REQUESTS_CA_BUNDLE: "/ambient-live-ca.pem",
+          NODE_EXTRA_CA_CERTS: "/ambient-live-ca.pem",
+        },
+        encoding: "utf8",
+      });
+      expect(liveResult.status, liveResult.stderr).toBe(0);
+      const liveEnvironment = fs.readFileSync(envFile, "utf8");
+      expect(liveEnvironment).toContain(`_nemoclaw_dcode_ca_bundle=${liveCaFile}`);
+      expect(liveEnvironment).toContain("export SSL_CERT_FILE=/ambient-live-ca.pem");
+      expect(liveEnvironment).toContain("export REQUESTS_CA_BUNDLE=/ambient-live-ca.pem");
+      expect(liveEnvironment).toContain("export NODE_EXTRA_CA_CERTS=/ambient-live-ca.pem");
+
+      fs.rmSync(liveCaFile);
+      const fallbackResult = spawnSync("bash", [scriptPath, "true"], {
+        env: { PATH: DEFAULT_TEST_PATH },
+        encoding: "utf8",
+      });
+      expect(fallbackResult.status, fallbackResult.stderr).toBe(0);
+      const fallbackEnvironment = fs.readFileSync(envFile, "utf8");
+      expect(fallbackEnvironment).toContain(`_nemoclaw_dcode_ca_bundle=${fallbackCaFile}`);
+      expect(fallbackEnvironment).toContain(`export SSL_CERT_FILE=${fallbackCaFile}`);
+      expect(fallbackEnvironment).toContain(`export REQUESTS_CA_BUNDLE=${fallbackCaFile}`);
+      expect(fallbackEnvironment).toContain(`export NODE_EXTRA_CA_CERTS=${fallbackCaFile}`);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps read-only identity commands outside the session supervisor", () => {
     const launcher = readAgentFile("dcode-launcher.sh");
     const directIdentity =
@@ -228,16 +272,11 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     const lines = result.stdout.trimEnd().split("\n");
     const managedProxy = "http://managed-proxy.internal:65535";
     const managedNoProxy = "localhost,127.0.0.1,::1,managed-proxy.internal";
-    for (const name of PROXY_URL_ENV_NAMES) {
-      expect(lines).toContain(`LAUNCHER_${name}=${managedProxy}`);
-    }
+    expect(PROXY_URL_ENV_NAMES.every((name) => lines.includes(`LAUNCHER_${name}=${managedProxy}`))).toBe(true);
     expect(lines).toContain(`LAUNCHER_${TRUSTED_FETCH_PROXY_ENV_NAME}=${managedProxy}`);
-    for (const name of NO_PROXY_ENV_NAMES) {
-      expect(lines).toContain(`LAUNCHER_${name}=${managedNoProxy}`);
-    }
-    for (const name of CLEARED_PROXY_ENV_NAMES) {
-      expect(lines).toContain(`LAUNCHER_${name}=__unset__`);
-    }
+    expect(NO_PROXY_ENV_NAMES.every((name) =>
+        lines.includes(`LAUNCHER_${name}=${managedNoProxy}`))).toBe(true);
+    expect(CLEARED_PROXY_ENV_NAMES.every((name) => lines.includes(`LAUNCHER_${name}=__unset__`))).toBe(true);
     const output = `${result.stdout}\n${result.stderr}`;
     expect(output).not.toContain("inference.local");
     expect(output).not.toContain("corp-proxy.example");
@@ -618,11 +657,11 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
         "",
       ];
 
-      for (const value of hostSamples) {
+      hostSamples.forEach((value) => {
         const expected = isValidProxyHost(value);
         expect(shellValidatorAccepts(start, "is_valid_proxy_host", value), value).toBe(expected);
         expect(shellValidatorAccepts(launcher, "is_valid_proxy_host", value), value).toBe(expected);
-      }
+      });
 
       const expected = isValidProxyPort(value);
       expect(shellValidatorAccepts(start, "is_valid_proxy_port", value), value).toBe(expected);
@@ -630,20 +669,21 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     },
   );
 
-  it("documents the proxy-only source boundary and removal condition (#6191)", () => {
+  it.each(
+    [
+        "# Invalid state:",
+        "# Source boundary:",
+        "# Source-fix constraint:",
+        "# Regression:",
+        "# Removal condition:",
+      ],
+  )("documents the proxy-only source boundary and removal condition [%s] (#6191)", (marker) => {
     const start = readAgentFile("start.sh");
     const launcher = readAgentFile("dcode-launcher.sh");
     const headlessCheck = fs.readFileSync(headlessCheckPath, "utf8");
 
-    for (const marker of [
-      "# Invalid state:",
-      "# Source boundary:",
-      "# Source-fix constraint:",
-      "# Regression:",
-      "# Removal condition:",
-    ]) {
-      expect(start).toContain(marker);
-    }
+    expect(start).toContain(marker);
+
     expect(start).toContain("Direct DNS/hosts resolution is not required");
     expect(launcher).toContain("Remove it only when OpenShell normalizes every sandbox exec/login");
     expect(headlessCheck).toContain("getent hosts inference.local >/dev/null 2>&1");
@@ -673,9 +713,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       expect(result.status).not.toBe(0);
       expect(startResult.status).not.toBe(0);
       expect(result.stdout).not.toContain("LAUNCHER_");
-      for (const value of Object.values(managedProxy)) {
-        expect(`${result.stdout}\n${result.stderr}\n${startResult.stderr}`).not.toContain(value);
-      }
+      expect(Object.values(managedProxy).every((value) => !`${result.stdout}\n${result.stderr}\n${startResult.stderr}`.includes(value))).toBe(true);
     },
   );
 });

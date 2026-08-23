@@ -722,9 +722,9 @@ describe("managed workload rebuild transaction", () => {
     expect(harness.events).toEqual(events);
     expect(harness.operations.abortPreparation).toHaveBeenCalledTimes(abortCalls);
     expect(harness.operations.rollback).toHaveBeenCalledTimes(rollbackCalls);
-    for (const operation of notCalled) {
+    notCalled.forEach((operation) => {
       expect(harness.operations[operation]).not.toHaveBeenCalled();
-    }
+    });
   });
 
   it("aborts preparation when durable registry metadata drifts during preparation", async () => {

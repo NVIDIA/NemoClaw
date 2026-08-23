@@ -326,9 +326,9 @@ describe("dependency release ledger security boundary", () => {
   it("rejects missing and corrupt objects anywhere in the reachable closure", () => {
     const partial = createBloblessClone();
     removePartialCloneConfig(partial.repo);
-    for (const marker of promisorMarkers(partial.repo)) {
+    promisorMarkers(partial.repo).forEach((marker) => {
       fs.rmSync(path.join(partial.repo, ".git", "objects", "pack", marker));
-    }
+    });
     const missing = runCollector(partial.repo);
     expect(missing.status).toBe(1);
     expect(missing.stderr).toMatch(/reachable object closure|missing objects/u);
@@ -460,12 +460,12 @@ process.stdout.write(JSON.stringify(payload) + "\\n");
       .split("\n")
       .map((line) => JSON.parse(line) as string[]);
     expect(environments.length).toBeGreaterThan(0);
-    for (const keys of environments) {
+    environments.forEach((keys) => {
       expect(keys).not.toEqual(
         expect.arrayContaining(["BASH_ENV", "NODE_OPTIONS", "PATH", "UPSTREAM_PROMPT_INJECTION"]),
       );
       expect(keys).toEqual(expect.arrayContaining(["GH_PROMPT_DISABLED", "LC_ALL", "NO_COLOR"]));
-    }
+    });
   });
 
   it("terminates Git output that exceeds the byte ceiling", () => {

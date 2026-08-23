@@ -97,6 +97,7 @@ export async function runSandboxCreateStep(
   const startupCommandPatch = resolveDockerStartupCommandPatch(
     context.agent,
     context.prebuild.dockerDriverGateway,
+    context.env,
   );
   const deferRestartSafeCutover =
     startupCommandPatch.persistStartupCommand && !context.useDockerGpuPatch;

@@ -83,9 +83,8 @@ export async function withDirectPublicDispatch(
     ]),
   );
   const getSandbox = vi.fn((name: string) => sandboxes.get(name) ?? null);
-  const isRouteOnlySandboxReservation = vi.fn(
-    (sandbox: SandboxStub) =>
-      sandbox.pendingRouteReservation === true && sandbox.createdAt === undefined,
+  const isPublishedSandboxRegistration = vi.fn(
+    (sandbox: SandboxStub) => sandbox.pendingRouteReservation !== true,
   );
   const getDefault = vi.fn(() => {
     const storedDefault = options.defaultSandbox ?? null;
@@ -134,7 +133,7 @@ export async function withDirectPublicDispatch(
   cacheModule(registryPath, {
     getDefault,
     getSandbox,
-    isRouteOnlySandboxReservation,
+    isPublishedSandboxRegistration,
     listSandboxes,
   });
   cacheModule(legacyPortMigrationPath, { migrateLegacyPortState });

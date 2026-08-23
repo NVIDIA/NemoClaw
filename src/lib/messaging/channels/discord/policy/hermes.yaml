@@ -13,6 +13,8 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        credential_binding:
+          provider: "{sandboxName}-discord-bridge"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -34,6 +36,8 @@ network_policies:
         protocol: websocket
         enforcement: enforce
         websocket_credential_rewrite: true
+        credential_binding:
+          provider: "{sandboxName}-discord-bridge"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: WEBSOCKET_TEXT, path: "/**" }
@@ -42,6 +46,8 @@ network_policies:
         protocol: websocket
         enforcement: enforce
         websocket_credential_rewrite: true
+        credential_binding:
+          provider: "{sandboxName}-discord-bridge"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: WEBSOCKET_TEXT, path: "/**" }

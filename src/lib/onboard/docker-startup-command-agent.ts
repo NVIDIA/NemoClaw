@@ -3,6 +3,7 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import type { DockerUlimit } from "./docker-gpu-patch-types";
+import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 
 const DCODE_AGENT_NAME = "langchain-deepagents-code";
 
@@ -17,23 +18,34 @@ export const DCODE_DOCKER_ULIMITS: readonly DockerUlimit[] = [
 export function resolveDockerStartupCommandPatch(
   agent: AgentDefinition | null | undefined,
   dockerDriverGateway: boolean | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
 ): {
   persistStartupCommand: boolean;
   preserveJetsonDeviceGroupMembership: boolean;
   requiredUlimits: readonly DockerUlimit[] | null;
 } {
   const agentName = agent?.name ?? "openclaw";
+  const preserveJetsonDeviceGroupMembership = agentName === "openclaw";
+  const requiredUlimits = agentName === DCODE_AGENT_NAME ? DCODE_DOCKER_ULIMITS : null;
   if (dockerDriverGateway !== true) {
     return {
       persistStartupCommand: false,
-      preserveJetsonDeviceGroupMembership: agentName === "openclaw",
+      preserveJetsonDeviceGroupMembership,
       requiredUlimits: null,
     };
+  }
+  // The restart-safe recreation discovers the sandbox with docker-driver
+  // labels (openshell.ai/managed-by), but the portable profile registers the
+  // gateway with the podman driver, whose containers never carry that label —
+  // the recreation can only fail after Ready (#9462). Portable+OpenClaw
+  // persistence is owned by the portable lifecycle instead (#9176).
+  if (isPortableExperimentalProfile(env)) {
+    return { persistStartupCommand: false, preserveJetsonDeviceGroupMembership, requiredUlimits };
   }
   return {
     persistStartupCommand:
       agentName === "openclaw" || agentName === "hermes" || agentName === DCODE_AGENT_NAME,
-    preserveJetsonDeviceGroupMembership: agentName === "openclaw",
-    requiredUlimits: agentName === DCODE_AGENT_NAME ? DCODE_DOCKER_ULIMITS : null,
+    preserveJetsonDeviceGroupMembership,
+    requiredUlimits,
   };
 }

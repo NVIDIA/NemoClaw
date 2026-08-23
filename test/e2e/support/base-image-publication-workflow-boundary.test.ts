@@ -60,6 +60,13 @@ function gateSteps(value: MutableWorkflow): MutableStep[] {
   );
 }
 
+function gateStep(value: MutableWorkflow, name: string): MutableStep {
+  return required(
+    gateSteps(value).find((step) => step.name === name),
+    `base-image-publication test fixture is missing step ${name}`,
+  );
+}
+
 function runClassifier(environment: {
   checkoutSha: string;
   eventName: string;
@@ -100,20 +107,35 @@ describe("base-image publication workflow boundary (#7372)", () => {
   });
 
   it.each([
-    ["push to main", "push", "", "1"],
-    ["manual main", "workflow_dispatch", "", "1"],
-    ["controller-selected PR", "workflow_dispatch", "a".repeat(40), "1"],
+    ["push to main", "push", "", "refs/heads/main", "1", "0"],
+    ["manual main", "workflow_dispatch", "", "refs/heads/main", "1", "0"],
+    [
+      "controller-selected PR",
+      "workflow_dispatch",
+      "a".repeat(40),
+      "refs/heads/candidate",
+      "0",
+      "1",
+    ],
+    [
+      "pinned a4f9b59 diagnostic",
+      "workflow_dispatch",
+      "a4f9b59aa64f88532a3e64e949dd1b4068aa1f1e",
+      "refs/heads/candidate",
+      "0",
+      "1",
+    ],
   ])(
     "classifies %s without executing untrusted code (#7372)",
-    (_case, eventName, checkoutSha, required) => {
+    (_case, eventName, checkoutSha, ref, required, reuse) => {
       expect(
         runClassifier({
           checkoutSha,
           eventName,
-          ref: "refs/heads/main",
+          ref,
           repository: "NVIDIA/NemoClaw",
         }),
-      ).toEqual({ output: `required=${required}\n`, status: 0 });
+      ).toEqual({ output: `required=${required}\nreuse=${reuse}\n`, status: 0 });
     },
   );
 
@@ -181,17 +203,23 @@ describe("base-image publication workflow boundary (#7372)", () => {
       },
     ],
     [
-      "contract download pin",
-      (value) => (gateSteps(value)[4].uses = "actions/download-artifact@v8"),
+      "contract download command",
+      (value) =>
+        (gateStep(value, "Download immutable Deep Agents Code base contract").run =
+          "node unreviewed.mts"),
     ],
     [
       "contract run binding",
-      (value) => (gateSteps(value)[4].with!["run-id"] = "${{ github.run_id }}"),
+      (value) =>
+        (gateStep(value, "Download immutable Deep Agents Code base contract").env![
+          "PUBLICATION_RUN_ID"
+        ] = "${{ github.run_id }}"),
     ],
     [
       "contract validation",
       (value) =>
-        (gateSteps(value)[5].run = "node tools/e2e/dcode-base-image-contract.mts contract.json"),
+        (gateStep(value, "Validate immutable Deep Agents Code base").run =
+          "node tools/e2e/dcode-base-image-contract.mts contract.json"),
     ],
     ["step count", (value) => gateSteps(value).push({ name: "Unreviewed step", run: "true" })],
     [
@@ -203,6 +231,14 @@ describe("base-image publication workflow boundary (#7372)", () => {
       "Launchable publication dependency",
       (value) =>
         (value.jobs["staging-brev-launchable"].needs = [
+          "base-image-publication",
+          "generate-matrix",
+        ]),
+    ],
+    [
+      "Launchable identity publication dependency",
+      (value) =>
+        (value.jobs["staging-brev-launchable-identity"].needs = [
           "base-image-publication",
           "generate-matrix",
         ]),

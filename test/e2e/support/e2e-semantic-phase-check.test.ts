@@ -197,7 +197,16 @@ describe("semantic E2E phase checker", () => {
     );
   });
 
-  test("accepts only the exact bootstrap forwarding alias", () => {
+  test.each([
+    { forwardedTestModules: [] },
+    { forwardedTestModules: ["test/e2e/live/other.test.ts"] },
+    {
+      forwardedTestModules: [
+        "test/e2e/live/launchable-smoke.test.ts",
+        "test/e2e/live/other.test.ts",
+      ],
+    },
+  ])("accepts only the exact bootstrap forwarding alias [case %#]", ({ forwardedTestModules }) => {
     const forwardingModule = {
       relativeModuleId: "test/e2e/live/bootstrap-install-smoke.test.ts",
       errors: [],
@@ -248,18 +257,13 @@ describe("semantic E2E phase checker", () => {
     ]);
     const expectedFailure =
       "test/e2e/live/bootstrap-install-smoke.test.ts: forwarding module must import exactly test/e2e/live/launchable-smoke.test.ts";
-    for (const forwardedTestModules of [
-      [],
-      ["test/e2e/live/other.test.ts"],
-      ["test/e2e/live/launchable-smoke.test.ts", "test/e2e/live/other.test.ts"],
-    ]) {
-      expect(
-        validateCollectedSemanticPhaseModule({
-          ...forwardingModule,
-          source: { ...forwardingModule.source, forwardedTestModules },
-        }),
-      ).toEqual([expectedFailure]);
-    }
+
+    expect(
+      validateCollectedSemanticPhaseModule({
+        ...forwardingModule,
+        source: { ...forwardingModule.source, forwardedTestModules },
+      }),
+    ).toEqual([expectedFailure]);
 
     const forwardingSource = scanLiveSourceGraph(
       path.join(REPO_ROOT, "test/e2e/live/bootstrap-install-smoke.test.ts"),

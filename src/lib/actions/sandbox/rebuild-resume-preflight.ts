@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { D, R } from "../../cli/terminal-style";
-import { endpointUrlHasUserinfoQueryOrFragment } from "../../core/url-utils";
+import { unsafeEndpointUrlViolation } from "../../core/url-utils";
 import type { InferenceSelection } from "../../inference/selection";
 import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
 import { isRecoveredProviderCredentialReuseSelectionKey } from "../../onboard/recovered-provider-reuse";
@@ -98,9 +98,9 @@ const SESSION_ONLY_ENDPOINT_PROVIDER_NAMES = new Set(
 
 export function canonicalCustomEndpointUrl(value: string | null | undefined): string | null {
   const raw = typeof value === "string" ? value.trim() : "";
-  // #9106: reject userinfo, query, and fragment components instead of
-  // stripping them, matching onboarding intake.
-  if (endpointUrlHasUserinfoQueryOrFragment(raw)) return null;
+  // #9106/#9301: reject unsafe endpoint metadata instead of stripping or
+  // forwarding it, matching onboarding intake.
+  if (unsafeEndpointUrlViolation(value)) return null;
   try {
     const url = new URL(raw);
     const supportedProtocol = url.protocol === "http:" || url.protocol === "https:";

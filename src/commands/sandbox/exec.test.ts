@@ -9,6 +9,7 @@ vi.mock("../../lib/actions/sandbox/exec", () => ({
 }));
 
 import { log } from "../../lib/cli/logger";
+import * as portableAgentLifecycle from "../../lib/onboard/experimental/portable-agent-lifecycle";
 import SandboxExecCommand from "./exec";
 
 const rootDir = process.cwd();
@@ -32,6 +33,20 @@ describe("SandboxExecCommand oclif parse path", () => {
       ["openclaw", "agent", "--agent", "main", "-m", "hi"],
       { workdir: undefined, tty: null, timeoutSeconds: undefined, stdin: undefined },
     );
+  });
+
+  it("rejects schema-5 inside the user-facing exec lifecycle fence (#9203)", async () => {
+    vi.spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable").mockImplementation(
+      () => {
+        throw new Error("schema-5 rejected");
+      },
+    );
+
+    await expect(SandboxExecCommand.run(["alpha", "--", "true"], rootDir)).rejects.toThrow(
+      "schema-5 rejected",
+    );
+
+    expect(execSandboxMock).not.toHaveBeenCalled();
   });
 
   it("does not assign host meaning to logging flags after --", async () => {

@@ -219,22 +219,23 @@ JSON
   log "[cli] command-level parity OK (${_n_help} nemoclaw command(s))"
 
   # ── Phase 3/3: flag-level parity (NemoClaw#3224) ──────────────────────────
-  # For each command, run its `--help`, extract every long-form flag mentioned,
-  # and confirm each appears within that command's own section in
+  # Read the compiled oclif metadata that renders `--help`, then confirm each
+  # public long-form flag appears within that command's own section in
   # commands.mdx (between its `### \`nemoclaw <cmd>\`` heading and the next
-  # ### heading). Two help formats coexist: oclif global commands use a
-  # USAGE/FLAGS layout; `nemoclaw <name> ...` commands use a custom
-  # Options: section. Greping the full help output handles both formats.
+  # ### heading). Commands with custom help fall back to their rendered output.
+  # All other commands avoid a separate cold CLI start.
   # Section-scoped grep avoids false negatives where a flag like `--yes`
   # appears in many sections but is missing from the one being audited.
   # Word-boundary regex avoids false positives where `--yes` is contained
   # in `--yes-i-accept-third-party-software`. Skips global -h/--help/--version.
   #
-  # The check runs with an isolated HOME that contains a fake
-  # `placeholder-sandbox` registry entry. That keeps CI deterministic and lets
-  # sandbox-scoped commands print `--help` without touching the user's real
-  # ~/.nemoclaw state.
   log "[cli] phase 3/3: flag-level parity"
+
+  if ! HOME="$_cli_home" "$NODE" "$CLI_JS" --dump-command-flags >"$_tmp/flags.txt" 2>"$_tmp/flags.err"; then
+    cat "$_tmp/flags.err" >&2
+    rm -rf "$_tmp"
+    return 1
+  fi
 
   # Awk extractor: print lines belonging to the section whose heading
   # canonicalizes to <cmd> after the same trailing-placeholder strip phase 2
@@ -303,8 +304,6 @@ JSON
         next;
       }
       if (/^\s*$/) {
-        # Oclif separates flag entries with blank lines, while the custom
-        # one-line Usage format uses one to end its usage synopsis.
         $mode = "" if $mode eq "usage";
         next;
       }
@@ -320,41 +319,25 @@ JSON
     # `nemoclaw onboard`) that is iterated separately. Re-invoking them
     # with `--help` would just trigger flag-value parsing errors.
     case "$cmd_line" in *" --"*) continue ;; esac
-    # `--dump-commands` lines start with `nemoclaw `; strip that since we
-    # re-invoke via `node bin/nemoclaw.js`. Then replace <name> with a
-    # sandbox name that passes name validation (lowercase, starts with
-    # letter, only letters/digits/hyphens — underscores are rejected).
-    local invoke
-    invoke="${cmd_line#nemoclaw }"
-    invoke="${invoke//<name>/placeholder-sandbox}"
-    # Read into an array so each space-separated token is a distinct argv
-    # element to node — avoids SC2086 and any quoting surprises.
-    local -a _invoke_args
-    read -ra _invoke_args <<<"$invoke"
-    # Redirect stdin to /dev/null. The outer `while read` is consuming
-    # `$_tmp/help.txt` via `done <` redirection; any inner command that
-    # touches stdin (some node startup paths do) would eat subsequent
-    # lines, silently truncating the iteration. Negative-tested by
-    # mutating commands.mdx and confirming drift is now reported.
-    #
-    # Capture exit code separately so a real failure (broken command path,
-    # crashed loader, etc.) propagates instead of being swallowed by
-    # `|| true`.
-    local _help_text _help_err _help_rc=0
-    _help_err="$(mktemp)"
-    _help_text="$(HOME="$_cli_home" "$NODE" "$CLI_JS" "${_invoke_args[@]}" --help </dev/null 2>"$_help_err")" || _help_rc=$?
-    if [[ "$_help_rc" -ne 0 ]]; then
-      cat "$_help_err" >&2
-      rm -f "$_help_err"
+    local _command_metadata _flag_rc=0
+    _command_metadata="$(LC_ALL=C awk -F '\t' -v target="$cmd_line" '
+      $1 == target {
+        print $2 "\t" $3
+        found = 1
+        exit
+      }
+      END { if (!found) exit 1 }
+    ' "$_tmp/flags.txt")" || _flag_rc=$?
+    if [[ "$_flag_rc" -ne 0 ]]; then
+      echo "check-docs: [cli] missing compiled flag metadata for '$cmd_line'" >&2
       rm -rf "$_tmp"
       return 1
     fi
-    rm -f "$_help_err"
-    [[ -z "$_help_text" ]] && continue
 
-    local _flags
-    _flags="$(extract_help_flags "$_help_text")"
-    [[ -z "$_flags" ]] && continue
+    local _help_source _flag_line _flags
+    _help_source="${_command_metadata%%$'\t'*}"
+    _flag_line="${_command_metadata#*$'\t'}"
+    _flags="$(printf '%s\n' "$_flag_line" | tr ' ' '\n' | grep -v '^$' | LC_ALL=C sort -u || true)"
 
     local _section
     _section="$(extract_md_section "$cmd_line" "$COMMANDS_MD")"
@@ -364,27 +347,8 @@ JSON
       _section="$(cat "$COMMANDS_MD")"
     fi
 
-    while IFS= read -r flag; do
-      [[ -z "$flag" ]] && continue
-      case "$flag" in --help | --version) continue ;; esac
-      # Word-boundary regex: treat letters/digits/_/- as continuation chars
-      # so `--yes` does not match inside `--yes-i-accept-third-party-software`.
-      local _pat="(^|[^a-zA-Z0-9_-])${flag}([^a-zA-Z0-9_-]|$)"
-      if ! grep -qE -- "$_pat" <<<"$_section"; then
-        echo "check-docs: [cli] flag $flag (from \`$cmd_line --help\`) not in '$cmd_line' section of $COMMANDS_MD" >&2
-        _flag_drift=1
-      fi
-    done <<<"$_flags"
-
-    # Reverse direction: extract long flags mentioned in the doc section
-    # and confirm each appears in the actual --help. Catches stale docs
-    # (flag removed from CLI but still listed in commands.mdx).
-    #
-    # Scoping rule: inside fenced code blocks (where USAGE lines live like
-    # `[--non-interactive]`), any `--foo` counts. Outside fences, only
-    # backtick-bounded `\`--foo\`` mentions count, so prose references to
-    # other tools (e.g. `\`openshell sandbox create --from\``) don't get
-    # mistaken for nemoclaw flag documentation.
+    # Extract documented flags before selecting the help source. Commands
+    # that implement custom help can advertise flags outside oclif metadata.
     local _doc_flags
     _doc_flags="$(
       printf '%s\n' "$_section" \
@@ -399,6 +363,55 @@ JSON
         | grep -vxE -- '--help|--version' \
         | LC_ALL=C sort -u || true
     )"
+
+    local _needs_rendered_help=0
+    if [[ "$_help_source" == "rendered" ]]; then
+      _needs_rendered_help=1
+    else
+      while IFS= read -r flag; do
+        [[ -z "$flag" ]] && continue
+        if ! grep -qxF -- "$flag" <<<"$_flags"; then
+          _needs_rendered_help=1
+          break
+        fi
+      done <<<"$_doc_flags"
+    fi
+
+    if [[ "$_needs_rendered_help" -eq 1 ]]; then
+      local invoke
+      invoke="${cmd_line#nemoclaw }"
+      invoke="${invoke//<name>/placeholder-sandbox}"
+      local -a _invoke_args
+      read -ra _invoke_args <<<"$invoke"
+      local _help_text _help_rc=0
+      _help_text="$(HOME="$_cli_home" "$NODE" "$CLI_JS" "${_invoke_args[@]}" --help </dev/null 2>"$_tmp/command-help.err")" || _help_rc=$?
+      if [[ "$_help_rc" -ne 0 ]]; then
+        cat "$_tmp/command-help.err" >&2
+        rm -rf "$_tmp"
+        return 1
+      fi
+      _flags="$(extract_help_flags "$_help_text")"
+      # Preserve the existing custom-help contract: a help screen with no
+      # parseable usage or flag section does not participate in flag parity.
+      [[ -z "$_flags" ]] && continue
+    elif [[ -z "$_flags" && -z "$_doc_flags" ]]; then
+      continue
+    fi
+
+    while IFS= read -r flag; do
+      [[ -z "$flag" ]] && continue
+      case "$flag" in --help | --version) continue ;; esac
+      # Word-boundary regex: treat letters/digits/_/- as continuation chars
+      # so `--yes` does not match inside `--yes-i-accept-third-party-software`.
+      local _pat="(^|[^a-zA-Z0-9_-])${flag}([^a-zA-Z0-9_-]|$)"
+      if ! grep -qE -- "$_pat" <<<"$_section"; then
+        echo "check-docs: [cli] flag $flag (from \`$cmd_line --help\`) not in '$cmd_line' section of $COMMANDS_MD" >&2
+        _flag_drift=1
+      fi
+    done <<<"$_flags"
+
+    # Reverse direction catches stale docs after the metadata or rendered-help
+    # selection above establishes the command's public flag set.
     while IFS= read -r flag; do
       [[ -z "$flag" ]] && continue
       if ! grep -qxF -- "$flag" <<<"$_flags"; then

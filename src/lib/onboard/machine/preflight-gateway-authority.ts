@@ -42,7 +42,7 @@ export interface OnboardPreflightGatewayAuthorityDeps
   extends Pick<OnboardGatewayReadinessCollectorDeps, "gatewayName" | "gatewayPort"> {
   collectGatewayReadiness(
     deps: OnboardGatewayReadinessCollectorDeps,
-  ): Promise<GatewayReadinessProjection>;
+  ): Promise<fatalRuntimePreflight.CollectedGatewayReadiness>;
   getGatewayOwnerDeps(): {
     resolveGatewayOwner(): GatewayOwner;
     probeGatewayAttachment: OnboardGatewayReadinessCollectorDeps["probeAttachment"];
@@ -65,7 +65,7 @@ export interface OnboardPreflightGatewayAuthorityDeps
 }
 
 export function createOnboardPreflightGatewayAuthority(deps: OnboardPreflightGatewayAuthorityDeps) {
-  const collectGatewayReadiness = () => {
+  const collectGateway = () => {
     const ownerDeps = deps.getGatewayOwnerDeps();
     return deps.collectGatewayReadiness({
       gatewayName: deps.gatewayName,
@@ -74,6 +74,7 @@ export function createOnboardPreflightGatewayAuthority(deps: OnboardPreflightGat
       probeAttachment: ownerDeps.probeGatewayAttachment,
     });
   };
+  const collectGatewayReadiness = async () => (await collectGateway()).projection;
   return {
     collectGatewayReadiness,
     runRuntimePreflight: (
@@ -84,7 +85,7 @@ export function createOnboardPreflightGatewayAuthority(deps: OnboardPreflightGat
     ) =>
       fatalRuntimePreflight.runReadinessGatedRuntimePreflight(options, {
         nonInteractive: deps.isNonInteractive(),
-        collectGatewayReadiness,
+        collectGatewayReadiness: collectGateway,
         ...(exitProcess ? { exitProcess } : {}),
       }),
     prepareGatewayAuthority: () =>
@@ -113,7 +114,7 @@ export function createOnboardPreflightGatewayAuthority(deps: OnboardPreflightGat
 
 export function collectOnboardGatewayReadiness(
   deps: OnboardGatewayReadinessCollectorDeps,
-): Promise<GatewayReadinessProjection> {
+): Promise<fatalRuntimePreflight.CollectedGatewayReadiness> {
   return fatalRuntimePreflight.collectOnboardGatewayReadiness(deps);
 }
 

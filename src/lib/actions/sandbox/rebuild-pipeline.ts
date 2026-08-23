@@ -15,7 +15,11 @@ import { withPortableOnboardRetirementBoundary } from "../../onboard/portable-re
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
 import { load as loadRegistry, REGISTRY_FILE } from "../../state/registry/persistence";
-import { normalizeRebuildTargetPolicyPresets, runRebuildBackupPhase } from "./rebuild-backup-phase";
+import {
+  excludePolicyPresetsByName,
+  normalizeRebuildTargetPolicyPresets,
+  runRebuildBackupPhase,
+} from "./rebuild-backup-phase";
 import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
@@ -33,6 +37,7 @@ import {
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import {
   blockRebuildOnPendingBaselineTransition,
+  assertSandboxRebuildCommandAvailable,
   revalidateManagedWorkloadRebuildBeforeDelete,
   revalidateRebuildRouteBeforeDelete,
 } from "./rebuild-preflight-guards";
@@ -85,6 +90,7 @@ export async function rebuildSandbox(
   opts: RebuildSandboxExecutionOptions = {},
 ): Promise<void> {
   const homeDir = process.env.HOME || os.homedir();
+  assertSandboxRebuildCommandAvailable(sandboxName);
   return withPortableOnboardRetirementBoundary(
     {
       homeDir,
@@ -93,6 +99,7 @@ export async function rebuildSandbox(
       stateDir: path.dirname(onboardSession.SESSION_FILE),
     },
     () => withMcpLifecycleLock(sandboxName, async () => {
+    assertSandboxRebuildCommandAvailable(sandboxName);
     const scopedEnvKeys = [
       BRAVE_API_KEY_ENV,
       TAVILY_API_KEY_ENV,
@@ -463,13 +470,16 @@ async function rebuildSandboxUnlocked(
         Array.isArray(completedInnerSession.policyPresets)
           ? completedInnerSession.policyPresets
           : [];
-      const targetPolicyPresets = normalizeRebuildTargetPolicyPresets(
-        [...backup.policyPresets, ...freshInnerOnboardPolicyPresets],
-        {
-          ...sandboxEntry,
-          observabilityEnabled: recreateOptions.observabilityEnabled,
-        },
-        durableConfig.webSearchConfig,
+      const targetPolicyPresets = excludePolicyPresetsByName(
+        normalizeRebuildTargetPolicyPresets(
+          [...backup.policyPresets, ...freshInnerOnboardPolicyPresets],
+          {
+            ...sandboxEntry,
+            observabilityEnabled: recreateOptions.observabilityEnabled,
+          },
+          durableConfig.webSearchConfig,
+        ),
+        mcpPreparation.entries.map((entry) => entry.policyName),
       );
       const capturedCustomPolicies =
         backup.backupManifest?.customPolicies?.map((entry) => ({ ...entry })) ??

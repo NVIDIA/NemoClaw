@@ -16,7 +16,7 @@ spec:
     technology: llama.cpp
     source:
       repository: ggml-org/llama.cpp
-      revision: 22dc605c4ead20e36f447cc67b55ef87e523bd55
+      revision: 8e7f22b67ef4667b4ddd50230771287f328cfb3f
 
   model:
     id: unsloth/Nemotron-3-Nano-30B-A3B-GGUF
@@ -43,8 +43,8 @@ spec:
       cleanup: preserve
 
   runtime:
-    image: ghcr.io/ggml-org/llama.cpp@sha256:866ad568474de9e835e487ae841ad6ace1a494b5eab4f292cbd45adb6180f711
-    imageDownloadSizeBytes: 2181958990
+    image: ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:9d0cddd7bcaf98d3b75a7fc8c7ce3af3a9973b5f23a8092e7e93a9afc473a675
+    imageDownloadSizeBytes: 1827478485
     platforms:
       - linux/amd64
       - linux/arm64
@@ -86,7 +86,7 @@ spec:
       value: f16
     speculativeDecoding: disabled
     limits:
-      maxRequestBodyBytes: 1048576
+      maxRequestBodyBytes: 32768
       maxRequestHeaderBytes: 32768
       maxOutputTokens: 4096
       requestTimeoutSeconds: 900

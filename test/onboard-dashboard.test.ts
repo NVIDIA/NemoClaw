@@ -110,6 +110,39 @@ function createListenerFailureRecoveryHarness(targetPort: number) {
 }
 
 describe("onboard dashboard helpers", () => {
+  it("builds a Hermes verification chain with the sandbox's allocated API port (#9290)", () => {
+    const getSandbox = vi.fn(() => ({ hermesApiPort: 8643 }));
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      runCaptureOpenshell: vi.fn(() => ""),
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemohermes",
+      agentProductName: () => "NemoHermes",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+      getSandbox,
+    });
+
+    expect(
+      helpers.buildAgentVerifyChain(
+        "http://127.0.0.1:18789",
+        "my-hermes",
+        loadAgent("hermes"),
+      ),
+    ).toMatchObject({
+      port: 18789,
+      dashboardHealthEndpoint: "/api/status",
+      gatewayPort: 8643,
+      gatewayHealthEndpoint: "/health",
+    });
+    expect(getSandbox).toHaveBeenCalledWith("my-hermes");
+  });
+
   it("prints platform-appropriate service hints for port conflicts", () => {
     expect(getPortConflictServiceHints("darwin").join("\n")).toMatch(/launchctl unload/);
     expect(getPortConflictServiceHints("darwin").join("\n")).not.toMatch(/systemctl --user/);

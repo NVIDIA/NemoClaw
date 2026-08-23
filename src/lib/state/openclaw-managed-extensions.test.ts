@@ -184,25 +184,28 @@ describe("OpenClaw managed extension symlink policy", () => {
 });
 
 describe("OpenClaw managed extension cleanup", () => {
-  it("removes ordinary state while preserving and validating managed extension directories", () => {
-    const command = buildRestoreCleanupCommand(
-      "/sandbox/.openclaw",
-      ["workspace", "extensions"],
-      OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS,
-      new Set(),
-    );
+  it.each(EXPECTED_MANAGED_EXTENSIONS)(
+    "removes ordinary state while preserving and validating managed extension directories [case %#]",
+    (extensionName) => {
+      const command = buildRestoreCleanupCommand(
+        "/sandbox/.openclaw",
+        ["workspace", "extensions"],
+        OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS,
+        new Set(),
+      );
 
-    expect(command).toContain("rm -rf -- '/sandbox/.openclaw/workspace'");
-    expect(command).not.toContain("rm -rf -- '/sandbox/.openclaw/extensions'");
-    expect(command).toContain("mkdir -p -- '/sandbox/.openclaw/extensions'");
-    for (const extensionName of EXPECTED_MANAGED_EXTENSIONS) {
+      expect(command).toContain("rm -rf -- '/sandbox/.openclaw/workspace'");
+      expect(command).not.toContain("rm -rf -- '/sandbox/.openclaw/extensions'");
+      expect(command).toContain("mkdir -p -- '/sandbox/.openclaw/extensions'");
+
       expect(command).toContain(`p='/sandbox/.openclaw/extensions/${extensionName}'`);
       expect(command).toContain(`! -name '${extensionName}'`);
-    }
-    expect(command).toContain('[ -e "$p" ] || [ -L "$p" ]');
-    expect(command).toContain('[ ! -d "$p" ] || [ -L "$p" ]');
-    expect(command).toContain("-exec rm -rf -- {} +");
-  });
+
+      expect(command).toContain('[ -e "$p" ] || [ -L "$p" ]');
+      expect(command).toContain('[ ! -d "$p" ] || [ -L "$p" ]');
+      expect(command).toContain("-exec rm -rf -- {} +");
+    },
+  );
 
   it("executes cleanup without deleting managed directories and rejects dangling symlinks", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-extensions-"));

@@ -639,10 +639,13 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       providerSpy.mock.calls[0][0].map((definition: { envKey: string }) => definition.envKey),
     ).toEqual(["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"]);
     expect(callOrder.indexOf("slackProbe:app")).toBeLessThan(
+      callOrder.indexOf("upsertMessagingProviders"),
+    );
+    expect(callOrder.indexOf("upsertMessagingProviders")).toBeLessThan(
       callOrder.indexOf("saveCredential:SLACK_BOT_TOKEN"),
     );
-    expect(callOrder.indexOf("saveCredential:SLACK_APP_TOKEN")).toBeLessThan(
-      callOrder.indexOf("upsertMessagingProviders"),
+    expect(callOrder.indexOf("upsertMessagingProviders")).toBeLessThan(
+      callOrder.indexOf("saveCredential:SLACK_APP_TOKEN"),
     );
   });
 
@@ -660,8 +663,8 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(
       providerSpy.mock.calls[0][0].map((definition: { envKey: string }) => definition.envKey),
     ).toEqual(["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"]);
-    expect(callOrder.indexOf("saveCredential:SLACK_APP_TOKEN")).toBeLessThan(
-      callOrder.indexOf("upsertMessagingProviders"),
+    expect(callOrder.indexOf("upsertMessagingProviders")).toBeLessThan(
+      callOrder.indexOf("saveCredential:SLACK_APP_TOKEN"),
     );
   });
 
@@ -861,19 +864,15 @@ describe("channels add verifies bridge startup after rebuild (#4314, #4390)", ()
 });
 
 describe("channel preset source-of-truth", () => {
-  it("every channel registered in KNOWN_CHANNELS ships a preset YAML that parsePresetPolicyKeys() accepts", () => {
-    const failures: string[] = [];
-    for (const name of knownChannelNames()) {
+  it.each(knownChannelNames())(
+    "channel $name ships a preset that parsePresetPolicyKeys accepts",
+    (name) => {
       const content = policies.loadPreset(name);
-      if (content === null) {
-        failures.push(`${name}: preset YAML not found on disk`);
-        continue;
-      }
-      if (policies.parsePresetPolicyKeys(content).length === 0) {
-        failures.push(`${name}: parsePresetPolicyKeys returned no entries`);
-      }
-    }
-
-    expect(failures).toEqual([]);
-  });
+      expect(content, `${name}: preset YAML not found on disk`).not.toBeNull();
+      expect(
+        policies.parsePresetPolicyKeys(content!).length,
+        `${name}: parsePresetPolicyKeys returned no entries`,
+      ).toBeGreaterThan(0);
+    },
+  );
 });

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Images / Sandbox Images and E2E
+name: Images / Build and Test Sandbox Images
 
 on:
   # Manual dispatch is the branch-validation path. Non-main refs set

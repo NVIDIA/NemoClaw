@@ -335,7 +335,7 @@ describe("inference selection config", () => {
     expect(getProviderSelectionConfig("openai-api")?.model).toBe("gpt-5.4");
     expect(getProviderSelectionConfig("openrouter-api")?.model).toBe(DEFAULT_CLOUD_MODEL);
     expect(getProviderSelectionConfig("anthropic-prod")?.model).toBe("claude-sonnet-4-6");
-    expect(getProviderSelectionConfig("gemini-api")?.model).toBe("gemini-2.5-flash");
+    expect(getProviderSelectionConfig("gemini-api")?.model).toBe("gemini-3.6-flash");
     expect(getProviderSelectionConfig("compatible-endpoint")?.model).toBe("custom-model");
     expect(getProviderSelectionConfig("compatible-anthropic-endpoint")?.model).toBe(
       "custom-anthropic-model",

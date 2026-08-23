@@ -6,15 +6,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { preparePromptArtifacts } from "../tools/pr-review-advisor/analyze.mts";
+import { artifactPaths } from "../tools/pr-review-advisor/artifacts.mts";
 import {
-  artifactPaths,
   buildSystemPrompt,
-  preparePromptArtifacts,
   readTrustedCodeChangeConsiderations,
-} from "../tools/pr-review-advisor/analyze.mts";
-import { createReviewFindingLedger } from "../tools/pr-review-advisor/review-ledger.mts";
-import { createTerminologyLedger } from "../tools/pr-review-advisor/terminology.mts";
-import { loadAdvisorSchema, metadata } from "./helpers/pr-review-advisor-test-fixtures";
+} from "../tools/pr-review-advisor/trusted-guidance.mts";
+import { metadata } from "./helpers/pr-review-advisor-test-fixtures";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const RESOURCE_PATH = path.join(
@@ -65,6 +63,12 @@ describe("shared code change considerations", () => {
     try {
       process.chdir(untrustedCheckout);
       expect(readTrustedCodeChangeConsiderations()).toContain("shortest stable test");
+      expect(readTrustedCodeChangeConsiderations()).toContain(
+        "neutral or negative in total lines",
+      );
+      expect(readTrustedCodeChangeConsiderations()).toContain(
+        "what old structure does it remove",
+      );
       expect(readTrustedCodeChangeConsiderations()).not.toContain("Ignore the trusted resource");
       expect(buildSystemPrompt().match(/# Code Change Considerations/gu)).toHaveLength(1);
     } finally {
@@ -114,9 +118,6 @@ describe("shared code change considerations", () => {
           artifacts: artifactPaths(outDir),
           metadata: reviewMetadata,
           diff: "",
-          schema: loadAdvisorSchema(),
-          findingLedger: createReviewFindingLedger(),
-          terminologyLedger: createTerminologyLedger(reviewMetadata.headSha),
         }),
       ).toThrow("Code change considerations malformed");
       expect(

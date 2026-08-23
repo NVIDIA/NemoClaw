@@ -66,10 +66,14 @@ export function buildCloudExperimentalCommandEnv(
   sandboxName: string,
   apiKey: string,
   base: NodeJS.ProcessEnv = process.env,
-  options: { forwardDcodeBaseImage?: boolean } = {},
+  options: { dcodeBaseImageReference?: string; forwardDcodeBaseImage?: boolean } = {},
 ): NodeJS.ProcessEnv {
   const dcodeBaseImage = options.forwardDcodeBaseImage
-    ? requireDcodeBaseImageReference(base)
+    ? requireDcodeBaseImageReference(
+        options.dcodeBaseImageReference === undefined
+          ? base
+          : { [DCODE_BASE_IMAGE_ENV]: options.dcodeBaseImageReference },
+      )
     : undefined;
   return {
     ...buildAvailabilityProbeEnv(base),
@@ -135,7 +139,9 @@ export async function runE2eCloudExperimentalChecks(
   targetId: string,
   sandboxName: string,
   checkScripts: readonly string[],
-  context: Pick<E2ETargetFixtures, "artifacts" | "host" | "secrets">,
+  context: Pick<E2ETargetFixtures, "artifacts" | "host" | "secrets"> & {
+    dcodeBaseImageReference?: string;
+  },
 ): Promise<void> {
   const apiKey = context.secrets.optional("NVIDIA_INFERENCE_API_KEY") ?? "";
   await context.artifacts.writeJson(
@@ -150,6 +156,7 @@ export async function runE2eCloudExperimentalChecks(
       artifactName: `cloud-experimental-${path.basename(scriptPath, ".sh")}`,
       cwd: REPO_ROOT,
       env: buildCloudExperimentalCommandEnv(sandboxName, apiKey, process.env, {
+        dcodeBaseImageReference: context.dcodeBaseImageReference,
         forwardDcodeBaseImage: scriptPath === DEEPAGENTS_FRESH_REONBOARD_CHECK,
       }),
       redactionValues: [apiKey],

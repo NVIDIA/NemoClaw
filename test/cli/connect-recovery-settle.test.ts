@@ -135,7 +135,10 @@ describe("CLI dispatch", () => {
 
     expect(r.code).toBe(1);
     expect(r.out).toContain(
-      `Probe failed: OpenClaw gateway is not running in '${sandboxName}' and automatic recovery failed.`,
+      `Probe failed: NemoClaw could not recover the OpenClaw gateway in '${sandboxName}'.`,
+    );
+    expect(r.out).toContain(
+      "Recovery detail: the recovered gateway did not become responsive before the recovery timeout.",
     );
     expect(r.out).toContain("#4710 wedge signature");
     expect(r.out).toContain("config change requires gateway restart (plugins.installs)");

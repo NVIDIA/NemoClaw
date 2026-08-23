@@ -448,7 +448,9 @@ function resolveHostLocalInferenceRoute(
       : requireRuntimeProviderHostLocalInferenceOperation(providerBundle, request.service, {
           env: hostLocalInferenceOperationEnvironment(request.service),
           acceleration:
-            request.service === "ollama" ? request.endpoint.acceleration : "nvidia-gpu",
+            request.service === "ollama" && "endpoint" in request
+              ? request.endpoint.acceleration
+              : "nvidia-gpu",
         });
   return prepareHostLocalInferenceStartup(operation, request);
 }
@@ -635,9 +637,13 @@ export function createSetupInference(
           return reserved;
         };
 
+        const defaultUpsertProvider = bindGatewayUpsertProvider(deps.upsertProvider, gatewayName);
         const commonDeps = {
           runOpenshell: runGatewayOpenshell,
-          upsertProvider: bindGatewayUpsertProvider(deps.upsertProvider, gatewayName),
+          upsertProvider: (...args: Parameters<CommonDeps["upsertProvider"]>) => {
+            const exactUpsertProvider = hostLocalGatewayMutation?.upsertProvider;
+            return (exactUpsertProvider ?? defaultUpsertProvider)(...args);
+          },
           verifyInferenceRoute: (selectedProvider: string, selectedModel: string) => {
             if (!hostLocalRoute && sandboxName) {
               reserveRoute(sandboxName, selectedProvider, selectedModel);

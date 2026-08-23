@@ -142,6 +142,7 @@ describe("secret redaction consistency (#1736)", () => {
           /* ignore optional command */
         }
       }
+
       writeFileSync(
         join(fakeBin, "date"),
         "#!/bin/sh\necho nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ghp_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb sk-cccccccccccccccccccccccc\n",

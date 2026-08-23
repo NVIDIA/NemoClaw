@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { shellQuote } from "../../runner";
 import type { McpBridgeEntry } from "../../state/registry";
 import {
   type AdapterMutationOptions,
@@ -20,6 +19,8 @@ import {
 } from "./mcp-bridge-adapter-status";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
+import { quoteMcpBridgeShellArg } from "./mcp-bridge-runtime-command";
 import { getAgentConfigDir } from "./mcp-bridge-state";
 import { executeSandboxCommand } from "./process-recovery";
 
@@ -50,19 +51,20 @@ export function buildOpenClawMcporterRegisterCommand(
   entry: McpBridgeEntry,
   replaceExisting = false,
   root = OPENCLAW_MCPORTER_ROOT,
+  credentialRevision?: McpAttachedCredentialRevision,
 ): string {
   const args = mcporterArgs(root, "config", "add", entry.server, "--url", entry.url);
-  const authorization = authorizationValue(entry);
+  const authorization = authorizationValue(entry, credentialRevision);
   if (authorization) args.push("--header", `Authorization=${authorization}`);
   args.push("--scope", "project");
-  const addCommand = args.map(shellQuote).join(" ");
+  const addCommand = args.map(quoteMcpBridgeShellArg).join(" ");
   if (replaceExisting) return addCommand;
   const getCommand = mcporterArgs(root, "config", "get", entry.server, "--json")
-    .map(shellQuote)
+    .map(quoteMcpBridgeShellArg)
     .join(" ");
   return [
     `if ${getCommand} >/dev/null 2>&1; then`,
-    `  echo ${shellQuote(`MCP server '${entry.server}' already exists in mcporter config and is not managed by NemoClaw.`)} >&2`,
+    `  echo ${quoteMcpBridgeShellArg(`MCP server '${entry.server}' already exists in mcporter config and is not managed by NemoClaw.`)} >&2`,
     "  exit 2",
     "fi",
     addCommand,
@@ -142,12 +144,13 @@ export function registerOpenClawAdapter(
   entry: McpBridgeEntry,
   envValues: Record<string, string> = {},
   replaceExisting = false,
+  credentialRevision?: McpAttachedCredentialRevision,
 ): void {
   ensureMcporter(sandboxName);
   const root = mcporterRootForEntry(entry);
   const result = executeSandboxCommand(
     sandboxName,
-    buildOpenClawMcporterRegisterCommand(entry, replaceExisting, root),
+    buildOpenClawMcporterRegisterCommand(entry, replaceExisting, root, credentialRevision),
   );
   const output = redactBridgeSecretsForDisplay(
     [result?.stdout, result?.stderr].filter(Boolean).join("\n").trim(),
@@ -164,7 +167,7 @@ export function registerOpenClawAdapter(
   // from the URL and opaque OpenShell placeholder NemoClaw intended.
   const verification = executeSandboxCommand(
     sandboxName,
-    buildOpenClawMcporterInspectCommand(entry, true, root),
+    buildOpenClawMcporterInspectCommand(entry, true, root, credentialRevision),
   );
   const verificationOutput = redactBridgeSecretsForDisplay(
     [verification?.stdout, verification?.stderr].filter(Boolean).join("\n").trim(),

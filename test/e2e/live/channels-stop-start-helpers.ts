@@ -6,6 +6,12 @@ import os from "node:os";
 import path from "node:path";
 
 import { expect } from "../fixtures/e2e-test.ts";
+import {
+  type OpenClawChannelConfigState,
+  openClawChannelIsActive,
+  openClawChannelIsInert,
+  openClawChannelStateProbeScript,
+} from "./channels-stop-start-config-state.ts";
 import { startChannelsStopStartProgress } from "./channels-stop-start-progress.ts";
 import { assertChannelsStopStartSandboxName } from "./channels-stop-start-safety.ts";
 import {
@@ -60,6 +66,7 @@ const CHANNELS_WITHOUT_CREDENTIAL_BINDING: Record<string, string> = {
 export const LIVE_TIMEOUT_MS = 80 * 60_000;
 
 type ChannelState = "active" | "disabled";
+type AgentConfigState = "active" | "inert";
 type JsonRecord = Record<string, unknown>;
 type Phase6Tokens = {
   telegram: string;
@@ -303,32 +310,27 @@ function expectChannelInputs(env: NodeJS.ProcessEnv): void {
   }
 }
 
-function openClawChannelKey(channel: string): string {
-  if (channel === "wechat") return "openclaw-weixin";
-  if (channel === "teams") return "msteams";
-  return channel;
-}
-
-async function agentConfigContains(
+async function readOpenClawChannelState(
   sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
   channel: string,
+  context: string,
+  redactions: string[],
+): Promise<OpenClawChannelConfigState> {
+  const script = openClawChannelStateProbeScript(channel);
+  const result = await sandboxSh(sandbox, SANDBOX_NAME, `python3 -c ${shellQuote(script)}`, {
+    artifactName: `config-channel-${AGENT}-${channel}-${context}`,
+    redactionValues: redactions,
+  });
+  expectExitZero(result, `read OpenClaw channel ${channel} ${context}`);
+  return JSON.parse(result.stdout.trim()) as OpenClawChannelConfigState;
+}
+
+async function hermesChannelIsActive(
+  sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
+  channel: string,
+  context: string,
   redactions: string[],
 ): Promise<boolean> {
-  if (AGENT === "openclaw") {
-    const result = await sandboxSh(
-      sandbox,
-      SANDBOX_NAME,
-      `python3 -c ${shellQuote(
-        `import json; channel=${JSON.stringify(
-          openClawChannelKey(channel),
-        )}; cfg=json.load(open('/sandbox/.openclaw/openclaw.json')); print('yes' if channel in cfg.get('channels', {}) else 'no')`,
-      )}`,
-      { artifactName: `config-channel-${AGENT}-${channel}`, redactionValues: redactions },
-    );
-    expectExitZero(result, `read OpenClaw channel ${channel}`);
-    return result.stdout.trim() === "yes";
-  }
-
   const probes: Record<string, string> = {
     telegram:
       'grep -Eq "^TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN$" /sandbox/.hermes/.env',
@@ -349,20 +351,35 @@ async function agentConfigContains(
     sandbox,
     SANDBOX_NAME,
     `if [ -r /sandbox/.hermes/.env ] && ${probes[channel]}; then echo yes; else echo no; fi`,
-    { artifactName: `config-channel-${AGENT}-${channel}`, redactionValues: redactions },
+    {
+      artifactName: `config-channel-${AGENT}-${channel}-${context}`,
+      redactionValues: redactions,
+    },
   );
-  expectExitZero(result, `read Hermes channel ${channel}`);
+  expectExitZero(result, `read Hermes channel ${channel} ${context}`);
   return result.stdout.trim() === "yes";
 }
 
 async function expectAgentConfig(
   sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
-  expected: "present" | "absent",
+  expected: AgentConfigState,
+  context: string,
   redactions: string[],
 ): Promise<void> {
   for (const channel of CHANNELS) {
-    const present = await agentConfigContains(sandbox, channel, redactions);
-    expect(present, `${AGENT}/${channel} config ${expected}`).toBe(expected === "present");
+    if (AGENT === "openclaw") {
+      const state = await readOpenClawChannelState(sandbox, channel, context, redactions);
+      const matches =
+        expected === "active" ? openClawChannelIsActive(state) : openClawChannelIsInert(state);
+      expect(
+        matches,
+        `${AGENT}/${channel} config ${expected}; state=${JSON.stringify(state)}`,
+      ).toBe(true);
+      continue;
+    }
+
+    const active = await hermesChannelIsActive(sandbox, channel, context, redactions);
+    expect(active, `${AGENT}/${channel} config ${expected}`).toBe(expected === "active");
   }
 }
 
@@ -481,18 +498,19 @@ async function policyPresetState(
   env: NodeJS.ProcessEnv,
   redactions: string[],
   channel: string,
+  context: string,
 ): Promise<ReturnType<typeof parsePolicyPresetState>> {
   const result = await host.command(
     "node",
     [process.env.NEMOCLAW_CLI_BIN ?? "bin/nemoclaw.js", SANDBOX_NAME, "policy-list"],
     {
-      artifactName: `policy-list-${channel}-${AGENT}`,
+      artifactName: `policy-list-${channel}-${AGENT}-${context}`,
       env,
       redactionValues: redactions,
       timeoutMs: 60_000,
     },
   );
-  expectExitZero(result, `policy-list ${channel}`);
+  expectExitZero(result, `policy-list ${channel} ${context}`);
   return parsePolicyPresetState(resultText(result), channel);
 }
 
@@ -613,11 +631,11 @@ export async function runChannelsStopStartTarget({
   progress.phase("validate active channel integrations");
   expectChannelInputs(env);
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
-  await expectAgentConfig(sandbox, "present", redactions);
+  await expectAgentConfig(sandbox, "active", "baseline", redactions);
   await expectProvidersExist(host, env, redactions, "baseline");
   for (const channel of CHANNELS) {
     expect(
-      await policyPresetState(host, env, redactions, channel),
+      await policyPresetState(host, env, redactions, channel, "baseline"),
       `${channel} policy active`,
     ).toBe("active");
   }
@@ -635,12 +653,12 @@ export async function runChannelsStopStartTarget({
   );
   expectExitZero(stopRebuild, "rebuild after stopping all channels");
   expectChannelInputs(env);
-  await expectAgentConfig(sandbox, "absent", redactions);
+  await expectAgentConfig(sandbox, "inert", "after-stop", redactions);
   await expectProvidersExist(host, env, redactions, "after-stop");
   for (const channel of CHANNELS) expectPlanChannelState(channel, "disabled");
   for (const channel of CHANNELS) {
     expect(
-      await policyPresetState(host, env, redactions, channel),
+      await policyPresetState(host, env, redactions, channel, "after-stop"),
       `${channel} policy inactive after stop+rebuild`,
     ).toBe("inactive");
   }
@@ -658,12 +676,12 @@ export async function runChannelsStopStartTarget({
   );
   expectExitZero(startRebuild, "rebuild after starting all channels");
   expectChannelInputs(env);
-  await expectAgentConfig(sandbox, "present", redactions);
+  await expectAgentConfig(sandbox, "active", "after-start", redactions);
   await expectProvidersExist(host, env, redactions, "after-start");
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
   for (const channel of CHANNELS) {
     expect(
-      await policyPresetState(host, env, redactions, channel),
+      await policyPresetState(host, env, redactions, channel, "after-start"),
       `${channel} policy active after start+rebuild`,
     ).toBe("active");
   }

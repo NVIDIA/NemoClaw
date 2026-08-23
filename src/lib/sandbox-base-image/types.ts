@@ -27,6 +27,7 @@ export type SandboxBaseImageResolutionMetadata = {
   ref: string;
   digest: string | null;
   source: SandboxBaseImageResolutionSource;
+  sourceRevision?: string;
   pinnedRemoteRef?: string;
   imageId: string;
   os: string;

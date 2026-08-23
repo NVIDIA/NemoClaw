@@ -7,6 +7,17 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import { SHIPPED_MANAGED_IMAGE_AGENTS } from "./managed-image/contract";
+import {
+  MANAGED_STARTUP_COMPLETION_FILE,
+  MANAGED_STARTUP_MERGED_CA_FILE,
+  MANAGED_STARTUP_RUNTIME_ENV_FILE,
+} from "./managed-startup/image-runtime";
+import {
+  MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
+  MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
+  MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
+} from "./managed-startup/shared-state-transaction";
 import { prepareInitialSandboxCreatePolicy } from "./initial-policy";
 
 type PolicyRule = {
@@ -25,6 +36,7 @@ type PolicyEndpoint = {
   tls?: string;
   allowed_ips?: string[];
   request_body_credential_rewrite?: boolean;
+  credential_binding?: { provider?: string };
   rules?: PolicyRule[];
 };
 
@@ -50,6 +62,20 @@ function repoPath(...segments: string[]): string {
   return path.join(import.meta.dirname, "..", "..", "..", ...segments);
 }
 
+function normalizeFilesystemPolicyPath(policyPath: string): string {
+  return path.posix.normalize(policyPath).replace(/\/+$/, "") || "/";
+}
+
+function filesystemPolicyAncestors(policyPath: string): string[] {
+  const segments = normalizeFilesystemPolicyPath(policyPath).split("/").filter(Boolean);
+  return [
+    "/",
+    ...segments
+      .slice(0, -1)
+      .map((_, index) => `/${segments.slice(0, index + 1).join("/")}`),
+  ];
+}
+
 function readPreparedPolicy(prepared: {
   policyPath: string;
   cleanup?: () => boolean;
@@ -59,16 +85,116 @@ function readPreparedPolicy(prepared: {
 }
 
 describe("initial sandbox policy real preset merge", () => {
-  const shippingPolicyCases = [
-    { path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"], agent: "openclaw" },
+  const managedImagePolicyPathsByAgent = {
+    openclaw: [
+      ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"],
+      ["nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"],
+      ["agents", "openclaw", "policy-permissive.yaml"],
+    ],
+    hermes: [
+      ["agents", "hermes", "policy-additions.yaml"],
+      ["agents", "hermes", "policy-permissive.yaml"],
+    ],
+    "langchain-deepagents-code": [
+      ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
+    ],
+  } as const satisfies Record<
+    (typeof SHIPPED_MANAGED_IMAGE_AGENTS)[number],
+    readonly (readonly string[])[]
+  >;
+
+  const managedImagePolicyCases = SHIPPED_MANAGED_IMAGE_AGENTS.flatMap((agent) =>
+    managedImagePolicyPathsByAgent[agent].map((policyPath) => ({ path: policyPath, agent })),
+  );
+  const shippingPolicyCases = managedImagePolicyCases.filter(
+    ({ agent }) => agent !== "langchain-deepagents-code",
+  );
+  const managedStartupReadOnlyPaths = [
+    { path: MANAGED_STARTUP_MERGED_CA_FILE, issue: "#9360", purpose: "CA bundle" },
     {
-      path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"],
-      agent: "openclaw",
+      path: MANAGED_STARTUP_RUNTIME_ENV_FILE,
+      issue: "#9357",
+      purpose: "runtime environment",
     },
-    { path: ["agents", "openclaw", "policy-permissive.yaml"], agent: "openclaw" },
-    { path: ["agents", "hermes", "policy-additions.yaml"], agent: "hermes" },
-    { path: ["agents", "hermes", "policy-permissive.yaml"], agent: "hermes" },
   ] as const;
+  const protectedManagedStartupPaths = [
+    MANAGED_STARTUP_COMPLETION_FILE,
+    "/run/nemoclaw/openclaw-config-guard",
+    MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
+    MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
+    MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
+  ] as const;
+
+  it("covers the complete shipped managed startup trust policy matrix", () => {
+    const policyIdentities = managedImagePolicyCases.map(
+      ({ path: policyPath, agent }) => `${agent}:${policyPath.join("/")}`,
+    );
+
+    expect(Object.keys(managedImagePolicyPathsByAgent)).toEqual([...SHIPPED_MANAGED_IMAGE_AGENTS]);
+    expect(policyIdentities).toHaveLength(6);
+    expect(new Set(policyIdentities).size).toBe(policyIdentities.length);
+    expect(managedStartupReadOnlyPaths.map(({ path: trustedPath }) => trustedPath)).toEqual([
+      MANAGED_STARTUP_MERGED_CA_FILE,
+      MANAGED_STARTUP_RUNTIME_ENV_FILE,
+    ]);
+  });
+
+  it.each(
+    managedImagePolicyCases.flatMap((policyCase) =>
+      managedStartupReadOnlyPaths.map((trustedPath) => ({ policyCase, trustedPath })),
+    ),
+  )(
+    "grants $policyCase.agent policy $policyCase.path exact read-only access to the managed startup $trustedPath.purpose ($trustedPath.issue)",
+    ({ policyCase, trustedPath }) => {
+      const prepared = prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
+        agentName: policyCase.agent,
+      });
+      const policy = readPreparedPolicy(prepared);
+      const readOnly = policy.filesystem_policy?.read_only ?? [];
+      const readWrite = policy.filesystem_policy?.read_write ?? [];
+      const normalizedReadOnly = readOnly.map(normalizeFilesystemPolicyPath);
+      const normalizedReadWrite = readWrite.map(normalizeFilesystemPolicyPath);
+      const trustedPathAncestors = filesystemPolicyAncestors(trustedPath.path);
+
+      expect(readOnly, policyCase.path.join("/")).toContain(trustedPath.path);
+      expect(normalizedReadWrite, policyCase.path.join("/")).not.toContain(trustedPath.path);
+      expect(
+        normalizedReadOnly.filter((candidate) => trustedPathAncestors.includes(candidate)),
+        policyCase.path.join("/"),
+      ).toEqual([]);
+      expect(
+        normalizedReadWrite.filter((candidate) => trustedPathAncestors.includes(candidate)),
+        policyCase.path.join("/"),
+      ).toEqual([]);
+    },
+  );
+
+  it.each(
+    managedImagePolicyCases.flatMap((policyCase) =>
+      protectedManagedStartupPaths.map((protectedPath) => ({ policyCase, protectedPath })),
+    ),
+  )(
+    "keeps $protectedPath inaccessible in $policyCase.agent policy $policyCase.path (#9357)",
+    ({ policyCase, protectedPath }) => {
+      const prepared = prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
+        agentName: policyCase.agent,
+      });
+      const policy = readPreparedPolicy(prepared);
+      const grantedPaths = [
+        ...(policy.filesystem_policy?.read_only ?? []),
+        ...(policy.filesystem_policy?.read_write ?? []),
+      ].map(normalizeFilesystemPolicyPath);
+      const exposingGrants = new Set([
+        ...filesystemPolicyAncestors(protectedPath),
+        normalizeFilesystemPolicyPath(protectedPath),
+      ]);
+
+      expect(
+        grantedPaths.filter((candidate) => exposingGrants.has(candidate)),
+        `${policyCase.path.join("/")} exposes ${protectedPath}`,
+      ).toEqual([]);
+    },
+  );
 
   it.each([
     {
@@ -80,6 +206,7 @@ describe("initial sandbox policy real preset merge", () => {
       path: ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
       agent: "langchain-deepagents-code",
     },
+    { path: ["agents", "nemocua", "policy-additions.yaml"], agent: "nemocua" },
   ])(
     "keeps $agent on the provider-neutral inference.local route without host-native inference egress",
     ({ path: policyPath, agent }) => {
@@ -103,10 +230,48 @@ describe("initial sandbox policy real preset merge", () => {
     },
   );
 
+  it("limits NemoCUA managed inference to the prepared image clients (#9649)", () => {
+    const effective = readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(
+        repoPath("agents", "nemocua", "policy-additions.yaml"),
+        [],
+        { agentName: "nemocua" },
+      ),
+    );
+
+    const managedInference = effective.network_policies?.managed_inference;
+
+    expect(effective.filesystem_policy?.read_only).toContain(MANAGED_STARTUP_MERGED_CA_FILE);
+    expect(managedInference).toEqual({
+      name: "managed_inference",
+      endpoints: [
+        {
+          host: "inference.local",
+          port: 443,
+          protocol: "rest",
+          enforcement: "enforce",
+          rules: [
+            { allow: { method: "POST", path: "/v1/chat/completions" } },
+            { allow: { method: "POST", path: "/v1/responses" } },
+            { allow: { method: "GET", path: "/v1/models" } },
+            { allow: { method: "GET", path: "/v1/models/**" } },
+          ],
+        },
+      ],
+      binaries: [
+        { path: "/usr/bin/python3" },
+        { path: "/usr/local/bin/python3" },
+        { path: "/usr/bin/curl" },
+      ],
+    });
+    expect(managedInference?.endpoints?.[0]).not.toHaveProperty("access");
+  });
+
   it("uses Hermes channel YAML when the Hermes base policy path implies the agent", () => {
     const prepared = prepareInitialSandboxCreatePolicy(
       repoPath("agents", "hermes", "policy-additions.yaml"),
       ["discord", "slack"],
+      { sandboxName: "hermes-channel" },
     );
     const policy = readPreparedPolicy(prepared);
 
@@ -178,16 +343,8 @@ describe("initial sandbox policy real preset merge", () => {
     },
   );
 
-  const packageDatabasePolicyCases = [
-    ...shippingPolicyCases,
-    {
-      path: ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
-      agent: "langchain-deepagents-code",
-    },
-  ] as const;
-
   it.each(
-    packageDatabasePolicyCases.flatMap((policyCase) =>
+    managedImagePolicyCases.flatMap((policyCase) =>
       ["/", "/var", "/var/lib", "/var/lib/dpkg"].map((writableAncestor) => ({
         policyCase,
         writableAncestor,
@@ -253,6 +410,46 @@ describe("initial sandbox policy real preset merge", () => {
       protocol: "rest",
       request_body_credential_rewrite: true,
     });
+  });
+
+  it("materializes Hermes Discord credential bindings from the target sandbox name", () => {
+    const sandboxName = "hermes-discord-e2e";
+    const effective = readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(
+        repoPath("agents", "hermes", "policy-additions.yaml"),
+        ["discord"],
+        { agentName: "hermes", sandboxName },
+      ),
+    );
+    const endpoints = effective.network_policies?.discord?.endpoints ?? [];
+    const credentialEndpoints = endpoints.filter((endpoint) =>
+      ["discord.com", "gateway.discord.gg", "*.discord.gg"].includes(endpoint.host ?? ""),
+    );
+
+    expect(credentialEndpoints.map((endpoint) => endpoint.host).sort()).toEqual([
+      "*.discord.gg",
+      "discord.com",
+      "gateway.discord.gg",
+    ]);
+    expect(credentialEndpoints.map((endpoint) => endpoint.credential_binding?.provider)).toEqual([
+      `${sandboxName}-discord-bridge`,
+      `${sandboxName}-discord-bridge`,
+      `${sandboxName}-discord-bridge`,
+    ]);
+    expect(JSON.stringify(effective)).not.toContain("{sandboxName}");
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["unsafe", "bad:provider"],
+  ])("rejects a Hermes Discord create policy with a %s target sandbox name", (_case, sandboxName) => {
+    expect(() =>
+      prepareInitialSandboxCreatePolicy(
+        repoPath("agents", "hermes", "policy-additions.yaml"),
+        ["discord"],
+        { agentName: "hermes", sandboxName },
+      ),
+    ).toThrow("a valid sandbox name is required to materialize credential bindings");
   });
 
   it.each(shippingPolicyCases.slice(0, 3).concat(shippingPolicyCases.slice(4)))(
@@ -326,19 +523,35 @@ describe("initial sandbox policy real preset merge", () => {
     expect(effective.network_policies?.["observability-otlp-local"]).toBeDefined();
   });
 
-  function verifyShippingPolicyMethods() {
-    const policyCases = [
-      { path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"], agent: "openclaw" },
-      {
-        path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"],
-        agent: "openclaw",
-      },
-      { path: ["agents", "openclaw", "policy-permissive.yaml"], agent: "openclaw" },
-      { path: ["agents", "hermes", "policy-additions.yaml"], agent: "hermes" },
-      { path: ["agents", "hermes", "policy-permissive.yaml"], agent: "hermes" },
-    ];
-
-    for (const policyCase of policyCases) {
+  it.each([
+    {
+      label: "restricted OpenClaw policy",
+      path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"],
+      agent: "openclaw",
+    },
+    {
+      label: "permissive OpenClaw blueprint policy",
+      path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"],
+      agent: "openclaw",
+    },
+    {
+      label: "permissive OpenClaw agent policy",
+      path: ["agents", "openclaw", "policy-permissive.yaml"],
+      agent: "openclaw",
+    },
+    {
+      label: "Hermes policy additions",
+      path: ["agents", "hermes", "policy-additions.yaml"],
+      agent: "hermes",
+    },
+    {
+      label: "permissive Hermes policy",
+      path: ["agents", "hermes", "policy-permissive.yaml"],
+      agent: "hermes",
+    },
+  ] as const)(
+    "keeps shipping policy methods explicit and avoids deprecated REST TLS mode for $label",
+    (policyCase) => {
       const effective = readPreparedPolicy(
         prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
           agentName: policyCase.agent,
@@ -356,12 +569,7 @@ describe("initial sandbox policy real preset merge", () => {
           expect(endpoint.tls).not.toBe("terminate");
         }
       }
-    }
-  }
-
-  it(
-    "keeps effective shipping policy methods explicit and avoids deprecated REST TLS mode",
-    verifyShippingPolicyMethods,
+    },
   );
 
   it("keeps the Restricted OpenClaw npm baseline inspected and GET-only (#8497)", () => {

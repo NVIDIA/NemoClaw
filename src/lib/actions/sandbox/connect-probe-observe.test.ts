@@ -55,6 +55,20 @@ describe("connectSandbox probe-only observe mode", () => {
     );
   });
 
+  it("settles completed Portable pairing before publishing probe readiness (#9207)", async () => {
+    const harness = createConnectHarness({
+      portablePairingSettlementResult: { kind: "settled" },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.settlePortablePairingSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+    expect(harness.settlePortablePairingSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.publishLaunchReadinessSpy.mock.invocationCallOrder[0]!,
+    );
+  });
+
   it("uses gatewayRecovery=recover on the full connect path", async () => {
     const harness = createConnectHarness();
 

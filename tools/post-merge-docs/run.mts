@@ -22,10 +22,12 @@ import {
   RESOLVER_MODEL_ID,
   resolverModelConfiguration,
 } from "../pr-merge-conflict-fixer/resolve.mts";
-import { allowedDocumentationPath, readBoundedFile } from "./contract.mts";
+import { allowedDocumentationPath, nextPatchReleaseTag, readBoundedFile } from "./contract.mts";
 
 const PATCH_FILE = "docs.patch";
+const REVIEW_REPORT_FILE = "review-report.txt";
 const MAX_PATCH_BYTES = 5_242_880;
+const MAX_REVIEW_REPORT_BYTES = 65_536;
 const MAX_FILE_BYTES = 1_048_576;
 const SHA = /^[0-9a-f]{40}$/u;
 const AGENT_FLAGS =
@@ -54,6 +56,12 @@ function phase(env: NodeJS.ProcessEnv): Phase {
 function exactSha(value: string | undefined, name: string): string {
   const sha = required(value, name);
   return SHA.test(sha) ? sha : fail(`${name} must be a full commit SHA`);
+}
+
+function targetReleaseTag(rangeStartTag: string): string {
+  const match = /^v(\d+)[.](\d+)[.](\d+)$/u.exec(rangeStartTag);
+  if (!match) fail("RANGE_START_TAG cannot produce a release target");
+  return nextPatchReleaseTag(rangeStartTag, "RANGE_START_TAG cannot produce a release target");
 }
 
 function git(repository: string, args: readonly string[]): string {
@@ -139,6 +147,7 @@ function prompt(env: NodeJS.ProcessEnv, current: Phase): string {
       "Inspect the committed range and staged candidate. Do not edit the repository.",
       "Approve only if it completely and accurately covers user-visible changes, follows DORI and writing rules, and makes no unsupported claim.",
       "An empty patch is valid only when no documentation update is needed.",
+      `If you reject the candidate, write a concise evidence-backed report to /sandbox/output/${REVIEW_REPORT_FILE}.`,
       'Write exactly {"outcome":"approved"} or {"outcome":"rejected"} to /sandbox/output/decision.json.',
     ].join("\n");
   }
@@ -164,8 +173,15 @@ function prepare(env: NodeJS.ProcessEnv): void {
   const config = required(env.POST_MERGE_DOCS_CONFIG_DIR, "POST_MERGE_DOCS_CONFIG_DIR");
   fs.mkdirSync(output, { mode: 0o700 });
   reset(config);
-  write(path.join(config, "models.json"), resolverModelConfiguration());
-  write(path.join(config, "task.txt"), `${prompt(env, current)}\n`);
+  const models = path.join(config, "models.json");
+  const task = path.join(config, "task.txt");
+  write(models, resolverModelConfiguration());
+  write(task, `${prompt(env, current)}\n`);
+  if (current === "review") {
+    fs.chmodSync(config, 0o755);
+    fs.chmodSync(models, 0o444);
+    fs.chmodSync(task, 0o444);
+  }
 }
 
 function agentCommand(current: Phase): string[] {
@@ -188,6 +204,8 @@ function agentCommand(current: Phase): string[] {
 function create(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
   const current = phase(env);
   const work = required(env.POST_MERGE_DOCS_WORKDIR, "POST_MERGE_DOCS_WORKDIR");
+  const config = required(env.POST_MERGE_DOCS_CONFIG_DIR, "POST_MERGE_DOCS_CONFIG_DIR");
+  const review = current === "review";
   const policy =
     current === "author"
       ? "pr-merge-conflict-fixer/policy.yaml"
@@ -195,29 +213,60 @@ function create(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
   createOpenShellSandbox(
     env,
     {
-      command: ["/usr/bin/git", "-C", "/sandbox/repo", "status", "--short"],
+      command: review
+        ? [
+            "/usr/bin/git",
+            "--git-dir=/sandbox/repo/.git",
+            "--work-tree=/sandbox/repo",
+            "status",
+            "--short",
+          ]
+        : ["/usr/bin/git", "-C", "/sandbox/repo", "status", "--short"],
       image: required(env.PI_IMAGE, "PI_IMAGE"),
       name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
       policyPath: path.join(required(env.TRUSTED_CHECKOUT, "TRUSTED_CHECKOUT"), "tools", policy),
-      uploads: [
-        { destination: "/sandbox", source: path.join(work, "repo") },
-        {
-          destination: "/sandbox",
-          source: required(env.POST_MERGE_DOCS_CONFIG_DIR, "POST_MERGE_DOCS_CONFIG_DIR"),
-        },
-        { destination: "/sandbox", source: path.join(work, "output") },
-      ],
+      driverConfig: review
+        ? {
+            docker: {
+              mounts: [
+                {
+                  read_only: true,
+                  source: path.join(work, "repo"),
+                  target: "/sandbox/repo",
+                  type: "bind",
+                },
+                {
+                  read_only: true,
+                  source: config,
+                  target: "/sandbox/config",
+                  type: "bind",
+                },
+              ],
+            },
+          }
+        : undefined,
+      uploads: review
+        ? []
+        : [
+            { destination: "/sandbox", source: path.join(work, "repo") },
+            { destination: "/sandbox", source: config },
+            { destination: "/sandbox", source: path.join(work, "output") },
+          ],
     },
     tools,
   );
 }
 
 function run(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
+  const current = phase(env);
   execOpenShellSandbox(
     env,
     {
-      command: agentCommand(phase(env)),
+      command: agentCommand(current),
       environment: {
+        ...(current === "review"
+          ? { GIT_DIR: "/sandbox/repo/.git", GIT_WORK_TREE: "/sandbox/repo" }
+          : {}),
         HOME: "/sandbox/output",
         PI_CODING_AGENT_DIR: "/sandbox/config",
         PI_OFFLINE: "1",
@@ -246,11 +295,10 @@ function download(env: NodeJS.ProcessEnv, name: string, tools: OpenShellTools): 
     },
     tools,
   );
-  return readBoundedFile(
-    path.join(directory, name),
-    name === PATCH_FILE ? MAX_PATCH_BYTES : 1_024,
-    true,
-  );
+  let maximum = 1_024;
+  if (name === PATCH_FILE) maximum = MAX_PATCH_BYTES;
+  if (name === REVIEW_REPORT_FILE) maximum = MAX_REVIEW_REPORT_BYTES;
+  return readBoundedFile(path.join(directory, name), maximum, true);
 }
 
 function exportArtifact(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
@@ -280,7 +328,11 @@ function exportArtifact(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
     );
     return;
   }
-  if (download(env, "decision.json", tools).toString("utf8").trim() !== '{"outcome":"approved"}') {
+  const decision = download(env, "decision.json", tools).toString("utf8").trim();
+  if (decision !== '{"outcome":"approved"}') {
+    if (decision === '{"outcome":"rejected"}') {
+      write(path.join(artifact, REVIEW_REPORT_FILE), download(env, REVIEW_REPORT_FILE, tools));
+    }
     fail("Independent documentation review did not approve the candidate");
   }
   const patch = readBoundedFile(patchPath(env), MAX_PATCH_BYTES, true);
@@ -291,8 +343,10 @@ function exportArtifact(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
       mainSha: exactSha(env.GITHUB_SHA, "GITHUB_SHA"),
       outcome: "approved",
       patchSha256: createHash("sha256").update(patch).digest("hex"),
+      rangeStartTag: required(env.RANGE_START_TAG, "RANGE_START_TAG"),
       repository: required(env.GITHUB_REPOSITORY, "GITHUB_REPOSITORY"),
-      version: 1,
+      targetReleaseTag: targetReleaseTag(required(env.RANGE_START_TAG, "RANGE_START_TAG")),
+      version: 2,
     })}\n`,
   );
 }
@@ -311,14 +365,26 @@ export function executePostMergeDocs(
   }
 }
 
+export function configurePostMergeDocs(
+  env: NodeJS.ProcessEnv,
+  tools: OpenShellTools = defaultOpenShellTools,
+): Promise<void> {
+  return configureOpenShellInference(
+    env,
+    {
+      enableBindMounts: true,
+      gatewayId: "post-merge-docs",
+      modelId: RESOLVER_MODEL_ID,
+      providerName: "docs",
+    },
+    tools,
+  );
+}
+
 async function main(): Promise<void> {
   switch (required(process.argv[2], "command")) {
     case "configure":
-      await configureOpenShellInference(process.env, {
-        gatewayId: "post-merge-docs",
-        modelId: RESOLVER_MODEL_ID,
-        providerName: "docs",
-      });
+      await configurePostMergeDocs(process.env);
       return;
     case "execute":
       executePostMergeDocs(process.env);

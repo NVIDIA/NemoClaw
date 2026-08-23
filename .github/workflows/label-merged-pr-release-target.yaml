@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Automation / Label Merged PR Release Target
+name: Automation / Assign and Reconcile Release Targets
 
 # pull_request_target runs in the base repo context, giving the token write
 # access even for fork PRs. This workflow is safe because it only reads trusted
@@ -22,11 +22,12 @@ permissions:
   # targets a pull request; issues:write alone returns 403.
   pull-requests: write
 
-# Serialize assignment with tag-triggered label retirement. queue:max keeps
-# every merge event while the release workflow owns the same coordination lock.
+# Do not cancel a running release-label operation. GitHub retains at most one
+# pending run for this group. The scheduled reconciliation repairs a merge
+# event that a newer pending run replaces.
 concurrency:
   group: release-target-label-operations
-  queue: max
+  cancel-in-progress: false
 
 jobs:
   label-release-target:
@@ -114,9 +115,6 @@ jobs:
                 return 0;
               });
 
-              if (releaseTags.length === 0) {
-                throw new Error('No strict semver release tags were found');
-              }
               return releaseTags;
             }
 
@@ -291,6 +289,7 @@ jobs:
             async function refreshLatestRelease(expectedName, expectedCommit) {
               const releaseTags = await loadReleaseTags();
               const latest = releaseTags[0];
+              if (!latest) return { changed: true };
               const latestCommit = await peelReleaseTag(latest);
               return {
                 changed: latest.name !== expectedName || latestCommit !== expectedCommit,
@@ -298,6 +297,10 @@ jobs:
             }
 
             async function reconcileReleaseTargets(releaseTags, restartCount = 0) {
+              if (releaseTags.length === 0) {
+                core.info('No strict semver release tags were found; no release target labels reconciled');
+                return;
+              }
               const latestRelease = releaseTags[0];
               const latestCommit = await peelReleaseTag(latestRelease);
               const main = await github.rest.repos.getBranch({ owner, repo, branch: 'main' });
@@ -333,6 +336,12 @@ jobs:
                 context.payload.pull_request,
               );
               const releaseTags = await loadReleaseTags();
+              if (releaseTags.length === 0) {
+                core.info(
+                  `No strict semver release tags were found; no release target label added to PR #${pullRequest.number}`,
+                );
+                return;
+              }
               const target = await resolveTargetForMerge(mergeSha, releaseTags);
               if (target) {
                 await applyTarget(pullRequest, target.label, target.boundary);

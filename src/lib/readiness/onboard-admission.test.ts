@@ -235,49 +235,53 @@ describe("onboarding readiness admission (#7411)", () => {
     });
   });
 
-  it("admits only the pre-mutation facts that portable host preparation can replace", () => {
-    let capabilities = withCapabilityState(
-      requiredCapabilities(),
-      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerDaemonReachable,
-      "absent",
-    );
-    for (const id of [
-      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerRuntimeSupported,
-      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageCompatible,
-      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
-    ]) {
+  it.each(
+    [
+        ONBOARD_REQUIRED_CAPABILITY_IDS.dockerRuntimeSupported,
+        ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageCompatible,
+        ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
+      ],
+  )(
+    "admits only the pre-mutation facts that portable host preparation can replace [case %#]",
+    (id) => {
+      let capabilities = withCapabilityState(
+        requiredCapabilities(),
+        ONBOARD_REQUIRED_CAPABILITY_IDS.dockerDaemonReachable,
+        "absent",
+      );
+
       capabilities = withCapabilityState(capabilities, id, "unknown");
-    }
 
-    expect(
-      evaluateOnboardReadinessAdmission(
-        report({
-          capabilities,
-          findings: [finding(ONBOARD_READINESS_FINDING_IDS.dockerDaemonUnreachable)],
-          status: "incompatible",
-        }),
-        { ...DEFAULT_OPTIONS, allowPortableHostPreparation: true },
-      ),
-    ).toEqual({
-      admitted: true,
-      waivedFindingIds: [ONBOARD_READINESS_FINDING_IDS.dockerDaemonUnreachable],
-    });
-
-    expect(
-      evaluateOnboardReadinessAdmission(
-        report({
-          capabilities: withCapabilityState(
+      expect(
+        evaluateOnboardReadinessAdmission(
+          report({
             capabilities,
-            ONBOARD_REQUIRED_CAPABILITY_IDS.dockerAvailable,
-            "absent",
-          ),
-          findings: [finding("host.docker.unavailable")],
-          status: "incompatible",
-        }),
-        { ...DEFAULT_OPTIONS, allowPortableHostPreparation: true },
-      ),
-    ).toMatchObject({ admitted: false, findingIds: ["host.docker.unavailable"] });
-  });
+            findings: [finding(ONBOARD_READINESS_FINDING_IDS.dockerDaemonUnreachable)],
+            status: "incompatible",
+          }),
+          { ...DEFAULT_OPTIONS, allowPortableHostPreparation: true },
+        ),
+      ).toEqual({
+        admitted: true,
+        waivedFindingIds: [ONBOARD_READINESS_FINDING_IDS.dockerDaemonUnreachable],
+      });
+
+      expect(
+        evaluateOnboardReadinessAdmission(
+          report({
+            capabilities: withCapabilityState(
+              capabilities,
+              ONBOARD_REQUIRED_CAPABILITY_IDS.dockerAvailable,
+              "absent",
+            ),
+            findings: [finding("host.docker.unavailable")],
+            status: "incompatible",
+          }),
+          { ...DEFAULT_OPTIONS, allowPortableHostPreparation: true },
+        ),
+      ).toMatchObject({ admitted: false, findingIds: ["host.docker.unavailable"] });
+    },
+  );
 
   it("admits the documented storage exception only when remediation is present", () => {
     let capabilities = withCapabilityState(

@@ -11,25 +11,49 @@ import {
 } from "./sandbox-gpu-create-attempt";
 
 describe("native GPU create failure classification", () => {
-  it("accepts an argument rejection without treating unrelated build failures as routing", () => {
-    const rejection = "error: unexpected argument '--gpu' found";
-    expect(isNativeGpuCreatePreBuildRejection(rejection)).toBe(true);
-    for (const [message, sawProgress, expected] of [
-      [rejection, false, true],
-      [rejection, true, false],
-      ["Docker build failed while compiling a GPU Python package for --gpu support", false, false],
-      ["x509: certificate signed by unknown authority", false, false],
-      ["notice: error: unexpected argument '--gpu' found while compiling docs", false, false],
-      ["error: unexpected argument '--gpu' found\nimage-controlled trailing output", false, false],
-      [
-        "error: unexpected argument '--gpu' found\nUsage: openshell sandbox create [OPTIONS]\nFor more information, try '--help'.",
-        false,
-        true,
-      ],
-    ] as const) {
+  it.each([
+    { scenario: "argument rejection before progress" },
+    { scenario: "argument rejection after progress" },
+    { scenario: "build failure mentioning GPU flag" },
+    { scenario: "certificate failure" },
+    { scenario: "documentation output" },
+    { scenario: "unbounded trailing output" },
+    { scenario: "bounded CLI usage output" },
+  ])(
+    "accepts an argument rejection without treating unrelated build failures as routing [$scenario]",
+    ({ scenario }) => {
+      const rejection = "error: unexpected argument '--gpu' found";
+      expect(isNativeGpuCreatePreBuildRejection(rejection)).toBe(true);
+      const [message, sawProgress, expected] = (
+        {
+          "argument rejection before progress": [rejection, false, true],
+          "argument rejection after progress": [rejection, true, false],
+          "build failure mentioning GPU flag": [
+            "Docker build failed while compiling a GPU Python package for --gpu support",
+            false,
+            false,
+          ],
+          "certificate failure": ["x509: certificate signed by unknown authority", false, false],
+          "documentation output": [
+            "notice: error: unexpected argument '--gpu' found while compiling docs",
+            false,
+            false,
+          ],
+          "unbounded trailing output": [
+            "error: unexpected argument '--gpu' found\nimage-controlled trailing output",
+            false,
+            false,
+          ],
+          "bounded CLI usage output": [
+            "error: unexpected argument '--gpu' found\nUsage: openshell sandbox create [OPTIONS]\nFor more information, try '--help'.",
+            false,
+            true,
+          ],
+        } as const
+      )[scenario]!;
       expect(isNativeGpuCreateRoutingFailure(message, { sawProgress })).toBe(expected);
-    }
-  });
+    },
+  );
 
   it.each([
     ["Failed", "policy denied startup exec for gpu-device-initialization-failed", false],

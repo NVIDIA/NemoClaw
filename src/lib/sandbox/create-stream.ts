@@ -23,6 +23,8 @@ export interface StreamSandboxCreateResult {
 }
 
 export interface StreamSandboxCreateOptions {
+  /** Schema-owned build context. Ordinary create paths keep the repository root. */
+  cwd?: string;
   readyCheck?: (() => boolean) | null;
   // Optional poll side effect. Must be paired with failureCheck so any
   // observed side-effect error has an authoritative terminal-state classifier.
@@ -114,7 +116,7 @@ export function streamSandboxCreate(
   const spawnChild = options.spawnImpl ?? spawn;
   const ownProcessGroup = spawnChild === spawn && process.platform !== "win32";
   const child: StreamableChildProcess = spawnChild(spawnCommand, commandArgs, {
-    cwd: ROOT,
+    cwd: options.cwd ?? ROOT,
     env,
     detached: ownProcessGroup,
     stdio: ["ignore", "pipe", "pipe"],

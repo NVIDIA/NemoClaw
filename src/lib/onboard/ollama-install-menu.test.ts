@@ -200,6 +200,27 @@ describe("resolveOllamaInstallMenuEntry", () => {
     expect(result.entry).toBeNull();
   });
 
+  it("does not route mirrored Windows-host Ollama through the WSL installer (#9300)", () => {
+    const result = resolveOllamaInstallMenuEntry({
+      hasOllama: true,
+      ollamaRunning: true,
+      hasWindowsOllama: true,
+      windowsHostOllamaSupported: true,
+      isWindowsHostOllama: true,
+      ollamaHost: "127.0.0.1",
+      installedOllamaVersion: "0.32.5",
+      runningOllamaVersion: "0.32.5",
+      platform: "linux",
+      isWsl: true,
+    });
+
+    expect(result).toEqual({
+      entry: null,
+      hasUpgradableOllama: false,
+      binaryNeedsUpgrade: false,
+    });
+  });
+
   it("omits the entry when only Windows-host Ollama is present", () => {
     const result = resolveOllamaInstallMenuEntry({
       hasOllama: false,

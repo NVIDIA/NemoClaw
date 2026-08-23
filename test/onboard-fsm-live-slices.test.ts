@@ -224,8 +224,7 @@ const sentinel = new Error("slice-called");
 if (scenario.mode === "dashboard-port-composition") {
   const finalizationHandlerDeps = require(${finalizationDepsPath}).finalizationHandlerDeps;
   finalizationHandlerDeps.checkAndRecoverSandboxProcesses = () => undefined;
-  finalizationHandlerDeps.warmupScopeUpgrade = () => undefined;
-  finalizationHandlerDeps.autoPairScopeApproval = () => undefined;
+  finalizationHandlerDeps.settleOrdinaryOpenClawPairing = async () => ({ kind: "settled" });
   const onboardDashboard = require(${onboardDashboardPath});
   const createOnboardDashboardHelpers = onboardDashboard.createOnboardDashboardHelpers;
   let dashboardForwardCalls = 0;

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { PERSONAL_OPEN_INTERNET_PRESET_NAME, PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
 import {
   isDcodeAgent,
   OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
@@ -18,6 +19,22 @@ export function normalizePolicyTierName(tierName: string | null | undefined): st
   return tierName.trim().toLowerCase() || null;
 }
 
+/** Keep tier-defining presets present independently of agent and selection mode. */
+export function ensureRequiredTierPolicyPresets(
+  tierName: string | null | undefined,
+  presetNames: readonly string[],
+): string[] {
+  if (normalizePolicyTierName(tierName) !== PERSONAL_POLICY_TIER_NAME) {
+    return [...presetNames];
+  }
+  return [
+    PERSONAL_OPEN_INTERNET_PRESET_NAME,
+    ...presetNames.filter(
+      (name) => name.trim().toLowerCase() !== PERSONAL_OPEN_INTERNET_PRESET_NAME,
+    ),
+  ];
+}
+
 export function agentRequiredPresetAdditions(
   agent: string | null | undefined,
   env: NodeJS.ProcessEnv,
@@ -32,6 +49,10 @@ function restrictedIncompatibleAgentRequiredPresets(agent: string | null | undef
   }
   if (isDcodeAgent(agent)) return [OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET];
   return [];
+}
+
+function personalSupersededAgentRequiredPresets(agent: string | null | undefined): string[] {
+  return isOpenclawAgent(agent) ? ["openclaw-pricing"] : [];
 }
 
 /**
@@ -94,8 +115,14 @@ export function suppressedAgentRequiredPresets(
   tierName: string,
   agent: string | null | undefined,
 ): string[] {
-  if (normalizePolicyTierName(tierName) !== RESTRICTED_TIER_NAME) return [];
-  return restrictedIncompatibleAgentRequiredPresets(agent);
+  const normalizedTier = normalizePolicyTierName(tierName);
+  if (normalizedTier === RESTRICTED_TIER_NAME) {
+    return restrictedIncompatibleAgentRequiredPresets(agent);
+  }
+  if (normalizedTier === PERSONAL_POLICY_TIER_NAME) {
+    return personalSupersededAgentRequiredPresets(agent);
+  }
+  return [];
 }
 
 export function filterSuppressedAgentRequiredPresets(
@@ -116,9 +143,16 @@ export function emitSuppressedAgentRequiredPresetsNote(
 ): Set<string> {
   const suppressed = suppressedAgentRequiredPresets(tierName, agent);
   if (suppressed.length > 0) {
-    note(
-      `  Restricted tier suppresses agent-required preset(s): ${suppressed.join(", ")}. Apply later with 'nemoclaw <name> policy add <preset>' if needed.`,
-    );
+    const normalizedTier = normalizePolicyTierName(tierName);
+    if (normalizedTier === PERSONAL_POLICY_TIER_NAME) {
+      note(
+        `  Personal tier supersedes exact web preset(s): ${suppressed.join(", ")} (${PERSONAL_OPEN_INTERNET_PRESET_NAME} already owns ports 80 and 443).`,
+      );
+    } else {
+      note(
+        `  Restricted tier suppresses agent-required preset(s): ${suppressed.join(", ")}. Apply later with 'nemoclaw <name> policy add <preset>' if needed.`,
+      );
+    }
   }
   return new Set(suppressed);
 }

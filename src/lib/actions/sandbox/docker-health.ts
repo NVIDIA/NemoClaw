@@ -39,7 +39,8 @@ interface ResolveDeps {
 
 const defaultDeps: ResolveDeps = {
   getSandbox: (name) => registry.getSandbox(name),
-  listSandboxNames: () => registry.listSandboxes().sandboxes.map((entry) => entry.name),
+  listSandboxNames: () =>
+    registry.listSandboxes().sandboxes.filter(registry.isPublishedSandboxRegistration).map((entry) => entry.name),
   dockerPsNames: () => dockerCapture(["ps", "--format", "{{.Names}}"], { ignoreError: true }),
   findLabeledSandboxContainers: (sandboxName) => findLabeledSandboxContainers(sandboxName),
   dockerInspectHealth: (containerName) =>

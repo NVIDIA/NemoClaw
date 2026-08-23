@@ -187,15 +187,14 @@ def process(pid, state, parent, start, uid, command, inode):
 
 root_uid = control.ROOT_UID
 pid1 = process(1, "S", 0, "100", root_uid, (control.OPENSHELL_ARGV0,), 101)
-start = process(
-    10,
-    "S",
-    1,
-    "200",
-    1001,
-    (b"/bin/bash", control.NEMOCLAW_START_PATH),
-    110,
-)
+stopped_pid1 = process(1, "T", 0, "100", root_uid, (control.OPENSHELL_ARGV0,), 101)
+def start_process(pid, command):
+    return process(pid, "S", 1, str(190 + pid), 1001, command, 100 + pid)
+start = start_process(10, (b"/bin/bash", control.NEMOCLAW_START_PATH, b"/bin/bash"))
+prefixed_start = start_process(11, (b"/bin/bash", b"--noprofile", control.NEMOCLAW_START_PATH))
+reordered_start = start_process(12, (b"/bin/bash", b"/bin/bash", control.NEMOCLAW_START_PATH))
+bare_direct_start = start_process(13, (b"nemoclaw-start", b"/bin/bash"))
+bare_interpreted_start = start_process(14, (b"/bin/bash", b"nemoclaw-start", b"/bin/bash"))
 gateway = process(
     77,
     "S",
@@ -483,6 +482,11 @@ control._supported_writer_uids = lambda: (1000, 1001)
 control._sandbox_uid = lambda: 1001
 control._capture_process = lambda pid: {1: pid1, 10: start}.get(pid)
 control._capture_writer_processes = lambda _uids: (start, gateway)
+results["managed_start_with_cmd"] = control._is_nemoclaw_start(start, 1001)
+results["prefixed_start"] = control._is_nemoclaw_start(prefixed_start, 1001)
+results["reordered_start"] = control._is_nemoclaw_start(reordered_start, 1001)
+results["bare_direct_start"] = control._is_nemoclaw_start(bare_direct_start, 1001)
+results["bare_interpreted_start"] = control._is_nemoclaw_start(bare_interpreted_start, 1001)
 real_readlink = os.readlink
 os.readlink = lambda selected: "mnt:[401]" if selected == control.MOUNT_NAMESPACE_PATH else real_readlink(selected)
 try:
@@ -510,6 +514,11 @@ control._capture_process = lambda pid: {
     77: gateway,
     78: auxiliary,
 }.get(pid)
+control.PROCESS_STATE_SECONDS = 0
+results["running_supervisor_hold"] = code(lambda: real_hold_exact_processes(fence, "mnt:[401]", activation))
+control.PROCESS_STATE_SECONDS = 5
+control._prove_fence_shape = lambda _fence, _mount: (stopped_pid1, start)
+control._recapture_reference = lambda reference, _code="fenced-process-drift": stopped_pid1 if reference.pid == 1 else {10: start, 77: gateway, 78: auxiliary}[reference.pid]
 real_hold_exact_processes(fence, "mnt:[401]", activation)
 results["hold_events"] = hold_events
 
@@ -827,8 +836,9 @@ control._recapture_reference = lambda reference, _code="fenced-process-drift": s
     by_release_pid[reference.pid]
 )
 def resume_reference(reference):
-    release_events.append(["resume", reference.pid])
-    release_states[reference.pid] = "S"
+    if release_states[reference.pid] in ("T", "t"):
+        release_events.append(["resume", reference.pid])
+        release_states[reference.pid] = "S"
     return state_process(by_release_pid[reference.pid])
 control._resume_reference = resume_reference
 control._prove_released_activation = lambda *_args: release_events.append(["health"])
@@ -1256,7 +1266,7 @@ beforeAll(() => {
 });
 
 describe("runtime state mutation controller", () => {
-  it("accepts only the canonical adapter request and recomputes its transaction binding (#7744)", () => {
+  it("accepts only the canonical adapter request and transaction binding (#7744)", () => {
     expect(harnessResult.canonical).toMatch(/^[0-9a-f]{64}$/u);
     expect(harnessResult).toMatchObject({
       noncanonical: "envelope-schema",
@@ -1273,10 +1283,15 @@ describe("runtime state mutation controller", () => {
     });
   });
 
-  it("holds exact OpenShell and entrypoint identities through recovery (#7744)", () => {
+  it("holds exact OpenShell and managed-image entrypoint identities through recovery (#9485)", () => {
     expect(harnessResult).toMatchObject({
       acquire: "fenced",
       assert: "fenced",
+      managed_start_with_cmd: true,
+      prefixed_start: false,
+      reordered_start: false,
+      bare_direct_start: false,
+      bare_interpreted_start: false,
       acquire_fence: {
         supervisor: { pid: 1, startIdentity: "100" },
         start: { pid: 10, startIdentity: "200", parentPid: 1 },
@@ -1285,9 +1300,9 @@ describe("runtime state mutation controller", () => {
       discovered_pid1: 1,
       discovered_start: 10,
       wrong_pid1: "supervisor-unavailable",
+      running_supervisor_hold: "supervisor-not-host-stopped",
     });
     expect(harnessResult.hold_events).toEqual([
-      ["stop", 1],
       ["stop", 10],
       ["stop", 77],
       ["stop", 78],
@@ -1403,18 +1418,17 @@ describe("runtime state mutation controller", () => {
         "activation-cleanup.json",
       ].sort(),
     );
-    for (const result of Object.values(faults)) {
+    Object.values(faults).forEach((result) => {
       expect(result).toEqual({
         faulted: true,
         progressRecorded: true,
         pending: false,
         clean: true,
       });
-    }
+    });
   });
 
-  it("records release intent before resuming PID1 last and resolves retry ambiguity (#7744)", () => {
-    const sigcont = harnessResult.sigcont as number;
+  it("records release intent before resuming exact writers and leaves PID1 to host authority (#9485)", () => {
     expect(harnessResult).toMatchObject({
       release: "activation-proven",
       released_marker: true,
@@ -1431,7 +1445,6 @@ describe("runtime state mutation controller", () => {
       ["resume", 78],
       ["resume", 10],
       ["health"],
-      ["signal", 1, sigcont],
     ]);
     expect(harnessResult.release_retry_events).toEqual([
       ["verify-checkpoint"],
@@ -1444,7 +1457,6 @@ describe("runtime state mutation controller", () => {
       ["resume", 77],
       ["resume", 10],
       ["health"],
-      ["signal", 1, sigcont],
     ]);
     expect(harnessResult.persistent_exit_release).toBe("activation-process-drift");
     const events = harnessResult.state_events as unknown[][];

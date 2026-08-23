@@ -8,6 +8,7 @@ import {
   type SelectedDockerGpuRoute,
 } from "./docker-gpu-route";
 import {
+  cleanupNativeGpuFailureForFallback,
   executeSandboxGpuCreatePlan,
   type NativeGpuFallbackCleanupResult,
   type SandboxGpuCreateAttemptFailure,
@@ -138,6 +139,41 @@ describe("executeSandboxGpuCreatePlan", () => {
       to_route: "compatibility",
       failure_stage: stage,
     });
+  });
+
+  it("uses an exact Hermes owner-cleanup receipt for one compatibility retry (#9935)", async () => {
+    const ownerCleanup = vi.fn();
+    const native = {
+      ...nativeFailure("gpu-proof"),
+      nativeCleanupReceipt: {
+        kind: "openshell-owner-cleanup-completed" as const,
+        sandboxName: "alpha",
+        sandboxId: "sandbox-alpha",
+        runtimeId: "runtime-alpha",
+      },
+    };
+    const runAttempt = vi.fn(async (route: SelectedDockerGpuRoute) =>
+      route === "native"
+        ? native
+        : { ok: true as const, route, value: "hermes-compatibility-ready" },
+    );
+
+    await expect(
+      execute(
+        planDeps(runAttempt, {
+          cleanupNativeFailure: (failure) =>
+            cleanupNativeGpuFailureForFallback("alpha", failure, {
+              runOpenshell: ownerCleanup,
+            }),
+        }),
+      ),
+    ).resolves.toEqual({
+      ok: true,
+      route: "compatibility",
+      value: "hermes-compatibility-ready",
+    });
+    expect(attemptedRoutes(runAttempt)).toEqual(["native", "compatibility"]);
+    expect(ownerCleanup).not.toHaveBeenCalled();
   });
 
   it("prepares and renders the built image before the single compatibility retry", async () => {

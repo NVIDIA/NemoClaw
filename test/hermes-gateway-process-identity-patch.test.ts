@@ -122,37 +122,37 @@ function classify(statusPath: string, commandLine: string) {
 
 describe("Hermes gateway process identity", () => {
   it("recognises the renamed entrypoint on both detection paths and stays idempotent", () => {
-    const { statusPath, tmp } = writeFixture();
-    try {
-      // The unpatched matcher is what makes `hermes status` report a running
-      // foreground gateway as stopped (#7804): it gates the PID-file liveness
-      // re-check and the process-table fallback alike.
-      expect(classify(statusPath, RENAMED)).toEqual({
-        subcommand: null,
-        run: false,
-        runtime: false,
-      });
+      const { statusPath, tmp } = writeFixture();
+      try {
+        // The unpatched matcher is what makes `hermes status` report a running
+        // foreground gateway as stopped (#7804): it gates the PID-file liveness
+        // re-check and the process-table fallback alike.
+        expect(classify(statusPath, RENAMED)).toEqual({
+          subcommand: null,
+          run: false,
+          runtime: false,
+        });
 
-      for (const pass of [1, 2]) {
-        const result = runPatcher(statusPath);
-        expect(result.status, `pass ${pass}: ${result.stderr}`).toBe(0);
+        const firstPatch = runPatcher(statusPath);
+        const secondPatch = runPatcher(statusPath);
+        expect(firstPatch.status, firstPatch.stderr).toBe(0);
+        expect(secondPatch.status, secondPatch.stderr).toBe(0);
+
+        expect(classify(statusPath, RENAMED)).toEqual({
+          subcommand: "run",
+          run: true,
+          runtime: true,
+        });
+        expect(
+          classify(
+            statusPath,
+            "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real gateway restart",
+          ),
+        ).toEqual({ subcommand: "restart", run: false, runtime: true });
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
       }
-
-      expect(classify(statusPath, RENAMED)).toEqual({
-        subcommand: "run",
-        run: true,
-        runtime: true,
-      });
-      expect(
-        classify(
-          statusPath,
-          "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real gateway restart",
-        ),
-      ).toEqual({ subcommand: "restart", run: false, runtime: true });
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+    });
 
   it("keeps the upstream name and the subcommand grammar intact", () => {
     const { statusPath, tmp } = writeFixture();

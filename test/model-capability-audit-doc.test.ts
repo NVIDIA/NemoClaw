@@ -43,12 +43,8 @@ describe("model capability audit doc (#3123)", () => {
   it("keeps the maintained audit states and evidence schema", () => {
     const markdown = fs.readFileSync(auditDocPath, "utf8");
 
-    for (const state of resultStates) {
-      expect(markdown).toContain(`\`${state}\``);
-    }
-    for (const field of evidenceFields) {
-      expect(markdown).toContain(field);
-    }
+    expect(resultStates.every((state) => markdown.includes(`\`${state}\``))).toBe(true);
+    expect(evidenceFields.every((field) => markdown.includes(field))).toBe(true);
 
     expect(markdown).toContain(
       "Agent surface | Provider class | Model or route | API path | State | Evidence",

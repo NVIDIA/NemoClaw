@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
-import { isCuaQualificationEnabled } from "../cua/feature";
-import { parseCuaRuntimeReadiness } from "../cua/schema";
 import type { InferenceSelection } from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
@@ -12,23 +10,29 @@ import {
 import { parseServingProfileProvenance } from "../inference/serving/profile-provenance";
 import { normalizeToolDisclosure } from "../tool-disclosure";
 import {
-  applyAddExtraProvider,
-  applyRemoveExtraProvider,
-  isValidExtraProviderName,
-  readExtraProviders,
-} from "./extra-providers";
-import {
   cloneSandboxHostLocalInferenceProvenance,
   cloneSandboxHostLocalInferenceReceipt,
   requireSandboxHostLocalInferenceProvenance,
 } from "./registry/host-local-inference";
 import { withLock } from "./registry/lock";
+import { load, save } from "./registry/persistence";
 import {
-  discardOpaqueCuaRuntimeReadiness,
-  hasOpaqueCuaRuntimeReadiness,
-  load,
-  save,
-} from "./registry/persistence";
+  isCurrentSandboxInferenceRouteReservation,
+  sandboxRegistrationMatchesInferenceRouteReservation,
+  type QualifiedSandboxInferenceRouteReservation,
+} from "./registry/route-reservation";
+export {
+  classifySandboxInferenceRouteReservation,
+  isCurrentSandboxInferenceRouteReservation,
+  isPendingReservationForSession,
+  isPublishedSandboxRegistration,
+  isRouteOnlySandboxReservation,
+  normalizeSandboxInferenceRouteSelection,
+  sandboxRegistrationMatchesInferenceRouteReservation,
+  type QualifiedSandboxInferenceRouteReservation,
+  type SandboxInferenceRouteReservationAuthority,
+  type SandboxInferenceRouteReservationDisposition,
+} from "./registry/route-reservation";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload";
 import { normalizeSandboxMcpState } from "./registry-mcp";
 import {
@@ -50,6 +54,15 @@ export {
   cloneSandboxHostLocalInferenceReceipt,
   requireSandboxHostLocalInferenceProvenance,
 };
+export {
+  addExtraProvider,
+  listExtraProviders,
+  removeExtraProvider,
+} from "./registry/extra-providers";
+export {
+  listManagedMcpCredentialReservations,
+  type ManagedMcpCredentialReservation,
+} from "./registry/mcp-credential-reservations";
 
 import { isDcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
 import { cloneSandboxHostMounts, hasUnsafeHostMountTerminalText } from "./registry/host-mount";
@@ -125,9 +138,23 @@ export function getDefault(): string | null {
   return names.length > 0 ? names[0] || null : null;
 }
 
-export function registerSandbox(entry: SandboxEntry): void {
-  withLock(() => {
+export function registerSandbox(
+  entry: SandboxEntry,
+  routeReservation?: QualifiedSandboxInferenceRouteReservation,
+  options: { pending?: boolean } = {},
+): SandboxEntry {
+  return withLock(() => {
     const data = load();
+    if (
+      routeReservation &&
+      (!isCurrentSandboxInferenceRouteReservation(
+        routeReservation,
+        data.sandboxes[entry.name] ?? null,
+      ) ||
+        !sandboxRegistrationMatchesInferenceRouteReservation(entry, routeReservation))
+    ) {
+      throw new Error("Cannot register a sandbox after its inference route reservation changed");
+    }
     const servingProfileProvenance = parseServingProfileProvenance(entry.servingProfileProvenance);
     if (entry.servingProfileProvenance !== undefined && !servingProfileProvenance) {
       throw new Error("Cannot register a sandbox with invalid serving profile provenance");
@@ -175,7 +202,7 @@ export function registerSandbox(entry: SandboxEntry): void {
         );
       }
     }
-    data.sandboxes[entry.name] = {
+    const registered: SandboxEntry = {
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),
       servingProfileProvenance: servingProfileProvenance ?? undefined,
@@ -253,11 +280,15 @@ export function registerSandbox(entry: SandboxEntry): void {
       dashboardRemoteBindPrepared: entry.dashboardRemoteBindPrepared === true ? true : undefined,
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
+      pendingRouteReservation: options.pending === true ? true : undefined,
     };
-    // Registration establishes a new sandbox lifecycle and may not inherit a
-    // deep-off readiness record carried from a previous same-named row.
-    discardOpaqueCuaRuntimeReadiness(data, entry.name);
-    save(reversibleRemoval.claimInitialDefaultInRegistry(data, entry.name));
+    data.sandboxes[entry.name] = registered;
+    save(
+      options.pending === true
+        ? data
+        : reversibleRemoval.claimInitialDefaultInRegistry(data, entry.name),
+    );
+    return structuredClone(registered);
   });
 }
 
@@ -349,39 +380,10 @@ export function reserveSandboxInferenceRoute(
       gatewayPort: route.gatewayPort,
       ...(route.openshellDriver === undefined ? {} : { openshellDriver: route.openshellDriver }),
     };
-    if (existing?.cuaRuntimeReadiness || hasOpaqueCuaRuntimeReadiness(data, name)) {
-      delete next.cuaRuntimeReadiness;
-      discardOpaqueCuaRuntimeReadiness(data, name);
-    }
     data.sandboxes[name] = next;
     save(data);
     return true;
   });
-}
-
-/**
- * True only for an inference route reserved before sandbox registration.
- *
- * Structural parameter (only the two fields it reads) so display-layer entry
- * types that omit the rest of the durable registry shape can reuse this single
- * source of truth instead of re-deriving the predicate (#7609).
- */
-export function isRouteOnlySandboxReservation(entry: {
-  pendingRouteReservation?: true;
-  createdAt?: string;
-}): boolean {
-  return entry.pendingRouteReservation === true && entry.createdAt === undefined;
-}
-
-export function isPendingReservationForSession(
-  entry: SandboxEntry | null,
-  sessionId: string | null | undefined,
-): boolean {
-  return (
-    entry?.pendingRouteReservation === true &&
-    Boolean(sessionId) &&
-    entry.reservationSessionId === sessionId
-  );
 }
 
 const HOST_LOCAL_INFERENCE_LIFECYCLE_AUTHORITY_FIELDS = new Set<keyof SandboxEntry>([
@@ -423,145 +425,21 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
     if (Object.prototype.hasOwnProperty.call(updates, "name") && updates.name !== name) {
       return false;
     }
-    // Readiness is a whole-record authority write owned by canonical CUA
-    // onboarding. Ignore an optional undefined property carried by a broad
-    // metadata shape, but reject every generic attempt to establish or replace
-    // a readiness record.
-    if (
-      Object.prototype.hasOwnProperty.call(updates, "cuaRuntimeReadiness") &&
-      updates.cuaRuntimeReadiness !== undefined
-    ) {
-      return false;
-    }
     if (changesHostLocalInferenceLifecycleAuthority(current, updates)) return false;
-    const { cuaRuntimeReadiness: _ignoredReadiness, ...ordinaryUpdates } = updates;
-    const next = { ...current, ...ordinaryUpdates };
-    if (
-      cuaInferenceSelectionChanged(current, next, hasOpaqueCuaRuntimeReadiness(data, name)) ||
-      cuaPolicyAuthorityMutationRequested(ordinaryUpdates) ||
-      cuaRuntimeAuthorityChanged(current, next, ordinaryUpdates)
-    ) {
-      delete next.cuaRuntimeReadiness;
-      discardOpaqueCuaRuntimeReadiness(data, name);
-    }
-    data.sandboxes[name] = next;
+    data.sandboxes[name] = { ...current, ...updates };
     save(data);
     return true;
   });
 }
 
-/** Inference-route writes share the readiness invalidation boundary. */
-export function updateSandboxInferenceRoute(name: string, updates: Partial<SandboxEntry>): boolean {
-  return updateSandbox(name, updates);
-}
-
-const CUA_POLICY_AUTHORITY_FIELDS = new Set<keyof SandboxEntry>([
-  "baselineExclusions",
-  "baselineExclusionTransition",
-  "customPolicies",
-  "policies",
-  "policyPresetsFinalized",
-  "policyTier",
-]);
-
-const CUA_RUNTIME_AUTHORITY_FIELDS = new Set<keyof SandboxEntry>([
-  "agent",
-  "agentVersion",
-  "fromDockerfile",
-  "gatewayName",
-  "gatewayPort",
-  "gpuEnabled",
-  "hostGpuDetected",
-  "imageTag",
-  "lifecycleGeneration",
-  "lifecycleLiveIdentityFingerprint",
-  "nemoclawVersion",
-  "openshellDriver",
-  "openshellVersion",
-  "pendingRouteReservation",
-  "reservationSessionId",
-  "sandboxGpuDevice",
-  "sandboxGpuEnabled",
-  "sandboxGpuMode",
-  "sandboxGpuProof",
-  "workload",
-]);
-
-function cuaPolicyAuthorityMutationRequested(updates: Partial<SandboxEntry>): boolean {
-  return [...CUA_POLICY_AUTHORITY_FIELDS].some((field) =>
-    Object.prototype.hasOwnProperty.call(updates, field),
-  );
-}
-
-function cuaRuntimeAuthorityChanged(
-  current: SandboxEntry,
-  next: SandboxEntry,
-  updates: Partial<SandboxEntry>,
-): boolean {
-  return [...CUA_RUNTIME_AUTHORITY_FIELDS].some(
-    (field) =>
-      Object.prototype.hasOwnProperty.call(updates, field) &&
-      !isDeepStrictEqual(current[field], next[field]),
-  );
-}
-
-/** Revoke normal and feature-off opaque CUA authority inside an existing transaction. */
-export function invalidateCuaRuntimeReadinessInRegistry(
-  data: ReturnType<typeof load>,
-  name: string,
-): void {
-  const sandbox = data.sandboxes[name];
-  if (sandbox) delete sandbox.cuaRuntimeReadiness;
-  discardOpaqueCuaRuntimeReadiness(data, name);
-}
-
-function cuaInferenceSelectionChanged(
-  current: SandboxEntry | null | undefined,
-  next: SandboxEntry,
-  hasOpaqueReadiness = false,
-): boolean {
-  if (!current?.cuaRuntimeReadiness && !hasOpaqueReadiness) return false;
-  const before = normalizeInferenceSelection(current);
-  const after = normalizeInferenceSelection(next);
-  return !isDeepStrictEqual(before, after);
-}
-
-/** Persist one complete, schema-valid readiness record without replacing unrelated row state. */
-export function recordCuaRuntimeReadiness(
-  name: string,
-  readiness: NonNullable<SandboxEntry["cuaRuntimeReadiness"]>,
-  expectedEntry: SandboxEntry,
-): boolean {
-  if (!isCuaQualificationEnabled()) return false;
-  const parsed = parseCuaRuntimeReadiness(readiness);
+/** Atomically publish a pending registration and preserve its initial-default claim. */
+export function finalizePendingSandboxRegistration(name: string): boolean {
   return withLock(() => {
     const data = load();
     const current = data.sandboxes[name];
-    if (
-      !current ||
-      current.agent !== "nemocua" ||
-      current.pendingRouteReservation === true ||
-      !isDeepStrictEqual(current, expectedEntry)
-    ) {
-      return false;
-    }
-    discardOpaqueCuaRuntimeReadiness(data, name);
-    data.sandboxes[name] = { ...current, cuaRuntimeReadiness: parsed };
-    save(data);
-    return true;
-  });
-}
-
-/** Remove readiness while preserving the rest of the sandbox row. */
-export function clearCuaRuntimeReadiness(name: string): boolean {
-  return withLock(() => {
-    const data = load();
-    const current = data.sandboxes[name];
-    if (!current) return false;
-    discardOpaqueCuaRuntimeReadiness(data, name);
-    const { cuaRuntimeReadiness: _cuaRuntimeReadiness, ...next } = current;
-    data.sandboxes[name] = next;
-    save(data);
+    if (!current || current.pendingRouteReservation !== true) return false;
+    data.sandboxes[name] = { ...current, pendingRouteReservation: undefined };
+    save(reversibleRemoval.claimInitialDefaultInRegistry(data, name));
     return true;
   });
 }
@@ -593,15 +471,7 @@ export function restoreSandboxEntry(
 ): void {
   withLock(() => {
     const data = load();
-    discardOpaqueCuaRuntimeReadiness(data, entry.name);
-    const { cuaRuntimeReadiness: _cuaRuntimeReadiness, ...restoredEntry } = entry;
-    save(
-      reversibleRemoval.restoreSandboxEntryInRegistry(
-        data,
-        restoredEntry,
-        options.defaultTransition,
-      ),
-    );
+    save(reversibleRemoval.restoreSandboxEntryInRegistry(data, entry, options.defaultTransition));
   });
 }
 
@@ -609,12 +479,7 @@ export function restoreSandboxEntry(
 export function restoreSandboxEntryIfMissing(receipt: SandboxRemovalReceipt): boolean {
   return withLock(() => {
     const data = load();
-    discardOpaqueCuaRuntimeReadiness(data, receipt.entry.name);
-    const { cuaRuntimeReadiness: _cuaRuntimeReadiness, ...entry } = receipt.entry;
-    const result = reversibleRemoval.restoreSandboxIfMissingInRegistry(data, {
-      ...receipt,
-      entry,
-    });
+    const result = reversibleRemoval.restoreSandboxIfMissingInRegistry(data, receipt);
     if (!result.restored) return false;
     save(result.registry);
     return result.restored;
@@ -644,29 +509,6 @@ export function clearAll(): void {
   withLock(() => save(reversibleRemoval.clearRegistry(load())));
 }
 
-export function listExtraProviders(): string[] {
-  return readExtraProviders(load());
-}
-
-export function addExtraProvider(name: string): boolean {
-  if (!isValidExtraProviderName(name)) return false;
-  return withLock(() => {
-    const data = load();
-    if (!applyAddExtraProvider(name, data)) return false;
-    save(data);
-    return true;
-  });
-}
-
-export function removeExtraProvider(name: string): boolean {
-  return withLock(() => {
-    const data = load();
-    if (!applyRemoveExtraProvider(name, data)) return false;
-    save(data);
-    return true;
-  });
-}
-
 /** Return the list of custom policy entries recorded for a sandbox (never null). */
 export function getCustomPolicies(name: string): CustomPolicyEntry[] {
   const data = load();
@@ -682,7 +524,6 @@ export function addCustomPolicy(name: string, entry: CustomPolicyEntry): boolean
     const list = (sandbox.customPolicies ?? []).filter((p) => p.name !== entry.name);
     list.push({ ...entry, appliedAt: entry.appliedAt ?? new Date().toISOString() });
     sandbox.customPolicies = list;
-    invalidateCuaRuntimeReadinessInRegistry(data, name);
     save(data);
     return true;
   });
@@ -698,7 +539,6 @@ export function removeCustomPolicyByName(name: string, presetName: string): bool
     const next = list.filter((p) => p.name !== presetName);
     if (next.length === list.length) return false;
     sandbox.customPolicies = next.length > 0 ? next : undefined;
-    invalidateCuaRuntimeReadinessInRegistry(data, name);
     save(data);
     return true;
   });
@@ -719,7 +559,6 @@ export function addBaselineExclusion(name: string, entry: BaselineExclusionEntry
     const list = (sandbox.baselineExclusions ?? []).filter((e) => e.key !== entry.key);
     list.push({ ...entry, acknowledgedAt: entry.acknowledgedAt ?? new Date().toISOString() });
     sandbox.baselineExclusions = list;
-    invalidateCuaRuntimeReadinessInRegistry(data, name);
     save(data);
     return true;
   });
@@ -735,7 +574,6 @@ export function removeBaselineExclusion(name: string, key: string): boolean {
     const next = list.filter((e) => e.key !== key);
     if (next.length === list.length) return false;
     sandbox.baselineExclusions = next.length > 0 ? next : undefined;
-    invalidateCuaRuntimeReadinessInRegistry(data, name);
     save(data);
     return true;
   });
@@ -760,7 +598,6 @@ export function beginBaselineExclusionTransition(
     const sandbox = data.sandboxes[name];
     if (!sandbox || sandbox.baselineExclusionTransition) return false;
     sandbox.baselineExclusionTransition = normalizeBaselineExclusionTransition(transition);
-    invalidateCuaRuntimeReadinessInRegistry(data, name);
     save(data);
     return true;
   });
@@ -795,7 +632,6 @@ export function commitBaselineExclusionTransition(name: string, id: string): boo
       sandbox.baselineExclusions = next.length > 0 ? next : undefined;
     }
     sandbox.baselineExclusionTransition = undefined;
-    invalidateCuaRuntimeReadinessInRegistry(data, name);
     save(data);
     return true;
   });
@@ -808,7 +644,6 @@ export function clearBaselineExclusionTransition(name: string, id: string): bool
     const sandbox = data.sandboxes[name];
     if (!sandbox || sandbox.baselineExclusionTransition?.id !== id) return false;
     sandbox.baselineExclusionTransition = undefined;
-    invalidateCuaRuntimeReadinessInRegistry(data, name);
     save(data);
     return true;
   });

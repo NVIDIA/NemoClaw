@@ -383,7 +383,7 @@ describe("protected managed-image runtime contract", () => {
       "nmc-mi-dc-rb",
     ]);
     expect(new Set(names).size).toBe(names.length);
-    for (const { agent, sandbox: name } of qualifications) {
+    qualifications.forEach(({ agent, sandbox: name }) => {
       expect(name.startsWith(MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX)).toBe(true);
       expect(name.length).toBeLessThanOrEqual(19);
       expect(name).not.toContain("--");
@@ -391,7 +391,7 @@ describe("protected managed-image runtime contract", () => {
         parseManagedImageOpenShellE2eInputs(["--agent", agent, "--image", IMAGE, "--sandbox", name])
           .sandbox,
       ).toBe(name);
-    }
+    });
   });
 
   it("enforces the canonical OpenShell sandbox-name length and delimiter contract (#8497)", () => {

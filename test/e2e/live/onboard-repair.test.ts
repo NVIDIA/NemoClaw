@@ -16,6 +16,7 @@ import {
   cleanupCorporateCaFixture,
   corporateCaMergeProbeScript,
   createCorporateCaFixture,
+  registeredCorporateCaWorkloadKind,
 } from "../fixtures/corporate-ca.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { readExtraProviders, updateExtraProviders } from "../fixtures/extra-providers-registry.ts";
@@ -252,7 +253,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
     forwardCleanupOptions,
   );
   const repairSandboxNames = [SANDBOX_NAME, OTHER_SANDBOX_NAME];
-  for (const name of [...repairSandboxNames].reverse()) {
+  [...repairSandboxNames].reverse().forEach((name) => {
     cleanupRegistry.trackDisposable(`delete OpenShell sandbox ${name}`, () =>
       cleanupWhenInstalled(`cleanup-probe-openshell-sandbox-${name}`, () =>
         sandbox.cleanupSandbox(name, {
@@ -279,7 +280,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
       name,
       sandboxCleanupOptions,
     );
-  }
+  });
   progress.phase("clear prior onboard-repair state");
   await cleanup(host, sandbox);
 
@@ -359,11 +360,15 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
   const status = await nemoclaw(host, [SANDBOX_NAME, "status"], "phase-2-status-after-repair");
   expect(status.exitCode, resultText(status)).toBe(0);
 
-  const corporateCaProbe = await sandbox.execShell(SANDBOX_NAME, corporateCaMergeProbeScript(), {
-    artifactName: "phase-2-corporate-ca-merge-probe",
-    env: env(),
-    timeoutMs: 60_000,
-  });
+  const corporateCaProbe = await sandbox.execShell(
+    SANDBOX_NAME,
+    corporateCaMergeProbeScript(registeredCorporateCaWorkloadKind(SANDBOX_NAME)),
+    {
+      artifactName: "phase-2-corporate-ca-merge-probe",
+      env: env(),
+      timeoutMs: 60_000,
+    },
+  );
   expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
 
   progress.phase("reseed interrupted onboarding state");

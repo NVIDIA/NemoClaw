@@ -11,8 +11,7 @@ function waitForPolicyMutation(description: string, mutate: () => boolean | void
       try {
         const result = mutate();
         if (result === false) {
-          lastError = new Error(`${description} returned false`);
-          return false;
+          throw new Error(`${description} returned false`);
         }
         return true;
       } catch (err) {

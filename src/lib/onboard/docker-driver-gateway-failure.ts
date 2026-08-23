@@ -66,7 +66,9 @@ function printIncompatibleGatewayDatabaseRecovery(
     : onboardResumeRecoveryCommand();
   printError("  The installed OpenShell version cannot use the existing gateway database.");
   printError(`  Database: ${path.join(stateDir, "openshell.db")}`);
-  printError("  The database records a migration that this OpenShell version does not include.");
+  printError(
+    "  The database records a migration that this OpenShell version does not include, or defines with different contents.",
+  );
   printError("  This can happen after an OpenShell downgrade.");
   const stopCommand = resolveGatewayStopCommand();
   if (!stopCommand && isGatewayStateInUse?.() !== false) {

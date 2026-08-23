@@ -245,13 +245,13 @@ describe("managed non-interactive error reporting", () => {
     const result = runPatchedNonInteractive(activeExceptionCasesDriver(cases));
 
     expect(result.status).toBe(0);
-    for (const [index, [, errorClass, category, retryable]] of cases.entries()) {
+    [...cases.entries()].forEach(([index, [, errorClass, category, retryable]]) => {
       const threadId = `thread-trusted-${index}`;
       expect(result.stderr).toContain(
         `error_class=${errorClass} category=${category} retryable=${retryable} ` +
           `correlation_id=${threadId}`,
       );
-    }
+    });
     expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
   });
 

@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import {
   buildRunPlan,
@@ -14,6 +14,12 @@ import {
   type UninstallRunDeps,
   type UninstallRunOptions,
 } from "./run-plan";
+
+const STATIC_TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-static-"));
+
+afterAll(() => {
+  fs.rmSync(STATIC_TEST_HOME, { recursive: true, force: true });
+});
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -164,6 +170,7 @@ describe("uninstall run plan", () => {
           hasPortableRuntimeCleanup: () => false,
           isTty: false,
           log: (line) => logs.push(line),
+          platform: "linux",
           rmSync: vi.fn((target: fs.PathLike) => {
             removed.push(String(target));
           }),
@@ -183,43 +190,6 @@ describe("uninstall run plan", () => {
       );
       expect(logs).toContain(`Removed ${path.join(userBin, "openshell-gateway")}`);
       expect(logs).toContain(`Removed ${path.join(userBin, "openshell-sandbox")}`);
-    } finally {
-      fs.rmSync(tmpHome, { recursive: true, force: true });
-    }
-  });
-
-  it("removes agent-alias CLI shims (nemohermes, nemo-deepagents) (#6098)", () => {
-    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-alias-shims-"));
-    const userBin = path.join(tmpHome, ".local", "bin");
-    fs.mkdirSync(userBin, { recursive: true });
-    const hermesShim = path.join(userBin, "nemohermes");
-    const deepagentsShim = path.join(userBin, "nemo-deepagents");
-    // Installer-managed symlinks → classified as managed-symlink → removed.
-    fs.symlinkSync("/tmp/prefix/bin/nemohermes", hermesShim);
-    fs.symlinkSync("/tmp/prefix/bin/nemo-deepagents", deepagentsShim);
-
-    const removed: string[] = [];
-    try {
-      const result = runUninstallPlan(
-        { assumeYes: true, deleteModels: false, keepOpenShell: false },
-        {
-          commandExists: (command) =>
-            command !== "docker" && command !== "lsof" && command !== "pgrep",
-          env: { HOME: tmpHome } as NodeJS.ProcessEnv,
-          existsSync: (target) => target === hermesShim || target === deepagentsShim,
-          hasPortableRuntimeCleanup: () => false,
-          isTty: false,
-          log: () => {},
-          rmSync: vi.fn((target: fs.PathLike) => {
-            removed.push(String(target));
-          }),
-          run: vi.fn(okWithKnownGatewayList),
-          runDocker: () => ok(""),
-        },
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(removed).toEqual(expect.arrayContaining([hermesShim, deepagentsShim]));
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
@@ -948,13 +918,14 @@ describe("uninstall run plan", () => {
         // process.env, so a developer shell exporting it would silently flip
         // this interactive scenario onto the non-interactive path.
         env: {
-          HOME: "/home/test",
+          HOME: STATIC_TEST_HOME,
           NEMOCLAW_NON_INTERACTIVE: "",
           TMPDIR: "/tmp/test",
         } as NodeJS.ProcessEnv,
         error: (line) => warnings.push(line),
         existsSync: (target) =>
-          target === "/swapfile" || target === "/home/test/.nemoclaw/managed_swap",
+          target === "/swapfile" ||
+          target === path.join(STATIC_TEST_HOME, ".nemoclaw/managed_swap"),
         isTty: true,
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
@@ -978,7 +949,7 @@ describe("uninstall run plan", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command !== "docker" && command !== "pgrep",
-        env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+        env: { HOME: STATIC_TEST_HOME, TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
         error: (line) => warnings.push(line),
         existsSync: () => false,
         isTty: false,

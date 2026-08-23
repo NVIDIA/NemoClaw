@@ -23,7 +23,8 @@ vi.mock("../sandbox/create-stream", () => ({
   streamSandboxCreate: mocks.streamSandboxCreate,
 }));
 
-vi.mock("./sandbox-readiness-tracing", () => ({
+vi.mock("./sandbox-readiness-tracing", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./sandbox-readiness-tracing")>()),
   waitForCreatedSandboxReadyWithTrace: mocks.waitForCreatedSandboxReadyWithTrace,
   printReadinessFailure: mocks.printReadinessFailure,
 }));
@@ -52,7 +53,6 @@ vi.mock("./openshell-docker-sandbox-containers", async (importOriginal) => ({
   queryOpenShellDockerSandboxRuntimeSnapshot: mocks.queryOpenShellDockerSandboxRuntimeSnapshot,
 }));
 
-import type { AgentDefinition } from "../agent/defs";
 import type { CheckpointPortableRuntimeAuthority } from "../state/onboard-checkpoint-types";
 import type { SandboxGpuProofResult } from "../state/registry";
 import {
@@ -81,14 +81,12 @@ import type {
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import { prepareSandboxCreateLaunch } from "./sandbox-create-launch";
 import {
-  resolveExportedPortableRuntimeAuthority,
-  resolveAgentCreateInput,
-  resolvePortableLifecycleMode,
   runSandboxGpuCreateFlow,
   type SandboxGpuCreateFlowDeps,
   type SandboxGpuCreateFlowInput,
 } from "./sandbox-gpu-create-flow";
 
+const READY_CHECK_OPTIONS = { ignoreError: true, timeout: 5_000 };
 const FAILED_PROOF: SandboxGpuProofResult = {
   status: "failed",
   cudaVerified: false,
@@ -202,55 +200,6 @@ function createSourceInput(): SandboxGpuCreateFlowInput {
 
 beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
-
-describe("resolveAgentCreateInput", () => {
-  it("selects portable lifecycle ownership only for OpenClaw (#9068)", () => {
-    const env = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
-
-    expect(resolveAgentCreateInput(null, true, env)).toMatchObject({
-      persistStartupCommand: true,
-      portableLifecycle: true,
-    });
-    expect(
-      resolveAgentCreateInput({ name: "hermes" } as AgentDefinition, true, env),
-    ).toMatchObject({
-      persistStartupCommand: true,
-      portableLifecycle: false,
-    });
-    expect(resolvePortableLifecycleMode(null, env)).toBe(true);
-    expect(resolvePortableLifecycleMode({ name: "hermes" } as AgentDefinition, env)).toBe(false);
-  });
-});
-
-describe("resolveExportedPortableRuntimeAuthority", () => {
-  it("passes checkpoint-owned authority to exported portable creation (#9070)", () => {
-    expect(
-      resolveExportedPortableRuntimeAuthority(
-        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-        () => ({
-          checkpoint: {
-            profile: { kind: "selected", value: "portable" },
-            runtimeAuthority: { kind: "selected", value: PORTABLE_RUNTIME_AUTHORITY },
-          },
-        }),
-      ),
-    ).toEqual(PORTABLE_RUNTIME_AUTHORITY);
-  });
-
-  it("rejects exported portable creation before effects when authority is absent (#9070)", () => {
-    expect(() =>
-      resolveExportedPortableRuntimeAuthority(
-        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-        () => ({
-          checkpoint: {
-            profile: { kind: "selected", value: "portable" },
-            runtimeAuthority: { kind: "unset" },
-          },
-        }),
-      ),
-    ).toThrow("requires checkpoint-owned Podman runtime authority before creation begins");
-  });
-});
 
 describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
   it("recovers before an MXC-style create without a Docker branch in central orchestration", async () => {
@@ -457,6 +406,10 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
       ),
     ).toEqual([2, 2]);
 
+    vi.mocked(deps.runCaptureOpenshell).mockClear();
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list"], READY_CHECK_OPTIONS);
+
     expect(vi.mocked(console.warn).mock.calls.flat().join("\n")).toContain(
       "unrelated sandbox 'bravo'",
     );
@@ -478,6 +431,55 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     expect(errorOutput()).toContain("never delete a runtime by mutable sandbox name");
     expect(errorOutput()).toContain("Authorization: Bearer <REDACTED>");
     expect(errorOutput()).not.toContain(recoverySecret);
+  });
+
+  it("reports the terminal phase when an incomplete managed create cannot become ready (#9819)", async () => {
+    const input = createInput();
+    const bootstrapIdentity = "e".repeat(64);
+    input.managedBootstrap = {
+      bootstrapIdentity,
+      stateRoot: "/tmp/nemoclaw-managed-bootstrap",
+      runtimeProvider: {
+        identity: { id: "mxc" },
+        bootstrap: {
+          createOnboardRouting: () => ({ nativeFallbackHasCleanBaseline: false }),
+          createLifecycle: (options: ManagedBootstrapRuntimeCreateLifecycleInput) => ({
+            launchArgv: options.launchArgv,
+            patch: createPatch(),
+            recoverUnfinished: async () => null,
+            prepareNetwork: async () => undefined,
+            runCreate: async <T>(
+              start: (held: {
+                readonly heldWorkloadArgv: readonly string[];
+                readonly bootstrapIdentity: string;
+              }) => Promise<{ readonly value: T }>,
+            ): Promise<T> =>
+              (
+                await start({
+                  heldWorkloadArgv: options.heldWorkloadArgv,
+                  bootstrapIdentity: options.bootstrapIdentity,
+                })
+              ).value,
+          }),
+        },
+      },
+    } as unknown as NonNullable<SandboxGpuCreateFlowInput["managedBootstrap"]>;
+    const deps = createDeps();
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 23,
+      output: "Created sandbox: alpha",
+      sawProgress: true,
+    });
+    mocks.waitForCreatedSandboxReadyWithTrace.mockReturnValueOnce({
+      ready: false,
+      reason: "terminal_failure_phase",
+      failurePhase: "Failed",
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "Sandbox 'alpha' entered Failed phase before it became ready (waited up to 60s).",
+    );
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledOnce();
   });
 });
 describe("runSandboxGpuCreateFlow proof authorization", () => {
@@ -516,12 +518,22 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
     );
   });
 
-  it("retries structured nvidia-smi failure only when host config proves no GPU attachment (#6110)", async () => {
+  it("inspects the exact recreated native container before authorizing compatibility fallback", async () => {
     const deps = createDeps();
+    const replacementContainerId = "b".repeat(64);
     vi.mocked(deps.verifyDirectSandboxGpu)
       .mockReturnValueOnce(NVIDIA_SMI_FAILED_PROOF)
       .mockReturnValue(VERIFIED_PROOF);
-    mockRuntimeSnapshot();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce({
+      ...createPatch(),
+      replacementRuntimeId: vi.fn(() => replacementContainerId),
+    });
+    mocks.queryOpenShellDockerSandboxRuntimeSnapshot.mockImplementation(
+      (_sandboxName, _deps, options) =>
+        options?.expectedContainerId === replacementContainerId
+          ? { ...DEFAULT_RUNTIME_SNAPSHOT, containerId: replacementContainerId }
+          : { ok: false, error: "expected one labeled sandbox container, found 2" },
+    );
 
     await expect(runSandboxGpuCreateFlow(createInput(), deps)).resolves.toMatchObject({
       route: "compatibility",
@@ -529,33 +541,38 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
     });
 
     expect(mocks.streamSandboxCreate).toHaveBeenCalledTimes(2);
+    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).toHaveBeenCalledWith(
+      "alpha",
+      {},
+      { expectedContainerId: replacementContainerId },
+    );
     expect(deps.runOpenshell).toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.objectContaining({ suppressOutput: true }),
     );
   });
 
-  it.each([
-    "present",
-    "unknown",
-  ] as const)("fails closed on sandbox nvidia-smi text when host GPU attachment is %s", async (nativeGpuAttachmentState) => {
-    const deps = createDeps();
-    vi.mocked(deps.verifyDirectSandboxGpu).mockReturnValue(NVIDIA_SMI_FAILED_PROOF);
-    mockRuntimeSnapshot({ nativeGpuAttachmentState });
-    mockExit();
+  it.each(["present", "unknown"] as const)(
+    "fails closed on sandbox nvidia-smi text when host GPU attachment is %s",
+    async (nativeGpuAttachmentState) => {
+      const deps = createDeps();
+      vi.mocked(deps.verifyDirectSandboxGpu).mockReturnValue(NVIDIA_SMI_FAILED_PROOF);
+      mockRuntimeSnapshot({ nativeGpuAttachmentState });
+      mockExit();
 
-    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+      await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
 
-    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
-    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).toHaveBeenCalledOnce();
-    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.anything(),
-    );
-    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
-      "without corroborating host evidence cannot authorize",
-    );
-  });
+      expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
+      expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).toHaveBeenCalledOnce();
+      expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+      expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
+        "without corroborating host evidence cannot authorize",
+      );
+    },
+  );
 
   it("stops after one compatibility retry when its GPU proof also fails", async () => {
     const deps = createDeps();
@@ -599,6 +616,18 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
 });
 
 describe("runSandboxGpuCreateFlow native failure and readiness", () => {
+  it("bounds the streamed sandbox readiness probe", async () => {
+    const deps = createDeps();
+    mocks.streamSandboxCreate.mockImplementationOnce(async (...args) => {
+      expect(args[3].readyCheck()).toBe(true);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+
+    const result = await runSandboxGpuCreateFlow(createInput(), deps);
+    expect(result).toMatchObject({ route: "native" });
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list"], READY_CHECK_OPTIONS);
+  });
+
   it("defers restart-safe no-GPU recreation until the create process exits (#8720)", async () => {
     const input = createInput();
     const patch = createPatch();
@@ -1142,20 +1171,6 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
 
     expect(deps.installPortableDemoLifecycle).not.toHaveBeenCalled();
     expect(mocks.createDockerGpuSandboxCreatePatch).not.toHaveBeenCalled();
-  });
-
-  it("keeps non-OpenClaw portable creation on the existing runtime patch (#9068)", async () => {
-    const input = createInput();
-    input.hostEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
-    input.portableLifecycle = false;
-    input.persistStartupCommand = true;
-    const deps = createDeps();
-    deps.installPortableDemoLifecycle = vi.fn(() => null);
-
-    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "native" });
-
-    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledOnce();
-    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledOnce();
   });
 
   it("rejects Docker compatibility before portable sandbox creation (#9068)", async () => {

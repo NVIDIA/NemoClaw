@@ -82,10 +82,10 @@ describe("Pi candidate lifecycle integration", () => {
       }),
     );
 
-    for (const source of sources) {
+    sources.forEach((source) => {
       expect(source).toEqual(sources[0]);
       expect(source).toMatchObject({ kind: "managed-image", reference: piContract().reference });
-    }
+    });
   });
 
   it("never falls back to a host Dockerfile for an enabled candidate (#7927)", () => {

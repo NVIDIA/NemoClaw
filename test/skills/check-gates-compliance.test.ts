@@ -6,6 +6,37 @@ import { describe, expect, it } from "vitest";
 import { REQUIRED_CHECK_NAMES, runComparatorGate, runGate } from "./check-gates-test-fixtures.ts";
 
 describe("maintainer merge-gate contributor compliance", () => {
+  it("excludes public docs but keeps inference source behind the risky-code test gate (#9934)", () => {
+    const docsOutput = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        files: [
+          { path: "docs/inference/set-up-vllm.mdx", status: "modified" },
+          { path: "docs/policy/network-access.mdx", status: "modified" },
+          { path: "fern/assets/inference-policy.svg", status: "modified" },
+        ],
+      }).stdout,
+    );
+    const sourceOutput = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        files: [{ path: "src/lib/inference/provider.ts", status: "modified" }],
+      }).stdout,
+    );
+
+    expect(docsOutput.gates.riskyCodeTested).toMatchObject({
+      pass: true,
+      details: "No risky files changed",
+    });
+    expect(sourceOutput.gates.riskyCodeTested).toMatchObject({
+      pass: false,
+      riskyFiles: ["src/lib/inference/provider.ts"],
+      hasTests: false,
+    });
+  });
+
   it("classifies the merge-gate checker as risky code with direct test coverage", () => {
     const output = JSON.parse(
       runGate({

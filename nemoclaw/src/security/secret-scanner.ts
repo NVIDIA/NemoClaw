@@ -21,15 +21,54 @@ interface SecretPattern {
   regex: RegExp;
 }
 
+/** Provider token formats shared by the in-process and sandbox scanners. */
+export const HIGH_CONFIDENCE_PREFIXED_TOKEN_SPECS = [
+  {
+    name: "NVIDIA API key",
+    prefixes: ["nvapi-"],
+    payloadCharacterClass: "A-Za-z0-9_-",
+    minimumPayloadLength: 20,
+  },
+  {
+    name: "GitHub token",
+    prefixes: ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"],
+    payloadCharacterClass: "A-Za-z0-9",
+    minimumPayloadLength: 36,
+  },
+  {
+    name: "GitHub token",
+    prefixes: ["github_pat_"],
+    payloadCharacterClass: "A-Za-z0-9_",
+    minimumPayloadLength: 30,
+  },
+  {
+    name: "npm token",
+    prefixes: ["npm_"],
+    payloadCharacterClass: "A-Za-z0-9",
+    minimumPayloadLength: 36,
+  },
+] as const;
+
+const HIGH_CONFIDENCE_PREFIXED_TOKEN_ALTERNATIVES = HIGH_CONFIDENCE_PREFIXED_TOKEN_SPECS.flatMap(
+  ({ prefixes, payloadCharacterClass, minimumPayloadLength }) =>
+    prefixes.map((prefix) => `${prefix}[${payloadCharacterClass}]{${minimumPayloadLength},}`),
+).join("|");
+
+/** POSIX ERE for standalone high-confidence provider tokens in sandbox shell scans. */
+export const HIGH_CONFIDENCE_PREFIXED_TOKEN_ERE = `(^|[^[:alnum:]_])(${HIGH_CONFIDENCE_PREFIXED_TOKEN_ALTERNATIVES})([^[:alnum:]_]|$)`;
+
 const SECRET_PATTERNS: SecretPattern[] = [
-  // NVIDIA
-  { name: "NVIDIA API key", regex: /\bnvapi-[A-Za-z0-9_-]{20,}\b/ },
+  ...HIGH_CONFIDENCE_PREFIXED_TOKEN_SPECS.map(
+    ({ name, prefixes, payloadCharacterClass, minimumPayloadLength }) => ({
+      name,
+      regex: new RegExp(
+        `\\b(?:${prefixes.join("|")})[${payloadCharacterClass}]{${minimumPayloadLength},}\\b`,
+      ),
+    }),
+  ),
 
   // OpenAI — exclude sk-ant- (Anthropic) to avoid double-matching
   { name: "OpenAI API key", regex: /\bsk-(?!ant-)[A-Za-z0-9_-]{20,}\b/ },
-
-  // GitHub
-  { name: "GitHub token", regex: /\b(ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9]{36,}\b/ },
 
   // AWS
   { name: "AWS access key", regex: /\bAKIA[0-9A-Z]{16}\b/ },
@@ -47,9 +86,6 @@ const SECRET_PATTERNS: SecretPattern[] = [
     regex:
       /(?<=(?:discord|bot|DISCORD_TOKEN|BOT_TOKEN|token)\s*[=:]\s*["']?)[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}/,
   },
-
-  // npm
-  { name: "npm token", regex: /\bnpm_[A-Za-z0-9]{36,}\b/ },
 
   // Private keys (PEM)
   {

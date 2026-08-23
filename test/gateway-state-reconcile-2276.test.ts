@@ -21,7 +21,7 @@ import { testTimeout } from "./helpers/timeouts";
 
 const TIMEOUT_MS = testTimeout(60_000);
 const SANDBOX_NAME = "my-assistant";
-const OPENSHELL_FIXTURE_VERSION = "0.0.101";
+const OPENSHELL_FIXTURE_VERSION = "0.0.106";
 
 // Output fixtures that mirror real OpenShell CLI output.
 const gatewayInfoNemoclaw = (gatewayName: string, port: number) =>
@@ -271,7 +271,7 @@ if (a[0] === "inspect") {
   const responses = new Map([
     ["{{.State.Running}}", "true\\n"],
     ["{{json .NetworkSettings.Ports}}", JSON.stringify({[gatewayPort + "/tcp"]:[{HostPort:gatewayPort}]}) + "\\n"],
-    ["{{.Config.Image}}", "nvcr.io/nvidia/openshell/cluster:0.0.101\\n"],
+    ["{{.Config.Image}}", "nvcr.io/nvidia/openshell/cluster:0.0.106\\n"],
   ]);
   if (target !== expectedTarget || !responses.has(format)) process.exit(64);
   process.stdout.write(responses.get(format));

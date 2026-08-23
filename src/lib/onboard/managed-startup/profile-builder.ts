@@ -398,7 +398,27 @@ function normalizeMessagingPlan(
   const hydrated = hydrateDerivedSandboxMessagingPlanFields(plan);
   const reparsed = parseSandboxMessagingPlan(hydrated, { agent });
   if (!reparsed) fail(`messagingPlan hydration produced an invalid ${agent} plan`);
-  return JSON.parse(JSON.stringify(reparsed)) as ManagedStartupJsonObject;
+  const projected = JSON.parse(JSON.stringify(reparsed)) as ManagedStartupJsonObject;
+  const buildSteps = projected.buildSteps;
+  if (Array.isArray(buildSteps)) {
+    for (const step of buildSteps) {
+      if (
+        !isPlainObject(step) ||
+        step.kind !== "package-install" ||
+        !isPlainObject(step.value) ||
+        typeof step.value.pin !== "boolean"
+      ) {
+        continue;
+      }
+      // Package pins govern image construction. A managed image already owns
+      // the exact installed package, so this derived build-only flag does not
+      // belong in the managed startup profile consumed at runtime. Validate
+      // and hydrate the full plan before this projection so malformed or
+      // misplaced pins still fail closed (#9399).
+      delete step.value.pin;
+    }
+  }
+  return projected;
 }
 
 function resolveAliasedEnvironmentValue(

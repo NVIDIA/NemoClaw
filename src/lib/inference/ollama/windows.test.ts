@@ -90,10 +90,10 @@ describe("Windows Ollama helper", () => {
       expect(atomicsWaitSpy).toHaveBeenCalledTimes(3);
       // The wait must target the module's shared backing store (a plain
       // ArrayBuffer would be rejected by Atomics.wait).
-      for (const [array] of atomicsWaitSpy.mock.calls) {
+      atomicsWaitSpy.mock.calls.forEach(([array]) => {
         expect(array).toBeInstanceOf(Int32Array);
         expect(array.buffer).toBeInstanceOf(SharedArrayBuffer);
-      }
+      });
       expect(atomicsWaitSpy).toHaveBeenNthCalledWith(1, expect.any(Int32Array), 0, 0, 1000);
       expect(atomicsWaitSpy).toHaveBeenNthCalledWith(2, expect.any(Int32Array), 0, 0, 1000);
       expect(atomicsWaitSpy).toHaveBeenNthCalledWith(3, expect.any(Int32Array), 0, 0, 2000);

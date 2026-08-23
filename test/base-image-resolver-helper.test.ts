@@ -78,12 +78,12 @@ exit 1`);
     );
   });
 
-  it("rejects an incompatible Hermes candidate and builds the local fallback", () => {
-    const remoteDigest = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
+  it("accepts a remote Hermes candidate with the required MCP and ACP runtimes", () => {
+    const remoteDigest = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"b".repeat(64)}`;
     const bin = fakeDocker(`
 printf "%s\\0" "$@" >> "$DOCKER_LOG"
 printf "\\0" >> "$DOCKER_LOG"
-if [[ "$1" == pull || "$1" == build ]]; then exit 0; fi
+if [[ "$1" == pull ]]; then exit 0; fi
 if [[ "$1" == image && "$2" == inspect ]]; then printf "%s\\n" "$REMOTE_DIGEST"; exit 0; fi
 if [[ "$1" == run ]]; then
   entrypoint=""
@@ -94,7 +94,14 @@ if [[ "$1" == run ]]; then
   done
   if [[ "$entrypoint" == /usr/bin/ldd ]]; then printf "ldd (Ubuntu GLIBC 2.39) 2.39\\n"; exit 0; fi
   if [[ "$entrypoint" == sh ]]; then exit 0; fi
-  if [[ "$entrypoint" == /opt/hermes/.venv/bin/python ]]; then [[ "$image" != "$REMOTE_DIGEST" ]]; exit; fi
+  if [[ "$entrypoint" == /opt/hermes/.venv/bin/python ]]; then
+    probe="\${@: -1}"
+    [[ "$probe" == *'import mcp'* ]]
+    [[ "$probe" == *'import acp'* ]]
+    [[ "$probe" == *'metadata.version("agent-client-protocol") == "0.9.0"'* ]]
+    [[ "$probe" == *'from acp_adapter.server import HermesACPAgent'* ]]
+    exit
+  fi
 fi
 exit 2`);
     const dockerLog = path.join(bin, "docker.log");
@@ -120,7 +127,91 @@ exit 2`);
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("lacks the packaged MCP Streamable HTTP client imports");
+    expect(readFileSync(githubEnv, "utf8").trim()).toBe(`HERMES_BASE_IMAGE=${remoteDigest}`);
+    const calls = readFileSync(dockerLog, "utf8")
+      .split("\0\0")
+      .filter(Boolean)
+      .map((call) => call.split("\0").filter(Boolean));
+    expect(calls.some((args) => args[0] === "build")).toBe(false);
+    const runtimeProbe = calls.find(
+      (args) => args.includes("/opt/hermes/.venv/bin/python") && args.includes(remoteDigest),
+    );
+    expect(runtimeProbe?.slice(0, -1)).toEqual([
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--cap-drop",
+      "ALL",
+      "--security-opt",
+      "no-new-privileges",
+      "--read-only",
+      "--user",
+      "sandbox",
+      "--entrypoint",
+      "/opt/hermes/.venv/bin/python",
+      remoteDigest,
+      "-I",
+      "-c",
+    ]);
+    expect(runtimeProbe?.at(-1)).toContain("or sys.exit(1)");
+    expect(runtimeProbe?.at(-1)).not.toContain("assert ");
+  });
+
+  it("rejects a Hermes candidate that has MCP but lacks ACP and builds locally", () => {
+    const remoteDigest = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
+    const bin = fakeDocker(`
+printf "%s\\0" "$@" >> "$DOCKER_LOG"
+printf "\\0" >> "$DOCKER_LOG"
+if [[ "$1" == pull || "$1" == build ]]; then exit 0; fi
+if [[ "$1" == image && "$2" == inspect ]]; then printf "%s\\n" "$REMOTE_DIGEST"; exit 0; fi
+if [[ "$1" == run ]]; then
+  entrypoint=""
+  image=""
+  while (($#)); do
+    if [[ "$1" == --entrypoint ]]; then entrypoint="$2"; image="$3"; break; fi
+    shift
+  done
+  if [[ "$entrypoint" == /usr/bin/ldd ]]; then printf "ldd (Ubuntu GLIBC 2.39) 2.39\\n"; exit 0; fi
+  if [[ "$entrypoint" == sh ]]; then exit 0; fi
+  if [[ "$entrypoint" == /opt/hermes/.venv/bin/python ]]; then
+    probe="\${@: -1}"
+    [[ "$probe" == *'import mcp'* ]]
+    if [[ "$image" == "$MCP_ONLY_DIGEST" ]]; then exit 1; fi
+    [[ "$probe" == *'import acp'* ]]
+    [[ "$probe" == *'metadata.version("agent-client-protocol") == "0.9.0"'* ]]
+    [[ "$probe" == *'from acp_adapter.server import HermesACPAgent'* ]]
+    exit
+  fi
+fi
+exit 2`);
+    const dockerLog = path.join(bin, "docker.log");
+    const githubEnv = path.join(bin, "github.env");
+    writeFileSync(githubEnv, "");
+    const resolver = hermesAction.runs.steps.find(
+      (step) => step.name === "Resolve Hermes sandbox base image",
+    )?.run;
+
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-c", resolver ?? ""], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      timeout: execTimeout(),
+      env: {
+        ...process.env,
+        DOCKER_LOG: dockerLog,
+        GITHUB_ACTION_PATH: path.join(repoRoot, ".github/actions/resolve-hermes-base-image"),
+        GITHUB_ENV: githubEnv,
+        GITHUB_SHA: "1".repeat(40),
+        PATH: `${bin}:${process.env.PATH}`,
+        MCP_ONLY_DIGEST: remoteDigest,
+        REMOTE_DIGEST: remoteDigest,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain(
+      "lacks the required MCP Streamable HTTP or ACP 0.9.0 adapter imports",
+    );
     expect(result.stdout).toContain("building locally");
     expect(readFileSync(githubEnv, "utf8").trim()).toBe(
       "HERMES_BASE_IMAGE=nemoclaw-hermes-base-local",
@@ -410,22 +501,39 @@ resolver_pull example:test`,
     expect(readdirSync(bin).filter((name) => name.startsWith("nemoclaw-docker-pull."))).toEqual([]);
   });
 
-  it("redacts complete credential headers and prevents log-command injection", () => {
-    const ansiSecret = "ansi-registry-secret";
-    const basicSecret = "registry-password";
-    const cookieSecret = "session-cookie-secret";
-    const cookieSecondSecret = "second-cookie-secret";
-    const crAuthorizationSecret = "cr-authorization-secret";
-    const crProxySecret = "cr-proxy-secret";
-    const foldedSecret = "folded-registry-secret";
-    const negotiateSecret = "negotiate-registry-secret";
-    const proxySecret = "proxy-registry-secret";
-    const querySecret = "registry-query-token";
-    const registryAuthSecret = "registry-auth-secret";
-    const registryConfigSecret = "registry-config-secret";
-    const setCookieSecret = "set-cookie-secret";
-    const verticalTabSecret = "vertical-tab-secret";
-    const bin = fakeDocker(`
+  it.each([
+    { scenario: "ANSI header" },
+    { scenario: "Basic authorization" },
+    { scenario: "Cookie header" },
+    { scenario: "second cookie" },
+    { scenario: "CR authorization" },
+    { scenario: "CR proxy authorization" },
+    { scenario: "folded header" },
+    { scenario: "Negotiate authorization" },
+    { scenario: "Proxy authorization" },
+    { scenario: "query string" },
+    { scenario: "registry authorization" },
+    { scenario: "registry config" },
+    { scenario: "Set-Cookie header" },
+    { scenario: "vertical-tab header" },
+  ])(
+    "redacts complete credential headers and prevents log-command injection [$scenario]",
+    ({ scenario }) => {
+      const ansiSecret = "ansi-registry-secret";
+      const basicSecret = "registry-password";
+      const cookieSecret = "session-cookie-secret";
+      const cookieSecondSecret = "second-cookie-secret";
+      const crAuthorizationSecret = "cr-authorization-secret";
+      const crProxySecret = "cr-proxy-secret";
+      const foldedSecret = "folded-registry-secret";
+      const negotiateSecret = "negotiate-registry-secret";
+      const proxySecret = "proxy-registry-secret";
+      const querySecret = "registry-query-token";
+      const registryAuthSecret = "registry-auth-secret";
+      const registryConfigSecret = "registry-config-secret";
+      const setCookieSecret = "set-cookie-secret";
+      const verticalTabSecret = "vertical-tab-secret";
+      const bin = fakeDocker(`
 printf "%s\\r\\n" \
   "pull access denied at https://registry-user:$BASIC_SECRET@example.test/v2/image?token=$QUERY_SECRET" \
   "Authorization: Negotiate $NEGOTIATE_SECRET" \
@@ -443,48 +551,51 @@ printf "\\033[31mAuthorization: CustomScheme %s\\033[0m\\r\\n" "$ANSI_SECRET" >&
 printf "progress\\vAuthorization: CustomScheme %s\\r\\n" "$VERTICAL_TAB_SECRET" >&2
 exit 1`);
 
-    const result = run("resolver_pull example:test", {
-      ANSI_SECRET: ansiSecret,
-      BASIC_SECRET: basicSecret,
-      COOKIE_SECRET: cookieSecret,
-      COOKIE_SECOND_SECRET: cookieSecondSecret,
-      CR_AUTHORIZATION_SECRET: crAuthorizationSecret,
-      CR_PROXY_SECRET: crProxySecret,
-      FOLDED_SECRET: foldedSecret,
-      NEGOTIATE_SECRET: negotiateSecret,
-      PATH: `${bin}:${process.env.PATH}`,
-      PROXY_SECRET: proxySecret,
-      QUERY_SECRET: querySecret,
-      REGISTRY_AUTH_SECRET: registryAuthSecret,
-      REGISTRY_CONFIG_SECRET: registryConfigSecret,
-      SET_COOKIE_SECRET: setCookieSecret,
-      VERTICAL_TAB_SECRET: verticalTabSecret,
-    });
+      const result = run("resolver_pull example:test", {
+        ANSI_SECRET: ansiSecret,
+        BASIC_SECRET: basicSecret,
+        COOKIE_SECRET: cookieSecret,
+        COOKIE_SECOND_SECRET: cookieSecondSecret,
+        CR_AUTHORIZATION_SECRET: crAuthorizationSecret,
+        CR_PROXY_SECRET: crProxySecret,
+        FOLDED_SECRET: foldedSecret,
+        NEGOTIATE_SECRET: negotiateSecret,
+        PATH: `${bin}:${process.env.PATH}`,
+        PROXY_SECRET: proxySecret,
+        QUERY_SECRET: querySecret,
+        REGISTRY_AUTH_SECRET: registryAuthSecret,
+        REGISTRY_CONFIG_SECRET: registryConfigSecret,
+        SET_COOKIE_SECRET: setCookieSecret,
+        VERTICAL_TAB_SECRET: verticalTabSecret,
+      });
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("pull access denied");
-    expect(result.stderr).toContain("[redacted]");
-    for (const secret of [
-      ansiSecret,
-      basicSecret,
-      cookieSecret,
-      cookieSecondSecret,
-      crAuthorizationSecret,
-      crProxySecret,
-      foldedSecret,
-      negotiateSecret,
-      proxySecret,
-      querySecret,
-      registryAuthSecret,
-      registryConfigSecret,
-      setCookieSecret,
-      verticalTabSecret,
-    ]) {
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("pull access denied");
+      expect(result.stderr).toContain("[redacted]");
+      const secret = (
+        {
+          "ANSI header": ansiSecret,
+          "Basic authorization": basicSecret,
+          "Cookie header": cookieSecret,
+          "second cookie": cookieSecondSecret,
+          "CR authorization": crAuthorizationSecret,
+          "CR proxy authorization": crProxySecret,
+          "folded header": foldedSecret,
+          "Negotiate authorization": negotiateSecret,
+          "Proxy authorization": proxySecret,
+          "query string": querySecret,
+          "registry authorization": registryAuthSecret,
+          "registry config": registryConfigSecret,
+          "Set-Cookie header": setCookieSecret,
+          "vertical-tab header": verticalTabSecret,
+        } as const
+      )[scenario]!;
       expect(result.stderr).not.toContain(secret);
-    }
-    expect(result.stderr).not.toContain("\u001b");
-    expect(result.stderr).not.toContain("\n::warning::forged-pull-command");
-  });
+
+      expect(result.stderr).not.toContain("\u001b");
+      expect(result.stderr).not.toContain("\n::warning::forged-pull-command");
+    },
+  );
 
   it.each([
     [
@@ -572,7 +683,7 @@ exit 1`);
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("[redacted]");
-    for (const secret of secrets) expect(result.stdout).not.toContain(secret);
+    expect(secrets.every((secret) => !result.stdout.includes(secret))).toBe(true);
   });
 
   it("redacts a folded credential preceded by an invalid byte", () => {

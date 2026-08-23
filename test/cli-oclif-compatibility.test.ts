@@ -481,30 +481,24 @@ describe("oclif compatibility dispatch", () => {
     }
   });
 
-  it("corrects a single sandbox-like global status argument without a CLI subprocess", async () => {
-    await withDirectPublicDispatch(
-      async ({ dispatchCli, exitSpy, runOclifArgv, runOclifCommandById, stderr }) => {
-        const cases = [
-          { argv: ["status", "alpha"], command: "nemoclaw alpha status" },
-          { argv: ["status", "--json", "alpha"], command: "nemoclaw alpha status --json" },
-          { argv: ["status", "alpha", "--json"], command: "nemoclaw alpha status --json" },
-          { argv: ["status", "alpha", "--help"], command: "nemoclaw alpha status --help" },
-          {
-            argv: ["status", "alpha", "--json", "--help"],
-            command: "nemoclaw alpha status --help",
-          },
-          {
-            argv: ["status", "alpha", "--help", "--json"],
-            command: "nemoclaw alpha status --help",
-          },
-        ];
-
-        for (const { argv, command } of cases) {
-          stderr.length = 0;
-          exitSpy.mockClear();
-          runOclifArgv.mockClear();
-          runOclifCommandById.mockClear();
-
+  it.each([
+    { argv: ["status", "alpha"], command: "nemoclaw alpha status" },
+    { argv: ["status", "--json", "alpha"], command: "nemoclaw alpha status --json" },
+    { argv: ["status", "alpha", "--json"], command: "nemoclaw alpha status --json" },
+    { argv: ["status", "alpha", "--help"], command: "nemoclaw alpha status --help" },
+    {
+      argv: ["status", "alpha", "--json", "--help"],
+      command: "nemoclaw alpha status --help",
+    },
+    {
+      argv: ["status", "alpha", "--help", "--json"],
+      command: "nemoclaw alpha status --help",
+    },
+  ])(
+    "corrects a single sandbox-like global status argument to $command",
+    async ({ argv, command }) => {
+      await withDirectPublicDispatch(
+        async ({ dispatchCli, exitSpy, runOclifArgv, runOclifCommandById, stderr }) => {
           await expect(dispatchCli(argv)).rejects.toThrow("process.exit:2");
 
           const output = stderr.join("\n");
@@ -514,32 +508,26 @@ describe("oclif compatibility dispatch", () => {
           expect(exitSpy).toHaveBeenCalledWith(2);
           expect(runOclifArgv).not.toHaveBeenCalled();
           expect(runOclifCommandById).not.toHaveBeenCalled();
-        }
-      },
-    );
-  });
+        },
+      );
+    },
+  );
 
-  it("leaves ambiguous or unsafe global status arguments to the strict parser", async () => {
-    await withDirectPublicDispatch(
-      async ({ dispatchCli, exitSpy, runOclifArgv, runOclifCommandById, stderr }) => {
-        const cases = [
-          ["status", "--bogus"],
-          ["status", "--bogus", "alpha"],
-          ["status", "alpha", "--bogus"],
-          ["status", "alpha", "beta"],
-          ["status", "status"],
-          ["status", "help"],
-          ["status", "sandbox"],
-          ["status", "internal"],
-          ["status", "alpha;echo pwned"],
-        ];
-
-        for (const argv of cases) {
-          stderr.length = 0;
-          exitSpy.mockClear();
-          runOclifArgv.mockClear();
-          runOclifCommandById.mockClear();
-
+  it.each([
+    ["status", "--bogus"],
+    ["status", "--bogus", "alpha"],
+    ["status", "alpha", "--bogus"],
+    ["status", "alpha", "beta"],
+    ["status", "status"],
+    ["status", "help"],
+    ["status", "sandbox"],
+    ["status", "internal"],
+    ["status", "alpha;echo pwned"],
+  ])(
+    "leaves ambiguous or unsafe global status arguments to the strict parser [%j]",
+    async (...argv) => {
+      await withDirectPublicDispatch(
+        async ({ dispatchCli, exitSpy, runOclifArgv, runOclifCommandById, stderr }) => {
           await dispatchCli(argv);
 
           expect(runOclifCommandById).toHaveBeenCalledWith(
@@ -551,29 +539,34 @@ describe("oclif compatibility dispatch", () => {
           expect(exitSpy).not.toHaveBeenCalled();
           expect(stderr.join("\n")).not.toContain("does not take a sandbox name");
           expect(stderr.join("\n")).not.toContain("Run:");
-        }
-      },
-    );
-  });
+        },
+      );
+    },
+  );
+
+  it.each([["--bogus"], ["--bogus", "alpha"], ["alpha", "--bogus"]])(
+    "keeps strict status flag errors in process [%j]",
+    async (...args) => {
+      await expect(StatusCommand.run(args, process.cwd())).rejects.toThrow(
+        "Nonexistent flag: --bogus",
+      );
+    },
+  );
 
   it.each(["status", "help", "sandbox", "internal", "alpha;echo pwned"])(
-    "keeps strict status parser errors in process [%s]",
+    "keeps strict status argument errors in process [%s]",
     async (token) => {
-      for (const args of [["--bogus"], ["--bogus", "alpha"], ["alpha", "--bogus"]]) {
-        await expect(StatusCommand.run(args, process.cwd())).rejects.toThrow(
-          "Nonexistent flag: --bogus",
-        );
-      }
-
-      await expect(StatusCommand.run(["alpha", "beta"], process.cwd())).rejects.toThrow(
-        "Unexpected arguments: alpha, beta",
-      );
-
       await expect(StatusCommand.run([token], process.cwd())).rejects.toThrow(
         `Unexpected argument: ${token}`,
       );
     },
   );
+
+  it("keeps multiple strict status arguments in process", async () => {
+    await expect(StatusCommand.run(["alpha", "beta"], process.cwd())).rejects.toThrow(
+      "Unexpected arguments: alpha, beta",
+    );
+  });
 
   it("routes sandbox status help directly and keeps its JSON help metadata", async () => {
     await withDirectPublicDispatch(async ({ dispatchCli, runOclifArgv, runOclifCommandById }) => {

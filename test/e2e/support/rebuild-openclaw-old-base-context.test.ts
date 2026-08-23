@@ -226,7 +226,7 @@ describe("rebuild-openclaw old-base build context", () => {
     expect(securityPatterns).not.toHaveLength(0);
     expect(securityPatterns).toEqual([...representativeSourceByPattern.keys()]);
 
-    for (const pattern of securityPatterns) {
+    securityPatterns.forEach((pattern) => {
       const dockerfilePath = path.join(
         fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-dockerfile-")),
         "Dockerfile.base",
@@ -243,6 +243,6 @@ describe("rebuild-openclaw old-base build context", () => {
         () => directDockerfileBaseCopySources(dockerfilePath),
         `.dockerignore pattern ${pattern} should reject representative source ${source}`,
       ).toThrow("Unsupported .dockerignore-secret Dockerfile.base COPY source");
-    }
+    });
   });
 });

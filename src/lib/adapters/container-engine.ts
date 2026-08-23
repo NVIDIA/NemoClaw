@@ -72,6 +72,8 @@ export interface ContainerEngineCommandOptions {
   readonly endpointArgs?: readonly string[];
   /** Exact operation-scoped names that may be added to the sanitized child environment. */
   readonly allowedEnvironmentNames?: readonly string[];
+  /** Complete child environment for one authority-bound engine operation. */
+  readonly commandEnvironment?: Readonly<Record<string, string>>;
   readonly capture?: ContainerEngineCommandCapture;
   readonly guard?: (phase: "before" | "after") => void;
 }
@@ -177,6 +179,44 @@ function operationCommandEnvironment(
     ...containerEngineCommandEnvironment(),
     ...normalized,
   });
+}
+
+function replacementCommandEnvironment(
+  explicit: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> {
+  if (typeof explicit !== "object" || explicit === null || Array.isArray(explicit)) {
+    throw new Error("Container engine command environment is invalid.");
+  }
+  const entries = Object.entries(explicit);
+  if (entries.length > MAX_ENVIRONMENT_ENTRIES) {
+    throw new Error("Container engine command environment has too many entries.");
+  }
+  let totalBytes = 0;
+  const normalized: Record<string, string> = Object.create(null);
+  for (const [name, value] of entries) {
+    if (
+      !ENVIRONMENT_NAME_PATTERN.test(name) ||
+      ENGINE_ENV_NAMES.has(name) ||
+      (!COMMAND_ENV_NAMES.has(name) &&
+        !COMMAND_ENV_PREFIXES.some((prefix) => name.startsWith(prefix)))
+    ) {
+      throw new Error("Container engine command environment name is invalid.");
+    }
+    if (
+      typeof value !== "string" ||
+      value === "" ||
+      Buffer.byteLength(value, "utf8") > MAX_ARGUMENT_BYTES ||
+      CONTROL_CHARACTERS.test(value)
+    ) {
+      throw new Error("Container engine command environment value is invalid.");
+    }
+    totalBytes += Buffer.byteLength(name, "utf8") + Buffer.byteLength(value, "utf8");
+    if (totalBytes > MAX_ENVIRONMENT_BYTES) {
+      throw new Error("Container engine command environment exceeds its byte bound.");
+    }
+    normalized[name] = value;
+  }
+  return Object.freeze(normalized);
 }
 
 function boundedText(value: string, label: string, allowPath = false): string {
@@ -321,6 +361,9 @@ export function createContainerEngineCommand(
       return name;
     }),
   );
+  const commandEnvironment = options.commandEnvironment
+    ? replacementCommandEnvironment(options.commandEnvironment)
+    : undefined;
   const capture = options.capture ?? defaultCapture;
   const run = (
     args: readonly string[],
@@ -336,13 +379,14 @@ export function createContainerEngineCommand(
     }
     const boundedTimeout = positiveTimeout(timeoutMs);
     return invokeGuarded(options.guard, () => {
-      if (environment !== undefined) {
+      const selectedEnvironment = environment ?? commandEnvironment;
+      if (selectedEnvironment !== undefined) {
         return capture(
           executable,
           commandArgs,
           boundedTimeout,
           input === undefined ? undefined : Buffer.from(input),
-          environment,
+          selectedEnvironment,
         );
       }
       return input === undefined

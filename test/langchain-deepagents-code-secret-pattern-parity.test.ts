@@ -106,9 +106,9 @@ describe("Deep Agents Code secret-pattern parity", () => {
   it.each(Array.from(CANONICAL_SECRET_POSITIVE_VECTORS, (value) => [value]))(
     "matches every shared positive vector with its designated canonical regex [case %#] (#6195)",
     (vector) => {
-      for (const [group, patterns] of Object.entries(canonicalPatterns) as Array<
+      (Object.entries(canonicalPatterns) as Array<
         [CanonicalSecretPatternGroup, readonly RegExp[]]
-      >) {
+      >).forEach(([group, patterns]) => {
         const coveredIndices = new Set(
           CANONICAL_SECRET_POSITIVE_VECTORS.filter((vector) => vector.patternGroup === group).map(
             (vector) => vector.patternIndex,
@@ -117,7 +117,7 @@ describe("Deep Agents Code secret-pattern parity", () => {
         expect(coveredIndices, `${group} patterns must all have a positive vector`).toEqual(
           new Set(patterns.map((_pattern, index) => index)),
         );
-      }
+      });
 
       const pattern = canonicalPatterns[vector.patternGroup][vector.patternIndex];
       expect(pattern, `${vector.label} designates an existing canonical regex`).toBeDefined();
@@ -144,19 +144,17 @@ describe("Deep Agents Code secret-pattern parity", () => {
     "bounds assignment separators and rejects credential-word substrings [case %#] (#6452)",
     (value) => {
       const assignmentPattern = CONTEXT_PATTERNS[1];
-      for (const value of [
-        "COMPASS=opaqueNonSecretPayload123",
-        "BYPASS=allowedValue123",
-        "TOPSECRET=opaqueNonSecretPayload123",
-        "SUBTOKEN=opaqueNonSecretPayload123",
-        "public-key=opaqueVerificationMaterial123",
-        "custom-key=opaqueNonSecretPayload123",
-        '{"key":"agent:main:main"}',
-        `TOKEN${" ".repeat(33)}opaqueCredentialPayloadZ1234567890`,
-        `TOKEN${" ".repeat(100_000)}opaqueCredentialPayloadZ1234567890`,
-      ]) {
-        expect(matches(assignmentPattern, value), value.slice(0, 80)).toBe(false);
-      }
+      expect([
+            "COMPASS=opaqueNonSecretPayload123",
+            "BYPASS=allowedValue123",
+            "TOPSECRET=opaqueNonSecretPayload123",
+            "SUBTOKEN=opaqueNonSecretPayload123",
+            "public-key=opaqueVerificationMaterial123",
+            "custom-key=opaqueNonSecretPayload123",
+            '{"key":"agent:main:main"}',
+            `TOKEN${" ".repeat(33)}opaqueCredentialPayloadZ1234567890`,
+            `TOKEN${" ".repeat(100_000)}opaqueCredentialPayloadZ1234567890`,
+          ].every((value) => Object.is(matches(assignmentPattern, value), false))).toBe(true);
       expect(
         matches(assignmentPattern, `TOKEN${" ".repeat(32)}opaqueCredentialPayloadZ1234567890`),
       ).toBe(true);
@@ -284,14 +282,14 @@ json.dump({
       reply_token: string;
     };
 
-    for (const [index, value] of values.entries()) {
+    [...values.entries()].forEach(([index, value]) => {
       expect(scrubbed.values[index], CANONICAL_SECRET_POSITIVE_VECTORS[index].label).toContain(
         "<redacted-secret>",
       );
       expect(scrubbed.values[index], CANONICAL_SECRET_POSITIVE_VECTORS[index].label).not.toContain(
         value,
       );
-    }
+    });
     expect(scrubbed.boundary).toContain("<redacted-secret>");
     expect(scrubbed.boundary).not.toContain("Api_Key=ABCDEFG");
     expect(scrubbed.reply_token).toBe('replyToken="<redacted-secret>"');

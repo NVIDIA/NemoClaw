@@ -160,7 +160,8 @@ describe("MCP tool discovery image contract", () => {
         .map((seedName) => fs.statSync(path.join(seedDirectory, seedName)).size)
         .every((size) => size <= 2_000_000),
     ).toBe(true);
-    for (const archive of manifest.archives) {
+    manifest.archives.forEach(
+      (archive: { archive: string; integrity: string; size: number }) => {
       const archiveParts = seedNames.filter(
         (seedName) =>
           seedName === archive.archive || seedName.startsWith(`${archive.archive}.part-`),
@@ -188,7 +189,8 @@ describe("MCP tool discovery image contract", () => {
       expect(seed).toHaveLength(archive.size);
       expect(integrity).toBe(archive.integrity);
       expect(matches.length).toBeGreaterThan(0);
-    }
+      },
+    );
   });
 
   it("does not commit MCP runtime registry archives", () => {
@@ -208,22 +210,22 @@ describe("MCP tool discovery image contract", () => {
     );
     const expectedHashes = {
       "managed-startup-image-runtime.bundle":
-        "96f6175f3cda6eefecf658c59e36cadecae5a27e93b9a4bdcd927a0bdd05446c",
+        "296a54f8d7d2ff63ba82254d83797891bd18e7dc7724acd0f2d7deb92435d43a",
       "mcp-tool-discovery/BUNDLED_PACKAGES.json":
         "df5dc8f167101085a8e73c444aa56854b2a4716a0bb7de9886fec4e50f402601",
       "mcp-tool-discovery/THIRD_PARTY_LICENSES.txt":
         "ae0820debd0e33a10baa3a9c6c7ea831e8ad32a43f8500d52c7dc961ba5513a5",
       "mcp-tool-discovery/mcp-tool-discovery.bundle":
-        "defdba693829bfdfad16ce2edaad6b0a454388a32f15113854850e652a950012",
+        "5622323afbace37445582fa889da4cfbae31bf8ecb2a5bab571026f9cc479fdb",
     } as const;
 
-    for (const [relativePath, expectedHash] of Object.entries(expectedHashes)) {
+    Object.entries(expectedHashes).forEach(([relativePath, expectedHash]) => {
       const actualHash = crypto
         .createHash("sha256")
         .update(fs.readFileSync(path.join(bundleRoot, relativePath)))
         .digest("hex");
       expect(actualHash, relativePath).toBe(expectedHash);
-    }
+    });
 
     const executableFixture = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-reviewed-mcp-runtime-"),

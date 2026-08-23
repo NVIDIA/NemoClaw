@@ -8,6 +8,7 @@
     "src/shared/banner-boundary.cts",
     "src/shared/credential-filter-boundary.cts",
     "src/shared/openshell-policy-boundary.cts",
+    "src/shared/private-networks-boundary.cts",
     "src/shared/sandbox-name.cts",
     "src/shared/snapshot-sanitizer-boundary.cts"
   ],

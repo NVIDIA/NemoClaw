@@ -11,6 +11,7 @@ import {
   createContextCapture as contextCapture,
   createDriftingContextCapture,
 } from "../../../../test/helpers/docker-operation-authority-test-helpers";
+import { prependInstalledUserLocalOpenshellPath } from "../openshell-pin";
 import { createDockerLlamaCppOperationAuthority } from "./docker-llama-cpp-operation";
 import {
   createDockerOperationAuthority,
@@ -138,9 +139,68 @@ describe("Docker operation authority", () => {
     expect(second.engine.authorityId).not.toBe(first.engine.authorityId);
   });
 
-  it("keeps authority stable across SSH session metadata and does not forward it", () => {
+  it("keeps managed llama.cpp Docker authority after onboarding resumes (#9585)", () => {
+    const executableRoot = fakeDocker("qualified");
+    const home = fakeExecutableRoot();
+    const localBin = path.join(home, ".local", "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeFakeExecutable(localBin, "openshell", "printf 'openshell\\n'");
+    const common = {
+      HOME: home,
+      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+    };
+    const installed = createDockerLlamaCppOperationAuthority({
+      ...common,
+      PATH: `${localBin}${path.delimiter}${executableRoot}`,
+    });
+    const resumedEnvironment = {
+      ...common,
+      PATH: executableRoot,
+    };
+    const resumed = createDockerLlamaCppOperationAuthority(resumedEnvironment);
+
+    expect(resumedEnvironment.PATH).toBe(executableRoot);
+    expect(resumed.engine.authorityId).toBe(installed.engine.authorityId);
+    expect(dockerOperationBindingSha256(resumed.engine)).toBe(
+      dockerOperationBindingSha256(installed.engine),
+    );
+  });
+
+  it("does not trust a non-executable user-local OpenShell path (#9585)", () => {
+    const executableRoot = fakeDocker("qualified");
+    const home = fakeExecutableRoot();
+    const localBin = path.join(home, ".local", "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(path.join(localBin, "openshell"), "not executable\n", { mode: 0o600 });
+    const environment = {
+      HOME: home,
+      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+      PATH: executableRoot,
+    };
+    const baseline = createDockerOperationAuthority("host-local-inference", environment);
+    const managed = createDockerLlamaCppOperationAuthority(environment);
+
+    expect(managed.engine.authorityId).toBe(baseline.engine.authorityId);
+    expect(environment.PATH).toBe(executableRoot);
+  });
+
+  it("does not trust a user-local OpenShell directory (#9585)", () => {
+    const home = fakeExecutableRoot();
+    const localBin = path.join(home, ".local", "bin");
+    fs.mkdirSync(path.join(localBin, "openshell"), { recursive: true });
+    const environment = { HOME: home, PATH: "/usr/bin" };
+    const getFutureShellPathHint = vi.fn(() => "export PATH");
+
+    expect(
+      prependInstalledUserLocalOpenshellPath({ env: environment, getFutureShellPathHint }),
+    ).toBeNull();
+    expect(getFutureShellPathHint).not.toHaveBeenCalled();
+    expect(environment.PATH).toBe("/usr/bin");
+  });
+
+  it("keeps authority stable across terminal and SSH session metadata (#9584)", () => {
     const executableRoot = fakeDockerScript(
-      `printf '%s\\n' "\${XDG_SESSION_ID-unset}" "\${XDG_SESSION_CLASS-unset}" "\${XDG_SESSION_TYPE-unset}"`,
+      `printf '%s\\n' "\${TERM-unset}" "\${XDG_SESSION_ID-unset}" "\${XDG_SESSION_CLASS-unset}" "\${XDG_SESSION_TYPE-unset}"`,
     );
     const common = {
       HOME: "/tmp/nemoclaw-home",
@@ -148,24 +208,52 @@ describe("Docker operation authority", () => {
       PATH: executableRoot,
       XDG_RUNTIME_DIR: "/run/user/1000",
     };
+    const callerTerm = "nemoclaw-caller-terminal";
     const first = createDockerOperationAuthority("host-local-inference", {
       ...common,
       XDG_SESSION_ID: "101",
       XDG_SESSION_CLASS: "user",
       XDG_SESSION_TYPE: "tty",
+      TERM: "xterm-256color",
     });
     const second = createDockerOperationAuthority("host-local-inference", {
       ...common,
       XDG_SESSION_ID: "102",
       XDG_SESSION_CLASS: "background",
       XDG_SESSION_TYPE: "unspecified",
+      TERM: callerTerm,
     });
 
     expect(second.engine.authorityId).toBe(first.engine.authorityId);
     expect(dockerOperationBindingSha256(second.engine)).toBe(
       dockerOperationBindingSha256(first.engine),
     );
-    expect(second.engine.capture(["version"]).stdout).toBe("unset\nunset\nunset\n");
+    const [dockerTerm, ...dockerSessionMetadata] = second.engine
+      .capture(["version"])
+      .stdout.trimEnd()
+      .split("\n");
+    // macOS /bin/sh supplies TERM=dumb after NemoClaw removes the caller value.
+    expect(dockerTerm).not.toBe(callerTerm);
+    expect(dockerSessionMetadata).toEqual(["unset", "unset", "unset"]);
+  });
+
+  it("keeps host-local inference authority stable across terminal attachment changes (#9599)", () => {
+    const executableRoot = fakeDocker("qualified");
+    const environment = {
+      HOME: "/tmp/nemoclaw-home",
+      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+      PATH: executableRoot,
+    };
+    const interactive = createDockerOperationAuthority("host-local-inference", {
+      ...environment,
+      TERM: "xterm-256color",
+    });
+    const detached = createDockerOperationAuthority("host-local-inference", environment);
+
+    expect(detached.engine.authorityId).toBe(interactive.engine.authorityId);
+    expect(dockerOperationBindingSha256(detached.engine)).toBe(
+      dockerOperationBindingSha256(interactive.engine),
+    );
   });
 
   it("fails closed when an earlier Docker credential helper appears", () => {
@@ -322,6 +410,16 @@ describe("Docker operation authority", () => {
     expect(() => authority.engine.capture(["version"])).toThrow(
       "Docker operation executable changed after qualification",
     );
+  });
+
+  it("fails closed when the fixed PATH has no Docker executable", () => {
+    expect(() =>
+      createDockerOperationAuthority("sandbox-lifecycle", {
+        HOME: "/tmp/nemoclaw-home",
+        DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+        PATH: fakeExecutableRoot(),
+      }),
+    ).toThrow("Docker operation could not resolve one absolute Docker executable");
   });
 
   it("rejects plaintext remote TCP before issuing a daemon command", () => {

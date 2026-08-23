@@ -552,7 +552,9 @@ describe("http-probe helpers", () => {
     expect(spawnedEnv?.MY_SECRET_TOKEN).toBeUndefined();
   });
 
-  it("bypasses ambient proxies when --resolve pins the validated origin (#6293)", () => {
+  it.each(
+    ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"],
+  )("bypasses ambient proxies when --resolve pins the validated origin [%s] (#6293)", (name) => {
     let spawnedEnv: NodeJS.ProcessEnv | undefined;
     runCurlProbe(
       ["-sS", "--resolve", "example.test:443:93.184.216.34", "https://example.test/models"],
@@ -582,16 +584,8 @@ describe("http-probe helpers", () => {
       },
     );
 
-    for (const name of [
-      "HTTP_PROXY",
-      "HTTPS_PROXY",
-      "ALL_PROXY",
-      "http_proxy",
-      "https_proxy",
-      "all_proxy",
-    ]) {
-      expect(spawnedEnv?.[name]).toBeUndefined();
-    }
+    expect(spawnedEnv?.[name]).toBeUndefined();
+
     expect(spawnedEnv?.NO_PROXY).toBe("*");
     expect(spawnedEnv?.no_proxy).toBe("*");
   });
@@ -626,16 +620,7 @@ describe("http-probe helpers", () => {
       },
     });
 
-    for (const name of [
-      "HTTP_PROXY",
-      "HTTPS_PROXY",
-      "ALL_PROXY",
-      "http_proxy",
-      "https_proxy",
-      "all_proxy",
-    ]) {
-      expect(spawnedEnv?.[name]).toBeUndefined();
-    }
+    expect(["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"].every((name) => spawnedEnv?.[name] === undefined)).toBe(true);
     expect(spawnedEnv?.NO_PROXY).toBe("*");
     expect(spawnedEnv?.no_proxy).toBe("*");
   });

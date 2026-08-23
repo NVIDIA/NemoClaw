@@ -60,7 +60,23 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-const TOKENS = { "@bash": '/bin/bash "$trusted_fixture" "$@"', "@bin": "/usr/bin", "@daemon": '"$daemon_json"', "@docker": "/etc/docker/daemon.json", "@env": "/usr/bin/sudo -n /usr/bin/env -i", "@fixture": '"$trusted_fixture"', "@gpu": "hermes-gpu-fallback-docker-runtime", "@install": "/usr/bin/sudo /usr/bin/install", "@root": '"$trusted_state_root"', "@run": "run_trusted_fixture", "@sha": '"$TRUSTED_FIXTURE_SHA256"', "@source": '"$trusted_source"', "@state": '"$state_dir"', "@sudo": "/usr/bin/sudo", "@workflow": '"$TRUSTED_WORKFLOW_SHA"' } as const;
+const TOKENS = {
+  "@bash": '/bin/bash "$trusted_fixture" "$@"',
+  "@bin": "/usr/bin",
+  "@daemon": '"$daemon_json"',
+  "@docker": "/etc/docker/daemon.json",
+  "@env": "/usr/bin/sudo -n /usr/bin/env -i",
+  "@fixture": '"$trusted_fixture"',
+  "@gpu": "hermes-gpu-fallback-docker-runtime",
+  "@install": "/usr/bin/sudo /usr/bin/install",
+  "@root": '"$trusted_state_root"',
+  "@run": "run_trusted_fixture",
+  "@sha": '"$TRUSTED_FIXTURE_SHA256"',
+  "@source": '"$trusted_source"',
+  "@state": '"$state_dir"',
+  "@sudo": "/usr/bin/sudo",
+  "@workflow": '"$TRUSTED_WORKFLOW_SHA"',
+} as const;
 
 function proof(spec: string): string[] {
   return spec
@@ -119,9 +135,24 @@ export function validateHermesGpuStartupWorkflow(
     strategy["max-parallel"] !== 1 ||
     JSON.stringify(matrix.include) !==
       JSON.stringify([
-        { scenario: "native", sandbox_name: "e2e-hgpu-native" },
-        { scenario: "fallback", sandbox_name: "e2e-hgpu-fallback" },
-        { scenario: "compatibility-only", sandbox_name: "e2e-hgpu-compat" },
+        {
+          scenario: "native",
+          sandbox_name: "e2e-hgpu-native",
+          observable_outcome: "Native GPU startup reaches the stable Ready route",
+          coverage_variant: "native",
+        },
+        {
+          scenario: "fallback",
+          sandbox_name: "e2e-hgpu-fallback",
+          observable_outcome: "Fallback GPU startup reaches the stable Ready route",
+          coverage_variant: "fallback",
+        },
+        {
+          scenario: "compatibility-only",
+          sandbox_name: "e2e-hgpu-compat",
+          observable_outcome: "Compatibility-only GPU startup reaches the stable Ready route",
+          coverage_variant: "compatibility-only",
+        },
       ])
   ) {
     errors.push(`${JOB_NAME} must serialize GPU scenarios`);

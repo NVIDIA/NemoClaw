@@ -92,9 +92,7 @@ describe("E2E recommendation normalizer", () => {
       { required: [], optional: [], confidence: "high" },
       metadata({ changedFiles: ["test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts"] }),
     );
-    expect(bedrock.required.map(({ id }) => id)).toContain(
-      "bedrock-runtime-compatible-anthropic",
-    );
+    expect(bedrock.required.map(({ id }) => id)).toContain("bedrock-runtime-compatible-anthropic");
     expect(bedrock.required.map(({ id }) => id)).not.toContain(
       "bedrock-runtime-compatible-anthropic-openclaw",
     );
@@ -125,6 +123,8 @@ describe("E2E recommendation normalizer", () => {
         "tools/advisors/e2e-text.mts",
         "tools/advisors/json.mts",
         "tools/advisors/risk-plan.mts",
+        "tools/e2e/execution-coverage.mts",
+        "tools/e2e/onboard-timeout-contract.mts",
         "tools/e2e/target-catalogue.mts",
         "scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts",
         "scripts/checks/protected-managed-image-contract.ts",
@@ -212,7 +212,7 @@ describe("E2E recommendation normalizer", () => {
     expect(JSON.stringify(normalized)).not.toMatch(/gh workflow run|--ref attacker/u);
   });
 
-  function verifyE2eRecommendationCommandFiltering() {
+  it("rejects arbitrary executables and shell token tricks without dropping ordinary prose", () => {
     for (const command of COMMAND_SHAPED_E2E_TEXT) {
       expect(isCommandShapedE2eText(command), command).toBe(true);
     }
@@ -256,12 +256,7 @@ describe("E2E recommendation normalizer", () => {
     }
     const normalized = JSON.stringify({ coverage, targets });
     for (const prose of untrustedProse) expect(normalized).not.toContain(prose);
-  }
-
-  it(
-    "rejects arbitrary executables and shell token tricks without dropping ordinary prose",
-    verifyE2eRecommendationCommandFiltering,
-  );
+  });
 
   it("rejects missing and unknown selector types instead of inferring them", () => {
     const normalized = normalizeE2eTargetAdvisorResult(

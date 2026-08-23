@@ -182,6 +182,7 @@ export type DockerGpuPatchSandboxSnapshot = {
 export type DockerGpuPatchFailureKind =
   | "patched_container_failed"
   | "sandbox_error_phase"
+  | "sandbox_deleting_phase"
   | "supervisor_unreachable"
   | "proof_failure"
   | "unknown";

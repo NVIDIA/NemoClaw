@@ -144,7 +144,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
     }
   });
 
-  it("prints a shell-quoted state-directory move after confirming no gateway process remains (#8797)", () => {
+  it("prints a shell-quoted state-directory move after confirming no gateway process remains (#8797, #9293)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
     const stateDir = path.join(dir, "gateway state;echo it's ignored");
     const log = path.join(stateDir, "openshell-gateway.log");
@@ -152,8 +152,8 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
     fs.writeFileSync(
       log,
       [
-        "Error: execution error: migration error: migration 6 was previously applied",
-        "  is missing in the resolved migrations",
+        "Error: execution error: migration error: migration 4 was previously applied but",
+        "  has been modified",
       ].join("\n"),
     );
     try {
@@ -166,6 +166,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
       expect(joined).toContain("cannot use the existing gateway database");
       expect(joined).toContain(`Database: ${path.join(stateDir, "openshell.db")}`);
+      expect(joined).toContain("does not include, or defines with different contents");
       expect(joined).toContain("it'\\''s ignored'");
       expect(joined).toContain("it'\\''s ignored.incompatible'");
       expect(joined).toContain("contains credentials and all registrations");

@@ -44,7 +44,7 @@ describe("native runtime qualification producer plan", () => {
 
     expect(plan.include).toHaveLength(24);
     expect(new Set(plan.include.map((entry) => entry.id)).size).toBe(24);
-    for (const entry of plan.include) {
+    plan.include.forEach((entry) => {
       expect(entry.jobName).toBe(`Native runtime qualification / ${entry.id}`);
       expect(entry.artifactName).toBe(
         `native-runtime-qualification-evidence-${CANDIDATE_SHA}-${entry.id}`,
@@ -56,7 +56,7 @@ describe("native runtime qualification producer plan", () => {
         new Set(entry.case.obligations.map(nativeRuntimeQualificationOperationFile)).size,
       ).toBe(entry.case.obligations.length);
       expect(Object.isFrozen(entry)).toBe(true);
-    }
+    });
     expect(
       plan.include.find(
         (entry) => entry.case.architecture === "amd64" && entry.case.acceleration === "cpu",

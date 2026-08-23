@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
   withProvenManagedGatewayProcess,
   writeManagedGatewayRuntimeProof,
@@ -26,6 +26,14 @@ import {
   type UninstallRunDeps,
   type UninstallRunOptions,
 } from "./run-plan";
+
+const STATIC_TEST_HOME = fs.mkdtempSync(
+  path.join(os.tmpdir(), "nemoclaw-uninstall-gateway-segregation-static-"),
+);
+
+afterAll(() => {
+  fs.rmSync(STATIC_TEST_HOME, { recursive: true, force: true });
+});
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -54,9 +62,7 @@ function externalGatewayProofRunResult(
     (command === "systemctl" &&
       args.includes("--property=MainPID") &&
       ok(`${String(externalPid)}\n`)) ||
-    (command === "ps" &&
-      args.includes("uid=") &&
-      ok(`${String(process.getuid?.() ?? -1)}\n`)) ||
+    (command === "ps" && args.includes("uid=") && ok(`${String(process.getuid?.() ?? -1)}\n`)) ||
     (command === "ps" && args.includes("args=") && ok(`${commandLine}\n`)) ||
     ok()
   );
@@ -218,7 +224,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command === "openshell",
-        env: { HOME: "/home/test" } as NodeJS.ProcessEnv,
+        env: { HOME: STATIC_TEST_HOME } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
         resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
@@ -260,7 +266,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
-        env: { HOME: "/home/test" } as NodeJS.ProcessEnv,
+        env: { HOME: STATIC_TEST_HOME } as NodeJS.ProcessEnv,
         error: vi.fn(),
         existsSync: () => false,
         resolveGatewayTeardownAuthority: () => {
@@ -291,7 +297,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command !== "docker" && command !== "pgrep",
-        env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+        env: { HOME: STATIC_TEST_HOME, TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
         rmSync: vi.fn(),
@@ -322,7 +328,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command !== "docker" && command !== "pgrep",
-        env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+        env: { HOME: STATIC_TEST_HOME, TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
         rmSync: vi.fn(),
@@ -366,9 +372,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         "https-pin-runtime-adapter.lock",
         "https-pin-runtime-adapter.log",
       ];
-      for (const name of adapterStateEntries) {
+      adapterStateEntries.forEach((name) => {
         fs.writeFileSync(path.join(stateDir, name), name.endsWith(".pid") ? "4242" : "state");
-      }
+      });
       const logs: string[] = [];
       const kill = vi.fn(() => true);
       const run = vi.fn((_command: string, _args: string[]) => ok());
@@ -394,9 +400,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(fs.existsSync(path.join(otherEnv, "sandboxes.json"))).toBe(true);
       expect(fs.existsSync(path.join(stateDir, "sandboxes.json"))).toBe(false);
       expect(fs.existsSync(stateDir)).toBe(true);
-      for (const name of adapterStateEntries) {
-        expect(fs.existsSync(path.join(stateDir, name))).toBe(true);
-      }
+      expect(adapterStateEntries.every((name) =>
+          Object.is(fs.existsSync(path.join(stateDir, name)), true))).toBe(true);
       expect(kill).not.toHaveBeenCalled();
       expect(
         run.mock.calls.some(
@@ -405,6 +410,77 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         ),
       ).toBe(false);
       expect(logs).toContain("Sibling gateways remain; kept the shared HTTPS Pin Runtime adapter.");
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("does not scan or signal a sibling Bedrock adapter during selected-gateway uninstall (#9552)", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-bedrock-scope-"));
+    try {
+      const stateDir = path.join(tmpHome, ".nemoclaw");
+      fs.mkdirSync(path.join(stateDir, "gateways", "8091"), { recursive: true });
+      fs.writeFileSync(
+        path.join(stateDir, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "default-box",
+          sandboxes: {
+            "default-box": { name: "default-box", gatewayName: "nemoclaw", gatewayPort: 8080 },
+            "sibling-box": {
+              name: "sibling-box",
+              gatewayName: "nemoclaw-8091",
+              gatewayPort: 8091,
+            },
+          },
+        }),
+      );
+      writeScopedGatewayState(tmpHome);
+      const scannedPorts: string[] = [];
+      const kill = vi.fn((_pid: number) => true);
+      let adapterExited = false;
+
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: true },
+        {
+          commandExists: (command) => command === "lsof" || command === "openshell",
+          env: { HOME: tmpHome, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
+          existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          isTty: false,
+          kill: (pid, _signal) => {
+            adapterExited ||= pid === 95520;
+            return kill(pid);
+          },
+          log: vi.fn(),
+          rmSync: fs.rmSync,
+          run: (command, args) => {
+            switch (command) {
+              case "openshell":
+                return ok(JSON.stringify([{ name: "nemoclaw" }, { name: "nemoclaw-8091" }]));
+              case "lsof":
+                scannedPorts.push(args[1] ?? "");
+                return args[1] === ":11436" ? ok("95520\n") : ok();
+              case "ps":
+                switch (args.at(-1)) {
+                  case "args=":
+                    return ok("/usr/bin/node /opt/nemoclaw/bedrock-runtime-adapter.js\n");
+                  case "user=":
+                    return ok("testuser\n");
+                  case "pid=":
+                    return adapterExited ? { status: 1, stdout: "", stderr: "" } : ok("95520\n");
+                  default:
+                    return ok();
+                }
+              default:
+                return ok();
+            }
+          },
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(scannedPorts).not.toContain(":11436");
+      expect(kill).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
@@ -848,14 +924,15 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const proxyStateEntries = [
         "ollama-proxy-token",
         "ollama-backend",
+        "ollama-backend.json",
         "ollama-auth-proxy.pid",
         "ollama-auth-proxy.status",
       ];
-      for (const entry of proxyStateEntries) {
+      proxyStateEntries.forEach((entry) => {
         const value = entry === "ollama-auth-proxy.pid" ? "4242\n" : `${entry}\n`;
         fs.writeFileSync(path.join(shared, entry), value);
         fs.writeFileSync(path.join(selected, entry), `legacy-${value}`);
-      }
+      });
 
       const runCalls: Array<{ command: string; args: string[] }> = [];
       const dockerCalls: string[][] = [];
@@ -917,9 +994,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(runCalls.some(({ command }) => command === "systemctl")).toBe(false);
       expect(fs.existsSync(path.join(nemoclawConfig, "keep"))).toBe(true);
       expect(kill.mock.calls.every(([pid]) => pid !== 4242)).toBe(true);
-      for (const entry of proxyStateEntries) {
-        expect(fs.existsSync(path.join(shared, entry))).toBe(true);
-      }
+      expect(proxyStateEntries.every((entry) =>
+          Object.is(fs.existsSync(path.join(shared, entry)), true))).toBe(true);
       expect(logs).toContain(
         "Preserving the shared Ollama auth proxy for the remaining gateway ports",
       );
@@ -1278,15 +1354,16 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const proxyStateEntries = [
         "ollama-proxy-token",
         "ollama-backend",
+        "ollama-backend.json",
         "ollama-auth-proxy.pid",
         "ollama-auth-proxy.status",
       ];
-      for (const entry of proxyStateEntries) {
+      proxyStateEntries.forEach((entry) => {
         fs.writeFileSync(
           path.join(stateDir, entry),
           entry === "ollama-auth-proxy.pid" ? "4242\n" : "seeded\n",
         );
-      }
+      });
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
       let proxyProcessIsRunning = true;
@@ -1319,12 +1396,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(logs.join("\n")).toContain("Sibling gateways remain");
       expect(fs.existsSync(path.join(stateDir, "gateways", "8091"))).toBe(true);
       expect(proxyProcessIsRunning).toBe(true);
-      for (const entry of proxyStateEntries) {
-        expect(fs.existsSync(path.join(stateDir, entry))).toBe(true);
-      }
+      expect(proxyStateEntries.every((entry) =>
+          Object.is(fs.existsSync(path.join(stateDir, entry)), true))).toBe(true);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
   });
-
 });

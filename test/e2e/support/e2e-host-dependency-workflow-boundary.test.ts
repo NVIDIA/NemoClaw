@@ -118,16 +118,18 @@ describe("E2E host dependency action boundary (#6961)", () => {
     expect(validateE2eWorkflow(workflow)).toContain("live host dependency setup must fail closed");
   });
 
-  it("executes the host helper with validated packages and bounded retries (#6961)", () => {
-    expect(fs.statSync(SCRIPT_PATH).mode & 0o111).not.toBe(0);
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-dependency-script-"));
-    const fakeBin = path.join(directory, "bin");
-    const callsPath = path.join(directory, "sudo-calls");
-    fs.mkdirSync(fakeBin);
-    writeExecutable(path.join(fakeBin, "sleep"), "#!/usr/bin/env bash\nexit 0\n");
-    writeExecutable(
-      path.join(fakeBin, "sudo"),
-      `#!/usr/bin/env bash
+  it.each(["", "   ", "expect\ncurl", "curl"])(
+    "executes the host helper with validated packages and bounded retries [%s] (#6961)",
+    (invalidPackages) => {
+      expect(fs.statSync(SCRIPT_PATH).mode & 0o111).not.toBe(0);
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-dependency-script-"));
+      const fakeBin = path.join(directory, "bin");
+      const callsPath = path.join(directory, "sudo-calls");
+      fs.mkdirSync(fakeBin);
+      writeExecutable(path.join(fakeBin, "sleep"), "#!/usr/bin/env bash\nexit 0\n");
+      writeExecutable(
+        path.join(fakeBin, "sudo"),
+        `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "\${SUDO_CALLS}"
 if [[ "$1 $2" == "apt-get update" ]]; then
@@ -142,57 +144,56 @@ if [[ "$1 $2" == "apt-get install" ]]; then
 fi
 exit 64
 `,
-    );
+      );
 
-    const runSetup = (packages: string, successAttempt = 1, args: string[] = []) => {
-      fs.rmSync(callsPath, { force: true });
-      return spawnSync(SCRIPT_PATH, args, {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          APT_UPDATE_SUCCESS_ATTEMPT: String(successAttempt),
-          HOST_DEPENDENCY_PACKAGES: packages,
-          PATH: `${fakeBin}:${process.env.PATH}`,
-          SUDO_CALLS: callsPath,
-        },
-      });
-    };
+      const runSetup = (packages: string, successAttempt = 1, args: string[] = []) => {
+        fs.rmSync(callsPath, { force: true });
+        return spawnSync(SCRIPT_PATH, args, {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            APT_UPDATE_SUCCESS_ATTEMPT: String(successAttempt),
+            HOST_DEPENDENCY_PACKAGES: packages,
+            PATH: `${fakeBin}:${process.env.PATH}`,
+            SUDO_CALLS: callsPath,
+          },
+        });
+      };
 
-    try {
-      const unexpectedArgument = runSetup("expect", 1, ["unexpected"]);
-      expect(unexpectedArgument.status).toBe(1);
-      expect(unexpectedArgument.stderr).toContain("does not accept arguments");
-      expect(fs.existsSync(callsPath)).toBe(false);
+      try {
+        const unexpectedArgument = runSetup("expect", 1, ["unexpected"]);
+        expect(unexpectedArgument.status).toBe(1);
+        expect(unexpectedArgument.stderr).toContain("does not accept arguments");
+        expect(fs.existsSync(callsPath)).toBe(false);
 
-      for (const invalidPackages of ["", "   ", "expect\ncurl", "curl"]) {
         const rejected = runSetup(invalidPackages);
         expect(rejected.status).toBe(1);
         expect(fs.existsSync(callsPath)).toBe(false);
+
+        const retried = runSetup("expect iptables", 3);
+        expect(retried.status, retried.stderr).toBe(0);
+        expect(fs.readFileSync(callsPath, "utf8").trim().split("\n")).toEqual([
+          "apt-get update",
+          "apt-get update",
+          "apt-get update",
+          "apt-get install -y --no-install-recommends expect iptables",
+        ]);
+
+        const exhausted = runSetup("expect", 4);
+        expect(exhausted.status).toBe(1);
+        expect(fs.readFileSync(callsPath, "utf8").trim().split("\n")).toEqual([
+          "apt-get update",
+          "apt-get update",
+          "apt-get update",
+        ]);
+        expect(`${exhausted.stdout}${exhausted.stderr}`).toContain(
+          "apt-get update failed after 3 attempts",
+        );
+      } finally {
+        fs.rmSync(directory, { force: true, recursive: true });
       }
-
-      const retried = runSetup("expect iptables", 3);
-      expect(retried.status, retried.stderr).toBe(0);
-      expect(fs.readFileSync(callsPath, "utf8").trim().split("\n")).toEqual([
-        "apt-get update",
-        "apt-get update",
-        "apt-get update",
-        "apt-get install -y --no-install-recommends expect iptables",
-      ]);
-
-      const exhausted = runSetup("expect", 4);
-      expect(exhausted.status).toBe(1);
-      expect(fs.readFileSync(callsPath, "utf8").trim().split("\n")).toEqual([
-        "apt-get update",
-        "apt-get update",
-        "apt-get update",
-      ]);
-      expect(`${exhausted.stdout}${exhausted.stderr}`).toContain(
-        "apt-get update failed after 3 attempts",
-      );
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
-  });
+    },
+  );
 
   it("keeps cloud-onboard host dependencies before workspace preparation", () => {
     const workflow = readWorkflow();

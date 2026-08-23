@@ -314,11 +314,11 @@ describe("onboard JSONL events", () => {
     stop();
 
     expect(lines).toHaveLength(2);
-    for (const line of lines) {
+    lines.forEach((line) => {
       expect(line.endsWith("\n")).toBe(true);
       expect(line.slice(0, -1)).not.toContain("\n");
       expect(JSON.parse(line)).toMatchObject({ schemaVersion: 1, session: CURRENT_SESSION_ID });
-    }
+    });
   });
 
   it("keeps human progress off stdout while event mode is active", async () => {

@@ -249,6 +249,25 @@ describe("parseSandboxMessagingPlan", () => {
     ).toBeNull();
   });
 
+  it("rejects agent render entries owned by a different plan agent", () => {
+    expect(
+      parseSandboxMessagingPlan(
+        makePlan({
+          agentRender: [
+            {
+              channelId: "telegram",
+              agent: "hermes",
+              target: "~/.hermes/.env",
+              kind: "env-lines",
+              lines: [],
+              templateRefs: [],
+            },
+          ],
+        }),
+      ),
+    ).toBeNull();
+  });
+
   it("rejects a lone noncanonical channel id even when related ids are canonical", () => {
     const source = makePlan();
     expect(

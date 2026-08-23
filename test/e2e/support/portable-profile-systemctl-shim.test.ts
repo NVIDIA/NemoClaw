@@ -84,6 +84,12 @@ const fs = require("node:fs");
 const net = require("node:net");
 const args = process.argv.slice(2);
 if (args[0] === "info") {
+  if (args.includes("{{.Host.CgroupManager}}")) {
+    const source = fs.readFileSync(process.env.CONTAINERS_CONF, "utf8");
+    const configured = source.match(/^cgroup_manager = "([^"]+)"$/m)?.[1] ?? "";
+    process.stdout.write((process.env.FAKE_PODMAN_CGROUP_MANAGER ?? configured) + "\\n");
+    process.exit(0);
+  }
   process.stdout.write(process.env.FAKE_PODMAN_SOCKET + "\\n");
   process.exit(0);
 }
@@ -358,6 +364,28 @@ async function waitForFileText(filePath: string, text: string): Promise<void> {
     interval: 50,
     timeout: 5_000,
   });
+}
+
+function readGatewayCommands(scope: FixtureScope): Record<string, unknown>[] {
+  return fs
+    .readFileSync(scope.gatewayCommandLog, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+async function waitForGatewayCommands(
+  scope: FixtureScope,
+  expectedKinds: string[],
+): Promise<Record<string, unknown>[]> {
+  return vi.waitFor(
+    () => {
+      const commands = readGatewayCommands(scope);
+      expect(commands.map((command) => command.kind)).toEqual(expectedKinds);
+      return commands;
+    },
+    { timeout: 5_000 },
+  );
 }
 
 function pidIsActive(pid: number): boolean {
@@ -655,12 +683,7 @@ describe("portable profile systemctl fixture", () => {
         expect(activeIdentity.stdout).toContain("ActiveState=active\n");
         expect(activeIdentity.stdout).toContain(`MainPID=${String(gatewayProcess.pid)}\n`);
 
-        const commands = fs
-          .readFileSync(scope.gatewayCommandLog, "utf8")
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line) as Record<string, unknown>);
-        expect(commands.map((command) => command.kind)).toEqual(["generate-certs", "serve"]);
+        const commands = await waitForGatewayCommands(scope, ["generate-certs", "serve"]);
         expect(commands[0]).toMatchObject({
           args: [
             "generate-certs",
@@ -747,12 +770,7 @@ describe("portable profile systemctl fixture", () => {
         );
         expect(fs.existsSync(scope.gatewayPidFile)).toBe(false);
         expect(fs.existsSync(gatewayLaunchPidFile)).toBe(true);
-        const commands = fs
-          .readFileSync(scope.gatewayCommandLog, "utf8")
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line) as Record<string, unknown>);
-        expect(commands.map((command) => command.kind)).toEqual(["generate-certs", "serve"]);
+        const commands = await waitForGatewayCommands(scope, ["generate-certs", "serve"]);
         const gatewayPid = commands[1]!.pid as number;
         expect(readFixtureProcessRecord(gatewayLaunchPidFile).pid).toBe(gatewayPid);
         expect(pidIsActive(gatewayPid)).toBe(true);
@@ -805,12 +823,7 @@ describe("portable profile systemctl fixture", () => {
         expect(launchedPid).not.toBeNull();
         const gatewayPid = Number(launchedPid![1]);
         await vi.waitFor(() => expect(pidIsActive(gatewayPid)).toBe(false));
-        const commands = fs
-          .readFileSync(scope.gatewayCommandLog, "utf8")
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line) as Record<string, unknown>);
-        expect(commands.map((command) => command.kind)).toEqual(["generate-certs"]);
+        await waitForGatewayCommands(scope, ["generate-certs"]);
       } finally {
         await cleanFixture(scope);
       }
@@ -939,10 +952,15 @@ describe("portable profile systemctl fixture", () => {
     },
   );
 
-  it(
-    "serializes try-restart with a public-socket request and leaves only the recorded backend process active (#9006)",
+  it.each([
+    { scenario: "activator PID" },
+    { scenario: "service PID" },
+    { scenario: "public socket" },
+    { scenario: "backend socket" },
+  ])(
+    "serializes try-restart with a public-socket request and leaves only the recorded backend process active [$scenario] (#9006)",
     { timeout: 30_000 },
-    async () => {
+    async ({ scenario }) => {
       const scope = createFixture();
       const refreshGate = path.join(scope.directory, "refresh-gate");
       const servicePidFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.pid");
@@ -985,14 +1003,15 @@ describe("portable profile systemctl fixture", () => {
 
         await cleanupPortableProfileSystemctlFixture(scope.runtimeDir);
         expect(backendPids.every((pid) => !pidIsActive(pid))).toBe(true);
-        for (const artifact of [
-          activatorPidFile,
-          servicePidFile,
-          scope.socketPath,
-          backendSocketPath,
-        ]) {
-          expect(fs.existsSync(artifact), artifact).toBe(false);
-        }
+        const artifact = (
+          {
+            "activator PID": activatorPidFile,
+            "service PID": servicePidFile,
+            "public socket": scope.socketPath,
+            "backend socket": backendSocketPath,
+          } as const
+        )[scenario]!;
+        expect(fs.existsSync(artifact), artifact).toBe(false);
       } finally {
         await cleanFixture(scope);
       }
@@ -1029,10 +1048,15 @@ describe("portable profile systemctl fixture", () => {
     },
   );
 
-  it(
-    "stops both fixture processes and removes both sockets during cleanup (#9006)",
+  it.each([
+    { scenario: "activator PID" },
+    { scenario: "service PID" },
+    { scenario: "public socket" },
+    { scenario: "backend socket" },
+  ])(
+    "stops both fixture processes and removes both sockets during cleanup [$scenario] (#9006)",
     { timeout: 30_000 },
-    async () => {
+    async ({ scenario }) => {
       const scope = createFixture();
       const activatorPidFile = path.join(scope.runtimeDir, "nemoclaw-podman-socket-activator.pid");
       const servicePidFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.pid");
@@ -1056,14 +1080,15 @@ describe("portable profile systemctl fixture", () => {
         await cleanupPortableProfileSystemctlFixture(scope.runtimeDir);
 
         expect(pids.every((pid) => !pidIsActive(pid))).toBe(true);
-        for (const artifact of [
-          activatorPidFile,
-          servicePidFile,
-          scope.socketPath,
-          backendSocketPath,
-        ]) {
-          expect(fs.existsSync(artifact), artifact).toBe(false);
-        }
+        const artifact = (
+          {
+            "activator PID": activatorPidFile,
+            "service PID": servicePidFile,
+            "public socket": scope.socketPath,
+            "backend socket": backendSocketPath,
+          } as const
+        )[scenario]!;
+        expect(fs.existsSync(artifact), artifact).toBe(false);
       } finally {
         await cleanFixture(scope);
       }
@@ -1335,11 +1360,11 @@ describe("portable profile systemctl fixture", () => {
         ["--user", "start", "podman.socket", "trailing"],
         ["--user", "enable", "podman.socket"],
       ];
-      for (const args of driftedCommands) {
+      driftedCommands.forEach((args) => {
         const result = systemctl(scope, args);
         expect(result.status, args.join(" ")).toBe(64);
         expect(result.stderr).toContain("unexpected user-service command:");
-      }
+      });
     } finally {
       fs.rmSync(scope.directory, { force: true, recursive: true });
     }
@@ -1355,34 +1380,121 @@ describe("portable profile systemctl fixture", () => {
         ["--user", "enable", "--now", "nemoclaw-openshell-gateway"],
         ["--user", "is-active", "nemoclaw-openshell-gateway", "--quiet"],
       ];
-      for (const args of driftedCommands) {
+      driftedCommands.forEach((args) => {
         const result = systemctl(scope, args);
         expect(result.status, args.join(" ")).toBe(64);
         expect(result.stderr).toContain("unexpected user-service command:");
-      }
+      });
     } finally {
       fs.rmSync(scope.directory, { force: true, recursive: true });
     }
   });
 
-  it("binds portable-launch setup and always-run cleanup to the shared systemctl fixture (#9006)", () => {
+  it("binds portable-launch to delegated systemd Podman and disposable BuildKit", () => {
     const provision = portableLaunchStep("Provision restricted rootless Linux runtime").run ?? "";
-    expect(provision).toContain(
-      'install -m 700 test/e2e/fixtures/portable-profile-systemctl-shim.sh "$shim_dir/systemctl"',
+    expect(provision).not.toContain("portable-profile-systemctl-shim.sh");
+    expect(provision).toContain('sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" /run/nemoclaw');
+    expect(provision).toContain('containers_conf="/run/nemoclaw/portable-containers.conf"');
+    expect(provision).toContain("podman.service.d/90-nemoclaw-cgroup-manager.conf");
+    expect(provision).toContain("user@.service.d/90-nemoclaw-cpu-delegation.conf");
+    expect(provision).toContain("/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf");
+    expect(provision).toContain("user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf");
+    expect(provision).toContain("Delegate=cpu memory pids");
+    expect(provision.match(/CPUWeight=100/gu)).toHaveLength(2);
+    expect(provision).toContain('sudo systemctl stop "user@${uid}.service"');
+    expect(provision).toContain("sudo systemctl daemon-reload");
+    expect(provision).toContain('sudo systemctl start "user@${uid}.service"');
+    expect(provision).toContain("/usr/bin/systemctl --user start podman.socket");
+    expect(provision).toContain("inspectPortableCpuDelegation");
+    const podmanConfigIndex = provision.indexOf('cgroup_manager = "systemd"');
+    expect(podmanConfigIndex).toBeGreaterThanOrEqual(0);
+    expect(podmanConfigIndex).toBeLessThan(
+      provision.indexOf('sudo systemctl start "user@${uid}.service"'),
     );
-    expect(provision).toContain("systemctl --user start podman.socket");
     const runtimeExportIndex = provision.indexOf("XDG_RUNTIME_DIR=%s");
     expect(runtimeExportIndex).toBeGreaterThanOrEqual(0);
     expect(runtimeExportIndex).toBeLessThan(
-      provision.indexOf("systemctl --user start podman.socket"),
+      provision.indexOf("/usr/bin/systemctl --user start podman.socket"),
     );
 
+    const buildkit = portableLaunchStep("Prove nested BuildKit on the portable Podman socket");
+    expect(buildkit.run).toContain("docker buildx create");
+    expect(buildkit.run).toContain("--driver docker-container");
+    expect(buildkit.run).toContain('"$DOCKER_HOST"');
+    expect(buildkit.run).toContain('docker buildx inspect "$builder_name" --bootstrap');
+    expect(buildkit.run).toContain("docker buildx build");
+
     const cleanup = portableLaunchStep("Clean up portable runtime");
+    const cleanupRun = cleanup.run ?? "";
     expect(cleanup.if).toBe("always()");
-    expect(cleanup.run).toContain('runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"');
-    expect(cleanup.run).toContain(
-      'import { cleanupPortableProfileSystemctlFixture } from "./test/e2e/fixtures/portable-profile-systemctl.ts"; await cleanupPortableProfileSystemctlFixture(process.argv[1]);',
+    expect(cleanupRun).toContain('docker buildx rm "$builder_name"');
+    expect(cleanupRun).toContain("Delegate=cpu memory pids\\n'");
+    expect(cleanupRun).toContain("CPUWeight=100\\n'");
+    expect(cleanupRun).toContain("sudo systemctl daemon-reload");
+    expect(cleanupRun.indexOf('docker buildx rm "$builder_name"')).toBeLessThan(
+      cleanupRun.indexOf("podman system reset"),
     );
-    expect(cleanup.run).toContain('"$runtime_dir"');
+    expect(cleanupRun).toContain(
+      "rm -f -- /run/nemoclaw/portable-inference.json /run/nemoclaw/.portable-inference.json.tmp",
+    );
+  });
+
+  it("creates the Portable Podman configuration and rejects a non-systemd cgroup manager", async () => {
+    const scope = createFixture();
+    const provision = portableLaunchStep("Provision restricted rootless Linux runtime").run ?? "";
+    const configStart = provision.indexOf('if test -e "$containers_conf"');
+    const configEnd = provision.indexOf("\n\ninstall_fixture_drop_in", configStart);
+    const managerStart = provision.indexOf('cgroup_manager="$(podman info');
+    const managerEnd = provision.indexOf("\npodman --version", managerStart);
+    expect([configStart, configEnd, managerStart, managerEnd]).not.toContain(-1);
+    const containersConf = path.join(scope.directory, "portable-containers.conf");
+    const receipt = path.join(scope.directory, "receipt");
+    try {
+      const configure = spawnSync(
+        "bash",
+        [
+          "-c",
+          `set -euo pipefail\ncontainers_conf="$1"\nreceipt="$2"\n${provision.slice(configStart, configEnd)}`,
+          "configure-podman",
+          containersConf,
+          receipt,
+        ],
+        { encoding: "utf8", env: scope.env },
+      );
+      expect(configure.status, configure.stderr).toBe(0);
+      expect(fs.readFileSync(containersConf, "utf8")).toBe(
+        '[engine]\ncgroup_manager = "systemd"\n',
+      );
+      expect(fs.statSync(containersConf).mode & 0o777).toBe(0o600);
+      expect(fs.readFileSync(receipt, "utf8")).toBe(`file\tpodman-config\t${containersConf}\n`);
+      expect(
+        systemctl(scope, [
+          "--user",
+          "set-environment",
+          "NETAVARK_FW=iptables",
+          `CONTAINERS_CONF=${containersConf}`,
+        ]).status,
+      ).toBe(0);
+      expect(systemctl(scope, ["--user", "start", "podman.socket"]).status).toBe(0);
+      expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
+      const managerCheck = provision.slice(managerStart, managerEnd);
+      const runManagerCheck = (manager?: string) =>
+        spawnSync("bash", ["-c", `set -euo pipefail\n${managerCheck}`], {
+          encoding: "utf8",
+          env: {
+            ...scope.env,
+            CONTAINERS_CONF: containersConf,
+            FAKE_PODMAN_CGROUP_MANAGER: manager,
+          },
+        });
+      expect(runManagerCheck().status).toBe(0);
+      const rejected = runManagerCheck("cgroupfs");
+      expect(rejected.status).not.toBe(0);
+      expect(rejected.stderr).toContain(
+        "Portable Podman must use the systemd cgroup manager; observed: cgroupfs",
+      );
+    } finally {
+      await cleanFixture(scope);
+    }
   });
 });

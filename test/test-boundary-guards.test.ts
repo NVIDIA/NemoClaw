@@ -49,6 +49,14 @@ function fixtureRepoPath(root: string, file: string): string {
   return path.relative(REPO_ROOT, path.join(root, file)).split(path.sep).join("/");
 }
 
+function writeSourceLoaderFixture(directory: string): void {
+  fs.writeFileSync(path.join(directory, "value.ts"), 'export const marker = "source";\n');
+  fs.writeFileSync(
+    path.join(directory, "parent.cjs"),
+    'process.stdout.write(require("./value.js").marker);\n',
+  );
+}
+
 describe("compiled-test import boundary", () => {
   it("detects every supported compiled-internal reference shape", () => {
     const specifier = (target: string) => ["..", "dist", target].join("/");
@@ -883,13 +891,8 @@ describe("CommonJS source runtime", () => {
     const outsideFixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-loader-test-"));
 
     try {
-      for (const directory of [sourceFixture, outsideFixture]) {
-        fs.writeFileSync(path.join(directory, "value.ts"), 'export const marker = "source";\n');
-        fs.writeFileSync(
-          path.join(directory, "parent.cjs"),
-          'process.stdout.write(require("./value.js").marker);\n',
-        );
-      }
+      writeSourceLoaderFixture(sourceFixture);
+      writeSourceLoaderFixture(outsideFixture);
 
       const run = (directory: string) =>
         spawnSync(

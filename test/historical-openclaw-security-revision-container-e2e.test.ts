@@ -442,29 +442,34 @@ describe("Historical OpenClaw security revision container E2E contract (#7272)",
     },
   );
 
-  test("builds a bounded least-privilege Docker boundary without host networking", () => {
-    const args = secureDockerRunArgs({
-      container: "security-e2e",
-      fixtureVolume: "security-e2e-fixture",
-      image: "candidate:local",
-      script: "true",
-      volume: "security-e2e-state",
-    });
-    for (const [option, value] of [
-      ["--user", "sandbox:sandbox"],
-      ["--network", "bridge"],
-      ["--cap-drop", "ALL"],
-      ["--security-opt", "no-new-privileges"],
-    ] as const) {
+  test.each(
+    [
+        ["--user", "sandbox:sandbox"],
+        ["--network", "bridge"],
+        ["--cap-drop", "ALL"],
+        ["--security-opt", "no-new-privileges"],
+    ] as const,
+  )(
+    "builds a bounded least-privilege Docker boundary without host networking [case %#]",
+    (option, value) => {
+      const args = secureDockerRunArgs({
+        container: "security-e2e",
+        fixtureVolume: "security-e2e-fixture",
+        image: "candidate:local",
+        script: "true",
+        volume: "security-e2e-state",
+      });
+
       const optionIndex = args.indexOf(option);
       expect(args.slice(optionIndex, optionIndex + 2)).toEqual([option, value]);
-    }
-    expect(args).not.toContain("host");
-    expect(args).toContain("--read-only");
-    expect(args.join(" ")).not.toContain("docker.sock");
-    const mounts = args.flatMap((value, index) => (value === "--mount" ? [args[index + 1]] : []));
-    expect(mounts.every((mount) => mount?.startsWith("type=volume,source="))).toBe(true);
-  });
+
+      expect(args).not.toContain("host");
+      expect(args).toContain("--read-only");
+      expect(args.join(" ")).not.toContain("docker.sock");
+      const mounts = args.flatMap((value, index) => (value === "--mount" ? [args[index + 1]] : []));
+      expect(mounts.every((mount) => mount?.startsWith("type=volume,source="))).toBe(true);
+    },
+  );
 
   test("models rejection of an OpenClaw state directory outside the container home", () => {
     const args = secureDockerRunArgs({

@@ -13,20 +13,20 @@ import { buildStateFileRestoreCommand } from "./state-file-restore";
 const STATE_FILE = { path: "openclaw.json", strategy: "copy" } as const;
 const fixtures: string[] = [];
 
-function runRestore(refreshOpenClawConfigHash: boolean): {
-  configPath: string;
-  stateDir: string;
-} {
+function runRestore(
+  refreshOpenClawConfigHash: boolean,
+  occupy: (stateDir: string) => void = () => undefined,
+): { configPath: string; stateDir: string; status: number | null } {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-file-mode-"));
   fixtures.push(fixture);
   const stateDir = path.join(fixture, ".openclaw");
   fs.mkdirSync(stateDir);
+  occupy(stateDir);
   const command = buildStateFileRestoreCommand(stateDir, STATE_FILE, refreshOpenClawConfigHash);
   const result = spawnSync("bash", ["-c", command], {
     input: Buffer.from('{"gateway":{"mode":"local"}}\n'),
   });
-  expect(result.status, result.stderr.toString()).toBe(0);
-  return { configPath: path.join(stateDir, STATE_FILE.path), stateDir };
+  return { configPath: path.join(stateDir, STATE_FILE.path), stateDir, status: result.status };
 }
 
 function mode(filePath: string): number {
@@ -41,16 +41,22 @@ afterEach(() => {
 
 describe("state-file restore modes", () => {
   it("restores an OpenClaw config with the mutable managed-guard mode", () => {
-    const { configPath, stateDir } = runRestore(true);
+    const { configPath, stateDir, status } = runRestore(true);
 
+    expect(status).toBe(0);
     expect(mode(configPath)).toBe(0o660);
     expect(mode(`${configPath}.last-good`)).toBe(0o660);
     expect(mode(path.join(stateDir, ".config-hash"))).toBe(0o660);
+
+    // A sandbox that cannot publish the config hash must not report a restore.
+    const blocked = runRestore(true, (dir) => fs.mkdirSync(path.join(dir, ".config-hash")));
+    expect(blocked.status).not.toBe(0);
   });
 
   it("keeps the restricted mode for ordinary copied state files", () => {
-    const { configPath } = runRestore(false);
+    const { configPath, status } = runRestore(false);
 
+    expect(status).toBe(0);
     expect(mode(configPath)).toBe(0o640);
   });
 });

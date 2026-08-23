@@ -267,11 +267,14 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
 
   it("drives every YAML-selected probe with declarative bounds and returns sanitized evidence (#8144)", async () => {
     const requestedMaxTokens: number[] = [];
+    const requestBodySizes: number[] = [];
+    let healthProbes = 0;
     let longRequest = 0;
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       switch (url) {
         case "http://127.0.0.1:18081/health":
+          healthProbes += 1;
           return new Response("{}", { status: 200 });
         case "http://127.0.0.1:18081/v1/models":
           return jsonResponse({ data: [{ id: MODEL }], object: "list" });
@@ -295,12 +298,25 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
           expect(url).toBe("http://127.0.0.1:18081/v1/chat/completions");
       }
       const body = String(init?.body ?? "");
+      const requestBodyBytes = new TextEncoder().encode(body).byteLength;
+      requestBodySizes.push(requestBodyBytes);
       const authorization = new Headers(init?.headers).get("authorization");
       switch (true) {
         case authorization !== AUTHORIZATION:
           return jsonResponse({ error: {} }, 401);
         case body === "{":
           return jsonResponse({ error: {} }, 400);
+        case requestBodyBytes === 50_000:
+          return jsonResponse(
+            {
+              error: {
+                code: "request_body_too_large",
+                message: "Request body exceeds the declared limit.",
+                type: "invalid_request_error",
+              },
+            },
+            413,
+          );
       }
 
       const request = JSON.parse(body) as JsonObject;
@@ -395,6 +411,16 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
         uiHttpStatus: 404,
       },
       malformedRequest: { httpStatus: 400, ok: true },
+      requestBodyLimit: {
+        acceptedBytes: 32768,
+        acceptedHttpStatus: 200,
+        continuationHealthHttpStatus: 200,
+        continuationHttpStatus: 200,
+        errorCode: "request_body_too_large",
+        errorType: "invalid_request_error",
+        rejectedBytes: 50000,
+        rejectedHttpStatus: 413,
+      },
       metrics: { requiredSeries: 11, unauthenticatedHttpStatus: 401 },
       properties: { metrics: true, model: MODEL, modelPath: MODEL_FILE },
       clientTimeout: { limitMilliseconds: 10, recovered: true },
@@ -405,6 +431,12 @@ describe("llama.cpp DGX Spark protocol qualification", () => {
       usage: { completionTokens: 2, promptTokens: 5, totalTokens: 7 },
     });
     expect(longRequest).toBe(2);
+    expect(healthProbes).toBe(2);
+    expect(
+      requestBodySizes.filter(
+        (size) => size >= plan.recipe.serve.limits.maxRequestBodyBytes,
+      ),
+    ).toEqual([32768, 50000]);
     expect(requestedMaxTokens).toEqual(
       expect.arrayContaining([
         plan.qualification.probeBounds.maxTokens.synchronousChat,

@@ -82,15 +82,15 @@ describe("prepareTargetPr", () => {
     const dedicated = path.join(parent, "pr-workdir");
 
     expect(validatePrepareTargetDirectory(dedicated)).toBe(path.resolve(dedicated));
-    for (const unsafe of ["", path.parse(dedicated).root, parent, path.join(parent, "repo")]) {
+    ["", path.parse(dedicated).root, parent, path.join(parent, "repo")].forEach((unsafe) => {
       expect(() => validatePrepareTargetDirectory(unsafe)).toThrow(PrepareTargetPrError);
       expect(() => validatePrepareTargetDirectory(unsafe)).toThrow(/target directory|pr-workdir/u);
-    }
-    for (const currentDirectory of [dedicated, path.join(dedicated, "checkout")]) {
+    });
+    [dedicated, path.join(dedicated, "checkout")].forEach((currentDirectory) => {
       expect(() => validatePrepareTargetDirectory(dedicated, currentDirectory)).toThrow(
         /pr-workdir/u,
       );
-    }
+    });
   });
 
   it("fetches, verifies SHAs, and exports env on the pull_request_target path", () => {

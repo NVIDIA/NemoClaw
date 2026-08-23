@@ -41,17 +41,6 @@ const MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_NAME =
   "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT }}";
 const MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_PATH =
   "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}/";
-const RELEASE_QUALIFICATION_WAIVER_UPLOAD_CONTRACT: WorkflowStep = {
-  name: "Upload release qualification waiver evidence",
-  if: "${{ inputs.release_qualification_waived_jobs != '' }}",
-  uses: UPLOAD_ARTIFACT_ACTION,
-  with: {
-    name: "release-qualification-waiver-${{ github.run_id }}-${{ github.run_attempt }}",
-    path: "${{ runner.temp }}/release-qualification-waiver/waiver.json",
-    "if-no-files-found": "error",
-    "retention-days": 30,
-  },
-};
 const NATIVE_RUNTIME_AGGREGATE_UPLOAD_CONTRACT: WorkflowStep = {
   name: "Upload aggregate evidence",
   uses: UPLOAD_ARTIFACT_ACTION,
@@ -112,13 +101,6 @@ function isExactManagedImageBuildCacheUpload(jobName: string, step: WorkflowStep
   );
 }
 
-function isExactReleaseQualificationWaiverUpload(jobName: string, step: WorkflowStep): boolean {
-  return (
-    jobName === "release-qualification" &&
-    isDeepStrictEqual(step, RELEASE_QUALIFICATION_WAIVER_UPLOAD_CONTRACT)
-  );
-}
-
 function isExactNativeRuntimeAggregateUpload(jobName: string, step: WorkflowStep): boolean {
   return (
     jobName === "native-runtime-qualification-producer-aggregate" &&
@@ -154,7 +136,21 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
       name: "staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}",
       path: [
         "${{ steps.workspace.outputs.work_dir }}/lane.log",
-        "${{ steps.workspace.outputs.work_dir }}/launchable-image.json",
+        "${{ steps.workspace.outputs.work_dir }}/launchable-e2e.json",
+        "${{ steps.workspace.outputs.work_dir }}/full-e2e.log",
+        "${{ steps.workspace.outputs.work_dir }}/cleanup.json",
+        "",
+      ].join("\n"),
+    },
+  ],
+  [
+    "staging-brev-launchable-identity",
+    {
+      name: "staging-brev-launchable-identity-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}",
+      path: [
+        "${{ steps.workspace.outputs.work_dir }}/lane.log",
+        "${{ steps.workspace.outputs.work_dir }}/launchable-identity.json",
+        "${{ steps.workspace.outputs.work_dir }}/cleanup.json",
         "",
       ].join("\n"),
     },
@@ -173,6 +169,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
         "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/dcode-base-image.json",
         "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
+        "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json",
         "e2e-artifacts/live/risk-signal.json",
         "e2e-artifacts/live/${{ matrix.id }}/actions/",
         "e2e-artifacts/live/${{ matrix.id }}/logs/",
@@ -265,6 +262,7 @@ const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
   ["native-runtime-qualification-podman-toolchain", "success()"],
   ["native-runtime-qualification-producer", "success()"],
   ["staging-brev-launchable", "${{ always() && steps.workspace.outputs.work_dir != '' }}"],
+  ["staging-brev-launchable-identity", "${{ always() && steps.workspace.outputs.work_dir != '' }}"],
   ["mcp-bridge", MCP_SCANNED_UPLOAD_CONDITION],
   ["mcp-bridge-dev", MCP_SCANNED_UPLOAD_CONDITION],
   ["openshell-dev-artifact", "${{ always() }}"],
@@ -464,7 +462,6 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         uses.startsWith(UPLOAD_ARTIFACT_ACTION_PREFIX) &&
         !isExactCommitCliArtifactUpload &&
         !isExactManagedImageBuildCacheUpload(jobName, step) &&
-        !isExactReleaseQualificationWaiverUpload(jobName, step) &&
         !isExactNativeRuntimeAggregateUpload(jobName, step)
       ) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);

@@ -3,8 +3,8 @@
 
 import {
   canonicalEndpoint,
-  endpointUrlHasUserinfoQueryOrFragment,
   normalizeProviderBaseUrl,
+  unsafeEndpointUrlViolation,
 } from "../core/url-utils";
 import { applyCompatibleEndpointContextWindow } from "../inference/compatible-endpoint-context";
 import type { TrustedPrivateEndpointCapability } from "../inference/endpoint-ssrf-preflight";
@@ -15,7 +15,10 @@ import type { NvidiaFeaturedModelSession } from "./nvidia-featured-model-selecti
 import { exitOnboardFromPrompt, getNavigationChoice } from "./prompt-helpers";
 import type { ReasoningEffort } from "./reasoning-mode";
 
-export { createNvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
+export {
+  createNvidiaFeaturedModelSession,
+  selectFeaturedModelAfterCredentialPrompt,
+} from "./nvidia-featured-model-selection";
 
 export type SetupNimSelectionBackNavigation = Readonly<{ kind: "NEMOCLAW_BACK_TO_SELECTION" }>;
 
@@ -101,10 +104,13 @@ export async function resolveCompatibleEndpointInput(args: {
   nonInteractive: boolean;
   prompt: (message: string) => Promise<string>;
 }): Promise<string> {
-  const envUrl = (args.envUrl || "").trim();
-  const recoveredUrl = (args.recoveredEndpointUrl || "").trim();
+  const envInput = args.envUrl || "";
+  const recoveredInput = args.recoveredEndpointUrl || "";
+  const envUrl = envInput.trim();
+  const recoveredUrl = recoveredInput.trim();
   const defaultEndpointUrl = envUrl || recoveredUrl;
-  if (args.nonInteractive) return defaultEndpointUrl;
+  const defaultEndpointInput = envUrl ? envInput : recoveredUrl ? recoveredInput : "";
+  if (args.nonInteractive) return defaultEndpointInput;
   return (
     (await args.prompt(
       defaultEndpointUrl
@@ -112,7 +118,7 @@ export async function resolveCompatibleEndpointInput(args: {
         : args.kind === "openai"
           ? "  OpenAI-compatible base URL (e.g., https://openrouter.ai): "
           : "  Anthropic-compatible base URL (e.g., https://proxy.example.com): ",
-    )) || defaultEndpointUrl
+    )) || defaultEndpointInput
   );
 }
 
@@ -142,21 +148,24 @@ export async function resolveCompatibleEndpointSelection(args: {
   if (navigation === "exit") {
     exitOnboardFromPrompt();
   }
-  // #9106: reject instead of silently stripping components that NemoClaw
-  // cannot forward to the endpoint.
-  if (endpointUrlHasUserinfoQueryOrFragment(endpointInput)) {
-    console.error("  Endpoint URL must not contain userinfo, query, or fragment components.");
-    // canonicalEndpoint returns null unless the stripped base is a
-    // credential-free http(s) URL, so the hint never echoes userinfo or
-    // query values.
-    const strippedBaseUrl = canonicalEndpoint(
-      normalizeProviderBaseUrl(endpointInput, args.kind),
-      args.kind,
-    );
-    if (strippedBaseUrl) {
-      console.error(
-        `  NemoClaw does not forward these components to the endpoint. Use: ${strippedBaseUrl}`,
+  // #9106/#9301: reject unsafe endpoint input here, before any network
+  // request, provider registration, registry write, or sandbox mutation.
+  const endpointViolation = unsafeEndpointUrlViolation(endpointInput);
+  if (endpointViolation) {
+    console.error(`  Endpoint URL ${endpointViolation.reason}`);
+    if (endpointViolation.kind === "userinfo-query-fragment") {
+      // canonicalEndpoint returns null unless the stripped base is a
+      // credential-free http(s) URL, so the hint never echoes userinfo or
+      // query values.
+      const strippedBaseUrl = canonicalEndpoint(
+        normalizeProviderBaseUrl(endpointInput, args.kind),
+        args.kind,
       );
+      if (strippedBaseUrl) {
+        console.error(
+          `  NemoClaw does not forward these components to the endpoint. Use: ${strippedBaseUrl}`,
+        );
+      }
     }
     if (args.nonInteractive) {
       process.exit(1);

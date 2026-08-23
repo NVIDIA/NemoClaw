@@ -419,8 +419,7 @@ COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
 
 # npm 10.9.8 in the pinned Node 22 image bundles an affected node-tar copy.
-# Replace only that private package from a registry- and SRI-verified archive
-# before npm processes the reviewed npm archive.
+# Replace it before npm processes the reviewed npm archive.
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
@@ -428,6 +427,12 @@ RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
 # picomatch packages meet the reviewed security floors.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+
+# npm 11.18.0 restores affected tar 7.5.19. Replace it from the exact
+# registry- and SRI-verified 7.5.21 archive before any npm consumers run.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 # npm 11.18.0 contains brace-expansion 5.0.7. Replace only that private
@@ -484,7 +489,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     OPENCLAW_LOCK_SHA256=none-legacy-fixture; \
     OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
     if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
-        OPENCLAW_LOCK_SHA256=a814d82a36046bd7819d222337809ce80ccfd76b553cd17265ff64a527d3d095; \
+        OPENCLAW_LOCK_SHA256=60f816dcff6f35179b1c48b4c06db9473497760d45ca1831252c27e8b1d2d665; \
         ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
         [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
             || { echo "Error: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)"; exit 1; }; \

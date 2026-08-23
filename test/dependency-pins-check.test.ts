@@ -17,6 +17,7 @@ const OPENCLAW_INTEGRITY =
 const ALTERNATE_INTEGRITY =
   "sha512-PzSJiYqmwpTudmakYs2oCJ57OW3VwEJYf8buTuKvuRvcYEUf/KOTu2dD6pLf2XYgDKErpvcDaoSAJ1nGCyvzAA==";
 const HERMES_SEMVER = "7.8.9";
+const FORMULA_SHA256 = "d".repeat(64);
 const MAP_SHA256 = "b".repeat(64);
 const MANIFEST_SHA256 = "c".repeat(64);
 const OPENSHELL_RELEASE_MANIFESTS = [
@@ -48,15 +49,29 @@ function writeFixture(root: string, overrides: FixtureOverrides = {}): void {
   const hermesSemver = overrides.hermesSemver ?? HERMES_SEMVER;
   const credentialManifestName = `openshell-child-visible-credentials.v${openshellMax}.json`;
   const credentialVersion = overrides.credentialVersion ?? openshellMax;
-  const installerHashVersions = [
-    overrides.installerHashExtraVersion,
-    overrides.installerHashVersion ?? openshellMax,
+  const installerTrustVersions = [
+    overrides.releaseTrustExtraVersion,
+    overrides.releaseTrustVersion ?? openshellMax,
   ].filter((version): version is string => version !== undefined);
-  const installerHashAllowlist = installerHashVersions
-    .flatMap((version) =>
-      OPENSHELL_RELEASE_MANIFESTS.filter(
-        (manifest) => manifest !== overrides.installerHashOmitManifest,
-      ).map((manifest) => `  "${version}|${manifest}|${MANIFEST_SHA256}"`),
+  const installerTrustRecords = installerTrustVersions
+    .map(
+      (version) => `  {
+    formula: {
+      asset: "openshell.rb",
+      sha256: "${overrides.releaseFormulaSha256 ?? FORMULA_SHA256}",
+    },
+    manifests: [
+${OPENSHELL_RELEASE_MANIFESTS.filter((manifest) => manifest !== overrides.releaseTrustOmitManifest)
+  .map(
+    (manifest) => `      {
+        asset: "${manifest}",
+        sha256: "${MANIFEST_SHA256}",
+      },`,
+  )
+  .join("\n")}
+    ],
+    version: "${version}",
+  },`,
     )
     .join("\n");
 
@@ -70,10 +85,11 @@ MIN_VERSION="${overrides.installerMin ?? openshellMin}"
 MAX_VERSION="${overrides.installerMax ?? openshellMax}"
 PIN_VERSION="${overrides.installerPinExpression ?? "$MAX_VERSION"}"
 `,
-    "scripts/check-installer-hash.sh": `
-readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(
-${installerHashAllowlist}
-)
+    "scripts/checks/extract-installer-pins.mts": `
+type OpenShellReleaseTrust = unknown;
+const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
+${installerTrustRecords}
+] as const;
 `,
     "scripts/brev-launchable-ci-cpu.sh": `
 case "$NEMOCLAW_REF" in
@@ -103,6 +119,10 @@ const minVersion = deps.getBlueprintMinOpenshellVersion() ?? "${overrides.minFal
 const DIGESTS = {
   "${overrides.supervisorMapVersion ?? openshellMax}": "sha256:${MAP_SHA256}",
 };
+`,
+    "src/lib/onboard/docker-driver-gateway-service.ts": `
+export const OPENSHELL_GATEWAY_HOMEBREW_FORMULA_SHA256 =
+  "${overrides.gatewayFormulaSha256 ?? FORMULA_SHA256}";
 `,
     "src/lib/onboard/openshell-feature-gate.ts": `
 const BUILDS = new Map([
@@ -198,11 +218,24 @@ describe("dependency pin drift check", () => {
     );
   });
 
-  it("accepts the blueprint maximum in a multi-release manifest allowlist (#5242)", () => {
+  it("accepts the blueprint maximum in multiple release trust records (#5242)", () => {
     withFixture(
       "nemoclaw-dependency-pins-multi-release-",
-      { installerHashExtraVersion: "1.2.3" },
+      { releaseTrustExtraVersion: "1.2.3" },
       (root) => expect(verifyDependencyPins(root)).toEqual([]),
+    );
+  });
+
+  it("rejects a stale Homebrew lifecycle formula pin", () => {
+    const staleFormulaSha256 = "e".repeat(64);
+    withFixture(
+      "nemoclaw-dependency-pins-homebrew-formula-",
+      { gatewayFormulaSha256: staleFormulaSha256 },
+      (root) => {
+        expect(verifyDependencyPins(root)).toEqual([
+          `OpenShell gateway Homebrew formula SHA-256: expected ${FORMULA_SHA256}, found ${staleFormulaSha256}`,
+        ]);
+      },
     );
   });
 
@@ -213,7 +246,7 @@ describe("dependency pin drift check", () => {
         installerMin: "1.2.2",
         installerMax: "1.2.3",
         installerPinExpression: "1.2.4",
-        installerHashVersion: "1.2.3",
+        releaseTrustVersion: "1.2.3",
         fallbackVersion: "1.2.3",
         minFallbackVersion: "1.2.2",
         supervisorMapVersion: "1.2.3",
@@ -239,7 +272,7 @@ describe("dependency pin drift check", () => {
           "OpenShell installer MIN_VERSION: expected 1.2.3, found 1.2.2",
           "OpenShell installer MAX_VERSION: expected 1.2.4, found 1.2.3",
           "OpenShell installer PIN_VERSION: expected $MAX_VERSION, found 1.2.4",
-          "OpenShell release-manifest allowlist: expected one complete entry for 1.2.4",
+          "OpenShell release trust: expected one complete record for 1.2.4",
           "OpenShell supported fallback version: expected 1.2.4, found 1.2.3",
           "OpenShell minimum fallback version: expected 1.2.3, found 1.2.2",
           "OpenShell supervisor manifest digest map: expected a reference to 1.2.4",
@@ -292,13 +325,13 @@ describe("dependency pin drift check", () => {
     });
   });
 
-  it("rejects an incomplete manifest allowlist entry for the blueprint maximum (#5242)", () => {
+  it("rejects an incomplete release trust record for the blueprint maximum (#5242)", () => {
     withFixture(
-      "nemoclaw-dependency-pins-incomplete-openshell-allowlist-",
-      { installerHashOmitManifest: "openshell-sandbox-checksums-sha256.txt" },
+      "nemoclaw-dependency-pins-incomplete-openshell-trust-",
+      { releaseTrustOmitManifest: "openshell-sandbox-checksums-sha256.txt" },
       (root) => {
         expect(verifyDependencyPins(root)).toEqual([
-          "OpenShell release-manifest allowlist: expected one complete entry for 1.2.4",
+          "OpenShell release trust: expected one complete record for 1.2.4",
         ]);
       },
     );

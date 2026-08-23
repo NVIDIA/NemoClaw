@@ -275,22 +275,21 @@ describe("MCP credential-resolution probe classification", () => {
 });
 
 describe("MCP credential-resolution probe execution gates", () => {
-  it("fails closed before sandbox traffic unless policy and provider readiness are all true (#6379)", () => {
-    const cases = [
-      [{ ...readyProbe, policyGatewayPresent: false }, "effective gateway policy"],
-      [{ ...readyProbe, policyGatewayPresent: null }, "could not be inspected"],
-      [{ ...readyProbe, providerAttached: false }, "not attached"],
-      [{ ...readyProbe, providerAttached: null }, "attachment could not be inspected"],
-      [{ ...readyProbe, providerCredentialReady: false }, "does not match"],
-    ] as const;
-
-    for (const [readiness, expectedDetail] of cases) {
+  it.each([
+    [{ ...readyProbe, policyGatewayPresent: false }, "effective gateway policy"],
+    [{ ...readyProbe, policyGatewayPresent: null }, "could not be inspected"],
+    [{ ...readyProbe, providerAttached: false }, "not attached"],
+    [{ ...readyProbe, providerAttached: null }, "attachment could not be inspected"],
+    [{ ...readyProbe, providerCredentialReady: false }, "does not match"],
+  ] as const)(
+    "fails closed before sandbox traffic unless policy and provider readiness are all true [case %#] (#6379)",
+    (readiness, expectedDetail) => {
       const probe = probeCredentialResolution("alpha", baseEntry, "mcporter", readiness);
       expect(probe).toMatchObject({ ok: null });
       expect(probe.detail).toContain(expectedDetail);
-    }
-    expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
-  });
+      expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
+    },
+  );
 
   it("skips without contacting the sandbox when the adapter is not declared (#6379)", () => {
     const probe = probeCredentialResolution("alpha", baseEntry, undefined, readyProbe);

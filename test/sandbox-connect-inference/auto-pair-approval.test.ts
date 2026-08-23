@@ -358,9 +358,15 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
         { launchReadinessRegistry: true },
       );
 
-      const result = runConnect(tmpDir, sandboxName, { OPENSHELL_TEST_GATEWAY_DOWN: "1" }, [
-        "--probe-only",
-      ]);
+      const result = runConnect(
+        tmpDir,
+        sandboxName,
+        {
+          OPENSHELL_TEST_GATEWAY_DOWN: "1",
+          NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS: "0",
+        },
+        ["--probe-only"],
+      );
       expect(result.status).toBe(1);
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));

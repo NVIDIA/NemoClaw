@@ -243,6 +243,91 @@ describe("buildManagedStartupProfile", () => {
     });
   });
 
+  it("omits a derived package pin from the managed startup profile (#9399)", () => {
+    const built = buildManagedStartupProfile(
+      openClawInput({
+        messagingPlan: {
+          ...messagingPlan("openclaw"),
+          channels: [
+            {
+              channelId: "discord",
+              displayName: "Discord",
+              authMode: "token-paste",
+              active: true,
+              selected: true,
+              configured: true,
+              disabled: false,
+              inputs: [],
+              hooks: [],
+            },
+          ],
+          buildSteps: [
+            {
+              channelId: "discord",
+              kind: "package-install",
+              outputId: "openclawPluginPackage",
+              required: true,
+              value: {
+                manager: "openclaw-plugin",
+                spec: "npm:@openclaw/discord@2026.7.1",
+                pin: true,
+              },
+            },
+          ],
+        },
+      }),
+    );
+
+    const plan = built.profile.messaging.plan as {
+      buildSteps: Array<{ value?: Record<string, unknown> }>;
+    };
+    expect(plan.buildSteps[0]?.value).toEqual({
+      manager: "openclaw-plugin",
+      spec: "npm:@openclaw/discord@2026.7.1",
+    });
+    expect(JSON.stringify(decodeManagedStartupProfile(built.encodedProfile))).not.toContain(
+      '"pin"',
+    );
+  });
+
+  it("does not project a malformed package pin past profile validation (#9399)", () => {
+    expect(() =>
+      buildManagedStartupProfile(
+        openClawInput({
+          messagingPlan: {
+            ...messagingPlan("openclaw"),
+            channels: [
+              {
+                channelId: "discord",
+                displayName: "Discord",
+                authMode: "token-paste",
+                active: true,
+                selected: true,
+                configured: true,
+                disabled: false,
+                inputs: [],
+                hooks: [],
+              },
+            ],
+            buildSteps: [
+              {
+                channelId: "discord",
+                kind: "package-install",
+                outputId: "openclawPluginPackage",
+                required: true,
+                value: {
+                  manager: "openclaw-plugin",
+                  spec: "npm:@openclaw/discord@2026.7.1",
+                  pin: "true",
+                },
+              },
+            ],
+          },
+        }),
+      ),
+    ).toThrow(/buildSteps\[0\]\.value\.pin has a credential-shaped field name/u);
+  });
+
   it.each([
     ["wrong-agent discriminator", { ...messagingPlan("hermes"), sandboxName: "portable-agent" }],
     [

@@ -3,6 +3,13 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { loadAgent } from "../../agent/defs";
+import type { SandboxEntry } from "../../state/registry";
+import {
+  LaunchReadinessObservationError,
+  requireLaunchSemanticHealth,
+  type LaunchReadinessHealthDeps,
+} from "./launch-readiness/health";
 import { isSandboxGatewayRunningForStatus } from "./process-recovery";
 
 describe("launch-readiness gateway health scope", () => {
@@ -32,5 +39,85 @@ describe("launch-readiness gateway health scope", () => {
       "nemoclaw-8091",
       "--",
     ]);
+  });
+});
+
+const SANDBOX = "alpha";
+const GATEWAY = "nemoclaw";
+const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
+const dcodeAgent = loadAgent("langchain-deepagents-code");
+
+function dcodeEntry(): SandboxEntry {
+  return {
+    name: SANDBOX,
+    agent: "langchain-deepagents-code",
+    provider: "openrouter-api",
+    model: MODEL,
+    preferredInferenceApi: null,
+  } as SandboxEntry;
+}
+
+function dcodeHealthDeps(
+  invocation: ReturnType<NonNullable<LaunchReadinessHealthDeps["inferenceInvocationProbe"]>>,
+): LaunchReadinessHealthDeps {
+  return {
+    smoke: vi.fn(() => ({ ok: true }) as const),
+    inferenceProbe: vi.fn(() => ({
+      healthy: true,
+      broken: false,
+      httpStatus: 404,
+      detail: "OK 404",
+    })),
+    inferenceInvocationProbe: vi.fn(() => invocation),
+  };
+}
+
+describe("Deep Agents Code OpenRouter launch readiness", () => {
+  it("accepts readiness after an inference request succeeds (#9834)", async () => {
+    const currentDeps = dcodeHealthDeps({ ok: true });
+
+    await expect(
+      requireLaunchSemanticHealth(
+        SANDBOX,
+        GATEWAY,
+        "langchain-deepagents-code",
+        dcodeEntry(),
+        dcodeAgent,
+        true,
+        currentDeps,
+      ),
+    ).resolves.toBeUndefined();
+    expect(currentDeps.inferenceInvocationProbe).toHaveBeenCalledWith({
+      sandboxName: SANDBOX,
+      gatewayName: GATEWAY,
+      provider: "openrouter-api",
+      model: MODEL,
+      preferredInferenceApi: null,
+    });
+  });
+
+  it("rejects readiness and names the inference request when invocation fails (#9834)", async () => {
+    const currentDeps = dcodeHealthDeps({
+      ok: false,
+      detail: "sandbox inference invocation probe returned HTTP 401",
+      httpStatus: 401,
+    });
+
+    await expect(
+      requireLaunchSemanticHealth(
+        SANDBOX,
+        GATEWAY,
+        "langchain-deepagents-code",
+        dcodeEntry(),
+        dcodeAgent,
+        true,
+        currentDeps,
+      ),
+    ).rejects.toEqual(
+      expect.objectContaining<Partial<LaunchReadinessObservationError>>({
+        category: "health",
+        failedCheck: "inference request",
+      }),
+    );
   });
 });

@@ -631,13 +631,14 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
-  it("requires bounded swap before every hosted Hermes image export", () => {
+  it.each(
+    ["build-hermes-sandbox-image", "messaging-plan-image-boundary"],
+  )("requires bounded swap before every hosted Hermes image export [%s]", (jobName) => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
-    for (const jobName of ["build-hermes-sandbox-image", "messaging-plan-image-boundary"]) {
-      const job = imageWorkflow.jobs[jobName];
-      const swap = job.steps!.find((step) => step.name === "Add swap for Hermes image export")!;
-      swap.run = swap.run!.replace('sudo swapon "$swap_file"', 'echo "swap omitted"');
-    }
+
+    const job = imageWorkflow.jobs[jobName];
+    const swap = job.steps!.find((step) => step.name === "Add swap for Hermes image export")!;
+    swap.run = swap.run!.replace('sudo swapon "$swap_file"', 'echo "swap omitted"');
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
@@ -710,34 +711,38 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
-  it("rejects duplicate setup, rebuilding, or failing to reuse the Hermes image", () => {
-    const { imageWorkflow, mainWorkflow } = readWorkflows();
-    const producer = imageWorkflow.jobs["build-hermes-sandbox-image"];
-    const hermes = imageWorkflow.jobs["test-hermes-sandbox-image"];
-    producer["timeout-minutes"] = 45;
-    hermes["timeout-minutes"] = 75;
-    for (const stepName of ["Set up Node", "Install root dependencies"]) {
+  it.each(
+    ["Set up Node", "Install root dependencies"],
+  )(
+    "rejects duplicate setup, rebuilding, or failing to reuse the Hermes image [%s]",
+    (stepName) => {
+      const { imageWorkflow, mainWorkflow } = readWorkflows();
+      const producer = imageWorkflow.jobs["build-hermes-sandbox-image"];
+      const hermes = imageWorkflow.jobs["test-hermes-sandbox-image"];
+      producer["timeout-minutes"] = 45;
+      hermes["timeout-minutes"] = 75;
+
       hermes.steps!.push({ ...hermes.steps!.find((step) => step.name === stepName)! });
       producer.steps!.push({ ...hermes.steps!.find((step) => step.name === stepName)! });
-    }
-    const rootEntrypoint = hermes.steps!.find(
-      (step) => step.name === "Run Hermes root entrypoint smoke Vitest test",
-    )!;
-    rootEntrypoint.env!.NEMOCLAW_HERMES_TEST_IMAGE = "nemoclaw-hermes-rebuilt";
-    rootEntrypoint.run = `${rootEntrypoint.run}\ndocker build -f agents/hermes/Dockerfile -t nemoclaw-hermes-rebuilt .`;
 
-    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
-      expect.arrayContaining([
-        "Hermes image producer must retain its 30-minute budget",
-        "Hermes image test consumer must retain its 90-minute budget",
-        "build-hermes-sandbox-image must not install Node dependencies",
-        "test-hermes-sandbox-image must run 'Set up Node' exactly once",
-        "test-hermes-sandbox-image must run 'Install root dependencies' exactly once",
-        "Hermes root entrypoint must consume the prebuilt Hermes production image",
-        "Hermes root entrypoint step must not rebuild the prebuilt image",
-      ]),
-    );
-  });
+      const rootEntrypoint = hermes.steps!.find(
+        (step) => step.name === "Run Hermes root entrypoint smoke Vitest test",
+      )!;
+      rootEntrypoint.env!.NEMOCLAW_HERMES_TEST_IMAGE = "nemoclaw-hermes-rebuilt";
+      rootEntrypoint.run = `${rootEntrypoint.run}\ndocker build -f agents/hermes/Dockerfile -t nemoclaw-hermes-rebuilt .`;
+
+      expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+        expect.arrayContaining([
+          "Hermes image producer must retain its 30-minute budget",
+          "Hermes image test consumer must retain its 90-minute budget",
+          "build-hermes-sandbox-image must not install Node dependencies",
+          `test-hermes-sandbox-image must run '${stepName}' exactly once`,
+          "Hermes root entrypoint must consume the prebuilt Hermes production image",
+          "Hermes root entrypoint step must not rebuild the prebuilt image",
+        ]),
+      );
+    },
+  );
 
   it("keeps Hermes probes failure-isolated with their inherited budgets", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();

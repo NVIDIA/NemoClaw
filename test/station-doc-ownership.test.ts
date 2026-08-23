@@ -244,7 +244,7 @@ describe("DGX Station documentation ownership", () => {
     },
   );
 
-  function verifyRetiredPrerequisitesRedirects() {
+  it("redirects every retired Prerequisites child route directly to Additional Setup", () => {
     const redirects = (
       parse(fs.readFileSync(FERN_DOCS, "utf-8")) as {
         redirects?: Array<{ source: string; destination: string }>;
@@ -288,10 +288,5 @@ describe("DGX Station documentation ownership", () => {
         }
       }
     }
-  }
-
-  it(
-    "redirects every retired Prerequisites child route directly to Additional Setup",
-    verifyRetiredPrerequisitesRedirects,
-  );
+  });
 });

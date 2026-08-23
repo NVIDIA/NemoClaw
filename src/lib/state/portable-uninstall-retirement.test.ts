@@ -9,6 +9,9 @@ import path from "node:path";
 import { afterEach, assert, describe, expect, it, vi } from "vitest";
 
 import {
+  assertNoHermesPortableHostAuthority,
+  defaultPortableStateDir,
+  getHermesPortableHostAuthorityEntryCount,
   hasPortableRetirementRecord,
   inspectPortableRetirementRecovery,
   portableRetirementFingerprint,
@@ -85,6 +88,54 @@ afterEach(() => {
 });
 
 describe("portable uninstall retirement state", () => {
+  it("shares the guarded portable state root across host admission owners (#9203)", () => {
+    const homeDir = "/home/nemoclaw-test";
+    const stateDir = "/private/nemoclaw-test-state";
+
+    expect(
+      defaultPortableStateDir({
+        HOME: homeDir,
+        NEMOCLAW_TEST_STATE_DIR: stateDir,
+      }),
+    ).toBe(path.join(homeDir, ".nemoclaw"));
+    expect(
+      defaultPortableStateDir({
+        HOME: homeDir,
+        VITEST: "true",
+        NEMOCLAW_TEST_BASE_HOME: homeDir,
+        NEMOCLAW_TEST_STATE_DIR: stateDir,
+      }),
+    ).toBe(stateDir);
+    expect(defaultPortableStateDir({ HOME: "" })).toBe(path.join(os.homedir(), ".nemoclaw"));
+    expect(defaultPortableStateDir({})).toBe(path.join(os.homedir(), ".nemoclaw"));
+  });
+
+  it.each([1, 2])(
+    "fails closed on %i malformed or ambiguous schema-5 authority entries (#9203)",
+    (entryCount) => {
+      const test = fixture();
+      const authorityRoot = path.join(test.stateDir, "hermes-portable-lifecycle");
+      fs.mkdirSync(authorityRoot, { mode: 0o700 });
+      Array.from({ length: entryCount }, (_unused, index) =>
+        fs.writeFileSync(path.join(authorityRoot, `ambiguous-${index}`), "not-a-receipt\n", {
+          mode: 0o600,
+        }),
+      );
+
+      expect(getHermesPortableHostAuthorityEntryCount(test.stateDir)).toBe(entryCount);
+      expect(() => assertNoHermesPortableHostAuthority(test.stateDir, "list")).toThrow(
+        "Command 'list' is not supported while an experimental Hermes portable lifecycle receipt exists. No legacy Docker or OpenShell action was attempted.",
+      );
+    },
+  );
+
+  it("preserves ordinary host command admission when schema-5 authority is absent (#9203)", () => {
+    const test = fixture();
+
+    expect(getHermesPortableHostAuthorityEntryCount(test.stateDir)).toBe(0);
+    expect(() => assertNoHermesPortableHostAuthority(test.stateDir, "list")).not.toThrow();
+  });
+
   it("publishes the sole private retry record without raw cleanup authority (#9189)", () => {
     const test = fixture();
     const prepared = prepareFixture(test);
@@ -113,39 +164,46 @@ describe("portable uninstall retirement state", () => {
         Buffer.from("bc"),
       ),
     );
-    for (const [size, vector] of [
-      [255, "09adecb5bfc2c496d9e1f4e737b4973699fa3f6f4a9027c0633bda893f7d9cfb"],
-      [256, "a62d83f4aa319e94abbccbb75d1dea277e450e5167be6872d87eb52d2e7a8b30"],
-      [65_535, "ab48f19398e2af46d86be80dea98e8326b67360e6cd8d3a171cc8c1a2b67a1b7"],
-      [65_536, "e868451822f03cecc74591d7785d6799f01d6742a83082d45d9f033c970afdbd"],
-    ] as const) {
-      expect(
-        portableRetirementFingerprint(
-          "a".repeat(64),
-          "config",
-          "containers.conf",
-          Buffer.alloc(size, 1),
+    expect(
+      (
+        [
+          [255, "09adecb5bfc2c496d9e1f4e737b4973699fa3f6f4a9027c0633bda893f7d9cfb"],
+          [256, "a62d83f4aa319e94abbccbb75d1dea277e450e5167be6872d87eb52d2e7a8b30"],
+          [65_535, "ab48f19398e2af46d86be80dea98e8326b67360e6cd8d3a171cc8c1a2b67a1b7"],
+          [65_536, "e868451822f03cecc74591d7785d6799f01d6742a83082d45d9f033c970afdbd"],
+        ] as const
+      ).every(([size, vector]) =>
+        Object.is(
+          portableRetirementFingerprint(
+            "a".repeat(64),
+            "config",
+            "containers.conf",
+            Buffer.alloc(size, 1),
+          ),
+          vector,
         ),
-      ).toBe(vector);
-    }
-    for (const input of [
-      ["", "config", "containers.conf", Buffer.from("x")],
-      [new String("a".repeat(64)), "config", "containers.conf", Buffer.from("x")],
-      ["A".repeat(64), "config", "containers.conf", Buffer.from("x")],
-      ["a".repeat(64), "invalid", "containers.conf", Buffer.from("x")],
-      ["a".repeat(64), "config", "containers.conf\0", Buffer.from("x")],
-      ["a".repeat(64), "receipt", "../receipt.json", Buffer.from("x")],
-      ["a".repeat(64), "registry", "sandboxes.json", Buffer.alloc(0)],
-      ["a".repeat(64), "receipt", `${"b".repeat(64)}.json`, Buffer.alloc(4_097)],
-      ["a".repeat(64), "config", "containers.conf", Buffer.alloc(65_537)],
-      ["a".repeat(64), "registry", "sandboxes.json", Buffer.alloc(1_048_577)],
-    ] as const) {
+      ),
+    ).toBe(true);
+    (
+      [
+        ["", "config", "containers.conf", Buffer.from("x")],
+        [new String("a".repeat(64)), "config", "containers.conf", Buffer.from("x")],
+        ["A".repeat(64), "config", "containers.conf", Buffer.from("x")],
+        ["a".repeat(64), "invalid", "containers.conf", Buffer.from("x")],
+        ["a".repeat(64), "config", "containers.conf\0", Buffer.from("x")],
+        ["a".repeat(64), "receipt", "../receipt.json", Buffer.from("x")],
+        ["a".repeat(64), "registry", "sandboxes.json", Buffer.alloc(0)],
+        ["a".repeat(64), "receipt", `${"b".repeat(64)}.json`, Buffer.alloc(4_097)],
+        ["a".repeat(64), "config", "containers.conf", Buffer.alloc(65_537)],
+        ["a".repeat(64), "registry", "sandboxes.json", Buffer.alloc(1_048_577)],
+      ] as const
+    ).forEach((input) => {
       expect(() =>
         portableRetirementFingerprint(
           ...(input as unknown as Parameters<typeof portableRetirementFingerprint>),
         ),
       ).toThrow(/invalid/);
-    }
+    });
     expect(JSON.stringify(parsed)).not.toContain("alpha");
     expect(JSON.stringify(parsed)).not.toContain(test.homeDir);
     expect(JSON.stringify(parsed)).not.toContain("helper_binaries_dir");
@@ -428,19 +486,24 @@ describe("portable uninstall retirement state", () => {
     expect(() => resumePortableEvidenceRetirement(staged.homeDir)).toThrow(/changed/);
   });
 
-  it("rejects noncanonical record fields and incomplete supersession before retirement (#9189)", () => {
-    const invalidIdentity = fixture();
-    const invalidPrepared = prepareFixture(invalidIdentity);
-    const invalidRecord = JSON.parse(invalidPrepared.recordBytes.toString("utf8")) as {
-      targets: string[][];
-    };
-    invalidRecord.targets[0]![2] = "01";
-    fs.writeFileSync(retirementRecordPath(invalidIdentity), `${JSON.stringify(invalidRecord)}\n`, {
-      mode: 0o600,
-    });
-    expect(() => hasPortableRetirementRecord(invalidIdentity.homeDir)).toThrow(/values/);
+  it.each([false, true])(
+    "rejects noncanonical record fields and incomplete supersession before retirement [%s] (#9189)",
+    (extra) => {
+      const invalidIdentity = fixture();
+      const invalidPrepared = prepareFixture(invalidIdentity);
+      const invalidRecord = JSON.parse(invalidPrepared.recordBytes.toString("utf8")) as {
+        targets: string[][];
+      };
+      invalidRecord.targets[0]![2] = "01";
+      fs.writeFileSync(
+        retirementRecordPath(invalidIdentity),
+        `${JSON.stringify(invalidRecord)}\n`,
+        {
+          mode: 0o600,
+        },
+      );
+      expect(() => hasPortableRetirementRecord(invalidIdentity.homeDir)).toThrow(/values/);
 
-    for (const extra of [false, true]) {
       const shape = fixture();
       const shaped = JSON.parse(prepareFixture(shape).recordBytes.toString("utf8")) as {
         targets: string[][];
@@ -448,30 +511,30 @@ describe("portable uninstall retirement state", () => {
       extra ? shaped.targets[0]!.push("0") : shaped.targets[0]!.pop();
       fs.writeFileSync(retirementRecordPath(shape), `${JSON.stringify(shaped)}\n`, { mode: 0o600 });
       expect(() => hasPortableRetirementRecord(shape.homeDir)).toThrow(/invalid/);
-    }
 
-    const missingConfig = fixture();
-    const missingPrepared = prepareFixture(missingConfig);
-    const missingRecord = JSON.parse(missingPrepared.recordBytes.toString("utf8")) as {
-      targets: unknown[];
-    };
-    missingRecord.targets.shift();
-    fs.writeFileSync(retirementRecordPath(missingConfig), `${JSON.stringify(missingRecord)}\n`, {
-      mode: 0o600,
-    });
-    expect(() => hasPortableRetirementRecord(missingConfig.homeDir)).toThrow(/order/);
+      const missingConfig = fixture();
+      const missingPrepared = prepareFixture(missingConfig);
+      const missingRecord = JSON.parse(missingPrepared.recordBytes.toString("utf8")) as {
+        targets: unknown[];
+      };
+      missingRecord.targets.shift();
+      fs.writeFileSync(retirementRecordPath(missingConfig), `${JSON.stringify(missingRecord)}\n`, {
+        mode: 0o600,
+      });
+      expect(() => hasPortableRetirementRecord(missingConfig.homeDir)).toThrow(/order/);
 
-    const incomplete = fixture();
-    const prepared = prepareFixture(incomplete);
-    fs.writeFileSync(
-      path.join(incomplete.stateDir, ".portable-uninstall-retirement.superseded"),
-      prepared.recordBytes,
-      { mode: 0o600 },
-    );
-    expect(() => publishAndRetirePortableEvidence(prepared)).toThrow(/incomplete/);
-    expect(fs.existsSync(incomplete.receipt)).toBe(true);
-    expect(fs.existsSync(incomplete.registryFile)).toBe(true);
-  });
+      const incomplete = fixture();
+      const prepared = prepareFixture(incomplete);
+      fs.writeFileSync(
+        path.join(incomplete.stateDir, ".portable-uninstall-retirement.superseded"),
+        prepared.recordBytes,
+        { mode: 0o600 },
+      );
+      expect(() => publishAndRetirePortableEvidence(prepared)).toThrow(/incomplete/);
+      expect(fs.existsSync(incomplete.receipt)).toBe(true);
+      expect(fs.existsSync(incomplete.registryFile)).toBe(true);
+    },
+  );
 
   it.each([
     ["T", [".portable-uninstall-retirement.tmp"]],
@@ -494,7 +557,9 @@ describe("portable uninstall retirement state", () => {
     const prepared = prepareFixture(test);
     const first = path.join(test.stateDir, names[0]!);
     fs.writeFileSync(first, prepared.recordBytes, { mode: 0o600 });
-    for (const name of names.slice(1)) fs.linkSync(first, path.join(test.stateDir, name));
+    names.slice(1).forEach((name) => {
+      fs.linkSync(first, path.join(test.stateDir, name));
+    });
     fs.linkSync(first, path.join(test.stateDir, "unexpected-record-link"));
     expect(() => hasPortableRetirementRecord(test.homeDir)).toThrow();
   });

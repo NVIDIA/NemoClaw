@@ -21,6 +21,7 @@ import {
   inspectDescriptorSnapshotRoot,
   installDescriptorSnapshotFile,
   resolveTrustedSnapshotSanitizerPythonPath,
+  SnapshotSanitizerPrerequisiteError,
   type SnapshotFileIdentity,
   scanDescriptorSnapshot,
   setSnapshotSanitizerPythonPathForTest,
@@ -128,25 +129,27 @@ describe("migration snapshot sanitizer fallbacks", () => {
     },
   ];
 
-  it("fails closed when the descriptor helper is unavailable", () => {
+  it("reports when the descriptor helper has no trusted interpreter (#8202)", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");
     const original = JSON.stringify({ apiKey: "sk-secret-value" });
     writeFileSync(configPath, original);
     setSnapshotSanitizerPythonPathForTest(null);
 
-    expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
+    expect(() => sanitizeOpenClawConfigFile(configPath)).toThrow(
+      SnapshotSanitizerPrerequisiteError,
+    );
     expect(readFileSync(configPath, "utf-8")).toBe(original);
   });
 
-  it("fails closed when the descriptor apply helper is unavailable", () => {
+  it("reports the validated root when the apply helper has no trusted interpreter (#8202)", () => {
     const root = { canonicalPath: makeRoot(), identity };
     setSnapshotSanitizerPythonPathForTest(null);
 
-    expect(
+    expect(() =>
       applyDescriptorSnapshotActions(root, { root: identity, directories: {}, files: [] }, [
         { kind: "remove", path: "config.json", metadata: identity },
       ]),
-    ).toBe(false);
+    ).toThrow(expect.objectContaining({ snapshotPath: root.canonicalPath }));
   });
 
   it("fails closed when the descriptor install helper is unavailable", () => {

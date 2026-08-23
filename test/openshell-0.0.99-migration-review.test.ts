@@ -185,14 +185,15 @@ describe("OpenShell 0.0.99 migration review", () => {
     expect(launch?.authorityStore).toBe(authorityStore);
   });
 
-  it("binds every adjacent range to its declared unique commit ledger (#8497)", () => {
-    const ledger = parseLedger();
-    const table = parseRangeTable();
-    const allCommits: string[] = [];
+  it.each(ranges)(
+    "binds every adjacent range to its declared unique commit ledger [case %#] (#8497)",
+    (from, to, paths, commitText) => {
+      const ledger = parseLedger();
+      const table = parseRangeTable();
 
-    expect(ledger.size).toBe(ranges.length);
-    expect(table.size).toBe(ranges.length);
-    for (const [from, to, paths, commitText] of ranges) {
+      expect(ledger.size).toBe(ranges.length);
+      expect(table.size).toBe(ranges.length);
+
       const key = `${from}->${to}`;
       const rangeName = `v0.0.${from} -> v0.0.${to}`;
       const commits = commitText.split(" ");
@@ -202,8 +203,11 @@ describe("OpenShell 0.0.99 migration review", () => {
         paths,
       });
       expect(new Set(commits).size, `${key} duplicate commits`).toBe(commits.length);
-      allCommits.push(...commits);
-    }
+    },
+  );
+
+  it("keeps adjacent range commit ledgers globally unique (#8497)", () => {
+    const allCommits = ranges.flatMap(([, , , commitText]) => commitText.split(" "));
 
     expect(allCommits).toHaveLength(117);
     expect(new Set(allCommits).size).toBe(117);

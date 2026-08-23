@@ -3,9 +3,7 @@
 
 import Ajv2020, { type AnySchema } from "ajv/dist/2020.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import systemReadinessSchema from "../../../schemas/system-readiness.schema.json" with {
-  type: "json",
-};
+import systemReadinessSchema from "../../../schemas/system-readiness.schema.json" with { type: "json" };
 import type { GpuDetection, NvidiaPlatform } from "../inference/nim";
 import type { HostAssessment } from "../onboard/preflight";
 import { collectHostObservations, createHostReadinessReport, projectHostReadiness } from "./host";
@@ -171,12 +169,15 @@ describe("host readiness projection (#7408)", () => {
       "absent",
       "host.gpu.cdi_stale",
     ],
-  ] as const)("returns stable results for %s", (overrides, capabilityId, expectedState, findingId) => {
-    const result = report(overrides);
+  ] as const)(
+    "returns stable results for %s",
+    (overrides, capabilityId, expectedState, findingId) => {
+      const result = report(overrides);
 
-    expect(state(result, capabilityId)).toBe(expectedState);
-    expect(findingIds(result)).toContain(findingId);
-  });
+      expect(state(result, capabilityId)).toBe(expectedState);
+      expect(findingIds(result)).toContain(findingId);
+    },
+  );
 
   it("blocks a reachable but unsupported DOCKER_HOST before using daemon evidence (#7411)", () => {
     const result = report({ dockerHostInvalid: true, dockerReachable: true });
@@ -487,7 +488,7 @@ describe("host readiness projection (#7408)", () => {
       collectPlatformIdentity: emptyPlatformIdentity,
       now: () => NOW,
     });
-    const snapshot = { ...current, observedAt: "2026-06-01T11:00:00Z", reusable: false };
+    const snapshot = { ...current, completedAt: "2026-06-01T11:00:00Z" };
     const result = projectHostReadiness(snapshot, {
       nemoclawVersion: "0.1.0",
       sourceRevision: SOURCE_REVISION,
@@ -501,19 +502,38 @@ describe("host readiness projection (#7408)", () => {
     ).toBe(true);
   });
 
-  it.each([
-    ["2026-06-01T11:00:00Z", true],
-    ["2026-06-01T11:59:30Z", false],
-  ] as const)("projects safe snapshot reuse at %s", (observedAt, reusable) => {
-    const current = collectHostObservations({
+  it.each(["2026-06-01T11:59:30Z", "2026-06-01T12:00:00Z"] as const)(
+    "projects safe snapshot reuse at %s",
+    (completedAt) => {
+      const current = collectHostObservations({
+        assess: () => host(),
+        collectPlatformIdentity: emptyPlatformIdentity,
+        now: () => NOW,
+      });
+      const result = projectHostReadiness(
+        { ...current, completedAt },
+        { nemoclawVersion: "0.1.0", sourceRevision: SOURCE_REVISION, now: () => NOW },
+      );
+
+      expect(result.status).toBe("supported");
+      expect(result.evidence.map(({ id }) => id)).not.toContain("host.probe.stale");
+    },
+  );
+
+  it("admits a collection that was itself slower than the reuse window (#9310)", () => {
+    const clock = [new Date(NOW.getTime() - 45_000), NOW];
+    let index = 0;
+
+    const snapshot = collectHostObservations({
       assess: () => host(),
       collectPlatformIdentity: emptyPlatformIdentity,
+      now: () => clock[Math.min(index++, clock.length - 1)] ?? NOW,
+    });
+    const result = projectHostReadiness(snapshot, {
+      nemoclawVersion: "0.1.0",
+      sourceRevision: SOURCE_REVISION,
       now: () => NOW,
     });
-    const result = projectHostReadiness(
-      { ...current, observedAt, reusable },
-      { nemoclawVersion: "0.1.0", sourceRevision: SOURCE_REVISION, now: () => NOW },
-    );
 
     expect(result.status).toBe("supported");
     expect(result.evidence.map(({ id }) => id)).not.toContain("host.probe.stale");

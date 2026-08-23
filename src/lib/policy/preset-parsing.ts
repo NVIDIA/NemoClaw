@@ -4,6 +4,7 @@
 import YAML from "yaml";
 
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
+import { DEFAULT_VLLM_PORT, VLLM_PORT } from "../core/vllm-port";
 
 export type PolicyValue = JsonValue;
 export type PolicyObject = JsonObject;
@@ -37,4 +38,26 @@ export function parseNetworkPolicies(content: string | null | undefined): Policy
   } catch {
     return null;
   }
+}
+
+/** Apply the configured vLLM host listener to the built-in local-inference policy. */
+export function materializeLocalInferencePresetPorts(content: string): string {
+  if (VLLM_PORT === DEFAULT_VLLM_PORT) return content;
+  const document = YAML.parse(content) as {
+    network_policies?: {
+      local_inference?: { endpoints?: Array<{ host?: unknown; port?: unknown }> };
+    };
+  } | null;
+  const endpoints = document?.network_policies?.local_inference?.endpoints;
+  if (!Array.isArray(endpoints)) {
+    throw new Error("Built-in local-inference policy is missing its endpoint list.");
+  }
+  const vllmEndpoints = endpoints.filter(
+    ({ host, port }) => host === "host.openshell.internal" && port === DEFAULT_VLLM_PORT,
+  );
+  if (vllmEndpoints.length !== 1) {
+    throw new Error("Built-in local-inference policy must define exactly one vLLM endpoint.");
+  }
+  vllmEndpoints[0].port = VLLM_PORT;
+  return YAML.stringify(document);
 }

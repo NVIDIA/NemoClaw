@@ -219,14 +219,14 @@ fi
 exit 99
 `,
       );
-      for (const cliBin of ["nemoclaw", "nemohermes", "nemo-deepagents"]) {
+      ["nemoclaw", "nemohermes", "nemo-deepagents"].forEach((cliBin) => {
         writeExecutable(
           path.join(prefixBin, cliBin),
           `#!/usr/bin/env bash
 echo "${cliBin} v0.1.0"
 `,
         );
-      }
+      });
 
       const result = runInstallerFunction(
         '_CLI_BIN=nemoclaw; ensure_nemoclaw_shim; for name in nemoclaw nemohermes nemo-deepagents; do test -x "$NEMOCLAW_SHIM_DIR/$name"; done',

@@ -43,7 +43,7 @@ describe("MCP tool discovery host boundary (#6901)", () => {
         "deepagents-config": "/opt/venv/bin/python3 -I -c",
       };
 
-      for (const adapter of Object.keys(expectedAncestor) as AgentMcpAdapter[]) {
+      (Object.keys(expectedAncestor) as AgentMcpAdapter[]).forEach((adapter) => {
         const built = buildMcpToolDiscoveryCommand(entry, adapter);
         expect(built).not.toBeNull();
         expect(built?.command).toContain(expectedAncestor[adapter]);
@@ -59,7 +59,7 @@ describe("MCP tool discovery host boundary (#6901)", () => {
         expect(built?.command).not.toContain("tools/call");
         expect(built?.command).toContain("rebuild the sandbox");
         expect(built?.command).toContain(`unset ${MCP_RUNTIME_SANITIZED_ENV_VARS.join(" ")}`);
-      }
+      });
       expect(MCP_RUNTIME_SANITIZED_ENV_VARS).toEqual(
         expect.arrayContaining(["LD_PRELOAD", "NODE_OPTIONS", "NODE_PATH", "PYTHONPATH"]),
       );

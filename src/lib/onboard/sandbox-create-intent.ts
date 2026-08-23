@@ -198,6 +198,7 @@ export function resolveSandboxCreateIntent({
         baselineExclusions: [...baselineExclusions].map((exclusion) => ({ ...exclusion })),
       },
     },
+    sandboxGpuDevice: sandboxGpuConfig.sandboxGpuDevice?.trim() || null,
     gpuCreateArgs: [...gpuCreateArgs],
     resourceCreateArgs: [...resourceCreateArgs],
     ...(hostMounts.length > 0

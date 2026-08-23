@@ -4,13 +4,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
+import type { AgentMcpAdapter } from "../../agent/defs";
 import * as policies from "../../policy";
 import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
 import type { McpBridgeEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
   buildMcpBridgePolicyName,
-  buildMcpBridgePolicyYaml,
+  buildMcpBridgePolicyYaml as renderMcpBridgePolicyYaml,
   buildMcpBridgeProviderName,
   MCP_BRIDGE_ALLOWED_METHODS,
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
@@ -22,6 +23,16 @@ import {
   assertGeneratedPolicyMutationSafe,
   removeGeneratedPolicy,
 } from "./mcp-bridge-policy";
+import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
+
+function buildMcpBridgePolicyYaml(
+  server: string,
+  url: string,
+  adapter: AgentMcpAdapter,
+  target: McpBridgeTargetValidation,
+): string {
+  return renderMcpBridgePolicyYaml(server, url, adapter, target, "alpha-mcp-bound-provider");
+}
 
 function githubBridgeEntry(overrides: Partial<McpBridgeEntry> = {}): McpBridgeEntry {
   return {
@@ -61,6 +72,27 @@ describe("MCP OpenShell policy", () => {
     ).toThrow(/without exact public address pins/);
   });
 
+  it("refuses to render an MCP credential binding without an exact provider name", () => {
+    expect(() =>
+      renderMcpBridgePolicyYaml(
+        "github",
+        "https://api.githubcopilot.com/mcp",
+        "mcporter",
+        { addresses: ["8.8.8.8"] },
+        "",
+      ),
+    ).toThrow(/requires an exact provider name/);
+    expect(() =>
+      renderMcpBridgePolicyYaml(
+        "github",
+        "https://api.githubcopilot.com/mcp",
+        "mcporter",
+        { addresses: ["8.8.8.8"] },
+        " provider ",
+      ),
+    ).toThrow(/requires an exact provider name/);
+  });
+
   it("inspects an unowned direct-private policy key without targetless rendering (#8267)", () => {
     const entry = githubBridgeEntry({
       server: "local",
@@ -81,6 +113,32 @@ describe("MCP OpenShell policy", () => {
     expect(removePreset).not.toHaveBeenCalled();
   });
 
+  it("can remove the live policy while preserving rebuild journal ownership (#9792)", () => {
+    const entry = githubBridgeEntry();
+    const registration = {
+      name: entry.policyName,
+      content: "network_policies:\n  mcp_bridge_github: {}\n",
+      sourcePath: MCP_BRIDGE_POLICY_SOURCE,
+    };
+    vi.spyOn(registry, "getCustomPolicies").mockReturnValue([registration]);
+    vi.spyOn(policies, "getPresetContentGatewayState")
+      .mockReturnValueOnce("match")
+      .mockReturnValueOnce("absent");
+    const removePreset = vi.spyOn(policies, "removePreset").mockReturnValue(true);
+    const removeOwnership = vi.spyOn(registry, "removeCustomPolicyByName");
+
+    expect(() =>
+      removeGeneratedPolicy("alpha", entry, { preserveRegistryOwnership: true }),
+    ).not.toThrow();
+
+    expect(removePreset).toHaveBeenCalledWith(
+      "alpha",
+      entry.policyName,
+      expect.objectContaining({ skipRegistryUpdate: true }),
+    );
+    expect(removeOwnership).not.toHaveBeenCalled();
+  });
+
   it("pins DNS answers while constraining the generic mcporter Node grant", () => {
     const policyName = buildMcpBridgePolicyName("GitHub_Server");
     const policy = YAML.parse(
@@ -97,6 +155,7 @@ describe("MCP OpenShell policy", () => {
             port: number;
             path: string;
             protocol: string;
+            credential_binding: { provider: string };
             mcp: {
               max_body_bytes: number;
               strict_tool_names?: boolean;
@@ -119,6 +178,7 @@ describe("MCP OpenShell policy", () => {
       path: "/mcp",
       protocol: "mcp",
       enforcement: "enforce",
+      credential_binding: { provider: "alpha-mcp-bound-provider" },
       mcp: {
         max_body_bytes: MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
         strict_tool_names: true,
@@ -244,9 +304,13 @@ describe("MCP OpenShell policy", () => {
   it("accepts only the canonical generated policy for the exact bridge and DNS pins", () => {
     const entry = githubBridgeEntry();
     const pins = ["2606:4700:4700::1111", "8.8.8.8"];
-    const content = buildMcpBridgePolicyYaml(entry.server, entry.url, "mcporter", {
-      addresses: pins,
-    });
+    const content = renderMcpBridgePolicyYaml(
+      entry.server,
+      entry.url,
+      "mcporter",
+      { addresses: pins },
+      entry.providerName ?? "",
+    );
     const registration = {
       name: entry.policyName,
       content,
@@ -353,7 +417,7 @@ describe("MCP OpenShell policy", () => {
       },
     ];
 
-    for (const mismatch of mismatches) {
+    mismatches.forEach((mismatch) => {
       vi.restoreAllMocks();
       const candidateEntry = mismatch.candidateEntry ?? entry;
       vi.spyOn(registry, "getCustomPolicies").mockReturnValue([
@@ -373,7 +437,7 @@ describe("MCP OpenShell policy", () => {
         mismatch.label,
       ).toThrow(/not canonical for its recorded bridge definition/);
       expect(gatewayState, mismatch.label).not.toHaveBeenCalled();
-    }
+    });
   });
 
   it("does not expose malformed persisted URLs in canonical ownership errors", () => {

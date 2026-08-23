@@ -409,44 +409,8 @@ describe("runner", () => {
       expect(plan.dry_run).toBe(false);
     });
 
-    it("does not expose credential field names or secret values in public plan output", async () => {
-      captureStdout();
-      mockExeca.mockResolvedValue({ exitCode: 0 });
-      const bp = {
-        components: {
-          inference: {
-            profiles: {
-              secrets: {
-                provider_type: "openai",
-                provider_name: "secret-provider",
-                endpoint: "https://api.example.com/v1",
-                model: "gpt-4",
-                credential_env: "SECRET_KEY",
-                credential_default: "default-secret-value",
-                token: "future-token-value",
-                authorization: "Bearer future-authorization",
-              },
-            },
-          },
-          sandbox: { image: "openclaw", name: "sb", forward_ports: [18789] },
-        },
-      };
-      process.env.SECRET_KEY = "real-secret-value";
-      try {
-        const plan = await actionPlan("secrets", bp);
-        const rendered = capturedJsonOutput<{
-          inference: Record<string, unknown>;
-        }>();
-        const out = stdoutText();
-
-        expect(plan.inference).not.toHaveProperty("credential_env");
-        expect(rendered.inference).toEqual({
-          provider_type: "openai",
-          provider_name: "secret-provider",
-          endpoint: "https://api.example.com/v1",
-          model: "gpt-4",
-        });
-        for (const leaked of [
+    it.each(
+      [
           "credential_env",
           "credential_default",
           "SECRET_KEY",
@@ -454,13 +418,53 @@ describe("runner", () => {
           "real-secret-value",
           "future-token-value",
           "future-authorization",
-        ]) {
+        ],
+    )(
+      "does not expose credential field names or secret values in public plan output [%s]",
+      async (leaked) => {
+        captureStdout();
+        mockExeca.mockResolvedValue({ exitCode: 0 });
+        const bp = {
+          components: {
+            inference: {
+              profiles: {
+                secrets: {
+                  provider_type: "openai",
+                  provider_name: "secret-provider",
+                  endpoint: "https://api.example.com/v1",
+                  model: "gpt-4",
+                  credential_env: "SECRET_KEY",
+                  credential_default: "default-secret-value",
+                  token: "future-token-value",
+                  authorization: "Bearer future-authorization",
+                },
+              },
+            },
+            sandbox: { image: "openclaw", name: "sb", forward_ports: [18789] },
+          },
+        };
+        process.env.SECRET_KEY = "real-secret-value";
+        try {
+          const plan = await actionPlan("secrets", bp);
+          const rendered = capturedJsonOutput<{
+            inference: Record<string, unknown>;
+          }>();
+          const out = stdoutText();
+
+          expect(plan.inference).not.toHaveProperty("credential_env");
+          expect(rendered.inference).toEqual({
+            provider_type: "openai",
+            provider_name: "secret-provider",
+            endpoint: "https://api.example.com/v1",
+            model: "gpt-4",
+          });
+
           expect(out).not.toContain(leaked);
+        } finally {
+          delete process.env.SECRET_KEY;
         }
-      } finally {
-        delete process.env.SECRET_KEY;
-      }
-    });
+      },
+    );
 
     it("passes dryRun through to the plan", async () => {
       captureStdout();

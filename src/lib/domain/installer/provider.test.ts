@@ -25,16 +25,16 @@ describe("installer provider helpers", () => {
     expect(normalizeInstallerProvider("unsupported")).toBeNull();
   });
 
-  function verifyProviderAliasNormalization() {
-    for (const provider of INSTALLER_PROVIDER_VALUES) {
-      expect(normalizeInstallerProvider(provider)).toBe(provider);
-    }
-    for (const [alias, provider] of Object.entries(INSTALLER_PROVIDER_ALIASES)) {
-      expect(normalizeInstallerProvider(alias)).toBe(provider);
-    }
-  }
+  it.each(INSTALLER_PROVIDER_VALUES)("preserves canonical provider %s", (provider) => {
+    expect(normalizeInstallerProvider(provider)).toBe(provider);
+  });
 
-  it("keeps provider values and aliases aligned with normalization", verifyProviderAliasNormalization);
+  it.each(Object.entries(INSTALLER_PROVIDER_ALIASES))(
+    "normalizes provider alias %s to %s",
+    (alias, provider) => {
+      expect(normalizeInstallerProvider(alias)).toBe(provider);
+    },
+  );
 
   it("keeps help text values aligned with install.sh usage", () => {
     expect(installerProviderHelpValues()).toBe(

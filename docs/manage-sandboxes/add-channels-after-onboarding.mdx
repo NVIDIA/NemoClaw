@@ -31,7 +31,6 @@ $$nemoclaw my-assistant channels add whatsapp
 $$nemoclaw my-assistant channels add teams
 ```
 
-<AgentOnly variant="openclaw">
 Add experimental Google Chat through its interactive enrollment flow:
 
 ```bash
@@ -39,7 +38,6 @@ $$nemoclaw my-assistant channels add googlechat
 ```
 
 Refer to [Set Up Google Chat](set-up-google-chat) before running the command.
-</AgentOnly>
 
 `channels add` accepts mixed-case input such as `Telegram`, then stores and prints the canonical lowercase name.
 It collects the inputs the channel needs, registers bridge providers with the OpenShell gateway when it captures tokens, records the channel in the sandbox registry, and asks whether to rebuild immediately.
@@ -48,9 +46,16 @@ Telegram, Discord, Slack, and Microsoft Teams prompt for credentials and configu
 WeChat runs an interactive host-side QR scan.
 WhatsApp collects no token because pairing happens inside the rebuilt sandbox.
 
+Google Chat prompts both agents for a service-account JSON key and sender access settings.
+
 <AgentOnly variant="openclaw">
-Google Chat prompts for a service-account JSON key and pauses while you configure its public webhook endpoint.
+OpenClaw pauses while you configure the Google Chat public webhook endpoint.
 It cannot be added non-interactively.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+Hermes prompts for the Google Cloud project ID and complete Pub/Sub subscription name.
+It uses Pub/Sub REST pull and does not create or configure a public webhook endpoint.
 </AgentOnly>
 
 ## Apply Policy and Rebuild

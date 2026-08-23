@@ -18,6 +18,7 @@ import {
   type McpProviderAttachment,
   type McpProviderAttachmentInspection,
   providerMatchesCredential,
+  providerMatchesManagedCredential,
   providerShapeDetail,
 } from "./mcp-bridge-provider-inspection";
 import {
@@ -119,7 +120,7 @@ function isRetryableSandboxMutationConflict(status: number | null, output: strin
 export function detachProvider(
   sandboxName: string,
   entry: McpBridgeEntry,
-  options: { bestEffort?: boolean } = {},
+  options: { allowLegacyGeneric?: boolean; bestEffort?: boolean } = {},
 ): ProviderDetachOutcome {
   if (!entry.providerName) return "absent";
   assertPersistedAuthenticatedBridgeEntry(entry);
@@ -130,6 +131,17 @@ export function detachProvider(
     );
   }
   for (let attempt = 0; attempt < MCP_PROVIDER_DETACH_ATTEMPTS; attempt += 1) {
+    const provider = inspectMcpProvider(entry.providerName);
+    if (
+      !providerMatchesManagedCredential(provider, entry.env[0], entry.providerId, {
+        allowLegacyGeneric: options.allowLegacyGeneric,
+      })
+    ) {
+      if (options.bestEffort) return "unknown";
+      throw new McpBridgeError(
+        `OpenShell provider '${entry.providerName}' changed before detach. ${providerShapeDetail(provider, entry.env[0], entry.providerId)} Refusing to mutate it.`,
+      );
+    }
     const before = exactAttachment(sandboxName, entry);
     if (!before.inspection.attachments) {
       if (options.bestEffort) return "unknown";

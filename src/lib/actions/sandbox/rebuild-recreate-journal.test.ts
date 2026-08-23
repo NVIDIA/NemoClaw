@@ -30,6 +30,14 @@ import {
 } from "./rebuild-recreate-journal";
 
 const SANDBOX_ID = "sbx-0d6f4c2a91";
+const HOST_MOUNT = {
+  source: "/srv/host-share",
+  target: "/sandbox/host-share",
+  readOnly: true,
+  sourceIdentity: { device: "66306", inode: "12345" },
+} as const;
+const PRE_HOST_MOUNT_FINGERPRINT =
+  "99603c8bf987561b783e2f38a1dcf260703537e5a680cae2198605ab13e181fe";
 
 const NON_DEFAULT_TARGET = {
   sandboxName: "alpha",
@@ -62,6 +70,7 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   sandboxGpu: null,
   sandboxGpuDevice: null,
   controlUiPort: null,
+  hostMounts: [HOST_MOUNT],
   targetGatewayName: "nemoclaw-9090",
   targetGatewayPort: 9090,
   onboardLockAlreadyHeld: true,
@@ -129,6 +138,32 @@ describe("rebuild replacement target fingerprint", () => {
         ...recreateOptions,
         targetGatewayName: "nemoclaw",
         targetGatewayPort: 8080,
+      }),
+    ).not.toBe(fingerprintRebuildRecreateTargetIntent(recreateOptions));
+  });
+
+  it("preserves the previous fingerprint for a replacement without host mounts (#9451)", () => {
+    expect(fingerprintRebuildRecreateTargetIntent({ ...recreateOptions, hostMounts: [] })).toBe(
+      PRE_HOST_MOUNT_FINGERPRINT,
+    );
+  });
+
+  it("separates a mounted replacement from the pre-binding fingerprint (#9451)", () => {
+    expect(fingerprintRebuildRecreateTargetIntent(recreateOptions)).not.toBe(
+      PRE_HOST_MOUNT_FINGERPRINT,
+    );
+  });
+
+  it("changes when the replacement host mount identity changes (#9451)", () => {
+    expect(
+      fingerprintRebuildRecreateTargetIntent({
+        ...recreateOptions,
+        hostMounts: [
+          {
+            ...HOST_MOUNT,
+            sourceIdentity: { ...HOST_MOUNT.sourceIdentity, inode: "67890" },
+          },
+        ],
       }),
     ).not.toBe(fingerprintRebuildRecreateTargetIntent(recreateOptions));
   });
@@ -375,6 +410,28 @@ describe("rebuild replacement journal", () => {
         targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent({
           ...recreateOptions,
           dcodeAutoApprovalMode: "thread-opt-in",
+        }),
+        log: vi.fn(),
+      }),
+    ).toThrow(/different recreate transaction in progress/);
+  });
+
+  it("refuses to resume a journal whose host mount identity changed (#9451)", () => {
+    open();
+
+    expect(() =>
+      openRebuildRecreateJournal({
+        target: NON_DEFAULT_TARGET,
+        expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
+        agentName: "langchain-deepagents-code",
+        targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent({
+          ...recreateOptions,
+          hostMounts: [
+            {
+              ...HOST_MOUNT,
+              sourceIdentity: { ...HOST_MOUNT.sourceIdentity, inode: "67890" },
+            },
+          ],
         }),
         log: vi.fn(),
       }),

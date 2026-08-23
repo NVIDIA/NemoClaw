@@ -10,6 +10,7 @@ import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 
 export default class SandboxSessionsCommand extends NemoClawCommand {
   static id = "sandbox:sessions";
+  static customHelp = true;
   static strict = false;
   static summary = "List conversation sessions in a sandbox";
   static description =

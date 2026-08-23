@@ -127,50 +127,55 @@ describe("http-proxy-fix rewrite for a deepinfra-style failure (#2344)", () => {
     expect("auth" in (captured ?? {})).toBe(false);
   });
 
-  it("strips Host / Proxy-* / RFC-7230-§6.1 hop-by-hop headers; preserves target-intent headers", () => {
-    http.request({
-      hostname: PROXY_HOST,
-      port: 3128,
-      path: "https://api.deepinfra.com/v1/foo",
-      headers: {
-        Host: `${PROXY_HOST}:3128`,
-        "Proxy-Authorization": "Basic dXNlcjpwYXNz",
-        "Proxy-Connection": "keep-alive",
-        "Proxy-Authenticate": "Basic realm=p",
-        Connection: "close",
-        "Keep-Alive": "timeout=5",
-        TE: "trailers",
-        Trailer: "Expires",
-        "Transfer-Encoding": "chunked",
-        Upgrade: "h2c",
-        Authorization: "Bearer real-target-token",
-        "Content-Type": "application/json",
-      },
-    });
+  it.each(
+    [
+        "Host",
+        "host",
+        "Proxy-Authorization",
+        "Proxy-Connection",
+        "Proxy-Authenticate",
+        "Connection",
+        "Keep-Alive",
+        "TE",
+        "Trailer",
+        "Transfer-Encoding",
+        "Upgrade",
+      ],
+  )(
+    "strips Host / Proxy-* / RFC-7230-§6.1 hop-by-hop headers; preserves target-intent headers [%s]",
+    (k) => {
+      http.request({
+        hostname: PROXY_HOST,
+        port: 3128,
+        path: "https://api.deepinfra.com/v1/foo",
+        headers: {
+          Host: `${PROXY_HOST}:3128`,
+          "Proxy-Authorization": "Basic dXNlcjpwYXNz",
+          "Proxy-Connection": "keep-alive",
+          "Proxy-Authenticate": "Basic realm=p",
+          Connection: "close",
+          "Keep-Alive": "timeout=5",
+          TE: "trailers",
+          Trailer: "Expires",
+          "Transfer-Encoding": "chunked",
+          Upgrade: "h2c",
+          Authorization: "Bearer real-target-token",
+          "Content-Type": "application/json",
+        },
+      });
 
-    expect(captured).not.toBeNull();
-    const headers = (captured?.headers ?? {}) as Record<string, string>;
-    // RFC 7230 §6.1 hop-by-hop set + proxy-pointing Host all stripped.
-    for (const k of [
-      "Host",
-      "host",
-      "Proxy-Authorization",
-      "Proxy-Connection",
-      "Proxy-Authenticate",
-      "Connection",
-      "Keep-Alive",
-      "TE",
-      "Trailer",
-      "Transfer-Encoding",
-      "Upgrade",
-    ]) {
+      expect(captured).not.toBeNull();
+      const headers = (captured?.headers ?? {}) as Record<string, string>;
+      // RFC 7230 §6.1 hop-by-hop set + proxy-pointing Host all stripped.
+
       expect(headers[k]).toBeUndefined();
-    }
-    // Target intent (caller's Authorization to the upstream and content
-    // negotiation) must survive.
-    expect(headers.Authorization).toBe("Bearer real-target-token");
-    expect(headers["Content-Type"]).toBe("application/json");
-  });
+
+      // Target intent (caller's Authorization to the upstream and content
+      // negotiation) must survive.
+      expect(headers.Authorization).toBe("Bearer real-target-token");
+      expect(headers["Content-Type"]).toBe("application/json");
+    },
+  );
 
   it("strips tokens named in the Connection header (RFC 7230 §6.1 transitive hop-by-hop)", () => {
     http.request({

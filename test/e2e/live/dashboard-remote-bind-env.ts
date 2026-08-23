@@ -28,16 +28,26 @@ export function buildDashboardRemoteBindEnv(
 }
 
 export function dashboardRemoteBindConnectStarted(
-  result: { exitCode: number | null; stdout: string; stderr: string },
+  result: {
+    exitCode: number | null;
+    stdout: string;
+    stderr: string;
+    timedOut?: boolean;
+  },
   sandboxName: string,
   dashboardPort: string,
 ): boolean {
   const output = stripAnsi(`${result.stdout}\n${result.stderr}`);
   return (
     result.exitCode === 0 ||
-    (result.exitCode === null &&
+    ((result.exitCode === null || result.timedOut === true) &&
       (output.includes("Dashboard port forward re-established.") ||
         (output.includes(`Forwarding port ${dashboardPort}`) &&
           output.includes(`sandbox ${sandboxName}`))))
   );
+}
+
+export function dashboardForwardIsRunning(forwardLine: string): boolean {
+  const columns = stripAnsi(forwardLine).trim().split(/\s+/u);
+  return columns.length === 5 && columns[4] === "running";
 }

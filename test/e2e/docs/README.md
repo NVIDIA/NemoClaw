@@ -71,10 +71,11 @@ dispatch shell validation suites.
 
 ## Selecting One Target
 
-`.github/workflows/e2e.yaml` runs one matrix target by passing its id through
-`TARGET_ID` and selecting the matching test with `-t "^${TARGET_ID}$"`. The
-selector performs the restriction; `TARGET_ID` alone does not limit which
-targets run.
+`.github/workflows/e2e.yaml` runs one matrix target by passing its ID through
+`TARGET_ID`. The workflow selects the test title with the stable
+`-t "^${TARGET_ID}:"` prefix. The title suffix contains the observable outcome,
+agent runtime, and environment or inference endpoint. The selector performs the
+restriction; `TARGET_ID` alone does not limit which targets run.
 
 The `generate-matrix` job resolves dispatch input through `requireTargets`, so
 an unknown id fails there before any target job starts.
@@ -126,12 +127,12 @@ npm run test:runtime-audit -- e2e-artifacts/run-1 e2e-artifacts/run-2
 The aggregate local command rebuilds the CLI before Vitest starts and runs E2E
 test files serially. It does not retry a failed test.
 
-After an eligible `E2E main` push workflow completes, `E2E / Main Retry` records its conclusion and source-attempt evidence.
+After an eligible `E2E main` push workflow completes, `E2E / Main Retry Evidence` records its conclusion and source-attempt evidence.
 It does not request a broad failed-job or workflow rerun.
 An E2E test can retry an external operation only through its checked-in bounded policy.
 The observer records `passed-first-attempt`, `passed-after-retry`, `failed-no-retry`, or `ignored`.
 The `flaky` field is `true` only for `passed-after-retry`.
-Hosted Runner Recovery separately owns one rerun of an eligible `CI / Platform Evidence` push with authenticated GitHub-hosted runner-loss evidence.
+`Automation / Recover Platform CI Runner` separately owns one rerun of an eligible `CI / Platform Compatibility` push with authenticated GitHub-hosted runner-loss evidence.
 
 After the observer evaluates attempt N, it uploads an artifact named for that
 attempt. The artifact contains one `attempts` entry for each source attempt through
@@ -301,7 +302,7 @@ test/e2e/
 
   For a PR revision run, leave `jobs` and
   `targets` empty. The run selects every default-selected free-standing workflow
-  E2E except `Publish staging Brev Launchable image`, every catalogue target in the
+  E2E except `Exact staging Brev Launchable`, every catalogue target in the
   `standard` profile, all shared credential-free tests, and these
   controller-selected registry targets:
   `ubuntu-policy-custom-missing-presets-negative`,
@@ -345,7 +346,7 @@ test/e2e/
   its result counts to the expected and tested candidate SHA, correlation ID,
   job ID, and shard ID. The workflow boundary requires every selected job shard
   to upload its evidence artifact.
-- `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Evidence`.
+- `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Compatibility`.
   It runs the Ubuntu 26.04 compatibility contracts and four full-suite Vitest shards on each of macOS and WSL.
   Each macOS shard installs the pinned OpenShell formula.
   Shard 1 has a 60-minute budget for live E2E; the other shards have 30 minutes.
@@ -365,10 +366,9 @@ test/e2e/
 - `.github/workflows/podman-cpu-proof.yaml` provides PR-only experimental runtime evidence with Docker disabled.
 - `.github/workflows/sandbox-images-and-e2e.yaml` provides reusable image build and test evidence through manual dispatch and `workflow_call`.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
-- The `staging-brev-launchable` job verifies the exact image-producer receipt,
-  records the concrete staging image in `launchable-image.json`, and stops before deployment.
-  Use `nemoclaw-maintainer-validate-launchable` for advisory deployment, runtime,
-  inference, and cleanup validation while issue #8924 blocks automation.
+- The `staging-brev-launchable` job validates the exact baked candidate in
+  preinstalled mode. Generic Brev VMs with source overlays are not a
+  qualification boundary.
 - `vitest.config.ts` contains `e2e-support` for fast fixture/support tests and
   `e2e-live` for opt-in live target execution. The PR and `main` CLI coverage
   shards include `e2e-support` for code changes; they never opt into live

@@ -385,66 +385,68 @@ describe("managed image publication evidence verifier", () => {
     });
   });
 
-  it("rejects a non-GHCR reference before invoking registry tools (#7744)", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-image-evidence-identity-"));
-    const bin = path.join(root, "bin");
-    const toolTrace = path.join(root, "external-tool.trace");
-    const digest = `sha256:${"7".repeat(64)}`;
+  it.each(["curl", "docker"])(
+    "rejects a non-GHCR reference before invoking registry tools [%s] (#7744)",
+    (tool) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-image-evidence-identity-"));
+      const bin = path.join(root, "bin");
+      const toolTrace = path.join(root, "external-tool.trace");
+      const digest = `sha256:${"7".repeat(64)}`;
 
-    fs.mkdirSync(bin);
-    for (const tool of ["curl", "docker"]) {
+      fs.mkdirSync(bin);
+
       fs.writeFileSync(
         path.join(bin, tool),
         '#!/bin/sh\nprintf \'%s\\n\' "$0" >> "$TOOL_TRACE"\nexit 99\n',
         { mode: 0o755 },
       );
-    }
 
-    try {
-      const result = spawnSync(
-        "bash",
-        [
-          verifier,
-          "--reference",
-          `registry.example/nvidia/nemoclaw/openclaw-sandbox@${digest}`,
-          "--digest",
-          digest,
-          "--platform",
-          platform,
-          "--agent",
-          agent,
-          "--base-reference",
-          baseReference,
-          "--repository",
-          repository,
-          "--revision",
-          revision,
-          "--cohort",
-          cohort,
-          "--run-id",
-          runId,
-          "--run-attempt",
-          runAttempt,
-          "--output",
-          path.join(root, "evidence.json"),
-        ],
-        {
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            PATH: `${bin}:${process.env.PATH ?? ""}`,
-            TOOL_TRACE: toolTrace,
+      try {
+        const result = spawnSync(
+          "bash",
+          [
+            verifier,
+            "--reference",
+            `registry.example/nvidia/nemoclaw/openclaw-sandbox@${digest}`,
+            "--digest",
+            digest,
+            "--platform",
+            platform,
+            "--agent",
+            agent,
+            "--base-reference",
+            baseReference,
+            "--repository",
+            repository,
+            "--revision",
+            revision,
+            "--cohort",
+            cohort,
+            "--run-id",
+            runId,
+            "--run-attempt",
+            runAttempt,
+            "--output",
+            path.join(root, "evidence.json"),
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              PATH: `${bin}:${process.env.PATH ?? ""}`,
+              TOOL_TRACE: toolTrace,
+            },
           },
-        },
-      );
+        );
 
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("managed image evidence identity is invalid");
-      expect(fs.existsSync(toolTrace)).toBe(false);
-    } finally {
-      fs.rmSync(root, { force: true, recursive: true });
-    }
-  });
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain("managed image evidence identity is invalid");
+        expect(fs.existsSync(toolTrace)).toBe(false);
+      } finally {
+        fs.rmSync(root, { force: true, recursive: true });
+      }
+    },
+  );
 
   it("rejects candidate bytes that do not match the build digest", () => {
     const fixture = runEvidence({}, `sha256:${"f".repeat(64)}`);

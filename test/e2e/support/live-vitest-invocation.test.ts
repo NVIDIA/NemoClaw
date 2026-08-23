@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildLiveVitestArgs,
+  INFERENCE_ROUTING_TEST_PATH,
   LIVE_VITEST_PROJECT,
   MCP_BRIDGE_TEST_PATH,
   type LiveVitestSpawner,
@@ -152,7 +153,7 @@ describe("buildLiveVitestArgs (#6961)", () => {
     expect(
       buildLiveVitestArgs({
         testPath: "test/e2e/live/registry-targets.test.ts",
-        selector: "^ubuntu-repo-cloud-openclaw$",
+        selector: "^ubuntu-repo-cloud-openclaw:",
       }),
     ).toEqual([
       "vitest",
@@ -161,7 +162,7 @@ describe("buildLiveVitestArgs (#6961)", () => {
       "e2e-live",
       "test/e2e/live/registry-targets.test.ts",
       "-t",
-      "^ubuntu-repo-cloud-openclaw$",
+      "^ubuntu-repo-cloud-openclaw:",
       "--silent=false",
       "--reporter=default",
       `--reporter=${RISK_SIGNAL_REPORTER}`,
@@ -183,6 +184,13 @@ describe("buildLiveVitestArgs (#6961)", () => {
       "--reporter=default",
       `--reporter=${RISK_SIGNAL_REPORTER}`,
     ]);
+  });
+
+  it("fails fast only for inference-routing (#9622)", () => {
+    expect(buildLiveVitestArgs({ testPath: INFERENCE_ROUTING_TEST_PATH })).toContain("--bail=1");
+    expect(buildLiveVitestArgs({ testPath: "test/e2e/live/onboard-resume.test.ts" })).not.toContain(
+      "--bail=1",
+    );
   });
 
   it("fails closed on an invalid input before producing any argv", () => {

@@ -137,19 +137,6 @@ describe("E2E artifact uploads", () => {
     );
   });
 
-  it("retains release waiver evidence for 30 days", () => {
-    const workflow = mutableWorkflow();
-    const upload = workflow.jobs["release-qualification"].steps?.find(
-      (step) => step.name === "Upload release qualification waiver evidence",
-    );
-    expect(upload).toBeDefined();
-    upload!.with!["retention-days"] = 7;
-
-    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
-      "release-qualification must not invoke actions/upload-artifact directly",
-    );
-  });
-
   it("allows only the exact 30-day native runtime aggregate upload", () => {
     const workflow = mutableWorkflow();
     const upload = workflow.jobs["native-runtime-qualification-producer-aggregate"].steps?.find(

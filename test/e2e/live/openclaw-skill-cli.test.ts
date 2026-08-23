@@ -223,12 +223,12 @@ test("openclaw-skill-cli: direct OpenClaw skills install/list/info/check roundtr
     "sandbox-openclaw-runtime-env-check",
     env,
   );
-  for (const requiredVar of ["OPENCLAW_HOME", "OPENCLAW_STATE_DIR", "OPENCLAW_WORKSPACE_DIR"]) {
+  ["OPENCLAW_HOME", "OPENCLAW_STATE_DIR", "OPENCLAW_WORKSPACE_DIR"].forEach((requiredVar) => {
     expect(
       resultText(envCheck),
       `${requiredVar} must be exported in sandbox runtime shell`,
     ).toMatch(new RegExp(`^${requiredVar}=.+$`, "m"));
-  }
+  });
 
   progress.phase("install the workspace skill fixture");
   await expectSandboxShellZero(

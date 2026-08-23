@@ -68,10 +68,10 @@ describe("buildHermesUpstreamHeader parity", () => {
     // Sanitizer strips C0 controls (0x00-0x1F), DEL (0x7F), and C1 controls
     // (0x80-0x9F). Exclude 0x0A from the assertion only because the
     // multi-line header itself separates comment lines with \n.
-    for (const line of header.split("\n")) {
+    header.split("\n").forEach((line) => {
       expect(line).not.toMatch(/[\x00-\x09\x0B-\x1F\x7F-\x9F]/);
       if (line.length > 0) expect(line.startsWith("#")).toBe(true);
-    }
+    });
   });
 
   it.each(

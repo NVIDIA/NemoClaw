@@ -999,30 +999,43 @@ describe("runner-pressure CLI fail-closed entrypoint (#7146)", () => {
     });
   }, 90_000);
 
-  it("initializes private evidence files before the live test", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runner-evidence-"));
-    const baselinePath = path.join(directory, "baseline.jsonl");
-    const phaseBaselinesPath = path.join(directory, "phase-baselines.jsonl");
-    const classificationPath = path.join(directory, "classification.jsonl");
-    try {
-      const result = runHelper(["initialize-evidence"], {
-        DOCKER_OOM_CONTAINER: "",
-        E2E_PHASE: "unit-test",
-        E2E_RESOURCE_BASELINE_FILE: baselinePath,
-        E2E_RESOURCE_PHASE_BASELINES_FILE: phaseBaselinesPath,
-        E2E_TERMINAL_CLASSIFICATION_FILE: classificationPath,
-      });
-      expect(result.status).toBe(0);
-      expect(parseBaselineLine(fs.readFileSync(baselinePath, "utf8")).phase).toBe("unit-test");
-      expect(fs.readFileSync(phaseBaselinesPath, "utf8")).toBe("");
-      expect(fs.readFileSync(classificationPath, "utf8")).toBe("");
-      for (const file of [baselinePath, phaseBaselinesPath, classificationPath]) {
+  it.each([
+    { scenario: "baseline evidence" },
+    { scenario: "phase baselines" },
+    { scenario: "classification evidence" },
+  ])(
+    "initializes private evidence files before the live test [$scenario]",
+    ({ scenario }) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runner-evidence-"));
+      const baselinePath = path.join(directory, "baseline.jsonl");
+      const phaseBaselinesPath = path.join(directory, "phase-baselines.jsonl");
+      const classificationPath = path.join(directory, "classification.jsonl");
+      try {
+        const result = runHelper(["initialize-evidence"], {
+          DOCKER_OOM_CONTAINER: "",
+          E2E_PHASE: "unit-test",
+          E2E_RESOURCE_BASELINE_FILE: baselinePath,
+          E2E_RESOURCE_PHASE_BASELINES_FILE: phaseBaselinesPath,
+          E2E_TERMINAL_CLASSIFICATION_FILE: classificationPath,
+        });
+        expect(result.status).toBe(0);
+        expect(parseBaselineLine(fs.readFileSync(baselinePath, "utf8")).phase).toBe("unit-test");
+        expect(fs.readFileSync(phaseBaselinesPath, "utf8")).toBe("");
+        expect(fs.readFileSync(classificationPath, "utf8")).toBe("");
+        const file = (
+          {
+            "baseline evidence": baselinePath,
+            "phase baselines": phaseBaselinesPath,
+            "classification evidence": classificationPath,
+          } as const
+        )[scenario]!;
         expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
       }
-    } finally {
-      fs.rmSync(directory, { recursive: true, force: true });
-    }
-  }, 90_000);
+    },
+    90_000,
+  );
 
   it.each(["assertion", "timeout"] as const)(
     "classifies a trusted harness %s artifact through the real CLI",
