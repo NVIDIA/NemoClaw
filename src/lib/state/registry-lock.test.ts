@@ -249,6 +249,25 @@ describe("process-bound registry locking", () => {
     expect(fs.existsSync(test.lockDir)).toBe(true);
   });
 
+  it("keeps a live owner when the host cannot read process identity (#9746)", () => {
+    const test = fixture("nemoclaw-unverifiable-host-lock-");
+    writeOrdinaryGeneration(test, 4242);
+    markStale(test.lockDir);
+    const wait = vi.fn();
+
+    expect(() =>
+      withRegistryLockAt(test.registryFile, () => undefined, {
+        isProcessAlive: () => true,
+        maxRetries: 1,
+        now: () => Number.MAX_SAFE_INTEGER,
+        readProcessIdentity: () => null,
+        wait,
+      }),
+    ).toThrow(/after 1 retries/);
+    expect(wait).toHaveBeenCalledOnce();
+    expect(fs.existsSync(test.lockDir)).toBe(true);
+  });
+
   it("keeps ordinary non-Linux acquisition and release behavior", () => {
     const test = fixture("nemoclaw-ordinary-no-proc-");
     vi.spyOn(process, "getuid").mockImplementation(() => undefined as never);

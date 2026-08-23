@@ -34,8 +34,10 @@ function createDeps(
     removeLegacy: vi.fn(),
     cleanupHost: vi.fn(),
     recoverProcesses: vi.fn(),
-    warmupScopeUpgrade: vi.fn(),
-    autoPairScopeApproval: vi.fn(),
+    settleOrdinaryPairing: vi.fn(async () => ({ kind: "settled" as const })),
+    ordinaryPairingIncompleteMessage: vi.fn(
+      () => "OpenClaw onboarding is incomplete; resume onboarding.",
+    ),
     readRegistryAgent: vi.fn(() => "openclaw"),
     settlePortablePairing: vi.fn(async () => ({ kind: "settled" as const })),
     portablePairingIncompleteMessage: vi.fn(
@@ -62,8 +64,8 @@ function createDeps(
       removeLegacyCredentialsFile: calls.removeLegacy,
       cleanupStaleHostFiles: calls.cleanupHost,
       checkAndRecoverSandboxProcesses: calls.recoverProcesses,
-      warmupScopeUpgrade: calls.warmupScopeUpgrade,
-      autoPairScopeApproval: calls.autoPairScopeApproval,
+      settleOrdinaryOpenClawPairing: calls.settleOrdinaryPairing,
+      ordinaryOpenClawPairingIncompleteMessage: calls.ordinaryPairingIncompleteMessage,
       readRegistryAgent: calls.readRegistryAgent,
       settlePortablePairing: calls.settlePortablePairing,
       portablePairingIncompleteMessage: calls.portablePairingIncompleteMessage,
@@ -168,7 +170,7 @@ describe("finalization handlers", () => {
     expect(result.verificationDiagnostics).toEqual(["  ✓ verified"]);
   });
 
-  it("uses strict Portable settlement instead of ordinary warm-up and approval (#9207)", async () => {
+  it("uses strict Portable settlement instead of ordinary pairing settlement (#9207)", async () => {
     const { deps, calls } = createDeps();
     const options = {
       ...baseOptions(deps),
@@ -179,8 +181,7 @@ describe("finalization handlers", () => {
     const result = await runFinalizationHandlers(options);
 
     expect(result.stateResult.type).toBe("complete");
-    expect(calls.warmupScopeUpgrade).not.toHaveBeenCalled();
-    expect(calls.autoPairScopeApproval).not.toHaveBeenCalled();
+    expect(calls.settleOrdinaryPairing).not.toHaveBeenCalled();
     expect(calls.settlePortablePairing).toHaveBeenCalledExactlyOnceWith("my-assistant", {
       portableRequired: true,
     });
@@ -197,8 +198,7 @@ describe("finalization handlers", () => {
     const result = await runFinalizationHandlers(options);
 
     expect(result.stateResult.type).toBe("complete");
-    expect(calls.warmupScopeUpgrade).not.toHaveBeenCalled();
-    expect(calls.autoPairScopeApproval).not.toHaveBeenCalled();
+    expect(calls.settleOrdinaryPairing).not.toHaveBeenCalled();
     expect(calls.settlePortablePairing).toHaveBeenCalledExactlyOnceWith("my-assistant", {
       portableRequired: true,
     });
@@ -229,8 +229,7 @@ describe("finalization handlers", () => {
     });
     expect(calls.verify).not.toHaveBeenCalled();
     expect(calls.dashboard).not.toHaveBeenCalled();
-    expect(calls.warmupScopeUpgrade).not.toHaveBeenCalled();
-    expect(calls.autoPairScopeApproval).not.toHaveBeenCalled();
+    expect(calls.settleOrdinaryPairing).not.toHaveBeenCalled();
     expect(calls.reportReadiness).toHaveBeenCalledWith(false);
     expect(calls.error).toHaveBeenCalledWith(
       "  Portable onboarding is incomplete; resume onboarding.",
@@ -248,8 +247,7 @@ describe("finalization handlers", () => {
     const result = await runFinalizationHandlers(options);
 
     expect(result.stateResult.type).toBe("complete");
-    expect(calls.warmupScopeUpgrade).toHaveBeenCalledOnce();
-    expect(calls.autoPairScopeApproval).toHaveBeenCalledOnce();
+    expect(calls.settleOrdinaryPairing).not.toHaveBeenCalled();
     expect(calls.settlePortablePairing).not.toHaveBeenCalled();
   });
 
@@ -271,8 +269,7 @@ describe("finalization handlers", () => {
         metadata: { state: "post_verify", reason: "portable_pairing_incomplete" },
       },
     });
-    expect(calls.warmupScopeUpgrade).not.toHaveBeenCalled();
-    expect(calls.autoPairScopeApproval).not.toHaveBeenCalled();
+    expect(calls.settleOrdinaryPairing).not.toHaveBeenCalled();
     expect(calls.settlePortablePairing).not.toHaveBeenCalled();
     expect(calls.verify).not.toHaveBeenCalled();
   });
@@ -399,9 +396,9 @@ describe("finalization handlers", () => {
     const recoveryOrders = calls.recoverProcesses.mock.invocationCallOrder;
     const refreshOrder = calls.ensureAgentDashboard.mock.invocationCallOrder[0];
     expect(recoveryOrders).toHaveLength(2);
-    expect(recoveryOrders[1]).toBeGreaterThan(calls.warmupScopeUpgrade.mock.invocationCallOrder[0]);
+    expect(calls.settleOrdinaryPairing).toHaveBeenCalledExactlyOnceWith("my-assistant");
     expect(recoveryOrders[1]).toBeGreaterThan(
-      calls.autoPairScopeApproval.mock.invocationCallOrder[0],
+      calls.settleOrdinaryPairing.mock.invocationCallOrder[0],
     );
     expect(refreshOrder).toBeGreaterThan(recoveryOrders[1]);
     expect(calls.verifyWebSearch.mock.invocationCallOrder[0]).toBeGreaterThan(refreshOrder);
@@ -431,7 +428,7 @@ describe("finalization handlers", () => {
 
     expect(calls.ensureAgentDashboard).not.toHaveBeenCalled();
     expect(calls.recoverProcesses).not.toHaveBeenCalled();
-    expect(calls.autoPairScopeApproval).not.toHaveBeenCalled();
+    expect(calls.settleOrdinaryPairing).not.toHaveBeenCalled();
     expect(calls.getChatUiUrl).not.toHaveBeenCalled();
     expect(calls.buildChain).not.toHaveBeenCalled();
     expect(calls.verify).not.toHaveBeenCalled();
@@ -544,114 +541,72 @@ describe("finalization handlers", () => {
     expect(calls.reportReadiness).toHaveBeenCalledWith(false);
   });
 
-  // Scenario A (#4504): the auto-pair scope-approval sweep runs against the
-  // freshly-recovered gateway — strictly after process recovery (which can
-  // restart the gateway, #3573) and strictly before deployment verification
-  // (so the gateway state is settled before we probe it).
-  it("runs the auto-pair scope-approval sweep after process recovery and before verify (#4504)", async () => {
+  it("settles ordinary OpenClaw pairing after recovery and before verification (#9844)", async () => {
     const { deps, calls } = createDeps();
 
     await runFinalizationHandlers(baseOptions(deps));
 
-    expect(calls.autoPairScopeApproval).toHaveBeenCalledOnce();
-    expect(calls.autoPairScopeApproval).toHaveBeenCalledWith("my-assistant");
-    // Ordering: recover → autoPairScopeApproval → verify.
-    expect(calls.autoPairScopeApproval.mock.invocationCallOrder[0]).toBeGreaterThan(
+    expect(calls.settleOrdinaryPairing).toHaveBeenCalledExactlyOnceWith("my-assistant");
+    expect(calls.settleOrdinaryPairing.mock.invocationCallOrder[0]).toBeGreaterThan(
       calls.recoverProcesses.mock.invocationCallOrder[0],
     );
-    expect(calls.autoPairScopeApproval.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(calls.settleOrdinaryPairing.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.recoverProcesses.mock.invocationCallOrder[1],
+    );
+    expect(calls.recoverProcesses.mock.invocationCallOrder[1]).toBeLessThan(
       calls.verify.mock.invocationCallOrder[0],
     );
   });
 
-  // Scenario B (#4504): the sweep is agent-agnostic — the stuck CLI/webchat
-  // scope upgrade can occur regardless of which agent the sandbox runs.
-  it("runs the scope-approval sweep regardless of agent type (#4504)", async () => {
+  it("does not settle ordinary OpenClaw pairing during an inner rebuild handoff (#9844)", async () => {
+    const { deps, calls } = createDeps();
+
+    const result = await runFinalizationHandlers({
+      ...baseOptions(deps),
+      recreateJournalHandoff: true,
+    });
+
+    expect(result.stateResult.type).toBe("complete");
+    expect(calls.settleOrdinaryPairing).not.toHaveBeenCalled();
+    expect(calls.ensureAgentDashboard).toHaveBeenCalledWith("my-assistant", null);
+    expect(calls.verify).toHaveBeenCalledOnce();
+  });
+
+  it("does not run OpenClaw pairing settlement for Hermes (#9844)", async () => {
     const { deps, calls } = createDeps();
     const agent = { name: "hermes" };
 
     await runFinalizationHandlers({ ...baseOptions(deps), agent });
 
-    expect(calls.autoPairScopeApproval).toHaveBeenCalledWith("my-assistant");
+    expect(calls.settleOrdinaryPairing).not.toHaveBeenCalled();
   });
 
-  // Scenario C (#4504): the dep is documented as best-effort / never-throws and
-  // the handler wraps no try/catch around it. Per the contract we assert the
-  // implemented behavior: the sweep is invoked and, because it returns cleanly,
-  // post verification proceeds to completion. A dependency that threw would
-  // abort finalization here — the regression this guards.
-  it("treats the scope-approval sweep as best-effort and still completes the session (#4504)", async () => {
-    const { deps, calls } = createDeps();
+  it("pauses onboarding when canonical OpenClaw pairing does not settle (#9844)", async () => {
+    const { deps, calls } = createDeps({
+      settleOrdinaryOpenClawPairing: vi.fn(async () => ({
+        kind: "incomplete" as const,
+        reason: "pairing-unavailable" as const,
+      })),
+    });
 
     const result = await runFinalizationHandlers(baseOptions(deps));
 
-    expect(calls.autoPairScopeApproval).toHaveBeenCalledOnce();
-    // The non-throwing sweep does not abort finalization: it proceeds through
-    // verification and the dashboard print to a completed result. (#4472 moved
-    // session completion to the imported completeOnboardMachine, so completion
-    // is asserted via the downstream dashboard + diagnostics rather than a dep.)
-    expect(calls.dashboard).toHaveBeenCalledOnce();
-    expect(result.verificationDiagnostics).toEqual(["  ✓ verified"]);
-  });
-
-  // Scenario 1 (#4504-v2, HEADLINE): the warm-up provokes the operator.write
-  // scope upgrade so the approval pass below has something pending to approve.
-  // The order is load-bearing: process recovery (gateway live) → warmup
-  // (provoke / create pending) → autoPairScopeApproval (approve / clear
-  // pending). Reversing warmup and approval makes the approval pass a no-op and
-  // the user's first real run falls back — exactly the bug v2 fixes.
-  it("provokes the scope upgrade after recovery and before the approval pass in v2 (#4504)", async () => {
-    const { deps, calls } = createDeps();
-
-    await runFinalizationHandlers(baseOptions(deps));
-
-    expect(calls.warmupScopeUpgrade).toHaveBeenCalledOnce();
-    expect(calls.warmupScopeUpgrade).toHaveBeenCalledWith("my-assistant");
-    // recover → warmup (provoke) → autoPairScopeApproval (approve).
-    expect(calls.warmupScopeUpgrade.mock.invocationCallOrder[0]).toBeGreaterThan(
-      calls.recoverProcesses.mock.invocationCallOrder[0],
+    expect(result).toMatchObject({
+      deploymentHealthy: false,
+      stateResult: {
+        type: "pause",
+        metadata: { state: "post_verify", reason: "deployment_not_ready" },
+      },
+    });
+    expect(result.verificationDiagnostics).toEqual([
+      "OpenClaw onboarding is incomplete; resume onboarding.",
+    ]);
+    expect(calls.verify).not.toHaveBeenCalled();
+    expect(calls.dashboard).not.toHaveBeenCalled();
+    expect(calls.ensureAgentDashboard).not.toHaveBeenCalled();
+    expect(calls.reportReadiness).toHaveBeenCalledWith(false);
+    expect(calls.error).toHaveBeenCalledWith(
+      "  OpenClaw onboarding is incomplete; resume onboarding.",
     );
-    expect(calls.warmupScopeUpgrade.mock.invocationCallOrder[0]).toBeLessThan(
-      calls.autoPairScopeApproval.mock.invocationCallOrder[0],
-    );
-  });
-
-  // Scenario 2 (#4504-v2): the warm-up is best-effort / non-blocking. The
-  // handler wraps no try/catch around the dep and relies on the dep itself
-  // never throwing (the production leaf swallows every failure — covered in
-  // auto-pair-warmup.test.ts). Per the contract we assert the implemented
-  // behavior here: the warm-up is invoked and, because the (non-throwing) dep
-  // returns cleanly, finalization is NOT ordered to depend on its success — it
-  // proceeds straight to the approval pass, verification, and the dashboard.
-  // The dep returning nothing useful (no pending provoked, gateway slow) does
-  // not change the downstream flow: behavior degrades to v1, never blocks.
-  it("completes v2 finalization without depending on the warm-up succeeding (#4504)", async () => {
-    // The default warm-up mock returns undefined (e.g. gateway not up → the
-    // production leaf swallowed and provoked nothing). Finalization must be
-    // unaffected.
-    const { deps, calls } = createDeps();
-
-    const result = await runFinalizationHandlers(baseOptions(deps));
-
-    expect(calls.warmupScopeUpgrade).toHaveBeenCalledOnce();
-    expect(calls.warmupScopeUpgrade.mock.results[0]).toEqual({ type: "return", value: undefined });
-    // The approval pass still runs after it (degrades to v1, not skipped).
-    expect(calls.autoPairScopeApproval).toHaveBeenCalledOnce();
-    expect(calls.dashboard).toHaveBeenCalledOnce();
-    expect(result.verificationDiagnostics).toEqual(["  ✓ verified"]);
-  });
-
-  // Scenario 3 (#4504-v2): the warm-up is agent-agnostic — the first-run scope
-  // upgrade is provoked regardless of which agent the sandbox runs (the
-  // contract says run it unconditionally; idempotent once operator.write is
-  // paired).
-  it("provokes the v2 scope upgrade regardless of agent type (#4504)", async () => {
-    const { deps: depsHermes, calls: callsHermes } = createDeps();
-    await runFinalizationHandlers({ ...baseOptions(depsHermes), agent: { name: "hermes" } });
-    expect(callsHermes.warmupScopeUpgrade).toHaveBeenCalledWith("my-assistant");
-
-    const { deps: depsOpenclaw, calls: callsOpenclaw } = createDeps();
-    await runFinalizationHandlers({ ...baseOptions(depsOpenclaw), agent: { name: "openclaw" } });
-    expect(callsOpenclaw.warmupScopeUpgrade).toHaveBeenCalledWith("my-assistant");
   });
 });
