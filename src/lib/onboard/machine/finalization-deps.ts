@@ -63,7 +63,7 @@ interface OrdinaryOpenClawPairingSettlementDeps {
     version: string,
     stateDirectory: string,
   ): OpenClawPairingSettlementObservation;
-  runWarmup(name: string): Promise<void> | void;
+  runWarmup(name: string, gatewayName: string): Promise<void> | void;
   runApproval(name: string, gatewayName: string): Promise<void> | void;
   withSandboxLock: SandboxLifecycleLock;
   withGatewayLock: GatewayRouteLock;
@@ -154,8 +154,10 @@ function defaultPairingSettlementDeps(): OrdinaryOpenClawPairingSettlementDeps {
       finalizationHandlerRuntime
         .loadPairingQualification()
         .observeOrdinaryOpenClawPairingSettlement(...args),
-    runWarmup: (name) =>
-      finalizationHandlerRuntime.loadAutoPairWarmup().runSandboxScopeWarmupRun(name),
+    runWarmup: (name, gatewayName) =>
+      finalizationHandlerRuntime
+        .loadAutoPairWarmup()
+        .runSandboxScopeWarmupRun(name, gatewayName),
     runApproval: (name, gatewayName) =>
       finalizationHandlerRuntime
         .loadAutoPairApproval()
@@ -174,8 +176,8 @@ function defaultPairingSettlementDeps(): OrdinaryOpenClawPairingSettlementDeps {
 }
 
 /**
- * Wait for the startup watcher to publish one canonical CLI pairing. When the
- * device has only its pairing scope, request and approve the write scope once.
+ * Run one bounded request producer, then wait for one canonical CLI pairing.
+ * When the device has only its pairing scope, approve the write scope once.
  * A final read verifies the exact device and no pending request for that device.
  */
 export async function settleOrdinaryOpenClawPairing(
@@ -198,6 +200,20 @@ export async function settleOrdinaryOpenClawPairing(
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
           const settlementDeadline = deps.now() + OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS;
+
+          // Fresh non-interactive onboarding can reach finalization before the
+          // startup watcher publishes its first CLI pairing request. Provoke
+          // that request once with the direct, device-authenticated
+          // sessions.create probe before observation. Approval and the final
+          // exact-device observation remain the only completion authority.
+          try {
+            await deps.runWarmup(name, target.gatewayName);
+          } catch {
+            // The bounded observation below remains fail closed.
+          }
+          if (!samePairingTarget(target, deps.getTarget(name))) {
+            return { kind: "incomplete", reason: "runtime-identity-invalid" };
+          }
           const pairingAppearanceDeadline = Math.min(
             settlementDeadline,
             deps.now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
@@ -224,16 +240,7 @@ export async function settleOrdinaryOpenClawPairing(
             return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
           }
 
-          let warmupFailed = false;
-          try {
-            await deps.runWarmup(name);
-          } catch {
-            warmupFailed = true;
-          }
-          if (!samePairingTarget(target, deps.getTarget(name))) {
-            return { kind: "incomplete", reason: "runtime-identity-invalid" };
-          }
-          if (warmupFailed || deps.now() >= settlementDeadline) {
+          if (deps.now() >= settlementDeadline) {
             return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
           }
 
