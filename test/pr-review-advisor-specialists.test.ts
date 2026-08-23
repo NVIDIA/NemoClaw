@@ -31,7 +31,7 @@ type CallableTool = ToolDefinition & {
 
 const context: InvestigateTurnContext = {
   scopeRisk: { riskPlan: { invariants: ["preserve identity"] } },
-  diff: "diff --git a/source.ts b/source.ts",
+  diffPath: ".pr-review-advisor-context/diff.patch",
   controlledWords: "controlled words",
   terminology: { candidates: [] },
   correctness: { state: "context" },
@@ -66,7 +66,7 @@ describe("PR review advisor specialist prompts", () => {
       expect(turn.name).toBe(`investigate-${interest}`);
       expect(contextToolNames).toEqual([
         "pr_review_scope_risk_context",
-        "pr_review_git_diff",
+        "pr_review_diff_path",
         "pr_review_controlled_words",
         "pr_review_terminology_pr_context",
         "pr_review_correctness_state_context",
@@ -85,18 +85,13 @@ describe("PR review advisor specialist prompts", () => {
   );
 
   it("keeps large specialist context in ordinary-read-sized Pi trace lines (#9986)", () => {
-    const largeDiff = "diff --git a/file b/file\n" + "+changed\n".repeat(80_000);
     const largeWords = "word\n".repeat(20_000) + "a".repeat(16_376) + "🦀";
     const turn = buildSpecialistInvestigateTurn("behavior", {
       ...context,
-      diff: largeDiff,
       controlledWords: largeWords,
     });
     const results = turn.contextToolResults ?? [];
 
-    expect(
-      results.filter(({ toolName }) => toolName.startsWith("pr_review_git_diff_part_")).length,
-    ).toBeGreaterThan(1);
     expect(
       results.filter(({ toolName }) => toolName.startsWith("pr_review_controlled_words_part_"))
         .length,
@@ -104,12 +99,6 @@ describe("PR review advisor specialist prompts", () => {
     expect(
       results.every(({ content }) => Buffer.byteLength(JSON.stringify(content)) <= 16 * 1024),
     ).toBe(true);
-    expect(
-      results
-        .filter(({ toolName }) => toolName.startsWith("pr_review_git_diff_part_"))
-        .map(({ content }) => content)
-        .join(""),
-    ).toBe(largeDiff);
     const wordChunks = results.filter(({ toolName }) =>
       toolName.startsWith("pr_review_controlled_words_part_"),
     );
