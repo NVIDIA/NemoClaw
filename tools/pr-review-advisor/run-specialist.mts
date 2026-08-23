@@ -68,6 +68,14 @@ export function writeSpecialistSummary(
   return file;
 }
 
+export function writeSpecialistDiff(configDir: string, diff: string): string {
+  const directory = path.join(configDir, "context");
+  fs.mkdirSync(directory, { recursive: true });
+  const file = path.join(directory, "diff.patch");
+  fs.writeFileSync(file, diff);
+  return file;
+}
+
 export function runSpecialistAdvisor(
   interest: AdvisorInterest,
   refs: { baseRef: string; headRef: string },
@@ -106,10 +114,7 @@ async function main(): Promise<void> {
   delete process.env.GH_TOKEN;
   delete process.env.GITHUB_TOKEN;
 
-  const diffDirectory = path.join(process.cwd(), ".pr-review-advisor-context");
-  fs.mkdirSync(diffDirectory, { recursive: true });
-  const diffPath = path.join(diffDirectory, "diff.patch");
-  fs.writeFileSync(diffPath, diff);
+  const diffPath = writeSpecialistDiff(configDir, diff);
 
   const turn = buildSpecialistInvestigateTurn(interest, {
     metadata: JSON.stringify({ version: 1, baseRef, headRef, headSha, changedFiles }, null, 2),

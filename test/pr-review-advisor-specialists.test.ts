@@ -11,6 +11,7 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { TERMINOLOGY_TRACE_TOOL } from "../tools/pr-review-advisor/terminology.mts";
 import {
   runSpecialistAdvisor,
+  writeSpecialistDiff,
   writeSpecialistSummary,
 } from "../tools/pr-review-advisor/run-specialist.mts";
 import type { RunAdvisorResult, RunReadOnlyAdvisorOptions } from "../tools/advisors/session.mts";
@@ -46,6 +47,16 @@ const context: InvestigateTurnContext = {
 };
 
 describe("PR review advisor specialist prompts", () => {
+  it("writes diff evidence under the writable specialist runtime directory", () => {
+    const configDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-config-"));
+    onTestFinished(() => fs.rmSync(configDir, { recursive: true, force: true }));
+
+    const file = writeSpecialistDiff(configDir, "diff evidence");
+
+    expect(file).toBe(path.join(configDir, "context", "diff.patch"));
+    expect(fs.readFileSync(file, "utf8")).toBe("diff evidence");
+  });
+
   it("parses exactly the five supported interests (#9949)", () => {
     expect(ADVISOR_INTERESTS).toEqual([
       "behavior",
