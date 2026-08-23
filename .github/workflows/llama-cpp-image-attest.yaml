@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Attest llama.cpp server image
+name: Security / Attest llama.cpp Server Image
 
 on:
   workflow_call:
