@@ -24,7 +24,8 @@ import {
 const REPOSITORY = "NVIDIA/NemoClaw";
 const WORKFLOW_PATH = ".github/workflows/managed-images.yaml";
 const WORKFLOW_FILE = "managed-images.yaml";
-const WORKFLOW_NAME = "Images / Managed Images";
+const PUBLICATION_WORKFLOW_NAME = "Images / Managed Images";
+const CURRENT_WORKFLOW_NAME = "Images / Build, Test, and Publish Managed Images";
 const MAX_CHANGED_FILES = 3_000;
 const PAGE_SIZE = 100;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
@@ -152,7 +153,7 @@ export function selectManagedImagePublicationRun(
   if (run.workflow_id !== expected.workflowId) {
     throw new Error("managed-image workflow run does not match the trusted workflow");
   }
-  exactString(run.name, WORKFLOW_NAME, "managed-image workflow run name");
+  exactString(run.name, PUBLICATION_WORKFLOW_NAME, "managed-image workflow run name");
   exactString(run.path, WORKFLOW_PATH, "managed-image workflow run path");
   exactString(run.event, "pull_request", "managed-image workflow run event");
   exactString(run.head_sha, expected.headSha, "managed-image workflow run commit");
@@ -237,7 +238,7 @@ export function writeManagedImageCatalog(
 function validateWorkflow(payload: unknown): number {
   const workflow = record(payload, "managed-image workflow");
   const id = positiveInteger(workflow.id, "managed-image workflow id");
-  exactString(workflow.name, WORKFLOW_NAME, "managed-image workflow name");
+  exactString(workflow.name, CURRENT_WORKFLOW_NAME, "managed-image workflow name");
   exactString(workflow.path, WORKFLOW_PATH, "managed-image workflow path");
   exactString(workflow.state, "active", "managed-image workflow state");
   return id;
