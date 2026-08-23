@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
@@ -20,9 +20,11 @@ import {
 import {
   assembleManagedImageCatalog,
   main,
+  ManagedImagePublicationPendingError,
   managedImagePublicationRequired,
   parseManagedImagePullRequestPaths,
   selectManagedImagePublicationRun,
+  waitForPrManagedImageCatalog,
 } from "../../../tools/e2e/pr-managed-image-publication.mts";
 
 const CANDIDATE_SHA = "a".repeat(40);
@@ -120,11 +122,15 @@ on:
   });
 
   it.each([
-    ["pending", { status: "in_progress", conclusion: null }, "must complete successfully"],
+    ["queued", { status: "queued", conclusion: null }, "still running"],
+    ["in progress", { status: "in_progress", conclusion: null }, "still running"],
+    ["waiting", { status: "waiting", conclusion: null }, "still running"],
+    ["pending", { status: "pending", conclusion: null }, "still running"],
+    ["requested", { status: "requested", conclusion: null }, "still running"],
     ["failed", { conclusion: "failure" }, "must complete successfully"],
     ["different commit", { head_sha: "b".repeat(40) }, "commit must be"],
     ["different PR", { pull_requests: [{ number: 9464 }] }, "PR number"],
-  ])("rejects a %s publication run", (_label, overrides, message) => {
+  ])("classifies a %s publication run", (_label, overrides, message) => {
     expect(() =>
       selectManagedImagePublicationRun(run(overrides), {
         headSha: CANDIDATE_SHA,
@@ -132,6 +138,66 @@ on:
         workflowId: WORKFLOW_ID,
       }),
     ).toThrow(message);
+  });
+
+  it("waits when GitHub has not created the exact publication run", () => {
+    expect(() =>
+      selectManagedImagePublicationRun(
+        { total_count: 0, workflow_runs: [] },
+        {
+          headSha: CANDIDATE_SHA,
+          prNumber: PR_NUMBER,
+          workflowId: WORKFLOW_ID,
+        },
+      ),
+    ).toThrow(ManagedImagePublicationPendingError);
+  });
+
+  it("waits only while the exact publication is pending", async () => {
+    const resolve = vi
+      .fn()
+      .mockRejectedValueOnce(new ManagedImagePublicationPendingError("still running"))
+      .mockResolvedValueOnce("written" as const);
+    const sleep = vi.fn(async () => undefined);
+
+    await expect(
+      waitForPrManagedImageCatalog(
+        {
+          baseSha: "b".repeat(40),
+          candidateRepository: "NVIDIA/NemoClaw",
+          candidateSha: CANDIDATE_SHA,
+          outputPath: "/tmp/catalog.json",
+          prNumber: PR_NUMBER,
+          token: "token",
+          workflowSource: "trusted workflow",
+        },
+        { attempts: 2, delayMs: 1, resolve, sleep },
+      ),
+    ).resolves.toBe("written");
+    expect(resolve).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledExactlyOnceWith(1);
+  });
+
+  it("does not retry a terminal publication failure", async () => {
+    const resolve = vi.fn().mockRejectedValue(new Error("publication failed"));
+    const sleep = vi.fn(async () => undefined);
+
+    await expect(
+      waitForPrManagedImageCatalog(
+        {
+          baseSha: "b".repeat(40),
+          candidateRepository: "NVIDIA/NemoClaw",
+          candidateSha: CANDIDATE_SHA,
+          outputPath: "/tmp/catalog.json",
+          prNumber: PR_NUMBER,
+          token: "token",
+          workflowSource: "trusted workflow",
+        },
+        { attempts: 2, delayMs: 1, resolve, sleep },
+      ),
+    ).rejects.toThrow("publication failed");
+    expect(resolve).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
   });
 
   it("assembles one exact all-agent catalog", () => {

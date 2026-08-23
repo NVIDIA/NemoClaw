@@ -38,6 +38,23 @@ export interface ManagedImagePublicationRun {
   readonly headSha: string;
 }
 
+export class ManagedImagePublicationPendingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ManagedImagePublicationPendingError";
+  }
+}
+
+export interface ResolvePrManagedImageCatalogInput {
+  readonly baseSha: string;
+  readonly candidateRepository: string;
+  readonly candidateSha: string;
+  readonly outputPath: string;
+  readonly prNumber: number;
+  readonly token: string;
+  readonly workflowSource: string;
+}
+
 function record(value: unknown, label: string): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be a JSON object`);
@@ -138,7 +155,15 @@ export function selectManagedImagePublicationRun(
   positiveInteger(expected.prNumber, "PR number");
   positiveInteger(expected.workflowId, "managed-image workflow id");
   const response = record(payload, "managed-image workflow runs");
-  if (response.total_count !== 1 || !Array.isArray(response.workflow_runs)) {
+  if (!Array.isArray(response.workflow_runs)) {
+    throw new Error("exact managed-image workflow run is missing or ambiguous");
+  }
+  if (response.total_count === 0 && response.workflow_runs.length === 0) {
+    throw new ManagedImagePublicationPendingError(
+      "exact managed-image workflow run is not available yet",
+    );
+  }
+  if (response.total_count !== 1) {
     throw new Error("exact managed-image workflow run is missing or ambiguous");
   }
   if (response.workflow_runs.length !== 1) {
@@ -170,6 +195,18 @@ export function selectManagedImagePublicationRun(
     record(run.pull_requests[0], "managed-image workflow pull request").number !== expected.prNumber
   ) {
     throw new Error("managed-image workflow run does not match the PR number");
+  }
+  if (
+    (run.status === "queued" ||
+      run.status === "in_progress" ||
+      run.status === "waiting" ||
+      run.status === "pending" ||
+      run.status === "requested") &&
+    (run.conclusion === null || run.conclusion === undefined)
+  ) {
+    throw new ManagedImagePublicationPendingError(
+      `managed-image workflow for candidate ${expected.headSha} is still running`,
+    );
   }
   if (run.status !== "completed" || run.conclusion !== "success") {
     throw new Error(
@@ -312,15 +349,7 @@ function validatePr(
 
 /** Resolve and download the exact all-agent catalog before candidate code executes. */
 export async function resolvePrManagedImageCatalog(
-  input: {
-    readonly baseSha: string;
-    readonly candidateRepository: string;
-    readonly candidateSha: string;
-    readonly outputPath: string;
-    readonly prNumber: number;
-    readonly token: string;
-    readonly workflowSource: string;
-  },
+  input: ResolvePrManagedImageCatalogInput,
   request: (path: string) => Promise<unknown> = (apiPath) => githubRequest(apiPath, input.token),
 ): Promise<"not-required" | "written"> {
   if (input.candidateRepository !== REPOSITORY) return "not-required";
@@ -385,6 +414,42 @@ export async function resolvePrManagedImageCatalog(
   }
 }
 
+/** Wait only for the exact candidate publication to appear and finish successfully. */
+export async function waitForPrManagedImageCatalog(
+  input: ResolvePrManagedImageCatalogInput,
+  options: {
+    readonly attempts?: number;
+    readonly delayMs?: number;
+    readonly resolve?: typeof resolvePrManagedImageCatalog;
+    readonly sleep?: (delayMs: number) => Promise<void>;
+  } = {},
+): Promise<"not-required" | "written"> {
+  const attempts = options.attempts ?? 121;
+  const delayMs = options.delayMs ?? 30_000;
+  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 121) {
+    throw new Error("managed-image publication wait attempts are invalid");
+  }
+  if (!Number.isSafeInteger(delayMs) || delayMs < 0 || delayMs > 30_000) {
+    throw new Error("managed-image publication wait delay is invalid");
+  }
+  const resolve = options.resolve ?? resolvePrManagedImageCatalog;
+  const sleep = options.sleep ?? ((delay) => new Promise((done) => setTimeout(done, delay)));
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await resolve(input);
+    } catch (error) {
+      if (!(error instanceof ManagedImagePublicationPendingError)) throw error;
+      if (attempt === attempts) {
+        throw new Error("exact managed-image workflow did not complete within the bounded wait", {
+          cause: error,
+        });
+      }
+      await sleep(delayMs);
+    }
+  }
+  throw new Error("exact managed-image workflow wait exhausted unexpectedly");
+}
+
 function requiredInteger(value: string | undefined, label: string): number {
   if (!value || !/^[1-9][0-9]*$/u.test(value)) throw new Error(`${label} is required`);
   return positiveInteger(Number(value), label);
@@ -399,18 +464,25 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     console.log("pr-managed-image-catalog outcome=assembled");
     return;
   }
-  if (argv.length !== 1) throw new Error("expected one managed-image catalog output path");
+  const wait = argv[0] === "wait";
+  const outputPath = wait ? argv[1] : argv[0];
+  if ((wait && argv.length !== 2) || (!wait && argv.length !== 1) || !outputPath) {
+    throw new Error("expected one managed-image catalog output path");
+  }
   const candidateSha = env.CANDIDATE_SHA ?? "";
   if (!candidateSha) return;
-  const result = await resolvePrManagedImageCatalog({
+  const input = {
     baseSha: env.BASE_SHA ?? "",
     candidateRepository: env.CANDIDATE_REPOSITORY ?? "",
     candidateSha,
-    outputPath: argv[0],
+    outputPath,
     prNumber: requiredInteger(env.PR_NUMBER, "PR_NUMBER"),
     token: env.GITHUB_TOKEN ?? "",
     workflowSource: fs.readFileSync(WORKFLOW_PATH, "utf8"),
-  });
+  };
+  const result = wait
+    ? await waitForPrManagedImageCatalog(input)
+    : await resolvePrManagedImageCatalog(input);
   console.log(`pr-managed-image-catalog outcome=${result}`);
 }
 

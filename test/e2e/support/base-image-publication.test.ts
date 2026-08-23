@@ -767,6 +767,27 @@ describe("base-image publication evidence", () => {
     expect(currentTime).toBe(10);
   });
 
+  it("returns the completed detailed run when the workflow list is stale", async () => {
+    const listedRun = workflowRun({ status: "in_progress", conclusion: null });
+    const completedRun = workflowRun();
+    const responses = [
+      workflowMetadata(),
+      runsPayload([listedRun]),
+      { total_count: 3, jobs: successfulJobs() },
+      completedRun,
+    ];
+
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async () => responses.shift(),
+        requireWorkflowSuccess: true,
+        waitMs: 100,
+        pollMs: 10,
+      }),
+    ).resolves.toEqual(selectedRun());
+  });
+
   it("rejects failed managed-image publication before E2E consumers start", async () => {
     const failedRun = workflowRun({ conclusion: "failure" });
     const responses = [

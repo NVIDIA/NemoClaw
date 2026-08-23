@@ -4,7 +4,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SandboxMessagingPlan } from "../../../messaging";
 import {
-  parseMessagingProviderAttachmentNames,
   restoreChannelMessagingProviderAttachments,
   rollbackMessagingProviderAttachments,
   type MessagingProviderAttachmentReceipt,
@@ -81,15 +80,6 @@ const ATTACHED_PROVIDER = [
 ].join("\n");
 
 describe("messaging provider attachment lifecycle", () => {
-  it("parses empty and populated OpenShell attachment lists", () => {
-    expect(
-      parseMessagingProviderAttachmentNames("No providers attached to sandbox alpha."),
-    ).toEqual([]);
-    expect(parseMessagingProviderAttachmentNames(ATTACHED_PROVIDER)).toEqual([
-      "alpha-discord-bridge",
-    ]);
-  });
-
   it("restores an exact Hermes Discord provider before policy application", () => {
     const fixture = queuedRunner([
       result(EXACT_PROVIDER),

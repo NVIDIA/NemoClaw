@@ -51,10 +51,21 @@ if test -e "$swap_file"; then
   printf 'refusing to replace existing swap path: %s\n' "$swap_file" >&2
   exit 1
 fi
+cleanup_failed_provision() {
+  status=$?
+  trap - EXIT
+  if ((status != 0)); then
+    swapoff "$swap_file" >/dev/null 2>&1 || true
+    rm -f -- "$swap_file" || true
+  fi
+  exit "$status"
+}
+trap cleanup_failed_provision EXIT
 fallocate -l "$swap_size_bytes" "$swap_file"
 chmod 0600 "$swap_file"
 mkswap "$swap_file"
-swapon "$swap_file"`,
+swapon "$swap_file"
+trap - EXIT`,
       "hermes-rebuild-swap",
       HERMES_REBUILD_SWAP_FILE,
       String(HERMES_REBUILD_SWAP_BYTES),

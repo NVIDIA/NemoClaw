@@ -268,12 +268,12 @@ export function inspectGatewayCredentialOnlyProviderBinding(
     : { kind: "collision" };
 }
 
-/** Read one exact provider identity without reading or exporting credential values. */
-export function readGatewayProviderMetadata(
+function readGatewayProvider<T extends GatewayProviderMetadata>(
   name: string,
   runOpenshell: GatewayProviderRunner,
-  gatewayName?: string | null,
-): GatewayProviderMetadata | null {
+  gatewayName: string | null | undefined,
+  parse: (output: string) => T | null,
+): T | null {
   if (!isSafeIdentifier(name, MAX_PROVIDER_NAME_LENGTH)) return null;
 
   const args = ["provider", "get"];
@@ -287,8 +287,17 @@ export function readGatewayProviderMetadata(
   if (result.status !== 0) return null;
 
   const output = `${commandStreamText(result.stdout)}\n${commandStreamText(result.stderr)}`;
-  const metadata = parseGatewayProviderMetadata(output);
-  return metadata?.name === name ? metadata : null;
+  const provider = parse(output);
+  return provider?.name === name ? provider : null;
+}
+
+/** Read one exact provider identity without reading or exporting credential values. */
+export function readGatewayProviderMetadata(
+  name: string,
+  runOpenshell: GatewayProviderRunner,
+  gatewayName?: string | null,
+): GatewayProviderMetadata | null {
+  return readGatewayProvider(name, runOpenshell, gatewayName, parseGatewayProviderMetadata);
 }
 
 /** Read one gateway-scoped provider identity for a mutation precondition. */
@@ -297,19 +306,5 @@ export function readGatewayProviderIdentity(
   runOpenshell: GatewayProviderRunner,
   gatewayName?: string | null,
 ): GatewayProviderIdentity | null {
-  if (!isSafeIdentifier(name, MAX_PROVIDER_NAME_LENGTH)) return null;
-
-  const args = ["provider", "get"];
-  if (gatewayName) args.push("-g", gatewayName);
-  args.push(name);
-  const result = runOpenshell(args, {
-    ignoreError: true,
-    suppressOutput: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.status !== 0) return null;
-
-  const output = `${commandStreamText(result.stdout)}\n${commandStreamText(result.stderr)}`;
-  const identity = parseGatewayProviderIdentity(output);
-  return identity?.name === name ? identity : null;
+  return readGatewayProvider(name, runOpenshell, gatewayName, parseGatewayProviderIdentity);
 }

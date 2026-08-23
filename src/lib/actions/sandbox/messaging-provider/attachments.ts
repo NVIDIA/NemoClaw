@@ -40,8 +40,6 @@ function commandOutput(result: OpenShellResult): string {
     .trim();
 }
 
-export { parseProviderAttachmentNames as parseMessagingProviderAttachmentNames } from "../../../adapters/openshell/provider-attachment-table";
-
 function gatewayScopedArgs(args: string[], gatewayName: string): string[] {
   return [...args.slice(0, 2), "-g", gatewayName, ...args.slice(2)];
 }

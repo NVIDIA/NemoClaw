@@ -1188,8 +1188,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
       requirementsLock,
       pythonStringMap(progressiveValidator, "PINNED_VERSIONS"),
     );
-    expect(progressiveValidator).toContain('"_deepagents_code_mcp": True');
-    expect(progressiveValidator).toContain('"readOnlyHint": True');
 
     const observabilityValidator = readAgentFile("validate-observability.py");
     const observabilityVersion = observabilityValidator.match(
@@ -1214,6 +1212,59 @@ describe("LangChain Deep Agents Code image contracts", () => {
     );
     expect(e2ePluginVersion).toBe(pluginVersion);
     expectVersionsMatchLock(requirementsLock, e2eVersions);
+  });
+
+  it("assigns the read-only MCP contract to each loaded validator tool", () => {
+    const validatorPath = path.join(
+      repoRoot,
+      "agents",
+      "langchain-deepagents-code",
+      "validate-progressive-tool-disclosure.py",
+    );
+    const metadata = JSON.parse(
+      execFileSync(
+        "python3",
+        [
+          "-c",
+          `import ast
+import json
+import sys
+
+tree = ast.parse(open(sys.argv[1], encoding="utf-8").read())
+values = []
+for node in ast.walk(tree):
+    if not isinstance(node, ast.Assign):
+        continue
+    if not any(isinstance(target, ast.Attribute) and target.attr == "metadata" for target in node.targets):
+        continue
+    value = ast.literal_eval(node.value)
+    if isinstance(value, dict) and value.get("_deepagents_code_mcp") is True:
+        values.append(value)
+print(json.dumps(values, sort_keys=True))`,
+          validatorPath,
+        ],
+        { encoding: "utf8" },
+      ),
+    ) as Array<Record<string, unknown>>;
+
+    expect(metadata).toEqual([
+      {
+        _deepagents_code_mcp: true,
+        _deepagents_code_mcp_server: "direct-runtime-validator",
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+        readOnlyHint: true,
+      },
+      {
+        _deepagents_code_mcp: true,
+        _deepagents_code_mcp_server: "runtime-validator",
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+        readOnlyHint: true,
+      },
+    ]);
   });
 
   it.each([

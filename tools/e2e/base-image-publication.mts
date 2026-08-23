@@ -640,6 +640,7 @@ export async function waitForBaseImagePublication(
         );
       }
       let publisherState: "pending" | "ready";
+      let validatedRun = selection.run;
       try {
         const jobs = await collectPaginated(options.request, jobsPath, "jobs");
         publisherState = validatePublisherJobs(jobs, selection.run);
@@ -648,6 +649,7 @@ export async function waitForBaseImagePublication(
             await options.request(`/repos/${REPOSITORY}/actions/runs/${selection.run.id}`),
             selection.run,
           );
+          validatedRun = boundRun;
           if (options.requireWorkflowSuccess === true) {
             if (boundRun.status !== "completed") {
               publisherState = "pending";
@@ -667,7 +669,7 @@ export async function waitForBaseImagePublication(
             `timed out validating base-image publication for ${selection.run.headSha}; ${selection.run.url}`,
           );
         }
-        return selection.run;
+        return validatedRun;
       }
     }
 

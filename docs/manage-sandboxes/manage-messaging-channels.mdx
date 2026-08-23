@@ -114,7 +114,8 @@ Hermes Google Chat does not use the dedicated webhook endpoint or `$$nemoclaw tu
 </AgentOnly>
 
 When `channels start` re-enables a channel, NemoClaw first restores its required OpenShell credential-provider attachments, then reapplies the matching built-in policy preset before rebuild.
-If attachment or policy restoration fails, the command keeps the channel disabled and exits without rebuilding into a partially active state.
+If attachment or policy restoration fails, NemoClaw attempts to restore the disabled plan and exits without rebuilding.
+If that persistence operation also fails, follow the recovery guidance and verify or restore the disabled plan before continuing.
 
 ## Avoid Cross-Sandbox Conflicts
 

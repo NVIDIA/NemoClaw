@@ -721,7 +721,9 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
     )
 
     assert_unique_callable_tool_names(
-        kwargs.get("tools"), kwargs.get("mcp_server_info")
+        kwargs.get("tools"),
+        kwargs.get("mcp_server_info"),
+        kwargs.get("mcp_tools"),
     )
     # Deep Agents Code 0.1.55 passes the exact loaded MCP tool objects
     # separately from the status-oriented server metadata. The metadata can be
