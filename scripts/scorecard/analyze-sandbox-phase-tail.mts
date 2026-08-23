@@ -11,6 +11,7 @@ const SANDBOX_PHASE = "nemoclaw.onboard.phase.sandbox";
 const SANDBOX_PHASE_ANOMALY_KIND = "sandbox-phase-tail";
 const FIRST_TURN_ANOMALY_KIND = "first-turn-latency-tail";
 const MAX_DURATION_MS = 24 * 60 * 60 * 1000;
+const SANDBOX_PHASE_SINGLE_OBSERVATION_MAX_OVERAGE_MS = 5_000;
 
 export interface SandboxPhaseCohort {
   agent: string;
@@ -185,7 +186,9 @@ export function readCurrentSandboxPhaseTailSample(root: string): SandboxPhaseTai
     !validWorkloadEvidence(artifact, cohort) ||
     !isDuration(tracePhases[SANDBOX_PHASE]) ||
     !isDuration(phaseBudgets[SANDBOX_PHASE]) ||
-    !isDuration(budget.sandboxPhaseSingleObservationMaxOverageMs)
+    !isDuration(budget.sandboxPhaseSingleObservationMaxOverageMs) ||
+    budget.sandboxPhaseSingleObservationMaxOverageMs >
+      SANDBOX_PHASE_SINGLE_OBSERVATION_MAX_OVERAGE_MS
   ) {
     return null;
   }

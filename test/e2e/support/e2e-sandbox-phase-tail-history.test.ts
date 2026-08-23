@@ -150,6 +150,30 @@ describe("sandbox-phase latency history", () => {
     }
   });
 
+  it("rejects an artifact that raises the fixed single-observation overage ceiling (#6660)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sandbox-tail-ceiling-"));
+    const artifactDirectory = path.join(directory, "e2e-full-e2e");
+    const artifactFile = path.join(artifactDirectory, "onboard-progress-budget.json");
+    try {
+      const oversizedAllowance = artifact(true);
+      const budget = oversizedAllowance.budget as Record<string, unknown>;
+      budget.sandboxPhaseSingleObservationMaxOverageMs = 6_000;
+      const tracePhases = (oversizedAllowance.phaseMeasurements as Record<string, unknown>)
+        .tracePhasesMs as Record<string, unknown>;
+      tracePhases["nemoclaw.onboard.phase.sandbox"] = 214_000;
+      const anomalies = (oversizedAllowance.performance as Record<string, unknown>)
+        .anomalies as Array<Record<string, unknown>>;
+      anomalies[0] = { ...anomalies[0], measurementMs: 214_000, overageMs: 6_000 };
+
+      fs.mkdirSync(artifactDirectory, { recursive: true });
+      fs.writeFileSync(artifactFile, JSON.stringify(oversizedAllowance));
+
+      expect(readCurrentSandboxPhaseTailSample(directory)).toBeNull();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("allows one anomaly after four valid same-cohort samples (#6660)", () => {
     const prior = Array.from({ length: 4 }, (_, index) => summary(index + 1, sample(false)));
 
