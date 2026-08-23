@@ -541,8 +541,17 @@ export function renderPodmanReplacementEnvironment(
   const intended = openshellSandboxCommandEnvValue(handle.intendedWorkloadArgv);
   if (!intended) throw new Error("Managed bootstrap Podman intended workload argv is invalid.");
   const inspectedUser = String(config.User ?? "").trim();
-  const workspaceInspect = ["0:0", "root", "root:root"].includes(inspectedUser)
-    ? { ...inspect, Config: { ...config, User: "0" } }
+  const labels = record(config.Labels ?? {}, "Config.Labels");
+  const exactPodmanBoundary = labels[PODMAN_MANAGED_LABEL] === "true";
+  const workspaceInspect = exactPodmanBoundary
+    ? {
+        ...inspect,
+        Config: {
+          ...config,
+          User: ["0:0", "root", "root:root"].includes(inspectedUser) ? "0" : inspectedUser,
+          Labels: { ...labels, "openshell.ai/managed-by": "openshell" },
+        },
+      }
     : inspect;
   const omitOciImageUser = shouldOmitOpenShellOciImageUser(
     workspaceInspect as unknown as DockerContainerInspect,
