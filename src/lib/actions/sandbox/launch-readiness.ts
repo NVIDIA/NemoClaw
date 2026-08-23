@@ -927,8 +927,16 @@ function resolveOpenClawPairingSettlementTarget(
   } catch {
     return null;
   }
-  const version = normalizedString(entry.agentVersion);
+  const recordedVersion = normalizedString(entry.agentVersion);
   const expectedVersion = normalizedString(agent.expected_version);
+  // Custom --from images deliberately omit agentVersion because NemoClaw did
+  // not build their OpenClaw payload. Ordinary pairing settlement does not
+  // execute version-specific code; it reads the descriptor-pinned state
+  // schema through the exact lifecycle below. Keep that supported path stable
+  // against the trusted definition while managed images still fail closed on
+  // a missing recorded version.
+  const version =
+    recordedVersion ?? (normalizedString(entry.fromDockerfile) ? expectedVersion : null);
   const stateDirectory = normalizedString(agent.config?.dir);
   const lifecycleGeneration = normalizedString(entry.lifecycleGeneration);
   const lifecycleLiveIdentityFingerprint = normalizedString(entry.lifecycleLiveIdentityFingerprint);
