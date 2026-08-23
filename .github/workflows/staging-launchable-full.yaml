@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: E2E / Issue 9880 Staging Reproduction
+name: E2E / Staging Launchable Full
 
 on:
   workflow_dispatch:
@@ -10,18 +10,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: issue-9880-staging-launchable
+  group: staging-brev-launchable-cpu
   cancel-in-progress: false
 
 jobs:
-  reproduce:
+  test:
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 95
-    env:
-      INSTANCE_NAME: issue-9880-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - name: Check out trusted reproduction lane
+      - name: Check out trusted Vitest controller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.workflow_sha }}
@@ -58,17 +56,17 @@ jobs:
           cache: npm
 
       - id: prepare
-        name: Prepare Brev CLI and evidence directory
+        name: Prepare Brev CLI and test dependencies
         env:
           BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
           BREV_CLI_SHA256: d4aa49db1716f10308a6587778a676a0c0076bd48a212d86a421ab9550bc8f32
-          HOME: ${{ runner.temp }}/issue-9880-home
           BREV_CLI_VERSION: 0.6.334
           BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
+          HOME: ${{ runner.temp }}/staging-launchable-full-home
         run: |
           set -euo pipefail
           install -d -m 0700 "$HOME"
-          work_dir="$(mktemp -d "${RUNNER_TEMP}/issue-9880.XXXXXX")"
+          work_dir="$(mktemp -d "${RUNNER_TEMP}/staging-launchable-full.XXXXXX")"
           chmod 700 "$work_dir"
           archive="${RUNNER_TEMP}/brev-cli.tar.gz"
           curl -fsSL -o "$archive" "https://github.com/brevdev/brev-cli/releases/download/v${BREV_CLI_VERSION}/brev-cli_${BREV_CLI_VERSION}_linux_amd64.tar.gz"
@@ -79,30 +77,30 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund
           printf 'work_dir=%s\n' "$work_dir" >>"$GITHUB_OUTPUT"
 
-      - name: Reproduce issue 9880 on the staging Launchable
-        timeout-minutes: 65
+      - name: Run the staging Launchable full scenario
+        timeout-minutes: 70
         env:
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
           E2E_ARTIFACT_DIR: ${{ steps.prepare.outputs.work_dir }}
-          E2E_TARGET_ID: issue-9880-staging-launchable
-          HOME: ${{ runner.temp }}/issue-9880-home
+          E2E_TARGET_ID: staging-launchable-full
+          HOME: ${{ runner.temp }}/staging-launchable-full-home
           NEMOCLAW_IMAGE_DISPATCH_TOKEN: ${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}
           NEMOCLAW_RUN_LIVE_E2E: "1"
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-        run: ./node_modules/.bin/vitest run --project e2e-live test/e2e/live/issue-9880-staging-launchable.test.ts --silent=false --reporter=default
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        run: ./node_modules/.bin/vitest run --project e2e-live test/e2e/live/staging-launchable-full.test.ts --silent=false --reporter=default
 
       - name: Remove Brev credentials
         if: always()
         env:
-          HOME: ${{ runner.temp }}/issue-9880-home
+          HOME: ${{ runner.temp }}/staging-launchable-full-home
         run: |
           set -euo pipefail
           rm -rf -- "$HOME"
           test ! -e "$HOME"
 
-      - name: Upload issue 9880 evidence
+      - name: Upload staging Launchable full evidence
         if: ${{ always() && steps.prepare.outputs.work_dir != '' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: issue-9880-staging-reproduction-${{ github.run_id }}-${{ github.run_attempt }}
+          name: staging-launchable-full-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.prepare.outputs.work_dir }}/

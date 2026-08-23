@@ -12,6 +12,7 @@ import {
 } from "../../../tools/e2e/runner-pressure.mts";
 import { renderSnapshotLine } from "../../../tools/e2e/runner-pressure-core.mts";
 import { type ArtifactSink, createArtifactSink } from "./artifacts.ts";
+import { BrevLaunchableFixture } from "./brev-launchable.ts";
 import { assertCleanupPassed, CleanupRegistry } from "./cleanup.ts";
 import {
   GatewayClient,
@@ -64,6 +65,7 @@ export interface E2ETargetFixtures {
   runtime: RuntimePhaseFixture;
   stateValidation: StateValidationPhaseFixture;
   progress: TestProgress;
+  brevLaunchable: BrevLaunchableFixture;
 }
 
 const SUPPORT_PHASES = [
@@ -257,6 +259,9 @@ export const test = base.extend<E2ETargetFixtures>({
   },
   host: async ({ shellProbe }, use) => {
     await use(new HostCliClient(shellProbe));
+  },
+  brevLaunchable: async ({ artifacts, host, secrets }, use) => {
+    await use(new BrevLaunchableFixture({ artifacts, host, secrets }));
   },
   sandbox: async ({ shellProbe }, use) => {
     await use(new SandboxClient(shellProbe));
