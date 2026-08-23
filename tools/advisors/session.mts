@@ -38,6 +38,8 @@ import {
   normalizedToolNames,
   promptWithRequiredContextTools,
   READ_ONLY_TOOLS,
+  requiredReadPreparationErrors,
+  requiredReadPreparationPrompt,
   repairableAssistantText,
   repairableAtomicTerminalToolName,
   repairableTerminalSubmitToolName,
@@ -695,6 +697,27 @@ export async function runReadOnlyAdvisor(
             raw.append(
               `\n[${options.logPrefix}] seeded_required_reads ${turn.name} calls=${seededReadHistory.calls}\n`,
             );
+          } else if ((tools.requiredReadPaths?.length ?? 0) > 0) {
+            contextTools.deactivate();
+            session.setActiveToolsByName(["read"]);
+            currentTurnFlow = [];
+            raw.append(`\n[${options.logPrefix}] required_read_preparation_start ${turn.name}\n`);
+            for (const requiredPath of tools.requiredReadPaths!) {
+              const preparationTurn = { ...turn, requiredReadPaths: [requiredPath] };
+              const eventOffset = currentTurnFlow.length;
+              await promptAndWait(requiredReadPreparationPrompt(preparationTurn));
+              const preparationErrors = requiredReadPreparationErrors(
+                turn.name,
+                currentTurnFlow.slice(eventOffset),
+                { ...tools, requiredReadPaths: [requiredPath] },
+              );
+              if (preparationErrors.length > 0) throw new Error(preparationErrors.join("; "));
+            }
+            const preparationFlow = currentTurnFlow;
+            raw.append(`[${options.logPrefix}] required_read_preparation_end ${turn.name} ok\n`);
+            contextTools.activateTurn(turn);
+            session.setActiveToolsByName([READ_ONLY_TOOLS, tools.activeToolNames].flat());
+            currentTurnFlow = preparationFlow;
           }
           await promptAndWait(promptWithRequiredContextTools(turn.prompt, contextToolNames));
           const initialFlow = currentTurnFlow;
