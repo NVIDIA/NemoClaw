@@ -181,7 +181,11 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   ]);
   const rows = object(object(specialists.strategy).matrix).advisor;
   const interests = Array.isArray(rows) ? rows.map((row) => object(row).interest) : [];
-  if (interests.length !== INTERESTS.size || interests.some((interest) => !INTERESTS.has(interest)))
+  if (
+    interests.length !== INTERESTS.size ||
+    new Set(interests).size !== INTERESTS.size ||
+    interests.some((interest) => !INTERESTS.has(interest))
+  )
     errors.push("specialist matrix must declare the five review interests");
   if (specialists["continue-on-error"] !== undefined)
     errors.push("specialist failures must block synthesis");

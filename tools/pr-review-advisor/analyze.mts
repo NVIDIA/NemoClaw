@@ -319,12 +319,6 @@ async function main(): Promise<void> {
   delete process.env.GH_TOKEN;
   delete process.env.GITHUB_TOKEN;
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
-  const { systemPrompt, promptTurns, securityCategoryNames } = preparePromptArtifacts({
-    artifacts,
-    metadata,
-    diff,
-  });
-
   const writeFailure = (reason: string): void => writeFailureArtifacts(artifacts, metadata, reason);
   const writeUnavailable = (reason: string): void =>
     writeUnavailableArtifacts(artifacts, metadata, reason, false);
@@ -335,6 +329,12 @@ async function main(): Promise<void> {
     );
     process.exit(0);
   }
+
+  const { systemPrompt, promptTurns, securityCategoryNames } = preparePromptArtifacts({
+    artifacts,
+    metadata,
+    diff,
+  });
 
   logProgress(
     `Launching PR review advisor SDK: provider=${ADVISOR_PROVIDER} model=${ADVISOR_MODEL}`,

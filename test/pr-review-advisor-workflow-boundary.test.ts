@@ -133,9 +133,10 @@ describe("PR review advisor workflow boundary", () => {
     );
   });
 
-  it("requires all five specialists before synthesis and publication", () => {
+  it("requires all five distinct specialists before synthesis and publication", () => {
     const errors = validateMutation((value) => {
-      value.jobs["review-specialists"].strategy.matrix.advisor.pop();
+      const specialists = value.jobs["review-specialists"].strategy.matrix.advisor;
+      specialists[4].interest = specialists[0].interest;
       value.jobs["review-specialists"]["continue-on-error"] = true;
       value.jobs.review.needs = "publish";
       value.jobs.publish.needs = "review-specialists";

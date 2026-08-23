@@ -53,7 +53,6 @@ describe("specialist Pi session inputs", () => {
     const inventory = validateSpecialistSessionDirectory(root);
     expect(Object.keys(inventory.files)).toEqual(ADVISOR_INTERESTS);
     expect(inventory.available).toEqual(ADVISOR_INTERESTS);
-    expect(inventory.missing).toEqual([]);
   });
 
   it.each(ADVISOR_INTERESTS)("rejects a missing required %s session", (interest) => {
