@@ -80,9 +80,14 @@ export function validateSpecialistSessionDirectory(directory: string): Specialis
     if (lines.length === 0) throw new Error(`Specialist session is empty: ${interest}`);
     for (const [index, line] of lines.entries()) {
       if (Buffer.byteLength(line, "utf8") > MAX_SPECIALIST_SESSION_LINE_BYTES) {
-        throw new Error(
-          `Specialist session ${interest} line ${index + 1} exceeds the ordinary read limit`,
-        );
+        if (REQUIRED_SPECIALIST_INTERESTS.some((required) => required === interest)) {
+          throw new Error(
+            `Specialist session ${interest} line ${index + 1} exceeds the ordinary read limit`,
+          );
+        }
+        missing.push(interest);
+        text = "";
+        break;
       }
       try {
         JSON.parse(line);
@@ -90,6 +95,7 @@ export function validateSpecialistSessionDirectory(directory: string): Specialis
         throw new Error(`Specialist session ${interest} has invalid JSONL at line ${index + 1}`);
       }
     }
+    if (text.length === 0) continue;
     const header = JSON.parse(lines[0]!) as Record<string, unknown>;
     if (header.type !== "session" || typeof header.id !== "string") {
       throw new Error(`Specialist session ${interest} has no valid Pi session header`);

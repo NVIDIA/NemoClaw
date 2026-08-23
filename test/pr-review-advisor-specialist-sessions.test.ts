@@ -134,10 +134,24 @@ describe("specialist Pi session inputs", () => {
     expect(() => validateSpecialistSessionDirectory(root)).toThrow(/invalid JSONL/u);
   });
 
-  it("rejects a trace line that ordinary read cannot return", () => {
+  it("omits an optional trace that ordinary read cannot return", () => {
     const root = fixture();
     fs.appendFileSync(
-      path.join(root, specialistSessionFileName("documentation")),
+      path.join(root, specialistSessionFileName("operations")),
+      JSON.stringify({ type: "message", body: "x".repeat(51 * 1024) }) + "\n",
+    );
+
+    const inventory = validateSpecialistSessionDirectory(root);
+
+    expect(inventory.available).toEqual(ADVISOR_INTERESTS.filter((item) => item !== "operations"));
+    expect(inventory.missing).toEqual(["operations"]);
+    expect(inventory.files.operations).toBeUndefined();
+  });
+
+  it("rejects a required trace that ordinary read cannot return", () => {
+    const root = fixture();
+    fs.appendFileSync(
+      path.join(root, specialistSessionFileName("behavior")),
       JSON.stringify({ type: "message", body: "x".repeat(51 * 1024) }) + "\n",
     );
     expect(() => validateSpecialistSessionDirectory(root)).toThrow(/ordinary read limit/u);
