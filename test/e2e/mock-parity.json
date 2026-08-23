@@ -131,15 +131,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/staging-launchable-full.test.ts",
-      "fast": [
-        "test/e2e/support/brev-launchable-fixture.test.ts",
-        "test/e2e/support/full-e2e-inference-probe.test.ts",
-        "test/e2e/support/issue-9880-staging-reproduction-workflow.test.ts",
-        "test/e2e/support/launch-agent-turn.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/full-e2e.test.ts",
       "fast": [
         "test/e2e/support/hosted-inference.test.ts",

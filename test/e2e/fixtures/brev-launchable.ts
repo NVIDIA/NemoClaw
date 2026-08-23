@@ -167,11 +167,11 @@ export class BrevLaunchableFixture {
     return workspace;
   }
 
-  async waitForExec(name: string, timeoutMs = 15 * 60_000): Promise<void> {
+  async waitForExec(ownership: BrevWorkspaceOwnership, timeoutMs = 15 * 60_000): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const remaining = deadline - Date.now();
-      const result = await this.exec(name, "true", {
+      const result = await this.exec(ownership, "true", {
         artifactName: "brev-exec-readiness",
         persistArtifacts: false,
         timeoutMs: Math.min(30_000, remaining),
@@ -182,16 +182,17 @@ export class BrevLaunchableFixture {
     throw new Error("Brev exec readiness timed out");
   }
 
-  async exec(
-    name: string,
+  private async exec(
+    ownership: BrevWorkspaceOwnership,
     command: string,
     options: Parameters<HostCliClient["command"]>[2] = {},
   ): Promise<ShellProbeResult> {
-    return this.host.command("brev", ["exec", name, command], options);
+    await this.assertOwnedWorkspace(ownership, "Brev exec");
+    return this.host.command("brev", ["exec", ownership.name, command], options);
   }
 
   async execScript(
-    name: string,
+    ownership: BrevWorkspaceOwnership,
     script: string,
     options: Parameters<HostCliClient["command"]>[2] = {},
   ): Promise<ShellProbeResult> {
@@ -200,14 +201,17 @@ export class BrevLaunchableFixture {
     const file = path.join(directory, "run.sh");
     fs.writeFileSync(file, script, { mode: 0o600 });
     try {
-      return await this.host.command("brev", ["exec", name, `@${file}`], options);
+      return await this.exec(ownership, `@${file}`, options);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }
   }
 
-  async verifyIdentity(name: string, expected: StagingHandoff): Promise<BrevRuntimeIdentity> {
-    const result = await this.exec(name, identityCommand(), {
+  async verifyIdentity(
+    ownership: BrevWorkspaceOwnership,
+    expected: StagingHandoff,
+  ): Promise<BrevRuntimeIdentity> {
+    const result = await this.exec(ownership, identityCommand(), {
       artifactName: "brev-runtime-identity",
       timeoutMs: 5 * 60_000,
     });
@@ -303,6 +307,24 @@ export class BrevLaunchableFixture {
       await delay(Math.min(this.pollMs, Math.max(1, deadline - Date.now())));
     }
     throw new Error(`Brev workspace readiness timed out: ${name}`);
+  }
+
+  private async assertOwnedWorkspace(
+    ownership: BrevWorkspaceOwnership,
+    operation: string,
+  ): Promise<void> {
+    const current = await this.workspace(ownership.name);
+    if (!ownership.accepted || !ownership.id) {
+      throw new Error(
+        `${operation} requires a recorded Brev workspace identity: ${ownership.name}`,
+      );
+    }
+    if (!current) {
+      throw new Error(`Brev workspace disappeared before ${operation}: ${ownership.name}`);
+    }
+    if (current.id !== ownership.id) {
+      throw new Error(`Brev workspace identity changed before ${operation}: ${ownership.name}`);
+    }
   }
 
   private async workspace(name: string): Promise<BrevWorkspaceRecord | null> {

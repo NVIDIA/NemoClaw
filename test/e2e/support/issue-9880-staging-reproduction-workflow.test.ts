@@ -3,10 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  ISSUE_9880_STAGING_LAUNCHABLE_TEST_TIMEOUT_MS,
-  STAGING_LAUNCHABLE_FULL_TEST_TIMEOUT_MS,
-} from "../../../tools/e2e/staging-launchable-timeout-contract.mts";
+import { ISSUE_9880_STAGING_LAUNCHABLE_TEST_TIMEOUT_MS } from "../../../tools/e2e/staging-launchable-timeout-contract.mts";
 import {
   readYaml,
   type Workflow,
@@ -30,7 +27,6 @@ type WorkflowContract = {
   checkout: string;
   inferenceCredential: string;
   job: string;
-  label: string;
   prepare: string;
   scenario: string;
   testTimeoutMs: number;
@@ -38,30 +34,16 @@ type WorkflowContract = {
   workflow: string;
 };
 
-const contracts = [
-  {
-    label: "issue 9880 staging reproduction",
-    workflow: ".github/workflows/issue-9880-staging-reproduction.yaml",
-    job: "reproduce",
-    checkout: "Check out trusted reproduction lane",
-    prepare: "Prepare Brev CLI and evidence directory",
-    scenario: "Reproduce issue 9880 on the staging Launchable",
-    upload: "Upload issue 9880 evidence",
-    inferenceCredential: "NVIDIA_API_KEY",
-    testTimeoutMs: ISSUE_9880_STAGING_LAUNCHABLE_TEST_TIMEOUT_MS,
-  },
-  {
-    label: "staging Launchable full scenario",
-    workflow: ".github/workflows/staging-launchable-full.yaml",
-    job: "test",
-    checkout: "Check out trusted Vitest controller",
-    prepare: "Prepare Brev CLI and test dependencies",
-    scenario: "Run the staging Launchable full scenario",
-    upload: "Upload staging Launchable full evidence",
-    inferenceCredential: "NVIDIA_INFERENCE_API_KEY",
-    testTimeoutMs: STAGING_LAUNCHABLE_FULL_TEST_TIMEOUT_MS,
-  },
-] as const satisfies readonly WorkflowContract[];
+const contract = {
+  workflow: ".github/workflows/issue-9880-staging-reproduction.yaml",
+  job: "reproduce",
+  checkout: "Check out trusted reproduction lane",
+  prepare: "Prepare Brev CLI and evidence directory",
+  scenario: "Reproduce issue 9880 on the staging Launchable",
+  upload: "Upload issue 9880 evidence",
+  inferenceCredential: "NVIDIA_API_KEY",
+  testTimeoutMs: ISSUE_9880_STAGING_LAUNCHABLE_TEST_TIMEOUT_MS,
+} as const satisfies WorkflowContract;
 
 const mutations: ReadonlyArray<
   readonly [string, (workflow: StagingWorkflow, contract: WorkflowContract) => void, string]
@@ -112,27 +94,17 @@ const mutations: ReadonlyArray<
   ],
 ];
 
-const mutationCases = contracts.flatMap((contract) =>
-  mutations.map(
-    ([caseName, mutate, expected]) =>
-      [contract.label, caseName, contract, mutate, expected] as const,
-  ),
-);
+describe("rejects unsafe changes to the staging Launchable workflow for issue 9880", () => {
+  it.each(mutations)("rejects %s", (_case, mutate, expected) => {
+    const workflow = readStagingWorkflow();
+    expect(validateWorkflow(workflow)).not.toContain(expected);
+    mutate(workflow, contract);
 
-describe("credential-bearing staging Launchable workflow boundaries", () => {
-  it.each(mutationCases)(
-    "rejects %s when it has %s",
-    (_label, _case, contract, mutate, expected) => {
-      const workflow = readStagingWorkflow(contract);
-      expect(validateWorkflow(workflow, contract)).not.toContain(expected);
-      mutate(workflow, contract);
-
-      expect(validateWorkflow(workflow, contract)).toContain(expected);
-    },
-  );
+    expect(validateWorkflow(workflow)).toContain(expected);
+  });
 });
 
-function readStagingWorkflow(contract: WorkflowContract): StagingWorkflow {
+function readStagingWorkflow(): StagingWorkflow {
   return structuredClone(readYaml<StagingWorkflow>(contract.workflow));
 }
 
@@ -144,7 +116,7 @@ function step(
   return workflow.jobs[contract.job]!.steps!.find((entry) => entry.name === name)!;
 }
 
-function validateWorkflow(workflow: StagingWorkflow, contract: WorkflowContract): string[] {
+function validateWorkflow(workflow: StagingWorkflow): string[] {
   const errors: string[] = [];
   const job = workflow.jobs[contract.job] ?? {};
 
@@ -156,10 +128,7 @@ function validateWorkflow(workflow: StagingWorkflow, contract: WorkflowContract)
   recordValidation(
     errors,
     workflow.concurrency?.["cancel-in-progress"] === false &&
-      workflow.concurrency.group ===
-        (contract.job === "reproduce"
-          ? "issue-9880-staging-launchable"
-          : "staging-brev-launchable-cpu"),
+      workflow.concurrency.group === "issue-9880-staging-launchable",
     "workflow must retain its non-cancelling staging concurrency group",
   );
   recordValidation(

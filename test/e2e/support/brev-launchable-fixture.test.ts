@@ -87,10 +87,10 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     const identity = runtimeIdentity(expected);
     const fixture = createFixture(
       root,
-      vi.fn(async () => result(`probe\n${JSON.stringify(identity)}`)),
+      vi.fn(ownedExecCommand(`probe\n${JSON.stringify(identity)}`)),
     );
 
-    await expect(fixture.verifyIdentity("fixture-workspace", expected)).resolves.toEqual(identity);
+    await expect(fixture.verifyIdentity(recordedOwnership(), expected)).resolves.toEqual(identity);
     expect(
       JSON.parse(fs.readFileSync(path.join(root, "brev-runtime-identity.json"), "utf8")),
     ).toEqual(identity);
@@ -107,12 +107,9 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
       const root = temporaryRoot();
       const expected = stagingHandoff();
       const identity = runtimeIdentity(expected, override);
-      const fixture = createFixture(
-        root,
-        vi.fn(async () => result(JSON.stringify(identity))),
-      );
+      const fixture = createFixture(root, vi.fn(ownedExecCommand(JSON.stringify(identity))));
 
-      await expect(fixture.verifyIdentity("fixture-workspace", expected)).rejects.toThrow(
+      await expect(fixture.verifyIdentity(recordedOwnership(), expected)).rejects.toThrow(
         "standing Launchable runtime identity does not match the staging handoff",
       );
       expect(fs.existsSync(path.join(root, "brev-runtime-identity.json"))).toBe(false);
@@ -191,23 +188,63 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     expect(ownership.id).toBe("owned-id");
   });
 
+  it("refuses a replacement before Brev exec readiness without executing on it", async () => {
+    const root = temporaryRoot();
+    const lifecycle = replaceableWorkspaceCommand();
+    const command = vi.fn(lifecycle.command);
+    const fixture = createFixture(root, command);
+    const ownership = fixture.ownership("fixture-workspace");
+
+    await fixture.create(ownership, "env-fixture123");
+    lifecycle.replace();
+
+    await expect(fixture.waitForExec(ownership, 100)).rejects.toThrow(
+      "Brev workspace identity changed before Brev exec",
+    );
+    expect(command.mock.calls.filter((call) => call[1][0] === "exec")).toHaveLength(0);
+  });
+
+  it("refuses a replacement before identity verification without executing on it", async () => {
+    const root = temporaryRoot();
+    const lifecycle = replaceableWorkspaceCommand();
+    const command = vi.fn(lifecycle.command);
+    const fixture = createFixture(root, command);
+    const ownership = fixture.ownership("fixture-workspace");
+
+    await fixture.create(ownership, "env-fixture123");
+    lifecycle.replace();
+
+    await expect(fixture.verifyIdentity(ownership, stagingHandoff())).rejects.toThrow(
+      "Brev workspace identity changed before Brev exec",
+    );
+    expect(command.mock.calls.filter((call) => call[1][0] === "exec")).toHaveLength(0);
+  });
+
   it("removes the private local script after Brev exec returns", async () => {
     const root = temporaryRoot();
     let observedScript = "";
     const command = vi.fn(async (_binary: string, args: string[]) => {
-      observedScript = args[2]?.slice(1) ?? "";
-      const descriptor = fs.openSync(observedScript, "r");
-      try {
-        expect(fs.fstatSync(descriptor).mode & 0o777).toBe(0o600);
-        expect(fs.readFileSync(descriptor, "utf8")).toContain("fixture script");
-      } finally {
-        fs.closeSync(descriptor);
+      switch (args[0]) {
+        case "ls":
+          return workspaceResult("owned-id");
+        case "exec": {
+          observedScript = args[2]?.slice(1) ?? "";
+          const descriptor = fs.openSync(observedScript, "r");
+          try {
+            expect(fs.fstatSync(descriptor).mode & 0o777).toBe(0o600);
+            expect(fs.readFileSync(descriptor, "utf8")).toContain("fixture script");
+          } finally {
+            fs.closeSync(descriptor);
+          }
+          return result("");
+        }
+        default:
+          throw new Error(`unexpected command: ${args.join(" ")}`);
       }
-      return result("");
     });
     const fixture = createFixture(root, command);
 
-    await fixture.execScript("fixture-workspace", "echo fixture script", {
+    await fixture.execScript(recordedOwnership(), "echo fixture script", {
       artifactName: "fixture-script",
     });
 
@@ -260,6 +297,30 @@ function stagingManifest(): Record<string, unknown> {
     imageName: "nemoclaw-fixture",
     nemoclawSha: handoff.nemoclawSha,
     imageRepositorySha: handoff.imageRepositorySha,
+  };
+}
+
+function recordedOwnership(): BrevWorkspaceOwnership {
+  return {
+    name: "fixture-workspace",
+    createRequested: true,
+    accepted: true,
+    id: "owned-id",
+  };
+}
+
+function ownedExecCommand(
+  stdout: string,
+): (_binary: string, args: string[]) => Promise<ShellProbeResult> {
+  return async (_binary, args) => {
+    switch (args[0]) {
+      case "ls":
+        return workspaceResult("owned-id");
+      case "exec":
+        return result(stdout);
+      default:
+        throw new Error(`unexpected command: ${args.join(" ")}`);
+    }
   };
 }
 
@@ -407,6 +468,34 @@ function replacementDuringReadinessCommand(): {
             : result({ workspaces: [] });
         case "create":
           created = true;
+          return result("");
+        default:
+          throw new Error(`unexpected command: ${args.join(" ")}`);
+      }
+    },
+  };
+}
+
+function replaceableWorkspaceCommand(): {
+  command: (_binary: string, args: string[]) => Promise<ShellProbeResult>;
+  replace(): void;
+} {
+  let created = false;
+  let replaced = false;
+  return {
+    replace() {
+      replaced = true;
+    },
+    async command(_binary, args) {
+      switch (args[0]) {
+        case "ls":
+          return created
+            ? workspaceResult(replaced ? "replacement-id" : "owned-id")
+            : result({ workspaces: [] });
+        case "create":
+          created = true;
+          return result("");
+        case "exec":
           return result("");
         default:
           throw new Error(`unexpected command: ${args.join(" ")}`);

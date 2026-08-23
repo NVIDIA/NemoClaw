@@ -34,12 +34,12 @@ test(
     const ownership = brevLaunchable.ownership(name);
     cleanup.add(`delete Brev workspace ${name}`, () => brevLaunchable.delete(ownership));
     const workspace = await brevLaunchable.create(ownership, launchableId);
-    await brevLaunchable.waitForExec(name);
-    await brevLaunchable.verifyIdentity(name, handoff);
+    await brevLaunchable.waitForExec(ownership);
+    await brevLaunchable.verifyIdentity(ownership, handoff);
 
     progress.phase("onboard the exact issue model");
     const onboard = await brevLaunchable.execScript(
-      name,
+      ownership,
       `#!/usr/bin/env bash
 set -euo pipefail
 export NVIDIA_INFERENCE_API_KEY=${shellQuote(inferenceKey)}
@@ -58,7 +58,7 @@ brev-quickstart issue-9880
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
 
     progress.phase("run bounded fresh OpenClaw CLI sessions");
-    const scenario = await brevLaunchable.execScript(name, scenarioScript(), {
+    const scenario = await brevLaunchable.execScript(ownership, scenarioScript(), {
       artifactName: "issue-9880-openclaw-cli-sessions",
       captureLimitBytes: 64 * 1024,
       timeoutMs: 10 * 60_000,
