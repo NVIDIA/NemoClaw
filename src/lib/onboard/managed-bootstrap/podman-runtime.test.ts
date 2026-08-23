@@ -808,7 +808,7 @@ describe("Podman managed-bootstrap runtime surface", () => {
         ...input.sandboxGpuConfig,
         mode: "1",
         hostGpuDetected: true,
-        hostGpuPlatform: "nvidia",
+        hostGpuPlatform: "linux",
         sandboxGpuEnabled: true,
       },
     });
