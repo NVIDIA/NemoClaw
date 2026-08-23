@@ -15,6 +15,8 @@ vi.mock("../../adapters/docker/run", () => ({
 }));
 vi.mock("../../state/registry", () => ({
   getSandbox: vi.fn(),
+  isPublishedSandboxRegistration: (entry: { pendingRouteReservation?: true }) =>
+    entry.pendingRouteReservation !== true,
   listSandboxes: vi.fn(),
 }));
 vi.mock("../../state/sandbox", () => ({
@@ -48,6 +50,28 @@ describe("startStoppedSandboxContainerForBackup", () => {
       containerName: "openshell-my-sb-abc123",
     });
     expect(d.dockerStart).toHaveBeenCalledWith("openshell-my-sb-abc123");
+  });
+
+  it("excludes created pending registrations from container ownership (#9733)", () => {
+    vi.mocked(registry.listSandboxes).mockReturnValue({
+      sandboxes: [
+        { name: "my" },
+        {
+          name: "my-assistant",
+          pendingRouteReservation: true,
+          createdAt: "2026-08-20T00:00:00.000Z",
+        },
+      ],
+      defaultSandbox: null,
+    });
+    const { listSandboxNames: _listSandboxNames, ...d } = deps({
+      listLabeledContainerNames: vi.fn().mockReturnValue(["openshell-my-assistant-12ab"]),
+      dockerInspectStatus: vi.fn().mockReturnValue("exited"),
+    });
+
+    expect(startStoppedSandboxContainerForBackup("my", d)).toEqual({
+      containerName: "openshell-my-assistant-12ab",
+    });
   });
 
   it("starts a created container (onboarded but never run)", () => {

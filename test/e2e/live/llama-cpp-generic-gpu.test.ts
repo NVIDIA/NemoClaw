@@ -32,6 +32,7 @@ import {
 } from "./gpu-e2e-helpers.ts";
 
 const TIMEOUT_MS = 110 * 60_000;
+const EXPECTED_LLAMA_CPP_REQUEST_GUARD_PATH = "/usr/local/bin/nemoclaw-llama-cpp-request-guard";
 const RECIPE_ID = "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
 const PRESET_ID = "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-llamacpp-gpu";
@@ -221,7 +222,7 @@ test(
     );
     expect(inspect.exitCode, resultText(inspect)).toBe(0);
     const inspectedRuntime = JSON.parse(inspect.stdout) as Array<{
-      Config?: { Cmd?: unknown; Image?: unknown };
+      Config?: { Cmd?: unknown; Entrypoint?: unknown; Image?: unknown };
       HostConfig?: { PortBindings?: Record<string, unknown> };
       NetworkSettings?: { Ports?: Record<string, unknown> };
       State?: { Pid?: unknown; Running?: unknown };
@@ -231,6 +232,7 @@ test(
     expect(runtime?.State?.Running).toBe(true);
     expect(runtime?.State?.Pid).toEqual(expect.any(Number));
     expect(runtime?.Config?.Image).toBe(recipe.spec.runtime.image);
+    expect(runtime?.Config?.Entrypoint).toEqual([EXPECTED_LLAMA_CPP_REQUEST_GUARD_PATH]);
     const containerPid = runtime?.State?.Pid as number;
     expect(containerPid).toBeGreaterThan(0);
     expect(runtime?.Config?.Cmd).toEqual(expect.any(Array));
@@ -238,6 +240,14 @@ test(
     const gpuLayersIndex = command.indexOf("--gpu-layers");
     expect(gpuLayersIndex).toBeGreaterThanOrEqual(0);
     expect(command[gpuLayersIndex + 1]).toBe("all");
+    const upstreamHostIndex = command.indexOf("--upstream-host");
+    expect(upstreamHostIndex).toBeGreaterThanOrEqual(0);
+    expect(command[upstreamHostIndex + 1]).toBe("127.0.0.1");
+    const upstreamPortIndex = command.indexOf("--upstream-port");
+    expect(upstreamPortIndex).toBeGreaterThanOrEqual(0);
+    expect(command[upstreamPortIndex + 1]).toBe(
+      String(recipe.spec.serve.requestGuard.upstreamPort),
+    );
     expect(inspectedRuntime[0]?.HostConfig?.PortBindings).toEqual({});
     expect(
       Object.values(inspectedRuntime[0]?.NetworkSettings?.Ports ?? {}).every(
@@ -262,8 +272,28 @@ test(
     );
     expect(startupLog).toContain("llama_server: model loaded");
     expect(startupLog).toContain(
-      `llama_server: listening on http://0.0.0.0:${recipe.spec.serve.port}`,
+      `llama_server: listening on http://127.0.0.1:${recipe.spec.serve.requestGuard.upstreamPort}`,
     );
+    const processes = await host.command(
+      "docker",
+      ["container", "top", MANAGED_LLAMA_CPP_CONTAINER_NAME, "-eo", "pid,ppid,comm"],
+      {
+        artifactName: "managed-llama-cpp-container-processes",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(processes.exitCode, resultText(processes)).toBe(0);
+    const llamaProcess = processes.stdout
+      .trim()
+      .split("\n")
+      .slice(1)
+      .map((line) => line.trim().split(/\s+/u))
+      .find(([, , processName]) => processName === "llama-server");
+    expect(llamaProcess, resultText(processes)).toBeDefined();
+    const llamaPid = Number(llamaProcess?.[0]);
+    expect(llamaPid).toBeGreaterThan(0);
+    expect(Number(llamaProcess?.[1])).toBe(containerPid);
     const computeApps = await host.command(
       "nvidia-smi",
       ["--query-compute-apps=pid,process_name,used_gpu_memory", "--format=csv,noheader,nounits"],
@@ -278,9 +308,7 @@ test(
       .trim()
       .split("\n")
       .map((line) => line.split(",").map((value) => value.trim()))
-      .find(
-        ([pid, processName]) => Number(pid) === containerPid && /llama-server$/u.test(processName),
-      );
+      .find(([pid, processName]) => Number(pid) === llamaPid && /llama-server$/u.test(processName));
     expect(llamaGpuProcess, resultText(computeApps)).toBeDefined();
     const usedGpuMemoryMiB = Number(llamaGpuProcess?.[2]);
     const minimumFullOffloadMemoryMiB = Math.floor((modelFile.sizeBytes / 1024 ** 2) * 0.75);
