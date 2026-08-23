@@ -3,6 +3,10 @@
 
 import { canonicalEndpoint, type EndpointFlavor } from "../core/url-utils";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
+import {
+  isPublishedSandboxRegistration,
+  isRouteOnlySandboxReservation,
+} from "../state/registry/route-reservation";
 import type { SandboxEntry } from "../state/registry";
 
 export type GatewayInferenceRoute = Pick<
@@ -142,6 +146,11 @@ export function preflightGatewayRouteDiscovery(
   const peers: SandboxEntry[] = [];
   const discoveryConflicts: GatewayRouteConflict[] = [];
   for (const sandbox of request.sandboxes) {
+    if (
+      !isPublishedSandboxRegistration(sandbox) &&
+      !isRouteOnlySandboxReservation(sandbox)
+    )
+      continue;
     if (sandbox.name === request.sandboxName) continue;
     let recordedGatewayName: string;
     try {
@@ -226,7 +235,7 @@ export function preflightGatewayRouteDiscovery(
 }
 
 /**
- * Compare a requested route with every durable registry row on the same
+ * Compare a requested route with every published durable registry row on the same
  * OpenShell gateway. Registry rows are intentionally used without a live-state
  * filter because stopped sandboxes still depend on the gateway route when they
  * restart. The requested route must already carry the target agent's effective
@@ -262,6 +271,11 @@ export function checkGatewayRouteCompatibility(
 
   const conflicts: GatewayRouteConflict[] = [];
   for (const sandbox of request.sandboxes) {
+    if (
+      !isPublishedSandboxRegistration(sandbox) &&
+      !isRouteOnlySandboxReservation(sandbox)
+    )
+      continue;
     if (sandbox.name === request.sandboxName) continue;
     let recordedGatewayName: string;
     try {

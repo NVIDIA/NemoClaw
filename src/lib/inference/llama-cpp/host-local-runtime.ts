@@ -55,10 +55,7 @@ export interface LlamaCppHostLocalLaunchContract {
   readonly serve: {
     readonly authentication: "bearer";
     readonly batchSize: number;
-    readonly chatTemplate:
-      | "nemotron-v3-embedded"
-      | "container-jinja-file"
-      | "model-embedded-jinja";
+    readonly chatTemplate: "nemotron-v3-embedded" | "container-jinja-file" | "model-embedded-jinja";
     readonly chatTemplateFile?: string;
     readonly chatTemplateArguments?: {
       readonly reasoningStrength: "low" | "medium" | "high" | "xhigh";
@@ -423,12 +420,22 @@ export function buildLlamaCppRequestGuardDockerArgv(
 ): string[] {
   validateContract(contract);
   validateBindings(contract, bindings);
-  const { limits } = contract.serve;
   return [
     ...buildLlamaCppHostLocalDockerRunArgv(contract, bindings),
     "--entrypoint",
     LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
     bindings.imageReference,
+    ...buildLlamaCppRequestGuardCommandArgv(contract),
+  ];
+}
+
+/** Reconstruct the immutable request-guard command for lifecycle inspection. */
+export function buildLlamaCppRequestGuardCommandArgv(
+  contract: LlamaCppHostLocalLaunchContract,
+): readonly string[] {
+  validateContract(contract);
+  const { limits } = contract.serve;
+  return Object.freeze([
     "--listen-host",
     "0.0.0.0",
     "--listen-port",
@@ -454,7 +461,7 @@ export function buildLlamaCppRequestGuardDockerArgv(
       maxOutputTokens: limits.maxOutputTokens,
       port: contract.serve.requestGuard.upstreamPort,
     }),
-  ];
+  ]);
 }
 
 function buildLlamaCppHostLocalDockerRunArgv(
