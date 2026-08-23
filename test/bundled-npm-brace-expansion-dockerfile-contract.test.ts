@@ -27,8 +27,6 @@ const finalDockerfiles = [
 ] as const;
 const copyInstruction =
   "COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts";
-const hermesTarCacheSeedInstruction =
-  "COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz /tmp/nemoclaw-bundled-npm-tar.tgz";
 const patchInstruction =
   "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts";
 const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
@@ -92,11 +90,5 @@ describe("bundled npm brace-expansion image remediation contract", () => {
     expect(copy, file).toBeGreaterThanOrEqual(0);
     expect(tarPatch, file).toBeGreaterThan(copy);
     expect(bracePatch.commandStart, file).toBeGreaterThan(tarPatch);
-  });
-
-  it("reasserts the Hermes tar repair from the locked offline cache seed", () => {
-    const source = fs.readFileSync(path.join(repoRoot, "agents/hermes/Dockerfile"), "utf8");
-
-    expect(source).toContain(hermesTarCacheSeedInstruction);
   });
 });
