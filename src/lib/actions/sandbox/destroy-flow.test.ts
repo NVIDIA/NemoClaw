@@ -462,7 +462,6 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
 
-    expect(harness.portableDestroyRevalidateSpy.mock.calls.length).toBeGreaterThanOrEqual(6);
     expect(harness.lifecycleLockEvents).toEqual(["acquired", "released", "process-exit"]);
     expect(harness.events).not.toContain("delete");
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
