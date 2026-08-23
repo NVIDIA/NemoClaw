@@ -9,6 +9,7 @@ import {
   AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
+  type ReadToolDetails,
   ModelRegistry,
   SessionManager,
   SettingsManager,
@@ -93,6 +94,8 @@ export type RunAdvisorResult = {
   /** Assistant text from the final turn. For single-turn callers, this is the full response. */
   text: string;
   raw: string;
+  /** Native Pi JSONL session path when persistence is enabled. */
+  sessionFile?: string;
   turnTexts: string[];
   turnErrors: string[];
   turnCallbackErrors: string[];
@@ -336,6 +339,100 @@ export function createAdvisorContextToolRuntime(
   };
 }
 
+type AdvisorSessionMessage = Parameters<SessionManager["appendMessage"]>[0];
+
+type SeededReadHistory = Readonly<{
+  flow: AdvisorTurnFlowEvent[];
+  calls: number;
+}>;
+
+export async function seedRequiredReadHistory(
+  sessionManager: SessionManager,
+  readTool: ToolDefinition,
+  requiredPaths: string[],
+  model: Readonly<{ api: string; provider: string; id: string }>,
+): Promise<SeededReadHistory> {
+  const paths = [...new Set(requiredPaths)];
+  if (paths.length === 0) return { flow: [], calls: 0 };
+
+  sessionManager.appendMessage({
+    role: "user",
+    content: "Read the required specialist traces before synthesis.",
+    timestamp: Date.now(),
+  });
+  const flow: AdvisorTurnFlowEvent[] = [];
+  let calls = 0;
+  for (const requiredPath of paths) {
+    let offset = 1;
+    let reachesEnd = false;
+    while (!reachesEnd) {
+      const toolCallId = `seed-read-${calls + 1}`;
+      const arguments_ = { path: requiredPath, ...(offset === 1 ? {} : { offset }) };
+      sessionManager.appendMessage({
+        role: "assistant",
+        content: [{ type: "toolCall", id: toolCallId, name: "read", arguments: arguments_ }],
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "toolUse",
+        timestamp: Date.now(),
+      } as AdvisorSessionMessage);
+      const result = await readTool.execute(
+        toolCallId,
+        arguments_,
+        undefined,
+        undefined,
+        undefined as never,
+      );
+      sessionManager.appendMessage({
+        role: "toolResult",
+        toolCallId,
+        toolName: "read",
+        content: result.content ?? [],
+        details: result.details,
+        isError: false,
+        timestamp: Date.now(),
+      });
+      const truncation = (result.details as ReadToolDetails | undefined)?.truncation;
+      const outputLines = truncation?.outputLines;
+      reachesEnd = !truncation?.truncated;
+      flow.push({
+        type: "read",
+        path: requiredPath,
+        offset,
+        endOffset: outputLines === undefined ? null : offset + outputLines - 1,
+        fileSize: fs.statSync(requiredPath).size,
+        reachesEnd,
+      });
+      calls += 1;
+      if (!reachesEnd) {
+        if (!outputLines || outputLines < 1) {
+          throw new Error(`Could not advance seeded read for ${requiredPath}`);
+        }
+        offset += outputLines;
+      }
+    }
+  }
+  return { flow, calls };
+}
+
+export function seededReadFlowForTurn(
+  turn: AdvisorPromptTurn,
+  flow: AdvisorTurnFlowEvent[],
+): AdvisorTurnFlowEvent[] {
+  if (turn.seedRequiredReads !== true) return [];
+  const requiredPaths = new Set(turn.requiredReadPaths ?? []);
+  return flow.filter((event) => event.type === "read" && requiredPaths.has(event.path));
+}
+
 export async function runReadOnlyAdvisor(
   options: RunReadOnlyAdvisorOptions,
 ): Promise<RunAdvisorResult> {
@@ -360,8 +457,11 @@ export async function runReadOnlyAdvisor(
 
   const promptTurns = normalizePromptTurns(options.promptTurns);
   const contextTools = createAdvisorContextToolRuntime(promptTurns);
+  let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
   const customTools = [
-    ...createRepoConfinedReadOnlyTools(options.cwd),
+    ...createRepoConfinedReadOnlyTools(options.cwd, (observation) => {
+      currentTurnFlow.push({ type: "read", ...observation });
+    }),
     ...contextTools.customTools,
   ];
   const availableToolNames = new Set(READ_ONLY_TOOLS);
@@ -406,6 +506,18 @@ export async function runReadOnlyAdvisor(
     options.cwd,
     path.join(options.configDir, "sessions"),
   );
+  const seededTurns = promptTurns.filter((turn) => turn.seedRequiredReads === true);
+  if (seededTurns.length > 1 || (seededTurns.length === 1 && seededTurns[0] !== promptTurns[0])) {
+    throw new Error("Seeded required reads are supported only for the first advisor turn");
+  }
+  const readTool = customTools.find((tool) => tool.name === "read");
+  if (!readTool) throw new Error("Advisor read tool is not registered");
+  const seededReadHistory = await seedRequiredReadHistory(
+    sessionManager,
+    readTool,
+    seededTurns.flatMap((turn) => turn.requiredReadPaths ?? []),
+    model,
+  );
   const { session, modelFallbackMessage } = await createAgentSession({
     cwd: options.cwd,
     agentDir: options.configDir,
@@ -420,6 +532,7 @@ export async function runReadOnlyAdvisor(
     settingsManager,
   });
 
+  const sessionFile = session.sessionFile;
   const rawHeader = [
     modelFallbackMessage ? `[${options.logPrefix}] ${modelFallbackMessage}` : undefined,
     `[${options.logPrefix}] model=${model.provider}/${model.id}`,
@@ -438,7 +551,6 @@ export async function runReadOnlyAdvisor(
   let currentTurnName = "";
   let currentTurnError: string | undefined;
   let successfulToolNames = new Set<string>();
-  let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
   let resolveCurrentAgentEnd: (() => void) | undefined;
 
   const captureTurnError = (source: string, message: string | undefined): void => {
@@ -546,7 +658,7 @@ export async function runReadOnlyAdvisor(
       currentTurnText = new CappedBuffer(options.maxCaptureBytes);
       currentTurnError = undefined;
       successfulToolNames = new Set();
-      currentTurnFlow = [];
+      currentTurnFlow = seededReadFlowForTurn(turn, seededReadHistory.flow);
       turnTextBuffers.push(currentTurnText);
       const turnIndex = `${index + 1}/${promptTurns.length}`;
       options.onTurnStart?.(turn);
@@ -575,6 +687,11 @@ export async function runReadOnlyAdvisor(
             await Promise.race([session.prompt(prompt), timeoutPromise]);
             await Promise.race([agentEndPromise, timeoutPromise]);
           };
+          if (turn.seedRequiredReads && (tools.requiredReadPaths?.length ?? 0) > 0) {
+            raw.append(
+              `\n[${options.logPrefix}] seeded_required_reads ${turn.name} calls=${seededReadHistory.calls}\n`,
+            );
+          }
           await promptAndWait(promptWithRequiredContextTools(turn.prompt, contextToolNames));
           const originalFlow = currentTurnFlow;
           const repairToolName = repairableAtomicTerminalToolName(
@@ -728,6 +845,7 @@ export async function runReadOnlyAdvisor(
   return {
     text: turnTexts.at(-1) || "",
     raw: raw.toStringWithTrailingNewline(),
+    sessionFile,
     turnTexts,
     turnErrors,
     turnCallbackErrors,
@@ -764,6 +882,8 @@ function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTu
     activeToolNames: normalizedToolNames(turn.activeToolNames),
     requiredToolNames: normalizedToolNames(turn.requiredToolNames),
     requireToolsBeforeText: normalizedToolNames(turn.requireToolsBeforeText),
+    requiredReadPaths: turn.requiredReadPaths,
+    seedRequiredReads: turn.seedRequiredReads === true,
     requireAssistantText: turn.requireAssistantText === true,
     atomicTerminalToolName: normalizedToolNames(
       turn.atomicTerminalToolName ? [turn.atomicTerminalToolName] : undefined,

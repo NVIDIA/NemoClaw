@@ -745,9 +745,19 @@ describe("post-merge documentation runner", () => {
     expect(fs.existsSync(path.join(input.root, "artifact/review.json"))).toBe(false);
     expect(state.deleted).toBe(true);
   });
+  it("retains an independent review report at the size limit", () => {
+    const input = runnerFixture("review");
+    const report = "x".repeat(65_536);
+    const { state, tools } = runnerTools(input, undefined, "rejected", report);
+    expect(() => executePostMergeDocs(input.env, tools)).toThrow("did not approve");
+    expect(fs.readFileSync(path.join(input.root, "artifact/review-report.txt"), "utf8")).toBe(
+      report,
+    );
+    expect(state.deleted).toBe(true);
+  });
   it("rejects an oversized independent review report and deletes the sandbox", () => {
     const input = runnerFixture("review");
-    const { state, tools } = runnerTools(input, undefined, "rejected", "x".repeat(1_025));
+    const { state, tools } = runnerTools(input, undefined, "rejected", "x".repeat(65_537));
     expect(() => executePostMergeDocs(input.env, tools)).toThrow("bounded regular file");
     expect(state.deleted).toBe(true);
   });
