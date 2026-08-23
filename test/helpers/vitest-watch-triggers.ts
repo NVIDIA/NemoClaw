@@ -44,6 +44,10 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)\.github\/workflows\/[^/]+\.ya?ml$/,
+    testsToRun: runTests("test/github-actions-workflow-names.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)docs\/reference\/troubleshooting\.mdx$/,
     testsToRun: runTests("test/policy-finality-docs.test.ts"),
   },
