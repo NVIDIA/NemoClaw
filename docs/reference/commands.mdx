@@ -4957,7 +4957,8 @@ export TELEGRAM_BOT_TOKEN_AGENT_B=<bot-B-token>
 $$nemoclaw onboard --agent hermes
 ```
 
-For each entry, NemoClaw registers a generic OpenShell provider row that resolves the named env to its operator-supplied value at egress time.
+For each entry, NemoClaw registers an OpenShell provider with the endpointless `nemoclaw-mcp-v1` profile.
+OpenShell resolves the named credential placeholder to the operator-supplied value at egress.
 The Hermes profile `.env` files are operator-owned: write `${TELEGRAM_BOT_TOKEN_AGENT_A}` (or the matching placeholder for each entry) into the per-profile `.env` so the in-sandbox Hermes process inherits the OpenShell placeholder instead of a raw token.
 NemoClaw never reads, writes, or rewrites these `.env` files; verify after onboarding that each profile's `.env` references the placeholder and that no raw bot token value sits on disk.
 

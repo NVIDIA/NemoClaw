@@ -5,7 +5,12 @@ import { randomBytes } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
 import { cloneAndDeepFreeze } from "../../../core/immutable";
+import { REPOSITORY_ROOT } from "../../../core/repository-root";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
+import {
+  ensureMessagingCredentialProviderProfile,
+  MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+} from "../../../messaging/provider-profile";
 import { isValidName, isValidProviderName } from "../../../name-validation";
 import { reportsExactProviderNotFound } from "../../../onboard/extra-provider-diagnostic-parser";
 import {
@@ -262,7 +267,7 @@ function applicationBindings(input: {
     input.profile.agent,
   ).map((binding) => ({
     providerName: binding.providerName,
-    providerType: "generic",
+    providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
     providerEnvKey: binding.providerEnvKey,
     source: "messaging",
   }));
@@ -293,7 +298,7 @@ function destinationOwnedBindings(entry: SandboxEntry): readonly ManagedClonePro
     entry.agent,
   ).map((binding) => ({
     providerName: binding.providerName,
-    providerType: "generic",
+    providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
     providerEnvKey: binding.providerEnvKey,
     source: "messaging",
   }));
@@ -526,10 +531,18 @@ export function provisionManagedCloneProviderTransaction(
   const environment = input.environment ?? process.env;
   const confirmed: ManagedCloneProviderOwnershipReceipt[] = [];
   try {
-    // The transaction boundary must still fence a clone with no credential
-    // providers (for example DCode) before a later caller proceeds to sandbox
-    // or filesystem mutation.
+    // Fence every shared gateway mutation, including provider profile import.
     revalidateManagedCloneMutationAuthority(prepared, input);
+    if (
+      prepared.providers.some(
+        (provider) => provider.binding.providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+      )
+    ) {
+      ensureMessagingCredentialProviderProfile({
+        root: REPOSITORY_ROOT,
+        runOpenshell: input.runOpenshell,
+      });
+    }
     for (const provider of prepared.providers) {
       revalidateManagedCloneMutationAuthority(prepared, input);
       const current = inspectProvider(provider.binding, input.runOpenshell);

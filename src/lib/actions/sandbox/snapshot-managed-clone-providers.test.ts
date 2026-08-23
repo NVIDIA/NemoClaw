@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { REPOSITORY_ROOT } from "../../core/repository-root";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import {
   encodeManagedStartupProfile,
@@ -157,10 +159,14 @@ function providerRunner(initial: readonly LiveBinding[] = []) {
   let createBehavior:
     | ((binding: LiveBinding) => { readonly materialize?: LiveBinding; readonly status: number })
     | undefined;
+  let profileImportResult = { status: 0, stdout: "", stderr: "" };
+  let profileExportResult = { status: 0, stdout: "", stderr: "" };
   let failDelete = false;
   const run = vi.fn((args: string[]) => {
     commands.push(args.join(" "));
     switch (args.slice(0, 2).join(" ")) {
+      case "provider profile":
+        return args[2] === "import" ? profileImportResult : profileExportResult;
       case "provider get": {
         const name = args[2] ?? "";
         const binding = live.get(name);
@@ -201,6 +207,12 @@ function providerRunner(initial: readonly LiveBinding[] = []) {
     },
     setFailDelete(value: boolean) {
       failDelete = value;
+    },
+    setProfileImportResult(value: typeof profileImportResult) {
+      profileImportResult = value;
+    },
+    setProfileExportResult(value: typeof profileExportResult) {
+      profileExportResult = value;
     },
   };
 }
@@ -279,13 +291,102 @@ describe("managed clone provider transaction", () => {
       {
         binding: {
           providerName: "destination-telegram-bridge",
-          providerType: "generic",
+          providerType: "nemoclaw-mcp-v1",
           providerEnvKey: "TELEGRAM_BOT_TOKEN",
           source: "messaging",
         },
         action: "create",
       },
     ]);
+  });
+
+  it("imports the endpointless profile before creating a cloned messaging provider (#9875)", () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const source = entry("source", profile);
+    const runner = providerRunner();
+    const prepared = prepareManagedCloneProviderTransaction({
+      handoff: handoff(profile, source, messagingPlan("destination")),
+      destination: null,
+      environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
+      runOpenshell: runner.run,
+      transactionId: "9".repeat(32),
+    });
+
+    provisionManagedCloneProviderTransaction(prepared, {
+      ...authorityDeps(source),
+      environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
+      runOpenshell: runner.run,
+    });
+
+    const importIndex = runner.commands.findIndex((command) =>
+      command.startsWith("provider profile import --file "),
+    );
+    const createIndex = runner.commands.findIndex((command) =>
+      command.startsWith("provider create --name destination-telegram-bridge "),
+    );
+    expect(importIndex).toBeGreaterThanOrEqual(0);
+    expect(runner.commands[importIndex]).toBe(
+      `provider profile import --file ${path.join(
+        REPOSITORY_ROOT,
+        "nemoclaw-blueprint",
+        "provider-profiles",
+        "nemoclaw-mcp-v1.yaml",
+      )}`,
+    );
+    expect(createIndex).toBeGreaterThan(importIndex);
+  });
+
+  it("rejects stale clone authority before importing the messaging profile (#9875)", () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const source = entry("source", profile);
+    const runner = providerRunner();
+    const prepared = prepareManagedCloneProviderTransaction({
+      handoff: handoff(profile, source, messagingPlan("destination")),
+      destination: null,
+      environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
+      runOpenshell: runner.run,
+      transactionId: "8".repeat(32),
+    });
+
+    expect(() =>
+      provisionManagedCloneProviderTransaction(prepared, {
+        ...authorityDeps(source, null, {
+          ...CONTENT_AUTHORITY,
+          contentSha256: "d".repeat(64),
+        }),
+        environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
+        runOpenshell: runner.run,
+      }),
+    ).toThrow(/snapshot content changed before mutation/u);
+    expect(
+      runner.commands.some((command) => command.startsWith("provider profile import --file ")),
+    ).toBe(false);
+    expect(runner.commands.some((command) => command.startsWith("provider create --name "))).toBe(
+      false,
+    );
+  });
+
+  it("does not create a cloned messaging provider after profile import fails (#9875)", () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const source = entry("source", profile);
+    const runner = providerRunner();
+    runner.setProfileImportResult({ status: 1, stdout: "", stderr: "gateway unavailable" });
+    const prepared = prepareManagedCloneProviderTransaction({
+      handoff: handoff(profile, source, messagingPlan("destination")),
+      destination: null,
+      environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
+      runOpenshell: runner.run,
+      transactionId: "7".repeat(32),
+    });
+
+    expect(() =>
+      provisionManagedCloneProviderTransaction(prepared, {
+        ...authorityDeps(source),
+        environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
+        runOpenshell: runner.run,
+      }),
+    ).toThrow(/Could not import the OpenShell messaging credential profile/);
+    expect(runner.commands.some((command) => command.startsWith("provider create"))).toBe(false);
   });
 
   it("reuses an exact provider only with exact destination registry ownership", () => {
@@ -295,7 +396,7 @@ describe("managed clone provider transaction", () => {
     const destination = entry("destination", profile, { messaging: { schemaVersion: 1, plan } });
     const liveBinding = {
       providerName: "destination-telegram-bridge",
-      providerType: "generic",
+      providerType: "nemoclaw-mcp-v1",
       providerEnvKey: "TELEGRAM_BOT_TOKEN",
     };
     const runner = providerRunner([liveBinding]);
@@ -321,6 +422,49 @@ describe("managed clone provider transaction", () => {
       status: "complete",
       providers: [{ outcome: "reused-preserved" }],
     });
+  });
+
+  it("rejects clone reuse backed by an incompatible global messaging profile (#9875)", () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const source = entry("source", profile);
+    const plan = messagingPlan("destination");
+    const destination = entry("destination", profile, { messaging: { schemaVersion: 1, plan } });
+    const liveBinding = {
+      providerName: "destination-telegram-bridge",
+      providerType: "nemoclaw-mcp-v1",
+      providerEnvKey: "TELEGRAM_BOT_TOKEN",
+    };
+    const runner = providerRunner([liveBinding]);
+    runner.setProfileImportResult({ status: 1, stdout: "", stderr: "profile already exists" });
+    runner.setProfileExportResult({
+      status: 0,
+      stdout: JSON.stringify({
+        id: "nemoclaw-mcp-v1",
+        credentials: [],
+        endpoints: ["https://foreign.invalid"],
+        binaries: [],
+        inference_capable: false,
+      }),
+      stderr: "",
+    });
+    const prepared = prepareManagedCloneProviderTransaction({
+      handoff: handoff(profile, source, plan),
+      destination,
+      environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
+      runOpenshell: runner.run,
+      transactionId: "4".repeat(32),
+    });
+
+    expect(() =>
+      provisionManagedCloneProviderTransaction(prepared, {
+        ...authorityDeps(source, destination),
+        environment: { TELEGRAM_BOT_TOKEN: "test-only-telegram-token" },
+        runOpenshell: runner.run,
+      }),
+    ).toThrow(/does not match NemoClaw's endpointless messaging credential contract/u);
+    expect(
+      runner.commands.some((command) => /provider (create|delete|update)/u.test(command)),
+    ).toBe(false);
   });
 
   it("rejects an exact same-name provider without destination ownership", () => {

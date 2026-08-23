@@ -405,6 +405,8 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/post-agent-install-selection.test.ts", mode: "100644" },
   { path: "src/lib/messaging/post-agent-install-selection.ts", mode: "100644" },
   { path: "src/lib/messaging/provider-placeholders.ts", mode: "100644" },
+  { path: "src/lib/messaging/provider-profile.test.ts", mode: "100644" },
+  { path: "src/lib/messaging/provider-profile.ts", mode: "100644" },
   { path: "src/lib/messaging/README.md", mode: "100644" },
   { path: "src/lib/messaging/utils.test.ts", mode: "100644" },
   { path: "src/lib/messaging/utils.ts", mode: "100644" },

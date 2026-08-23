@@ -49,10 +49,16 @@ export interface MessagingOpenShellRunOptions {
   readonly ignoreError?: boolean;
   readonly env?: Readonly<Record<string, string>>;
   readonly input?: string;
+  readonly maxBuffer?: number;
+  readonly suppressOutput?: boolean;
   readonly stdio?: readonly unknown[];
+  readonly timeout?: number;
 }
 
 export interface MessagingOpenShellRunResult {
+  readonly error?: unknown;
+  readonly output?: unknown;
+  readonly signal?: unknown;
   readonly status?: number | null;
   readonly stdout?: unknown;
   readonly stderr?: unknown;

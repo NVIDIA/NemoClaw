@@ -15,6 +15,10 @@ import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../types";
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
+import {
+  publishAttachedProvidersBeforeDockerSandboxCreation,
+  validateAttachedMessagingProvidersBeforeSandboxCreation,
+} from "./provider-publication";
 
 type SandboxRecreateReasonInput = {
   sandboxName: string;
@@ -130,51 +134,6 @@ function hasPreservedManagedMcpRebuildHandoff(
   createIntent: SandboxCreateIntent | null | undefined,
 ): boolean {
   return Boolean(preservedMcpState) && hasManagedMcpRebuildHandoff(createIntent);
-}
-
-function publishAttachedProvidersBeforeDockerSandboxCreation(
-  input: {
-    readonly openshellDriver: SandboxEntry["openshellDriver"];
-    readonly inferenceProvider: string | null;
-    readonly messagingProviders: readonly string[];
-    readonly extraProviders: readonly string[];
-    readonly gatewayName: string;
-  },
-  deps: Pick<SandboxCreateOrchestrationRuntime, "providerExistsInGateway" | "runOpenshell"> & {
-    readonly cleanupCreateSources: () => void;
-  },
-): void {
-  if (input.openshellDriver === "docker") {
-    const providersRequiringExistenceProbe = new Set(
-      [input.inferenceProvider, ...input.messagingProviders].filter(
-        (provider): provider is string => Boolean(provider),
-      ),
-    );
-    const attachedProviders = new Set([
-      ...providersRequiringExistenceProbe,
-      ...input.extraProviders,
-    ]);
-    for (const attachedProvider of attachedProviders) {
-      if (
-        providersRequiringExistenceProbe.has(attachedProvider) &&
-        !deps.providerExistsInGateway(attachedProvider)
-      )
-        continue;
-      const refreshed = deps.runOpenshell(
-        ["provider", "update", "-g", input.gatewayName, attachedProvider],
-        {
-          ignoreError: true,
-          suppressOutput: true,
-        },
-      );
-      if (refreshed.status !== 0) {
-        deps.cleanupCreateSources();
-        throw new Error(
-          `OpenShell did not publish attached provider '${attachedProvider}' before Docker sandbox creation.`,
-        );
-      }
-    }
-  }
 }
 
 type ApplyRecreatePolicyCarryForward = (
@@ -1240,6 +1199,27 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
     });
 
+    const providerPreparationInput = {
+      openshellDriver: sandboxRuntimeFields.openshellDriver,
+      inferenceProvider: resolvedCreateIntent.inferenceProvider,
+      messagingProviders,
+      messagingProviderRequests: resolvedCreateIntent.messagingProviderRequests,
+      extraProviders: resolvedCreateIntent.extraProviders,
+      gatewayName: GATEWAY_NAME,
+    };
+    const providerPreparationDeps = {
+      providerExistsInGateway,
+      runOpenshell,
+      cleanupCreateSources: () => {
+        cleanupInitialCreateSource();
+        cleanupBuildContext();
+      },
+    };
+    validateAttachedMessagingProvidersBeforeSandboxCreation(
+      providerPreparationInput,
+      providerPreparationDeps,
+    );
+
     if (hermesPortableAuthority) {
       if (!portableRuntimeContext?.environmentScope) {
         throw new Error("Hermes portable onboarding is missing runtime environment authority.");
@@ -1317,21 +1297,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       cleanupBuildContext();
     } else {
       publishAttachedProvidersBeforeDockerSandboxCreation(
-        {
-          openshellDriver: sandboxRuntimeFields.openshellDriver,
-          inferenceProvider: resolvedCreateIntent.inferenceProvider,
-          messagingProviders,
-          extraProviders: resolvedCreateIntent.extraProviders,
-          gatewayName: GATEWAY_NAME,
-        },
-        {
-          providerExistsInGateway,
-          runOpenshell,
-          cleanupCreateSources: () => {
-            cleanupInitialCreateSource();
-            cleanupBuildContext();
-          },
-        },
+        providerPreparationInput,
+        providerPreparationDeps,
       );
       const created = await runCreateFlow(createArgv);
       cleanupInitialCreateSource();
