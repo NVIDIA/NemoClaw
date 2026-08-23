@@ -18,7 +18,6 @@ import { writeDockerDriverGatewayRuntimeMarkerForStateDir } from "../src/lib/onb
 import {
   getNemoclawOpenShellGatewayUserServicePath,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
-  NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
 } from "../src/lib/onboard/docker-driver-gateway-service";
 import { deriveCheckpointFromSession } from "../src/lib/state/onboard-checkpoint-migrate";
 import { createSession } from "../src/lib/state/onboard-session";
@@ -192,6 +191,7 @@ exit 0
     fakeBin: string,
   ): {
     child: ChildProcess;
+    identityQuery: string;
     servicePath: string;
     stateDir: string;
     systemctlCalls: string;
@@ -201,7 +201,8 @@ exit 0
     const gatewayBin = path.join(gatewayBinDir, "openshell-gateway");
     const processScript = path.join(tmp, "packaged-gateway-process.mjs");
     fs.mkdirSync(gatewayBinDir, { recursive: true });
-    fs.symlinkSync(process.execPath, gatewayBin);
+    fs.copyFileSync(process.execPath, gatewayBin);
+    fs.chmodSync(gatewayBin, 0o755);
     fs.writeFileSync(processScript, "setInterval(() => {}, 1_000);\n", { mode: 0o600 });
     const child = spawn(gatewayBin, [processScript], {
       env: {
@@ -219,19 +220,37 @@ exit 0
     fs.mkdirSync(path.dirname(servicePath), { recursive: true });
     fs.writeFileSync(
       servicePath,
-      `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE}\n[Service]\nExecStart=${gatewayBin} ${processScript}\n`,
+      fs
+        .readFileSync(
+          path.join(import.meta.dirname, "..", "scripts", "lib", "openshell-gateway.service.in"),
+          "utf-8",
+        )
+        .replaceAll("@OPENSHELL_GATEWAY_BIN@", gatewayBin),
     );
+    const identityQuery = [
+      "--user",
+      "show",
+      NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
+      "--property=FragmentPath",
+      "--property=ExecStart",
+      "--property=DropInPaths",
+      "--property=ExecCondition",
+      "--property=ExecStartPre",
+      "--property=ExecStartPost",
+      "--property=ExecReload",
+      "--property=ExecStop",
+      "--property=ExecStopPost",
+      "--property=ActiveState",
+      "--property=MainPID",
+    ].join(" ");
     const systemctlCalls = path.join(tmp, "systemctl-calls");
     fs.writeFileSync(
       path.join(fakeBin, "systemctl"),
       `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> '${systemctlCalls}'
 case "$*" in
-  "--user show ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE} --property=FragmentPath --property=ExecStart")
-    printf '%s\\n' 'FragmentPath=${servicePath}' 'ExecStart={ path=${gatewayBin} ; argv[]=${gatewayBin} ${processScript} ; }'
-    ;;
-  "--user show ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE} --property=FragmentPath --property=ExecStart --property=ActiveState --property=MainPID")
-    printf '%s\\n' 'FragmentPath=${servicePath}' 'ExecStart={ path=${gatewayBin} ; argv[]=${gatewayBin} ${processScript} ; }' 'ActiveState=active' 'MainPID=${String(childPid)}'
+  "${identityQuery}")
+    printf '%s\\n' 'FragmentPath=${servicePath}' 'ExecStart={ path=${gatewayBin} ; argv[]=${gatewayBin} ; ignore_errors=no ; }' 'DropInPaths=' 'ExecCondition=' 'ExecStartPre={ path=${gatewayBin} ; argv[]=${gatewayBin} generate-certs --output-dir \${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal ; ignore_errors=no ; }' 'ExecStartPost=' 'ExecReload=' 'ExecStop=' 'ExecStopPost=' 'ActiveState=active' 'MainPID=${String(childPid)}'
     ;;
   "--user show ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE} --property=MainPID --value")
     printf '%s\\n' '${String(childPid)}'
@@ -249,7 +268,7 @@ esac
 `,
       { mode: 0o755 },
     );
-    return { child, servicePath, stateDir, systemctlCalls };
+    return { child, identityQuery, servicePath, stateDir, systemctlCalls };
   }
 
   it("exits 0 and shows usage for --help", () => {
@@ -396,10 +415,8 @@ exit 0
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-packaged-gateway-"));
       const fakeBin = path.join(tmp, "bin");
       writeFakeTools(fakeBin);
-      const { child, servicePath, stateDir, systemctlCalls } = startPackagedGatewayProcess(
-        tmp,
-        fakeBin,
-      );
+      const { child, identityQuery, servicePath, stateDir, systemctlCalls } =
+        startPackagedGatewayProcess(tmp, fakeBin);
       const openshellCalls = path.join(tmp, "openshell-calls");
       fs.writeFileSync(
         path.join(fakeBin, "openshell"),
@@ -454,12 +471,7 @@ exit 0
           name: "nemoclaw-9124",
         });
         const serviceInvocations = fs.readFileSync(systemctlCalls, "utf-8");
-        expect(serviceInvocations).toContain(
-          `--user show ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE} --property=FragmentPath --property=ExecStart`,
-        );
-        expect(serviceInvocations).toContain(
-          `--user show ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE} --property=FragmentPath --property=ExecStart --property=ActiveState --property=MainPID`,
-        );
+        expect(serviceInvocations).toContain(identityQuery);
         expect(serviceInvocations).toContain(
           `--user show ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE} --property=MainPID --value`,
         );
