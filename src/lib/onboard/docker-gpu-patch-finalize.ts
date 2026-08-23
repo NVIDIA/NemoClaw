@@ -29,8 +29,10 @@ import {
   resolveDockerGpuPatchRollbackDeps,
   rollbackToBackupContainer,
 } from "./docker-gpu-patch-rollback";
+import { fullDockerContainerId } from "./docker-gpu-patch-clone";
 import type { DockerGpuPatchDeps, DockerGpuPatchResult } from "./docker-gpu-patch-types";
 import { waitForOpenShellSandboxLifecycleRelease } from "./docker-gpu-supervisor-reconnect";
+import { queryOpenShellDockerSandboxContainers } from "./openshell-docker-sandbox-containers";
 
 export {
   restoreDockerGpuPatchBackupAfterRecreateFailure as rollbackDockerGpuPatchOnRecreateFailure,
@@ -59,6 +61,26 @@ export type DockerGpuPatchFinalizeOutcome = {
   replacementRemovalConfirmed?: boolean;
   replacementPresence?: "absent" | "present" | "unknown";
 };
+
+function isSoleLabeledReplacement(
+  sandboxName: string,
+  replacementContainerId: string,
+  dockerRun: NonNullable<DockerGpuPatchDeps["dockerRun"]>,
+  timeoutMs: number,
+): boolean {
+  const expectedContainerId = fullDockerContainerId(replacementContainerId);
+  if (!expectedContainerId || timeoutMs <= 0) return false;
+  try {
+    const containers = queryOpenShellDockerSandboxContainers(sandboxName, { dockerRun }, timeoutMs);
+    return (
+      containers.ok &&
+      containers.ids.length === 1 &&
+      fullDockerContainerId(containers.ids[0]) === expectedContainerId
+    );
+  } catch {
+    return false;
+  }
+}
 
 export function finalizeDockerGpuPatchBackup(
   options: DockerGpuPatchFinalizeOptions,
@@ -103,7 +125,17 @@ export function finalizeDockerGpuPatchBackup(
     }
     const lifecycleReleaseObserved =
       backupRemoved && hasLifecycleContext
-        ? waitForOpenShellSandboxLifecycleRelease(sandboxName, lifecycleReleaseTimeoutSecs, deps)
+        ? waitForOpenShellSandboxLifecycleRelease(sandboxName, lifecycleReleaseTimeoutSecs, {
+            runOpenshell: deps.runOpenshell,
+            sleep: deps.sleep,
+            soleLabeledReplacementCorroboratesError: (remainingMs) =>
+              isSoleLabeledReplacement(
+                sandboxName,
+                options.result.newContainerId,
+                resolved.dockerRun,
+                remainingMs,
+              ),
+          })
         : false;
     if (!lifecycleReleaseObserved) {
       return {

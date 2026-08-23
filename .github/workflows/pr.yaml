@@ -255,7 +255,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # Coverage startup plus the stable, duration-weighted roster can exceed
+    # the former 15-minute cap before Vitest writes its shard artifacts.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

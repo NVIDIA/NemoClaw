@@ -14,7 +14,7 @@ import type { PreservedEnvFile } from "../../src/lib/state/preserved-env";
 import type { SandboxRemovalReceipt } from "../../src/lib/state/registry";
 
 export type RebuildSandbox =
-  typeof import("../../src/lib/actions/sandbox/rebuild")["rebuildSandbox"];
+  (typeof import("../../src/lib/actions/sandbox/rebuild"))["rebuildSandbox"];
 export type RebuildFlowStep = {
   status: string;
   startedAt: string | null;
@@ -43,6 +43,7 @@ export type RebuildFlowOverrides = {
     disposeImageRef?: () => boolean;
   };
   executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
+  executeSandboxExecCommand?: () => { status: number; stdout: string; stderr: string } | null;
   checkAndRecoverSandboxProcesses?: () => {
     checked: boolean;
     wasRunning: boolean | null;
@@ -137,6 +138,7 @@ export type RebuildFlowHarness = {
   restartSandboxGatewaySpy: MockInstance;
   errorSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
+  executeSandboxExecCommandSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   ensureRebuildAgentBaseImageSpy: MockInstance;
   ensureTargetGatewaySpy: MockInstance;
