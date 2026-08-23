@@ -96,6 +96,19 @@ export interface PersonalStockToolEvidenceArtifact {
   qualifyingWebFetchResults: number;
   webFetchCalls: number;
   webFetchExecutions: number;
+  webFetchResultCounts: {
+    asOfMatches: number;
+    directFetch: number;
+    httpSuccess: number;
+    maxCharsWithinLimit: number;
+    paired: number;
+    priceMatches: number;
+    publicHttpsTarget: number;
+    resultSuccess: number;
+    sourceUrlMatches: number;
+    symbolMatches: number;
+    total: number;
+  };
   webFetchResultsWithinMaxChars: number;
 }
 
@@ -845,6 +858,23 @@ export function projectPersonalStockToolEvidenceArtifact(
   evidence: OpenClawToolEvidence,
 ): PersonalStockToolEvidenceArtifact {
   const assessment = assessPersonalStockToolEvidence(evidence);
+  const webFetchResultCounts = {
+    asOfMatches: evidence.webFetchResults.filter(({ asOfMatches }) => asOfMatches).length,
+    directFetch: evidence.webFetchResults.filter(({ directFetch }) => directFetch).length,
+    httpSuccess: evidence.webFetchResults.filter(({ httpSuccess }) => httpSuccess).length,
+    maxCharsWithinLimit: evidence.webFetchResults.filter(
+      ({ maxCharsWithinLimit }) => maxCharsWithinLimit,
+    ).length,
+    paired: evidence.webFetchResults.filter(({ paired }) => paired).length,
+    priceMatches: evidence.webFetchResults.filter(({ priceMatches }) => priceMatches).length,
+    publicHttpsTarget: evidence.webFetchResults.filter(({ target }) => isPublicHttpsTarget(target))
+      .length,
+    resultSuccess: evidence.webFetchResults.filter(({ resultSuccess }) => resultSuccess).length,
+    sourceUrlMatches: evidence.webFetchResults.filter(({ sourceUrlMatches }) => sourceUrlMatches)
+      .length,
+    symbolMatches: evidence.webFetchResults.filter(({ symbolMatches }) => symbolMatches).length,
+    total: evidence.webFetchResults.length,
+  };
   return {
     schemaVersion: 1,
     controlTargetViolations: evidence.controlTargetViolations,
@@ -859,9 +889,8 @@ export function projectPersonalStockToolEvidenceArtifact(
     qualifyingWebFetchResults: assessment.qualifyingWebFetchResults,
     webFetchCalls: assessment.webFetchCalls,
     webFetchExecutions: assessment.webFetchExecutions,
-    webFetchResultsWithinMaxChars: evidence.webFetchResults.filter(
-      ({ maxCharsWithinLimit }) => maxCharsWithinLimit,
-    ).length,
+    webFetchResultCounts,
+    webFetchResultsWithinMaxChars: webFetchResultCounts.maxCharsWithinLimit,
   };
 }
 
@@ -994,7 +1023,8 @@ export async function validateOpenClawAgentAttemptEvidence(
     }
     await options.recordToolEvidence(toolEvidence);
     if (!options.toolEvidenceValidator(toolEvidence)) {
-      const assessment = assessPersonalStockToolEvidence(toolEvidence);
+      const assessment = projectPersonalStockToolEvidenceArtifact(toolEvidence);
+      const counts = assessment.webFetchResultCounts;
       const diagnostic = [
         `errors=${toolEvidence.errors.length}`,
         `finalStatuses=${toolEvidence.finalStatuses.length}`,
@@ -1004,8 +1034,19 @@ export async function validateOpenClawAgentAttemptEvidence(
         `webFetchCalls=${assessment.webFetchCalls}`,
         `webFetchExecutions=${assessment.webFetchExecutions}`,
         `qualifying=${assessment.qualifyingWebFetchResults}`,
-        `forbiddenTools=${assessment.forbiddenToolNames.length}`,
-        `forbiddenProviders=${assessment.forbiddenProviderMentions.length}`,
+        `webFetchResults=${counts.total}`,
+        `asOfMatches=${counts.asOfMatches}`,
+        `directFetch=${counts.directFetch}`,
+        `httpSuccess=${counts.httpSuccess}`,
+        `maxCharsWithinLimit=${counts.maxCharsWithinLimit}`,
+        `paired=${counts.paired}`,
+        `priceMatches=${counts.priceMatches}`,
+        `publicHttpsTarget=${counts.publicHttpsTarget}`,
+        `resultSuccess=${counts.resultSuccess}`,
+        `sourceUrlMatches=${counts.sourceUrlMatches}`,
+        `symbolMatches=${counts.symbolMatches}`,
+        `forbiddenTools=${assessment.forbiddenToolCount}`,
+        `forbiddenProviders=${assessment.forbiddenProviderMentionCount}`,
       ].join("; ");
       return {
         attempt: { passed: false, failureClass: "deterministic" },

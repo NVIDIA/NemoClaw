@@ -9,6 +9,7 @@ import type {
   SandboxCreateMessagingProviderRequest,
 } from "./sandbox-create-intent-types";
 import { containerPathsOverlap } from "./host-mount/path-overlap";
+import { normalizeSandboxGpuDeviceForCdi } from "./sandbox-gpu-create";
 import { prepareSandboxGpuRoutePolicies } from "./sandbox-gpu-route-policy";
 
 type PrepareInitialSandboxCreatePolicy =
@@ -29,6 +30,10 @@ function buildSandboxDriverConfig(
   managedStateMount: MaterializeSandboxCreatePlanInput["managedStateMount"],
   managedStateMountDriverId: MaterializeSandboxCreatePlanInput["managedStateMountDriverId"],
 ): string | null {
+  const cdiDevice = normalizeSandboxGpuDeviceForCdi(intent.sandboxGpuDevice);
+  if (cdiDevice && (!intent.policy.options.directGpu || !intent.gpuCreateArgs.includes("--gpu"))) {
+    throw new Error("Sandbox GPU device selection requires the OpenShell GPU request.");
+  }
   const dockerMounts: Array<Record<string, unknown>> = (intent.hostMounts ?? []).map(
     ({ source, target }) => ({ type: "bind", source, target, read_only: true }),
   );
@@ -59,7 +64,17 @@ function buildSandboxDriverConfig(
   }
   const driverConfig = Object.fromEntries(
     [...mountsByDriver].flatMap(([driverId, mounts]) =>
-      mounts.length > 0 ? [[driverId, { mounts }]] : [],
+      mounts.length > 0 || cdiDevice
+        ? [
+            [
+              driverId,
+              {
+                ...(cdiDevice ? { cdi_devices: [cdiDevice] } : {}),
+                ...(mounts.length > 0 ? { mounts } : {}),
+              },
+            ],
+          ]
+        : [],
     ),
   );
   return Object.keys(driverConfig).length > 0 ? JSON.stringify(driverConfig) : null;
@@ -238,6 +253,7 @@ export function materializeSandboxCreatePlan({
         ? intent.policy.options.additionalPresets.filter((name) => name !== "local-inference")
         : [...intent.policy.options.additionalPresets],
       agentName: intent.policy.options.agentName,
+      sandboxName: intent.sandboxName,
       policyTier: intent.policy.options.policyTier,
       baselineExclusions: intent.policy.options.baselineExclusions.map((exclusion) => ({
         ...exclusion,
@@ -269,7 +285,10 @@ export function materializeSandboxCreatePlan({
   const messagingProviders = filterDisabledMessagingProviders(
     [
       ...new Set([
-        ...upsertMessagingProviders(enabledMessagingTokenDefs, { replaceExisting: true }),
+        ...upsertMessagingProviders(enabledMessagingTokenDefs, {
+          replaceExisting: true,
+          allowedSandboxes: [intent.sandboxName],
+        }),
         ...intent.reusableMessagingProviders,
       ]),
     ],
@@ -334,6 +353,7 @@ export function materializeHermesPortableCreatePlan(input: {
       baselineExclusions: intent.policy.options.baselineExclusions.map((entry) => ({ ...entry })),
     },
   );
+  const driverConfig = buildSandboxDriverConfig(intent, null, null);
   const createArgs = [
     "--from",
     fromRef,
@@ -341,6 +361,7 @@ export function materializeHermesPortableCreatePlan(input: {
     intent.sandboxName,
     "--policy",
     initialSandboxPolicy.policyPath,
+    ...(driverConfig ? ["--driver-config-json", driverConfig] : []),
     ...intent.gpuCreateArgs,
     ...intent.resourceCreateArgs,
   ];

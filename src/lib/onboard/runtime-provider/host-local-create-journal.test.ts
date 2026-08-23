@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createHostLocalCreateJournalStore,
   HOST_LOCAL_CREATE_JOURNAL_DIRECTORY,
+  reconcileAndReadHostLocalCreateJournalRecords,
   type HostLocalCreateJournalRecord,
   serializeHostLocalCreateJournalRecord,
 } from "./host-local-create-journal";
@@ -97,6 +98,26 @@ function journalPath(): string {
 function executionPath(name: ".execution-lease.json" | ".execution-recovery.json"): string {
   return path.join(stateDirectory, HOST_LOCAL_CREATE_JOURNAL_DIRECTORY, name);
 }
+
+describe("existing journal reads", () => {
+  it("does not create an absent journal directory", () => {
+    expect(reconcileAndReadHostLocalCreateJournalRecords(stateDirectory)).toEqual([]);
+    expect(fs.existsSync(path.dirname(journalPath()))).toBe(false);
+  });
+
+  it("repairs a recoverable exclusive-publish orphan", () => {
+    const store = createHostLocalCreateJournalStore(stateDirectory);
+    store.create(prepared());
+    const orphan = path.join(
+      path.dirname(journalPath()),
+      `.${path.basename(journalPath())}.${OWNER_ONE}.tmp`,
+    );
+    fs.linkSync(journalPath(), orphan);
+
+    expect(reconcileAndReadHostLocalCreateJournalRecords(stateDirectory)).toEqual([prepared()]);
+    expect(fs.existsSync(orphan)).toBe(false);
+  });
+});
 
 function executionSource(transactionId: string, ownerId: string, ownerPid: number): string {
   return `${JSON.stringify({ schemaVersion: 1, transactionId, ownerId, ownerPid })}\n`;

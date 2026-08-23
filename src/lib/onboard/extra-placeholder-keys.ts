@@ -3,6 +3,7 @@
 
 import { getCredential, normalizeCredentialValue } from "../credentials/store";
 import * as webSearch from "../inference/web-search";
+import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { getChannelTokenKeys, listChannels } from "../sandbox/channels";
 
 interface MessagingTokenDefShape {
@@ -112,7 +113,7 @@ export function registerExtraPlaceholderProviders(
       name: `${sandboxName}-extra-${extraPlaceholderProviderSlug(envKey)}`,
       envKey,
       token,
-      providerType: "generic",
+      providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
     });
   }
   return [...parsed.keys];

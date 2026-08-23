@@ -55,6 +55,7 @@ export type SandboxCreateIntent = {
   readonly staleExtraProviders: readonly string[];
   readonly hermesToolGateways: readonly string[];
   readonly policy: SandboxCreatePolicyRequest;
+  readonly sandboxGpuDevice?: string | null;
   readonly gpuCreateArgs: readonly string[];
   readonly resourceCreateArgs: readonly string[];
   readonly hostMounts?: readonly SandboxHostMount[];
@@ -101,7 +102,7 @@ export type MaterializeSandboxCreatePlanInput = {
   runProviderPreDeleteCleanup(): void;
   upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],
-    options: { replaceExisting: true },
+    options: { replaceExisting: true; allowedSandboxes: readonly [string] },
   ): string[];
   getHermesToolGatewayProviderName(sandboxName: string): string;
   discloseInitialSandboxPolicy?(policy: InitialSandboxPolicy): void;

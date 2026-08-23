@@ -24,6 +24,7 @@ import {
 } from "../../adapters/podman";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import type { SandboxEntry } from "../../state/registry/types";
+import { assertHermesPortableUninstallCompleteForOnboarding } from "../../state/hermes-portable-uninstall/journal";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 import {
   classifySandboxInferenceRouteReservation,
@@ -268,6 +269,7 @@ const CREATE_INTENT_VALUE_OPTIONS = new Set([
   "--provider",
 ]);
 const CREATE_INTENT_DRIVER_KEYS = new Set([
+  "cdi_devices",
   "docker",
   "mode",
   "mounts",
@@ -811,6 +813,7 @@ export async function runHermesPortableOnboardingTransaction<T>(
   deps: HermesPortableOnboardingDeps<T>,
 ): Promise<HermesPortableOnboardingResult<T>> {
   return await deps.withLifecycleLock(input.sandboxName, async () => {
+    assertHermesPortableUninstallCompleteForOnboarding(input.stateDir);
     const assertOpenShellExecutableAuthority = (): void =>
       deps.assertOpenShellExecutableAuthority(input.openshellExecutableAuthority);
     const observeSandbox = (): HermesPortableSandboxObservation => {

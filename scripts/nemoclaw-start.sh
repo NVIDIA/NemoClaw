@@ -2619,9 +2619,17 @@ import os
 import re
 import stat
 import subprocess
+import sys
 import time
 
 print('[auto-pair] watcher started', flush=True)
+
+
+def report_unhandled_watcher_exception(exc_type, _exc_value, _traceback):
+    print(f'[auto-pair] stage=watcher-execution failed error={exc_type.__name__}', flush=True)
+
+
+sys.excepthook = report_unhandled_watcher_exception
 
 APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'
 
@@ -2722,7 +2730,12 @@ QUIET_POLLS = 0
 APPROVED = 0
 SLOW_MODE = False
 HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
+OBSERVED_REQUEST_IDS = set()
+VALIDATED_REQUEST_IDS = set()
+LAST_LIST_FAILURE_REASON = None
+REQUEST_CREATION_WAITING_REPORTED = False
 PAIRING_BOOTSTRAPPED = False
+MALFORMED_REQUEST_ID_REPORTED = False
 # SECURITY NOTE: clientId/clientMode are client-supplied and spoofable
 # (the gateway stores connectParams.client.id verbatim). The policy requires
 # an explicit known clientId and never trusts an allowlisted mode by itself.
@@ -2856,7 +2869,7 @@ def is_pairing_required_list_failure(out, err):
     return 'pairing required' in message and 'device is not approved yet' in message
 
 
-REQUEST_ID_RE = re.compile(r'^[A-Za-z0-9._:-]{1,128}$')
+REQUEST_ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$')
 
 
 def _structured_request_ids(text):
@@ -2934,15 +2947,41 @@ def brief_child_error(out, err):
     lines = [line.strip() for line in f'{err}\n{out}'.splitlines() if line.strip()]
     return (lines[-1] if lines else '')[:400]
 
+
+def report_request_observed(request_id):
+    if request_id in OBSERVED_REQUEST_IDS:
+        return
+    OBSERVED_REQUEST_IDS.add(request_id)
+    print(f'[auto-pair] stage=request-creation observed request={request_id}')
+
+
+def report_request_validation(request_id, accepted, reason):
+    if request_id in VALIDATED_REQUEST_IDS:
+        return
+    VALIDATED_REQUEST_IDS.add(request_id)
+    outcome = 'accepted' if accepted else 'rejected'
+    print(f'[auto-pair] stage=validation {outcome} request={request_id} reason={reason}')
+
+
+def list_failure_reason(rc, out, err):
+    if rc == 124:
+        return 'timeout'
+    if is_pairing_required_list_failure(out, err):
+        return 'pairing-required'
+    if rc != 0:
+        return 'command-failed'
+    return 'empty-output'
+
 # Workaround boundary (NemoClaw#4462): the watcher child sources the trusted
 # runtime environment, so its first list call resolves the live gateway through
 # local loopback and retains the shared token plus a private child marker. The
 # reviewed 2026.7.1 dist patch uses that marker to retain CLI identity before a
-# stored device credential exists. Once OpenClaw issues that credential, the
-# patch retains identity for ordinary loopback CLI calls automatically. Later
-# list and approval calls drop the gateway env triplet and use the stored device
-# credential. Remove both pieces when upstream supports that flow.
-def run(*args, strip_gateway_env=False, force_device_pairing=False):
+# stored device credential exists. Once OpenClaw issues that credential, later
+# list calls drop the gateway env triplet and use the reviewed settlement marker
+# to select pairing-only stored-device auth. Approval calls keep their separate
+# bounded credential selection. Remove these pieces when upstream supports that
+# flow.
+def run(*args, strip_gateway_env=False, force_device_pairing=False, pairing_settlement=False):
     # Bound every openclaw CLI invocation so a wedged child cannot pin
     # the watcher beyond DEADLINE (CodeRabbit #4292): subprocess.run with
     # no timeout would hold a hung `openclaw devices list/approve` past
@@ -2950,8 +2989,12 @@ def run(*args, strip_gateway_env=False, force_device_pairing=False):
     env = None
     if strip_gateway_env:
         env = gateway_approval_env(os.environ)
+        env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)
+        if pairing_settlement:
+            env['NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT'] = '1'
     elif force_device_pairing:
         env = dict(os.environ)
+        env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)
         env['NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING'] = '1'
     try:
         proc = subprocess.run(
@@ -3007,14 +3050,31 @@ while time.time() < DEADLINE:
         '--json',
         strip_gateway_env=PAIRING_BOOTSTRAPPED,
         force_device_pairing=not PAIRING_BOOTSTRAPPED,
+        pairing_settlement=PAIRING_BOOTSTRAPPED,
     )
     if rc != 0 or not out:
+        failure_reason = list_failure_reason(rc, out, err)
+        if failure_reason != LAST_LIST_FAILURE_REASON:
+            print(f'[auto-pair] stage=listing failed reason={failure_reason}')
+            LAST_LIST_FAILURE_REASON = failure_reason
         initial_request_id = pairing_required_request_id(out, err)
-        if (
-            initial_request_id
-            and initial_request_id not in HANDLED
-            and initial_cli_request_is_allowlisted(initial_request_id)
-        ):
+        if initial_request_id and initial_request_id not in HANDLED:
+            live_request_ids = {initial_request_id}
+            HANDLED.intersection_update(live_request_ids)
+            OBSERVED_REQUEST_IDS.intersection_update(live_request_ids)
+            VALIDATED_REQUEST_IDS.intersection_update(live_request_ids)
+            FAST_REENTRY_BUMPED_REQUEST_IDS.intersection_update(live_request_ids)
+            report_request_observed(initial_request_id)
+            initial_request_allowed = initial_cli_request_is_allowlisted(initial_request_id)
+            report_request_validation(
+                initial_request_id,
+                initial_request_allowed,
+                'allowlisted-initial-cli' if initial_request_allowed else 'not-allowlisted',
+            )
+        else:
+            initial_request_allowed = False
+        if initial_request_id and initial_request_id not in HANDLED and initial_request_allowed:
+            print(f'[auto-pair] stage=approval attempting request={initial_request_id}')
             arc, aout, aerr = run(
                 OPENCLAW, 'devices', 'approve', initial_request_id, '--json', strip_gateway_env=True,
             )
@@ -3025,54 +3085,98 @@ while time.time() < DEADLINE:
                 FAST_REENTRY_REMAINING = max(FAST_REENTRY_REMAINING, FAST_REENTRY_POLLS)
                 sleep_for_next_poll(FAST_REENTRY_INTERVAL)
                 continue
+            approval_failure_reason = 'timeout' if arc == 124 else 'command-failed'
+            print(f'[auto-pair] stage=approval failed reason={approval_failure_reason}')
             failure = brief_child_error(aout, aerr)
             if arc != 124 and failure:
                 print(f'[auto-pair] initial CLI approve failed request={initial_request_id}: {failure}')
         sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
-    if not PAIRING_BOOTSTRAPPED:
-        PAIRING_BOOTSTRAPPED = True
-        print('[auto-pair] loopback CLI pairing bootstrap completed')
     try:
         data = json.loads(out)
     except Exception:
+        if LAST_LIST_FAILURE_REASON != 'invalid-json':
+            print('[auto-pair] stage=listing failed reason=invalid-json')
+            LAST_LIST_FAILURE_REASON = 'invalid-json'
         sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
-
-    pending = data.get('pending') or []
-    paired = data.get('paired') or []
+    if not isinstance(data, dict):
+        if LAST_LIST_FAILURE_REASON != 'invalid-response':
+            print('[auto-pair] stage=listing failed reason=invalid-response')
+            LAST_LIST_FAILURE_REASON = 'invalid-response'
+        sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
+        continue
+    pending = data.get('pending')
+    paired = data.get('paired')
+    if not isinstance(pending, list) or not isinstance(paired, list):
+        if LAST_LIST_FAILURE_REASON != 'invalid-response':
+            print('[auto-pair] stage=listing failed reason=invalid-response')
+            LAST_LIST_FAILURE_REASON = 'invalid-response'
+        sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
+        continue
+    LAST_LIST_FAILURE_REASON = None
+    has_cli_pairing = any(
+        d.get('clientId') == 'cli' and d.get('clientMode') == 'cli'
+        for d in paired
+        if isinstance(d, dict)
+    )
+    if not PAIRING_BOOTSTRAPPED and has_cli_pairing:
+        PAIRING_BOOTSTRAPPED = True
+        print('[auto-pair] loopback CLI pairing bootstrap completed')
     has_browser = any((d.get('clientId') == 'openclaw-control-ui') or (d.get('clientMode') == 'webchat') for d in paired if isinstance(d, dict))
 
-    if pending:
+    normalized_pending = []
+    saw_malformed_request_id = False
+    for device in pending:
+        request_id = device.get('requestId') if isinstance(device, dict) else None
+        if not isinstance(request_id, str) or REQUEST_ID_RE.fullmatch(request_id) is None:
+            saw_malformed_request_id = True
+            if not MALFORMED_REQUEST_ID_REPORTED:
+                print('[auto-pair] stage=validation rejected reason=malformed-request-id')
+                MALFORMED_REQUEST_ID_REPORTED = True
+            continue
+        normalized_pending.append((request_id, device))
+    if not saw_malformed_request_id:
+        MALFORMED_REQUEST_ID_REPORTED = False
+    pending_request_ids = {request_id for request_id, _device in normalized_pending}
+    HANDLED.intersection_update(pending_request_ids)
+    OBSERVED_REQUEST_IDS.intersection_update(pending_request_ids)
+    VALIDATED_REQUEST_IDS.intersection_update(pending_request_ids)
+    FAST_REENTRY_BUMPED_REQUEST_IDS.intersection_update(pending_request_ids)
+
+    if not normalized_pending and not paired and APPROVED == 0 and not REQUEST_CREATION_WAITING_REPORTED:
+        print('[auto-pair] stage=request-creation waiting reason=no-request')
+        REQUEST_CREATION_WAITING_REPORTED = True
+
+    if normalized_pending:
         QUIET_POLLS = 0
         attempted_request_ids = set()
-        pending_request_ids = set()
-        for device in pending:
-            if not isinstance(device, dict):
-                continue
-            request_id = device.get('requestId')
-            if not request_id:
-                continue
-            pending_request_ids.add(request_id)
+        for request_id, device in normalized_pending:
             if request_id in HANDLED:
                 continue
+            report_request_observed(request_id)
             decision = approval_request_decision(device)
             client_id = decision['client_id']
             client_mode = decision['client_mode']
             if decision['reason'] == 'unknown-client':
                 HANDLED.add(request_id)
+                report_request_validation(request_id, False, 'unknown-client')
                 print(f'[auto-pair] rejected unknown client={client_id} mode={client_mode}')
                 continue
             if decision['reason'] == 'malformed-scopes':
                 HANDLED.add(request_id)
+                report_request_validation(request_id, False, 'malformed-scopes')
                 print(f'[auto-pair] rejected malformed scopes client={client_id} mode={client_mode}')
                 continue
             if decision['reason'] == 'disallowed-scopes':
                 HANDLED.add(request_id)
                 scopes = decision['scopes']
+                report_request_validation(request_id, False, 'disallowed-scopes')
                 print(f'[auto-pair] rejected disallowed scopes={sorted(scopes)} client={client_id} mode={client_mode}')
                 continue
+            report_request_validation(request_id, True, 'allowlisted-request')
             attempted_request_ids.add(request_id)
+            print(f'[auto-pair] stage=approval attempting request={request_id}')
             arc, aout, aerr = run(
                 OPENCLAW, 'devices', 'approve', request_id, '--json', strip_gateway_env=True,
             )
@@ -3082,20 +3186,17 @@ while time.time() < DEADLINE:
             # retryable too; only intentionally rejected unknown clients
             # and confirmed successful approvals are marked handled.
             if arc == 124:
+                print('[auto-pair] stage=approval failed reason=timeout')
                 continue
             if arc == 0:
                 HANDLED.add(request_id)
                 APPROVED += 1
                 print(f'[auto-pair] approved request={request_id} client={client_id} mode={client_mode}')
             else:
+                print('[auto-pair] stage=approval failed reason=command-failed')
                 failure = brief_child_error(aout, aerr)
                 if failure:
                     print(f'[auto-pair] approve failed request={request_id}: {failure}')
-        # Drop previously-bumped requestIds that the gateway no longer reports
-        # as pending so a future re-appearance of the same id (very unlikely,
-        # but kept robust) can bump again. The set is otherwise small and
-        # never crosses out of the watcher process.
-        FAST_REENTRY_BUMPED_REQUEST_IDS.intersection_update(pending_request_ids)
         # Fast-reentry is armed on the rising edge per requestId — once for
         # each freshly-observed allowlisted attempt. A sticky pending request
         # that fails approval repeatedly therefore stops bumping the counter

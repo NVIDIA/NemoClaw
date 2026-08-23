@@ -33,11 +33,14 @@ It then creates the runner, sends one validation request for the selected model,
 This path does not inspect, start, or use a host Ollama process, and it does not use the default Docker runtime.
 
 <Warning title="Portable Cleanup Boundary">
-This path covers fresh onboarding and provider selection.
-It does not establish complete `destroy` or `uninstall` cleanup for the Portable Ollama runner.
-Portable uninstall stops when it cannot prove exact cleanup authority for a Portable lifecycle receipt with schema `5`.
-It exits nonzero before deleting the runner or its receipt.
-Preserve the Portable Ollama runner and its lifecycle receipt.
+Run `$$nemoclaw uninstall` for full cleanup of a receipt-owned Portable Ollama runner.
+Before its first mutation, NemoClaw records the exact schema `5` lifecycle receipt, sandbox registry revision and lifecycle generation, sandbox and Podman container identities, committed gateway provider revision and profile, inference runtime, socket, and Portable network.
+It revalidates that authority before each cleanup phase and preserves a provider or inference runtime that another recorded sandbox shares.
+An interrupted run keeps owner-private, credential-free recovery state.
+Preserve the reported state and rerun the same command to resume the recorded phase.
+An identity change, same-name replacement, stale sandbox readiness result, changed provider profile, or other authority drift makes uninstall exit nonzero before an unproven mutation.
+The command preserves every Podman image.
+Per-sandbox `destroy` remains outside this full-uninstall cleanup contract.
 </Warning>
 
 </AgentOnly>

@@ -10,12 +10,28 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const sdk = vi.hoisted(() => {
   type Listener = (event: unknown) => void;
-  type TerminalResponse = "omit" | "fail-once" | "fail-twice" | "fail-then-success" | "success";
-  type AnalysisResponse = "empty" | "length" | "success";
+  type TerminalResponse =
+    | "omit"
+    | "fail-once"
+    | "fail-twice"
+    | "fail-thrice"
+    | "fail-four-times"
+    | "fail-four-times-then-success"
+    | "fail-five-times"
+    | "fail-five-times-then-success"
+    | "fail-twice-then-success"
+    | "fail-then-success"
+    | "success";
   const terminalPlans: Record<TerminalResponse, { failureCount: number; succeeds: boolean }> = {
     omit: { failureCount: 0, succeeds: false },
     "fail-once": { failureCount: 1, succeeds: false },
     "fail-twice": { failureCount: 2, succeeds: false },
+    "fail-thrice": { failureCount: 3, succeeds: false },
+    "fail-four-times": { failureCount: 4, succeeds: false },
+    "fail-four-times-then-success": { failureCount: 4, succeeds: true },
+    "fail-five-times": { failureCount: 5, succeeds: false },
+    "fail-five-times-then-success": { failureCount: 5, succeeds: true },
+    "fail-twice-then-success": { failureCount: 2, succeeds: true },
     "fail-then-success": { failureCount: 1, succeeds: true },
     success: { failureCount: 0, succeeds: true },
   };
@@ -33,13 +49,13 @@ const sdk = vi.hoisted(() => {
   const state = {
     omitContextTool: false,
     activeToolCalls: [] as string[][],
-    analysisResponses: [] as AnalysisResponse[],
     contextContents: [] as string[],
     customTools: [] as MockTool[],
     emitAnalysisError: false,
     emitCommitProse: false,
     emitRepairProse: false,
     omitAnalysis: false,
+    omitAnalysisPrompts: 0,
     prompts: [] as string[],
     retryResponses: [] as Array<"exhausted" | "success">,
     terminalResponses: [] as TerminalResponse[],
@@ -48,13 +64,13 @@ const sdk = vi.hoisted(() => {
   const reset = (): void => {
     state.omitContextTool = false;
     state.activeToolCalls = [];
-    state.analysisResponses = [];
     state.contextContents = [];
     state.customTools = [];
     state.emitAnalysisError = false;
     state.emitCommitProse = false;
     state.emitRepairProse = false;
     state.omitAnalysis = false;
+    state.omitAnalysisPrompts = 0;
     state.prompts = [];
     state.retryResponses = [];
     state.terminalResponses = [];
@@ -73,6 +89,22 @@ const sdk = vi.hoisted(() => {
   const failTerminalTool = (tool: MockTool, emit: Listener): void => {
     emit({ type: "tool_execution_start", toolName: tool.name });
     emit({ type: "tool_execution_end", toolName: tool.name, isError: true });
+  };
+
+  const executeReadTool = async (tool: MockTool, target: string, emit: Listener): Promise<void> => {
+    emit({ type: "tool_execution_start", toolName: tool.name });
+    try {
+      await tool.execute(
+        `${tool.name}-call`,
+        { path: target } as never,
+        undefined,
+        undefined,
+        undefined as never,
+      );
+      emit({ type: "tool_execution_end", toolName: tool.name, isError: false });
+    } catch {
+      emit({ type: "tool_execution_end", toolName: tool.name, isError: true });
+    }
   };
 
   const executeContextTool = async (contextTool: MockTool, emit: Listener): Promise<void> => {
@@ -100,6 +132,7 @@ const sdk = vi.hoisted(() => {
       for (const listener of listeners) listener(event);
     };
     const session = {
+      sessionFile: "/tmp/pi-session.jsonl",
       subscribe(listener: Listener) {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -121,17 +154,25 @@ const sdk = vi.hoisted(() => {
           : "omit";
         const terminalPlan = terminalPlans[terminalResponse];
         const retryResponse = terminalTool ? undefined : state.retryResponses.shift();
-        const analysisResponse = terminalTool
-          ? "success"
-          : (state.analysisResponses.shift() ?? (state.omitAnalysis ? "empty" : "success"));
+        const isRepairPrompt =
+          prompt.includes("Call `turn_action` now") || prompt.includes("Complete the repair");
         await (contextTool && !state.omitContextTool
           ? executeContextTool(contextTool, emit)
           : Promise.resolve());
+        const requiredReadPath = /^- (.+)$/mu.exec(prompt.split("Required files:\n")[1] ?? "")?.[1];
+        const readTool = state.customTools.find(
+          (tool) => requiredReadPath && activeToolNames.includes(tool.name) && tool.name === "read",
+        );
+        await (readTool && requiredReadPath
+          ? executeReadTool(readTool, requiredReadPath, emit)
+          : Promise.resolve());
+        const repairTools = state.customTools.filter(
+          (tool) => isRepairPrompt && activeToolNames.includes(tool.name) && tool !== terminalTool,
+        );
+        for (const repairTool of repairTools) await executeTerminalTool(repairTool, emit);
         Array.from({ length: terminalTool ? terminalPlan.failureCount : 0 }).forEach(() =>
           failTerminalTool(terminalTool as MockTool, emit),
         );
-        const isRepairPrompt =
-          prompt.includes("Call `turn_action` now") || prompt.includes("Complete the repair");
         const retryError = "429 status code (no body)";
         const retryAttemptEvents = [
           {
@@ -163,9 +204,12 @@ const sdk = vi.hoisted(() => {
           ],
         };
         retryPlans[retryResponse ?? "none"].forEach(emit);
+        const omitThisAnalysis = state.omitAnalysis || state.omitAnalysisPrompts > 0;
+        state.omitAnalysisPrompts = Math.max(0, state.omitAnalysisPrompts - 1);
         const shouldEmitText =
-          analysisResponse === "success" &&
+          !omitThisAnalysis &&
           retryResponse !== "exhausted" &&
+          !prompt.startsWith("Prepare ") &&
           (!prompt.includes("Emit no prose before or after") ||
             (state.emitCommitProse && !isRepairPrompt) ||
             (state.emitRepairProse && isRepairPrompt));
@@ -186,11 +230,6 @@ const sdk = vi.hoisted(() => {
               error: { errorMessage: "analysis stream failed" },
               reason: "error",
             },
-          });
-        analysisResponse === "length" &&
-          emit({
-            type: "message_end",
-            message: { role: "assistant", stopReason: "length" },
           });
         emit({ type: "agent_end" });
       },
@@ -261,7 +300,7 @@ function analysisTurn(name: string): AdvisorPromptTurn {
   return {
     ...turn(name, '{"repair":true}'),
     requireAssistantText: true,
-    assistantTextRepairPrompt: "Continue with concise required analysis.",
+    assistantTextRepairPrompt: "Return the required analysis.",
   };
 }
 
@@ -287,9 +326,10 @@ function commitTurn(name: string): AdvisorPromptTurn {
   };
 }
 
-async function run(promptTurns: AdvisorPromptTurn[]) {
+async function run(promptTurns: AdvisorPromptTurn[], prepare?: (directory: string) => void) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-session-runner-"));
   tempDirs.push(dir);
+  prepare?.(dir);
   process.env.TEST_ADVISOR_KEY = "test-key";
   return runReadOnlyAdvisor({
     cwd: dir,
@@ -339,6 +379,7 @@ describe("advisor session runner", () => {
     const result = await run([analysisTurn("only-analysis")]);
 
     expect(result.fatalError).toBeUndefined();
+    expect(result.sessionFile).toBe("/tmp/pi-session.jsonl");
     expect(transport.configure).toHaveBeenCalledOnce();
     expect(transport.configure.mock.invocationCallOrder[0]).toBeLessThan(
       sdk.createAgentSession.mock.invocationCallOrder[0] as number,
@@ -407,14 +448,41 @@ describe("advisor session runner", () => {
     expect(sdk.state.prompts).toHaveLength(2);
   });
 
-  it("rejects two failed initial attempts without terminal-submit repair", async () => {
+  it("repairs two failed initial submit attempts (#9963)", async () => {
     const responses = ["fail-twice", "success"] as const;
     sdk.state.terminalResponses = [...responses];
     const result = await run([submitTurn("prepare-and-submit")]);
 
-    expect(result.fatalError).toContain("exactly 1 turn_action submit attempt");
-    expect(result.raw).not.toContain("terminal_submit_repair_start");
-    expect(sdk.state.prompts).toHaveLength(1);
+    expect(result.fatalError).toBeUndefined();
+    expect(result.raw).toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("repairs three failed initial submit attempts (#9963)", async () => {
+    sdk.state.terminalResponses = ["fail-thrice", "success"];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.raw).toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("repairs four failed initial submit attempts (#9963)", async () => {
+    sdk.state.terminalResponses = ["fail-four-times", "success"];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.raw).toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("repairs five failed initial submit attempts (#9963)", async () => {
+    sdk.state.terminalResponses = ["fail-five-times", "success"];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.raw).toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(2);
   });
 
   it("accepts one failed submit followed by one same-turn success (#9630)", async () => {
@@ -425,6 +493,109 @@ describe("advisor session runner", () => {
     expect(result.turnErrors).toEqual([]);
     expect(result.raw).not.toContain("terminal_submit_repair_start");
     expect(sdk.state.prompts).toHaveLength(1);
+  });
+
+  it("accepts two failed duplicate submits and one successful submit (#9963)", async () => {
+    sdk.state.terminalResponses = ["fail-twice-then-success"];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).not.toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(1);
+  });
+
+  it("accepts four failed submits followed by one same-turn success (#9963)", async () => {
+    sdk.state.terminalResponses = ["fail-four-times-then-success"];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).not.toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(1);
+  });
+
+  it("accepts five failed submits followed by one same-turn success (#9963)", async () => {
+    sdk.state.terminalResponses = ["fail-five-times-then-success"];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).not.toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(1);
+  });
+
+  it("deduplicates relative aliases before required-read preparation (#9963)", async () => {
+    sdk.state.terminalResponses = ["success"];
+    const result = await run(
+      [
+        {
+          ...submitTurn("prepare-and-submit"),
+          requiredReadPaths: ["required.txt", "./required.txt"],
+        },
+      ],
+      (directory) => fs.writeFileSync(path.join(directory, "required.txt"), "required\n", "utf8"),
+    );
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).toContain("required_read_preparation_end prepare-and-submit ok");
+  });
+
+  it("prepares every distinct required read before submission (#9963)", async () => {
+    sdk.state.terminalResponses = ["success"];
+    const result = await run(
+      [
+        {
+          ...submitTurn("prepare-and-submit"),
+          requiredReadPaths: ["first.txt", "second.txt"],
+        },
+      ],
+      (directory) => {
+        fs.writeFileSync(path.join(directory, "first.txt"), "first\n", "utf8");
+        fs.writeFileSync(path.join(directory, "second.txt"), "second\n", "utf8");
+      },
+    );
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(sdk.state.prompts).toHaveLength(3);
+    expect(sdk.state.prompts[0]).toMatch(/first\.txt/u);
+    expect(sdk.state.prompts[1]).toMatch(/second\.txt/u);
+    expect(result.raw).toContain("required_read_preparation_end prepare-and-submit ok");
+  });
+
+  it("accepts an empty required file at EOF (#9963)", async () => {
+    const requiredReadTurn: AdvisorPromptTurn = {
+      name: "read-empty",
+      prompt: "Analyze the required file.",
+      requiredReadPaths: ["empty.txt"],
+      requireAssistantText: true,
+    };
+    const result = await run([requiredReadTurn], (directory) =>
+      fs.writeFileSync(path.join(directory, "empty.txt"), "", "utf8"),
+    );
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).toContain("required_read_preparation_end read-empty ok");
+  });
+
+  it("rejects a required read outside the workspace (#9963)", async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-required-read-outside-"));
+    tempDirs.push(outside);
+    const outsideFile = path.join(outside, "outside.txt");
+    fs.writeFileSync(outsideFile, "outside\n", "utf8");
+
+    await expect(
+      run([
+        {
+          name: "read-outside",
+          prompt: "Analyze the required file.",
+          requiredReadPaths: [outsideFile],
+        },
+      ]),
+    ).rejects.toThrow("outside the workspace");
   });
 
   it("allows one failed initial submit followed by one repair success", async () => {
@@ -455,13 +626,28 @@ describe("advisor session runner", () => {
     ]);
   });
 
-  it("does not repair an omitted preparatory terminal submit", async () => {
+  it("repairs an omitted preparatory terminal submit (#9963)", async () => {
     sdk.state.terminalResponses = ["omit", "success"];
     const result = await run([submitTurn("prepare-and-submit")]);
 
-    expect(result.fatalError).toContain("must make exactly 1 turn_action submit attempt");
-    expect(result.raw).not.toContain("terminal_submit_repair_start");
-    expect(sdk.state.prompts).toHaveLength(1);
+    expect(result.fatalError).toBeUndefined();
+    expect(result.raw).toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("repairs omitted required recording tools before submit (#9963)", async () => {
+    sdk.state.terminalResponses = ["fail-once", "success"];
+    const requiredRecordingTurn = {
+      ...submitTurn("prepare-and-submit"),
+      requiredToolNames: ["draft_action", "turn_action"],
+      terminalSubmitRepairToolNames: ["draft_action"],
+    };
+    const result = await run([requiredRecordingTurn]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).toContain("tool_end draft_action ok");
+    expect(sdk.state.prompts).toHaveLength(2);
   });
 
   it("accepts a failed atomic attempt followed by one same-turn success (#6446)", async () => {
@@ -524,48 +710,27 @@ describe("advisor session runner", () => {
     ]);
   });
 
-  it("fails before the commit turn when required analysis is empty (#6446)", async () => {
+  it("repairs omitted required analysis before the next turn (#9963)", async () => {
+    sdk.state.omitAnalysisPrompts = 1;
+    sdk.state.terminalResponses = ["success"];
+    const result = await run([analysisTurn("only-analysis"), commitTurn("only-commit")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).toContain("assistant_text_repair_start only-analysis");
+    expect(sdk.state.prompts).toHaveLength(3);
+  });
+
+  it("fails before the next turn when required analysis repair is empty (#9963)", async () => {
     sdk.state.omitAnalysis = true;
     const result = await run([analysisTurn("only-analysis"), commitTurn("only-commit")]);
 
-    expect(result.fatalError).toContain("only-analysis omitted required analysis");
+    expect(result.fatalError).toContain(
+      "only-analysis assistant-text repair omitted required analysis",
+    );
     expect(result.turnErrors).toEqual([
-      expect.stringContaining("only-analysis omitted required analysis"),
+      expect.stringContaining("assistant-text repair omitted required analysis"),
     ]);
-    expect(result.raw).toContain("assistant_text_repair_start only-analysis");
-    expect(sdk.state.prompts).toHaveLength(2);
-  });
-
-  it("continues once when required analysis is initially empty", async () => {
-    sdk.state.analysisResponses = ["empty", "success"];
-    const result = await run([analysisTurn("only-analysis")]);
-
-    expect(result.fatalError).toBeUndefined();
-    expect(result.turnErrors).toEqual([]);
-    expect(result.raw).toContain("assistant_text_repair_start only-analysis");
-    expect(sdk.state.prompts).toHaveLength(2);
-  });
-
-  it("continues once when required analysis reaches the model output limit", async () => {
-    sdk.state.analysisResponses = ["length", "success"];
-    const result = await run([analysisTurn("only-analysis")]);
-
-    expect(result.fatalError).toBeUndefined();
-    expect(result.turnErrors).toEqual([]);
-    expect(result.raw).toContain("assistant_text_repair_start only-analysis");
-    expect(result.raw).toContain("assistant response reached the model output limit");
-    expect(sdk.state.prompts).toHaveLength(2);
-  });
-
-  it("fails when an output-limited analysis continuation adds no receipt", async () => {
-    sdk.state.analysisResponses = ["length", "empty"];
-    const result = await run([analysisTurn("only-analysis")]);
-
-    expect(result.fatalError).toContain("analysis repair omitted required analysis");
-    expect(result.turnErrors).toEqual([
-      expect.stringContaining("analysis repair omitted required analysis"),
-    ]);
-    expect(result.raw).toContain("assistant_text_repair_start only-analysis");
     expect(sdk.state.prompts).toHaveLength(2);
   });
 
@@ -597,16 +762,6 @@ describe("advisor session runner", () => {
     await expect(
       contextTool?.execute("after-turn", {}, undefined, undefined, undefined as never),
     ).rejects.toThrow("not active");
-  });
-
-  it("does not repair empty analysis when required context is missing", async () => {
-    sdk.state.omitAnalysis = true;
-    sdk.state.omitContextTool = true;
-    const result = await run([analysisTurn("only-analysis")]);
-
-    expect(result.fatalError).toContain("omitted required tool result(s): review_context");
-    expect(result.raw).not.toContain("assistant_text_repair_start");
-    expect(sdk.state.prompts).toHaveLength(1);
   });
 
   it("scopes context and extra active tools to each turn, then resets them (#6446)", async () => {

@@ -109,7 +109,7 @@ export function classifyExistingLock(options: { ownerAlive: boolean; ownerPid: n
 }
 
 function status(pid: number, alive: boolean, record: string | null, read: (pid: number) => string | null): RegistryOwnerStatus {
-  if (record === null) return "ordinary";
+  if (record === null) return alive && read(pid) === null ? "unverifiable" : "ordinary";
   if (!alive) return "recycled";
   const current = read(pid);
   return current === null ? "unverifiable" : record === `${String(pid)} ${current}` ? "original" : "recycled";

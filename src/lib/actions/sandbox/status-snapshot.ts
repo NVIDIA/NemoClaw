@@ -415,7 +415,12 @@ export async function collectSandboxStatusSnapshot(
       getReconciledSandboxGatewayState(name, {
         getState: getSandboxGatewayStateForStatus,
       }));
-  const getSandbox = opts.deps?.getSandbox ?? registry.getSandbox;
+  const getSandbox =
+    opts.deps?.getSandbox ??
+    ((name: string) => {
+      const entry = registry.getSandbox(name);
+      return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
+    });
   const sb = getSandbox(sandboxName);
   let lookup: SandboxGatewayState;
   try {
@@ -689,7 +694,12 @@ async function buildSandboxStatusReport(
   sandboxName: string,
   deps: CollectSandboxStatusSnapshotDeps,
 ): Promise<SandboxStatusReport> {
-  const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const getSandbox =
+    deps.getSandbox ??
+    ((name: string) => {
+      const entry = registry.getSandbox(name);
+      return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
+    });
   const preflight = await (deps.getSandboxStatusPreflightImpl ?? getSandboxStatusPreflight)(
     getSandbox(sandboxName),
   );

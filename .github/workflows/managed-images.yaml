@@ -15,7 +15,7 @@
 # never contributes to the all-agent cohort, so Pi cannot reach onboarding agent
 # selection before the activation change merges.
 
-name: Images / Managed Images
+name: Images / Build, Test, and Publish Managed Images
 
 on:
   workflow_call:
@@ -43,6 +43,7 @@ on:
       - "scripts/**"
       - "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json"
       - "src/lib/actions/sandbox/mcp-bridge-*.ts"
+      - "src/lib/actions/sandbox/rebuild-post-restore-phase.ts"
       - "src/lib/core/json-types.ts"
       - "src/lib/core/ports.ts"
       - "src/lib/messaging/**"

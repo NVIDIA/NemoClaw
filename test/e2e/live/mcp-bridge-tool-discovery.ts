@@ -36,7 +36,11 @@ export function shouldRetryMcpToolDiscoveryTransportFailure(
 export function shouldRetryMcpDiscoveryAfterRestart(
   requestsSinceAttempt: readonly FakeMcpRequest[],
 ): boolean {
-  return requestsSinceAttempt.length === 0;
+  // Status/readiness checks can hit the configured endpoint without speaking
+  // MCP. Those probes must not suppress the one bounded runtime restart: only
+  // fixture-visible MCP protocol traffic proves that the agent attempted
+  // discovery and produced a product failure worth preserving as-is.
+  return !requestsSinceAttempt.some((request) => request.rpcMethod !== undefined);
 }
 
 type McpToolDiscoveryStatusJson = {

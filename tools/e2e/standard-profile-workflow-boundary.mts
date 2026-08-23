@@ -477,10 +477,16 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     }) ||
     !managedCatalogRun.includes('[[ "$RESTORE_CLI" == "true" ]]') ||
     !managedCatalogRun.includes(".source.revision == $revision") ||
+    !managedCatalogRun.includes("[.[].source.release] | unique | length") ||
+    !managedCatalogRun.includes("[.[].source.cohort] | unique | length") ||
+    !managedCatalogRun.includes('[[ "$RESTORE_CLI" == "true" ]]') ||
     !managedCatalogRun.includes(".source.release == $release") ||
     !managedCatalogRun.includes("[.[] | .source.release] | unique | length == 1") ||
     !managedCatalogRun.includes(
       "managed-image catalog source identity does not match the candidate",
+    ) ||
+    !managedCatalogRun.includes(
+      "managed-image catalog release does not match the restored CLI",
     ) ||
     !managedCatalogRun.includes("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG") ||
     managedCatalogRun.includes("NEMOCLAW_E2E_EXACT_RELEASE") ||

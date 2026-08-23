@@ -8,52 +8,17 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  openPatchedPairingFixture,
   runFixture,
   runPatch,
+  selfApprovalOptions,
+  selfApprovalTransactionJournal as transactionJournal,
+  selfApprovalTransactionSnapshots as transactionSnapshots,
   validClient,
   validPaired,
   validPending,
   writeFixtureDist,
 } from "./helpers/openclaw-device-self-approval-patch-harness";
-
-interface PairingFixtureRuntime {
-  writes: Array<{ file: string; value: unknown; options?: Record<string, unknown> }>;
-  setPairingState(
-    pendingById: Record<string, unknown>,
-    pairedByDeviceId: Record<string, unknown>,
-    baseDir?: string,
-  ): void;
-  setFile(file: string, value: unknown): void;
-  getFile(file: string): unknown;
-  getPairingPaths(baseDir?: string): {
-    pendingPath: string;
-    pairedPath: string;
-    journalPath: string;
-  };
-  listDevicePairing(baseDir?: string): Promise<{
-    pending: Array<Record<string, unknown>>;
-    paired: Array<Record<string, unknown>>;
-  }>;
-  getPairedDevice(deviceId: string, baseDir?: string): Promise<Record<string, unknown> | null>;
-  getPendingDevicePairing(
-    requestId: string,
-    baseDir?: string,
-  ): Promise<Record<string, unknown> | null>;
-  approveDevicePairing(
-    requestId: string,
-    options: Record<string, unknown>,
-    baseDir?: string,
-  ): Promise<Record<string, unknown> | null>;
-  approveBootstrapDevicePairing(
-    requestId: string,
-    bootstrapProfile: Record<string, unknown>,
-    baseDir?: string,
-  ): Promise<Record<string, unknown> | null>;
-  armLateWriterFailure(): Promise<void>;
-  releaseLateWriter(): void;
-  armCommittedJournalFailure(): void;
-  armStateDrift(file: string, value: unknown): void;
-}
 
 interface CliFixtureRuntime {
   gatewayCalls: Array<Record<string, unknown>>;
@@ -97,100 +62,6 @@ function clonePairedTokenRecord(token: string, overrides: Record<string, unknown
     },
     ...overrides,
   });
-}
-
-function openPatchedPairingFixture(): {
-  runtime: PairingFixtureRuntime;
-  source: string;
-  tmp: string;
-} {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-state-runtime-"));
-  const dist = path.join(tmp, "dist");
-  fs.mkdirSync(dist);
-  writeFixtureDist(dist);
-  const apply = runPatch(dist);
-  expect(apply.status, `${apply.stdout}${apply.stderr}`).toBe(0);
-  const source = fs.readFileSync(path.join(dist, "device-pairing-fixture.js"), "utf8");
-  const runtime = runFixture<PairingFixtureRuntime>(
-    source,
-    `({
-      writes,
-      setPairingState,
-      setFile,
-      getFile,
-      getPairingPaths,
-      listDevicePairing,
-      getPairedDevice,
-      getPendingDevicePairing,
-      approveDevicePairing,
-      approveBootstrapDevicePairing,
-      armLateWriterFailure,
-      releaseLateWriter,
-      armCommittedJournalFailure,
-      armStateDrift
-    })`,
-  );
-  return { runtime, source, tmp };
-}
-
-function transactionSnapshots() {
-  const pending = validPending({ ts: 100 });
-  const pairedBefore = validPaired({
-    approvedAtMs: 100,
-    tokens: {
-      operator: { token: "token-before", role: "operator", scopes: ["operator.pairing"] },
-    },
-  });
-  const pairedAfter = validPaired({
-    approvedAtMs: 200,
-    scopes: ["operator.pairing", "operator.read", "operator.write"],
-    approvedScopes: ["operator.pairing", "operator.read", "operator.write"],
-    tokens: {
-      operator: {
-        token: "token-after",
-        role: "operator",
-        scopes: ["operator.pairing", "operator.read", "operator.write"],
-      },
-    },
-  });
-  return {
-    before: {
-      pendingById: { "request-1": pending },
-      pairedByDeviceId: { "device-1": pairedBefore },
-    },
-    after: {
-      pendingById: {},
-      pairedByDeviceId: { "device-1": pairedAfter },
-    },
-  };
-}
-
-function transactionJournal(
-  phase: "prepared" | "committed",
-  snapshots: ReturnType<typeof transactionSnapshots>,
-) {
-  return {
-    version: 1,
-    kind: "nemoclaw-self-approval",
-    phase,
-    requestId: "request-1",
-    deviceId: "device-1",
-    before: snapshots.before,
-    after: snapshots.after,
-  };
-}
-
-function selfApprovalOptions() {
-  return {
-    callerScopes: ["operator.pairing"],
-    nemoclawSelfApprovalIdentity: {
-      deviceId: "device-1",
-      publicKey: "public-key-1",
-      role: "operator",
-      clientId: "cli",
-      clientMode: "cli",
-    },
-  };
 }
 
 describe("OpenClaw bounded device self-approval patch (#4462)", () => {
@@ -477,18 +348,16 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     }
   });
 
-  it.each(
-    [
-        { client: { id: "control-ui", mode: "ui" }, role: "operator", scopes: ["operator.write"] },
-        { client: { id: "cli", mode: "cli" }, role: "node", scopes: ["operator.write"] },
-        { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.admin"] },
-        {
-          client: { id: "cli", mode: "cli" },
-          role: "operator",
-          scopes: ["operator.write", "operator.write"],
-        },
-      ],
-  )(
+  it.each([
+    { client: { id: "control-ui", mode: "ui" }, role: "operator", scopes: ["operator.write"] },
+    { client: { id: "cli", mode: "cli" }, role: "node", scopes: ["operator.write"] },
+    { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.admin"] },
+    {
+      client: { id: "cli", mode: "cli" },
+      role: "operator",
+      scopes: ["operator.write", "operator.write"],
+    },
+  ])(
     "routes only a bounded CLI device-token scope mismatch into canonical pairing [case %#]",
     async (candidate) => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-auth-upgrade-"));
@@ -606,10 +475,12 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
         runtime.approvePairingWithFallback({ json: true }, "request-1"),
       ).resolves.toEqual({ requestId: "request-1", approved: true });
       expect(runtime.gatewayCalls).toHaveLength(2);
-      ([
-        ["device.pair.list", runtime.gatewayCalls[0]],
-        ["device.pair.approve", runtime.gatewayCalls[1]],
-      ] as const).forEach(([method, call]) => {
+      (
+        [
+          ["device.pair.list", runtime.gatewayCalls[0]],
+          ["device.pair.approve", runtime.gatewayCalls[1]],
+        ] as const
+      ).forEach(([method, call]) => {
         expect(call).toMatchObject({
           method,
           scopes: ["operator.pairing"],
@@ -965,6 +836,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
             role: "operator",
             clientId: "cli",
             clientMode: "cli",
+            deviceToken: "token-before",
           },
         },
       });
@@ -989,6 +861,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       validClient({
         connect: {
           role: "operator",
+          auth: { token: "token-before" },
           device: { id: "device-2", publicKey: "public-key-1" },
           client: { id: "cli", mode: "cli" },
         },
@@ -999,6 +872,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       validClient({
         connect: {
           role: "operator",
+          auth: { token: "token-before" },
           device: { id: "device-1", publicKey: "public-key-2" },
           client: { id: "cli", mode: "cli" },
         },
@@ -1009,6 +883,17 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       validClient({
         connect: {
           role: "node",
+          auth: { token: "token-before" },
+          device: { id: "device-1", publicKey: "public-key-1" },
+          client: { id: "cli", mode: "cli" },
+        },
+      }),
+    ],
+    [
+      "missing device token",
+      validClient({
+        connect: {
+          role: "operator",
           device: { id: "device-1", publicKey: "public-key-1" },
           client: { id: "cli", mode: "cli" },
         },
@@ -1179,20 +1064,23 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
   );
 
   it.each([
-    ["prepared", "pending published first", "after", "before"],
-    ["prepared", "paired published first", "before", "after"],
-    ["committed", "pending published first", "after", "before"],
-    ["committed", "paired published first", "before", "after"],
+    ["prepared", "pending published first", "after", "before", "before"],
+    ["prepared", "paired published first", "before", "after", "before"],
+    ["prepared", "stored auth published first", "before", "before", "after"],
+    ["committed", "pending published first", "after", "before", "before"],
+    ["committed", "paired published first", "before", "after", "before"],
+    ["committed", "stored auth published first", "before", "before", "after"],
   ] as const)(
     "recovers a %s journal when %s",
-    async (phase, _direction, pendingSide, pairedSide) => {
+    async (phase, _direction, pendingSide, pairedSide, authSide) => {
       const { runtime, tmp } = openPatchedPairingFixture();
       try {
         const snapshots = transactionSnapshots();
         const currentPending = snapshots[pendingSide].pendingById;
         const currentPaired = snapshots[pairedSide].pairedByDeviceId;
-        const { journalPath } = runtime.getPairingPaths();
+        const { authPath, journalPath } = runtime.getPairingPaths();
         runtime.setPairingState(currentPending, currentPaired);
+        runtime.setFile(authPath, snapshots[authSide].auth);
         runtime.setFile(journalPath, transactionJournal(phase, snapshots));
 
         const listed = await runtime.listDevicePairing();
@@ -1203,8 +1091,9 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
         expect(runtime.getFile(runtime.getPairingPaths().pairedPath)).toEqual(
           expected.pairedByDeviceId,
         );
+        expect(runtime.getFile(runtime.getPairingPaths().authPath)).toEqual(expected.auth);
         expect(runtime.getFile(journalPath)).toEqual({
-          version: 1,
+          version: 2,
           kind: "nemoclaw-self-approval",
           phase: "idle",
         });
@@ -1227,7 +1116,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       const snapshots = transactionSnapshots();
       const { journalPath, pendingPath } = runtime.getPairingPaths();
       const malformed = {
-        version: 1,
+        version: 2,
         kind: "nemoclaw-self-approval",
         phase: "prepared",
       };
@@ -1283,6 +1172,10 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
         transactionJournal("prepared", {
           before: snapshots.before,
           after: {
+            auth: expect.objectContaining({
+              deviceId: "device-1",
+              tokens: expect.objectContaining({ operator: expect.any(Object) }),
+            }),
             pendingById: {},
             pairedByDeviceId: expect.objectContaining({
               "device-1": expect.objectContaining({ deviceId: "device-1" }),
@@ -1292,11 +1185,14 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       );
 
       runtime.releaseLateWriter();
-      await expect(approval).rejects.toThrow("failed to publish both device pairing state files");
+      await expect(approval).rejects.toThrow(
+        "failed to publish device pairing and stored-auth state",
+      );
       expect(runtime.getFile(paths.pendingPath)).toEqual(snapshots.before.pendingById);
       expect(runtime.getFile(paths.pairedPath)).toEqual(snapshots.before.pairedByDeviceId);
+      expect(runtime.getFile(paths.authPath)).toEqual(snapshots.before.auth);
       expect(runtime.getFile(paths.journalPath)).toEqual({
-        version: 1,
+        version: 2,
         kind: "nemoclaw-self-approval",
         phase: "idle",
       });
@@ -1332,6 +1228,18 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       expect(runtime.getFile(paths.pendingPath)).toEqual(driftedPending);
       expect(runtime.getFile(paths.pairedPath)).toEqual(snapshots.before.pairedByDeviceId);
       expect(runtime.getFile(paths.journalPath)).toBeNull();
+
+      runtime.setPairingState(snapshots.before.pendingById, snapshots.before.pairedByDeviceId);
+      runtime.armStateDrift(paths.authPath, {
+        ...snapshots.before.auth,
+        tokens: {
+          operator: { token: "other-token", role: "operator", scopes: ["operator.pairing"] },
+        },
+      });
+      await expect(
+        runtime.approveDevicePairing("request-1", selfApprovalOptions(), "/fixture"),
+      ).rejects.toThrow("stored device auth changed before NemoClaw self-approval publication");
+      expect(runtime.getFile(paths.journalPath)).toBeNull();
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1352,8 +1260,42 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       expect(runtime.getFile(paths.pairedPath)).toMatchObject({
         "device-1": { deviceId: "device-1", publicKey: "public-key-1" },
       });
+      expect(runtime.getFile(paths.authPath)).toMatchObject({
+        deviceId: "device-1",
+        tokens: {
+          operator: {
+            role: "operator",
+            scopes: ["operator.write"],
+            token: "token",
+          },
+        },
+      });
       expect(runtime.getFile(paths.journalPath)).toEqual({
-        version: 1,
+        version: 2,
+        kind: "nemoclaw-self-approval",
+        phase: "idle",
+      });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("reports failure until a committed journal clears its credential snapshots", async () => {
+    const { runtime, tmp } = openPatchedPairingFixture();
+    try {
+      const snapshots = transactionSnapshots();
+      const paths = runtime.getPairingPaths();
+      runtime.setPairingState(snapshots.before.pendingById, snapshots.before.pairedByDeviceId);
+      runtime.armIdleJournalFailure();
+
+      await expect(
+        runtime.approveDevicePairing("request-1", selfApprovalOptions(), "/fixture"),
+      ).rejects.toThrow("idle journal cleanup failed");
+      expect(runtime.getFile(paths.journalPath)).toMatchObject({ phase: "committed", version: 2 });
+
+      await expect(runtime.listDevicePairing()).resolves.toMatchObject({ pending: [] });
+      expect(runtime.getFile(paths.journalPath)).toEqual({
+        version: 2,
         kind: "nemoclaw-self-approval",
         phase: "idle",
       });

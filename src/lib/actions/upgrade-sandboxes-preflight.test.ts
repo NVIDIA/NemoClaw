@@ -42,8 +42,8 @@ vi.mock("../runtime-recovery", () => ({
 }));
 vi.mock("../sandbox/version", () => ({ checkAgentVersion: mocks.checkAgentVersion }));
 vi.mock("../state/registry", () => ({
-  isRouteOnlySandboxReservation: (entry: { pendingRouteReservation?: true; createdAt?: string }) =>
-    entry.pendingRouteReservation === true && entry.createdAt === undefined,
+  isPublishedSandboxRegistration: (entry: { pendingRouteReservation?: true }) =>
+    entry.pendingRouteReservation !== true,
   listSandboxes: mocks.listSandboxes,
 }));
 vi.mock("../state/sandbox", () => ({ getLatestBackup: mocks.getLatestBackup }));

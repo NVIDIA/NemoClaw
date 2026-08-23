@@ -41,8 +41,9 @@ import {
   collectDeterministicContext,
   type DeterministicReviewContext,
 } from "./deterministic-context.mts";
-import { createGitDiffToolController } from "./git-diff-tool.mts";
 import { buildInvestigateTurn } from "./investigate-turn.mts";
+import { validateSpecialistSessionDirectory } from "./specialist-sessions.mts";
+import { buildSynthesisTurn } from "./synthesis-turn.mts";
 import { renderSummary } from "./render-result.mts";
 import {
   buildCorrectnessTurnContext,
@@ -330,10 +331,12 @@ async function main(): Promise<void> {
   delete process.env.GH_TOKEN;
   delete process.env.GITHUB_TOKEN;
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
-  const { systemPrompt, promptTurns, securityCategoryNames } = preparePromptArtifacts({
-    artifacts,
-    metadata,
-  });
+  const { systemPrompt, promptTurns, securityCategoryNames, resultLimitations } =
+    preparePromptArtifacts({
+      artifacts,
+      metadata,
+      diff,
+    });
 
   const writeFailure = (reason: string): void => writeFailureArtifacts(artifacts, metadata, reason);
   const writeUnavailable = (reason: string): void =>
@@ -363,7 +366,6 @@ async function main(): Promise<void> {
       logPrefix: "pr-review-advisor",
       baseRef,
       headRef,
-      diff,
       metadata,
       schema,
       securityCategoryNames,
@@ -383,6 +385,8 @@ async function main(): Promise<void> {
       advisorExecutionErrors(sdkResult),
       submission!,
       artifacts,
+      undefined,
+      resultLimitations,
     );
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -399,6 +403,7 @@ export function persistSuccessfulReview(
   submission: ReviewSubmissionController,
   artifacts: ArtifactPaths,
   write: (path: string, value: unknown) => void = writeJson,
+  requiredLimitations: readonly string[] = [],
 ): ReviewAdvisorResult {
   if (executionErrors.length > 0) {
     throw new Error(`PR review advisor SDK execution failed: ${executionErrors.join("; ")}`);
@@ -407,7 +412,22 @@ export function persistSuccessfulReview(
   if (!submitted) {
     throw new Error("PR review advisor did not atomically submit a review result");
   }
-  const result = submitted as ReviewAdvisorResult;
+  const submittedResult = submitted as ReviewAdvisorResult;
+  const result =
+    requiredLimitations.length === 0
+      ? submittedResult
+      : {
+          ...submittedResult,
+          reviewCompleteness: {
+            ...submittedResult.reviewCompleteness,
+            limitations: [
+              ...new Set([
+                ...submittedResult.reviewCompleteness.limitations,
+                ...requiredLimitations,
+              ]),
+            ],
+          },
+        };
   write(artifacts.result, result);
   write(artifacts.finalResult, result);
   return result;
@@ -416,15 +436,38 @@ export function persistSuccessfulReview(
 export function preparePromptArtifacts({
   artifacts,
   metadata,
+  diff,
 }: {
   artifacts: ArtifactPaths;
   metadata: ReviewMetadata;
-}): { systemPrompt: string; promptTurns: AdvisorPromptTurn[]; securityCategoryNames: string[] } {
+  diff: string;
+}): {
+  systemPrompt: string;
+  promptTurns: AdvisorPromptTurn[];
+  securityCategoryNames: string[];
+  resultLimitations: string[];
+} {
   try {
     const securityRubric = readParsedTrustedSecurityRubric();
     const systemPrompt = buildSystemPrompt(securityRubric);
-    const promptTurns = buildPromptTurns({ metadata });
-    return { systemPrompt, promptTurns, securityCategoryNames: securityRubric.categories };
+    const specialistSessionDirectory = process.env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR;
+    const specialistInventory = specialistSessionDirectory
+      ? validateSpecialistSessionDirectory(specialistSessionDirectory)
+      : undefined;
+    const promptTurns = specialistInventory
+      ? [buildSynthesisTurn(specialistInventory), buildChallengeAndRecordTurn()]
+      : buildPromptTurns({ metadata, diffPath: writeReviewDiff(diff) });
+    const resultLimitations =
+      specialistInventory?.missing.map(
+        (interest) =>
+          `Specialist trace unavailable: ${interest}; synthesis did not receive dedicated ${interest} review.`,
+      ) ?? [];
+    return {
+      systemPrompt,
+      promptTurns,
+      securityCategoryNames: securityRubric.categories,
+      resultLimitations,
+    };
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
     writeFailureArtifacts(artifacts, metadata, reason);
@@ -470,7 +513,6 @@ type AdvisorConversationOptions = {
   logPrefix: string;
   baseRef: string;
   headRef: string;
-  diff: string;
   metadata: ReviewMetadata;
   schema: Record<string, unknown>;
   securityCategoryNames: readonly string[];
@@ -487,12 +529,6 @@ async function runAdvisorConversation(
   const terminologyTools = createTerminologyToolController({
     baseRef: options.baseRef,
     headRef: options.headRef,
-  });
-  const diffTools = createGitDiffToolController({
-    baseRef: options.baseRef,
-    headRef: options.headRef,
-    changedFiles: options.metadata.changedFiles,
-    totalDiffCharacters: options.diff.length,
   });
   const submission = createReviewSubmissionController({
     metadata: {
@@ -527,7 +563,7 @@ async function runAdvisorConversation(
     credentialEnv: ADVISOR_CREDENTIAL_ENV,
     logPrefix: options.logPrefix,
     logProgress,
-    customTools: [...submission.tools, ...terminologyTools.tools, ...diffTools.tools],
+    customTools: [...submission.tools, ...terminologyTools.tools],
     onTurnComplete: (turn) => applyReviewSubmissionTurn(submission, turn),
   });
   return { run: result, submission };
@@ -559,16 +595,27 @@ export async function collectGitHubContext(
   return collectGitHubReviewContext(env);
 }
 
+export function writeReviewDiff(diff: string): string {
+  const directory = path.join(root, ".pr-review-advisor-context");
+  fs.mkdirSync(directory, { recursive: true });
+  const file = path.join(directory, "diff.patch");
+  fs.writeFileSync(file, diff);
+  return path.relative(root, file);
+}
+
 export function buildPromptTurns({
   metadata,
+  diffPath,
 }: {
   metadata: ReviewMetadata;
+  diffPath: string;
 }): AdvisorPromptTurn[] {
   const context = metadata.deterministic;
   return [
     buildInvestigateTurn({
       metadata: metadataFields(metadata),
       scopeRisk: buildScopeRiskTurnContext(context),
+      diffPath,
       controlledWords: readTrustedControlledWords(),
       terminology: {
         issueReferenceLines: context.github?.issueReferenceLines ?? [],

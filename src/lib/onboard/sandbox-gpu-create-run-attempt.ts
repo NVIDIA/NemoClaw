@@ -20,7 +20,9 @@ import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
 import { installPortableDemoSandboxLifecycle } from "./experimental/portable-demo-lifecycle";
 import { enforceManagedBootstrapRecoveryForSandbox } from "./managed-bootstrap/adapter";
 import type {
-  ManagedBootstrapNativeGpuFallbackRollbackOutcome,
+  ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff,
+  ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt,
+  ManagedBootstrapRuntimeCreateLifecycle,
   ManagedBootstrapRuntimePatch,
   ManagedBootstrapRuntimeSnapshot,
 } from "./managed-bootstrap/runtime-create";
@@ -100,6 +102,31 @@ function createPortableRuntimePatch(
       return verifyDirectSandboxGpu(input.sandboxName);
     },
   };
+}
+
+type NativeFallbackCleanupEvidence = Readonly<{
+  nativeCleanupHandoff?: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff;
+  nativeCleanupReceipt?: ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt;
+}>;
+
+async function rollbackNativeGpuFailureForFallback(
+  managedLifecycle: ManagedBootstrapRuntimeCreateLifecycle | null,
+  runtimePatch: ManagedBootstrapRuntimePatch,
+): Promise<NativeFallbackCleanupEvidence> {
+  if (!managedLifecycle) {
+    await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+    return {};
+  }
+  const rollback = await runtimePatch.rollbackManagedStartupAfterCreateFailure({
+    ownerCleanupHandoff: "native-gpu-fallback-after-absent-attachment",
+  });
+  if (rollback?.kind !== "openshell-owner-cleanup-required") return {};
+  const ownerCleanup = managedLifecycle.completeNativeGpuFallbackOwnerCleanup
+    ? await managedLifecycle.completeNativeGpuFallbackOwnerCleanup(rollback)
+    : rollback;
+  return ownerCleanup.kind === "openshell-owner-cleanup-completed"
+    ? { nativeCleanupReceipt: ownerCleanup }
+    : { nativeCleanupHandoff: ownerCleanup };
 }
 
 function normalizedOpenShellCommandOutput(result: OpenShellCommandResult): string {
@@ -358,7 +385,7 @@ export function createSandboxGpuCreateAttemptRunner(
           return isSandboxReady(list, input.sandboxName);
         },
         onPoll: () => {
-          if (!deferRestartSafeCutover) runtimePatch.maybeApplyDuringCreate();
+          if (!deferRestartSafeCutover) void runtimePatch.maybeApplyDuringCreate();
         },
         readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent({
           isTerminalAgent: input.terminalAgent,
@@ -406,7 +433,13 @@ export function createSandboxGpuCreateAttemptRunner(
               });
               if (!readiness.ready) {
                 throw new Error(
-                  `Managed bootstrap incomplete create did not reach authoritative Ready state (${readiness.reason}).`,
+                  sandboxReadinessTracing
+                    .formatCreatedSandboxReadinessFailureMessage(
+                      input.sandboxName,
+                      readiness,
+                      input.sandboxReadyTimeoutSecs,
+                    )
+                    .trimStart(),
                 );
               }
             } else {
@@ -668,20 +701,10 @@ export function createSandboxGpuCreateAttemptRunner(
           const snapshot = inspectNativeRuntime();
           if (snapshot?.nativeGpuAttachmentState === "absent") {
             state.nativeRuntimeSnapshot = snapshot;
-            let nativeCleanupHandoff: Extract<
-              ManagedBootstrapNativeGpuFallbackRollbackOutcome,
-              { readonly kind: "openshell-owner-cleanup-required" }
-            > | null = null;
-            if (managedLifecycle) {
-              const rollback = await runtimePatch.rollbackManagedStartupAfterCreateFailure({
-                ownerCleanupHandoff: "native-gpu-fallback-after-absent-attachment",
-              });
-              if (rollback?.kind === "openshell-owner-cleanup-required") {
-                nativeCleanupHandoff = rollback;
-              }
-            } else {
-              await runtimePatch.rollbackManagedStartupAfterCreateFailure();
-            }
+            const nativeCleanup = await rollbackNativeGpuFailureForFallback(
+              managedLifecycle,
+              runtimePatch,
+            );
             return {
               ok: false,
               route,
@@ -690,7 +713,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 "Native OpenShell GPU proof failed and the host confirms no GPU attachment.",
               ),
               fallbackEligible: true,
-              ...(nativeCleanupHandoff ? { nativeCleanupHandoff } : {}),
+              ...nativeCleanup,
             } as const;
           }
         }

@@ -95,7 +95,9 @@ function privateCredentialFile(
   readonly directory: string;
   readonly file: string;
 } {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-llama-bridge-key-"));
+  const directory = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-llama-bridge-key-")),
+  );
   const file = path.join(directory, "api-key");
   fs.writeFileSync(file, "a".repeat(size), { mode });
   fs.chmodSync(file, mode);

@@ -3,7 +3,11 @@
 
 import { R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
-import { removePortableDemoSandboxLifecycleReceipt } from "../../onboard/experimental/portable-demo-lifecycle";
+import {
+  type PreparedPortableDemoSandboxDestroyAuthority,
+  preparePortableDemoSandboxDestroyAuthority,
+  removePortableDemoSandboxLifecycleReceipt,
+} from "../../onboard/experimental/portable-demo-lifecycle";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundle,
@@ -52,6 +56,8 @@ export function retirePortableLifecycleAuthority(sandboxName: string): void {
   removePortableDemoSandboxLifecycleReceipt(sandboxName);
 }
 
+export { preparePortableDemoSandboxDestroyAuthority };
+
 type SandboxDestroyExecutionInput = {
   cleanupShieldsArtifacts: (sandboxName: string) => void;
   force: boolean;
@@ -66,6 +72,7 @@ type SandboxDestroyExecutionInput = {
   // container observed by the pre-destroy guard.
   expectedContainerIdentity?: SandboxNameLabeledContainer | null;
   expectedRuntimeProviderIdentity?: RuntimeProviderDestroyIdentityReceipt;
+  portableContainerAuthority?: PreparedPortableDemoSandboxDestroyAuthority;
   stopInferenceResources: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   deps?: {
@@ -94,6 +101,7 @@ export type SandboxDestroyExecutionResult =
       hostLocalInferenceOwnershipRequiresGateway: boolean;
       mcpOwnershipRequiresGateway: boolean;
       mcpRecoveryFailure?: string;
+      portableLifecycleOwnershipRequiresGateway?: boolean;
       shieldsRelockRequiresGateway: boolean;
       hostLocalInferenceCleanupFailure?: string;
       deleteConfirmed?: boolean;
@@ -285,6 +293,7 @@ export async function executeSandboxDestroy({
   sandboxName,
   expectedContainerIdentity,
   expectedRuntimeProviderIdentity,
+  portableContainerAuthority,
   stopInferenceResources,
   runtimeProviders = CURRENT_RUNTIME_PROVIDER_BUNDLES,
   deps = {},
@@ -295,23 +304,36 @@ export async function executeSandboxDestroy({
       | { status: "changed" }
       | { status: "ambiguous"; detail: string }
       | { status: "probe-failed"; detail: string };
-    const identityProvider = sandbox
-      ? resolveRuntimeProviderBundle(sandbox.openshellDriver, runtimeProviders)
-      : null;
+    const identityProvider = resolveRuntimeProviderBundle(
+      sandbox?.openshellDriver ?? expectedRuntimeProviderIdentity?.providerId,
+      runtimeProviders,
+    );
     const inspectIdentityContinuity = (): IdentityContinuity => {
+      if (portableContainerAuthority) {
+        try {
+          portableContainerAuthority.revalidate();
+          return { status: "match" };
+        } catch (error) {
+          return { status: "probe-failed", detail: redactDestroyError(error) };
+        }
+      }
       if (expectedRuntimeProviderIdentity) {
-        if (
-          !sandbox ||
-          identityProvider?.cleanup.supported !== true ||
-          !identityProvider.cleanup.captureDestroyIdentity
-        ) {
+        if (identityProvider?.cleanup.supported !== true) {
           return {
             status: "probe-failed",
             detail: "the selected runtime provider has no destroy identity observer",
           };
         }
         try {
-          const actual = identityProvider.cleanup.captureDestroyIdentity({ sandbox, sandboxName });
+          const actual = sandbox
+            ? identityProvider.cleanup.captureDestroyIdentity?.({ sandbox, sandboxName })
+            : identityProvider.cleanup.captureDestroyIdentityByName?.(sandboxName);
+          if (!actual) {
+            return {
+              status: "probe-failed",
+              detail: "the selected runtime provider has no destroy identity observer",
+            };
+          }
           return actual.schemaVersion === expectedRuntimeProviderIdentity.schemaVersion &&
             actual.providerId === expectedRuntimeProviderIdentity.providerId &&
             actual.resourceHandle === expectedRuntimeProviderIdentity.resourceHandle &&
@@ -525,6 +547,7 @@ export async function executeSandboxDestroy({
       force &&
       !hasMcpOwnership &&
       !hasHostLocalInferenceOwnership &&
+      portableContainerAuthority === undefined &&
       !hardened.hardeningFailed;
 
     if (deleteResult.status !== 0 && !alreadyGone && !forcedLocalCleanup) {
@@ -540,13 +563,19 @@ export async function executeSandboxDestroy({
           gatewayUnreachable && hasHostLocalInferenceOwnership,
         mcpOwnershipRequiresGateway: gatewayUnreachable && hasMcpOwnership,
         mcpRecoveryFailure,
+        portableLifecycleOwnershipRequiresGateway:
+          gatewayUnreachable && portableContainerAuthority !== undefined,
         shieldsRelockRequiresGateway: gatewayUnreachable && hardened.hardeningFailed,
       };
     }
 
-    if (!forcedLocalCleanup && expectedContainerIdentity) {
+    if (!forcedLocalCleanup && (portableContainerAuthority || expectedContainerIdentity)) {
       try {
-        removeExactDestroyContainerIdentity(sandboxName, expectedContainerIdentity, console.log);
+        if (portableContainerAuthority) {
+          portableContainerAuthority.verifyAbsent();
+        } else if (expectedContainerIdentity) {
+          removeExactDestroyContainerIdentity(sandboxName, expectedContainerIdentity, console.log);
+        }
       } catch (error) {
         const detail = redactDestroyError(error);
         return {
@@ -603,7 +632,6 @@ export async function executeSandboxDestroy({
           current,
           hostLocalInferenceAuthority,
           listSandboxes!().sandboxes,
-          deps.hostLocalInferenceLifecycleOptions,
         );
         commonLlamaCppAuthorityRetired =
           hostLocalInferenceAuthority.receipt.service === "llama-cpp";

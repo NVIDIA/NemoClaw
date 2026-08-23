@@ -60,6 +60,7 @@ export function runOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
     ignoreError: opts.ignoreError,
     timeout: opts.timeout,
     killSignal: opts.killSignal,
+    maxBuffer: opts.maxBuffer,
     errorLine: console.error,
     exit: (code: number) => process.exit(code),
   });
