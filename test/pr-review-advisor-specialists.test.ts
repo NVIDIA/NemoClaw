@@ -117,6 +117,16 @@ describe("PR review advisor specialist prompts", () => {
     },
   );
 
+  it("reviews the complete design against the accepted outcome", () => {
+    const prompt = buildSpecialistInvestigateTurn("design-architecture", context).prompt;
+
+    expect(prompt).toContain("appropriate design for the accepted outcome");
+    expect(prompt).toContain("Evaluate the complete change");
+    expect(prompt).toContain("maintenance cost and supported surface");
+    expect(prompt).toContain("narrower capability slices");
+    expect(prompt).toContain("smallest coherent change");
+  });
+
   it("keeps large specialist context in ordinary-read-sized Pi trace lines (#9986)", () => {
     const largeWords = "word\n".repeat(20_000) + "a".repeat(16_376) + "🦀";
     const turn = buildSpecialistInvestigateTurn("behavior", {
