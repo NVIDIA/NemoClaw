@@ -68,10 +68,12 @@ vi.mock("./ssrf.js", async (importOriginal) => {
 const { validateEndpointUrl } = await import("./ssrf.js");
 const mockedValidateEndpoint = vi.mocked(validateEndpointUrl);
 
-const { emitRunId, loadBlueprint, actionPlan, actionApply, actionStatus, actionRollback, main } =
+const { emitRunId, loadBlueprint, actionPlan, actionApply, actionStatus, actionRollback, actionReconcile, main } =
   await import("./runner.js");
 const { readFileSync } = await import("node:fs");
 const mockedReadFileSync = vi.mocked(readFileSync);
+
+const mockedReaddirSync = vi.mocked((await import("node:fs")).readdirSync);
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -1303,6 +1305,37 @@ describe("runner", () => {
 
     it("throws when run ID is not found", async () => {
       await expect(actionRollback("nc-missing")).rejects.toThrow(/nc-missing not found/);
+    });
+
+    it("reports an unreadable run directory as a failure, not a missing run", async () => {
+      const runDir = `${RUNS_DIR}/nc-run-1`;
+      addDir(runDir);
+      mockedReaddirSync.mockImplementationOnce(() => {
+        throw Object.assign(new Error(`EACCES: permission denied, scandir '${runDir}'`), {
+          code: "EACCES",
+        });
+      });
+
+      await expect(actionRollback("nc-run-1")).rejects.toThrow(
+        /Cannot read run directory for run nc-run-1: EACCES: permission denied/,
+      );
+
+      expect(mockExeca).not.toHaveBeenCalled();
+      expect(store.has(`${runDir}/rolled_back`)).toBe(false);
+    });
+
+    it("reports an unreadable run directory from reconcile as a failure too", async () => {
+      const runDir = `${RUNS_DIR}/nc-run-1`;
+      addDir(runDir);
+      mockedReaddirSync.mockImplementationOnce(() => {
+        throw Object.assign(new Error(`EACCES: permission denied, scandir '${runDir}'`), {
+          code: "EACCES",
+        });
+      });
+
+      await expect(actionReconcile("nc-run-1")).rejects.toThrow(
+        /Cannot read run directory for run nc-run-1: EACCES: permission denied/,
+      );
     });
 
     it("writes rolled_back marker file", async () => {
