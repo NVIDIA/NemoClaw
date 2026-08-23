@@ -1539,12 +1539,8 @@ export function createPodmanManagedBootstrapAdapter(
                 sandbox: sandboxIdentity(journal),
                 bootstrapIdentity: journal.bootstrapIdentity,
                 outcome: committed ? ("committed" as const) : ("rolled-back" as const),
-                restoredRuntimeId: committed
-                  ? journal.replacementRuntimeId
-                  : journal.originalRuntimeId,
-                restoredSpecHash: committed
-                  ? journal.replacementSpecFingerprint
-                  : journal.originalSpecFingerprint,
+                restoredRuntimeId: committed ? null : journal.originalRuntimeId,
+                restoredSpecHash: committed ? null : journal.originalSpecFingerprint,
                 heldWorkloadRemoved: committed,
                 alreadyRolledBack: false,
                 finalizedAt: new Date().toISOString(),
@@ -1923,9 +1919,8 @@ export function createPodmanManagedBootstrapAdapter(
         sandbox: input.handle.sandbox,
         bootstrapIdentity: input.handle.bootstrapIdentity,
         outcome: "committed",
-        restoredRuntimeId: current.prepared.replacementRuntimeId,
-        restoredSpecHash:
-          current.contractReplacementSpecHash ?? current.prepared.replacementSpecFingerprint,
+        restoredRuntimeId: null,
+        restoredSpecHash: null,
         heldWorkloadRemoved: true,
         alreadyRolledBack: false,
         finalizedAt: new Date().toISOString(),
