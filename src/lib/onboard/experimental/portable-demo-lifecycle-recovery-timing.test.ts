@@ -198,6 +198,7 @@ describe("portable lifecycle recovery timing output", () => {
         launchOpenshell,
         log,
         now: () => 0,
+        timingNow: () => 0,
       }),
     ).toEqual({ kind: "recovered" });
     expect(timingLines(log)).toEqual([
@@ -218,6 +219,7 @@ describe("portable lifecycle recovery timing output", () => {
           args.includes("curl") ? { status: 0, stdout: "401" } : { status: 0 },
         log,
         now: () => 0,
+        timingNow: () => 0,
       }),
     ).toEqual({ kind: "already-running" });
     expect(timingLines(log)).toEqual([
@@ -240,6 +242,7 @@ describe("portable lifecycle recovery timing output", () => {
         launchOpenshell: vi.fn(),
         log,
         now: () => now,
+        timingNow: () => now,
         sleep: (milliseconds) => {
           now += milliseconds;
         },
@@ -250,7 +253,7 @@ describe("portable lifecycle recovery timing output", () => {
     expect(timingLines(log)[0]).not.toContain("has a startup process");
   });
 
-  it("preserves recovery when the diagnostic writer throws (#9200)", () => {
+  it("preserves recovery when the diagnostic clock and writer throw (#9200)", () => {
     const stateDir = temporaryStateDir();
     const podman = createPodman(true);
     const timingWrite = vi.fn((_line: string) => {
@@ -268,6 +271,9 @@ describe("portable lifecycle recovery timing output", () => {
           args.includes("curl") ? { status: 0, stdout: "401" } : { status: 0 },
         log,
         now: () => 0,
+        timingNow: () => {
+          throw new Error("diagnostic clock failed");
+        },
       }),
     ).toEqual({ kind: "already-running" });
     expect(timingWrite).toHaveBeenCalledOnce();

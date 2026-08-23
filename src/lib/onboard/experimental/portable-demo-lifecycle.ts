@@ -148,6 +148,8 @@ export interface PortableDemoLifecycleDeps {
   loadManagedOllama?: () => string | null;
   sleep?: (milliseconds: number) => void;
   now?: () => number;
+  /** Diagnostic-only clock; never used for lifecycle deadlines. */
+  timingNow?: () => number;
   log?: (message: string) => void;
 }
 
@@ -1173,7 +1175,7 @@ export function recoverPortableDemoSandboxLifecycle(
   if (!receipt) return { kind: "not-installed" };
   const clock = deps.now ?? Date.now;
   const lifecycleTiming = createPortableLifecycleTimingRecorder({
-    now: clock,
+    now: deps.timingNow,
     write: deps.log ?? console.log,
   });
   const authority = lifecycleTiming.measure("authority", () => {
