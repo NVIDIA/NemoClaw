@@ -3,6 +3,7 @@
 
 import { strict as assert } from "node:assert";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
@@ -33,13 +34,22 @@ function runInstallerBody(home: string, body: string, env: NodeJS.ProcessEnv = {
   });
 }
 
-async function spawnTaggedGateway(home: string, gatewayPort: number, args: string[] = []) {
+async function spawnGateway(
+  home: string,
+  gatewayPort: number,
+  options: { args?: string[]; env?: NodeJS.ProcessEnv; historical?: boolean } = {},
+) {
   const gatewayBin = path.join(home, ".local", "bin", "openshell-gateway");
   fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
   fs.copyFileSync("/usr/bin/yes", gatewayBin);
   fs.chmodSync(gatewayBin, 0o755);
   const gatewayName = gatewayPort === 8080 ? "nemoclaw" : `nemoclaw-${gatewayPort}`;
-  const taggedArgv0 = `openshell-gateway[nemoclaw=${gatewayName};port=${gatewayPort}]`;
+  const gatewayArgv0 = options.historical
+    ? "openshell-gateway"
+    : `openshell-gateway[nemoclaw=${gatewayName};port=${gatewayPort}]`;
+  const baseEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith("OPENSHELL_")),
+  );
   const supervisor = spawn(
     "bash",
     [
@@ -60,10 +70,15 @@ async function spawnTaggedGateway(home: string, gatewayPort: number, args: strin
         'exit "$gateway_status"',
       ].join("\n"),
       "gateway-test-supervisor",
-      ...args,
+      ...(options.args ?? []),
     ],
     {
-      env: { ...process.env, GATEWAY_BIN: gatewayBin, TAGGED_ARGV0: taggedArgv0 },
+      env: {
+        ...baseEnv,
+        ...options.env,
+        GATEWAY_BIN: gatewayBin,
+        TAGGED_ARGV0: gatewayArgv0,
+      },
       stdio: ["ignore", "pipe", "ignore"],
     },
   );
@@ -73,6 +88,50 @@ async function spawnTaggedGateway(home: string, gatewayPort: number, args: strin
   const pid = Number(String(pidOutput).trim());
   assert(pid !== undefined && Number.isSafeInteger(pid) && pid > 0, "gateway returned no PID");
   return { gatewayBin, pid, supervisor };
+}
+
+function historicalGatewayEnv(runtimeDir: string, gatewayPort: number): Record<string, string> {
+  return {
+    OPENSHELL_DRIVERS: "docker",
+    OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+    OPENSHELL_SERVER_PORT: String(gatewayPort),
+    OPENSHELL_DISABLE_TLS: "true",
+    OPENSHELL_DISABLE_GATEWAY_AUTH: "true",
+    OPENSHELL_DB_URL: `sqlite:${path.join(runtimeDir, "openshell.db")}`,
+    OPENSHELL_GRPC_ENDPOINT: `http://127.0.0.1:${gatewayPort}`,
+    OPENSHELL_SSH_GATEWAY_HOST: "host.openshell.internal",
+    OPENSHELL_SSH_GATEWAY_PORT: String(gatewayPort),
+    OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+    OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "ghcr.io/nvidia/openshell/supervisor:0.0.44",
+  };
+}
+
+function writeHistoricalGatewayMarker(
+  runtimeDir: string,
+  gateway: { gatewayBin: string; pid: number },
+  desiredEnv: Record<string, string>,
+  openshellVersion: string,
+) {
+  const desiredPairs = Object.keys(desiredEnv)
+    .sort()
+    .map((key) => [key, desiredEnv[key]]);
+  fs.writeFileSync(
+    path.join(runtimeDir, "runtime.json"),
+    `${JSON.stringify({
+      version: 1,
+      pid: gateway.pid,
+      driver: "docker",
+      platform: "linux",
+      arch: process.arch,
+      endpoint: desiredEnv.OPENSHELL_GRPC_ENDPOINT,
+      desiredEnvHash: createHash("sha256").update(JSON.stringify(desiredPairs)).digest("hex"),
+      gatewayBin: gateway.gatewayBin,
+      openshellVersion,
+      dockerHost: null,
+      createdAt: "2026-05-14T00:00:00.000Z",
+    })}\n`,
+    { mode: 0o600 },
+  );
 }
 
 function processExists(pid: number): boolean {
@@ -88,7 +147,8 @@ type MutationPoint =
   | "before-named-destroy"
   | "between-destroy-commands"
   | "before-service-stop"
-  | "before-pid-fallback";
+  | "before-pid-fallback"
+  | "stable";
 
 function runRetirementWithIdentityMutation(mutationPoint: MutationPoint) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-retirement-identity-"));
@@ -162,7 +222,7 @@ function runRetirementWithIdentityMutation(mutationPoint: MutationPoint) {
     "  return 1",
     "}",
     "stop_legacy_openshell_gateway_process() {",
-    `  printf 'gateway pid-stop\\n' >> ${JSON.stringify(lifecycleLog)}`,
+    `  printf 'gateway pid-stop %s\\n' "\${1:-}" >> ${JSON.stringify(lifecycleLog)}`,
     "}",
     "preinstall_backup_and_retire_legacy_gateway",
   ].join("\n");
@@ -205,6 +265,13 @@ it.each([
   },
 );
 
+it("passes the installed OpenShell version to historical process qualification (#9705)", () => {
+  const { lifecycle, result } = runRetirementWithIdentityMutation("stable");
+
+  expect(result.status).toBe(0);
+  expect(lifecycle).toContain("gateway pid-stop 0.0.84");
+});
+
 it.skipIf(process.platform !== "linux")(
   "stops only the target-bound selected-port PID-file gateway (#9705)",
   async () => {
@@ -213,7 +280,7 @@ it.skipIf(process.platform !== "linux")(
     const home = path.join(root, "home");
     const runtimeDir = path.join(root, "runtime");
     fs.mkdirSync(runtimeDir, { recursive: true });
-    const gateway = await spawnTaggedGateway(home, 8080);
+    const gateway = await spawnGateway(home, 8080);
     const pidFile = path.join(runtimeDir, "openshell-gateway.pid");
     fs.writeFileSync(pidFile, `${String(gateway.pid)}\n`);
 
@@ -238,6 +305,82 @@ it.skipIf(process.platform !== "linux")(
 );
 
 it.skipIf(process.platform !== "linux")(
+  "stops a historical gateway bound by its runtime marker and environment (#9705)",
+  async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-retirement-old-runtime-"));
+    tempRoots.push(root);
+    const home = path.join(root, "home");
+    const runtimeDir = path.join(root, "runtime");
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    const desiredEnv = historicalGatewayEnv(runtimeDir, 8080);
+    const gateway = await spawnGateway(home, 8080, {
+      env: desiredEnv,
+      historical: true,
+    });
+    const pidFile = path.join(runtimeDir, "openshell-gateway.pid");
+    fs.writeFileSync(pidFile, `${String(gateway.pid)}\n`);
+    writeHistoricalGatewayMarker(runtimeDir, gateway, desiredEnv, "0.0.44");
+
+    try {
+      const result = runInstallerBody(home, "stop_legacy_openshell_gateway_process 0.0.44", {
+        NEMOCLAW_GATEWAY_PORT: "8080",
+        NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: runtimeDir,
+      });
+
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(fs.existsSync(pidFile)).toBe(false);
+      expect(processExists(gateway.pid)).toBe(false);
+    } finally {
+      try {
+        process.kill(gateway.pid, "SIGKILL");
+      } catch {
+        // The expected successful path already stopped the gateway.
+      }
+      gateway.supervisor.kill("SIGKILL");
+    }
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "keeps a historical gateway whose runtime evidence names another port (#9705)",
+  async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-retirement-old-port-"));
+    tempRoots.push(root);
+    const home = path.join(root, "home");
+    const runtimeDir = path.join(root, "runtime");
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    const desiredEnv = historicalGatewayEnv(runtimeDir, 9090);
+    const gateway = await spawnGateway(home, 9090, {
+      env: desiredEnv,
+      historical: true,
+    });
+    const pidFile = path.join(runtimeDir, "openshell-gateway.pid");
+    fs.writeFileSync(pidFile, `${String(gateway.pid)}\n`);
+    writeHistoricalGatewayMarker(runtimeDir, gateway, desiredEnv, "0.0.44");
+
+    try {
+      const result = runInstallerBody(home, "stop_legacy_openshell_gateway_process 0.0.44", {
+        NEMOCLAW_GATEWAY_PORT: "8080",
+        NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: runtimeDir,
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("PID-file or process identity is not target-bound");
+      expect(result.stderr).not.toContain(gateway.gatewayBin);
+      expect(fs.existsSync(pidFile)).toBe(true);
+      expect(processExists(gateway.pid)).toBe(true);
+    } finally {
+      try {
+        process.kill(gateway.pid, "SIGKILL");
+      } catch {
+        // The assertion above reports an unexpected early exit.
+      }
+      gateway.supervisor.kill("SIGKILL");
+    }
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
   "keeps a different-port PID-file gateway running (#9705)",
   async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-retirement-pid-port-"));
@@ -245,7 +388,7 @@ it.skipIf(process.platform !== "linux")(
     const home = path.join(root, "home");
     const runtimeDir = path.join(root, "runtime");
     fs.mkdirSync(runtimeDir, { recursive: true });
-    const gateway = await spawnTaggedGateway(home, 9090);
+    const gateway = await spawnGateway(home, 9090);
     const pidFile = path.join(runtimeDir, "openshell-gateway.pid");
     fs.writeFileSync(pidFile, `${String(gateway.pid)}\n`);
 
@@ -279,7 +422,7 @@ it.skipIf(process.platform !== "linux")(
     const home = path.join(root, "home");
     const runtimeDir = path.join(root, "runtime");
     fs.mkdirSync(runtimeDir, { recursive: true });
-    const gateway = await spawnTaggedGateway(home, 8080, ["unexpected"]);
+    const gateway = await spawnGateway(home, 8080, { args: ["unexpected"] });
     const pidFile = path.join(runtimeDir, "openshell-gateway.pid");
     fs.writeFileSync(pidFile, `${String(gateway.pid)}\n`);
 
@@ -312,7 +455,7 @@ it.skipIf(process.platform !== "linux")(
     const home = path.join(root, "home");
     const runtimeDir = path.join(root, "runtime");
     fs.mkdirSync(runtimeDir, { recursive: true });
-    const gateway = await spawnTaggedGateway(home, 8080);
+    const gateway = await spawnGateway(home, 8080);
     const pidFile = path.join(runtimeDir, "openshell-gateway.pid");
     fs.writeFileSync(pidFile, `${String(gateway.pid)}\n`);
     fs.chmodSync(gateway.gatewayBin, 0o775);
@@ -346,7 +489,7 @@ it.skipIf(process.platform !== "linux")(
     const home = path.join(root, "home");
     const runtimeDir = path.join(root, "runtime");
     fs.mkdirSync(runtimeDir, { recursive: true });
-    const gateway = await spawnTaggedGateway(home, 8080);
+    const gateway = await spawnGateway(home, 8080);
     const pidFile = path.join(runtimeDir, "openshell-gateway.pid");
     const replacement = `${gateway.gatewayBin}.replacement`;
     fs.writeFileSync(pidFile, `${String(gateway.pid)}\n`);

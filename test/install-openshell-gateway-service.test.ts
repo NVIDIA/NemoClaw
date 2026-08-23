@@ -179,7 +179,7 @@ function writeGatewayDiscoverySystemctlStub(
     activationRoot?: string;
     activationServices?: string[];
     failure?: {
-      command: "list-units" | "unit-path" | `show:${string}`;
+      command: "daemon-reload" | "list-units" | "unit-path" | `show:${string}`;
       diagnostic: string;
       status: number;
     };
@@ -211,6 +211,7 @@ function writeGatewayDiscoverySystemctlStub(
       options.activeRows ??
         activeServices.map((name) => `${name} loaded active running test service`),
     );
+  const daemonReload = failureLines("daemon-reload") ?? [":"];
   const showCases = Object.entries(options.services ?? {}).flatMap(([name, metadata]) => {
     const failure = failureLines(`show:${name}`);
     const response = failure ?? [
@@ -248,6 +249,9 @@ function writeGatewayDiscoverySystemctlStub(
       'case "$*" in',
       '  "--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager")',
       ...listUnits.map((line) => `    ${line}`),
+      "    ;;",
+      '  "--user daemon-reload")',
+      ...daemonReload.map((line) => `    ${line}`),
       "    ;;",
       ...showCases,
       "  *) exit 97 ;;",
@@ -558,6 +562,7 @@ describe("install.sh OpenShell gateway service", () => {
 
     expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(fs.existsSync(servicePath(home))).toBe(true);
+    expect(fs.readFileSync(systemctl.log, "utf-8")).toContain("--user daemon-reload\n");
   });
 
   it.each(["list-units", "show:foreign-gateway.service"] as const)(
@@ -587,6 +592,22 @@ describe("install.sh OpenShell gateway service", () => {
       expect(fs.existsSync(servicePath(home))).toBe(false);
     },
   );
+
+  it("fails with a fixed diagnostic when the staged service cannot be loaded (#9705)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const secret = "manager-reload-secret";
+    const systemctl = writeGatewayDiscoverySystemctlStub(home, {
+      failure: { command: "daemon-reload", diagnostic: secret, status: 1 },
+    });
+
+    const result = installWithGatewayDiscovery(home, gatewayBin, systemctl.bin);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Could not refresh the systemd user manager");
+    expect(result.stderr).not.toContain(secret);
+    expect(fs.existsSync(servicePath(home))).toBe(true);
+  });
 
   it("fails closed when the user manager becomes unavailable during a metadata query (#9705)", () => {
     const home = makeTempRoot();

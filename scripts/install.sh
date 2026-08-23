@@ -3142,6 +3142,11 @@ NODE
     error "Could not install OpenShell gateway user service at $service_path"
   fi
 
+  if [[ "$OPENSHELL_GATEWAY_CANONICAL_SERVICE_SET_IDENTITY_AVAILABLE" == "true" ]] \
+    && ! run_gateway_service_command systemctl --user daemon-reload >/dev/null 2>&1; then
+    error "Could not refresh the systemd user manager after installing the OpenShell gateway user service."
+  fi
+
   info "Installed OpenShell gateway user service at $service_path"
 }
 
@@ -4376,6 +4381,7 @@ LEGACY_GATEWAY_PROCESS_IDENTITY=""
 
 inspect_trusted_legacy_openshell_gateway_process() {
   local pid_file="${1:-}" gateway_name="${2:-}" gateway_port="${3:-}"
+  local old_openshell_version="${4:-}"
   local user_gateway_bin inspection_output
   local -a inspection_records=()
   LEGACY_GATEWAY_PROCESS_STATUS=""
@@ -4398,6 +4404,7 @@ inspect_trusted_legacy_openshell_gateway_process() {
       userGatewayBin,
       systemLocalGatewayBin,
       systemGatewayBin,
+      expectedOldOpenShellVersion,
     ] = process.argv.slice(1);
     const expectedUid = Number(expectedUidText);
     const expectedGatewayPort = Number(expectedGatewayPortText);
@@ -4439,9 +4446,9 @@ inspect_trusted_legacy_openshell_gateway_process() {
       first.size === second.size &&
       first.mtimeNs === second.mtimeNs &&
       first.ctimeNs === second.ctimeNs;
-    const readAndHash = (fileDescriptor, size, includeContents) => {
+    const readAndHash = (fileDescriptor, size, includeContents, contentsLimit = 64) => {
       if (size < 0n || size > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-      if (includeContents && size > 64n) return null;
+      if (includeContents && size > BigInt(contentsLimit)) return null;
       const hash = createHash("sha256");
       const chunks = [];
       const buffer = Buffer.allocUnsafe(64 * 1024);
@@ -4474,13 +4481,13 @@ inspect_trusted_legacy_openshell_gateway_process() {
         stat.ctimeNs,
         digest,
       ].join(":");
-    const inspectFile = (filePath, owner, executable, includeContents) => {
+    const inspectFile = (filePath, owner, executable, includeContents, contentsLimit = 64) => {
       let descriptor;
       try {
         descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow | nonblock);
         const before = fs.fstatSync(descriptor, { bigint: true });
         const namedBefore = fs.lstatSync(filePath, { bigint: true });
-        const inspected = readAndHash(descriptor, before.size, includeContents);
+        const inspected = readAndHash(descriptor, before.size, includeContents, contentsLimit);
         const after = inspected ? fs.fstatSync(descriptor, { bigint: true }) : null;
         const namedAfter = after ? fs.lstatSync(filePath, { bigint: true }) : null;
         if (
@@ -4572,7 +4579,7 @@ inspect_trusted_legacy_openshell_gateway_process() {
       }
       return values;
     };
-    const processTargetsGateway = (tokens) => {
+    const processTargetKind = (tokens) => {
       const argv0 = tokens[0] ?? "";
       const tagged = /^openshell-gateway\[nemoclaw=(nemoclaw(?:-[0-9]+)?);port=([0-9]+)\]$/u.exec(
         path.basename(argv0),
@@ -4582,9 +4589,12 @@ inspect_trusted_legacy_openshell_gateway_process() {
           tokens.length === 1 &&
           tagged[1] === expectedGatewayName &&
           tagged[2] === String(expectedGatewayPort)
-        );
+        )
+          ? "tagged"
+          : null;
       }
-      if (path.basename(argv0) !== "openshell-gateway") return false;
+      if (path.basename(argv0) !== "openshell-gateway") return null;
+      if (tokens.length === 1) return "historical";
       const ports = flagValues(tokens, "--port");
       const names = flagValues(tokens, "--name");
       return (
@@ -4592,7 +4602,103 @@ inspect_trusted_legacy_openshell_gateway_process() {
         ports[0] === String(expectedGatewayPort) &&
         names.length <= 1 &&
         (names.length === 0 || names[0] === expectedGatewayName)
-      );
+      )
+        ? "explicit"
+        : null;
+    };
+    const readProcessEnvironment = (pid) => {
+      const raw = fs.readFileSync(`/proc/${pid}/environ`);
+      if (raw.length === 0 || raw.length > 64 * 1024) return null;
+      const values = {};
+      for (const entry of raw.toString("utf8").split("\0")) {
+        if (entry.length === 0) continue;
+        const separator = entry.indexOf("=");
+        if (separator <= 0) return null;
+        const key = entry.slice(0, separator);
+        if (Object.hasOwn(values, key)) return null;
+        values[key] = entry.slice(separator + 1);
+      }
+      return { raw, values };
+    };
+    const historicalRuntimeEvidence = (pid, executablePath) => {
+      if (expectedOldOpenShellVersion.length === 0) return null;
+      const markerPath = path.join(path.dirname(pidFile), "runtime.json");
+      const markerRecord = inspectFile(markerPath, expectedUid, false, true, 64 * 1024);
+      const processEnvironment = readProcessEnvironment(pid);
+      if (!markerRecord || !processEnvironment) return null;
+      let marker;
+      let endpoint;
+      try {
+        marker = JSON.parse(markerRecord.contents);
+        endpoint = new URL(marker.endpoint);
+      } catch {
+        return null;
+      }
+      if (
+        marker === null ||
+        typeof marker !== "object" ||
+        marker.version !== 1 ||
+        marker.pid !== pid ||
+        marker.driver !== "docker" ||
+        marker.platform !== "linux" ||
+        marker.arch !== process.arch ||
+        marker.gatewayBin !== executablePath ||
+        marker.openshellVersion !== expectedOldOpenShellVersion ||
+        !/^[0-9a-f]{64}$/u.test(marker.desiredEnvHash) ||
+        (typeof marker.dockerHost !== "string" && marker.dockerHost !== null) ||
+        typeof marker.createdAt !== "string" ||
+        Number.isNaN(Date.parse(marker.createdAt)) ||
+        (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") ||
+        endpoint.hostname !== "127.0.0.1" ||
+        endpoint.port !== String(expectedGatewayPort) ||
+        endpoint.username !== "" ||
+        endpoint.password !== "" ||
+        endpoint.pathname !== "/" ||
+        endpoint.search !== "" ||
+        endpoint.hash !== ""
+      ) {
+        return null;
+      }
+      const environment = processEnvironment.values;
+      if (
+        environment.OPENSHELL_DRIVERS !== "docker" ||
+        environment.OPENSHELL_SERVER_PORT !== String(expectedGatewayPort) ||
+        environment.OPENSHELL_DB_URL !== `sqlite:${path.dirname(pidFile)}/openshell.db` ||
+        environment.OPENSHELL_GRPC_ENDPOINT !== marker.endpoint
+      ) {
+        return null;
+      }
+      const desiredEnvironmentKeys = [
+        "OPENSHELL_DRIVERS",
+        "OPENSHELL_BIND_ADDRESS",
+        "OPENSHELL_SERVER_PORT",
+        "OPENSHELL_DISABLE_TLS",
+        "OPENSHELL_DISABLE_GATEWAY_AUTH",
+        "OPENSHELL_LOCAL_TLS_DIR",
+        "OPENSHELL_DB_URL",
+        "OPENSHELL_GRPC_ENDPOINT",
+        "OPENSHELL_SSH_GATEWAY_HOST",
+        "OPENSHELL_SSH_GATEWAY_PORT",
+        "OPENSHELL_DOCKER_NETWORK_NAME",
+        "OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
+        "OPENSHELL_DOCKER_SUPERVISOR_BIN",
+        "OPENSHELL_GATEWAY_CONFIG",
+        "OPENSHELL_VM_DRIVER_STATE_DIR",
+        "OPENSHELL_DRIVER_DIR",
+      ];
+      const desiredPairs = desiredEnvironmentKeys
+        .filter((key) => typeof environment[key] === "string")
+        .sort()
+        .map((key) => [key, environment[key]]);
+      const desiredEnvironmentHash = createHash("sha256")
+        .update(JSON.stringify(desiredPairs))
+        .digest("hex");
+      if (desiredEnvironmentHash !== marker.desiredEnvHash) return null;
+      return createHash("sha256")
+        .update(markerRecord.identity)
+        .update("\0")
+        .update(processEnvironment.raw)
+        .digest("hex");
     };
 
     const pidRecord = inspectFile(pidFile, expectedUid, false, true);
@@ -4636,7 +4742,13 @@ inspect_trusted_legacy_openshell_gateway_process() {
       .toString("utf8")
       .split("\0")
       .filter((token) => token.length > 0);
-    if (!processTargetsGateway(commandLineTokens)) process.exit(1);
+    const targetKind = processTargetKind(commandLineTokens);
+    if (!targetKind) process.exit(1);
+    const runtimeEvidenceDigest =
+      targetKind === "historical"
+        ? historicalRuntimeEvidence(pid, allowedExecutable.path)
+        : createHash("sha256").update("explicit-target").digest("hex");
+    if (!runtimeEvidenceDigest) process.exit(1);
     const afterProcessStat = readProcessStat(pid);
     const currentProcessDirectory = fs.statSync(`/proc/${pid}`, { bigint: true });
     if (
@@ -4654,10 +4766,12 @@ inspect_trusted_legacy_openshell_gateway_process() {
       beforeProcessStat.startTime,
       processExecutableIdentity,
       commandLineDigest,
+      runtimeEvidenceDigest,
     ].join(":");
     process.stdout.write(`running\n${pid}\n${pidRecord.identity}\n${processIdentity}`);
   ' "$pid_file" "$EUID" "$gateway_name" "$gateway_port" "$user_gateway_bin" \
-    "$OPENSHELL_GATEWAY_SYSTEM_LOCAL_BIN" "$OPENSHELL_GATEWAY_SYSTEM_BIN" 2>/dev/null)" || return 1
+    "$OPENSHELL_GATEWAY_SYSTEM_LOCAL_BIN" "$OPENSHELL_GATEWAY_SYSTEM_BIN" \
+    "$old_openshell_version" 2>/dev/null)" || return 1
 
   mapfile -t inspection_records <<<"$inspection_output"
   [[ "${#inspection_records[@]}" -eq 4 ]] || return 1
@@ -4668,7 +4782,7 @@ inspect_trusted_legacy_openshell_gateway_process() {
   [[ "${inspection_records[1]}" =~ ^[1-9][0-9]*$ ]] || return 1
   [[ "${inspection_records[2]}" =~ ^[0-9]+(:[0-9]+){7}:[0-9a-f]{64}$ ]] || return 1
   if [[ "${inspection_records[0]}" == "running" ]]; then
-    [[ "${inspection_records[3]}" =~ ^[0-9]+:[0-9]+:[0-9]+(:[0-9]+){7}:[0-9a-f]{64}:[0-9a-f]{64}$ ]] \
+    [[ "${inspection_records[3]}" =~ ^[0-9]+:[0-9]+:[0-9]+(:[0-9]+){7}:[0-9a-f]{64}:[0-9a-f]{64}:[0-9a-f]{64}$ ]] \
       || return 1
   elif [[ "${inspection_records[3]}" != "-" ]]; then
     return 1
@@ -4696,9 +4810,9 @@ legacy_gateway_process_snapshot() {
 
 revalidate_trusted_legacy_openshell_gateway_process() {
   local pid_file="${1:-}" gateway_name="${2:-}" gateway_port="${3:-}"
-  local expected_snapshot="${4:-}" current_snapshot
+  local expected_snapshot="${4:-}" old_openshell_version="${5:-}" current_snapshot
   inspect_trusted_legacy_openshell_gateway_process \
-    "$pid_file" "$gateway_name" "$gateway_port" \
+    "$pid_file" "$gateway_name" "$gateway_port" "$old_openshell_version" \
     || error "Refusing to signal the legacy OpenShell gateway because its target identity could not be revalidated."
   current_snapshot="$(legacy_gateway_process_snapshot)"
   if [[ "$LEGACY_GATEWAY_PROCESS_STATUS" != "running" ||
@@ -4710,6 +4824,7 @@ revalidate_trusted_legacy_openshell_gateway_process() {
 stop_legacy_openshell_gateway_process() {
   [ "$(uname -s)" = "Linux" ] || return 1
 
+  local old_openshell_version="${1:-}"
   local gateway_name gateway_port runtime_dir pid_file pid pid_file_identity expected_snapshot attempt
   gateway_port="$(resolve_nemoclaw_gateway_port)" || return 2
   gateway_name="$(nemoclaw_gateway_name)" || return 2
@@ -4723,7 +4838,7 @@ stop_legacy_openshell_gateway_process() {
   pid_file="${runtime_dir}/openshell-gateway.pid"
   [[ -e "$pid_file" || -L "$pid_file" ]] || return 1
   inspect_trusted_legacy_openshell_gateway_process \
-    "$pid_file" "$gateway_name" "$gateway_port" \
+    "$pid_file" "$gateway_name" "$gateway_port" "$old_openshell_version" \
     || error "Refusing to retire the legacy OpenShell gateway because its PID-file or process identity is not target-bound."
   pid="$LEGACY_GATEWAY_PROCESS_PID"
   pid_file_identity="$LEGACY_GATEWAY_PID_FILE_IDENTITY"
@@ -4733,7 +4848,7 @@ stop_legacy_openshell_gateway_process() {
   fi
   expected_snapshot="$(legacy_gateway_process_snapshot)"
   revalidate_trusted_legacy_openshell_gateway_process \
-    "$pid_file" "$gateway_name" "$gateway_port" "$expected_snapshot"
+    "$pid_file" "$gateway_name" "$gateway_port" "$expected_snapshot" "$old_openshell_version"
   kill "$pid" 2>/dev/null \
     || error "Could not stop the recorded legacy OpenShell gateway process ${pid}."
   for attempt in {1..50}; do
@@ -4742,7 +4857,7 @@ stop_legacy_openshell_gateway_process() {
   done
   if kill -0 "$pid" 2>/dev/null; then
     revalidate_trusted_legacy_openshell_gateway_process \
-      "$pid_file" "$gateway_name" "$gateway_port" "$expected_snapshot"
+      "$pid_file" "$gateway_name" "$gateway_port" "$expected_snapshot" "$old_openshell_version"
     kill -KILL "$pid" 2>/dev/null \
       || error "Could not terminate the recorded legacy OpenShell gateway process ${pid}."
     for attempt in {1..10}; do
@@ -4951,7 +5066,7 @@ preinstall_backup_and_retire_legacy_gateway() {
           || {
             revalidate_openshell_gateway_retirement_service_set \
               "$retirement_service_set_identity" "$gateway_port"
-            stop_legacy_openshell_gateway_process
+            stop_legacy_openshell_gateway_process "$old_openshell_version"
           }; } \
           && { openshell gateway remove "$gateway_name" >/dev/null 2>&1 \
             || warn "The legacy gateway process stopped, but its OpenShell registration could not be removed; onboarding will replace the stale registration."; }; } \
@@ -4968,7 +5083,7 @@ preinstall_backup_and_retire_legacy_gateway() {
           || {
             revalidate_openshell_gateway_retirement_service_set \
               "$retirement_service_set_identity" "$gateway_port"
-            stop_legacy_openshell_gateway_process
+            stop_legacy_openshell_gateway_process "$old_openshell_version"
           }; } \
           && { openshell gateway remove "$gateway_name" >/dev/null 2>&1 \
             || warn "Legacy gateway ${gateway_name} stopped, but its OpenShell registration could not be removed; onboarding will replace only that stale registration."; }; } \
