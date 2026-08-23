@@ -1260,14 +1260,12 @@ function readStandaloneGatewayLaunch(
   });
 }
 
-function waitForProcessQuiescence(snapshot: PodmanGatewayWatcherSnapshot): void {
+function waitForProcessExit(snapshot: PodmanGatewayWatcherSnapshot): boolean {
   for (let attempt = 0; attempt < 300; attempt += 1) {
-    const state = processState(snapshot.pid);
-    if (state === null || state === "X" || state === "Z") return;
-    if (processInstanceSuspended(snapshot)) return;
+    if (!processInstanceAlive(snapshot)) return true;
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
   }
-  throw new Error("Managed bootstrap Podman gateway owner did not quiesce.");
+  return !processInstanceAlive(snapshot);
 }
 
 function listenerPids(port: number): readonly number[] {
@@ -1441,8 +1439,18 @@ function createProductionWatcherController(
         }
         return;
       }
-      process.kill(snapshot.pid, "SIGSTOP");
-      waitForProcessQuiescence(snapshot);
+      if (!processInstanceAlive(snapshot)) {
+        throw new Error(
+          "Managed bootstrap Podman standalone gateway identity changed before stop.",
+        );
+      }
+      process.kill(snapshot.pid, "SIGTERM");
+      if (waitForProcessExit(snapshot)) return;
+      if (!processInstanceAlive(snapshot)) return;
+      process.kill(snapshot.pid, "SIGKILL");
+      if (!waitForProcessExit(snapshot)) {
+        throw new Error("Managed bootstrap Podman standalone gateway did not stop.");
+      }
     },
     resumeSameOwner(snapshot) {
       if (snapshot.ownerKind === "managed-service") {
