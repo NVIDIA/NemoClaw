@@ -43,8 +43,8 @@ spec:
       cleanup: preserve
 
   runtime:
-    image: ghcr.io/ggml-org/llama.cpp@sha256:6b0bf4974521b2c16a498c7dd0715f4eb077725f1483e0ee0f617679005b1e1f
-    imageDownloadSizeBytes: 2523824482
+    image: ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:9d0cddd7bcaf98d3b75a7fc8c7ce3af3a9973b5f23a8092e7e93a9afc473a675
+    imageDownloadSizeBytes: 1827478485
     platforms:
       - linux/amd64
       - linux/arm64
@@ -53,7 +53,7 @@ spec:
     restartPolicy: unless-stopped
     hosts: 1
     cuda:
-      baseImage: docker.io/nvidia/cuda@sha256:ebef3c171eeef0298e4eb2e4be843105edf3b8b0ac45e0b43acee358e8046867
+      baseImage: docker.io/nvidia/cuda@sha256:789e629e49401647e22b7054ae9c6c4f6427dba68010ba428deb4cc6b063676e
       minimumDriverVersion: 580.65.06
     gpu:
       vendor: nvidia
