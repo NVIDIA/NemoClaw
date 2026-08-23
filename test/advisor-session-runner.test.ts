@@ -31,7 +31,7 @@ const sdk = vi.hoisted(() => {
     name: string;
     execute: (
       toolCallId: string,
-      params: Record<string, never>,
+      params: Record<string, unknown>,
       signal: AbortSignal | undefined,
       onUpdate: undefined,
       context: never,
@@ -100,6 +100,26 @@ const sdk = vi.hoisted(() => {
     }
   };
 
+  const executeReadTool = async (
+    readTool: MockTool,
+    readPath: string,
+    emit: Listener,
+  ): Promise<void> => {
+    emit({ type: "tool_execution_start", toolName: readTool.name });
+    try {
+      await readTool.execute(
+        `${readTool.name}-call`,
+        { path: readPath },
+        undefined,
+        undefined,
+        undefined as never,
+      );
+      emit({ type: "tool_execution_end", toolName: readTool.name, isError: false });
+    } catch {
+      emit({ type: "tool_execution_end", toolName: readTool.name, isError: true });
+    }
+  };
+
   const createAgentSession = vi.fn(async (options: { customTools?: MockTool[] }) => {
     state.customTools = options.customTools ?? [];
     const listeners = new Set<Listener>();
@@ -119,6 +139,10 @@ const sdk = vi.hoisted(() => {
       },
       async prompt(prompt: string) {
         state.prompts.push(prompt);
+        const requiredReadPath = /^- (.+)$/mu.exec(prompt.split("Required files:\n")[1] ?? "")?.[1];
+        const readTool = state.customTools.find(
+          (tool) => activeToolNames.includes(tool.name) && tool.name === "read",
+        );
         const contextTool = state.customTools.find(
           (tool) => activeToolNames.includes(tool.name) && tool.name.endsWith("_context"),
         );
@@ -132,6 +156,9 @@ const sdk = vi.hoisted(() => {
         const retryResponse = terminalTool ? undefined : state.retryResponses.shift();
         const isRepairPrompt =
           prompt.includes("Call `turn_action` now") || prompt.includes("Complete the repair");
+        await (readTool && requiredReadPath
+          ? executeReadTool(readTool, requiredReadPath, emit)
+          : Promise.resolve());
         await (contextTool && !state.omitContextTool
           ? executeContextTool(contextTool, emit)
           : Promise.resolve());
@@ -176,6 +203,7 @@ const sdk = vi.hoisted(() => {
         const omitThisAnalysis = state.omitAnalysis || state.omitAnalysisPrompts > 0;
         state.omitAnalysisPrompts = Math.max(0, state.omitAnalysisPrompts - 1);
         const shouldEmitText =
+          !requiredReadPath &&
           !omitThisAnalysis &&
           retryResponse !== "exhausted" &&
           (!prompt.includes("Emit no prose before or after") ||
@@ -294,9 +322,10 @@ function commitTurn(name: string): AdvisorPromptTurn {
   };
 }
 
-async function run(promptTurns: AdvisorPromptTurn[]) {
+async function run(promptTurns: AdvisorPromptTurn[], prepare?: (dir: string) => void) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-session-runner-"));
   tempDirs.push(dir);
+  prepare?.(dir);
   process.env.TEST_ADVISOR_KEY = "test-key";
   return runReadOnlyAdvisor({
     cwd: dir,
@@ -360,6 +389,22 @@ describe("advisor session runner", () => {
 
     expect(result.fatalError).toBeUndefined();
     expect(transport.configure).not.toHaveBeenCalled();
+  });
+
+  it("prepares one read for equivalent required paths (#9963)", async () => {
+    const requiredTurn = {
+      ...analysisTurn("only-analysis"),
+      requiredReadPaths: ["required.txt", "./required.txt"],
+    };
+    const result = await run([requiredTurn], (dir) => {
+      fs.writeFileSync(path.join(dir, "required.txt"), "required context\n");
+    });
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(sdk.state.prompts.filter((prompt) => prompt.includes("Required files:"))).toHaveLength(
+      1,
+    );
   });
 
   it("clears a transient provider error after the same-session retry succeeds", async () => {

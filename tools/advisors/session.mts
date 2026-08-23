@@ -816,11 +816,12 @@ async function canonicalizeRequiredReadPaths(
   await Promise.all(
     promptTurns.map(async (turn) => {
       if (turn.requiredReadPaths === undefined) return;
-      turn.requiredReadPaths = await Promise.all(
+      const canonicalPaths = await Promise.all(
         [...new Set(turn.requiredReadPaths)].map((candidate) =>
           canonicalRepoReadPath(cwd, candidate),
         ),
       );
+      turn.requiredReadPaths = [...new Set(canonicalPaths)];
     }),
   );
 }
