@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Automation / PR Limit
+name: Governance / Enforce Open PR Limit
 
 # pull_request_target runs in the base repository context. This workflow never
 # checks out or executes pull request code.
