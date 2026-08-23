@@ -799,8 +799,18 @@ describe("resolveVllmGpuMemoryUtilization", () => {
         "0.5",
       ]),
     ).toBe(0.5);
+    expect(resolveVllmGpuMemoryUtilization(0.7, ["--gpu_memory_utilization=0.6"])).toBe(0.6);
     expect(resolveVllmGpuMemoryUtilization(undefined, ["--max-num-seqs", "2"])).toBeUndefined();
   });
+
+  it.each(["--gpu-memory-u", "--gpu_memory_u=0.5"])(
+    "rejects the abbreviated option %s",
+    (option) => {
+      expect(() => resolveVllmGpuMemoryUtilization(0.7, [option, "0.5"])).toThrow(
+        /must use the full --gpu-memory-utilization option name/,
+      );
+    },
+  );
 
   it("rejects a missing utilization value", () => {
     expect(() => resolveVllmGpuMemoryUtilization(0.7, ["--gpu-memory-utilization"])).toThrow(

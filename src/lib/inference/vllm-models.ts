@@ -701,17 +701,30 @@ export function resolveVllmGpuMemoryUtilization(
       : validateVllmGpuMemoryUtilization(recipeUtilization);
   for (let index = 0; index < extraServeArgs.length; index += 1) {
     const argument = extraServeArgs[index]!;
+    const separator = argument.indexOf("=");
+    const option = separator < 0 ? argument : argument.slice(0, separator);
+    const normalizedOption = option.replaceAll("_", "-");
+    if (
+      normalizedOption.length > 2 &&
+      VLLM_GPU_MEMORY_UTILIZATION_ARG.startsWith(normalizedOption) &&
+      normalizedOption !== VLLM_GPU_MEMORY_UTILIZATION_ARG
+    ) {
+      throw new Error(
+        `GPU memory utilization overrides must use the full ${VLLM_GPU_MEMORY_UTILIZATION_ARG} option name.`,
+      );
+    }
+    if (normalizedOption !== VLLM_GPU_MEMORY_UTILIZATION_ARG) continue;
     let value: string | undefined;
-    if (argument === VLLM_GPU_MEMORY_UTILIZATION_ARG) {
+    if (separator < 0) {
       value = extraServeArgs[index + 1];
       if (value === undefined) {
         throw new Error(`${VLLM_GPU_MEMORY_UTILIZATION_ARG} requires a value.`);
       }
       index += 1;
-    } else if (argument.startsWith(`${VLLM_GPU_MEMORY_UTILIZATION_ARG}=`)) {
-      value = argument.slice(VLLM_GPU_MEMORY_UTILIZATION_ARG.length + 1);
+    } else {
+      value = argument.slice(separator + 1);
     }
-    if (value !== undefined) utilization = parseVllmGpuMemoryUtilization(value);
+    utilization = parseVllmGpuMemoryUtilization(value);
   }
   return utilization;
 }

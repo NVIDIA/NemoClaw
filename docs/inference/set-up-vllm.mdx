@@ -580,7 +580,7 @@ NEMOCLAW_PROVIDER=install-vllm \
 
 If the selected image does not support an argument, the managed container exits and NemoClaw prints the log tail.
 
-Before large downloads, NemoClaw requires valid `nvidia-smi` total/free-memory telemetry for the GPU selected by the managed Docker recipe.
+When the selected managed recipe defines a GPU-memory utilization value, NemoClaw requires valid `nvidia-smi` total/free-memory telemetry for the Docker-selected GPU before large downloads.
 It repeats the same check with fresh telemetry immediately before launch so another workload cannot consume the required free GPU memory unnoticed during the download.
 If telemetry is unavailable, the Docker-selected device cannot be resolved, or free memory is below the effective utilization requirement, onboarding stops with a diagnostic and can be resumed after the GPU state is corrected.
 

@@ -280,31 +280,31 @@ describe("managed vLLM GPU memory preflight", () => {
     expect(errors).toContain("then resume onboarding");
   });
 
-  it("uses the effective appended memory override for the early preflight", async () => {
-    const profile = detectVllmProfile({ type: "nvidia" })!;
-    process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-27b";
-    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify([
-      "--gpu-memory-utilization",
-      "0.9",
-    ]);
-    mockHostCommands({
-      computeCap: "9.0\n",
-      gpuMemory: "0, GPU-1234, 100000, 80000\n",
-    });
-    mockDockerDaemon(profile.containerName);
+  it.each(["--gpu-memory-utilization", "--gpu_memory_utilization"])(
+    "uses the effective %s override for the early preflight",
+    async (option) => {
+      const profile = detectVllmProfile({ type: "nvidia" })!;
+      process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-27b";
+      process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify([option, "0.9"]);
+      mockHostCommands({
+        computeCap: "9.0\n",
+        gpuMemory: "0, GPU-1234, 100000, 80000\n",
+      });
+      mockDockerDaemon(profile.containerName);
 
-    const result = await installVllm(profile, {
-      hasImage: false,
-      nonInteractive: true,
-      promptFn: vi.fn(),
-    });
+      const result = await installVllm(profile, {
+        hasImage: false,
+        nonInteractive: true,
+        promptFn: vi.fn(),
+      });
 
-    expect(result).toEqual({ ok: false });
-    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
-    expect(errSpy).toHaveBeenCalledWith(
-      expect.stringContaining("sets --gpu-memory-utilization=0.9"),
-    );
-  });
+      expect(result).toEqual({ ok: false });
+      expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+      expect(errSpy).toHaveBeenCalledWith(
+        expect.stringContaining("sets --gpu-memory-utilization=0.9"),
+      );
+    },
+  );
 
   it("does not apply the recipe default after a lower appended override", async () => {
     const profile = detectVllmProfile({ type: "nvidia" })!;
