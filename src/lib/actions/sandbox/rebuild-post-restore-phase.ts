@@ -12,7 +12,7 @@ import type * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
 import * as registry from "../../state/registry";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
-import { executeSandboxCommand } from "./process-recovery";
+import { executeSandboxExecCommand } from "./process-recovery";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import {
   refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
@@ -229,6 +229,7 @@ export async function runRebuildPostRestorePhase(
   let mutablePermsRepairUnverified = false;
   let mutableConfigHashRefreshUnverified = false;
   let finalMutableConfigHashUnverified = false;
+  let openClawDoctorTransportUnverified = false;
   let messagingHostForwardUnverified = false;
   const policyPresetRestoreIncomplete =
     failedPresets.length > 0 ||
@@ -237,19 +238,23 @@ export async function runRebuildPostRestorePhase(
 
   if (targetAgentName === "openclaw") {
     log("Running openclaw doctor --fix inside sandbox for post-upgrade structure repair");
-    const doctorResult = executeSandboxCommand(
+    const doctorResult = executeSandboxExecCommand(
       sandboxName,
       "openclaw doctor --fix",
       OPENCLAW_DOCTOR_TIMEOUT_MS,
+      { allowLocalDockerFallback: false },
     );
     log(
       `doctor --fix: exit=${doctorResult?.status}, stdout=${(doctorResult?.stdout || "").substring(0, 200)}`,
     );
-    if (doctorResult && doctorResult.status === 0) {
+    if (doctorResult === null) {
+      openClawDoctorTransportUnverified = true;
+      console.log(`  ${D}Post-upgrade structure repair completion was not verified${R}`);
+    } else if (doctorResult.status === 0) {
       console.log(`  ${G}\u2713${R} Post-upgrade structure check passed`);
     } else {
       console.log(
-        `  ${D}Post-upgrade structure check skipped (doctor returned ${doctorResult?.status ?? "null"})${R}`,
+        `  ${D}Post-upgrade structure repair completed with exit ${doctorResult.status}${R}`,
       );
     }
 
@@ -411,16 +416,18 @@ export async function runRebuildPostRestorePhase(
   }
 
   console.log("");
-  const postRestoreComplete = postRestoreCompleted({
-    hermesGatewayRestoreUnverified,
-    messagingHostForwardUnverified,
-    mcpBridgeRestoreUnverified,
-    mutableConfigHashRefreshUnverified:
-      mutableConfigHashRefreshUnverified || finalMutableConfigHashUnverified,
-    mutablePermsRepairUnverified,
-    policyPresetRestoreIncomplete,
-    restoreSucceeded,
-  });
+  const postRestoreComplete =
+    !openClawDoctorTransportUnverified &&
+    postRestoreCompleted({
+      hermesGatewayRestoreUnverified,
+      messagingHostForwardUnverified,
+      mcpBridgeRestoreUnverified,
+      mutableConfigHashRefreshUnverified:
+        mutableConfigHashRefreshUnverified || finalMutableConfigHashUnverified,
+      mutablePermsRepairUnverified,
+      policyPresetRestoreIncomplete,
+      restoreSucceeded,
+    });
   if (postRestoreComplete) {
     printSuccessfulRebuildSummary({
       sandboxName,
@@ -452,6 +459,11 @@ export async function runRebuildPostRestorePhase(
     if (finalMutableConfigHashUnverified && !mutableConfigHashRefreshUnverified) {
       console.log(
         `    Final OpenClaw configuration hash verification failed after post-restore finalization \u2014 restart the sandbox or re-run \`${CLI_NAME} ${sandboxName} rebuild\` before relying on config integrity checks`,
+      );
+    }
+    if (openClawDoctorTransportUnverified) {
+      console.log(
+        `    OpenClaw post-upgrade structure repair did not return a trusted completion result; re-run \`${CLI_NAME} ${sandboxName} rebuild\` before relying on config integrity checks`,
       );
     }
     if (messagingHostForwardUnverified) {
@@ -486,9 +498,15 @@ export async function runRebuildPostRestorePhase(
   }
   if (
     targetAgentName === "openclaw" &&
-    (mutableConfigHashRefreshUnverified || finalMutableConfigHashUnverified)
+    (openClawDoctorTransportUnverified ||
+      mutableConfigHashRefreshUnverified ||
+      finalMutableConfigHashUnverified)
   ) {
-    bail("OpenClaw config integrity verification failed after rebuild.");
+    bail(
+      openClawDoctorTransportUnverified
+        ? "OpenClaw post-upgrade structure repair completion was not verified after rebuild."
+        : "OpenClaw config integrity verification failed after rebuild.",
+    );
     return;
   }
   if (
