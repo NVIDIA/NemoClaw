@@ -415,6 +415,23 @@ function sameState(left: ExactPodmanContainerState, right: ExactPodmanContainerS
   );
 }
 
+function boundedBootstrapSecurityFailure(
+  engine: BootstrapEngine,
+  runtimeId: string,
+): string | null {
+  const result = engine.capture(
+    ["container", "logs", "--tail", "80", runtimeId],
+    DEFAULT_COMMAND_TIMEOUT_MS,
+  );
+  if (result.status !== 0 || result.error) return null;
+  const allowed = `${result.stdout}\n${result.stderr}`
+    .split(/\r?\n/u)
+    .filter((line) =>
+      /^\[SECURITY\] Managed bootstrap (?:entrypoint|trampoline): [\x20-\x7e]{1,400}$/u.test(line),
+    );
+  return allowed.at(-1) ?? null;
+}
+
 function inspectStable(
   engine: BootstrapEngine,
   prepared: PodmanBootstrapPreparedReplacement,
@@ -423,11 +440,16 @@ function inspectStable(
   const first = inspectExact(engine, prepared);
   const second = inspectExact(engine, prepared);
   if (!sameState(first, second) || second.running !== expectedRunning) {
+    const bootstrapFailure =
+      expectedRunning && !second.running
+        ? boundedBootstrapSecurityFailure(engine, prepared.replacementRuntimeId)
+        : null;
     const detail = [
       `status ${second.status}`,
       `exit ${second.exitCode === null ? "unknown" : String(second.exitCode)}`,
       `oom ${second.oomKilled === null ? "unknown" : String(second.oomKilled)}`,
       ...(second.error ? [`error ${second.error}`] : []),
+      ...(bootstrapFailure ? [`bootstrap ${bootstrapFailure}`] : []),
     ].join("; ");
     fail(
       `the exact replacement is not stably ${expectedRunning ? "running" : "stopped"} (${detail})`,

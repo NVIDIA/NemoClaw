@@ -119,6 +119,7 @@ function preparedReplacement(
 }
 
 interface HarnessOptions {
+  readonly bootstrapLog?: string;
   readonly completionAgent?: ManagedStartupAgent;
   readonly completionMode?: number;
   readonly completionUnavailableCount?: number;
@@ -219,6 +220,7 @@ function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
   > = {
     "container cp": copy,
     "container inspect": inspect,
+    "container logs": () => result({ stderr: options.bootstrapLog ?? "" }),
     "container start": start,
   };
   const capture = vi.fn(
@@ -432,6 +434,7 @@ describe("Podman image-owned bootstrap transaction", () => {
 
   it("reports the bounded Podman exit state when a replacement does not stay running", () => {
     const fake = harness("hermes", {
+      bootstrapLog: "[SECURITY] Managed bootstrap trampoline: agent identity mismatch",
       inspectError: "bootstrap rejected",
       inspectExitCode: 126,
       inspectStatus: "exited",
@@ -439,7 +442,21 @@ describe("Podman image-owned bootstrap transaction", () => {
     });
 
     expect(() => startPodmanBootstrapImageTransaction(startInput("hermes", fake))).toThrow(
-      "not stably running (status exited; exit 126; oom false; error bootstrap rejected)",
+      "not stably running (status exited; exit 126; oom false; error bootstrap rejected; bootstrap [SECURITY] Managed bootstrap trampoline: agent identity mismatch)",
+    );
+    expect(fake.commands).toContainEqual(["container", "logs", "--tail", "80", RUNTIME_ID]);
+  });
+
+  it("does not surface non-bootstrap container output in a replacement failure", () => {
+    const fake = harness("hermes", {
+      bootstrapLog: "secret-looking application output",
+      inspectExitCode: 1,
+      inspectStatus: "exited",
+      startsRunningAfterStart: false,
+    });
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("hermes", fake))).toThrow(
+      "not stably running (status exited; exit 1; oom false)",
     );
   });
 
