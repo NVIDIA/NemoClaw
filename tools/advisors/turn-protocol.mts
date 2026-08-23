@@ -44,8 +44,8 @@ export type AdvisorPromptTurn = {
   requireToolsBeforeText?: string[];
   /** Ordinary read-tool paths that must finish successfully before assistant text. */
   requiredReadPaths?: string[];
-  /** Seed those read calls and results into Pi history before the first model request. */
-  seedRequiredReads?: boolean;
+  /** Require at least one ordinary read from these paths before assistant text. */
+  requiredReadOneOfPaths?: string[];
   /** Fail the turn when it completes without non-whitespace assistant analysis. */
   requireAssistantText?: boolean;
   /** Opt into one prose-only continuation when required assistant analysis is absent. */
@@ -87,6 +87,7 @@ export type AdvisorTurnTools = {
   requiredToolNames: string[];
   requireToolsBeforeText: string[];
   requiredReadPaths?: string[];
+  requiredReadOneOfPaths?: string[];
   requireAssistantText: boolean;
   atomicTerminalToolName?: string;
   terminalSubmitToolName?: string;
@@ -171,6 +172,7 @@ export function resolveAdvisorTurnTools(
     requiredToolNames,
     requireToolsBeforeText,
     requiredReadPaths: [...new Set(turn.requiredReadPaths ?? [])],
+    requiredReadOneOfPaths: [...new Set(turn.requiredReadOneOfPaths ?? [])],
     requireAssistantText: turn.requireAssistantText === true,
     atomicTerminalToolName,
     terminalSubmitToolName,
@@ -393,6 +395,21 @@ export function advisorTurnFlowErrors(
     if (firstText >= 0 && (end < 0 || end > firstText)) {
       errors.push(`${turnName} emitted text before ${toolName} completed`);
     }
+  }
+  const oneOfReads = events.flatMap((event, index) =>
+    event.type === "read" && tools.requiredReadOneOfPaths?.includes(event.path)
+      ? [{ event, index }]
+      : [],
+  );
+  if ((tools.requiredReadOneOfPaths?.length ?? 0) > 0 && oneOfReads.length === 0) {
+    errors.push(`${turnName} omitted specialist evidence read`);
+  }
+  if (
+    firstText >= 0 &&
+    oneOfReads.length > 0 &&
+    oneOfReads.every(({ index }) => index > firstText)
+  ) {
+    errors.push(`${turnName} emitted text before specialist evidence read`);
   }
   const requiredReadCompletionIndexes = new Map<string, number>();
   for (const requiredPath of tools.requiredReadPaths ?? []) {
