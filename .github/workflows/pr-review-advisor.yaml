@@ -50,8 +50,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  review:
-    name: Advisor / ${{ matrix.advisor.label }}
+  review-specialists:
+    name: Specialist / ${{ matrix.advisor.label }}
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request_target' || github.event.action != 'edited' || github.event.changes.base != null) }}
     permissions:
       actions: read
@@ -61,25 +61,50 @@ jobs:
       pull-requests: read
     runs-on: ubuntu-24.04
     timeout-minutes: 40
-    continue-on-error: ${{ !matrix.advisor.publish_comment }}
     strategy:
       fail-fast: false
       matrix:
         advisor:
-          - interest: ""
-            label: GPT-5.6 Terra
-            model: azure/openai/gpt-5.6-terra
-            sandbox_name: pr-advisor-gpt
-            artifact_dir: pr-review-advisor
-            artifact_name: pr-review-advisor
-            publish_comment: true
-          - interest: ""
-            label: Nemotron 3 Ultra
-            model: nvidia/nvidia/nemotron-3-ultra
-            sandbox_name: pr-advisor-nem
-            artifact_dir: pr-review-advisor-nemotron-ultra
-            artifact_name: pr-review-advisor-nemotron-ultra
-            publish_comment: false
+          - {
+              interest: behavior,
+              label: Behavior,
+              model: azure/openai/gpt-5.6-terra,
+              sandbox_name: pr-adv-sp-beh,
+              artifact_dir: pr-review-specialist-behavior,
+              artifact_name: pr-review-specialist-behavior,
+            }
+          - {
+              interest: trust,
+              label: Trust,
+              model: azure/openai/gpt-5.6-terra,
+              sandbox_name: pr-adv-sp-trust,
+              artifact_dir: pr-review-specialist-trust,
+              artifact_name: pr-review-specialist-trust,
+            }
+          - {
+              interest: design-architecture,
+              label: Design / Architecture,
+              model: azure/openai/gpt-5.6-terra,
+              sandbox_name: pr-adv-sp-design,
+              artifact_dir: pr-review-specialist-design-architecture,
+              artifact_name: pr-review-specialist-design-architecture,
+            }
+          - {
+              interest: operations,
+              label: Operations,
+              model: azure/openai/gpt-5.6-terra,
+              sandbox_name: pr-adv-sp-ops,
+              artifact_dir: pr-review-specialist-operations,
+              artifact_name: pr-review-specialist-operations,
+            }
+          - {
+              interest: documentation,
+              label: Documentation,
+              model: azure/openai/gpt-5.6-terra,
+              sandbox_name: pr-adv-sp-docs,
+              artifact_dir: pr-review-specialist-documentation,
+              artifact_name: pr-review-specialist-documentation,
+            }
     env:
       # Pin runtime packages to reviewed versions. Updates go through normal
       # dependency review rather than floating in a secret-bearing job.
@@ -101,6 +126,7 @@ jobs:
       PR_REVIEW_ADVISOR_HEARTBEAT_MS: "60000"
       PR_REVIEW_ADVISOR_SANDBOX_TIMEOUT_SECONDS: "2100"
       PR_REVIEW_ADVISOR_MODEL: ${{ matrix.advisor.model }}
+      PR_REVIEW_ADVISOR_INTEREST: ${{ matrix.advisor.interest }}
       PR_REVIEW_ADVISOR_ARTIFACT_DIR: ${{ matrix.advisor.artifact_dir }}
       PR_REVIEW_ADVISOR_RUN_ANALYSIS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_analysis == false && '0' || '1' }}
       PR_REVIEW_ADVISOR_COMMENT_MARKER: "<!-- nemoclaw-pr-review-advisor -->"
@@ -361,59 +387,10 @@ jobs:
             exit 0
           fi
 
-  review-specialists:
-    name: Specialist / ${{ matrix.advisor.label }}
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request_target' || github.event.action != 'edited' || github.event.changes.base != null) }}
-    permissions:
-      actions: read
-      checks: read
-      contents: read
-      issues: read
-      pull-requests: read
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        advisor:
-          - { interest: behavior, label: Behavior, model: azure/openai/gpt-5.6-terra, sandbox_name: pr-adv-sp-beh, artifact_dir: pr-review-specialist-behavior, artifact_name: pr-review-specialist-behavior }
-          - { interest: trust, label: Trust, model: azure/openai/gpt-5.6-terra, sandbox_name: pr-adv-sp-trust, artifact_dir: pr-review-specialist-trust, artifact_name: pr-review-specialist-trust }
-          - { interest: design-architecture, label: Design / Architecture, model: azure/openai/gpt-5.6-terra, sandbox_name: pr-adv-sp-design, artifact_dir: pr-review-specialist-design-architecture, artifact_name: pr-review-specialist-design-architecture }
-          - { interest: operations, label: Operations, model: azure/openai/gpt-5.6-terra, sandbox_name: pr-adv-sp-ops, artifact_dir: pr-review-specialist-operations, artifact_name: pr-review-specialist-operations }
-          - { interest: documentation, label: Documentation, model: azure/openai/gpt-5.6-terra, sandbox_name: pr-adv-sp-docs, artifact_dir: pr-review-specialist-documentation, artifact_name: pr-review-specialist-documentation }
-    env:
-      PI_SDK_VERSION: "0.80.6"
-      TYPEBOX_VERSION: "1.1.38"
-      YAML_VERSION: "2.8.3"
-      UNDICI_VERSION: "8.10.0"
-      VITEST_VERSION: "4.1.9"
-      FD_FIND_VERSION: "9.0.0-1"
-      RIPGREP_VERSION: "14.1.0-1"
-      OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
-      PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
-      PR_REVIEW_ADVISOR_TIMEOUT_MS: "900000"
-      PR_REVIEW_ADVISOR_HEARTBEAT_MS: "60000"
-      PR_REVIEW_ADVISOR_SANDBOX_TIMEOUT_SECONDS: "2100"
-      PR_REVIEW_ADVISOR_MODEL: ${{ matrix.advisor.model }}
-      PR_REVIEW_ADVISOR_INTEREST: ${{ matrix.advisor.interest }}
-      PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR: ""
-      PR_REVIEW_ADVISOR_ARTIFACT_DIR: ${{ matrix.advisor.artifact_dir }}
-      PR_REVIEW_ADVISOR_RUN_ANALYSIS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_analysis == false && '0' || '1' }}
-      PR_REVIEW_ADVISOR_COMMENT_MARKER: "<!-- nemoclaw-pr-review-advisor -->"
-      PR_REVIEW_ADVISOR_COMMENT_TITLE: PR Review Advisor shadow specialist
-      PR_REVIEW_ADVISOR_COMMENT_LABEL: PR review advisor
-      PR_REVIEW_ADVISOR_WORKFLOW_NAME: "PR Review / Advisor"
-      SANDBOX_NAME: ${{ matrix.advisor.sandbox_name }}
-      ADVISOR_DIR: ${{ github.workspace }}/advisor
-      TARGET_REPO: ${{ github.event_name == 'pull_request_target' && github.repository || inputs.target_repo || github.repository }}
-      PR_NUMBER: ${{ github.event.pull_request.number || inputs.target_pr }}
-    steps: *advisor-analysis-steps
-
-  review-synthesis-shadow:
+  review:
     name: Synthesis
     needs: review-specialists
-    if: ${{ always() && needs.review-specialists.result != 'cancelled' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request_target' || github.event.action != 'edited' || github.event.changes.base != null) }}
+    if: ${{ needs.review-specialists.result == 'success' && github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request_target' || github.event.action != 'edited' || github.event.changes.base != null) }}
     permissions:
       actions: read
       checks: read
@@ -422,11 +399,17 @@ jobs:
       pull-requests: read
     runs-on: ubuntu-24.04
     timeout-minutes: 40
-    continue-on-error: true
     strategy:
       matrix:
         advisor:
-          - { interest: "", label: Shadow synthesis, model: azure/openai/gpt-5.6-terra, sandbox_name: pr-adv-synthesis, artifact_dir: pr-review-advisor-shadow-synthesis, artifact_name: pr-review-advisor-shadow-synthesis }
+          - {
+              interest: "",
+              label: Synthesis,
+              model: azure/openai/gpt-5.6-terra,
+              sandbox_name: pr-adv-synthesis,
+              artifact_dir: pr-review-advisor,
+              artifact_name: pr-review-advisor,
+            }
     env:
       PI_SDK_VERSION: "0.80.6"
       TYPEBOX_VERSION: "1.1.38"
@@ -446,7 +429,7 @@ jobs:
       PR_REVIEW_ADVISOR_ARTIFACT_DIR: ${{ matrix.advisor.artifact_dir }}
       PR_REVIEW_ADVISOR_RUN_ANALYSIS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_analysis == false && '0' || '1' }}
       PR_REVIEW_ADVISOR_COMMENT_MARKER: "<!-- nemoclaw-pr-review-advisor -->"
-      PR_REVIEW_ADVISOR_COMMENT_TITLE: PR Review Advisor shadow synthesis
+      PR_REVIEW_ADVISOR_COMMENT_TITLE: PR Review Advisor
       PR_REVIEW_ADVISOR_COMMENT_LABEL: PR review advisor
       PR_REVIEW_ADVISOR_WORKFLOW_NAME: "PR Review / Advisor"
       SANDBOX_NAME: ${{ matrix.advisor.sandbox_name }}
@@ -458,7 +441,7 @@ jobs:
   publish:
     name: Publish advisor
     needs: review
-    if: ${{ always() && github.event_name == 'pull_request_target' && (github.event.action != 'edited' || github.event.changes.base != null) && needs.review.result != 'cancelled' }}
+    if: ${{ always() && github.event_name == 'pull_request_target' && (github.event.action != 'edited' || github.event.changes.base != null) && needs.review.result == 'success' }}
     # Publication is best-effort and must never hide the primary analysis
     # lane's required outcome in the review matrix above.
     continue-on-error: true
@@ -482,7 +465,6 @@ jobs:
       PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       ADVISOR_DIR: ${{ github.workspace }}/advisor
       PUBLISH_ARTIFACT_DIR: ${{ github.workspace }}/publish-artifacts/pr-review-advisor
-      SECONDARY_PUBLISH_ARTIFACT_DIR: ${{ github.workspace }}/publish-artifacts/pr-review-advisor-nemotron-ultra
       PR_REVIEW_ADVISOR_MAX_RESULT_BYTES: "2097152"
       PR_REVIEW_ADVISOR_MAX_SUMMARY_BYTES: "1048576"
     steps:
@@ -513,22 +495,9 @@ jobs:
           name: pr-review-advisor
           path: publish-artifacts/pr-review-advisor
 
-      # A missing or invalid second opinion must not suppress a completed
-      # primary review. A present artifact must pass the same validation before
-      # the publisher includes its sanitized status.
-      - name: Download secondary advisor artifact
-        id: download-secondary-advisor-artifact
-        continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: pr-review-advisor-nemotron-ultra
-          path: publish-artifacts/pr-review-advisor-nemotron-ultra
-
       - name: Validate advisor artifacts
-        id: validate-advisor-artifacts
         env:
           GH_TOKEN: ${{ github.token }}
-          SECONDARY_ARTIFACT_OUTCOME: ${{ steps.download-secondary-advisor-artifact.outcome }}
         run: |
           node --experimental-strip-types \
             "$ADVISOR_DIR/tools/pr-review-advisor/validate-artifacts.mts"
@@ -536,15 +505,7 @@ jobs:
       - name: Post PR review advisor comment
         env:
           GH_TOKEN: ${{ github.token }}
-          SECONDARY_ARTIFACT_VALIDATED: ${{ steps.validate-advisor-artifacts.outputs.secondary_artifact_validated }}
         run: |
-          SECONDARY_ARGS=()
-          if [ "$SECONDARY_ARTIFACT_VALIDATED" = "true" ]; then
-            SECONDARY_ARGS=(
-              --second-opinion-analysis-result "$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-result.json"
-              --second-opinion-result "$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json"
-            )
-          fi
           node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts" \
             --repo "$GITHUB_REPOSITORY" \
             --pr "$PR_NUMBER" \
@@ -553,5 +514,4 @@ jobs:
             --result "$PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json" \
             --marker "$PR_REVIEW_ADVISOR_COMMENT_MARKER" \
             --title "$PR_REVIEW_ADVISOR_COMMENT_TITLE" \
-            --label "$PR_REVIEW_ADVISOR_COMMENT_LABEL" \
-            "${SECONDARY_ARGS[@]}"
+            --label "$PR_REVIEW_ADVISOR_COMMENT_LABEL"

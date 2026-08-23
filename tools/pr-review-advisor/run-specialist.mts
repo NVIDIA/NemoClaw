@@ -55,7 +55,7 @@ export function renderSpecialistSummary(interest: AdvisorInterest, text: string)
     .split("-")
     .map((part) => part[0]!.toUpperCase() + part.slice(1))
     .join(" / ");
-  return `# PR Review Advisor — ${title} specialist\n\n> Evidence for synthesis and human review. The primary advisor remains authoritative.\n\n${text.trim()}\n`;
+  return `# PR Review Advisor — ${title} specialist\n\n> Evidence for synthesis and human review. Synthesis publishes the final review.\n\n${text.trim()}\n`;
 }
 
 export function writeSpecialistSummary(

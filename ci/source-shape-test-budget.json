@@ -182,13 +182,23 @@
       "category": "security"
     },
     {
-      "file": "test/pr-review-advisor-workflow-boundary.test.ts",
-      "test": "rejects deleting or weakening analysis-workspace symlink removal",
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "requires valid sandbox names",
       "category": "security"
     },
     {
-      "file": "test/pr-review-advisor-workflow-boundary.test.ts",
-      "test": "requires one advisor lane to publish the PR comment",
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "requires distinct specialist and synthesis sandboxes",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "requires a synthesis matrix",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test": "requires native specialist sessions",
       "category": "security"
     },
     {
