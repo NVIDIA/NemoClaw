@@ -3,6 +3,7 @@
 """Validate deterministic read-only MCP calls against the installed package."""
 
 import datetime
+import errno
 import ipaddress
 import json
 import signal
@@ -184,9 +185,16 @@ def _serve(mode: str, host: str, port: int, cert: Path, key: Path, marker: Path)
 
 
 def _container_address() -> str:
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-        probe.connect(("10.255.255.254", 1))
-        address = probe.getsockname()[0]
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("10.255.255.254", 1))
+            address = probe.getsockname()[0]
+    except OSError as error:
+        if error.errno != errno.ENETUNREACH:
+            raise
+        # Protected image rebuilds deliberately disable BuildKit networking.
+        # Loopback still exercises the complete local TLS and MCP contract.
+        return "127.0.0.1"
     parsed = ipaddress.ip_address(address)
     if parsed.version != 4 or parsed.is_loopback or parsed.is_link_local:
         raise RuntimeError("validation server did not resolve a routed IPv4 address")
