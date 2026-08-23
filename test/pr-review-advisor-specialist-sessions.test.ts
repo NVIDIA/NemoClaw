@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { advisorTurnFlowErrors, resolveAdvisorTurnTools } from "../tools/advisors/session.mts";
 import { buildSynthesisTurn } from "../tools/pr-review-advisor/synthesis-turn.mts";
 import { ADVISOR_INTERESTS } from "../tools/pr-review-advisor/specialists.mts";
 import {
@@ -84,6 +85,28 @@ describe("specialist Pi session inputs", () => {
 
     expect(turn.activeToolNames).toEqual(["read", "grep", "find", "ls"]);
     expect(turn.requiredReadPaths).toBeUndefined();
+    const tools = resolveAdvisorTurnTools(turn, [], new Set(["read", "grep", "find", "ls"]));
+    const receipt = { type: "text" as const, text: "receipt" };
+    expect(advisorTurnFlowErrors("synthesize", [receipt], tools)).toContain(
+      "synthesize omitted specialist evidence read",
+    );
+    expect(
+      advisorTurnFlowErrors(
+        "synthesize",
+        [
+          {
+            type: "read",
+            path: turn.requiredReadOneOfPaths![0]!,
+            offset: 1,
+            endOffset: 20,
+            fileSize: 1000,
+            reachesEnd: false,
+          },
+          receipt,
+        ],
+        tools,
+      ),
+    ).toEqual([]);
   });
 
   it("rejects unexpected files", () => {

@@ -19,6 +19,7 @@ export function buildSynthesisTurn(inventory: SpecialistSessionInventory): Advis
     activeToolNames: ["read", "grep", "find", "ls"],
     requiredToolNames: [],
     requireToolsBeforeText: [],
+    requiredReadOneOfPaths: inventory.available.map((interest) => inventory.files[interest]!),
     requireAssistantText: true,
     contextToolResults: [],
     prompt: `Turn 1/2 — synthesize specialist investigations.

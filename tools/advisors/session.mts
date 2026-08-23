@@ -837,6 +837,7 @@ function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTu
     requiredToolNames: normalizedToolNames(turn.requiredToolNames),
     requireToolsBeforeText: normalizedToolNames(turn.requireToolsBeforeText),
     requiredReadPaths: turn.requiredReadPaths,
+    requiredReadOneOfPaths: turn.requiredReadOneOfPaths,
     requireAssistantText: turn.requireAssistantText === true,
     assistantTextRepairPrompt:
       typeof turn.assistantTextRepairPrompt === "string" && turn.assistantTextRepairPrompt.trim()
