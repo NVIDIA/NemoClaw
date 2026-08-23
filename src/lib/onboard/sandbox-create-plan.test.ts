@@ -331,9 +331,13 @@ describe("resolveSandboxCreateIntent", () => {
         expect(policy.appliedPresets).toEqual(["telegram"]);
       },
       runProviderPreDeleteCleanup: () => events.push("cleanup"),
-      upsertMessagingProviders: vi.fn((receivedTokenDefs) => {
+      upsertMessagingProviders: vi.fn((receivedTokenDefs, options) => {
         events.push("upsert");
         expect(receivedTokenDefs).toEqual(tokenDefs);
+        expect(options).toEqual({
+          replaceExisting: true,
+          allowedSandboxes: ["sandbox"],
+        });
         return ["sandbox-telegram-bridge"];
       }),
       getHermesToolGatewayProviderName: (sandboxName) => {

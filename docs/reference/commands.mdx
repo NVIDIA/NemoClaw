@@ -276,7 +276,7 @@ Display names are accepted when they identify exactly one profile, but stable ID
 ### `$$nemoclaw onboard`
 
 Run the interactive setup wizard (recommended for new installs).
-The wizard creates an OpenShell gateway, registers inference providers, builds the sandbox image, and creates the sandbox.
+The wizard creates an OpenShell gateway, registers inference providers, selects the exact managed image (or builds an explicit custom Dockerfile), and creates the sandbox.
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```bash
@@ -452,7 +452,7 @@ It also bypasses locally recorded sandbox base-image resolution metadata and rer
 `--fresh` takes precedence over a base-image hint carried from a rebuild, so NemoClaw does not use that recorded hint.
 The installer also accepts `--fresh` and forwards it to `$$nemoclaw onboard`, which skips automatic resume detection.
 `--resume` and `--fresh` are mutually exclusive.
-For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you intentionally want onboarding to replace that sandbox with a new provider, model, agent, or build-time setting.
+For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you intentionally want onboarding to replace that sandbox with a new provider, model, agent, or startup setting.
 Use `$$nemoclaw <sandbox-name> rebuild` when you want NemoClaw to recreate the sandbox from its recorded registry metadata without changing those selections.
 
 #### `--tool-disclosure <progressive|direct>`
@@ -811,7 +811,7 @@ The `$$nemoclaw onboard --help` output lists installed runtime names inline, and
 
 <AgentOnly variant="openclaw">
 
-Use `--agents <agents.yaml>` to declare secondary OpenClaw agents, `agents.defaults`, and main-agent overrides in a checked-in manifest that NemoClaw bakes into the sandbox image at build time.
+Use `--agents <agents.yaml>` to declare secondary OpenClaw agents, `agents.defaults`, and main-agent overrides in a checked-in manifest that NemoClaw includes in the generated sandbox configuration.
 Refer to [Declarative Multi-Agent Manifest](../configure-agents/declarative-agents-manifest) for the schema and OpenClaw-native sub-agent field semantics.
 
 </AgentOnly>
@@ -828,10 +828,10 @@ NemoClaw allocates each Hermes sandbox's OpenAI-compatible API port from that ra
 If you enable Slack during onboarding, the wizard collects both the Bot Token (`SLACK_BOT_TOKEN`) and the App-Level Token (`SLACK_APP_TOKEN`).
 Socket Mode requires both tokens.
 The app-level token is stored in a dedicated `slack-app` OpenShell provider and forwarded to the sandbox alongside the bot token.
-The wizard also accepts optional `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` values so you can restrict Slack DMs, channel `@mention` users, and channel IDs before the sandbox image is built.
+The wizard also accepts optional `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` values so you can restrict Slack DMs, channel `@mention` users, and channel IDs before the sandbox is created.
 
 If you enable Discord during onboarding, the wizard can also prompt for a Discord Server ID, whether the bot should reply only to `@mentions` or to all messages in that server, and an optional Discord User ID.
-NemoClaw bakes those values into the sandbox image as Discord guild workspace config so the bot can respond in the selected server, not just in DMs.
+NemoClaw includes those values in the generated Discord guild workspace configuration so the bot can respond in the selected server, not just in DMs.
 If you leave the Discord User ID blank, the guild config omits the user allowlist and any member of the configured server can message the bot.
 Guild responses remain mention-gated by default unless you opt into all-message replies.
 If `DISCORD_SERVER_ID` is set and `DISCORD_REQUIRE_MENTION` is unset, NemoClaw records the existing mention-only default (`DISCORD_REQUIRE_MENTION=1`).
@@ -925,6 +925,12 @@ To tune the existing-gateway HTTP health poll, use `NEMOCLAW_REUSE_HEALTH_POLL_C
 The poll count is clamped to a minimum of `1` so the health probe always runs at least once, and the interval is clamped to a minimum of `0` (no sleep between attempts).
 
 #### `--from <Dockerfile>`
+
+Without `--from`, onboarding through the OpenShell Docker driver for OpenClaw, Hermes, and LangChain Deep Agents Code selects an immutable managed image for the installed release and host architecture.
+NemoClaw validates the complete three-agent publication cohort before selecting any member.
+If registry or catalog availability prevents resolution, the ordinary `prefer-managed` path builds the shipped, reviewed repository Dockerfile instead; it never selects an unpinned `:latest` image.
+Available catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent fails closed before sandbox creation.
+The portable experimental profile and native Podman are not part of this activation.
 
 Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
 The supplied Dockerfile defines the complete sandbox image, and NemoClaw does not layer it on top of the stock managed runtime.
@@ -1604,7 +1610,7 @@ Hermes can restart its gateway when it applies a configuration change. Use `--re
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-For Deep Agents sandboxes, `config set` is unavailable because the `dcode` configuration is baked into the sandbox image at build time.
+For Deep Agents sandboxes, `config set` is unavailable because managed startup (or an explicit custom image build) materializes the `dcode` configuration as image-owned state.
 Run `$$nemoclaw onboard --agent dcode --name <sandbox-name> --fresh` when you need to change it.
 Use `$$nemoclaw <name> config get` to read the current values.
 
@@ -2953,7 +2959,7 @@ As with `channels add`, `NEMOCLAW_NON_INTERACTIVE=1` or a run without a terminal
 `channels start` and `channels stop` follow the same rule.
 If you omit the required `<channel>` argument, the CLI prints the `channels remove <channel>` usage with the supported channel list.
 
-Host-side removal is the supported path because agent channel config is baked into the container image at build time (`/sandbox/.openclaw/openclaw.json` for OpenClaw and `/sandbox/.hermes/.env` for Hermes); agent-specific channel removals inside the sandbox would modify the running config but not persist changes across rebuilds.
+Host-side removal is the supported path because managed startup (or an explicit custom image build) materializes agent channel config as image-owned state (`/sandbox/.openclaw/openclaw.json` for OpenClaw and `/sandbox/.hermes/.env` for Hermes); agent-specific channel removals inside the sandbox would modify the running config but not persist changes across rebuilds.
 
 ### `$$nemoclaw <name> channels stop <channel>`
 
@@ -3817,7 +3823,8 @@ NemoClaw does not truncate or rename a registered sandbox identity.
 Follow [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes) to transfer state to a compatible replacement before you rerun the command.
 
 Each rebuild reuses the same workspace backup-and-restore flow as `$$nemoclaw <name> rebuild`, so workspace files survive the upgrade.
-If the registry is unreachable (offline or firewalled hosts), NemoClaw falls back to the unpinned `:latest` tag and reports that the digest could not be resolved instead of failing.
+If the registry or required managed-image catalog evidence is unavailable, NemoClaw fails closed instead of selecting an unpinned image.
+Restore registry access, then rerun the command so NemoClaw can validate the exact image digest.
 During installer recovery, a registered sandbox that is not Ready can also be rebuilt from its validated latest backup.
 That recovery requires a NemoClaw-managed image fingerprint or the installer's explicit confirmation for a listed pre-fingerprint OpenClaw or Hermes entry.
 The legacy confirmation never overrides recorded custom-image evidence.
@@ -4927,16 +4934,16 @@ OpenClaw-specific onboarding configuration:
 | `NEMOCLAW_WEB_SEARCH_PROVIDER` | `brave`, `tavily`, or `none` | Selects Brave Search or Tavily Search in non-interactive onboarding, or disables web search explicitly. When unset, `BRAVE_API_KEY` implicitly selects Brave before `TAVILY_API_KEY` can implicitly select Tavily. |
 | `BRAVE_API_KEY` | Brave Search API key | Supplies and implicitly selects Brave Search when no web search provider is set. NemoClaw validates the key and stores it in OpenShell rather than the sandbox. |
 | `TAVILY_API_KEY` | Tavily Search API key | Supplies and implicitly selects Tavily Search when no provider is set and no Brave key is available. NemoClaw validates the key and stores it in OpenShell rather than the sandbox. |
-| `NEMOCLAW_AGENT_TIMEOUT` | positive integer (seconds) | Build-time setting that overrides `agents.defaults.timeoutSeconds` and `models.providers.<provider-id>.timeoutSeconds` in the built OpenClaw config. Set it before onboarding builds the sandbox image. Setting it only for a later `$$nemoclaw <name> agent` invocation does not change the existing image. Raise for slow inference. |
+| `NEMOCLAW_AGENT_TIMEOUT` | positive integer (seconds) | Onboarding setting that overrides `agents.defaults.timeoutSeconds` and `models.providers.<provider-id>.timeoutSeconds` in the generated OpenClaw config. Set it before onboarding creates or recreates the sandbox. Setting it only for a later `$$nemoclaw <name> agent` invocation does not change the existing sandbox. Raise for slow inference. |
 | `NEMOCLAW_MCP_SHADOW_DIAGNOSTICS` | literal `1` to enable | Forwards opt-in successful Streamable HTTP MCP timing diagnostics to a newly created or rebuilt OpenClaw sandbox. It does not change timeouts, retries, requests, or responses. Unset it and rebuild after evidence collection to restore failure-only logging. Other values are ignored. |
 | `NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS` | positive number of seconds | Sets the post-pairing poll cadence for the in-sandbox OpenClaw auto-pair watcher. Defaults to `5` so late allowlisted CLI and browser scope upgrades are approved before clients time out. Raise only on load-sensitive gateways. |
 | `NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS` | positive integer | Sets how many fast polls run after the watcher observes a fresh allowlisted scope-upgrade request. Defaults to `5`; set lower only when you need to reduce gateway polling. |
 | `NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS` | positive number of seconds | Sets the fast-reentry interval after a fresh allowlisted scope-upgrade request. Defaults to `1`. |
-| `NEMOCLAW_CONTEXT_WINDOW` | positive integer (tokens) | Overrides the model's context-window value in the built OpenClaw config. |
-| `NEMOCLAW_MAX_TOKENS` | positive integer (tokens) | Overrides the model's `maxTokens` in the built OpenClaw config. |
-| `NEMOCLAW_REASONING` | `true` or `false` | Overrides the model's reasoning-mode flag in the built OpenClaw config. |
+| `NEMOCLAW_CONTEXT_WINDOW` | positive integer (tokens) | Overrides the model's context-window value in the generated OpenClaw config. |
+| `NEMOCLAW_MAX_TOKENS` | positive integer (tokens) | Overrides the model's `maxTokens` in the generated OpenClaw config. |
+| `NEMOCLAW_REASONING` | `true` or `false` | Overrides the model's reasoning-mode flag in the generated OpenClaw config. |
 | `NEMOCLAW_REASONING_EFFORT` | `low`, `medium`, `high`, or `default` | Applies only to the `compatible-endpoint` provider with the `openai-completions` API. A `low`, `medium`, or `high` value writes `params.extra_body.reasoning_effort`; unset or `default` leaves the endpoint's own default in place. Onboarding parses every explicit value before provider effects and rejects an invalid value or provider/API mismatch before route, policy, sandbox, or registry mutation. During `inference set`, NemoClaw rejects every explicit value, including `default`, before mutation unless the resulting route is compatible. Without an explicit effort input, switching to another provider or API family clears a recorded effort. An ordinary restart preserves the persisted runtime state instead of replaying the image's original value. |
-| `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | duration with `s`, `m`, or `h` suffix (for example `30m`, `1h`, or `0m`) | Overrides `agents.defaults.heartbeat.every` in the built OpenClaw config. Set `0m` to disable periodic agent turns. |
+| `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | duration with `s`, `m`, or `h` suffix (for example `30m`, `1h`, or `0m`) | Overrides `agents.defaults.heartbeat.every` in the generated OpenClaw config. Set `0m` to disable periodic agent turns. |
 | `NEMOCLAW_EXTRA_AGENTS_JSON` | JSON array of OpenClaw secondary-agent entries | Adds secondary agents to `agents.list`. Refer to [Extra OpenClaw agents](#extra-openclaw-agents) for the entry schema, path constraints, and validation rules. |
 
 </AgentOnly>
@@ -4953,7 +4960,7 @@ Hermes-specific onboarding configuration:
 | `NEMOCLAW_NOUS_AUTH_METHOD` | same as `NEMOCLAW_HERMES_AUTH_METHOD` | Nous-specific alias for Hermes Provider authentication selection. |
 | `NEMOCLAW_HERMES_TOOL_GATEWAYS` | comma-separated list | Selects managed Hermes tool gateways in non-interactive onboarding. Valid values are `nous-web`, `nous-image`, `nous-audio`, `nous-browser`, and `nous-code`; the `nous-` prefix is optional. Unknown values fail before sandbox creation. |
 | `NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS` | comma-separated list | Back-compatible alias for `NEMOCLAW_HERMES_TOOL_GATEWAYS`. |
-| `NEMOCLAW_CONTEXT_WINDOW` | positive integer, at least `64000` tokens | Overrides `model.context_length` in the built Hermes config. Fresh and resumed Local Ollama onboarding, including sandbox rebuilds, must verify a loaded runtime context at least as large as this value. |
+| `NEMOCLAW_CONTEXT_WINDOW` | positive integer, at least `64000` tokens | Overrides `model.context_length` in the generated Hermes config. Fresh and resumed Local Ollama onboarding, including sandbox rebuilds, must verify a loaded runtime context at least as large as this value. |
 | `NEMOCLAW_EXTRA_PLACEHOLDER_KEYS` | whitespace- or comma-separated list of upper-snake env keys | Adds operator-supplied OpenShell provider rows so per-profile credentials such as `TELEGRAM_BOT_TOKEN_AGENT_A` flow through the same out-of-process placeholder injection that the canonical channel tokens use, instead of being baked into each Hermes profile `.env` as raw text. Refer to [Extra placeholder keys](#extra-placeholder-keys) for the entry shape and validation rules. |
 
 </AgentOnly>
@@ -4971,7 +4978,8 @@ export TELEGRAM_BOT_TOKEN_AGENT_B=<bot-B-token>
 $$nemoclaw onboard --agent hermes
 ```
 
-For each entry, NemoClaw registers a generic OpenShell provider row that resolves the named env to its operator-supplied value at egress time.
+For each entry, NemoClaw registers an OpenShell provider with the endpointless `nemoclaw-mcp-v1` profile.
+OpenShell resolves the named credential placeholder to the operator-supplied value at egress.
 The Hermes profile `.env` files are operator-owned: write `${TELEGRAM_BOT_TOKEN_AGENT_A}` (or the matching placeholder for each entry) into the per-profile `.env` so the in-sandbox Hermes process inherits the OpenShell placeholder instead of a raw token.
 NemoClaw never reads, writes, or rewrites these `.env` files; verify after onboarding that each profile's `.env` references the placeholder and that no raw bot token value sits on disk.
 
@@ -4991,10 +4999,10 @@ Export the credential before running `$$nemoclaw onboard` for that profile.
 
 #### Extra OpenClaw agents
 
-Set `NEMOCLAW_EXTRA_AGENTS_JSON` to either a JSON array of secondary-agent entries, or an object payload of the form `{"agents": [...], "defaults": {...}, "main": {...}}`, to bake them into `agents.list[]` at image build time.
+Set `NEMOCLAW_EXTRA_AGENTS_JSON` to either a JSON array of secondary-agent entries, or an object payload of the form `{"agents": [...], "defaults": {...}, "main": {...}}`, to include them in `agents.list[]` during managed startup or an explicit custom image build.
 Each entry must declare `id` and `tools`; `workspace`, `agentDir`, `subagents`, `description`, and `model` are optional.
 The generator always writes the canonical `main` entry first with `default: true`, so secondary agents cannot displace the primary agent.
-Malformed JSON or invalid entries fail the image build with a structured error.
+Malformed JSON or invalid entries fail onboarding with a structured error.
 
 Field rules:
 
@@ -5004,8 +5012,8 @@ Field rules:
 - `tools` must declare a non-empty `allow[]` or `deny[]`; nothing is implicitly granted.
 - `model`, when set, must be a `"provider/model"` string whose provider portion matches the primary onboard provider.
 - `default: true` is rejected because the primary agent is the only default.
-- Allowed entry fields: `id`, `workspace`, `agentDir`, `tools`, `subagents`, `description`, `model`. Any other key fails the image build (no implicit credential or env pass-through).
-- Allowed `tools` fields: `profile`, `allow`, `deny`. Allowed per-agent `subagents` fields: `delegationMode`, `allowAgents`, `model`, `thinking`, `requireAgentId`. Any other nested key fails the image build.
+- Allowed entry fields: `id`, `workspace`, `agentDir`, `tools`, `subagents`, `description`, `model`. Any other key fails onboarding (no implicit credential or env pass-through).
+- Allowed `tools` fields: `profile`, `allow`, `deny`. Allowed per-agent `subagents` fields: `delegationMode`, `allowAgents`, `model`, `thinking`, `requireAgentId`. Any other nested key fails onboarding.
 
 OpenClaw accepts `subagents.maxSpawnDepth` only on `agents.defaults.subagents`, never inside a per-agent `subagents` object.
 The value must be an integer between `1` and `5` (OpenClaw's accepted range); to set it, use the object payload shape and pass it under `defaults`:
@@ -5232,7 +5240,7 @@ Set the onboarding variables before running `$$nemoclaw onboard` if a slow conne
 |----------|---------|---------|
 | `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
-| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness, in seconds. Raise the timeout when the sandbox image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). Ordinary onboarding deletes the partially created sandbox when the deadline expires and prints the retry hint. Portable OpenClaw onboarding instead preserves the sandbox when NemoClaw cannot verify its exact runtime identity. |
+| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness, in seconds. Raise the timeout when the managed-image pull, explicit custom image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). Ordinary onboarding deletes the partially created sandbox when the deadline expires and prints the retry hint. Portable OpenClaw onboarding instead preserves the sandbox when NemoClaw cannot verify its exact runtime identity. |
 | `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE` | `30` | Consecutive `Error`-phase polls the post-create readiness wait tolerates before treating `Error` as terminal. Polling starts at 250ms and backs off to a 2-second cap, while `NEMOCLAW_SANDBOX_READY_TIMEOUT` remains the overall deadline. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. `Failed` and `CrashLoopBackOff` always fail immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
 | `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | `30`, `90`, or `120`, depending on the recovery phase | Wall-clock timeout for OpenShell command re-registration after policy application, plus gateway health and re-registration during managed OpenClaw or Hermes recovery. A valid finite, nonnegative value overrides the internal budget for the current recovery phase. |
 

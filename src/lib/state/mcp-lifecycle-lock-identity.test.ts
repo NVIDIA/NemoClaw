@@ -451,14 +451,18 @@ describe("MCP lifecycle lock identity properties", () => {
             // fc draws ageMs and graceMs independently, so ageMs === graceMs is
             // almost never sampled. This loop tests the >= comparison at the exact ages.
 
-            expect([graceMs - 1, graceMs, graceMs + 1, ageMs].every((boundaryAgeMs) =>
+            expect(
+              [graceMs - 1, graceMs, graceMs + 1, ageMs].every(
+                (boundaryAgeMs) =>
                   classifyMcpLifecycleLock(
                     observation(lockOwner, 0),
                     SANDBOX_NAME,
                     boundaryAgeMs,
                     graceMs,
                     localProbes,
-                  ) === (boundaryAgeMs >= graceMs ? "stale" : "wait"))).toBe(true);
+                  ) === (boundaryAgeMs >= graceMs ? "stale" : "wait"),
+              ),
+            ).toBe(true);
           },
         ),
         SEEDED_PROPERTY_PARAMETERS,

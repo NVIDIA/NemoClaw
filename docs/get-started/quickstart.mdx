@@ -50,6 +50,9 @@ Review the [Prerequisites](prerequisites) before you begin.
     Choose an inference provider and model, then provide its credential when prompted.
     Press Enter to accept the suggested `my-assistant` sandbox name.
     For a first run, skip optional web search and messaging setup, then accept the suggested network policy tier.
+    With the OpenShell Docker driver, stock OpenClaw onboarding normally uses the release's exact managed-image digest.
+    If registry or catalog availability prevents resolution, it builds the shipped repository Dockerfile instead; it never selects an unpinned `:latest` image.
+    Invalid or inconsistent catalog evidence fails closed before sandbox creation.
 
     <Note>
       The installer can display `Run express install with these settings? [Y/n]:` before the agent-selection prompt on DGX Spark, qualifying DGX Station, or Windows Subsystem for Linux (WSL) hosts.
@@ -156,7 +159,7 @@ Use these details when your first-run path needs more control.
     Export the relevant API key before starting the installer when you do not want the wizard to prompt for it.
     Refer to [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for provider requirements, model choices, and local-server setup.
 
-    Web search and messaging are optional build-time choices.
+    Web search and messaging are optional onboarding choices.
     Add them when you need them, then rerun onboarding and accept sandbox recreation when you change those choices later.
     Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) and [Network Policies](../network-policy/approve-network-requests) before enabling them.
   </Accordion>
@@ -256,12 +259,12 @@ Use these details when your first-run path needs more control.
 
     After you apply the configuration, routine editing ends.
     If inference setup fails and offers a `back` recovery action, you can return to provider and model selection and then review the updated configuration again.
-    NemoClaw registers inference, prompts for optional web search and messaging channels, builds and starts the sandbox, sets up OpenClaw, and applies the selected network policy tier and presets.
+    NemoClaw registers inference, prompts for optional web search and messaging channels, prepares the managed startup profile, starts the sandbox from the exact managed image, sets up OpenClaw, and applies the selected network policy tier and presets.
 
     <Note>
-    Onboarding builds the sandbox image with a managed `NEMOCLAW_DISABLE_DEVICE_AUTH=1` compatibility setting so the dashboard is usable during setup.
+    Onboarding includes a managed `NEMOCLAW_DISABLE_DEVICE_AUTH=1` compatibility setting in the startup profile so the dashboard is usable during setup.
     NemoClaw records that this value came from onboarding rather than reporting it as an operator-selected opt-out.
-    This build-time setting is baked into the image and setting it after onboarding does not affect an existing sandbox.
+    This setting is fixed when the sandbox is created; setting it in the host environment afterward does not affect that sandbox.
     </Note>
 
     If registered sandboxes already exist, the installer prepares the current NemoClaw CLI without replacing OpenShell and requires a fresh backup of every registered sandbox before it changes the gateway.
@@ -314,7 +317,7 @@ Use these details when your first-run path needs more control.
     For an OpenAI-compatible HTTP endpoint on `localhost`, `127.0.0.1`, or `[::1]`, press Enter to select no authentication when the endpoint uses the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`.
     Port `11435` supports this mode only when `NEMOCLAW_OLLAMA_PROXY_PORT` uses a different free port.
 
-    After you enter a sandbox name, the wizard asks for final confirmation before it registers the provider, prompts for integrations, and builds the sandbox image.
+    After you enter a sandbox name, the wizard asks for final confirmation before it registers the provider, prompts for integrations, and creates the sandbox.
 
     ```text
       ──────────────────────────────────────────────────
@@ -327,7 +330,7 @@ Use these details when your first-run path needs more control.
       Managed tools: none
       Messaging:     none
       Sandbox name:  my-gpt-claw
-      Note:          Sandbox build typically takes 5–15 minutes on this host.
+      Note:          Sandbox creation can take a few minutes on first run.
       ──────────────────────────────────────────────────
       Web search and messaging channels will be prompted next.
       Choose an action:
@@ -353,7 +356,7 @@ Use these details when your first-run path needs more control.
     After confirmation, NemoClaw registers the selected provider with the OpenShell gateway and sets the `inference.local` route.
     The wizard asks whether to enable web search and offers Brave Search or Tavily Search.
     Provide `BRAVE_API_KEY` for Brave Search or `TAVILY_API_KEY` for Tavily Search when prompted.
-    NemoClaw validates the selected key before it builds the sandbox, registers a sandbox-scoped OpenShell provider, and writes only an OpenShell resolver placeholder into the OpenClaw configuration.
+    NemoClaw validates the selected key before it creates the sandbox, registers a sandbox-scoped OpenShell provider, and writes only an OpenShell resolver placeholder into the OpenClaw configuration.
     OpenShell replaces the placeholder with the real key at egress.
 
     For non-interactive onboarding, select the provider explicitly and export its key.
@@ -373,13 +376,13 @@ Use these details when your first-run path needs more control.
     The onboarding flow also offers Telegram, Discord, Slack, WeChat, WhatsApp, Microsoft Teams, and Google Chat.
     Press a channel number to toggle it, then press Enter to continue.
     Leave every channel unselected to skip messaging setup.
-    When a channel accepts pasted credentials, NemoClaw validates the credential input before it builds the sandbox image.
+    When a channel accepts pasted credentials, NemoClaw validates the credential input before it creates the sandbox.
     For example, Slack bot tokens must start with `xoxb-`.
     WeChat, WhatsApp, Microsoft Teams, and Google Chat are experimental.
     Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) before enabling them.
 
-    After the sandbox image builds and OpenClaw starts, NemoClaw asks which network policy tier to apply.
-    Web search and messaging selections happen first so the sandbox image and policy suggestions stay aligned.
+    After the managed image starts OpenClaw, NemoClaw asks which network policy tier to apply.
+    Web search and messaging selections happen first so the startup profile and policy suggestions stay aligned.
     The default Balanced tier includes common development presets, such as npm, PyPI, Hugging Face, and Homebrew, plus the matching `brave` or `tavily` preset.
     Add the `weather` preset explicitly for read-only weather lookups.
     OpenClaw sandboxes also receive the `openclaw-pricing` preset automatically so session-cost records can populate without manual configuration.
@@ -441,7 +444,7 @@ Use these details when your first-run path needs more control.
     The wizard starts a background dashboard port forward and prints its URL in the ready summary.
     The default host port is `18789`.
     When that port is occupied, NemoClaw uses the next free dashboard port, such as `18790`, and includes the port in the URL.
-    For a new sandbox, NemoClaw reserves the selected loopback port through sandbox preparation and the image build.
+    For a new sandbox, NemoClaw reserves the selected loopback port through sandbox preparation and creation.
     If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources.
     If OpenShell returns the exact `sandbox is not ready` response, NemoClaw waits 5 seconds and retries the dashboard forward up to 12 times.
     The readiness-specific delays total at most 1 minute and preserve the existing sandbox and selected port.
