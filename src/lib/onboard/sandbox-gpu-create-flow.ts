@@ -484,7 +484,9 @@ export async function runSandboxGpuCreateFlow(
       );
     }
     console.error(
-      hermesPortableLifecycle
+      gpuCreateOutcome.nativeCleanupHandoff
+        ? `  Managed bootstrap retained exact owner-cleanup authority for sandbox '${input.sandboxName}'. Do not delete a runtime by mutable sandbox name; preserve it for identity-bound recovery.`
+        : hermesPortableLifecycle
         ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
         : `  Manual cleanup: openshell sandbox delete "${input.sandboxName}"`,
     );

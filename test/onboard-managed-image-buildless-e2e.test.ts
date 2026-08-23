@@ -27,9 +27,11 @@ describe("managed image buildless onboarding orchestration contract", () => {
       "utf8",
     );
     expect(commands).toContain(
-      "If the registry or required managed-image catalog evidence is unavailable, NemoClaw fails closed instead of selecting an unpinned image.",
+      "If registry or catalog availability prevents resolution, the ordinary `prefer-managed` path builds the shipped, reviewed repository Dockerfile instead; it never selects an unpinned `:latest` image.",
     );
-    expect(commands).not.toContain("falls back to the unpinned `:latest` tag");
+    expect(commands).toContain(
+      "Available catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent fails closed before sandbox creation.",
+    );
 
     progress.phase("validate mocked all-agent buildless orchestration boundaries");
     runManagedImageBuildlessE2e();
