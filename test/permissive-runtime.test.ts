@@ -87,7 +87,18 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
   it("keeps the Hermes Discord provider binding in Shields down", () => {
     let stagedPolicy = "";
     const out = buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
-      livePolicyYaml: HERMES_DISCORD_PERMISSIVE,
+      livePolicyYaml: YAML.stringify({
+        network_policies: {
+          discord: {
+            endpoints: [
+              {
+                host: "discord.com",
+                credential_binding: { provider: "hermes-box-discord-bridge" },
+              },
+            ],
+          },
+        },
+      }),
       readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
@@ -123,7 +134,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
 
   it("removes inactive Hermes Discord bindings before Shields down", () => {
     let stagedPolicy = "";
-    buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
+    const out = buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
       livePolicyYaml: BASE_PERMISSIVE,
       readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
       sandboxName: "hermes-box",
@@ -133,8 +144,10 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       },
     });
 
+    expect(out).toBe("/staged-hermes-permissive.yaml");
     expect(YAML.parse(stagedPolicy).network_policies?.discord).toBeUndefined();
     expect(stagedPolicy).not.toContain("hermes-box-discord-bridge");
+    expect(stagedPolicy).not.toContain("{sandboxName}");
   });
 
   it("rejects an unsafe Hermes sandbox name before staging Shields down", () => {
@@ -142,7 +155,17 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
 
     expect(() =>
       buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
-        livePolicyYaml: "",
+        livePolicyYaml: YAML.stringify({
+          network_policies: {
+            discord: {
+              endpoints: [
+                {
+                  credential_binding: { provider: "bad:provider-discord-bridge" },
+                },
+              ],
+            },
+          },
+        }),
         readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
         sandboxName: "bad:provider",
         writeTempPolicy,

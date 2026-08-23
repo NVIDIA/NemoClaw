@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { waitUntil } from "../../core/wait";
 import { shellQuote } from "../../runner";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError } from "./mcp-bridge-contracts";
+import { waitForMcpBridgeCondition } from "./mcp-bridge/timing";
 import {
   assertAuthenticatedBridgeEntry,
   assertPersistedAuthenticatedBridgeEntry,
@@ -163,7 +163,7 @@ export function waitForAttachedMcpCredential(
   let refreshedAfterObservedAbsence = false;
   let lastAttempt: McpCredentialRevisionAttempt = { kind: "transport-unavailable" };
   let attachedRevision: McpAttachedCredentialRevision | undefined;
-  const ready = waitUntil(
+  const ready = waitForMcpBridgeCondition(
     () => {
       // Each exec is a fresh OpenShell process. Only the bounded placeholder
       // classification crosses back to the host, where the comparison cannot
@@ -225,7 +225,7 @@ export function waitForDetachedMcpCredential(sandboxName: string, entry: McpBrid
     process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS ?? "30",
     10,
   );
-  const revoked = waitUntil(
+  const revoked = waitForMcpBridgeCondition(
     () =>
       executeMcpCredentialProofCommand(sandboxName, buildMcpCredentialDetachedCommand(envName))
         ?.status === 0,

@@ -33,6 +33,7 @@ import {
   MessagingHostStateApplier,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
+  MESSAGING_CREDENTIAL_PROVIDER_TYPE,
   runMessagingHook,
   type SandboxMessagingChannelPlan,
   type SandboxMessagingPlan,
@@ -854,7 +855,7 @@ async function applyChannelAddToGatewayAndRegistry(
     name: bridgeProviderName(sandboxName, channelName, envKey),
     envKey,
     token,
-    ...(staticProviderType ? { providerType: staticProviderType } : {}),
+    providerType: staticProviderType ?? MESSAGING_CREDENTIAL_PROVIDER_TYPE,
   }));
   // Bridge channels declare no manifest credentials, so the loop above yields
   // nothing for them. Their provider must be created HERE (same seam onboarding
@@ -1525,6 +1526,7 @@ async function rollbackChannelAdd(
           name: bridgeProviderName(sandboxName, canonical, envKey),
           envKey,
           token,
+          providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         }));
         policyChannelDependencies.upsertMessagingProviders(priorTokenDefs, {
           bestEffort: true,

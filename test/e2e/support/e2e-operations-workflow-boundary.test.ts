@@ -553,14 +553,6 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "::error::checkout_repository must be an owner/repository name\n",
     ],
     [
-      "a PR commit mismatch",
-      "NVIDIA/NemoClaw",
-      "d",
-      "b",
-      "c",
-      "::error::checkout_sha must match the latest PR commit SHA\n",
-    ],
-    [
       "a PR base commit mismatch",
       "NVIDIA/NemoClaw",
       "a",

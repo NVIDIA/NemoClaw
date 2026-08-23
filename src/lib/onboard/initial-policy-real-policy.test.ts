@@ -8,7 +8,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { SHIPPED_MANAGED_IMAGE_AGENTS } from "./managed-image/contract";
-import { MANAGED_STARTUP_MERGED_CA_FILE } from "./managed-startup/image-runtime";
+import {
+  MANAGED_STARTUP_COMPLETION_FILE,
+  MANAGED_STARTUP_MERGED_CA_FILE,
+  MANAGED_STARTUP_RUNTIME_ENV_FILE,
+} from "./managed-startup/image-runtime";
+import {
+  MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
+  MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
+  MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
+} from "./managed-startup/shared-state-transaction";
 import { prepareInitialSandboxCreatePolicy } from "./initial-policy";
 
 type PolicyRule = {
@@ -100,8 +109,23 @@ describe("initial sandbox policy real preset merge", () => {
   const shippingPolicyCases = managedImagePolicyCases.filter(
     ({ agent }) => agent !== "langchain-deepagents-code",
   );
+  const managedStartupReadOnlyPaths = [
+    { path: MANAGED_STARTUP_MERGED_CA_FILE, issue: "#9360", purpose: "CA bundle" },
+    {
+      path: MANAGED_STARTUP_RUNTIME_ENV_FILE,
+      issue: "#9357",
+      purpose: "runtime environment",
+    },
+  ] as const;
+  const protectedManagedStartupPaths = [
+    MANAGED_STARTUP_COMPLETION_FILE,
+    "/run/nemoclaw/openclaw-config-guard",
+    MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
+    MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
+    MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
+  ] as const;
 
-  it("covers the complete shipped managed startup CA policy matrix", () => {
+  it("covers the complete shipped managed startup trust policy matrix", () => {
     const policyIdentities = managedImagePolicyCases.map(
       ({ path: policyPath, agent }) => `${agent}:${policyPath.join("/")}`,
     );
@@ -109,11 +133,19 @@ describe("initial sandbox policy real preset merge", () => {
     expect(Object.keys(managedImagePolicyPathsByAgent)).toEqual([...SHIPPED_MANAGED_IMAGE_AGENTS]);
     expect(policyIdentities).toHaveLength(6);
     expect(new Set(policyIdentities).size).toBe(policyIdentities.length);
+    expect(managedStartupReadOnlyPaths.map(({ path: trustedPath }) => trustedPath)).toEqual([
+      MANAGED_STARTUP_MERGED_CA_FILE,
+      MANAGED_STARTUP_RUNTIME_ENV_FILE,
+    ]);
   });
 
-  it.each(managedImagePolicyCases)(
-    "grants $agent policy $path exact read-only access to the managed startup CA bundle (#9360)",
-    (policyCase) => {
+  it.each(
+    managedImagePolicyCases.flatMap((policyCase) =>
+      managedStartupReadOnlyPaths.map((trustedPath) => ({ policyCase, trustedPath })),
+    ),
+  )(
+    "grants $policyCase.agent policy $policyCase.path exact read-only access to the managed startup $trustedPath.purpose ($trustedPath.issue)",
+    ({ policyCase, trustedPath }) => {
       const prepared = prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
         agentName: policyCase.agent,
       });
@@ -122,19 +154,44 @@ describe("initial sandbox policy real preset merge", () => {
       const readWrite = policy.filesystem_policy?.read_write ?? [];
       const normalizedReadOnly = readOnly.map(normalizeFilesystemPolicyPath);
       const normalizedReadWrite = readWrite.map(normalizeFilesystemPolicyPath);
-      const managedCaAncestors = filesystemPolicyAncestors(MANAGED_STARTUP_MERGED_CA_FILE);
+      const trustedPathAncestors = filesystemPolicyAncestors(trustedPath.path);
 
-      expect(readOnly, policyCase.path.join("/")).toContain(MANAGED_STARTUP_MERGED_CA_FILE);
-      expect(normalizedReadWrite, policyCase.path.join("/")).not.toContain(
-        MANAGED_STARTUP_MERGED_CA_FILE,
-      );
+      expect(readOnly, policyCase.path.join("/")).toContain(trustedPath.path);
+      expect(normalizedReadWrite, policyCase.path.join("/")).not.toContain(trustedPath.path);
       expect(
-        normalizedReadOnly.filter((candidate) => managedCaAncestors.includes(candidate)),
+        normalizedReadOnly.filter((candidate) => trustedPathAncestors.includes(candidate)),
         policyCase.path.join("/"),
       ).toEqual([]);
       expect(
-        normalizedReadWrite.filter((candidate) => managedCaAncestors.includes(candidate)),
+        normalizedReadWrite.filter((candidate) => trustedPathAncestors.includes(candidate)),
         policyCase.path.join("/"),
+      ).toEqual([]);
+    },
+  );
+
+  it.each(
+    managedImagePolicyCases.flatMap((policyCase) =>
+      protectedManagedStartupPaths.map((protectedPath) => ({ policyCase, protectedPath })),
+    ),
+  )(
+    "keeps $protectedPath inaccessible in $policyCase.agent policy $policyCase.path (#9357)",
+    ({ policyCase, protectedPath }) => {
+      const prepared = prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
+        agentName: policyCase.agent,
+      });
+      const policy = readPreparedPolicy(prepared);
+      const grantedPaths = [
+        ...(policy.filesystem_policy?.read_only ?? []),
+        ...(policy.filesystem_policy?.read_write ?? []),
+      ].map(normalizeFilesystemPolicyPath);
+      const exposingGrants = new Set([
+        ...filesystemPolicyAncestors(protectedPath),
+        normalizeFilesystemPolicyPath(protectedPath),
+      ]);
+
+      expect(
+        grantedPaths.filter((candidate) => exposingGrants.has(candidate)),
+        `${policyCase.path.join("/")} exposes ${protectedPath}`,
       ).toEqual([]);
     },
   );

@@ -3,8 +3,22 @@
 
 import { describe, expect, it } from "vitest";
 
-type RunResult = { status: number; stdout?: string; stderr?: string };
-type RunOptions = { env?: Record<string, string | undefined> };
+type RunResult = {
+  error?: unknown;
+  output?: string;
+  signal?: unknown;
+  status: number;
+  stdout?: string;
+  stderr?: string;
+};
+type RunOptions = {
+  env?: Record<string, string | undefined>;
+  ignoreError?: boolean;
+  maxBuffer?: number;
+  stdio?: readonly unknown[];
+  suppressOutput?: boolean;
+  timeout?: number;
+};
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
 const DISCORD_STATIC_PROFILE_EXPORT = JSON.stringify({
@@ -84,7 +98,12 @@ const {
     baseUrl: string | null,
     env: Record<string, string | undefined>,
     runOpenshell: RunOpenshell,
-    options?: { replaceExisting?: boolean; requireExactBinding?: boolean },
+    options?: {
+      knownExists?: boolean;
+      replaceExisting?: boolean;
+      allowedSandboxes?: readonly string[];
+      requireExactBinding?: boolean;
+    },
   ) => { ok: boolean; status?: number; message?: string; reason?: string };
   upsertMessagingProviders: (
     tokenDefs: Array<{
@@ -95,8 +114,9 @@ const {
     }>,
     runOpenshell: RunOpenshell,
     options?: {
-      replaceExisting?: boolean;
+      allowedSandboxes?: readonly string[];
       bestEffort?: boolean;
+      replaceExisting?: boolean;
       requireExactBindings?: boolean;
     },
   ) => string[];
@@ -657,6 +677,201 @@ describe("onboard provider helpers", () => {
     );
   });
 
+  it("imports the endpointless profile before creating a static messaging provider (#9875)", () => {
+    const credential = "discord-credential-must-not-leak";
+    const calls: Array<{ command: string[]; env?: Record<string, string | undefined> }> = [];
+    let created = false;
+    const providers = upsertMessagingProviders(
+      [
+        {
+          name: "alpha-discord-bridge",
+          envKey: "DISCORD_BOT_TOKEN",
+          token: credential,
+          providerType: "nemoclaw-mcp-v1",
+        },
+      ],
+      (command, options) => {
+        calls.push({ command, env: options?.env });
+        switch (command[1]) {
+          case "get":
+            return created
+              ? {
+                  status: 0,
+                  stdout:
+                    "Name: alpha-discord-bridge\nType: nemoclaw-mcp-v1\nCredential keys: DISCORD_BOT_TOKEN\nConfig keys: <none>\n",
+                }
+              : {
+                  status: 1,
+                  stdout: "",
+                  stderr: "provider 'alpha-discord-bridge' not found",
+                };
+          case "create":
+            created = true;
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    );
+
+    expect(providers).toEqual(["alpha-discord-bridge"]);
+    expect(calls.map(({ command }) => command.join(" "))).toEqual([
+      expect.stringMatching(/^provider profile import --file .*nemoclaw-mcp-v1\.yaml$/),
+      "provider get alpha-discord-bridge",
+      "provider create --name alpha-discord-bridge --type nemoclaw-mcp-v1 --credential DISCORD_BOT_TOKEN",
+      "provider get alpha-discord-bridge",
+    ]);
+    expect(calls[2]?.env).toEqual({ DISCORD_BOT_TOKEN: credential });
+    expect(calls.flatMap(({ command }) => command)).not.toContain(credential);
+  });
+
+  it("rejects credential-free reuse when the messaging profile is incompatible (#9875)", () => {
+    const commands: string[] = [];
+    const profileResults: Record<string, RunResult> = {
+      import: { status: 1, stdout: "", stderr: "profile already exists" },
+      export: {
+        status: 0,
+        stdout: JSON.stringify({
+          id: "nemoclaw-mcp-v1",
+          credentials: [],
+          endpoints: [{ url: "https://foreign.example" }],
+          binaries: [],
+          inference_capable: false,
+        }),
+        stderr: "",
+      },
+    };
+
+    expect(() =>
+      upsertMessagingProviders(
+        [
+          {
+            name: "alpha-discord-bridge",
+            envKey: "DISCORD_BOT_TOKEN",
+            token: null,
+            providerType: "nemoclaw-mcp-v1",
+          },
+        ],
+        (command) => {
+          const joined = command.join(" ");
+          commands.push(joined);
+          return profileResults[command[2] ?? ""] ?? { status: 0, stdout: "", stderr: "" };
+        },
+        { bestEffort: true },
+      ),
+    ).toThrow(/does not match NemoClaw's endpointless messaging credential contract/u);
+    expect(commands).toEqual([
+      expect.stringMatching(/^provider profile import --file /u),
+      "provider profile export nemoclaw-mcp-v1 --output json",
+    ]);
+  });
+
+  it.each([
+    ["alpha-discord-bridge", "DISCORD_BOT_TOKEN"],
+    ["alpha-slack-bridge", "SLACK_BOT_TOKEN"],
+  ])("rejects a live legacy provider before updating %s (#9875)", (name, credentialKey) => {
+    const commands: string[] = [];
+
+    expect(() =>
+      upsertMessagingProviders(
+        [
+          {
+            name,
+            envKey: credentialKey,
+            token: "test-only-messaging-credential",
+            providerType: "nemoclaw-mcp-v1",
+          },
+        ],
+        (command) => {
+          commands.push(command.join(" "));
+          return command[1] === "profile"
+            ? { status: 0 }
+            : {
+                status: 0,
+                stdout: `Name: ${name}\nType: generic\nCredential keys: ${credentialKey}\nConfig keys: <none>\n`,
+              };
+        },
+        { bestEffort: true },
+      ),
+    ).toThrow(/does not match the required endpointless credential binding/);
+    expect(commands.some((command) => /provider (create|update)/u.test(command))).toBe(false);
+  });
+
+  it("rejects an ambiguous messaging provider lookup before mutation (#9875)", () => {
+    const mutations: string[] = [];
+    const getResult = {
+      status: 1,
+      stdout: "",
+      stderr: 'Error: status: Unavailable, message: "provider not found"',
+    };
+    const profileResult = { status: 0, stdout: "", stderr: "" };
+
+    expect(() =>
+      upsertMessagingProviders(
+        [
+          {
+            name: "alpha-discord-bridge",
+            envKey: "DISCORD_BOT_TOKEN",
+            token: "credential",
+            providerType: "nemoclaw-mcp-v1",
+          },
+        ],
+        (command) => {
+          const joined = command.join(" ");
+          const result = joined.startsWith("provider profile import ")
+            ? profileResult
+            : new Map([["provider get alpha-discord-bridge", getResult]]).get(joined);
+          mutations.push(...(result ? [] : [joined]));
+          return result ?? profileResult;
+        },
+        { bestEffort: true },
+      ),
+    ).toThrow(/Could not inspect messaging provider/);
+    expect(mutations).toEqual([]);
+  });
+
+  it.each([
+    ["alpha-discord-bridge", "DISCORD_BOT_TOKEN"],
+    ["alpha-slack-bridge", "SLACK_BOT_TOKEN"],
+  ])("replaces a detached legacy provider before registering %s (#9875)", (name, credentialKey) => {
+    const commands: string[] = [];
+    let providerType = "generic";
+    const providers = upsertMessagingProviders(
+      [
+        {
+          name,
+          envKey: credentialKey,
+          token: "test-only-messaging-credential",
+          providerType: "nemoclaw-mcp-v1",
+        },
+      ],
+      (command) => {
+        commands.push(command.join(" "));
+        switch (command[1]) {
+          case "profile":
+          case "delete":
+            return { status: 0 };
+          case "create":
+            providerType = "nemoclaw-mcp-v1";
+            return { status: 0 };
+          default:
+            return {
+              status: 0,
+              stdout: `Name: ${name}\nType: ${providerType}\nCredential keys: ${credentialKey}\nConfig keys: <none>\n`,
+            };
+        }
+      },
+      { replaceExisting: true },
+    );
+
+    expect(providers).toEqual([name]);
+    expect(commands).toEqual([
+      expect.stringMatching(/^provider profile import --file /u),
+      `provider get ${name}`,
+      `provider delete ${name}`,
+      `provider create --name ${name} --type nemoclaw-mcp-v1 --credential ${credentialKey}`,
+      `provider get ${name}`,
+    ]);
+  });
+
   it("updates an existing Brave Search provider in place on reuse paths", () => {
     const commands: string[] = [];
     const providers = upsertMessagingProviders(
@@ -941,6 +1156,44 @@ describe("onboard provider helpers", () => {
       "sandbox provider detach spark-nemo spark-nemo-telegram-bridge",
       "provider delete spark-nemo-telegram-bridge",
       "provider create --name spark-nemo-telegram-bridge --type generic --credential TELEGRAM_BOT_TOKEN",
+    ]);
+  });
+
+  it("does not detach a sibling sandbox while replacing a recreate-owned provider (#9875)", () => {
+    const commands: string[] = [];
+
+    expect(() =>
+      upsertMessagingProviders(
+        [
+          {
+            name: "spark-nemo-telegram-bridge",
+            envKey: "TELEGRAM_BOT_TOKEN",
+            token: "tg-test",
+            providerType: "generic",
+          },
+        ],
+        (command) => {
+          const joined = command.join(" ");
+          commands.push(joined);
+          return joined === "provider delete spark-nemo-telegram-bridge"
+            ? {
+                status: 1,
+                stdout: "",
+                stderr:
+                  "Error: status: FailedPrecondition, message: \"provider 'spark-nemo-telegram-bridge' is attached to sandbox(es): sibling-live\"",
+              }
+            : { status: 0, stdout: "", stderr: "" };
+        },
+        {
+          replaceExisting: true,
+          bestEffort: true,
+          allowedSandboxes: ["spark-nemo"],
+        },
+      ),
+    ).toThrow(/sibling-live/u);
+    expect(commands).toEqual([
+      "provider get spark-nemo-telegram-bridge",
+      "provider delete spark-nemo-telegram-bridge",
     ]);
   });
 

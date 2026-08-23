@@ -360,6 +360,21 @@ describe("protected managed-image build-cache boundary", () => {
     });
   });
 
+  it("binds every protected build to the selected target architecture", () => {
+    stubBuildInvocation();
+
+    const result = runBuild(REPO_ROOT, ["--platform", "linux/arm64"]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(recordedBuildInvocations()).toHaveLength(3);
+    expect(recordedBuildInvocation("openclaw")).toContain("--platform linux/arm64");
+    expect(recordedBuildInvocation("openclaw")).toContain("--build-arg TARGETARCH=arm64");
+    expect(recordedBuildInvocation("hermes")).toContain("--platform linux/arm64");
+    expect(recordedBuildInvocation("hermes")).toContain("--build-arg TARGETARCH=arm64");
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain("--platform linux/arm64");
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain("--build-arg TARGETARCH=arm64");
+  });
+
   it("passes each agent one empty absolute cache export root", () => {
     const cacheRoot = path.join(testRoot, "export-cache");
     stubBuildInvocation();
