@@ -192,6 +192,27 @@ export function validateSandboxCreateIntentBindings(
   });
 }
 
+function resolveProviderChannelMap(
+  requests: readonly SandboxCreateMessagingProviderRequest[],
+): Map<string, string> {
+  const providerChannels = new Map<string, string>();
+  for (const { channel, name } of requests) {
+    if (channel) providerChannels.set(name, channel);
+  }
+  return providerChannels;
+}
+
+function filterDisabledMessagingProviders(
+  providerNames: string[],
+  providerChannels: ReadonlyMap<string, string>,
+  disabledChannelNames: ReadonlySet<string>,
+): string[] {
+  return providerNames.filter((providerName) => {
+    const channel = providerChannels.get(providerName);
+    return !channel || !disabledChannelNames.has(channel);
+  });
+}
+
 /** Materialize policy, route metadata, resources, and providers from a secretless intent. */
 export function materializeSandboxCreatePlan({
   intent,
@@ -244,17 +265,17 @@ export function materializeSandboxCreatePlan({
   ];
 
   runProviderPreDeleteCleanup();
-  // Reusable providers hold gateway-side credential authority. Keep their exact
-  // attachment on the replacement even when the channel runtime is disabled:
-  // the initial policy can still carry a credential_binding during rebuild or
-  // Shields transitions, while enabledMessagingTokenDefs continues to suppress
-  // new provider creation for disabled channels.
-  const messagingProviders = [
-    ...new Set([
-      ...upsertMessagingProviders(enabledMessagingTokenDefs, { replaceExisting: true }),
-      ...intent.reusableMessagingProviders,
-    ]),
-  ];
+  const providerChannels = resolveProviderChannelMap(intent.messagingProviderRequests);
+  const messagingProviders = filterDisabledMessagingProviders(
+    [
+      ...new Set([
+        ...upsertMessagingProviders(enabledMessagingTokenDefs, { replaceExisting: true }),
+        ...intent.reusableMessagingProviders,
+      ]),
+    ],
+    providerChannels,
+    new Set(intent.disabledChannelNames),
+  );
   const createProviders = new Set<string>();
   if (intent.inferenceProvider) createProviders.add(intent.inferenceProvider);
   for (const provider of messagingProviders) createProviders.add(provider);
