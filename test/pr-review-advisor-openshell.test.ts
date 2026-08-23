@@ -12,7 +12,6 @@ import {
   ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
   advisorInferenceBaseUrl,
   DEFAULT_ADVISOR_MODEL,
-  NEMOTRON_ULTRA_ADVISOR_MODEL,
   openAiAdvisorProviderConfig,
 } from "../tools/advisors/session.mts";
 import type { OpenShellTools } from "../tools/openshell-agent/runtime.mts";
@@ -75,7 +74,7 @@ function advisorEnvironment(): NodeJS.ProcessEnv {
     PR_NUMBER: "7542",
     PR_REVIEW_ADVISOR_API_KEY: "advisor-host-secret",
     PR_REVIEW_ADVISOR_ARTIFACT_DIR: "pr-review-advisor",
-    PR_REVIEW_ADVISOR_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+    PR_REVIEW_ADVISOR_MODEL: DEFAULT_ADVISOR_MODEL,
     PR_REVIEW_ADVISOR_SANDBOX_TIMEOUT_SECONDS: "2100",
     RUNNER_TEMP: runnerTemp,
     SANDBOX_NAME: "pr-advisor-test",
@@ -141,64 +140,30 @@ describe("PR review advisor OpenShell wrapper", () => {
     ).toThrow("must use an approved advisor inference endpoint");
   });
 
-  it.each([DEFAULT_ADVISOR_MODEL, NEMOTRON_ULTRA_ADVISOR_MODEL])(
-    "preserves hosted provider compatibility for %s",
-    (modelId) => {
-      const config = openAiAdvisorProviderConfig("PR_REVIEW_ADVISOR_API_KEY") as {
-        apiKey: string;
-        baseUrl: string;
-        models: Array<{
-          id: string;
-          compat?: Record<string, unknown>;
-          reasoning: boolean;
-        }>;
-      };
+  it("preserves hosted provider compatibility", () => {
+    const config = openAiAdvisorProviderConfig("PR_REVIEW_ADVISOR_API_KEY") as {
+      apiKey: string;
+      baseUrl: string;
+      models: Array<{ id: string; compat?: Record<string, unknown>; reasoning: boolean }>;
+    };
 
-      expect(config.apiKey).toBe("PR_REVIEW_ADVISOR_API_KEY");
-      expect(config.baseUrl).toBe(ADVISOR_OPENAI_COMPATIBLE_BASE_URL);
-      expect(config.models).toContainEqual(
-        expect.objectContaining({
-          id: modelId,
-          reasoning: false,
-          compat: expect.objectContaining({
-            supportsDeveloperRole: false,
-            supportsReasoningEffort: false,
-            supportsStore: false,
-            supportsStrictMode: false,
-            supportsUsageInStreaming: false,
-            maxTokensField: "max_tokens",
-          }),
+    expect(config.apiKey).toBe("PR_REVIEW_ADVISOR_API_KEY");
+    expect(config.baseUrl).toBe(ADVISOR_OPENAI_COMPATIBLE_BASE_URL);
+    expect(config.models).toContainEqual(
+      expect.objectContaining({
+        id: DEFAULT_ADVISOR_MODEL,
+        reasoning: false,
+        compat: expect.objectContaining({
+          supportsDeveloperRole: false,
+          supportsReasoningEffort: false,
+          supportsStore: false,
+          supportsStrictMode: false,
+          supportsUsageInStreaming: false,
+          maxTokensField: "max_tokens",
         }),
-      );
-    },
-  );
-
-  it("runs the Nemotron matrix model through the analyzer directly", () => {
-    const runNode = vi.fn(
-      (_script: string, _args: string[], _env: NodeJS.ProcessEnv, _cwd: string) => 0,
+      }),
     );
-
-    runPrReviewAdvisorAnalysis(
-      {
-        advisorDir: ROOT,
-        advisorWorkdir: ROOT,
-        outDir: path.join(temporaryDirectory(), "artifacts"),
-        baseRef: "origin/main",
-        headRef: "HEAD",
-        model: NEMOTRON_ULTRA_ADVISOR_MODEL,
-        title: "PR Review Advisor",
-        runAnalysis: "0",
-      },
-      { runNode },
-    );
-
-    expect(runNode).toHaveBeenCalledTimes(1);
-    expect(runNode.mock.calls[0]?.[2]).toMatchObject({
-      PR_REVIEW_ADVISOR_MODEL: NEMOTRON_ULTRA_ADVISOR_MODEL,
-    });
-    expect(runNode.mock.calls[0]?.[2].PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toBeUndefined();
   });
-
   it("loads host-prepared GitHub context without a GitHub token", async () => {
     const directory = temporaryDirectory();
     const contextPath = path.join(directory, "github-context.json");
@@ -246,7 +211,7 @@ describe("PR review advisor OpenShell wrapper", () => {
       GH_TOKEN: "host-token",
       GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
       PR_NUMBER: "7542",
-          });
+    });
     const pullRequest = context?.pullRequest as Record<string, unknown>;
     expect(pullRequest.author_association).toBe("MEMBER");
     expect(pullRequest).not.toHaveProperty("authorAssociation");
@@ -307,7 +272,7 @@ describe("PR review advisor OpenShell wrapper", () => {
       GH_TOKEN: "host-token",
       GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
       PR_NUMBER: "7542",
-          });
+    });
     expect(context?.openPrOverlaps).toHaveLength(25);
     (context?.openPrOverlaps ?? []).forEach((overlap) => {
       expect(overlap.sameFileCount).toBe(300);
@@ -544,7 +509,7 @@ describe("PR review advisor OpenShell wrapper", () => {
         "--provider",
         "advisor",
         "--model",
-        "nvidia/nvidia/nemotron-3-ultra",
+        DEFAULT_ADVISOR_MODEL,
         "--timeout",
         "900",
       ],
@@ -763,7 +728,10 @@ describe("PR review advisor OpenShell wrapper", () => {
 
   it("exposes validated specialist sessions inside the standard Pi workdir (#9949)", () => {
     const env = advisorEnvironment();
-    const sessionDirectory = path.join(env.ADVISOR_WORKDIR as string, ".pr-review-advisor-sessions");
+    const sessionDirectory = path.join(
+      env.ADVISOR_WORKDIR as string,
+      ".pr-review-advisor-sessions",
+    );
     const sessionAlias = path.join(env.GITHUB_WORKSPACE as string, "specialist-sessions-alias");
     fs.mkdirSync(sessionDirectory);
     const sessionEntries = {
@@ -787,13 +755,19 @@ describe("PR review advisor OpenShell wrapper", () => {
     runAdvisorSandbox(env, tools);
 
     const calls = vi.mocked(tools.run).mock.calls;
-    const createArgs = calls.find(([, args]) => args.slice(0, 2).join(" ") === "sandbox create")?.[1] ?? [];
+    const createArgs =
+      calls.find(([, args]) => args.slice(0, 2).join(" ") === "sandbox create")?.[1] ?? [];
     const driverConfigIndex = createArgs.indexOf("--driver-config-json");
     const driverConfig = JSON.parse(createArgs[driverConfigIndex + 1] as string);
-    expect(driverConfig.docker.mounts.filter((mount: { target?: string }) => mount.target === "/pr-workdir")).toEqual([
-      expect.objectContaining({ read_only: true }),
-    ]);
-    const runArgs = calls.find(([, args]) => args.includes("/advisor/tools/pr-review-advisor/run-analysis.mts"))?.[1] ?? [];
+    expect(
+      driverConfig.docker.mounts.filter(
+        (mount: { target?: string }) => mount.target === "/pr-workdir",
+      ),
+    ).toEqual([expect.objectContaining({ read_only: true })]);
+    const runArgs =
+      calls.find(([, args]) =>
+        args.includes("/advisor/tools/pr-review-advisor/run-analysis.mts"),
+      )?.[1] ?? [];
     expect(runArgs).toContain(
       "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR=/pr-workdir/.pr-review-advisor-sessions",
     );

@@ -53,10 +53,9 @@ describe("specialist Pi session inputs", () => {
     const inventory = validateSpecialistSessionDirectory(root);
     expect(Object.keys(inventory.files)).toEqual(ADVISOR_INTERESTS);
     expect(inventory.available).toEqual(ADVISOR_INTERESTS);
-    expect(inventory.missing).toEqual([]);
   });
 
-  it.each(["behavior", "trust"] as const)("rejects a missing required %s session", (interest) => {
+  it.each(ADVISOR_INTERESTS)("rejects a missing required %s session", (interest) => {
     const root = fixture();
     fs.rmSync(path.join(root, specialistSessionFileName(interest)));
     expect(() => validateSpecialistSessionDirectory(root)).toThrow(
@@ -64,22 +63,8 @@ describe("specialist Pi session inputs", () => {
     );
   });
 
-  it.each(["design-architecture", "operations", "documentation"] as const)(
-    "accepts a missing optional %s session and inventories the limitation",
-    (interest) => {
-      const root = fixture();
-      fs.rmSync(path.join(root, specialistSessionFileName(interest)));
-      const inventory = validateSpecialistSessionDirectory(root);
-
-      expect(inventory.available).toEqual(ADVISOR_INTERESTS.filter((item) => item !== interest));
-      expect(inventory.missing).toEqual([interest]);
-      expect(inventory.files[interest]).toBeUndefined();
-    },
-  );
-
   it("lets synthesis inspect available traces with read-only tools", () => {
     const root = fixture();
-    fs.rmSync(path.join(root, specialistSessionFileName("documentation")));
     const turn = buildSynthesisTurn(validateSpecialistSessionDirectory(root));
 
     expect(turn.activeToolNames).toEqual(["read", "grep", "find", "ls"]);
@@ -106,14 +91,6 @@ describe("specialist Pi session inputs", () => {
         tools,
       ),
     ).toEqual([]);
-  });
-
-  it("rejects unexpected files", () => {
-    const root = fixture();
-    fs.writeFileSync(path.join(root, "extra.jsonl"), "{}\n");
-    expect(() => validateSpecialistSessionDirectory(root)).toThrow(
-      /Unexpected specialist session input/u,
-    );
   });
 
   it("rejects symlinked sessions", () => {
