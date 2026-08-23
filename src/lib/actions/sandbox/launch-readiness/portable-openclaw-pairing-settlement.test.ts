@@ -159,6 +159,24 @@ describe("Portable OpenClaw pairing settlement", () => {
     expect(scope.runApproval).not.toHaveBeenCalled();
   });
 
+  it("fails closed when Portable policy finalization changes inside the gateway lock (#9207)", async () => {
+    const getSandbox = vi
+      .fn()
+      .mockReturnValueOnce(ENTRY)
+      .mockReturnValue({ ...ENTRY, policyPresetsFinalized: undefined });
+    const scope = settlementDeps({ getSandbox });
+
+    await expect(settlePortableOpenClawPairing("alpha", {}, scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "portable-policy-incomplete",
+    });
+    expect(scope.calls).toEqual(["sandbox-lock", "gateway-lock"]);
+    expect(getSandbox).toHaveBeenCalledTimes(2);
+    expect(scope.observePairing).not.toHaveBeenCalled();
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(scope.runApproval).not.toHaveBeenCalled();
+  });
+
   it("leaves a current Portable receipt on the ordinary non-OpenClaw path (#9207)", async () => {
     const scope = settlementDeps({
       getSandbox: vi.fn(() => ({ ...ENTRY, agent: "hermes" })),
