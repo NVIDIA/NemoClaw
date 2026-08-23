@@ -398,17 +398,32 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           MANAGED_IMAGE_CATALOG: ${{ inputs.managed_image_catalog }}
+          RESTORE_CLI: ${{ inputs.restore_cli && 'true' || 'false' }}
         run: |
           set -euo pipefail
-          candidate_release="v$(jq -r '.nemoclawVersion' dist/build-identity.json)"
           catalog_path="${RUNNER_TEMP}/e2e-managed-image-catalog.json"
-          jq -e --arg release "$candidate_release" --arg revision "$CANDIDATE_SHA" '
+          jq -e --arg revision "$CANDIDATE_SHA" '
             type == "object" and length > 0 and
-            all(.[]; .source.revision == $revision and .source.release == $release)
+            all(.[];
+              .source.revision == $revision and
+              (.source.release | type == "string" and length > 0) and
+              (.source.cohort | type == "string" and length > 0)
+            ) and
+            ([.[].source.release] | unique | length) == 1 and
+            ([.[].source.cohort] | unique | length) == 1
           ' <<<"$MANAGED_IMAGE_CATALOG" >/dev/null || {
             echo "::error::managed-image catalog source identity does not match the candidate" >&2
             exit 1
           }
+          if [[ "$RESTORE_CLI" == "true" ]]; then
+            candidate_release="v$(jq -r '.nemoclawVersion' dist/build-identity.json)"
+            jq -e --arg release "$candidate_release" '
+              all(.[]; .source.release == $release)
+            ' <<<"$MANAGED_IMAGE_CATALOG" >/dev/null || {
+              echo "::error::managed-image catalog release does not match the restored CLI" >&2
+              exit 1
+            }
+          fi
           jq -c . <<<"$MANAGED_IMAGE_CATALOG" >"$catalog_path"
           [[ -s "$catalog_path" && ! -L "$catalog_path" ]] || {
             echo "::error::temporary managed-image catalog is invalid" >&2
@@ -620,7 +635,7 @@ jobs:
           [[ "$JOB_STATUS" =~ ^(success|failure|cancelled)$ ]] || { echo "::error::E2E job status is invalid" >&2; exit 1; }
           [[ "$ARTIFACT_DIRECTORY" =~ ^e2e-artifacts/live/[a-z0-9]+([_-][a-z0-9]+)*(/[a-z0-9]+([_-][a-z0-9]+)*)?$ ]] || { echo "::error::E2E artifact directory is invalid" >&2; exit 1; }
           install -d -m 0700 "$ARTIFACT_DIRECTORY"
-          product_evidence_count="$(find -P "$ARTIFACT_DIRECTORY" -type f ! -name evidence-manifest.json -printf . | wc -c)"
+          product_evidence_count="$(find -P "$ARTIFACT_DIRECTORY" -type f ! -name evidence-manifest.json -exec printf . \; | wc -c | tr -d '[:space:]')"
           if [[ "$JOB_STATUS" == "success" && "$product_evidence_count" == "0" ]]; then
             echo "::error::successful E2E target produced no product evidence" >&2
             exit 1

@@ -664,9 +664,9 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         if: PUBLICATION_REUSE_CONDITION,
         env: {
           GITHUB_TOKEN: "${{ github.token }}",
-          PUBLICATION_HEAD_SHA: "ee6762b9941777d64dad832994b03ca2a572d4c9",
+          PUBLICATION_HEAD_SHA: "e38db201413b457614904187377ed9fd002d281d",
           PUBLICATION_RUN_ATTEMPT: "1",
-          PUBLICATION_RUN_ID: "32204372443",
+          PUBLICATION_RUN_ID: "32544159037",
         },
         run: 'node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract-reused"',
       },
@@ -686,9 +686,9 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         name: "Validate reused Deep Agents Code base",
         if: PUBLICATION_REUSE_CONDITION,
         env: {
-          PUBLICATION_HEAD_SHA: "ee6762b9941777d64dad832994b03ca2a572d4c9",
+          PUBLICATION_HEAD_SHA: "e38db201413b457614904187377ed9fd002d281d",
           PUBLICATION_RUN_ATTEMPT: "1",
-          PUBLICATION_RUN_ID: "32204372443",
+          PUBLICATION_RUN_ID: "32544159037",
         },
         run: 'node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract-reused/contract.json"',
       },

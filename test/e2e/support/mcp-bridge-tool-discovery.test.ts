@@ -393,6 +393,14 @@ describe("authenticated MCP discovery restart retry", () => {
     expect(shouldRetryMcpDiscoveryAfterRestart([])).toBe(true);
   });
 
+  it("retries when only a non-MCP credential readiness probe reached the fixture", () => {
+    expect(
+      shouldRetryMcpDiscoveryAfterRestart([
+        { ...request("initialize"), rpcMethod: undefined },
+      ]),
+    ).toBe(true);
+  });
+
   it("does not retry after the fixture received a request", () => {
     expect(shouldRetryMcpDiscoveryAfterRestart([request("initialize")])).toBe(false);
   });
