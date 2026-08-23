@@ -335,6 +335,8 @@ function journalStore(): PodmanBootstrapJournalStore {
 function watcherLease() {
   const assertStillStopped = vi.fn();
   const resumeAndProve = vi.fn();
+  const resumeForObservationAndProve = vi.fn();
+  const requiesceAndProve = vi.fn();
   const lease: PodmanGatewayWatcherLease = {
     record: {
       schemaVersion: PODMAN_WATCHER_LEASE_SCHEMA_VERSION,
@@ -350,6 +352,8 @@ function watcherLease() {
       processStartIdentity: "pid-start-1234",
     },
     assertStillStopped,
+    resumeForObservationAndProve,
+    requiesceAndProve,
     resumeAndProve,
   };
   return { assertStillStopped, lease, resumeAndProve };

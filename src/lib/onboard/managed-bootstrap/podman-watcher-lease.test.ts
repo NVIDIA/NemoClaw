@@ -27,6 +27,11 @@ const RESUMED = Object.freeze({
   pid: 4_200,
   processStartIdentity: "proc-start-200",
 });
+const RESUMED_AGAIN = Object.freeze({
+  ...ORIGINAL,
+  pid: 4_300,
+  processStartIdentity: "proc-start-300",
+});
 const HOLDER = Object.freeze({ pid: 9_100, processStartIdentity: "holder-start-100" });
 
 function record(
@@ -45,6 +50,7 @@ function harness(overrides: Partial<PodmanManagedGatewayWatcherControllerDeps> =
   let durable: PodmanGatewayWatcherLeaseRecord | null = null;
   let holderAlive = true;
   let ownerStopped = false;
+  let resumeCount = 0;
   let watchers: PodmanGatewayWatcherSnapshot[] = [ORIGINAL];
   const alive = new Set(["4100:proc-start-100"]);
   const healthy = new Set(["4100:proc-start-100"]);
@@ -68,17 +74,18 @@ function harness(overrides: Partial<PodmanManagedGatewayWatcherControllerDeps> =
       durable = null;
     }),
   };
-  const stopExactOwner = vi.fn(() => {
-    alive.delete(key(ORIGINAL));
-    healthy.delete(key(ORIGINAL));
+  const stopExactOwner = vi.fn((entry: PodmanGatewayWatcherSnapshot = ORIGINAL) => {
+    alive.delete(key(entry));
+    healthy.delete(key(entry));
     watchers = [];
     ownerStopped = true;
   });
   const resumeSameOwner = vi.fn(() => {
+    const resumed = resumeCount++ === 0 ? RESUMED : RESUMED_AGAIN;
     ownerStopped = false;
-    watchers = [RESUMED];
-    alive.add(key(RESUMED));
-    healthy.add(key(RESUMED));
+    watchers = [resumed];
+    alive.add(key(resumed));
+    healthy.add(key(resumed));
   });
   const deps: PodmanManagedGatewayWatcherControllerDeps = {
     store,
@@ -145,6 +152,25 @@ describe("durable Podman OpenShell watcher lease", () => {
     expect(fake.watchers()).toEqual([RESUMED]);
     expect(fake.durable()).toBeNull();
     expect(fake.store.clear).toHaveBeenCalledWith(LEASE_ID);
+  });
+
+  it("retains durable authority while observation runs and requiesces before finalization", () => {
+    const fake = harness();
+    const lease = fake.controller.quiesceAndProve();
+
+    lease.resumeForObservationAndProve();
+    expect(fake.watchers()).toEqual([RESUMED]);
+    expect(fake.durable()).toEqual(expect.objectContaining({ ...RESUMED, phase: "observing" }));
+
+    lease.requiesceAndProve();
+    expect(fake.watchers()).toEqual([]);
+    expect(fake.durable()).toEqual(expect.objectContaining({ ...RESUMED, phase: "stopped" }));
+    lease.assertStillStopped();
+
+    lease.resumeAndProve();
+    expect(fake.resumeSameOwner).toHaveBeenCalledTimes(2);
+    expect(fake.stopExactOwner).toHaveBeenCalledTimes(2);
+    expect(fake.durable()).toBeNull();
   });
 
   it("clears an acquiring record when the crash preceded the stop request", () => {

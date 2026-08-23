@@ -923,8 +923,12 @@ function createProductionWatcherController(
   });
   const wrapLease = (lease: PodmanGatewayWatcherLease): PodmanGatewayWatcherLease =>
     Object.freeze({
-      record: lease.record,
+      get record() {
+        return lease.record;
+      },
       assertStillStopped: lease.assertStillStopped,
+      resumeForObservationAndProve: lease.resumeForObservationAndProve,
+      requiesceAndProve: lease.requiesceAndProve,
       resumeAndProve() {
         lease.resumeAndProve();
         if (lease.record.ownerKind === "standalone") {
@@ -1486,6 +1490,7 @@ export function createPodmanManagedBootstrapAdapter(
         transaction: current.imageTransaction,
         timeoutSecs,
       });
+      current.watcherLease.resumeForObservationAndProve();
       current.completion = completion;
       return completionReceipt(
         handle,
@@ -1502,6 +1507,7 @@ export function createPodmanManagedBootstrapAdapter(
       const current = transactions.get(input.handle.bootstrapIdentity);
       if (!current?.prepared || !current.watcherLease)
         throw new Error("Managed bootstrap Podman transaction is unavailable.");
+      current.watcherLease.requiesceAndProve();
       if (input.outcome === "rollback") {
         const receipt = rollbackPodmanBootstrapBeforeCommit({
           bootstrapIdentity: input.handle.bootstrapIdentity,
