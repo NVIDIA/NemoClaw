@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Automation / Label Merged PR Release Target
+name: Automation / Assign and Reconcile Release Targets
 
 # pull_request_target runs in the base repo context, giving the token write
 # access even for fork PRs. This workflow is safe because it only reads trusted
