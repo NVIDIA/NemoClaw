@@ -158,6 +158,7 @@ export type AdvisorLaneReport = {
   counts?: FindingCounts;
   confidence?: "low" | "medium" | "high";
   fingerprints?: LaneFingerprints;
+  result?: ReviewAdvisorResult;
   e2e?: LaneE2eRecommendations;
   terminology?: TrustedLaneTerminologyDecision[];
 };
@@ -377,7 +378,7 @@ export function normalizeAdvisorLaneReport(
     };
   }
   if (analysisResult.version !== 1 || !structure) return unavailableLaneReport();
-  return { status: "completed", partial: false, ...structure };
+  return { status: "completed", partial: false, result: finalResult as ReviewAdvisorResult, ...structure };
 }
 
 export function buildComment({
@@ -397,7 +398,8 @@ export function buildComment({
   metadata?: CommentMetadata;
   lanes?: AdvisorLaneReports;
 }): string {
-  const findingRecords = collectFindingRecords(result);
+  const effectiveResult = resultWithCompletedSecondOpinionFindings(result, lanes);
+  const findingRecords = collectFindingRecords(effectiveResult);
   const blockerCount = findingRecords.filter(
     (record) => record.finding.severity === "blocker",
   ).length;
@@ -407,23 +409,23 @@ export function buildComment({
   const suggestionCount = findingRecords.filter(
     (record) => record.finding.severity === "suggestion",
   ).length;
-  const reviewHistory = buildSecondarySummary(result);
+  const reviewHistory = buildSecondarySummary(effectiveResult);
   const informational =
-    result?.summary?.recommendation === "info_only" && result.summary.oneLine
-      ? `**Status:** ${escapeCommentText(result.summary.oneLine)}\n`
+    effectiveResult?.summary?.recommendation === "info_only" && effectiveResult.summary.oneLine
+      ? `**Status:** ${escapeCommentText(effectiveResult.summary.oneLine)}\n`
       : "";
   const findingsDetails = renderFindingsDetails(findingRecords);
-  const terminologyDetails = renderTerminologyDetails(result);
-  const e2eDetails = renderE2eDetails(result);
+  const terminologyDetails = renderTerminologyDetails(effectiveResult);
+  const e2eDetails = renderE2eDetails(effectiveResult);
   const laneDetails = renderAdvisorLanes(lanes);
   const details = runUrl ? `\n[Workflow run details](${runUrl})` : "";
-  const hiddenMetadata = renderHiddenMetadata(result, metadata);
+  const hiddenMetadata = renderHiddenMetadata(effectiveResult, metadata);
   const posture = reviewPosture(
-    result?.summary?.recommendation,
-    result?.summary?.confidence,
+    effectiveResult?.summary?.recommendation,
+    effectiveResult?.summary?.confidence,
     blockerCount,
   );
-  const headline = reviewHeadline(result?.summary?.recommendation, blockerCount);
+  const headline = reviewHeadline(effectiveResult?.summary?.recommendation, blockerCount);
   const heading = validateSingleLineCommentField(title || COMMENT_TITLE, "title");
   const renderedMarker = validateCommentMarker(marker || MARKER);
   const prefix = `${renderedMarker}\n${hiddenMetadata}`;
@@ -821,6 +823,30 @@ function collectFindingRecords(result?: ReviewAdvisorResult): FindingRecord[] {
     id: `PRA-${index + 1}`,
     finding,
   }));
+}
+
+function resultWithCompletedSecondOpinionFindings(
+  result?: ReviewAdvisorResult,
+  lanes?: AdvisorLaneReports,
+): ReviewAdvisorResult | undefined {
+  const secondOpinionFindingRecords =
+    lanes?.primary.status !== "completed" &&
+    lanes?.secondOpinion.status === "completed" &&
+    !lanes.secondOpinion.partial
+      ? collectFindingRecords(lanes.secondOpinion.result)
+      : [];
+  if (secondOpinionFindingRecords.length === 0) return result;
+  const primaryFingerprints = new Set(
+    collectFindingRecords(result).map((record) => stableJson(record.finding)),
+  );
+  const secondOpinionOnly = secondOpinionFindingRecords
+    .filter((record) => !primaryFingerprints.has(stableJson(record.finding)))
+    .map((record) => record.finding);
+  if (secondOpinionOnly.length === 0) return result;
+  return {
+    ...result,
+    findings: [...(result?.findings || []), ...secondOpinionOnly],
+  };
 }
 
 function trustedLaneStructure(

@@ -4,7 +4,7 @@
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderSummary } from "../tools/pr-review-advisor/render-result.mts";
-import { buildComment } from "../tools/pr-review-advisor/comment.mts";
+import { buildComment, normalizeAdvisorLaneReport } from "../tools/pr-review-advisor/comment.mts";
 import {
   loadAdvisorSchema,
   metadata,
@@ -124,6 +124,43 @@ describe("PR review advisor", () => {
     expect(comment).toContain("#### `PRA-20` Blocker — Blocker 20");
     expect(comment).not.toContain("`PRA-21`");
     expect(comment).not.toContain("### Recommended refactoring");
+  });
+
+  it("keeps completed second-opinion warnings visible when the primary lane is skipped", () => {
+    const headSha = "abc123def456";
+    const secondOpinionResult = validResult({
+      headSha,
+      findings: [
+        {
+          severity: "warning",
+          category: "correctness",
+          file: "src/lib/example.ts",
+          line: 12,
+          title: "Check the alternate path",
+          description: "The second opinion found a concrete non-blocking concern.",
+          recommendation: "Review or justify the alternate path before merge.",
+        },
+      ],
+    });
+    const comment = buildComment({
+      summary: "unused",
+      result: validResult({ headSha, findings: [] }),
+      lanes: {
+        primary: { status: "skipped", partial: false },
+        secondOpinion: normalizeAdvisorLaneReport(
+          secondOpinionResult,
+          secondOpinionResult,
+          headSha,
+        ),
+      },
+    });
+
+    expect(comment).toContain("**Findings:** 0 blockers · 1 warning · 0 suggestions");
+    expect(comment).toContain("**Next action:** Review the warnings below.");
+    expect(comment).toContain("#### `PRA-1` Warning — Check the alternate path");
+    expect(comment).toContain(
+      "**Nemotron 3 Ultra (second opinion):** Completed · high confidence · 0 blockers · 1 warning · 0 suggestions",
+    );
   });
 
   it("keeps warning-only reviews non-blocking without synthetic test tasks", () => {
