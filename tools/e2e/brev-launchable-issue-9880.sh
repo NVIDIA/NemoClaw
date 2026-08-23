@@ -214,12 +214,19 @@ jq -e --arg expectedBootImage "$expected_boot_image" --arg expectedSha "$expecte
 log "Verified standing Launchable runtime identity before credential exposure"
 
 raw_log="$(mktemp "${RUNNER_TEMP:-/tmp}/issue-9880.XXXXXX")"
-remote_script="$(mktemp "${RUNNER_TEMP:-/tmp}/issue-9880-remote.XXXXXX")"
-chmod 600 "$raw_log" "$remote_script"
-cleanup_scenario_files() { rm -f -- "$remote_script" "$raw_log"; }
+remote_script=""
+cleanup_scenario_files() {
+  local cleanup_status=0
+  [ -z "${remote_script:-}" ] || rm -f -- "$remote_script" || cleanup_status=$?
+  [ -z "${raw_log:-}" ] || rm -f -- "$raw_log" || cleanup_status=$?
+  return "$cleanup_status"
+}
 trap cleanup_scenario_files EXIT
 trap 'cleanup_scenario_files; exit 130' INT
 trap 'cleanup_scenario_files; exit 143' TERM
+chmod 600 "$raw_log"
+remote_script="$(mktemp "${RUNNER_TEMP:-/tmp}/issue-9880-remote.XXXXXX")"
+chmod 600 "$remote_script"
 {
   printf 'export NVIDIA_INFERENCE_API_KEY=%q\n' "$NVIDIA_API_KEY"
   cat <<'REMOTE'
@@ -301,9 +308,10 @@ timeout --signal=TERM --kill-after=10s 900s brev exec "$INSTANCE_NAME" "@$remote
 scenario_status=$?
 set -e
 rm -f -- "$remote_script"
-trap - EXIT INT TERM
 remote_script=""
 redact_file "$raw_log" "$WORK_DIR/issue-9880.log"
+raw_log=""
+trap - EXIT INT TERM
 
 classification="completed"
 if [ "$scenario_status" -eq 86 ]; then

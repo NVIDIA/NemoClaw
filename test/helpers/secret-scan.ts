@@ -16,8 +16,9 @@ function fileContainsLiteral(file: string, literal: string): boolean {
   try {
     handle = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
     return fs.fstatSync(handle).isFile() && fs.readFileSync(handle, "utf8").includes(literal);
-  } catch {
-    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") return false;
+    throw error;
   } finally {
     if (handle !== undefined) fs.closeSync(handle);
   }
