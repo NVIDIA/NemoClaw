@@ -316,7 +316,7 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
       ...lifecycleResult(),
       registryEntryPresent: Boolean(registry.getSandbox("alpha")?.mcp?.bridges?.github),
     }).toMatchObject({
-      error: expect.stringMatching(/left residual resources/),
+      error: expect.stringMatching(/Generated MCP policy cleanup .* is incomplete/),
       adapterRegistered: true,
       providerExists: true,
       registryEntryPresent: true,

@@ -557,7 +557,7 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
     expect(result.stdout).not.toContain("Cleared incomplete MCP destroy transaction");
   });
 
-  it("preserves the prepared marker and manifest when forced cleanup tolerates residuals", async () => {
+  it("preserves the prepared marker and manifest when policy cleanup is unproved", async () => {
     const home = createTempHome("nemoclaw-force-residual-preserve-");
     const script = `
 process.env.HOME = ${JSON.stringify(home)};
@@ -584,23 +584,26 @@ registry.registerSandbox({
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.removeMcpBridge("stuck-sandbox", "github", { force: true, allowResidual: true }).then(
   () => {
-    const after = registry.getSandbox("stuck-sandbox");
-    process.stdout.write("<<REPRO_JSON>>" + JSON.stringify({ mcp: after && after.mcp }));
-    process.exit(0);
+    process.exit(1);
   },
   (error) => {
-    process.stderr.write(String(error && error.message || error));
-    process.exit(1);
+    const after = registry.getSandbox("stuck-sandbox");
+    process.stdout.write("<<REPRO_JSON>>" + JSON.stringify({
+      error: String(error && error.message || error),
+      mcp: after && after.mcp,
+    }));
+    process.exit(0);
   },
 );
 `;
     const result = runManagedMcpNodeScript(home, script);
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stderr).toContain("adapter cleanup failed (injected)");
     const jsonMarker = "<<REPRO_JSON>>";
     const parsed = JSON.parse(
       result.stdout.slice(result.stdout.indexOf(jsonMarker) + jsonMarker.length),
-    ) as { mcp: SandboxMcpSnapshot | undefined };
+    ) as { error: string; mcp: SandboxMcpSnapshot | undefined };
+    expect(parsed.error).toContain("Generated MCP policy cleanup");
     expect(parsed.mcp?.destroyPreparedAt).toBe("2026-06-27T01:00:00.000Z");
     expect(parsed.mcp?.managedServerNames).toEqual(["github"]);
     expect(parsed.mcp?.bridges).toHaveProperty("github");

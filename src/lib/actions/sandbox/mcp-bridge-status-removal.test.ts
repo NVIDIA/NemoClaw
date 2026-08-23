@@ -110,7 +110,7 @@ bridge.removeMcpBridge("legacy-sandbox", "github").then(
     });
   });
 
-  it("preserves the registry entry when force cleanup leaves residual policy state", () => {
+  it("preserves the bridge manifest when force cleanup leaves residual policy state", () => {
     const home = createTempHome("nemoclaw-mcp-residual-");
     const script = `
 process.env.HOME = ${JSON.stringify(home)};
@@ -188,7 +188,7 @@ bridge.removeMcpBridge("legacy-sandbox", "github", { force: true }).then(
       message: string;
       sandbox: { mcp?: { bridges?: Record<string, unknown> } };
     };
-    expect(payload.message).toContain("registry entry was preserved");
+    expect(payload.message).toContain("bridge manifest was preserved");
     expect(payload.sandbox.mcp?.bridges).toHaveProperty("github");
   });
 });

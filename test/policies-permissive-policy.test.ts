@@ -42,6 +42,9 @@ policies.applyPermissivePolicy("hermes-sandbox");
     fakeOpenshell,
     `#!/usr/bin/env bash
 set -euo pipefail
+if [ "$1 $2" = "policy get" ]; then
+  exit 0
+fi
 if [ "$1 $2" = "policy set" ]; then
   policy_file=""
   while [ "$#" -gt 0 ]; do
