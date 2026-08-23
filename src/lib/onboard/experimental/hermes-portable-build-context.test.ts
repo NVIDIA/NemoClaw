@@ -133,6 +133,15 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     expect(stagedDockerfile).toContain("ARG NEMOCLAW_TOOL_DISCLOSURE=direct");
     expect(stagedDockerfile).toContain("ARG CHAT_UI_URL=");
     expect(stagedDockerfile).not.toContain("ARG CHAT_UI_URL=http://127.0.0.1:18789");
+    const globalArguments = stagedDockerfile.slice(0, stagedDockerfile.indexOf("\nFROM "));
+    expect(globalArguments).toContain("ARG TARGETARCH=amd64");
+    expect(stagedDockerfile).toContain(
+      "FROM hermes-managed-teams-${TARGETARCH}-wheels AS hermes-managed-teams-1-wheels",
+    );
+    expect(stagedDockerfile).not.toMatch(/^ADD --chmod=/mu);
+    expect(stagedDockerfile).toMatch(
+      /^ADD --checksum=sha256:[a-f0-9]{64} https:\/\/files[.]pythonhosted[.]org\//mu,
+    );
     const finalStage = stagedDockerfile.slice(stagedDockerfile.lastIndexOf("FROM ${BASE_IMAGE}"));
     const payloadCopyIndex = finalStage.indexOf("COPY --from=hermes-runtime-payload / /");
     const permissionNormalizationIndex = finalStage.search(
@@ -347,7 +356,7 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     );
   });
 
-  it("rejects BuildKit-only local COPY options before reservation (#9921)", () => {
+  it("rejects BuildKit-only local COPY options before reservation (#10007)", () => {
     const source = primaryCloneFixture();
     const dockerfile = path.join(source, "agents/hermes/Dockerfile");
     const reservationRoot = path.join(stateDir, "hermes-portable-build-context");
@@ -365,6 +374,25 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
 
     expect(() => createHermesPortableBuildContextPlan(source, BUILD_SETTINGS)).toThrow(
       "non-Portable local COPY option",
+    );
+    expect(fs.existsSync(reservationRoot)).toBe(reservationExistedBefore);
+  });
+
+  it("rejects BuildKit-only remote ADD options before reservation (#10007)", () => {
+    const source = primaryCloneFixture();
+    const dockerfile = path.join(source, "agents/hermes/Dockerfile");
+    const reservationRoot = path.join(stateDir, "hermes-portable-build-context");
+    fs.writeFileSync(
+      dockerfile,
+      fs
+        .readFileSync(dockerfile, "utf8")
+        .replace("ADD --checksum=sha256:", "ADD --chmod=0444 --checksum=sha256:"),
+      { mode: 0o644 },
+    );
+    const reservationExistedBefore = fs.existsSync(reservationRoot);
+
+    expect(() => createHermesPortableBuildContextPlan(source, BUILD_SETTINGS)).toThrow(
+      "unsupported local or unpinned ADD instruction",
     );
     expect(fs.existsSync(reservationRoot)).toBe(reservationExistedBefore);
   });
