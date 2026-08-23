@@ -26,6 +26,8 @@ import {
 } from "./podman-bootstrap-replacement";
 import {
   PODMAN_MANAGED_LABEL,
+  PODMAN_OPENSHELL_MANAGED_BY_LABEL,
+  PODMAN_OPENSHELL_MANAGED_BY_VALUE,
   PODMAN_SANDBOX_CONTAINER_PREFIX,
   PODMAN_SANDBOX_ID_LABEL,
   PODMAN_SANDBOX_NAME_LABEL,
@@ -65,6 +67,10 @@ const LABELS = Object.freeze({
   [PODMAN_SANDBOX_NAME_LABEL]: SANDBOX_NAME,
   [PODMAN_SANDBOX_NAMESPACE_LABEL]: "",
   [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
+});
+const REPLACEMENT_LABELS = Object.freeze({
+  ...LABELS,
+  [PODMAN_OPENSHELL_MANAGED_BY_LABEL]: PODMAN_OPENSHELL_MANAGED_BY_VALUE,
 });
 const STATE_VOLUME_LABELS = Object.freeze({
   [PODMAN_BOOTSTRAP_IDENTITY_LABEL]: BOOTSTRAP_IDENTITY,
@@ -273,13 +279,21 @@ class PodmanHarness {
     this.capturedEnvironmentContents = fs.readFileSync(environmentFile, "utf8");
     this.capturedEnvironmentMode = fs.statSync(environmentFile).mode & 0o777;
     const configuredResult = this.createResult;
+    const labels = Object.fromEntries(
+      args.flatMap((argument, index) => {
+        if (argument !== "--label") return [];
+        const label = args[index + 1] ?? "";
+        const separator = label.indexOf("=");
+        return separator > 0 ? [[label.slice(0, separator), label.slice(separator + 1)]] : [];
+      }),
+    );
     switch (configuredResult) {
       case null:
         this.replacement = {
           id: REPLACEMENT_RUNTIME_ID,
           name: STAGING_NAME,
           image: REPLACEMENT_IMAGE_ID,
-          labels: LABELS,
+          labels,
           entrypoint: ENTRYPOINT_ARGV,
           command: COMMAND_ARGV,
           environment: this.replacementEnvironment,
@@ -397,7 +411,7 @@ describe("Podman bootstrap stopped replacement", () => {
       id: REPLACEMENT_RUNTIME_ID,
       name: STAGING_NAME,
       image: REPLACEMENT_IMAGE_ID,
-      labels: LABELS,
+      labels: REPLACEMENT_LABELS,
       running: false,
     });
     expect(harness.stateVolume).toEqual({

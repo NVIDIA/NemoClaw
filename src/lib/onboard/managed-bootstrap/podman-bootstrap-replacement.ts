@@ -19,6 +19,8 @@ import {
 } from "./podman-bootstrap-journal";
 import {
   PODMAN_MANAGED_LABEL,
+  PODMAN_OPENSHELL_MANAGED_BY_LABEL,
+  PODMAN_OPENSHELL_MANAGED_BY_VALUE,
   PODMAN_SANDBOX_CONTAINER_PREFIX,
   PODMAN_SANDBOX_ID_LABEL,
   PODMAN_SANDBOX_NAME_LABEL,
@@ -145,6 +147,7 @@ interface NormalizedReplacementPlan extends PodmanBootstrapReplacementPlan {
   readonly entrypointArgv: readonly string[];
   readonly commandArgv: readonly string[];
   readonly replacementImageContentId: string;
+  readonly replacementLabels: Readonly<Record<string, string>>;
   readonly replacementStagingName: string;
   readonly replacementStateVolumeName: string;
   readonly replacementStateVolumeLabels: Readonly<Record<string, string>>;
@@ -277,6 +280,15 @@ function canonicalLabels(
     return failure("Podman replacement labels do not match exact OpenShell ownership.", false);
   }
   return labels;
+}
+
+function replacementLabels(
+  labels: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> {
+  return Object.freeze({
+    ...labels,
+    [PODMAN_OPENSHELL_MANAGED_BY_LABEL]: PODMAN_OPENSHELL_MANAGED_BY_VALUE,
+  });
 }
 
 function environmentEntries(
@@ -439,6 +451,7 @@ function normalizePlan(plan: PodmanBootstrapReplacementPlan): NormalizedReplacem
     "Podman held-workload image content ID",
   );
   const labels = canonicalLabels(held);
+  const managedReplacementLabels = replacementLabels(labels);
   const originalContainerName = safeString(
     held.containerName,
     "Podman held-workload container name",
@@ -482,6 +495,7 @@ function normalizePlan(plan: PodmanBootstrapReplacementPlan): NormalizedReplacem
     entrypointArgv,
     commandArgv,
     replacementImageContentId,
+    replacementLabels: managedReplacementLabels,
     replacementStagingName,
     replacementStateVolumeName,
     replacementStateVolumeLabels,
@@ -496,7 +510,7 @@ function normalizePlan(plan: PodmanBootstrapReplacementPlan): NormalizedReplacem
     replacementSpecFingerprint: stableHash({
       replacementStagingName,
       replacementImageContentId,
-      labels,
+      labels: managedReplacementLabels,
       runtimeArgs,
       environment,
       entrypointArgv,
@@ -820,7 +834,7 @@ function createArgs(plan: NormalizedReplacementPlan, environmentFile: string): r
     "--env-file",
     environmentFile,
   ];
-  for (const [key, value] of Object.entries(plan.heldWorkload.labels)) {
+  for (const [key, value] of Object.entries(plan.replacementLabels)) {
     args.push("--label", `${key}=${value}`);
   }
   args.push(
@@ -932,7 +946,7 @@ function expectedReplacement(
     runtimeId,
     name: plan.replacementStagingName,
     imageContentId: plan.replacementImageContentId,
-    labels: plan.heldWorkload.labels,
+    labels: plan.replacementLabels,
     running: false,
     entrypointArgv: plan.entrypointArgv,
     commandArgv: plan.commandArgv,
@@ -951,7 +965,7 @@ function replacementExpectationFromJournal(
     runtimeId,
     name: journal.replacementStagingName,
     imageContentId: journal.replacementImageContentId,
-    labels: held.labels,
+    labels: replacementLabels(canonicalLabels(held)),
     running: false,
     stateVolume,
   };

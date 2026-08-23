@@ -71,6 +71,8 @@ import {
 import {
   inspectExactPodmanHeldWorkload,
   PODMAN_MANAGED_LABEL,
+  PODMAN_OPENSHELL_MANAGED_BY_LABEL,
+  PODMAN_OPENSHELL_MANAGED_BY_VALUE,
   PODMAN_SANDBOX_ID_LABEL,
   PODMAN_SANDBOX_NAME_LABEL,
   PODMAN_SANDBOX_NAMESPACE,
@@ -1495,6 +1497,7 @@ function proveJournalRuntime(
   runtimeId: string,
   allowedNames: readonly string[],
   expectedImageContentId: string,
+  requireCurrentOwnership = false,
 ): JsonRecord {
   const first = inspectRuntime(engine, runtimeId);
   const second = inspectRuntime(engine, runtimeId);
@@ -1511,7 +1514,9 @@ function proveJournalRuntime(
     labels[PODMAN_SANDBOX_ID_LABEL] !== journal.sandboxId ||
     labels[PODMAN_SANDBOX_NAME_LABEL] !== journal.sandboxName ||
     labels[PODMAN_SANDBOX_NAMESPACE_LABEL] !== PODMAN_SANDBOX_NAMESPACE ||
-    labels[PODMAN_SANDBOX_WORKSPACE_LABEL] !== PODMAN_SANDBOX_WORKSPACE
+    labels[PODMAN_SANDBOX_WORKSPACE_LABEL] !== PODMAN_SANDBOX_WORKSPACE ||
+    (requireCurrentOwnership &&
+      labels[PODMAN_OPENSHELL_MANAGED_BY_LABEL] !== PODMAN_OPENSHELL_MANAGED_BY_VALUE)
   ) {
     throw new Error(
       "Managed bootstrap Podman runtime does not match its exact durable ownership authority.",
@@ -1566,6 +1571,7 @@ export function finishCommittedPodmanBootstrap(
     journal.replacementRuntimeId,
     [journal.replacementStagingName, journal.originalContainerName],
     journal.replacementImageContentId,
+    true,
   );
   const currentName = String(replacement.Name ?? "").replace(/^\//u, "");
   if (currentName === journal.replacementStagingName) {
@@ -1581,6 +1587,7 @@ export function finishCommittedPodmanBootstrap(
     journal.replacementRuntimeId,
     [journal.originalContainerName],
     journal.replacementImageContentId,
+    true,
   );
   watcherLease.assertStillStopped();
   const committed = journalStore.recordCommitted(journal.bootstrapIdentity);

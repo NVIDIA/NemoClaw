@@ -90,6 +90,7 @@ function runtimeInspect(runtimeId: string, name: string, image: string) {
     Config: {
       Labels: {
         "openshell.managed": "true",
+        "openshell.ai/managed-by": "openshell",
         "openshell.ai/sandbox-id": "sandbox-alpha",
         "openshell.ai/sandbox-name": "alpha",
         "openshell.ai/sandbox-namespace": "",
