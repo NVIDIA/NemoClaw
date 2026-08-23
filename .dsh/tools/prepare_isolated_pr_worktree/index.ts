@@ -106,7 +106,7 @@ export default async function prepare_isolated_pr_worktree(input: {
   const relativePath = targetParts.slice(namespaceParts.length).join("/");
   const namespaceGuardScript =
     'const fs=require("node:fs"),p=require("node:path");' +
-    "const [rootInput,namespaceInput,candidateInput]=process.argv.slice(1);" +
+    "const [rootInput,namespaceInput,candidateInput,primaryInput]=process.argv.slice(1);" +
     "const root=p.normalize(rootInput),namespace=p.normalize(namespaceInput),candidate=p.normalize(candidateInput);" +
     'const lstat=value=>{try{return fs.lstatSync(value)}catch(error){if(error&&error.code==="ENOENT")return null;throw error}};' +
     'const inside=(parent,child,allowEqual)=>{const relative=p.relative(parent,child);return(allowEqual||relative!=="")&&!p.isAbsolute(relative)&&relative!==".."&&!relative.startsWith(".."+p.sep)};' +
@@ -118,8 +118,9 @@ export default async function prepare_isolated_pr_worktree(input: {
     "for(let index=0;index<chain.length;index+=1){const status=lstat(chain[index]);if(!status)break;if(status.isSymbolicLink())process.exit(42);if(index<chain.length-1&&!status.isDirectory())process.exit(43)}" +
     "const canonicalRoot=projected(root),canonicalNamespace=projected(namespace),canonicalCandidate=projected(candidate);" +
     "if(!inside(canonicalRoot,canonicalNamespace,false)||!inside(canonicalNamespace,canonicalCandidate,true))process.exit(44);" +
+    "if(primaryInput){const canonicalPrimary=projected(p.normalize(primaryInput));if(inside(canonicalPrimary,canonicalRoot,true)||inside(canonicalPrimary,canonicalCandidate,true))process.exit(45)}" +
     "}catch{process.exit(43)}";
-  const guardNamespace = async (candidate, description) => {
+  const guardNamespace = async (candidate, description, primaryRoot = "") => {
     const guarded = await tools.bash({
       command:
         "node -e " +
@@ -129,7 +130,9 @@ export default async function prepare_isolated_pr_worktree(input: {
         " " +
         quote(namespace) +
         " " +
-        quote(candidate),
+        quote(candidate) +
+        " " +
+        quote(primaryRoot),
       workdir: input.workdir,
       description,
       timeoutMs: 10000,
@@ -140,9 +143,35 @@ export default async function prepare_isolated_pr_worktree(input: {
       throw new Error("Isolation namespace contains a symlinked path component");
     if (guarded.exitCode === 44)
       throw new Error("Canonical worktree path escapes the caller isolation namespace");
+    if (guarded.exitCode === 45)
+      throw new Error("Isolation root and worktree path must be outside the primary checkout");
     if (guarded.exitCode !== 0) throw new Error("Could not validate isolation namespace");
   };
   await guardNamespace(targetPath, "Validate isolated worktree namespace");
+  const primaryRootResult = await tools.bash({
+    command: "git rev-parse --show-toplevel",
+    workdir: input.workdir,
+    description: "Resolve primary checkout root",
+    timeoutMs: 10000,
+  });
+  if (
+    primaryRootResult.kind !== "foreground" ||
+    primaryRootResult.exitCode !== 0 ||
+    primaryRootResult.stdout.truncated ||
+    primaryRootResult.stderr.truncated ||
+    primaryRootResult.stderr.text
+  )
+    throw new Error("Could not resolve primary checkout root");
+  const primaryRoot = primaryRootResult.stdout.text.endsWith("\n")
+    ? primaryRootResult.stdout.text.slice(0, -1)
+    : primaryRootResult.stdout.text;
+  safeAbsolute(primaryRoot, "primary checkout root");
+  if (/[\r\n]/.test(primaryRoot)) throw new Error("Primary checkout root is not a single path");
+  await guardNamespace(
+    targetPath,
+    "Validate isolated worktree outside primary checkout",
+    primaryRoot,
+  );
   const primary = await tools.read_git_checkout({
     workdir: input.workdir,
     includeRoot: false,
@@ -239,7 +268,7 @@ export default async function prepare_isolated_pr_worktree(input: {
     "Create isolated worktree parent",
     10000,
   );
-  await guardNamespace(targetPath, "Revalidate isolated worktree namespace");
+  await guardNamespace(targetPath, "Revalidate isolated worktree namespace", primaryRoot);
   await run(
     "git fetch " +
       quote(remote) +
@@ -302,7 +331,7 @@ export default async function prepare_isolated_pr_worktree(input: {
             item.headRefOid +
             ". Pass replaceExisting:true to replace this clean worktree.",
         );
-      await guardNamespace(targetPath, "Validate stale worktree namespace");
+      await guardNamespace(targetPath, "Validate stale worktree namespace", primaryRoot);
       await run(
         "git worktree remove " + quote(targetPath),
         "Remove stale isolated worktree",
@@ -324,7 +353,7 @@ export default async function prepare_isolated_pr_worktree(input: {
     if (exists.exitCode !== 1) throw new Error("Could not inspect worktree path " + relativePath);
   }
   if (action !== "reused") {
-    await guardNamespace(targetPath, "Validate worktree creation namespace");
+    await guardNamespace(targetPath, "Validate worktree creation namespace", primaryRoot);
     await run(
       "git worktree add --detach " + quote(targetPath) + " " + quote(item.headRefOid),
       "Create exact-commit worktree",

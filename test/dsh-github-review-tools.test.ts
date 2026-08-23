@@ -73,9 +73,12 @@ function symlinkedWorktreeFixture(kind: "root" | "intermediate") {
   return { fixture, isolationKey, root, target };
 }
 
-function shellBashSpy() {
+function shellBashSpy(primaryRoot?: string) {
   return vi.fn(async ({ command, workdir }: { command: string; workdir: string }) => {
-    const result = spawnSync("bash", ["-c", command], { cwd: workdir, encoding: "utf8" });
+    const result =
+      command === "git rev-parse --show-toplevel" && primaryRoot !== undefined
+        ? { status: 0, stdout: primaryRoot + "\n", stderr: "" }
+        : spawnSync("bash", ["-c", command], { cwd: workdir, encoding: "utf8" });
     return {
       kind: "foreground",
       exitCode: result.status ?? 1,
@@ -176,9 +179,11 @@ describe("isolated worktree namespace guards", () => {
   it("allows a canonical missing namespace during preparation planning", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dsh-worktree-"));
     fixtureRoots.push(fixture);
+    const primary = path.join(fixture, "checkout");
+    fs.mkdirSync(primary);
     const root = path.join(fixture, "root");
     const target = path.join(root, "session", "1");
-    const bash = shellBashSpy();
+    const bash = shellBashSpy(primary);
     vi.stubGlobal("tools", {
       bash,
       read_git_checkout: vi.fn().mockResolvedValue({ clean: true }),
@@ -209,7 +214,7 @@ describe("isolated worktree namespace guards", () => {
 
     await expect(
       prepareIsolatedPrWorktree({
-        workdir: fixture,
+        workdir: primary,
         number: 1,
         root,
         path: target,
@@ -222,7 +227,7 @@ describe("isolated worktree namespace guards", () => {
     "rejects a symlinked %s path before worktree preparation",
     async (kind) => {
       const fixture = symlinkedWorktreeFixture(kind);
-      const bash = shellBashSpy();
+      const bash = shellBashSpy(path.join(fixture.fixture, "primary"));
       vi.stubGlobal("tools", { bash });
 
       await expect(
@@ -244,7 +249,7 @@ describe("isolated worktree namespace guards", () => {
     "rejects a symlinked %s path before worktree cleanup",
     async (kind) => {
       const fixture = symlinkedWorktreeFixture(kind);
-      const bash = shellBashSpy();
+      const bash = shellBashSpy(path.join(fixture.fixture, "primary"));
       vi.stubGlobal("tools", { bash });
 
       await expect(
@@ -260,4 +265,53 @@ describe("isolated worktree namespace guards", () => {
       expect(bash.mock.calls.some(([call]) => call.command.includes("git worktree"))).toBe(false);
     },
   );
+
+  it("rejects a preparation root inside the primary checkout before mutation", async () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dsh-worktree-"));
+    fixtureRoots.push(fixture);
+    const primary = path.join(fixture, "checkout");
+    fs.mkdirSync(primary);
+    const root = path.join(primary, "isolated");
+    const target = path.join(root, "session", "1");
+    const bash = shellBashSpy(primary);
+    vi.stubGlobal("tools", { bash });
+
+    await expect(
+      prepareIsolatedPrWorktree({
+        workdir: primary,
+        number: 1,
+        root,
+        path: target,
+        isolationKey: "session",
+        dryRun: false,
+        apply: true,
+      }),
+    ).rejects.toThrow("outside the primary checkout");
+    expect(bash.mock.calls.some(([call]) => call.command.includes("mkdir -p"))).toBe(false);
+    expect(bash.mock.calls.some(([call]) => call.command.includes("git worktree"))).toBe(false);
+  });
+
+  it("rejects a cleanup root inside the primary checkout before worktree inspection", async () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dsh-worktree-"));
+    fixtureRoots.push(fixture);
+    const primary = path.join(fixture, "checkout");
+    fs.mkdirSync(primary);
+    const root = path.join(primary, "isolated");
+    const target = path.join(root, "session", "1");
+    const bash = shellBashSpy(primary);
+    vi.stubGlobal("tools", { bash });
+
+    await expect(
+      removeIsolatedPrWorktrees({
+        workdir: primary,
+        paths: [target],
+        root,
+        isolationKey: "session",
+        dryRun: false,
+        apply: true,
+      }),
+    ).rejects.toThrow("outside the primary checkout");
+    expect(bash.mock.calls.some(([call]) => call.command.includes("mkdir -p"))).toBe(false);
+    expect(bash.mock.calls.some(([call]) => call.command.includes("git worktree"))).toBe(false);
+  });
 });
