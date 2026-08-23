@@ -5,9 +5,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { SessionManager, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { advisorTurnFlowErrors, resolveAdvisorTurnTools } from "../tools/advisors/session.mts";
+import {
+  advisorTurnFlowErrors,
+  resolveAdvisorTurnTools,
+  seedRequiredReadHistory,
+  seededReadFlowForTurn,
+} from "../tools/advisors/session.mts";
 import { buildSynthesisTurn } from "../tools/pr-review-advisor/synthesis-turn.mts";
 import { ADVISOR_INTERESTS } from "../tools/pr-review-advisor/specialists.mts";
 import {
@@ -48,6 +54,92 @@ function fixture(): string {
 }
 
 describe("specialist Pi session inputs", () => {
+  it("seeds complete ordinary reads into genuine Pi history", async () => {
+    const root = fixture();
+    const requiredPath = path.join(root, specialistSessionFileName("behavior"));
+    const offsets: number[] = [];
+    const readTool = {
+      name: "read",
+      label: "read",
+      description: "Read a test trace",
+      parameters: { type: "object", properties: {} } as ToolDefinition["parameters"],
+      async execute(_toolCallId: string, input: { path: string; offset?: number }) {
+        offsets.push(input.offset ?? 1);
+        const first = input.offset === undefined;
+        return {
+          content: [{ type: "text" as const, text: first ? "first page" : "last page" }],
+          details: first
+            ? { truncation: { truncated: true, outputLines: 2 } }
+            : { truncation: { truncated: false, outputLines: 1 } },
+        };
+      },
+    } as ToolDefinition;
+    const manager = SessionManager.inMemory(root);
+
+    const seeded = await seedRequiredReadHistory(manager, readTool, [requiredPath], {
+      api: "openai-completions",
+      provider: "azure",
+      id: "test-model",
+    });
+
+    expect(offsets).toEqual([1, 3]);
+    expect(seeded.flow).toEqual([
+      expect.objectContaining({ path: requiredPath, offset: 1, endOffset: 2, reachesEnd: false }),
+      expect.objectContaining({ path: requiredPath, offset: 3, endOffset: 3, reachesEnd: true }),
+    ]);
+    expect(manager.buildSessionContext().messages).toEqual([
+      expect.objectContaining({ role: "user" }),
+      expect.objectContaining({
+        role: "assistant",
+        content: [expect.objectContaining({ type: "toolCall", name: "read" })],
+      }),
+      expect.objectContaining({ role: "toolResult", toolName: "read", isError: false }),
+      expect.objectContaining({
+        role: "assistant",
+        content: [expect.objectContaining({ arguments: { path: requiredPath, offset: 3 } })],
+      }),
+      expect.objectContaining({ role: "toolResult", toolName: "read", isError: false }),
+    ]);
+  });
+
+  it("does not reuse seeded reads in a later turn with the same path", () => {
+    const requiredPath = path.join(fixture(), specialistSessionFileName("behavior"));
+    const seededFlow = [
+      {
+        type: "read" as const,
+        path: requiredPath,
+        offset: 1,
+        endOffset: null,
+        fileSize: 1,
+        reachesEnd: true,
+      },
+    ];
+    const seededTurn = {
+      name: "seeded",
+      prompt: "seeded",
+      requiredReadPaths: [requiredPath],
+      seedRequiredReads: true,
+    };
+    const laterTurn = {
+      name: "later",
+      prompt: "later",
+      requiredReadPaths: [requiredPath],
+      requireAssistantText: true,
+    };
+
+    expect(seededReadFlowForTurn(seededTurn, seededFlow)).toEqual(seededFlow);
+    expect(seededReadFlowForTurn(laterTurn, seededFlow)).toEqual([]);
+    expect(
+      advisorTurnFlowErrors("later", [{ type: "text", text: "analysis" }], {
+        activeToolNames: ["read"],
+        requiredToolNames: [],
+        requireToolsBeforeText: [],
+        requiredReadPaths: [requiredPath],
+        requireAssistantText: true,
+      }),
+    ).toContain(`later omitted required read: ${requiredPath}`);
+  });
+
   it("accepts the five expected native Pi JSONL sessions", () => {
     const root = fixture();
     const inventory = validateSpecialistSessionDirectory(root);
@@ -88,15 +180,13 @@ describe("specialist Pi session inputs", () => {
     expect(turn.prompt).toContain("explicit review-completeness limitation");
   });
 
-  it("requires complete contiguous ordinary-read coverage before synthesis text", () => {
+  it("validates the complete reads already present before synthesis text", () => {
     const turn = buildSynthesisTurn(validateSpecialistSessionDirectory(fixture()));
     const tools = resolveAdvisorTurnTools(turn, [], new Set(["read", "grep", "find", "ls"]));
     const paths = turn.requiredReadPaths ?? [];
     expect(turn.activeToolNames).toEqual(["read", "grep", "find", "ls"]);
-    expect(turn.prompt).toContain(
-      "Before you write any text, read each available file contiguously from line 1 through EOF",
-    );
-    expect(turn.prompt).toContain("Until every available file reaches EOF, emit only `read` calls");
+    expect(turn.seedRequiredReads).toBe(true);
+    expect(turn.prompt).toContain("Pi session already contains complete ordinary `read` calls");
     const read = (
       readPath: string,
       offset: number,
@@ -214,6 +304,15 @@ describe("specialist Pi session inputs", () => {
     const root = fixture();
     fs.writeFileSync(path.join(root, specialistSessionFileName("operations")), "{\n");
     expect(() => validateSpecialistSessionDirectory(root)).toThrow(/invalid JSONL/u);
+  });
+
+  it("rejects a trace line that ordinary read cannot return", () => {
+    const root = fixture();
+    fs.appendFileSync(
+      path.join(root, specialistSessionFileName("documentation")),
+      JSON.stringify({ type: "message", body: "x".repeat(51 * 1024) }) + "\n",
+    );
+    expect(() => validateSpecialistSessionDirectory(root)).toThrow(/ordinary read limit/u);
   });
 
   it("rejects malformed JSONL and non-Pi headers", () => {
