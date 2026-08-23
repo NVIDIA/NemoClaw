@@ -1252,7 +1252,7 @@ const PR_METADATA_EDIT_JOB_NAMES = new Set([
   "static-checks",
   "wechat-runtime-audit",
 ]);
-const PR_REVIEW_ADVISOR_WORKFLOW_NAME = "PR Review / Advisor";
+const PR_REVIEW_ADVISOR_WORKFLOW_NAME = "Automation / PR Review Advisor";
 const PR_REVIEW_ADVISOR_WORKFLOW_PATH = ".github/workflows/pr-review-advisor.yaml";
 const ADVISORY_PR_REVIEW_ADVISOR_JOB_NAMES = new Set([
   "PR review advisor (GPT-5.6 Terra)",

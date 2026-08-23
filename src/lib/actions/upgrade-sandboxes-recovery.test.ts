@@ -70,6 +70,7 @@ function createRecoveryHarness(
   rebuildSpy: ReturnType<typeof vi.fn>;
   latestBackupSpy: ReturnType<typeof vi.spyOn>;
   managedEvidenceSpy: ReturnType<typeof vi.spyOn>;
+  checkAgentVersionSpy: ReturnType<typeof vi.spyOn>;
   liveListSpy: ReturnType<typeof vi.spyOn>;
   readOnlyListSpy: ReturnType<typeof vi.spyOn>;
 } {
@@ -115,16 +116,19 @@ function createRecoveryHarness(
       ...options.registryOverrides?.[name],
     })),
   });
-  vi.spyOn(sandboxVersion, "checkAgentVersion").mockImplementation((...args: unknown[]) => {
-    const name = String(args[0]);
-    return {
-      sandboxVersion: options.staleNames?.includes(name) === true ? "2026.5.26" : "2026.5.27",
-      expectedVersion: "2026.5.27",
-      isStale: options.staleNames?.includes(name) === true,
-      verificationFailed: false,
-      detectionMethod: "registry",
-    };
-  });
+  const checkAgentVersionSpy = vi
+    .spyOn(sandboxVersion, "checkAgentVersion")
+    .mockImplementation((...args: unknown[]) => {
+      const name = String(args[0]);
+      return {
+        sandboxVersion:
+          options.staleNames?.includes(name) === true ? "2026.5.26" : "2026.5.27",
+        expectedVersion: "2026.5.27",
+        isStale: options.staleNames?.includes(name) === true,
+        verificationFailed: false,
+        detectionMethod: "registry",
+      };
+    });
   const latestBackupSpy = vi
     .spyOn(sandboxState, "getLatestBackup")
     .mockImplementation((...args: unknown[]) => {
@@ -151,6 +155,7 @@ function createRecoveryHarness(
     rebuildSpy,
     latestBackupSpy,
     managedEvidenceSpy,
+    checkAgentVersionSpy,
     liveListSpy,
     readOnlyListSpy,
   };
@@ -177,7 +182,7 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     expect(console.log).toHaveBeenCalledWith("  No sandboxes found in the registry.");
   });
 
-  it("recovers real sandboxes while ignoring a route-only reservation (#6500)", async () => {
+  it("recovers published sandboxes while ignoring pending registrations (#9733)", async () => {
     const harness = createRecoveryHarness(["tm", "alpha", "beta"], {
       registryOverrides: {
         tm: { pendingRouteReservation: true },
@@ -190,14 +195,11 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
 
     await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
 
-    expect(harness.latestBackupSpy.mock.calls.map((call: unknown[]) => call[0])).toEqual([
+    expect(harness.checkAgentVersionSpy.mock.calls.map((call: unknown[]) => call[0])).toEqual([
       "alpha",
-      "beta",
     ]);
-    expect(harness.rebuildSpy.mock.calls.map((call: unknown[]) => call[0])).toEqual([
-      "alpha",
-      "beta",
-    ]);
+    expect(harness.latestBackupSpy.mock.calls.map((call: unknown[]) => call[0])).toEqual(["alpha"]);
+    expect(harness.rebuildSpy.mock.calls.map((call: unknown[]) => call[0])).toEqual(["alpha"]);
   });
 
   it.each(["alpha", "beta"])(

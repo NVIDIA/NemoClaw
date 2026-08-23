@@ -19,13 +19,12 @@ const RECIPE_ID = "vllm.deepseek-v4-flash-0731.spark-dual.v1";
 const LLAMA_CPP_PROFILE_ID = "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b";
 const LLAMA_CPP_RECIPE_ID = "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
 const LLAMA_CPP_IMAGE =
-  "ghcr.io/ggml-org/llama.cpp@sha256:866ad568474de9e835e487ae841ad6ace1a494b5eab4f292cbd45adb6180f711";
+  "ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:9d0cddd7bcaf98d3b75a7fc8c7ce3af3a9973b5f23a8092e7e93a9afc473a675";
+const LLAMA_CPP_IMAGE_DOWNLOAD_SIZE_BYTES = 1_827_478_485;
 const LLAMA_CPP_MODEL_DIGEST =
   "sha256:627f5b04aedc97f967332f331bd75b7a4ed2f33ca83e6ee74b44235cc1887890";
 const MUSE_LLAMA_CPP_PROFILE_ID = "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b";
 const MUSE_LLAMA_CPP_RECIPE_ID = "llama-cpp.muse-glimmer-30b.spark-single.v1";
-const MUSE_LLAMA_CPP_IMAGE =
-  "ghcr.io/ggml-org/llama.cpp@sha256:6b0bf4974521b2c16a498c7dd0715f4eb077725f1483e0ee0f617679005b1e1f";
 const MUSE_LLAMA_CPP_MODEL_DIGEST =
   "sha256:4cc57c0f51040a226e5a72cc47b7613f7772950e460a665f7083de89f183f60e";
 const LIGHTNING_PROFILE_ID = "vllm.dgx-spark-gb10.single.nemotron-3.5-lightning-30b-a3b-nvfp4";
@@ -184,7 +183,7 @@ describe("managed inference YAML profile contract", () => {
       },
       runtime: {
         image: LLAMA_CPP_IMAGE,
-        imageDownloadSizeBytes: 2181958990,
+        imageDownloadSizeBytes: LLAMA_CPP_IMAGE_DOWNLOAD_SIZE_BYTES,
         networkExposure: "loopback",
       },
       serve: {
@@ -235,12 +234,12 @@ describe("managed inference YAML profile contract", () => {
         ],
       },
       runtime: {
-        image: MUSE_LLAMA_CPP_IMAGE,
-        imageDownloadSizeBytes: 2523824482,
+        image: LLAMA_CPP_IMAGE,
+        imageDownloadSizeBytes: LLAMA_CPP_IMAGE_DOWNLOAD_SIZE_BYTES,
         platforms: ["linux/amd64", "linux/arm64"],
         cuda: {
           baseImage:
-            "docker.io/nvidia/cuda@sha256:ebef3c171eeef0298e4eb2e4be843105edf3b8b0ac45e0b43acee358e8046867",
+            "docker.io/nvidia/cuda@sha256:789e629e49401647e22b7054ae9c6c4f6427dba68010ba428deb4cc6b063676e",
         },
       },
       serve: {

@@ -269,6 +269,7 @@ const CREATE_INTENT_VALUE_OPTIONS = new Set([
   "--provider",
 ]);
 const CREATE_INTENT_DRIVER_KEYS = new Set([
+  "cdi_devices",
   "docker",
   "mode",
   "mounts",

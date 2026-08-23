@@ -20,6 +20,8 @@
  * approval in OpenClaw instead: for the exact bounded CLI mismatch, continue
  * only into OpenClaw's pairing gate. For the resulting same-device scope
  * transition, use OpenClaw's stored device credential with operator.pairing.
+ * NemoClaw's settlement list uses the same pairing-only stored credential so
+ * it can observe that transition without a shared gateway credential.
  * A restored clone whose paired server state exists before its client-auth
  * store converges instead opts into one narrower path: its pairing state and
  * signed identity are loaded only from inherited clone-file descriptors, the
@@ -51,6 +53,7 @@ const CLI_APPROVE_MARKER =
 const CLI_SCOPE_MARKER = "nemoclaw: reach gateway for bounded same-device scope approval";
 const CLI_RETRY_MARKER = "nemoclaw: keep bounded device auth fail closed";
 const CLI_LIST_MARKER = "nemoclaw: preflight bounded stored device auth before live pairing list";
+const CLI_SETTLEMENT_LIST_MARKER = "nemoclaw: use stored device auth for pairing settlement list";
 const CLI_PAIRED_TOKEN_MARKER = "nemoclaw: preflight bounded paired token before live pairing list";
 const CALL_FORCE_IDENTITY_MARKER = "nemoclaw: force device identity for loopback pairing bootstrap";
 const CALL_STORED_IDENTITY_MARKER =
@@ -67,6 +70,7 @@ const CLI_APPLIED_MARKERS = [
   CLI_SCOPE_MARKER,
   CLI_RETRY_MARKER,
   CLI_LIST_MARKER,
+  CLI_SETTLEMENT_LIST_MARKER,
   CLI_PAIRED_TOKEN_MARKER,
 ] as const;
 const AUTH_SCOPE_UPGRADE_MARKER =
@@ -468,8 +472,17 @@ const CLI_CALL_GATEWAY_REPLACEMENT = [
 ].join("\n");
 
 const CLI_LIST_SIGNATURE_TARGET = "async function listPairingWithFallback(opts) {";
-const CLI_LIST_SIGNATURE_REPLACEMENT =
+const CLI_LIST_SIGNATURE_LEGACY_REPLACEMENT =
   "async function listPairingWithFallback(opts, callOpts) { // nemoclaw: preflight bounded stored device auth before live pairing list (#4462)";
+const CLI_LIST_SIGNATURE_REPLACEMENT = [
+  CLI_LIST_SIGNATURE_LEGACY_REPLACEMENT,
+  '\tconst nemoclawSettlementListCallOpts = process.env.NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT === "1" ? {',
+  "\t\tscopes: [PAIRING_SCOPE],",
+  "\t\tuseStoredDeviceAuth: true,",
+  "\t\trequiredStoredDeviceAuthScopes: [PAIRING_SCOPE]",
+  `\t} : void 0; // ${CLI_SETTLEMENT_LIST_MARKER} (#9844)`,
+  "\tcallOpts ??= nemoclawSettlementListCallOpts;",
+].join("\n");
 const CLI_LIST_CALL_TARGET =
   '\t\treturn parseDevicePairingList(await callGatewayCli("device.pair.list", opts, {}));';
 const CLI_LIST_CALL_REPLACEMENT =
@@ -646,6 +659,7 @@ const HANDLER_HELPER = [
   '\tconst clientRole = typeof client?.connect?.role === "string" ? client.connect.role.trim() : "";',
   '\tconst clientId = typeof client?.connect?.client?.id === "string" ? client.connect.client.id.trim() : "";',
   '\tconst clientMode = typeof client?.connect?.client?.mode === "string" ? client.connect.client.mode.trim() : "";',
+  '\tconst deviceToken = typeof client?.connect?.auth?.token === "string" ? client.connect.auth.token.trim() : "";',
   '\tconst pendingClientId = typeof pending?.clientId === "string" ? pending.clientId.trim() : "";',
   '\tconst pendingClientMode = typeof pending?.clientMode === "string" ? pending.clientMode.trim() : "";',
   "\tif (",
@@ -653,6 +667,7 @@ const HANDLER_HELPER = [
   "\t\tcallerDeviceId !== clientDeviceId ||",
   "\t\tcallerDeviceId !== pendingDeviceId ||",
   "\t\t!clientPublicKey ||",
+  "\t\t!deviceToken ||",
   "\t\tclientPublicKey !== pendingPublicKey ||",
   '\t\tclientRole !== "operator" ||',
   '\t\tclientId !== "cli" ||',
@@ -685,7 +700,7 @@ const HANDLER_HELPER = [
   "\t\tnemoclawPendingScopes.add(normalized);",
   "\t}",
   '\tif (pending.isRepair !== true && (pending.isRepair !== false || !nemoclawPendingScopes.has("operator.write"))) return null;',
-  "\treturn { deviceId: callerDeviceId, publicKey: clientPublicKey, role: clientRole, clientId, clientMode };",
+  "\treturn { deviceId: callerDeviceId, publicKey: clientPublicKey, role: clientRole, clientId, clientMode, deviceToken };",
   "} // nemoclaw: bounded same-device scope approval (#4462)",
   "",
 ].join("\n");
@@ -728,7 +743,8 @@ const HANDLER_APPROVE_REPLACEMENT =
   "\t\tconst approved = await approveDevicePairing(requestId, { callerScopes: authz.callerScopes, nemoclawSelfApprovalIdentity });";
 
 const STATE_TRANSACTION_HELPER = [
-  "const NEMOCLAW_SELF_APPROVAL_JOURNAL_VERSION = 1;",
+  "const NEMOCLAW_SELF_APPROVAL_JOURNAL_VERSION = 2;",
+  "const NEMOCLAW_SELF_APPROVAL_LEGACY_JOURNAL_VERSION = 1;",
   'const NEMOCLAW_SELF_APPROVAL_JOURNAL_KIND = "nemoclaw-self-approval";',
   'const NEMOCLAW_SELF_APPROVAL_JOURNAL_SUFFIX = ".nemoclaw-self-approval-journal";',
   "const NEMOCLAW_SELF_APPROVAL_JOURNAL_WRITE_OPTIONS = { mode: 384, dirMode: 448, trailingNewline: true };",
@@ -746,10 +762,40 @@ const STATE_TRANSACTION_HELPER = [
   "function nemoclawIsPairingRecord(value) {",
   "\treturn nemoclawIsPlainRecord(value) && Object.values(value).every((entry) => nemoclawIsPlainRecord(entry));",
   "}",
-  "function nemoclawIsSnapshot(value) {",
+  "function nemoclawOperatorToken(value) {",
+  "\tif (!nemoclawIsPlainRecord(value?.tokens)) return null;",
+  "\tconst token = value.tokens.operator;",
+  '\treturn nemoclawIsPlainRecord(token) && typeof token.token === "string" && token.token.trim() === token.token && token.token ? token : null;',
+  "}",
+  "function nemoclawExactOperatorScopes(value) {",
+  "\tif (!Array.isArray(value) || value.length === 0) return null;",
+  "\tconst scopes = new Set();",
+  "\tfor (const scope of value) {",
+  '\t\tif (typeof scope !== "string" || scope.trim() !== scope || (scope !== "operator.pairing" && scope !== "operator.read" && scope !== "operator.write") || scopes.has(scope)) return null;',
+  "\t\tscopes.add(scope);",
+  "\t}",
+  "\treturn [...scopes].toSorted();",
+  "}",
+  "function nemoclawIsDeviceAuthStore(value) {",
+  '\tif (!nemoclawIsPlainRecord(value) || !nemoclawHasExactKeys(value, ["deviceId", "tokens", "version"])) return false;',
+  '\tif (value.version !== 1 || typeof value.deviceId !== "string" || !value.deviceId.trim() || value.deviceId.trim() !== value.deviceId) return false;',
+  '\tif (!nemoclawIsPlainRecord(value.tokens) || !nemoclawHasExactKeys(value.tokens, ["operator"])) return false;',
+  "\tconst operator = nemoclawOperatorToken(value);",
+  '\treturn Boolean(operator && operator.role === "operator" && nemoclawExactOperatorScopes(operator.scopes));',
+  "}",
+  "function nemoclawIsLegacySnapshot(value) {",
   "\treturn (",
   "\t\tnemoclawIsPlainRecord(value) &&",
   '\t\tnemoclawHasExactKeys(value, ["pairedByDeviceId", "pendingById"]) &&',
+  "\t\tnemoclawIsPairingRecord(value.pendingById) &&",
+  "\t\tnemoclawIsPairingRecord(value.pairedByDeviceId)",
+  "\t);",
+  "}",
+  "function nemoclawIsSnapshot(value) {",
+  "\treturn (",
+  "\t\tnemoclawIsPlainRecord(value) &&",
+  '\t\tnemoclawHasExactKeys(value, ["auth", "pairedByDeviceId", "pendingById"]) &&',
+  "\t\tnemoclawIsDeviceAuthStore(value.auth) &&",
   "\t\tnemoclawIsPairingRecord(value.pendingById) &&",
   "\t\tnemoclawIsPairingRecord(value.pairedByDeviceId)",
   "\t);",
@@ -764,14 +810,77 @@ const STATE_TRANSACTION_HELPER = [
   "\tconst rightKeys = Object.keys(right).toSorted();",
   "\treturn leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index] && nemoclawStatesEqual(left[key], right[key]));",
   "}",
+  "function nemoclawAuthMatchesPairedDevice(auth, paired) {",
+  "\tconst authToken = nemoclawOperatorToken(auth);",
+  "\tconst pairedToken = nemoclawOperatorToken(paired);",
+  "\tconst authScopes = nemoclawExactOperatorScopes(authToken?.scopes);",
+  "\tconst pairedScopes = nemoclawExactOperatorScopes(pairedToken?.scopes);",
+  "\treturn Boolean(",
+  "\t\tnemoclawIsDeviceAuthStore(auth) &&",
+  "\t\tnemoclawIsPlainRecord(paired) &&",
+  '\t\ttypeof paired.deviceId === "string" &&',
+  "\t\tauth.deviceId === paired.deviceId &&",
+  '\t\tauthToken?.role === "operator" &&',
+  '\t\tpairedToken?.role === "operator" &&',
+  "\t\tauthToken.token === pairedToken.token &&",
+  "\t\tauthScopes &&",
+  "\t\tpairedScopes &&",
+  "\t\tnemoclawStatesEqual(authScopes, pairedScopes)",
+  "\t);",
+  "}",
+  "function nemoclawDeviceAuthForPairedDevice(currentAuth, paired) {",
+  "\tif (nemoclawAuthMatchesPairedDevice(currentAuth, paired)) return currentAuth;",
+  "\tconst pairedToken = nemoclawOperatorToken(paired);",
+  "\tconst pairedScopes = nemoclawExactOperatorScopes(pairedToken?.scopes);",
+  '\tif (!nemoclawIsPlainRecord(paired) || typeof paired.deviceId !== "string" || !paired.deviceId.trim() || paired.deviceId !== paired.deviceId.trim() || pairedToken?.role !== "operator" || !pairedScopes) throw new Error("invalid paired device while migrating the NemoClaw self-approval journal");',
+  '\treturn { version: 1, deviceId: paired.deviceId, tokens: { operator: { token: pairedToken.token, role: "operator", scopes: [...pairedToken.scopes], updatedAtMs: Date.now() } } };',
+  "}",
   "function nemoclawResolveJournalPath(baseDir) {",
   '\treturn `${resolvePairingPaths(baseDir, "devices").pendingPath}${NEMOCLAW_SELF_APPROVAL_JOURNAL_SUFFIX}`;',
+  "}",
+  "function nemoclawResolveDeviceAuthPath(baseDir) {",
+  '\treturn `${resolvePairingPaths(baseDir, "identity").dir}/device-auth.json`;',
   "}",
   "function nemoclawIdleJournal() {",
   '\treturn { version: NEMOCLAW_SELF_APPROVAL_JOURNAL_VERSION, kind: NEMOCLAW_SELF_APPROVAL_JOURNAL_KIND, phase: "idle" };',
   "}",
+  "function nemoclawValidateLegacyJournal(value) {",
+  '\tif (value.version !== NEMOCLAW_SELF_APPROVAL_LEGACY_JOURNAL_VERSION || value.kind !== NEMOCLAW_SELF_APPROVAL_JOURNAL_KIND) throw new Error("invalid legacy NemoClaw self-approval journal identity");',
+  '\tif (value.phase === "idle") {',
+  '\t\tif (!nemoclawHasExactKeys(value, ["kind", "phase", "version"])) throw new Error("invalid legacy NemoClaw idle self-approval journal");',
+  "\t\treturn value;",
+  "\t}",
+  '\tif (value.phase !== "prepared" && value.phase !== "committed") throw new Error("invalid legacy NemoClaw self-approval journal phase");',
+  '\tif (!nemoclawHasExactKeys(value, ["after", "before", "deviceId", "kind", "phase", "requestId", "version"])) throw new Error("invalid legacy NemoClaw self-approval journal schema");',
+  '\tif (typeof value.requestId !== "string" || !value.requestId.trim() || value.requestId !== value.requestId.trim()) throw new Error("invalid legacy NemoClaw self-approval journal request id");',
+  '\tif (typeof value.deviceId !== "string" || !value.deviceId.trim() || value.deviceId !== value.deviceId.trim()) throw new Error("invalid legacy NemoClaw self-approval journal device id");',
+  '\tif (!nemoclawIsLegacySnapshot(value.before) || !nemoclawIsLegacySnapshot(value.after)) throw new Error("invalid legacy NemoClaw self-approval journal snapshots");',
+  "\tconst pendingBefore = value.before.pendingById[value.requestId];",
+  "\tconst pairedBefore = value.before.pairedByDeviceId[value.deviceId];",
+  "\tconst pairedAfter = value.after.pairedByDeviceId[value.deviceId];",
+  "\tconst pairedTokenBefore = nemoclawOperatorToken(pairedBefore);",
+  "\tconst pairedTokenAfter = nemoclawOperatorToken(pairedAfter);",
+  "\tconst pairedScopesBefore = nemoclawExactOperatorScopes(pairedTokenBefore?.scopes);",
+  "\tconst pairedScopesAfter = nemoclawExactOperatorScopes(pairedTokenAfter?.scopes);",
+  "\tif (",
+  "\t\t!nemoclawIsPlainRecord(pendingBefore) ||",
+  "\t\tpendingBefore.deviceId !== value.deviceId ||",
+  "\t\t!nemoclawIsPlainRecord(pairedBefore) ||",
+  "\t\tpairedBefore.deviceId !== value.deviceId ||",
+  "\t\tvalue.requestId in value.after.pendingById ||",
+  "\t\t!nemoclawIsPlainRecord(pairedAfter) ||",
+  "\t\tpairedAfter.deviceId !== value.deviceId ||",
+  '\t\tpairedTokenBefore?.role !== "operator" ||',
+  '\t\tpairedTokenAfter?.role !== "operator" ||',
+  "\t\t!pairedScopesBefore ||",
+  "\t\t!pairedScopesAfter ||",
+  "\t\tpairedTokenBefore.token === pairedTokenAfter.token",
+  '\t) throw new Error("invalid legacy NemoClaw self-approval journal transition");',
+  "\treturn value;",
+  "}",
   "function nemoclawValidateJournal(value) {",
   '\tif (!nemoclawIsPlainRecord(value)) throw new Error("invalid NemoClaw self-approval journal object");',
+  "\tif (value.version === NEMOCLAW_SELF_APPROVAL_LEGACY_JOURNAL_VERSION) return nemoclawValidateLegacyJournal(value);",
   '\tif (value.version !== NEMOCLAW_SELF_APPROVAL_JOURNAL_VERSION || value.kind !== NEMOCLAW_SELF_APPROVAL_JOURNAL_KIND) throw new Error("invalid NemoClaw self-approval journal identity");',
   '\tif (value.phase === "idle") {',
   '\t\tif (!nemoclawHasExactKeys(value, ["kind", "phase", "version"])) throw new Error("invalid NemoClaw idle self-approval journal");',
@@ -785,6 +894,16 @@ const STATE_TRANSACTION_HELPER = [
   "\tconst pendingBefore = value.before.pendingById[value.requestId];",
   "\tconst pairedBefore = value.before.pairedByDeviceId[value.deviceId];",
   "\tconst pairedAfter = value.after.pairedByDeviceId[value.deviceId];",
+  "\tconst authBefore = value.before.auth;",
+  "\tconst authAfter = value.after.auth;",
+  "\tconst pairedTokenBefore = nemoclawOperatorToken(pairedBefore);",
+  "\tconst pairedTokenAfter = nemoclawOperatorToken(pairedAfter);",
+  "\tconst authTokenBefore = nemoclawOperatorToken(authBefore);",
+  "\tconst authTokenAfter = nemoclawOperatorToken(authAfter);",
+  "\tconst pairedScopesBefore = nemoclawExactOperatorScopes(pairedTokenBefore?.scopes);",
+  "\tconst pairedScopesAfter = nemoclawExactOperatorScopes(pairedTokenAfter?.scopes);",
+  "\tconst authScopesBefore = nemoclawExactOperatorScopes(authTokenBefore?.scopes);",
+  "\tconst authScopesAfter = nemoclawExactOperatorScopes(authTokenAfter?.scopes);",
   "\tif (",
   "\t\t!nemoclawIsPlainRecord(pendingBefore) ||",
   "\t\tpendingBefore.deviceId !== value.deviceId ||",
@@ -792,34 +911,74 @@ const STATE_TRANSACTION_HELPER = [
   "\t\tpairedBefore.deviceId !== value.deviceId ||",
   "\t\tvalue.requestId in value.after.pendingById ||",
   "\t\t!nemoclawIsPlainRecord(pairedAfter) ||",
-  "\t\tpairedAfter.deviceId !== value.deviceId",
+  "\t\tpairedAfter.deviceId !== value.deviceId ||",
+  "\t\tauthBefore.deviceId !== value.deviceId ||",
+  "\t\tauthAfter.deviceId !== value.deviceId ||",
+  "\t\t!pairedTokenBefore ||",
+  "\t\t!pairedTokenAfter ||",
+  "\t\t!authTokenBefore ||",
+  "\t\t!authTokenAfter ||",
+  "\t\t!pairedScopesBefore ||",
+  "\t\t!pairedScopesAfter ||",
+  "\t\t!authScopesBefore ||",
+  "\t\t!authScopesAfter ||",
+  "\t\tpairedTokenBefore.token !== authTokenBefore.token ||",
+  "\t\tpairedTokenAfter.token !== authTokenAfter.token ||",
+  "\t\tpairedTokenBefore.token === pairedTokenAfter.token ||",
+  "\t\t!nemoclawStatesEqual(pairedScopesBefore, authScopesBefore) ||",
+  "\t\t!nemoclawStatesEqual(pairedScopesAfter, authScopesAfter)",
   '\t) throw new Error("invalid NemoClaw self-approval journal transition");',
   "\treturn value;",
   "}",
   "async function nemoclawReadPairingSnapshot(baseDir) {",
   '\tconst { pendingPath, pairedPath } = resolvePairingPaths(baseDir, "devices");',
-  "\tconst [pending, paired] = await Promise.all([readJsonIfExists(pendingPath), readJsonIfExists(pairedPath)]);",
-  "\tconst snapshot = { pendingById: pending ?? {}, pairedByDeviceId: paired ?? {} };",
+  "\tconst authPath = nemoclawResolveDeviceAuthPath(baseDir);",
+  "\tconst [pending, paired, auth] = await Promise.all([readJsonIfExists(pendingPath), readJsonIfExists(pairedPath), readJsonIfExists(authPath)]);",
+  "\tconst snapshot = { pendingById: pending ?? {}, pairedByDeviceId: paired ?? {}, auth };",
   '\tif (!nemoclawIsSnapshot(snapshot)) throw new Error("invalid device pairing state during NemoClaw self-approval transaction");',
   "\treturn snapshot;",
   "}",
   "async function nemoclawWritePairingSnapshot(snapshot, baseDir) {",
   '\tconst { pendingPath, pairedPath } = resolvePairingPaths(baseDir, "devices");',
-  "\tconst settled = await Promise.allSettled([writeJson(pendingPath, snapshot.pendingById), writeJson(pairedPath, snapshot.pairedByDeviceId)]);",
+  "\tconst authPath = nemoclawResolveDeviceAuthPath(baseDir);",
+  "\tconst settled = await Promise.allSettled([writeJson(pendingPath, snapshot.pendingById), writeJson(pairedPath, snapshot.pairedByDeviceId), writeJson(authPath, snapshot.auth, NEMOCLAW_SELF_APPROVAL_JOURNAL_WRITE_OPTIONS)]);",
   '\tconst failures = settled.filter((result) => result.status === "rejected").map((result) => result.reason);',
-  '\tif (failures.length > 0) throw new AggregateError(failures, "failed to publish both device pairing state files");',
+  '\tif (failures.length > 0) throw new AggregateError(failures, "failed to publish device pairing and stored-auth state");',
   "}",
   "function nemoclawCurrentMatchesJournal(current, journal) {",
   "\treturn (",
   "\t\t(nemoclawStatesEqual(current.pendingById, journal.before.pendingById) || nemoclawStatesEqual(current.pendingById, journal.after.pendingById)) &&",
-  "\t\t(nemoclawStatesEqual(current.pairedByDeviceId, journal.before.pairedByDeviceId) || nemoclawStatesEqual(current.pairedByDeviceId, journal.after.pairedByDeviceId))",
+  "\t\t(nemoclawStatesEqual(current.pairedByDeviceId, journal.before.pairedByDeviceId) || nemoclawStatesEqual(current.pairedByDeviceId, journal.after.pairedByDeviceId)) &&",
+  "\t\t(nemoclawStatesEqual(current.auth, journal.before.auth) || nemoclawStatesEqual(current.auth, journal.after.auth))",
   "\t);",
   "}",
+  "function nemoclawCurrentMatchesLegacyJournal(current, journal) {",
+  "\treturn (",
+  "\t\t(nemoclawStatesEqual(current.pendingById, journal.before.pendingById) || nemoclawStatesEqual(current.pendingById, journal.after.pendingById)) &&",
+  "\t\t(nemoclawStatesEqual(current.pairedByDeviceId, journal.before.pairedByDeviceId) || nemoclawStatesEqual(current.pairedByDeviceId, journal.after.pairedByDeviceId)) &&",
+  "\t\t(nemoclawAuthMatchesPairedDevice(current.auth, journal.before.pairedByDeviceId[journal.deviceId]) || nemoclawAuthMatchesPairedDevice(current.auth, journal.after.pairedByDeviceId[journal.deviceId]))",
+  "\t);",
+  "}",
+  "async function nemoclawRecoverLegacySelfApprovalTransaction(journal, baseDir, journalPath) {",
+  '\tif (journal.phase === "idle") {',
+  "\t\tawait writeJson(journalPath, nemoclawIdleJournal(), NEMOCLAW_SELF_APPROVAL_JOURNAL_WRITE_OPTIONS);",
+  '\t\treturn "idle";',
+  "\t}",
+  "\tconst current = await nemoclawReadPairingSnapshot(baseDir);",
+  '\tif (!nemoclawCurrentMatchesLegacyJournal(current, journal)) throw new Error("device pairing or stored-auth state does not match the legacy NemoClaw self-approval journal");',
+  '\tconst targetPairing = journal.phase === "prepared" ? journal.before : journal.after;',
+  "\tconst targetPaired = targetPairing.pairedByDeviceId[journal.deviceId];",
+  "\tconst target = { pendingById: targetPairing.pendingById, pairedByDeviceId: targetPairing.pairedByDeviceId, auth: nemoclawDeviceAuthForPairedDevice(current.auth, targetPaired) };",
+  "\tawait nemoclawWritePairingSnapshot(target, baseDir);",
+  "\tawait writeJson(journalPath, nemoclawIdleJournal(), NEMOCLAW_SELF_APPROVAL_JOURNAL_WRITE_OPTIONS);",
+  "\treturn journal.phase;",
+  "} // nemoclaw: migrate version 1 self-approval recovery state (#9844)",
   "async function recoverNemoClawSelfApprovalTransaction(baseDir) {",
   "\tconst journalPath = nemoclawResolveJournalPath(baseDir);",
   "\tconst rawJournal = await readJsonIfExists(journalPath);",
   "\tif (rawJournal === null) return null;",
   "\tconst journal = nemoclawValidateJournal(rawJournal);",
+  "\tif (journal.version === NEMOCLAW_SELF_APPROVAL_LEGACY_JOURNAL_VERSION) return await nemoclawRecoverLegacySelfApprovalTransaction(journal, baseDir, journalPath);",
   '\tif (journal.phase === "idle") return "idle";',
   "\tconst current = await nemoclawReadPairingSnapshot(baseDir);",
   '\tif (!nemoclawCurrentMatchesJournal(current, journal)) throw new Error("device pairing state does not match the NemoClaw self-approval journal");',
@@ -827,18 +986,28 @@ const STATE_TRANSACTION_HELPER = [
   "\tawait writeJson(journalPath, nemoclawIdleJournal(), NEMOCLAW_SELF_APPROVAL_JOURNAL_WRITE_OPTIONS);",
   "\treturn journal.phase;",
   "} // nemoclaw: recover bounded self-approval state transaction (#4462)",
-  "async function persistNemoClawSelfApprovalState(state, baseDir, requestId, deviceId, before) {",
+  "async function persistNemoClawSelfApprovalState(state, baseDir, requestId, deviceId, before, identity) {",
   "\tconst journalPath = nemoclawResolveJournalPath(baseDir);",
   "\tconst current = await nemoclawReadPairingSnapshot(baseDir);",
-  '\tif (!nemoclawIsSnapshot(before) || !nemoclawStatesEqual(current, before)) throw new Error("device pairing state changed before NemoClaw self-approval publication");',
-  "\tconst after = { pendingById: state.pendingById, pairedByDeviceId: state.pairedByDeviceId };",
+  "\tconst currentPairing = { pendingById: current.pendingById, pairedByDeviceId: current.pairedByDeviceId };",
+  '\tif (!nemoclawIsPlainRecord(before) || !nemoclawStatesEqual(currentPairing, before)) throw new Error("device pairing state changed before NemoClaw self-approval publication");',
+  "\tconst beforePairedToken = nemoclawOperatorToken(current.pairedByDeviceId[deviceId]);",
+  "\tconst beforeAuthToken = nemoclawOperatorToken(current.auth);",
+  "\tconst afterPairedToken = nemoclawOperatorToken(state.pairedByDeviceId[deviceId]);",
+  "\tconst beforePairedScopes = nemoclawExactOperatorScopes(beforePairedToken?.scopes);",
+  "\tconst beforeAuthScopes = nemoclawExactOperatorScopes(beforeAuthToken?.scopes);",
+  "\tconst afterPairedScopes = nemoclawExactOperatorScopes(afterPairedToken?.scopes);",
+  '\tif (!identity || identity.deviceId !== deviceId || !beforePairedToken || !beforeAuthToken || !afterPairedToken || !beforePairedScopes || !beforeAuthScopes || !afterPairedScopes || identity.deviceToken !== beforePairedToken.token || identity.deviceToken !== beforeAuthToken.token || !nemoclawStatesEqual(beforePairedScopes, beforeAuthScopes)) throw new Error("stored device auth changed before NemoClaw self-approval publication");',
+  '\tconst afterAuth = { version: 1, deviceId, tokens: { operator: { token: afterPairedToken.token, role: "operator", scopes: [...afterPairedToken.scopes], updatedAtMs: Date.now() } } };',
+  "\tconst beforeSnapshot = { ...currentPairing, auth: current.auth };",
+  "\tconst after = { pendingById: state.pendingById, pairedByDeviceId: state.pairedByDeviceId, auth: afterAuth };",
   "\tconst prepared = nemoclawValidateJournal({",
   "\t\tversion: NEMOCLAW_SELF_APPROVAL_JOURNAL_VERSION,",
   "\t\tkind: NEMOCLAW_SELF_APPROVAL_JOURNAL_KIND,",
   '\t\tphase: "prepared",',
   "\t\trequestId,",
   "\t\tdeviceId,",
-  "\t\tbefore,",
+  "\t\tbefore: beforeSnapshot,",
   "\t\tafter",
   "\t});",
   "\tawait writeJson(journalPath, prepared, NEMOCLAW_SELF_APPROVAL_JOURNAL_WRITE_OPTIONS);",
@@ -854,9 +1023,7 @@ const STATE_TRANSACTION_HELPER = [
   "\t\t}",
   "\t\tthrow error;",
   "\t}",
-  "\ttry {",
-  "\t\tawait writeJson(journalPath, nemoclawIdleJournal(), NEMOCLAW_SELF_APPROVAL_JOURNAL_WRITE_OPTIONS);",
-  "\t} catch {}",
+  "\tawait writeJson(journalPath, nemoclawIdleJournal(), NEMOCLAW_SELF_APPROVAL_JOURNAL_WRITE_OPTIONS);",
   "}",
   "",
 ].join("\n");
@@ -1085,7 +1252,7 @@ const STATE_APPROVAL_PERSIST_TARGET = [
 const STATE_APPROVAL_PERSIST_REPLACEMENT = [
   "\t\tdelete state.pendingById[requestId];",
   "\t\tstate.pairedByDeviceId[device.deviceId] = device;",
-  "\t\tif (nemoclawSelfApprovalScopes) await persistNemoClawSelfApprovalState(state, baseDir, requestId, device.deviceId, state[NEMOCLAW_SELF_APPROVAL_LOADED_SNAPSHOT]);",
+  "\t\tif (nemoclawSelfApprovalScopes) await persistNemoClawSelfApprovalState(state, baseDir, requestId, device.deviceId, state[NEMOCLAW_SELF_APPROVAL_LOADED_SNAPSHOT], options.nemoclawSelfApprovalIdentity);",
   '\t\telse await persistState(state, baseDir, "both");',
   "\t\treturn {",
   '\t\t\tstatus: "approved",',
@@ -1244,22 +1411,44 @@ const FILE_SPECS: FileSpec[] = [
         countOccurrences(source, marker),
       );
       if (appliedMarkerCounts.some((count) => count > 0)) {
-        if (appliedMarkerCounts.every((count) => count === 1)) {
+        const settlementMarkerIndex = CLI_APPLIED_MARKERS.indexOf(CLI_SETTLEMENT_LIST_MARKER);
+        const settlementMarkerCount = appliedMarkerCounts[settlementMarkerIndex];
+        const priorMarkerCounts = appliedMarkerCounts.filter(
+          (_count, index) => index !== settlementMarkerIndex,
+        );
+        if (priorMarkerCounts.every((count) => count === 1) && settlementMarkerCount! <= 1) {
+          let upgradedSource = source;
+          let changed = false;
           const legacyModeLine =
             '\tconst nemoclawPairedTokenRequested = process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1";';
-          if (source.includes(legacyModeLine)) {
+          if (upgradedSource.includes(legacyModeLine)) {
             const result = replaceExactlyOnce(
-              source,
+              upgradedSource,
               legacyModeLine,
               '\tconst nemoclawPairedTokenRequested = process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING === "1";',
               "restored-clone paired-token mode target",
               file,
             );
-            return result.error
-              ? { source, status: "no-match", error: result.error }
-              : { source: result.source, status: "would-apply" };
+            if (result.error) return { source, status: "no-match", error: result.error };
+            upgradedSource = result.source;
+            changed = true;
           }
-          return { source, status: "already-applied" };
+          if (settlementMarkerCount === 0) {
+            const result = replaceExactlyOnce(
+              upgradedSource,
+              CLI_LIST_SIGNATURE_LEGACY_REPLACEMENT,
+              CLI_LIST_SIGNATURE_REPLACEMENT,
+              "devices CLI pairing-settlement list target",
+              file,
+            );
+            if (result.error) return { source, status: "no-match", error: result.error };
+            upgradedSource = result.source;
+            changed = true;
+          }
+          return {
+            source: upgradedSource,
+            status: changed ? "would-apply" : "already-applied",
+          };
         }
         return {
           source,
