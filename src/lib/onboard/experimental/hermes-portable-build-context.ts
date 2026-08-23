@@ -266,9 +266,8 @@ function parseDockerfileSources(bytes: Buffer): readonly string[] {
       if (
         sources.length !== 1 ||
         !sources[0]!.startsWith("https://files.pythonhosted.org/") ||
-        options.length !== 2 ||
-        options[0] !== "--chmod=0444" ||
-        !/^--checksum=sha256:[a-f0-9]{64}$/u.test(options[1]!)
+        options.length !== 1 ||
+        !/^--checksum=sha256:[a-f0-9]{64}$/u.test(options[0]!)
       ) {
         fail("Dockerfile has an unsupported local or unpinned ADD instruction");
       }

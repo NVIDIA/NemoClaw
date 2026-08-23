@@ -3,7 +3,35 @@
 
 import { describe, expect, it } from "vitest";
 
-import { resolveIntegrationProjectScheduling } from "./helpers/integration-project-scheduling";
+import {
+  resolveCliCoverageShardScheduling,
+  resolveIntegrationProjectScheduling,
+} from "./helpers/integration-project-scheduling";
+
+describe("CLI coverage shard scheduling", () => {
+  it("uses two workers for a validated CI shard (#6237)", () => {
+    expect(
+      resolveCliCoverageShardScheduling({
+        isCi: true,
+        cliShard: "2",
+        cliShardCount: "12",
+      }),
+    ).toEqual({ maxWorkers: 2 });
+  });
+
+  it.each([
+    ["local shard", false, "1", "12"],
+    ["missing shard", true, undefined, "12"],
+    ["missing shard count", true, "1", undefined],
+    ["invalid shard", true, "x", "12"],
+    ["invalid shard count", true, "1", "0"],
+    ["out-of-range shard", true, "13", "12"],
+  ])("does not constrain $0", (_name, isCi, cliShard, cliShardCount) => {
+    expect(
+      resolveCliCoverageShardScheduling({ isCi, cliShard, cliShardCount }),
+    ).toEqual({});
+  });
+});
 
 describe("integration project scheduling", () => {
   it("parallelizes the canonical local full-suite run (#6245)", () => {

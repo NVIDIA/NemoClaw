@@ -84,20 +84,22 @@ export type ChannelStatusOptions = {
   deps?: StatusDeps;
 };
 
-type ChannelStatusSingleReport =
-  | {
-      schemaVersion: 1;
-      sandbox: string;
-      channel: string;
-      report: ChannelHealthReport;
-    }
-  | {
-      schemaVersion: 1;
-      sandbox: string;
-      channel: string;
-      verdict: "info";
-      signals: DiagnosticSignal[];
-    };
+type ChannelStatusDetailedReport = {
+  schemaVersion: 1;
+  sandbox: string;
+  channel: string;
+  report: ChannelHealthReport;
+};
+
+type ChannelStatusBasicReport = {
+  schemaVersion: 1;
+  sandbox: string;
+  channel: string;
+  verdict: "info";
+  signals: DiagnosticSignal[];
+};
+
+type ChannelStatusSingleReport = ChannelStatusDetailedReport | ChannelStatusBasicReport;
 
 type ChannelStatusSnapshotReport =
   | ChannelStatusSingleReport
@@ -257,6 +259,8 @@ function renderSingleChannelSignals(
         ? G
         : report.report.verdict === "idle" || report.report.verdict === "unpaired"
           ? YW
+          : report.report.verdict === "info"
+            ? D
           : RD;
     deps.out(`  Verdict: ${verdictColor}${report.report.verdict}${R}`);
     for (const hint of report.report.hints) {
@@ -279,6 +283,7 @@ export function exitCodeFor(report: ChannelStatusReport): number {
   if ("report" in report) {
     switch (report.report.verdict) {
       case "healthy":
+      case "info":
       case "unknown":
         return 0;
       default:
@@ -295,7 +300,7 @@ function buildBasicChannelReport(
   deps: Required<StatusDeps>,
   diagnostic: MessagingChannelDiagnosticSpec,
   options: { readonly includeDeepDiagnostics?: boolean; readonly channelPaused?: boolean } = {},
-): ChannelStatusSingleReport {
+): ChannelStatusBasicReport {
   const entry = deps.getSandbox(sandboxName);
   const enabled = registry.getConfiguredMessagingChannelsFromEntry(entry).includes(channelName);
   const disabled = registry.getDisabledMessagingChannelsFromEntry(entry).includes(channelName);
@@ -372,7 +377,7 @@ function buildBasicChannelReport(
 function buildUnknownConfiguredChannelReport(
   sandboxName: string,
   channelName: string,
-): ChannelStatusSingleReport {
+): ChannelStatusBasicReport {
   return {
     schemaVersion: 1,
     sandbox: sandboxName,
@@ -494,9 +499,29 @@ function collectChannelReport(
         )
       : undefined;
   if (!healthReport) {
-    return buildBasicChannelReport(sandboxName, channelName, agent, collectionDeps, diagnostic, {
-      channelPaused: channelIsPaused,
-    });
+    const basicReport = buildBasicChannelReport(
+      sandboxName,
+      channelName,
+      agent,
+      collectionDeps,
+      diagnostic,
+      { channelPaused: channelIsPaused },
+    );
+    if (!hasHealthHook) return basicReport;
+    return {
+      schemaVersion: 1,
+      sandbox: sandboxName,
+      channel: channelName,
+      report: {
+        schemaVersion: 1,
+        agent: agent.name,
+        channel: channelName,
+        verdict: basicReport.verdict,
+        probedAt: collectionDeps.now().toISOString(),
+        signals: basicReport.signals,
+        hints: basicReport.signals.flatMap((signal) => (signal.hint ? [signal.hint] : [])),
+      },
+    };
   }
   const configSignals = buildConfigStatusSignals(
     sandboxName,

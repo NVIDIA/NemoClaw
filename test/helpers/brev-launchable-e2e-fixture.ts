@@ -14,6 +14,22 @@ const REAL_STAT = spawnSync("which", ["stat"], { encoding: "utf8" }).stdout.trim
 export const candidateSha = "a".repeat(40);
 const roots: string[] = [];
 
+export function gatewayChildJournal(
+  messages: string[],
+  metadata: { executable?: string; unit?: string } = {},
+): string {
+  return messages
+    .map((message) =>
+      JSON.stringify({
+        _PID: "77",
+        _SYSTEMD_UNIT: metadata.unit ?? "openshell-gateway.service",
+        _EXE: metadata.executable ?? "/usr/local/bin/openshell-gateway",
+        MESSAGE: message,
+      }),
+    )
+    .join("\n");
+}
+
 export function cleanupFixtures(): void {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 }
@@ -31,6 +47,7 @@ export function fixture(
     deleteFails?: boolean;
     e2eDiagnosticTimesOut?: boolean;
     e2eFails?: boolean;
+    gatewayChildJournal?: string;
     gatewayExecStart?: string;
     imageRepositorySha?: string;
     listenerOutput?: string;
@@ -65,6 +82,7 @@ export function fixture(
   const state = path.join(root, "workspace.json");
   const calls = path.join(root, "calls.log");
   const diagnosticPhase = path.join(root, "diagnostic-phase");
+  const gatewayLifecycleCommand = path.join(root, "gateway-lifecycle-command");
   const refreshAttempts = path.join(root, "refresh-attempts");
   const sshAttempts = path.join(root, "ssh-attempts");
   const timeoutBlock = path.join(root, "timeout-block");
@@ -202,18 +220,19 @@ esac
     `#!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
-  "--boot _PID=1 --unit=openshell-gateway.service --no-pager --lines=80 --output=json")
-    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1000","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Starting OpenShell gateway"}'
-    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1100","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Started OpenShell gateway"}'
-    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1200","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"guest s3cr3t password=journal-test-secret 203.0.113.20"}'
-    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1300","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Start request repeated too quickly"}'
-    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1400","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Scheduled restart job, restart counter is at 1"}'
-    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1500","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Main process exited, code=exited, status=1/FAILURE"}'
-    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1600","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Failed with result exit-code"}'
-    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1700","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Dependency failed for OpenShell gateway"}'
-    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"2200","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Stopping OpenShell gateway"}'
-    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"2300","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Deactivated successfully"}'
-    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"2400","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Stopped OpenShell gateway"}' ;;
+  "--boot --unit=openshell-gateway.service --no-pager --lines=120 --output=json")
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1000","_PID":"1","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Starting OpenShell gateway"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1100","_PID":"1","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Started OpenShell gateway"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1200","_PID":"1","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"guest s3cr3t password=journal-test-secret 203.0.113.20"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1300","_PID":"1","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Start request repeated too quickly"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1400","_PID":"1","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Scheduled restart job, restart counter is at 1"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1500","_PID":"1","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Main process exited, code=exited, status=1/FAILURE"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1600","_PID":"1","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Failed with result exit-code"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"1700","_PID":"1","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Dependency failed for OpenShell gateway"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"2200","_PID":"1","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Stopping OpenShell gateway"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"2300","_PID":"1","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Deactivated successfully"}'
+    printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"2400","_PID":"1","_SYSTEMD_UNIT":"openshell-gateway.service","MESSAGE":"Stopped OpenShell gateway"}'
+    printf '%s\n' "$FAKE_GATEWAY_CHILD_JOURNAL" ;;
   "--boot _PID=1 --unit=docker.service --unit=docker.socket --no-pager --lines=80 --output=json")
     printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"900","_SYSTEMD_UNIT":"docker.service","MESSAGE":"Starting Docker Application Container Engine"}'
     printf '%s\n' '{"__MONOTONIC_TIMESTAMP":"950","_SYSTEMD_UNIT":"docker.service","MESSAGE":"Started Docker Application Container Engine"}'
@@ -420,6 +439,7 @@ case "$remote" in
   *journalctl*openshell-gateway.service*)
     probe_options_present "$@"
     printf 'ssh full-e2e diagnostic gateway lifecycle\n' >> "$FAKE_CALLS"
+    printf '%s' "$remote" > "$FAKE_GATEWAY_LIFECYCLE_COMMAND"
     bash -c "$remote"
     exit $? ;;
   *journalctl*docker.service*)
@@ -474,6 +494,17 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_DIAGNOSTIC_PHASE: diagnosticPhase,
     FAKE_E2E_DIAGNOSTIC_TIMES_OUT: options.e2eDiagnosticTimesOut ? "1" : "0",
     FAKE_E2E_FAILS: options.e2eFails ? "1" : "0",
+    FAKE_GATEWAY_CHILD_JOURNAL:
+      options.gatewayChildJournal ??
+      gatewayChildJournal([
+        "Starting OpenShell server bind=127.0.0.1:8080",
+        'Gateway listener bound address=127.0.0.1:8080 listener_purpose="primary"',
+        "Error: transport error: failed to bind to 172.18.0.1:8080: Cannot assign requested",
+        "address (os error 99)",
+        "api_key=gateway-child-test-secret child.hidden.internal",
+        "Starting OpenShell server bind=127.0.0.1:8080",
+      ]),
+    FAKE_GATEWAY_LIFECYCLE_COMMAND: gatewayLifecycleCommand,
     FAKE_GATEWAY_EXEC_START:
       options.gatewayExecStart ??
       "{ path=/usr/local/bin/nemoclaw-openshell-gateway-service ; argv[]=/usr/local/bin/nemoclaw-openshell-gateway-service ; ignore_errors=no ; }",
@@ -530,7 +561,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
   ]) {
     delete env[key];
   }
-  return { calls, env, refreshAttempts, sshAttempts, state, workDir };
+  return { calls, env, gatewayLifecycleCommand, refreshAttempts, sshAttempts, state, workDir };
 }
 
 export function run(env: NodeJS.ProcessEnv, args: string[] = []) {

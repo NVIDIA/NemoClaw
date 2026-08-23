@@ -14,6 +14,10 @@ import {
   readAutoPairApprovalPolicyModule,
 } from "../../src/lib/actions/sandbox/auto-pair-approval";
 import {
+  buildOpenClawPairingObservationScript,
+  parseOpenClawPairingSettlementObservation,
+} from "../../src/lib/actions/sandbox/launch-readiness/openclaw-pairing-qualification";
+import {
   CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
   CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
   CONNECT_AUTO_PAIR_MAX_APPROVALS,
@@ -1151,7 +1155,7 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
   requireLiveProof(fs.existsSync(openclawEntry), "reviewed OpenClaw CLI entrypoint missing");
 
   const liveRoot = path.join(options.tmp, "device-approval-live-stored-auth");
-  const stateDir = path.join(liveRoot, "state");
+  const stateDirPath = path.join(liveRoot, "state");
   const primaryStateDir = path.join(liveRoot, "primary-state");
   const homeDir = path.join(liveRoot, "home");
   const proofBin = path.join(liveRoot, "bin");
@@ -1162,7 +1166,8 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
   const proofStoredAuthGuard = path.join(proofBin, "deny-primary-device-auth.cjs");
   const configPath = path.join(liveRoot, "openclaw.json");
   const gatewayLog = path.join(liveRoot, "gateway.log");
-  fs.mkdirSync(stateDir, { recursive: true });
+  fs.mkdirSync(stateDirPath, { recursive: true });
+  const stateDir = fs.realpathSync(stateDirPath);
   fs.mkdirSync(homeDir, { recursive: true });
   fs.mkdirSync(proofBin, { recursive: true });
   fs.writeFileSync(
@@ -1237,6 +1242,22 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
   );
   const approvalPolicy = readAutoPairApprovalPolicyModule();
   requireLiveProof(approvalPolicy, "restored-clone approval policy module missing");
+  const observeOrdinaryPairing = () => {
+    const observation = spawnSync("sh", ["-s"], {
+      encoding: "utf8",
+      env,
+      input: buildOpenClawPairingObservationScript(
+        Buffer.from(approvalPolicy, "utf8").toString("base64"),
+        stateDir,
+        "ordinary-settlement",
+      ),
+      timeout: Math.min(options.timeoutMs, 60_000),
+    });
+    requireSuccess(observation, "observe real ordinary pairing settlement");
+    const parsed = parseOpenClawPairingSettlementObservation(observation.stdout ?? "");
+    requireLiveProof(parsed, "real ordinary pairing settlement returned no observation");
+    return parsed;
+  };
   const pairedTokenApprovalScript = buildAutoPairApprovalScript(
     Buffer.from(approvalPolicy, "utf8").toString("base64"),
     {
@@ -1570,6 +1591,12 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
       String(identity.deviceId),
       "pending pairing settlement list",
     );
+    proofPhase = "ordinary-settlement-observation-before-approval";
+    const pairingOnlyObservation = observeOrdinaryPairing();
+    requireLiveProof(
+      pairingOnlyObservation.state === "pairing-only",
+      "ordinary settlement did not observe pairing-only state before canonical approval",
+    );
     const pendingBeforeOrdinaryApproval = fs.readFileSync(pendingPath, "utf8");
     const pairedBeforeOrdinaryApproval = fs.readFileSync(pairedPath, "utf8");
     const authBeforeOrdinaryApproval = fs.readFileSync(deviceAuthPath, "utf8");
@@ -1628,6 +1655,13 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
       ordinaryAuthOperator.scopes,
       ["operator.pairing", "operator.read", "operator.write"],
       "ordinary stored-device approval auth scopes",
+    );
+    proofPhase = "ordinary-settlement-observation-after-approval";
+    const settledObservation = observeOrdinaryPairing();
+    requireLiveProof(
+      settledObservation.state === "settled" &&
+        settledObservation.deviceIdentitySha256 === pairingOnlyObservation.deviceIdentitySha256,
+      "ordinary settlement did not preserve the canonical device through scope approval",
     );
     proofPhase = "ordinary-stored-device-approval-output";
     const ordinaryApprovalOutput = `${String(ordinaryApproval.stdout ?? "")}\n${String(ordinaryApproval.stderr ?? "")}`;
