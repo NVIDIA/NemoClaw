@@ -112,7 +112,6 @@ async function main(): Promise<void> {
       promptTurns: [turn],
       systemPrompt: buildSystemPrompt(readParsedTrustedSecurityRubric()),
       configDir,
-      htmlExportPath: path.join(outDir, `pr-review-${interest}-session.html`),
       timeoutMs: parsePositiveInt(process.env.PR_REVIEW_ADVISOR_TIMEOUT_MS, 900000),
       heartbeatMs: parsePositiveInt(process.env.PR_REVIEW_ADVISOR_HEARTBEAT_MS, 60000),
       maxCaptureBytes: parsePositiveInt(
