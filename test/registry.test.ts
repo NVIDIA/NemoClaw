@@ -1293,7 +1293,7 @@ describe("advisory file locking", () => {
       return origMkdir.apply(fs, args);
     };
     fs.rmSync = (...args) => {
-      if (args[0] === lockDir) rmCalls.push(args[0]);
+      if (String(args[0]).startsWith(`${lockDir}.quarantine.`)) rmCalls.push(args[0]);
       return origRm.apply(fs, args);
     };
     try {

@@ -13,8 +13,26 @@ import * as importedGatewayLocalTls from "../../../src/lib/onboard/docker-driver
 import * as importedPortableHostPreparation from "../../../src/lib/onboard/experimental/portable-host-preparation.ts";
 import * as importedSandboxPrebuild from "../../../src/lib/onboard/sandbox-prebuild.ts";
 import * as importedBuildContext from "../../../src/lib/sandbox/build-context.ts";
+import {
+  DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
+  parseDockerNetworkIpamEntries,
+  PORTABLE_DOCKER_NETWORK_NAME,
+  PORTABLE_DOCKER_NETWORK_SUBNET,
+  PORTABLE_HOST_GATEWAY_IP,
+  PORTABLE_REGISTRY_IP,
+} from "../../../src/lib/onboard/docker-driver-platform.ts";
 import { test } from "../fixtures/e2e-test.ts";
+import {
+  cleanupPortableHostGatewayAlias,
+  cleanupPortableProfileRootlessFixture,
+  installPortableProfileSystemctlShim,
+} from "../fixtures/portable-profile-systemctl.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
+import {
+  getSandboxConfigRequest,
+  mintSandboxJwt,
+  runSandboxTokenContainerProbe,
+} from "./openshell-gateway-auth-probe.ts";
 import { verifyPinnedPodmanGatewayStarts } from "./portable-profile-gateway-proof.ts";
 
 const gatewayEnvModule = (
@@ -54,9 +72,10 @@ const BASE_IMAGE =
 const PORTABLE_PROFILE_E2E_PHASES = [
   "select the Podman-reported runtime socket",
   "prepare the rootless container runtime",
+  "verify immutable non-force network removal",
   "build and publish the sandbox image",
   "start the pinned Podman gateway",
-  "verify the fixed host route",
+  "verify distinct same-network routes",
   "record portable environment completion",
 ] as const;
 
@@ -74,6 +93,15 @@ function run(command: string, args: readonly string[]): string {
     `${command} ${args.join(" ")} failed:\n${String(result.error?.message || result.stderr || result.stdout)}`,
   );
   return String(result.stdout).trim();
+}
+
+function parseOnePodmanRecord(raw: string, label: string): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(raw);
+  assert.ok(Array.isArray(parsed), `${label} must be a JSON array`);
+  assert.equal(parsed.length, 1, `${label} must contain one record`);
+  const record = parsed[0];
+  assert.ok(record && typeof record === "object" && !Array.isArray(record), `${label} is invalid`);
+  return record as Record<string, unknown>;
 }
 
 async function waitForRegistry(attempt = 0): Promise<void> {
@@ -96,53 +124,6 @@ async function waitForRegistry(attempt = 0): Promise<void> {
       );
 }
 
-function writeSystemctlShim(binDir: string): void {
-  const shim = path.join(binDir, "systemctl");
-  fs.writeFileSync(
-    shim,
-    `#!/usr/bin/env bash
-set -euo pipefail
-runtime_dir="\${XDG_RUNTIME_DIR:?}"
-service_dir="\${runtime_dir}/podman"
-socket_path="\${service_dir}/podman.sock"
-pid_file="\${runtime_dir}/nemoclaw-podman-service.pid"
-log_file="\${runtime_dir}/nemoclaw-podman-service.log"
-
-case "$*" in
-  "--user set-environment NETAVARK_FW=iptables CONTAINERS_CONF="*)
-    exit 0
-    ;;
-  "--user try-restart podman.service")
-    if [[ -f "\${pid_file}" ]]; then
-      kill "$(<"\${pid_file}")" 2>/dev/null || true
-      rm -f "\${pid_file}" "\${socket_path}"
-    fi
-    exit 0
-    ;;
-  "--user enable --now podman.socket")
-    install -d -m 755 "\${service_dir}"
-    nohup podman system service --time=0 "unix://\${socket_path}" >"\${log_file}" 2>&1 &
-    echo $! >"\${pid_file}"
-    for _ in $(seq 1 100); do
-      if [[ -S "\${socket_path}" ]]; then
-        chmod 660 "\${socket_path}"
-        exit 0
-      fi
-      sleep 0.1
-    done
-    cat "\${log_file}" >&2 || true
-    exit 1
-    ;;
-  *)
-    echo "unexpected user-service command: $*" >&2
-    exit 64
-    ;;
-esac
-`,
-    { encoding: "utf-8", mode: 0o700 },
-  );
-}
-
 function selectInstallerPodmanRuntime(repoRoot: string): string {
   const payload = path.join(repoRoot, "scripts", "install.sh");
   const script = [
@@ -157,15 +138,31 @@ function selectInstallerPodmanRuntime(repoRoot: string): string {
 async function main(progress: TestProgress): Promise<void> {
   assert.equal(process.platform, "linux", "portable profile E2E requires Linux");
   assert.notEqual(process.getuid?.(), 0, "portable profile E2E must run without root privileges");
+  const sourceRevision = process.env.E2E_SOURCE_REVISION;
+  assert.match(
+    sourceRevision ?? "",
+    /^[a-f0-9]{40}$/u,
+    "E2E_SOURCE_REVISION must identify the exact candidate commit",
+  );
+  assert.equal(run("git", ["rev-parse", "HEAD"]), sourceRevision);
 
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-e2e-"));
+  const root = fs.mkdtempSync(path.join(os.userInfo().homedir, ".nemoclaw-portable-e2e-"));
   const home = path.join(root, "home");
   const binDir = path.join(root, "bin");
   const stateDir = path.join(root, "gateway-state");
   const configHome = path.join(home, ".config");
   const runtimeDir = `/run/user/${String(process.getuid?.())}`;
+  const disposableNetworkName = `nemoclaw-portable-id-proof-${String(process.pid)}`;
+  let disposableNetworkCreated = false;
+  let disposableNetworkId: string | null = null;
+  let disposableNetworkSubnet: string | null = null;
+  let disposableNetworkInterface: string | null = null;
+  const gatewayAliasPresentBefore = run("ip", ["-o", "-4", "address", "show", "dev", "lo"])
+    .split("\n")
+    .some((line) => line.includes(`inet ${PORTABLE_HOST_GATEWAY_IP}/32`));
+  fs.mkdirSync(home, { recursive: true, mode: 0o700 });
   fs.mkdirSync(binDir, { recursive: true, mode: 0o700 });
-  writeSystemctlShim(binDir);
+  installPortableProfileSystemctlShim(binDir);
 
   Object.assign(process.env, {
     HOME: home,
@@ -183,18 +180,86 @@ async function main(progress: TestProgress): Promise<void> {
     assert.equal(installerDockerHost, `unix://${runtimeDir}/podman/podman.sock`);
 
     progress.phase("prepare the rootless container runtime");
-    preparePortableExperimentalHost(process.env);
+    const prepared = preparePortableExperimentalHost(process.env, { home });
+    assert.equal(prepared?.authority.configHome, configHome);
     assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`);
     assert.equal(fs.statSync(path.join(runtimeDir, "podman")).mode & 0o777, 0o700);
     assert.match(
       fs.readFileSync(String(process.env.CONTAINERS_CONF), "utf-8"),
       /default_rootless_network_cmd = "pasta"/,
     );
+    const registryConfig = path.join(
+      configHome,
+      "containers/registries.conf.d/99-nemoclaw-portable.conf",
+    );
+    assert.equal(
+      fs.readFileSync(registryConfig, "utf-8"),
+      '[[registry]]\nlocation = "localhost:5000"\ninsecure = true\n',
+    );
+    assert.match(
+      run("ip", ["-o", "-4", "address", "show", "dev", "lo"]),
+      new RegExp(`\\binet ${PORTABLE_HOST_GATEWAY_IP.replaceAll(".", "\\.")}/32\\b`),
+    );
 
     const podmanInfo = JSON.parse(run("podman", ["info", "--format", "json"]));
     assert.equal(podmanInfo.host?.security?.rootless, true, "Podman must be rootless");
     run("docker", ["version"]);
     await waitForRegistry();
+
+    progress.phase("verify immutable non-force network removal");
+    const verifiedPodmanUrl = String(process.env.DOCKER_HOST);
+    assert.equal(verifiedPodmanUrl, `unix://${runtimeDir}/podman/podman.sock`);
+    // Netavark rejects the retired link-local subnet before this pinned runtime can create it.
+    // Deterministic tests own that state; this live boundary proves the emitted full-ID form.
+    run("podman", ["--url", verifiedPodmanUrl, "network", "create", disposableNetworkName]);
+    disposableNetworkCreated = true;
+    const disposableNetwork = parseOnePodmanRecord(
+      run("podman", ["--url", verifiedPodmanUrl, "network", "inspect", disposableNetworkName]),
+      "disposable network inspection",
+    );
+    assert.equal(disposableNetwork.name, disposableNetworkName);
+    assert.equal(disposableNetwork.driver, "bridge");
+    assert.equal(disposableNetwork.dns_enabled, true);
+    assert.match(String(disposableNetwork.network_interface), /^podman(?:0|[1-9][0-9]{0,8})$/u);
+    assert.equal(Object.hasOwn(disposableNetwork, "network_dns_servers"), false);
+    assert.match(String(disposableNetwork.id), /^[a-f0-9]{64}$/u);
+    assert.ok(Array.isArray(disposableNetwork.subnets));
+    assert.equal(disposableNetwork.subnets.length, 1);
+    const disposableSubnet = disposableNetwork.subnets[0] as Record<string, unknown>;
+    assert.equal(typeof disposableSubnet.subnet, "string");
+    assert.equal(Object.hasOwn(disposableSubnet, "lease_range"), false);
+    assert.notEqual(disposableSubnet.subnet, "169.254.1.0/24");
+    disposableNetworkId = String(disposableNetwork.id);
+    disposableNetworkSubnet = String(disposableSubnet.subnet);
+    disposableNetworkInterface = String(disposableNetwork.network_interface);
+    run("podman", ["--url", verifiedPodmanUrl, "network", "rm", disposableNetworkId]);
+    disposableNetworkCreated = false;
+    const absentInspection = spawnSync(
+      "podman",
+      ["--url", verifiedPodmanUrl, "network", "inspect", disposableNetworkId],
+      {
+        encoding: "utf-8",
+        env: process.env,
+        killSignal: "SIGKILL",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 15_000,
+      },
+    );
+    assert.equal(absentInspection.error, undefined);
+    assert.notEqual(absentInspection.status, 0);
+    const remainingNetworkIds = run("podman", [
+      "--url",
+      verifiedPodmanUrl,
+      "network",
+      "ls",
+      "--no-trunc",
+      "--format",
+      "{{.ID}}",
+    ])
+      .split("\n")
+      .filter(Boolean);
+    assert.ok(remainingNetworkIds.every((id) => /^[a-f0-9]{64}$/u.test(id)));
+    assert.ok(!remainingNetworkIds.includes(disposableNetworkId));
 
     progress.phase("build and publish the sandbox image");
     const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
@@ -215,26 +280,59 @@ async function main(progress: TestProgress): Promise<void> {
       origin: "generated",
       log: console.log,
     });
-    assert.equal(
-      prebuild.imageRef,
-      "localhost:5000/nemoclaw-sandbox-local:portable-e2e-rootless-e2e",
-    );
+    const imageRef = prebuild.imageRef;
+    assert.equal(imageRef, "localhost:5000/nemoclaw-sandbox-local:portable-e2e-rootless-e2e");
 
-    run("podman", ["image", "rm", "--force", prebuild.imageRef]);
-    run("podman", ["pull", prebuild.imageRef]);
+    run("podman", ["image", "rm", "--force", imageRef]);
+    run("podman", ["pull", imageRef]);
     assert.match(
-      run("podman", ["image", "inspect", "--format", "{{.Id}}", prebuild.imageRef]),
+      run("podman", ["image", "inspect", "--format", "{{.Id}}", imageRef]),
       /^(?:sha256:)?[a-f0-9]{64}$/,
     );
-    run("podman", ["network", "create", "--subnet", "169.254.1.0/24", "openshell-docker"]);
-    run("podman", [
-      "network",
-      "connect",
-      "--ip",
-      "169.254.1.2",
-      "openshell-docker",
-      "nemoclaw-portable-registry",
-    ]);
+    assert.deepEqual(
+      parseDockerNetworkIpamEntries(
+        run("docker", [
+          "network",
+          "inspect",
+          "--format",
+          DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
+          PORTABLE_DOCKER_NETWORK_NAME,
+        ]),
+      )?.map(({ subnet }) => subnet),
+      [PORTABLE_DOCKER_NETWORK_SUBNET],
+    );
+    assert.equal(
+      run("docker", [
+        "inspect",
+        "--format",
+        `{{with index .NetworkSettings.Networks ${JSON.stringify(PORTABLE_DOCKER_NETWORK_NAME)}}}{{.IPAddress}}{{end}}`,
+        "nemoclaw-portable-registry",
+      ]),
+      PORTABLE_REGISTRY_IP,
+    );
+    const currentNetwork = parseOnePodmanRecord(
+      run("podman", [
+        "--url",
+        verifiedPodmanUrl,
+        "network",
+        "inspect",
+        PORTABLE_DOCKER_NETWORK_NAME,
+      ]),
+      "portable network inspection",
+    );
+    assert.match(String(currentNetwork.id), /^[a-f0-9]{64}$/u);
+    const currentRegistry = parseOnePodmanRecord(
+      run("podman", [
+        "--url",
+        verifiedPodmanUrl,
+        "container",
+        "inspect",
+        "nemoclaw-portable-registry",
+      ]),
+      "portable registry inspection",
+    );
+    assert.match(String(currentRegistry.Id), /^[a-f0-9]{64}$/u);
+    assert.equal(currentRegistry.Name, "nemoclaw-portable-registry");
 
     const gatewayBin = run("bash", ["-lc", "command -v openshell-gateway"]);
     const sandboxBin = run("bash", ["-lc", "command -v openshell-sandbox"]);
@@ -248,10 +346,10 @@ async function main(progress: TestProgress): Promise<void> {
     });
     assert.equal(gatewayEnv.OPENSHELL_DRIVERS, "podman");
     assert.equal(gatewayEnv.OPENSHELL_BIND_ADDRESS, "0.0.0.0");
-    assert.equal(gatewayEnv.OPENSHELL_GRPC_ENDPOINT, "https://169.254.1.2:8080");
+    assert.equal(gatewayEnv.OPENSHELL_GRPC_ENDPOINT, `https://${PORTABLE_HOST_GATEWAY_IP}:8080`);
     assert.match(
       fs.readFileSync(gatewayEnv.OPENSHELL_GATEWAY_CONFIG, "utf-8"),
-      /host_gateway_ip = "169\.254\.1\.2"/,
+      new RegExp(`host_gateway_ip = "${PORTABLE_HOST_GATEWAY_IP.replaceAll(".", "\\.")}"`),
     );
     assert.match(
       fs.readFileSync(gatewayEnv.OPENSHELL_GATEWAY_CONFIG, "utf-8"),
@@ -264,35 +362,115 @@ async function main(progress: TestProgress): Promise<void> {
 
     progress.phase("start the pinned Podman gateway");
     ensureDockerDriverGatewayLocalTlsBundle({ gatewayBin, stateDir });
-    await verifyPinnedPodmanGatewayStarts(gatewayBin, gatewayEnv, progress);
+    await verifyPinnedPodmanGatewayStarts(gatewayBin, gatewayEnv, progress, async () => {
+      progress.phase("verify distinct same-network routes");
+      const sandboxId = "portable-e2e";
+      const sandboxToken = mintSandboxJwt({
+        configPath: gatewayEnv.OPENSHELL_GATEWAY_CONFIG,
+        sandboxId,
+      });
+      const gatewayProbe = runSandboxTokenContainerProbe({
+        authorization: `Bearer ${sandboxToken}`,
+        dockerBin: "podman",
+        hostGatewayIp: PORTABLE_HOST_GATEWAY_IP,
+        networkName: PORTABLE_DOCKER_NETWORK_NAME,
+        payload: getSandboxConfigRequest(sandboxId),
+        port: 8080,
+        stateDir,
+      });
+      assert.equal(gatewayProbe.status, 0, "The authenticated same-network gateway probe failed.");
+      const gatewayResult = JSON.parse(gatewayProbe.stdout) as {
+        grpcStatus?: string;
+        httpStatus?: number;
+      };
+      assert.equal(gatewayResult.httpStatus, 200);
+      assert.ok(gatewayResult.grpcStatus);
+      assert.ok(!["7", "16"].includes(gatewayResult.grpcStatus));
 
-    progress.phase("verify the fixed host route");
+      const registryRouteProof = [
+        `exec 3<>/dev/tcp/${PORTABLE_REGISTRY_IP}/5000`,
+        "printf 'GET /v2/ HTTP/1.1\\r\\nHost: portable-profile\\r\\nConnection: close\\r\\n\\r\\n' >&3",
+        "response=$(cat <&3)",
+        'grep -F "200 OK" <<<"$response"',
+      ].join("; ");
+      assert.equal(
+        run("podman", [
+          "run",
+          "--rm",
+          "--network",
+          PORTABLE_DOCKER_NETWORK_NAME,
+          imageRef,
+          "timeout",
+          "15",
+          "bash",
+          "-lc",
+          registryRouteProof,
+        ]),
+        "HTTP/1.1 200 OK",
+      );
+    });
 
-    const routeProof = [
-      "exec 3<>/dev/tcp/169.254.1.2/5000",
-      "printf 'GET /v2/ HTTP/1.1\\r\\nHost: portable-profile\\r\\nConnection: close\\r\\n\\r\\n' >&3",
-      "response=$(cat <&3)",
-      'grep -F "200 OK" <<<"$response"',
-    ].join("; ");
-    assert.equal(
-      run("podman", [
-        "run",
-        "--rm",
-        "--network",
-        "openshell-docker",
-        prebuild.imageRef,
-        "timeout",
-        "15",
-        "bash",
-        "-lc",
-        routeProof,
-      ]),
-      "HTTP/1.1 200 OK",
+    const artifactDir = process.env.E2E_ARTIFACT_DIR;
+    assert.ok(artifactDir, "E2E_ARTIFACT_DIR is required for the rootless receipt");
+    fs.mkdirSync(artifactDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(artifactDir, "portable-profile-rootless-receipt.json"),
+      `${JSON.stringify(
+        {
+          sourceRevision,
+          rootless: true,
+          podmanPackageVersion: process.env.PODMAN_APT_VERSION ?? null,
+          podmanVersion: run("podman", ["--version"]),
+          podmanUrl: verifiedPodmanUrl,
+          immutableNetworkRemoval: {
+            networkId: disposableNetworkId,
+            subnet: disposableNetworkSubnet,
+            networkForce: false,
+            absentAfterRemoval: true,
+            retiredUpgradeEndToEnd: false,
+            inspectedShape: {
+              dnsEnabled: true,
+              networkInterface: disposableNetworkInterface,
+              networkDnsServersPresent: false,
+              leaseRangePresent: false,
+            },
+          },
+          portableNetwork: {
+            id: currentNetwork.id,
+            subnet: PORTABLE_DOCKER_NETWORK_SUBNET,
+            hostGateway: `${PORTABLE_HOST_GATEWAY_IP}/32`,
+          },
+          registry: { id: currentRegistry.Id, ip: PORTABLE_REGISTRY_IP },
+          authenticatedGatewayRoute: true,
+          registryRoute: true,
+        },
+        null,
+        2,
+      )}\n`,
+      { encoding: "utf-8", mode: 0o600 },
     );
 
     progress.phase("record portable environment completion");
     console.log("Portable profile rootless environment E2E passed.");
   } finally {
+    void (disposableNetworkCreated
+      ? spawnSync(
+          "podman",
+          [
+            "--url",
+            `unix://${runtimeDir}/podman/podman.sock`,
+            "network",
+            "rm",
+            disposableNetworkId ?? disposableNetworkName,
+          ],
+          {
+            env: process.env,
+            killSignal: "SIGKILL",
+            stdio: "ignore",
+            timeout: 15_000,
+          },
+        )
+      : undefined);
     spawnSync("podman", ["rm", "--force", "nemoclaw-portable-registry"], {
       env: process.env,
       killSignal: "SIGKILL",
@@ -305,25 +483,22 @@ async function main(progress: TestProgress): Promise<void> {
       stdio: "ignore",
       timeout: 15_000,
     });
-    const pidFile = path.join(runtimeDir, "nemoclaw-podman-service.pid");
-    const pid = fs.existsSync(pidFile)
-      ? Number(fs.readFileSync(pidFile, "utf-8").trim())
-      : Number.NaN;
-    const terminateService = Number.isInteger(pid)
-      ? () => process.kill(pid, "SIGTERM")
-      : () => undefined;
-    terminateService();
-    try {
-      fs.rmSync(root, { recursive: true, force: true });
-    } catch (error) {
-      console.warn(`Portable E2E temporary cleanup was incomplete: ${String(error)}`);
-    }
+    cleanupPortableHostGatewayAlias(
+      PORTABLE_HOST_GATEWAY_IP,
+      gatewayAliasPresentBefore,
+      process.env,
+    );
+    await cleanupPortableProfileRootlessFixture(runtimeDir, root);
   }
 }
 
-test("portable profile rootless environment completes the local image and fixed-host route contracts", {
-  meta: { e2ePhases: PORTABLE_PROFILE_E2E_PHASES },
-  timeout: 120_000,
-}, async ({ progress }) => {
-  await main(progress);
-});
+test(
+  "portable profile rootless environment completes distinct authenticated gateway and registry routes",
+  {
+    meta: { e2ePhases: PORTABLE_PROFILE_E2E_PHASES },
+    timeout: 120_000,
+  },
+  async ({ progress }) => {
+    await main(progress);
+  },
+);

@@ -301,16 +301,25 @@ describe("dockerfile patch — corporate CA baking (#6210)", () => {
   });
 
   it("does not bake a fallback corporate CA without root startup selection (#8803)", () => {
-    process.env.REQUESTS_CA_BUNDLE = writeCa();
+    const caPath = writeCa();
+    process.env.REQUESTS_CA_BUNDLE = caPath;
     const dockerfilePath = dockerfileWith([
       ...BASE_ARGS.filter((line) => !line.startsWith("ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=")),
       "ARG NEMOCLAW_CORPORATE_CA_B64=",
       ...OPENCLAW_STARTUP,
     ]);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     patch(dockerfilePath);
+    const messages = errorSpy.mock.calls.map((call) => String(call[0]));
+    errorSpy.mockRestore();
 
     expect(corporateCaArgLine(dockerfilePath)).toBe("ARG NEMOCLAW_CORPORATE_CA_B64=");
+    const warning = messages.find((message) => message.includes("WARNING"));
+    assert.ok(warning, "expected a dropped corporate CA warning (#8454)");
+    expect(warning).toContain("REQUESTS_CA_BUNDLE");
+    expect(warning).toContain(caPath);
+    expect(warning).toContain("NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER");
   });
 
   it("keeps Deep Agents Code sandbox startup when baking a corporate CA (#8803)", () => {
@@ -335,10 +344,20 @@ describe("dockerfile patch — corporate CA baking (#6210)", () => {
   });
 
   it("stays a no-op for a fallback CA when a custom Dockerfile lacks the ARG", () => {
-    process.env.CURL_CA_BUNDLE = writeCa();
+    const caPath = writeCa();
+    process.env.CURL_CA_BUNDLE = caPath;
     const dockerfilePath = openClawDockerfileWith([]);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     expect(() => patch(dockerfilePath)).not.toThrow();
+    const messages = errorSpy.mock.calls.map((call) => String(call[0]));
+    errorSpy.mockRestore();
+
     expect(corporateCaArgLine(dockerfilePath)).toBeUndefined();
+    const warning = messages.find((message) => message.includes("WARNING"));
+    assert.ok(warning, "expected a dropped corporate CA warning (#8454)");
+    expect(warning).toContain("CURL_CA_BUNDLE");
+    expect(warning).toContain(caPath);
+    expect(warning).toContain("NEMOCLAW_CORPORATE_CA_B64");
   });
 });

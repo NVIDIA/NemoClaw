@@ -6,12 +6,16 @@ import fs from "node:fs";
 
 import type { AgentDefinition } from "../../agent/defs";
 import { log } from "../../cli/logger";
-import { getCuaRuntimeReadinessDigest } from "../../cua/contract";
 import { parseGatewayInference, planInferenceRouteReconcile } from "../../inference/config";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
 import { resolveGatewayName } from "../../onboard/gateway-binding";
+import {
+  classifyPortableLifecycleReceipt,
+  portableLifecycleReceiptMatchesGeneration,
+  type PortableLifecycleReceiptClassification,
+} from "../../onboard/experimental/portable-runtime-receipt-readiness";
 import {
   observeSandboxOnGateway,
   type SandboxRecreateObserver,
@@ -39,8 +43,13 @@ import {
 } from "../../state/registry-messaging";
 import { buildGatewayInferenceGetArgs } from "./connect-inference-gateway";
 import {
+  runPortableOpenClawPairingApproval,
+  runPortableOpenClawPairingRequestProducer,
+} from "./auto-pair-approval";
+import {
   captureLaunchReadiness,
   LaunchReadinessEvidenceError,
+  type LaunchReadinessFailedCheck,
   type LaunchReadinessHealthDeps,
   LaunchReadinessObservationError as ObservationError,
   requireLaunchSemanticHealth,
@@ -49,8 +58,12 @@ import {
 } from "./launch-readiness/health";
 import {
   observeOpenClawPairingQualification,
+  observeOpenClawPairingSettlement,
   OpenClawPairingQualificationError,
+  type OpenClawPairingSettlementObservation,
 } from "./launch-readiness/openclaw-pairing-qualification";
+
+export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/timing";
 
 const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
 const ALLOWED_OPENSHELL_DRIVERS = new Set(["docker", "kubernetes", "vm"]);
@@ -94,11 +107,16 @@ export type LaunchReadinessDecision =
 export interface LaunchReadinessDeps extends LaunchReadinessHealthDeps {
   checkMutationAuthority?: typeof checkLaunchReadinessMutationAuthority;
   getSandbox?: typeof registry.getSandbox;
+  updateSandbox?: typeof registry.updateSandbox;
   observeSandbox?: SandboxRecreateObserver;
   readLease?: typeof readLaunchReadinessLease;
   fenceLease?: typeof fenceLaunchReadinessLease;
   publishLease?: typeof publishLaunchReadinessLease;
   observeOpenClawPairingQualification?: typeof observeOpenClawPairingQualification;
+  observeOpenClawPairingSettlement?: typeof observeOpenClawPairingSettlement;
+  runPortablePairingProducer?: typeof runPortableOpenClawPairingRequestProducer;
+  runPortablePairingApproval?: typeof runPortableOpenClawPairingApproval;
+  classifyPortableLifecycleReceipt?: typeof classifyPortableLifecycleReceipt;
   storeOptions?: LaunchReadinessStoreOptions;
   withSandboxLock?: typeof withSandboxMutationLock;
   withGatewayLock?: typeof withGatewayRouteMutationLock;
@@ -116,6 +134,7 @@ export type LaunchReadinessPublicationResult =
   | {
       kind: "validation-failed";
       category: "identity" | "config" | "health" | "session";
+      failedCheck?: LaunchReadinessFailedCheck;
     }
   | { kind: "evidence-failed" };
 
@@ -123,6 +142,27 @@ export type LaunchReadinessMutationGateResult<T> =
   | { kind: "entered"; value: T }
   | { kind: "changed" }
   | { kind: "unsafe" };
+
+export type PortableOpenClawPairingSettlementResult =
+  | { readonly kind: "not-portable" }
+  | { readonly kind: "settled" }
+  | {
+      readonly kind: "incomplete";
+      readonly reason:
+        | "portable-receipt-missing"
+        | "portable-receipt-invalid"
+        | "portable-policy-incomplete"
+        | "portable-runtime-identity-invalid"
+        | "portable-pairing-incomplete";
+    };
+
+export interface OpenClawPairingSettlementTarget {
+  readonly gatewayName: string;
+  readonly lifecycleGeneration: string;
+  readonly lifecycleLiveIdentityFingerprint: string;
+  readonly stateDirectory: string;
+  readonly version: string;
+}
 
 type LaunchReadinessPublicationValidationCategory = Extract<
   LaunchReadinessPublicationResult,
@@ -452,6 +492,7 @@ function projectAgent(agent: AgentDefinition): unknown {
 export function buildLaunchReadinessRegistryProjection(
   entry: SandboxEntry,
   agent: AgentDefinition,
+  portableRuntimeAuthoritySha256: string | null = null,
 ): unknown {
   const driver = normalizedString(entry.openshellDriver)?.toLowerCase() ?? null;
   if (!driver || !ALLOWED_OPENSHELL_DRIVERS.has(driver)) throw new ObservationError("config");
@@ -528,6 +569,12 @@ export function buildLaunchReadinessRegistryProjection(
   if (hermesAuthMethod !== null && hermesAuthMethod !== "oauth" && hermesAuthMethod !== "api_key") {
     throw new ObservationError("config");
   }
+  if (
+    portableRuntimeAuthoritySha256 !== null &&
+    !/^[a-f0-9]{64}$/.test(portableRuntimeAuthoritySha256)
+  ) {
+    throw new ObservationError("config");
+  }
 
   return {
     version: 2,
@@ -563,6 +610,12 @@ export function buildLaunchReadinessRegistryProjection(
     policies: [...(entry.policies ?? [])],
     policyTier: normalizedString(entry.policyTier),
     policyPresetsFinalized: entry.policyPresetsFinalized === true,
+    ...(portableRuntimeAuthoritySha256
+      ? {
+          portableLifecycleReceipt: "current",
+          portableRuntimeAuthoritySha256,
+        }
+      : {}),
     customPolicies,
     baselineExclusions,
     webSearchEnabled: entry.webSearchEnabled === true,
@@ -586,9 +639,6 @@ export function buildLaunchReadinessRegistryProjection(
       installPath: install.installPath,
       loadPaths: install.loadPaths ? [...install.loadPaths] : null,
     })),
-    cuaRuntimeReadinessSha256: entry.cuaRuntimeReadiness
-      ? launchReadinessDigest(getCuaRuntimeReadinessDigest(entry.cuaRuntimeReadiness))
-      : null,
   };
 }
 
@@ -644,7 +694,37 @@ async function captureLaunchIdentity(
   if (!entry || entry.name !== sandboxName) throw new ObservationError("identity");
   const agentName = normalizedString(entry.agent) ?? "openclaw";
   const agent = resolveTrustedLaunchAgent(entry, deps, agentName);
-  const projection = buildLaunchReadinessRegistryProjection(entry, agent);
+  const portableReceipt = (
+    deps.classifyPortableLifecycleReceipt ?? classifyPortableLifecycleReceipt
+  )(sandboxName);
+  let portableRuntimeAuthoritySha256: string | null = null;
+  if (entry.agent === "openclaw") {
+    if (portableReceipt.kind === "invalid-or-legacy") throw new ObservationError("config");
+    if (portableReceipt.kind === "current") {
+      if (
+        entry.policyPresetsFinalized !== true ||
+        entry.lifecycleGeneration !== portableReceipt.registryGeneration
+      ) {
+        throw new ObservationError("config");
+      }
+      portableRuntimeAuthoritySha256 = launchReadinessDigest(portableReceipt.runtimeAuthority);
+    }
+  } else if (
+    portableReceipt.kind !== "absent" &&
+    !(
+      typeof entry.agent === "string" &&
+      entry.agent.length > 0 &&
+      entry.agent === entry.agent.trim() &&
+      entry.agent !== "openclaw"
+    )
+  ) {
+    throw new ObservationError("config");
+  }
+  const projection = buildLaunchReadinessRegistryProjection(
+    entry,
+    agent,
+    portableRuntimeAuthoritySha256,
+  );
   if (entry.gatewayPort !== gatewayPort || entry.gatewayName !== gatewayName) {
     throw new ObservationError("identity");
   }
@@ -766,13 +846,16 @@ function debugDecision(category: LaunchReadinessDecisionCategory): void {
   );
 }
 
-function publicationValidationCategory(
-  error: unknown,
-): LaunchReadinessPublicationValidationCategory | null {
+function publicationValidationCategory(error: unknown): {
+  category: LaunchReadinessPublicationValidationCategory;
+  failedCheck?: LaunchReadinessFailedCheck;
+} | null {
   if (!(error instanceof ObservationError)) return null;
-  return ["identity", "config", "health", "session"].includes(error.category)
-    ? (error.category as LaunchReadinessPublicationValidationCategory)
-    : null;
+  if (!["identity", "config", "health", "session"].includes(error.category)) return null;
+  return {
+    category: error.category as LaunchReadinessPublicationValidationCategory,
+    ...(error.failedCheck ? { failedCheck: error.failedCheck } : {}),
+  };
 }
 
 function fallback(
@@ -795,6 +878,251 @@ function fallback(
     recoveryBlocked,
     ...(authorityUnsupported ? { authorityUnsupported: true as const } : {}),
   };
+}
+
+function incompletePortablePairing(
+  reason: Extract<PortableOpenClawPairingSettlementResult, { kind: "incomplete" }>["reason"],
+): PortableOpenClawPairingSettlementResult {
+  return { kind: "incomplete", reason };
+}
+
+function portableReceiptChanged(
+  first: PortableLifecycleReceiptClassification,
+  second: PortableLifecycleReceiptClassification,
+): boolean {
+  return (
+    first.kind !== "current" ||
+    second.kind !== "current" ||
+    first.registryGeneration !== second.registryGeneration ||
+    launchReadinessDigest(first.runtimeAuthority) !== launchReadinessDigest(second.runtimeAuthority)
+  );
+}
+
+function resolveOpenClawPairingSettlementTarget(
+  sandboxName: string,
+  entry: SandboxEntry | null,
+  deps: LaunchReadinessDeps,
+  requiredGeneration?: string,
+  allowUnknownCustomVersion = false,
+): OpenClawPairingSettlementTarget | null {
+  // Policy eligibility belongs to the settlement caller. Ordinary onboarding
+  // permits policy skip, while Portable pairing requires the finalized marker.
+  if (
+    !entry ||
+    entry.name !== sandboxName ||
+    (entry.agent !== null && entry.agent !== "openclaw") ||
+    entry.pendingRouteReservation === true ||
+    entry.reservationSessionId ||
+    !Number.isInteger(entry.gatewayPort) ||
+    (entry.gatewayPort ?? 0) < 1 ||
+    (entry.gatewayPort ?? 0) > 65535
+  ) {
+    return null;
+  }
+  const gatewayName = resolveGatewayName(entry.gatewayPort as number);
+  if (entry.gatewayName !== gatewayName) return null;
+
+  let agent: AgentDefinition;
+  try {
+    agent = resolveTrustedLaunchAgent(entry, deps, "openclaw");
+  } catch {
+    return null;
+  }
+  const recordedVersion = normalizedString(entry.agentVersion);
+  // Custom Dockerfile workloads intentionally have no managed agent version:
+  // registration must not stamp the manifest's version onto unreviewed image
+  // contents. Ordinary settlement does not use the version to select a
+  // command shape, so its caller may preserve that unknown value as the empty
+  // string while retaining the exact registry and live-lifecycle checks.
+  const customDockerfile = normalizedString(entry.fromDockerfile);
+  const version =
+    recordedVersion ?? (allowUnknownCustomVersion && customDockerfile ? "" : null);
+  const expectedVersion = normalizedString(agent.expected_version);
+  const stateDirectory = normalizedString(agent.config?.dir);
+  const lifecycleGeneration = normalizedString(entry.lifecycleGeneration);
+  const lifecycleLiveIdentityFingerprint = normalizedString(entry.lifecycleLiveIdentityFingerprint);
+  if (
+    version === null ||
+    !expectedVersion ||
+    !stateDirectory ||
+    !lifecycleGeneration ||
+    !lifecycleLiveIdentityFingerprint ||
+    (requiredGeneration !== undefined && lifecycleGeneration !== requiredGeneration)
+  ) {
+    return null;
+  }
+  return {
+    gatewayName,
+    lifecycleGeneration,
+    lifecycleLiveIdentityFingerprint,
+    stateDirectory,
+    version,
+  };
+}
+
+/** Resolve the finalized ordinary OpenClaw runtime that owns pairing state. */
+export function resolveOrdinaryOpenClawPairingTarget(
+  sandboxName: string,
+  deps: LaunchReadinessDeps = {},
+): OpenClawPairingSettlementTarget | null {
+  try {
+    const getSandbox = deps.getSandbox ?? registry.getSandbox;
+    return resolveOpenClawPairingSettlementTarget(
+      sandboxName,
+      getSandbox(sandboxName),
+      deps,
+      undefined,
+      true,
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Settle current Portable OpenClaw pairing under the lifecycle then owning
+ * gateway-route locks. An ambiguous approval receives one strict final
+ * observation and never another write.
+ */
+export async function settlePortableOpenClawPairing(
+  sandboxName: string,
+  options: {
+    readonly portableRequired?: boolean;
+  } = {},
+  deps: LaunchReadinessDeps = {},
+): Promise<PortableOpenClawPairingSettlementResult> {
+  const classifyReceipt = deps.classifyPortableLifecycleReceipt ?? classifyPortableLifecycleReceipt;
+  const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const updateSandbox = deps.updateSandbox ?? registry.updateSandbox;
+  const withSandboxLock = deps.withSandboxLock ?? withSandboxMutationLock;
+  const withGatewayLock = deps.withGatewayLock ?? withGatewayRouteMutationLock;
+  const observePairing = deps.observeOpenClawPairingSettlement ?? observeOpenClawPairingSettlement;
+  const runProducer = deps.runPortablePairingProducer ?? runPortableOpenClawPairingRequestProducer;
+  const runApproval = deps.runPortablePairingApproval ?? runPortableOpenClawPairingApproval;
+
+  return withSandboxLock(sandboxName, async () => {
+    let firstEntry = getSandbox(sandboxName);
+    if (
+      firstEntry?.agent !== "openclaw" &&
+      typeof firstEntry?.agent === "string" &&
+      firstEntry.agent.length > 0 &&
+      firstEntry.agent === firstEntry.agent.trim()
+    ) {
+      return { kind: "not-portable" };
+    }
+
+    const firstReceipt = classifyReceipt(sandboxName);
+    if (
+      firstEntry?.agent === null &&
+      options.portableRequired === true &&
+      firstEntry.policyPresetsFinalized === true &&
+      portableLifecycleReceiptMatchesGeneration(firstReceipt, firstEntry.lifecycleGeneration)
+    ) {
+      if (!updateSandbox(sandboxName, { agent: "openclaw" })) {
+        return incompletePortablePairing("portable-runtime-identity-invalid");
+      }
+      firstEntry = getSandbox(sandboxName);
+      if (firstEntry?.agent !== "openclaw") {
+        return incompletePortablePairing("portable-runtime-identity-invalid");
+      }
+    }
+    if (firstEntry?.agent !== "openclaw") {
+      if (firstReceipt.kind === "absent" && !options.portableRequired) {
+        return { kind: "not-portable" };
+      }
+      return incompletePortablePairing("portable-runtime-identity-invalid");
+    }
+    if (firstReceipt.kind === "absent") {
+      return options.portableRequired
+        ? incompletePortablePairing("portable-receipt-missing")
+        : { kind: "not-portable" };
+    }
+    if (firstReceipt.kind !== "current") {
+      return incompletePortablePairing("portable-receipt-invalid");
+    }
+    if (firstEntry.policyPresetsFinalized !== true) {
+      return incompletePortablePairing("portable-policy-incomplete");
+    }
+    const firstTarget = resolveOpenClawPairingSettlementTarget(
+      sandboxName,
+      firstEntry,
+      deps,
+      firstReceipt.registryGeneration,
+    );
+    if (!firstTarget) return incompletePortablePairing("portable-runtime-identity-invalid");
+
+    return withGatewayLock(firstTarget.gatewayName, async () => {
+      const lockedReceipt = classifyReceipt(sandboxName);
+      const lockedEntry = getSandbox(sandboxName);
+      if (lockedReceipt.kind !== "current" || portableReceiptChanged(firstReceipt, lockedReceipt)) {
+        return incompletePortablePairing("portable-receipt-invalid");
+      }
+      if (lockedEntry?.policyPresetsFinalized !== true) {
+        return incompletePortablePairing("portable-policy-incomplete");
+      }
+      const target = resolveOpenClawPairingSettlementTarget(
+        sandboxName,
+        lockedEntry,
+        deps,
+        lockedReceipt.registryGeneration,
+      );
+      if (
+        !target ||
+        target.gatewayName !== firstTarget.gatewayName ||
+        target.version !== firstTarget.version ||
+        target.stateDirectory !== firstTarget.stateDirectory
+      ) {
+        return incompletePortablePairing("portable-runtime-identity-invalid");
+      }
+
+      let first: OpenClawPairingSettlementObservation;
+      try {
+        first = observePairing(
+          sandboxName,
+          target.gatewayName,
+          target.version,
+          target.stateDirectory,
+        );
+      } catch {
+        return incompletePortablePairing("portable-pairing-incomplete");
+      }
+      if (first.state === "settled") return { kind: "settled" };
+
+      runProducer(sandboxName, target.gatewayName);
+      runApproval(sandboxName, target.gatewayName, first.deviceIdentitySha256);
+
+      try {
+        const final = observePairing(
+          sandboxName,
+          target.gatewayName,
+          target.version,
+          target.stateDirectory,
+        );
+        return final.state === "settled"
+          ? { kind: "settled" }
+          : incompletePortablePairing("portable-pairing-incomplete");
+      } catch {
+        return incompletePortablePairing("portable-pairing-incomplete");
+      }
+    });
+  });
+}
+
+export function portableOpenClawPairingIncompleteMessage(
+  sandboxName: string,
+  reason: Extract<PortableOpenClawPairingSettlementResult, { kind: "incomplete" }>["reason"],
+): string {
+  const cause =
+    reason === "portable-policy-incomplete"
+      ? "its policy preset step is not finalized"
+      : reason === "portable-receipt-missing"
+        ? "its Portable lifecycle receipt is missing"
+        : reason === "portable-receipt-invalid"
+          ? "its Portable lifecycle receipt is invalid or legacy"
+          : reason === "portable-runtime-identity-invalid"
+            ? "its recorded Portable runtime identity is not authoritative"
+            : "its local OpenClaw operator pairing is not settled";
+  return `Portable onboarding for '${sandboxName}' is incomplete because ${cause}. Resume or rerun onboarding before connecting, recovering, or launching it.`;
 }
 
 /**
@@ -943,9 +1271,9 @@ export async function publishLaunchReadiness(
         try {
           captured = await captureLaunchIdentity(sandboxName, gatewayName, gatewayPort, deps);
         } catch (error) {
-          const category = publicationValidationCategory(error);
-          return category
-            ? ({ kind: "validation-failed", category } as const)
+          const validation = publicationValidationCategory(error);
+          return validation
+            ? ({ kind: "validation-failed", ...validation } as const)
             : ({ kind: "evidence-failed" } as const);
         } finally {
           recordPerformanceStage("publication-validation", validationStartedAt);

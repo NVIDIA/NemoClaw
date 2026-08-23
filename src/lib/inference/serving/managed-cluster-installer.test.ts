@@ -327,6 +327,38 @@ describe("managed-cluster vLLM installer selection", () => {
     expect(installEffects.prerequisites).not.toHaveBeenCalled();
   });
 
+  it("uses the configured vLLM port for managed-cluster admission", async () => {
+    const selection = fixtureManagedClusterSelection();
+    const base = readyCapability();
+    const capability = {
+      ...base,
+      local: {
+        ...base.local,
+        runtimeSnapshot: { ...base.local.runtimeSnapshot, listeningPorts: [19_000] },
+      },
+    } as ManagedClusterDetectedManagedServingCapability;
+    const materializePlan = vi.fn();
+
+    const result = await tryInstallManagedClusterManagedVllm(
+      {
+        platform: "spark",
+        env: { NEMOCLAW_VLLM_PORT: "19000" },
+        nonInteractive: true,
+        promptFn: vi.fn(),
+      },
+      effects(),
+      {
+        probeCapability: () => capability,
+        resolveSelection: () => selection,
+        materializePlan,
+        error: vi.fn(),
+      },
+    );
+
+    expect(result).toEqual({ kind: "handled", result: { ok: false } });
+    expect(materializePlan).not.toHaveBeenCalled();
+  });
+
   it("budgets the selected model and image at full size before prompting", async () => {
     const selection = fixtureManagedClusterSelection();
     const base = readyCapability();
@@ -537,7 +569,9 @@ describe("managed-cluster vLLM installer selection", () => {
     const confirmed = confirmedCapability(capability);
     const selection = fixtureManagedClusterSelection();
     const installEffects = effects();
+    const prerequisites = vi.mocked(installEffects.prerequisites);
     const beforeInstall = vi.fn();
+    const checkpointInstallIntent = vi.fn();
     const clearBinding = vi.fn();
     const persistReceipt = vi.fn();
     const stageCalls: string[] = [];
@@ -577,6 +611,7 @@ describe("managed-cluster vLLM installer selection", () => {
         nonInteractive: true,
         promptFn: vi.fn(),
         beforeInstall,
+        checkpointInstallIntent,
       },
       installEffects,
       {
@@ -596,6 +631,10 @@ describe("managed-cluster vLLM installer selection", () => {
     expect(result).toEqual({ kind: "handled", result: { ok: true } });
     expect(capturedStage).toBeDefined();
     expect(stageCalls).toEqual(["spark-worker", "spark-head"]);
+    expect(checkpointInstallIntent).toHaveBeenCalledWith(selection.recipe.spec.model.id);
+    expect(checkpointInstallIntent.mock.invocationCallOrder[0]).toBeLessThan(
+      prerequisites.mock.invocationCallOrder[0],
+    );
     expect(beforeInstall).toHaveBeenCalledWith("deepseek-v4-flash-0731");
     expect(installEffects.pullImage).toHaveBeenCalledTimes(2);
     expect(installEffects.downloadModel).toHaveBeenNthCalledWith(

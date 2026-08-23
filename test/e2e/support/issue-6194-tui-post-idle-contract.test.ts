@@ -92,9 +92,7 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       "connected_idle_after_status",
       "clean_exit",
     ];
-    for (const marker of markers) {
-      expect(script.match(new RegExp(`\\b${marker}\\b`, "gu")) ?? []).toHaveLength(1);
-    }
+    expect(markers.every((marker) => (script.match(new RegExp(`\\b${marker}\\b`, "gu")) ?? []).length === 1)).toBe(true);
     const order = markers.map((marker) => script.indexOf(marker));
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
@@ -385,22 +383,21 @@ exit 0
     expect(script).not.toContain("-nocase -exact");
   });
 
-  it.each([
-    "blocked",
-    "denied",
-    "rejected",
-  ])("does not map assistant prose containing '%s' to the former refusal exit", (word) => {
-    const tuiScript = buildIssue6194TuiExpectScript();
-    const approvalScript = buildIssue6194OpenShellApprovalExpectScript();
-    const assistantTranscript = `The request was ${word} because this model has no network tools.`;
+  it.each(["blocked", "denied", "rejected"])(
+    "does not map assistant prose containing '%s' to the former refusal exit",
+    (word) => {
+      const tuiScript = buildIssue6194TuiExpectScript();
+      const approvalScript = buildIssue6194OpenShellApprovalExpectScript();
+      const assistantTranscript = `The request was ${word} because this model has no network tools.`;
 
-    expect(assistantTranscript).toContain(word);
-    expect(tuiScript).not.toContain("Use an available tool");
-    expect(tuiScript).not.toContain("NEMOCLAW_ISSUE_6194_NETWORK_ENDPOINT");
-    expect(tuiScript).not.toContain("(blocked|denied|rejected)");
-    expect(`${tuiScript}\n${approvalScript}`).not.toMatch(/exit 50\b/u);
-    expect(approvalScript).not.toContain("assistantTranscript");
-  });
+      expect(assistantTranscript).toContain(word);
+      expect(tuiScript).not.toContain("Use an available tool");
+      expect(tuiScript).not.toContain("NEMOCLAW_ISSUE_6194_NETWORK_ENDPOINT");
+      expect(tuiScript).not.toContain("(blocked|denied|rejected)");
+      expect(`${tuiScript}\n${approvalScript}`).not.toMatch(/exit 50\b/u);
+      expect(approvalScript).not.toContain("assistantTranscript");
+    },
+  );
 
   it("redacts secrets from ANSI terminal captures before artifact publication", () => {
     const secret = "nvapi-secret-issue-6194";

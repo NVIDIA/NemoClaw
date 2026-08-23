@@ -37,7 +37,7 @@ _nemoclaw_bootstrap_identity="$6"
 shift 7
 
 case "$_nemoclaw_agent" in
-  openclaw | hermes | langchain-deepagents-code) ;;
+  openclaw | hermes | langchain-deepagents-code | pi) ;;
   *) fail "agent is unsupported" ;;
 esac
 case "$_nemoclaw_fingerprint" in

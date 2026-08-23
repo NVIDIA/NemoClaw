@@ -7,6 +7,54 @@
 // accepted while echoed or embedded tokens are rejected, without gating on
 // NEMOCLAW_RUN_LIVE_E2E=1.
 
+import type { RetryFailureClass } from "../fixtures/retry-policy.ts";
+
+export interface OpenClawPostSwitchInferenceAttempt {
+  exitCode: number | null;
+  httpStatus: string;
+  malformed: boolean;
+  output: string;
+  productMatched: boolean;
+}
+
+export type OpenClawPostSwitchInferenceClassification =
+  | { outcome: "passed" }
+  | { outcome: "failed"; failureClass: RetryFailureClass };
+
+export function classifyOpenClawPostSwitchInferenceAttempt(
+  attempt: OpenClawPostSwitchInferenceAttempt,
+): OpenClawPostSwitchInferenceClassification {
+  if (attempt.productMatched) return { outcome: "passed" };
+  if (attempt.malformed || /malformed|invalid (?:request|json)/iu.test(attempt.output)) {
+    return { outcome: "failed", failureClass: "malformed-input" };
+  }
+  if (
+    /authentication failed|unauthorized|HTTP 401\b|\b401\b|invalid (?:credential|api[_ -]?key)/iu.test(
+      attempt.output,
+    )
+  ) {
+    return { outcome: "failed", failureClass: "authentication" };
+  }
+  if (/authorization failed|forbidden|HTTP 403\b|\b403\b/iu.test(attempt.output)) {
+    return { outcome: "failed", failureClass: "authorization" };
+  }
+  if (
+    /denied by network policy|network policy denied|policy (?:update |validation )?failed/iu.test(
+      attempt.output,
+    )
+  ) {
+    return { outcome: "failed", failureClass: "policy-denial" };
+  }
+  const curlTransportExit =
+    typeof attempt.exitCode === "number" && [6, 7, 28, 35, 52, 56].includes(attempt.exitCode);
+  const transientTransport = curlTransportExit;
+  const transientStatus =
+    attempt.exitCode === 0 && /^(408|429|5[0-9]{2})$/u.test(attempt.httpStatus);
+  return transientTransport || transientStatus
+    ? { outcome: "failed", failureClass: "transient-external" }
+    : { outcome: "failed", failureClass: "deterministic" };
+}
+
 export function agentReplyContainsToken(reply: string, expected: string): boolean {
   const normalizedReply = reply.replace(/\s+/gu, "").toUpperCase();
   const normalizedExpected = expected.replace(/\s+/gu, "").toUpperCase();

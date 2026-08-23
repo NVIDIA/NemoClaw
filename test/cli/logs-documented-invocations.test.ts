@@ -68,13 +68,14 @@ describe("documented sandbox logs invocations", () => {
     expect(invocations.length).toBeGreaterThanOrEqual(5);
   });
 
-  for (const { args, reference } of invocations) {
-    it(`runs the invocation documented at ${reference}`, ({ resources }) => {
+  it.for(invocations.map(({ args, reference }) => [reference, args] as const))(
+    "runs the invocation documented at %s",
+    ([, args], { resources }) => {
       const setup = createLogsTestSetup(resources, "nemoclaw-cli-logs-documented-");
       const result = setup.runLogs(`${args} 2>&1`);
 
       expect(result.out).not.toContain("Nonexistent flag");
       expect(result.code).toBe(0);
-    });
-  }
+    },
+  );
 });

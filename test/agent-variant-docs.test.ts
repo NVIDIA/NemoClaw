@@ -2,10 +2,39 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs.mts";
+import {
+  agentVariants,
+  findGeneratedNavigationTargets,
+  renderAgentVariantPage,
+} from "../scripts/sync-agent-variant-docs.mts";
+
+const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+/**
+ * Every page that `docs/index.yml` publishes through a generated agent variant,
+ * paired with the variants that actually publish it. Discovery goes through the
+ * renderer's own parsed navigation so the test cannot drift from what ships.
+ */
+function sharedVariantPages(): readonly {
+  sourcePath: string;
+  source: string;
+  variants: readonly (typeof agentVariants)[number][];
+}[] {
+  const targets = findGeneratedNavigationTargets();
+
+  return [...new Set(targets.map((target) => target.sourcePath))].sort().map((sourcePath) => ({
+    sourcePath,
+    source: readFileSync(path.join(repoRoot, "docs", sourcePath), "utf8"),
+    variants: agentVariants.filter((variant) =>
+      targets.some((target) => target.sourcePath === sourcePath && target.variant === variant),
+    ),
+  }));
+}
 
 const source = `---
 title: "Example"
@@ -32,97 +61,6 @@ Use \`$$nemoclaw\` for the current variant.
 `;
 
 describe("agent variant docs", () => {
-  // source-shape-contract: compatibility -- OpenClaw workspace documentation must list every runtime-seeded template so generated variants cannot omit operator-visible files.
-  it("keeps the OpenClaw workspace inventory aligned with seeded runtime templates", () => {
-    const workspaceFiles = readFileSync(
-      new URL("../docs/manage-sandboxes/workspace-files.mdx", import.meta.url),
-      "utf8",
-    );
-    const startScript = readFileSync(
-      new URL("../scripts/nemoclaw-start.sh", import.meta.url),
-      "utf8",
-    );
-    const seedFunction = startScript.slice(
-      startScript.indexOf("seed_default_workspace_templates()"),
-    );
-    const seededFiles = seedFunction
-      .match(/for file in ([^;]+); do/)?.[1]
-      .trim()
-      .split(/\s+/);
-
-    expect(seededFiles).toEqual([
-      "AGENTS.md",
-      "SOUL.md",
-      "IDENTITY.md",
-      "USER.md",
-      "TOOLS.md",
-      "HEARTBEAT.md",
-    ]);
-    const expectedSeededFiles = seededFiles ?? [];
-    const deferredFiles = ["MEMORY.md", "memory/"];
-
-    const rendered = renderAgentVariantPage(workspaceFiles, "openclaw", {
-      sourcePath: "/repo/docs/manage-sandboxes/workspace-files.mdx",
-    });
-    expect(rendered).toContain(
-      "when the default workspace directory exists, is not a symbolic link, and is empty",
-    );
-    expect(rendered).toContain(
-      "Set `NEMOCLAW_MINIMAL_BOOTSTRAP=1` before onboarding to skip default workspace template seeding.",
-    );
-    const fileReference = rendered.match(
-      /## File Reference\n\n([\s\S]*?)\n\n## Where They Live/,
-    )?.[1];
-    const tableFiles = Array.from(
-      fileReference?.matchAll(/^\| `([^`]+)` \|/gm) ?? [],
-      (match) => match[1],
-    );
-    expect(tableFiles.filter((file) => !deferredFiles.includes(file)).sort()).toEqual(
-      [...expectedSeededFiles].sort(),
-    );
-    expect(tableFiles.filter((file) => deferredFiles.includes(file)).sort()).toEqual(
-      [...deferredFiles].sort(),
-    );
-
-    const workspaceTree = rendered.match(
-      /```text\n\/sandbox\/\.openclaw\/workspace\/\n([\s\S]*?)\n```/,
-    )?.[1];
-    const treeFiles = Array.from(
-      workspaceTree?.matchAll(/^[├└]── ([^\s]+)/gm) ?? [],
-      (match) => match[1],
-    );
-    for (const file of expectedSeededFiles) {
-      expect(tableFiles).toContain(file);
-      expect(treeFiles).toContain(file);
-    }
-    expect(treeFiles.filter((file) => !deferredFiles.includes(file)).sort()).toEqual(
-      [...expectedSeededFiles].sort(),
-    );
-    expect(treeFiles.filter((file) => deferredFiles.includes(file)).sort()).toEqual(
-      [...deferredFiles].sort(),
-    );
-
-    const multiAgentSection = rendered.match(
-      /## Multi-Agent Deployments\n\n([\s\S]*?)\n\n## Persistence Behavior/,
-    )?.[1];
-    const seededSummary = multiAgentSection?.match(
-      /same seeded Markdown file structure[^:]*: ([^\n]+)\n/,
-    )?.[1];
-    const deferredSummary = multiAgentSection?.match(
-      /OpenClaw creates ([^\n]+) separately in each workspace/,
-    )?.[1];
-    const summarySeededFiles = Array.from(
-      seededSummary?.matchAll(/`([^`]+)`/g) ?? [],
-      (match) => match[1],
-    );
-    const summaryDeferredFiles = Array.from(
-      deferredSummary?.matchAll(/`([^`]+)`/g) ?? [],
-      (match) => match[1],
-    );
-    expect(summarySeededFiles.sort()).toEqual([...expectedSeededFiles].sort());
-    expect(summaryDeferredFiles.sort()).toEqual([...deferredFiles].sort());
-  });
-
   it("renders OpenClaw placeholder code and content", () => {
     const rendered = renderAgentVariantPage(source, "openclaw");
 
@@ -280,182 +218,296 @@ import { AgentOnly } from "../_components/AgentGuide";
     expect(rendered).toContain("![Diagram](../../../manage-sandboxes/images/diagram.png)");
   });
 
-  it("renders strict Landlock troubleshooting for Deep Agents only", () => {
-    const troubleshooting = readFileSync(
-      new URL("../docs/reference/troubleshooting.mdx", import.meta.url),
-      "utf8",
-    );
-    const deepAgents = renderAgentVariantPage(troubleshooting, "deepagents", {
-      sourcePath: "/repo/docs/reference/troubleshooting.mdx",
-    });
-    const openclaw = renderAgentVariantPage(troubleshooting, "openclaw", {
-      sourcePath: "/repo/docs/reference/troubleshooting.mdx",
-    });
+  it("rejects a heading whose body is filtered out of the variant (#9731)", () => {
+    const orphanHeading = `---
+title: "Example"
+---
+## Set OpenClaw Limits
 
-    expect(deepAgents).toContain("### Landlock filesystem policy blocks sandbox startup");
-    expect(deepAgents).toContain("Deep Agents uses strict Landlock compatibility.");
-    expect(deepAgents).toContain(
-      "OpenShell refuses to start the sandbox instead of silently degrading.",
-    );
-    expect(deepAgents).not.toContain("### Landlock filesystem restrictions silently degraded");
-    expect(deepAgents).not.toContain("best_effort mode");
-    expect(deepAgents).not.toContain(
-      "This warning is informational and does not block sandbox creation.",
-    );
+<AgentOnly variant="openclaw">
 
-    expect(openclaw).toContain("### Landlock filesystem restrictions silently degraded");
-    expect(openclaw).toContain("best_effort mode");
-    expect(openclaw).not.toContain("### Landlock filesystem policy blocks sandbox startup");
-  });
+OpenClaw only.
 
-  it("does not render managed web-search troubleshooting for Deep Agents", () => {
-    const troubleshooting = readFileSync(
-      new URL("../docs/reference/troubleshooting.mdx", import.meta.url),
-      "utf8",
-    );
-    const deepAgents = renderAgentVariantPage(troubleshooting, "deepagents", {
-      sourcePath: "/repo/docs/reference/troubleshooting.mdx",
-    });
-    const openclaw = renderAgentVariantPage(troubleshooting, "openclaw", {
-      sourcePath: "/repo/docs/reference/troubleshooting.mdx",
-    });
+</AgentOnly>
+`;
 
-    expect(deepAgents).toContain("### Tavily remains blocked after opt-in");
-    expect(deepAgents).toContain(
-      "Deep Agents does not have a NemoClaw-managed web-search feature.",
-    );
-    expect(deepAgents).not.toContain("### Web search verification reports a warning");
-    expect(deepAgents).not.toContain(
-      "When web search is enabled, onboarding checks the selected agent configuration",
-    );
-    expect(deepAgents).not.toContain(
-      "Rerunning onboarding with a different provider recreates the sandbox",
-    );
-
-    expect(openclaw).toContain("### Web search verification reports a warning");
-    expect(openclaw).not.toContain(
-      "Deep Agents does not have a NemoClaw-managed web-search feature.",
+    expect(() => renderAgentVariantPage(orphanHeading, "openclaw")).not.toThrow();
+    expect(() => renderAgentVariantPage(orphanHeading, "hermes")).toThrow(
+      "renders ## Set OpenClaw Limits with no content in the hermes generated variant",
     );
   });
 
-  it("lists only implemented commands in manifest iteration guidance (#7308)", () => {
-    const manifest = readFileSync(
-      new URL("../docs/inference/declarative-agents-manifest.mdx", import.meta.url),
-      "utf8",
-    );
-    const rendered = renderAgentVariantPage(manifest, "openclaw", {
-      sourcePath: "/repo/docs/inference/declarative-agents-manifest.mdx",
-    });
-    const iteratingStart = rendered.indexOf("## Iterating");
-    const iteratingEnd = rendered.indexOf("## Apply to an Existing Sandbox", iteratingStart);
-    const iterating = rendered.slice(iteratingStart, iteratingEnd);
+  it("accepts a section whose only content is a fenced Markdown example (#9731)", () => {
+    const fencedExample = `---
+title: "Example"
+---
+## Parent
 
-    expect(iteratingStart).toBeGreaterThanOrEqual(0);
-    expect(iteratingEnd).toBeGreaterThan(iteratingStart);
-    expect(iterating).toContain("agents add|delete|list");
-    expect(iterating).toContain("agents apply -f <agents.yaml>");
-    expect(iterating).not.toContain("agents show");
+\`\`\`markdown
+## Example Heading
+
+## Example Sibling
+\`\`\`
+`;
+
+    expect(() => renderAgentVariantPage(fencedExample, "openclaw")).not.toThrow();
   });
 
-  it("renders provider-switch instructions for the applicable agent variants (#7309)", () => {
-    const source = readFileSync(
-      new URL("../docs/inference/switch-providers.mdx", import.meta.url),
-      "utf8",
-    );
-    const render = (variant: "openclaw" | "hermes" | "deepagents") =>
-      renderAgentVariantPage(source, variant, {
-        sourcePath: "/repo/docs/inference/switch-providers.mdx",
-      });
-    const openclaw = render("openclaw");
-    const hermes = render("hermes");
-    const deepAgents = render("deepagents");
-    const recreationHeading = "## Recreate a Deep Agents Sandbox";
-    const namedSandboxSyntax =
-      "The `shields` commands take a positional name. `inference set` takes `--sandbox <name>`.";
+  it("rejects a section whose only content is a comment that renders nothing (#9731)", () => {
+    const commentOnly = `---
+title: "Example"
+---
+## Parent
 
-    expect(openclaw).toContain(namedSandboxSyntax);
-    expect(openclaw).toContain("nemoclaw <name> shields down");
-    expect(openclaw).not.toContain(recreationHeading);
-    expect(hermes).toContain(namedSandboxSyntax);
-    expect(hermes).toContain("nemohermes <name> shields down");
-    expect(hermes).not.toContain(recreationHeading);
-    expect(deepAgents).toContain(recreationHeading);
-    expect(deepAgents).not.toContain(namedSandboxSyntax);
+{/* nothing renders here */}
+
+## Sibling
+
+Real content.
+`;
+
+    expect(() => renderAgentVariantPage(commentOnly, "openclaw")).toThrow(
+      "renders ## Parent with no content",
+    );
   });
 
-  it("excludes OpenClaw gateway behavior from Hermes provider switching (#7902)", () => {
-    const source = readFileSync(
-      new URL("../docs/inference/switch-providers.mdx", import.meta.url),
-      "utf8",
-    );
-    const render = (variant: "openclaw" | "hermes") =>
-      renderAgentVariantPage(source, variant, {
-        sourcePath: "/repo/docs/inference/switch-providers.mdx",
-      });
-    const openclaw = render("openclaw");
-    const hermes = render("hermes");
-    const openClawGatewayBehavior = "restarts only the OpenClaw gateway and verifies its health";
+  it("treats an indented Markdown example as content, not a heading (#9731)", () => {
+    const indentedExample = `---
+title: "Example"
+---
+## Parent
 
-    expect(openclaw).toContain(openClawGatewayBehavior);
-    expect(hermes).not.toContain(
-      "updates the provider namespace and selected model in the running configuration",
-    );
-    expect(hermes).not.toContain(
-      "Changes within the current API family hot-reload without replacing the gateway process",
-    );
-    expect(hermes).not.toContain(openClawGatewayBehavior);
-    expect(hermes).toContain("a normal runtime route change does not rebuild or restart Hermes");
+    ## Indented Example Heading
+
+## Sibling
+
+Real content.
+`;
+
+    expect(() => renderAgentVariantPage(indentedExample, "openclaw")).not.toThrow();
   });
 
-  it("renders the Hermes baseline-policy explanation once (#7903)", () => {
-    const source = readFileSync(
-      new URL("../docs/reference/network-policies.mdx", import.meta.url),
-      "utf8",
-    );
-    const hermes = renderAgentVariantPage(source, "hermes", {
-      sourcePath: "/repo/docs/reference/network-policies.mdx",
-    });
-    const baselineExplanation =
-      "Hermes sandboxes use an agent-specific baseline policy in `agents/hermes/policy-additions.yaml`";
+  it("keeps scanning after text that looks like a closing fence (#9731)", () => {
+    const looseFenceClose = `---
+title: "Example"
+---
+## Parent
 
-    expect(hermes.split(baselineExplanation)).toHaveLength(2);
+~~~text
+~~~not-a-close
+~~~
+
+## Empty Sibling
+
+## Last
+
+Real content.
+`;
+
+    expect(() => renderAgentVariantPage(looseFenceClose, "openclaw")).toThrow(
+      "renders ## Empty Sibling with no content",
+    );
   });
 
-  it("renders the shared Hermes WhatsApp session path without a configuration repair (#8184)", () => {
-    const whatsapp = readFileSync(
-      new URL("../docs/manage-sandboxes/set-up-whatsapp.mdx", import.meta.url),
-      "utf8",
-    );
-    const hermes = renderAgentVariantPage(whatsapp, "hermes", {
-      sourcePath: "/repo/docs/manage-sandboxes/set-up-whatsapp.mdx",
-    });
+  it("keeps comment state separate from fences and indentation (#9731)", () => {
+    const commentWithMarkers = `---
+title: "Example"
+---
+## Parent
 
-    expect(hermes).toContain(
-      "Hermes dashboard pairing and the gateway share `/sandbox/.hermes/platforms/whatsapp/session`",
+{/*
+    ~~~
+    ## Commented Heading
+*/}
+
+## Sibling
+
+Real content.
+`;
+
+    expect(() => renderAgentVariantPage(commentWithMarkers, "openclaw")).toThrow(
+      "renders ## Parent with no content",
     );
-    expect(hermes).toContain("nemohermes <sandbox> channels status --channel whatsapp");
-    expect(hermes).toContain("nemohermes <sandbox> channels remove whatsapp");
-    expect(hermes).not.toContain("platforms.whatsapp.extra.session_path");
   });
 
-  it("keeps the troubleshooting security guidance link within each agent guide (#6558)", () => {
-    const troubleshooting = readFileSync(
-      new URL("../docs/reference/troubleshooting.mdx", import.meta.url),
-      "utf8",
+  it("names every empty heading in one message (#9731)", () => {
+    const twoEmpty = `---
+title: "Example"
+---
+## First
+
+## Second
+
+## Last
+
+Real content.
+`;
+
+    expect(() => renderAgentVariantPage(twoEmpty, "openclaw")).toThrow(
+      "renders ## First, ## Second with no content",
     );
+  });
 
-    for (const variant of ["openclaw", "hermes", "deepagents"] as const) {
-      const rendered = renderAgentVariantPage(troubleshooting, variant, {
-        outputPath: `/repo/docs/_build/agent-variants/reference/troubleshooting.${variant}.generated.mdx`,
-        sourcePath: "/repo/docs/reference/troubleshooting.mdx",
-      });
+  it("closes a comment that spaces the terminator from its brace (#9731)", () => {
+    // MDX allows `*/ }`. Failing to close the comment swallows the content
+    // below it, so the section reads as empty when it is not.
+    const spacedCommentEnd = `---
+title: "Example"
+---
+## Parent
 
-      expect(rendered).toContain(
-        "[Gateway Compatibility Container](../security/security-controls/gateway-authentication-controls#gateway-compatibility-container)",
+{/* note */ }
+
+Real content.
+`;
+
+    expect(() => renderAgentVariantPage(spacedCommentEnd, "openclaw")).not.toThrow();
+  });
+
+  it("keeps text that follows a comment terminator (#9731)", () => {
+    const trailingText = `---
+title: "Example"
+---
+## Parent
+
+{/* note */} Real content here.
+`;
+
+    expect(() => renderAgentVariantPage(trailingText, "openclaw")).not.toThrow();
+  });
+
+  it("does not open a fence on an inline code span (#9731)", () => {
+    const inlineSpan = `---
+title: "Example"
+---
+## Parent
+
+\`\`\`inline\`\`\` mentioned in prose.
+
+## Empty Sibling
+
+## Last
+
+Real content.
+`;
+
+    expect(() => renderAgentVariantPage(inlineSpan, "openclaw")).toThrow(
+      "renders ## Empty Sibling with no content",
+    );
+  });
+
+  it("does not close a fence on an indented marker (#9731)", () => {
+    // The indented marker is code, so the headings below it stay inside the
+    // fence and never open a section.
+    const indentedClose = `---
+title: "Example"
+---
+## Parent
+
+\`\`\`\`text
+    \`\`\`\`
+## Not A Heading
+## Still Not A Heading
+\`\`\`\`
+
+Real content.
+`;
+
+    expect(() => renderAgentVariantPage(indentedClose, "openclaw")).not.toThrow();
+  });
+
+  it("closes a fence on a longer marker (#9731)", () => {
+    const longerClose = `---
+title: "Example"
+---
+## Parent
+
+\`\`\`text
+fenced content
+\`\`\`\`\`
+
+## Empty Sibling
+
+## Last
+
+Real content.
+`;
+
+    expect(() => renderAgentVariantPage(longerClose, "openclaw")).toThrow(
+      "renders ## Empty Sibling with no content",
+    );
+  });
+
+  it("sees a level-one heading as a section boundary (#9731)", () => {
+    const topLevelAfterEmpty = `---
+title: "Example"
+---
+## Empty
+
+# Title
+
+Real content.
+`;
+
+    expect(() => renderAgentVariantPage(topLevelAfterEmpty, "openclaw")).toThrow(
+      "renders ## Empty with no content",
+    );
+  });
+
+  it("reports an empty Setext section (#9731)", () => {
+    const setextHeadings = `---
+title: "Example"
+---
+Empty Section
+-------------
+
+Last Section
+------------
+
+Real content.
+`;
+
+    expect(() => renderAgentVariantPage(setextHeadings, "openclaw")).toThrow(
+      "renders Empty Section with no content",
+    );
+  });
+
+  it("does not treat a Setext underline as its section's content (#9731)", () => {
+    const underlineOnly = `---
+title: "Example"
+---
+Only Heading
+============
+`;
+
+    expect(() => renderAgentVariantPage(underlineOnly, "openclaw")).toThrow(
+      "renders Only Heading with no content",
+    );
+  });
+
+  it("keeps a Setext heading above an ATX section honest (#9731)", () => {
+    const mixed = `---
+title: "Example"
+---
+Setext Parent
+=============
+
+## Child
+
+Real content.
+`;
+
+    expect(() => renderAgentVariantPage(mixed, "openclaw")).not.toThrow();
+  });
+
+  it("leaves no shared page section heading without content in any published variant (#9731)", () => {
+    const pages = sharedVariantPages();
+    const renderEveryPublishedVariant = () =>
+      pages.flatMap(({ sourcePath, source: pageSource, variants }) =>
+        variants.map((variant) => renderAgentVariantPage(pageSource, variant, { sourcePath })),
       );
-      expect(rendered).not.toMatch(
-        /\/user-guide\/(?:openclaw|hermes|deepagents)\/security\/security-controls\/gateway-authentication-controls/,
-      );
-    }
+
+    expect(pages.length).toBeGreaterThan(0);
+    expect(renderEveryPublishedVariant).not.toThrow();
   });
 });

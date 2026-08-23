@@ -117,6 +117,7 @@ export function parseSandboxMessagingPlan(
   }
   if (
     !hasCanonicalChannelReferences(value.credentialBindings) ||
+    !hasMatchingAgentRenderEntries(value.agentRender, value.agent) ||
     !hasCanonicalChannelReferences(value.agentRender) ||
     !hasCanonicalChannelReferences(value.buildSteps) ||
     !hasCanonicalChannelReferences(value.stateUpdates) ||
@@ -132,6 +133,13 @@ export function parseSandboxMessagingPlan(
       value as MaybeCompactMessagingPlan,
       options.environment,
     ),
+  );
+}
+
+function hasMatchingAgentRenderEntries(value: unknown, agent: string): boolean {
+  return (
+    !Array.isArray(value) ||
+    value.every((render) => isObjectRecord(render) && render.agent === agent)
   );
 }
 

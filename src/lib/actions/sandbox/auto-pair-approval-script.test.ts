@@ -23,7 +23,9 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(script).toContain("'devices', 'approve'");
     expect(script).toContain("approval_request_decision(device)");
     expect(script).toContain("if not decision['allowed']:");
+    expect(script).toContain("list_env['NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT'] = '1'");
     expect(script).toContain("approve_env = gateway_approval_env(os.environ)");
+    expect(script).toContain("approve_env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)");
     expect(script).toContain(`MAX_APPROVALS = ${AUTO_PAIR_MAX_APPROVALS}`);
     expect(script).toContain("'UE9MSUNZ'");
   });
@@ -38,6 +40,7 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
 
     expect(ordinary).not.toContain("local_identity_public_key");
     expect(ordinary).toContain("approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)");
+    expect(ordinary).toContain("approve_env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)");
     expect(ordinary).toContain("approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)");
     expect(ordinary).not.toContain("approve_env['NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING'] = '1'");
     expect(ordinary).not.toContain("approve_env['NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING'] = '1'");
@@ -109,39 +112,38 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(module).not.toContain("recover_failed_scope_approval");
   });
 
-  it("accepts exactly one terminal fixed receipt", () => {
-    for (const receipt of [
-      "approved-one",
-      "list-failed",
-      "list-state-path-invalid",
-      "list-platform-unsupported",
-      "list-state-root-failed",
-      "list-devices-directory-failed",
-      "list-pending-unsafe",
-      "list-pending-unstable",
-      "list-pending-invalid-shape",
-      "list-pending-unavailable",
-      "list-timeout",
-      "list-exec-failed",
-      "list-scope-upgrade-pending",
-      "list-device-pairing-required",
-      "list-gateway-connect-failed",
-      "list-command-failed",
-      "list-empty-output",
-      "list-invalid-json",
-      "list-invalid-output",
-      "list-missing-pending",
-    ] as const) {
-      expect(
-        parseAutoPairApprovalReceipt(`ignored setup output\n${RECEIPT_MARKER}=${receipt}\n`),
-      ).toBe(receipt);
-    }
-    for (const output of [
-      `${RECEIPT_MARKER}=approved-one\nlater output\n`,
-      `${RECEIPT_MARKER}=approve-failed\n${RECEIPT_MARKER}=approved-one\n`,
-      `${RECEIPT_MARKER}=raw-request-id\n`,
-    ]) {
-      expect(parseAutoPairApprovalReceipt(output)).toBeNull();
-    }
+  it.each([
+    "approved-one",
+    "list-failed",
+    "list-state-path-invalid",
+    "list-platform-unsupported",
+    "list-state-root-failed",
+    "list-devices-directory-failed",
+    "list-pending-unsafe",
+    "list-pending-unstable",
+    "list-pending-invalid-shape",
+    "list-pending-unavailable",
+    "list-timeout",
+    "list-exec-failed",
+    "list-scope-upgrade-pending",
+    "list-device-pairing-required",
+    "list-gateway-connect-failed",
+    "list-command-failed",
+    "list-empty-output",
+    "list-invalid-json",
+    "list-invalid-output",
+    "list-missing-pending",
+  ] as const)("accepts the terminal fixed receipt %s", (receipt) => {
+    expect(
+      parseAutoPairApprovalReceipt(`ignored setup output\n${RECEIPT_MARKER}=${receipt}\n`),
+    ).toBe(receipt);
+  });
+
+  it.each([
+    `${RECEIPT_MARKER}=approved-one\nlater output\n`,
+    `${RECEIPT_MARKER}=approve-failed\n${RECEIPT_MARKER}=approved-one\n`,
+    `${RECEIPT_MARKER}=raw-request-id\n`,
+  ])("rejects a non-terminal, duplicate, or unknown receipt [case %#]", (output) => {
+    expect(parseAutoPairApprovalReceipt(output)).toBeNull();
   });
 });

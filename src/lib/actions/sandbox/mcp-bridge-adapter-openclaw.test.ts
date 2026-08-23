@@ -18,6 +18,7 @@ import {
   OPENCLAW_MCPORTER_ROOT,
 } from "./mcp-bridge-adapter-openclaw";
 import {
+  entryHeaders,
   buildOpenClawMcporterInspectCommand,
   mcporterHeadersMatchExpected,
   openClawMcporterRoot,
@@ -58,8 +59,35 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
     expect(
       mcporterHeadersMatchExpected(
         {
+          Authorization: "Bearer openshell:resolve:env:v1442987827285932589_GITHUB_TOKEN",
+          accept: "application/json, text/event-stream",
+        },
+        expected,
+      ),
+    ).toBe(true);
+    expect(
+      mcporterHeadersMatchExpected(
+        {
           ...expected,
           accept: "application/json",
+        },
+        expected,
+      ),
+    ).toBe(false);
+    expect(
+      mcporterHeadersMatchExpected(
+        {
+          Authorization: "Bearer openshell:resolve:env:v42_OTHER_TOKEN",
+          accept: "application/json, text/event-stream",
+        },
+        expected,
+      ),
+    ).toBe(false);
+    expect(
+      mcporterHeadersMatchExpected(
+        {
+          Authorization: `Bearer openshell:resolve:env:v${"1".repeat(21)}_GITHUB_TOKEN`,
+          accept: "application/json, text/event-stream",
         },
         expected,
       ),
@@ -81,6 +109,51 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
           accept: "application/json, text/event-stream",
         },
         expected,
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    "Bearer openshell:resolve:env:v_GITHUB_TOKEN",
+    "Bearer openshell:resolve:env:v42_OTHER_TOKEN",
+    "Bearer openshell:resolve:env:v42x_GITHUB_TOKEN",
+    `Bearer openshell:resolve:env:v${"1".repeat(21)}_GITHUB_TOKEN`,
+  ])("rejects an unsafe revisioned mcporter Authorization header: %s", (authorization) => {
+    expect(
+      mcporterHeadersMatchExpected(
+        { Authorization: authorization },
+        { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
+      ),
+    ).toBe(false);
+  });
+
+  it("projects the live OpenShell credential revision into mcporter config", () => {
+    const command = buildOpenClawMcporterRegisterCommand(
+      baseEntry,
+      false,
+      OPENCLAW_MCPORTER_ROOT,
+      "v1442987827285932589",
+    );
+
+    expect(command).toContain(
+      "Authorization=Bearer openshell:resolve:env:v1442987827285932589_GITHUB_TOKEN",
+    );
+    expect(command).not.toContain("Authorization=Bearer openshell:resolve:env:GITHUB_TOKEN'");
+  });
+
+  it("matches the exact readiness-proven revision during post-write inspection", () => {
+    const expectedV12 = entryHeaders(baseEntry, "v12");
+
+    expect(
+      mcporterHeadersMatchExpected(
+        { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
+        expectedV12,
+      ),
+    ).toBe(true);
+    expect(
+      mcporterHeadersMatchExpected(
+        { Authorization: "Bearer openshell:resolve:env:v11_GITHUB_TOKEN" },
+        expectedV12,
       ),
     ).toBe(false);
   });
@@ -268,7 +341,7 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
         "absent",
       );
 
-      for (const jsoncState of [configJsoncState, homeConfigJsoncState, legacyConfigJsoncState]) {
+      [configJsoncState, homeConfigJsoncState, legacyConfigJsoncState].forEach((jsoncState) => {
         fs.mkdirSync(path.dirname(jsoncState), { recursive: true });
         fs.writeFileSync(
           jsoncState,
@@ -279,7 +352,7 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
             headers: normalizedHeaders,
           }),
         );
-      }
+      });
       const layeredJsoncRemove = run(buildOpenClawMcporterRemoveCommand(baseEntry));
       expect(layeredJsoncRemove.status).toBe(0);
       expectFileAbsent(configJsoncState);
@@ -377,10 +450,10 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
         (args) => args.includes("config") && args.includes("get"),
       );
       expect(configGets).not.toHaveLength(0);
-      for (const args of configGets) {
+      configGets.forEach((args) => {
         expect(args.slice(0, 3)).toEqual(["--root", OPENCLAW_MCPORTER_ROOT, "config"]);
         expect(args.at(-1)).toBe("--json");
-      }
+      });
       expect(configGets).toContainEqual([
         "--root",
         OPENCLAW_MCPORTER_ROOT,
@@ -449,10 +522,10 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
     ];
 
     expect(root).toBe("/sandbox/.custom-openclaw/workspace");
-    for (const command of commands) {
+    commands.forEach((command) => {
       expect(command).toContain(root);
       expect(command).not.toContain(OPENCLAW_MCPORTER_ROOT);
-    }
+    });
   });
 
   it("uses the loaded OpenClaw workspace throughout adapter lifecycle calls", () => {
@@ -487,10 +560,10 @@ process.stdout.write(JSON.stringify(commands));
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const commands = JSON.parse(result.stdout) as string[];
     expect(commands).toHaveLength(4);
-    for (const command of commands.slice(1)) {
+    commands.slice(1).forEach((command) => {
       expect(command).toContain("/sandbox/.custom-openclaw/workspace");
       expect(command).not.toContain(OPENCLAW_MCPORTER_ROOT);
-    }
+    });
   });
 
   it("keeps the mcporter runtime pin visible for image tests", () => {

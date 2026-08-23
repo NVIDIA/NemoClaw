@@ -206,29 +206,39 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(output).toMatch(
       /Express install will configure Qwen3\.6 35B-A3B NVFP4 with the fixed catalog-backed vLLM profile/,
     );
-    expect(output).toMatch(/The serving catalog owns the model, image, port, and vLLM arguments/);
+    expect(output).toMatch(/The serving catalog owns the model, image, and vLLM arguments/);
     expect(output).toMatch(/installer rejects provider and model overrides/);
     expect(output).toMatch(
-      /dedicated local-model onboarder rejects vLLM model, port, and serve-argument overrides/,
+      /dedicated local-model onboarder rejects vLLM model and serve-argument overrides/,
     );
+    expect(output).toMatch(/NEMOCLAW_VLLM_PORT may override the host listener/);
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER= MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=my-assistant STATION_EXPRESS= PROFILE_GATE=1 PROFILE_RUNTIME=vllm SPARK_SELECTION=fixed-vllm/,
     );
   });
 
-  it.each([
-    ["port", { NEMOCLAW_VLLM_PORT: "18000" }],
-    ["serve arguments", { NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '["--max-model-len","4096"]' }],
-  ])("rejects a preset %s before activating the fixed Spark Express profile", (_, extraEnv) => {
-    const result = runExpressPromptWithTty("2\ny\n", "pipe", "DGX Spark", extraEnv);
+  it("rejects preset serve arguments before activating the fixed Spark Express profile", () => {
+    const result = runExpressPromptWithTty("2\ny\n", "pipe", "DGX Spark", {
+      NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '["--max-model-len","4096"]',
+    });
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.status, output).not.toBe(0);
     expect(output).toContain(
-      "The fixed DGX Spark vLLM profile does not accept provider, model, port, or serve-argument overrides.",
+      "The fixed DGX Spark vLLM profile does not accept provider, model, or serve-argument overrides.",
     );
     expect(output).not.toContain("RESULT NON_INTERACTIVE=");
     expect(output).not.toContain("PROFILE_GATE=1");
+  });
+
+  it("accepts a preset host port for the fixed Spark Express profile", () => {
+    const result = runExpressPromptWithTty("2\ny\n", "pipe", "DGX Spark", {
+      NEMOCLAW_VLLM_PORT: "18000",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROFILE_GATE=1 PROFILE_RUNTIME=vllm SPARK_SELECTION=fixed-vllm");
   });
 
   it("preserves a preset Spark vLLM model in the prompt and exported env", () => {
@@ -848,21 +858,18 @@ maybe_offer_express_install`,
       env: { NEMOCLAW_VLLM_MODEL: "nemotron-3-ultra-550b-a55b" },
       message: /--station-deepseek conflicts with NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'/,
     },
-  ])("rejects $name before Docker or build-dependency mutation", ({
-    args,
-    platform,
-    env,
-    message,
-  }) => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-flag-preflight-"));
-    const mutationLog = path.join(tmp, "host-mutations.log");
-    const result = spawnSync(
-      "bash",
-      [
-        "--noprofile",
-        "--norc",
-        "-c",
-        `
+  ])(
+    "rejects $name before Docker or build-dependency mutation",
+    ({ args, platform, env, message }) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-flag-preflight-"));
+      const mutationLog = path.join(tmp, "host-mutations.log");
+      const result = spawnSync(
+        "bash",
+        [
+          "--noprofile",
+          "--norc",
+          "-c",
+          `
 source "$INSTALLER_UNDER_TEST" >/dev/null
 detect_express_platform() { printf "%s" "$EXPRESS_PLATFORM"; }
 classify_dgx_station_release() { printf "%s" "\${EXPRESS_RELEASE_STATE:-generic-ubuntu}"; }
@@ -870,30 +877,31 @@ ensure_docker() { printf "ensure_docker\\n" >>"$MUTATION_LOG"; }
 ensure_openshell_build_deps() { printf "ensure_openshell_build_deps\\n" >>"$MUTATION_LOG"; }
 main "$@"
 `,
-        "_",
-        ...args,
-      ],
-      {
-        cwd: tmp,
-        encoding: "utf-8",
-        env: {
-          HOME: tmp,
-          PATH: TEST_SYSTEM_PATH,
-          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-          MUTATION_LOG: mutationLog,
-          EXPRESS_PLATFORM: platform,
-          ...env,
+          "_",
+          ...args,
+        ],
+        {
+          cwd: tmp,
+          encoding: "utf-8",
+          env: {
+            HOME: tmp,
+            PATH: TEST_SYSTEM_PATH,
+            INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+            MUTATION_LOG: mutationLog,
+            EXPRESS_PLATFORM: platform,
+            ...env,
+          },
         },
-      },
-    );
-    const output = `${result.stdout}${result.stderr}`;
-    const mutations = fs.existsSync(mutationLog) ? fs.readFileSync(mutationLog, "utf-8") : "";
+      );
+      const output = `${result.stdout}${result.stderr}`;
+      const mutations = fs.existsSync(mutationLog) ? fs.readFileSync(mutationLog, "utf-8") : "";
 
-    expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(message);
-    expect(mutations).toBe("");
-    fs.rmSync(tmp, { recursive: true, force: true });
-  });
+      expect(result.status, output).not.toBe(0);
+      expect(output).toMatch(message);
+      expect(mutations).toBe("");
+      fs.rmSync(tmp, { recursive: true, force: true });
+    },
+  );
 
   it.each<{
     name: string;
@@ -910,30 +918,30 @@ main "$@"
       extraEnv: {},
       entrypointArgs: ["--station-deepseek", "--yes-i-accept-third-party-software"],
     },
-  ])("reaches and accepts the DeepSeek express prompt through main with $name (#7008)", ({
-    extraEnv,
-    entrypointArgs,
-  }) => {
-    const result = runExpressPromptWithTty(
-      "\n",
-      "pipe",
-      "DGX Station",
-      extraEnv,
-      "accepted-station-main",
-      entrypointArgs,
-    );
-    const output = `${result.stdout}${result.stderr}`;
-    expect(result.status, output).toBe(0);
-    expect(output).toMatch(
-      /Express install will configure managed local vLLM with DeepSeek V4 Flash/,
-    );
-    expect(output.match(/Run express install with these settings\?/g)).toHaveLength(1);
-    expect(output).toMatch(/Using express install for DGX Station/);
-    expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=deepseek-ai\/DeepSeek-V4-Flash VLLM_MODEL=deepseek-v4-flash POLICY=suggested YES=1 SANDBOX=my-assistant/,
-    );
-    expect(output).not.toMatch(/cannot be combined with non-interactive mode/);
-  });
+  ])(
+    "reaches and accepts the DeepSeek express prompt through main with $name (#7008)",
+    ({ extraEnv, entrypointArgs }) => {
+      const result = runExpressPromptWithTty(
+        "\n",
+        "pipe",
+        "DGX Station",
+        extraEnv,
+        "accepted-station-main",
+        entrypointArgs,
+      );
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.status, output).toBe(0);
+      expect(output).toMatch(
+        /Express install will configure managed local vLLM with DeepSeek V4 Flash/,
+      );
+      expect(output.match(/Run express install with these settings\?/g)).toHaveLength(1);
+      expect(output).toMatch(/Using express install for DGX Station/);
+      expect(output).toMatch(
+        /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=deepseek-ai\/DeepSeek-V4-Flash VLLM_MODEL=deepseek-v4-flash POLICY=suggested YES=1 SANDBOX=my-assistant/,
+      );
+      expect(output).not.toMatch(/cannot be combined with non-interactive mode/);
+    },
+  );
 
   it.each<{
     name: string;
@@ -953,32 +961,32 @@ main "$@"
       extraEnv: { EXPRESS_RELEASE_STATE: "unsupported-dgx-os" },
       entrypointArgs: ["--force-station-install", "--yes-i-accept-third-party-software"],
     },
-  ])("reaches and accepts the forced Station express prompt through main with $name", ({
-    extraEnv,
-    entrypointArgs,
-  }) => {
-    const result = runExpressPromptWithTty(
-      "\n",
-      "pipe",
-      "DGX Station",
-      extraEnv,
-      "accepted-station-main",
-      entrypointArgs,
-    );
-    const output = `${result.stdout}${result.stderr}`;
+  ])(
+    "reaches and accepts the forced Station express prompt through main with $name",
+    ({ extraEnv, entrypointArgs }) => {
+      const result = runExpressPromptWithTty(
+        "\n",
+        "pipe",
+        "DGX Station",
+        extraEnv,
+        "accepted-station-main",
+        entrypointArgs,
+      );
+      const output = `${result.stdout}${result.stderr}`;
 
-    expect(result.status, output).toBe(0);
-    expect(output).toMatch(
-      /Explicit --force-station-install intent bypasses only DGX release-metadata qualification/,
-    );
-    expect(output).toMatch(
-      /Active agent and unrelated Docker workloads still block Station preparation; an existing vLLM workload receives explicit handling choices/,
-    );
-    expect(output.match(/Run express install with these settings\?/g)).toHaveLength(1);
-    expect(output).toMatch(/Using express install for DGX Station/);
-    expect(output).toMatch(/PROVIDER=install-vllm/);
-    expect(output).not.toMatch(/cannot be combined with non-interactive mode/);
-  });
+      expect(result.status, output).toBe(0);
+      expect(output).toMatch(
+        /Explicit --force-station-install intent bypasses only DGX release-metadata qualification/,
+      );
+      expect(output).toMatch(
+        /Active agent and unrelated Docker workloads still block Station preparation; an existing vLLM workload receives explicit handling choices/,
+      );
+      expect(output.match(/Run express install with these settings\?/g)).toHaveLength(1);
+      expect(output).toMatch(/Using express install for DGX Station/);
+      expect(output).toMatch(/PROVIDER=install-vllm/);
+      expect(output).not.toMatch(/cannot be combined with non-interactive mode/);
+    },
+  );
 
   it("errors instead of silently skipping --station-deepseek when no interactive terminal is available (#7014)", () => {
     // Python's start_new_session runs main without a controlling terminal, and
@@ -1117,16 +1125,19 @@ printf 'NON_EXPRESS_ALLOWED\n'
     // the "(triggered by: …)" clause is omitted.
     ["NON_INTERACTIVE", "1", /cannot be combined with non-interactive mode\./],
     ["NEMOCLAW_PROVIDER", "install-vllm", /conflicts with NEMOCLAW_PROVIDER=install-vllm/],
-  ])("rejects %s when the Station demo override would otherwise be ignored", (name, value, message) => {
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
-      STATION_DEEPSEEK: "1",
-      [name]: value,
-    });
-    const output = `${result.stdout}${result.stderr}`;
-    expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(message);
-    expect(output).not.toMatch(/Run express install/);
-  });
+  ])(
+    "rejects %s when the Station demo override would otherwise be ignored",
+    (name, value, message) => {
+      const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
+        STATION_DEEPSEEK: "1",
+        [name]: value,
+      });
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.status, output).not.toBe(0);
+      expect(output).toMatch(message);
+      expect(output).not.toMatch(/Run express install/);
+    },
+  );
 
   it("describes and preserves an explicit DGX Station model override", () => {
     const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
@@ -1181,28 +1192,25 @@ detect_express_platform
     expect(result.stdout).toBe("Windows WSL");
   });
 
-  it.each([
-    "Dell Pro Max with Station GB300",
-    "NVIDIA DGX Station GB300",
-    "DGX_Station_GB300",
-  ])("recognizes supported Station GB300 firmware as DGX Station: %s", (productName) => {
-    const result = detectExpressPlatformForProductName(productName);
-
-    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-    expect(result.stdout).toBe("DGX Station");
-  });
-
-  it("rejects partial and unsupported Station product identifiers", () => {
-    for (const productName of [
-      "Acme XP3830 Workstation",
-      "Dell Pro Max with Station GB200",
-      "Dell Pro Max with GB300",
-    ]) {
+  it.each(["Dell Pro Max with Station GB300", "NVIDIA DGX Station GB300", "DGX_Station_GB300"])(
+    "recognizes supported Station GB300 firmware as DGX Station: %s",
+    (productName) => {
       const result = detectExpressPlatformForProductName(productName);
 
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(result.stdout).not.toBe("DGX Station");
-    }
+      expect(result.stdout).toBe("DGX Station");
+    },
+  );
+
+  it.each([
+    "Acme XP3830 Workstation",
+    "Dell Pro Max with Station GB200",
+    "Dell Pro Max with GB300",
+  ])("rejects partial and unsupported Station product identifiers [case %#]", (productName) => {
+    const result = detectExpressPlatformForProductName(productName);
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).not.toBe("DGX Station");
   });
 
   it.each(["7.2.0", "7.4.0", "7.5.0"])("recognizes stock DGX OS %s on Station GB300", (version) => {
@@ -1225,18 +1233,18 @@ detect_express_platform
     expect(result.stdout).toBe("DGX Station");
   });
 
-  it.each([
-    "colossus-baseos",
-    "ai-developer-tools",
-  ] as const)("recognizes the exact no-OTA %s Station profile", (profile) => {
-    const result = detectExpressPlatformForStockDgxRelease(
-      "DGX Station GB300",
-      noOtaFactoryRelease(profile),
-    );
+  it.each(["colossus-baseos", "ai-developer-tools"] as const)(
+    "recognizes the exact no-OTA %s Station profile",
+    (profile) => {
+      const result = detectExpressPlatformForStockDgxRelease(
+        "DGX Station GB300",
+        noOtaFactoryRelease(profile),
+      );
 
-    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-    expect(result.stdout).toBe("DGX Station");
-  });
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(result.stdout).toBe("DGX Station");
+    },
+  );
 
   it("classifies the exact GB300WS 7.5.0 build 2026-05-13-18-42-38 as Station Express (#7979)", () => {
     const release = noOtaFactoryRelease("ai-developer-tools").replace(
@@ -1311,12 +1319,15 @@ detect_express_platform
     ["NVIDIA DGX Station GB300X", "Unsupported DGX Station generation"],
     ["Dell Pro Max with Station GB200", ""],
     ["Dell Pro Max with GB300", ""],
-  ])("rejects partial or unsupported Station product identifier: %s (#7103)", (productName, expected) => {
-    const result = detectExpressPlatformForProductName(productName);
+  ])(
+    "rejects partial or unsupported Station product identifier: %s (#7103)",
+    (productName, expected) => {
+      const result = detectExpressPlatformForProductName(productName);
 
-    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-    expect(result.stdout).toBe(expected);
-  });
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(result.stdout).toBe(expected);
+    },
+  );
 
   it("classifies older DGX Station generations as unsupported", () => {
     const result = detectExpressPlatformForProductName("NVIDIA DGX Station A100");
@@ -1325,40 +1336,40 @@ detect_express_platform
     expect(result.stdout).toBe("Unsupported DGX Station generation");
   });
 
-  it.each([
-    "Unsupported DGX Station OS",
-    "Unsupported DGX Station generation",
-  ])("rejects %s before the express prompt", (platform) => {
-    const result = spawnSync(
-      "bash",
-      [
-        "--noprofile",
-        "--norc",
-        "-c",
-        `
+  it.each(["Unsupported DGX Station OS", "Unsupported DGX Station generation"])(
+    "rejects %s before the express prompt",
+    (platform) => {
+      const result = spawnSync(
+        "bash",
+        [
+          "--noprofile",
+          "--norc",
+          "-c",
+          `
 source "$INSTALLER_UNDER_TEST" >/dev/null
 validate_express_platform_boundary "$EXPRESS_PLATFORM"
 printf 'PROMPT_REACHED\n'
 `,
-      ],
-      {
-        cwd: path.join(import.meta.dirname, ".."),
-        encoding: "utf-8",
-        env: {
-          HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-platform-reject-")),
-          PATH: TEST_SYSTEM_PATH,
-          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-          EXPRESS_PLATFORM: platform,
+        ],
+        {
+          cwd: path.join(import.meta.dirname, ".."),
+          encoding: "utf-8",
+          env: {
+            HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-platform-reject-")),
+            PATH: TEST_SYSTEM_PATH,
+            INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+            EXPRESS_PLATFORM: platform,
+          },
         },
-      },
-    );
-    const output = `${result.stdout}${result.stderr}`;
-    expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(
-      /outside the (recognized Station Express release-metadata|validated Station GB300 express) boundary/,
-    );
-    expect(output).not.toContain("PROMPT_REACHED");
-  });
+      );
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.status, output).not.toBe(0);
+      expect(output).toMatch(
+        /outside the (recognized Station Express release-metadata|validated Station GB300 express) boundary/,
+      );
+      expect(output).not.toContain("PROMPT_REACHED");
+    },
+  );
 
   it("explains the supported boundary for an unrecognized DGX OS before Station preparation", () => {
     const result = spawnSync(

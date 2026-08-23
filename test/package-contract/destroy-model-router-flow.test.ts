@@ -90,10 +90,13 @@ describe("destroySandbox model-router teardown (#9098)", () => {
         routerPid: stub.pid,
         routerCredentialHash: "router-credential-hash",
       } as Session;
-      const updateSession = vi.fn((mutator: (current: Session) => Session | void) => {
-        mutator(session);
-        return session;
-      });
+      const compareAndSwapSession = vi.fn(
+        (matches: (current: Session) => boolean, mutator: (current: Session) => Session | void) => {
+          return matches(session)
+            ? (mutator(session), "updated" as const)
+            : ("mismatch" as const);
+        },
+      );
 
       await expect(
         stopModelRouterForDestroyedSandbox(
@@ -103,18 +106,30 @@ describe("destroySandbox model-router teardown (#9098)", () => {
             endpointUrl: session.endpointUrl,
           },
           {
-            listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
+            acquireOnboardLock: () => ({
+              acquired: true,
+              lockFile: "/tmp/onboard.lock",
+              stale: false,
+            }),
+            listHostRegistryEntries: () => [],
+            compareAndSwapSession,
+            expectedSession: session,
             loadSession: () => session,
-            updateSession,
+            releaseOnboardLock: () => undefined,
+            withModelRouterPortLifecycleLock: async (_port, operation) => await operation(),
           },
         ),
-      ).resolves.toBeUndefined();
+      ).resolves.toBe(true);
 
       await vi.waitFor(() => expect(stubExited).toBe(true), { timeout: 8_000, interval: 100 });
       expect(await probeHealthy(port)).toBe(false);
-      expect(updateSession).toHaveBeenCalledOnce();
+      expect(compareAndSwapSession).toHaveBeenCalledTimes(2);
       expect(session).toEqual(
-        expect.objectContaining({ routerPid: null, routerCredentialHash: null }),
+        expect.objectContaining({
+          sandboxName: null,
+          routerPid: null,
+          routerCredentialHash: null,
+        }),
       );
     },
   );

@@ -11,19 +11,15 @@ import {
 } from "./timeouts";
 
 describe("openshell-timeouts", () => {
-  it("exports positive integer constants", () => {
-    const constants = [
-      OPENSHELL_PROBE_TIMEOUT_MS,
-      OPENSHELL_OPERATION_TIMEOUT_MS,
-      OPENSHELL_HEAVY_TIMEOUT_MS,
-      OPENSHELL_DOWNLOAD_TIMEOUT_MS,
-    ];
-
-    for (const value of constants) {
-      expect(value).toBeTypeOf("number");
-      expect(value).toBeGreaterThan(0);
-      expect(Number.isInteger(value)).toBe(true);
-    }
+  it.each([
+    { name: "probe timeout", value: OPENSHELL_PROBE_TIMEOUT_MS },
+    { name: "operation timeout", value: OPENSHELL_OPERATION_TIMEOUT_MS },
+    { name: "heavy timeout", value: OPENSHELL_HEAVY_TIMEOUT_MS },
+    { name: "download timeout", value: OPENSHELL_DOWNLOAD_TIMEOUT_MS },
+  ])("exports a positive integer $name", ({ value }) => {
+    expect(value).toBeTypeOf("number");
+    expect(value).toBeGreaterThan(0);
+    expect(Number.isInteger(value)).toBe(true);
   });
 
   it("maintains expected ordering: PROBE < OPERATION <= DOWNLOAD < HEAVY", () => {

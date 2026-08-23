@@ -9,7 +9,10 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash-command";
+import {
+  buildRefreshMutableOpenClawConfigHashCommand,
+  buildVerifyMutableOpenClawConfigHashCommand,
+} from "./rebuild-config-hash-command";
 
 function sha256Hex(filePath: string): string {
   return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
@@ -24,6 +27,20 @@ function runRefresh(
     env,
     timeout: 5000,
   });
+}
+
+function runVerify(configDir: string): ReturnType<typeof spawnSync> {
+  return spawnSync("bash", ["-c", buildVerifyMutableOpenClawConfigHashCommand(configDir)], {
+    encoding: "utf-8",
+    timeout: 5000,
+  });
+}
+
+function installRootOwnerStat(binDir: string): void {
+  const statCommand = path.join(binDir, "stat");
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(statCommand, "#!/bin/sh\nprintf '%s\\n' root\n");
+  fs.chmodSync(statCommand, 0o755);
 }
 
 describe.skipIf(process.platform !== "linux")("OpenClaw rebuild config hash refresh", () => {
@@ -47,6 +64,179 @@ describe.skipIf(process.platform !== "linux")("OpenClaw rebuild config hash refr
     }
   });
 
+  it("verifies the final pair without changing a stale config hash (#9530)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-final-hash-"));
+    const configDir = path.join(tmpDir, ".openclaw");
+    const configPath = path.join(configDir, "openclaw.json");
+    const hashPath = path.join(configDir, ".config-hash");
+    try {
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(configPath, '{"gateway":{"auth":{"token":"fresh"}}}\n');
+      fs.writeFileSync(hashPath, "stale  openclaw.json\n");
+
+      const result = runVerify(configDir);
+
+      expect(result.status).toBe(15);
+      expect(result.stderr).toBe("OpenClaw config hash does not match openclaw.json\n");
+      expect(fs.readFileSync(hashPath, "utf-8")).toBe("stale  openclaw.json\n");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a matching final pair without changing the config hash (#9530)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-final-hash-"));
+    const configDir = path.join(tmpDir, ".openclaw");
+    const configPath = path.join(configDir, "openclaw.json");
+    const hashPath = path.join(configDir, ".config-hash");
+    try {
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(configPath, '{"gateway":{"auth":{"token":"fresh"}}}\n');
+      const expectedHash = `${sha256Hex(configPath)}  openclaw.json\n`;
+      fs.writeFileSync(hashPath, expectedHash);
+
+      const result = runVerify(configDir);
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(fs.readFileSync(hashPath, "utf-8")).toBe(expectedHash);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      title: "rejects a missing final config without changing the config hash (#9530)",
+      arrange: (_configDir: string, hashPath: string) => {
+        fs.writeFileSync(hashPath, "stale  openclaw.json\n");
+      },
+      expectedStatus: 17,
+      expectedStderr: "OpenClaw config is not a regular file",
+      expectedHash: "stale  openclaw.json\n",
+    },
+    {
+      title: "rejects a dangling final config symlink without changing the config hash (#9530)",
+      arrange: (configDir: string, hashPath: string) => {
+        fs.symlinkSync(
+          path.join(configDir, "missing-openclaw.json"),
+          path.join(configDir, "openclaw.json"),
+        );
+        fs.writeFileSync(hashPath, "stale  openclaw.json\n");
+      },
+      expectedStatus: 11,
+      expectedStderr: "refusing symlinked OpenClaw config file",
+      expectedHash: "stale  openclaw.json\n",
+    },
+    {
+      title: "rejects a final config directory without changing the config hash (#9530)",
+      arrange: (configDir: string, hashPath: string) => {
+        fs.mkdirSync(path.join(configDir, "openclaw.json"));
+        fs.writeFileSync(hashPath, "stale  openclaw.json\n");
+      },
+      expectedStatus: 17,
+      expectedStderr: "OpenClaw config is not a regular file",
+      expectedHash: "stale  openclaw.json\n",
+    },
+  ])("$title", ({ arrange, expectedStatus, expectedStderr, expectedHash }) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-final-hash-input-"));
+    const configDir = path.join(tmpDir, ".openclaw");
+    const hashPath = path.join(configDir, ".config-hash");
+    try {
+      fs.mkdirSync(configDir, { recursive: true });
+      arrange(configDir, hashPath);
+
+      const result = runVerify(configDir);
+
+      expect(result.status).toBe(expectedStatus);
+      expect(result.stderr).toContain(expectedStderr);
+      expect(fs.readFileSync(hashPath, "utf-8")).toBe(expectedHash);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a missing final config hash (#9530)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-final-hash-input-"));
+    const configDir = path.join(tmpDir, ".openclaw");
+    const configPath = path.join(configDir, "openclaw.json");
+    const hashPath = path.join(configDir, ".config-hash");
+    try {
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(configPath, '{"gateway":{}}\n');
+
+      const result = runVerify(configDir);
+
+      expect(result.status).toBe(18);
+      expect(result.stderr).toContain("OpenClaw config hash is not a regular file");
+      expect(fs.existsSync(hashPath)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a missing final config directory (#9530)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-final-hash-input-"));
+    const configDir = path.join(tmpDir, ".openclaw");
+    try {
+      const result = runVerify(configDir);
+
+      expect(result.status).toBe(16);
+      expect(result.stderr).toContain("OpenClaw config directory is not a directory");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      title: "rejects a stale hash when the config directory is root-owned (#9530)",
+      initialHash: () => `${"0".repeat(64)}  openclaw.json\n`,
+      expectedStatus: 15,
+      expectedStderr: "root-owned OpenClaw config hash does not match openclaw.json\n",
+    },
+    {
+      title: "accepts a matching hash when the config directory is root-owned (#9530)",
+      initialHash: (configPath: string) => `${sha256Hex(configPath)}  openclaw.json\n`,
+      expectedStatus: 0,
+      expectedStderr: "",
+    },
+    {
+      title: "rejects a valid hash that names another file in a root-owned directory (#9530)",
+      initialHash: (configPath: string) => {
+        const decoyPath = path.join(path.dirname(configPath), "decoy.json");
+        fs.writeFileSync(decoyPath, '{"decoy":true}\n');
+        return `${sha256Hex(decoyPath)}  decoy.json\n`;
+      },
+      expectedStatus: 15,
+      expectedStderr: "root-owned OpenClaw config hash does not match openclaw.json\n",
+    },
+  ])("$title", ({ initialHash, expectedStatus, expectedStderr }) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-root-hash-"));
+    const configDir = path.join(tmpDir, ".openclaw");
+    const binDir = path.join(tmpDir, "bin");
+    const configPath = path.join(configDir, "openclaw.json");
+    const hashPath = path.join(configDir, ".config-hash");
+    try {
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(configPath, '{"gateway":{"auth":{"token":"fresh"}}}\n');
+      const expectedHash = initialHash(configPath);
+      fs.writeFileSync(hashPath, expectedHash);
+      installRootOwnerStat(binDir);
+
+      const result = runRefresh(configDir, {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      });
+
+      expect(result.status).toBe(expectedStatus);
+      expect(result.stderr).toBe(expectedStderr);
+      expect(fs.readFileSync(hashPath, "utf-8")).toBe(expectedHash);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("refuses to refresh through a symlinked config file", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-hash-symlink-"));
     const configDir = path.join(tmpDir, ".openclaw");
@@ -60,6 +250,28 @@ describe.skipIf(process.platform !== "linux")("OpenClaw rebuild config hash refr
       fs.writeFileSync(hashPath, "stale  openclaw.json\n");
 
       const result = runRefresh(configDir);
+
+      expect(result.status).toBe(11);
+      expect(result.stderr).toContain("refusing symlinked OpenClaw config file");
+      expect(fs.readFileSync(hashPath, "utf-8")).toBe("stale  openclaw.json\n");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to verify through a symlinked config file without changing the config hash (#9530)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-final-hash-symlink-"));
+    const configDir = path.join(tmpDir, ".openclaw");
+    const targetPath = path.join(tmpDir, "target-openclaw.json");
+    const configPath = path.join(configDir, "openclaw.json");
+    const hashPath = path.join(configDir, ".config-hash");
+    try {
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(targetPath, '{"gateway":{"auth":{"token":"target"}}}\n');
+      fs.symlinkSync(targetPath, configPath);
+      fs.writeFileSync(hashPath, "stale  openclaw.json\n");
+
+      const result = runVerify(configDir);
 
       expect(result.status).toBe(11);
       expect(result.stderr).toContain("refusing symlinked OpenClaw config file");

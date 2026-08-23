@@ -160,6 +160,9 @@ export function createDeps(
         _gatewayName: string,
         operation: () => Promise<T> | T,
       ) => await operation(),
+      withModelRouterPortLifecycleLock: async <T>(_port: number, operation: () => Promise<T> | T) =>
+        await operation(),
+      getModelRouterPort: () => 4000,
       normalizeHermesAuthMethod: (value: string | null | undefined) =>
         value === "oauth" || value === "api_key" ? value : null,
       setupNim: calls.setupNim,

@@ -12,7 +12,10 @@ import {
 } from "../../onboard/observability-policy-presets";
 import { resolveRecreatePolicyPresets } from "../../onboard/policy-preset-persistence";
 import { isStaleBuiltinWebSearchPolicyPreset } from "../../onboard/policy-selection";
-import { filterSuppressedAgentRequiredPresets } from "../../onboard/policy-tier-suppression";
+import {
+  ensureRequiredTierPolicyPresets,
+  filterSuppressedAgentRequiredPresets,
+} from "../../onboard/policy-tier-suppression";
 import { parsePresetPolicyKeys } from "../../policy";
 import { hasCompleteOpenClawImagePluginProvenance } from "../../state/openclaw-plugin-restore";
 import { hasAuthoritativeOpenClawImagePluginProvenance } from "../../state/sandbox";
@@ -42,6 +45,18 @@ export interface RebuildBackupPhaseResult {
   backupWasForceSkipped: boolean;
   policyPresets: string[];
   sessionPolicyPresets: string[] | null;
+}
+
+export function excludePolicyPresetsByName(
+  presets: readonly string[],
+  excludedNames: readonly (string | undefined)[],
+): string[] {
+  const excluded = new Set(
+    excludedNames.filter(
+      (name): name is string => typeof name === "string" && name.length > 0,
+    ),
+  );
+  return presets.filter((name) => !excluded.has(name));
 }
 
 function bailForUnsafeOpenClawPluginProvenance(input: RebuildBackupPhaseInput): never {
@@ -138,9 +153,12 @@ export function normalizeRebuildTargetPolicyPresets(
   sandboxEntry: RebuildSandboxEntry,
   webSearchConfig: WebSearchConfig | null,
 ): string[] {
-  return normalizeRebuildObservabilityPolicyPresets(
-    normalizeRebuildWebSearchPolicyPresets([...new Set(presets)], sandboxEntry, webSearchConfig),
-    sandboxEntry,
+  return ensureRequiredTierPolicyPresets(
+    sandboxEntry.policyTier,
+    normalizeRebuildObservabilityPolicyPresets(
+      normalizeRebuildWebSearchPolicyPresets([...new Set(presets)], sandboxEntry, webSearchConfig),
+      sandboxEntry,
+    ),
   );
 }
 

@@ -23,6 +23,7 @@
  * recovers to Ready is the runtime evidence required.
  */
 
+import { parseLiveSandboxEntries } from "../runtime-recovery";
 import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import { envInt } from "./env";
@@ -71,6 +72,91 @@ export type DockerGpuSupervisorReconnectDeps = {
   sleep?: (seconds: number) => void;
   errorPhaseDebouncePolls?: number;
 };
+
+type DockerLifecycleReleaseDeps = Pick<
+  DockerGpuSupervisorReconnectDeps,
+  "runOpenshell" | "sleep"
+> & {
+  /**
+   * Corroborating evidence for an Error row from a Docker query that confirms
+   * the transaction-owned replacement is the sole labeled sandbox container.
+   * The callback must fail closed and keep its child within the supplied
+   * remaining lifecycle-release budget.
+   */
+  soleLabeledReplacementCorroboratesError?: (remainingMs: number) => boolean;
+};
+
+/**
+ * Workaround contract for the OpenShell lifecycle race in #9531:
+ *
+ * - Removing the rollback backup can strand the exact sandbox in `Deleting`
+ *   while its replacement container is healthy.
+ * - `openshell sandbox list` owns lifecycle authority. Docker health cannot
+ *   prove that OpenShell retired the previous record.
+ * - This layer waits after backup removal and before replacement restart so
+ *   OpenShell processes the stale deletion before the new registration.
+ * - The caller enters this wait only after the replacement reached Ready and
+ *   was deliberately stopped. A successful list normally omits the sandbox
+ *   name. An Error row is also sufficient only when a separate bounded Docker
+ *   query confirms that exact stopped replacement is the sole remaining
+ *   labeled container. This corroborates the release condition; the OpenShell
+ *   row alone is not an identity-bound ownership receipt.
+ * - `waits for the sandbox name to disappear before restarting the
+ *   replacement (#9531)` protects the event order. `rejects final handoff when
+ *   OpenShell never releases the deleting lifecycle record (#9531)` protects
+ *   the composed failure path.
+ *
+ * Remove this wait only when OpenShell binds deletion to the removed container
+ * identity or provides an identity-bound lifecycle-release receipt.
+ */
+export function waitForOpenShellSandboxLifecycleRelease(
+  sandboxName: string,
+  timeoutSecs: number,
+  deps: DockerLifecycleReleaseDeps,
+): boolean {
+  if (!deps.runOpenshell) return false;
+  const sleep = deps.sleep ?? defaultSleep;
+  const boundedTimeoutSecs = Math.max(1, Math.round(timeoutSecs));
+  const deadline = Date.now() + boundedTimeoutSecs * 1000;
+  const maxAttempts = Math.max(1, Math.ceil(boundedTimeoutSecs / 2) + 1);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const remainingBeforeProbeMs = deadline - Date.now();
+    if (remainingBeforeProbeMs <= 0) break;
+    const result = deps.runOpenshell(["sandbox", "list"], {
+      ignoreError: true,
+      suppressOutput: true,
+      timeout: Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, remainingBeforeProbeMs),
+    });
+    if (hasZeroDockerExitStatus(result)) {
+      const output = String(result.stdout ?? "").trim();
+      const entries = parseLiveSandboxEntries(output);
+      const sandboxPresent = entries.some((entry) => entry.name === sandboxName);
+      const stoppedReplacementError = entries.some(
+        (entry) => entry.name === sandboxName && entry.phase === "Error",
+      );
+      const hasPhaseBearingEntry = entries.some((entry) => entry.phase !== null);
+      const explicitEmptyList = output === "No sandboxes found" || output === "No sandboxes found.";
+      const remainingBeforeCorroborationMs = deadline - Date.now();
+      const soleLabeledReplacementCorroboratesError =
+        stoppedReplacementError &&
+        remainingBeforeCorroborationMs > 0 &&
+        deps.soleLabeledReplacementCorroboratesError?.(remainingBeforeCorroborationMs) === true;
+      if (
+        explicitEmptyList ||
+        soleLabeledReplacementCorroboratesError ||
+        (hasPhaseBearingEntry && !sandboxPresent)
+      ) {
+        return true;
+      }
+    }
+    const remainingBeforeSleepMs = deadline - Date.now();
+    if (attempt < maxAttempts && remainingBeforeSleepMs > 0) {
+      sleep(Math.min(2, remainingBeforeSleepMs / 1000));
+    }
+  }
+  return false;
+}
 
 function defaultSleep(seconds: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, seconds) * 1000);

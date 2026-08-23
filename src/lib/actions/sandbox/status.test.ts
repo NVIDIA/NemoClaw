@@ -106,6 +106,7 @@ describe("sandbox status host mounts", () => {
 
       expect(report.hostMounts).toEqual(hostMounts);
       expect(report.hostMounts).not.toBe(hostMounts);
+      expect(report.hostMounts?.[0]).not.toBe(hostMounts[0]);
     } finally {
       fs.rmSync(source, { recursive: true, force: true });
     }

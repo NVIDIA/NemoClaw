@@ -123,23 +123,25 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("stops after an unknown recreated-runtime probe failure (#9050)", () => {
+  it("stops after an unknown durable-identity probe failure (#9050)", () => {
     const { runCaptureOpenshell, sleep } = replay([`${NAME}   Ready`]);
 
-    expect(
-      waitForCreatedSandboxReadyWithTrace({
-        sandboxName: NAME,
-        timeoutSecs: 30,
-        runCaptureOpenshell,
-        isSandboxReady,
-        checkReadyIdentity: () => "probe_failed",
-        sleep,
-      }),
-    ).toEqual({
+    const readiness = waitForCreatedSandboxReadyWithTrace({
+      sandboxName: NAME,
+      timeoutSecs: 30,
+      runCaptureOpenshell,
+      isSandboxReady,
+      checkReadyIdentity: () => "probe_failed",
+      sleep,
+    });
+    expect(readiness).toEqual({
       ready: false,
       reason: "identity_probe_failed",
       failurePhase: null,
     });
+    expect(formatCreatedSandboxReadinessFailureMessage(NAME, readiness, 30)).toBe(
+      `  NemoClaw could not verify that sandbox '${NAME}' returned a durable ID and accepted commands.`,
+    );
     expect(runCaptureOpenshell).toHaveBeenCalledOnce();
     expect(sleep).not.toHaveBeenCalled();
   });
@@ -517,6 +519,16 @@ describe("DGX Spark fresh-onboard readiness replay (#6043)", () => {
     expect(formatCreatedSandboxReadinessFailureMessage(NAME, ready, 1500)).toContain(
       "entered Error phase before it became ready (waited up to 1500s)",
     );
+  });
+
+  it("retains the terminal phase in managed-bootstrap readiness diagnostics (#9819)", () => {
+    expect(
+      formatCreatedSandboxReadinessFailureMessage(
+        NAME,
+        { ready: false, reason: "terminal_failure_phase", failurePhase: "Failed" },
+        1500,
+      ),
+    ).toContain("entered Failed phase before it became ready (waited up to 1500s)");
   });
 
   it("recovers with the shipped default debounce: onboard continues to Ready", () => {

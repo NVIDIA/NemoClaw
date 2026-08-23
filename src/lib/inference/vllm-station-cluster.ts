@@ -8,7 +8,12 @@ import path from "node:path";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { isDgxStationGb300Product } from "./dgx-station-identity";
 import { buildVllmSshTransportEnv } from "./vllm-docker-env";
-import { NEMOTRON_ULTRA_DUAL_STATION_IMAGE, VLLM_MODELS } from "./vllm-models";
+import {
+  DUAL_STATION_VLLM_GPU_MEMORY_UTILIZATION,
+  STATION_PAIR_OPTIONAL_ORCHESTRATION,
+  vllmModelForOrchestration,
+  vllmStationPairForOrchestration,
+} from "./vllm-models";
 import {
   type DualStationSshBinding,
   dualStationPinnedSshArgs,
@@ -40,25 +45,43 @@ const CANONICAL_SSH_HOST_PATTERN =
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
 const CANONICAL_SSH_USERNAME_PATTERN = /^[A-Za-z_][A-Za-z0-9._-]*$/;
 
-const ultraModel = VLLM_MODELS.find((model) => model.envValue === "nemotron-3-ultra-550b-a55b");
+const ultraModel = vllmModelForOrchestration(
+  STATION_PAIR_OPTIONAL_ORCHESTRATION,
+  "station",
+  "arm64",
+);
 if (!ultraModel?.revision) {
-  throw new Error("Nemotron Ultra must have an immutable Hugging Face revision");
+  throw new Error("The Station-pair model must have an immutable Hugging Face revision");
+}
+const stationPair = vllmStationPairForOrchestration(
+  ultraModel,
+  STATION_PAIR_OPTIONAL_ORCHESTRATION,
+  "station",
+  "arm64",
+);
+if (!stationPair) {
+  throw new Error("The Station-pair orchestration must have a typed runtime configuration");
 }
 
 export const DUAL_STATION_VLLM_RUNTIME = Object.freeze({
-  image: NEMOTRON_ULTRA_DUAL_STATION_IMAGE.arm64.ref,
+  image: stationPair.image,
+  imageDownloadSizeBytes: stationPair.imageDownloadSizeBytes,
   modelId: ultraModel.id,
   modelRevision: ultraModel.revision,
-  servedModelId: "nemotron-ultra",
-  tensorParallelSize: 1 as const,
-  pipelineParallelSize: 2 as const,
-  nodeCount: 2 as const,
+  servedModelId: stationPair.servedName,
+  tensorParallelSize: stationPair.tensorParallelSize,
+  pipelineParallelSize: stationPair.pipelineParallelSize,
+  nodeCount: stationPair.nodeCount,
+  loadTimeoutSeconds: stationPair.loadTimeoutSeconds,
+  gpuMemoryUtilization: DUAL_STATION_VLLM_GPU_MEMORY_UTILIZATION,
 });
 
 export interface StationGpuProbe {
   index: number;
   name: string;
   uuid: string;
+  totalMemoryMiB: number;
+  freeMemoryMiB: number;
 }
 
 export interface StationIpv4AddressProbe {
@@ -296,23 +319,29 @@ def product_name():
 def gpu_inventory():
     rc, output = run([
         "nvidia-smi",
-        "--query-gpu=index,name,uuid",
+        "--query-gpu=index,name,uuid,memory.total,memory.free",
         "--format=csv,noheader,nounits",
     ])
     if rc != 0:
         return []
     result = []
     for row in csv.reader(output.splitlines()):
-        if len(row) != 3:
+        if len(row) != 5:
             continue
         try:
             index = int(row[0].strip())
+            total_memory_mib = int(row[3].strip())
+            free_memory_mib = int(row[4].strip())
         except ValueError:
+            continue
+        if total_memory_mib <= 0 or free_memory_mib < 0 or free_memory_mib > total_memory_mib:
             continue
         result.append({
             "index": index,
             "name": row[1].strip(),
             "uuid": row[2].strip(),
+            "totalMemoryMiB": total_memory_mib,
+            "freeMemoryMiB": free_memory_mib,
         })
     return result
 
@@ -868,10 +897,27 @@ function parseGpu(value: unknown, label: string): StationGpuProbe {
   const name = requireString(record.name, `${label}.name`, 256);
   const uuid = requireString(record.uuid, `${label}.uuid`, 128);
   if (!/^GPU-[A-Za-z0-9-]+$/.test(uuid)) throw new Error(`${label}.uuid is invalid`);
+  const totalMemoryMiB = requireInteger(
+    record.totalMemoryMiB,
+    `${label}.totalMemoryMiB`,
+    1,
+    Number.MAX_SAFE_INTEGER,
+  );
+  const freeMemoryMiB = requireInteger(
+    record.freeMemoryMiB,
+    `${label}.freeMemoryMiB`,
+    0,
+    Number.MAX_SAFE_INTEGER,
+  );
+  if (freeMemoryMiB > totalMemoryMiB) {
+    throw new Error(`${label}.freeMemoryMiB exceeds total memory`);
+  }
   return {
     index: requireInteger(record.index, `${label}.index`, 0, 1024),
     name,
     uuid,
+    totalMemoryMiB,
+    freeMemoryMiB,
   };
 }
 

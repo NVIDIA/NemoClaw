@@ -34,13 +34,12 @@ describe("ssh-forward-hint", () => {
       ]);
     });
 
-    it("never leaks the SSH_CONNECTION socket IP across an alias, NAT, or ProxyJump (#5925)", () => {
-      // An `~/.ssh/config` alias or ProxyJump makes the SSH_CONNECTION server-IP
-      // (field 3) unrelated to what the operator typed, so it must never appear.
-      for (const sshConnection of [
-        "10.0.0.9 51000 10.6.76.40 22", // NAT'd / aliased direct host
-        "203.0.113.8 40222 10.10.0.5 2222", // private bastion-side (ProxyJump) target on a custom port
-      ]) {
+    it.each([
+      "10.0.0.9 51000 10.6.76.40 22", // NAT'd / aliased direct host
+      "203.0.113.8 40222 10.10.0.5 2222", // private bastion-side (ProxyJump) target on a custom port
+    ])(
+      "never leaks the SSH_CONNECTION socket IP across an alias, NAT, or ProxyJump [case %#] (#5925)",
+      (sshConnection) => {
         const lines = buildSshForwardHintLines({
           port: 18790,
           accessUrl: "http://127.0.0.1:18790",
@@ -52,8 +51,8 @@ describe("ssh-forward-hint", () => {
         expect(lines?.join("\n")).not.toContain("10.6.76.40");
         expect(lines?.join("\n")).not.toContain("10.10.0.5");
         expect(lines?.join("\n")).not.toContain("-p ");
-      }
-    });
+      },
+    );
 
     it("renders an explicitly supplied destination verbatim (#5925)", () => {
       const lines = buildSshForwardHintLines({

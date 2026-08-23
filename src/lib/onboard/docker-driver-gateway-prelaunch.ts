@@ -107,13 +107,12 @@ export function reapHostGatewayBeforeLaunch(
  */
 export function prelaunchReapFailureMessage(result: StopHostGatewayResult): string | null {
   if (result.failed.length === 0) return null;
-  // Recommend killing exactly the PIDs we matched, not a host-wide
-  // `pkill -f openshell-gateway`: this path is deliberately scoped to this port
-  // (usePgrepFallback:false), so a host-wide kill could take down another
-  // worktree's gateway.
   return (
     "Refusing to start a second OpenShell gateway: existing host gateway process " +
-    `${result.failed.join(", ")} could not be stopped. Run: sudo kill -9 ${result.failed.join(" ")}`
+    `${result.failed.join(", ")} could not be stopped. Do not signal a PID from this saved output. ` +
+    "Before any privileged stop, verify that the live process owner and command line identify " +
+    "the exact gateway name and port, and that the PID file, runtime marker, and loaded sandbox " +
+    "namespace still match the selected state directory. Then retry onboarding."
   );
 }
 

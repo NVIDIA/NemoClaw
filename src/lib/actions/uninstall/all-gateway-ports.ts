@@ -29,7 +29,7 @@ import { readLineFromStdin } from "../../core/stdin";
 import { resolveGatewayName } from "../../onboard/gateway-binding";
 import { listGatewayStateRoots } from "../../state/gateway-registry";
 import {
-  runUninstallPlan,
+  runUninstallPlanProduction,
   type UninstallRunDeps,
   type UninstallRunOptions,
   type UninstallRunOutcome,
@@ -44,7 +44,7 @@ export interface AllGatewayPortsDeps extends UninstallRunDeps {
   runSelectedPass?: (
     options: UninstallRunOptions,
     deps: UninstallRunDeps,
-  ) => Pick<UninstallRunOutcome, "exitCode" | "otherGatewayEnvironmentsRemain">;
+  ) => Promise<Pick<UninstallRunOutcome, "exitCode" | "otherGatewayEnvironmentsRemain">>;
 }
 
 export interface AllGatewayPortsOutcome {
@@ -122,10 +122,10 @@ function confirmSweep(
   return false;
 }
 
-export function runUninstallAllGatewayPorts(
+export async function runUninstallAllGatewayPorts(
   options: UninstallRunOptions,
   deps: AllGatewayPortsDeps = {},
-): AllGatewayPortsOutcome {
+): Promise<AllGatewayPortsOutcome> {
   const env = { ...process.env, ...(deps.env ?? {}) };
   const branding = getAgentBranding(deps.env?.NEMOCLAW_AGENT ?? process.env.NEMOCLAW_AGENT);
   const home = deps.home ?? deps.env?.HOME ?? process.env.HOME ?? os.homedir();
@@ -134,7 +134,7 @@ export function runUninstallAllGatewayPorts(
   const readLine = deps.readLine ?? (() => readLineFromStdin());
   const listPorts = deps.listGatewayPorts ?? defaultListGatewayPorts;
   const runPortPass = deps.runPortPass ?? defaultRunPortPass;
-  const runSelectedPass = deps.runSelectedPass ?? runUninstallPlan;
+  const runSelectedPass = deps.runSelectedPass ?? runUninstallPlanProduction;
   const runDeps = { ...deps, env };
   const expectedGatewayName = resolveGatewayName(GATEWAY_PORT);
 
@@ -161,11 +161,19 @@ export function runUninstallAllGatewayPorts(
     .filter((port) => port !== GATEWAY_PORT)
     .sort((left, right) => left - right);
   if (otherPorts.length === 0) {
-    const selected = runSelectedPass(options, {
-      ...runDeps,
-      requireCompleteGatewayProcessCleanup: true,
-      retainedGatewayPorts: [],
-    });
+    let selected: Pick<UninstallRunOutcome, "exitCode" | "otherGatewayEnvironmentsRemain">;
+    try {
+      selected = await runSelectedPass(options, {
+        ...runDeps,
+        requireCompleteGatewayProcessCleanup: true,
+        retainedGatewayPorts: [],
+      });
+    } catch (failure) {
+      error(
+        `Whole-host selected gateway uninstall failed: ${failure instanceof Error ? failure.message : String(failure)}`,
+      );
+      return { exitCode: 1, ports: [GATEWAY_PORT] };
+    }
     if (selected.otherGatewayEnvironmentsRemain) {
       error("Whole-host uninstall is incomplete because another gateway-port environment remains.");
       return { exitCode: 1, ports: [GATEWAY_PORT] };
@@ -191,14 +199,22 @@ export function runUninstallAllGatewayPorts(
   log(
     `Uninstalling gateway '${resolveGatewayName(GATEWAY_PORT)}' on port ${String(GATEWAY_PORT)}.`,
   );
-  const selected = runSelectedPass(
-    { ...options, assumeYes: true },
-    {
-      ...runDeps,
-      requireCompleteGatewayProcessCleanup: true,
-      retainedGatewayPorts,
-    },
-  );
+  let selected: Pick<UninstallRunOutcome, "exitCode" | "otherGatewayEnvironmentsRemain">;
+  try {
+    selected = await runSelectedPass(
+      { ...options, assumeYes: true },
+      {
+        ...runDeps,
+        requireCompleteGatewayProcessCleanup: true,
+        retainedGatewayPorts,
+      },
+    );
+  } catch (failure) {
+    error(
+      `Whole-host selected gateway uninstall failed: ${failure instanceof Error ? failure.message : String(failure)}`,
+    );
+    return { exitCode: 1, ports: ordered };
+  }
   if (selected.exitCode !== 0) exitCode = 1;
   if (selected.otherGatewayEnvironmentsRemain) {
     exitCode = 1;

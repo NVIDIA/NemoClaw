@@ -20,11 +20,12 @@ import {
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   type ManagedImageContractCatalog,
   type ManagedImageContractV1,
+  type ManagedImageAgent,
   SHIPPED_MANAGED_IMAGE_AGENTS,
-  type ShippedManagedImageAgent,
 } from "./managed-image/contract";
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import {
+  liveE2eManagedImageCatalog,
   prepareSandboxWorkloadSource,
   SandboxWorkloadPreparationError,
 } from "./workload/preparation";
@@ -36,7 +37,7 @@ const MANAGED_IMAGE_PLATFORM = MANAGED_IMAGE_PLATFORMS[0];
 const REVISION = "2f03907c37822ea6f1ac9d1bf5c82a4a4568585f";
 const COHORT = "ghrun-7744-2";
 
-function contract(agent: ShippedManagedImageAgent, index: number): ManagedImageContractV1 {
+function contract(agent: ManagedImageAgent, index: number): ManagedImageContractV1 {
   const image = MANAGED_IMAGE_REPOSITORIES[agent];
   const digest = `sha256:${String(index + 1).repeat(64)}` as const;
   return {
@@ -85,6 +86,67 @@ function input(agentName: string) {
 }
 
 describe("sandbox workload preparation", () => {
+  it("selects an exact embedded catalog only for live PR E2E (#9464)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    const packagedCatalogPath = path.join(fixtureRoot, "dist", "e2e-managed-image-catalog.json");
+    fs.mkdirSync(path.dirname(packagedCatalogPath));
+    fs.writeFileSync(catalogPath, "{}\n", { mode: 0o600 });
+    fs.writeFileSync(packagedCatalogPath, "{}\n", { mode: 0o600 });
+    try {
+      expect(
+        liveE2eManagedImageCatalog({
+          GITHUB_ACTIONS: "true",
+          NEMOCLAW_RUN_LIVE_E2E: "1",
+          NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+        }),
+      ).toEqual({ path: catalogPath, revision: REVISION });
+      expect(
+        liveE2eManagedImageCatalog({
+          GITHUB_ACTIONS: "true",
+          GITHUB_WORKSPACE: fixtureRoot,
+          NEMOCLAW_RUN_LIVE_E2E: "1",
+          NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
+        }),
+      ).toEqual({ path: packagedCatalogPath, revision: REVISION });
+      expect(
+        liveE2eManagedImageCatalog({
+          NEMOCLAW_RUN_LIVE_E2E: "1",
+          NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+        }),
+      ).toBeNull();
+      expect(
+        liveE2eManagedImageCatalog({
+          GITHUB_ACTIONS: "true",
+          NEMOCLAW_RUN_LIVE_E2E: "1",
+          NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: path.join(fixtureRoot, "missing.json"),
+        }),
+      ).toBeNull();
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects an embedded catalog without an exact candidate revision (#9464)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    fs.writeFileSync(catalogPath, "{}\n", { mode: 0o600 });
+    try {
+      expect(() =>
+        liveE2eManagedImageCatalog({
+          GITHUB_ACTIONS: "true",
+          NEMOCLAW_RUN_LIVE_E2E: "1",
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+        }),
+      ).toThrow("requires an exact candidate revision");
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
   it.each(
     SHIPPED_MANAGED_IMAGE_AGENTS,
   )("resolves the complete release catalog and exact %s image (#7744)", async (agent) => {
@@ -105,6 +167,60 @@ describe("sandbox workload preparation", () => {
       release: RELEASE,
       fallbackDiagnostic: null,
     });
+  });
+
+  it("passes an immutable qualification revision to catalog resolution (#9385)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+
+    await prepareSandboxWorkloadSource(
+      { ...input("openclaw"), catalogRevision: REVISION },
+      { resolveCatalog },
+    );
+
+    expect(resolveCatalog).toHaveBeenCalledExactlyOnceWith({
+      release: RELEASE,
+      platform: MANAGED_IMAGE_PLATFORM,
+      revision: REVISION,
+    });
+  });
+
+  it("rejects an exact catalog from another PR commit (#9464)", async () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    fs.writeFileSync(catalogPath, JSON.stringify(CATALOG), { mode: 0o600 });
+    try {
+      await expect(
+        prepareSandboxWorkloadSource({
+          ...input("openclaw"),
+          catalogPath,
+          expectedCatalogRevision: "b".repeat(40),
+        }),
+      ).rejects.toThrow("does not match the live E2E candidate revision");
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("uses an exact-revision E2E catalog when local git describe labels differ", async () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    fs.writeFileSync(catalogPath, JSON.stringify(CATALOG), { mode: 0o600 });
+    try {
+      const prepared = await prepareSandboxWorkloadSource({
+        ...input("openclaw"),
+        version: "0.1.0",
+        catalogPath,
+        expectedCatalogRevision: REVISION,
+      });
+
+      expect(prepared.release).toBe(RELEASE);
+      expect(prepared.source).toMatchObject({
+        kind: "managed-image",
+        contract: { source: { release: RELEASE, revision: REVISION } },
+      });
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
   });
 
   it("loads an exact local all-agent catalog without using the registry resolver (#7744)", async () => {
@@ -427,5 +543,82 @@ describe("sandbox workload preparation", () => {
       kind: "managed-image",
       reference: contract("hermes", 1).reference,
     });
+  });
+
+  it("never fetches the all-agent cohort catalog for a gated candidate (#7927)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+
+    await expect(
+      prepareSandboxWorkloadSource(
+        { ...input("pi"), acceptedCandidateContract: contract("pi", 3) },
+        { resolveCatalog },
+      ),
+    ).rejects.toThrow("requires an exact managed image catalog file");
+    expect(resolveCatalog).not.toHaveBeenCalled();
+  });
+
+  it("prepares the exact candidate digest from a supplied catalog file (#7927)", async () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-candidate-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    const piContract = contract("pi", 3);
+    fs.writeFileSync(catalogPath, JSON.stringify({ pi: piContract }), { mode: 0o600 });
+
+    const prepared = await prepareSandboxWorkloadSource(
+      { ...input("pi"), acceptedCandidateContract: piContract, catalogPath },
+      { resolveCatalog: async () => CATALOG },
+    );
+
+    expect(prepared.source).toMatchObject({
+      kind: "managed-image",
+      reference: piContract.reference,
+    });
+  });
+
+  it("refuses a candidate catalog that differs from the accepted receipt (#7927)", async () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-candidate-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    const acceptedContract = contract("pi", 3);
+    const differentDigest = `sha256:${"5".repeat(64)}` as const;
+    const differentContract = {
+      ...acceptedContract,
+      digest: differentDigest,
+      reference: `${acceptedContract.image}@${differentDigest}` as const,
+    };
+    fs.writeFileSync(catalogPath, JSON.stringify({ pi: differentContract }), { mode: 0o600 });
+
+    try {
+      await expect(
+        prepareSandboxWorkloadSource({
+          ...input("pi"),
+          acceptedCandidateContract: acceptedContract,
+          catalogPath,
+        }),
+      ).rejects.toThrow("does not match the accepted qualification receipt");
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("refuses a candidate catalog entry that claims a shipped agent (#7927)", async () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-candidate-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    fs.writeFileSync(catalogPath, JSON.stringify({ pi: contract("hermes", 1) }), { mode: 0o600 });
+
+    await expect(
+      prepareSandboxWorkloadSource({
+        ...input("pi"),
+        acceptedCandidateContract: contract("pi", 3),
+        catalogPath,
+      }),
+    ).rejects.toThrow(SandboxWorkloadPreparationError);
+  });
+
+  it("refuses a candidate while the gate is off (#7927)", async () => {
+    await expect(
+      prepareSandboxWorkloadSource(
+        { ...input("pi"), runtime: runtime("docker") },
+        { resolveCatalog: async () => CATALOG },
+      ),
+    ).rejects.toThrow("the selected agent is a release candidate and candidate selection is disabled");
   });
 });

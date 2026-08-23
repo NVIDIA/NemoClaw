@@ -14,13 +14,13 @@ import {
   MANAGED_BOOTSTRAP_REQUEST_FILE,
   serializeManagedBootstrapEnvelopeTar,
 } from "../../src/lib/onboard/managed-bootstrap/envelope.ts";
-import { managedImageRuntimeIdentity } from "../../src/lib/onboard/managed-image/contract.ts";
-import { MANAGED_STARTUP_EXECUTABLE } from "../../src/lib/onboard/managed-startup/hold.ts";
 import {
-  encodeManagedStartupProfile,
-  MANAGED_STARTUP_AGENTS,
-  type ManagedStartupAgent,
-} from "../../src/lib/onboard/managed-startup/profile.ts";
+  managedImageRuntimeIdentity,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
+  type ShippedManagedImageAgent,
+} from "../../src/lib/onboard/managed-image/contract.ts";
+import { MANAGED_STARTUP_EXECUTABLE } from "../../src/lib/onboard/managed-startup/hold.ts";
+import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
 import {
   createManagedStartupRootApplyRequest,
   type ManagedStartupRootApplyRequest,
@@ -47,7 +47,7 @@ const FIXED_ROOT_ENV = [
 ] as const;
 
 export interface ManagedImageDirectE2eInputs {
-  readonly agent: ManagedStartupAgent;
+  readonly agent: ShippedManagedImageAgent;
   readonly image: string;
   readonly platform: ProtectedManagedImagePlatform;
 }
@@ -90,7 +90,7 @@ export function parseManagedImageDirectE2eInputs(
       "usage: --agent <agent> --image <immutable> --platform <linux/amd64|linux/arm64>",
     );
   }
-  if (!(MANAGED_STARTUP_AGENTS as readonly string[]).includes(agent)) {
+  if (!(SHIPPED_MANAGED_IMAGE_AGENTS as readonly string[]).includes(agent)) {
     throw new Error("--agent must identify a shipped managed-image agent");
   }
   if (!IMMUTABLE_REFERENCE_RE.test(image)) {
@@ -99,7 +99,7 @@ export function parseManagedImageDirectE2eInputs(
   if (platform !== "linux/amd64" && platform !== "linux/arm64") {
     throw new Error("--platform must be linux/amd64 or linux/arm64");
   }
-  return { agent: agent as ManagedStartupAgent, image, platform };
+  return { agent: agent as ShippedManagedImageAgent, image, platform };
 }
 
 function commandDetail(result: CommandResult): string {
@@ -131,7 +131,7 @@ function docker(
   return normalized;
 }
 
-function requestFor(agent: ManagedStartupAgent, changed = false): ManagedStartupRootApplyRequest {
+function requestFor(agent: ShippedManagedImageAgent, changed = false): ManagedStartupRootApplyRequest {
   return createManagedStartupRootApplyRequest({
     agent,
     encodedProfile: encodeManagedStartupProfile(
@@ -143,7 +143,7 @@ function requestFor(agent: ManagedStartupAgent, changed = false): ManagedStartup
 
 function rootRuntimeArgs(
   containerId: string,
-  agent: ManagedStartupAgent,
+  agent: ShippedManagedImageAgent,
   action: "--apply-root-stdin" | "--commit-shared-state-transaction",
   user = "0:0",
   bootstrapIdentity?: string,
@@ -269,7 +269,7 @@ function verifyManagedBootstrapPidOneBoundary(
   }
 }
 
-function managedConfig(agent: ManagedStartupAgent): string {
+function managedConfig(agent: ShippedManagedImageAgent): string {
   switch (agent) {
     case "openclaw":
       return "/sandbox/.openclaw/openclaw.json";
@@ -629,6 +629,14 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
       "cat",
       "/usr/local/share/nemoclaw/corporate-ca.pem",
     ]).stdout;
+    const installedSystemCaAnchor = docker([
+      "exec",
+      "--user",
+      "0:0",
+      containerId,
+      "cat",
+      "/usr/local/share/ca-certificates/nemoclaw-corporate-ca-01.crt",
+    ]).stdout;
     const mergedCa = docker([
       "exec",
       "--user",
@@ -639,6 +647,7 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
     ]).stdout;
     if (
       installedCa !== MANAGED_STARTUP_E2E_CORPORATE_CA_PEM ||
+      installedSystemCaAnchor !== MANAGED_STARTUP_E2E_CORPORATE_CA_PEM ||
       !mergedCa.endsWith(MANAGED_STARTUP_E2E_CORPORATE_CA_PEM)
     ) {
       throw new Error("managed corporate CA was not installed and merged exactly");
@@ -655,6 +664,8 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
         'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-runtime.env)" = "0:0:444"',
         'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-complete.json)" = "0:0:444"',
         'test "$(stat -c "%u:%g:%a" /usr/local/share/nemoclaw/corporate-ca.pem)" = "0:0:444"',
+        'test "$(stat -c "%u:%g:%a" /usr/local/share/ca-certificates/nemoclaw-corporate-ca-01.crt)" = "0:0:444"',
+        "openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt /usr/local/share/nemoclaw/corporate-ca.pem >/dev/null",
         'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-ca-bundle.pem)" = "0:0:444"',
         "test -d /var/lib/nemoclaw/managed-startup-shared-state-transaction-v1",
       ].join("\n"),

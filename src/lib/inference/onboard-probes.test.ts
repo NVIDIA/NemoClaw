@@ -26,6 +26,7 @@ const {
   hasResponsesToolCall,
   isSandboxInternalUrl,
   probeOpenAiLikeEndpoint,
+  probeOpenAiLikeEndpointOptimized,
   RETRIABLE_HTTP_PROBE_STATUSES,
   verifyOnboardInferenceSmoke,
 } = require("./onboard-probes");
@@ -324,39 +325,41 @@ describe("OpenAI-compatible inference probes", () => {
     });
   });
 
-  it("uses max_completion_tokens for GPT-5 family and reasoning models (#6642)", () => {
-    for (const model of ["gpt-5.4", "azure/gpt-5.4", "o3-mini", "o1"]) {
+  it.each(["gpt-5.4", "azure/gpt-5.4", "o3-mini", "o1"])(
+    "uses max_completion_tokens for GPT-5 family and reasoning models [case %#] (#6642)",
+    (model) => {
       expect(getChatCompletionsProbePayload(model)).toEqual({
         model,
         messages: [{ role: "user", content: "Reply with exactly: OK" }],
         max_completion_tokens: 16,
       });
-    }
-  });
+    },
+  );
 
   // Some hosted endpoints reject a reply budget below 16 with HTTP 400 even
   // though discovery succeeds and normal inference works, so a bounded probe
   // that undershoots that floor fails a valid route. Whichever field a model
   // uses, the budget must clear the floor (#7939).
-  it("requests a reply budget hosted endpoints accept, in whichever field the model uses (#7939)", () => {
-    const endpointMinimumReplyTokens = 16;
+  it.each([
+    "nvidia/nemotron-3-super-120b-a12b",
+    "nvidia/nvidia/nemotron-3-ultra",
+    "openai/openai/gpt-5.6-sol",
+    "moonshotai/kimi-k2.6",
+    "deepseek-ai/deepseek-v4-pro",
+    "gpt-5.4",
+    "o3-mini",
+  ])(
+    "requests a reply budget hosted endpoints accept, in whichever field the model uses [%s] (#7939)",
+    (model) => {
+      const endpointMinimumReplyTokens = 16;
 
-    for (const model of [
-      "nvidia/nemotron-3-super-120b-a12b",
-      "nvidia/nvidia/nemotron-3-ultra",
-      "openai/openai/gpt-5.6-sol",
-      "moonshotai/kimi-k2.6",
-      "deepseek-ai/deepseek-v4-pro",
-      "gpt-5.4",
-      "o3-mini",
-    ]) {
       const payload = getChatCompletionsProbePayload(model);
       const budget = payload.max_completion_tokens ?? payload.max_tokens;
 
       expect(typeof budget, `${model} states a reply budget`).toBe("number");
       expect(budget, model).toBeGreaterThanOrEqual(endpointMinimumReplyTokens);
-    }
-  });
+    },
+  );
 
   it("uses an extended validation budget for DeepSeek V4 Flash", () => {
     const args = getChatCompletionsProbeCurlArgs({
@@ -677,6 +680,25 @@ exit 0
   });
 
   describe("private-address SSRF guard (#6293)", () => {
+    it("rejects a private endpoint in the optimized probe before spawning curl", async () => {
+      const apiKey = "nvapi-optimized-private-endpoint-secret";
+      const spawnSyncImpl = vi.fn(() => {
+        throw new Error("curl must not run for a private endpoint");
+      });
+
+      const result = await probeOpenAiLikeEndpointOptimized(
+        "http://192.168.1.50:8000/v1",
+        "openai/model",
+        apiKey,
+        { skipResponsesProbe: true, spawnSyncImpl },
+      );
+
+      expect(result).toMatchObject({ ok: false });
+      expect(result.message).toMatch(/private\/internal address/i);
+      expect(JSON.stringify(result)).not.toContain(apiKey);
+      expect(spawnSyncImpl).not.toHaveBeenCalled();
+    });
+
     it("rejects a non-loopback private LAN endpoint before issuing any probe (#6293)", () => {
       const result = probeOpenAiLikeEndpoint(
         "http://192.168.1.50:8000/v1",
@@ -932,7 +954,7 @@ exit 0
     });
 
     it("preserves query-param auth on doubled-timeout chat-completions retry", () => {
-      const script = `#!/usr/bin/env bash
+        const script = `#!/usr/bin/env bash
 outfile=""
 n=$(cat "${HARNESS_COUNTER}")
 n=$((n + 1))
@@ -960,35 +982,36 @@ fi
 printf '200'
 exit 0
 `;
-      withFakeCurlProbe(
-        { script, dirPrefix: "nemoclaw-query-retry-probe-" },
-        ({ counter, tmpDir }) => {
-          const result = probeOpenAiLikeEndpoint(
-            "https://api.example.com/v1",
-            "test-model",
-            "secret key",
-            { skipResponsesProbe: true, authMode: "query-param" },
-          );
+        withFakeCurlProbe(
+          { script, dirPrefix: "nemoclaw-query-retry-probe-" },
+          ({ counter, tmpDir }) => {
+            const result = probeOpenAiLikeEndpoint(
+              "https://api.example.com/v1",
+              "test-model",
+              "secret key",
+              { skipResponsesProbe: true, authMode: "query-param" },
+            );
 
-          expect(result).toMatchObject({ ok: true, api: "openai-completions" });
-          expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
-          const observedConfigPaths = new Set<string>();
-          for (const call of ["1", "2"]) {
-            const args = fs.readFileSync(path.join(tmpDir, `args-${call}.txt`), "utf8");
-            expect(args).toContain("https://api.example.com/v1/chat/completions");
-            expect(args).not.toContain("?key=");
-            expect(args).not.toContain("Authorization: Bearer");
-            expect(args).not.toContain("secret key");
-            observedConfigPaths.add(captureAuthConfigPath(args.split("\n")));
-          }
-          // Both calls must reuse the same auth config tmpfile so a doubled-
-          // timeout retry never spawns a second config write that could race
-          // with cleanup. PR #5975 review note PRA-9 / CodeRabbit "assert
-          // --config has a path value".
-          expect(observedConfigPaths.size).toBe(1);
-        },
-      );
-    });
+            expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+            expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+            const firstArgs = fs.readFileSync(path.join(tmpDir, "args-1.txt"), "utf8");
+            const retryArgs = fs.readFileSync(path.join(tmpDir, "args-2.txt"), "utf8");
+            const combinedArgs = `${firstArgs}\n${retryArgs}`;
+            expect(combinedArgs).toContain("https://api.example.com/v1/chat/completions");
+            expect(combinedArgs).not.toContain("?key=");
+            expect(combinedArgs).not.toContain("Authorization: Bearer");
+            expect(combinedArgs).not.toContain("secret key");
+
+            // Both calls must reuse the same auth config tmpfile so a doubled-
+            // timeout retry never spawns a second config write that could race
+            // with cleanup. PR #5975 review note PRA-9 / CodeRabbit "assert
+            // --config has a path value".
+            expect(captureAuthConfigPath(firstArgs.split("\n"))).toBe(
+              captureAuthConfigPath(retryArgs.split("\n")),
+            );
+          },
+        );
+      });
 
     it("retries Local Ollama validation when HTTP 200 omits a structured tool call (#8714)", () => {
       const body = `n=$(cat "${HARNESS_COUNTER}")

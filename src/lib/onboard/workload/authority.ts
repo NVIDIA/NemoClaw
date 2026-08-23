@@ -6,13 +6,13 @@ import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import type { ResolvedCorporateCa } from "../corporate-ca-types";
 import {
-  isShippedManagedImageAgent,
+  isManagedImageAgent,
   MANAGED_IMAGE_CONTRACT_VERSION,
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
+  type ManagedImageAgent,
   type ManagedImageContractV1,
   parseManagedImageContractV1,
-  type ShippedManagedImageAgent,
 } from "../managed-image/contract";
 import { validateManagedStartupCorporateCaTransport } from "../managed-startup/application";
 import {
@@ -26,7 +26,7 @@ export type ManagedWorkloadReceipt = Extract<
 >;
 
 export interface ManagedWorkloadAuthority {
-  readonly agent: ShippedManagedImageAgent;
+  readonly agent: ManagedImageAgent;
   readonly receipt: ManagedWorkloadReceipt;
   readonly contract: ManagedImageContractV1;
   readonly profile: ManagedStartupProfile;
@@ -49,20 +49,20 @@ function isManagedImageReference(value: unknown): value is string {
   );
 }
 
-function exactAgent(value: string | null | undefined): ShippedManagedImageAgent {
+function exactAgent(value: string | null | undefined): ManagedImageAgent {
   const normalized = value?.trim();
   if (!normalized) {
     throw new ManagedWorkloadAuthorityError(
       "the durable managed workload does not record an explicit agent",
     );
   }
-  if (isShippedManagedImageAgent(normalized)) return normalized;
-  throw new ManagedWorkloadAuthorityError(`'${normalized}' is not a shipped managed-image agent`);
+  if (isManagedImageAgent(normalized)) return normalized;
+  throw new ManagedWorkloadAuthorityError(`'${normalized}' is not a managed-image agent`);
 }
 
 function contractFromReceipt(
   receipt: ManagedWorkloadReceipt,
-  agent: ShippedManagedImageAgent,
+  agent: ManagedImageAgent,
 ): ManagedImageContractV1 {
   const image = MANAGED_IMAGE_REPOSITORIES[agent];
   const referencePrefix = `${image}@`;

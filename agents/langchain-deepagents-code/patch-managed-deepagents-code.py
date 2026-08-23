@@ -10,7 +10,7 @@
 # sourceBoundary: deepagents-code owns those Python entrypoints and child env;
 # langgraph-cli owns the analytics opt-out; NemoClaw owns the sandbox image
 # posture and therefore validates every patched symbol before build.
-# whyNotSourceFix: upstream 0.1.34 has no single managed-runtime hook that can
+# whyNotSourceFix: upstream 0.1.55 has no single managed-runtime hook that can
 # enforce these constraints across CLI, UI, headless, server, and restart paths.
 # regressionTest: the exact version plus AST symbol/method gates fail the image
 # build on drift, while hostile analytics values exercise patched entrypoints and
@@ -26,7 +26,7 @@ import importlib.metadata
 import importlib.util
 from pathlib import Path
 
-EXPECTED_DCODE_VERSION = "0.1.34"
+EXPECTED_DCODE_VERSION = "0.1.55"
 PATCH_MARKER = "NemoClaw-managed Deep Agents Code hardening v2."
 TOOL_DISCLOSURE_PATCH_MARKER = "NemoClaw-managed progressive tool disclosure."
 OBSERVABILITY_PATCH_MARKER = "NemoClaw-managed backend-neutral observability."
@@ -67,6 +67,8 @@ os.environ.pop("DEEPAGENTS_CODE_SHELL_ALLOW_LIST", None)
 os.environ.pop("PYTHONHOME", None)
 os.environ.pop("PYTHONPATH", None)
 os.environ.pop("OPENAI_PROXY", None)
+os.environ.pop("DEEPAGENTS_CODE_APPROVAL_MODE", None)
+os.environ.pop("DEEPAGENTS_CODE_STARTUP_MODE", None)
 
 from deepagents_code._nemoclaw_managed import assert_safe_runtime
 
@@ -94,6 +96,8 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
     os.environ.pop("PYTHONHOME", None)
     os.environ.pop("PYTHONPATH", None)
     os.environ.pop("OPENAI_PROXY", None)
+    os.environ.pop("DEEPAGENTS_CODE_APPROVAL_MODE", None)
+    os.environ.pop("DEEPAGENTS_CODE_STARTUP_MODE", None)
 
     from deepagents_code._nemoclaw_managed import (
         assert_safe_runtime as _nemoclaw_assert_safe_runtime,
@@ -102,6 +106,11 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
     )
 
     nemoclaw_auto_approval_enabled = _nemoclaw_managed_auto_approval_enabled()
+    nemoclaw_thread_auto_approval_requested = bool(
+        getattr(args, "auto_approve", False)
+        and nemoclaw_auto_approval_enabled
+        and not getattr(args, "non_interactive_message", None)
+    )
 
     blocked_command = getattr(args, "command", None)
     if blocked_command == "mcp":
@@ -128,6 +137,8 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         parser.error("--interpreter is disabled in NemoClaw-managed Deep Agents Code sandboxes")
     if getattr(args, "auto_approve", False) and not nemoclaw_auto_approval_enabled:
         parser.error("--auto-approve is disabled in NemoClaw-managed Deep Agents Code sandboxes")
+    if getattr(args, "yolo", False):
+        parser.error("--yolo is disabled in NemoClaw-managed Deep Agents Code sandboxes")
     if getattr(args, "acp", False):
         parser.error("--acp is disabled in NemoClaw-managed Deep Agents Code sandboxes")
 
@@ -164,13 +175,24 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         args.acp = False
     if hasattr(args, "startup_cmd"):
         args.startup_cmd = None
+    # 0.1.55 adds persisted startup/approval modes. Managed sessions always
+    # start in manual mode; the separately attested -y capability remains the
+    # only route to thread-scoped auto-approval.
+    if hasattr(args, "startup_mode"):
+        args.startup_mode = "manual"
+    if hasattr(args, "approval_mode"):
+        args.approval_mode = "manual"
+    # Deep Agents Code 0.1.55 changed -y/--auto-approve from unrestricted
+    # thread approval to classifier-backed Auto mode. Preserve NemoClaw's
+    # explicitly enabled thread-opt-in contract by routing that flag to the
+    # upstream unrestricted mode.
+    if nemoclaw_thread_auto_approval_requested:
+        args.auto_approve = False
+        if hasattr(args, "yolo"):
+            args.yolo = True
 
     _nemoclaw_assert_safe_runtime()
-    if (
-        getattr(args, "auto_approve", False)
-        and nemoclaw_auto_approval_enabled
-        and not getattr(args, "non_interactive_message", None)
-    ):
+    if nemoclaw_thread_auto_approval_requested:
         print(
             "WARNING: Auto-approval is enabled for this thread. Tool calls, "
             "including shell commands, may execute without further confirmation "
@@ -199,12 +221,6 @@ _nemoclaw_original_restart_server_for_agent_swap = (
     DeepAgentsApp._restart_server_for_agent_swap
 )
 _nemoclaw_original_switch_model = DeepAgentsApp._switch_model
-_nemoclaw_original_on_auto_approve_enabled = (
-    DeepAgentsApp._on_auto_approve_enabled
-)
-_nemoclaw_original_action_toggle_auto_approve = (
-    DeepAgentsApp.action_toggle_auto_approve
-)
 _nemoclaw_original_absolutize_launch_relative_path = (
     DeepAgentsApp._absolutize_launch_relative_path
 )
@@ -228,7 +244,7 @@ async def _nemoclaw_handle_command(self, command: str) -> None:
             or (root == "/goal" and len(tokens) <= 3)
         )
     )
-    if blocked_model_params or blocked_grader_model or root in {"/auth", "/connect", "/update", "/auto-update", "/install", "/mcp"}:
+    if blocked_model_params or blocked_grader_model or root in {"/auth", "/connect", "/update", "/auto-update", "/install", "/mcp", "/mode", "/auto", "/yolo"}:
         await self._mount_message(UserMessage(command))
         await self._mount_message(AppMessage(_NEMOCLAW_MANAGED_UI_MESSAGE))
         return
@@ -325,10 +341,14 @@ def _nemoclaw_auto_approval_is_allowed() -> bool:
 
 
 def _nemoclaw_reset_thread_auto_approval(self) -> None:
+    from deepagents_code.approval_mode import ApprovalMode
+
+    self._approval_mode = ApprovalMode.MANUAL
     self._auto_approve = False
     if getattr(self, "_status_bar", None) is not None:
-        self._status_bar.set_auto_approve(enabled=False)
+        self._status_bar.set_approval_mode(ApprovalMode.MANUAL.value)
     if getattr(self, "_session_state", None) is not None:
+        self._session_state.approval_mode = ApprovalMode.MANUAL
         self._session_state.auto_approve = False
         self._session_state.approval_mode_key = None
 
@@ -350,22 +370,32 @@ def _nemoclaw_notify_auto_approval_warning(self) -> None:
     )
 
 
-async def _nemoclaw_on_auto_approve_enabled(self) -> None:
+async def _nemoclaw_on_auto_approve_enabled(self) -> bool:
     if not _nemoclaw_auto_approval_is_allowed():
         await _nemoclaw_block_auto_approve(self)
-        return
-    await _nemoclaw_original_on_auto_approve_enabled(self)
-    if getattr(self, "_auto_approve", False):
+        return False
+    from deepagents_code.approval_mode import ApprovalMode
+
+    enabled = await self._set_approval_mode(ApprovalMode.YOLO)
+    if enabled:
         _nemoclaw_notify_auto_approval_warning(self)
+    return enabled
 
 
 async def _nemoclaw_action_toggle_auto_approve(self) -> None:
     if not _nemoclaw_auto_approval_is_allowed():
         await _nemoclaw_block_auto_approve(self)
         return
-    was_enabled = bool(getattr(self, "_auto_approve", False))
-    await _nemoclaw_original_action_toggle_auto_approve(self)
-    if not was_enabled and getattr(self, "_auto_approve", False):
+    from deepagents_code.approval_mode import ApprovalMode
+
+    target = (
+        ApprovalMode.MANUAL
+        if getattr(self, "_approval_mode", ApprovalMode.MANUAL)
+        is ApprovalMode.YOLO
+        else ApprovalMode.YOLO
+    )
+    changed = await self._set_approval_mode(target)
+    if changed and target is ApprovalMode.YOLO:
         _nemoclaw_notify_auto_approval_warning(self)
 
 
@@ -559,7 +589,7 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     return kwargs
 '''
 
-# Source-of-truth boundary: upstream Deep Agents Code 0.1.34 resolves and pins
+# Source-of-truth boundary: upstream Deep Agents Code 0.1.55 resolves and pins
 # destination DNS locally, then disables environment proxies. That is a sound
 # standalone SSRF defense but cannot operate in OpenShell's proxy-only network
 # namespace, where direct DNS and direct target connections are rejected. The
@@ -599,7 +629,7 @@ def _nemoclaw_get_class_path(self, provider_name: str):
 ModelConfig.get_class_path = _nemoclaw_get_class_path
 '''
 
-# Source-of-truth boundary: pinned upstream deepagents-code==0.1.34 cannot inject
+# Source-of-truth boundary: pinned upstream deepagents-code==0.1.55 cannot inject
 # managed progressive-disclosure or Relay middleware into both main and subagent
 # graphs, nor attach a metadata-only callback to the compiled graph. Without this
 # root-owned image patch, those graphs omit NemoClaw's runtime controls; this repo
@@ -641,7 +671,11 @@ def _nemoclaw_create_deep_agent(*args, **kwargs):
             ProgressiveToolDisclosureMiddleware,
         )
 
-        middleware.append(ProgressiveToolDisclosureMiddleware())
+        middleware.append(
+            ProgressiveToolDisclosureMiddleware(
+                registered_tools=kwargs.get("tools")
+            )
+        )
     if observability_active:
         from deepagents_code.nemoclaw_observability import new_relay_middleware
 
@@ -655,7 +689,16 @@ def _nemoclaw_create_deep_agent(*args, **kwargs):
             if isinstance(subagent, dict):
                 subagent_middleware = list(subagent.get("middleware") or ())
                 if progressive_active:
-                    subagent_middleware.append(ProgressiveToolDisclosureMiddleware())
+                    registered_tools = (
+                        subagent["tools"]
+                        if "tools" in subagent
+                        else kwargs.get("tools")
+                    )
+                    subagent_middleware.append(
+                        ProgressiveToolDisclosureMiddleware(
+                            registered_tools=registered_tools
+                        )
+                    )
                 if observability_active:
                     subagent_middleware.append(new_relay_middleware())
                 subagent = {**subagent, "middleware": subagent_middleware}
@@ -1309,7 +1352,24 @@ APPROVAL_PATCH = r'''
 _NEMOCLAW_AUTO_APPROVAL_DISABLED_MESSAGE = (
     "Auto-approval is disabled in NemoClaw-managed sandboxes."
 )
+_nemoclaw_original_approval_options = ApprovalMenu._build_options
 _nemoclaw_original_approval_selection = ApprovalMenu._handle_selection
+
+
+def _nemoclaw_build_approval_options(self) -> list[tuple[str, str]]:
+    """Keep the managed unrestricted action's label truthful in 0.1.55."""
+    options = _nemoclaw_original_approval_options(self)
+    if not self._is_auto_fallback:
+        options = [
+            (
+                "Auto-approve for this thread (a)"
+                if decision == "auto_approve_all"
+                else label,
+                decision,
+            )
+            for label, decision in options
+        ]
+    return options
 
 
 def _nemoclaw_handle_approval_selection(
@@ -1335,6 +1395,7 @@ def _nemoclaw_handle_approval_selection(
     )
 
 
+ApprovalMenu._build_options = _nemoclaw_build_approval_options
 ApprovalMenu._handle_selection = _nemoclaw_handle_approval_selection
 '''
 
@@ -1444,61 +1505,63 @@ MCP_EXPLICIT_CONFIG_PATCH = '''    if explicit_config_path:
         configs.append(load_mcp_config(config_path))
 '''
 
-SERVER_ENV_OVERRIDES_MARKER = '''        env.update(self._persistent_env_overrides)
-        env.update(self._env_overrides)
+SERVER_ENV_OVERRIDES_MARKER = '''            env.update(self._persistent_env_overrides)
+            env.update(self._env_overrides)
 '''
 
-SERVER_ENV_OVERRIDES_PATCH = '''        env.update(self._persistent_env_overrides)
-        env.update(self._env_overrides)
+SERVER_ENV_OVERRIDES_PATCH = '''            env.update(self._persistent_env_overrides)
+            env.update(self._env_overrides)
 
-        # Reassert the managed child-process posture after both override
-        # layers so restarts cannot re-enable update checks, optional
-        # analytics, or unmanaged telemetry export.
-        env["LANGGRAPH_NO_VERSION_CHECK"] = "true"
-        env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"
-        env["OTEL_ENABLED"] = "false"
-        for name in (
-            "OPENAI_PROXY",
-            "OTEL_EXPORTER_OTLP_ENDPOINT",
-            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-            "OTEL_EXPORTER_OTLP_HEADERS",
-            "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
-        ):
-            env.pop(name, None)
+            # Reassert the managed child-process posture after both override
+            # layers so restarts cannot re-enable update checks, optional
+            # analytics, or unmanaged telemetry export.
+            env["LANGGRAPH_NO_VERSION_CHECK"] = "true"
+            env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"
+            env["OTEL_ENABLED"] = "false"
+            for name in (
+                "OPENAI_PROXY",
+                "OTEL_EXPORTER_OTLP_ENDPOINT",
+                "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+                "OTEL_EXPORTER_OTLP_HEADERS",
+                "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+            ):
+                env.pop(name, None)
 
-        # Revalidate and bind the exact managed MCP snapshot before creating
-        # any launch artifacts. Initial start and restart share this path.
-        nemoclaw_mcp_pass_fds: tuple[int, ...] = ()
-        nemoclaw_mcp_binding_env = "NEMOCLAW_DCODE_MCP_BINDING"
-        env.pop(nemoclaw_mcp_binding_env, None)
-        nemoclaw_mcp_path = env.get("DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH")
-        if nemoclaw_mcp_path:
-            from deepagents_code._nemoclaw_managed import (
-                managed_mcp_server_binding,
+            # Revalidate and bind the exact managed MCP snapshot before creating
+            # any launch artifacts. Initial start and restart share this path.
+            nemoclaw_mcp_pass_fds: tuple[int, ...] = ()
+            nemoclaw_mcp_binding_env = "NEMOCLAW_DCODE_MCP_BINDING"
+            env.pop(nemoclaw_mcp_binding_env, None)
+            nemoclaw_mcp_path = env.get("DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH")
+            if nemoclaw_mcp_path:
+                from deepagents_code._nemoclaw_managed import (
+                    managed_mcp_server_binding,
+                )
+
+                descriptor, binding = managed_mcp_server_binding(nemoclaw_mcp_path)
+                nemoclaw_mcp_pass_fds = (descriptor,)
+                env[nemoclaw_mcp_binding_env] = binding
+'''
+
+SERVER_POPEN_MARKER = '''            self._process = subprocess.Popen(  # noqa: S603
+                cmd,
+                cwd=str(work_dir),
+                env=env,
+                stdout=self._log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=(sys.platform != "win32"),
             )
-
-            descriptor, binding = managed_mcp_server_binding(nemoclaw_mcp_path)
-            nemoclaw_mcp_pass_fds = (descriptor,)
-            env[nemoclaw_mcp_binding_env] = binding
 '''
 
-SERVER_POPEN_MARKER = '''        self._process = subprocess.Popen(  # noqa: S603, ASYNC220
-            cmd,
-            cwd=str(work_dir),
-            env=env,
-            stdout=self._log_file,
-            stderr=subprocess.STDOUT,
-        )
-'''
-
-SERVER_POPEN_PATCH = '''        self._process = subprocess.Popen(  # noqa: S603, ASYNC220
-            cmd,
-            cwd=str(work_dir),
-            env=env,
-            stdout=self._log_file,
-            stderr=subprocess.STDOUT,
-            pass_fds=nemoclaw_mcp_pass_fds,
-        )
+SERVER_POPEN_PATCH = '''            self._process = subprocess.Popen(  # noqa: S603
+                cmd,
+                cwd=str(work_dir),
+                env=env,
+                stdout=self._log_file,
+                stderr=subprocess.STDOUT,
+                pass_fds=nemoclaw_mcp_pass_fds,
+                start_new_session=(sys.platform != "win32"),
+            )
 '''
 
 UPDATE_CHECK_PATCH = r'''
@@ -1824,7 +1887,7 @@ def main() -> None:
         "server_config": root / "_server_config.py",
         "mcp_tools": root / "mcp_tools.py",
         "subagents": root / "subagents.py",
-        "hooks": root / "hooks.py",
+        "hooks": root / "hooks" / "legacy.py",
         "non_interactive": root / "client" / "non_interactive.py",
     }
     texts = {name: path.read_text(encoding="utf-8") for name, path in paths.items()}
@@ -1957,6 +2020,7 @@ def main() -> None:
             "_switch_model",
             "_absolutize_launch_relative_path",
             "_set_rubric_model",
+            "_set_approval_mode",
             "_on_auto_approve_enabled",
             "action_toggle_auto_approve",
         },
@@ -2037,7 +2101,7 @@ def main() -> None:
         paths["approval"],
         texts["approval"],
         "ApprovalMenu",
-        {"_handle_selection"},
+        {"_build_options", "_handle_selection"},
     )
     _require_methods(
         paths["status"],

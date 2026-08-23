@@ -49,10 +49,10 @@ const EXPECTED_PASS_MARKERS = [
 ];
 
 describe("strict Chat Completions tool-call probe (#4537)", () => {
-  it(
-    "validates Local Ollama strict tool-call enforcement against a hermetic mock",
+  it.each(Array.from(EXPECTED_PASS_MARKERS, (value) => [value]))(
+    "validates Local Ollama strict tool-call enforcement: %s",
     testTimeoutOptions(120_000),
-    () => {
+    (marker) => {
       const missingSourceModules = REQUIRED_SOURCE_MODULES.filter(
         (modulePath) => !fs.existsSync(modulePath),
       );
@@ -83,12 +83,10 @@ describe("strict Chat Completions tool-call probe (#4537)", () => {
         `strict tool-call probe driver exited with ${result.status}; stdout:\n${stdout}`,
       );
 
-      for (const marker of EXPECTED_PASS_MARKERS) {
-        assert.ok(
-          stdout.includes(marker),
-          `missing pass marker ${JSON.stringify(marker)} in driver stdout:\n${stdout}`,
-        );
-      }
+      assert.ok(
+        stdout.includes(marker),
+        `missing pass marker ${JSON.stringify(marker)} in driver stdout:\n${stdout}`,
+      );
     },
   );
 });

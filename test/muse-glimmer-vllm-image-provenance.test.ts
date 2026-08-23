@@ -35,14 +35,14 @@ const recipe = YAML.parse(readFileSync(RECIPE_PATH, "utf8")) as {
 };
 
 describe("Muse Glimmer vLLM image provenance", () => {
-  // source-shape-contract: security -- Exact manifest, publisher, platform, and source identities keep the credential-bearing managed runtime bound to the reviewed external image.
-  it("binds the selected runtime to its reviewed publisher, manifest, platform, and source", () => {
+  // source-shape-contract: security -- The checked-in provenance and recipe must resolve to the same reviewed external runtime image and size.
+  it("binds the checked-in provenance to the selected runtime", () => {
     verifyMuseGlimmerVllmImageProvenance(provenance);
 
     expect(recipe.spec.runtime).toMatchObject({
       architecture: "arm64",
       image: MUSE_GLIMMER_VLLM_IMAGE_REFERENCE,
-      imageDownloadSizeBytes: 9_699_710_136,
+      imageDownloadSizeBytes: 9_706_339_423,
     });
 
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
@@ -51,7 +51,7 @@ describe("Muse Glimmer vLLM image provenance", () => {
     expect(model).toBeDefined();
     expect(resolveVllmRuntimeProfile(profile!, model!)).toMatchObject({
       image: MUSE_GLIMMER_VLLM_IMAGE_REFERENCE,
-      imageDownloadSizeBytes: 9_699_710_136,
+      imageDownloadSizeBytes: 9_706_339_423,
     });
   });
 
@@ -63,12 +63,18 @@ describe("Muse Glimmer vLLM image provenance", () => {
     ["source drift", ["build", "sourceRevision"], "0".repeat(40)],
     ["label drift", ["reportedLabels", "org.opencontainers.image.revision"], "0".repeat(40)],
     ["support ancestry drift", ["upstreamSupport", "relationship"], "unverified"],
+    ["runtime dependency drift", ["runtimeDependencies", "huggingfaceHubVersion"], "1.27.0"],
+    [
+      "revision serialization drift",
+      ["revisionSerialization", "resolvedRevisionAfterPickle"],
+      "main",
+    ],
   ] as const)("rejects %s", (_name, pathParts, replacement) => {
     const changed = structuredClone(provenance) as JsonRecord;
     let target = changed;
-    for (const part of pathParts.slice(0, -1)) {
+    pathParts.slice(0, -1).forEach((part) => {
       target = target[part] as JsonRecord;
-    }
+    });
     const leaf = pathParts.at(-1)!;
     expect(Object.hasOwn(target, leaf)).toBe(true);
     const original = target[leaf];

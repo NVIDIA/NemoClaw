@@ -53,31 +53,29 @@ describe("source-loader Node options", () => {
     ).toBe(inspect);
   });
 
-  it("preserves malformed or unrelated options byte-for-byte (#6245)", () => {
+  it.each([
+    '--conditions="development mode --trace-warnings',
+    "--conditions='development mode --trace-warnings",
+    "--conditions=trailing\\",
+  ])("preserves malformed or unrelated options byte-for-byte [%s] (#6245)", (malformed) => {
     const nodeOptions =
       '--require=/tmp/onboard-script-mocks.cjs.backup --conditions="development mode"';
-    const malformedOptions = [
-      '--conditions="development mode --trace-warnings',
-      "--conditions='development mode --trace-warnings",
-      "--conditions=trailing\\",
-    ];
 
     expect(nodeOptionsWithoutSourceLoader(nodeOptions)).toBe(nodeOptions);
-    for (const malformed of malformedOptions) {
-      expect(nodeOptionsWithoutSourceLoader(malformed)).toBe(malformed);
-      const loaderBeforeMalformed = `${sourceLoaderNodeOptions(undefined)} ${malformed}`;
-      expect(nodeOptionsWithoutSourceLoader(loaderBeforeMalformed)).toBe(loaderBeforeMalformed);
-    }
+
+    expect(nodeOptionsWithoutSourceLoader(malformed)).toBe(malformed);
+    const loaderBeforeMalformed = `${sourceLoaderNodeOptions(undefined)} ${malformed}`;
+    expect(nodeOptionsWithoutSourceLoader(loaderBeforeMalformed)).toBe(loaderBeforeMalformed);
   });
 
-  it("preserves malformed source-loader assignments byte-for-byte (#6245)", () => {
-    const hook = "hook";
-    const malformedAssignments = ["--require='hook", '--require="hook', '--require=foo"bar'];
+  it.each(["--require='hook", '--require="hook', '--require=foo"bar'])(
+    "preserves malformed source-loader assignments byte-for-byte [%s] (#6245)",
+    (malformed) => {
+      const hook = "hook";
 
-    for (const malformed of malformedAssignments) {
       expect(nodeOptionsWithoutSourceLoader(malformed, hook)).toBe(malformed);
-    }
-  });
+    },
+  );
 
   it("removes an unquoted source-loader assignment with escaped backslashes (#6245)", () => {
     const escapedWindowsHook = String.raw`C:\\path\\hook`;

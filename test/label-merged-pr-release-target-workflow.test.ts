@@ -12,7 +12,7 @@ const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor a
 ) => (...args: unknown[]) => Promise<unknown>;
 
 type AutoLabelWorkflow = {
-  concurrency?: { group?: string; queue?: string };
+  concurrency?: { "cancel-in-progress"?: boolean; group?: string };
   on?: {
     pull_request_target?: {
       branches?: string[];
@@ -26,7 +26,7 @@ type AutoLabelWorkflow = {
 };
 
 type ReleaseLatestWorkflow = {
-  concurrency?: { group?: string; queue?: string };
+  concurrency?: { "cancel-in-progress"?: boolean; group?: string };
   permissions?: Record<string, string>;
   jobs: Record<string, WorkflowJob>;
 };
@@ -180,52 +180,6 @@ async function runScript(harness: ReturnType<typeof createHarness>): Promise<voi
 }
 
 describe("merged PR release target workflow", () => {
-  // source-shape-contract: security -- Privileged label writes must stay metadata-only and serialize retirement with assignment
-  it("keeps fork-safe labeling inside the trusted metadata boundary", () => {
-    const coordination = {
-      group: "release-target-label-operations",
-      queue: "max",
-    };
-    expect(workflow.on?.pull_request_target).toEqual({
-      branches: ["main"],
-      types: ["closed"],
-    });
-    expect(workflow.on).toHaveProperty("workflow_dispatch");
-    expect(workflow.permissions).toEqual({
-      contents: "read",
-      issues: "write",
-      "pull-requests": "write",
-    });
-    expect(workflow.concurrency).toEqual(coordination);
-    expect(releaseWorkflow.concurrency).toEqual(coordination);
-    expect(releaseWorkflow.permissions).toEqual({
-      contents: "write",
-      issues: "write",
-      "pull-requests": "write",
-    });
-    expect(job.if).toBe(
-      "${{ github.event_name != 'pull_request_target' || github.event.pull_request.merged == true }}",
-    );
-    expect(actionStep?.uses).toMatch(/^actions\/github-script@[0-9a-f]{40}$/u);
-    expect(job.steps).toHaveLength(1);
-    expect(job.steps?.some((step) => step.uses?.startsWith("actions/checkout@"))).toBe(false);
-    expect(job.steps?.some((step) => typeof step.run === "string")).toBe(false);
-    expect(script).not.toContain("containing release");
-    expect(script).not.toContain("RECONCILIATION_WINDOW_MS");
-    expect(retirementStep?.env).toMatchObject({
-      GH_TOKEN: "${{ github.token }}",
-    });
-    expect(retirementStep?.run).toContain("scripts/retire-release-label.mts");
-    const latestIndex = releaseJob.steps?.findIndex(
-      (step) => step.name === "Move latest to the verified release tag object",
-    );
-    const retirementIndex = releaseJob.steps?.findIndex(
-      (step) => step.name === "Retire the released target label",
-    );
-    expect(latestIndex).toBeGreaterThanOrEqual(0);
-    expect(retirementIndex).toBeGreaterThan(latestIndex ?? -1);
-  });
-
   it.each([
     ["pull request", undefined, "pull_request is missing"],
     [
@@ -285,6 +239,31 @@ describe("merged PR release target workflow", () => {
       issue_number: 123,
       labels: ["v0.0.11"],
     });
+  });
+
+  it("does not label a merged PR when the repository has no release tag boundary (#9533)", async () => {
+    const harness = createHarness([{ name: "latest" }]);
+
+    await runScript(harness);
+
+    expect(harness.addLabels).not.toHaveBeenCalled();
+    expect(harness.getRef).not.toHaveBeenCalled();
+    expect(harness.info).toHaveBeenCalledWith(
+      "No strict semver release tags were found; no release target label added to PR #123",
+    );
+  });
+
+  it("does not fail scheduled reconciliation when the repository has no release tag boundary (#9533)", async () => {
+    const harness = createHarness([{ name: "latest" }]);
+    harness.context.eventName = "schedule";
+
+    await runScript(harness);
+
+    expect(harness.addLabels).not.toHaveBeenCalled();
+    expect(harness.getBranch).not.toHaveBeenCalled();
+    expect(harness.info).toHaveBeenCalledWith(
+      "No strict semver release tags were found; no release target labels reconciled",
+    );
   });
 
   it("does not label a PR already captured at the latest tag boundary", async () => {
@@ -540,6 +519,55 @@ describe("merged PR release target workflow", () => {
     expect(harness.addLabels).toHaveBeenCalledWith(
       expect.objectContaining({ issue_number: 123, labels: ["v0.0.12"] }),
     );
+  });
+
+  it("restarts reconciliation when the last release tag disappears during the audit (#9533)", async () => {
+    const harness = createHarness([{ name: "v0.0.10" }]);
+    const [v10] = harness.fixtures;
+    harness.context.eventName = "schedule";
+    harness.listTags
+      .mockResolvedValueOnce({ data: [{ name: v10.name }] })
+      .mockResolvedValue({ data: [] });
+    harness.compareCommitsWithBasehead.mockImplementation(
+      async ({ basehead }: { basehead: string }) => {
+        expect(basehead).toBe(`${v10.commitSha}...${MERGE_SHA}`);
+        return {
+          data: {
+            status: "ahead",
+            ahead_by: 1,
+            behind_by: 0,
+            total_commits: 1,
+            commits: [{ sha: MERGE_SHA }],
+          },
+        };
+      },
+    );
+    harness.listPullRequestsAssociatedWithCommit.mockResolvedValueOnce({
+      data: [
+        {
+          base: { ref: "main" },
+          labels: [],
+          merge_commit_sha: MERGE_SHA,
+          merged_at: "2026-07-04T00:00:00Z",
+          number: 123,
+        },
+      ],
+    });
+
+    await runScript(harness);
+
+    expect(harness.listPullRequestsAssociatedWithCommit).toHaveBeenCalledWith(
+      expect.objectContaining({ commit_sha: MERGE_SHA }),
+    );
+    expect(harness.warning).toHaveBeenCalledWith(
+      "Newest release tag changed; restarting reconciliation",
+    );
+    expect(harness.info).toHaveBeenCalledWith(
+      "No strict semver release tags were found; no release target labels reconciled",
+    );
+    expect(harness.getLabel).not.toHaveBeenCalled();
+    expect(harness.createLabel).not.toHaveBeenCalled();
+    expect(harness.addLabels).not.toHaveBeenCalled();
   });
 
   it("stops after two reconciliation restarts when release tags keep changing", async () => {

@@ -18,7 +18,11 @@ import {
   servingProfileProvenance,
 } from "../inference/serving/profile-provenance";
 import type { CompiledServingCatalog, ServingProfileProvenance } from "../inference/serving/types";
-import { VLLM_EXTRA_ARGS_ENV } from "../inference/vllm-models";
+import {
+  NEMOCLAW_VLLM_GPU_DEVICE_ENV,
+  normalizeVllmGpuDevice,
+  VLLM_EXTRA_ARGS_ENV,
+} from "../inference/vllm-models";
 import {
   resolveToolDisclosureRequest,
   TOOL_DISCLOSURE_ENV,
@@ -44,7 +48,7 @@ import {
   resolveLocalModelProfilePlan,
 } from "./local-model-profile/plan";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
-import { parseReadOnlyHostMounts } from "./host-mount";
+import { parseReadOnlyHostMounts, requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
 import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
@@ -70,6 +74,7 @@ export interface OnboardCommandOptions {
   hostMounts?: import("../state/registry/types").SandboxHostMount[];
   sandboxGpu: "enable" | "disable" | null;
   sandboxGpuDevice: string | null;
+  vllmGpuDevice: string | null;
   acceptThirdPartySoftware: boolean;
   agent: string | null;
   agentsManifest: string | null;
@@ -91,10 +96,15 @@ export interface OnboardCommandOptions {
 export interface ResolveOnboardOptionsDeps {
   env: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
+  arch?: NodeJS.Architecture;
+  runtimeProviders?: import("./runtime-provider/access").RuntimeProviderBundleRegistry;
   listAgents?: () => string[];
   listServingProfiles?: () => ServingProfileListEntry[];
   loadServingCatalog?: () => CompiledServingCatalog;
-  loadSession?: () => { servingProfileProvenance?: ServingProfileProvenance | null } | null;
+  loadSession?: () => {
+    servingProfileProvenance?: ServingProfileProvenance | null;
+    vllmGpuDevice?: string | null;
+  } | null;
   error?: (message?: string) => void;
   exit?: (code: number) => never;
   resumeIntent?: ResolvedOnboardResumeIntent;
@@ -188,25 +198,52 @@ function resolveSandboxGpu(flags: OnboardFlags): "enable" | "disable" | null {
   return null;
 }
 
+function resolveVllmGpuDevice(
+  requested: string | undefined,
+  resume: boolean,
+  deps: ResolveOnboardOptionsDeps,
+): string | null {
+  let normalized: string | null = null;
+  if (requested !== undefined) {
+    try {
+      normalized = normalizeVllmGpuDevice(requested);
+    } catch (error) {
+      fail(deps, `  Invalid --vllm-gpu-device: ${(error as Error).message}.`);
+    }
+  }
+  if (!resume) return normalized;
+
+  const recorded = deps.loadSession?.()?.vllmGpuDevice ?? null;
+  if (!recorded) {
+    if (normalized) {
+      fail(
+        deps,
+        "  --vllm-gpu-device cannot be added while resuming a legacy onboarding session; start fresh instead.",
+      );
+    }
+    return null;
+  }
+  if (normalized && normalized !== recorded) {
+    fail(deps, `  --vllm-gpu-device ${normalized} does not match resumed GPU device ${recorded}.`);
+  }
+  return recorded;
+}
+
 function resolveHostMounts(
   values: readonly string[] | undefined,
   experimentalProfile: ExperimentalOnboardProfile | null,
   deps: ResolveOnboardOptionsDeps,
 ): import("../state/registry/types").SandboxHostMount[] {
-  if ((values?.length ?? 0) > 0 && experimentalProfile === PORTABLE_EXPERIMENTAL_PROFILE) {
-    fail(
-      deps,
-      "  --host-mount requires the OpenShell Docker driver and cannot be used with --experimental-profile portable.",
-    );
-  }
   let mounts: import("../state/registry/types").SandboxHostMount[];
   try {
     mounts = parseReadOnlyHostMounts(values ?? []);
   } catch (error) {
     return fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
   }
-  if (mounts.length > 0 && (deps.platform ?? process.platform) !== "linux") {
-    fail(deps, "  --host-mount is currently supported only on Linux and WSL2 hosts.");
+  try {
+    requireReadOnlyHostMountRuntimeSupport(mounts, { ...deps, experimentalProfile });
+  } catch (error) {
+    fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
   }
   return mounts;
 }
@@ -316,13 +353,54 @@ function resolveServingProfileLifecycle(
     );
   }
   const requested = explicit ?? installerProfile;
-  if (!resume) return requested;
-  return resolveResumedServingProfile(requested, deps);
+  const settled = resume ? resolveResumedServingProfile(requested, deps) : requested;
+  // Check the profile the run will actually apply, not just an explicit
+  // --profile: the installer and resume paths reach the same environment
+  // application, and an unmapped backend there would set the preset while
+  // leaving the provider unresolved — the silent fall-through to the provider
+  // menu this fixes (#9313).
+  return assertServingProfileProviderSupported(settled, deps);
+}
+
+function assertServingProfileProviderSupported(
+  provenance: ServingProfileProvenance | null,
+  deps: ResolveOnboardOptionsDeps,
+): ServingProfileProvenance | null {
+  const unsupported = provenance !== null && servingProfileProviderKey(provenance) === null;
+  return unsupported
+    ? fail(
+        deps,
+        `  Serving profile '${provenance.preset.id}' uses backend '${provenance.recipe.backend}', which onboarding cannot configure.`,
+      )
+    : provenance;
 }
 
 function activeServingProfileId(provenance: ServingProfileProvenance | null): string | null {
   if (!provenance || provenance.preset.supportState === "disabled") return null;
   return provenance.preset.id;
+}
+
+/**
+ * Provider the requested serving profile has to run through.
+ *
+ * The preset alone only tells provider selection *which* profile to serve once
+ * a local-inference provider has been chosen; it never chooses the provider.
+ * Because `--profile` also rejects an explicit `NEMOCLAW_PROVIDER`, leaving
+ * this unset dropped onboarding into the interactive provider menu with the
+ * requested profile unusable (#9313). Returns null for a backend that has no
+ * provider wired up, which the caller reports rather than silently ignoring.
+ */
+export function servingProfileProviderKey(provenance: ServingProfileProvenance): string | null {
+  switch (provenance.recipe.backend) {
+    // Kept as literals so this module does not take a dependency on the
+    // provider menu; `command.test.ts` asserts they match its exported keys.
+    case "vllm":
+      return "install-vllm";
+    case "install-llama-cpp":
+      return "install-llama-cpp";
+    default:
+      return null;
+  }
 }
 
 function resolveResumedServingProfile(
@@ -373,6 +451,7 @@ export function resolveOnboardOptions(
   const resume = deps.resumeIntent?.effectiveResume ?? flags.resume === true;
   const agent = resolveAgent(flags.agent, deps);
   const servingProfileProvenance = resolveServingProfileLifecycle(flags, deps, resume);
+  const vllmGpuDevice = resolveVllmGpuDevice(flags["vllm-gpu-device"], resume, deps);
   validateObservabilityAgent(flags.observability, agent, deps);
   let toolDisclosure: ToolDisclosure | null;
   try {
@@ -398,6 +477,7 @@ export function resolveOnboardOptions(
     ...(hostMounts.length > 0 ? { hostMounts } : {}),
     sandboxGpu: resolveSandboxGpu(flags),
     sandboxGpuDevice: flags["sandbox-gpu-device"] ?? null,
+    vllmGpuDevice,
     acceptThirdPartySoftware:
       flags[NOTICE_ACCEPT_FLAG_NAME] === true || String(deps.env[NOTICE_ACCEPT_ENV] || "") === "1",
     agent,
@@ -479,9 +559,23 @@ function applyServingProfileEnvironment(
   if (!options.servingProfile) return () => {};
   const previous = env[NEMOCLAW_SERVING_PRESET_ENV];
   env[NEMOCLAW_SERVING_PRESET_ENV] = options.servingProfile;
+  // The preset selects the model once a provider is chosen; the profile's
+  // backend is what selects the provider. Setting only the former left the
+  // provider unresolved and onboarding fell back to the menu (#9313).
+  // `validateServingProfileConflicts` already rejected an operator-supplied
+  // NEMOCLAW_PROVIDER, so nothing of the caller's is being overwritten here.
+  const providerKey = options.servingProfileProvenance
+    ? servingProfileProviderKey(options.servingProfileProvenance)
+    : null;
+  const previousProvider = env.NEMOCLAW_PROVIDER;
+  if (providerKey) env.NEMOCLAW_PROVIDER = providerKey;
   return () => {
     if (previous === undefined) delete env[NEMOCLAW_SERVING_PRESET_ENV];
     else env[NEMOCLAW_SERVING_PRESET_ENV] = previous;
+    if (providerKey) {
+      if (previousProvider === undefined) delete env.NEMOCLAW_PROVIDER;
+      else env.NEMOCLAW_PROVIDER = previousProvider;
+    }
   };
 }
 
@@ -536,6 +630,7 @@ type OnboardCommandAttemptResult = "complete" | "retry" | number;
 interface OnboardCommandEnvironmentSnapshot {
   agentsManifest: string | undefined;
   toolDisclosure: string | undefined;
+  vllmGpuDevice: string | undefined;
   ollamaAutostart: { present: boolean; value: string | undefined };
 }
 
@@ -585,6 +680,8 @@ function restoreOnboardCommandEnvironment(
   restoreServingProfileEnvironment();
   if (snapshot.toolDisclosure === undefined) delete env[TOOL_DISCLOSURE_ENV];
   else env[TOOL_DISCLOSURE_ENV] = snapshot.toolDisclosure;
+  if (snapshot.vllmGpuDevice === undefined) delete env[NEMOCLAW_VLLM_GPU_DEVICE_ENV];
+  else env[NEMOCLAW_VLLM_GPU_DEVICE_ENV] = snapshot.vllmGpuDevice;
   if (snapshot.ollamaAutostart.present) {
     env.NEMOCLAW_OLLAMA_NO_AUTOSTART = snapshot.ollamaAutostart.value ?? "";
   } else {
@@ -603,6 +700,7 @@ async function runOnboardCommandAttempt(
   const environmentSnapshot: OnboardCommandEnvironmentSnapshot = {
     agentsManifest: env.NEMOCLAW_EXTRA_AGENTS_JSON,
     toolDisclosure: env[TOOL_DISCLOSURE_ENV],
+    vllmGpuDevice: env[NEMOCLAW_VLLM_GPU_DEVICE_ENV],
     ollamaAutostart: {
       present: Object.prototype.hasOwnProperty.call(env, "NEMOCLAW_OLLAMA_NO_AUTOSTART"),
       value: env.NEMOCLAW_OLLAMA_NO_AUTOSTART,
@@ -615,6 +713,8 @@ async function runOnboardCommandAttempt(
     restoreServingProfileEnvironment = applyServingProfileEnvironment(options, env);
     const toolDisclosure = toolDisclosureEnvironmentOverride(options, deps.flags);
     if (toolDisclosure) env[TOOL_DISCLOSURE_ENV] = toolDisclosure;
+    if (options.vllmGpuDevice) env[NEMOCLAW_VLLM_GPU_DEVICE_ENV] = options.vllmGpuDevice;
+    else delete env[NEMOCLAW_VLLM_GPU_DEVICE_ENV];
     if (options.noOllamaAutostart && !options.experimentalProfile) {
       env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
     }

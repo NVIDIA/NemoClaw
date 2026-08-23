@@ -1,8 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import type { ServingProfileProvenance } from "../inference/serving/types";
-import { redactSensitiveText } from "../security/redact";
+import { NEMOCLAW_VLLM_GPU_DEVICE_ENV, parseVllmGpuDevice } from "../inference/vllm-models";
+import { PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
+import { redact, redactFull, redactSensitiveText } from "../security/redact";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import {
   deriveCheckpointFromSession,
@@ -24,8 +28,10 @@ import { recordCheckpointSandboxIdentity } from "./checkpoint-record";
 import { checkpointProvesSandboxStepComplete } from "./checkpoint-replay";
 import { EXPERIMENTAL_PROFILE_ENV } from "./docker-driver-platform";
 import type { PortableInferenceActivation } from "./experimental/portable-inference-descriptor";
+import { requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import type { ResumeConfigConflict } from "./resume-config";
 import type { StationExpressResumeIntent } from "./station-express-resume";
+import { ensureRequiredTierPolicyPresets } from "./policy-tier-suppression";
 import {
   assertLockedResumeIntentSnapshot as assertLockedResumeIntentSnapshotAtPath,
   isOnboardResumeIntentRaceError,
@@ -44,6 +50,7 @@ export {
   reportReadOnlyHostMounts,
   verifyReadOnlyHostMountSources,
 } from "./host-mount";
+export { requireReadOnlyHostMountRuntimeSupport };
 export {
   isOnboardResumeIntentRaceError,
   OnboardResumeIntentError,
@@ -91,6 +98,7 @@ const PORTABLE_DEFAULT_ENV_KEYS = [
   TOOL_DISCLOSURE_ENV,
   "NEMOCLAW_PROVIDER",
   "NEMOCLAW_MODEL",
+  "NEMOCLAW_PROVIDER_MODEL",
   "NEMOCLAW_ENDPOINT_URL",
   "NEMOCLAW_PREFERRED_API",
   "NEMOCLAW_OLLAMA_NO_AUTOSTART",
@@ -111,8 +119,17 @@ interface PreviousEnvironmentValue {
 
 export interface PortableOnboardEnvironmentScope {
   readonly env: NodeJS.ProcessEnv;
+  createHermesPortablePodmanSourceEnvironment(
+    runtimeAuthority: CheckpointPortableRuntimeAuthority,
+  ): NodeJS.ProcessEnv;
   installRuntime(input: { containersConf: string; socketPath: string }): void;
   restore(): void;
+}
+
+/** Keep one prepared portable runtime authority with the environment scope that installed it. */
+export interface PortableOnboardRuntimeContext {
+  readonly authority: CheckpointPortableRuntimeAuthority;
+  readonly environmentScope: PortableOnboardEnvironmentScope | null;
 }
 
 export function createDefaultResumeProfileEnvironmentScope(
@@ -124,6 +141,9 @@ export function createDefaultResumeProfileEnvironmentScope(
   let restored = false;
   return {
     env,
+    createHermesPortablePodmanSourceEnvironment() {
+      throw new Error("Default onboarding has no portable Podman environment authority.");
+    },
     installRuntime() {
       throw new Error("Default onboarding resume cannot install portable runtime authority.");
     },
@@ -141,11 +161,13 @@ const ONBOARD_DEFERRED_EXIT_ERROR = Symbol.for("nemoclaw.onboard.deferred-exit-e
 export class OnboardDeferredExitError extends Error {
   readonly [ONBOARD_DEFERRED_EXIT_ERROR] = true;
   readonly code: number;
+  readonly preserveIncompleteSession: boolean;
 
-  constructor(code: number) {
+  constructor(code: number, options: { preserveIncompleteSession?: boolean } = {}) {
     super(`Onboarding requested exit ${String(code)}.`);
     this.name = "OnboardDeferredExitError";
     this.code = code;
+    this.preserveIncompleteSession = options.preserveIncompleteSession === true;
   }
 }
 
@@ -160,6 +182,10 @@ export function isOnboardDeferredExitError(error: unknown): error is OnboardDefe
     typeof candidate.code === "number" &&
     Number.isInteger(candidate.code)
   );
+}
+
+export function shouldPreserveIncompleteOnboardSession(error: unknown): boolean {
+  return isOnboardDeferredExitError(error) && error.preserveIncompleteSession;
 }
 
 interface DeferredExitOptions {
@@ -194,6 +220,10 @@ export function redactOnboardDiagnosticText(message: string): string {
   return redactSensitiveText(message) ?? "";
 }
 
+export function redactOnboardCommandDiagnosticText(message: string): string {
+  return redactSensitiveText(redact(redactFull(message))) ?? "";
+}
+
 export function createPortableOnboardEnvironmentScope(
   env: NodeJS.ProcessEnv,
   activation: PortableInferenceActivation | null,
@@ -216,13 +246,24 @@ export function createPortableOnboardEnvironmentScope(
     env.NEMOCLAW_PREFERRED_API = "openai-completions";
   }
   if (!options.resume) {
+    const requestedModel = previous.get("NEMOCLAW_MODEL")?.value?.trim();
+    const requestedPolicyPresets = previous.get("NEMOCLAW_POLICY_PRESETS")?.value;
     env[TOOL_DISCLOSURE_ENV] = "direct";
     env.NEMOCLAW_PROVIDER = activation ? "custom" : "ollama";
-    env.NEMOCLAW_MODEL = activation?.model ?? "qwen3-vl:4b";
-    env.NEMOCLAW_POLICY_MODE = "custom";
-    env.NEMOCLAW_POLICY_PRESETS =
-      previous.get("NEMOCLAW_POLICY_PRESETS")?.value ?? "personal-open-internet";
-    env.NEMOCLAW_POLICY_TIER = "personal";
+    env.NEMOCLAW_MODEL = activation?.model ?? (requestedModel || "qwen3-vl:4b");
+    env.NEMOCLAW_POLICY_TIER = PERSONAL_POLICY_TIER_NAME;
+    if (requestedPolicyPresets?.trim()) {
+      env.NEMOCLAW_POLICY_MODE = "custom";
+      env.NEMOCLAW_POLICY_PRESETS = ensureRequiredTierPolicyPresets(
+        PERSONAL_POLICY_TIER_NAME,
+        requestedPolicyPresets
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean),
+      ).join(",");
+    } else {
+      env.NEMOCLAW_POLICY_MODE = "suggested";
+    }
   } else {
     const requestedPolicyPresets = previous.get("NEMOCLAW_POLICY_PRESETS")?.value?.trim();
     if (requestedPolicyPresets) {
@@ -231,13 +272,40 @@ export function createPortableOnboardEnvironmentScope(
     }
   }
 
+  let installedRuntime: { readonly containersConf: string; readonly dockerHost: string } | null =
+    null;
   let restored = false;
   return {
     env,
+    createHermesPortablePodmanSourceEnvironment(runtimeAuthority) {
+      if (restored || !installedRuntime) {
+        throw new Error("Hermes portable Podman environment authority is not active.");
+      }
+      const expectedContainersConf = path.join(
+        runtimeAuthority.configHome,
+        "nemoclaw",
+        "portable",
+        "containers.conf",
+      );
+      const expectedDockerHost = `unix://${runtimeAuthority.socketPath}`;
+      if (
+        installedRuntime.containersConf !== expectedContainersConf ||
+        installedRuntime.dockerHost !== expectedDockerHost
+      ) {
+        throw new Error("Hermes portable Podman environment disagrees with runtime authority.");
+      }
+      const source = { ...env };
+      if (source.CONTAINERS_CONF === installedRuntime.containersConf) {
+        delete source.CONTAINERS_CONF;
+      }
+      if (source.DOCKER_HOST === installedRuntime.dockerHost) delete source.DOCKER_HOST;
+      return source;
+    },
     installRuntime({ containersConf, socketPath }) {
       env.NETAVARK_FW = "iptables";
       env.CONTAINERS_CONF = containersConf;
       env.DOCKER_HOST = `unix://${socketPath}`;
+      installedRuntime = { containersConf, dockerHost: env.DOCKER_HOST };
     },
     restore() {
       if (restored) return;
@@ -295,6 +363,10 @@ export interface OnboardSessionBootstrapDeps {
   cliName(): string;
   error(message: string): void;
   exitProcess(code: number): never;
+  requireHostMountRuntimeSupport(
+    mounts: readonly import("../state/registry/types").SandboxHostMount[] | undefined,
+    checkpointProfile?: CheckpointOnboardProfile,
+  ): void;
   resolveResumeCheckpoint(): CheckpointLoadResult;
 }
 
@@ -475,6 +547,10 @@ async function prepareResumeSession(
   deps: OnboardSessionBootstrapDeps,
 ): Promise<OnboardSessionBootstrapResult> {
   let session = deps.loadSession();
+  deps.requireHostMountRuntimeSupport(
+    input.requestedHostMounts?.length ? input.requestedHostMounts : session?.metadata?.hostMounts,
+    input.checkpointProfile,
+  );
   deps.setOnboardBrandingAgent(input.agentFlag || session?.agent || input.envAgent || null);
   if (!session || session.resumable === false) {
     reportMissingResumeSession(deps);
@@ -521,6 +597,7 @@ function prepareFreshSession(
   input: OnboardSessionBootstrapInput,
   deps: OnboardSessionBootstrapDeps,
 ): OnboardSessionBootstrapResult {
+  deps.requireHostMountRuntimeSupport(input.requestedHostMounts, input.checkpointProfile);
   if (input.fresh) {
     deps.clearSession();
   }
@@ -534,6 +611,7 @@ function prepareFreshSession(
     observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
     stationExpressIntent: input.stationExpressIntent ?? null,
     servingProfileProvenance: input.servingProfileProvenance ?? null,
+    vllmGpuDevice: parseVllmGpuDevice(process.env[NEMOCLAW_VLLM_GPU_DEVICE_ENV]),
     metadata: {
       gatewayName: "nemoclaw",
       fromDockerfile: fromDockerfile || null,
@@ -559,10 +637,17 @@ export async function prepareOnboardSession(
 
 export function prepareOnboardSessionValidated(
   input: OnboardSessionBootstrapInput,
-  deps: Omit<OnboardSessionBootstrapDeps, "resolveResumeCheckpoint">,
+  deps: Omit<
+    OnboardSessionBootstrapDeps,
+    "requireHostMountRuntimeSupport" | "resolveResumeCheckpoint"
+  >,
 ): Promise<OnboardSessionBootstrapResult> {
   return prepareOnboardSession(input, {
     ...deps,
+    requireHostMountRuntimeSupport: (mounts, checkpointProfile) =>
+      requireReadOnlyHostMountRuntimeSupport(mounts, {
+        experimentalProfile: checkpointProfile === "portable" ? "portable" : null,
+      }),
     resolveResumeCheckpoint: defaultResolveResumeCheckpoint,
   });
 }

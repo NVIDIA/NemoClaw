@@ -4,7 +4,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../adapters/docker", () => ({
+  dockerCapture: vi.fn(),
+  dockerForceRm: vi.fn(),
   dockerInspect: vi.fn(),
+  dockerRunDetached: vi.fn(),
 }));
 
 vi.mock("../state/registry", () => ({
@@ -217,9 +220,11 @@ describe("gateway GPU passthrough inspection", () => {
       ).toThrow("exit 1");
 
       expect(errors).toContain("    openshell gateway remove nemoclaw");
-      expect(errors).toContain(
-        "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
+      expect(errors).toContain("  If a privileged process remains, do not use a host-wide process match.");
+      expect(errors.join("\n")).toContain(
+        "gateway name 'nemoclaw', exact port, command line, PID file, runtime marker, and loaded sandbox namespace",
       );
+      expect(errors.join("\n")).not.toContain("pkill");
       expect(errors).toContain("    nemoclaw onboard --gpu");
       expect(errors.join("\n")).not.toContain("gateway destroy");
     } finally {

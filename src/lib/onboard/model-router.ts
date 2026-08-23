@@ -37,8 +37,8 @@ import {
 } from "./model-router-command";
 import {
   doesModelRouterProcessOwnPort,
-  findModelRouterPidForPort,
   getRouterHealthSnapshot,
+  inspectModelRouterProcessForPort,
   isRouterHealthy,
   ROUTER_HEALTH_TIMEOUT_MS as ROUTER_HEALTH_REQUEST_TIMEOUT_MS,
   type RouterHealthSnapshot,
@@ -61,9 +61,9 @@ const ROUTER_HEALTH_INTERVAL_MS = 2000;
 const ROUTER_STARTUP_TIMEOUT_MS = 10 * 60_000;
 // LiteLLM's /health live-probes every upstream endpoint per request, so it
 // can need far longer than the 3-second liveness budget to answer (#8962).
-// The startup poll keeps the 3-second budget: the status-only liveness
-// probe must not accept a fast 200 that names zero healthy endpoints, so
-// recovery for a slow-but-healthy router runs through the body-checked
+// The startup poll keeps the 3-second budget and reads the body, so it
+// never accepts a fast 200 that names zero healthy endpoints; recovery for
+// a router whose /health outruns that budget runs through the body-checked
 // final snapshot after the poll exhausts its retries.
 const ROUTER_FINAL_HEALTH_SNAPSHOT_TIMEOUT_MS = 30_000;
 const ROUTER_LOG_TAIL_LINES = 20;
@@ -468,7 +468,8 @@ export async function startModelRouter(
       Math.min(ROUTER_HEALTH_REQUEST_TIMEOUT_MS, Math.ceil(remainingMs)),
     );
     healthAttempts += 1;
-    const healthy = await deps.isRouterHealthy(port, healthTimeoutMs);
+    const pollSnapshot = await deps.getRouterHealthSnapshot(port, healthTimeoutMs);
+    const healthy = isRouterSnapshotReady(pollSnapshot);
     const processAlive = deps.isProcessAlive(pid);
     if (healthy && processAlive) return pid;
     if (!processAlive) {
@@ -484,7 +485,7 @@ export async function startModelRouter(
   const finalSnapshot: RouterHealthSnapshot = childExited
     ? { healthy: false, body: null }
     : await deps.getRouterHealthSnapshot(port, ROUTER_FINAL_HEALTH_SNAPSHOT_TIMEOUT_MS);
-  if (finalSnapshot.healthy && hasHealthyEndpoint(finalSnapshot.body) && deps.isProcessAlive(pid)) {
+  if (isRouterSnapshotReady(finalSnapshot) && deps.isProcessAlive(pid)) {
     return pid;
   }
   try {
@@ -503,11 +504,11 @@ export async function startModelRouter(
   );
 }
 
-/** True when the parsed /health body names at least one healthy endpoint. */
-function hasHealthyEndpoint(body: string | null): boolean {
-  if (!body) return false;
+/** Router readiness: /health answered 2xx and names at least one healthy endpoint. */
+function isRouterSnapshotReady(snapshot: RouterHealthSnapshot): boolean {
+  if (!snapshot.healthy || !snapshot.body) return false;
   try {
-    const parsed = JSON.parse(body) as { healthy_endpoints?: readonly unknown[] };
+    const parsed = JSON.parse(snapshot.body) as { healthy_endpoints?: readonly unknown[] };
     return Array.isArray(parsed?.healthy_endpoints) && parsed.healthy_endpoints.length > 0;
   } catch {
     return false;
@@ -577,6 +578,12 @@ function getRoutedProfile(): BlueprintInferenceProfile {
   return bp;
 }
 
+export const DEFAULT_MODEL_ROUTER_PORT = 4000;
+
+export function resolveModelRouterPort(): number {
+  return getRoutedProfile().router?.port || DEFAULT_MODEL_ROUTER_PORT;
+}
+
 export function isRoutedInferenceProvider(provider: string | null | undefined): boolean {
   if (!provider) return false;
   if (provider === "nvidia-router") return true;
@@ -589,7 +596,7 @@ const MODEL_ROUTER_SERVICE_LABEL = "Model Router";
 /**
  * Verify the host Model Router is reachable from the OpenShell Docker network.
  *
- * `isRouterHealthy()` only proves the router answers on the host loopback. On
+ * A healthy /health answer only proves the router responds on the host loopback. On
  * Linux Docker-driver hosts with UFW default-deny, a sandbox container can
  * still fail to reach `host.openshell.internal:<routerPort>` even though the
  * host curl succeeds (#4564). This mirrors the Ollama auth-proxy probe: on a
@@ -615,7 +622,7 @@ async function verifyModelRouterSandboxReachability(routerPort: number): Promise
 
 export async function reconcileModelRouter(): Promise<void> {
   const bp = getRoutedProfile();
-  const routerPort = bp.router.port || 4000;
+  const routerPort = resolveModelRouterPort();
   const routerCredentialEnv =
     bp.router.credential_env || bp.credential_env || DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV;
   const routerCredential =
@@ -630,19 +637,29 @@ export async function reconcileModelRouter(): Promise<void> {
   const recordedPid = session?.routerPid ?? null;
   const recordedCredentialHash = session?.routerCredentialHash ?? null;
 
-  if (await isRouterHealthy(routerPort)) {
+  // One snapshot answers both questions: `healthy` is the occupied-port check,
+  // and `isRouterSnapshotReady` is the single authority for declaring the
+  // router usable, exactly as it is for the startup poll. Budget the body read,
+  // because /health probes every upstream endpoint and can answer well after
+  // the 3-second liveness budget.
+  const snapshot = await getRouterHealthSnapshot(
+    routerPort,
+    ROUTER_FINAL_HEALTH_SNAPSHOT_TIMEOUT_MS,
+  );
+  if (snapshot.healthy) {
     const recordedProcessOwnsRouter = doesModelRouterProcessOwnPort(recordedPid, routerPort);
     if (
       routerCredentialHash &&
       recordedCredentialHash === routerCredentialHash &&
-      recordedProcessOwnsRouter
+      recordedProcessOwnsRouter &&
+      isRouterSnapshotReady(snapshot)
     ) {
       console.log(`  ✓ Model router is already healthy on port ${routerPort}`);
       await verifyModelRouterSandboxReachability(routerPort);
       return;
     }
     if (recordedProcessOwnsRouter) {
-      console.log("  Restarting model router with updated credentials...");
+      console.log("  Restarting model router...");
       await stopModelRouterProcess(
         requireValue(recordedPid, "Expected recorded router PID"),
         routerPort,
@@ -653,13 +670,15 @@ export async function reconcileModelRouter(): Promise<void> {
       // requiring a manual stop-and-retry. Only stop it if the cmdline
       // confirms it is actually model-router proxy — never kill an unrelated
       // service that happens to occupy the port. See issue #5169.
-      const orphanPid = findModelRouterPidForPort(routerPort);
-      if (orphanPid !== null) {
-        console.log(`  Stopping orphaned model router (PID ${orphanPid})...`);
-        await stopModelRouterProcess(orphanPid, routerPort);
+      const orphan = inspectModelRouterProcessForPort(routerPort);
+      if (orphan.status === "found") {
+        console.log(`  Stopping orphaned model router (PID ${orphan.pid})...`);
+        await stopModelRouterProcess(orphan.pid, routerPort);
       } else {
+        const inventoryDetail =
+          orphan.status === "unavailable" ? " The host process inventory is unavailable." : "";
         throw new Error(
-          `Port ${routerPort} already has a healthy router endpoint, but its credential state is unknown. Stop the existing model-router process and rerun onboarding.`,
+          `Port ${routerPort} already has a healthy router endpoint, but its credential state is unknown.${inventoryDetail} Stop the existing model-router process and rerun onboarding.`,
         );
       }
     }

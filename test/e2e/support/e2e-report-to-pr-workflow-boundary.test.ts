@@ -97,7 +97,7 @@ function executeGenerateMatrixWithPlannerOutput(
     fakeNpx,
     [
       "#!/usr/bin/env bash",
-      "expected=(tsx tools/e2e/workflow-plan.mts --ci-output)",
+      "expected=(--no-install tsx tools/e2e/workflow-plan.mts --ci-output)",
       'actual=("$@")',
       '[[ "${#actual[@]}" -eq "${#expected[@]}" ]] || exit 97',
       'for index in "${!expected[@]}"; do [[ "${actual[$index]}" == "${expected[$index]}" ]] || exit 97; done',
@@ -124,6 +124,8 @@ function executeGenerateMatrixWithPlannerOutput(
           GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
           INFERENCE_MODE: "mock",
           JOBS: options.jobs ?? "cloud-onboard",
+          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "false",
+          NVIDIA_OWNED: "false",
           PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
           TARGETS: options.targets ?? "",
         },

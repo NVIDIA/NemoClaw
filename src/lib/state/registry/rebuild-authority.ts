@@ -5,9 +5,9 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import {
-  isShippedManagedImageAgent,
+  isManagedImageAgent,
   MANAGED_IMAGE_REPOSITORIES,
-  type ShippedManagedImageAgent,
+  type ManagedImageAgent,
 } from "../../onboard/managed-image/contract";
 import { withLock } from "./lock";
 import { load, save } from "./persistence";
@@ -76,10 +76,10 @@ function requireReceiptAgent(
   agent: SandboxEntry["agent"],
   workload: ManagedWorkloadReceipt,
   label: string,
-): ShippedManagedImageAgent {
+): ManagedImageAgent {
   if (
     typeof agent !== "string" ||
-    !isShippedManagedImageAgent(agent) ||
+    !isManagedImageAgent(agent) ||
     !workload.reference.startsWith(`${MANAGED_IMAGE_REPOSITORIES[agent]}@sha256:`)
   ) {
     throw new SandboxRebuildAuthorityError(

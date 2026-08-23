@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { GpuDetection } from "../inference/nim";
+import { setOnboardBrandingAgent } from "./branding";
 import {
   printCdiSpecUnavailableError,
   printDockerNotReachableError,
@@ -37,6 +38,8 @@ function withStderrColorDepth<T>(colorDepth: number, callback: () => T): T {
 
 describe("onboard preflight severity messages (#6004)", () => {
   afterEach(() => {
+    setOnboardBrandingAgent(null);
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -121,11 +124,15 @@ describe("onboard preflight severity messages (#6004)", () => {
     expect(lines(warn).join("\n")).toContain("may fail with OOM");
   });
 
-  it("prints a missing messaging provider to stderr with a ⚠ marker and fix hint", () => {
+  it("routes missing messaging provider repair through profile-aware onboarding (#9875)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    setOnboardBrandingAgent("hermes");
+    vi.stubEnv("NEMOCLAW_INVOKED_AS", "nemohermes");
     printMessagingProviderMissing("slack");
     expect(lines(warn)[0]).toContain("⚠ Messaging provider 'slack' was not found in the gateway.");
-    expect(lines(warn).join("\n")).toContain("openshell provider create --name slack");
+    expect(lines(warn).join("\n")).toContain(
+      "rerun nemohermes onboard with the required messaging credentials",
+    );
   });
 });
 

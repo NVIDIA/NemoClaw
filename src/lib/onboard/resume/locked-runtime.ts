@@ -6,12 +6,14 @@ import type {
   CheckpointPortableRuntimeAuthority,
   OnboardCheckpoint,
 } from "../../state/onboard-checkpoint-types";
+import { requireReadOnlyHostMountRuntimeSupport } from "../host-mount";
 import {
   assertLockedResumeIntentSnapshot,
   createDefaultResumeProfileEnvironmentScope,
   createPortableOnboardEnvironmentScope,
   preparePortableExperimentalHost,
   type PortableOnboardEnvironmentScope,
+  type PortableOnboardRuntimeContext,
 } from "../session-bootstrap";
 import type { OnboardOptions } from "../types";
 import { ensureUsageNoticeConsent } from "../usage-notice";
@@ -19,7 +21,7 @@ import { ensureUsageNoticeConsent } from "../usage-notice";
 export interface LockedOnboardRuntimePreparation {
   readonly checkpointProfile: CheckpointOnboardProfile;
   readonly environmentScope: PortableOnboardEnvironmentScope | null;
-  readonly preparedPortableAuthority: CheckpointPortableRuntimeAuthority | null;
+  readonly portableRuntimeContext: PortableOnboardRuntimeContext | null;
 }
 
 async function ensureNoticeAccepted(
@@ -86,12 +88,12 @@ function prepareEnvironment(
   expectedPortableAuthority: CheckpointPortableRuntimeAuthority | null,
 ): {
   environmentScope: PortableOnboardEnvironmentScope | null;
-  preparedPortableAuthority: CheckpointPortableRuntimeAuthority | null;
+  portableRuntimeContext: PortableOnboardRuntimeContext | null;
 } {
   if (checkpointProfile !== "portable") {
     return {
       environmentScope: resume ? createDefaultResumeProfileEnvironmentScope(process.env) : null,
-      preparedPortableAuthority: null,
+      portableRuntimeContext: null,
     };
   }
   const environmentScope = createPortableOnboardEnvironmentScope(
@@ -110,7 +112,10 @@ function prepareEnvironment(
       containersConf: prepared.containersConf,
       socketPath: prepared.authority.socketPath,
     });
-    return { environmentScope, preparedPortableAuthority: prepared.authority };
+    return {
+      environmentScope,
+      portableRuntimeContext: { authority: prepared.authority, environmentScope },
+    };
   } catch (error) {
     environmentScope.restore();
     throw error;
@@ -121,12 +126,20 @@ export async function prepare(
   options: OnboardOptions,
   resume: boolean,
   nonInteractive: boolean,
-  loadSession: () => { readonly checkpoint?: OnboardCheckpoint | null } | null,
+  loadSession: () => {
+    readonly checkpoint?: OnboardCheckpoint | null;
+    readonly metadata?: { readonly hostMounts?: OnboardOptions["hostMounts"] };
+  } | null,
 ): Promise<LockedOnboardRuntimePreparation> {
+  const storedSession = resume ? loadSession() : null;
   const { checkpointProfile, expectedPortableAuthority } = resolveCheckpointProfile(
     options,
     resume,
-    loadSession,
+    () => storedSession,
+  );
+  requireReadOnlyHostMountRuntimeSupport(
+    options.hostMounts?.length ? options.hostMounts : storedSession?.metadata?.hostMounts,
+    { experimentalProfile: checkpointProfile === "portable" ? "portable" : null },
   );
   let environmentScope: PortableOnboardEnvironmentScope | null = null;
   try {

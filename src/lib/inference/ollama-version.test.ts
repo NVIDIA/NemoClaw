@@ -16,6 +16,11 @@ describe("Ollama version detection", () => {
     expect(getInstalledOllamaVersion(capture)).toBe("0.6.2");
   });
 
+  it("prefers the client version line over the daemon version the CLI reports (#9276)", () => {
+    const capture = () => "ollama version is 0.23.4\nWarning: client version is 0.32.9";
+    expect(getInstalledOllamaVersion(capture)).toBe("0.32.9");
+  });
+
   it("returns null when ollama --version produces no output", () => {
     const capture = () => "";
     expect(getInstalledOllamaVersion(capture)).toBeNull();

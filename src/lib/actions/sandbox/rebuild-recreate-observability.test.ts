@@ -266,6 +266,44 @@ describe("runRebuildRecreatePhase handoff", () => {
     }
   });
 
+  it("carries the recreate host mounts into the session inner onboard resumes (#9451)", async () => {
+    const hostMounts = [
+      {
+        source: "/srv/host-share",
+        target: "/sandbox/host-share",
+        readOnly: true as const,
+        sourceIdentity: { device: "66306", inode: "12345" },
+      },
+    ];
+    let recordedHostMounts: unknown;
+    let requestedHostMounts: unknown;
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
+      recordedHostMounts = onboardSession.loadSession()?.metadata.hostMounts;
+      requestedHostMounts = options.hostMounts;
+    });
+
+    await expect(
+      runRebuildRecreatePhase(makeInput({ recreateOptions: { ...recreateOptions, hostMounts } })),
+    ).resolves.toBe(true);
+
+    // Both sides of the resume host-mount comparison must agree; an empty
+    // recorded set aborted the resume after the old sandbox was deleted.
+    expect(recordedHostMounts).toEqual(hostMounts);
+    expect(requestedHostMounts).toEqual(hostMounts);
+    expect(recordedHostMounts).not.toBe(hostMounts);
+  });
+
+  it("records no host mounts when the recreate target declares none (#9451)", async () => {
+    let recordedHostMounts: unknown = "inner onboard was never reached";
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+      recordedHostMounts = onboardSession.loadSession()?.metadata.hostMounts;
+    });
+
+    await expect(runRebuildRecreatePhase(makeInput())).resolves.toBe(true);
+
+    expect(recordedHostMounts).toBeUndefined();
+  });
+
   it("carries the journal authority instead of a stale preflight option (#7411)", async () => {
     let observedAuthority: unknown;
     vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {

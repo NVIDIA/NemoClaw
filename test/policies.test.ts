@@ -38,12 +38,13 @@ function parseResultPayload(stdout: string): any {
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("each preset has name and description", () => {
-      for (const p of policies.listPresets()) {
+    it.each(Array.from(policies.listPresets(), (value) => [value]))(
+      "$name has a name and description",
+      (p) => {
         expect(p.name).toBeTruthy();
         expect(p.description).toBeTruthy();
-      }
-    });
+      },
+    );
 
     it("does not include the WhatsApp preset YAML body in the description", () => {
       const whatsapp = policies.listPresets().find((p) => p.name === "whatsapp");
@@ -736,11 +737,18 @@ exit 1
     });
   });
 
-  describe("policy-add --from-file false success when the sandbox is absent from the registry (#4510)", () => {
+  describe("policy-add when the sandbox is absent from the registry (#4510, #9295)", () => {
     const registryModule = requireForTest(
       path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"),
     ) as Record<string, any>;
-    const CUSTOM_CONTENT = "network_policies:\n  slack-files-upload:\n    host: files.slack.com\n";
+    const CUSTOM_CONTENT = `preset:
+  name: slack-files-upload
+  description: Allow Slack file uploads
+network_policies:
+  slack-files-upload:
+    host: files.slack.com
+`;
+    const BUILTIN_CONTENT = "network_policies:\n  github:\n    host: github.com\n";
     const SOURCE_PATH = "/tmp/slack-files-upload-case.yaml";
 
     let tmpHome: string;
@@ -749,6 +757,7 @@ exit 1
     let resolveSpy: ReturnType<typeof vi.spyOn>;
     let savedGetSandbox: any;
     let savedAddCustomPolicy: any;
+    let savedUpdateSandbox: any;
 
     beforeEach(() => {
       tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-issue4510-"));
@@ -767,6 +776,7 @@ exit 1
         .mockReturnValue(fakeOpenshell);
       savedGetSandbox = registryModule.getSandbox;
       savedAddCustomPolicy = registryModule.addCustomPolicy;
+      savedUpdateSandbox = registryModule.updateSandbox;
     });
 
     afterEach(() => {
@@ -775,6 +785,7 @@ exit 1
       resolveSpy.mockRestore();
       registryModule.getSandbox = savedGetSandbox;
       registryModule.addCustomPolicy = savedAddCustomPolicy;
+      registryModule.updateSandbox = savedUpdateSandbox;
       fs.rmSync(tmpHome, { recursive: true, force: true });
     });
 
@@ -810,7 +821,33 @@ exit 1
       }
     });
 
-    it("records the custom preset and returns true when the sandbox is registered", () => {
+    it("warns but keeps the mutation when a built-in preset cannot be recorded locally (#9295)", () => {
+      registryModule.getSandbox = () => null;
+      const updateSpy = vi.fn(() => true);
+      registryModule.updateSandbox = updateSpy;
+      const errors: string[] = [];
+      const errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+        errors.push(a.map((x) => String(x)).join(" "));
+      });
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      try {
+        // A built-in preset stays discoverable from the gateway, so the applied
+        // policy stands. The warning is what tells the operator why policy list
+        // will report it without local state behind it.
+        const result = policies.applyPresetContent("my-assistant", "github", BUILTIN_CONTENT, {});
+        expect(result).toBe(true);
+        expect(updateSpy).not.toHaveBeenCalled();
+        const combined = errors.join("\n");
+        expect(combined).toContain("my-assistant");
+        expect(combined).toMatch(/could not be\s+recorded locally/);
+        expect(combined).toMatch(/active on gateway, missing\s+from local state/);
+      } finally {
+        errSpy.mockRestore();
+        logSpy.mockRestore();
+      }
+    });
+
+    it("applies a well-formed custom preset and records it verbatim (#9406)", () => {
       registryModule.getSandbox = (name: string) => ({ name });
       const addSpy = vi.fn(() => true);
       registryModule.addCustomPolicy = addSpy;
@@ -998,13 +1035,14 @@ exit 1
       ).toThrow(/Cannot merge policy preset: the current policy is not a valid YAML mapping/);
     });
 
-    it("fails closed when preset entries are malformed or not a mapping", () => {
-      for (const invalidEntries of ["  broken: [unterminated", "  - host: example.com"]) {
+    it.each(["  broken: [unterminated", "  - host: example.com"])(
+      "fails closed when preset entries are malformed or not a mapping [case %#]",
+      (invalidEntries) => {
         expect(() => policies.mergePresetIntoPolicy("version: 1", invalidEntries)).toThrow(
           /preset network_policies entries must be a valid YAML mapping/,
         );
-      }
-    });
+      },
+    );
 
     const realisticEntries =
       "  pypi_access:\n" +

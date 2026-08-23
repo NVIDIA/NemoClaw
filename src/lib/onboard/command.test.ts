@@ -10,7 +10,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getCredential } from "../credentials/store";
 import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import { servingProfileProvenance } from "../inference/serving/profile-provenance";
-import { resolveOnboardOptions, runOnboardCommand } from "./command";
+import { NEMOCLAW_VLLM_GPU_DEVICE_ENV } from "../inference/vllm-models";
+import { resolveOnboardOptions, runOnboardCommand, servingProfileProviderKey } from "./command";
 import type { OnboardFlags } from "./command-support";
 import { PortableInferenceDescriptorError } from "./experimental/portable-inference-descriptor";
 import { invalidGatewayManagementDeclarationError } from "./gateway-management";
@@ -20,6 +21,7 @@ import {
   LOCAL_MODEL_PROFILE_RUNTIME_ENV,
 } from "./local-model-profile/plan";
 import { OnboardResumeIntentError, OnboardResumeIntentRaceError } from "./session-bootstrap";
+import { MANAGED_VLLM_PROVIDER_KEY } from "./vllm-menu";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -199,6 +201,44 @@ describe("onboard command options", () => {
     expect(errors.join("\n")).toContain("legacy onboarding session");
   });
 
+  it("normalizes a vLLM GPU index or UUID and reuses the recorded device on resume", () => {
+    expect(resolve({ "vllm-gpu-device": "002" }).vllmGpuDevice).toBe("2");
+    const uuid = "GPU-69ADB14E-820E-BFB4-0993-171E73F68504";
+    const normalizedUuid = "GPU-69adb14e-820e-bfb4-0993-171e73f68504";
+    expect(resolve({ "vllm-gpu-device": uuid }).vllmGpuDevice).toBe(normalizedUuid);
+    expect(
+      resolve({ resume: true }, { loadSession: () => ({ vllmGpuDevice: normalizedUuid }) })
+        .vllmGpuDevice,
+    ).toBe(normalizedUuid);
+  });
+
+  it.each([
+    {
+      caseName: "a CDI device name",
+      flags: { "vllm-gpu-device": "nvidia.com/gpu=0" } as OnboardFlags,
+      session: null,
+    },
+    {
+      caseName: "a device added to a legacy resume",
+      flags: { resume: true, "vllm-gpu-device": "1" } as OnboardFlags,
+      session: {},
+    },
+    {
+      caseName: "a device changed during resume",
+      flags: { resume: true, "vllm-gpu-device": "1" } as OnboardFlags,
+      session: { vllmGpuDevice: "0" },
+    },
+  ])("rejects $caseName", ({ flags, session }) => {
+    const errors: string[] = [];
+    expect(() =>
+      resolve(flags, {
+        ...(session ? { loadSession: () => session } : {}),
+        error: (message = "") => errors.push(message),
+      }),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toMatch(/vllm-gpu-device|resumed GPU device/);
+  });
+
   it("maps typed oclif flags to onboarding options", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-options-"));
     const dockerfilePath = path.join(tmpDir, "Custom.Dockerfile");
@@ -218,6 +258,7 @@ describe("onboard command options", () => {
           name: "second-assistant",
           "sandbox-gpu": true,
           "sandbox-gpu-device": "nvidia.com/gpu=0",
+          "vllm-gpu-device": "2",
           agent: "dcode",
           "tool-disclosure": "direct",
           observability: true,
@@ -227,7 +268,10 @@ describe("onboard command options", () => {
           "no-ollama-autostart": true,
           "yes-i-accept-third-party-software": true,
         },
-        { listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"] },
+        {
+          listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"],
+          loadSession: () => ({ vllmGpuDevice: "2" }),
+        },
       ),
     ).toEqual({
       tempManagedRuntime: true,
@@ -240,6 +284,7 @@ describe("onboard command options", () => {
       sandboxName: "second-assistant",
       sandboxGpu: "enable",
       sandboxGpuDevice: "nvidia.com/gpu=0",
+      vllmGpuDevice: "2",
       acceptThirdPartySoftware: true,
       agent: "langchain-deepagents-code",
       agentsManifest: null,
@@ -259,6 +304,21 @@ describe("onboard command options", () => {
     });
   });
 
+  it("accepts an exact qualification catalog without enabling candidate activation", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-catalog-only-"));
+    const managedCatalogPath = path.join(tmpDir, "managed-catalog.json");
+    fs.writeFileSync(managedCatalogPath, "{}\n");
+
+    try {
+      expect(resolve({ "temp-managed-runtime-catalog": managedCatalogPath })).toMatchObject({
+        tempManagedRuntime: false,
+        tempManagedRuntimeCatalog: managedCatalogPath,
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses explicit false/null defaults when flags are absent", () => {
     expect(resolve({})).toEqual({
       tempManagedRuntime: false,
@@ -271,6 +331,7 @@ describe("onboard command options", () => {
       sandboxName: null,
       sandboxGpu: null,
       sandboxGpuDevice: null,
+      vllmGpuDevice: null,
       acceptThirdPartySoftware: false,
       agent: null,
       agentsManifest: null,
@@ -290,7 +351,7 @@ describe("onboard command options", () => {
     });
   });
 
-  it("maps repeated Linux host mounts and rejects unsupported host platforms", () => {
+  it("maps repeated host mounts when the selected runtime provider supports them", () => {
     const first = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
     const second = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
     const values = [`${first}:/sandbox/project`, `${second}:/sandbox/reference`];
@@ -309,27 +370,52 @@ describe("onboard command options", () => {
           sourceIdentity: { device: expect.any(String), inode: expect.any(String) },
         },
       ]);
-      expect(() => resolve({ "host-mount": values }, { platform: "darwin" })).toThrow("exit:1");
     } finally {
       fs.rmSync(first, { recursive: true, force: true });
       fs.rmSync(second, { recursive: true, force: true });
     }
   });
 
-  it("rejects host mounts for the portable Podman profile before path or runtime effects", () => {
+  it("reports the Podman capability reason for portable host mounts", () => {
     const errors: string[] = [];
+    const source = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
 
-    expect(() =>
-      resolve(
-        {
-          "experimental-profile": "portable",
-          "host-mount": ["/path/that/need/not/exist:/sandbox/project"],
-        },
-        { platform: "linux", error: (message = "") => errors.push(message) },
-      ),
-    ).toThrow("exit:1");
-    expect(errors.join("\n")).toContain("requires the OpenShell Docker driver");
+    try {
+      expect(() =>
+        resolve(
+          {
+            "experimental-profile": "portable",
+            "host-mount": [`${source}:/sandbox/project`],
+          },
+          { platform: "linux", error: (message = "") => errors.push(message) },
+        ),
+      ).toThrow("exit:1");
+      expect(errors.join("\n")).toContain("Runtime provider 'podman'");
+      expect(errors.join("\n")).toContain("not qualified for the Podman runtime provider");
+    } finally {
+      fs.rmSync(source, { recursive: true, force: true });
+    }
   });
+
+  it.each([
+    ["darwin", "arm64", "docker", "has not qualified read-only host mounts"],
+    ["win32", "x64", "kubernetes", "Kubernetes hostPath semantics"],
+  ] as const)(
+    "reports why the runtime provider selected for %s rejects host mounts",
+    (platform, arch, provider, reason) => {
+      const source = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
+      const error = vi.fn();
+      try {
+        expect(() =>
+          resolve({ "host-mount": [`${source}:/sandbox/project`] }, { platform, arch, error }),
+        ).toThrow("exit:1");
+        expect(error.mock.calls.flat().join("\n")).toContain(`Runtime provider '${provider}'`);
+        expect(error.mock.calls.flat().join("\n")).toContain(reason);
+      } finally {
+        fs.rmSync(source, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("resolves the portable profile to deterministic unattended defaults", () => {
     expect(resolve({ "experimental-profile": "portable" })).toMatchObject({
@@ -510,6 +596,22 @@ describe("onboard command options", () => {
     expect(runOnboard).toHaveBeenCalledWith(expect.objectContaining({ resume: true }));
   });
 
+  it("scopes the selected vLLM GPU device to one onboarding run", async () => {
+    const env: NodeJS.ProcessEnv = { [NEMOCLAW_VLLM_GPU_DEVICE_ENV]: "9" };
+    let observed: string | undefined;
+    await runOnboardCommand({
+      flags: { "vllm-gpu-device": "2" },
+      env,
+      runOnboard: async (options) => {
+        observed = env[NEMOCLAW_VLLM_GPU_DEVICE_ENV];
+        expect(options.vllmGpuDevice).toBe("2");
+      },
+    });
+
+    expect(observed).toBe("2");
+    expect(env[NEMOCLAW_VLLM_GPU_DEVICE_ENV]).toBe("9");
+  });
+
   it("re-resolves once after onboard reports a pre-read race (#9035)", async () => {
     const snapshots = ["first", "second"].map((fingerprint) => ({
       effectiveResume: true,
@@ -661,49 +763,59 @@ describe("onboard command options", () => {
     }
   });
 
-  it("restores every scoped command value before exiting on a handled error (#9035)", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-handled-error-environment-"));
-    const manifestPath = path.join(tmpDir, "agents.yaml");
-    fs.writeFileSync(manifestPath, "agents: []\n");
-    const env: NodeJS.ProcessEnv = {
-      NEMOCLAW_EXTRA_AGENTS_JSON: "previous-agents",
-      NEMOCLAW_OLLAMA_NO_AUTOSTART: "previous-autostart",
-      NEMOCLAW_SERVING_PRESET: "previous-serving",
-      NEMOCLAW_TOOL_DISCLOSURE: "previous-disclosure",
-    };
-    let environmentAtExit: NodeJS.ProcessEnv | null = null;
-
-    try {
-      await expect(
-        runOnboardCommand({
-          flags: {
-            agents: manifestPath,
-            "no-ollama-autostart": true,
-            profile: COMPATIBLE_NANO_PROFILE.id,
-            "tool-disclosure": "direct",
-          },
-          env,
-          listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
-          runOnboard: async () => {
-            throw invalidGatewayManagementDeclarationError("unsupported contract");
-          },
-          error: () => {},
-          exit: (code): never => {
-            environmentAtExit = { ...env };
-            throw new Error(`exit:${code}`);
-          },
-        }),
-      ).rejects.toThrow("exit:1");
-      expect(environmentAtExit).toEqual({
+  it.each([
+    { providerState: "unset", previousProvider: undefined },
+    { providerState: "blank", previousProvider: "" },
+  ])(
+    "restores every scoped command value before a handled-error exit when the provider is $providerState (#9035)",
+    async ({ previousProvider }) => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-handled-error-environment-"));
+      const manifestPath = path.join(tmpDir, "agents.yaml");
+      fs.writeFileSync(manifestPath, "agents: []\n");
+      const env: NodeJS.ProcessEnv = {
         NEMOCLAW_EXTRA_AGENTS_JSON: "previous-agents",
         NEMOCLAW_OLLAMA_NO_AUTOSTART: "previous-autostart",
-        NEMOCLAW_SERVING_PRESET: "previous-serving",
+        NEMOCLAW_SERVING_PRESET: COMPATIBLE_NANO_PROFILE.id,
         NEMOCLAW_TOOL_DISCLOSURE: "previous-disclosure",
+        ...(previousProvider === undefined ? {} : { NEMOCLAW_PROVIDER: previousProvider }),
+      };
+      let environmentAtExit: NodeJS.ProcessEnv | null = null;
+      const runOnboard = vi.fn(async () => {
+        throw invalidGatewayManagementDeclarationError("unsupported contract");
       });
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
+
+      try {
+        await expect(
+          runOnboardCommand({
+            flags: {
+              agents: manifestPath,
+              "no-ollama-autostart": true,
+              profile: COMPATIBLE_NANO_PROFILE.id,
+              "tool-disclosure": "direct",
+            },
+            env,
+            listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
+            runOnboard,
+            error: () => {},
+            exit: (code): never => {
+              environmentAtExit = { ...env };
+              throw new Error(`exit:${code}`);
+            },
+          }),
+        ).rejects.toThrow("exit:1");
+        expect(runOnboard).toHaveBeenCalledOnce();
+        expect(environmentAtExit).toEqual({
+          NEMOCLAW_EXTRA_AGENTS_JSON: "previous-agents",
+          NEMOCLAW_OLLAMA_NO_AUTOSTART: "previous-autostart",
+          NEMOCLAW_SERVING_PRESET: COMPATIBLE_NANO_PROFILE.id,
+          NEMOCLAW_TOOL_DISCLOSURE: "previous-disclosure",
+          ...(previousProvider === undefined ? {} : { NEMOCLAW_PROVIDER: previousProvider }),
+        });
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("scopes the selected catalog preset to one onboarding run (#8384)", async () => {
     const env: NodeJS.ProcessEnv = {};
@@ -720,6 +832,101 @@ describe("onboard command options", () => {
 
     expect(observed).toBe(COMPATIBLE_NANO_PROFILE.id);
     expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
+  });
+
+  it("selects the profile's inference provider so onboarding skips the menu (#9313)", async () => {
+    // The preset alone only picks the model once a provider is chosen. Without
+    // a provider the run fell through to the interactive provider menu with the
+    // requested profile never applied.
+    const vllmProfile = {
+      ...COMPATIBLE_NANO_PROFILE,
+      id: "vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4",
+      displayName: "Muse Glimmer 30B NVFP4 W4A4 on one DGX Spark",
+      backend: "vllm",
+    };
+    const env: NodeJS.ProcessEnv = {};
+    let observedProvider: string | undefined;
+    let observedPreset: string | undefined;
+    await runOnboardCommand({
+      flags: { profile: vllmProfile.id },
+      env,
+      listServingProfiles: () => [vllmProfile],
+      runOnboard: async () => {
+        observedProvider = env.NEMOCLAW_PROVIDER;
+        observedPreset = env.NEMOCLAW_SERVING_PRESET;
+      },
+    });
+
+    expect(observedProvider).toBe("install-vllm");
+    expect(observedPreset).toBe(vllmProfile.id);
+    // Scoped to the run, like the preset itself.
+    expect(env.NEMOCLAW_PROVIDER).toBeUndefined();
+    expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
+  });
+
+  it("selects the managed llama.cpp provider for a llama-cpp profile (#9313)", async () => {
+    const env: NodeJS.ProcessEnv = {};
+    let observedProvider: string | undefined;
+    await runOnboardCommand({
+      flags: { profile: COMPATIBLE_NANO_PROFILE.id },
+      env,
+      listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
+      runOnboard: async () => {
+        observedProvider = env.NEMOCLAW_PROVIDER;
+      },
+    });
+
+    expect(observedProvider).toBe("install-llama-cpp");
+    expect(env.NEMOCLAW_PROVIDER).toBeUndefined();
+  });
+
+  it("rejects an unmapped backend on the resume path too (#9313)", () => {
+    // Explicit --profile, the installer path, and resume all converge on the
+    // same environment application, so the check lives at the end of the
+    // lifecycle rather than on the explicit path alone. Resume replays a
+    // recorded profile: a backend with no provider must be reported instead of
+    // resuming into the provider menu.
+    const catalog = loadServingCatalog();
+    // Retarget preset and recipe together; provenance requires them to agree.
+    const patchedCatalog = {
+      ...catalog,
+      presets: catalog.presets.map((preset) => ({
+        ...preset,
+        spec: { ...preset.spec, plan: { ...preset.spec.plan, backend: "future-backend" } },
+      })),
+      recipes: catalog.recipes.map((recipe) => ({
+        ...recipe,
+        spec: { ...recipe.spec, backend: "future-backend" },
+      })),
+    };
+    const recorded = servingProfileProvenance(
+      patchedCatalog as never,
+      catalog.presets[0]!.metadata.id,
+    );
+    const errors: string[] = [];
+
+    expect(() =>
+      resolve(
+        { resume: true },
+        {
+          loadServingCatalog: () => patchedCatalog as never,
+          loadSession: () => ({ servingProfileProvenance: recorded }) as never,
+          error: (message = "") => errors.push(message),
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("which onboarding cannot configure");
+  });
+
+  it("maps each serving backend to the provider that can run it (#9313)", () => {
+    // A backend with no provider returns null, which `resolveServingProfile`
+    // reports instead of accepting the flag and then asking for a provider.
+    const withBackend = (backend: string) => ({ recipe: { backend } }) as never;
+
+    // Uses the provider menu's exported key so the two cannot drift.
+    expect(servingProfileProviderKey(withBackend("vllm"))).toBe(MANAGED_VLLM_PROVIDER_KEY);
+    expect(servingProfileProviderKey(withBackend("install-llama-cpp"))).toBe("install-llama-cpp");
+    expect(servingProfileProviderKey(withBackend("future-backend"))).toBeNull();
   });
 
   it("records an installer profile without activating the disabled generic preset", async () => {
@@ -760,18 +967,7 @@ describe("onboard command options", () => {
       env,
       loadPortableInferenceDescriptor: async () => null,
       runOnboard: async () => {
-        for (const key of [
-          "NEMOCLAW_EXPERIMENTAL_PROFILE",
-          "NEMOCLAW_PROVIDER",
-          "NEMOCLAW_MODEL",
-          "NEMOCLAW_OLLAMA_NO_AUTOSTART",
-          "NEMOCLAW_POLICY_MODE",
-          "NEMOCLAW_POLICY_PRESETS",
-          "NEMOCLAW_POLICY_TIER",
-          "NEMOCLAW_TOOL_DISCLOSURE",
-        ]) {
-          observed[key] = env[key];
-        }
+        Object.assign(observed, env);
       },
     });
 
@@ -940,7 +1136,7 @@ describe("onboard command options", () => {
       name: "serving profile",
       flags: { profile: COMPATIBLE_NANO_PROFILE.id } as OnboardFlags,
       listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
-      keys: ["NEMOCLAW_SERVING_PRESET"],
+      keys: ["NEMOCLAW_PROVIDER", "NEMOCLAW_SERVING_PRESET"],
     },
   ])("restores the $name environment when an agents manifest is invalid", async (testCase) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-invalid-agents-manifest-"));
@@ -957,7 +1153,7 @@ describe("onboard command options", () => {
           runOnboard: vi.fn(),
         }),
       ).rejects.toThrow("--agents YAML parse error");
-      for (const key of testCase.keys) expect(env[key]).toBeUndefined();
+      expect(testCase.keys.every((key) => env[key] === undefined)).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

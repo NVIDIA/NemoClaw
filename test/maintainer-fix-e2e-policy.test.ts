@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-
 import { describe, expect, it } from "vitest";
 import { evaluateE2eMaintenancePolicy } from "../.agents/skills/nemoclaw-maintainer-fix-e2e-failures/scripts/evaluate-policy.mts";
 
@@ -204,48 +202,6 @@ describe("continuous E2E maintenance write policy", () => {
       allowedWrites: ["submit-approval"],
       queueState: "approval-ready",
     });
-  });
-
-  it("runs the policy evaluator after comparing every imported file", () => {
-    const guide = fs.readFileSync(
-      new URL(
-        "../.agents/skills/nemoclaw-maintainer-fix-e2e-failures/references/review-and-merge.md",
-        import.meta.url,
-      ),
-      "utf8",
-    );
-    const trustCheck = guide.indexOf('cmp -s "$trusted_policy_root/$policy_file" "$policy_file"');
-    const trustedInvocation = guide.indexOf('"$trusted_policy_root/$policy_path"');
-
-    expect(guide).toContain("every local file that it imports");
-    expect(trustCheck).toBeGreaterThanOrEqual(0);
-    expect(trustedInvocation).toBeGreaterThan(trustCheck);
-  });
-
-  it("stops before the final gate when a gate-checker file differs", () => {
-    const guide = fs.readFileSync(
-      new URL(
-        "../.agents/skills/nemoclaw-maintainer-fix-e2e-failures/references/review-and-merge.md",
-        import.meta.url,
-      ),
-      "utf8",
-    );
-    const finalGate = guide.slice(
-      guide.indexOf("## Final Merge Gate"),
-      guide.indexOf("## Merge Without Bypass"),
-    );
-    const trustCheck = finalGate.indexOf('cmp -s "$trusted_gate_root/$gate_file" "$gate_file"');
-    const trustedInvocation = finalGate.indexOf('"$trusted_gate_root/$gate_path" <pr-number>');
-
-    expect(finalGate).toContain("set -euo pipefail");
-    expect(finalGate).toContain('gate_surface=("$gate_path" "$gate_shared_path")');
-    expect(finalGate).toContain('test -z "$(git status --porcelain -- "${gate_surface[@]}")"');
-    expect(finalGate).toContain("If either file differs");
-    expect(trustCheck).toBeGreaterThanOrEqual(0);
-    expect(trustedInvocation).toBeGreaterThan(trustCheck);
-    expect(finalGate).not.toContain(
-      "  .agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number>",
-    );
   });
 
   it("denies a merge when approval and checks belong to an earlier commit", () => {

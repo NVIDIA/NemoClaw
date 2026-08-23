@@ -106,14 +106,15 @@ ${body}
 }
 
 describe("published docs route checking", () => {
-  it("indexes the native changelog route for every agent variant", () => {
-    const index = buildPublishedRouteIndex(navYaml);
+  it.each(["openclaw", "hermes", "deepagents"])(
+    "indexes the native changelog route for %s",
+    (variant) => {
+      const index = buildPublishedRouteIndex(navYaml);
 
-    for (const variant of ["openclaw", "hermes", "deepagents"]) {
       expect(index.routes.has(`/user-guide/${variant}/release-notes`)).toBe(true);
       expect(index.routes.has(`/user-guide/${variant}/release-notes/2026/7/14`)).toBe(true);
-    }
-  });
+    },
+  );
 
   it("requires the shared changelog in every agent variant", () => {
     const incompleteNav = navYaml.replace(
@@ -435,8 +436,9 @@ describe("Manage Sandboxes extension routes", () => {
     expect(findMissingDirectLegacyManageSandboxRedirects()).toEqual([]);
   });
 
-  it("publishes MCP pages under the MCP Servers group for every agent variant", () => {
-    for (const variant of ["openclaw", "hermes", "deepagents"]) {
+  it.each(["openclaw", "hermes", "deepagents"])(
+    "publishes %s MCP pages under the MCP Servers group",
+    (variant) => {
       expect(
         index.routes.has(
           `/user-guide/${variant}/manage-sandboxes/mcp-servers/about-managed-mcp-servers`,
@@ -447,8 +449,8 @@ describe("Manage Sandboxes extension routes", () => {
           `/user-guide/${variant}/manage-sandboxes/extend-sandboxes/about-managed-mcp-servers`,
         ),
       ).toBe(false);
-    }
-  });
+    },
+  );
 
   it("publishes plugin installation directly under supported Manage Sandboxes variants", () => {
     expect(index.routes.has("/user-guide/openclaw/manage-sandboxes/install-openclaw-plugins")).toBe(
@@ -522,75 +524,81 @@ describe("public security review boundaries", () => {
   const destinations = new Map(redirects.map(({ source, destination }) => [source, destination]));
   const redirectIndexes = new Map(redirects.map(({ source }, index) => [source, index]));
 
-  it("keeps internal review records out of the public Security section", () => {
+  it("keeps internal review files out of the public Security section", () => {
     const publicReviewFiles = readdirSync(path.join(repoRoot, "docs", "security")).filter((name) =>
       /review/iu.test(name),
     );
 
     expect(publicReviewFiles).toEqual([]);
-    for (const variant of ["openclaw", "hermes", "deepagents"]) {
+  });
+
+  it.each(["openclaw", "hermes", "deepagents"])(
+    "keeps internal review routes out of the %s Security section",
+    (variant) => {
       expect(
         index.routes.has(`/user-guide/${variant}/security/openshell-0.0.72-compatibility-review`),
       ).toBe(false);
       expect(
         index.routes.has(`/user-guide/${variant}/security/openshell-0.0.71-gateway-auth-review`),
       ).toBe(false);
-    }
-  });
+    },
+  );
 
-  it("redirects retired review routes directly to current security guidance", () => {
-    for (const reviewSlug of [
-      "openshell-0.0.72-compatibility-review",
-      "openshell-0.0.71-gateway-auth-review",
-    ]) {
-      for (const [sourceBase, destinationBase] of [
+  it.each(
+    ["openshell-0.0.72-compatibility-review", "openshell-0.0.71-gateway-auth-review"].flatMap(
+      (reviewSlug) =>
         [
-          `/nemoclaw/latest/user-guide/:variant/security/${reviewSlug}`,
-          "/nemoclaw/latest/user-guide/:variant/security/security-controls/gateway-authentication-controls",
-        ],
-        [
-          `/nemoclaw/user-guide/:variant/security/${reviewSlug}`,
-          "/nemoclaw/user-guide/:variant/security/security-controls/gateway-authentication-controls",
-        ],
-        [
-          `/nemoclaw/latest/security/${reviewSlug}`,
-          "/nemoclaw/latest/user-guide/openclaw/security/security-controls/gateway-authentication-controls",
-        ],
-        [
-          `/nemoclaw/security/${reviewSlug}`,
-          "/nemoclaw/user-guide/openclaw/security/security-controls/gateway-authentication-controls",
-        ],
-      ]) {
-        expect(destinations.get(sourceBase)).toBe(destinationBase);
-        expect(destinations.get(`${sourceBase}.html`)).toBe(destinationBase);
-        expect(destinations.get(`${sourceBase}/index.html`)).toBe(destinationBase);
-        expect(destinations.get(`${sourceBase}.md`)).toBe(`${destinationBase}.md`);
-        expect(destinations.get(`${sourceBase}.mdx`)).toBe(`${destinationBase}.mdx`);
+          [
+            `/nemoclaw/latest/user-guide/:variant/security/${reviewSlug}`,
+            "/nemoclaw/latest/user-guide/:variant/security/security-controls/gateway-authentication-controls",
+          ],
+          [
+            `/nemoclaw/user-guide/:variant/security/${reviewSlug}`,
+            "/nemoclaw/user-guide/:variant/security/security-controls/gateway-authentication-controls",
+          ],
+          [
+            `/nemoclaw/latest/security/${reviewSlug}`,
+            "/nemoclaw/latest/user-guide/openclaw/security/security-controls/gateway-authentication-controls",
+          ],
+          [
+            `/nemoclaw/security/${reviewSlug}`,
+            "/nemoclaw/user-guide/openclaw/security/security-controls/gateway-authentication-controls",
+          ],
+        ].map(([sourceBase, destinationBase]) => ({ destinationBase, sourceBase })),
+    ),
+  )(
+    "redirects $sourceBase directly to current security guidance",
+    ({ sourceBase, destinationBase }) => {
+      expect(destinations.get(sourceBase)).toBe(destinationBase);
+      expect(destinations.get(`${sourceBase}.html`)).toBe(destinationBase);
+      expect(destinations.get(`${sourceBase}/index.html`)).toBe(destinationBase);
+      expect(destinations.get(`${sourceBase}.md`)).toBe(`${destinationBase}.md`);
+      expect(destinations.get(`${sourceBase}.mdx`)).toBe(`${destinationBase}.mdx`);
 
-        expect(redirectIndexes.get(`${sourceBase}.html`)).toBeLessThan(
-          redirectIndexes.get("/nemoclaw/:path*.html") ?? -1,
-        );
-        const genericIndexSource = sourceBase.startsWith("/nemoclaw/latest/")
-          ? "/nemoclaw/latest/:path*/index.html"
-          : "/nemoclaw/:path*/index.html";
-        expect(redirectIndexes.get(`${sourceBase}/index.html`)).toBeLessThan(
-          redirectIndexes.get(genericIndexSource) ?? -1,
-        );
-      }
-    }
-  });
+      expect(redirectIndexes.get(`${sourceBase}.html`)).toBeLessThan(
+        redirectIndexes.get("/nemoclaw/:path*.html") ?? -1,
+      );
+      const genericIndexSource = sourceBase.startsWith("/nemoclaw/latest/")
+        ? "/nemoclaw/latest/:path*/index.html"
+        : "/nemoclaw/:path*/index.html";
+      expect(redirectIndexes.get(`${sourceBase}/index.html`)).toBeLessThan(
+        redirectIndexes.get(genericIndexSource) ?? -1,
+      );
+    },
+  );
 });
 
 describe("headless server deployment routes", () => {
   const index = buildPublishedRouteIndex();
 
-  it("publishes the guide for every agent variant (#7180)", () => {
-    for (const variant of ["openclaw", "hermes", "deepagents"]) {
+  it.each(["openclaw", "hermes", "deepagents"])(
+    "publishes the guide for the %s agent variant (#7180)",
+    (variant) => {
       expect(index.routes.has(`/user-guide/${variant}/deployment/deploy-to-headless-server`)).toBe(
         true,
       );
-    }
-  });
+    },
+  );
 
   it("resolves every guide link against generated published routes (#7180)", () => {
     expect(findBrokenPublishedRoutes("deployment/deploy-to-headless-server.mdx", index)).toEqual(
@@ -603,60 +611,66 @@ describe("headless server deployment routes", () => {
     expect(index.routes.has("/user-guide/openclaw/deployment/brev-web-ui")).toBe(false);
   });
 
-  it("redirects every retired Brev deployment route directly to the shared guide (#7180)", () => {
-    const redirects = fernRedirects ?? [];
-    const destinations = new Map(redirects.map(({ source, destination }) => [source, destination]));
-    const redirectIndexes = new Map(redirects.map(({ source }, index) => [source, index]));
+  const retiredBrevRouteCases = ["deploy-to-remote-gpu", "brev-web-ui"].flatMap((retiredSlug) =>
+    [
+      [
+        `/nemoclaw/latest/user-guide/openclaw/deployment/${retiredSlug}`,
+        "/nemoclaw/latest/user-guide/openclaw/deployment/deploy-to-headless-server",
+      ],
+      [
+        `/nemoclaw/user-guide/openclaw/deployment/${retiredSlug}`,
+        "/nemoclaw/user-guide/openclaw/deployment/deploy-to-headless-server",
+      ],
+      [
+        `/nemoclaw/latest/deployment/${retiredSlug}`,
+        "/nemoclaw/latest/user-guide/openclaw/deployment/deploy-to-headless-server",
+      ],
+      [
+        `/nemoclaw/deployment/${retiredSlug}`,
+        "/nemoclaw/user-guide/openclaw/deployment/deploy-to-headless-server",
+      ],
+    ].map(([sourceBase, destinationBase]) => ({ destinationBase, sourceBase })),
+  );
 
-    for (const retiredSlug of ["deploy-to-remote-gpu", "brev-web-ui"]) {
-      for (const [sourceBase, destinationBase] of [
-        [
-          `/nemoclaw/latest/user-guide/openclaw/deployment/${retiredSlug}`,
-          "/nemoclaw/latest/user-guide/openclaw/deployment/deploy-to-headless-server",
-        ],
-        [
-          `/nemoclaw/user-guide/openclaw/deployment/${retiredSlug}`,
-          "/nemoclaw/user-guide/openclaw/deployment/deploy-to-headless-server",
-        ],
-        [
-          `/nemoclaw/latest/deployment/${retiredSlug}`,
-          "/nemoclaw/latest/user-guide/openclaw/deployment/deploy-to-headless-server",
-        ],
-        [
-          `/nemoclaw/deployment/${retiredSlug}`,
-          "/nemoclaw/user-guide/openclaw/deployment/deploy-to-headless-server",
-        ],
-      ]) {
-        expect(destinations.get(sourceBase)).toBe(destinationBase);
-        expect(destinations.get(`${sourceBase}.html`)).toBe(destinationBase);
-        expect(destinations.get(`${sourceBase}/index.html`)).toBe(destinationBase);
-        expect(destinations.get(`${sourceBase}.md`)).toBe(`${destinationBase}.md`);
-        expect(destinations.get(`${sourceBase}.mdx`)).toBe(`${destinationBase}.mdx`);
+  it.each(retiredBrevRouteCases)(
+    "redirects $sourceBase directly to the shared guide (#7180)",
+    ({ sourceBase, destinationBase }) => {
+      const redirects = fernRedirects ?? [];
+      const destinations = new Map(
+        redirects.map(({ source, destination }) => [source, destination]),
+      );
+      const redirectIndexes = new Map(redirects.map(({ source }, index) => [source, index]));
 
-        expect(redirectIndexes.get(`${sourceBase}.html`)).toBeLessThan(
-          redirectIndexes.get("/nemoclaw/:path*.html") ?? -1,
-        );
-        const genericIndexSource = sourceBase.startsWith("/nemoclaw/latest/")
-          ? "/nemoclaw/latest/:path*/index.html"
-          : "/nemoclaw/:path*/index.html";
-        expect(redirectIndexes.get(`${sourceBase}/index.html`)).toBeLessThan(
-          redirectIndexes.get(genericIndexSource) ?? -1,
-        );
-      }
-    }
-  });
+      expect(destinations.get(sourceBase)).toBe(destinationBase);
+      expect(destinations.get(`${sourceBase}.html`)).toBe(destinationBase);
+      expect(destinations.get(`${sourceBase}/index.html`)).toBe(destinationBase);
+      expect(destinations.get(`${sourceBase}.md`)).toBe(`${destinationBase}.md`);
+      expect(destinations.get(`${sourceBase}.mdx`)).toBe(`${destinationBase}.mdx`);
+
+      expect(redirectIndexes.get(`${sourceBase}.html`)).toBeLessThan(
+        redirectIndexes.get("/nemoclaw/:path*.html") ?? -1,
+      );
+      const genericIndexSource = sourceBase.startsWith("/nemoclaw/latest/")
+        ? "/nemoclaw/latest/:path*/index.html"
+        : "/nemoclaw/:path*/index.html";
+      expect(redirectIndexes.get(`${sourceBase}/index.html`)).toBeLessThan(
+        redirectIndexes.get(genericIndexSource) ?? -1,
+      );
+    },
+  );
 });
 
 describe("gateway lifecycle authority routes", () => {
   const index = buildPublishedRouteIndex();
 
-  it("publishes the OpenShell gateway guide for every guide variant (#6576)", () => {
-    for (const variant of ["openclaw", "hermes", "deepagents"]) {
+  it.each(["openclaw", "hermes", "deepagents"])(
+    "publishes the OpenShell gateway guide for the %s variant (#6576)",
+    (variant) => {
       expect(
         index.routes.has(`/user-guide/${variant}/deployment/gateway-lifecycle-authority`),
       ).toBe(true);
-    }
-  });
+    },
+  );
 
   it("resolves every OpenShell gateway guide link for each guide variant (#6576)", () => {
     expect(findBrokenPublishedRoutes("deployment/gateway-lifecycle-authority.mdx", index)).toEqual(

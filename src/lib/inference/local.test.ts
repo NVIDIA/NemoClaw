@@ -38,7 +38,6 @@ import {
   isOllamaRunnerCrash,
   LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
   parseOllamaList,
-  parseOllamaTags,
   probeLocalProviderHealth,
   probeOllamaAuthProxyHealth,
   QWEN3_6_OLLAMA_MODEL,
@@ -299,6 +298,60 @@ describe("local inference helpers", () => {
     expect(result.diagnostic).toMatch(/Docker command failed/);
   });
 
+  it("reports an image-pull failure instead of an Ollama networking failure when Docker cannot provide the probe image (#9308)", () => {
+    const mockCapture = (cmd: readonly string[]) =>
+      cmd.includes("version")
+        ? "29.6.2"
+        : cmd.includes("inspect")
+          ? ""
+          : cmd.includes("run")
+            ? ""
+            : '{"models":[]}';
+    const noopSleep = () => {};
+    const result = validateLocalProvider("ollama-local", mockCapture, noopSleep);
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/Docker image-pull failure/);
+    expect(result.message).toMatch(/not an Ollama networking failure/);
+    expect(result.message).not.toMatch(/Docker container reachability check failed/);
+    expect(result.message).not.toMatch(/sandbox uses a different network path/);
+    expect(result.diagnostic).toMatch(/DOCKER_CONFIG=\$\(mktemp -d\) docker pull curlimages\/curl/);
+    expect(result.diagnostic).toMatch(/credential helper/);
+    expect(result.diagnostic).toMatch(/onboard --resume/);
+  });
+
+  it("reports an image-pull failure instead of a vLLM networking failure when Docker cannot provide the probe image (#9308)", () => {
+    const mockCapture = (cmd: readonly string[]) =>
+      cmd.includes("version")
+        ? "29.6.2"
+        : cmd.includes("inspect")
+          ? ""
+          : cmd.includes("run")
+            ? ""
+            : '{"data":[]}';
+    const noopSleep = () => {};
+    const result = validateLocalProvider("vllm-local", mockCapture, noopSleep);
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/Docker image-pull failure/);
+    expect(result.message).toMatch(/not a vLLM networking failure/);
+    expect(result.diagnostic).toMatch(/docker pull curlimages\/curl/);
+  });
+
+  it("keeps the runtime-failure report when the probe image is present locally (#9308)", () => {
+    const mockCapture = (cmd: readonly string[]) =>
+      cmd.includes("version")
+        ? "29.6.2"
+        : cmd.includes("inspect")
+          ? "sha256:0d9b7ef1"
+          : cmd.includes("run")
+            ? ""
+            : '{"models":[]}';
+    const noopSleep = () => {};
+    const result = validateLocalProvider("ollama-local", mockCapture, noopSleep);
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/Docker container reachability check failed/);
+    expect(result.diagnostic).toMatch(/image pull error or runtime failure/);
+  });
+
   it("succeeds after container check retry", () => {
     let callCount = 0;
     const mockCapture = () => {
@@ -456,27 +509,27 @@ describe("local inference helpers", () => {
       provider: "vllm-local",
       body: JSON.stringify({ data: [{ id: `available\u001b[31m${"x".repeat(180)}` }] }),
     },
-  ])("sanitizes $provider inventory names in unavailable-model diagnostics", ({
-    provider,
-    body,
-  }) => {
-    const result = probeLocalProviderHealth(provider, {
-      model: "missing\u001b[2J\nmodel",
-      runCurlProbeImpl: () => ({
-        ok: true,
-        httpStatus: 200,
-        curlStatus: 0,
-        body,
-        stderr: "",
-        message: "HTTP 200",
-      }),
-      loadOllamaProxyTokenImpl: () => null,
-    });
+  ])(
+    "sanitizes $provider inventory names in unavailable-model diagnostics",
+    ({ provider, body }) => {
+      const result = probeLocalProviderHealth(provider, {
+        model: "missing\u001b[2J\nmodel",
+        runCurlProbeImpl: () => ({
+          ok: true,
+          httpStatus: 200,
+          curlStatus: 0,
+          body,
+          stderr: "",
+          message: "HTTP 200",
+        }),
+        loadOllamaProxyTokenImpl: () => null,
+      });
 
-    expect(result?.ok).toBe(false);
-    expect(result?.detail).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
-    expect(result?.detail.length).toBeLessThan(400);
-  });
+      expect(result?.ok).toBe(false);
+      expect(result?.detail).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+      expect(result?.detail.length).toBeLessThan(400);
+    },
+  );
 
   it.each([
     {
@@ -504,28 +557,27 @@ describe("local inference helpers", () => {
       body: '{"models":[]}',
       expectedDetail: "could not verify configured model",
     },
-  ])("fails closed for an invalid $provider configured-model inventory", ({
-    provider,
-    body,
-    expectedDetail,
-  }) => {
-    const result = probeLocalProviderHealth(provider, {
-      model: "configured-model",
-      runCurlProbeImpl: () => ({
-        ok: true,
-        httpStatus: 200,
-        curlStatus: 0,
-        body,
-        stderr: "",
-        message: "HTTP 200",
-      }),
-      loadOllamaProxyTokenImpl: () => null,
-    });
+  ])(
+    "fails closed for an invalid $provider configured-model inventory",
+    ({ provider, body, expectedDetail }) => {
+      const result = probeLocalProviderHealth(provider, {
+        model: "configured-model",
+        runCurlProbeImpl: () => ({
+          ok: true,
+          httpStatus: 200,
+          curlStatus: 0,
+          body,
+          stderr: "",
+          message: "HTTP 200",
+        }),
+        loadOllamaProxyTokenImpl: () => null,
+      });
 
-    expect(result?.ok).toBe(false);
-    expect(result?.failureLabel).toBe("unhealthy");
-    expect(result?.detail).toContain(expectedDetail);
-  });
+      expect(result?.ok).toBe(false);
+      expect(result?.failureLabel).toBe("unhealthy");
+      expect(result?.detail).toContain(expectedDetail);
+    },
+  );
 
   it.each([
     { body: '{"data":[{"id":"served-model"}]}', expected: true },
@@ -729,16 +781,19 @@ describe("local inference helpers", () => {
   // /api/tags should not register as healthy when the response body is not the
   // Ollama wire format — a captive HTTP_PROXY or stale listener can otherwise
   // answer with arbitrary 2xx that the curl-status-only check accepts.
-  it("rejects a backend 200 whose body is not the Ollama /api/tags JSON shape", () => {
+  it.each([
+    ["an HTML body", "<html><body>Privoxy</body></html>"],
+    ["a null model entry", '{"models":[null]}'],
+    ["a primitive model entry", '{"models":[1]}'],
+    ["a nested-array model entry", '{"models":[[]]}'],
+  ])("rejects a backend 200 with %s", (_label, body) => {
     const result = probeLocalProviderHealth("ollama-local", {
       loadOllamaProxyTokenImpl: () => null,
       runCurlProbeImpl: () => ({
         ok: true,
         httpStatus: 200,
         curlStatus: 0,
-        // E.g. a corporate HTTP proxy that intercepts loopback and serves an
-        // HTML landing page on every URL, or a stale unrelated listener.
-        body: "<html><body>Privoxy</body></html>",
+        body,
         stderr: "",
         message: "HTTP 200",
       }),
@@ -749,7 +804,12 @@ describe("local inference helpers", () => {
     expect(result?.detail).toContain("HTTP_PROXY");
   });
 
-  it("rejects an auth-proxy 200 whose body is not the Ollama /api/tags JSON shape", () => {
+  it.each([
+    ["an invalid object", '{"error":"backend unreachable"}'],
+    ["a null model entry", '{"models":[null]}'],
+    ["a primitive model entry", '{"models":[1]}'],
+    ["a nested-array model entry", '{"models":[[]]}'],
+  ])("rejects an auth-proxy 200 with %s", (_label, body) => {
     const result = probeLocalProviderHealth("ollama-local", {
       loadOllamaProxyTokenImpl: () => "token",
       runCurlProbeImpl: (argv: string[]) => {
@@ -758,9 +818,7 @@ describe("local inference helpers", () => {
           ok: true,
           httpStatus: 200,
           curlStatus: 0,
-          // Proxy is up but its upstream Ollama backend is gone; the proxy
-          // returns a stub 200 with no models array.
-          body: isProxy ? '{"error":"backend unreachable"}' : '{"models":[]}',
+          body: isProxy ? body : '{"models":[]}',
           stderr: "",
           message: "HTTP 200",
         };
@@ -866,26 +924,26 @@ describe("local inference helpers", () => {
   });
 
   it("returns parsed ollama model options when available", () => {
-    const mockCapture = () => "nemotron-3-nano:30b  abc  24 GB  now\nqwen3:32b  def  20 GB  now";
+    let call = 0;
+    const mockCapture = () => {
+      call += 1;
+      return call === 1
+        ? JSON.stringify({ models: [] })
+        : "nemotron-3-nano:30b  abc  24 GB  now\nqwen3:32b  def  20 GB  now";
+    };
     expect(getOllamaModelOptions(mockCapture)).toEqual(["nemotron-3-nano:30b", "qwen3:32b"]);
   });
 
-  it("parses installed models from Ollama /api/tags output", () => {
-    expect(
-      parseOllamaTags(
-        JSON.stringify({
-          models: [{ name: "nemotron-3-nano:30b" }, { name: "qwen3.5:9b" }],
-        }),
-      ),
-    ).toEqual(["nemotron-3-nano:30b", "qwen3.5:9b"]);
-  });
-
-  it("returns no tags for malformed Ollama API output", () => {
-    expect(parseOllamaTags("{not-json")).toEqual([]);
-    expect(parseOllamaTags(JSON.stringify({ models: null }))).toEqual([]);
-    expect(parseOllamaTags(JSON.stringify({ models: [{}, { name: "qwen3.5:9b" }] }))).toEqual([
-      "qwen3.5:9b",
-    ]);
+  it("does not fall back to the CLI after a malformed Ollama inventory", () => {
+    let call = 0;
+    const mockCapture = () => {
+      call += 1;
+      return call === 1
+        ? JSON.stringify({ models: [{}, { name: "qwen3.5:9b" }] })
+        : "qwen3.5:9b  abc  8 GB  now";
+    };
+    expect(getOllamaModelOptions(mockCapture)).toEqual([]);
+    expect(call).toBe(1);
   });
 
   it("prefers Ollama /api/tags over parsing the CLI list output", () => {
@@ -905,12 +963,24 @@ describe("local inference helpers", () => {
   });
 
   it("prefers the default ollama model when present", () => {
-    const mockCapture = () => "qwen3:32b  abc  20 GB  now\nnemotron-3-nano:30b  def  24 GB  now";
+    let call = 0;
+    const mockCapture = () => {
+      call += 1;
+      return call === 1
+        ? JSON.stringify({ models: [] })
+        : "qwen3:32b  abc  20 GB  now\nnemotron-3-nano:30b  def  24 GB  now";
+    };
     expect(getDefaultOllamaModel(null, mockCapture)).toBe(DEFAULT_OLLAMA_MODEL);
   });
 
   it("falls back to the first listed ollama model when the default is absent", () => {
-    const mockCapture = () => "qwen3:32b  abc  20 GB  now\ngemma3:4b  def  3 GB  now";
+    let call = 0;
+    const mockCapture = () => {
+      call += 1;
+      return call === 1
+        ? JSON.stringify({ models: [] })
+        : "qwen3:32b  abc  20 GB  now\ngemma3:4b  def  3 GB  now";
+    };
     expect(getDefaultOllamaModel(null, mockCapture)).toBe("qwen3:32b");
   });
 
@@ -1305,31 +1375,24 @@ describe("local inference helpers", () => {
     expect(result.message).toMatch(/did not answer the local probe in time/);
   });
 
-  it("flags runner-crash error payloads as a daemon failure (#4365)", () => {
+  it.each([
+    "model runner has unexpectedly stopped, this may be due to resource limitations or an internal error",
+    "llama runner process has terminated: exit status 134",
+    "model runner crashed",
+    "Ollama runner process exited unexpectedly",
+    "runner died: signal 9",
+    "runner killed",
+  ])("flags runner-crash error payloads as a daemon failure [%s] (#4365)", (errText) => {
     // Issue #4365: when Ollama's model runner crashes ("model runner has
     // unexpectedly stopped"), surface daemonFailure so the wizard escapes the
     // Ollama-model inner loop instead of asking for another tag.
-    const crashSamples = [
-      "model runner has unexpectedly stopped, this may be due to resource limitations or an internal error",
-      "llama runner process has terminated: exit status 134",
-      "model runner crashed",
-      "Ollama runner process exited unexpectedly",
-      "runner died: signal 9",
-      "runner killed",
-    ];
-    for (const errText of crashSamples) {
-      expect(isOllamaRunnerCrash(errText)).toBe(true);
-      const payload = JSON.stringify({ error: errText });
-      const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
-      const result = validateOllamaModel(
-        "nemotron-3-nano:30b",
-        () => payload,
-        undefined,
-        captureEx,
-      );
-      expect(result.ok).toBe(false);
-      expect(result.daemonFailure).toBe(true);
-    }
+
+    expect(isOllamaRunnerCrash(errText)).toBe(true);
+    const payload = JSON.stringify({ error: errText });
+    const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
+    const result = validateOllamaModel("nemotron-3-nano:30b", () => payload, undefined, captureEx);
+    expect(result.ok).toBe(false);
+    expect(result.daemonFailure).toBe(true);
   });
 
   it("does not flag model-fit / generic errors as a daemon failure (#4365)", () => {

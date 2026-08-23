@@ -14,7 +14,10 @@ import {
   formatGatewayRouteImpactWarning,
   isAdvisoryGatewayRouteConflict,
 } from "../inference/gateway-route-compatibility";
-import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
+import {
+  withGatewayRouteMutationLock,
+  withModelRouterPortLifecycleLock,
+} from "../inference/gateway-route-mutation-lock";
 import { getManagedVllmProviderBinding } from "../inference/local";
 import {
   type OllamaModelHolder,
@@ -35,6 +38,7 @@ import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import type { Session } from "../state/onboard-session";
 import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
 import { shouldFrontOllamaWithProxy } from "./local-inference-topology";
+import { resolveModelRouterPort } from "./model-router";
 
 export { assertNoOpenShellGatewayEndpointOverride };
 
@@ -185,6 +189,8 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   trustedPrivateEndpointHosts?: readonly string[];
   checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
   withGatewayRouteMutationLock: typeof withGatewayRouteMutationLock;
+  withModelRouterPortLifecycleLock?: typeof withModelRouterPortLifecycleLock;
+  getModelRouterPort?: () => number;
   withSandboxMutationLock: typeof withSandboxMutationLock;
   step: (current: number, total: number, label: string) => void;
   getGatewayName: () => string;
@@ -442,7 +448,9 @@ function resolveHostLocalInferenceRoute(
       : requireRuntimeProviderHostLocalInferenceOperation(providerBundle, request.service, {
           env: hostLocalInferenceOperationEnvironment(request.service),
           acceleration:
-            request.service === "ollama" ? request.endpoint.acceleration : "nvidia-gpu",
+            request.service === "ollama" && "endpoint" in request
+              ? request.endpoint.acceleration
+              : "nvidia-gpu",
         });
   return prepareHostLocalInferenceStartup(operation, request);
 }
@@ -509,9 +517,18 @@ export function createSetupInference(
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
+    const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;
+    const withInferenceMutationLocks = <T>(operation: () => Promise<T> | T): Promise<T> =>
+      deps.withGatewayRouteMutationLock(gatewayName, () => {
+        if (!routedProvider) return operation();
+        const withRouterPortLock =
+          deps.withModelRouterPortLifecycleLock ?? withModelRouterPortLifecycleLock;
+        const port = (deps.getModelRouterPort ?? resolveModelRouterPort)();
+        return withRouterPortLock(port, operation);
+      });
     const mutateGatewayRoute = (): Promise<SetupInferenceResult> =>
       // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider onboarding centralizes route and two-phase transaction ordering.
-      deps.withGatewayRouteMutationLock(gatewayName, async () => {
+      withInferenceMutationLocks(async () => {
         if (
           options.isRecordedProviderRecoveryAuthorized &&
           !options.isRecordedProviderRecoveryAuthorized()
@@ -620,9 +637,13 @@ export function createSetupInference(
           return reserved;
         };
 
+        const defaultUpsertProvider = bindGatewayUpsertProvider(deps.upsertProvider, gatewayName);
         const commonDeps = {
           runOpenshell: runGatewayOpenshell,
-          upsertProvider: bindGatewayUpsertProvider(deps.upsertProvider, gatewayName),
+          upsertProvider: (...args: Parameters<CommonDeps["upsertProvider"]>) => {
+            const exactUpsertProvider = hostLocalGatewayMutation?.upsertProvider;
+            return (exactUpsertProvider ?? defaultUpsertProvider)(...args);
+          },
           verifyInferenceRoute: (selectedProvider: string, selectedModel: string) => {
             if (!hostLocalRoute && sandboxName) {
               reserveRoute(sandboxName, selectedProvider, selectedModel);
@@ -883,7 +904,7 @@ export function createSetupInference(
               }
               return outcome.result;
             }
-          } else if (deps.isRoutedInferenceProvider(provider)) {
+          } else if (routedProvider) {
             await inferenceProviders.setupRoutedInference(
               { model, provider, endpointUrl, credentialEnv },
               {

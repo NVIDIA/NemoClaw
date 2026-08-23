@@ -123,7 +123,10 @@ describe("onboard shared gateway route containment", () => {
       events.push("openshell");
       return { status: 0 };
     });
-    const updateSandbox = vi.fn(() => true);
+    const updateSandbox = vi.fn(() => {
+      events.push("registry-published");
+      return true;
+    });
     const upsertProvider = vi.fn(() => ({ ok: true }));
     const verifyInferenceRoute = vi.fn();
     const verifyOnboardInferenceSmoke = vi.fn();
@@ -161,6 +164,14 @@ describe("onboard shared gateway route containment", () => {
         events.push("lock");
         return await operation();
       },
+      withModelRouterPortLifecycleLock: async <T>(
+        port: number,
+        operation: () => Promise<T> | T,
+      ) => {
+        events.push(`router-port-lock:${String(port)}`);
+        return await operation();
+      },
+      getModelRouterPort: () => 4100,
       step: () => events.push("step"),
       getGatewayName,
       runOpenshell,
@@ -191,8 +202,9 @@ describe("onboard shared gateway route containment", () => {
       setupInference("new-sandbox", "model-b", "router-b", "http://router-b.test/v1", "ROUTER_KEY"),
     ).resolves.toEqual({ ok: true });
 
-    expect(events.slice(0, 4)).toEqual([
+    expect(events.slice(0, 5)).toEqual([
       "lock",
+      "router-port-lock:4100",
       "guard",
       expect.stringContaining("error:  Warning: Onboarding 'new-sandbox' will re-point"),
       "step",
@@ -208,6 +220,9 @@ describe("onboard shared gateway route containment", () => {
     expect(verifyInferenceRoute).toHaveBeenCalledWith("nemoclaw-9090", "router-b", "model-b");
     expect(verifyOnboardInferenceSmoke).toHaveBeenCalledOnce();
     expect(updateSandbox).toHaveBeenCalledOnce();
+    expect(events.indexOf("router-port-lock:4100")).toBeLessThan(
+      events.indexOf("registry-published"),
+    );
     expect(error).toHaveBeenCalledWith(expect.stringContaining("stopped-sandbox"));
     expect(exitProcess).not.toHaveBeenCalled();
   });
@@ -363,6 +378,11 @@ describe("onboard shared gateway route containment", () => {
       withSandboxMutationLock: async <T>(_sandboxName: string, operation: () => Promise<T> | T) =>
         await operation(),
       withGatewayRouteMutationLock,
+      withModelRouterPortLifecycleLock: async <T>(
+        _port: number,
+        operation: () => Promise<T> | T,
+      ) => await operation(),
+      getModelRouterPort: () => 4000,
       step: vi.fn(),
       getGatewayName: () => "nemoclaw",
       runOpenshell,
@@ -469,6 +489,11 @@ describe("onboard shared gateway route containment", () => {
         await operation(),
       withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
         await operation(),
+      withModelRouterPortLifecycleLock: async <T>(
+        _port: number,
+        operation: () => Promise<T> | T,
+      ) => await operation(),
+      getModelRouterPort: () => 4000,
       step: vi.fn(),
       getGatewayName: () => "nemoclaw",
       runOpenshell: vi.fn(() => ({ status: 0 })),

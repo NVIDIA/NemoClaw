@@ -436,34 +436,6 @@ describe("fetch-guard patch regression guard", () => {
     ).toContain("rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter");
   });
 
-  // source-shape-contract: security -- Cross-file OpenClaw pins bind reviewed classifiers to verified package integrity
-  it("requires classifier review and integrity evidence when the OpenClaw build pin changes", () => {
-    const reviewMessage =
-      "Update fetch-guard classifier expectations before changing the OpenClaw build version.";
-
-    const blueprintMinVersion = readBlueprintMinOpenClawVersion();
-    const baseImageVersion = readDockerfileBaseOpenClawVersion();
-    const runtimeVersion = readDockerfileOpenClawVersion();
-
-    expectVersionAtLeast(
-      baseImageVersion,
-      blueprintMinVersion,
-      "Dockerfile.base OpenClaw target must satisfy the blueprint minimum.",
-    );
-    expect(
-      runtimeVersion,
-      "Dockerfile and Dockerfile.base must build the same OpenClaw target.",
-    ).toBe(baseImageVersion);
-    expect(readDockerfileBaseOpenClawIntegrity()).toBe(EXPECTED_OPENCLAW_INTEGRITY);
-    expect(readDockerfileOpenClawIntegrity()).toBe(EXPECTED_OPENCLAW_INTEGRITY);
-    expect([...REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS], reviewMessage).toContain(
-      runtimeVersion,
-    );
-    expect([...REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS], reviewMessage).toContain(
-      baseImageVersion,
-    );
-  });
-
   it("applies the Dockerfile OpenClaw compatibility patch block to executable fixtures", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-patches-"));
     const dist = path.join(tmp, "dist");

@@ -17,6 +17,7 @@ type PreparedContextResult = {
   commands: string[];
   errorMessage: string | null;
   patchCalls: number;
+  patchSleepUsesSeconds: boolean | null;
   planFromRefs: string[];
   registerCalls: Array<{ imageTag?: string | null }>;
   resolvedBuildIds: string[];
@@ -69,6 +70,7 @@ function runPreparedContextScenario(scenario: PreparedContextScenario): Prepared
   const dockerGpuSandboxCreatePath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "docker-gpu-sandbox-create.ts"),
   );
+  const waitPath = JSON.stringify(path.join(repoRoot, "src", "lib", "core", "wait.ts"));
 
   const script = String.raw`
 const fs = require("node:fs");
@@ -83,6 +85,7 @@ const dockerfilePatchFlow = require(${dockerfilePatchFlowPath});
 const sandboxCreatePlanMaterialization = require(${sandboxCreatePlanPath});
 const imageTag = require(${imageTagPath});
 const dockerGpuSandboxCreate = require(${dockerGpuSandboxCreatePath});
+const wait = require(${waitPath});
 const { loadAgent } = require(${agentDefsPath});
 
 const scenario = ${JSON.stringify(scenario)};
@@ -95,9 +98,12 @@ const planFromRefs = [];
 const resolvedBuildIds = [];
 let cleanupCalls = 0;
 let patchCalls = 0;
+let patchSleepUsesSeconds = null;
 let stageCalls = 0;
 
-dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = () => ({
+dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = (options) => {
+  patchSleepUsesSeconds = options.deps.sleep === wait.sleepSeconds;
+  return {
   maybeApplyDuringCreate: () => {},
   createFailureMessage: () => null,
   exitOnPatchError: async () => {},
@@ -109,7 +115,8 @@ dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = () => ({
   selectedMode: () => null,
   printReadinessFailureIfEnabled: () => {},
   verifyGpuOrExit: async (verify) => verify(sandboxName),
-});
+  };
+};
 
 buildContextStage.stageCreateSandboxBuildContext = () => {
   stageCalls += 1;
@@ -146,7 +153,13 @@ runner.runFile = (file, args = []) => {
 };
 runner.runCapture = (command) => {
   const normalized = normalize(command);
-  if (normalized.includes("sandbox exec -n " + sandboxName + " -- dcode identity")) {
+  if (
+    normalized.includes(
+      "sandbox exec --name " +
+        sandboxName +
+        " --gateway nemoclaw -- /usr/local/bin/dcode identity",
+    )
+  ) {
     return [
       "Route:    inference",
       "Provider: nvidia-prod",
@@ -220,6 +233,7 @@ const { createSandbox } = require(${onboardPath});
       [],
       null,
       null,
+      null,
       preparedBuildContext,
     );
   } catch (error) {
@@ -233,6 +247,7 @@ const { createSandbox } = require(${onboardPath});
     commands,
     errorMessage,
     patchCalls,
+    patchSleepUsesSeconds,
     planFromRefs,
     registerCalls,
     resolvedBuildIds,
@@ -292,6 +307,16 @@ describe("onboard prepared DCode build context", () => {
       ),
       "expected the prepared build ID to determine the registered image tag",
     );
+  });
+
+
+  it("passes the seconds-based sleep helper to the Docker GPU patch during prepared-context onboarding (#9218)", {
+    timeout: 90_000,
+  }, () => {
+    const result = runPreparedContextScenario("create");
+
+    assert.equal(result.errorMessage, null);
+    assert.equal(result.patchSleepUsesSeconds, true);
   });
 
   it("rejects a prepared context combined with a custom Dockerfile (#6195)", {

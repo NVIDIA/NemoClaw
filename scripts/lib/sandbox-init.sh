@@ -38,12 +38,16 @@ source "${_SANDBOX_INIT_DIR}/sandbox-rlimits.sh"
 # File                         Owner      Mode  Writer   Reader    Sourced?
 # /tmp/nemoclaw-proxy-env.sh   root       444   root     sandbox   YES (/etc shell hooks)
 # /tmp/gateway.log             gateway    644   gateway  all       no (world-readable for diagnostics)
-# /tmp/auto-pair.log           sandbox    600   sandbox  sandbox   no
+# /tmp/auto-pair.log           root*      600   root*    inherited no
 # /tmp/nemoclaw-plugin-refresh.log sandbox 600   sandbox  sandbox   no (OpenClaw refresh output)
 # /tmp/.npm-cache/             sandbox    755   sandbox  sandbox   no (tool data)
 # /tmp/.cache/                 sandbox    755   sandbox  sandbox   no (tool data)
 # /tmp/.config/                sandbox    755   sandbox  sandbox   no (tool data)
 # /tmp/.gnupg/                 sandbox    700   sandbox  sandbox   no (key data)
+#
+# * In non-root mode the sandbox user owns and opens auto-pair.log. In root
+# mode PID 1 owns and opens it before the stepped-down watcher inherits the
+# descriptor; PID 1 has already dropped CAP_DAC_OVERRIDE at that boundary.
 #
 # In non-root mode privilege separation is disabled — all files are
 # owned by sandbox. chmod 444 is best-effort (owner can chmod back).

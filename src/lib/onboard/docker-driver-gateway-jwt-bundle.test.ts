@@ -161,7 +161,7 @@ describe("docker-driver-gateway JWT bundle", () => {
     }
   });
 
-  it("regenerates an incomplete gateway JWT bundle before writing config", () => {
+  it("does not replace an incomplete JWT identity when its gateway config is missing", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-config-"));
     try {
       const jwtDir = path.join(stateDir, "jwt");
@@ -171,19 +171,16 @@ describe("docker-driver-gateway JWT bundle", () => {
       const kidPath = path.join(jwtDir, "kid");
       fs.writeFileSync(signingKeyPath, "stale partial key\n", { mode: 0o600 });
 
-      writeGatewayConfig(stateDir);
+      expect(() => writeGatewayConfig(stateDir)).toThrow(
+        /durable gateway state exists without a config/,
+      );
 
-      const toml = fs.readFileSync(path.join(stateDir, "openshell-gateway.toml"), "utf-8");
-      expect(fs.readFileSync(signingKeyPath, "utf-8")).not.toBe("stale partial key\n");
-      expect(fs.existsSync(publicKeyPath)).toBe(true);
-      expect(fs.existsSync(kidPath)).toBe(true);
+      expect(fs.existsSync(path.join(stateDir, "openshell-gateway.toml"))).toBe(false);
+      expect(fs.readFileSync(signingKeyPath, "utf-8")).toBe("stale partial key\n");
+      expect(fs.existsSync(publicKeyPath)).toBe(false);
+      expect(fs.existsSync(kidPath)).toBe(false);
       expect(fs.statSync(jwtDir).mode & 0o777).toBe(0o700);
       expect(fs.statSync(signingKeyPath).mode & 0o777).toBe(0o600);
-      expect(fs.statSync(publicKeyPath).mode & 0o777).toBe(0o600);
-      expect(fs.statSync(kidPath).mode & 0o777).toBe(0o600);
-      expect(toml).toContain(`signing_key_path = "${signingKeyPath}"`);
-      expect(toml).toContain(`public_key_path = "${publicKeyPath}"`);
-      expect(toml).toContain(`kid_path = "${kidPath}"`);
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }

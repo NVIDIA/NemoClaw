@@ -152,19 +152,18 @@ const setupInference = createSetupInference({
           0,
           `setupInference accepted a configured route without proving chat/completions; output:\n${output}`,
         );
-        for (const expectedDiagnostic of [
+
+        const expectedDiagnostics = [
           /compatible-endpoint/i,
           /broken-model/i,
           /broken\.example\.invalid/i,
           /Credential env: configured/i,
           /503|upstream/i,
-        ]) {
-          assert.match(
-            output,
-            expectedDiagnostic,
-            `onboard did not surface actionable inference smoke diagnostics; output:\n${output}`,
-          );
-        }
+        ];
+        assert.ok(
+          expectedDiagnostics.every((diagnostic) => diagnostic.test(output)),
+          `onboard did not surface all actionable inference smoke diagnostics; output:\n${output}`,
+        );
 
         const curlLog = fs.existsSync(curlLogPath) ? fs.readFileSync(curlLogPath, "utf8") : "";
         assert.ok(

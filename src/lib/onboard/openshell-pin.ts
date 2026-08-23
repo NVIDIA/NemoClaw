@@ -204,6 +204,31 @@ export type RunOpenshellInstallDeps = OpenshellInstallPinDeps & {
   setOpenshellBin: (binPath: string | null) => void;
 };
 
+export type PrependInstalledUserLocalOpenshellPathDeps = {
+  env?: NodeJS.ProcessEnv;
+  getFutureShellPathHint: RunOpenshellInstallDeps["getFutureShellPathHint"];
+};
+
+/** Keep the installed user-local OpenShell directory first across separate NemoClaw command processes. */
+export function prependInstalledUserLocalOpenshellPath(
+  deps: PrependInstalledUserLocalOpenshellPathDeps,
+): string | null {
+  const env = deps.env ?? process.env;
+  const localBin = env.XDG_BIN_HOME || path.join(env.HOME || "", ".local", "bin");
+  const openshellPath = path.join(localBin, "openshell");
+  try {
+    if (!fs.statSync(openshellPath).isFile()) return null;
+    fs.accessSync(openshellPath, fs.constants.X_OK);
+  } catch {
+    return null;
+  }
+  const futureShellPathHint = deps.getFutureShellPathHint(localBin, env.PATH ?? "");
+  if (futureShellPathHint !== null) {
+    env.PATH = env.PATH ? `${localBin}${path.delimiter}${env.PATH}` : localBin;
+  }
+  return futureShellPathHint;
+}
+
 /**
  * Execute `scripts/install-openshell.sh`, wiring in the blueprint-driven pin
  * resolution and the host-side state updates onboard.ts cares about (binary
@@ -234,13 +259,7 @@ export function runOpenshellInstall(deps: RunOpenshellInstallDeps): OpenShellIns
     return { installed: false, localBin: null, futureShellPathHint: null };
   }
   const localBin = process.env.XDG_BIN_HOME || path.join(process.env.HOME || "", ".local", "bin");
-  const openshellPath = path.join(localBin, "openshell");
-  const futureShellPathHint = fs.existsSync(openshellPath)
-    ? deps.getFutureShellPathHint(localBin, process.env.PATH)
-    : null;
-  if (fs.existsSync(openshellPath) && futureShellPathHint) {
-    process.env.PATH = `${localBin}${path.delimiter}${process.env.PATH}`;
-  }
+  const futureShellPathHint = prependInstalledUserLocalOpenshellPath(deps);
   const bin = deps.resolveOpenshell();
   deps.setOpenshellBin(bin);
   if (bin) process.env.NEMOCLAW_OPENSHELL_BIN = bin;

@@ -23,21 +23,25 @@ const rollbackCommand = buildDeepAgentsMcpRegisterCommand(baseEntry, true, [base
 const removalCommand = buildDeepAgentsMcpRemoveCommand(baseEntry);
 
 describe("Deep Agents managed MCP projection safety", () => {
-  it("uses the isolated runtime and one stable-read contract for every v2 mutation", () => {
+  it.each([
+    { mutation: "registration", command: registrationCommand },
+    { mutation: "rollback", command: rollbackCommand },
+    { mutation: "removal", command: removalCommand },
+  ])("uses one stable-read contract for $mutation", ({ command }) => {
+    expect(command).toContain("os.O_NOFOLLOW");
+    expect(command).toContain("os.fstat(descriptor)");
+    expect(command).toContain("assert_managed_source_stable(path, identity)");
+    expect(command).toContain("os.link(tmp_name, path, follow_symlinks=False)");
+    expect(command).toContain("os.ftruncate(descriptor, 0)");
+    expect(command).not.toContain("\n    path.unlink()\n");
+    expect(command).not.toContain("config_path.read_text");
+  });
+
+  it("uses the isolated runtime and bounds registration before mutation", () => {
     expect(registrationCommand).toMatch(/^\/opt\/venv\/bin\/python3 -I - <<'PY'/);
     expect(buildDeepAgentsMcpStatusCommand(baseEntry)).toMatch(
       /^\/opt\/venv\/bin\/python3 -I - <<'PY'/,
     );
-
-    for (const command of [registrationCommand, rollbackCommand, removalCommand]) {
-      expect(command).toContain("os.O_NOFOLLOW");
-      expect(command).toContain("os.fstat(descriptor)");
-      expect(command).toContain("assert_managed_source_stable(path, identity)");
-      expect(command).toContain("os.link(tmp_name, path, follow_symlinks=False)");
-      expect(command).toContain("os.ftruncate(descriptor, 0)");
-      expect(command).not.toContain("\n    path.unlink()\n");
-      expect(command).not.toContain("config_path.read_text");
-    }
     expect(rollbackCommand).toContain(
       `len(payload['expectedServers']) > ${String(DEEPAGENTS_MCP_MAX_SERVERS)}`,
     );

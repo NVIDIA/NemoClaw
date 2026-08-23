@@ -16,12 +16,13 @@ import {
 } from "./ollama-model-registry";
 
 describe("OLLAMA_MODEL_REGISTRY", () => {
-  it("is ordered largest-first by requiredMemoryMB", () => {
-    for (let i = 0; i < OLLAMA_MODEL_REGISTRY.length - 1; i++) {
-      expect(OLLAMA_MODEL_REGISTRY[i].requiredMemoryMB).toBeGreaterThan(
-        OLLAMA_MODEL_REGISTRY[i + 1].requiredMemoryMB,
-      );
-    }
+  it.each(
+    OLLAMA_MODEL_REGISTRY.slice(0, -1).map((entry, index) => ({
+      entry,
+      next: OLLAMA_MODEL_REGISTRY[index + 1],
+    })),
+  )("orders $entry.tag before the smaller $next.tag model", ({ entry, next }) => {
+    expect(entry.requiredMemoryMB).toBeGreaterThan(next.requiredMemoryMB);
   });
 
   it("exposes the smallest tag as SMALLEST_OLLAMA_MODEL_TAG", () => {
@@ -117,6 +118,12 @@ describe("effectiveGpuMemoryMB", () => {
 });
 
 describe("fittableOllamaModelTags", () => {
+  const abundantMemoryTags = fittableOllamaModelTags({
+    type: "nvidia",
+    totalMemoryMB: 131_072,
+    availableMemoryMB: 131_072,
+  });
+
   it("returns the smallest tag for null gpus and ambiguous device types", () => {
     expect(fittableOllamaModelTags(null)).toEqual([SMALLEST_OLLAMA_MODEL_TAG]);
     expect(fittableOllamaModelTags({ type: "generic", totalMemoryMB: 131_072 })).toEqual([
@@ -124,21 +131,20 @@ describe("fittableOllamaModelTags", () => {
     ]);
   });
 
-  it("includes every entry that fits the available-memory figure (smallest-first)", () => {
-    const tags = fittableOllamaModelTags({
-      type: "nvidia",
-      totalMemoryMB: 131_072,
-      availableMemoryMB: 131_072,
-    });
-    expect(tags[0]).toBe(SMALLEST_OLLAMA_MODEL_TAG);
-    expect(tags.length).toBe(OLLAMA_MODEL_REGISTRY.length);
-    // Smallest-first: each subsequent entry should require at least as much
-    // memory as the previous one.
-    for (let i = 0; i < tags.length - 1; i++) {
-      const a = OLLAMA_MODEL_REGISTRY.find((e) => e.tag === tags[i]);
-      const b = OLLAMA_MODEL_REGISTRY.find((e) => e.tag === tags[i + 1]);
-      expect(a && b && a.requiredMemoryMB <= b.requiredMemoryMB).toBe(true);
-    }
+  it("includes every entry that fits the available-memory figure, smallest first", () => {
+    expect(abundantMemoryTags[0]).toBe(SMALLEST_OLLAMA_MODEL_TAG);
+    expect(abundantMemoryTags.length).toBe(OLLAMA_MODEL_REGISTRY.length);
+  });
+
+  it.each(
+    abundantMemoryTags.slice(0, -1).map((tag, index) => ({
+      nextTag: abundantMemoryTags[index + 1],
+      tag,
+    })),
+  )("orders $tag before the larger $nextTag model", ({ tag, nextTag }) => {
+    const entry = OLLAMA_MODEL_REGISTRY.find((candidate) => candidate.tag === tag);
+    const next = OLLAMA_MODEL_REGISTRY.find((candidate) => candidate.tag === nextTag);
+    expect(entry && next && entry.requiredMemoryMB <= next.requiredMemoryMB).toBe(true);
   });
 
   it("falls back to the smallest tag when nothing in the registry fits available memory", () => {
@@ -198,11 +204,12 @@ describe("modelFitsAvailableMemory", () => {
 });
 
 describe("OLLAMA_DOWNLOAD_SIZE_FALLBACK_BYTES", () => {
-  it("mirrors the registry's downloadSizeBytes for every entry", () => {
-    for (const entry of OLLAMA_MODEL_REGISTRY) {
+  it.each(OLLAMA_MODEL_REGISTRY)(
+    "mirrors the $tag registry download size in the fallback map",
+    (entry) => {
       expect(OLLAMA_DOWNLOAD_SIZE_FALLBACK_BYTES[entry.tag]).toBe(entry.downloadSizeBytes);
-    }
-  });
+    },
+  );
 
   it("exposes the largest fittable tag via largestFittableOllamaModelTag", () => {
     expect(

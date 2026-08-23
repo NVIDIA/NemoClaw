@@ -32,9 +32,34 @@ When the log contains readable output from this run, the error includes a redact
 The owner-only log contains unredacted router output.
 Review the log before you share it.
 NemoClaw does not provide log-only cleanup.
-When `destroy` removes the last registered Model Router sandbox that uses a host port, it also stops the Model Router process and frees that port.
-If the stop fails, destroy still completes and prints a warning with the manual stop command.
-While another registered Model Router sandbox uses the same host port, destroying one Model Router sandbox keeps that Model Router process running.
+
+## Router and Sandbox Lifecycle Locks
+
+Routed onboarding already holds the onboarding session lock when it acquires the selected gateway route lock, then the current-user lock for the selected Model Router port.
+The port lock is shared across the current user's NemoClaw gateways.
+Onboarding holds all three locks through router setup and sandbox registry publication.
+Before sandbox deletion, `destroy` captures the current onboarding session identity.
+Model Router destruction takes the gateway route lock, then the current-user Model Router port lock, and then tries the onboarding session lock without waiting.
+After acquiring the session lock, `destroy` rechecks the captured identity before the peer check or process stop.
+If another onboarding run owns the session lock, or the identity changed, `destroy` skips Model Router teardown and warns.
+It leaves the Model Router process and current onboarding session unchanged.
+When `destroy` removes a Model Router sandbox, it checks the bounded set of NemoClaw gateway registries under the host state directory for a same-port peer.
+If no same-port peer remains, NemoClaw stops only a process whose command line still identifies the Model Router on that port.
+NemoClaw clears the matching Model Router process and credential recovery identity only after the stop succeeds or a complete process scan and health probe confirm that the router is absent.
+The final sandbox-name cleanup also checks the captured session identity.
+Other sandbox destroy paths use a non-blocking session update.
+If onboarding owns the lock or the captured session identity changed, `destroy` leaves the current session unchanged.
+If the captured session still names the destroyed sandbox but uses another router port, `destroy` clears only the sandbox association and preserves the router process and credential recovery identity.
+If the process inventory is unavailable, the completed scan finds no matching process while the port remains healthy, or the stop fails, `destroy` still completes and keeps the recovery identity.
+If `destroy` warns that it could not identify or stop a listener for the deleted sandbox, follow these steps:
+
+1. Inspect the current listener process immediately before you stop anything.
+2. Stop it only if its command line identifies the Model Router on the named port.
+3. Do not stop the router recorded by a preserved session for another port.
+4. Do not stop a previously reported process ID if its command line no longer matches.
+
+While another registered Model Router sandbox in any host gateway registry uses the same port, destroying one Model Router sandbox keeps the process running.
+A Model Router sandbox on another port does not keep the process running.
 A successful [uninstall](../../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) stops the selected Model Router and removes its log with the selected gateway's operational state.
 Review the uninstall scope before you use it for log removal.
 

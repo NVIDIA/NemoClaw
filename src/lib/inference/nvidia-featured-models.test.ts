@@ -315,6 +315,34 @@ describe("NVIDIA featured model catalog", () => {
     );
   });
 
+  it("filters the retired DeepSeek V4 Pro entry the featured feed still lists (#9611)", () => {
+    const options = getNvidiaFeaturedModelPromptOptions(null, {
+      runCurlProbeImpl: () => ({
+        ok: true,
+        httpStatus: 200,
+        curlStatus: 0,
+        body: JSON.stringify({
+          "featured-models": [
+            { model: "nvidia/nemotron-3-ultra-550b-a55b", "model-name": "Nemotron 3 Ultra 550B" },
+            { model: "nemotron-3-super-120b-a12b", "model-name": "Nemotron 3 Super 120B" },
+            { model: "z-ai/glm-5.2", "model-name": "GLM 5.2" },
+            { model: "minimaxai/minimax-m3", "model-name": "Minimax M3" },
+            { model: "deepseek-ai/deepseek-v4-pro", "model-name": "DeepSeek V4 Pro" },
+          ],
+        }),
+        stderr: "",
+        message: "",
+      }),
+    });
+
+    expect(options.cloudModelOptions.map((option) => option.id)).toEqual([
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
+      "z-ai/glm-5.2",
+      "minimaxai/minimax-m3",
+    ]);
+  });
+
   it("reuses one featured catalog lookup but recomputes defaults across onboarding retries", () => {
     let probeCount = 0;
     const loadOptions = createNvidiaFeaturedModelPromptOptionsLoader({

@@ -1,12 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import type { ContainerEngineCommandCapture } from "../container-engine";
 import {
   createPodmanContainerEngine,
   localPodmanEnvironment,
+  resolvePodmanExecutablePath,
   type PodmanExecutableAuthorityDeps,
   type PodmanExecutableStat,
   type PodmanSocketAuthority,
@@ -56,6 +61,34 @@ function executableAuthorityDeps(
 }
 
 describe("Podman container engine command adapter", () => {
+  it("resolves and pins the canonical Podman executable for state mutation", ({
+    onTestFinished,
+  }) => {
+    const directory = fs.mkdtempSync(
+      path.join(fs.realpathSync(os.homedir()), ".nemoclaw-podman-executable-"),
+    );
+    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const executable = path.join(directory, "podman");
+    fs.writeFileSync(executable, PODMAN_BYTES, { mode: 0o700 });
+
+    expect(resolvePodmanExecutablePath({ PATH: directory })).toBe(executable);
+    const capture = vi.fn<ContainerEngineCommandCapture>(() => ({
+      status: 0,
+      stdout: "ok",
+      stderr: "",
+    }));
+    const engine = createPodmanContainerEngine({
+      operation: "state-mutation",
+      socketAuthority: AUTHORITY,
+      executableSearchEnv: { PATH: directory },
+      assertAuthority: vi.fn(),
+      capture,
+    });
+
+    expect(engine.capture(["inspect", "qualified-id"], 2000).status).toBe(0);
+    expect(capture.mock.calls[0]?.[0]).toBe(executable);
+  });
+
   it("removes ambient remote and Docker TLS selectors from local Podman commands (#9035)", () => {
     const source = {
       CONTAINER_HOST: "ssh://attacker.test",
@@ -144,6 +177,35 @@ describe("Podman container engine command adapter", () => {
     expect(capture).toHaveBeenCalledTimes(1);
   });
 
+  it("pins socket and executable authority for state-mutation retries", () => {
+    const assertSocketAuthority = vi.fn();
+    const capture = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const readFile = vi.fn(() => PODMAN_BYTES);
+    const engine = createPodmanContainerEngine({
+      operation: "state-mutation",
+      socketAuthority: AUTHORITY,
+      executable: "/usr/bin/podman",
+      executableAuthorityDeps: executableAuthorityDeps(PODMAN_BYTES, { readFile }),
+      assertAuthority: assertSocketAuthority,
+      capture,
+    });
+
+    engine.assertAuthority();
+    engine.capture(["container", "inspect", "a".repeat(64)]);
+
+    expect(engine.operation).toBe("state-mutation");
+    expect(readFile).toHaveBeenCalledTimes(2);
+    expect(assertSocketAuthority).toHaveBeenCalledTimes(3);
+    expect(capture).toHaveBeenCalledExactlyOnceWith(
+      "/usr/bin/podman",
+      ["--url", "unix:///run/user/1000/podman/podman.sock", "container", "inspect", "a".repeat(64)],
+      15_000,
+    );
+    expect(() => engine.captureHost(["info"])).toThrow(
+      "Podman state-mutation forbids ambient host command capture",
+    );
+  });
+
   it("shares only socket authority across real operation-scoped engines", () => {
     const common = {
       socketAuthority: AUTHORITY,
@@ -205,15 +267,16 @@ describe("Podman container engine command adapter", () => {
     expect(assertAuthority).toHaveBeenCalledTimes(2);
   });
 
-  it("requires an explicit canonical absolute executable for host-local inference", () => {
+  it("requires a resolvable canonical absolute executable for host-local inference", () => {
     expect(() =>
       createPodmanContainerEngine({
         operation: "host-local-inference",
         socketAuthority: AUTHORITY,
+        executableSearchEnv: { PATH: "" },
         assertAuthority: vi.fn(),
         capture: vi.fn(),
       }),
-    ).toThrow("canonical absolute path");
+    ).toThrow("could not resolve podman from PATH");
     expect(() =>
       createPodmanContainerEngine({
         operation: "host-local-inference",

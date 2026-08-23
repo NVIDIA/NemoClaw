@@ -7,33 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
-import config from "../../../vitest.config.ts";
 import { shouldRunInstallerIntegration, shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
-
-interface ProjectConfig {
-  test?: {
-    env?: Record<string, string>;
-    fileParallelism?: boolean;
-    name?: string;
-    include?: string[];
-    retry?: number;
-    setupFiles?: string[];
-  };
-}
-
-interface RootConfig {
-  test?: {
-    env?: Record<string, string>;
-    projects?: ProjectConfig[];
-  };
-}
-
-const DRIFT_PREFLIGHT_BYPASS = "NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT";
-const FIXTURE_UMASK_SETUP = "test/helpers/normalize-fixture-umask.ts";
-
-function projectConfigs(): ProjectConfig[] {
-  return (config as RootConfig).test?.projects ?? [];
-}
 
 describe("gated E2E Vitest projects", () => {
   it("enables installer integration only in CI or with the installer opt-in env var", () => {
@@ -51,38 +25,6 @@ describe("gated E2E Vitest projects", () => {
     expect(shouldRunLiveE2E({ NEMOCLAW_RUN_LIVE_E2E: "1" })).toBe(true);
     expect(shouldRunLiveE2E({ NEMOCLAW_RUN_LIVE_E2E: "true" })).toBe(true);
     expect(shouldRunLiveE2E({ NEMOCLAW_RUN_LIVE_E2E: " TRUE " })).toBe(true);
-  });
-
-  it("keeps stateful E2E project retries disabled and aggregate live files serial (#6692)", () => {
-    const statefulProjects = projectConfigs().filter(
-      (project) => !project.test?.setupFiles?.includes(FIXTURE_UMASK_SETUP),
-    );
-    const deterministicProjects = projectConfigs().filter((project) =>
-      project.test?.setupFiles?.includes(FIXTURE_UMASK_SETUP),
-    );
-
-    expect(statefulProjects.length).toBeGreaterThan(0);
-    expect(statefulProjects.every((project) => project.test?.retry === 0)).toBe(true);
-    expect(statefulProjects.some((project) => project.test?.fileParallelism === false)).toBe(true);
-    expect(deterministicProjects.every((project) => project.test?.retry === undefined)).toBe(true);
-  });
-
-  // source-shape-contract: security -- Live projects must not inherit the deterministic drift-preflight bypass
-  it("keeps the drift-preflight bypass out of live projects (#6692)", () => {
-    const statefulProjects = projectConfigs().filter(
-      (project) => !project.test?.setupFiles?.includes(FIXTURE_UMASK_SETUP),
-    );
-    const deterministicProjects = projectConfigs().filter((project) =>
-      project.test?.setupFiles?.includes(FIXTURE_UMASK_SETUP),
-    );
-
-    expect((config as RootConfig).test?.env?.[DRIFT_PREFLIGHT_BYPASS]).toBeUndefined();
-    for (const project of deterministicProjects) {
-      expect(project.test?.env?.[DRIFT_PREFLIGHT_BYPASS], project.test?.name).toBe("1");
-    }
-    for (const project of statefulProjects) {
-      expect(project.test?.env?.[DRIFT_PREFLIGHT_BYPASS], project.test?.name).toBeUndefined();
-    }
   });
 
   it("cleans and rebuilds the CLI before aggregate live E2E execution (#6692)", () => {

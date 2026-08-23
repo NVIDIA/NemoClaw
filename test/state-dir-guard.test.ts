@@ -426,33 +426,34 @@ describe("state-dir-guard", () => {
     );
   });
 
-  it("rejects missing, non-UTF-8, and oversized plan files", () => {
-    const { root, configDir } = fixture();
-    const cases: Array<[string, (planFile: string) => void]> = [
-      ["missing.json", () => undefined],
-      ["non-utf8.json", (planFile) => fs.writeFileSync(planFile, Buffer.from([0xff]))],
+  it.each(
+    Array.from(
       [
-        "oversized.json",
-        (planFile) => fs.writeFileSync(planFile, Buffer.alloc(1024 * 1024 + 1, 0x20)),
-      ],
-    ];
+        ["missing.json", () => undefined],
+        ["non-utf8.json", (planFile) => fs.writeFileSync(planFile, Buffer.from([0xff]))],
+        [
+          "oversized.json",
+          (planFile) => fs.writeFileSync(planFile, Buffer.alloc(1024 * 1024 + 1, 0x20)),
+        ],
+      ] as Array<[string, (planFile: string) => void]>,
+      (value) => [value],
+    ),
+  )("rejects missing, non-UTF-8, and oversized plan files [case %#]", ([fileName, writePlan]) => {
+    const { root, configDir } = fixture();
 
-    for (const [fileName, writePlan] of cases) {
-      const planFile = path.join(root, fileName);
-      writePlan(planFile);
+    const planFile = path.join(root, fileName);
+    writePlan(planFile);
 
-      const result = runGuardWithPlanSource("preflight", configDir, "--plan-file", planFile);
+    const result = runGuardWithPlanSource("preflight", configDir, "--plan-file", planFile);
 
-      expect(result.status, fileName).toBe(1);
-      expect(result.lines, fileName).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ type: "issue", code: "invalid-plan" }),
-          expect.objectContaining({ type: "result", status: "failed", issueCount: 1 }),
-        ]),
-      );
-    }
+    expect(result.status, fileName).toBe(1);
+    expect(result.lines, fileName).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "issue", code: "invalid-plan" }),
+        expect.objectContaining({ type: "result", status: "failed", issueCount: 1 }),
+      ]),
+    );
   });
-
   it.each([
     ["malformed JSON", "{"],
     ["duplicate JSON keys", PLAN_JSON.replace('"version":1', '"version":1,"version":1')],
@@ -756,33 +757,32 @@ describe("state-dir-guard", () => {
     ]);
     expect(fs.readFileSync(outsideFile, "utf-8")).toBe("untouched\n");
   });
-
   it.each([
     ["slack", "/usr/local/lib/node_modules/openclaw"],
     ["whatsapp", "/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw"],
   ])("preserves the exact image-owned OpenClaw %s peer link across transitions", (extensionId, target) => {
-    const { configDir } = fixture(".openclaw");
-    const peerLink = path.join(configDir, "extensions", extensionId, "node_modules", "openclaw");
-    fs.mkdirSync(path.dirname(peerLink), { recursive: true });
-    fs.symlinkSync(target, peerLink);
+      const { configDir } = fixture(".openclaw");
+      const peerLink = path.join(configDir, "extensions", extensionId, "node_modules", "openclaw");
+      fs.mkdirSync(path.dirname(peerLink), { recursive: true });
+      fs.symlinkSync(target, peerLink);
 
-    const preflight = runGuard("preflight", configDir);
-    const locked = runGuard("lock", configDir);
-    const unlocked = runGuard("unlock", configDir);
+      const preflight = runGuard("preflight", configDir);
+      const locked = runGuard("lock", configDir);
+      const unlocked = runGuard("unlock", configDir);
 
-    expect(preflight.status, preflight.stderr).toBe(0);
-    expect(locked.status, locked.stderr).toBe(0);
-    expect(unlocked.status, unlocked.stderr).toBe(0);
-    expect(fs.lstatSync(peerLink).isSymbolicLink()).toBe(true);
-    expect(fs.readlinkSync(peerLink)).toBe(target);
-    expect(locked.lines.at(-1)).toEqual(
-      expect.objectContaining({
-        type: "result",
-        action: "lock",
-        status: "ok",
-        removedEntries: 0,
-      }),
-    );
+      expect(preflight.status, preflight.stderr).toBe(0);
+      expect(locked.status, locked.stderr).toBe(0);
+      expect(unlocked.status, unlocked.stderr).toBe(0);
+      expect(fs.lstatSync(peerLink).isSymbolicLink()).toBe(true);
+      expect(fs.readlinkSync(peerLink)).toBe(target);
+      expect(locked.lines.at(-1)).toEqual(
+        expect.objectContaining({
+          type: "result",
+          action: "lock",
+          status: "ok",
+          removedEntries: 0,
+        }),
+      );
   });
 
   it.each([
@@ -1083,33 +1083,33 @@ describe("state-dir-guard", () => {
     ["Hermes", "NEMOCLAW_TEST_HERMES_FAIL_CLOSED"],
     ["Deep Agents", "NEMOCLAW_TEST_DEEP_AGENTS_FAIL_CLOSED"],
   ])("leaves the %s config root fail-closed when a state-tree budget aborts lock", (_agent, env) => {
-    const { configDir } = fixture();
-    const pluginsDir = path.join(configDir, "plugins");
-    const pluginPath = path.join(pluginsDir, "entry-0.txt");
-    fs.mkdirSync(pluginsDir);
-    for (let index = 0; index < 5; index += 1) {
-      fs.writeFileSync(path.join(pluginsDir, `entry-${index}.txt`), "payload\n");
-    }
-    const staleFd = fs.openSync(pluginPath, "r+");
+      const { configDir } = fixture();
+      const pluginsDir = path.join(configDir, "plugins");
+      const pluginPath = path.join(pluginsDir, "entry-0.txt");
+      fs.mkdirSync(pluginsDir);
+      for (let index = 0; index < 5; index += 1) {
+        fs.writeFileSync(path.join(pluginsDir, `entry-${index}.txt`), "payload\n");
+      }
+      const staleFd = fs.openSync(pluginPath, "r+");
 
-    try {
-      const result = runGuard("lock", configDir, {
-        NEMOCLAW_TEST_MAX_ENTRIES: "3",
-        [env]: "1",
-      });
+      try {
+        const result = runGuard("lock", configDir, {
+          NEMOCLAW_TEST_MAX_ENTRIES: "3",
+          [env]: "1",
+        });
 
-      expect(result.status).toBe(1);
-      expect(result.lines).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ type: "issue", code: "work-entry-limit" }),
-        ]),
-      );
-      expect(mode(configDir)).toBe(0o500);
-      fs.writeSync(staleFd, Buffer.from("stale\n"), 0, 6, 0);
-      expect(mode(configDir)).not.toBe(0o755);
-    } finally {
-      fs.closeSync(staleFd);
-    }
+        expect(result.status).toBe(1);
+        expect(result.lines).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ type: "issue", code: "work-entry-limit" }),
+          ]),
+        );
+        expect(mode(configDir)).toBe(0o500);
+        fs.writeSync(staleFd, Buffer.from("stale\n"), 0, 6, 0);
+        expect(mode(configDir)).not.toBe(0o755);
+      } finally {
+        fs.closeSync(staleFd);
+      }
   });
 
   it.each([

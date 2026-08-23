@@ -591,9 +591,9 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
 
   await preCleanSandbox(host, sandbox, "pre-cleanup");
   cleanup.trackDisposable(`remove shields state for ${SANDBOX_NAME}`, () => {
-    for (const file of [STATE_FILE(SANDBOX_NAME), TIMER_FILE(SANDBOX_NAME), AUDIT_FILE]) {
+    [STATE_FILE(SANDBOX_NAME), TIMER_FILE(SANDBOX_NAME), AUDIT_FILE].forEach((file) => {
       fs.rmSync(file, { force: true });
-    }
+    });
     fs.rmSync(path.join(os.homedir(), ".nemoclaw", "onboard.lock"), {
       force: true,
     });

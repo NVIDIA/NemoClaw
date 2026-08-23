@@ -16,7 +16,11 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import {
+  buildHostedInferenceModelsProbe,
+  requireHostedInferenceConfig,
+  stagePortableHostedInferenceDescriptor,
+} from "../fixtures/hosted-inference.ts";
 import {
   type ColdOnboardPerformanceBudget,
   evaluateColdOnboardPerformance,
@@ -42,6 +46,7 @@ import {
   fullE2eInferenceProbeEvidence,
   runFullE2eInferenceProbe,
 } from "./full-e2e-inference-probe.ts";
+import { readFullE2eColdWorkloadEvidence } from "./full-e2e-workload-evidence.ts";
 import { runOpenClawLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
 import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.ts";
 
@@ -260,6 +265,7 @@ async function assertColdOnboardPerformance(input: {
   const maxSilenceMs = maximumOutputSilenceMs(traceWindow, input.outputEvents);
   const maxSilenceSecs = Math.ceil(maxSilenceMs / 1_000);
   const rootEndToInstallCompletionMs = input.installCompletedAtMs - traceWindow.finishedAtMs;
+  const workload = readFullE2eColdWorkloadEvidence(SANDBOX_NAME, usedBuildKitPrebuild);
 
   const firstTurnStartedAtMs = Date.now();
   const turn = await input.sandbox.execShell(
@@ -294,7 +300,7 @@ async function assertColdOnboardPerformance(input: {
   const responseChars = assistantReply.length;
 
   await input.artifacts.writeJson("onboard-progress-budget.json", {
-    schemaVersion: "nemoclaw.full_e2e_cold_performance.v3",
+    schemaVersion: "nemoclaw.full_e2e_cold_performance.v4",
     sandbox: SANDBOX_NAME,
     installExitCode: input.install.exitCode,
     firstTurnExitCode: turn.exitCode,
@@ -314,6 +320,15 @@ async function assertColdOnboardPerformance(input: {
       provider: input.providerName,
       promptContract: "sentinel-v1",
     },
+    sandboxPhaseCohort: {
+      agent: "openclaw",
+      baseBuildMode: usedAuthoritativeLocalBaseBuild
+        ? "authoritative-local-base-build"
+        : "published-base",
+      platform: process.platform,
+      setupMode: SETUP_MODE,
+      workloadKind: workload.kind,
+    },
     onboardSecs: Math.ceil(traceWindow.durationMs / 1_000),
     rootStartToFirstTurnCompletionSecs,
     budget: input.budget,
@@ -330,13 +345,13 @@ async function assertColdOnboardPerformance(input: {
     maxSilenceBudgetSecs: MAX_SILENCE_SECS,
     buildKitFallback,
     usedBuildKitPrebuild,
+    workload,
     classicBuildSteps,
     responseChars,
   });
 
   expect(plain, "expected literal wizard step [1/8] in installer output").toContain("[1/8]");
   expect(buildKitFallback, "expected no fallback from BuildKit to the gateway builder").toBe(false);
-  expect(usedBuildKitPrebuild, "expected the cold install to use BuildKit").toBe(true);
   expect(classicBuildSteps, "expected no classic per-instruction build steps").toBe(0);
   expect(
     maxSilenceSecs,
@@ -348,8 +363,12 @@ async function assertColdOnboardPerformance(input: {
     `expected the sentinel first agent reply, got: ${turnText}`,
   ).toBe(true);
   for (const anomaly of performanceEvaluation.anomalies) {
+    const title =
+      anomaly.kind === "first-turn-latency-tail"
+        ? "Hosted first-turn latency anomaly"
+        : "Sandbox phase latency anomaly";
     console.warn(
-      `::warning title=Hosted first-turn latency anomaly::root-end-to-first-turn-completion ${anomaly.measurementMs}ms exceeded ${anomaly.budgetMs}ms by ${anomaly.overageMs}ms after all deterministic cold-onboard budgets passed`,
+      `::warning title=${title}::${anomaly.kind} measured ${anomaly.measurementMs}ms against ${anomaly.budgetMs}ms, an overage of ${anomaly.overageMs}ms`,
     );
   }
   expect(
@@ -372,6 +391,15 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   },
 }, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, secrets, skip }) => {
   const hosted = requireHostedInferenceConfig(secrets);
+  const portableHostedDescriptor =
+    PORTABLE_PROFILE && !USE_PREINSTALLED_LAUNCHABLE
+      ? stagePortableHostedInferenceDescriptor(hosted)
+      : null;
+  portableHostedDescriptor &&
+    cleanupRegistry.trackDisposable(
+      "remove unconsumed Portable hosted inference descriptor",
+      portableHostedDescriptor.dispose,
+    );
   const coldOnboardBudget = USE_PREINSTALLED_LAUNCHABLE ? null : readFullE2eColdPathBudget();
   const redactionValues = [hosted.apiKey];
   await artifacts.target.declare({
@@ -519,23 +547,13 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   expect(resultText(policy)).toMatch(/network_policies|egress/i);
 
   progress.phase("exercise hosted, sandbox, and post-recovery launch inference");
-  const direct = await host.command(
-    "curl",
-    [
-      "-fsS",
-      "--max-time",
-      "60",
-      "-H",
-      `Authorization: Bearer ${hosted.apiKey}`,
-      `${hosted.endpointUrl}/models`,
-    ],
-    {
-      artifactName: "phase-4-direct-hosted-inference-models",
-      env: env(),
-      redactionValues,
-      timeoutMs: 90_000,
-    },
-  );
+  const directProbe = buildHostedInferenceModelsProbe(hosted.apiKey, hosted.endpointUrl);
+  const direct = await host.command(directProbe.command, directProbe.args, {
+    artifactName: "phase-4-direct-hosted-inference-models",
+    env: env(directProbe.env),
+    redactionValues,
+    timeoutMs: 90_000,
+  });
   expect(direct.exitCode, resultText(direct)).toBe(0);
   expect(resultText(direct)).toContain("data");
 

@@ -2,43 +2,49 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+
 import {
-  CUA_FRAMEWORK_FEATURE_ENV,
-  CUA_QUALIFICATION_FEATURE_ENV,
-  isCuaFrameworkEnabled,
-  isCuaQualificationEnabled,
-  requireCuaFrameworkEnabled,
+  isCuaEnabled,
+  requireCuaEnabled,
+  requireCuaSandboxImageRef,
 } from "./feature";
 
-describe("CUA framework activation (#7750)", () => {
-  it("is disabled unless the dedicated CUA flag is exactly 1", () => {
-    expect(CUA_FRAMEWORK_FEATURE_ENV).toBe("NEMOCLAW_CUA_ENABLED");
-    for (const value of [undefined, "", "true", "0", "01", " 1", "1 "]) {
-      expect(isCuaFrameworkEnabled({ NEMOCLAW_CUA_ENABLED: value })).toBe(false);
-    }
-    expect(isCuaFrameworkEnabled({ NEMOCLAW_CUA_ENABLED: "1" })).toBe(true);
-    expect(() => requireCuaFrameworkEnabled({})).toThrow(
-      "use the controlled Brev Launchable activation",
-    );
-    expect(() => requireCuaFrameworkEnabled({ NEMOCLAW_CUA_ENABLED: "1" })).not.toThrow();
+describe("NemoCUA feature gate", () => {
+  it.each([undefined, "", "0", "01", " 1", "1 ", "true", "yes"])(
+    "keeps NemoCUA disabled for NEMOCLAW_CUA_ENABLED=%s (#9649)",
+    (value) => {
+      expect(isCuaEnabled({ NEMOCLAW_CUA_ENABLED: value })).toBe(false);
+      expect(() => requireCuaEnabled({ NEMOCLAW_CUA_ENABLED: value })).toThrow(
+        "NemoCUA is disabled",
+      );
+    },
+  );
+
+  it("enables NemoCUA only for the exact value 1 (#9649)", () => {
+    expect(isCuaEnabled({ NEMOCLAW_CUA_ENABLED: "1" })).toBe(true);
   });
 
-  it("requires a second explicit opt-in for candidate qualification", () => {
-    expect(CUA_QUALIFICATION_FEATURE_ENV).toBe("NEMOCLAW_CUA_QUALIFICATION");
-    expect(isCuaQualificationEnabled({ NEMOCLAW_CUA_QUALIFICATION: "1" })).toBe(false);
-    for (const value of [undefined, "", "true", "0", "01", " 1", "1 "]) {
-      expect(
-        isCuaQualificationEnabled({
-          NEMOCLAW_CUA_ENABLED: "1",
-          NEMOCLAW_CUA_QUALIFICATION: value,
-        }),
-      ).toBe(false);
-    }
+  it("requires an explicit prepared sandbox image when NemoCUA is enabled (#9649)", () => {
+    expect(() => requireCuaSandboxImageRef({ NEMOCLAW_CUA_ENABLED: "1" })).toThrow(
+      "NEMOCLAW_CUA_SANDBOX_IMAGE_REF",
+    );
     expect(
-      isCuaQualificationEnabled({
+      requireCuaSandboxImageRef({
         NEMOCLAW_CUA_ENABLED: "1",
-        NEMOCLAW_CUA_QUALIFICATION: "1",
+        NEMOCLAW_CUA_SANDBOX_IMAGE_REF: "nemocua-scenario:image-123",
       }),
-    ).toBe(true);
+    ).toBe("nemocua-scenario:image-123");
   });
+
+  it.each(["image with-space", "image\nFROM attacker", "", " image "])(
+    "rejects unsafe sandbox image input %j (#9649)",
+    (imageRef) => {
+      expect(() =>
+        requireCuaSandboxImageRef({
+          NEMOCLAW_CUA_ENABLED: "1",
+          NEMOCLAW_CUA_SANDBOX_IMAGE_REF: imageRef,
+        }),
+      ).toThrow("must name the prepared NemoCUA sandbox image");
+    },
+  );
 });

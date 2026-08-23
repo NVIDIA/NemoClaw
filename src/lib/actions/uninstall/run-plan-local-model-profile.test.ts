@@ -6,11 +6,21 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import {
+  withProvenManagedGatewayProcess,
+  writeManagedGatewayRuntimeProof,
+} from "../../../../test/support/uninstall-managed-gateway-test-support";
 
 import {
+  loadManagedLlamaCppOwner,
   managedLlamaCppStatePaths,
   reserveManagedLlamaCppOwner,
 } from "../../inference/llama-cpp/managed-state";
+import {
+  buildDockerDriverGatewayConfigToml,
+  ensureDockerDriverGatewayJwtBundle,
+  gatewayIdForStateDir,
+} from "../../onboard/docker-driver-gateway-config";
 import {
   type RunResult,
   runUninstallPlan as runUninstallPlanBase,
@@ -90,6 +100,27 @@ function publishManagedLlamaOwner(
     recipeId: "llama-cpp.nemotron.spark-single.v1",
   });
   return paths.stateDir;
+}
+
+function writeScopedGatewayState(home: string): void {
+  const stateDir = path.join(home, ".local", "state", "nemoclaw", "openshell-docker-gateway");
+  const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+  fs.writeFileSync(
+    path.join(stateDir, "openshell-gateway.toml"),
+    buildDockerDriverGatewayConfigToml(
+      {
+        OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
+        OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+        OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+        OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+      },
+      "/usr/bin/openshell-sandbox",
+      jwtBundle,
+      gatewayIdForStateDir(stateDir),
+    ),
+    { mode: 0o600 },
+  );
+  writeManagedGatewayRuntimeProof(stateDir, 8080);
 }
 
 describe("uninstall local model profile cleanup", () => {
@@ -406,10 +437,12 @@ describe("uninstall local model profile cleanup", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    for (const [command, , options] of run.mock.calls.filter(([command]) => command === "ollama")) {
-      expect(command).toBe("ollama");
-      expect(options?.env?.OLLAMA_HOST).toBe("127.0.0.1:11434");
-    }
+    run.mock.calls
+      .filter(([command]) => command === "ollama")
+      .forEach(([command, , options]) => {
+        expect(command).toBe("ollama");
+        expect(options?.env?.OLLAMA_HOST).toBe("127.0.0.1:11434");
+      });
   });
 
   it("fails without deleting any Ollama model when inventory is malformed", () => {
@@ -513,6 +546,7 @@ describe("uninstall local model profile cleanup", () => {
       fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-llama-scoped-")),
     );
     const stateDir = publishManagedLlamaOwner(tmpHome, 8080, "selected-sandbox");
+    writeScopedGatewayState(tmpHome);
     const runManagedLlamaCppRuntimeCleanup = vi.fn((sandboxName: string, gatewayPort: number) => {
       expect(sandboxName).toBe("selected-sandbox");
       expect(gatewayPort).toBe(8080);
@@ -523,10 +557,11 @@ describe("uninstall local model profile cleanup", () => {
     try {
       const result = runUninstallPlan(
         { assumeYes: true, deleteModels: true, keepOpenShell: true },
-        {
+        withProvenManagedGatewayProcess({
           commandExists: (command) => command === "openshell",
           env: { HOME: tmpHome } as NodeJS.ProcessEnv,
           existsSync: fs.existsSync,
+          isPortFree: () => true,
           isTty: false,
           log: () => {},
           run: vi.fn((command: string, args: string[]) =>
@@ -535,7 +570,7 @@ describe("uninstall local model profile cleanup", () => {
               : ok(),
           ),
           runManagedLlamaCppRuntimeCleanup,
-        },
+        }),
       );
 
       expect(result.exitCode).toBe(0);
@@ -582,34 +617,67 @@ describe("uninstall local model profile cleanup", () => {
     }
   });
 
-  it("preserves selected gateway authority when scoped cleanup leaves ownership state", () => {
+  it("continues unrelated uninstall after managed llama.cpp cleanup fails (#9575)", () => {
     const tmpHome = fs.realpathSync(
       fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-llama-fail-")),
     );
     const stateDir = publishManagedLlamaOwner(tmpHome, 8080, "selected-sandbox");
+    const siblingStateDir = publishManagedLlamaOwner(tmpHome, 9000, "sibling-sandbox");
+    const selectedPaths = managedLlamaCppStatePaths(tmpHome, 8080);
+    const siblingPaths = managedLlamaCppStatePaths(tmpHome, 9000);
+    const selectedOwnerBefore = loadManagedLlamaCppOwner(selectedPaths);
+    const siblingOwnerBefore = loadManagedLlamaCppOwner(siblingPaths);
+    writeScopedGatewayState(tmpHome);
+    const unrelatedState = path.join(tmpHome, ".nemoclaw", "unrelated-state.json");
+    const cacheDir = path.join(tmpHome, ".cache", "huggingface");
+    fs.mkdirSync(cacheDir, { recursive: true });
+    fs.writeFileSync(unrelatedState, "{}\n", { mode: 0o600 });
     const errors: string[] = [];
+    const logs: string[] = [];
+    const runLocalModelRuntimeCleanup = vi.fn(() => ok());
+    const runHuggingFaceCacheDataCleanup = vi.fn(() => ok());
+    const runManagedLlamaCppRuntimeCleanup = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "qualified endpoint changed",
+    }));
     try {
       const result = runUninstallPlan(
-        { assumeYes: true, deleteModels: false, keepOpenShell: true },
-        {
+        { assumeYes: true, deleteModels: true, keepOpenShell: true },
+        withProvenManagedGatewayProcess({
           commandExists: (command) => command === "openshell",
           env: { HOME: tmpHome } as NodeJS.ProcessEnv,
           error: (message) => errors.push(message),
           existsSync: fs.existsSync,
+          isPortFree: () => true,
           isTty: false,
-          log: () => {},
-          run: vi.fn((command: string, args: string[]) =>
-            command === "openshell" && args[0] === "gateway" && args[1] === "list"
-              ? ok(JSON.stringify([{ name: "nemoclaw" }, { name: "nemoclaw-9000" }]))
-              : ok(),
-          ),
-          runManagedLlamaCppRuntimeCleanup: vi.fn(() => ok()),
-        },
+          log: (message) => logs.push(message),
+          run: vi.fn(okWithKnownGatewayList),
+          runHuggingFaceCacheDataCleanup,
+          runLocalModelRuntimeCleanup,
+          runManagedLlamaCppRuntimeCleanup,
+        }),
       );
 
       expect(result.exitCode).toBe(1);
+      expect(runManagedLlamaCppRuntimeCleanup).toHaveBeenCalledExactlyOnceWith(
+        "selected-sandbox",
+        8080,
+      );
       expect(fs.existsSync(stateDir)).toBe(true);
-      expect(errors.join("\n")).toContain("returned without retiring its ownership state");
+      expect(fs.existsSync(path.join(stateDir, "owner.json"))).toBe(true);
+      expect(fs.existsSync(path.join(siblingStateDir, "owner.json"))).toBe(true);
+      expect(loadManagedLlamaCppOwner(selectedPaths)).toEqual(selectedOwnerBefore);
+      expect(loadManagedLlamaCppOwner(siblingPaths)).toEqual(siblingOwnerBefore);
+      expect(fs.existsSync(unrelatedState)).toBe(false);
+      expect(fs.existsSync(cacheDir)).toBe(true);
+      expect(runHuggingFaceCacheDataCleanup).not.toHaveBeenCalled();
+      expect(runLocalModelRuntimeCleanup).not.toHaveBeenCalled();
+      expect(logs).toContain(
+        "Managed llama.cpp cleanup did not complete. NemoClaw kept model stores for retry.",
+      );
+      expect(logs.some((message) => message.endsWith("State and binaries"))).toBe(true);
+      expect(errors.join("\n")).toContain("continue unrelated uninstall steps");
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }

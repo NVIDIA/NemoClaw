@@ -2,20 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { setTimeout as sleep } from "node:timers/promises";
+
 import {
   detectOpenShellStateRpcResultIssue,
   type OpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
 import { captureOpenshellForStatus, isCommandTimeout } from "../../adapters/openshell/runtime";
 import { type AgentDefinition, getAgentRuntimeKind, loadAgent } from "../../agent/defs";
+import { retryUntilAsync } from "../../core/retry";
+
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
-import type { CuaAppliedPolicyIdentity } from "../../cua/contract";
-import {
-  type CuaStateValidationDeps,
-  getObservedValidatedCuaState,
-  isCuaPublicStateEnabled,
-  type ObservedCuaInferenceRoute,
-} from "../../cua/state";
 import {
   type GatewayInference,
   parseGatewayInference,
@@ -166,6 +162,8 @@ export interface SandboxStatusReport {
   liveRoute: GatewayInference | null;
   routeDrift: SandboxStatusRouteDrift | null;
   phase: string | null;
+  /** Receipt-owned Hermes portable lifecycle phase when schema-5 authority is present. */
+  portableLifecyclePhase?: "pending" | "configuring" | "active";
   gatewayState: string;
   inferenceHealth: ProviderHealthStatus | null;
   rpcIssue: { kind: "image_drift" | "host_process_drift" | "protobuf_mismatch" } | null;
@@ -180,8 +178,6 @@ export interface SandboxStatusReport {
   openshellDriver: string;
   openshellVersion: string;
   policies: string[];
-  /** Current, validated, credential-free CUA candidate runtime readiness. */
-  cuaRuntime?: registry.SandboxEntry["cuaRuntimeReadiness"] | null;
   /** Baseline network policy keys the operator has excluded, replayed on rebuild. */
   baselineExclusions: string[];
   /** Observed enforcement state for each recorded baseline exclusion. */
@@ -297,9 +293,6 @@ function loadRecoverSandboxProcesses(): RecoverSandboxProcesses {
 
 interface CollectSandboxStatusSnapshotDeps {
   getSandbox?: typeof registry.getSandbox;
-  observeCuaLiveInference?: (entry: registry.SandboxEntry) => ObservedCuaInferenceRoute;
-  observeCuaLiveAppliedPolicy?: (entry: registry.SandboxEntry) => CuaAppliedPolicyIdentity;
-  validateCuaRuntimeReadiness?: CuaStateValidationDeps["validateRuntimeReadiness"];
   listSandboxes?: typeof registry.listSandboxes;
   captureOpenshellForStatusImpl?: typeof captureOpenshellForStatus;
   probeProviderHealthImpl?: ProbeProviderHealth;
@@ -420,7 +413,12 @@ export async function collectSandboxStatusSnapshot(
       getReconciledSandboxGatewayState(name, {
         getState: getSandboxGatewayStateForStatus,
       }));
-  const getSandbox = opts.deps?.getSandbox ?? registry.getSandbox;
+  const getSandbox =
+    opts.deps?.getSandbox ??
+    ((name: string) => {
+      const entry = registry.getSandbox(name);
+      return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
+    });
   const sb = getSandbox(sandboxName);
   let lookup: SandboxGatewayState;
   try {
@@ -578,21 +576,6 @@ export async function collectSandboxStatusSnapshot(
   // providers without a registered host-side health probe (#6192).
   if (!suppressInferenceProbe && lookup.state === "present") {
     let gatewayChain: Awaited<ReturnType<ProbeSandboxInferenceGatewayHealth>> = null;
-    try {
-      const probe =
-        opts.deps?.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth;
-      const attempts = recoveredManagedGateway ? RECOVERED_INFERENCE_PROBE_ATTEMPTS : 1;
-      for (let attempt = 1; attempt <= attempts; attempt += 1) {
-        gatewayChain = await probe(sandboxName);
-        if (gatewayChain?.ok || attempt === attempts) break;
-        await (opts.deps?.delayInferenceRecoveryProbe ?? sleep)(RECOVERED_INFERENCE_PROBE_DELAY_MS);
-      }
-    } catch (error) {
-      // This is a permanent fail-closed runtime boundary, but unexpected
-      // OpenShell/transport exceptions must remain observable for diagnosis.
-      reportInferenceProbeError(error, opts.deps?.reportInferenceProbeError ?? console.error);
-      gatewayChain = null;
-    }
     // Take the provider and model as one pair. Falling back per field can pair
     // a live model with a recorded provider and request a route neither one
     // describes.
@@ -601,11 +584,14 @@ export async function collectSandboxStatusSnapshot(
         ? {
             provider: live.provider,
             model: live.model,
-            // The live gateway RPC does not expose a stored API override. Do
-            // not carry an API family across route drift. When the live pair
-            // is unchanged, the recorded family still describes that route.
+            // The live gateway RPC does not expose a stored API family. The
+            // recorded API family describes the recorded provider, so it keeps
+            // describing the live route while that provider is unchanged,
+            // including when only the model drifted. Drop it only when the
+            // provider itself changed, so one provider's API family cannot be
+            // carried onto another that has no such endpoint (#9302).
             preferredInferenceApi:
-              routeDriftPlan?.kind === "aligned" ? (sb?.preferredInferenceApi ?? null) : null,
+              live.provider === sb?.provider ? (sb?.preferredInferenceApi ?? null) : null,
           }
         : {
             provider: currentProvider,
@@ -614,23 +600,51 @@ export async function collectSandboxStatusSnapshot(
           };
     const invocationModel = (invocationRoute.model || "").trim();
     const invocationProvider = (invocationRoute.provider || "").trim();
-    const invocation =
-      gatewayChain?.ok && invocationModel && invocationProvider
-        ? runSandboxInferenceInvocationProbe(
-            {
-              sandboxName,
-              provider: invocationProvider,
-              model: invocationModel,
-              preferredInferenceApi: invocationRoute.preferredInferenceApi,
-            },
-            opts.deps?.probeSandboxInferenceInvocationImpl,
-            (error) =>
-              reportInferenceProbeError(
-                error,
-                opts.deps?.reportInferenceProbeError ?? console.error,
-              ),
-          )
-        : null;
+    const canProbeInvocation = Boolean(invocationModel && invocationProvider);
+    let invocation: ReturnType<typeof runSandboxInferenceInvocationProbe> | null = null;
+    try {
+      const probe =
+        opts.deps?.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth;
+      const attempts = recoveredManagedGateway ? RECOVERED_INFERENCE_PROBE_ATTEMPTS : 1;
+      await retryUntilAsync(
+        async () => {
+          gatewayChain = await probe(sandboxName);
+          invocation =
+            gatewayChain?.ok && canProbeInvocation
+              ? runSandboxInferenceInvocationProbe(
+                  {
+                    sandboxName,
+                    provider: invocationProvider,
+                    model: invocationModel,
+                    preferredInferenceApi: invocationRoute.preferredInferenceApi,
+                  },
+                  opts.deps?.probeSandboxInferenceInvocationImpl,
+                  (error) =>
+                    reportInferenceProbeError(
+                      error,
+                      opts.deps?.reportInferenceProbeError ?? console.error,
+                    ),
+                )
+              : null;
+          return { gatewayChain, invocation };
+        },
+        {
+          accept: ({ gatewayChain: chain, invocation: result }) =>
+            Boolean(chain?.ok && (!canProbeInvocation || result?.ok)),
+          retryDelaysMs: Array.from(
+            { length: attempts - 1 },
+            () => RECOVERED_INFERENCE_PROBE_DELAY_MS,
+          ),
+          sleep: opts.deps?.delayInferenceRecoveryProbe ?? sleep,
+        },
+      );
+    } catch (error) {
+      // This is a permanent fail-closed runtime boundary, but unexpected
+      // OpenShell/transport exceptions must remain observable for diagnosis.
+      reportInferenceProbeError(error, opts.deps?.reportInferenceProbeError ?? console.error);
+      gatewayChain = null;
+      invocation = null;
+    }
     inferenceHealth = buildSandboxInferenceRouteHealth(gatewayChain, providerHealth, invocation);
   }
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
@@ -677,7 +691,12 @@ async function buildSandboxStatusReport(
   sandboxName: string,
   deps: CollectSandboxStatusSnapshotDeps,
 ): Promise<SandboxStatusReport> {
-  const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const getSandbox =
+    deps.getSandbox ??
+    ((name: string) => {
+      const entry = registry.getSandbox(name);
+      return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
+    });
   const preflight = await (deps.getSandboxStatusPreflightImpl ?? getSandboxStatusPreflight)(
     getSandbox(sandboxName),
   );
@@ -725,13 +744,6 @@ async function buildSandboxStatusReport(
       }
     : null;
   const agent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
-  const cua = getObservedValidatedCuaState(sb, process.env, {
-    observeLiveInference: deps.observeCuaLiveInference,
-    observeLiveAppliedPolicy: deps.observeCuaLiveAppliedPolicy,
-    ...(deps.validateCuaRuntimeReadiness
-      ? { validation: { validateRuntimeReadiness: deps.validateCuaRuntimeReadiness } }
-      : {}),
-  });
   return {
     schemaVersion: 1,
     name: sandboxName,
@@ -764,7 +776,6 @@ async function buildSandboxStatusReport(
     openshellDriver: (sb && sb.openshellDriver) || "unknown",
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies,
-    ...(isCuaPublicStateEnabled() ? { cuaRuntime: cua.readiness } : {}),
     baselineExclusions,
     baselineExclusionStates,
     baselineExclusionTransition,

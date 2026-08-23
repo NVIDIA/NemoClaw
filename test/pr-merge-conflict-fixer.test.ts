@@ -649,12 +649,12 @@ describe("PR merge conflict fixer", () => {
       "delete",
       "sandbox-test",
     ]);
-    for (const [, , options] of calls) {
+    calls.forEach(([, , options]) => {
       expect(options.env.GH_TOKEN).toBeUndefined();
       expect(options.env.GITHUB_TOKEN).toBeUndefined();
       expect(options.env.OPENAI_API_KEY).toBeUndefined();
       expect(options.env.PR_REVIEW_ADVISOR_API_KEY).toBeUndefined();
-    }
+    });
     expect(fs.existsSync(required(env.ARTIFACT_DIR, "ARTIFACT_DIR"))).toBe(true);
   });
 

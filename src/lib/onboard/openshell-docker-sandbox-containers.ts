@@ -61,12 +61,21 @@ export type OpenShellDockerSandboxContainerQuery =
 export function queryOpenShellDockerSandboxContainers(
   sandboxName: string,
   deps: DockerSandboxContainerQueryDeps = {},
+  timeoutMs: number = DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
 ): OpenShellDockerSandboxContainerQuery {
   const run = deps.dockerRun ?? dockerRun;
+  const requestedTimeoutMs =
+    Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? Math.floor(timeoutMs)
+      : DOCKER_SANDBOX_QUERY_TIMEOUT_MS;
+  const boundedTimeoutMs = Math.max(
+    1,
+    Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, requestedTimeoutMs),
+  );
   const result = run([...sandboxContainerFilterArgs(sandboxName), "--format", "{{.ID}}"], {
     ignoreError: true,
     suppressOutput: true,
-    timeout: DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
+    timeout: boundedTimeoutMs,
   });
   if (Number(result.status ?? 1) !== 0) {
     return {
@@ -86,6 +95,43 @@ type StaleDockerOrphanCleanupDeps = {
   queryContainers?: typeof queryOpenShellDockerSandboxContainers;
   forceRemove?: (containerId: string) => { status?: number | null };
 };
+
+/** Remove only the Docker container whose immutable ID passed the caller's authority check. */
+export function removeExactOpenShellDockerSandboxContainer(
+  sandboxName: string,
+  expectedContainerId: string,
+  log: (message: string) => void,
+  deps: StaleDockerOrphanCleanupDeps = {},
+): void {
+  const queryContainers = deps.queryContainers ?? queryOpenShellDockerSandboxContainers;
+  const initial = queryContainers(sandboxName);
+  if (!initial.ok) {
+    throw new Error(`could not inspect the exact Docker cleanup target: ${initial.error}`);
+  }
+  if (initial.ids.length === 0) return;
+  if (initial.ids.length !== 1 || initial.ids[0] !== expectedContainerId) {
+    throw new Error(
+      `expected exactly labeled Docker container '${expectedContainerId}', found ` +
+        `${initial.ids.length === 0 ? "none" : initial.ids.join(", ")}; refusing replacement cleanup`,
+    );
+  }
+
+  const removal = deps.forceRemove
+    ? deps.forceRemove(expectedContainerId)
+    : dockerRun(["rm", "-f", expectedContainerId], {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: STALE_DOCKER_ORPHAN_TIMEOUT_MS,
+      });
+  if (Number(removal.status ?? 1) !== 0) {
+    throw new Error(`could not remove exact Docker container '${expectedContainerId}'`);
+  }
+  const confirmed = queryContainers(sandboxName);
+  if (!confirmed.ok || confirmed.ids.length !== 0) {
+    throw new Error("could not confirm exact Docker container removal");
+  }
+  log(`Removed exact Docker container '${expectedContainerId}' after OpenShell sandbox deletion`);
+}
 
 /**
  * Remove one exact Docker-owned orphan when a registry row outlives its OpenShell sandbox.
@@ -335,9 +381,9 @@ function parseNvidiaVisibleDevices(result: {
 
 /**
  * Inspect a native container before deletion. Default callers must resolve one
- * labeled container. Managed-bootstrap callers may instead provide the full
- * transaction-owned container ID, which must be present among the labeled
- * replacement and retained rollback backup.
+ * labeled container. A caller that owns a recreation transaction may instead
+ * provide the full replacement container ID. That ID must be present among
+ * the labeled replacement and retained rollback backup.
  *
  * Docker owns the fields returned here: `.Image` is the immutable retry
  * identity, `.Config.Image` is bookkeeping-only, and HostConfig supplies the

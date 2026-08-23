@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   ensureValidatedWebSearchCredential: vi.fn(),
   isDockerDesktopWslRuntime: vi.fn(),
   isLinuxDockerDriverGatewayEnabled: vi.fn(),
+  preflightAuthoritativeRebuildTarget: vi.fn(),
   preflightRebuildCredentials: vi.fn(),
   readGatewayProviderMetadata: vi.fn(),
   runOpenshell: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock("../../onboard/gateway-provider-metadata", async (importOriginal) => {
 vi.mock("./rebuild-onboard-dependencies", () => ({
   rebuildOnboardDependencies: {
     ensureValidatedWebSearchCredential: mocks.ensureValidatedWebSearchCredential,
+    preflightAuthoritativeRebuildTarget: mocks.preflightAuthoritativeRebuildTarget,
   },
 }));
 
@@ -52,8 +54,12 @@ vi.mock("./rebuild-credential-preflight", () => ({
 import * as rebuildImagePreflight from "./rebuild-custom-image-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import type { RebuildTargetConfig } from "./rebuild-target-config";
-import { preflightRebuildTargetRuntime } from "./rebuild-target-runtime";
+import {
+  preflightAuthoritativeOnboardRuntime,
+  preflightRebuildTargetRuntime,
+} from "./rebuild-target-runtime";
 
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
 const TARGET = {
@@ -186,6 +192,40 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
     } finally {
       imagePreflight.mockRestore();
     }
+  });
+});
+
+describe("authoritative rebuild readiness", () => {
+  it("passes recorded managed-vLLM intent to the pre-delete readiness gate (#9292)", async () => {
+    const authority = { checkpoint: "gateway-authority" };
+    mocks.preflightAuthoritativeRebuildTarget.mockResolvedValue(authority);
+    const recreateOptions = {
+      ...RECREATE_OPTIONS,
+      allowDeferredN1xManagedVllm: true,
+    } as RebuildRecreateOnboardOpts;
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+
+    await expect(
+      preflightAuthoritativeOnboardRuntime(
+        "alpha",
+        { provider: "vllm-local", model: "test-model" } as RebuildResumeConfig,
+        recreateOptions,
+        bail,
+      ),
+    ).resolves.toBe(true);
+
+    expect(mocks.preflightAuthoritativeRebuildTarget).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowDeferredN1xManagedVllm: true,
+        provider: "vllm-local",
+        model: "test-model",
+        sandboxName: "alpha",
+      }),
+    );
+    expect(recreateOptions.rebuildGatewayAuthority).toBe(authority);
+    expect(bail).not.toHaveBeenCalled();
   });
 });
 

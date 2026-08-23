@@ -14,6 +14,7 @@ import { runCapture as defaultRunCapture } from "../runner";
 import {
   ensureAgentDashboardForward as ensureAgentDashboardForwardForAgent,
   replaceUrlPort,
+  resolveVerifyAgentApiPort,
 } from "./agent-dashboard-forward";
 import { ensureAgentFixedForward as ensureFixedAgentForward } from "./agent-fixed-forward";
 import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
@@ -28,10 +29,11 @@ import {
   getOccupiedPorts,
   getPersistedDashboardPort,
   getRegistryOccupiedDashboardPorts,
+  isPortBoundOnHost,
   isLiveForwardStatus,
   type ListSandboxesFn,
 } from "./dashboard-port";
-import { bestEffortForwardStop } from "./forward-cleanup";
+import { bestEffortForwardStop, waitForStoppedForwardPortRelease } from "./forward-cleanup";
 import {
   buildDetachedForwardStartSpawn,
   buildForwardStartProgressLogger,
@@ -71,6 +73,10 @@ export interface OnboardDashboardDeps {
   // never reads the runner's real `~/.nemoclaw/sandboxes.json`; production
   // callers leave it unset and the helper falls back to the live registry.
   listSandboxes?: ListSandboxesFn;
+  /** Host-listener probe injected by forward release race tests. */
+  isPortBoundOnHost?: typeof isPortBoundOnHost;
+  /** Sandbox lookup used to resolve the per-sandbox Hermes API port. */
+  getSandbox?(name: string): { hermesApiPort?: number | null } | null | undefined;
   printAgentDashboardUi(
     sandboxName: string,
     token: string | null,
@@ -83,8 +89,20 @@ export interface OnboardDashboardDeps {
   ): void;
 }
 
+/** Agent fields the deployment-verification chain reads. */
+export type VerifyChainAgent = {
+  name?: string;
+  dashboard?: { healthPath?: string } | null;
+  healthProbe?: { url?: string; port?: number } | null;
+};
+
 export interface OnboardDashboardHelpers {
   buildChain: typeof buildChain;
+  buildAgentVerifyChain(
+    chatUiUrl: string,
+    sandboxName: string,
+    agent: VerifyChainAgent | null | undefined,
+  ): ReturnType<typeof buildChain>;
   buildControlUiUrls: typeof buildControlUiUrls;
   buildOrphanedSandboxRollbackMessage(
     sandboxName: string,
@@ -221,6 +239,33 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     });
   }
 
+  /**
+   * Build the delivery chain deployment verification probes for `sandboxName`.
+   *
+   * Resolves the agent's OpenAI-compatible API port for this sandbox rather
+   * than the agent manifest default, so verification probes the port this
+   * sandbox actually publishes on the host (#9290).
+   */
+  function buildAgentVerifyChain(
+    chatUiUrl: string,
+    sandboxName: string,
+    agent: VerifyChainAgent | null | undefined,
+  ): ReturnType<typeof buildChain> {
+    // Resolve WSL once: `buildChain` and the host-address lookup must agree, or
+    // the chain can claim WSL while dropping the fallback URL that pairs with it.
+    const isWsl = deps.isWsl();
+    return buildChain({
+      chatUiUrl,
+      isWsl,
+      wslHostAddress: getWslHostAddress({ isWsl }),
+      dashboardHealthEndpoint: agent?.dashboard?.healthPath,
+      gatewayPort: resolveVerifyAgentApiPort(sandboxName, agent, {
+        getSandbox: deps.getSandbox,
+      }),
+      gatewayHealthEndpoint: agent?.healthProbe?.url,
+    });
+  }
+
   function stopAllDashboardForwards(): void {
     const forwardList = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
     for (const port of getRunningForwardPorts(forwardList)) {
@@ -285,7 +330,21 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       preferredEntry &&
       (preferredEntry.sandboxName === sandboxName || !isLiveForwardStatus(preferredEntry.status))
     ) {
-      stopForwardForSandbox(preferredPort);
+      const stopResult = stopForwardForSandbox(preferredPort);
+      if (
+        preferredEntry.sandboxName === sandboxName &&
+        (stopResult === "stopped" || stopResult === "no-entry")
+      ) {
+        // OpenShell can remove forward metadata before the SSH listener exits.
+        // Do not classify that retiring listener as a foreign fixed-port
+        // conflict; use the same bounded five-second release window as runtime
+        // forward recovery.
+        waitForStoppedForwardPortRelease(
+          preferredPort,
+          deps.isPortBoundOnHost ?? isPortBoundOnHost,
+          { sleep: (milliseconds) => deps.sleep(milliseconds / 1_000) },
+        );
+      }
       existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
     }
     let actualPort: number;
@@ -294,7 +353,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         sandboxName,
         preferredPort,
         existingForwards,
-        undefined,
+        deps.isPortBoundOnHost ?? isPortBoundOnHost,
         getRegistryOccupiedDashboardPorts(sandboxName, deps.listSandboxes),
       );
     } catch (err) {
@@ -613,6 +672,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
 
   return {
     buildChain,
+    buildAgentVerifyChain,
     buildControlUiUrls,
     buildOrphanedSandboxRollbackMessage,
     ensureDashboardForward,

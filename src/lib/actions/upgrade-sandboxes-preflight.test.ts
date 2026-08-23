@@ -42,8 +42,8 @@ vi.mock("../runtime-recovery", () => ({
 }));
 vi.mock("../sandbox/version", () => ({ checkAgentVersion: mocks.checkAgentVersion }));
 vi.mock("../state/registry", () => ({
-  isRouteOnlySandboxReservation: (entry: { pendingRouteReservation?: true; createdAt?: string }) =>
-    entry.pendingRouteReservation === true && entry.createdAt === undefined,
+  isPublishedSandboxRegistration: (entry: { pendingRouteReservation?: true }) =>
+    entry.pendingRouteReservation !== true,
   listSandboxes: mocks.listSandboxes,
 }));
 vi.mock("../state/sandbox", () => ({ getLatestBackup: mocks.getLatestBackup }));
@@ -148,9 +148,7 @@ describe("upgrade-sandboxes gateway preflight adapter (#6237)", () => {
     await expect(upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
 
     const output = errorSpy.mock.calls.flat().join("\n");
-    for (const name of incompatibleNames) {
-      expect(output).toContain(JSON.stringify(name));
-    }
+    expect(incompatibleNames.every((name) => output.includes(JSON.stringify(name)))).toBe(true);
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(mocks.captureNamedGatewaySandboxListReadOnly).not.toHaveBeenCalled();
     expect(mocks.captureSandboxListWithGatewayPreflightOrExit).not.toHaveBeenCalled();

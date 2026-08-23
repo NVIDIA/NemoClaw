@@ -29,25 +29,58 @@ import {
   resolveDockerGpuPatchRollbackDeps,
   rollbackToBackupContainer,
 } from "./docker-gpu-patch-rollback";
+import { fullDockerContainerId } from "./docker-gpu-patch-clone";
 import type { DockerGpuPatchDeps, DockerGpuPatchResult } from "./docker-gpu-patch-types";
+import { waitForOpenShellSandboxLifecycleRelease } from "./docker-gpu-supervisor-reconnect";
+import { queryOpenShellDockerSandboxContainers } from "./openshell-docker-sandbox-containers";
 
 export {
   restoreDockerGpuPatchBackupAfterRecreateFailure as rollbackDockerGpuPatchOnRecreateFailure,
   rollbackToBackupContainer,
 } from "./docker-gpu-patch-rollback";
 
-export type DockerGpuPatchFinalizeOptions = {
-  result: DockerGpuPatchResult;
-  supervisorReady: boolean;
-};
+export type DockerGpuPatchFinalizeOptions =
+  | {
+      result: DockerGpuPatchResult;
+      supervisorReady: false;
+    }
+  | {
+      result: DockerGpuPatchResult;
+      supervisorReady: true;
+      sandboxName: string;
+      lifecycleReleaseTimeoutSecs: number;
+    };
 
 export type DockerGpuPatchFinalizeOutcome = {
   backupRemoved: boolean;
   rolledBack: boolean;
+  replacementStoppedForCommit?: boolean;
+  replacementRestarted?: boolean;
+  lifecycleReleaseObserved?: boolean;
   replacementStopConfirmed?: boolean;
   replacementRemovalConfirmed?: boolean;
   replacementPresence?: "absent" | "present" | "unknown";
 };
+
+function isSoleLabeledReplacement(
+  sandboxName: string,
+  replacementContainerId: string,
+  dockerRun: NonNullable<DockerGpuPatchDeps["dockerRun"]>,
+  timeoutMs: number,
+): boolean {
+  const expectedContainerId = fullDockerContainerId(replacementContainerId);
+  if (!expectedContainerId || timeoutMs <= 0) return false;
+  try {
+    const containers = queryOpenShellDockerSandboxContainers(sandboxName, { dockerRun }, timeoutMs);
+    return (
+      containers.ok &&
+      containers.ids.length === 1 &&
+      fullDockerContainerId(containers.ids[0]) === expectedContainerId
+    );
+  } catch {
+    return false;
+  }
+}
 
 export function finalizeDockerGpuPatchBackup(
   options: DockerGpuPatchFinalizeOptions,
@@ -63,13 +96,64 @@ export function finalizeDockerGpuPatchBackup(
     return { backupRemoved: true, rolledBack: false };
   }
   if (options.supervisorReady) {
-    // Backup removal is best-effort: the supervisor probe already confirmed
-    // the new GPU container is reachable, so the backup is no longer needed
-    // even if `docker rm` cannot delete it (e.g. concurrent admin action,
-    // daemon timeout). Reflect the actual rm status in the outcome so
-    // diagnostics can flag a leaked backup container.
+    // Stop the replacement before retiring the labelled backup, then start it
+    // afterward. OpenShell observes Docker lifecycle events for both containers;
+    // leaving the backup's removal as the final event can demote the already
+    // reconnected replacement back to not-ready. The final start makes the live
+    // replacement's registration authoritative while the rollback container is
+    // still retained until the destructive removal succeeds.
+    const stopResult = resolved.dockerStop(options.result.newContainerId, containerOpts);
+    if (!hasZeroDockerExitStatus(stopResult)) {
+      return {
+        backupRemoved: false,
+        rolledBack: false,
+        replacementStoppedForCommit: false,
+      };
+    }
     const rmResult = resolved.dockerRm(options.result.backupContainerName, containerOpts);
-    return { backupRemoved: hasZeroDockerExitStatus(rmResult), rolledBack: false };
+    const backupRemoved = hasZeroDockerExitStatus(rmResult);
+    const sandboxName = options.sandboxName;
+    const lifecycleReleaseTimeoutSecs = options.lifecycleReleaseTimeoutSecs;
+    const hasLifecycleContext =
+      sandboxName.length > 0 &&
+      Number.isFinite(lifecycleReleaseTimeoutSecs) &&
+      lifecycleReleaseTimeoutSecs > 0;
+    if (backupRemoved && hasLifecycleContext) {
+      console.log(
+        `  Waiting for OpenShell to retire the previous lifecycle record before restarting the replacement (up to ${lifecycleReleaseTimeoutSecs}s)...`,
+      );
+    }
+    const lifecycleReleaseObserved =
+      backupRemoved && hasLifecycleContext
+        ? waitForOpenShellSandboxLifecycleRelease(sandboxName, lifecycleReleaseTimeoutSecs, {
+            runOpenshell: deps.runOpenshell,
+            sleep: deps.sleep,
+            soleLabeledReplacementCorroboratesError: (remainingMs) =>
+              isSoleLabeledReplacement(
+                sandboxName,
+                options.result.newContainerId,
+                resolved.dockerRun,
+                remainingMs,
+              ),
+          })
+        : false;
+    if (!lifecycleReleaseObserved) {
+      return {
+        backupRemoved,
+        rolledBack: false,
+        replacementStoppedForCommit: true,
+        replacementRestarted: false,
+        lifecycleReleaseObserved: false,
+      };
+    }
+    const startResult = resolved.dockerStart(options.result.newContainerId, containerOpts);
+    return {
+      backupRemoved,
+      rolledBack: false,
+      replacementStoppedForCommit: true,
+      replacementRestarted: hasZeroDockerExitStatus(startResult),
+      lifecycleReleaseObserved: true,
+    };
   }
   const rollback = rollbackToBackupContainer(
     {

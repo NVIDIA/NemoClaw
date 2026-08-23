@@ -7,6 +7,7 @@ import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
 import {
   createPodmanContainerEngine,
+  type PodmanBoundContainerEngine,
   type PodmanContainerEngine,
   type PodmanExecutableAuthorityDeps,
   type PodmanExecutableStat,
@@ -96,6 +97,11 @@ function realOperationEngines(socketAuthority: PodmanSocketAuthority = REAL_SOCK
       ...common,
       operation: "sandbox-lifecycle",
     }),
+    stateMutation: createPodmanContainerEngine({
+      ...common,
+      operation: "state-mutation",
+      executableAuthorityDeps: podmanExecutableAuthorityDeps(),
+    }),
   };
 }
 
@@ -122,6 +128,16 @@ function hostDoctorEngine(authorityId = AUTHORITY_ID): PodmanContainerEngine {
                 arch: "amd64",
                 os: "linux",
                 cgroupVersion: "v2",
+                idMappings: {
+                  uidmap: [
+                    { container_id: 0, host_id: 1000, size: 1 },
+                    { container_id: 1, host_id: 100000, size: 65536 },
+                  ],
+                  gidmap: [
+                    { container_id: 0, host_id: 1000, size: 1 },
+                    { container_id: 1, host_id: 100000, size: 65536 },
+                  ],
+                },
                 networkBackend: "netavark",
                 security: { rootless: true },
               },
@@ -134,7 +150,7 @@ function hostDoctorEngine(authorityId = AUTHORITY_ID): PodmanContainerEngine {
     }),
     captureHost: vi.fn((args: readonly string[]) => ({
       status: 0,
-      stdout: args[0] === "--version" ? "podman version 5.6.2\n" : "0 1000 1\n1 100000 65536\n",
+      stdout: args[0] === "--version" ? "podman version 5.6.2\n" : "",
       stderr: "",
     })),
   };
@@ -215,43 +231,44 @@ function providerHarness(agent: (typeof AGENTS)[number]) {
 }
 
 describe("dormant Podman runtime provider", () => {
-  it.each(
-    AGENTS,
-  )("runs basic CPU start and stop for %s through an injected bundle", async (agent) => {
-    const runtime = providerHarness(agent);
-    const verifyGateway = vi.fn(async () => undefined);
-    const restoreStartupState = vi.fn(() => SUCCESSFUL_RECOVERY);
-    const stopSandboxChannels = vi.fn();
+  it.each(AGENTS)(
+    "runs basic CPU start and stop for %s through an injected bundle",
+    async (agent) => {
+      const runtime = providerHarness(agent);
+      const verifyGateway = vi.fn(async () => undefined);
+      const restoreStartupState = vi.fn(() => SUCCESSFUL_RECOVERY);
+      const stopSandboxChannels = vi.fn();
 
-    await expect(
-      startSandbox(runtime.sandboxName, {
-        getSandbox: () => runtime.entry,
-        runtimeProviders: runtime.providers,
-        restoreStartupState,
-        verifyGateway,
-        log: vi.fn(),
-      }),
-    ).resolves.toEqual({ exitCode: 0 });
-    expect(
-      stopSandbox(runtime.sandboxName, {
-        getSandbox: () => runtime.entry,
-        runtimeProviders: runtime.providers,
-        stopSandboxChannels,
-        teardownSandboxDashboardForward: vi.fn(),
-        log: vi.fn(),
-      }),
-    ).toEqual({ exitCode: 0 });
+      await expect(
+        startSandbox(runtime.sandboxName, {
+          getSandbox: () => runtime.entry,
+          runtimeProviders: runtime.providers,
+          restoreStartupState,
+          verifyGateway,
+          log: vi.fn(),
+        }),
+      ).resolves.toEqual({ exitCode: 0 });
+      expect(
+        stopSandbox(runtime.sandboxName, {
+          getSandbox: () => runtime.entry,
+          runtimeProviders: runtime.providers,
+          stopSandboxChannels,
+          teardownSandboxDashboardForward: vi.fn(),
+          log: vi.fn(),
+        }),
+      ).toEqual({ exitCode: 0 });
 
-    expect(restoreStartupState).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
-    expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
-    expect(stopSandboxChannels).toHaveBeenCalledWith(
-      runtime.sandboxName,
-      expect.objectContaining({ channelStopTransport: "openshell" }),
-    );
-    expect(
-      JSON.stringify((runtime.lifecycle.capture as ReturnType<typeof vi.fn>).mock.calls),
-    ).not.toContain("docker");
-  });
+      expect(restoreStartupState).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
+      expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
+      expect(stopSandboxChannels).toHaveBeenCalledWith(
+        runtime.sandboxName,
+        expect.objectContaining({ channelStopTransport: "openshell" }),
+      );
+      expect(
+        JSON.stringify((runtime.lifecycle.capture as ReturnType<typeof vi.fn>).mock.calls),
+      ).not.toContain("docker");
+    },
+  );
 
   it("reports a failed gateway probe after the exact Podman container starts", async () => {
     const runtime = providerHarness("openclaw");
@@ -278,6 +295,15 @@ describe("dormant Podman runtime provider", () => {
   it("stays outside the production-selectable registry", () => {
     expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual(["docker", "kubernetes"]);
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
+  });
+
+  it("declares read-only host mounts unsupported until Podman qualification lands", () => {
+    const runtime = providerHarness("openclaw");
+
+    expect(runtime.providers.podman?.capabilities.readOnlyHostMounts).toEqual({
+      supported: false,
+      reason: "Read-only host mounts are not qualified for the Podman runtime provider.",
+    });
   });
 
   it("fails host-local inference before probing either Podman operation scope", () => {
@@ -364,14 +390,34 @@ describe("dormant Podman runtime provider", () => {
     expect(engines.sandboxLifecycle.endpointAuthorityId).toBe(
       engines.hostLocalInference.endpointAuthorityId,
     );
+    expect(engines.stateMutation.endpointAuthorityId).toBe(
+      engines.hostLocalInference.endpointAuthorityId,
+    );
     expect(engines.hostLocalInference.authorityId).not.toBe(engines.hostDoctor.authorityId);
+    expect(engines.stateMutation.authorityId).not.toBe(engines.hostDoctor.authorityId);
     expect(bundle).toMatchObject({
       capabilities: { hostLocalInference: true },
       hostLocalInference: {
         providerId: "podman",
         supported: true,
       },
+      stateMutation: {
+        providerId: "podman",
+        supported: true,
+      },
+      containerEngine: {
+        providerId: "podman",
+        supported: true,
+        identities: expect.arrayContaining([
+          {
+            operation: "state-mutation",
+            engineId: "podman",
+            displayName: "Podman",
+          },
+        ]),
+      },
     });
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
   });
 
   it("rejects real operation engines when one socket endpoint drifts", () => {
@@ -393,6 +439,48 @@ describe("dormant Podman runtime provider", () => {
         },
       }),
     ).toThrow("same endpoint authority");
+  });
+
+  it("rejects a state-mutation engine with another operation scope", () => {
+    const { hostLocalInference: _hostLocalInference, ...engines } = realOperationEngines();
+
+    expect(() =>
+      createPodmanRuntimeProviderBundle({
+        engines: {
+          ...engines,
+          stateMutation: engines.sandboxLifecycle as PodmanBoundContainerEngine,
+        },
+      }),
+    ).toThrow("'state-mutation' Podman engine");
+  });
+
+  it("rejects a state-mutation engine bound to another endpoint authority", () => {
+    const { hostLocalInference: _hostLocalInference, ...engines } = realOperationEngines();
+    const driftedStateMutation = realOperationEngines({
+      ...REAL_SOCKET_AUTHORITY,
+      inode: "9002",
+    }).stateMutation;
+
+    expect(() =>
+      createPodmanRuntimeProviderBundle({
+        engines: { ...engines, stateMutation: driftedStateMutation },
+      }),
+    ).toThrow("same endpoint authority");
+  });
+
+  it("rejects state-mutation options without a state-mutation engine", () => {
+    const {
+      hostLocalInference: _hostLocalInference,
+      stateMutation: _stateMutation,
+      ...engines
+    } = realOperationEngines();
+
+    expect(() =>
+      createPodmanRuntimeProviderBundle({
+        engines,
+        stateMutation: {},
+      }),
+    ).toThrow("state-mutation engine with its options");
   });
 
   it("rejects a mismatched engine scope before bundle registration", () => {

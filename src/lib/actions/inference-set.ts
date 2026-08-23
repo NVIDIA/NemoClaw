@@ -63,18 +63,24 @@ import {
   openshellReportsProviderNotFound,
 } from "./inference-set-error";
 import {
-  completeInferenceGatewayRestart,
+  completeInferencePostCommit,
   defaultInferenceGatewayRestart,
   finalizeInferenceMutation,
   type InferenceGatewayRestartDeps,
   type InferenceMutation,
   readPreviousOpenClawInferenceApi,
+  settleInferenceSetOpenClawPairing,
 } from "./inference-set-gateway-restart";
 import {
+  type InferenceSetSandboxRouteProbe,
+  assertInferenceSetCommandAvailable,
   prepareInferenceSetProviderBinding,
+  probeInferenceSetSandboxRoute,
+  probeInferenceSetSandboxRouteUntilConverged,
   type RuntimeProviderBundleRegistry,
   RuntimeProviderSelectionError,
   requireInferenceSetRuntimeAuthority,
+  sleepInferenceSetRouteConvergence,
 } from "./inference-set-provider";
 import { buildInferenceSetFailure } from "./inference-set-provider-diagnostics";
 import {
@@ -85,6 +91,7 @@ import {
   type EnsureHttpsPinRuntimeAdapterFn,
   finalizeInferenceSetRoute,
   type InferenceSetProviderBinding,
+  isSandboxBridgeProviderBinding,
   prepareInferenceSetRoute,
   type RegistryInferenceMetadata,
 } from "./inference-set-route-containment";
@@ -127,7 +134,6 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   getSandbox: (name: string) => SandboxEntry | null;
   listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox: string | null };
   updateSandbox: (name: string, updates: Partial<SandboxEntry>) => boolean;
-  updateSandboxInferenceRoute?: (name: string, updates: Partial<SandboxEntry>) => boolean;
   getRequestedAgent: () => string | null | undefined;
   loadSession: () => onboardSession.Session | null;
   updateSession: (
@@ -163,6 +169,8 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   resolveCredentialValue: (credentialEnv: string) => string;
   ensureHttpsPinRuntimeAdapter: EnsureHttpsPinRuntimeAdapterFn;
   revokeHttpsPinRuntimeAdapterRoute: (routeId: string) => Promise<boolean>;
+  probeSandboxRoute: InferenceSetSandboxRouteProbe;
+  sleep: (milliseconds: number) => Promise<void>;
   withGatewayRouteMutationLock: typeof withGatewayRouteMutationLock;
 }
 
@@ -244,7 +252,6 @@ function defaultDeps(): InferenceSetDeps {
     getSandbox: registry.getSandbox,
     listSandboxes: registry.listSandboxes,
     updateSandbox: registry.updateSandbox,
-    updateSandboxInferenceRoute: registry.updateSandboxInferenceRoute,
     getRequestedAgent: () => process.env.NEMOCLAW_AGENT,
     loadSession: onboardSession.loadSession,
     updateSession: onboardSession.updateSession,
@@ -268,8 +275,11 @@ function defaultDeps(): InferenceSetDeps {
     resolveCredentialValue: (credentialEnv) => process.env[credentialEnv] ?? "",
     ensureHttpsPinRuntimeAdapter,
     revokeHttpsPinRuntimeAdapterRoute,
+    probeSandboxRoute: probeInferenceSetSandboxRoute,
+    sleep: sleepInferenceSetRouteConvergence,
     withGatewayRouteMutationLock,
     restartSandboxGateway: defaultInferenceGatewayRestart,
+    settleOpenClawPairing: settleInferenceSetOpenClawPairing,
     isSandboxConfigMutable: (sandboxName) => {
       const { isShieldsDown }: typeof import("../shields") = require("../shields");
       return isShieldsDown(sandboxName, true);
@@ -936,10 +946,15 @@ async function runInferenceSetWithoutHostLock(
   // verify. Only a genuinely-unreachable host stack hard-fails here, before the
   // route is touched.
   let effectiveNoVerify = options.noVerify === true;
-  // The adapter origin resolves only from inside the sandbox network. The
-  // host-side OpenShell verifier cannot resolve host.openshell.internal, so
-  // adapter registration + local health are the verification boundary.
-  if (httpsPinProviderBinding) effectiveNoVerify = true;
+  const probeDirectSandboxBridge = isSandboxBridgeProviderBinding(directProviderBinding);
+  // Adapter routes and explicit custom routes on NemoClaw's sandbox bridge
+  // resolve only from inside the sandbox network. The host-side OpenShell
+  // verifier cannot resolve host.openshell.internal, so its result would be a
+  // guaranteed false negative. HTTPS-pin adapters retain their local-health
+  // verification; direct bridge routes are probed from the sandbox below.
+  if (httpsPinProviderBinding || probeDirectSandboxBridge) {
+    effectiveNoVerify = true;
+  }
   if (deps.isLocalInferenceProvider(provider)) {
     const localValidation = deps.validateLocalProvider(provider);
     if (localValidation.ok) {
@@ -993,14 +1008,54 @@ async function runInferenceSetWithoutHostLock(
       sandboxName,
       session,
     });
+  const previousInferenceApi = resolveRuntimeInferenceApi({
+    agentName,
+    config,
+    currentProvider: entry.provider,
+    provider: entry.provider ?? "",
+    sandboxName,
+    session,
+  });
   assertReasoningEffortRoute(reasoningEffortRequest, provider, preMutationInferenceApi);
   const previousProvider = typeof entry.provider === "string" ? entry.provider.trim() : "";
   const previousModel = typeof entry.model === "string" ? entry.model.trim() : "";
+  if (probeDirectSandboxBridge && (!previousProvider || !previousModel)) {
+    throw new InferenceSetError(
+      `Cannot verify the sandbox-only provider route because sandbox '${sandboxName}' does not record ` +
+        "the previous provider and model needed to restore its OpenShell inference selection.",
+      2,
+    );
+  }
 
   let appliedProvider = false;
   let appliedInferenceSelection = false;
   let restoredSelectionAfterProviderFailure = false;
   let providerMutation: ReturnType<typeof prepareInferenceSetProviderBinding> | null = null;
+  const restorePreviousInferenceSelection = (): string | null => {
+    let restoreResult: CaptureOpenshellResult;
+    try {
+      restoreResult = deps.captureOpenshell(
+        openshellInferenceSetArgs({
+          gatewayName: preparedRoute.gatewayName,
+          provider: previousProvider,
+          model: previousModel,
+          noVerify: true,
+        }),
+        {
+          ignoreError: true,
+          includeStreams: true,
+          maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
+        },
+      );
+    } catch {
+      return "the restore command could not be invoked";
+    }
+    if (restoreResult.status !== 0) {
+      return `the restore command exited with status ${restoreResult.status ?? "unknown"}`;
+    }
+    appliedInferenceSelection = false;
+    return null;
+  };
   try {
     const providerBinding = httpsPinProviderBinding ?? directProviderBinding;
     if (providerBinding) {
@@ -1081,34 +1136,77 @@ async function runInferenceSetWithoutHostLock(
           providerError instanceof Error ? providerError.message : String(providerError);
         const providerExitCode =
           providerError instanceof InferenceSetError ? providerError.exitCode : 1;
-        const restoreResult = deps.captureOpenshell(
-          openshellInferenceSetArgs({
-            gatewayName: preparedRoute.gatewayName,
-            provider: previousProvider,
-            model: previousModel,
-            noVerify: true,
-          }),
-          {
-            ignoreError: true,
-            includeStreams: true,
-            maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
-          },
-        );
-        if (restoreResult.status !== 0) {
+        const restoreFailure = restorePreviousInferenceSelection();
+        if (restoreFailure) {
           throw new InferenceSetError(
             `${providerDetail}\n  Failed to restore the previous OpenShell inference selection ` +
-              `'${previousProvider}' / '${previousModel}' (status ${restoreResult.status ?? "unknown"}). ` +
+              `'${previousProvider}' / '${previousModel}': ${restoreFailure}. ` +
               `The live selection and provider binding may be split; re-run onboarding before using this route.`,
             providerExitCode,
           );
         }
-        appliedInferenceSelection = false;
         restoredSelectionAfterProviderFailure = true;
         throw new InferenceSetError(
           `${providerDetail}\n  The previous OpenShell inference selection was restored to ` +
             `'${previousProvider}' / '${previousModel}'. Provider state may still be partial; ` +
             `retry this command or re-run onboarding to reconcile it.`,
           providerExitCode,
+        );
+      }
+    }
+
+    if (probeDirectSandboxBridge) {
+      let probe: ReturnType<InferenceSetSandboxRouteProbe>;
+      try {
+        probe = await probeInferenceSetSandboxRouteUntilConverged(
+          {
+            input: {
+              sandboxName,
+              provider,
+              model,
+              preferredInferenceApi: preMutationInferenceApi,
+            },
+            previousProvider,
+            previousModel,
+            previousInferenceApi,
+            targetInferenceApi: preMutationInferenceApi,
+          },
+          {
+            probe: deps.probeSandboxRoute,
+            sleep: deps.sleep,
+            onRetry: (result, delayMs, attempt) => {
+              if (result.ok) return;
+              deps.log(
+                `  Waiting ${delayMs / 1_000}s for OpenShell route convergence after HTTP ${result.httpStatus} (probe ${attempt}/3)...`,
+              );
+            },
+          },
+        );
+      } catch (probeError) {
+        const probeFailureDetail =
+          probeError instanceof Error && probeError.message
+            ? (onboardSession.redactSensitiveText(probeError.message)?.trim() ?? "")
+            : "";
+        probe = {
+          ok: false,
+          detail: probeFailureDetail
+            ? `sandbox inference invocation probe was unavailable: ${probeFailureDetail}`
+            : "sandbox inference invocation probe was unavailable",
+          httpStatus: null,
+        };
+      }
+      if (!probe.ok) {
+        const restoreFailure = restorePreviousInferenceSelection();
+        if (restoreFailure) {
+          throw new InferenceSetError(
+            `Sandbox-side verification rejected provider '${provider}' / '${model}': ${probe.detail}. ` +
+              `Failed to restore the previous OpenShell inference selection '${previousProvider}' / ` +
+              `'${previousModel}': ${restoreFailure}. Re-run onboarding before using this route.`,
+          );
+        }
+        throw new InferenceSetError(
+          `Sandbox-side verification rejected provider '${provider}' / '${model}': ${probe.detail}. ` +
+            `The previous OpenShell inference selection was restored to '${previousProvider}' / '${previousModel}'.`,
         );
       }
     }
@@ -1132,7 +1230,7 @@ async function runInferenceSetWithoutHostLock(
         nimContainer: registryMetadata.nimContainer ?? null,
       });
     if (
-      !(deps.updateSandboxInferenceRoute ?? deps.updateSandbox)(
+      !deps.updateSandbox(
         sandboxName,
         registryFields(
           resolveAgentInferenceApi(
@@ -1166,12 +1264,7 @@ async function runInferenceSetWithoutHostLock(
     // Refresh the registry with config-derived API-family metadata before the
     // crash-prone in-sandbox sync (#3725/#3726). Explicit operator-supplied
     // metadata remains authoritative when present.
-    if (
-      !(deps.updateSandboxInferenceRoute ?? deps.updateSandbox)(
-        sandboxName,
-        registryFields(preferredInferenceApi),
-      )
-    ) {
+    if (!deps.updateSandbox(sandboxName, registryFields(preferredInferenceApi))) {
       throw new InferenceSetError(
         `Failed to update NemoClaw registry for sandbox '${sandboxName}'.`,
       );
@@ -1239,8 +1332,9 @@ async function runInferenceSetWithoutHostLock(
         ? `  Syncing Hermes model route in sandbox '${sandboxName}'...`
         : `  Syncing OpenClaw model identity in sandbox '${sandboxName}'...`,
     );
-    // In-sandbox config is the last, crash-prone layer (gateway + registry already consistent):
-    //   - don't abort on failure; track whether it synced, never report a false "synced"
+    // In-sandbox config is the last, crash-prone layer (gateway + registry already consistent).
+    // OpenClaw keeps its existing degraded result on failure. Hermes finalizes the committed
+    // route and registry, then returns an error so automation cannot accept partial convergence.
     // Two degraded states, both fixed by `rebuild` (regenerates openclaw.json + .config-hash from registry):
     //   - write fails:           config left old (old .config-hash still matches it)
     //   - hash recompute fails:  config new but .config-hash stale -> integrity-guard mismatch
@@ -1299,11 +1393,20 @@ async function runInferenceSetWithoutHostLock(
       reasoningEffortRequest,
     );
 
-    return finalizeInferenceMutation(
+    const mutation = finalizeInferenceMutation(
       {
         agentName,
         configChanged: patched.changed,
         nextApi: patched.route.inferenceApi,
+        openClawPairingTarget:
+          agentName === "openclaw"
+            ? {
+                sandboxName,
+                gatewayName: expectedGatewayName,
+                openclawVersion: entry.agentVersion ?? "",
+                stateDirectory: target.configDir,
+              }
+            : undefined,
         previousApi: previousOpenClawInferenceApi,
         result: {
           sandboxName,
@@ -1319,6 +1422,14 @@ async function runInferenceSetWithoutHostLock(
       },
       deps,
     );
+    if (agentName === "hermes" && !inSandboxConfigSynced) {
+      throw new InferenceSetError(
+        `Hermes inference route synchronization did not complete for '${sandboxName}'. ` +
+          `The OpenShell route and NemoClaw registry remain committed, but the in-sandbox ` +
+          `Hermes configuration did not fully converge. Run '${CLI_NAME} ${sandboxName} rebuild' to converge it.`,
+      );
+    }
+    return mutation;
   } catch (error) {
     if (!providerMutation) throw error;
     if (restoredSelectionAfterProviderFailure) throw error;
@@ -1380,8 +1491,10 @@ export async function runInferenceSet(
   // an async lock. The inner resolution still validates the live registry entry.
   const selected = resolveTargetSandbox(options.sandboxName, deps);
   assertInferenceSetRuntimeAuthority(selected.entry, deps.runtimeProviders);
+  assertInferenceSetCommandAvailable(selected.sandboxName);
   deps.prepareRunOpenshell();
   return withSandboxMutationLock(selected.sandboxName, async () => {
+    assertInferenceSetCommandAvailable(selected.sandboxName);
     const lockedSelection = resolveTargetSandbox(selected.sandboxName, deps);
     assertInferenceSetRuntimeAuthority(lockedSelection.entry, deps.runtimeProviders);
     const gatewayName = resolveSandboxGatewayName(lockedSelection.entry);
@@ -1394,10 +1507,11 @@ export async function runInferenceSet(
         ),
       ),
     );
-    // Release the config transition lock before the managed restart reacquires
-    // it, but retain the outer sandbox lifecycle lock so another process cannot
-    // destroy/recreate this name between the committed write and restart.
-    completeInferenceGatewayRestart(mutation, deps);
+    // Release the config transition lock before post-commit gateway work
+    // reacquires its own route state. Retain the outer sandbox lifecycle lock
+    // so another process cannot replace this sandbox between the committed
+    // write, an optional restart, and device-scope convergence.
+    completeInferencePostCommit(mutation, deps);
     if (mutation.result.dashboardConverged === false) {
       throw new InferenceSetError(
         `Inference route and main Hermes config were updated for '${mutation.result.sandboxName}', ` +

@@ -11,13 +11,16 @@ import {
 } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { DASHBOARD_PORT, HERMES_OPENAI_API_PORT } from "../../core/ports";
-import { waitUntil } from "../../core/wait";
 import { getActiveMessagingHostForward } from "../../messaging/host-forward";
 import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/hydration";
 import type { SandboxMessagingHostForwardPlan } from "../../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { isRemoteDashboardBindRequested } from "../../onboard/dockerfile-remote-dashboard-bind-contract";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import {
+  waitForForwardRecoveryState,
+  waitForStoppedForwardPortRelease,
+} from "../../onboard/forward-cleanup";
 import {
   resolveSandboxHermesApiPort,
   retargetHermesApiPortInUrl,
@@ -38,7 +41,11 @@ import {
   getHermesDashboardRecoveryConfig,
 } from "./hermes-dashboard-recovery";
 
-type SandboxPortAgent = { forwardPort?: unknown; runtime?: { kind?: unknown } } | null;
+type SandboxPortAgent = {
+  forwardPort?: unknown;
+  forward_ports?: unknown;
+  runtime?: { kind?: unknown };
+} | null;
 
 type SandboxPortDeps = {
   getSandbox?: typeof registry.getSandbox;
@@ -55,9 +62,6 @@ type DashboardForwardStopRunner = (
   args: string[],
   options: { ignoreError: true; stdio: "ignore"; timeout: number },
 ) => { status?: number | null };
-
-const FORWARD_RELEASE_TIMEOUT_MS = 5_000;
-const FORWARD_RELEASE_POLL_MS = 250;
 
 function isValidPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
@@ -81,20 +85,6 @@ function runDashboardForwardStopBestEffort(
     // replace that result when OpenShell cannot be launched.
     return { status: 1 };
   }
-}
-
-function confirmDashboardForwardReleased(
-  port: number,
-  isForwardReachable: (port: number) => boolean,
-): boolean {
-  const now = Date.now;
-  return waitUntil(() => !isForwardReachable(port), {
-    deadlineMs: now() + FORWARD_RELEASE_TIMEOUT_MS,
-    initialIntervalMs: FORWARD_RELEASE_POLL_MS,
-    maxIntervalMs: FORWARD_RELEASE_POLL_MS,
-    backoffFactor: 1,
-    now,
-  });
 }
 
 export function resolveSandboxDashboardPort(
@@ -170,7 +160,10 @@ export function teardownSandboxDashboardForward(
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
     if (result.status !== 0) return;
-    confirmDashboardForwardReleased(port, deps.isLocalForwardReachable ?? isLocalForwardReachable);
+    waitForStoppedForwardPortRelease(
+      port,
+      deps.isLocalForwardReachable ?? isLocalForwardReachable,
+    );
   } catch {
     // Defense in depth for injected or future runners: teardown is best-effort.
   }
@@ -328,7 +321,7 @@ export function ensureSandboxPortForwardForPort(
       health: forwardHealth,
       portReleased: false,
     };
-    waitUntil(
+    waitForForwardRecoveryState(
       () => {
         stopState.health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
         stopState.portReleased = !isLocalForwardReachable(port);
@@ -338,12 +331,7 @@ export function ensureSandboxPortForwardForPort(
           stopState.portReleased
         );
       },
-      {
-        deadlineMs: Date.now() + waitMs,
-        initialIntervalMs: 100,
-        maxIntervalMs: 500,
-        backoffFactor: 1.5,
-      },
+      waitMs,
     );
     if (stopState.health === true && !forceRestart) return acceptSuccessfulForward();
     if (stopState.health === "occupied") return false;
@@ -382,7 +370,7 @@ export function ensureSandboxPortForwardForPort(
   if (waitMs === 0) return false;
 
   let occupied = false;
-  const settled = waitUntil(
+  const settled = waitForForwardRecoveryState(
     () => {
       health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
       if (health === "occupied") {
@@ -391,12 +379,7 @@ export function ensureSandboxPortForwardForPort(
       }
       return health === true;
     },
-    {
-      deadlineMs: Date.now() + waitMs,
-      initialIntervalMs: 100,
-      maxIntervalMs: 500,
-      backoffFactor: 1.5,
-    },
+    waitMs,
   );
   return settled && !occupied && acceptSuccessfulForward();
 }
@@ -437,6 +420,31 @@ export function recoverMessagingHostForward(
   return recovered;
 }
 
+function resolveDeclaredAgentForwardPorts(
+  sandbox: ReturnType<typeof registry.getSandbox>,
+  primaryPort: number,
+  agent: SandboxPortAgent,
+  hermesDashboardPort: number | null,
+): number[] {
+  const declared = agent?.forward_ports;
+  if (!Array.isArray(declared)) return [];
+  const covered = new Set<number>([primaryPort]);
+  if (isValidPort(agent?.forwardPort)) covered.add(agent.forwardPort);
+  if (isValidPort(hermesDashboardPort)) covered.add(hermesDashboardPort);
+  const ports: number[] = [];
+  for (const candidate of declared) {
+    if (typeof candidate !== "number") continue;
+    if (!Number.isInteger(candidate) || candidate < 1024 || candidate > 65535) continue;
+    if (covered.has(candidate)) continue;
+    const port =
+      candidate === HERMES_OPENAI_API_PORT ? resolveSandboxHermesApiPort(sandbox ?? {}) : candidate;
+    if (covered.has(port)) continue;
+    covered.add(port);
+    ports.push(port);
+  }
+  return ports;
+}
+
 /**
  * Re-establish every declared `forward_ports` entry on the active agent
  * manifest that is not already owned by another recovery helper. The
@@ -458,27 +466,17 @@ export function ensureDeclaredAgentForwardPortsHealthy(
 ): boolean | null {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   if (!agent) return null;
-  const declared = (agent as { forward_ports?: unknown }).forward_ports;
-  if (!Array.isArray(declared) || declared.length === 0) return null;
   const hermesDashboard = getHermesDashboardRecoveryConfig(sandboxName);
   const sandbox = registry.getSandbox(sandboxName);
-  const skipSet = new Set<number>([primaryPort]);
-  // The manifest's own primary entry is the default dashboard port. This
-  // sandbox's dashboard forward lives at primaryPort and is recovered by
-  // ensureSandboxPortForward, so the default must not be probed again.
-  if (isValidPort(agent.forwardPort)) skipSet.add(agent.forwardPort);
-  if (hermesDashboard && Number.isInteger(hermesDashboard.publicPort)) {
-    skipSet.add(hermesDashboard.publicPort);
-  }
-  let sawCovered = false;
+  const ports = resolveDeclaredAgentForwardPorts(
+    sandbox,
+    primaryPort,
+    agent,
+    hermesDashboard?.publicPort ?? null,
+  );
+  if (ports.length === 0) return null;
   let allHealthy = true;
-  for (const candidate of declared) {
-    if (typeof candidate !== "number") continue;
-    if (!Number.isInteger(candidate) || candidate < 1024 || candidate > 65535) continue;
-    if (skipSet.has(candidate)) continue;
-    const port =
-      candidate === HERMES_OPENAI_API_PORT ? resolveSandboxHermesApiPort(sandbox ?? {}) : candidate;
-    sawCovered = true;
+  for (const port of ports) {
     const health = isSandboxPortForwardHealthy(sandboxName, port);
     if (health === true) continue;
     if (health === "occupied") {
@@ -489,7 +487,6 @@ export function ensureDeclaredAgentForwardPortsHealthy(
       allHealthy = false;
     }
   }
-  if (!sawCovered) return null;
   return allHealthy;
 }
 
@@ -514,18 +511,13 @@ export function areSandboxLaunchForwardsHealthy(
   if (hermesDashboard) requiredPorts.add(hermesDashboard.publicPort);
   const messagingForward = getSandboxMessagingHostForward(sandboxName);
   if (messagingForward) requiredPorts.add(messagingForward.port);
-  const declared = (agent as { forward_ports?: unknown } | null)?.forward_ports;
-  if (Array.isArray(declared)) {
-    for (const candidate of declared) {
-      if (
-        typeof candidate === "number" &&
-        Number.isInteger(candidate) &&
-        candidate >= 1024 &&
-        candidate <= 65535
-      ) {
-        requiredPorts.add(candidate);
-      }
-    }
+  for (const port of resolveDeclaredAgentForwardPorts(
+    sandbox,
+    primaryPort,
+    agent,
+    hermesDashboard?.publicPort ?? null,
+  )) {
+    requiredPorts.add(port);
   }
   const result = captureOpenshell(["forward", "list", "--gateway", owningGatewayName], {
     ignoreError: true,

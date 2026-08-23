@@ -135,6 +135,101 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
   });
 
+  it("waits for the authoritative invocation after recovering the agent gateway", async () => {
+    const healthy: SandboxInferenceRouteHealth = {
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 200,
+      detail: "reachable",
+    };
+    const options = snapshotDeps(healthy);
+    options.deps.reconcile = async () => ({
+      state: "present",
+      output: "Phase: Ready",
+      recoveredSandbox: true,
+      recoverySandboxVia: "started-stopped-original",
+    });
+    const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => healthy);
+    const probeSandboxInferenceInvocationImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        ok: false,
+        detail: "sandbox inference invocation failed with status 6",
+        httpStatus: null,
+      })
+      .mockReturnValueOnce({ ok: true });
+    const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
+    const recoverSandboxProcesses = vi.fn(() => ({
+      checked: true,
+      wasRunning: false,
+      recovered: true,
+      forwardRecovered: true,
+    }));
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: {
+        ...options.deps,
+        delayInferenceRecoveryProbe,
+        probeSandboxInferenceGatewayHealthImpl,
+        probeSandboxInferenceInvocationImpl,
+        recoverSandboxProcesses,
+      },
+    });
+
+    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledTimes(2);
+    expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledTimes(2);
+    expect(delayInferenceRecoveryProbe).toHaveBeenCalledOnce();
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
+  });
+
+  it("reports unhealthy after every recovered inference request fails", async () => {
+    const healthy: SandboxInferenceRouteHealth = {
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 200,
+      detail: "reachable",
+    };
+    const failedInvocation: SandboxInferenceInvocationResult = {
+      ok: false,
+      detail: "sandbox inference invocation failed with status 503",
+      httpStatus: 503,
+    };
+    const options = snapshotDeps(healthy);
+    options.deps.reconcile = async () => ({
+      state: "present",
+      output: "Phase: Ready",
+      recoveredSandbox: true,
+      recoverySandboxVia: "started-stopped-original",
+    });
+    const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => healthy);
+    const probeSandboxInferenceInvocationImpl = vi.fn(() => failedInvocation);
+    const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
+    const recoverSandboxProcesses = vi.fn(() => ({
+      checked: true,
+      wasRunning: false,
+      recovered: true,
+      forwardRecovered: true,
+    }));
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: {
+        ...options.deps,
+        delayInferenceRecoveryProbe,
+        probeSandboxInferenceGatewayHealthImpl,
+        probeSandboxInferenceInvocationImpl,
+        recoverSandboxProcesses,
+      },
+    });
+
+    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledTimes(3);
+    expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledTimes(3);
+    expect(delayInferenceRecoveryProbe).toHaveBeenCalledTimes(2);
+    expect(delayInferenceRecoveryProbe).toHaveBeenCalledWith(2_000);
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel: "unhealthy" });
+  });
+
   it("reports the inference route as unreachable after all post-recovery probes", async () => {
     const unreachable: SandboxInferenceRouteHealth = {
       ok: false,
@@ -276,7 +371,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(snapshot.inferenceHealth?.failureLabel).toBeUndefined();
   });
 
-  it("keeps an upstream subprobe failure out of the served-route verdict (#6846)", async () => {
+  it("keeps an unreachable upstream subprobe failure out of the served-route verdict (#6846)", async () => {
     const gateway: SandboxInferenceRouteHealth = {
       ok: true,
       endpoint: "https://inference.local/v1/models",
@@ -290,7 +385,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       providerLabel: "NVIDIA Endpoints",
       endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
       detail: "model invocation probe failed",
-      failureLabel: "unauthorized",
+      failureLabel: "unreachable",
     };
 
     const snapshot = await collectSandboxStatusSnapshot(
@@ -333,6 +428,140 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(snapshot.inferenceHealth?.subprobes).toContainEqual(
       expect.objectContaining({ probeLabel: "route reachability", ok: true }),
     );
+  });
+
+  it("reports the upstream check as not probed after the provider rejected the host credential and the route served a request (#9595)", async () => {
+    const gateway: SandboxInferenceRouteHealth = {
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 200,
+      detail:
+        "Inference gateway responded HTTP 200 on https://inference.local/v1/models (full chain reachable).",
+    };
+    const providerHealth: ProviderHealthStatus = {
+      ok: false,
+      probed: true,
+      providerLabel: "NVIDIA Endpoints",
+      endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+      detail:
+        "NVIDIA Endpoints rejected the host credential in NVIDIA_INFERENCE_API_KEY. " +
+        "Check NVIDIA_INFERENCE_API_KEY where you run this command.",
+      failureLabel: "unauthorized",
+    };
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps(gateway, providerHealth),
+    );
+
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: true });
+    const upstream = snapshot.inferenceHealth?.subprobes?.find(
+      (subprobe) => subprobe.probeLabel === "upstream",
+    );
+    expect(upstream).toMatchObject({ ok: true, probed: false });
+    expect(upstream?.failureLabel).toBeUndefined();
+    expect(upstream?.detail).toContain("rejected the host credential");
+    expect(upstream?.detail).toContain("NVIDIA_INFERENCE_API_KEY");
+    expect(upstream?.detail).toContain("provider credential stored in the gateway");
+    expect(upstream?.detail).toContain("does not attribute this result to the sandbox route");
+  });
+
+  it("keeps an unreachable upstream check after the route served a request (#9595)", async () => {
+    const gateway: SandboxInferenceRouteHealth = {
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 200,
+      detail:
+        "Inference gateway responded HTTP 200 on https://inference.local/v1/models (full chain reachable).",
+    };
+    const providerHealth: ProviderHealthStatus = {
+      ok: false,
+      probed: true,
+      providerLabel: "NVIDIA Endpoints",
+      endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+      detail: "model invocation probe could not reach the endpoint",
+      failureLabel: "unreachable",
+    };
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps(gateway, providerHealth),
+    );
+
+    expect(snapshot.inferenceHealth?.subprobes).toContainEqual({
+      ...providerHealth,
+      probeLabel: "upstream",
+    });
+  });
+
+  it("keeps an unauthorized auth proxy subprobe after the route served a request (#9595)", async () => {
+    const gateway: SandboxInferenceRouteHealth = {
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 200,
+      detail:
+        "Inference gateway responded HTTP 200 on https://inference.local/v1/models (full chain reachable).",
+    };
+    const authProxy: ProviderHealthStatus = {
+      ok: false,
+      probed: true,
+      providerLabel: "Local Ollama",
+      probeLabel: "auth proxy",
+      endpoint: "http://127.0.0.1:11435/api/tags",
+      detail:
+        "Ollama auth proxy returned 401 — the persisted token is no longer accepted. " +
+        "Re-run `nemoclaw onboard` (Ollama path) to rotate the proxy token.",
+      failureLabel: "unauthorized",
+    };
+    const providerHealth: ProviderHealthStatus = {
+      ok: true,
+      probed: true,
+      providerLabel: "Local Ollama",
+      probeLabel: "ollama backend",
+      endpoint: "http://127.0.0.1:11434/api/tags",
+      detail: "Local Ollama is reachable.",
+      subprobes: [authProxy],
+    };
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps(gateway, providerHealth),
+    );
+
+    expect(snapshot.inferenceHealth?.subprobes).toContainEqual(authProxy);
+  });
+
+  it("keeps an unauthorized upstream check when the route did not serve a request (#9595)", async () => {
+    const gateway: SandboxInferenceRouteHealth = {
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 401,
+      detail:
+        "Inference gateway responded HTTP 401 on https://inference.local/v1/models (full chain reachable).",
+    };
+    const providerHealth: ProviderHealthStatus = {
+      ok: false,
+      probed: true,
+      providerLabel: "NVIDIA Endpoints",
+      endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+      detail: "model invocation probe rejected the credential",
+      failureLabel: "unauthorized",
+    };
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps(gateway, providerHealth, {
+        ok: false,
+        detail: "sandbox inference invocation probe returned HTTP 401",
+        httpStatus: 401,
+      }),
+    );
+
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel: "unauthorized" });
+    expect(snapshot.inferenceHealth?.subprobes).toContainEqual({
+      ...providerHealth,
+      probeLabel: "upstream",
+    });
   });
 
   it("does not send an agent request when the route probe already failed", async () => {

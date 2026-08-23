@@ -136,9 +136,9 @@ describe("compatible-endpoint reasoning effort in the built OpenClaw config (#76
 
     const models = config.models.providers.inference.models;
     expect(models.length).toBeGreaterThan(1);
-    for (const model of models) {
+    models.forEach((model: { params: unknown }) => {
       expect(model.params).toEqual({ extra_body: { reasoning_effort: "low" } });
-    }
+    });
   });
 
   it("fails the build rather than dropping an unsupported effort", () => {

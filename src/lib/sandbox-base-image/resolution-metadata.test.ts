@@ -108,6 +108,33 @@ describe("sandbox base-image resolution metadata lifecycle", () => {
     );
   });
 
+  it("preserves an exact digest resolution when Docker omits RepoDigests (#9386)", () => {
+    mocks.dockerImageInspectFormat.mockReturnValue(
+      JSON.stringify({
+        Id: inspected.Id,
+        Os: inspected.Os,
+        Architecture: inspected.Architecture,
+      }),
+    );
+
+    expect(createSandboxBaseImageResolutionMetadata(options, KEY, publishedResolution)).toEqual(
+      metadata,
+    );
+  });
+
+  it("rejects sparse RepoDigests when the resolved reference is not the exact digest", () => {
+    mocks.dockerImageInspectFormat.mockReturnValue(
+      JSON.stringify({ ...inspected, RepoDigests: [] }),
+    );
+
+    expect(
+      createSandboxBaseImageResolutionMetadata(options, KEY, {
+        ...publishedResolution,
+        ref: `${IMAGE_NAME}:published`,
+      }),
+    ).toBeNull();
+  });
+
   it("finalizes a local fallback with identity metadata and no repository digest (#4680)", () => {
     const localResolution: SandboxBaseImageResolution = {
       ref: options.localTag,

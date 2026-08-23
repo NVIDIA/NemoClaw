@@ -23,8 +23,11 @@
       "type": "object",
       "required": [
         "backend",
-        "model",
         "execution"
+      ],
+      "anyOf": [
+        { "required": ["model"], "properties": { "model": {} } },
+        { "required": ["modelRef"], "properties": { "modelRef": {} } }
       ],
       "properties": {
         "backend": {
@@ -57,6 +60,20 @@
               "type": "string",
               "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64}|sha256:[0-9a-f]{64})$"
             },
+            "environmentValue": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+            },
+            "displayName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "menuOrder": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
             "servedName": {
               "$ref": "#/$defs/stableId"
             },
@@ -71,6 +88,12 @@
             },
             "preparation": {
               "$ref": "#/$defs/modelPreparation"
+            },
+            "capabilities": {
+              "$ref": "https://github.com/NVIDIA/NemoClaw/managed-inference/schemas/model.schema.json#/properties/spec/properties/capabilities"
+            },
+            "probePolicyRef": {
+              "$ref": "#/$defs/adapterId"
             },
             "files": {
               "type": "array",
@@ -119,6 +142,9 @@
           },
           "additionalProperties": false
         },
+        "modelRef": {
+          "$ref": "#/$defs/stableId"
+        },
         "runtime": {
           "type": "object",
           "properties": {
@@ -127,6 +153,17 @@
               "pattern": "^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?/)?(?:[a-z0-9]+(?:[._-][a-z0-9]+)*/)*[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[0-9a-f]{64}$"
             },
             "imageDownloadSizeBytes": {
+              "$ref": "#/$defs/positiveSafeInteger"
+            },
+            "imageUnpackedSizeBytes": {
+              "$ref": "#/$defs/positiveSafeInteger"
+            },
+            "minimumComputeCapability": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 999
+            },
+            "minimumGpuMemoryBytes": {
               "$ref": "#/$defs/positiveSafeInteger"
             },
             "pullTimeoutSeconds": {
@@ -353,6 +390,23 @@
             "lifecycleRef": {
               "$ref": "#/$defs/adapterId"
             },
+            "orchestrationRef": {
+              "$ref": "#/$defs/adapterId"
+            },
+            "stationPair": {
+              "type": "object",
+              "required": ["image", "imageDownloadSizeBytes", "servedName", "nodeCount", "tensorParallelSize", "pipelineParallelSize", "loadTimeoutSeconds"],
+              "properties": {
+                "image": { "$ref": "#/$defs/imageDigest" },
+                "imageDownloadSizeBytes": { "$ref": "#/$defs/positiveSafeInteger" },
+                "servedName": { "$ref": "#/$defs/stableId" },
+                "nodeCount": { "const": 2 },
+                "tensorParallelSize": { "type": "integer", "minimum": 1, "maximum": 1024 },
+                "pipelineParallelSize": { "type": "integer", "minimum": 1, "maximum": 1024 },
+                "loadTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 }
+              },
+              "additionalProperties": false
+            },
             "topologyBinding": {
               "$ref": "#/$defs/bindingName"
             },
@@ -391,6 +445,29 @@
             "authentication": {
               "$ref": "#/$defs/token"
             },
+            "directInstall": {
+              "type": "object",
+              "required": [
+                "authentication",
+                "fixedArguments",
+                "catalogReceipt"
+              ],
+              "properties": {
+                "authentication": {
+                  "enum": [
+                    "none",
+                    "bearer"
+                  ]
+                },
+                "fixedArguments": {
+                  "type": "boolean"
+                },
+                "catalogReceipt": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
             "executable": {
               "$ref": "#/$defs/absolutePath"
             },
@@ -405,7 +482,7 @@
                 "properties": {
                   "name": {
                     "type": "string",
-                    "pattern": "^--[a-z0-9][a-z0-9-]*$",
+                    "pattern": "^--[a-z0-9][a-z0-9._-]*$",
                     "maxLength": 128
                   },
                   "value": {
@@ -1225,6 +1302,11 @@
               "not": {
                 "enum": [
                   "downloadSizeBytes",
+                  "environmentValue",
+                  "displayName",
+                  "menuOrder",
+                  "capabilities",
+                  "probePolicyRef",
                   "gated",
                   "installFastSafetensors",
                   "preparation"
@@ -1261,6 +1343,9 @@
             "propertyNames": {
               "not": {
                 "enum": [
+                  "imageUnpackedSizeBytes",
+                  "minimumComputeCapability",
+                  "minimumGpuMemoryBytes",
                   "pullTimeoutSeconds",
                   "architecture",
                   "networkMode",
@@ -1292,6 +1377,8 @@
             "propertyNames": {
               "not": {
                 "enum": [
+                  "orchestrationRef",
+                  "stationPair",
                   "topologyBinding",
                   "nodeCount",
                   "tensorParallelSize",
@@ -1390,6 +1477,7 @@
             "propertyNames": {
               "not": {
                 "enum": [
+                  "directInstall",
                   "executable",
                   "arguments"
                 ]
@@ -1539,7 +1627,10 @@
         },
         "propertyNames": {
           "not": {
-            "const": "bindings"
+            "enum": [
+              "bindings",
+              "modelRef"
+            ]
           }
         }
       },

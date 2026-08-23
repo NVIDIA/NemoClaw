@@ -84,14 +84,14 @@ describe("Fern changelog documentation", () => {
       .sort();
 
     expect(changelogFiles.length).toBeGreaterThan(0);
-    for (const fileName of changelogFiles) {
+    changelogFiles.forEach((fileName) => {
       const source = fs.readFileSync(path.join(changelogDir, fileName), "utf8");
       expect(
         source.startsWith(mdxSpdxHeader),
         `${fileName} must start with an MDX-compatible SPDX comment`,
       ).toBe(true);
       expect(source, `${fileName} must not use an HTML comment`).not.toContain("<!--");
-    }
+    });
 
     const overview = fs.readFileSync(path.join(changelogDir, "overview.mdx"), "utf8");
     expect(overview).toMatch(
@@ -108,7 +108,7 @@ describe("Fern changelog documentation", () => {
     const versions: string[] = [];
     const releaseBlocks = new Map<string, string>();
 
-    for (const fileName of datedFiles) {
+    datedFiles.forEach((fileName) => {
       const source = fs.readFileSync(path.join(changelogDir, fileName), "utf8");
       expect(source, `${fileName} must use literal CLI names`).not.toContain("$$nemoclaw");
       expect(source, `${fileName} must not contain variant-only wrappers`).not.toContain(
@@ -139,16 +139,16 @@ describe("Fern changelog documentation", () => {
           !/^[a-z][a-z0-9+.-]*:/i.test(target),
       );
       expect(relativeLinks, `${fileName} must use root-absolute internal routes`).toEqual([]);
-    }
+    });
 
-    for (const [version, expectedBullets] of Object.entries(expectedMigratedBulletCounts)) {
+    Object.entries(expectedMigratedBulletCounts).forEach(([version, expectedBullets]) => {
       const block = releaseBlocks.get(version);
       expect(block, `${version} must remain in the migrated history`).toBeDefined();
       expect(
         block?.match(/^- /gm)?.length ?? 0,
         `${version} must retain its complete detailed list`,
       ).toBe(expectedBullets);
-    }
+    });
 
     const migratedVersions = [
       ...Array.from({ length: 83 - 38 + 1 }, (_, index) => `v0.0.${83 - index}`),
@@ -163,6 +163,15 @@ describe("Fern changelog documentation", () => {
 
     expect(source).toContain("## v0.0.34");
     expect(source.match(/^```bash$/gm)?.length ?? 0, "v0.0.34 must retain its examples").toBe(3);
+  });
+
+  it("records a maintainer decision from displayed documentation coverage", () => {
+    const guide = fs.readFileSync(path.join(docsDir, "CONTRIBUTING.md"), "utf8");
+
+    expect(guide).toContain(
+      "The maintainer then decides whether to proceed, request another docs PR,",
+    );
+    expect(guide).not.toContain("independently approved empty patch");
   });
 
   it("sorts complete semantic versions newest first", () => {
@@ -206,7 +215,7 @@ describe("Fern changelog documentation", () => {
     const variants = nav.navigation?.find((item) => item.variants)?.variants ?? [];
 
     expect(variants.map((variant) => variant.slug)).toEqual(["openclaw", "deepagents", "hermes"]);
-    for (const variant of variants) {
+    variants.forEach((variant) => {
       expect(variant.layout?.filter((node) => node.changelog)).toEqual([
         {
           changelog: "./changelog",
@@ -214,7 +223,7 @@ describe("Fern changelog documentation", () => {
           slug: "release-notes",
         },
       ]);
-    }
+    });
     expect(fs.existsSync(path.join(docsDir, "about", "release-notes.mdx"))).toBe(false);
   });
 });

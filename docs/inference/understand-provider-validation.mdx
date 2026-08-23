@@ -60,9 +60,13 @@ The managed Deep Agents runtime keeps `use_responses_api = false` and uses Chat 
 
 For OpenClaw, NemoClaw sends a non-streaming request to `/v1/messages`, then sends a streaming request to the same path.
 The streaming check requires exactly one `message_start`, at least one `content_block_delta`, and one `message_stop` event.
+The streaming request also forces the `emit_ok` tool through Anthropic's `tool_choice` field.
+Validation requires a native `tool_use` content block named `emit_ok` and a later `message_delta` with `stop_reason: tool_use`.
+Text that merely contains JSON shaped like a tool request remains assistant text and fails validation.
+The corresponding diagnostics are `anthropic-streaming-missing-tool-use` and `anthropic-streaming-missing-tool-use-stop-reason`.
 
-Set `NEMOCLAW_REASONING=true` to skip the streaming check for a reasoning-only endpoint.
-Agent runs still use streaming, so this setting moves a streaming defect from onboarding to runtime.
+Set `NEMOCLAW_REASONING=true` to skip both the streaming sequence and forced tool-call checks for a reasoning-only endpoint.
+Agent runs still use streaming and native tool calls, so this setting moves either defect from onboarding to runtime.
 
 </AgentOnly>
 
@@ -70,6 +74,7 @@ Agent runs still use streaming, so this setting moves a streaming defect from on
 
 For Hermes and other agents that use only OpenAI-compatible inference, NemoClaw validates `/v1/chat/completions` for a custom Anthropic selection.
 This is the API surface that the managed OpenAI frontend uses at runtime.
+These routes keep their existing Chat Completions tool-call validation and do not run the OpenClaw native Anthropic `emit_ok` streaming check.
 
 </AgentOnly>
 
@@ -104,5 +109,6 @@ Verify that route from inside the sandbox after onboarding.
 - [Verify the Sandbox Inference Route](verify-inference-route) to test the route the agent uses.
 <AgentOnly variant="openclaw">
 - [Troubleshooting](../../reference/troubleshooting#tool-calls-appear-as-assistant-text) when a local server returns tool calls as text.
+- [Troubleshooting Anthropic-compatible tool-call validation](../../reference/troubleshooting#onboarding-rejects-an-anthropic-compatible-tool-call) when the forced native tool probe fails during onboarding.
 </AgentOnly>
 - [Set Up an OpenAI-Compatible Endpoint](../custom-endpoints/set-up-openai-compatible-endpoint) for custom endpoint setup.

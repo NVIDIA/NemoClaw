@@ -61,7 +61,7 @@ runner.run = () => successfulRunResult;
 runner.runCapture = () => "";
 
 registry.getSandbox = () => ({ name: "test-sb", model: null, provider: null });
-registry.registerSandbox = () => true;
+registry.registerSandbox = (entry) => entry;
 registry.updateSandbox = () => true;
 
 // ── Run ────────────────────────────────────────────────────────────────────

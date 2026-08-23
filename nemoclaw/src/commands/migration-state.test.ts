@@ -519,13 +519,13 @@ describe("commands/migration-state", () => {
       const hostState = makeHostOpenClawState();
 
       const bundle = createSnapshotBundle(hostState, logger, { persist: true });
-      if (bundle === null) {
-        expect.unreachable("bundle should not be null");
-        return;
-      }
-      expect(bundle.manifest.version).toBe(3);
-      expect(bundle.manifest.homeDir).toBe("/home/user");
+      if (bundle === null) expect.unreachable("bundle should not be null");
+      expect(bundle.manifest).toMatchObject({ version: 3, homeDir: "/home/user" });
       expect(bundle.temporary).toBe(false);
+      // The retention reader accepts only this directory grammar and requires the
+      // manifest to name the same identity (blueprint/snapshot-management.ts).
+      expect(bundle.snapshotDir).toMatch(/^\/home\/user\/\.nemoclaw\/snapshots\/\d{8}T\d{6}Z$/);
+      expect(bundle.snapshotDir.endsWith(`/${String(bundle.manifest.timestamp)}`)).toBe(true);
     });
 
     it("snapshots external config when hasExternalConfig", () => {

@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   V00103_SANDBOX_BUILD_DIGESTS,
   V00103_SUPERVISOR_MANIFEST_DIGEST,
+  V00106_SUPERVISOR_MANIFEST_DIGEST,
 } from "./helpers/openshell-release-fixtures";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
@@ -47,6 +48,13 @@ function addSupervisorManifestPin(source: string, version: string, digest: strin
   const result = source.replace(marker, `${marker}  "${version}": "${digest}",\n`);
   assert.notEqual(result, source, "supervisor manifest fixture mutation must change the map");
   return result;
+}
+
+function selectSupervisorManifestPin(source: string, version: string, digest: string): string {
+  const identity = new RegExp(`("${version.replaceAll(".", "\\.")}":\\s*)"sha256:[a-f0-9]{64}"`);
+  return identity.test(source)
+    ? source.replace(identity, `$1"${digest}"`)
+    : addSupervisorManifestPin(source, version, digest);
 }
 
 function addSandboxBuildPins(source: string): string {
@@ -86,26 +94,32 @@ function selectOpenShellV00103(): {
   blueprint: string;
   brevInstaller: string;
   installer: string;
+  supervisorRuntime: string;
 } {
   const installer = addSandboxBuildPins(
     replaceRequired(INSTALLER_TEMPLATE, [
-      ['DEV_MIN_VERSION="0.0.101"', 'DEV_MIN_VERSION="0.0.103"'],
-      ['MIN_VERSION="0.0.101"', 'MIN_VERSION="0.0.103"'],
-      ['MAX_VERSION="0.0.101"', 'MAX_VERSION="0.0.103"'],
-      ["v0.0.101:", "v0.0.103:"],
+      ['DEV_MIN_VERSION="0.0.106"', 'DEV_MIN_VERSION="0.0.103"'],
+      ['MIN_VERSION="0.0.106"', 'MIN_VERSION="0.0.103"'],
+      ['MAX_VERSION="0.0.106"', 'MAX_VERSION="0.0.103"'],
+      ["v0.0.106:", "v0.0.103:"],
     ]),
   );
   const brevInstaller = replaceRequired(BREV_TEMPLATE, [
     [
-      'stable | auto) OPENSHELL_VERSION="v0.0.101" ;;',
+      'stable | auto) OPENSHELL_VERSION="v0.0.106" ;;',
       'stable | auto) OPENSHELL_VERSION="v0.0.103" ;;',
     ],
-    ["v0.0.101:", "v0.0.103:"],
+    ["v0.0.106:", "v0.0.103:"],
   ]);
   const blueprint = replaceRequired(BLUEPRINT_TEMPLATE, [
-    ['max_openshell_version: "0.0.101"', 'max_openshell_version: "0.0.103"'],
+    ['max_openshell_version: "0.0.106"', 'max_openshell_version: "0.0.103"'],
   ]);
-  return { blueprint, brevInstaller, installer };
+  const supervisorRuntime = selectSupervisorManifestPin(
+    SUPERVISOR_RUNTIME_TEMPLATE,
+    "0.0.103",
+    V00103_SUPERVISOR_MANIFEST_DIGEST,
+  );
+  return { blueprint, brevInstaller, installer, supervisorRuntime };
 }
 
 type RunOptions = {
@@ -146,12 +160,13 @@ function runParser(options: RunOptions = {}) {
         blueprint: BLUEPRINT_TEMPLATE,
         brevInstaller: BREV_TEMPLATE,
         installer: INSTALLER_TEMPLATE,
+        supervisorRuntime: SUPERVISOR_RUNTIME_TEMPLATE,
       };
   fs.writeFileSync(installer, selected.installer);
   fs.writeFileSync(brevInstaller, selected.brevInstaller);
   fs.writeFileSync(blueprint, selected.blueprint);
   const supervisorSource =
-    options.transformSupervisor?.(SUPERVISOR_RUNTIME_TEMPLATE) ?? SUPERVISOR_RUNTIME_TEMPLATE;
+    options.transformSupervisor?.(selected.supervisorRuntime) ?? selected.supervisorRuntime;
   const writeSupervisorRuntime = options.supervisorSymlink
     ? writeSymlinkedSupervisorRuntime
     : writeRegularSupervisorRuntime;
@@ -185,25 +200,27 @@ function runParser(options: RunOptions = {}) {
 }
 
 describe("OpenShell supervisor manifest trust", () => {
-  it("accepts the selected base-trusted OpenShell 0.0.101 supervisor identity (#8893)", () => {
+  it("accepts the selected base-trusted OpenShell 0.0.106 supervisor identity (#6256)", () => {
     const result = runParser();
 
     expect(result.status, result.stderr).toBe(0);
   });
 
-  it("accepts the base-trusted OpenShell 0.0.103 supervisor identity before version selection (#8893)", () => {
-    const result = runParser({
-      transformSupervisor: (source) =>
-        addSupervisorManifestPin(source, "0.0.103", V00103_SUPERVISOR_MANIFEST_DIGEST),
-    });
+  it.each([["0.0.103", V00103_SUPERVISOR_MANIFEST_DIGEST]] as const)(
+    "accepts the base-trusted OpenShell %s supervisor identity before version selection (#8893)",
+    (version, digest) => {
+      const result = runParser({
+        transformSupervisor: (source) => addSupervisorManifestPin(source, version, digest),
+      });
 
-    expect(result.status, result.stderr).toBe(0);
-  });
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
 
   it("rejects a replacement supervisor digest", () => {
     const result = runParser({
       transformSupervisor: (source) =>
-        addSupervisorManifestPin(source, "0.0.103", REPLACEMENT_SUPERVISOR_MANIFEST_DIGEST),
+        source.replace(V00106_SUPERVISOR_MANIFEST_DIGEST, REPLACEMENT_SUPERVISOR_MANIFEST_DIGEST),
     });
 
     expect(result.status).toBe(1);
@@ -222,8 +239,23 @@ describe("OpenShell supervisor manifest trust", () => {
     expect(result.stderr).toContain("|0.0.104|");
   });
 
+  it("rejects the OpenShell 0.0.106 supervisor identity remapped to another release", () => {
+    const result = runParser({
+      transformSupervisor: (source) =>
+        addSupervisorManifestPin(source, "0.0.105", V00106_SUPERVISOR_MANIFEST_DIGEST),
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must use only base-trusted identities");
+    expect(result.stderr).toContain(`|0.0.105|${V00106_SUPERVISOR_MANIFEST_DIGEST}`);
+  });
+
   it("rejects selecting OpenShell 0.0.103 without its supervisor manifest identity (#8893)", () => {
-    const result = runParser({ selectV00103: true });
+    const result = runParser({
+      selectV00103: true,
+      transformSupervisor: (source) =>
+        source.replace(/^  "0\.0\.103": "sha256:[a-f0-9]{64}",\n/mu, ""),
+    });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
@@ -236,7 +268,7 @@ describe("OpenShell supervisor manifest trust", () => {
       candidateParserBypass: true,
       selectV00103: true,
       transformSupervisor: (source) =>
-        addSupervisorManifestPin(source, "0.0.103", REPLACEMENT_SUPERVISOR_MANIFEST_DIGEST),
+        source.replace(V00103_SUPERVISOR_MANIFEST_DIGEST, REPLACEMENT_SUPERVISOR_MANIFEST_DIGEST),
     });
 
     expect(result.status).toBe(1);
@@ -247,23 +279,23 @@ describe("OpenShell supervisor manifest trust", () => {
   it("rejects removing a required supervisor identity", () => {
     const result = runParser({
       transformSupervisor: (source) =>
-        source.replace(/^  "0\.0\.101": "sha256:[a-f0-9]{64}",\n/mu, ""),
+        source.replace(/^  "0\.0\.106": "sha256:[a-f0-9]{64}",\n/mu, ""),
     });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "missing=[ghcr.io/nvidia/openshell/supervisor|0.0.101|sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb]",
+      `missing=[ghcr.io/nvidia/openshell/supervisor|0.0.106|${V00106_SUPERVISOR_MANIFEST_DIGEST}]`,
     );
   });
 
   it("rejects duplicate supervisor versions", () => {
     const result = runParser({
       transformSupervisor: (source) =>
-        addSupervisorManifestPin(source, "0.0.101", V00103_SUPERVISOR_MANIFEST_DIGEST),
+        addSupervisorManifestPin(source, "0.0.106", V00103_SUPERVISOR_MANIFEST_DIGEST),
     });
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("contains duplicate versions: 0.0.101");
+    expect(result.stderr).toContain("contains duplicate versions: 0.0.106");
   });
 
   it("rejects a supervisor resolver that changes the trusted image repository", () => {

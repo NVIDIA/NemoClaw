@@ -18,6 +18,12 @@ import { GATEWAY_PORT } from "../core/ports";
 import { parseDockerDaemonObservation } from "../domain/docker-host";
 import { cliDisplayName, cliName } from "./branding";
 import {
+  DEFAULT_DOCKER_DRIVER_NETWORK_NAME,
+  DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
+  parseDockerNetworkIpamEntries,
+  resolveDockerDriverNetworkName,
+} from "./experimental/docker-network-authority";
+import {
   isPortableExperimentalProfile,
   PORTABLE_HOST_GATEWAY_IP,
 } from "./experimental/portable-profile";
@@ -34,7 +40,7 @@ export { tryAutoApplyUfwRule } from "./ufw-auto-apply";
 
 const DEFAULT_PROBE_IMAGE =
   "busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662";
-const DEFAULT_NETWORK_NAME = "openshell-docker";
+const DEFAULT_NETWORK_NAME = DEFAULT_DOCKER_DRIVER_NETWORK_NAME;
 const HOST_INTERNAL_NAME = "host.openshell.internal";
 const HOST_DOCKER_INTERNAL_NAME = "host.docker.internal";
 const DEFAULT_PROBE_TIMEOUT_SEC = 5;
@@ -109,23 +115,8 @@ function isRunningInWsl(env: NodeJS.ProcessEnv = process.env, release = os.relea
 }
 
 function parseDockerNetworkIpamConfig(raw: string): DockerBridgeNetworkInfo | undefined {
-  const text = raw.trim();
-  if (!text || text === "<no value>") return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  if (!Array.isArray(parsed)) return undefined;
-  const candidates: DockerBridgeNetworkInfo[] = [];
-  for (const entry of parsed) {
-    if (!entry || typeof entry !== "object") continue;
-    const record = entry as Record<string, unknown>;
-    const subnet = typeof record.Subnet === "string" ? record.Subnet : undefined;
-    const gatewayIp = typeof record.Gateway === "string" ? record.Gateway : undefined;
-    if (subnet || gatewayIp) candidates.push({ subnet, gatewayIp });
-  }
+  const candidates = parseDockerNetworkIpamEntries(raw);
+  if (!candidates) return undefined;
   return (
     candidates.find((candidate) => candidate.gatewayIp && !candidate.gatewayIp.includes(":")) ??
     candidates.find((candidate) => candidate.subnet && /^\d+\./.test(candidate.subnet)) ??
@@ -135,7 +126,7 @@ function parseDockerNetworkIpamConfig(raw: string): DockerBridgeNetworkInfo | un
 
 function defaultInspectNetwork(networkName: string): DockerBridgeNetworkInfo | undefined {
   const raw = dockerCapture(
-    ["network", "inspect", "--format", "{{json .IPAM.Config}}", networkName],
+    ["network", "inspect", "--format", DOCKER_NETWORK_IPAM_INSPECT_FORMAT, networkName],
     { ignoreError: true },
   );
   return parseDockerNetworkIpamConfig(raw);
@@ -309,8 +300,7 @@ function buildProbeArgs(
 export async function isSandboxBridgeGatewayReachable(
   opts: SandboxBridgeReachabilityOptions = {},
 ): Promise<SandboxBridgeReachabilityResult> {
-  const networkName =
-    opts.networkName ?? process.env.OPENSHELL_DOCKER_NETWORK_NAME ?? DEFAULT_NETWORK_NAME;
+  const networkName = opts.networkName ?? resolveDockerDriverNetworkName();
   const port = opts.port ?? GATEWAY_PORT;
   const timeoutSec = opts.timeoutSec ?? DEFAULT_PROBE_TIMEOUT_SEC;
   const probeImage = opts.probeImage ?? DEFAULT_PROBE_IMAGE;
@@ -513,8 +503,8 @@ export function formatSandboxBridgeUnreachableMessage(
       result.detail ? `    ${result.detail}` : undefined,
       "    If the user-scoped Podman service is active, restart it:",
       "      systemctl --user try-restart podman.service",
-      "    Enable and start the user-scoped Podman socket:",
-      "      systemctl --user enable --now podman.socket",
+      "    Start the current user's Podman socket for this session; this does not enable it for later sessions:",
+      "      systemctl --user start podman.socket",
       `    Then rerun \`${cliName()} onboard --experimental-profile portable\`.`,
     ]
       .filter((line): line is string => Boolean(line))
@@ -539,8 +529,8 @@ export function formatSandboxBridgeUnreachableMessage(
       `    The probe mapped ${HOST_INTERNAL_NAME} to the OpenShell Podman host gateway.`,
       "    If the user-scoped Podman service is active, restart it:",
       "      systemctl --user try-restart podman.service",
-      "    Enable and start the user-scoped Podman socket:",
-      "      systemctl --user enable --now podman.socket",
+      "    Start the current user's Podman socket for this session; this does not enable it for later sessions:",
+      "      systemctl --user start podman.socket",
       `    Then rerun \`${cliName()} onboard --experimental-profile portable\`.`,
     ].join("\n");
   }

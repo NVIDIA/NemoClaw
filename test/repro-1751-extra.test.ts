@@ -57,18 +57,19 @@ describe("GPU passthrough session persistence (#1751)", () => {
     expect(loaded.gpuPassthrough).toBe(true);
   });
 
-  it("non-boolean gpuPassthrough updates are filtered out (silent-drop guard)", () => {
-    session.saveSession(session.createSession({ gpuPassthrough: true }));
-    // Garbage shapes: string, number, null. None should clobber the existing true.
-    const garbageValues: unknown[] = ["yes", 1, null, undefined, "true"];
-    for (const v of garbageValues) {
+  it.each(Array.from(["yes", 1, null, undefined, "true"], (value) => [value]))(
+    "non-boolean gpuPassthrough updates are filtered out (silent-drop guard) [case %#]",
+    (v) => {
+      session.saveSession(session.createSession({ gpuPassthrough: true }));
+      // Garbage shapes: string, number, null. None should clobber the existing true.
+
       session.markStepComplete("provider_selection", {
         gpuPassthrough: v as unknown as boolean,
       });
       const loaded = session.loadSession()!;
       expect(loaded.gpuPassthrough).toBe(true);
-    }
-  });
+    },
+  );
 
   it("default for fresh session is gpuPassthrough=false (no implicit GPU intent)", () => {
     const fresh = session.createSession();

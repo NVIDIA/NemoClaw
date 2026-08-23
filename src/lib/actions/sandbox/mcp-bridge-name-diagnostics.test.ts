@@ -21,16 +21,17 @@ function messageFrom(reject: () => void): string {
 }
 
 describe("MCP bridge name diagnostics", () => {
-  it("uses the canonical OpenShell 0.0.99 sandbox-name boundary (#8497)", () => {
-    expect(() => validateSandboxName("a".repeat(19))).not.toThrow();
+  it.each(Array.from(["a".repeat(20), "legacy--box"], (value) => [value]))(
+    "rejects sandbox name %s at the OpenShell 0.0.99 boundary (#8497)",
+    (name) => {
+      expect(() => validateSandboxName("a".repeat(19))).not.toThrow();
 
-    for (const name of ["a".repeat(20), "legacy--box"]) {
       const message = messageFrom(() => validateSandboxName(name));
 
       expect(message).toContain(`Invalid sandbox name "${name}"`);
       expect(message).toContain("Allowed format: 1-19 characters");
-    }
-  });
+    },
+  );
 
   it("escapes control characters in a rejected sandbox name (#7796)", () => {
     const message = messageFrom(() => validateSandboxName(`bad${ESC}[31mX`));

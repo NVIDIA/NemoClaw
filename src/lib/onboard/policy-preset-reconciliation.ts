@@ -14,7 +14,10 @@ import {
 } from "./observability-policy-presets";
 import { mergeRequiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
 import { classifyPresetProvenance } from "../policy/preset-provenance";
-import { filterSuppressedAgentRequiredPresets } from "./policy-tier-suppression";
+import {
+  ensureRequiredTierPolicyPresets,
+  filterSuppressedAgentRequiredPresets,
+} from "./policy-tier-suppression";
 
 export type RequiredSetupPolicyPresetOptions = {
   enabledChannels?: string[] | null;
@@ -77,7 +80,10 @@ export function mergeRequiredSetupPolicyPresets(
     },
   );
   const agentScoped = filterSetupPolicyPresetNamesForAgent(mergedPresets, options.agent);
-  return filterSuppressedAgentRequiredPresets(agentScoped, options.tierName, options.agent);
+  return ensureRequiredTierPolicyPresets(
+    options.tierName,
+    filterSuppressedAgentRequiredPresets(agentScoped, options.tierName, options.agent),
+  );
 }
 
 export function isStaleBuiltinBravePolicyPreset(

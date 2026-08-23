@@ -5,10 +5,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  normalizeReviewResult,
   parseSecurityRubric,
   readTrustedSecurityRubric,
-} from "../tools/pr-review-advisor/analyze.mts";
+} from "../tools/pr-review-advisor/trusted-guidance.mts";
 import { metadata, ROOT, validResult } from "./helpers/pr-review-advisor-test-fixtures.ts";
 
 describe("canonical security rubric", () => {
@@ -60,7 +59,7 @@ describe("canonical security rubric", () => {
       justification: `evidence-${index + 1}`,
     }));
 
-    const result = normalizeReviewResult(validResult({ securityCategories }), metadata());
+    const result = validResult({ securityCategories });
 
     expect(result.securityCategories).toEqual(securityCategories);
     expect(result.securityCategories.at(-1)).toEqual({

@@ -35,14 +35,17 @@ describe("resolveOnboardRunOptions", () => {
   it.each([
     [false, true],
     [false, false],
-  ])("treats auto-yes resume as non-interactive when stdin=%s and stdout=%s", (stdinIsTty, stdoutIsTty) => {
-    expect(
-      resolveOnboardRunOptions({ autoYes: true, resume: true }, {}, null, () => false, {
-        stdinIsTty,
-        stdoutIsTty,
-      }).nonInteractive,
-    ).toBe(true);
-  });
+  ])(
+    "treats auto-yes resume as non-interactive when stdin=%s and stdout=%s",
+    (stdinIsTty, stdoutIsTty) => {
+      expect(
+        resolveOnboardRunOptions({ autoYes: true, resume: true }, {}, null, () => false, {
+          stdinIsTty,
+          stdoutIsTty,
+        }).nonInteractive,
+      ).toBe(true);
+    },
+  );
 
   it.each([
     [true, true],
@@ -231,16 +234,16 @@ describe("resolveOnboardEntryOptions", () => {
     expect(deps.error).not.toHaveBeenCalled();
   });
 
-  it("does not auto-resume when the persisted session is not in_progress (#5470)", () => {
+  it.each(
+    Array.from(["complete", "failed", "pending", "", null, undefined] as const, (value) => [value]),
+  )("does not auto-resume from persisted session state %s (#5470)", (status) => {
     const deps = createDeps();
 
-    for (const status of ["complete", "failed", "pending", "", null, undefined] as const) {
-      const result = resolveOnboardEntryOptions(
-        { opts: {}, env: {}, stdinIsTty: true, stdoutIsTty: true, persistedSessionStatus: status },
-        deps,
-      );
-      expect(result.resume).toBe(false);
-    }
+    const result = resolveOnboardEntryOptions(
+      { opts: {}, env: {}, stdinIsTty: true, stdoutIsTty: true, persistedSessionStatus: status },
+      deps,
+    );
+    expect(result.resume).toBe(false);
   });
 
   it("prints validation guidance for invalid sandbox names", () => {

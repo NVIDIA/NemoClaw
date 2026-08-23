@@ -1221,6 +1221,23 @@ describe("adapter recovery lock (#6141)", () => {
     expect(sleep).toHaveBeenCalledWith(25);
   });
 
+  it("does not probe or sleep when the adapter exit attempt budget is zero (#9218)", async () => {
+    const isRunning = vi.fn(() => true);
+    const sleep = vi.fn(async () => {});
+
+    await expect(
+      lockModule.__test.waitForAdapterProcessExit(12345, {
+        isRunning,
+        sleep,
+        attempts: 0,
+        intervalMs: 25,
+      }),
+    ).resolves.toBe(false);
+    expect(isRunning).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+
   it("refuses replacement when the old adapter never exits within the bounded wait", async () => {
     const sleep = vi.fn(async () => {});
 

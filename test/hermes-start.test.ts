@@ -1429,18 +1429,19 @@ describe("agents/hermes/start.sh shields-up kanban dispatcher override", () => {
 });
 
 describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
-  it.each([
-    true,
-    false,
-  ])("resolves the installed Tirith finalizer before fallback (%s)", (installed) => {
-    const run = runTirithFinalizerPathResolution(installed);
+  it.each([true, false])(
+    "resolves the installed Tirith finalizer before fallback (%s)",
+    (installed) => {
+      const run = runTirithFinalizerPathResolution(installed);
 
-    expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.result.stdout.trim()).toBe(run.expected);
-  });
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(run.result.stdout.trim()).toBe(run.expected);
+    },
+  );
 
-  it("removes retryable Tirith markers before explicit command dispatch", () => {
-    for (const mode of ["non-root", "root"] as const) {
+  it.each(["non-root", "root"] as const)(
+    "removes retryable Tirith markers before explicit command dispatch [case %#]",
+    (mode) => {
       const run = runTirithExplicitCommandDispatch(mode);
 
       expect(run.result.status, `${mode}: ${run.result.stderr}`).toBe(0);
@@ -1448,8 +1449,8 @@ describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
       expect(run.result.stderr).toContain(
         "download_failed marker present; letting Hermes runtime fallback retry Tirith",
       );
-    }
-  });
+    },
+  );
 
   it("repairs the Hermes config root before strict runtime config updates", () => {
     const run = runHermesRootStartupMutableRootPreflight();

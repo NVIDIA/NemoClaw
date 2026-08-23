@@ -6,7 +6,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { PodmanSocketAuthorityDeps } from "../../adapters/podman";
+import type { PodmanSocketAuthority, PodmanSocketAuthorityDeps } from "../../adapters/podman";
+import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import {
   installPortableDemoSandboxLifecycle,
   type PortableDemoLifecycleDeps,
@@ -16,6 +17,32 @@ import {
 const CONTAINER_ID = "a".repeat(64);
 const SANDBOX_ID = "sandbox-id-alpha";
 const SOCKET_PATH = "/run/user/1001/podman/podman.sock";
+const RUNTIME_AUTHORITY: CheckpointPortableRuntimeAuthority = {
+  schemaVersion: 1,
+  kind: "podman",
+  ownership: "current-user",
+  uid: 1001,
+  homeDir: "/home/tester",
+  configHome: "/home/tester/.config",
+  runtimeDir: "/run/user/1001",
+  socketPath: SOCKET_PATH,
+};
+const SOCKET_AUTHORITY: PodmanSocketAuthority = {
+  directoryChain: [],
+  device: "1",
+  inode: "2",
+  mode: String(0o140600),
+  ownerUid: "1001",
+  socketPath: SOCKET_PATH,
+};
+const READINESS = {
+  uid: 1001,
+  home: RUNTIME_AUTHORITY.homeDir,
+  systemctl: () => ({ status: 0 }),
+  hardenSocketDirectory: vi.fn(),
+  captureSocketAuthority: () => SOCKET_AUTHORITY,
+  assertSocketAuthority: vi.fn(),
+};
 const STARTUP_ARGV = [
   "env",
   "CHAT_UI_URL=http://127.0.0.1:18789",
@@ -65,7 +92,9 @@ function createPodman() {
     const command = args[0] === "--url" ? args.slice(2) : args;
     switch (command[0]) {
       case "info":
-        return { status: 0, stdout: "/run/user/1001/podman/podman.sock\n" };
+        return { status: 0, stdout: `${SOCKET_PATH}\n` };
+      case "version":
+        return { status: 0, stdout: JSON.stringify({ Server: { Version: "5.6.1" } }) };
       case "ps":
         return { status: 0, stdout: `${CONTAINER_ID}\n` };
       case "inspect":
@@ -128,7 +157,9 @@ function installReceipt(stateDir: string, podman: ReturnType<typeof createPodman
       podman,
       stateDir,
       podmanSocketAuthorityDeps: socketAuthorityDeps(),
-      hardenSocketDirectory: vi.fn(),
+      runtimeAuthority: RUNTIME_AUTHORITY,
+      runtimeReadiness: READINESS,
+      log: vi.fn(),
     },
   );
 }
@@ -153,6 +184,8 @@ function recoverPortableDemoSandboxLifecycle(
       podmanSocketAuthorityDeps: socketAuthorityDeps(),
       hardenSocketDirectory: vi.fn(),
       launchOpenshell,
+      runtimeReadiness: READINESS,
+      log: vi.fn(),
     } satisfies PortableDemoLifecycleDeps,
   );
 }

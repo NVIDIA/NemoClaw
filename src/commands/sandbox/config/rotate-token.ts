@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Args, Flags } from "@oclif/core";
-import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
+import {
+  assertHermesPortableCommandUnavailable,
+  NemoClawCommand,
+  withSandboxCommandLifecycleLock,
+} from "../../../lib/cli/nemoclaw-oclif-command";
 
 import * as sandboxConfig from "../../../lib/sandbox/config";
 
@@ -37,9 +41,12 @@ export default class SandboxConfigRotateTokenCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(SandboxConfigRotateTokenCommand);
     try {
-      await sandboxConfig.configRotateToken(args.sandboxName, {
-        fromEnv: flags["from-env"] ?? null,
-        fromStdin: flags.stdin ?? false,
+      await withSandboxCommandLifecycleLock(args.sandboxName, () => {
+        assertHermesPortableCommandUnavailable(args.sandboxName, "sandbox:config:rotate-token");
+        return sandboxConfig.configRotateToken(args.sandboxName, {
+          fromEnv: flags["from-env"] ?? null,
+          fromStdin: flags.stdin ?? false,
+        });
       });
     } catch (error) {
       if (error instanceof sandboxConfig.SandboxConfigError) {

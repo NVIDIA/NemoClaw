@@ -9,14 +9,14 @@ import { parse } from "yaml";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const docsRoot = path.join(repoRoot, "docs");
 const generatedDocsRoot = path.join(repoRoot, "docs/_build/agent-variants");
-const agentVariants = ["openclaw", "hermes", "deepagents"] as const;
+export const agentVariants = ["openclaw", "hermes", "deepagents"] as const;
 
 type AgentVariant = (typeof agentVariants)[number];
 type RenderedFile = {
   path: string;
   contents: string;
 };
-type RenderTarget = {
+export type RenderTarget = {
   sourcePath: string;
   variant: AgentVariant;
 };
@@ -183,6 +183,130 @@ function assertStaticallyResolvedVariantPage(
   );
 }
 
+type VariantLine =
+  | { kind: "blank" }
+  | { kind: "content" }
+  | { kind: "fence"; marker: string }
+  | { kind: "comment"; closed: boolean }
+  | { kind: "heading"; level: number; text: string; setext?: boolean };
+
+// MDX parses `{...}` as a JavaScript expression, so whitespace is allowed
+// between the comment terminator and the closing brace.
+const JSX_COMMENT_END = /\*\/\s*\}/u;
+
+/** Whatever a line renders once its complete comments are removed. */
+function textOutsideComments(line: string): string {
+  return line.replace(/\{\/\*[\s\S]*?\*\/\s*\}/gu, "").trim();
+}
+
+/** The heading level a Setext underline gives the paragraph line above it. */
+function setextHeadingLevel(nextLine: string | undefined): number | undefined {
+  const underline = nextLine?.match(/^ {0,3}(=+|-+) *$/u);
+  if (!underline) return undefined;
+  return underline[1].startsWith("=") ? 1 : 2;
+}
+
+/** Classify one line that sits outside any open fence or comment. */
+function classifyVariantLine(rawLine: string, nextLine?: string): VariantLine {
+  const line = rawLine.trim();
+  if (line === "") return { kind: "blank" };
+  if (line.startsWith("{/*")) {
+    const closed = JSX_COMMENT_END.test(line);
+    // A comment can be followed by text that still renders.
+    if (closed && textOutsideComments(line) !== "") return { kind: "content" };
+    return { kind: "comment", closed };
+  }
+  // An indented code block is content. Classifying it would turn a Markdown
+  // example into a heading or a fence.
+  if (/^(?: {4,}|\t)/u.test(rawLine)) return { kind: "content" };
+  // A backtick info string cannot contain a backtick, so an inline code span
+  // is not a fence. A tilde info string may contain anything.
+  const fence = line.match(/^(`{3,})[^`]*$/u) ?? line.match(/^(~{3,})/u);
+  if (fence) return { kind: "fence", marker: fence[1] };
+  const heading = line.match(/^(#{1,6})(?:[ \t]|$)/u);
+  if (heading) return { kind: "heading", level: heading[1].length, text: line };
+  // A Setext underline turns the paragraph line above it into a heading.
+  const setext = setextHeadingLevel(nextLine);
+  if (setext) return { kind: "heading", level: setext, text: line, setext: true };
+  return { kind: "content" };
+}
+
+/**
+ * A closing fence is the opening marker alone, at least as long, and indented
+ * by less than the four spaces that would make it a code block.
+ */
+function closesFence(rawLine: string, marker: string): boolean {
+  if (/^(?: {4,}|\t)/u.test(rawLine)) return false;
+  return new RegExp(`^${marker[0]}{${String(marker.length)},}\\s*$`, "u").test(rawLine.trim());
+}
+
+/**
+ * A heading whose body sits in an `<AgentOnly>` block for another variant
+ * renders with nothing beneath it. Reject that here so `npm run docs` catches
+ * it, including on documentation-only changes that skip the test lanes.
+ *
+ * The message names the heading rather than a line number, because this runs on
+ * the rendered body and its line numbers do not match the shared source page.
+ */
+function assertNoEmptyVariantSections(
+  body: string,
+  activeVariant: AgentVariant,
+  sourcePath?: string,
+): void {
+  const empty: string[] = [];
+  let open: { heading: string; level: number } | undefined;
+  let fence: string | undefined;
+  let comment = false;
+  let setextUnderline = false;
+  const lines = body.split("\n");
+
+  lines.forEach((rawLine, index) => {
+    if (fence !== undefined) {
+      if (closesFence(rawLine, fence)) fence = undefined;
+      return;
+    }
+    // The underline belongs to the heading above it, not to its section.
+    if (setextUnderline) {
+      setextUnderline = false;
+      return;
+    }
+    if (comment) {
+      if (!JSX_COMMENT_END.test(rawLine)) return;
+      comment = false;
+      // Text after the terminator still renders, so it closes the section.
+      if (rawLine.replace(/^[\s\S]*?\*\/\s*\}/u, "").trim() !== "") open = undefined;
+      return;
+    }
+
+    const line = classifyVariantLine(rawLine, lines[index + 1]);
+    if (line.kind === "blank") return;
+    if (line.kind === "comment") {
+      comment = !line.closed;
+      return;
+    }
+    if (line.kind === "fence") {
+      fence = line.marker;
+      open = undefined;
+      return;
+    }
+    if (line.kind === "heading") {
+      if (open && line.level <= open.level) empty.push(open.heading);
+      open = { heading: line.text, level: line.level };
+      setextUnderline = line.setext === true;
+      return;
+    }
+    open = undefined;
+  });
+
+  if (open) empty.push(open.heading);
+  if (empty.length === 0) return;
+
+  const source = sourcePath ? path.relative(repoRoot, sourcePath) : "agent variant source";
+  throw new Error(
+    `${source} renders ${empty.join(", ")} with no content in the ${activeVariant} generated variant. Move the heading inside the AgentOnly block that holds its body.`,
+  );
+}
+
 export function renderAgentVariantPage(
   source: string,
   variant: AgentVariant,
@@ -200,6 +324,7 @@ export function renderAgentVariantPage(
     .replace(/\n{3,}/g, "\n\n")
     .trimStart();
   assertStaticallyResolvedVariantPage(renderedBody, variant, options.sourcePath);
+  assertNoEmptyVariantSections(renderedBody, variant, options.sourcePath);
 
   if (options.sourcePath && options.outputPath) {
     renderedBody = rewriteRelativePaths(renderedBody, options.sourcePath, options.outputPath);
@@ -300,7 +425,7 @@ function findAgentVariantTargets(): RenderTarget[] {
   });
 }
 
-function findGeneratedNavigationTargets(): RenderTarget[] {
+export function findGeneratedNavigationTargets(): RenderTarget[] {
   const docsIndex = parse(readFileSync(path.join(docsRoot, "index.yml"), "utf8")) as DocsIndex;
   const userGuide = docsIndex.navigation?.find((item) => Array.isArray(item.variants));
   if (!userGuide?.variants) {

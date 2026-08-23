@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { retryUntil } from "../core/retry";
+
 import { getLocalProviderLabel } from "../inference/local";
 import type { SandboxGpuProofResult } from "../state/registry";
 import {
@@ -21,7 +23,7 @@ const {
 const DOCKER_GPU_INFERENCE_PROBE_CONNECT_TIMEOUT_SECS = 5;
 const DOCKER_GPU_INFERENCE_PROBE_MAX_TIME_SECS = 10;
 const DOCKER_GPU_INFERENCE_PROBE_MAX_ATTEMPTS = 3;
-const DOCKER_GPU_INFERENCE_PROBE_RETRY_DELAY_SECS = 2;
+const DOCKER_GPU_INFERENCE_PROBE_RETRY_DELAY_MS = 2_000;
 
 // The OpenShell inference route OpenClaw's LLM client actually uses inside the
 // sandbox. It is served by the OpenShell L7 proxy/router and routes to the
@@ -160,7 +162,7 @@ export type SandboxExecResult = {
 
 export type DockerGpuSandboxInferenceVerifyDeps = {
   execInSandbox?: (sandboxName: string, script: string) => SandboxExecResult;
-  sleep?: (seconds: number) => void;
+  sleep?: (milliseconds: number) => void;
 };
 
 export type DockerGpuSandboxInferenceVerification =
@@ -221,54 +223,55 @@ function probeSandboxRuntimeInference(
     `--connect-timeout ${DOCKER_GPU_INFERENCE_PROBE_CONNECT_TIMEOUT_SECS} ` +
     `--max-time ${DOCKER_GPU_INFERENCE_PROBE_MAX_TIME_SECS} ${safeEndpoint} 2>/dev/null || echo 000); ` +
     `echo "HTTP_$code"`;
-  let last: RuntimeProbeOutcome = {
-    kind: "exec-failed",
-    detail: "openshell sandbox exec did not run (sandbox unreachable or exec timed out)",
-  };
-  for (let attempt = 1; attempt <= DOCKER_GPU_INFERENCE_PROBE_MAX_ATTEMPTS; attempt++) {
+  const probe = (): RuntimeProbeOutcome => {
     const result = deps.execInSandbox(sandboxName, script);
     if (result === null) {
-      last = {
+      return {
         kind: "exec-failed",
         detail: "openshell sandbox exec did not run (sandbox unreachable or exec timed out)",
       };
-    } else {
-      const out = (result.stdout || "").trim();
-      if (out === "NO_CURL") return { kind: "no-curl" };
-      const match = out.match(/HTTP_(\d{3})/);
-      if (match) {
-        const httpCode = match[1];
-        // This gate is the #4509 runtime proof, so only a 2xx — the model list
-        // actually returned through the proxy with injected auth — counts as
-        // success. `000` is the reported failure (DNS / connection refused). A
-        // 4xx (wrong provider route, or auth the proxy failed to inject) or 5xx
-        // (local Ollama/vLLM backend down) means OpenClaw's real request would
-        // fail too, so do NOT report it as reachable.
-        if (/^2\d\d$/.test(httpCode)) return { kind: "ok", httpCode };
-        last = {
-          kind: "unreachable",
-          detail:
-            httpCode === "000"
-              ? `${endpoint} returned HTTP 000 (DNS failure or connection refused)`
-              : `${endpoint} returned HTTP ${httpCode} (inference route reached but not usable — provider route/auth misconfigured or the local backend is failing)`,
-        };
-      } else {
-        // The exec ran but produced no sentinel — the sandbox runtime exec
-        // path itself is broken (e.g. sandbox in Error, exec denied). Treat as
-        // an exec failure, NOT a missing-curl soft-skip, so we never declare
-        // success without actually exercising the runtime (#4509 review).
-        const noise = (out || result.stderr || "").slice(0, 160);
-        last = {
-          kind: "exec-failed",
-          detail: `unexpected sandbox exec output: ${noise}`,
-        };
-      }
     }
-    if (attempt < DOCKER_GPU_INFERENCE_PROBE_MAX_ATTEMPTS) {
-      deps.sleep(DOCKER_GPU_INFERENCE_PROBE_RETRY_DELAY_SECS);
+
+    const out = (result.stdout || "").trim();
+    if (out === "NO_CURL") return { kind: "no-curl" };
+    const match = out.match(/HTTP_(\d{3})/);
+    if (match) {
+      const httpCode = match[1];
+      // This gate is the #4509 runtime proof, so only a 2xx — the model list
+      // actually returned through the proxy with injected auth — counts as
+      // success. `000` is the reported failure (DNS / connection refused). A
+      // 4xx (wrong provider route, or auth the proxy failed to inject) or 5xx
+      // (local Ollama/vLLM backend down) means OpenClaw's real request would
+      // fail too, so do NOT report it as reachable.
+      if (/^2\d\d$/.test(httpCode)) return { kind: "ok", httpCode };
+      return {
+        kind: "unreachable",
+        detail:
+          httpCode === "000"
+            ? `${endpoint} returned HTTP 000 (DNS failure or connection refused)`
+            : `${endpoint} returned HTTP ${httpCode} (inference route reached but not usable — provider route/auth misconfigured or the local backend is failing)`,
+      };
     }
-  }
-  return last;
+
+    // The exec ran but produced no sentinel — the sandbox runtime exec
+    // path itself is broken (e.g. sandbox in Error, exec denied). Treat as
+    // an exec failure, NOT a missing-curl soft-skip, so we never declare
+    // success without actually exercising the runtime (#4509 review).
+    const noise = (out || result.stderr || "").slice(0, 160);
+    return {
+      kind: "exec-failed",
+      detail: `unexpected sandbox exec output: ${noise}`,
+    };
+  };
+
+  return retryUntil(probe, {
+    accept: (result) => result.kind === "ok" || result.kind === "no-curl",
+    retryDelaysMs: Array.from(
+      { length: DOCKER_GPU_INFERENCE_PROBE_MAX_ATTEMPTS - 1 },
+      () => DOCKER_GPU_INFERENCE_PROBE_RETRY_DELAY_MS,
+    ),
+    sleep: deps.sleep,
+  });
 }
 
 /**
@@ -308,8 +311,8 @@ export function verifyDockerGpuSandboxLocalInference(
   const execInSandbox = deps.execInSandbox ?? executeSandboxCommandForVerification;
   const sleep =
     deps.sleep ??
-    ((seconds: number) => {
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, seconds) * 1000);
+    ((milliseconds: number) => {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, milliseconds));
     });
 
   const outcome = probeSandboxRuntimeInference(options.sandboxName, endpoint, {

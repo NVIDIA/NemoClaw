@@ -453,37 +453,28 @@ describe("wipeSandboxState (#5449)", () => {
       stateFiles: [{ path: "config.toml" }],
       label: "langchain-deepagents-code",
     },
-  ])("wipes the shipped $label manifest shape under its own /sandbox/<agent> dir for Ultra PRA-2 (#5455)", ({
-    agent,
-    configDir,
-    stateDirs,
-    stateDirPrefixes,
-    stateFiles,
-  }) => {
-    const { deps, runOpenshell } = buildDeps({
-      getSandbox: vi.fn(() => ({ agent }) as never),
-      loadAgent: vi.fn(() => ({
-        configPaths: { dir: configDir },
-        stateDirs,
-        stateDirPrefixes,
-        stateFiles,
-      })),
-    });
+  ])(
+    "wipes the shipped $label manifest shape under its own /sandbox/<agent> dir for Ultra PRA-2 (#5455)",
+    ({ agent, configDir, stateDirs, stateDirPrefixes, stateFiles }) => {
+      const { deps, runOpenshell } = buildDeps({
+        getSandbox: vi.fn(() => ({ agent }) as never),
+        loadAgent: vi.fn(() => ({
+          configPaths: { dir: configDir },
+          stateDirs,
+          stateDirPrefixes,
+          stateFiles,
+        })),
+      });
 
-    destroy.wipeSandboxState("test-sb", deps as never);
+      destroy.wipeSandboxState("test-sb", deps as never);
 
-    const { script } = execCommand(runOpenshell);
-    expect(script).toContain(`cd '${configDir}'`);
-    for (const dir of stateDirs) {
-      expect(script).toContain(`'${dir}'`);
-    }
-    for (const prefix of stateDirPrefixes) {
-      expect(script).toContain(`'${prefix}'*`);
-    }
-    for (const file of stateFiles) {
-      expect(script).toContain(`'${file.path}'`);
-    }
-  });
+      const { script } = execCommand(runOpenshell);
+      expect(script).toContain(`cd '${configDir}'`);
+      expect(stateDirs.every((dir) => script.includes(`'${dir}'`))).toBe(true);
+      expect(stateDirPrefixes.every((prefix) => script.includes(`'${prefix}'*`))).toBe(true);
+      expect(stateFiles.every((file) => script.includes(`'${file.path}'`))).toBe(true);
+    },
+  );
 
   // Ultra advisor PRA-2 on #5455 (empty exact state dirs): a manifest with
   // only a declared prefix must still issue a syntactically valid wipe.

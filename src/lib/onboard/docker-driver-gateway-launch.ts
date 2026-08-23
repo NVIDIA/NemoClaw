@@ -153,6 +153,10 @@ export function buildDockerDriverGatewayLaunch(
     gatewayEnv,
     options.stateDir,
     options.sandboxBin || gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_BIN,
+    {
+      allowOpenShell0044PreAuthDatabase:
+        process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1",
+    },
   );
   assertDockerDriverGatewayAuthConfigSafe(gatewayEnv);
   const baseEnv = options.env ?? process.env;

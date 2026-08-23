@@ -3,6 +3,12 @@
 
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../../cli/branding";
+import {
+  deferSandboxLifecycleExit,
+  runWithDeferredSandboxLifecycleExit,
+} from "../../../core/process-exit";
+import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
+import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../../state/registry";
 import { buildOpenshellExecArgs, computeExitCode, execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
@@ -213,7 +219,22 @@ export async function runSessionsPassthrough(
   sandboxName: string,
   { verb, extraArgs = [] }: SessionsPassthroughOptions = {},
 ): Promise<void> {
-  await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
+  return runWithDeferredSandboxLifecycleExit(async () => {
+    await withMcpLifecycleLock(sandboxName, () => {
+      assertHermesPortableCommandUnavailable(sandboxName, `sandbox:sessions:${verb ?? "list"}`);
+      return runSessionsPassthroughUnlocked(sandboxName, { verb, extraArgs });
+    });
+  });
+}
+
+async function runSessionsPassthroughUnlocked(
+  sandboxName: string,
+  { verb, extraArgs = [] }: SessionsPassthroughOptions = {},
+): Promise<void> {
+  await ensureLiveSandboxOrExit(sandboxName, {
+    allowNonReadyPhase: true,
+    exit: deferSandboxLifecycleExit,
+  });
   // Hermes sandboxes ship the `hermes` binary in place of OpenClaw's
   // `openclaw` binary, and `openclaw` does not exist inside them (#6247).
   // Route the passthrough at the in-sandbox agent's own binary name and
@@ -246,7 +267,7 @@ export async function runSessionsPassthrough(
       } else if (errorMessage) {
         console.error(`  Failed to invoke openshell: ${errorMessage}`);
       }
-      process.exit(code);
+      deferSandboxLifecycleExit(code);
     }
 
     if (isJsonOutput(extraArgs)) {
@@ -256,7 +277,7 @@ export async function runSessionsPassthrough(
         // an internal warm-up session.
         if (capturedOutput.includes(WARMUP_SESSION_ID_PREFIX)) {
           printJsonParseFailure();
-          process.exit(1);
+          deferSandboxLifecycleExit(1);
         }
         writeWithTrailingNewline(process.stdout, capturedOutput);
         writeWithTrailingNewline(process.stderr, capturedError);
@@ -272,5 +293,5 @@ export async function runSessionsPassthrough(
     writeWithTrailingNewline(process.stderr, capturedError);
     return;
   }
-  await execSandbox(sandboxName, command);
+  await execSandbox(sandboxName, command, {}, { exit: deferSandboxLifecycleExit });
 }

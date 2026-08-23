@@ -76,21 +76,19 @@ class FakeRunner implements CommandRunner {
 }
 
 describe("E2E fixture clients", () => {
-  it("enforces the OpenShell 0.0.99 sandbox identity boundary (#8497)", () => {
+  it.each([
+    "a2345678901234567890",
+    "e2e--sandbox",
+    "1e2e-sandbox",
+    "E2e-sandbox",
+    "e2e.sandbox",
+    "e2e_sandbox",
+  ])("enforces the OpenShell 0.0.99 sandbox identity boundary [%s] (#8497)", (invalidName) => {
     expect(() => validateSandboxName("a234567890123456789")).not.toThrow();
 
-    for (const invalidName of [
-      "a2345678901234567890",
-      "e2e--sandbox",
-      "1e2e-sandbox",
-      "E2e-sandbox",
-      "e2e.sandbox",
-      "e2e_sandbox",
-    ]) {
-      expect(() => validateSandboxName(invalidName), invalidName).toThrow(
-        /sandbox name is invalid for fixture client/,
-      );
-    }
+    expect(() => validateSandboxName(invalidName), invalidName).toThrow(
+      /sandbox name is invalid for fixture client/,
+    );
   });
 
   it("host client runs the configured NemoClaw CLI", async () => {
@@ -164,17 +162,17 @@ describe("E2E fixture clients", () => {
     ]);
   });
 
-  it.each([
-    "Error: sandbox assistant not found",
-    "no such sandbox: assistant",
-  ])("host client accepts canonical already-absent cleanup output: %s", async (stderr) => {
-    const runner = new FakeRunner();
-    runner.exitCode = 1;
-    runner.stderr = stderr;
-    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+  it.each(["Error: sandbox assistant not found", "no such sandbox: assistant"])(
+    "host client accepts canonical already-absent cleanup output: %s",
+    async (stderr) => {
+      const runner = new FakeRunner();
+      runner.exitCode = 1;
+      runner.stderr = stderr;
+      const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
 
-    await expect(host.cleanupSandbox("assistant")).resolves.toBeUndefined();
-  });
+      await expect(host.cleanupSandbox("assistant")).resolves.toBeUndefined();
+    },
+  );
 
   it("host client surfaces unexpected sandbox cleanup failures", async () => {
     const runner = new FakeRunner();
@@ -234,33 +232,31 @@ describe("E2E fixture clients", () => {
     ]);
   });
 
-  it.each([
-    "No active forward",
-    "forward 18789 not found",
-    "forward stop failed: not running",
-  ])("host client accepts canonical already-absent forward output: %s", async (stderr) => {
-    const runner = new FakeRunner();
-    runner.enqueue({ exitCode: 1, stderr });
-    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+  it.each(["No active forward", "forward 18789 not found", "forward stop failed: not running"])(
+    "host client accepts canonical already-absent forward output: %s",
+    async (stderr) => {
+      const runner = new FakeRunner();
+      runner.enqueue({ exitCode: 1, stderr });
+      const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
 
-    await host.cleanupForward(18789);
+      await host.cleanupForward(18789);
 
-    expect(runner.calls.map((call) => call.args)).toEqual([["forward", "stop", "18789"]]);
-  });
+      expect(runner.calls.map((call) => call.args)).toEqual([["forward", "stop", "18789"]]);
+    },
+  );
 
-  it.each([
-    "permission denied",
-    "daemon not running",
-    "some unrelated error: not running",
-  ])("host client surfaces unexpected forward cleanup failure: %s", async (stderr) => {
-    const runner = new FakeRunner();
-    runner.enqueue({ exitCode: 1, stderr });
-    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+  it.each(["permission denied", "daemon not running", "some unrelated error: not running"])(
+    "host client surfaces unexpected forward cleanup failure: %s",
+    async (stderr) => {
+      const runner = new FakeRunner();
+      runner.enqueue({ exitCode: 1, stderr });
+      const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
 
-    await expect(host.cleanupForward(18789)).rejects.toThrow(
-      `cleanup forward 18789 failed: ${stderr}`,
-    );
-  });
+      await expect(host.cleanupForward(18789)).rejects.toThrow(
+        `cleanup forward 18789 failed: ${stderr}`,
+      );
+    },
+  );
 
   it("host client does not hide a current gateway remove failure behind the legacy verb", async () => {
     const runner = new FakeRunner();
@@ -708,20 +704,21 @@ describe("E2E fixture clients", () => {
     ]);
   });
 
-  it("provider client rejects curl-sensitive request options before command construction", async () => {
-    const endpoint = trustedProviderEndpoint("https://api.example.test/v1/models", {
-      allowedHosts: ["api.example.test"],
-    });
+  it.each([
+    { body: "@/etc/passwd" },
+    { headers: ["@/tmp/headers"] },
+    { headers: ["Authorization: Bearer token\nX-Leak: value"] },
+    { curlMaxTimeSeconds: 0 },
+    { curlMaxTimeSeconds: -1 },
+    { curlMaxTimeSeconds: Number.NaN },
+    { curlMaxTimeSeconds: Number.POSITIVE_INFINITY },
+  ])(
+    "provider client rejects curl-sensitive request options before command construction [case %#]",
+    async (options) => {
+      const endpoint = trustedProviderEndpoint("https://api.example.test/v1/models", {
+        allowedHosts: ["api.example.test"],
+      });
 
-    for (const options of [
-      { body: "@/etc/passwd" },
-      { headers: ["@/tmp/headers"] },
-      { headers: ["Authorization: Bearer token\nX-Leak: value"] },
-      { curlMaxTimeSeconds: 0 },
-      { curlMaxTimeSeconds: -1 },
-      { curlMaxTimeSeconds: Number.NaN },
-      { curlMaxTimeSeconds: Number.POSITIVE_INFINITY },
-    ]) {
       const runner = new FakeRunner();
       const provider = new ProviderClient(runner);
 
@@ -729,8 +726,8 @@ describe("E2E fixture clients", () => {
         /@file|CR or LF|finite positive/,
       );
       expect(runner.calls).toEqual([]);
-    }
-  });
+    },
+  );
 
   it("provider client does not follow redirects after endpoint validation", async () => {
     const runner = new FakeRunner();

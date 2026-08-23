@@ -78,21 +78,21 @@ describe("MCP credential-resolution probe command security", () => {
     expect(command.trimEnd().endsWith("exit 0")).toBe(true);
   });
 
-  it("uses the selected adapter runtime without capturing endpoint bodies (#6379)", () => {
-    const mcporter = buildCredentialResolutionProbeCommand(baseEntry, "mcporter")?.command ?? "";
-    const hermes = buildCredentialResolutionProbeCommand(baseEntry, "hermes-config")?.command ?? "";
-    const deepagents =
-      buildCredentialResolutionProbeCommand(baseEntry, "deepagents-config")?.command ?? "";
+  it.each([
+    { adapter: "mcporter" as const, runtime: "nemoclaw-start node -e" },
+    { adapter: "hermes-config" as const, runtime: "/opt/hermes/.venv/bin/python -I -c" },
+    { adapter: "deepagents-config" as const, runtime: "/opt/venv/bin/python3 -I -c" },
+  ])(
+    "uses the $adapter runtime without capturing endpoint bodies (#6379)",
+    ({ adapter, runtime }) => {
+      const command = buildCredentialResolutionProbeCommand(baseEntry, adapter)?.command ?? "";
 
-    expect(mcporter).toContain("nemoclaw-start node -e");
-    expect(hermes).toContain("/opt/hermes/.venv/bin/python -I -c");
-    expect(deepagents).toContain("/opt/venv/bin/python3 -I -c");
-    for (const command of [mcporter, hermes, deepagents]) {
+      expect(command).toContain(runtime);
       expect(command).toContain("'/dev/null'");
       expect(command).not.toContain("head -c");
       expect(command).not.toContain("mktemp");
-    }
-  });
+    },
+  );
 
   it("refuses missing credentials and unsafe persisted endpoints (#6379)", () => {
     expect(buildCredentialResolutionProbeCommand({ ...baseEntry, env: [] }, "mcporter")).toBeNull();

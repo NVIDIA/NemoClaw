@@ -358,12 +358,16 @@ describe("openClawAgentIncompleteTurnSignal", () => {
     expect(openClawAgentIncompleteTurnSignal(raw)).toBeNull();
   });
 
-  it("ignores a timeout phase that carries no value (#8723)", () => {
-    for (const timeoutPhase of ["", "   ", null, 3, true]) {
-      const raw = JSON.stringify({ status: "ok", result: { payloads: [], meta: { timeoutPhase } } });
+  it.each(["", "   ", null, 3, true])(
+    "ignores a timeout phase that carries no value [case %#] (#8723)",
+    (timeoutPhase) => {
+      const raw = JSON.stringify({
+        status: "ok",
+        result: { payloads: [], meta: { timeoutPhase } },
+      });
       expect(openClawAgentIncompleteTurnSignal(raw)).toBeNull();
-    }
-  });
+    },
+  );
 
   it("leaves the timeout phase absent for an abandoned turn that did not time out (#8723)", () => {
     const raw = JSON.stringify({

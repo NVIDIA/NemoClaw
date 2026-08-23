@@ -68,6 +68,7 @@ export type RebuildFlowOverrides = {
     error?: Error;
   };
   executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
+  executeSandboxExecCommand?: () => { status: number; stdout: string; stderr: string } | null;
   checkAndRecoverSandboxProcesses?: () => {
     checked: boolean;
     wasRunning: boolean | null;
@@ -141,6 +142,7 @@ export type RebuildFlowHarness = {
   restoreTrustedAgentBaseImageOverrideSpy: MockInstance;
   restoreTrustedAgentRemoteBaseImageOverrideSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
+  executeSandboxExecCommandSpy: MockInstance;
   checkAndRecoverSandboxProcessesSpy: MockInstance;
   restartSandboxGatewaySpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
@@ -189,6 +191,20 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         : "OpenClaw";
   const agentBaseImageId = `sha256:${"a".repeat(64)}`;
   const agentBaseImageRef = `nemoclaw-${agentName}-sandbox-base-local:image-${agentBaseImageId.slice("sha256:".length)}`;
+  const agentBaseImageResolutionMetadata = {
+    schema: 1,
+    key: `${agentName}-rebuild-base`,
+    imageName: `ghcr.io/nvidia/nemoclaw/${agentName}-sandbox-base`,
+    ref: agentBaseImageRef,
+    digest: null,
+    source: "local" as const,
+    imageId: agentBaseImageId,
+    os: "linux",
+    architecture: "amd64",
+    glibcVersion: "2.41",
+    requireOpenshellSandboxAbi: true,
+    minGlibcVersion: "2.39",
+  };
   const agentDef = {
     name: agentName,
     displayName: agentDisplayName,
@@ -269,6 +285,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const ensureAgentBaseImageSpy = vi.spyOn(agentOnboard, "ensureAgentBaseImage").mockReturnValue({
     imageTag: agentBaseImageRef,
     built: true,
+    resolutionMetadata: agentBaseImageResolutionMetadata,
     trustedLocalOverride,
   });
   const restoreTrustedAgentBaseImageOverrideSpy = vi.fn();
@@ -647,6 +664,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .mockImplementation(
       overrides.executeSandboxCommand ?? (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
     );
+  const executeSandboxExecCommandSpy = vi
+    .spyOn(processRecovery, "executeSandboxExecCommand")
+    .mockImplementation(
+      overrides.executeSandboxExecCommand ??
+        (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
+    );
   const checkAndRecoverSandboxProcessesSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
     .mockImplementation(
@@ -724,6 +747,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     restoreTrustedAgentBaseImageOverrideSpy,
     restoreTrustedAgentRemoteBaseImageOverrideSpy,
     executeSandboxCommandSpy,
+    executeSandboxExecCommandSpy,
     checkAndRecoverSandboxProcessesSpy,
     restartSandboxGatewaySpy,
     ensureMessagingHostForwardAfterRebuildSpy,

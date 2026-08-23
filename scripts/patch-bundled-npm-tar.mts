@@ -10,13 +10,10 @@ import {
   constants,
   cpSync,
   fstatSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
-  readdirSync,
   readFileSync,
-  realpathSync,
   renameSync,
   rmSync,
 } from "node:fs";
@@ -24,11 +21,18 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const FIXED_TAR_VERSION = "7.5.20";
+import {
+  jsonObject as record,
+  readJsonObject as readJson,
+  rejectUnsafePackageTree,
+  requireRealDirectory as realDirectory,
+} from "./lib/bundled-npm-package.mts";
+
+export const FIXED_TAR_VERSION = "7.5.21";
 export const FIXED_TAR_INTEGRITY =
-  "sha512-9FcyK4PA6+WbzlTM9WhQm6vB5W7cP7dUiPsv1g7YDwEQnQ1CGpK3MGlKk/ITVWMk05kHZuBhmVhiv8LZoy/PFQ==";
-export const FIXED_TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.20.tgz";
-export const MINIMUM_SAFE_TAR_VERSION = "7.5.19";
+  "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==";
+export const FIXED_TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz";
+export const MINIMUM_SAFE_TAR_VERSION = "7.5.21";
 
 /**
  * Source boundary for this private npm-tree remediation. The pinned upstream
@@ -42,37 +46,6 @@ export const NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH = [
   "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",
   "node:24-trixie-slim@sha256:05c08ce4291e9a58f59456a7985176defb12cdd42271f35ff81a3e167ea61d4c",
 ] as const;
-
-type JsonRecord = Record<string, unknown>;
-
-function record(value: unknown, label: string): JsonRecord {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`${label} must be a JSON object`);
-  }
-  return value as JsonRecord;
-}
-
-function readJson(file: string, label: string): JsonRecord {
-  const descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    const metadata = fstatSync(descriptor);
-    if (!metadata.isFile()) throw new Error(`${label} must be a real file: ${file}`);
-    return record(JSON.parse(readFileSync(descriptor, "utf8")), label);
-  } catch (error) {
-    throw new Error(`${label} is invalid: ${String(error)}`);
-  } finally {
-    closeSync(descriptor);
-  }
-}
-
-function realDirectory(directory: string, label: string): string {
-  const resolved = resolve(directory);
-  const metadata = lstatSync(resolved);
-  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-    throw new Error(`${label} must be a real directory: ${resolved}`);
-  }
-  return realpathSync(resolved);
-}
 
 function parseVersion(version: unknown, label: string): readonly [number, number, number] {
   if (typeof version !== "string") throw new Error(`${label} must be an exact semver version`);
@@ -88,15 +61,6 @@ function versionAtLeast(version: unknown, minimum: string, label: string): boole
     if (observed[index] !== required[index]) return observed[index]! > required[index]!;
   }
   return true;
-}
-
-function rejectUnsafeTree(root: string): void {
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) {
-      throw new Error(`replacement tar package contains an unsafe member: ${entry.name}`);
-    }
-    if (entry.isDirectory()) rejectUnsafeTree(join(root, entry.name));
-  }
 }
 
 export type BundledNpmTarState = Readonly<{
@@ -158,7 +122,7 @@ export function patchBundledNpmTar(options: {
 }): BundledNpmTarState {
   const npmRoot = realDirectory(options.npmRoot, "npm package root");
   const replacementRoot = realDirectory(options.replacementRoot, "replacement tar root");
-  rejectUnsafeTree(replacementRoot);
+  rejectUnsafePackageTree(replacementRoot, "replacement tar package");
   const replacement = readJson(join(replacementRoot, "package.json"), "replacement tar manifest");
   if (replacement.name !== "tar" || replacement.version !== FIXED_TAR_VERSION) {
     throw new Error(`replacement package must be tar@${FIXED_TAR_VERSION}`);

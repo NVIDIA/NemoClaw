@@ -9,13 +9,17 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DASHBOARD_PORT } from "../core/ports";
-import { isCuaFrameworkEnabled, requireCuaFrameworkEnabled } from "../cua/feature";
-import { getCuaExternalAgentManifestPath } from "../cua/runtime-manifest";
+import { isCuaEnabled, requireCuaEnabled } from "../cua/feature";
 import { ROOT } from "../runner";
 import {
   formatAgentAliasSuffix,
   resolveAgentNameAlias as resolveKnownAgentNameAlias,
 } from "./aliases";
+import {
+  isCandidateAgent,
+  isCandidateAgentSelectable,
+  requireCandidateAgentSelectable,
+} from "./candidate";
 import { type AgentDashboardUi, readDashboardUi } from "./dashboard-ui";
 import type {
   AgentChoice,
@@ -94,6 +98,7 @@ export const AGENTS_DIR = path.join(ROOT, "agents");
 const _cache = new Map<string, AgentDefinition>();
 
 export { agentAliasSummary } from "./aliases";
+export { requireCandidateQualificationEnabled } from "./candidate";
 
 export function resolveAgentNameAlias(
   value: string | null | undefined,
@@ -121,18 +126,11 @@ export function listAgents(env: NodeJS.ProcessEnv = process.env): string[] {
     ? fs
         .readdirSync(AGENTS_DIR, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
-        .filter((entry) => entry.name !== "nemocua")
-        .filter((entry) => entry.name !== "pi")
+        .filter((entry) => entry.name !== "nemocua" || isCuaEnabled(env))
+        .filter((entry) => !isCandidateAgent(entry.name) || isCandidateAgentSelectable(entry.name, env))
         .filter((entry) => fs.existsSync(path.join(AGENTS_DIR, entry.name, "manifest.yaml")))
         .map((entry) => entry.name)
     : [];
-  if (
-    isCuaFrameworkEnabled(env) &&
-    env.NEMOCLAW_CUA_RUNTIME_MANIFEST &&
-    env.NEMOCLAW_CUA_RUNTIME_MANIFEST_SHA256
-  ) {
-    agents.push("nemocua");
-  }
   return [...new Set(agents)].sort();
 }
 
@@ -156,14 +154,10 @@ export function requireAgentPolicyAdditionsPath(
  * Load and parse an agent manifest.
  */
 export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): AgentDefinition {
-  if (name === "nemocua") requireCuaFrameworkEnabled(env);
-  if (name === "pi") throw new Error("Pi is not selectable in this release");
-  const externalCua = name === "nemocua";
-  const manifestPath = externalCua
-    ? getCuaExternalAgentManifestPath(env)
-    : path.join(AGENTS_DIR, name, "manifest.yaml");
-  const cacheKey = externalCua ? null : name;
-  const cached = cacheKey ? _cache.get(cacheKey) : undefined;
+  if (name === "nemocua") requireCuaEnabled(env);
+  requireCandidateAgentSelectable(name, env);
+  const manifestPath = path.join(AGENTS_DIR, name, "manifest.yaml");
+  const cached = _cache.get(name);
   if (cached) return cached;
 
   if (!fs.existsSync(manifestPath)) {
@@ -400,24 +394,7 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
     },
   };
 
-  if (externalCua) {
-    if (
-      agent.name !== "nemocua" ||
-      runtime.kind !== "terminal" ||
-      !runtime.interactive_command ||
-      !runtime.headless_command ||
-      !runtime.smoke_commands?.length ||
-      !binaryPath?.startsWith("/") ||
-      !versionCommand ||
-      !expectedVersion
-    ) {
-      throw new Error(
-        "External NemoCUA agent manifest must declare the canonical terminal runtime, binary, version, and smoke surfaces",
-      );
-    }
-  }
-
-  if (cacheKey) _cache.set(cacheKey, agent);
+  _cache.set(name, agent);
   return agent;
 }
 
@@ -489,6 +466,10 @@ export function resolveAgentName({
     const available = listAgents();
     const resolved = resolveAgentNameAlias(session.agent, available);
     if (!resolved) {
+      // A recorded release candidate must fail closed. Falling back to OpenClaw
+      // would silently change the agent a resumed session was created with and
+      // strand its agent-scoped state.
+      requireCandidateAgentSelectable(session.agent);
       console.error(
         `  Warning: session references unknown agent '${session.agent}', falling back to openclaw.`,
       );

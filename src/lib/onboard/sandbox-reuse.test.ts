@@ -373,7 +373,7 @@ describe("createSandboxReuseHelpers", () => {
 
     expect(helpers.waitForSandboxRecreateDeleteAbsence("alpha", "nemoclaw-9090", note)).toBe(true);
     expect(captureOpenshell).toHaveBeenCalledTimes(3);
-    for (const [args, options] of captureOpenshell.mock.calls) {
+    captureOpenshell.mock.calls.forEach(([args, options]) => {
       expect(args).toEqual(["sandbox", "get", "-g", "nemoclaw-9090", "alpha"]);
       expect(options).toMatchObject({
         ignoreError: true,
@@ -383,7 +383,7 @@ describe("createSandboxReuseHelpers", () => {
       const timeout = Number(options?.timeout);
       expect(timeout).toBeGreaterThan(0);
       expect(timeout).toBeLessThanOrEqual(SANDBOX_RECREATE_PROBE_TIMEOUT_MS);
-    }
+    });
     expect(note).toHaveBeenLastCalledWith("  Delete convergence probe 3: state=absent");
   });
 

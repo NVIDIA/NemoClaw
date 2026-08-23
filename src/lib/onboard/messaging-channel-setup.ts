@@ -436,7 +436,6 @@ function buildCredentialAvailability(
       if (input.kind !== "secret" || !input.envKey || !getMessagingToken(input.envKey)) {
         continue;
       }
-      availability[input.id] = true;
       availability[`${manifest.id}.${input.id}`] = true;
       availability[input.envKey] = true;
     }

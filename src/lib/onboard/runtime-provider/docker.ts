@@ -14,6 +14,12 @@ import {
 } from "../docker-driver-sandbox-recovery";
 import { createDockerManagedBootstrapSurface } from "../managed-bootstrap/docker-runtime";
 import {
+  hasPortableAgentSandboxLifecycleReceipt,
+  recoverPortableAgentSandboxLifecycle,
+  stopPortableAgentSandboxLifecycle,
+} from "../experimental/portable-agent-lifecycle";
+import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
+import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
@@ -53,13 +59,17 @@ export interface DockerRuntimeProviderDependencies {
     timeout?: number,
   ) => RuntimeProviderCommandCapture;
   readonly findLabeledSandboxContainers: typeof findLabeledSandboxContainers;
+  readonly hasPortableLifecycleReceipt: typeof hasPortableAgentSandboxLifecycleReceipt;
   readonly isRuntimeDown: typeof isDockerRuntimeDown;
   readonly printRuntimeDownGuidance: typeof printDockerRuntimeDownGuidance;
   readonly recoverSandbox: typeof recoverDockerDriverSandbox;
+  readonly recoverPortableSandbox: typeof recoverPortableAgentSandboxLifecycle;
   readonly queryRuntimeSnapshot: typeof queryOpenShellDockerSandboxRuntimeSnapshot;
   readonly removeImage: DockerRemoveImage;
   readonly stopContainer: DockerStop;
+  readonly stopPortableSandbox: typeof stopPortableAgentSandboxLifecycle;
   readonly unpauseContainer: DockerUnpause;
+  readonly withLifecycleLockSync: typeof withMcpLifecycleLockSync;
 }
 
 const DOCKER_OPERATION_TIMEOUT_MS = 30_000;
@@ -86,17 +96,23 @@ function resolveDependencies(
       ((command, args, timeout) => captureHostCommand(command, args, timeout)),
     findLabeledSandboxContainers:
       overrides.findLabeledSandboxContainers ?? findLabeledSandboxContainers,
+    hasPortableLifecycleReceipt:
+      overrides.hasPortableLifecycleReceipt ?? hasPortableAgentSandboxLifecycleReceipt,
     isRuntimeDown: overrides.isRuntimeDown ?? isDockerRuntimeDown,
     printRuntimeDownGuidance: overrides.printRuntimeDownGuidance ?? printDockerRuntimeDownGuidance,
     recoverSandbox: overrides.recoverSandbox ?? recoverDockerDriverSandbox,
+    recoverPortableSandbox:
+      overrides.recoverPortableSandbox ?? recoverPortableAgentSandboxLifecycle,
     queryRuntimeSnapshot:
       overrides.queryRuntimeSnapshot ?? queryOpenShellDockerSandboxRuntimeSnapshot,
     removeImage:
       overrides.removeImage ??
       ((reference, options) => loadDockerRemoveImage()(reference, options)),
     stopContainer: overrides.stopContainer ?? ((name, options) => loadDockerStop()(name, options)),
+    stopPortableSandbox: overrides.stopPortableSandbox ?? stopPortableAgentSandboxLifecycle,
     unpauseContainer:
       overrides.unpauseContainer ?? ((name, options) => loadDockerUnpause()(name, options)),
+    withLifecycleLockSync: overrides.withLifecycleLockSync ?? withMcpLifecycleLockSync,
   };
 }
 
@@ -124,6 +140,14 @@ function dockerLifecyclePreflight(
   input: RuntimeProviderLifecycleInput,
   deps: DockerRuntimeProviderDependencies,
 ): RuntimeProviderLifecycleResult | null {
+  try {
+    if (deps.hasPortableLifecycleReceipt(input.sandboxName, input.environment)) return null;
+  } catch (error) {
+    return {
+      exitCode: 1,
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
   if (!deps.isRuntimeDown(input.sandboxName)) return null;
   deps.printRuntimeDownGuidance(input.sandboxName, { retryCommand: action });
   return { exitCode: 1 };
@@ -141,6 +165,41 @@ function startDockerSandbox(
   input: RuntimeProviderLifecycleInput,
   deps: DockerRuntimeProviderDependencies,
 ): RuntimeProviderLifecycleResult {
+  return deps.withLifecycleLockSync(input.sandboxName, () =>
+    startDockerSandboxUnlocked(input, deps),
+  );
+}
+
+function startDockerSandboxUnlocked(
+  input: RuntimeProviderLifecycleInput,
+  deps: DockerRuntimeProviderDependencies,
+): RuntimeProviderLifecycleResult {
+  try {
+    const portable = deps.recoverPortableSandbox(
+      input.sandboxName,
+      {
+        agent: input.sandbox.agent,
+        gatewayName: input.sandbox.gatewayName ?? "nemoclaw",
+        lifecycleGeneration: input.sandbox.lifecycleGeneration,
+        openshellDriver: input.sandbox.openshellDriver,
+        provider: input.sandbox.provider,
+      },
+      {
+        env: input.environment,
+        log: input.log,
+        readRegistry: (sandboxName) => (sandboxName === input.sandboxName ? input.sandbox : null),
+      },
+    );
+    if (portable.kind !== "not-installed") {
+      return input.sandbox.agent === "hermes"
+        ? ({ exitCode: 0, hermesPortableVerified: true } as RuntimeProviderLifecycleResult & {
+            readonly hermesPortableVerified: true;
+          })
+        : { exitCode: 0 };
+    }
+  } catch (error) {
+    return { exitCode: 1, message: error instanceof Error ? error.message : String(error) };
+  }
   const containers = deps.findLabeledSandboxContainers(input.sandboxName);
   const paused = containers.find((container) => isPausedStatus(container.status));
   if (paused) {
@@ -186,6 +245,64 @@ function stopDockerSandbox(
   hooks: RuntimeProviderLifecycleStopHooks,
   deps: DockerRuntimeProviderDependencies,
 ): RuntimeProviderLifecycleStopOutcome {
+  return deps.withLifecycleLockSync(input.sandboxName, () =>
+    stopDockerSandboxUnlocked(input, hooks, deps),
+  );
+}
+
+function stopDockerSandboxUnlocked(
+  input: RuntimeProviderLifecycleInput,
+  hooks: RuntimeProviderLifecycleStopHooks,
+  deps: DockerRuntimeProviderDependencies,
+): RuntimeProviderLifecycleStopOutcome {
+  try {
+    const portable = deps.stopPortableSandbox(
+      input.sandboxName,
+      {
+        agent: input.sandbox.agent,
+        gatewayName: input.sandbox.gatewayName ?? "nemoclaw",
+        lifecycleGeneration: input.sandbox.lifecycleGeneration,
+        openshellDriver: input.sandbox.openshellDriver,
+        provider: input.sandbox.provider,
+      },
+      hooks.beforeStop,
+      {
+        env: input.environment,
+        log: input.log,
+        readRegistry: (sandboxName) => (sandboxName === input.sandboxName ? input.sandbox : null),
+      },
+    );
+    if (portable.kind === "already-stopped") {
+      const registryHermes = input.sandbox.agent === "hermes";
+      const portableHermes = portable.portableAgent === "hermes";
+      if (registryHermes !== portableHermes) {
+        throw new Error("Portable stop authority disagrees with the registered sandbox agent");
+      }
+      return portableHermes
+        ? ({
+            exitCode: 0,
+            state: "already-stopped",
+            hermesPortableVerified: true,
+          } as RuntimeProviderLifecycleStopOutcome & { readonly hermesPortableVerified: true })
+        : { exitCode: 0, state: "already-stopped" };
+    }
+    if (portable.kind === "stopped") {
+      const registryHermes = input.sandbox.agent === "hermes";
+      const portableHermes = portable.portableAgent === "hermes";
+      if (registryHermes !== portableHermes) {
+        throw new Error("Portable stop authority disagrees with the registered sandbox agent");
+      }
+      return portableHermes
+        ? ({
+            exitCode: 0,
+            state: "stopped",
+            hermesPortableVerified: true,
+          } as RuntimeProviderLifecycleStopOutcome & { readonly hermesPortableVerified: true })
+        : { exitCode: 0, state: "stopped" };
+    }
+  } catch (error) {
+    return { exitCode: 1, message: error instanceof Error ? error.message : String(error) };
+  }
   const containers = deps.findLabeledSandboxContainers(input.sandboxName);
   if (containers.length === 0) {
     return {
@@ -318,6 +435,7 @@ export function createDockerRuntimeProviderBundle(
       directLifecycle: true,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: true,
+      readOnlyHostMounts: { supported: true, hostPlatforms: ["linux"] },
     },
     preflightDoctor: {
       providerId,
@@ -420,6 +538,11 @@ export function createKubernetesRuntimeProviderBundle(
       directLifecycle: false,
       legacyGatewayContainerInspection: true,
       workloadImageCleanup: true,
+      readOnlyHostMounts: {
+        supported: false,
+        reason:
+          "Kubernetes hostPath semantics have not passed NemoClaw security and lifecycle qualification.",
+      },
     },
     preflightDoctor: {
       providerId,

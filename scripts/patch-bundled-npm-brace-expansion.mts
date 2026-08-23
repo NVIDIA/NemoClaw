@@ -10,19 +10,24 @@ import {
   constants,
   cpSync,
   fstatSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
-  readdirSync,
   readFileSync,
-  realpathSync,
   renameSync,
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import {
+  collectBundledPackageVersions,
+  jsonObject as record,
+  readJsonObject as readJson,
+  rejectUnsafePackageTree,
+  requireRealDirectory as realDirectory,
+} from "./lib/bundled-npm-package.mts";
 
 export const AFFECTED_BRACE_EXPANSION_VERSION = "5.0.7";
 export const FIXED_BRACE_EXPANSION_VERSION = "5.0.9";
@@ -37,106 +42,6 @@ const REVIEWED_BRACE_EXPANSION_VERSIONS = new Set([
   "5.0.8",
   FIXED_BRACE_EXPANSION_VERSION,
 ]);
-
-type JsonRecord = Record<string, unknown>;
-
-function record(value: unknown, label: string): JsonRecord {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`${label} must be a JSON object`);
-  }
-  return value as JsonRecord;
-}
-
-function readJson(file: string, label: string): JsonRecord {
-  const descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    if (!fstatSync(descriptor).isFile()) throw new Error(`${label} must be a real file: ${file}`);
-    return record(JSON.parse(readFileSync(descriptor, "utf8")), label);
-  } catch (error) {
-    throw new Error(`${label} is invalid: ${String(error)}`);
-  } finally {
-    closeSync(descriptor);
-  }
-}
-
-function realDirectory(directory: string, label: string): string {
-  const resolved = resolve(directory);
-  const metadata = lstatSync(resolved);
-  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-    throw new Error(`${label} must be a real directory: ${resolved}`);
-  }
-  return realpathSync(resolved);
-}
-
-function rejectUnsafeTree(root: string): void {
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) {
-      throw new Error(
-        `replacement brace-expansion package contains an unsafe member: ${entry.name}`,
-      );
-    }
-    if (entry.isDirectory()) rejectUnsafeTree(join(root, entry.name));
-  }
-}
-
-function isContainedBinSymlink(
-  nodeModulesRoot: string,
-  directory: string,
-  entryName: string,
-): boolean {
-  if (basename(directory) !== ".bin") return false;
-  try {
-    const target = realpathSync(join(directory, entryName));
-    const targetRelative = relative(nodeModulesRoot, target);
-    return (
-      targetRelative !== "" &&
-      targetRelative !== ".." &&
-      !targetRelative.startsWith(`..${sep}`) &&
-      !isAbsolute(targetRelative) &&
-      lstatSync(target).isFile()
-    );
-  } catch {
-    return false;
-  }
-}
-
-function collectBraceExpansionVersions(
-  directory: string,
-  nodeModulesRoot: string,
-  versions: string[],
-): void {
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    if (entry.isSymbolicLink()) {
-      if (!isContainedBinSymlink(nodeModulesRoot, directory, entry.name)) {
-        throw new Error(`npm package contains an unsafe symlink: ${join(directory, entry.name)}`);
-      }
-      continue;
-    }
-    if (
-      entry.isDirectory() &&
-      (entry.name.startsWith(".brace-expansion.nemoclaw-stage-") ||
-        entry.name.startsWith("brace-expansion.nemoclaw-backup-"))
-    ) {
-      continue;
-    }
-    if (!entry.isDirectory() && !entry.isFile()) {
-      throw new Error(`npm package contains an unsafe member: ${join(directory, entry.name)}`);
-    }
-    const child = join(directory, entry.name);
-    if (entry.isDirectory()) {
-      collectBraceExpansionVersions(child, nodeModulesRoot, versions);
-      continue;
-    }
-    if (entry.name !== "package.json") continue;
-    const manifest = readJson(child, "npm bundled package manifest");
-    if (manifest.name === "brace-expansion") {
-      if (typeof manifest.version !== "string") {
-        throw new Error("npm bundled brace-expansion version is invalid");
-      }
-      versions.push(manifest.version);
-    }
-  }
-}
 
 export type BundledNpmBraceExpansionState = Readonly<{
   braceExpansionVersion: string;
@@ -174,9 +79,15 @@ export function inspectBundledNpmBraceExpansion(npmRoot: string): BundledNpmBrac
     );
   }
 
-  const versions: string[] = [];
   const nodeModulesRoot = realDirectory(join(root, "node_modules"), "npm node_modules root");
-  collectBraceExpansionVersions(nodeModulesRoot, nodeModulesRoot, versions);
+  const versions = collectBundledPackageVersions({
+    ignoredDirectoryPrefixes: [
+      ".brace-expansion.nemoclaw-stage-",
+      "brace-expansion.nemoclaw-backup-",
+    ],
+    nodeModulesRoot,
+    packageName: "brace-expansion",
+  });
   if (versions.length !== 1 || versions[0] !== version) {
     throw new Error(`npm bundled brace-expansion layout has drifted: ${JSON.stringify(versions)}`);
   }
@@ -207,7 +118,7 @@ export function patchBundledNpmBraceExpansion(options: {
     options.replacementRoot,
     "replacement brace-expansion root",
   );
-  rejectUnsafeTree(replacementRoot);
+  rejectUnsafePackageTree(replacementRoot, "replacement brace-expansion package");
   const replacement = readJson(
     join(replacementRoot, "package.json"),
     "replacement brace-expansion manifest",

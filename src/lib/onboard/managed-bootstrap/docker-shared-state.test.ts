@@ -147,6 +147,39 @@ describe("Docker managed-bootstrap shared-state helper environment", () => {
     helpers.forEach(expectCleanRunNodeHelper);
   });
 
+  it("grants only the capabilities needed to restore exact Hermes root metadata (#9486)", () => {
+    const fake = fixture({ sharedState: "pending" });
+    finalizeDockerManagedStartupSharedState(
+      {
+        transaction: sharedStateTransaction(),
+        retainContainerAfterRollback: true,
+        supervisorReady: false,
+      },
+      fake.deps,
+    );
+
+    const rollbackHelper = nodeHelperCalls(fake.deps).find((args) =>
+      args.includes("--rollback-shared-state-transaction"),
+    );
+    expect(rollbackHelper).toBeDefined();
+    const capabilities = rollbackHelper!.flatMap((value, index, args) =>
+      value === "--cap-add" ? [args[index + 1]] : [],
+    );
+    expect(capabilities).toEqual(["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID"]);
+    expect(rollbackHelper).toEqual(
+      expect.arrayContaining([
+        "--cap-drop",
+        "ALL",
+        "--network",
+        "none",
+        "--read-only",
+        "--volumes-from",
+        NEW_ID,
+      ]),
+    );
+    expect(rollbackHelper).not.toContain("--privileged");
+  });
+
   it("clears arbitrary container environment before the durable receipt-clear helper", () => {
     const fake = fixture({ sharedState: "committed" });
     clearDockerManagedStartupSharedStateCommitReceipt(sharedStateTransaction(), fake.deps);

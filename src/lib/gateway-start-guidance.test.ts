@@ -40,11 +40,12 @@ describe("gatewayStartGuidance", () => {
     );
   });
 
-  it("never names a gateway lifecycle command the OpenShell CLI does not have", () => {
-    for (const launcher of ["nemoclaw", "openshell"] as const) {
+  it.each(["nemoclaw", "openshell"] as const)(
+    "never names a gateway lifecycle command the OpenShell CLI does not have [case %#]",
+    (launcher) => {
       expect(gatewayStartGuidance("nemoclaw", launcher)).not.toContain("openshell gateway start");
-    }
-  });
+    },
+  );
 
   it("reads the launcher the current runtime provider records", () => {
     expect(

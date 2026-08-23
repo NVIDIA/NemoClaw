@@ -134,7 +134,9 @@ describe("host-side credential staging", () => {
     expect(credentials.getCredential("NVIDIA_INFERENCE_API_KEY")).toBe("nvapi-from-env");
   });
 
-  it("scopes a runtime credential without exporting or enumerating it", async () => {
+  it.each(
+    ["secret\nheader", "secret\rheader", "secret\0tail"],
+  )("scopes a runtime credential without exporting or enumerating it [%s]", async (value) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
     try {
       const credentials = await importCredentialsModule(home);
@@ -168,11 +170,10 @@ describe("host-side credential staging", () => {
           expect(credentials.getCredential("COMPATIBLE_API_KEY")).toBe(" runtime-only-secret ");
         },
       );
-      for (const value of ["secret\nheader", "secret\rheader", "secret\0tail"]) {
-        await expect(
-          credentials.withCredentialOverrides({ COMPATIBLE_API_KEY: value }, async () => {}),
-        ).rejects.toThrow(/must not contain NUL, CR, or LF/);
-      }
+
+      await expect(
+        credentials.withCredentialOverrides({ COMPATIBLE_API_KEY: value }, async () => {}),
+      ).rejects.toThrow(/must not contain NUL, CR, or LF/);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

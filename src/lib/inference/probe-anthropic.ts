@@ -26,7 +26,9 @@ export type AnthropicStreamingDiagnosticCode =
   | "anthropic-streaming-duplicate-message-stop"
   | "anthropic-streaming-missing-content-block-delta"
   | "anthropic-streaming-missing-message-start"
-  | "anthropic-streaming-missing-message-stop";
+  | "anthropic-streaming-missing-message-stop"
+  | "anthropic-streaming-missing-tool-use"
+  | "anthropic-streaming-missing-tool-use-stop-reason";
 
 export interface AnthropicProbeFailureDetail {
   name: string;
@@ -55,6 +57,12 @@ export interface AnthropicProbeOptions {
    */
   probeStreaming?: boolean;
   /**
+   * Require the streaming request to return a native Anthropic `tool_use`
+   * block. This detects gateways that flatten tool calls into assistant text
+   * even though ordinary Messages and non-streaming requests succeed (#7967).
+   */
+  requireStreamingToolCalling?: boolean;
+  /**
    * SSRF-preflight-validated address(es) to pin the probe curl to via
    * `--resolve`, so a second DNS lookup here cannot rebind the endpoint host to
    * a private/internal address after the public preflight (TOCTOU — #6293).
@@ -71,6 +79,7 @@ export interface AnthropicProbeOptions {
 // tolerated by the streaming probe when the required events were already
 // collected before the cap.
 const STREAMING_PROBE_TIMING_ARGS = ["--connect-timeout", "10", "--max-time", "15"];
+const STREAMING_TOOL_PROBE_NAME = "emit_ok";
 
 function anthropicFailureFromError(error: unknown): AnthropicProbeResult {
   const message = error instanceof Error ? error.message : String(error);
@@ -81,12 +90,40 @@ function anthropicFailureFromError(error: unknown): AnthropicProbeResult {
   };
 }
 
-function anthropicMessagesPayload(model: string, stream: boolean): string {
+function anthropicMessagesPayload(
+  model: string,
+  stream: boolean,
+  requireToolCalling = false,
+): string {
   return JSON.stringify({
     model,
-    max_tokens: 16,
+    max_tokens: requireToolCalling ? 64 : 16,
     ...(stream ? { stream: true } : {}),
-    messages: [{ role: "user", content: "Reply with exactly: OK" }],
+    messages: [
+      {
+        role: "user",
+        content: requireToolCalling
+          ? `Call ${STREAMING_TOOL_PROBE_NAME} with value OK. Do not answer with text.`
+          : "Reply with exactly: OK",
+      },
+    ],
+    ...(requireToolCalling
+      ? {
+          tools: [
+            {
+              name: STREAMING_TOOL_PROBE_NAME,
+              description: "Return the supplied validation value.",
+              input_schema: {
+                type: "object",
+                properties: { value: { type: "string" } },
+                required: ["value"],
+                additionalProperties: false,
+              },
+            },
+          ],
+          tool_choice: { type: "tool", name: STREAMING_TOOL_PROBE_NAME },
+        }
+      : {}),
   });
 }
 
@@ -109,7 +146,7 @@ const SEQUENCE_ERROR_DIAGNOSTICS: Record<string, AnthropicStreamingDiagnosticCod
 function anthropicStreamingDiagnosticCodes(
   result: Pick<
     AnthropicStreamingProbeResult,
-    "duplicateEvents" | "missingEvents" | "sequenceErrors"
+    "duplicateEvents" | "missingEvents" | "sequenceErrors" | "toolCallErrors"
   >,
 ): AnthropicStreamingDiagnosticCode[] {
   return [
@@ -121,6 +158,11 @@ function anthropicStreamingDiagnosticCodes(
     ),
     ...result.sequenceErrors.flatMap((error) =>
       SEQUENCE_ERROR_DIAGNOSTICS[error] ? [SEQUENCE_ERROR_DIAGNOSTICS[error]] : [],
+    ),
+    ...result.toolCallErrors.map((error) =>
+      error === "missing-expected-tool-use"
+        ? ("anthropic-streaming-missing-tool-use" as const)
+        : ("anthropic-streaming-missing-tool-use-stop-reason" as const),
     ),
   ];
 }
@@ -183,7 +225,7 @@ export function probeAnthropicEndpoint(
           "-H",
           "content-type: application/json",
           "-d",
-          anthropicMessagesPayload(model, true),
+          anthropicMessagesPayload(model, true, options.requireStreamingToolCalling === true),
           messagesUrl,
         ],
         {
@@ -191,6 +233,9 @@ export function probeAnthropicEndpoint(
           pinnedAddresses: options.pinnedAddresses,
           trustedPrivateCapability: options.trustedPrivateCapability,
         },
+        options.requireStreamingToolCalling === true
+          ? { expectedToolName: STREAMING_TOOL_PROBE_NAME }
+          : {},
       );
       if (!streamResult.ok) {
         return {

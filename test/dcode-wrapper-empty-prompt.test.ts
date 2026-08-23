@@ -103,15 +103,13 @@ const REJECT_CASES: Array<{ label: string; args: string[] }> = [
 describe.skipIf(!canRun)(
   "agents/langchain-deepagents-code/dcode-wrapper.sh empty prompt (#5752)",
   () => {
-    for (const { label, args } of REJECT_CASES) {
-      it(`refuses ${label} with exit 2 and never launches dcode`, () => {
-        const run = runWrapper(args);
+    it.each(REJECT_CASES)("refuses $label with exit 2 and never launches dcode", ({ args }) => {
+      const run = runWrapper(args);
 
-        expect(run.status).toBe(2);
-        expect(run.stderr).toContain("empty non-interactive prompt");
-        expect(run.launched).toBe(false);
-      });
-    }
+      expect(run.status).toBe(2);
+      expect(run.stderr).toContain("empty non-interactive prompt");
+      expect(run.launched).toBe(false);
+    });
 
     it("passes a real -n prompt through to dcode with managed flags", () => {
       const run = runWrapper(["-n", "list the files"]);

@@ -6,6 +6,10 @@ import path from "node:path";
 import { expect } from "vitest";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
+import {
+  DCODE_BASE_IMAGE_ENV,
+  requireDcodeBaseImageReference,
+} from "../fixtures/dcode-base-image.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -62,7 +66,15 @@ export function buildCloudExperimentalCommandEnv(
   sandboxName: string,
   apiKey: string,
   base: NodeJS.ProcessEnv = process.env,
+  options: { dcodeBaseImageReference?: string; forwardDcodeBaseImage?: boolean } = {},
 ): NodeJS.ProcessEnv {
+  const dcodeBaseImage = options.forwardDcodeBaseImage
+    ? requireDcodeBaseImageReference(
+        options.dcodeBaseImageReference === undefined
+          ? base
+          : { [DCODE_BASE_IMAGE_ENV]: options.dcodeBaseImageReference },
+      )
+    : undefined;
   return {
     ...buildAvailabilityProbeEnv(base),
     CLOUD_EXPERIMENTAL_MODEL: base.NEMOCLAW_MODEL,
@@ -74,6 +86,7 @@ export function buildCloudExperimentalCommandEnv(
     OPENSHELL_GATEWAY: "nemoclaw",
     REPO: REPO_ROOT,
     SANDBOX_NAME: sandboxName,
+    ...(dcodeBaseImage ? { [DCODE_BASE_IMAGE_ENV]: dcodeBaseImage } : {}),
   };
 }
 
@@ -126,7 +139,9 @@ export async function runE2eCloudExperimentalChecks(
   targetId: string,
   sandboxName: string,
   checkScripts: readonly string[],
-  context: Pick<E2ETargetFixtures, "artifacts" | "host" | "secrets">,
+  context: Pick<E2ETargetFixtures, "artifacts" | "host" | "secrets"> & {
+    dcodeBaseImageReference?: string;
+  },
 ): Promise<void> {
   const apiKey = context.secrets.optional("NVIDIA_INFERENCE_API_KEY") ?? "";
   await context.artifacts.writeJson(
@@ -140,7 +155,10 @@ export async function runE2eCloudExperimentalChecks(
     const result = await context.host.command("bash", [path.join(REPO_ROOT, scriptPath)], {
       artifactName: `cloud-experimental-${path.basename(scriptPath, ".sh")}`,
       cwd: REPO_ROOT,
-      env: buildCloudExperimentalCommandEnv(sandboxName, apiKey),
+      env: buildCloudExperimentalCommandEnv(sandboxName, apiKey, process.env, {
+        dcodeBaseImageReference: context.dcodeBaseImageReference,
+        forwardDcodeBaseImage: scriptPath === DEEPAGENTS_FRESH_REONBOARD_CHECK,
+      }),
       redactionValues: [apiKey],
       timeoutMs: cloudExperimentalCheckTimeoutMs(scriptPath),
     });

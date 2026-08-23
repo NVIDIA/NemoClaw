@@ -375,9 +375,9 @@ describe("shields — unit logic", () => {
         },
       ];
 
-      for (const entry of entries) {
+      entries.forEach((entry) => {
         fs.appendFileSync(auditPath, JSON.stringify(entry) + "\n");
-      }
+      });
 
       const lines = fs.readFileSync(auditPath, "utf-8").trim().split("\n");
       expect(lines).toHaveLength(2);
@@ -748,7 +748,7 @@ describe("shields — unit logic", () => {
       expect(fs.existsSync(path.join(stateDir(), `shields-timer-${sandboxName}.json`))).toBe(true);
     });
 
-    it("bounds current-generation inline recovery when the snapshot is missing (#7952)", async () => {
+    it("runs portable-command validation under the expired-timer deadline gate before recovery (#9738)", async () => {
       const sandboxName = "openclaw";
       const processToken = "c".repeat(32);
       const missingSnapshotPath = path.join(stateDir(), "missing-current-snapshot.yaml");
@@ -773,12 +773,18 @@ describe("shields — unit logic", () => {
       vi.spyOn(console, "log").mockImplementation(() => undefined);
       vi.spyOn(console, "error").mockImplementation(() => undefined);
       const { shieldsStatus } = await loadShieldsModule();
-
-      expect(() => shieldsStatus(sandboxName)).toThrow("Inline auto-restore exhausted 7 attempts");
       const { getMcpLifecycleLockPath } = await import("../state/mcp-lifecycle-lock");
-      expect(fs.existsSync(`${getMcpLifecycleLockPath(sandboxName, stateDir())}.containment`)).toBe(
-        true,
+      const lockPath = getMcpLifecycleLockPath(sandboxName, stateDir());
+      const assertCommandAvailable = vi.fn(() => {
+        expect(fs.existsSync(lockPath)).toBe(true);
+        expect(fs.existsSync(`${lockPath}.deadline`)).toBe(true);
+      });
+
+      expect(() => shieldsStatus(sandboxName, true, { assertCommandAvailable })).toThrow(
+        "Inline auto-restore exhausted 7 attempts",
       );
+      expect(assertCommandAvailable).toHaveBeenCalledOnce();
+      expect(fs.existsSync(`${lockPath}.containment`)).toBe(true);
       expect(fs.existsSync(path.join(stateDir(), `shields-timer-${sandboxName}.json`))).toBe(true);
     });
 
@@ -979,9 +985,9 @@ describe("shields — unit logic", () => {
         "  Shields: UP (DRIFTED — declared locked but sandbox filesystem differs)",
       );
       expect(errorSpy).toHaveBeenCalledWith("  Drift:");
-      for (const issue of driftIssues) {
+      driftIssues.forEach((issue) => {
         expect(errorSpy).toHaveBeenCalledWith(`    - ${issue}`);
-      }
+      });
       expect(errorSpy).toHaveBeenCalledWith(
         `  Recovery: nemoclaw ${sandboxName} shields up   # re-lock and re-verify`,
       );

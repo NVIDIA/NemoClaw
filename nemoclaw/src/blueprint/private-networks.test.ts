@@ -275,6 +275,22 @@ describe("private-networks loader", () => {
       expect(() => getNetworkEntries()).toThrow(/missing or empty 'name'/);
     });
 
+    it.each([" localhost", "localhost ", "."])("rejects non-canonical name %j", (name) => {
+      seedYaml(
+        "/blueprint/private-networks.yaml",
+        `ipv4: []\nipv6: []\nnames:\n  - name: ${JSON.stringify(name)}\n    purpose: malformed\n`,
+      );
+      expect(() => getNetworkEntries()).toThrow(/'name' must be canonical/);
+    });
+
+    it("accepts a canonical name with a terminal dot", () => {
+      seedYaml(
+        "/blueprint/private-networks.yaml",
+        "ipv4: []\nipv6: []\nnames:\n  - name: localhost.\n    purpose: canonical FQDN\n",
+      );
+      expect(isPrivateHostname("localhost")).toBe(true);
+    });
+
     it("rejects a names entry with empty purpose", () => {
       seedYaml(
         "/blueprint/private-networks.yaml",

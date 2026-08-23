@@ -4,6 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SandboxEntry } from "../../state/registry";
 
+import { captureOpenshell } from "../../adapters/openshell/runtime";
+
 vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: vi.fn(() => ({ status: 0, output: "" })),
   getOpenshellBinary: vi.fn(() => "openshell"),
@@ -37,6 +39,8 @@ vi.mock("./gateway-state", () => ({
 
 import {
   type ManagedInferenceRouteResetDeps,
+
+  probeSandboxInferenceRoute,
   repairSandboxInferenceRouteWithDeps,
   resetManagedInferenceRouteWithDeps,
   type SandboxInferenceRouteProbe,
@@ -389,5 +393,37 @@ describe("managed inference route reset unit flow", () => {
     expect(result).toBe(false);
     expect(calls.errors).toContain("  Error: failed to reset the OpenShell inference route.");
     expect(calls.unrecoverable).toEqual([{ sandboxName: "demo", detail: "BROKEN 503 still down" }]);
+  });
+});
+
+
+describe("connect inference route retries", () => {
+  it("returns the third healthy probe result after two unhealthy probe results (#9218)", () => {
+    vi.mocked(captureOpenshell)
+      .mockReturnValueOnce({ status: 0, output: "BROKEN 503", stderr: "" })
+      .mockReturnValueOnce({ status: 0, output: "BROKEN 503", stderr: "" })
+      .mockReturnValueOnce({ status: 0, output: "OK 200", stderr: "" });
+
+    const result = probeSandboxInferenceRoute(
+      "alpha",
+      { name: "hermes" },
+      { attempts: 3, delayMs: 2_000 },
+    );
+
+    expect(result).toMatchObject({ healthy: true, broken: false, httpStatus: 200 });
+    expect(captureOpenshell).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns the final unhealthy probe result after exhausting attempts (#9218)", () => {
+    vi.mocked(captureOpenshell).mockReturnValue({ status: 0, output: "BROKEN 503", stderr: "" });
+
+    const result = probeSandboxInferenceRoute(
+      "alpha",
+      { name: "hermes" },
+      { attempts: 2, delayMs: 500 },
+    );
+
+    expect(result).toMatchObject({ healthy: false, broken: true, httpStatus: 503 });
+    expect(captureOpenshell).toHaveBeenCalledTimes(2);
   });
 });

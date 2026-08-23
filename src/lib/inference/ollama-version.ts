@@ -24,10 +24,14 @@ export type OllamaVersionRunCapture = (
  */
 export const MIN_OLLAMA_VERSION = "0.32.9";
 
+const OLLAMA_CLIENT_VERSION_LINE = /client version is\s+(\d+\.\d+\.\d+)/i;
+
 export function getInstalledOllamaVersion(runCaptureImpl?: OllamaVersionRunCapture): string | null {
   const capture = runCaptureImpl ?? runCapture;
   const out = capture(["ollama", "--version"], { ignoreError: true });
   if (!out) return null;
+  const clientVersion = out.match(OLLAMA_CLIENT_VERSION_LINE);
+  if (clientVersion) return clientVersion[1];
   const match = out.match(/(\d+)\.(\d+)\.(\d+)/);
   return match ? match[0] : null;
 }

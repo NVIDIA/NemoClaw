@@ -211,10 +211,14 @@ describe("requestedAgentTimeoutSeconds", () => {
     expect(agentDispatchDeadlineSeconds(argv)).toBeUndefined();
   });
 
-  it("refuses a value that cannot be a deadline (#8723)", () => {
-    for (const raw of ["-5", "1.5", "abc", "", "1e3"]) {
+  it.each(["-5", "1.5", "abc", "", "1e3"])(
+    "refuses a value that cannot be a deadline: %j (#8723)",
+    (raw) => {
       expect(requestedAgentTimeoutSeconds(agent("--timeout", raw))).toBeNull();
-    }
+    },
+  );
+
+  it("refuses a missing deadline value (#8723)", () => {
     expect(requestedAgentTimeoutSeconds(agent("--timeout"))).toBeNull();
   });
 });
@@ -241,7 +245,9 @@ describe("agentDispatchDeadlineSeconds", () => {
     );
     // The buffer would round past the ceiling, so the argv would carry a
     // deadline that differs from the one the caller asked for.
-    expect(agentDispatchDeadlineSeconds(["openclaw", "agent", "--timeout", ceiling])).toBeUndefined();
+    expect(
+      agentDispatchDeadlineSeconds(["openclaw", "agent", "--timeout", ceiling]),
+    ).toBeUndefined();
   });
 
   it("still bounds the largest deadline that survives the buffer (#8723)", () => {

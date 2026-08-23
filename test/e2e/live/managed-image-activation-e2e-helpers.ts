@@ -27,6 +27,7 @@ import {
 } from "../fixtures/clients/index.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 
@@ -65,6 +66,20 @@ export function summarizeOnboardFailureStartupSignals(
   ) as Record<OnboardFailureStartupSignal, boolean>;
 }
 
+export async function captureManagedImageOnboardPairingDiagnostics(
+  sandbox: Pick<SandboxClient, "exec">,
+  agent: ShippedManagedImageAgent,
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  if (agent !== "openclaw") return;
+  await captureIssue4462FailureDiagnostics(sandbox, {
+    env,
+    redactionValues: [API_KEY],
+    sandboxName,
+  });
+}
+
 const SANDBOX_NAMES: Record<ShippedManagedImageAgent, string> = {
   openclaw: "mi-act-openclaw",
   hermes: "mi-act-hermes",
@@ -84,6 +99,27 @@ type DockerGuard = {
   readonly tracePath: string;
   readonly dispose: () => void;
 };
+
+export function managedActivationOnboardArgs(
+  catalogPath: string,
+  agent: ShippedManagedImageAgent,
+  sandboxName: string,
+): string[] {
+  return [
+    "onboard",
+    "--temp-managed-runtime-catalog",
+    catalogPath,
+    "--fresh",
+    "--recreate-sandbox",
+    "--non-interactive",
+    "--yes",
+    "--no-gpu",
+    "--agent",
+    agent,
+    "--name",
+    sandboxName,
+  ];
+}
 
 function requiredCatalogPath(): string {
   const value = process.env.NEMOCLAW_MANAGED_ACTIVATION_CATALOG;
@@ -411,6 +447,7 @@ async function collectOnboardFailureDockerDiagnostics(
     await Promise.allSettled(
       containerIds.map(async (containerId, index) => {
         const logs = await host.command("docker", ["logs", "--tail", "1000", containerId], {
+          artifactName: `managed-activation-onboard-failure-${agent}-container-${index + 1}-logs`,
           captureLimitBytes: 2 * 1024 * 1024,
           env,
           persistArtifacts: false,
@@ -449,21 +486,7 @@ async function qualifyAgent(
 
   enterOnboardPhase(progress, agent);
   const onboard = await host.nemoclaw(
-    [
-      "onboard",
-      "--temp-managed-runtime",
-      "--temp-managed-runtime-catalog",
-      catalogPath,
-      "--fresh",
-      "--recreate-sandbox",
-      "--non-interactive",
-      "--yes",
-      "--no-gpu",
-      "--agent",
-      agent,
-      "--name",
-      sandboxName,
-    ],
+    managedActivationOnboardArgs(catalogPath, agent, sandboxName),
     {
       artifactName: `managed-activation-onboard-${agent}`,
       env,
@@ -472,6 +495,7 @@ async function qualifyAgent(
     },
   );
   if (onboard.exitCode !== 0) {
+    await captureManagedImageOnboardPairingDiagnostics(sandbox, agent, sandboxName, env);
     await collectOnboardFailureDockerDiagnostics(artifacts, host, agent, sandboxName, env);
   }
   expect(onboard.exitCode, resultText(onboard)).toBe(0);

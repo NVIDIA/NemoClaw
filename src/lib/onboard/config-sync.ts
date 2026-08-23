@@ -42,7 +42,9 @@ export function buildSandboxConfigSyncScript(selectionConfig: ProviderSelectionC
   // chance to perform its own startup initialization.
   return `
 set -euo pipefail
-nemoclaw_dir="\${HOME:-/sandbox}/.nemoclaw"
+# OpenShell exec and the OpenClaw gateway can expose different HOME values.
+# The managed gateway always reads its NemoClaw state from /sandbox.
+nemoclaw_dir="/sandbox/.nemoclaw"
 nemoclaw_config="$nemoclaw_dir/config.json"
 mkdir -p -m 700 "$nemoclaw_dir"
 nemoclaw_dir_uid="$(stat -c '%u' "$nemoclaw_dir" 2>/dev/null || echo '')"

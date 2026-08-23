@@ -56,7 +56,9 @@ describe("port conflict report", () => {
 
     expect(report).toContain(`  ${RED("✗ Port 8080 is not available.")}`);
     expect(report).toContain("Blocked by: python3 (PID 1234)");
-    expect(report).toContain("sudo kill 1234");
+    expect(report).toContain("sudo lsof -i :8080 -sTCP:LISTEN -P -n");
+    expect(report).toContain("signal only the PID from that fresh check");
+    expect(report).not.toContain("sudo kill 1234");
     expect(report).toContain("NEMOCLAW_GATEWAY_PORT=<port> nemoclaw onboard");
   });
 

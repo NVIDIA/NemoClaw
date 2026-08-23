@@ -5,6 +5,7 @@ import type { BaselineExclusionEntry } from "../state/registry";
 import type { SandboxHostMount } from "../state/registry/types";
 import type { DockerGpuRoutePlan } from "./docker-gpu-route";
 import type { InitialSandboxPolicy } from "./initial-policy";
+import type { ManagedHermesStateVolumeMount } from "./managed-workload/hermes-state-volume";
 import type { MessagingTokenDef } from "./messaging-prep";
 import type { MessagingChannel } from "./messaging-state";
 import type { SandboxGpuCreateConfig } from "./sandbox-gpu-create";
@@ -54,6 +55,7 @@ export type SandboxCreateIntent = {
   readonly staleExtraProviders: readonly string[];
   readonly hermesToolGateways: readonly string[];
   readonly policy: SandboxCreatePolicyRequest;
+  readonly sandboxGpuDevice?: string | null;
   readonly gpuCreateArgs: readonly string[];
   readonly resourceCreateArgs: readonly string[];
   readonly hostMounts?: readonly SandboxHostMount[];
@@ -93,11 +95,12 @@ export type ResolveSandboxCreateIntentInput = {
 export type MaterializeSandboxCreatePlanInput = {
   intent: SandboxCreateIntent;
   fromRef: string;
+  managedStateMount?: ManagedHermesStateVolumeMount | null;
   messagingTokenDefs: MessagingTokenDef[];
   runProviderPreDeleteCleanup(): void;
   upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],
-    options: { replaceExisting: true },
+    options: { replaceExisting: true; allowedSandboxes: readonly [string] },
   ): string[];
   getHermesToolGatewayProviderName(sandboxName: string): string;
   discloseInitialSandboxPolicy?(policy: InitialSandboxPolicy): void;

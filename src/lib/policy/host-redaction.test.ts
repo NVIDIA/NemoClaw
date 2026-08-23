@@ -88,11 +88,9 @@ describe("isInternalHost", () => {
     "w.localdomain",
   ];
 
-  for (const host of internal) {
-    it(`treats ${host} as internal`, () => {
-      expect(isInternalHost(host)).toBe(true);
-    });
-  }
+  it.each(internal)("treats %s as internal", (host) => {
+    expect(isInternalHost(host)).toBe(true);
+  });
 
   const external = [
     "api.slack.com",
@@ -107,11 +105,9 @@ describe("isInternalHost", () => {
     "fec0::1",
     "2001:db8::1",
   ];
-  for (const host of external) {
-    it(`treats ${host} as external`, () => {
-      expect(isInternalHost(host)).toBe(false);
-    });
-  }
+  it.each(external)("treats %s as external", (host) => {
+    expect(isInternalHost(host)).toBe(false);
+  });
 });
 
 describe("hostStemsFromEndpoints", () => {

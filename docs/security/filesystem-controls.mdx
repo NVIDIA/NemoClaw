@@ -61,7 +61,10 @@ The sandbox group cannot list, create, or remove entries in a confidentiality ro
 They can inspect metadata for a direct child only when they already know its name.
 Probing a missing direct child, such as the legacy `credentials/oauth.json`, returns `ENOENT` instead of `EACCES`.
 
-Restoring the mutable-default posture returns those directories to `sandbox:sandbox 2770`.
+Restoring the mutable-default posture returns protected directories to a sandbox-owned, mutable state.
+The guard normally sets them to `sandbox:sandbox 2770`.
+If a running OpenClaw process reopens its `devices` store during the transition, it can restore native `0700` or `0755` directory modes and `0600` file modes.
+Shields accepts those modes only for the sandbox-owned OpenClaw `devices` subtree while restoring mutable state; `shields up` still transfers ownership and removes write access.
 
 For plan-aware current images and host-injected transitions, each agent manifest declares only its own protected paths, confidential paths, dynamic prefixes, and writable subpaths.
 The lock helper applies only that selected manifest plan and skips declared paths that are not present.

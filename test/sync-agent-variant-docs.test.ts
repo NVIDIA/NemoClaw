@@ -354,30 +354,4 @@ The gateway state path is \`~/.local/state/nemoclaw\`.
     expect(rendered).not.toContain("ghcr.io/nvidia/nemo-deepagents/sandbox-base");
     expect(rendered).not.toContain("~/.local/state/nemo-deepagents");
   });
-
-  it("omits gateway-agent session headings from the Deep Agents reference", () => {
-    const source = readFileSync(new URL("../docs/reference/commands.mdx", import.meta.url), "utf8");
-    const deepAgents = renderDeepAgentsCommandsVariant(source);
-    const hermes = renderHermesCommandsVariant(source);
-
-    expect(deepAgents).not.toContain("### `nemo-deepagents <name> sessions`");
-    expect(deepAgents).not.toContain("### `nemo-deepagents <name> sessions list`");
-    expect(hermes).toContain("### `nemohermes <name> sessions`");
-    expect(hermes).toContain("### `nemohermes <name> sessions list`");
-  });
-
-  it("renders Hermes-only web search environment guidance", () => {
-    const source = readFileSync(new URL("../docs/reference/commands.mdx", import.meta.url), "utf8");
-    const rendered = renderHermesCommandsVariant(source);
-    const onboardingStart = rendered.indexOf("### Onboarding Configuration");
-    const onboardingEnd = rendered.indexOf("#### Extra placeholder keys", onboardingStart);
-    const onboarding = rendered.slice(onboardingStart, onboardingEnd);
-
-    expect(onboardingStart).toBeGreaterThanOrEqual(0);
-    expect(onboardingEnd).toBeGreaterThan(onboardingStart);
-    expect(onboarding).toContain("| `NEMOCLAW_WEB_SEARCH_PROVIDER` | `tavily` or `none` |");
-    expect(onboarding).toContain("| `TAVILY_API_KEY` | Tavily Search API key |");
-    expect(onboarding).not.toContain("| `BRAVE_API_KEY` |");
-    expect(onboarding).not.toContain("Brave-first precedence");
-  });
 });

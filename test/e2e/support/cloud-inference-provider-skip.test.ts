@@ -4,7 +4,10 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPreContractExternalProviderSkipEvidence,
+  classifyCloudChatFailure,
   classifyPreContractExternalProviderFailure,
+  cloudChatWriteOutArg,
+  parseCloudChatResponse,
   PRE_CONTRACT_EXTERNAL_PROVIDER_REMOVAL_CONDITION,
   PRE_CONTRACT_EXTERNAL_PROVIDER_SKIP_REASON,
   PRE_CONTRACT_EXTERNAL_PROVIDER_SOURCE_BOUNDARY,
@@ -15,6 +18,54 @@ function probeOutput(output: string): { stdout: string; stderr: string } {
 }
 
 describe("cloud inference pre-contract provider skip classifier", () => {
+  it("classifies chat retries independently of curl exit status", () => {
+    expect(classifyCloudChatFailure("503", "", "expected PONG", undefined)).toBe(
+      "transient-external",
+    );
+    expect(classifyCloudChatFailure("408", "", "expected PONG", undefined)).toBe(
+      "transient-external",
+    );
+    expect(classifyCloudChatFailure("429", "", "expected PONG", undefined)).toBe(
+      "transient-external",
+    );
+    expect(classifyCloudChatFailure("", "", "", new Error("request ETIMEDOUT"))).toBe(
+      "transient-external",
+    );
+    expect(classifyCloudChatFailure("", "", "", new Error("request timeout"))).toBe(
+      "transient-external",
+    );
+    expect(classifyCloudChatFailure("", "", "", undefined, true)).toBe("transient-external");
+    expect(classifyCloudChatFailure("200", "", "response was not parseable JSON", undefined)).toBe(
+      "malformed-input",
+    );
+    expect(classifyCloudChatFailure("200", "", "expected PONG", undefined)).toBe("deterministic");
+    expect(
+      classifyCloudChatFailure("200", "", "body said rate limit and HTTP 503", undefined),
+    ).toBe("deterministic");
+  });
+
+  it("keeps authentication statuses terminal when transport text is present (#9166)", () => {
+    expect(classifyCloudChatFailure("401", "request timed out", "expected PONG", undefined)).toBe(
+      "deterministic",
+    );
+    expect(
+      classifyCloudChatFailure(
+        "403",
+        "failed to connect after ECONNRESET",
+        "expected PONG",
+        undefined,
+      ),
+    ).toBe("deterministic");
+  });
+
+  it("separates the curl status trailer from provider content", () => {
+    const output = `{"message":"rate limit and HTTP 503"}${cloudChatWriteOutArg().replace("%{http_code}", "200")}`;
+    expect(parseCloudChatResponse(output)).toEqual({
+      body: '{"message":"rate limit and HTTP 503"}',
+      httpStatus: "200",
+    });
+  });
+
   it("skips only endpoint validation failures with transient provider evidence", () => {
     expect(
       classifyPreContractExternalProviderFailure(
@@ -56,6 +107,26 @@ describe("cloud inference pre-contract provider skip classifier", () => {
     expect(
       classifyPreContractExternalProviderFailure(
         probeOutput("Chat Completions API validation failed: HTTP 403 forbidden"),
+      ),
+    ).toBeNull();
+    expect(
+      classifyPreContractExternalProviderFailure(
+        probeOutput("endpoint validation failed: authentication failed after timeout"),
+      ),
+    ).toBeNull();
+    expect(
+      classifyPreContractExternalProviderFailure(
+        probeOutput("failed to verify inference endpoint: authorization failed after ECONNRESET"),
+      ),
+    ).toBeNull();
+    expect(
+      classifyPreContractExternalProviderFailure(
+        probeOutput("endpoint validation failed: denied by network policy after rate limit"),
+      ),
+    ).toBeNull();
+    expect(
+      classifyPreContractExternalProviderFailure(
+        probeOutput("endpoint validation failed: invalid JSON request after HTTP 429 timeout"),
       ),
     ).toBeNull();
   });

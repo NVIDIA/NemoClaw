@@ -40,6 +40,11 @@ async function closeServer(server: Server): Promise<void> {
   });
 }
 
+async function listenAndCloseOnLoopback(port: number): Promise<void> {
+  const server = await listenOnLoopback(port);
+  await closeServer(server);
+}
+
 async function unusedLoopbackPort(): Promise<number> {
   const server = await listenOnLoopback(0);
   const address = server.address();
@@ -261,6 +266,7 @@ describe("dashboard port reservation", () => {
     const createSandboxWithBaseImageResolution = vi.fn(
       async (
         baseImageResolutionContext: { fresh: boolean },
+        portableRuntimeAuthority: { socketPath: string } | null,
         computePlan: { sequence: number },
         managedWorkloadRebuild: null,
         temporaryManagedRuntime: boolean,
@@ -271,6 +277,7 @@ describe("dashboard port reservation", () => {
         events.push("create sandbox");
         return {
           baseImageResolutionContext,
+          portableRuntimeAuthority,
           computePlan,
           managedWorkloadRebuild,
           temporaryManagedRuntime,
@@ -287,6 +294,7 @@ describe("dashboard port reservation", () => {
         return { fresh: false };
       },
       createSandboxWithBaseImageResolution,
+      resolvePortableRuntimeContext: () => ({ socketPath: "/run/user/1001/podman.sock" }),
       resolveComputePlan: () => {
         events.push("resolve compute plan");
         return { sequence: ++sequence };
@@ -295,6 +303,7 @@ describe("dashboard port reservation", () => {
 
     await expect(entryPoints.createSandbox("standard")).resolves.toMatchObject({
       baseImageResolutionContext: { fresh: false },
+      portableRuntimeAuthority: { socketPath: "/run/user/1001/podman.sock" },
       computePlan: { sequence: 1 },
       managedWorkloadRebuild: null,
       temporaryManagedRuntime: false,
@@ -306,6 +315,7 @@ describe("dashboard port reservation", () => {
       entryPoints.createSandboxWithTemporaryManagedRuntime("temporary"),
     ).resolves.toMatchObject({
       baseImageResolutionContext: { fresh: false },
+      portableRuntimeAuthority: { socketPath: "/run/user/1001/podman.sock" },
       computePlan: { sequence: 2 },
       managedWorkloadRebuild: null,
       temporaryManagedRuntime: true,
@@ -314,8 +324,8 @@ describe("dashboard port reservation", () => {
       sandboxName: "temporary",
     });
     expect(createSandboxWithBaseImageResolution).toHaveBeenCalledTimes(2);
-    expect(createSandboxWithBaseImageResolution.mock.calls[0]?.[5]).not.toBe(
-      createSandboxWithBaseImageResolution.mock.calls[1]?.[5],
+    expect(createSandboxWithBaseImageResolution.mock.calls[0]?.[6]).not.toBe(
+      createSandboxWithBaseImageResolution.mock.calls[1]?.[6],
     );
     expect(events).toEqual([
       "resolve compute plan",
@@ -333,10 +343,12 @@ describe("dashboard port reservation", () => {
       [string],
       string,
       { fresh: boolean },
+      null,
       { sequence: number }
     >({
       createBaseImageResolutionContext: () => ({ fresh: false }),
       createSandboxWithBaseImageResolution: async () => "unreachable",
+      resolvePortableRuntimeContext: () => null,
       resolveComputePlan: () => {
         throw setupFailure;
       },
@@ -356,7 +368,7 @@ describe("dashboard port reservation", () => {
       withDashboardPortReservationScope(async (scope) => {
         scope.current = await reserveDashboardPort(port);
         await assert.rejects(
-          listenOnLoopback(port),
+          listenAndCloseOnLoopback(port),
           (error: NodeJS.ErrnoException) => error.code === "EADDRINUSE",
         );
         throw new Error("sandbox build failed");
@@ -366,6 +378,29 @@ describe("dashboard port reservation", () => {
 
     const listener = await listenOnLoopback(port);
     await closeServer(listener);
+  });
+
+  it("releases the selected port when finalization calls the extracted scope callback (#9568)", async () => {
+    const port = await unusedLoopbackPort();
+
+    await withDashboardPortReservationScope(async (scope) => {
+      scope.current = await reserveDashboardPort(port);
+      await assert.rejects(
+        listenAndCloseOnLoopback(port),
+        (error: NodeJS.ErrnoException) => error.code === "EADDRINUSE",
+      );
+
+      const finalizationDashboard = { releasePort: scope.release };
+      await finalizationDashboard.releasePort();
+
+      assert.equal(scope.current, null);
+      const listener = await listenOnLoopback(port);
+      try {
+        assert.equal(listener.listening, true);
+      } finally {
+        await closeServer(listener);
+      }
+    });
   });
 
   it("reselects before sandbox creation when a listener wins the allocation race (#8798)", async () => {

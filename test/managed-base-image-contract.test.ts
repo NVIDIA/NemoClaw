@@ -38,11 +38,12 @@ function exportContract(output: string, agent: string, image: string, amd64 = am
 }
 
 describe("managed base image contract exporter", () => {
-  it("binds both native platform digests for every managed agent (#7744)", () => {
-    const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-contract-"));
+  it.each(agents)(
+    "binds both native platform digests for every managed agent [case %#] (#7744)",
+    ({ agent, image }) => {
+      const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-contract-"));
 
-    try {
-      for (const { agent, image } of agents) {
+      try {
         const output = path.join(temporaryRoot, agent, "contract.json");
         const result = exportContract(output, agent, image);
 
@@ -65,11 +66,11 @@ describe("managed base image contract exporter", () => {
           sourceRevision,
           run: { id: 42, attempt: 3 },
         });
+      } finally {
+        fs.rmSync(temporaryRoot, { recursive: true, force: true });
       }
-    } finally {
-      fs.rmSync(temporaryRoot, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   it("rejects a platform digest that is not a full SHA-256 value (#7744)", () => {
     const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-contract-"));

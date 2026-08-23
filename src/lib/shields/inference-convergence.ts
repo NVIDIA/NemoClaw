@@ -7,6 +7,8 @@ import {
 } from "../actions/sandbox/connect-inference-route-probe";
 import { buildOpenshellCommand } from "../adapters/openshell/command-argv";
 
+import { retryUntil } from "../core/retry";
+
 const DEFAULT_MAX_ATTEMPTS = 4;
 const DEFAULT_RETRY_DELAY_MS = 500;
 const INFERENCE_ROUTE_PROBE_TIMEOUT_MS = 10_000;
@@ -65,28 +67,34 @@ export function waitForHermesInferenceRouteConvergence(
     ? Math.max(0, Math.trunc(configuredRetryDelayMs))
     : DEFAULT_RETRY_DELAY_MS;
   const buildCommand = options.buildOpenshellCommand ?? buildOpenshellCommand;
-  const sleep = options.sleep ?? sleepMs;
-  let httpStatus = 0;
+  const retryDelaysMs = Array.from({ length: maxAttempts - 1 }, () => retryDelayMs);
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const probe = options.run(
-      buildCommand(buildSandboxInferenceRouteProbeArgs(sandboxName, { name: "hermes" })),
-      {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
-      },
-    );
-    const parsed = parseSandboxInferenceRouteProbeResult({
-      status: probe.status,
-      output: String(probe.stdout ?? ""),
-      stderr: String(probe.stderr ?? ""),
-    });
-    httpStatus = parsed.httpStatus;
-    const usable = parsed.healthy && httpStatus >= 200 && httpStatus < 300;
-    if (usable) return { ok: true, attempts: attempt, httpStatus };
-    if (attempt < maxAttempts) sleep(retryDelayMs);
-  }
-
-  return { ok: false, attempts: maxAttempts, httpStatus };
+  return retryUntil(
+    (attempt) => {
+      const probe = options.run(
+        buildCommand(buildSandboxInferenceRouteProbeArgs(sandboxName, { name: "hermes" })),
+        {
+          ignoreError: true,
+          suppressOutput: true,
+          timeout: INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+        },
+      );
+      const parsed = parseSandboxInferenceRouteProbeResult({
+        status: probe.status,
+        output: String(probe.stdout ?? ""),
+        stderr: String(probe.stderr ?? ""),
+      });
+      const httpStatus = parsed.httpStatus;
+      return {
+        ok: parsed.healthy && httpStatus >= 200 && httpStatus < 300,
+        attempts: attempt,
+        httpStatus,
+      };
+    },
+    {
+      accept: (result) => result.ok,
+      retryDelaysMs,
+      sleep: options.sleep ?? sleepMs,
+    },
+  );
 }

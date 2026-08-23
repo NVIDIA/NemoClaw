@@ -11,6 +11,13 @@ vi.mock("./gateway-rpc", () => ({
   callOpenclawGateway: vi.fn(),
 }));
 
+const withLifecycleLockMock = vi.hoisted(() =>
+  vi.fn(async (_sandboxName: string, operation: () => unknown) => await operation()),
+);
+vi.mock("../../../state/mcp-lifecycle-lock-acquisition", () => ({
+  withMcpLifecycleLock: withLifecycleLockMock,
+}));
+
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { callOpenclawGateway } from "./gateway-rpc";
 import { resetSandboxSession } from "./reset";
@@ -35,6 +42,7 @@ let consoleLogSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   ensureMock.mockClear();
   gatewayMock.mockReset();
+  withLifecycleLockMock.mockClear();
   processExitSpy = vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
     throw new Error(`process.exit:${code ?? 0}`);
   });
@@ -56,14 +64,29 @@ describe("resetSandboxSession", () => {
       key: "agent:main:main",
     });
 
-    expect(ensureMock).toHaveBeenCalledWith("sb-1", { allowNonReadyPhase: true });
+    expect(ensureMock).toHaveBeenCalledWith("sb-1", {
+      allowNonReadyPhase: true,
+      exit: expect.any(Function),
+    });
     expect(gatewayMock).toHaveBeenCalledTimes(1);
     expect(gatewayMock.mock.calls[0]?.[0]).toMatchObject({
       sandboxName: "sb-1",
       method: "sessions.reset",
       params: { key: "agent:main:main", reason: "reset" },
+      exit: expect.any(Function),
     });
     expect(result).toEqual({ key: "agent:main:main", reason: "reset", entry: null });
+  });
+
+  it("defers a readiness exit through lifecycle authority (#9203)", async () => {
+    ensureMock.mockImplementationOnce(async (_sandboxName, options) => options.exit(1));
+
+    await expect(resetSandboxSession("sb-1", { key: "agent:main:main" })).rejects.toThrow(
+      /process\.exit:1/,
+    );
+
+    expect(withLifecycleLockMock).toHaveBeenCalledOnce();
+    expect(gatewayMock).not.toHaveBeenCalled();
   });
 
   it("forwards reason='new' when requested", async () => {

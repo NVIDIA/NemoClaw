@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { listMessagingProviderSuffixes } from "../messaging/channels";
+import { listMessagingBridgeProfiles } from "./messaging-bridge-provider";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 
 export {
@@ -11,6 +12,14 @@ export {
   type ReconcileExtraProvidersDeps,
   reconcileRegisteredExtraProviders,
 } from "./extra-provider-reconciliation";
+export function removeManagedHermesStateVolume(
+  context: import("./managed-workload/hermes-state-volume").ManagedHermesStateVolumeContext,
+  deps: import("./managed-workload/hermes-state-volume").ManagedHermesStateVolumeDeps = {},
+): import("./managed-workload/hermes-state-volume").ManagedHermesStateVolumeCleanupResult {
+  const volumeModule =
+    require("./managed-workload/hermes-state-volume") as typeof import("./managed-workload/hermes-state-volume");
+  return volumeModule.removeManagedHermesStateVolume(context, deps);
+}
 
 export type SandboxProviderRunOpenshell = (
   args: string[],
@@ -58,9 +67,16 @@ export type SandboxRecreateCleanupDeps = DetachSandboxProvidersDeps & {
 };
 
 export const SANDBOX_PROVIDER_SUFFIXES = [
-  ...listMessagingProviderSuffixes().map((suffix) => suffix.replace(/^-/, "")),
-  "brave-search",
-  "tavily-search",
+  ...new Set([
+    ...listMessagingProviderSuffixes().map((suffix) => suffix.replace(/^-/, "")),
+    // Bridge-profile channels mint their provider outside the manifest credentials
+    // (nothing is delivered into the sandbox), so the credential-derived suffixes
+    // above can miss them. Some static profiles also describe a manifest provider,
+    // so deduplicate the combined inventory before cleanup issues detach commands.
+    ...listMessagingBridgeProfiles().map((profile) => `${profile.channelId}-bridge`),
+    "brave-search",
+    "tavily-search",
+  ]),
 ] as readonly string[];
 
 export type SandboxProviderSuffix = string;

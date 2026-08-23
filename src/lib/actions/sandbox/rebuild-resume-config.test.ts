@@ -133,14 +133,29 @@ describe("getRebuildEndpointFromRegistry", () => {
     expect(
       getRebuildEndpointFromRegistry("compatible-endpoint", "https://example.test/v1?x=1"),
     ).toEqual({ known: false });
-    expect(getRebuildEndpointFromRegistry("compatible-endpoint", "http://@example.test/v1")).toEqual(
-      { known: false },
-    );
     expect(
-      getRebuildEndpointFromRegistry(
-        "compatible-endpoint",
-        "https:user:password@example.test/v1",
-      ),
+      getRebuildEndpointFromRegistry("compatible-endpoint", "https://example.test/v1;id"),
+    ).toEqual({ known: false });
+    expect(
+      getRebuildEndpointFromRegistry("compatible-endpoint", "https://example.test/v1%0ax"),
+    ).toEqual({ known: false });
+    expect(
+      getRebuildEndpointFromRegistry("compatible-endpoint", "\thttps://example.test/v1"),
+    ).toEqual({ known: false });
+    expect(
+      getRebuildEndpointFromRegistry("compatible-endpoint", "https://example.test/v1\n"),
+    ).toEqual({ known: false });
+    expect(
+      getRebuildEndpointFromRegistry("compatible-endpoint", "\u00a0https://example.test/v1"),
+    ).toEqual({ known: false });
+    expect(
+      getRebuildEndpointFromRegistry("compatible-endpoint", "https://example.test/v1\u2029"),
+    ).toEqual({ known: false });
+    expect(
+      getRebuildEndpointFromRegistry("compatible-endpoint", "http://@example.test/v1"),
+    ).toEqual({ known: false });
+    expect(
+      getRebuildEndpointFromRegistry("compatible-endpoint", "https:user:password@example.test/v1"),
     ).toEqual({ known: false });
     expect(
       getRebuildEndpointFromRegistry("compatible-endpoint", "https://example.test/v1#frag"),
@@ -345,23 +360,30 @@ describe("prepareRebuildResumeConfig", () => {
     ).toThrow("Cannot validate recreate endpoint");
   });
 
-  it("fails closed for a matching custom-endpoint session with an invalid endpoint", () => {
-    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
-      sandboxName: "alpha",
-      provider: "compatible-endpoint",
-      model: "m",
-      endpointUrl: "https://user:pass@example.test/v1",
-    });
-    expect(() =>
-      prepareRebuildResumeConfig(
-        "alpha",
-        entry({ provider: "compatible-endpoint", model: "m" }),
-        null,
-        noopLog,
-        throwingBail,
-      ),
-    ).toThrow("Cannot validate recreate endpoint");
-  });
+  it.each([
+    ["userinfo", "https://user:pass@example.test/v1"],
+    ["a percent-encoded control character", "https://example.test/v1%0ainjected"],
+    ["a shell metacharacter", "https://example.test/v1;id"],
+  ])(
+    "fails closed for a matching custom-endpoint session with %s before rebuild deletion",
+    (_label, endpointUrl) => {
+      vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+        sandboxName: "alpha",
+        provider: "compatible-endpoint",
+        model: "m",
+        endpointUrl,
+      });
+      expect(() =>
+        prepareRebuildResumeConfig(
+          "alpha",
+          entry({ provider: "compatible-endpoint", model: "m" }),
+          null,
+          noopLog,
+          throwingBail,
+        ),
+      ).toThrow("Cannot validate recreate endpoint");
+    },
+  );
 
   it("does not borrow a custom endpoint from a conflicting same-sandbox selection", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue({
@@ -497,19 +519,19 @@ describe("prepareRebuildResumeConfig", () => {
     }
   });
 
-  it("rejects explicit target endpoints that do not exactly match the target boundary", () => {
-    const cases = [
-      { name: "wrong sandbox", sandboxName: "beta" },
-      { name: "wrong provider", provider: "openai" },
-      { name: "unknown provider", provider: "compatible-endpoint-alias" },
-      { name: "missing model", model: "" },
-      { name: "wrong model", model: "other-model" },
-      { name: "unsupported url", endpointUrl: "file:///tmp/x" },
-      { name: "userinfo url", endpointUrl: "https://u:p@example.test/v1" },
-      { name: "query url", endpointUrl: "https://example.test/v1?x=1" },
-      { name: "fragment url", endpointUrl: "https://example.test/v1#frag" },
-    ];
-    for (const testCase of cases) {
+  it.each([
+    { name: "wrong sandbox", sandboxName: "beta" },
+    { name: "wrong provider", provider: "openai" },
+    { name: "unknown provider", provider: "compatible-endpoint-alias" },
+    { name: "missing model", model: "" },
+    { name: "wrong model", model: "other-model" },
+    { name: "unsupported url", endpointUrl: "file:///tmp/x" },
+    { name: "userinfo url", endpointUrl: "https://u:p@example.test/v1" },
+    { name: "query url", endpointUrl: "https://example.test/v1?x=1" },
+    { name: "fragment url", endpointUrl: "https://example.test/v1#frag" },
+  ])(
+    "rejects explicit target endpoints that do not exactly match the target boundary [$name]",
+    (testCase) => {
       vi.restoreAllMocks();
       vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "other" });
       const restore = snapshotEnv([
@@ -535,8 +557,8 @@ describe("prepareRebuildResumeConfig", () => {
       } finally {
         restore();
       }
-    }
-  });
+    },
+  );
 
   it("does not use an explicit endpoint when its sandbox name targets another sandbox", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "other" });

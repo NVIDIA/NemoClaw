@@ -201,8 +201,9 @@ module.exports = {
 }
 
 describe("channels remove full teardown (#3998)", () => {
-  for (const sandboxAgent of ["openclaw", "hermes"] as const) {
-    it(`strips '${sandboxAgent}' session.policyPresets and clears the in-sandbox whatsapp state dir`, () => {
+  it.each(["openclaw", "hermes"] as const)(
+    "strips '%s' session.policyPresets and clears the in-sandbox whatsapp state dir",
+    (sandboxAgent) => {
       const script = `${buildPreamble({ sandboxAgent })}
 const ctx = module.exports;
 (async () => {
@@ -285,8 +286,8 @@ const ctx = module.exports;
         clearIdx < rebuildIdx,
         `sandbox state must be cleared before rebuild so the backup excludes the auth files: ${JSON.stringify(payload.callOrder)}`,
       );
-    });
-  }
+    },
+  );
 
   it("falls back to SSH when sandbox-exec wrapper does not return the sentinel", () => {
     const script = `${buildPreamble({

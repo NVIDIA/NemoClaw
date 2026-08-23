@@ -1,13 +1,94 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const portableMocks = vi.hoisted(() => ({
+  assertUnavailable: vi.fn(),
+}));
+
+vi.mock("../onboard/experimental/portable-agent-lifecycle", async (importOriginal) => ({
+  ...(await importOriginal()),
+  assertHermesPortableCommandUnavailable: portableMocks.assertUnavailable,
+}));
 import { HERMES_PROXY_REWRITE_SENTINEL } from "../hermes-managed-route";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps, HERMES_TARGET } from "./inference-set.test-support";
 
 describe("runInferenceSet Hermes routing", () => {
+  beforeEach(() => {
+    portableMocks.assertUnavailable.mockReset();
+  });
+
+  it("rejects schema-5 before OpenShell or registry mutation (#9203)", async () => {
+    portableMocks.assertUnavailable.mockImplementation(() => {
+      throw new Error("schema-5 rejected");
+    });
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "moonshotai/kimi-k2.6",
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "hermes-provider",
+          model: "openai/gpt-5.4-mini",
+          sandboxName: "hermes",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow("schema-5 rejected");
+
+    expect(deps.calls.prepareRunOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("rechecks schema-5 after the lifecycle lock is acquired (#9203)", async () => {
+    portableMocks.assertUnavailable
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("schema-5 appeared");
+    });
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "moonshotai/kimi-k2.6",
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "hermes-provider",
+          model: "openai/gpt-5.4-mini",
+          sandboxName: "hermes",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow("schema-5 appeared");
+
+    expect(deps.calls.prepareRunOpenshell).toHaveBeenCalledOnce();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
   it("updates OpenShell, Hermes config.yaml, registry, and the matching onboard session", async () => {
     const config: ConfigObject = {
       model: {
@@ -207,7 +288,7 @@ describe("runInferenceSet Hermes routing", () => {
     expect(seedOrder).toBeGreaterThan(writeOrder);
   });
 
-  it("does not re-seed the dashboard when the in-sandbox config write fails (#6893)", async () => {
+  it("fails after commit when the in-sandbox config write fails (#7083)", async () => {
     const config: ConfigObject = {
       model: { default: "moonshotai/kimi-k2.6", provider: "custom" },
     };
@@ -227,22 +308,36 @@ describe("runInferenceSet Hermes routing", () => {
       throw new Error("write failed");
     });
 
-    await runInferenceSet(
-      {
+    await expect(
+      runInferenceSet(
+        {
+          provider: "hermes-provider",
+          model: "openai/gpt-5.4-mini",
+          sandboxName: "hermes",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).rejects.toMatchObject({
+      name: "InferenceSetError",
+      exitCode: 1,
+      message: expect.stringMatching(/Hermes inference route synchronization did not complete/),
+    });
+
+    // A failed in-sandbox Hermes config write leaves the old config in place; re-seeding the
+    // dashboard from it would be pointless. The host route remains committed, but
+    // the command must fail so automation cannot accept a partial switch.
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "hermes",
+      expect.objectContaining({
         provider: "hermes-provider",
         model: "openai/gpt-5.4-mini",
-        sandboxName: "hermes",
-        noVerify: true,
-      },
-      deps,
+      }),
     );
-
-    // A failed gateway-config write leaves the old config in place; re-seeding the
-    // dashboard from it would be pointless (and the guidance is to rebuild).
     expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();
   });
 
-  it("does not re-seed or report synced when the config hash refresh fails (#6893)", async () => {
+  it("fails after commit when the config hash refresh fails (#7083)", async () => {
     const config: ConfigObject = {
       model: { default: "moonshotai/kimi-k2.6", provider: "custom" },
     };
@@ -262,17 +357,30 @@ describe("runInferenceSet Hermes routing", () => {
       throw new Error("hash refresh failed");
     });
 
-    await runInferenceSet(
-      {
-        provider: "hermes-provider",
-        model: "openai/gpt-5.4-mini",
-        sandboxName: "hermes",
-        noVerify: true,
-      },
-      deps,
-    );
+    await expect(
+      runInferenceSet(
+        {
+          provider: "hermes-provider",
+          model: "openai/gpt-5.4-mini",
+          sandboxName: "hermes",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).rejects.toMatchObject({
+      name: "InferenceSetError",
+      exitCode: 1,
+      message: expect.stringMatching(/Hermes inference route synchronization did not complete/),
+    });
 
     expect(deps.calls.writeSandboxConfig).toHaveBeenCalledOnce();
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "hermes",
+      expect.objectContaining({
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+      }),
+    );
     expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();
     const logs = deps.calls.log.mock.calls.map((call) => String(call[0]));
     expect(logs.some((line) => line.includes("failed to refresh its integrity hash"))).toBe(true);

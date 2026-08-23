@@ -197,6 +197,7 @@ describe("onboard helpers", () => {
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
+    fs.writeFileSync(path.join(fakeBin, "brew"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -233,6 +234,28 @@ preflight.assessHost = () => ({
 const bridgeDnsPreflight = require(${bridgeDnsPreflightPath});
 bridgeDnsPreflight.assertDockerBridgeAndContainerDnsHealthy = () => {};
 const preflightGatewayAuthority = require(${preflightGatewayAuthorityPath});
+const createPreflightGatewayAuthority =
+  preflightGatewayAuthority.createOnboardPreflightGatewayAuthority;
+preflightGatewayAuthority.createOnboardPreflightGatewayAuthority = (deps) => ({
+  ...createPreflightGatewayAuthority(deps),
+  runRuntimePreflight: async () => ({
+    gpu: null,
+    host: preflight.assessHost(),
+    readinessReport: {},
+    sandboxGpuConfig: {
+      mode: "0",
+      hostGpuDetected: false,
+      hostGpuPlatform: null,
+      sandboxGpuEnabled: false,
+      sandboxGpuDevice: null,
+      errors: [],
+    },
+  }),
+  prepareGatewayAuthority: async () => ({
+    externallySupervised: false,
+    gatewayReuseState: "healthy",
+  }),
+});
 
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const commands = [];
@@ -312,18 +335,44 @@ gatewayState.isGatewayHealthy = () => true;
 dockerDriverPlatform.isLinuxDockerDriverGatewayEnabled = () => false;
 gatewayGpuPassthrough.reconcileGatewayGpuReuseForGpuIntent = ({ gatewayReuseState }) => gatewayReuseState;
 onboardProbes.verifyOnboardInferenceSmoke = () => {};
-preflightGatewayAuthority.collectOnboardGatewayReadiness = async () => ({
-  observations: [{ id: "gateway.management.mode", state: "present", value: "nemoclaw-managed" }],
-  capabilities: [
-    "gateway.authority.resolved",
-    "gateway.attachment.valid",
-    "gateway.reuse.ready",
-    "gateway.version.compatible",
-    "gateway.port.uncontested",
-  ].map((id) => ({ id, state: "present" })),
-  findings: [],
-  evidence: [],
-});
+preflightGatewayAuthority.collectOnboardGatewayReadiness = async () => {
+  const completedAt = new Date().toISOString();
+  return {
+    projection: {
+      observations: [
+        { id: "gateway.management.mode", state: "present", value: "nemoclaw-managed" },
+      ],
+      capabilities: [
+        "gateway.authority.resolved",
+        "gateway.attachment.valid",
+        "gateway.reuse.ready",
+        "gateway.version.compatible",
+        "gateway.port.uncontested",
+      ].map((id) => ({ id, state: "present" })),
+      findings: [],
+      evidence: [],
+    },
+    snapshot: {
+      observedAt: completedAt,
+      completedAt,
+      observations: {
+        owner: {
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          mode: "nemoclaw-managed",
+          source: "standalone",
+          endpoint: null,
+          supervisor: null,
+          requiredCapabilities: [],
+        },
+        attachmentState: "not-applicable",
+        reuseState: "healthy",
+        driftState: "not-detected",
+        portConflictState: "none",
+      },
+    },
+  };
+};
 
 const complete = () => ({
   status: "complete",
