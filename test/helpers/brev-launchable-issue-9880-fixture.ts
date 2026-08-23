@@ -38,9 +38,11 @@ export function issue9880Fixture(): {
     path.join(bin, "timeout"),
     String.raw`#!/usr/bin/env bash
 set -euo pipefail
+signal=""
+if [ "${"$"}{1:-}" = --signal=KILL ]; then signal="--signal=KILL "; shift; fi
 duration="$1"
 shift
-printf 'timeout %s %s\n' "$duration" "$*" >> "$FAKE_CALLS"
+printf 'timeout %s%s %s\n' "$signal" "$duration" "$*" >> "$FAKE_CALLS"
 if [ "${"$"}{FAKE_BLOCK_COMMAND:-}" = "brev refresh" ] && [ "${"$"}{1:-} ${"$"}{2:-}" = "brev refresh" ]; then
   /bin/sleep "${"$"}{duration%s}"
   exit 124

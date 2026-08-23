@@ -150,8 +150,8 @@ describe("the staging Launchable reproduces the bounded OpenClaw CLI scenario", 
   });
 
   it.each([
-    ["brev refresh", /timeout [12]s brev refresh/u],
-    ["ssh", /timeout [12]s ssh .* issue-9880-test true/u],
+    ["brev refresh", /timeout --signal=KILL [12]s brev refresh/u],
+    ["ssh", /timeout --signal=KILL [12]s ssh .* issue-9880-test true/u],
   ])(
     "bounds a blocked %s operation by the SSH deadline (#9880)",
     (blockedCommand, boundedCall) => {
@@ -164,7 +164,7 @@ describe("the staging Launchable reproduces the bounded OpenClaw CLI scenario", 
       expect(result.status, `${result.stdout}\n${result.stderr}\n${fs.readFileSync(fixture.calls, "utf8")}`).not.toBe(0);
       const calls = fs.readFileSync(fixture.calls, "utf8");
       expect(`${result.stdout}\n${result.stderr}`, calls).toContain("workspace SSH readiness timed out");
-      expect(calls).toMatch(/timeout [12]s brev refresh/u);
+      expect(calls).toMatch(/timeout --signal=KILL [12]s brev refresh/u);
       expect(calls).toMatch(boundedCall);
     },
     10_000,
@@ -179,7 +179,8 @@ describe("the staging Launchable reproduces the bounded OpenClaw CLI scenario", 
 
     expect(result.status).not.toBe(0);
     const calls = fs.readFileSync(fixture.calls, "utf8");
-    const readiness = calls.slice(calls.indexOf("timeout 2s brev refresh"));
+    const readiness = calls.slice(calls.indexOf("timeout --signal=KILL 2s brev refresh"));
+    expect(readiness).toContain("timeout --signal=KILL 2s brev refresh");
     expect(readiness).toMatch(/sleep [12]/u);
     expect(readiness).not.toContain("sleep 9");
     expect(readiness).not.toContain("timeout 0s");

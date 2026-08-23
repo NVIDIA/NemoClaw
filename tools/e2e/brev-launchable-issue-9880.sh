@@ -178,11 +178,11 @@ while [ "$SECONDS" -lt "$ssh_deadline" ]; do
   remaining=$((ssh_deadline - SECONDS))
   [ "$remaining" -gt 0 ] || break
   refresh_timeout=$((remaining < 60 ? remaining : 60))
-  timeout "${refresh_timeout}s" brev refresh >/dev/null 2>&1 || true
+  timeout --signal=KILL "${refresh_timeout}s" brev refresh >/dev/null 2>&1 || true
   remaining=$((ssh_deadline - SECONDS))
   [ "$remaining" -gt 0 ] || break
   ssh_timeout=$((remaining < 15 ? remaining : 15))
-  if timeout "${ssh_timeout}s" ssh "${SSH_OPTIONS[@]}" "$INSTANCE_NAME" true >/dev/null 2>&1; then
+  if timeout --signal=KILL "${ssh_timeout}s" ssh "${SSH_OPTIONS[@]}" "$INSTANCE_NAME" true >/dev/null 2>&1; then
     ssh_ready=1
     break
   fi
