@@ -75,6 +75,7 @@ function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
     })),
     removeBackup: vi.fn(() => true),
     runOpenshell: vi.fn(() => ({ status: 0, stdout: "No sandboxes found.\n" })),
+    runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:00  Ready\n"),
     recreate: vi.fn(() => patchResult()),
     finalize: vi.fn(({ supervisorReady }) =>
       supervisorReady
@@ -156,12 +157,15 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
     expect(deps.finalize).toHaveBeenCalledWith(
       {
-        lifecycleReleaseTimeoutSecs: 900,
+        finalHandoffTimeoutSecs: 900,
         result: expect.objectContaining({ newContainerId: "new-container-id" }),
         sandboxName: "alpha",
         supervisorReady: true,
       },
-      { runOpenshell: deps.runOpenshell },
+      {
+        runCaptureOpenshell: deps.runCaptureOpenshell,
+        runOpenshell: deps.runOpenshell,
+      },
     );
   });
 
@@ -389,12 +393,15 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(deps.restartRestoredManagedGateway).toHaveBeenCalledWith("new-container-id");
     expect(deps.finalize).toHaveBeenCalledWith(
       {
-        lifecycleReleaseTimeoutSecs: 900,
+        finalHandoffTimeoutSecs: 900,
         result: expect.objectContaining({ newContainerId: "new-container-id" }),
         sandboxName: "alpha",
         supervisorReady: true,
       },
-      { runOpenshell: deps.runOpenshell },
+      {
+        runCaptureOpenshell: deps.runCaptureOpenshell,
+        runOpenshell: deps.runOpenshell,
+      },
     );
   });
 
@@ -405,6 +412,7 @@ describe("relaunchManagedSupervisorSession", () => {
 
     expect(relaunch?.finalize(true)).toMatchObject({ backupRemoved: true, rolledBack: false });
     expect(deps.finalize).toHaveBeenCalledWith(expect.objectContaining({ supervisorReady: true }), {
+      runCaptureOpenshell: deps.runCaptureOpenshell,
       runOpenshell: deps.runOpenshell,
       sleep,
     });

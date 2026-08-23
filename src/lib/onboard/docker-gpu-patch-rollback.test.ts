@@ -177,8 +177,9 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
     const runByCommand: Record<string, () => { status: number; stdout: string }> = {
       ps: () => ({
         status: 0,
-        stdout: replacementPresent ? `${replacementId}\n` : "",
+        stdout: `${alphaContainerIds().join("\n")}\n`,
       }),
+      inspect: () => ({ status: 0, stdout: "true\n" }),
     };
     const dockerRun = vi.fn(
       (args: readonly string[]) =>
@@ -227,6 +228,7 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
       return successfulRemoval();
     };
     removalHandlers.set(restoredName, removeRestored);
+    removalHandlers.set(restoredId, removeRestored);
     const dockerRm = vi.fn((target: string) => {
       removeTargets.push(target);
       return removalHandlers.get(target)?.() ?? successfulRemoval();

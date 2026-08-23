@@ -202,15 +202,15 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     ],
   },
 }, async ({
-  artifacts,
-  environment,
-  onboard,
-  host,
-  gateway,
-  progress,
-  sandbox,
-  secrets,
-  cleanup,
+    artifacts,
+    environment,
+    onboard,
+    host,
+    gateway,
+    progress,
+    sandbox,
+    secrets,
+    cleanup,
 }) => {
   secrets.required("NVIDIA_INFERENCE_API_KEY");
 
@@ -452,17 +452,23 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     },
   );
   expect(createLegacyKeepalive.exitCode, resultText(createLegacyKeepalive)).toBe(0);
-  // Do not overlap the fixture's recreation with the restart below. The
-  // fixture runs in its own process, so the host must observe the replacement
-  // through OpenShell before starting the next container lifecycle transition.
-  await waitForSandboxExecReady(
-    host,
-    instance.sandboxName,
-    progress,
-    "legacy-recreate-openshell-ready",
+  const handoffReceipt = JSON.parse(createLegacyKeepalive.stdout) as {
+    newContainerId?: unknown;
+  };
+  expect(handoffReceipt.newContainerId).toMatch(/^[0-9a-f]{64}$/iu);
+  const finalHandoffExec = await host.command(
+    host.openshellCommandPath,
+    ["sandbox", "exec", "-n", instance.sandboxName, "--", "true"],
+    {
+      artifactName: "legacy-recreate-final-handoff",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
   );
+  expect(finalHandoffExec.exitCode, resultText(finalHandoffExec)).toBe(0);
 
   const legacyContainerId = await findSandboxContainer(host, "legacy-restart-container-before");
+  expect(legacyContainerId).toBe(handoffReceipt.newContainerId);
   expect(legacyContainerId).not.toBe(recoveredContainerId);
   expect(
     await inspectStartupCommand(host, legacyContainerId, "legacy-restart-command-before"),

@@ -50,8 +50,9 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const finalizeBackup = vi.fn(() => ({
       backupRemoved: true,
       rolledBack: false,
-      lifecycleReleaseObserved: true,
       replacementRestarted: true,
+      finalHandoffAcknowledged: true,
+      lastSandboxPhase: "Ready",
     }));
     const capturePreRollbackDiagnostics = vi.fn(() => null);
     const onPatchFailureExit = vi.fn();
@@ -97,11 +98,11 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
         result,
         supervisorReady: true,
         sandboxName: "alpha",
-        lifecycleReleaseTimeoutSecs: 900,
+        finalHandoffTimeoutSecs: 900,
       },
       deps,
     );
-    expect(waitForSupervisor).toHaveBeenCalledTimes(2);
+    expect(waitForSupervisor).toHaveBeenCalledOnce();
     expect(capturePreRollbackDiagnostics).not.toHaveBeenCalled();
     expect(onPatchFailureExit).not.toHaveBeenCalled();
   });
@@ -138,7 +139,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
         result,
         supervisorReady: true,
         sandboxName: "alpha",
-        lifecycleReleaseTimeoutSecs: 900,
+        finalHandoffTimeoutSecs: 900,
       },
       deps,
     );
@@ -174,7 +175,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(onPatchFailureExit).toHaveBeenCalledOnce();
   });
 
-  it("rejects final handoff when OpenShell never releases the deleting lifecycle record (#9531)", async () => {
+  it("rejects final handoff when OpenShell reports Deleting after restart (#9531)", async () => {
     const deps = makeDeps();
     const result = deferredCreateResult();
     const waitForSupervisor = vi.fn(() => true);
@@ -191,8 +192,9 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
         finalizeBackup: vi.fn(() => ({
           backupRemoved: true,
           rolledBack: false,
-          lifecycleReleaseObserved: false,
           replacementRestarted: true,
+          finalHandoffAcknowledged: false,
+          lastSandboxPhase: "Deleting",
         })),
         onPatchFailureExit,
       },
