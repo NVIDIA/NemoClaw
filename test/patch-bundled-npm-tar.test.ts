@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
@@ -140,6 +141,48 @@ describe("npm bundled node-tar remediation", () => {
       state: "fixed",
       tarVersion: FIXED_TAR_VERSION,
     });
+  });
+
+  it("extracts the verified bytes when the caller archive changes after verification", () => {
+    const target = fixture("11.16.0", "7.5.15");
+    const archive = path.join(temporaryDirectory(), `tar-${FIXED_TAR_VERSION}.tgz`);
+    const cacheSeed = path.join(
+      import.meta.dirname,
+      "..",
+      "tools",
+      "mcp-tool-discovery-runtime",
+      "npm-cache-seed",
+      `tar-${FIXED_TAR_VERSION}.tgz`,
+    );
+    fs.copyFileSync(cacheSeed, archive);
+    const verifiedBytes = fs.readFileSync(archive);
+    const commands: string[] = [];
+
+    expect(
+      patchBundledNpmTarFromArchive(target.npmRoot, archive, (command, args) => {
+        commands.push(command);
+        const operations: Readonly<Record<string, () => void>> = {
+          npm: () => undefined,
+          npx: () => undefined,
+          tar: () => {
+            fs.writeFileSync(archive, "replaced after verification\n");
+            const fileIndex = args.indexOf("--file");
+            expect(fileIndex).toBeGreaterThanOrEqual(0);
+            const extractionArchive = args[fileIndex + 1]!;
+            expect(extractionArchive).not.toBe(archive);
+            expect(fs.readFileSync(extractionArchive)).toEqual(verifiedBytes);
+            const result = spawnSync(command, [...args], { encoding: "utf8" });
+            expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+          },
+        };
+        expect(operations[command], `unexpected command: ${command}`).toBeDefined();
+        operations[command]!();
+      }),
+    ).toMatchObject({ state: "fixed", tarVersion: FIXED_TAR_VERSION });
+
+    expect(commands).toEqual(["tar", "npm", "npx"]);
+    expect(fs.readFileSync(archive, "utf8")).toBe("replaced after verification\n");
+    expect(verifyBundledNpmTar(target.npmRoot).tarVersion).toBe(FIXED_TAR_VERSION);
   });
 
   it("rejects mismatched tar@7.5.21 archive bytes before extraction or npm-tree mutation (#9933)", () => {

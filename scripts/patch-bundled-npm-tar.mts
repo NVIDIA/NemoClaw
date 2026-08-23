@@ -16,6 +16,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -199,6 +200,7 @@ function prepareFixedTarReplacementFromArchive(
     throw new Error("npm bundled tar replacement archive path must be absolute");
   }
   const rootDirectory = mkdtempSync(join(tmpdir(), "nemoclaw-npm-tar-bootstrap-"));
+  const verifiedArchivePath = join(rootDirectory, `tar-${FIXED_TAR_VERSION}.tgz`);
   const replacementRoot = join(rootDirectory, "replacement");
   try {
     const archiveDescriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -218,12 +220,13 @@ function prepareFixedTarReplacementFromArchive(
       );
     }
 
+    writeFileSync(verifiedArchivePath, archiveBytes, { flag: "wx", mode: 0o600 });
     mkdirSync(replacementRoot, { mode: 0o700 });
     commandRunner("tar", [
       "--extract",
       "--gzip",
       "--file",
-      archivePath,
+      verifiedArchivePath,
       "--directory",
       replacementRoot,
       "--strip-components=1",
