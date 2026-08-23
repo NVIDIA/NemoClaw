@@ -456,7 +456,7 @@ export function preparePromptArtifacts({
       : undefined;
     const promptTurns = specialistInventory
       ? [buildSynthesisTurn(specialistInventory), buildChallengeAndRecordTurn()]
-      : buildPromptTurns({ metadata, diff });
+      : buildPromptTurns({ metadata, diffPath: writeReviewDiff(diff) });
     const resultLimitations =
       specialistInventory?.missing.map(
         (interest) =>
@@ -595,19 +595,27 @@ export async function collectGitHubContext(
   return collectGitHubReviewContext(env);
 }
 
+export function writeReviewDiff(diff: string): string {
+  const directory = path.join(root, ".pr-review-advisor-context");
+  fs.mkdirSync(directory, { recursive: true });
+  const file = path.join(directory, "diff.patch");
+  fs.writeFileSync(file, diff);
+  return path.relative(root, file);
+}
+
 export function buildPromptTurns({
   metadata,
-  diff,
+  diffPath,
 }: {
   metadata: ReviewMetadata;
-  diff: string;
+  diffPath: string;
 }): AdvisorPromptTurn[] {
   const context = metadata.deterministic;
   return [
     buildInvestigateTurn({
       metadata: metadataFields(metadata),
       scopeRisk: buildScopeRiskTurnContext(context),
-      diff,
+      diffPath,
       controlledWords: readTrustedControlledWords(),
       terminology: {
         issueReferenceLines: context.github?.issueReferenceLines ?? [],
