@@ -696,7 +696,7 @@ describe("CLI dispatch", () => {
     );
   });
 
-  it("suggests a created sandbox when its reservation flag remains pending (#8801)", async () => {
+  it("omits a created pending registration while retaining published sandboxes (#9733)", async () => {
     await withDirectPublicDispatch(
       async ({ dispatchCli, exitSpy, sandboxes, stderr }) => {
         sandboxes.set("created", {
@@ -708,11 +708,15 @@ describe("CLI dispatch", () => {
         await expect(dispatchCli(["create", "stop"])).rejects.toThrow("process.exit:1");
 
         const output = stderr.join("\n");
-        expect(output).toContain("Did you mean: nemoclaw created stop?");
-        expect(output).toContain("Registered sandboxes: created");
+        expect(output).not.toContain("Did you mean: nemoclaw created stop?");
+        expect(output).not.toContain("Registered sandboxes: created");
+        expect(output).toContain("Registered sandboxes: published");
         expect(exitSpy).toHaveBeenCalledWith(1);
       },
-      { sandboxNames: ["created"], pendingSandboxNames: ["created"] },
+      {
+        sandboxNames: ["created", "published"],
+        pendingSandboxNames: ["created"],
+      },
     );
   });
 

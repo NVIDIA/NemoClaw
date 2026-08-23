@@ -73,6 +73,8 @@ describe("runSandboxSnapshot restore: baseline exclusions", () => {
     expect(createArgs[createArgs.indexOf("--policy") + 1]).toBe("/tmp/snapshot-clone-policy.yaml");
     expect(f.registerSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({ name: "beta", baselineExclusions: [exclusion] }),
+      undefined,
+      { pending: true },
     );
     expect(cleanup).toHaveBeenCalledOnce();
   });

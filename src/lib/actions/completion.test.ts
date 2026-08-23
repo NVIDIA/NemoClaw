@@ -151,7 +151,7 @@ describe("completion actions", () => {
     expect(written[0]).toContain("#compdef nemoclaw");
   });
 
-  it("emits sorted registered sandbox names without route-only reservations (#8801)", () => {
+  it("emits only sorted published sandbox names (#9733)", () => {
     const written: string[] = [];
     runCompletionSandboxNamesAction({
       listRegisteredSandboxes: () => ({
@@ -169,6 +169,6 @@ describe("completion actions", () => {
       }),
       write: (output) => written.push(output),
     });
-    expect(written).toEqual(["alpha\nbeta\ncreated\n"]);
+    expect(written).toEqual(["alpha\nbeta\n"]);
   });
 });
