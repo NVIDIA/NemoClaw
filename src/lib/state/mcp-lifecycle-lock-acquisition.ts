@@ -247,25 +247,6 @@ function resetCorruptGenerationTracker(tracker: CorruptGenerationTracker): void 
   tracker.firstSeenAt = 0;
 }
 
-function classifyObservedMcpLifecycleLock(
-  observation: LockObservation,
-  sandboxName: string,
-  corruptLockGraceMs: number,
-  corruptTracker: CorruptGenerationTracker,
-  now: number,
-): "active" | "stale" | "wait" {
-  const decision = decideObservedMcpLifecycleLock(
-    observation,
-    "main",
-    sandboxName,
-    corruptLockGraceMs,
-    corruptTracker,
-    now,
-  );
-  if (decision.kind === "reap" || decision.kind === "contain") return "stale";
-  return decision.kind === "wait" ? decision.disposition : "wait";
-}
-
 function committedContainmentActiveError(
   sandboxName: string,
   lockPath: string,
@@ -987,21 +968,22 @@ async function acquireDeadlineFence(
     }
 
     const observation = await readMcpLifecycleLockObservation(deadlinePath);
-    if (
-      observation &&
-      classifyObservedMcpLifecycleLock(
-        observation,
-        sandboxName,
-        corruptLockGraceMs,
-        corruptTracker,
-        performance.now(),
-      ) === "stale"
-    ) {
+    const decision = observation
+      ? decideObservedMcpLifecycleLock(
+          observation,
+          "deadline",
+          sandboxName,
+          corruptLockGraceMs,
+          corruptTracker,
+          performance.now(),
+        )
+      : null;
+    if (decision?.kind === "contain") {
       ensureDurableContainmentForStaleGenerationSync(
         lockPath,
         sandboxName,
         options.stateDir ?? resolveNemoclawStateDir(),
-        observation,
+        decision.observation,
         "An auto-restore deadline owner exited before its recovery operation completed",
       );
       continue;
@@ -1103,21 +1085,22 @@ function acquireDeadlineFenceSync(
     }
 
     const observation = readMcpLifecycleLockObservationSync(deadlinePath);
-    if (
-      observation &&
-      classifyObservedMcpLifecycleLock(
-        observation,
-        sandboxName,
-        corruptLockGraceMs,
-        corruptTracker,
-        performance.now(),
-      ) === "stale"
-    ) {
+    const decision = observation
+      ? decideObservedMcpLifecycleLock(
+          observation,
+          "deadline",
+          sandboxName,
+          corruptLockGraceMs,
+          corruptTracker,
+          performance.now(),
+        )
+      : null;
+    if (decision?.kind === "contain") {
       ensureDurableContainmentForStaleGenerationSync(
         lockPath,
         sandboxName,
         options.stateDir,
-        observation,
+        decision.observation,
         "An auto-restore deadline owner exited before its recovery operation completed",
       );
       continue;
@@ -1164,8 +1147,9 @@ async function clearDeadlineProtectedPath(
     const observed = await readMcpLifecycleLockObservation(targetPath);
     if (!observed) return;
 
-    const disposition = classifyObservedMcpLifecycleLock(
+    const decision = decideObservedMcpLifecycleLock(
       observed,
+      targetPath.endsWith(".reaper") ? "reaper" : "main",
       sandboxName,
       0,
       corruptTracker,
@@ -1179,10 +1163,11 @@ async function clearDeadlineProtectedPath(
       owner.pidNamespaceIdentity === readMcpLockPidNamespaceIdentity();
     const exactCurrentOrdinaryOwner =
       !targetPath.endsWith(".reaper") &&
-      disposition === "active" &&
+      decision.kind === "wait" &&
+      decision.disposition === "active" &&
       exactLocalOwner &&
       readMcpLockProcessIdentity(owner.pid, true) === owner.processIdentity;
-    if (disposition === "stale" && exactLocalOwner) {
+    if ((decision.kind === "reap" || decision.kind === "contain") && exactLocalOwner) {
       const confirmed = await readMcpLifecycleLockObservation(targetPath);
       if (!sameLockGeneration(observed, confirmed)) continue;
       if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
@@ -1265,8 +1250,9 @@ function clearDeadlineProtectedPathSync(
     const observed = readMcpLifecycleLockObservationSync(targetPath);
     if (!observed) return;
 
-    const disposition = classifyObservedMcpLifecycleLock(
+    const decision = decideObservedMcpLifecycleLock(
       observed,
+      targetPath.endsWith(".reaper") ? "reaper" : "main",
       sandboxName,
       0,
       corruptTracker,
@@ -1294,7 +1280,7 @@ function clearDeadlineProtectedPathSync(
       error.code = "NEMOCLAW_SYNC_REENTRANT_OWNER";
       throw error;
     }
-    if (disposition === "stale" && exactLocalOwner) {
+    if ((decision.kind === "reap" || decision.kind === "contain") && exactLocalOwner) {
       const confirmed = readMcpLifecycleLockObservationSync(targetPath);
       if (!sameLockGeneration(observed, confirmed)) continue;
       if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
