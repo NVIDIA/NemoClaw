@@ -63,6 +63,7 @@ function createStatefulMessagingProviderRunner({
   const providers = new Map(
     initialProviders.map(([name, type, credential]) => [name, { type, credential }]),
   );
+  let lifecycleReleased = false;
   return (command, options = {}) => {
     const normalized = normalizeCommand(command);
     const args = normalized.split(/\s+/);
@@ -140,6 +141,14 @@ function createStatefulMessagingProviderRunner({
     }
     if (providerIndex >= 0) {
       return { status: 1, stderr: "unsupported provider command" };
+    }
+    if (normalized.startsWith("docker rm ")) lifecycleReleased = true;
+    if (lifecycleReleased && args.includes("sandbox") && args.includes("list")) {
+      return {
+        status: 0,
+        stdout: Buffer.from("No sandboxes found\n"),
+        stderr: Buffer.alloc(0),
+      };
     }
     if (
       readySandboxName &&
