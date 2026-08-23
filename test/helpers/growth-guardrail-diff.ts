@@ -144,6 +144,20 @@ function requiredEnvironment(name: string): string {
   return value;
 }
 
+function cachedBlobReader(
+  client: ReturnType<typeof createPrBlobClient>,
+  repository: string,
+  revision: string,
+): GrowthGuardrailDiff["readBase"] {
+  const cache = new Map<string, string | null>();
+  return async (paths) => {
+    const missing = [...new Set(paths)].filter((file) => !cache.has(file));
+    const fetched = await client.fetchBlobs(repository, revision, missing);
+    for (const [file, source] of fetched) cache.set(file, source);
+    return new Map(paths.map((file) => [file, cache.get(file) ?? null]));
+  };
+}
+
 async function loadPullRequestDiff(): Promise<GrowthGuardrailDiff> {
   const token = requiredEnvironment("GH_TOKEN");
   const repository = requiredEnvironment("REPO");
@@ -155,15 +169,13 @@ async function loadPullRequestDiff(): Promise<GrowthGuardrailDiff> {
   assertRepositoryName(headRepository, "HEAD_REPO");
   const client = createPrBlobClient({ token });
   const files = await client.getPullFiles(repository, prNumber);
+  const readBase = cachedBlobReader(client, repository, baseSha);
+  const readHead = cachedBlobReader(client, headRepository, headSha);
 
   return {
     files,
-    readBase(paths) {
-      return client.fetchBlobs(repository, baseSha, paths);
-    },
-    readHead(paths) {
-      return client.fetchBlobs(headRepository, headSha, paths);
-    },
+    readBase,
+    readHead,
   };
 }
 
