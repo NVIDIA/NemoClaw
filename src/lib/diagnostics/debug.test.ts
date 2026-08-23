@@ -1,10 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Import source directly so tests cannot pass against a stale build.
 import {
   buildDmesgRerunCommand,
@@ -85,6 +95,8 @@ describe("createTarball", () => {
     if (tempDir) rmSync(tempDir, { recursive: true, force: true });
     if (outputDir) rmSync(outputDir, { recursive: true, force: true });
     process.exitCode = undefined;
+    vi.doUnmock("node:crypto");
+    vi.resetModules();
   });
 
   it("sets process.exitCode = 1 and returns false when tar fails on invalid output path", () => {
@@ -129,6 +141,56 @@ describe("createTarball", () => {
     expect(ok).toBe(true);
     expect(process.exitCode).toBeUndefined();
     expect(existsSync(output)).toBe(true);
+  });
+
+  it("writes the bundle owner-only so a shared output directory cannot expose it", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "debug-test-"));
+    writeFileSync(join(tempDir, "env.txt"), "PROXY_USER=example-not-a-real-value-1");
+    outputDir = mkdtempSync(join(tmpdir(), "debug-test-out-"));
+    const output = join(outputDir, "owner-only.tar.gz");
+    const ok = createTarball(tempDir, output);
+    expect(ok).toBe(true);
+    // test/helpers/normalize-fixture-umask.ts pins every worker to umask 0o022,
+    // under which an unstaged archive is published 644.
+    expect((statSync(output).mode & 0o777).toString(8)).toBe("600");
+  });
+
+  it("refuses to stage the bundle through a symbolic link planted at the staging path", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "debug-test-"));
+    writeFileSync(join(tempDir, "payload.txt"), "test data");
+    outputDir = mkdtempSync(join(tmpdir(), "debug-test-out-"));
+    const output = join(outputDir, "staged.tar.gz");
+    const bystander = join(outputDir, "bystander.txt");
+    const bystanderContents = "bystander content that must survive";
+    writeFileSync(bystander, bystanderContents);
+    // Pin the staging suffix so the planted link sits exactly where this
+    // process stages; the second link covers the pre-fix `.partial.<pid>` name.
+    const suffix = "0".repeat(16);
+    vi.resetModules();
+    vi.doMock("node:crypto", async () => {
+      const actual = await vi.importActual<typeof import("node:crypto")>("node:crypto");
+      return { ...actual, randomBytes: () => actual.randomBytes(8).fill(0) };
+    });
+    const { createTarball: stageTarball } = await import("./tarball");
+    const legacyStagingPath = `${output}.partial.${process.pid}`;
+    symlinkSync(bystander, legacyStagingPath);
+    symlinkSync(bystander, `${legacyStagingPath}.${suffix}`);
+    const messages: string[] = [];
+    const record = (level: string) => (message: string) => messages.push(`${level}: ${message}`);
+    const ok = stageTarball(tempDir, output, {
+      info: record("info"),
+      warn: record("warn"),
+      error: record("error"),
+    });
+    expect(ok).toBe(false);
+    expect(process.exitCode).toBe(1);
+    // The refusal is reported, not silent.
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toContain(`error: Failed to stage tarball for ${output}`);
+    expect(messages.join("\n")).not.toContain("Tarball written to");
+    expect(readFileSync(bystander, "utf-8")).toBe(bystanderContents);
+    expect(existsSync(output)).toBe(false);
+    expect(lstatSync(legacyStagingPath).isSymbolicLink()).toBe(true);
   });
 });
 

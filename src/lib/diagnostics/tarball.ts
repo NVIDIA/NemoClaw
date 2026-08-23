@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { renameSync, rmSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { closeSync, openSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname } from "node:path";
 
 export interface CreateTarballOptions {
@@ -15,9 +16,10 @@ export interface CreateTarballOptions {
 
 /**
  * Archive `collectDir` into a tarball at `output`. Writes to a sibling
- * `.partial.<pid>` path and renames atomically on success so a pre-existing
- * file at `output` is preserved when `tar` fails. Sets `process.exitCode = 1`
- * on failure so callers do not have to remember.
+ * `.partial.<pid>.<random>` path that this process creates exclusively at mode
+ * `0600`, then renames atomically on success so a pre-existing file at `output`
+ * is preserved when `tar` fails. Sets `process.exitCode = 1` on failure so
+ * callers do not have to remember.
  */
 export function createTarball(
   collectDir: string,
@@ -25,7 +27,21 @@ export function createTarball(
   options: CreateTarballOptions,
 ): boolean {
   const { info, warn, error, timeoutMs = 60_000 } = options;
-  const partial = `${output}.partial.${process.pid}`;
+  // Stage beside `output` under a name other users cannot predict, and create
+  // it exclusively at mode 0600 before `tar` runs. The exclusive create refuses
+  // to follow anything already at that path, and `tar` truncates the file it
+  // finds instead of recreating it, so the published bundle is owner-only
+  // rather than umask-governed.
+  const partial = `${output}.partial.${process.pid}.${randomBytes(8).toString("hex")}`;
+  try {
+    closeSync(openSync(partial, "wx", 0o600));
+  } catch (err) {
+    error(
+      `Failed to stage tarball for ${output}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    process.exitCode = 1;
+    return false;
+  }
   const result = spawnSync(
     "tar",
     ["czf", partial, "-C", dirname(collectDir), basename(collectDir)],
