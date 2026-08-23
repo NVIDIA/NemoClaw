@@ -44,6 +44,7 @@ import {
   observePodmanBootstrapReplacementReady,
   renderPodmanReplacementHealthArgs,
   renderPodmanReplacementMountArgs,
+  renderPodmanReplacementRuntimeArgs,
   renderPodmanReplacementSecretArgs,
 } from "./podman-runtime";
 import type { PodmanGatewayWatcherLease } from "./podman-watcher-lease";
@@ -323,6 +324,69 @@ describe("Podman managed-bootstrap runtime surface", () => {
       ["secret", "inspect", "--format", "{{.ID}}", "openshell-token-sandbox-alpha"],
       15_000,
     );
+  });
+
+  it("reproduces OpenShell's provider-owned Podman launch authority", () => {
+    expect(
+      renderPodmanReplacementRuntimeArgs({
+        Config: {
+          User: "0:0",
+          Hostname: "sandbox-alpha",
+          WorkingDir: "/",
+          StopTimeout: 10,
+        },
+        HostConfig: {
+          CapAdd: ["CAP_SYS_ADMIN", "NET_ADMIN"],
+          CapDrop: ["NET_RAW"],
+          SecurityOpt: ["no-new-privileges", "seccomp=unconfined"],
+          ExtraHosts: ["host.openshell.internal:10.89.0.1"],
+          GroupAdd: ["44"],
+          Tmpfs: { "/run/netns": "rw,nosuid,nodev" },
+          PortBindings: {
+            "22/tcp": [{ HostIp: "127.0.0.1", HostPort: "32122" }],
+          },
+          Ulimits: [{ Name: "nofile", Soft: 1024, Hard: 2048 }],
+          Memory: 2_147_483_648,
+          PidsLimit: 2048,
+          OomScoreAdj: 500,
+        },
+      }),
+    ).toEqual([
+      "--user",
+      "0:0",
+      "--hostname",
+      "sandbox-alpha",
+      "--workdir",
+      "/",
+      "--stop-timeout",
+      "10",
+      "--cap-add",
+      "SYS_ADMIN",
+      "--cap-add",
+      "NET_ADMIN",
+      "--cap-drop",
+      "NET_RAW",
+      "--security-opt",
+      "no-new-privileges",
+      "--security-opt",
+      "seccomp=unconfined",
+      "--add-host",
+      "host.openshell.internal:10.89.0.1",
+      "--group-add",
+      "44",
+      "--tmpfs",
+      "/run/netns:rw,nosuid,nodev",
+      "--publish",
+      "127.0.0.1:32122:22/tcp",
+      "--ulimit",
+      "nofile=1024:2048",
+      "--memory",
+      "2147483648",
+      "--pids-limit",
+      "2048",
+      "--oom-score-adj",
+      "500",
+    ]);
   });
 
   it("persists only non-secret native gateway launch environment", () => {

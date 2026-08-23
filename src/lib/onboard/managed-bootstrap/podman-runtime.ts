@@ -349,6 +349,164 @@ export function renderPodmanReplacementHealthArgs(inspect: JsonRecord): readonly
   ]);
 }
 
+function boundedRuntimeValue(value: unknown, label: string): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 4_096 ||
+    value.includes("\0") ||
+    /[\r\n]/u.test(value)
+  ) {
+    throw new Error(`Managed bootstrap Podman ${label} is invalid.`);
+  }
+  return value;
+}
+
+function optionalNonNegativeIntegerFlag(
+  args: string[],
+  flag: string,
+  value: unknown,
+  label: string,
+): void {
+  if (value === undefined || value === null || value === 0 || value === "") return;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`Managed bootstrap Podman ${label} is invalid.`);
+  }
+  args.push(flag, String(value));
+}
+
+function optionalStringFlag(args: string[], flag: string, value: unknown, label: string): void {
+  if (value === undefined || value === null || value === "") return;
+  args.push(flag, boundedRuntimeValue(value, label));
+}
+
+/** Reproduce the provider-owned OpenShell Podman launch contract. */
+export function renderPodmanReplacementRuntimeArgs(inspect: JsonRecord): readonly string[] {
+  const config = record(inspect.Config, "Config");
+  const host = record(inspect.HostConfig ?? {}, "HostConfig");
+  const args: string[] = [];
+
+  const user = String(config.User ?? "").trim();
+  if (!["0", "0:0", "root", "root:root"].includes(user)) {
+    throw new Error("Managed bootstrap Podman supervisor user must remain root.");
+  }
+  args.push("--user", "0:0");
+  optionalStringFlag(args, "--hostname", config.Hostname, "hostname");
+  const workingDirectory = String(config.WorkingDir ?? "");
+  if (workingDirectory) {
+    if (
+      !path.isAbsolute(workingDirectory) ||
+      path.normalize(workingDirectory) !== workingDirectory
+    ) {
+      throw new Error("Managed bootstrap Podman working directory is invalid.");
+    }
+    args.push("--workdir", workingDirectory);
+  }
+  optionalNonNegativeIntegerFlag(args, "--stop-timeout", config.StopTimeout, "stop timeout");
+
+  const capability = (value: unknown, label: string): string => {
+    const normalized = boundedRuntimeValue(value, label).replace(/^CAP_/u, "");
+    if (!/^[A-Z][A-Z0-9_]{0,63}$/u.test(normalized)) {
+      throw new Error(`Managed bootstrap Podman ${label} is invalid.`);
+    }
+    return normalized;
+  };
+  for (const value of stringArray(host.CapAdd ?? [], "HostConfig.CapAdd")) {
+    args.push("--cap-add", capability(value, "added capability"));
+  }
+  for (const value of stringArray(host.CapDrop ?? [], "HostConfig.CapDrop")) {
+    args.push("--cap-drop", capability(value, "dropped capability"));
+  }
+  for (const value of stringArray(host.SecurityOpt ?? [], "HostConfig.SecurityOpt")) {
+    args.push("--security-opt", boundedRuntimeValue(value, "security option"));
+  }
+  for (const value of stringArray(host.ExtraHosts ?? [], "HostConfig.ExtraHosts")) {
+    args.push("--add-host", boundedRuntimeValue(value, "host alias"));
+  }
+  for (const value of stringArray(host.GroupAdd ?? [], "HostConfig.GroupAdd")) {
+    args.push("--group-add", boundedRuntimeValue(value, "supplementary group"));
+  }
+  for (const value of stringArray(host.Dns ?? [], "HostConfig.Dns")) {
+    args.push("--dns", boundedRuntimeValue(value, "DNS server"));
+  }
+  for (const value of stringArray(host.DnsSearch ?? [], "HostConfig.DnsSearch")) {
+    args.push("--dns-search", boundedRuntimeValue(value, "DNS search domain"));
+  }
+
+  if (host.Tmpfs !== undefined && host.Tmpfs !== null) {
+    const tmpfs = record(host.Tmpfs, "HostConfig.Tmpfs");
+    for (const destination of Object.keys(tmpfs).sort()) {
+      if (!path.isAbsolute(destination) || path.normalize(destination) !== destination) {
+        throw new Error("Managed bootstrap Podman tmpfs destination is invalid.");
+      }
+      const options = tmpfs[destination];
+      const rendered = options
+        ? `${destination}:${boundedRuntimeValue(options, "tmpfs options")}`
+        : destination;
+      args.push("--tmpfs", rendered);
+    }
+  }
+
+  if (host.PortBindings !== undefined && host.PortBindings !== null) {
+    const bindings = record(host.PortBindings, "HostConfig.PortBindings");
+    for (const containerEndpoint of Object.keys(bindings).sort()) {
+      const match = /^(\d{1,5})\/(tcp|udp|sctp)$/u.exec(containerEndpoint);
+      const containerPort = Number(match?.[1]);
+      if (!match || containerPort < 1 || containerPort > 65_535) {
+        throw new Error("Managed bootstrap Podman published container endpoint is invalid.");
+      }
+      const rows = bindings[containerEndpoint];
+      if (!Array.isArray(rows) || rows.length !== 1) {
+        throw new Error("Managed bootstrap Podman published host endpoint is ambiguous.");
+      }
+      const binding = record(rows[0], "HostConfig.PortBindings entry");
+      const hostPort = Number(binding.HostPort);
+      if (!Number.isSafeInteger(hostPort) || hostPort < 1 || hostPort > 65_535) {
+        throw new Error("Managed bootstrap Podman published host port is invalid.");
+      }
+      const hostIp = String(binding.HostIp ?? "");
+      if (hostIp.includes("\0") || /[\r\n]/u.test(hostIp)) {
+        throw new Error("Managed bootstrap Podman published host address is invalid.");
+      }
+      const endpoint = `${hostIp ? `${hostIp}:` : ""}${String(hostPort)}:${String(containerPort)}/${match[2]}`;
+      args.push("--publish", endpoint);
+    }
+  }
+
+  if (host.Ulimits !== undefined && host.Ulimits !== null) {
+    if (!Array.isArray(host.Ulimits)) {
+      throw new Error("Managed bootstrap Podman ulimits are invalid.");
+    }
+    for (const value of host.Ulimits) {
+      const limit = record(value, "HostConfig.Ulimits entry");
+      const name = boundedRuntimeValue(limit.Name, "ulimit name");
+      const soft = Number(limit.Soft);
+      const hard = Number(limit.Hard);
+      if (![soft, hard].every((entry) => Number.isSafeInteger(entry) && entry >= -1)) {
+        throw new Error("Managed bootstrap Podman ulimit bounds are invalid.");
+      }
+      args.push("--ulimit", `${name}=${String(soft)}:${String(hard)}`);
+    }
+  }
+
+  optionalNonNegativeIntegerFlag(args, "--memory", host.Memory, "memory limit");
+  optionalNonNegativeIntegerFlag(
+    args,
+    "--memory-reservation",
+    host.MemoryReservation,
+    "memory reservation",
+  );
+  optionalNonNegativeIntegerFlag(args, "--memory-swap", host.MemorySwap, "memory swap limit");
+  optionalNonNegativeIntegerFlag(args, "--cpu-shares", host.CpuShares, "CPU shares");
+  optionalNonNegativeIntegerFlag(args, "--cpu-quota", host.CpuQuota, "CPU quota");
+  optionalNonNegativeIntegerFlag(args, "--cpu-period", host.CpuPeriod, "CPU period");
+  optionalNonNegativeIntegerFlag(args, "--pids-limit", host.PidsLimit, "PID limit");
+  optionalNonNegativeIntegerFlag(args, "--oom-score-adj", host.OomScoreAdj, "OOM score adjustment");
+  optionalStringFlag(args, "--cpuset-cpus", host.CpusetCpus, "CPU set");
+  optionalStringFlag(args, "--cpuset-mems", host.CpusetMems, "memory-node set");
+  return Object.freeze(args);
+}
+
 function replacementCommand(
   handle: ManagedBootstrapHeldWorkloadHandle,
   snapshot: ManagedBootstrapObservedSnapshot,
@@ -1560,6 +1718,7 @@ export function createPodmanManagedBootstrapAdapter(
             bootstrapIdentity: handle.bootstrapIdentity,
             heldWorkload: current.held,
             runtimeArgs: Object.freeze([
+              ...renderPodmanReplacementRuntimeArgs(current.rawInspect),
               ...networkArgs(current.rawInspect),
               ...renderPodmanReplacementMountArgs(current.rawInspect),
               ...renderPodmanReplacementSecretArgs(
