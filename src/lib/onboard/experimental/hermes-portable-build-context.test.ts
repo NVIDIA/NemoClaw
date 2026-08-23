@@ -133,6 +133,11 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     expect(stagedDockerfile).toContain("ARG NEMOCLAW_TOOL_DISCLOSURE=direct");
     expect(stagedDockerfile).toContain("ARG CHAT_UI_URL=");
     expect(stagedDockerfile).not.toContain("ARG CHAT_UI_URL=http://127.0.0.1:18789");
+    const globalArguments = stagedDockerfile.slice(0, stagedDockerfile.indexOf("\nFROM "));
+    expect(globalArguments).toContain("ARG TARGETARCH=amd64");
+    expect(stagedDockerfile).toContain(
+      "FROM hermes-managed-teams-${TARGETARCH}-wheels AS hermes-managed-teams-1-wheels",
+    );
     expect(stagedDockerfile).not.toMatch(/^ADD --chmod=/mu);
     expect(stagedDockerfile).toMatch(
       /^ADD --checksum=sha256:[a-f0-9]{64} https:\/\/files[.]pythonhosted[.]org\//mu,
