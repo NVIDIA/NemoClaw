@@ -102,6 +102,7 @@ export type PublicationSelection =
 export interface PublicationWaitOptions {
   history: FirstParentHistory;
   request: (path: string) => Promise<unknown>;
+  requireWorkflowSuccess?: boolean;
   waitMs: number;
   pollMs: number;
   now?: () => number;
@@ -515,7 +516,7 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
   return pending ? "pending" : "ready";
 }
 
-export function validateBoundRun(payload: unknown, expected: PublicationRun): void {
+export function validateBoundRun(payload: unknown, expected: PublicationRun): PublicationRun {
   const actual = validateRun(payload, 0, expected.workflowId);
   if (
     actual.id !== expected.id ||
@@ -526,6 +527,7 @@ export function validateBoundRun(payload: unknown, expected: PublicationRun): vo
       `selected base-image workflow changed while evidence was verified; ${expected.url}`,
     );
   }
+  return actual;
 }
 
 async function collectPaginationAttempt(
@@ -642,10 +644,19 @@ export async function waitForBaseImagePublication(
         const jobs = await collectPaginated(options.request, jobsPath, "jobs");
         publisherState = validatePublisherJobs(jobs, selection.run);
         if (publisherState === "ready") {
-          validateBoundRun(
+          const boundRun = validateBoundRun(
             await options.request(`/repos/${REPOSITORY}/actions/runs/${selection.run.id}`),
             selection.run,
           );
+          if (options.requireWorkflowSuccess === true) {
+            if (boundRun.status !== "completed") {
+              publisherState = "pending";
+            } else if (boundRun.conclusion !== "success") {
+              throw new Error(
+                `managed-image publication workflow did not complete successfully; ${boundRun.url}`,
+              );
+            }
+          }
         }
       } catch (error) {
         throw publicationEvidenceError(error, selection.run);
@@ -789,6 +800,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   const token = env.GITHUB_TOKEN ?? "";
   const expectedSha = env.EXPECTED_SHA ?? "";
   const outputPath = env.GITHUB_OUTPUT ?? "";
+  const requireManagedImagePublication = env.REQUIRE_MANAGED_IMAGE_PUBLICATION ?? "0";
   const workspace = env.GITHUB_WORKSPACE ?? process.cwd();
   if (token.length === 0 || token.includes("\r") || token.includes("\n")) {
     throw new Error("GITHUB_TOKEN must be a non-empty single-line value");
@@ -806,6 +818,9 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   if (env.GITHUB_SHA !== expectedSha) {
     throw new Error("EXPECTED_SHA must match GITHUB_SHA");
   }
+  if (requireManagedImagePublication !== "0" && requireManagedImagePublication !== "1") {
+    throw new Error("REQUIRE_MANAGED_IMAGE_PUBLICATION must be 0 or 1");
+  }
 
   const workflowSource = readFileSync(resolve(workspace, WORKFLOW_PATH), "utf8");
   const paths = parseBaseImagePushPaths(workflowSource);
@@ -813,6 +828,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   const run = await waitForBaseImagePublication({
     history,
     request: (path) => githubRequest(path, token),
+    requireWorkflowSuccess: requireManagedImagePublication === "1",
     waitMs: waitSeconds * 1000,
     pollMs: pollSeconds * 1000,
   });
