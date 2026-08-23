@@ -1394,6 +1394,27 @@ describe("PR review advisor submission tools", () => {
     expect(write).not.toHaveBeenCalled();
   });
 
+  it("adds trusted missing-specialist limitations to each canonical artifact", () => {
+    const submitted = {
+      reviewCompleteness: { limitations: ["model limitation"], requiresHumanReview: true },
+    };
+    const submission = completedSubmission(submitted);
+    const write = vi.fn();
+
+    const result = persistSuccessfulReview([], submission, ARTIFACTS, write, [
+      "Specialist trace unavailable: operations",
+    ]);
+
+    expect(result.reviewCompleteness.limitations).toEqual([
+      "model limitation",
+      "Specialist trace unavailable: operations",
+    ]);
+    expect(write.mock.calls).toEqual([
+      [ARTIFACTS.result, result],
+      [ARTIFACTS.finalResult, result],
+    ]);
+  });
+
   it("writes each canonical artifact exactly once after finalized success", () => {
     const result = { submitted: true };
     const submission = completedSubmission(result);

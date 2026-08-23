@@ -66,6 +66,7 @@ let sandboxRecreated = false;
 runner.run = (command) => {
   const cmd = _n(command);
   events.push({ kind: "run", cmd });
+  if (cmd.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (cmd.includes("sandbox delete")) sandboxDeleted = true;
   return cmd.includes("sandbox get") && cmd.includes("my-assistant")
     ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }

@@ -97,6 +97,7 @@ const sdk = vi.hoisted(() => {
       for (const listener of listeners) listener(event);
     };
     const session = {
+      sessionFile: "/tmp/pi-session.jsonl",
       subscribe(listener: Listener) {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -327,6 +328,7 @@ describe("advisor session runner", () => {
     const result = await run([analysisTurn("only-analysis")]);
 
     expect(result.fatalError).toBeUndefined();
+    expect(result.sessionFile).toBe("/tmp/pi-session.jsonl");
     expect(transport.configure).toHaveBeenCalledOnce();
     expect(transport.configure.mock.invocationCallOrder[0]).toBeLessThan(
       sdk.createAgentSession.mock.invocationCallOrder[0] as number,
