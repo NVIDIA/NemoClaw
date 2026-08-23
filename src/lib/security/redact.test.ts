@@ -59,6 +59,87 @@ describe("redactForLog", () => {
     expect(redactForLog(assignment)).toBe(expected);
   });
 
+  it.each([
+    [
+      'CUSTOM_API_KEY="opaque api key value" safe diagnostic',
+      'CUSTOM_API_KEY="<REDACTED>" safe diagnostic',
+    ],
+    [
+      "CUSTOM_TOKEN='opaque token value' safe diagnostic",
+      "CUSTOM_TOKEN='<REDACTED>' safe diagnostic",
+    ],
+    [
+      'CUSTOM_PASSWORD="opaque password value" safe diagnostic',
+      'CUSTOM_PASSWORD="<REDACTED>" safe diagnostic',
+    ],
+    [
+      "CUSTOM_SECRET='opaque secret value' safe diagnostic",
+      "CUSTOM_SECRET='<REDACTED>' safe diagnostic",
+    ],
+  ])("redacts the complete quoted assignment in %s", (assignment, expected) => {
+    expect(redactFull(assignment)).toBe(expected);
+    expect(redactForLog(assignment)).toBe(expected);
+  });
+
+  it("redacts a quoted multiword sensitive environment assignment before its suffix", () => {
+    expect(redactSensitiveText('OPENAI_API_KEY="opaque first second" safe diagnostic')).toBe(
+      "OPENAI_API_KEY=<REDACTED> safe diagnostic",
+    );
+  });
+
+  it.each([
+    [
+      "double-quoted",
+      'OPENAI_API_KEY="opaque first second\nsafe diagnostic',
+      'OPENAI_API_KEY="<REDACTED>"\nsafe diagnostic',
+    ],
+    [
+      "single-quoted",
+      "OPENAI_API_KEY='opaque first second\nsafe diagnostic",
+      "OPENAI_API_KEY='<REDACTED>'\nsafe diagnostic",
+    ],
+    [
+      "double-quoted with a dangling backslash",
+      'OPENAI_API_KEY="opaque first second\\\nsafe diagnostic',
+      'OPENAI_API_KEY="<REDACTED>"\nsafe diagnostic',
+    ],
+    [
+      "single-quoted with a dangling backslash",
+      "OPENAI_API_KEY='opaque first second\\\nsafe diagnostic",
+      "OPENAI_API_KEY='<REDACTED>'\nsafe diagnostic",
+    ],
+    [
+      "double-quoted before a bare carriage return",
+      'OPENAI_API_KEY="opaque first second\rsafe diagnostic',
+      'OPENAI_API_KEY="<REDACTED>"\rsafe diagnostic',
+    ],
+    [
+      "single-quoted before a bare carriage return",
+      "OPENAI_API_KEY='opaque first second\rsafe diagnostic",
+      "OPENAI_API_KEY='<REDACTED>'\rsafe diagnostic",
+    ],
+    [
+      "double-quoted with a dangling backslash before a bare carriage return",
+      'OPENAI_API_KEY="opaque first second\\\rsafe diagnostic',
+      'OPENAI_API_KEY="<REDACTED>"\rsafe diagnostic',
+    ],
+    [
+      "single-quoted with a dangling backslash before a bare carriage return",
+      "OPENAI_API_KEY='opaque first second\\\rsafe diagnostic",
+      "OPENAI_API_KEY='<REDACTED>'\rsafe diagnostic",
+    ],
+  ])(
+    "fails closed at line end for an unterminated %s environment assignment (#9863)",
+    (_case, assignment, expectedFull) => {
+      const full = redactFull(assignment);
+      const sensitive = redactSensitiveText(assignment);
+      const suffix = assignment.includes("\r") ? "\rsafe diagnostic" : "\nsafe diagnostic";
+
+      expect(full).toBe(expectedFull);
+      expect(sensitive).toBe(`OPENAI_API_KEY=<REDACTED>${suffix}`);
+    },
+  );
+
   it("preserves benign structured keys containing pass", () => {
     const benign = {
       compass: "north",

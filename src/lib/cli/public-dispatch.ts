@@ -131,12 +131,8 @@ function isMigrationRecoveryInvocation(argv: readonly string[]): boolean {
 
 function registeredSandboxNames(): string[] {
   const registryApi = registry();
-  // Suggestions must use the same registered sandbox inventory as `list` and global `status`.
-  // Onboarding retains route-only reservations so an interrupted onboarding session can resume,
-  // but these reservations are not registered sandboxes.
-  return registryApi
-    .listSandboxes()
-    .sandboxes.filter((sandbox) => !registryApi.isRouteOnlySandboxReservation(sandbox))
+  // Suggestions must use the same published sandbox inventory as `list` and global `status`.
+  return registryApi.listSandboxes().sandboxes.filter(registryApi.isPublishedSandboxRegistration)
     .map((sandbox) => sandbox.name);
 }
 

@@ -10,6 +10,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { LlamaCppGgufCachePlan } from "../../inference/llama-cpp/gguf-cache-plan";
+import {
+  LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
+  LLAMA_CPP_HOST_LOCAL_SERVER_PATH,
+} from "../../inference/llama-cpp/host-local-runtime";
 import type { DockerLlamaCppManagedLifecycleOptions } from "./docker-llama-cpp-managed-lifecycle";
 import {
   contract,
@@ -415,6 +419,33 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(serialized).not.toContain("test-only-secret");
     expect(fixture.capture.mock.calls.map(([argv]) => argv)).toContainEqual(
       expect.arrayContaining(["create", "--no-healthcheck"]),
+    );
+    const create = fixture.capture.mock.calls
+      .map(([argv]) => argv)
+      .find(([operation]) => operation === "create");
+    expect(create).toBeDefined();
+    expect(create?.[create.indexOf("--entrypoint") + 1]).toBe(
+      LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH,
+    );
+    const command = create?.slice(create.indexOf(IMAGE) + 1) ?? [];
+    expect(command[command.indexOf("--max-request-body-bytes") + 1]).toBe(
+      String(contract().serve.limits.maxRequestBodyBytes),
+    );
+    expect(command[command.indexOf("--upstream-port") + 1]).toBe(
+      String(contract().serve.requestGuard.upstreamPort),
+    );
+    const separator = command.indexOf("--");
+    expect(command.slice(separator + 1, separator + 8)).toEqual([
+      LLAMA_CPP_HOST_LOCAL_SERVER_PATH,
+      "--model",
+      `/models/${MODEL_FILENAME}`,
+      "--alias",
+      contract().model.servedName,
+      "--host",
+      "127.0.0.1",
+    ]);
+    expect(command.slice(separator)[command.slice(separator).indexOf("--port") + 1]).toBe(
+      String(contract().serve.requestGuard.upstreamPort),
     );
     expect(lifecycle.runtime.inspectManaged(receipt).running).toBe(true);
     expect(lifecycle.runtime.stopManaged(receipt).running).toBe(false);
@@ -1211,6 +1242,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
         (candidate: DockerFixture) => candidate.driftExtraDeviceAuthority("cap-add"),
         (candidate: DockerFixture) => candidate.driftExtraDeviceAuthority("legacy-device"),
         (candidate: DockerFixture) => candidate.dropTmpfs(),
+        (candidate: DockerFixture) => candidate.driftEntrypoint(),
       ],
       (value) => [value],
     ),

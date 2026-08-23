@@ -70,6 +70,10 @@ function createRepoPathGuard(cwd: string): RepoPathGuard {
   };
 }
 
+export async function canonicalRepoReadPath(cwd: string, candidate: string): Promise<string> {
+  return createRepoPathGuard(cwd).resolveExisting(candidate);
+}
+
 function createGuardedLsOperations(guard: RepoPathGuard): LsOperations {
   return {
     async exists(absolutePath) {

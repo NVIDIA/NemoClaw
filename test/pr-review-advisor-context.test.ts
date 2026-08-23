@@ -174,6 +174,9 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(investigate?.requiredToolNames).toEqual(contextToolNames);
     expect(investigate?.requireToolsBeforeText).toEqual(contextToolNames);
     expect(investigate?.requireAssistantText).toBe(true);
+    expect(investigate?.assistantTextRepairPrompt).toContain(
+      "called every required context tool but omitted its analysis receipt",
+    );
     expect(investigate?.atomicTerminalToolName).toBeUndefined();
     expect(investigate?.terminalSubmitToolName).toBeUndefined();
     expect(investigate?.prompt).toContain("Turn 1/2 — investigate");
@@ -278,7 +281,7 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     );
     expect(challenge?.terminalSubmitToolName).toBe("submit_review");
     expect(challenge?.terminalSubmitRepairPrompt).toBe(
-      "The nonmutating submit_review validation was rejected. You have one repair only: follow the validation error's exact correction, replace only the invalid draft sections, and submit once more. Set findingId=null when the entry does not report a concern; never reuse an unrelated finding. If you replace findings, record the receipt again afterward because it is bound to the latest findings revision.",
+      "The challenge-and-record response did not complete a valid submission. You have one repair only: complete or replace the required draft sections in this exact order: record_findings, record_review_receipt, recommend_e2e, then submit_review. Follow each validation error's exact correction. Set findingId=null when the entry does not report a concern; never reuse an unrelated finding. If you replace findings, record the receipt again afterward because it is bound to the latest findings revision.",
     );
     expect(challenge?.terminalSubmitRepairToolNames).toEqual([
       "record_findings",
