@@ -703,6 +703,36 @@ describe("host-local model cleanup", () => {
     contender.releaseExecution(replacement);
   });
 
+  it("retains cleanup execution ownership through final private-state removal (#9888)", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine);
+    const paths = managedLlamaCppStatePaths(homeDir);
+    const prepared = prepareManagedLlamaCppRuntimeCleanupForSandbox("spark-agent", {
+      homeDir,
+      engine: harness.engine,
+    });
+    const contender = createHostLocalCreateJournalStore(paths.stateDir);
+    const remove = fs.rmSync.bind(fs);
+    let contentionError: unknown;
+    let unexpectedLease: unknown;
+    vi.spyOn(fs, "rmSync").mockImplementationOnce(((target, options) => {
+      try {
+        unexpectedLease = contender.acquireExecution("9".repeat(64));
+      } catch (error) {
+        contentionError = error;
+      }
+      return remove(target, options);
+    }) as typeof fs.rmSync);
+
+    expect(prepared?.cleanup()).toMatchObject({ ok: true });
+    expect(contentionError).toEqual(
+      expect.objectContaining({ message: expect.stringContaining("live process") }),
+    );
+    expect(unexpectedLease).toBeUndefined();
+    expect(fs.existsSync(paths.stateDir)).toBe(false);
+  });
+
   it("re-inspects after removal and retains authority when the container remains", () => {
     const homeDir = temporaryHome();
     const harness = engineHarness({ removalLeavesContainer: true });

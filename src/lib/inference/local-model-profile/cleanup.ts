@@ -916,28 +916,27 @@ function cleanupLlamaCpp(
     requireManagedLlamaCppPrivateAuthority(paths, options.expectedPrivateAuthority);
     journalStore.retire(journal.transactionId);
     executionOwnership.assert();
+    requirePrivateManagedState(paths, deps.currentUserId);
+    const finalReceipt = loadManagedLlamaCppReceipt(paths);
+    if (
+      JSON.stringify(loadManagedLlamaCppOwner(paths)) !== JSON.stringify(owner) ||
+      (receipt === null
+        ? finalReceipt !== null
+        : finalReceipt === null ||
+          serializeHostLocalInferenceReceipt(finalReceipt) !==
+            serializeHostLocalInferenceReceipt(receipt)) ||
+      serializedManagedLlamaCppPersistedAuthority(paths) !== persistedAuthority ||
+      journalStore.list().length !== 0
+    ) {
+      throw new Error("managed llama.cpp state changed during exact cleanup");
+    }
+    requireManagedLlamaCppStaticState(paths, options.expectedPrivateAuthority);
+    fs.rmSync(paths.stateDir, { recursive: true });
+    removed.push(`state:${paths.stateDir}`);
+    return true;
   } finally {
     executionOwnership.release();
   }
-
-  requirePrivateManagedState(paths, deps.currentUserId);
-  const finalReceipt = loadManagedLlamaCppReceipt(paths);
-  if (
-    JSON.stringify(loadManagedLlamaCppOwner(paths)) !== JSON.stringify(owner) ||
-    (receipt === null
-      ? finalReceipt !== null
-      : finalReceipt === null ||
-        serializeHostLocalInferenceReceipt(finalReceipt) !==
-          serializeHostLocalInferenceReceipt(receipt)) ||
-    serializedManagedLlamaCppPersistedAuthority(paths) !== persistedAuthority ||
-    journalStore.list().length !== 0
-  ) {
-    throw new Error("managed llama.cpp state changed during exact cleanup");
-  }
-  requireManagedLlamaCppStaticState(paths, options.expectedPrivateAuthority);
-  fs.rmSync(paths.stateDir, { recursive: true });
-  removed.push(`state:${paths.stateDir}`);
-  return true;
 }
 
 export interface ManagedLlamaCppSandboxCleanupOptions {

@@ -503,6 +503,20 @@ async function destroySandboxUnlocked(
     (registeredSandbox.provider === "llama-cpp-local" &&
       !registeredSandbox.hostLocalInferenceProvenance)
   ) {
+    /**
+     * SOURCE_OF_TRUTH
+     * Invalid state: the sandbox registry row is absent after a partial destroy,
+     * but private managed llama.cpp owner state still requires exact cleanup.
+     * Source boundary: destroy qualifies that private owner, journal, and Docker
+     * operation before crossing the OpenShell sandbox-delete boundary.
+     * Source-fix constraint: destroy cannot reconstruct the missing registry row
+     * or safely select a Docker daemon after deletion, so it may use only the
+     * retained private authority and must fail closed when qualification fails.
+     * Regression proof: destroy-flow.test.ts proves registry-absent preparation
+     * and completion without post-delete authority discovery.
+     * Removal condition: remove this recovery path when sandbox registry
+     * retirement and private managed-runtime retirement are one durable action.
+     */
     try {
       // Fresh Docker qualification reads ambient DOCKER_CONTEXT, DOCKER_HOST,
       // or Docker's persisted currentContext. Pin that selection before
