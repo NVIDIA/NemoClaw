@@ -41,6 +41,9 @@
     "description": {
       "type": "string"
     },
+    "openshell_target": {
+      "$ref": "#/$defs/externalOpenShellTarget"
+    },
     "components": {
       "type": "object",
       "required": ["sandbox", "inference"],
@@ -140,6 +143,71 @@
     }
   },
   "$defs": {
+    "externalOpenShellTarget": {
+      "type": "object",
+      "description": "Explicit externally managed OpenShell gateway target for target-only planning.",
+      "required": [
+        "endpoint",
+        "workspace",
+        "expected_release",
+        "lifecycle",
+        "trust",
+        "authentication"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "pattern": "^https://",
+          "description": "Bare HTTPS gateway origin without credentials, path, query, or fragment."
+        },
+        "workspace": {
+          "type": "string",
+          "pattern": "^(?!.*--)[a-z]([a-z0-9-]*[a-z0-9])?$",
+          "maxLength": 19
+        },
+        "expected_release": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "lifecycle": {
+          "const": "external"
+        },
+        "trust": {
+          "type": "object",
+          "required": ["ca_file"],
+          "additionalProperties": false,
+          "properties": {
+            "ca_file": { "type": "string", "minLength": 1 }
+          }
+        },
+        "authentication": {
+          "oneOf": [
+            { "$ref": "#/$defs/externalOpenShellMtlsAuthentication" },
+            { "$ref": "#/$defs/externalOpenShellOidcAuthentication" }
+          ]
+        }
+      }
+    },
+    "externalOpenShellMtlsAuthentication": {
+      "type": "object",
+      "required": ["kind", "client_certificate_file", "client_key_file"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "mtls" },
+        "client_certificate_file": { "type": "string", "minLength": 1 },
+        "client_key_file": { "type": "string", "minLength": 1 }
+      }
+    },
+    "externalOpenShellOidcAuthentication": {
+      "type": "object",
+      "required": ["kind", "token_file"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "oidc" },
+        "token_file": { "type": "string", "minLength": 1 }
+      }
+    },
     "inferenceProfile": {
       "type": "object",
       "required": ["provider_type", "endpoint"],
