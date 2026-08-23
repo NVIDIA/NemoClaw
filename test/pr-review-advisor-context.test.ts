@@ -14,7 +14,7 @@ import {
   type OpenPrOverlap,
 } from "../tools/pr-review-advisor/github-context.mts";
 import { buildSystemPrompt } from "../tools/pr-review-advisor/trusted-guidance.mts";
-import { loadAdvisorSchema, ROOT } from "./helpers/pr-review-advisor-test-fixtures.ts";
+import { ROOT } from "./helpers/pr-review-advisor-test-fixtures.ts";
 
 describe("PR review advisor", () => {
   afterEach(() => {
