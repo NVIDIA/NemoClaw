@@ -927,8 +927,11 @@ function resolveOpenClawPairingSettlementTarget(
   } catch {
     return null;
   }
-  const version = normalizedString(entry.agentVersion);
   const expectedVersion = normalizedString(agent.expected_version);
+  // Custom --from images intentionally do not claim an agent version. Use the
+  // repository-pinned OpenClaw version only to select the known pairing-state
+  // schema; lifecycle generation and live identity still bind the runtime.
+  const version = normalizedString(entry.agentVersion) ?? expectedVersion;
   const stateDirectory = normalizedString(agent.config?.dir);
   const lifecycleGeneration = normalizedString(entry.lifecycleGeneration);
   const lifecycleLiveIdentityFingerprint = normalizedString(entry.lifecycleLiveIdentityFingerprint);

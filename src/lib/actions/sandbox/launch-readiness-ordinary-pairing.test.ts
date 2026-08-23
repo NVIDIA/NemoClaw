@@ -57,6 +57,21 @@ describe("ordinary OpenClaw pairing target", () => {
     });
   });
 
+  it("uses the trusted OpenClaw version for a custom --from runtime (#10014)", () => {
+    vi.mocked(deps.getSandbox!).mockReturnValue({
+      ...openClawEntry(),
+      agentVersion: null,
+    });
+
+    expect(resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME, deps)).toEqual({
+      gatewayName: GATEWAY_NAME,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: FINGERPRINT,
+      stateDirectory: "/sandbox/.openclaw",
+      version: loadAgent("openclaw").expected_version,
+    });
+  });
+
   it("resolves ordinary pairing after a supported policy-skip onboarding (#9817)", () => {
     vi.mocked(deps.getSandbox!).mockReturnValue({
       ...openClawEntry(),

@@ -174,8 +174,8 @@ function defaultPairingSettlementDeps(): OrdinaryOpenClawPairingSettlementDeps {
 }
 
 /**
- * Wait for the startup watcher to publish one canonical CLI pairing. When the
- * device has only its pairing scope, request and approve the write scope once.
+ * Run one bounded request producer, then wait for one canonical CLI pairing.
+ * When the device has only its pairing scope, approve the write scope once.
  * A final read verifies the exact device and no pending request for that device.
  */
 export async function settleOrdinaryOpenClawPairing(
@@ -198,6 +198,20 @@ export async function settleOrdinaryOpenClawPairing(
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
           const settlementDeadline = deps.now() + OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS;
+
+          // A valid non-interactive path can reach finalization before the
+          // startup watcher publishes its first CLI request. Run the accepted,
+          // bounded direct request producer once before waiting for canonical
+          // state. Approval and the final exact-device observation remain the
+          // only completion authority (#10014).
+          try {
+            await deps.runWarmup(name);
+          } catch {
+            // The bounded observation below remains fail closed.
+          }
+          if (!samePairingTarget(target, deps.getTarget(name))) {
+            return { kind: "incomplete", reason: "runtime-identity-invalid" };
+          }
           const pairingAppearanceDeadline = Math.min(
             settlementDeadline,
             deps.now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
@@ -224,16 +238,7 @@ export async function settleOrdinaryOpenClawPairing(
             return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
           }
 
-          let warmupFailed = false;
-          try {
-            await deps.runWarmup(name);
-          } catch {
-            warmupFailed = true;
-          }
-          if (!samePairingTarget(target, deps.getTarget(name))) {
-            return { kind: "incomplete", reason: "runtime-identity-invalid" };
-          }
-          if (warmupFailed || deps.now() >= settlementDeadline) {
+          if (deps.now() >= settlementDeadline) {
             return { kind: "incomplete", reason: "scope-upgrade-incomplete" };
           }
 
