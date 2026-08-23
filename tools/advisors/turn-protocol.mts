@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
+const MAX_TERMINAL_SUBMIT_ATTEMPTS_WITH_REPAIR = 5;
 
 export type AdvisorContextToolContentType = "diff" | "json" | "text";
 
@@ -53,7 +54,7 @@ export type AdvisorPromptTurn = {
   atomicTerminalRepairPrompt?: string;
   /**
    * Terminal submit tool that may follow context, reads, prose, and other active draft tools.
-   * With repair enabled, the turn permits up to three attempts with exactly one success.
+   * With repair enabled, the turn permits up to five attempts with exactly one success.
    * Only failed duplicate submit calls may follow a success.
    */
   terminalSubmitToolName?: string;
@@ -266,7 +267,7 @@ function terminalSubmitToolErrors(
 ): string[] {
   const counts = terminalToolEventCounts(events, toolName);
   const minimumAttempts = repaired ? 2 : 1;
-  const maximumAttempts = repaired ? 3 : 1;
+  const maximumAttempts = repaired ? MAX_TERMINAL_SUBMIT_ATTEMPTS_WITH_REPAIR : 1;
   const errors: string[] = [];
   if (counts.starts !== counts.completions) {
     errors.push(
@@ -534,7 +535,12 @@ export function repairableTerminalSubmitToolName(
   const sequence = terminalSubmitAttemptSequence(events, toolName);
   if (sequence.malformed || sequence.unsettled) return undefined;
   const counts = terminalToolEventCounts(events, toolName);
-  if (counts.starts !== counts.completions || counts.starts > 3) return undefined;
+  if (
+    counts.starts !== counts.completions ||
+    counts.starts >= MAX_TERMINAL_SUBMIT_ATTEMPTS_WITH_REPAIR
+  ) {
+    return undefined;
+  }
   if (counts.successfulCompletions !== 0) return undefined;
   if (counts.failedCompletions !== counts.starts) return undefined;
   return toolName;
@@ -554,7 +560,7 @@ export function hasCompletedTerminalSubmitRepair(
     !sequence.malformed &&
     !sequence.unsettled &&
     sequence.outcomes.length >= 2 &&
-    sequence.outcomes.length <= 3 &&
+    sequence.outcomes.length <= MAX_TERMINAL_SUBMIT_ATTEMPTS_WITH_REPAIR &&
     sequence.outcomes.filter((outcome) => outcome === "successful").length === 1 &&
     !hasActivityAfterSuccessfulTerminalSubmit(events, toolName)
   );

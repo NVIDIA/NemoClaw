@@ -262,7 +262,7 @@ describe("advisor session context tool flow", () => {
     },
   );
 
-  it.each([0, 1, 2, 3])(
+  it.each([0, 1, 2, 3, 4])(
     "repairs a submit after %i settled failed attempt(s) (#9963)",
     (failureCount) => {
       const { turn, tools } = terminalSubmitRepairContract();
@@ -276,11 +276,11 @@ describe("advisor session context tool flow", () => {
     },
   );
 
-  it("does not repair a submit after four settled failed attempts (#9963)", () => {
+  it("does not repair a submit after five settled failed attempts (#9963)", () => {
     const { turn, tools } = terminalSubmitRepairContract();
-    const fourFailures = Array.from({ length: 4 }, () => [ledgerStart, ledgerFailure]).flat();
+    const fiveFailures = Array.from({ length: 5 }, () => [ledgerStart, ledgerFailure]).flat();
     expect(
-      repairableTerminalSubmitToolName(turn, fourFailures, tools, new Set(), undefined),
+      repairableTerminalSubmitToolName(turn, fiveFailures, tools, new Set(), undefined),
     ).toBeUndefined();
   });
 
@@ -294,13 +294,42 @@ describe("advisor session context tool flow", () => {
 
   it.each([
     {
-      events: [ledgerStart, ledgerSuccess, ledgerStart, ledgerFailure, ledgerStart, ledgerFailure],
+      events: [
+        ledgerStart,
+        ledgerSuccess,
+        ...Array.from({ length: 4 }, () => [ledgerStart, ledgerFailure]).flat(),
+      ],
     },
     {
-      events: [ledgerStart, ledgerFailure, ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess],
+      events: [
+        ...Array.from({ length: 4 }, () => [ledgerStart, ledgerFailure]).flat(),
+        ledgerStart,
+        ledgerSuccess,
+      ],
     },
-  ])("accepts up to two failed duplicate submits around one success (#9963)", ({ events }) => {
+  ])("accepts up to four failed duplicate submits around one success (#9963)", ({ events }) => {
     const { turn, tools } = terminalSubmitRepairContract();
+    expect(hasCompletedTerminalSubmitRepair(turn, events, tools, undefined)).toBe(true);
+    expect(advisorTurnFlowErrors("prepare", events, tools, true)).toEqual([]);
+  });
+
+  it("ignores a read observation after a successful terminal submit (#9963)", () => {
+    const { turn, tools } = terminalSubmitRepairContract();
+    const events: AdvisorTurnFlowEvent[] = [
+      ledgerStart,
+      ledgerFailure,
+      ledgerStart,
+      ledgerSuccess,
+      {
+        type: "read",
+        path: "/workspace/review.jsonl",
+        offset: 1,
+        endOffset: 1,
+        fileSize: 2,
+        reachesEnd: true,
+      },
+    ];
+
     expect(hasCompletedTerminalSubmitRepair(turn, events, tools, undefined)).toBe(true);
     expect(advisorTurnFlowErrors("prepare", events, tools, true)).toEqual([]);
   });
@@ -334,16 +363,11 @@ describe("advisor session context tool flow", () => {
     ["the second attempt is unsettled", [ledgerStart, ledgerFailure, ledgerStart]],
     ["attempt events overlap", [ledgerStart, ledgerStart, ledgerFailure, ledgerSuccess]],
     [
-      "four attempts are made",
+      "six attempts are made",
       [
         ledgerStart,
         ledgerSuccess,
-        ledgerStart,
-        ledgerFailure,
-        ledgerStart,
-        ledgerFailure,
-        ledgerStart,
-        ledgerFailure,
+        ...Array.from({ length: 5 }, () => [ledgerStart, ledgerFailure]).flat(),
       ],
     ],
     [

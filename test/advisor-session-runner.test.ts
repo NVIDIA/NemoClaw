@@ -15,6 +15,8 @@ const sdk = vi.hoisted(() => {
     | "fail-once"
     | "fail-twice"
     | "fail-thrice"
+    | "fail-four-times"
+    | "fail-four-times-then-success"
     | "fail-twice-then-success"
     | "fail-then-success"
     | "success";
@@ -23,6 +25,8 @@ const sdk = vi.hoisted(() => {
     "fail-once": { failureCount: 1, succeeds: false },
     "fail-twice": { failureCount: 2, succeeds: false },
     "fail-thrice": { failureCount: 3, succeeds: false },
+    "fail-four-times": { failureCount: 4, succeeds: false },
+    "fail-four-times-then-success": { failureCount: 4, succeeds: true },
     "fail-twice-then-success": { failureCount: 2, succeeds: true },
     "fail-then-success": { failureCount: 1, succeeds: true },
     success: { failureCount: 0, succeeds: true },
@@ -83,6 +87,22 @@ const sdk = vi.hoisted(() => {
     emit({ type: "tool_execution_end", toolName: tool.name, isError: true });
   };
 
+  const executeReadTool = async (tool: MockTool, target: string, emit: Listener): Promise<void> => {
+    emit({ type: "tool_execution_start", toolName: tool.name });
+    try {
+      await tool.execute(
+        `${tool.name}-call`,
+        { path: target } as never,
+        undefined,
+        undefined,
+        undefined as never,
+      );
+      emit({ type: "tool_execution_end", toolName: tool.name, isError: false });
+    } catch {
+      emit({ type: "tool_execution_end", toolName: tool.name, isError: true });
+    }
+  };
+
   const executeContextTool = async (contextTool: MockTool, emit: Listener): Promise<void> => {
     emit({ type: "tool_execution_start", toolName: contextTool.name });
     try {
@@ -135,6 +155,13 @@ const sdk = vi.hoisted(() => {
         await (contextTool && !state.omitContextTool
           ? executeContextTool(contextTool, emit)
           : Promise.resolve());
+        const requiredReadPath = /^- (.+)$/mu.exec(prompt.split("Required files:\n")[1] ?? "")?.[1];
+        const readTool = state.customTools.find(
+          (tool) => requiredReadPath && activeToolNames.includes(tool.name) && tool.name === "read",
+        );
+        await (readTool && requiredReadPath
+          ? executeReadTool(readTool, requiredReadPath, emit)
+          : Promise.resolve());
         const repairTools = state.customTools.filter(
           (tool) => isRepairPrompt && activeToolNames.includes(tool.name) && tool !== terminalTool,
         );
@@ -178,6 +205,7 @@ const sdk = vi.hoisted(() => {
         const shouldEmitText =
           !omitThisAnalysis &&
           retryResponse !== "exhausted" &&
+          !prompt.startsWith("Prepare ") &&
           (!prompt.includes("Emit no prose before or after") ||
             (state.emitCommitProse && !isRepairPrompt) ||
             (state.emitRepairProse && isRepairPrompt));
@@ -294,9 +322,10 @@ function commitTurn(name: string): AdvisorPromptTurn {
   };
 }
 
-async function run(promptTurns: AdvisorPromptTurn[]) {
+async function run(promptTurns: AdvisorPromptTurn[], prepare?: (directory: string) => void) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-session-runner-"));
   tempDirs.push(dir);
+  prepare?.(dir);
   process.env.TEST_ADVISOR_KEY = "test-key";
   return runReadOnlyAdvisor({
     cwd: dir,
@@ -434,6 +463,15 @@ describe("advisor session runner", () => {
     expect(sdk.state.prompts).toHaveLength(2);
   });
 
+  it("repairs four failed initial submit attempts (#9963)", async () => {
+    sdk.state.terminalResponses = ["fail-four-times", "success"];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.raw).toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
   it("accepts one failed submit followed by one same-turn success (#9630)", async () => {
     sdk.state.terminalResponses = ["fail-then-success"];
     const result = await run([submitTurn("prepare-and-submit")]);
@@ -452,6 +490,66 @@ describe("advisor session runner", () => {
     expect(result.turnErrors).toEqual([]);
     expect(result.raw).not.toContain("terminal_submit_repair_start");
     expect(sdk.state.prompts).toHaveLength(1);
+  });
+
+  it("accepts four failed submits followed by one same-turn success (#9963)", async () => {
+    sdk.state.terminalResponses = ["fail-four-times-then-success"];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).not.toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(1);
+  });
+
+  it("deduplicates relative aliases before required-read preparation (#9963)", async () => {
+    sdk.state.terminalResponses = ["success"];
+    const result = await run(
+      [
+        {
+          ...submitTurn("prepare-and-submit"),
+          requiredReadPaths: ["required.txt", "./required.txt"],
+        },
+      ],
+      (directory) => fs.writeFileSync(path.join(directory, "required.txt"), "required\n", "utf8"),
+    );
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).toContain("required_read_preparation_end prepare-and-submit ok");
+  });
+
+  it("accepts an empty required file at EOF (#9963)", async () => {
+    const requiredReadTurn: AdvisorPromptTurn = {
+      name: "read-empty",
+      prompt: "Analyze the required file.",
+      requiredReadPaths: ["empty.txt"],
+      requireAssistantText: true,
+    };
+    const result = await run([requiredReadTurn], (directory) =>
+      fs.writeFileSync(path.join(directory, "empty.txt"), "", "utf8"),
+    );
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).toContain("required_read_preparation_end read-empty ok");
+  });
+
+  it("rejects a required read outside the workspace (#9963)", async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-required-read-outside-"));
+    tempDirs.push(outside);
+    const outsideFile = path.join(outside, "outside.txt");
+    fs.writeFileSync(outsideFile, "outside\n", "utf8");
+
+    await expect(
+      run([
+        {
+          name: "read-outside",
+          prompt: "Analyze the required file.",
+          requiredReadPaths: [outsideFile],
+        },
+      ]),
+    ).rejects.toThrow("outside the workspace");
   });
 
   it("allows one failed initial submit followed by one repair success", async () => {
