@@ -62,15 +62,16 @@ export type DockerGpuPatchFinalizeOutcome = {
   replacementPresence?: "absent" | "present" | "unknown";
 };
 
-function stoppedReplacementIsSoleLabeledContainer(
+function isSoleLabeledReplacement(
   sandboxName: string,
   replacementContainerId: string,
   dockerRun: NonNullable<DockerGpuPatchDeps["dockerRun"]>,
+  timeoutMs: number,
 ): boolean {
   const expectedContainerId = fullDockerContainerId(replacementContainerId);
-  if (!expectedContainerId) return false;
+  if (!expectedContainerId || timeoutMs <= 0) return false;
   try {
-    const containers = queryOpenShellDockerSandboxContainers(sandboxName, { dockerRun });
+    const containers = queryOpenShellDockerSandboxContainers(sandboxName, { dockerRun }, timeoutMs);
     return (
       containers.ok &&
       containers.ids.length === 1 &&
@@ -127,11 +128,12 @@ export function finalizeDockerGpuPatchBackup(
         ? waitForOpenShellSandboxLifecycleRelease(sandboxName, lifecycleReleaseTimeoutSecs, {
             runOpenshell: deps.runOpenshell,
             sleep: deps.sleep,
-            stoppedReplacementOwnsError: () =>
-              stoppedReplacementIsSoleLabeledContainer(
+            soleLabeledReplacementCorroboratesError: (remainingMs) =>
+              isSoleLabeledReplacement(
                 sandboxName,
                 options.result.newContainerId,
                 resolved.dockerRun,
+                remainingMs,
               ),
           })
         : false;
