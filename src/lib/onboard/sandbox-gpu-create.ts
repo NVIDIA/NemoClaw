@@ -21,6 +21,11 @@ export function buildSandboxGpuCreateArgs(
 export function normalizeSandboxGpuDeviceForCdi(device: string | null | undefined): string | null {
   const selector = String(device ?? "").trim();
   if (!selector) return null;
+  if (selector === "nvidia.com/gpu=") {
+    throw new Error(
+      "NVIDIA GPU CDI device name must include an identifier after 'nvidia.com/gpu='.",
+    );
+  }
   return selector.startsWith("nvidia.com/gpu=") ? selector : `nvidia.com/gpu=${selector}`;
 }
 

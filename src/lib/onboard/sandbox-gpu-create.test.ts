@@ -37,6 +37,13 @@ describe("sandbox GPU create helpers", () => {
     expect(normalizeSandboxGpuDeviceForCdi(selector)).toBe(expected);
   });
 
+  it.each(["nvidia.com/gpu=", "nvidia.com/gpu=   "])(
+    "rejects empty CDI device identifier %j",
+    (selector) => {
+      expect(() => normalizeSandboxGpuDeviceForCdi(selector)).toThrow("must include an identifier");
+    },
+  );
+
   it("keeps the default sandbox readiness timeout unless explicitly overridden", () => {
     expect(getSandboxReadyTimeoutSecs({ sandboxGpuEnabled: false }, {}, "linux")).toBe(180);
     expect(getSandboxReadyTimeoutSecs({ sandboxGpuEnabled: true }, {}, "linux")).toBe(180);
