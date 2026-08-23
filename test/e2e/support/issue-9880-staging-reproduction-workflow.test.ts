@@ -10,6 +10,7 @@ import YAML from "yaml";
 import {
   cleanupIssue9880Fixtures,
   issue9880Fixture,
+  waitForIssue9880RemoteScript,
 } from "../../helpers/brev-launchable-issue-9880-fixture.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
@@ -165,6 +166,36 @@ describe("the staging Launchable reproduces the bounded OpenClaw CLI scenario", 
     },
     10_000,
   );
+
+  it("removes the credential-bearing remote script after termination (#9880)", async () => {
+    const fixture = issue9880Fixture();
+    const child = fixture.start({
+      BREV_EXEC_TIMEOUT_SECONDS: "2",
+      FAKE_EXEC_SUCCEEDS: "1",
+      FAKE_SCENARIO_BLOCKS: "1",
+      NVIDIA_API_KEY: "nvapi-interrupt-test-secret",
+    });
+    const remoteFiles = await waitForIssue9880RemoteScript(fixture.root);
+    expect(remoteFiles, await new Promise<string>((resolve) => {
+      let output = "";
+      child.stdout?.on("data", (chunk) => { output += chunk.toString(); });
+      child.stderr?.on("data", (chunk) => { output += chunk.toString(); });
+      setTimeout(() => resolve(output), 20);
+    })).toHaveLength(1);
+
+    child.kill("SIGTERM");
+    await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+
+    expect(fs.readdirSync(fixture.root).filter((file) => file.startsWith("issue-9880-remote."))).toEqual([]);
+    const retainedSecret = fs
+      .readdirSync(fixture.root, { recursive: true })
+      .filter((entry): entry is string => typeof entry === "string")
+      .some((entry) => {
+        const file = path.join(fixture.root, entry);
+        return fs.statSync(file).isFile() && fs.readFileSync(file, "utf8").includes("nvapi-interrupt-test-secret");
+      });
+    expect(retainedSecret).toBe(false);
+  }, 10_000);
 
   it("caps poll sleep to the remaining Brev exec deadline (#9880)", () => {
     const fixture = issue9880Fixture();

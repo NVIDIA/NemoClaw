@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +14,15 @@ function executable(file: string, source: string): void {
   fs.writeFileSync(file, source, { mode: 0o755 });
 }
 
+export async function waitForIssue9880RemoteScript(root: string): Promise<string[]> {
+  for (let attempt = 0; attempt < 250; attempt += 1) {
+    const files = fs.readdirSync(root).filter((file) => file.startsWith("issue-9880-remote."));
+    if (files.length > 0) return files;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return [];
+}
+
 export function cleanupIssue9880Fixtures(): void {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 }
@@ -22,6 +31,8 @@ export function issue9880Fixture(): {
   calls: string;
   env: NodeJS.ProcessEnv;
   run: (overrides?: NodeJS.ProcessEnv, args?: string[]) => ReturnType<typeof spawnSync>;
+  start: (overrides?: NodeJS.ProcessEnv, args?: string[]) => ReturnType<typeof spawn>;
+  root: string;
   state: string;
   workDir: string;
 } {
@@ -47,10 +58,6 @@ if [ "${"$"}{FAKE_BLOCK_COMMAND:-}" = "brev exec" ] && [ "${"$"}{1:-} ${"$"}{2:-
   /bin/sleep "${"$"}{duration%s}"
   exit 124
 fi
-if [ "${"$"}{FAKE_BLOCK_COMMAND:-}" = ssh ] && [ "${"$"}{1:-}" = ssh ]; then
-  /bin/sleep "${"$"}{duration%s}"
-  exit 124
-fi
 exec "$@"
 `,
   );
@@ -59,13 +66,6 @@ exec "$@"
     String.raw`#!/usr/bin/env bash
 printf 'sleep %s\n' "$1" >> "$FAKE_CALLS"
 /bin/sleep "$1"
-`,
-  );
-  executable(
-    path.join(bin, "ssh"),
-    String.raw`#!/usr/bin/env bash
-printf 'ssh %s\n' "$*" >> "$FAKE_CALLS"
-exit 34
 `,
   );
   executable(
@@ -84,7 +84,15 @@ case "${"$"}{1:-}" in
     printf '%s\n' '{"name":"issue-9880-test","id":"ws-1","status":"RUNNING","shell_status":"READY","build_status":"COMPLETED"}' > "$FAKE_STATE" ;;
   refresh) exit 0 ;;
   exec)
-    if [ "${"$"}{FAKE_EXEC_SUCCEEDS:-0}" = 1 ]; then exit 0; fi
+    if [ "${"$"}{3:-}" = true ] && [ "${"$"}{FAKE_EXEC_SUCCEEDS:-0}" = 1 ]; then exit 0; fi
+    if [[ "${"$"}{3:-}" == @* ]] && [ "${"$"}{FAKE_SCENARIO_BLOCKS:-0}" = 1 ]; then
+      /bin/sleep 30
+      exit 0
+    fi
+    if [[ "${"$"}{3:-}" == "set -euo pipefail"* ]]; then
+      printf '%s\n' '{"sourceRepository":"NVIDIA/NemoClaw","sourcePath":"/opt/nemoclaw-image/NemoClaw","provisionSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","imageRepositorySha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","repoSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bootImage":"projects/brevdevprod/global/images/nemoclaw-test-image","repoClean":true,"runtimeOverrides":false}'
+      exit 0
+    fi
     exit 34 ;;
   delete) rm -f "$FAKE_STATE" ;;
   *) exit 2 ;;
@@ -117,6 +125,7 @@ fi
     PATH: `${bin}:${process.env.PATH ?? ""}`,
     BREV_LAUNCHABLE_ID: "env-staging123",
     FAKE_BLOCK_COMMAND: "",
+    FAKE_EXEC_SUCCEEDS: "0",
     FAKE_CALLS: calls,
     FAKE_STATE: state,
     GH_TOKEN: "github-test-token",
@@ -130,6 +139,7 @@ fi
   return {
     calls,
     env,
+    root,
     state,
     workDir,
     run: (overrides = {}, args = []) =>
@@ -137,6 +147,11 @@ fi
         encoding: "utf8",
         env: { ...env, ...overrides },
         timeout: 20_000,
+      }),
+    start: (overrides = {}, args = []) =>
+      spawn("bash", [SCRIPT, ...args], {
+        env: { ...env, ...overrides },
+        stdio: ["ignore", "pipe", "pipe"],
       }),
   };
 }

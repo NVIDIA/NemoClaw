@@ -119,7 +119,6 @@ require BREV_LAUNCHABLE_ID
 require GH_TOKEN
 require NVIDIA_API_KEY
 command -v gh >/dev/null 2>&1 || fail "gh is required"
-command -v ssh >/dev/null 2>&1 || fail "ssh is required"
 [[ "$BREV_LAUNCHABLE_ID" =~ ^env-[A-Za-z0-9]+$ ]] || fail "BREV_LAUNCHABLE_ID is invalid"
 for name in BREV_EXEC_TIMEOUT_SECONDS POLL_SECONDS; do
   value="${!name:-}"
@@ -217,6 +216,8 @@ log "Verified standing Launchable runtime identity before credential exposure"
 raw_log="$(mktemp "${RUNNER_TEMP:-/tmp}/issue-9880.XXXXXX")"
 remote_script="$(mktemp "${RUNNER_TEMP:-/tmp}/issue-9880-remote.XXXXXX")"
 chmod 600 "$raw_log" "$remote_script"
+cleanup_remote_script() { rm -f -- "$remote_script"; }
+trap cleanup_remote_script EXIT INT TERM
 {
   printf 'export NVIDIA_INFERENCE_API_KEY=%q\n' "$NVIDIA_API_KEY"
   cat <<'REMOTE'
@@ -297,7 +298,9 @@ set +e
 timeout --signal=TERM --kill-after=10s 900s brev exec "$INSTANCE_NAME" "@$remote_script" >"$raw_log" 2>&1
 scenario_status=$?
 set -e
-rm -f -- "$remote_script"
+cleanup_remote_script
+trap - EXIT INT TERM
+remote_script=""
 redact_file "$raw_log" "$WORK_DIR/issue-9880.log"
 
 classification="completed"
