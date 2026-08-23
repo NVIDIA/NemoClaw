@@ -28,6 +28,7 @@ const PROVIDER_NEUTRAL_MANAGED_RUNTIME_MODULES = [
   "src/lib/actions/sandbox/destroy-presence.ts",
   "src/lib/actions/sandbox/launch-readiness.ts",
   "src/lib/actions/sandbox/process-recovery.ts",
+  "src/lib/actions/sandbox/snapshot/backup-authority.ts",
   "src/lib/actions/sandbox/rebuild-flow-helpers.ts",
   "src/lib/actions/sandbox/sandbox-gateway-routing.ts",
   "src/lib/actions/sandbox/status-preflight.ts",
@@ -47,8 +48,12 @@ const PROVIDER_NEUTRAL_MANAGED_RUNTIME_MODULES = [
   "src/lib/onboard/host-service-reachability.ts",
   "src/lib/onboard/managed-workload/hermes-state-volume.ts",
   "src/lib/onboard/sandbox-create/orchestration.ts",
+  "src/lib/adapters/sandbox/command-transport.ts",
+  "src/lib/sandbox/config.ts",
+  "src/lib/sandbox/privileged-exec.ts",
   "src/lib/shields/hermes-runtime-state-mutation.ts",
   "src/lib/shields/index.ts",
+  "src/lib/shields/mutable-config-repair.ts",
   "src/lib/state/registry/lifecycle-generation.ts",
 ] as const;
 

@@ -281,8 +281,10 @@ export function createHermesShieldsProviderConsumerHarness(
       ]),
     registrySpy,
     vi
-      .spyOn(privilegedExec, "privilegedSandboxExecArgv")
-      .mockImplementation((_sandboxName: unknown, command: unknown) => command as string[]),
+      .spyOn(privilegedExec, "capturePrivilegedSandboxCommand")
+      .mockImplementation((_sandboxName: unknown, command: unknown) =>
+        Buffer.from(dockerExec.dockerExecFileSync(command as string[])),
+      ),
     verifyLockSpy,
     vi.spyOn(console, "log").mockImplementation(() => undefined),
     vi.spyOn(console, "error").mockImplementation(() => undefined),

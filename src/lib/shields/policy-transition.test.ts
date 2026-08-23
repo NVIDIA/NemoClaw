@@ -68,9 +68,7 @@ describe("shields policy transition", () => {
       },
       stateLockPlanInImage: false,
     });
-    vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(
-      (_sandboxName: unknown, cmd: unknown) => cmd as string[],
-    );
+    vi.spyOn(privilegedExec, "capturePrivilegedSandboxCommand").mockReturnValue(Buffer.alloc(0));
     vi.spyOn(dockerExec, "dockerExecFileSync").mockReturnValue("");
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -553,39 +551,40 @@ describe("shields config lock without a shipped config hash", () => {
     resolveAgentConfigSpy = vi
       .spyOn(agentConfig, "resolveAgentConfig")
       .mockImplementation(() => target());
-    vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(
-      (_sandboxName: unknown, cmd: unknown) => cmd as string[],
+    vi.spyOn(privilegedExec, "capturePrivilegedSandboxCommand").mockImplementation(
+      (_sandboxName: unknown, cmd: unknown) => Buffer.from(runSandboxCommand(cmd as string[])),
     );
     vi.spyOn(dockerExec, "dockerExecFileSync").mockImplementation((cmd: unknown) =>
       runSandboxCommand(cmd as string[]),
     );
-    vi.spyOn(dockerExec, "dockerSpawnSync").mockImplementation((rawCommand: unknown) => {
-      const command = Array.isArray(rawCommand) ? rawCommand.map(String) : [];
-      const action = (["preflight", "lock", "unlock"] as const).find((candidate) =>
-        command.includes(candidate),
-      );
-      const handler =
-        stateDirGuardCommandHandlers.get(String(action ?? command[0])) ??
-        (() => unsupportedCommand(command));
-      handler();
+    vi.spyOn(privilegedExec, "executePrivilegedSandboxCommand").mockImplementation(
+      (_sandboxName: unknown, rawCommand: unknown) => {
+        const command = Array.isArray(rawCommand) ? rawCommand.map(String) : [];
+        const action = (["preflight", "lock", "unlock"] as const).find((candidate) =>
+          command.includes(candidate),
+        );
+        const handler =
+          stateDirGuardCommandHandlers.get(String(action ?? command[0])) ??
+          (() => unsupportedCommand(command));
+        handler();
 
-      return {
-        status: 0,
-        signal: null,
-        stdout:
-          action === undefined
-            ? ""
-            : `${JSON.stringify({
-                type: "result",
-                action,
-                status: "ok",
-                issueCount: 0,
-              })}\n`,
-        stderr: "",
-        pid: 0,
-        output: [],
-      } as never;
-    });
+        return {
+          status: 0,
+          signal: null,
+          stdout: Buffer.from(
+            action === undefined
+              ? ""
+              : `${JSON.stringify({
+                  type: "result",
+                  action,
+                  status: "ok",
+                  issueCount: 0,
+                })}\n`,
+          ),
+          stderr: Buffer.alloc(0),
+        } as never;
+      },
+    );
     vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]);
     applyStateDirLockModeSpy = vi.spyOn(stateDirLock, "applyStateDirLockMode").mockReturnValue([]);
     restoreStateDirLockPostureSpy = vi.spyOn(stateDirLock, "restoreStateDirLockPosture");
@@ -629,26 +628,31 @@ describe("shields config lock without a shipped config hash", () => {
       "rollback-failed",
       "  CRITICAL: Deep Agents config lock transaction could not restore its original posture. Restore this sandbox from a trusted snapshot or recreate it before retrying. rollback failed",
     ],
-  ] as const)("maps the anchored %s child protocol to exact bounded guidance (#7995)", (status, expectedGuidance) => {
-    const stderr =
-      status === "sandbox-parent" ? Buffer.from(lockFailure(status), "utf8") : lockFailure(status);
-    commandHandlers.set(
-      "python3",
-      rejectConfigLock(
-        sandboxCommandFailure(
-          stderr,
-          `hostile argv marker ${lockFailure("incomplete")}`,
-          lockFailure("config-root"),
+  ] as const)(
+    "maps the anchored %s child protocol to exact bounded guidance (#7995)",
+    (status, expectedGuidance) => {
+      const stderr =
+        status === "sandbox-parent"
+          ? Buffer.from(lockFailure(status), "utf8")
+          : lockFailure(status);
+      commandHandlers.set(
+        "python3",
+        rejectConfigLock(
+          sandboxCommandFailure(
+            stderr,
+            `hostile argv marker ${lockFailure("incomplete")}`,
+            lockFailure("config-root"),
+          ),
         ),
-      ),
-    );
+      );
 
-    expect(() => shields.lockAgentConfig("dcode-safety", target(), false)).toThrow(
-      DEEP_AGENTS_LOCK_GENERIC_ERROR,
-    );
-    expect(errorSpy).toHaveBeenCalledWith(expectedGuidance);
-    expect(errorSpy).toHaveBeenCalledTimes(1);
-  });
+      expect(() => shields.lockAgentConfig("dcode-safety", target(), false)).toThrow(
+        DEEP_AGENTS_LOCK_GENERIC_ERROR,
+      );
+      expect(errorSpy).toHaveBeenCalledWith(expectedGuidance);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("accepts transaction-failed without inventing a containment or rollback claim (#7995)", () => {
     commandHandlers.set(
@@ -758,54 +762,57 @@ describe("shields config lock without a shipped config hash", () => {
         format: "json",
       }),
     ],
-  ])("pins expired inline recovery to Deep Agents when the registry %s (#7995)", (_scenario, resolveTarget) => {
-    const sandboxName = "dcode-safety";
-    const stateDir = path.join(homeDir, ".nemoclaw", "state");
-    const snapshotPath = path.join(stateDir, "policy-snapshot-inline-recovery.yaml");
-    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
-    fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n", { mode: 0o600 });
-    fs.writeFileSync(
-      path.join(stateDir, `shields-${sandboxName}.json`),
-      JSON.stringify({
-        shieldsDown: true,
-        shieldsDownAt: new Date(Date.now() - 120_000).toISOString(),
-        shieldsDownTimeout: 60,
-        shieldsDownReason: "identity coverage",
-        shieldsDownPolicy: "permissive",
-        shieldsPolicySnapshotPath: snapshotPath,
-      }),
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      markerPath,
-      JSON.stringify({
-        pid: 4242,
-        sandboxName,
-        snapshotPath,
-        restoreAt: new Date(Date.now() - 30_000).toISOString(),
-        processToken: "7".repeat(32),
-        agentName: "langchain-deepagents-code",
-        configPath: CONFIG_PATH,
-        configDir: CONFIG_DIR,
-      }),
-      { mode: 0o600 },
-    );
-    vi.spyOn(process, "kill").mockImplementation(reportMissingTimerProcess);
-    resolveAgentConfigSpy.mockImplementation(resolveTarget);
+  ])(
+    "pins expired inline recovery to Deep Agents when the registry %s (#7995)",
+    (_scenario, resolveTarget) => {
+      const sandboxName = "dcode-safety";
+      const stateDir = path.join(homeDir, ".nemoclaw", "state");
+      const snapshotPath = path.join(stateDir, "policy-snapshot-inline-recovery.yaml");
+      const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n", { mode: 0o600 });
+      fs.writeFileSync(
+        path.join(stateDir, `shields-${sandboxName}.json`),
+        JSON.stringify({
+          shieldsDown: true,
+          shieldsDownAt: new Date(Date.now() - 120_000).toISOString(),
+          shieldsDownTimeout: 60,
+          shieldsDownReason: "identity coverage",
+          shieldsDownPolicy: "permissive",
+          shieldsPolicySnapshotPath: snapshotPath,
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        markerPath,
+        JSON.stringify({
+          pid: 4242,
+          sandboxName,
+          snapshotPath,
+          restoreAt: new Date(Date.now() - 30_000).toISOString(),
+          processToken: "7".repeat(32),
+          agentName: "langchain-deepagents-code",
+          configPath: CONFIG_PATH,
+          configDir: CONFIG_DIR,
+        }),
+        { mode: 0o600 },
+      );
+      vi.spyOn(process, "kill").mockImplementation(reportMissingTimerProcess);
+      resolveAgentConfigSpy.mockImplementation(resolveTarget);
 
-    const posture = shields.getShieldsPosture(sandboxName, true);
-    const state = JSON.parse(
-      fs.readFileSync(path.join(stateDir, `shields-${sandboxName}.json`), "utf-8"),
-    );
+      const posture = shields.getShieldsPosture(sandboxName, true);
+      const state = JSON.parse(
+        fs.readFileSync(path.join(stateDir, `shields-${sandboxName}.json`), "utf-8"),
+      );
 
-    expect(posture.mode).toBe("locked");
-    expect(lockCalls).toHaveLength(2);
-    expect(lockCalls.every((command) => command[4] === CONFIG_DIR)).toBe(true);
-    expect(lockCalls.every((command) => command[5] === CONFIG_PATH)).toBe(true);
-    expect(Object.keys(state.fileHashes)).toEqual([CONFIG_PATH, HASH_PATH]);
-    expect(fs.existsSync(markerPath)).toBe(false);
-  });
+      expect(posture.mode).toBe("locked");
+      expect(lockCalls).toHaveLength(2);
+      expect(lockCalls.every((command) => command[4] === CONFIG_DIR)).toBe(true);
+      expect(lockCalls.every((command) => command[5] === CONFIG_PATH)).toBe(true);
+      expect(Object.keys(state.fileHashes)).toEqual([CONFIG_PATH, HASH_PATH]);
+      expect(fs.existsSync(markerPath)).toBe(false);
+    },
+  );
 
   it("restores the managed sandbox parent when the config is unlocked", () => {
     entries.set(CONFIG_DIR, { mode: "755", owner: "root:root" });

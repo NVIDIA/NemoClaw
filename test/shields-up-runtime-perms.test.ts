@@ -129,8 +129,20 @@ Module._load = function patchedLoad(request, parent, isMain) {
   }
   if (request === "../sandbox/privileged-exec") {
     return {
-      privilegedSandboxExecArgv(_sandboxName, cmd) {
-        return [...cmd];
+      capturePrivilegedSandboxCommand(_sandboxName, cmd) {
+        const docker = Module._load("../adapters/docker/exec", parent, isMain);
+        return Buffer.from(docker.dockerExecFileSync([...cmd]));
+      },
+      executePrivilegedSandboxCommand(_sandboxName, cmd) {
+        const docker = Module._load("../adapters/docker/exec", parent, isMain);
+        const result = docker.dockerSpawnSync([...cmd]);
+        return {
+          status: result.status,
+          signal: result.signal,
+          stdout: Buffer.from(result.stdout || ""),
+          stderr: Buffer.from(result.stderr || ""),
+          ...(result.error ? { error: result.error } : {}),
+        };
       },
       withPrivilegedSandboxExecutionLease(_sandboxName, _operation, fn) {
         return fn();
@@ -222,19 +234,19 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
     expect(HERMES_STATE_LOCK_PLAN.writableSubpaths).toEqual(["profiles/dashboard-home"]);
   });
 
-  it.each([
-    "extensions",
-    "agent",
-  ])("surfaces a recursive guard refusal for a symlinked %s root", (root) => {
-    const unsafePath = `/sandbox/.openclaw/${root}`;
-    const result = runLockAgentConfigProbe({ stateDirIssuePath: unsafePath });
+  it.each(["extensions", "agent"])(
+    "surfaces a recursive guard refusal for a symlinked %s root",
+    (root) => {
+      const unsafePath = `/sandbox/.openclaw/${root}`;
+      const result = runLockAgentConfigProbe({ stateDirIssuePath: unsafePath });
 
-    expect(result.status).toBe(2);
-    expect(result.stderr).toContain("Config not locked");
-    expect(result.stderr).toContain("state-dir guard lock [state-root-symlink]");
-    expect(result.stderr).toContain(unsafePath);
-    expect(result.stderr).toContain("state-dir roots must not be symlinks");
-  });
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("Config not locked");
+      expect(result.stderr).toContain("state-dir guard lock [state-root-symlink]");
+      expect(result.stderr).toContain(unsafePath);
+      expect(result.stderr).toContain("state-dir roots must not be symlinks");
+    },
+  );
 
   it("preserves the top-level seal when recursive containment refuses", () => {
     const result = runLockAgentConfigProbe({

@@ -4,6 +4,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import type { PodmanBoundContainerEngine } from "../../adapters/podman";
@@ -13,7 +14,6 @@ import {
   getDockerDriverGatewayRuntimeMarkerPath,
   parseDockerDriverGatewayRuntimeMarker,
   readDockerDriverGatewayRuntimeMarker,
-  resolveDockerDriverGatewayStateDir,
   writeDockerDriverGatewayPidFile,
   writeDockerDriverGatewayRuntimeMarker,
   type DockerDriverGatewayRuntimeMarker,
@@ -26,6 +26,7 @@ import {
 import { shouldOmitOpenShellOciImageUser } from "../docker-gpu-patch-clone";
 import type { DockerContainerInspect } from "../docker-gpu-patch-types";
 import { openshellSandboxCommandEnvValue } from "../docker-startup-command-env";
+import { resolveGatewayName, resolveGatewayStateDirName } from "../gateway-binding";
 import type { ManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import type { RuntimeProviderBootstrapSurface } from "../runtime-provider/contract";
 import {
@@ -108,6 +109,9 @@ const REPLACEMENT_OBSERVATION_TIMEOUT_MS = 30_000;
 const REPLACEMENT_OBSERVATION_INTERVAL_SECONDS = 0.25;
 const OPENSHELL_TOKEN_SECRET_PREFIX = "openshell-token-";
 const OPENSHELL_PROXY_SECRET_PREFIX = "openshell-proxy-auth-";
+const OPENSHELL_WORKSPACE_VOLUME_PREFIX = "openshell-sandbox-";
+const OPENSHELL_WORKSPACE_VOLUME_SUFFIX = "-workspace";
+const OPENSHELL_WORKSPACE_DIRECTORY = "/sandbox";
 const PERSISTABLE_ENVIRONMENT_KEYS = new Set([
   "HOME",
   "LANG",
@@ -637,6 +641,70 @@ export function renderPodmanReplacementMountArgs(inspect: JsonRecord): string[] 
   return args;
 }
 
+function exactPodmanManagedWorkspaceVolume(
+  inspect: JsonRecord,
+  sandboxId: string,
+): { readonly name: string; readonly mountpoint: string } {
+  const expectedName = `${OPENSHELL_WORKSPACE_VOLUME_PREFIX}${sandboxId}${OPENSHELL_WORKSPACE_VOLUME_SUFFIX}`;
+  if (!SAFE_RESOURCE_NAME.test(expectedName) || !Array.isArray(inspect.Mounts)) {
+    throw new Error("Managed bootstrap Podman workspace-volume identity is invalid.");
+  }
+  const matches = inspect.Mounts.map((value) => record(value, "mount")).filter(
+    (mount) => mount.Destination === OPENSHELL_WORKSPACE_DIRECTORY,
+  );
+  if (matches.length !== 1) {
+    throw new Error("Managed bootstrap Podman workspace must resolve to one exact mount.");
+  }
+  const mount = matches[0] as JsonRecord;
+  const mountpoint = String(mount.Source ?? "");
+  if (
+    mount.Type !== "volume" ||
+    mount.Name !== expectedName ||
+    mount.RW !== true ||
+    (mount.Driver !== undefined && mount.Driver !== "" && mount.Driver !== "local") ||
+    !path.isAbsolute(mountpoint) ||
+    path.normalize(mountpoint) !== mountpoint ||
+    mountpoint === path.parse(mountpoint).root
+  ) {
+    throw new Error("Managed bootstrap Podman workspace-volume authority is invalid.");
+  }
+  return Object.freeze({ name: expectedName, mountpoint });
+}
+
+/** Restore the image contract on OpenShell's exact persistent Podman workspace root. */
+export function preparePodmanManagedWorkspaceAuthority(input: {
+  readonly engine: PodmanBoundContainerEngine;
+  readonly inspect: JsonRecord;
+  readonly sandboxId: string;
+  readonly agentGid: number;
+}): void {
+  const workspace = exactPodmanManagedWorkspaceVolume(input.inspect, input.sandboxId);
+  const inspected = capture(
+    input.engine,
+    ["volume", "inspect", "--format", "{{.Name}}\n{{.Mountpoint}}", workspace.name],
+    "workspace-volume inspection",
+    15_000,
+  ).stdout.trimEnd();
+  if (inspected !== `${workspace.name}\n${workspace.mountpoint}`) {
+    throw new Error("Managed bootstrap Podman workspace-volume mountpoint identity changed.");
+  }
+  const prepare = input.engine.prepareManagedWorkspaceRoot;
+  if (!prepare) {
+    throw new Error("Managed bootstrap Podman workspace-root preparation is unavailable.");
+  }
+  const receipt = prepare({ path: workspace.mountpoint, gid: input.agentGid });
+  if (
+    receipt.path !== workspace.mountpoint ||
+    receipt.uid !== 0 ||
+    receipt.gid !== input.agentGid ||
+    receipt.mode !== 0o1775 ||
+    !/^\d+$/u.test(receipt.device) ||
+    !/^\d+$/u.test(receipt.inode)
+  ) {
+    throw new Error("Managed bootstrap Podman workspace-root receipt is invalid.");
+  }
+}
+
 function exactSecretTarget(value: string, label: string): string {
   if (
     !path.isAbsolute(value) ||
@@ -775,6 +843,15 @@ function processState(pid: number): string | null {
 function processInstanceAlive(snapshot: PodmanGatewayWatcherSnapshot): boolean {
   const state = processState(snapshot.pid);
   if (state === null || state === "X" || state === "Z") return false;
+  try {
+    return processStartIdentity(snapshot.pid) === snapshot.processStartIdentity;
+  } catch {
+    return false;
+  }
+}
+
+function processInstanceSuspended(snapshot: PodmanGatewayWatcherSnapshot): boolean {
+  if (processState(snapshot.pid) !== "T") return false;
   try {
     return processStartIdentity(snapshot.pid) === snapshot.processStartIdentity;
   } catch {
@@ -1094,12 +1171,14 @@ function readStandaloneGatewayLaunch(
   });
 }
 
-function waitForProcessExit(pid: number): void {
+function waitForProcessQuiescence(snapshot: PodmanGatewayWatcherSnapshot): void {
   for (let attempt = 0; attempt < 300; attempt += 1) {
-    if (processState(pid) === null || ["X", "Z"].includes(processState(pid) ?? "")) return;
+    const state = processState(snapshot.pid);
+    if (state === null || state === "X" || state === "Z") return;
+    if (processInstanceSuspended(snapshot)) return;
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
   }
-  throw new Error("Managed bootstrap Podman gateway owner did not stop.");
+  throw new Error("Managed bootstrap Podman gateway owner did not quiesce.");
 }
 
 function listenerPids(port: number): readonly number[] {
@@ -1121,11 +1200,29 @@ function listenerPids(port: number): readonly number[] {
   );
 }
 
+/** Resolve the name and state directory that own one native Podman gateway port. */
+export function resolvePodmanManagedGatewayAuthority(
+  environment: NodeJS.ProcessEnv,
+  gatewayPort: number,
+  gatewayName?: string,
+  homeDir: string = environment.HOME || os.homedir(),
+): { readonly gatewayName: string; readonly stateDir: string } {
+  const configured = environment.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
+  const stateDir =
+    configured && configured.trim()
+      ? path.resolve(configured.trim())
+      : path.join(homeDir, ".local", "state", "nemoclaw", resolveGatewayStateDirName(gatewayPort));
+  return Object.freeze({
+    gatewayName: gatewayName ?? resolveGatewayName(gatewayPort),
+    stateDir,
+  });
+}
+
 function createProductionWatcherController(
   options: PodmanManagedBootstrapAdapterOptions,
+  authority: ReturnType<typeof resolvePodmanManagedGatewayAuthority>,
 ): PodmanManagedGatewayWatcherController {
-  const gatewayName = options.gatewayName ?? "nemoclaw";
-  const stateDir = resolveDockerDriverGatewayStateDir(options.environment);
+  const { gatewayName, stateDir } = authority;
   const pidFile = path.join(stateDir, "openshell-gateway.pid");
   const markerFile = getDockerDriverGatewayRuntimeMarkerPath(stateDir);
   const standaloneLaunchFile = path.join(options.stateRoot, STANDALONE_LAUNCH_FILE);
@@ -1235,6 +1332,7 @@ function createProductionWatcherController(
           }) === null
         );
       }
+      if (processInstanceSuspended(snapshot)) return true;
       return !listTargetWatchers().some(
         (candidate) =>
           candidate.ownerKind === snapshot.ownerKind &&
@@ -1254,8 +1352,8 @@ function createProductionWatcherController(
         }
         return;
       }
-      process.kill(snapshot.pid, "SIGTERM");
-      waitForProcessExit(snapshot.pid);
+      process.kill(snapshot.pid, "SIGSTOP");
+      waitForProcessQuiescence(snapshot);
     },
     resumeSameOwner(snapshot) {
       if (snapshot.ownerKind === "managed-service") {
@@ -1267,6 +1365,10 @@ function createProductionWatcherController(
         if (!started.attempted || !started.started) {
           throw new Error(started.reason ?? "Managed Podman gateway service did not resume.");
         }
+        return;
+      }
+      if (processInstanceSuspended(snapshot)) {
+        process.kill(snapshot.pid, "SIGCONT");
         return;
       }
       const launch =
@@ -1289,7 +1391,9 @@ function createProductionWatcherController(
     },
     isHealthy(snapshot) {
       return (
-        processInstanceAlive(snapshot) && listenerPids(options.gatewayPort).includes(snapshot.pid)
+        processInstanceAlive(snapshot) &&
+        !processInstanceSuspended(snapshot) &&
+        listenerPids(options.gatewayPort).includes(snapshot.pid)
       );
     },
   });
@@ -1513,7 +1617,13 @@ export function createPodmanManagedBootstrapAdapter(
     throw new Error("Managed bootstrap Podman requires an operation-scoped engine.");
   }
   const journalStore = createFilePodmanBootstrapJournalStore(options.stateRoot);
-  const watcherController = options.watcherController ?? createProductionWatcherController(options);
+  const gatewayAuthority = resolvePodmanManagedGatewayAuthority(
+    options.environment,
+    options.gatewayPort,
+    options.gatewayName,
+  );
+  const watcherController =
+    options.watcherController ?? createProductionWatcherController(options, gatewayAuthority);
   const transactions = new Map<string, TransactionState>();
 
   return Object.freeze({
@@ -1822,6 +1932,12 @@ export function createPodmanManagedBootstrapAdapter(
         prepared: current.prepared,
         watcherLease: current.watcherLease,
       });
+      preparePodmanManagedWorkspaceAuthority({
+        engine: options.engine,
+        inspect: current.rawInspect,
+        sandboxId: current.held.sandboxId,
+        agentGid: snapshot.agentIdentity.gid,
+      });
       current.watcherLease.resumeForObservationAndProve();
       current.imageTransaction = startPodmanBootstrapImageTransaction({
         engine: options.engine,
@@ -1879,7 +1995,7 @@ export function createPodmanManagedBootstrapAdapter(
         runtimeId: current.prepared.replacementRuntimeId,
         sandboxName: handle.sandbox.sandboxName,
         sandboxId: handle.sandbox.sandboxId,
-        gatewayName: options.gatewayName ?? "nemoclaw",
+        gatewayName: gatewayAuthority.gatewayName,
         runCaptureOpenshell,
         ...(options.sleep ? { sleep: options.sleep } : {}),
       });

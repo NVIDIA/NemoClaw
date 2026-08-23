@@ -33,6 +33,7 @@ import type {
   PodmanInferenceQualificationOptions,
 } from "./podman-preflight";
 import { startPodmanSandbox, stopPodmanSandbox } from "./podman-lifecycle";
+import { createPodmanPrivilegedSandboxControl } from "./podman-privileged-sandbox-control";
 import {
   inspectPodmanHost,
   type PodmanHostPreflightOptions,
@@ -320,6 +321,7 @@ export function createPodmanRuntimeProviderBundle(
       providerId,
       supported: true,
       channelStopTransport: "openshell",
+      privilegedSandboxControl: createPodmanPrivilegedSandboxControl(sandboxLifecycle),
       start: (input) => startPodmanSandbox(input, sandboxLifecycle),
       verifyStarted: (input, verifyGateway) => verifyGateway(input.sandboxName),
       stop: (input, hooks) => stopPodmanSandbox(input, hooks, sandboxLifecycle),

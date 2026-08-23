@@ -22,6 +22,10 @@ const ORIGINAL = Object.freeze({
   pid: 4_100,
   processStartIdentity: "proc-start-100",
 } as const satisfies PodmanGatewayWatcherSnapshot);
+const STANDALONE_ORIGINAL = Object.freeze({
+  ...ORIGINAL,
+  ownerKind: "standalone" as const,
+});
 const RESUMED = Object.freeze({
   ...ORIGINAL,
   pid: 4_200,
@@ -46,16 +50,23 @@ function record(
   });
 }
 
-function harness(overrides: Partial<PodmanManagedGatewayWatcherControllerDeps> = {}) {
+function harness(
+  overrides: Partial<PodmanManagedGatewayWatcherControllerDeps> = {},
+  options: {
+    readonly initial?: PodmanGatewayWatcherSnapshot;
+    readonly retainQuiescedProcess?: boolean;
+  } = {},
+) {
+  const initial = options.initial ?? ORIGINAL;
   let durable: PodmanGatewayWatcherLeaseRecord | null = null;
   let holderAlive = true;
   let ownerStopped = false;
   let resumeCount = 0;
-  let watchers: PodmanGatewayWatcherSnapshot[] = [ORIGINAL];
-  const alive = new Set(["4100:proc-start-100"]);
-  const healthy = new Set(["4100:proc-start-100"]);
   const key = (entry: PodmanGatewayWatcherSnapshot) =>
     `${String(entry.pid)}:${entry.processStartIdentity}`;
+  let watchers: PodmanGatewayWatcherSnapshot[] = [initial];
+  const alive = new Set([key(initial)]);
+  const healthy = new Set([key(initial)]);
   const writes: PodmanGatewayWatcherLeaseRecord[] = [];
   const store = {
     read: vi.fn(() => durable),
@@ -74,13 +85,21 @@ function harness(overrides: Partial<PodmanManagedGatewayWatcherControllerDeps> =
       durable = null;
     }),
   };
-  const stopExactOwner = vi.fn((entry: PodmanGatewayWatcherSnapshot = ORIGINAL) => {
-    alive.delete(key(entry));
+  const stopExactOwner = vi.fn((entry: PodmanGatewayWatcherSnapshot = initial) => {
     healthy.delete(key(entry));
-    watchers = [];
+    if (!options.retainQuiescedProcess) {
+      alive.delete(key(entry));
+      watchers = [];
+    }
     ownerStopped = true;
   });
   const resumeSameOwner = vi.fn(() => {
+    if (options.retainQuiescedProcess && watchers.length === 1) {
+      const retained = watchers[0] as PodmanGatewayWatcherSnapshot;
+      ownerStopped = false;
+      healthy.add(key(retained));
+      return;
+    }
     const resumed = resumeCount++ === 0 ? RESUMED : RESUMED_AGAIN;
     ownerStopped = false;
     watchers = [resumed];
@@ -89,7 +108,7 @@ function harness(overrides: Partial<PodmanManagedGatewayWatcherControllerDeps> =
   });
   const deps: PodmanManagedGatewayWatcherControllerDeps = {
     store,
-    captureCurrent: () => ORIGINAL,
+    captureCurrent: () => initial,
     captureLeaseHolder: () => HOLDER,
     listTargetWatchers: () => watchers,
     isProcessInstanceAlive: (entry) => alive.has(key(entry)),
@@ -171,6 +190,27 @@ describe("durable Podman OpenShell watcher lease", () => {
     lease.resumeAndProve();
     expect(fake.resumeSameOwner).toHaveBeenCalledTimes(2);
     expect(fake.stopExactOwner).toHaveBeenCalledTimes(2);
+    expect(fake.durable()).toBeNull();
+  });
+
+  it("suspends and resumes one exact standalone watcher without replacing its process", () => {
+    const fake = harness({}, { initial: STANDALONE_ORIGINAL, retainQuiescedProcess: true });
+    const lease = fake.controller.quiesceAndProve();
+
+    expect(fake.watchers()).toEqual([STANDALONE_ORIGINAL]);
+    expect(fake.alive).toContain("4100:proc-start-100");
+    expect(fake.healthy).not.toContain("4100:proc-start-100");
+    lease.assertStillStopped();
+
+    lease.resumeForObservationAndProve();
+    expect(fake.watchers()).toEqual([STANDALONE_ORIGINAL]);
+    expect(fake.healthy).toContain("4100:proc-start-100");
+
+    lease.requiesceAndProve();
+    lease.resumeAndProve();
+    expect(fake.stopExactOwner).toHaveBeenCalledTimes(2);
+    expect(fake.resumeSameOwner).toHaveBeenCalledTimes(2);
+    expect(fake.watchers()).toEqual([STANDALONE_ORIGINAL]);
     expect(fake.durable()).toBeNull();
   });
 

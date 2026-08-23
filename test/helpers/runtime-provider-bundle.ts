@@ -176,6 +176,18 @@ export function createInMemoryRuntimeProviderBundle({
       providerId,
       supported: true,
       channelStopTransport: "openshell",
+      privilegedSandboxControl: {
+        resolveTarget: ({ sandboxName }) => ({
+          providerId,
+          resourceHandle: `in-memory:${sandboxName}`,
+        }),
+        execute: () => ({
+          status: 0,
+          signal: null,
+          stdout: Buffer.alloc(0),
+          stderr: Buffer.alloc(0),
+        }),
+      },
       start(input: RuntimeProviderLifecycleInput) {
         state.running.add(input.sandboxName);
         event("start", input.sandboxName);

@@ -28,12 +28,9 @@ const { createHash, randomBytes } = require("crypto");
 const { CLI_NAME }: typeof import("../cli/branding") = require("../cli/branding");
 const { isObjectRecord }: typeof import("../core/json-types") = require("../core/json-types");
 const {
-  dockerExecFileSync,
-  dockerSpawnSync,
-}: typeof import("../adapters/docker/exec") = require("../adapters/docker/exec");
-const {
+  capturePrivilegedSandboxCommand,
+  executePrivilegedSandboxCommand,
   isDirectSandboxFallbackUnavailableError,
-  privilegedSandboxExecArgv,
   withPrivilegedSandboxExecutionLease,
 }: typeof import("../sandbox/privileged-exec") = require("../sandbox/privileged-exec");
 const {
@@ -816,8 +813,8 @@ function openClawRollbackIssue(prefix: string, error: unknown): OpenClawRollback
 
 function privilegedSandboxExec(sandboxName: string, cmd: string[], timeout = 15000): void {
   withPrivilegedSandboxExecutionLease(sandboxName, "shields privileged execution", () => {
-    dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd, false, true), {
-      stdio: ["ignore", "pipe", "pipe"],
+    capturePrivilegedSandboxCommand(sandboxName, cmd, {
+      sanitizeEnvironment: true,
       timeout,
     });
   });
@@ -825,10 +822,12 @@ function privilegedSandboxExec(sandboxName: string, cmd: string[], timeout = 150
 
 function privilegedSandboxExecCapture(sandboxName: string, cmd: string[], timeout = 15000): string {
   return withPrivilegedSandboxExecutionLease(sandboxName, "shields privileged capture", () =>
-    dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd, false, true), {
-      stdio: ["ignore", "pipe", "pipe"],
+    capturePrivilegedSandboxCommand(sandboxName, cmd, {
+      sanitizeEnvironment: true,
       timeout,
-    }).trim(),
+    })
+      .toString("utf8")
+      .trim(),
   );
 }
 
@@ -2174,20 +2173,17 @@ function stateDirLockExec(sandboxName: string) {
   return {
     run: (cmd: string[], input?: string) =>
       withPrivilegedSandboxExecutionLease(sandboxName, "state directory guard", () => {
-        const result = dockerSpawnSync(
-          privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined, true),
-          {
-            encoding: "utf-8",
-            input,
-            timeout: STATE_DIR_GUARD_TIMEOUT_MS,
-            maxBuffer: 16 * 1024 * 1024,
-          },
-        );
+        const result = executePrivilegedSandboxCommand(sandboxName, cmd, {
+          ...(input === undefined ? {} : { input }),
+          sanitizeEnvironment: true,
+          timeout: STATE_DIR_GUARD_TIMEOUT_MS,
+          maxOutputBytes: 16 * 1024 * 1024,
+        });
         return {
           status: result.status,
           signal: result.signal,
-          stdout: String(result.stdout ?? ""),
-          stderr: String(result.stderr ?? ""),
+          stdout: result.stdout.toString("utf8"),
+          stderr: result.stderr.toString("utf8"),
           ...(result.error ? { error: result.error.message } : {}),
         };
       }),
@@ -2201,20 +2197,17 @@ function openClawConfigGuardExec(sandboxName: string) {
         const timeout = cmd.includes("unlock-failed-startup")
           ? OPENCLAW_CONFIG_GUARD_RECOVERY_TIMEOUT_MS
           : OPENCLAW_CONFIG_GUARD_TIMEOUT_MS;
-        const result = dockerSpawnSync(
-          privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined, true),
-          {
-            encoding: "utf-8",
-            input,
-            timeout,
-            maxBuffer: 2 * 1024 * 1024,
-          },
-        );
+        const result = executePrivilegedSandboxCommand(sandboxName, cmd, {
+          ...(input === undefined ? {} : { input }),
+          sanitizeEnvironment: true,
+          timeout,
+          maxOutputBytes: 2 * 1024 * 1024,
+        });
         return {
           status: result.status,
           signal: result.signal,
-          stdout: String(result.stdout ?? ""),
-          stderr: String(result.stderr ?? ""),
+          stdout: result.stdout.toString("utf8"),
+          stderr: result.stderr.toString("utf8"),
           ...(result.error ? { error: result.error.message } : {}),
         };
       }),

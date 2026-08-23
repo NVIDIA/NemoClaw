@@ -20,6 +20,10 @@ import {
   observeSandboxOnGateway,
   type SandboxRecreateObserver,
 } from "../../onboard/sandbox-recreate-probe";
+import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  resolveRuntimeProviderBundle,
+} from "../../onboard/runtime-provider/access";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
 import {
@@ -66,7 +70,6 @@ import {
 export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/timing";
 
 const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
-const ALLOWED_OPENSHELL_DRIVERS = new Set(["docker", "kubernetes", "vm"]);
 
 export type LaunchReadinessPerformanceStage =
   | "storage-read"
@@ -487,7 +490,9 @@ export function buildLaunchReadinessRegistryProjection(
   portableRuntimeAuthoritySha256: string | null = null,
 ): unknown {
   const driver = normalizedString(entry.openshellDriver)?.toLowerCase() ?? null;
-  if (!driver || !ALLOWED_OPENSHELL_DRIVERS.has(driver)) throw new ObservationError("config");
+  if (!driver || !resolveRuntimeProviderBundle(driver, CURRENT_RUNTIME_PROVIDER_BUNDLES)) {
+    throw new ObservationError("config");
+  }
   const openshellVersion = normalizedString(entry.openshellVersion);
   const gatewayPort = entry.gatewayPort;
   if (!openshellVersion || openshellVersion.length > 128) throw new ObservationError("config");

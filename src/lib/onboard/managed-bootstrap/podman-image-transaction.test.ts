@@ -121,6 +121,7 @@ function preparedReplacement(
 interface HarnessOptions {
   readonly bootstrapLog?: string;
   readonly completionAgent?: ManagedStartupAgent;
+  readonly completionMissingAfterSuccessfulCopyCount?: number;
   readonly completionMode?: number;
   readonly completionUnavailableCount?: number;
   readonly inspectImage?: string;
@@ -206,9 +207,17 @@ function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
   };
   const copyCompletion = (destination: string): ContainerEngineCommandResult => {
     completionAttempts += 1;
-    return completionAttempts <= (options.completionUnavailableCount ?? 0)
-      ? result({ status: 1, stderr: "completion not found" })
-      : publishCompletion(destination);
+    const unavailable = options.completionUnavailableCount ?? 0;
+    if (completionAttempts <= unavailable) {
+      return result({ status: 1, stderr: "completion not found" });
+    }
+    if (
+      completionAttempts <=
+      unavailable + (options.completionMissingAfterSuccessfulCopyCount ?? 0)
+    ) {
+      return result();
+    }
+    return publishCompletion(destination);
   };
   const copy = (args: readonly string[], input?: Buffer): ContainerEngineCommandResult => {
     const source = args[2] as string;
@@ -365,6 +374,36 @@ describe("Podman image-owned bootstrap transaction", () => {
     );
 
     expect(completion.agent).toBe("openclaw");
+    expect(fake.completionAttempts()).toBe(2);
+  });
+
+  it("retries when Podman reports copy success before publishing the destination", () => {
+    const fake = harness("langchain-deepagents-code", {
+      completionMissingAfterSuccessfulCopyCount: 1,
+    });
+    const transaction = startPodmanBootstrapImageTransaction(
+      startInput("langchain-deepagents-code", fake),
+    );
+    let milliseconds = 0;
+    const completion = awaitPodmanBootstrapImageTransaction(
+      {
+        engine: fake.engine,
+        journalStore: fake.journalStore,
+        prepared: fake.prepared,
+        watcherLease: fake.watcher,
+        transaction,
+        timeoutSecs: 1,
+      },
+      {
+        now: () => new Date(milliseconds),
+        pollIntervalMs: 25,
+        sleep: (duration) => {
+          milliseconds += duration;
+        },
+      },
+    );
+
+    expect(completion.agent).toBe("langchain-deepagents-code");
     expect(fake.completionAttempts()).toBe(2);
   });
 

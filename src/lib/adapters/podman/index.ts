@@ -54,9 +54,23 @@ export interface PodmanContainerEngine extends ContainerEngine {
   readonly endpointAuthorityId: string;
 }
 
+export interface PodmanManagedWorkspaceRootReceipt {
+  readonly path: string;
+  readonly device: string;
+  readonly inode: string;
+  readonly uid: 0;
+  readonly gid: number;
+  readonly mode: 0o1775;
+}
+
 /** Podman engine whose exact socket and executable authority can be revalidated on demand. */
 export interface PodmanBoundContainerEngine extends PodmanContainerEngine {
   readonly assertAuthority: () => void;
+  /** Exact local user-namespace mutation available only to managed bootstrap. */
+  readonly prepareManagedWorkspaceRoot?: (input: {
+    readonly path: string;
+    readonly gid: number;
+  }) => PodmanManagedWorkspaceRootReceipt;
 }
 
 export function resolvePodmanExecutablePath(env: NodeJS.ProcessEnv = process.env): string {
@@ -223,8 +237,81 @@ export function createPodmanContainerEngine(
     assertAuthority: () => assertBoundAuthority(true),
   };
   if (!protectsRuntimeMutation) return Object.freeze(boundEngine);
+  const prepareManagedWorkspaceRoot = (input: {
+    readonly path: string;
+    readonly gid: number;
+  }): PodmanManagedWorkspaceRootReceipt => {
+    if (options.operation !== "managed-bootstrap") {
+      throw new Error("Podman workspace-root preparation requires managed-bootstrap authority.");
+    }
+    if (
+      !path.isAbsolute(input.path) ||
+      path.normalize(input.path) !== input.path ||
+      input.path === path.parse(input.path).root ||
+      fs.realpathSync(input.path) !== input.path
+    ) {
+      throw new Error("Podman managed workspace mountpoint is invalid.");
+    }
+    if (!Number.isSafeInteger(input.gid) || input.gid < 1 || input.gid > 2_147_483_647) {
+      throw new Error("Podman managed workspace group identity is invalid.");
+    }
+    const before = fs.lstatSync(input.path, { bigint: true });
+    if (!before.isDirectory() || before.isSymbolicLink() || before.nlink < 1n) {
+      throw new Error("Podman managed workspace mountpoint is not one stable directory.");
+    }
+    const runLocal = (args: readonly string[], action: string) => {
+      const result = boundEngine.captureHost(args, 15_000);
+      if (result.status !== 0 || result.error) {
+        const detail = (
+          result.stderr ||
+          result.stdout ||
+          result.error?.message ||
+          "unknown failure"
+        )
+          .replace(/\s+/gu, " ")
+          .trim()
+          .slice(-600);
+        throw new Error(
+          `Podman managed workspace ${action} failed (exit ${String(result.status)}): ${detail}`,
+        );
+      }
+      return result;
+    };
+    runLocal(
+      ["unshare", "chown", "--no-dereference", `0:${String(input.gid)}`, "--", input.path],
+      "ownership preparation",
+    );
+    runLocal(["unshare", "chmod", "1775", "--", input.path], "mode preparation");
+    const observed = runLocal(
+      ["unshare", "stat", "--format=%u:%g:%a:%F", "--", input.path],
+      "authority observation",
+    ).stdout.trim();
+    if (observed !== `0:${String(input.gid)}:1775:directory`) {
+      throw new Error(
+        `Podman managed workspace authority is invalid after preparation (${observed || "empty observation"}).`,
+      );
+    }
+    const after = fs.lstatSync(input.path, { bigint: true });
+    if (
+      !after.isDirectory() ||
+      after.isSymbolicLink() ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino
+    ) {
+      throw new Error("Podman managed workspace mountpoint changed during preparation.");
+    }
+    return Object.freeze({
+      path: input.path,
+      device: after.dev.toString(),
+      inode: after.ino.toString(),
+      uid: 0 as const,
+      gid: input.gid,
+      mode: 0o1775 as const,
+    });
+  };
   return Object.freeze({
     ...boundEngine,
+    ...(options.operation === "managed-bootstrap" ? { prepareManagedWorkspaceRoot } : {}),
     captureHost: () => {
       throw new Error(`Podman ${options.operation} forbids ambient host command capture.`);
     },

@@ -49,6 +49,7 @@ import {
 } from "./contract";
 import { createDockerLlamaCppHostLocalOperation } from "./docker-llama-cpp-operation";
 import { createDockerStateMutationSurface } from "./docker-state-mutation";
+import { createDockerPrivilegedSandboxControl } from "./docker-privileged-sandbox-control";
 import { createDockerRuntimeProviderSnapshotSurface } from "./snapshot";
 
 type DockerOpResult = { status?: number | null };
@@ -577,6 +578,7 @@ export function createDockerRuntimeProviderBundle(
       providerId,
       supported: true,
       channelStopTransport: "docker-kubectl-first",
+      privilegedSandboxControl: createDockerPrivilegedSandboxControl(),
       start: (input) => startDockerSandbox(input, deps),
       verifyStarted: (input, verifyGateway) => verifyGateway(input.sandboxName),
       stop: (input, hooks) => stopDockerSandbox(input, hooks, deps),

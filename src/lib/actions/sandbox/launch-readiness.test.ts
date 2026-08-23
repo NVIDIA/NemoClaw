@@ -1049,6 +1049,21 @@ describe("launch readiness validation", () => {
           ))).toBe(true);
   });
 
+  it("accepts qualification-registered runtime providers without a provider-name branch", () => {
+    const projection = buildLaunchReadinessRegistryProjection(
+      { ...sandbox, openshellDriver: "podman" },
+      loadAgent("openclaw"),
+    ) as { openshellDriver: string };
+
+    expect(projection.openshellDriver).toBe("podman");
+    expect(() =>
+      buildLaunchReadinessRegistryProjection(
+        { ...sandbox, openshellDriver: "unregistered-runtime" },
+        loadAgent("openclaw"),
+      ),
+    ).toThrow();
+  });
+
   it("binds current Portable lifecycle state into final readiness publication (#9207)", async () => {
     const currentDeps = deps();
     const runtimeAuthority = {

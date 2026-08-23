@@ -206,6 +206,43 @@ describe("Podman container engine command adapter", () => {
     );
   });
 
+  it("prepares one exact managed-bootstrap workspace root through Podman's user namespace", ({
+    onTestFinished,
+  }) => {
+    const directory = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-workspace-")),
+    );
+    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const capture = vi.fn<ContainerEngineCommandCapture>((_executable, args) => ({
+      status: 0,
+      stdout: args.includes("--format=%u:%g:%a:%F") ? "0:999:1775:directory\n" : "",
+      stderr: "",
+    }));
+    const engine = createPodmanContainerEngine({
+      operation: "managed-bootstrap",
+      socketAuthority: AUTHORITY,
+      executable: "/usr/bin/podman",
+      executableAuthorityDeps: executableAuthorityDeps(),
+      assertAuthority: vi.fn(),
+      capture,
+    });
+
+    expect(engine.prepareManagedWorkspaceRoot?.({ path: directory, gid: 999 })).toMatchObject({
+      path: directory,
+      uid: 0,
+      gid: 999,
+      mode: 0o1775,
+    });
+    expect(capture.mock.calls.map((call) => call[1])).toEqual([
+      ["unshare", "chown", "--no-dereference", "0:999", "--", directory],
+      ["unshare", "chmod", "1775", "--", directory],
+      ["unshare", "stat", "--format=%u:%g:%a:%F", "--", directory],
+    ]);
+    expect(() => engine.captureHost(["unshare", "id"])).toThrow(
+      "forbids ambient host command capture",
+    );
+  });
+
   it("shares only socket authority across real operation-scoped engines", () => {
     const common = {
       socketAuthority: AUTHORITY,

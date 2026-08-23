@@ -545,7 +545,18 @@ function tryCopyCompletion(
       DEFAULT_COMMAND_TIMEOUT_MS,
     );
     if (result.status !== 0) return { completion: null, status: result.status };
-    return { completion: readProtectedCompletion(file), status: result.status };
+    try {
+      return { completion: readProtectedCompletion(file), status: result.status };
+    } catch (error) {
+      // Podman can report a successful archive copy before its destination is
+      // visible to the host caller. Treat only that absent destination as an
+      // unpublished receipt and retain the existing bounded poll. All unsafe
+      // metadata and unstable-read failures remain fatal.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return { completion: null, status: result.status };
+      }
+      throw error;
+    }
   } finally {
     cleanupTempDir(file, COMPLETION_TEMP_PREFIX);
   }

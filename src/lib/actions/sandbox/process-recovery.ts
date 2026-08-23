@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomBytes } from "node:crypto";
-import { dockerSpawnSync } from "../../adapters/docker";
 import { stripAnsi } from "../../adapters/openshell/client";
 import {
   captureOpenshell,
@@ -27,7 +26,8 @@ import { ROOT, shellQuote } from "../../runner";
 import {
   isDirectSandboxFallbackUnavailableError,
   isPinnedSandboxContainerIdentityChangedError,
-  privilegedSandboxExecArgv,
+  executePrivilegedSandboxCommand as executeProviderPrivilegedSandboxCommand,
+  resolvePrivilegedSandboxTarget,
   withPrivilegedSandboxExecutionLease,
 } from "../../sandbox/privileged-exec";
 import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
@@ -102,12 +102,11 @@ function commandTransportDependencies(): CommandTransportDependencies {
     buildSandboxExecMarkedCommand,
     buildSubprocessEnv,
     captureSandboxSshConfig,
-    dockerSpawnSync,
+    executePrivilegedSandboxCommand: executeProviderPrivilegedSandboxCommand,
     extractSandboxExecCommandStdout,
     getOpenshellBinary,
     isDirectSandboxFallbackUnavailableError,
     openshellProbeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-    privilegedSandboxExecArgv,
     root: ROOT,
     withPrivilegedSandboxExecutionLease,
   };
@@ -164,19 +163,15 @@ export function executePrivilegedSandboxCommand(
     sandboxName,
     "sandbox process recovery controller",
     () => {
-      const argv = privilegedSandboxExecArgv(sandboxName, [...command], false, true);
-      const result = dockerSpawnSync(argv, {
-        cwd: ROOT,
-        encoding: "utf-8",
-        env: buildSubprocessEnv(),
-        stdio: ["ignore", "pipe", "pipe"],
+      const result = executeProviderPrivilegedSandboxCommand(sandboxName, command, {
+        sanitizeEnvironment: true,
         timeout,
       });
       if (result.error) return null;
       return {
         status: result.status ?? 1,
-        stdout: String(result.stdout || ""),
-        stderr: String(result.stderr || ""),
+        stdout: result.stdout.toString("utf8"),
+        stderr: result.stderr.toString("utf8"),
       };
     },
   );
@@ -206,26 +201,21 @@ function executeGatewaySupervisorActionPinned(
   const nonce = randomBytes(32).toString("hex");
   try {
     return withPrivilegedSandboxExecutionLease(sandboxName, `gateway supervisor ${action}`, () => {
-      const argv = privilegedSandboxExecArgv(
+      const targetContainerId =
+        expectedContainerId ?? resolvePrivilegedSandboxTarget(sandboxName).resourceHandle;
+      const result = executeProviderPrivilegedSandboxCommand(
         sandboxName,
         [MANAGED_GATEWAY_CONTROL_PATH, action, nonce],
-        false,
-        true,
-        expectedContainerId,
+        {
+          sanitizeEnvironment: true,
+          expectedResourceHandle: targetContainerId,
+          timeout,
+        },
       );
-      const controlPathIndex = argv.lastIndexOf(MANAGED_GATEWAY_CONTROL_PATH);
-      const targetContainerId = controlPathIndex > 0 ? argv[controlPathIndex - 1] : null;
-      const result = dockerSpawnSync(argv, {
-        cwd: ROOT,
-        encoding: "utf-8",
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout,
-      });
-      if (result.error) return null;
       const status = result.status ?? 1;
-      const stdout = String(result.stdout || "").trim();
-      let stderr = String(result.stderr || "").trim();
+      const stdout = result.stdout.toString("utf8").trim();
+      let stderr = result.stderr.toString("utf8").trim();
+      if (result.error) return null;
       const restartingContainerMatch = stderr.match(DOCKER_CONTAINER_RESTARTING_ERROR);
       const managedControlRestartingContainerId =
         status === 1 &&

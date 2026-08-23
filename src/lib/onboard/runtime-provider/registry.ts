@@ -422,6 +422,12 @@ function validateLifecycleSurface(providerId: string, surface: Record<string, un
     requireFunction(surface, "start", "lifecycle");
     requireFunction(surface, "verifyStarted", "lifecycle");
     requireFunction(surface, "stop", "lifecycle");
+    const control = requireOwnRecord(surface, "privilegedSandboxControl");
+    requireFunction(control, "resolveTarget", "lifecycle.privilegedSandboxControl");
+    requireFunction(control, "execute", "lifecycle.privilegedSandboxControl");
+    if (control.buildLegacyDockerArgv !== undefined) {
+      requireFunction(control, "buildLegacyDockerArgv", "lifecycle.privilegedSandboxControl");
+    }
   }
 }
 

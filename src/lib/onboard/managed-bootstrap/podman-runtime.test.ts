@@ -42,6 +42,8 @@ import {
   createPodmanManagedBootstrapSurface,
   finishCommittedPodmanBootstrap,
   observePodmanBootstrapReplacementReady,
+  preparePodmanManagedWorkspaceAuthority,
+  resolvePodmanManagedGatewayAuthority,
   renderPodmanReplacementEnvironment,
   renderPodmanReplacementHealthArgs,
   renderPodmanReplacementMountArgs,
@@ -178,6 +180,31 @@ function installCoordinatorMocks() {
 }
 
 describe("Podman managed-bootstrap runtime surface", () => {
+  it.each([
+    [8080, "nemoclaw", "openshell-docker-gateway"],
+    [18080, "nemoclaw-18080", "openshell-docker-gateway-18080"],
+  ])("binds gateway port %i to its runtime authority", (gatewayPort, gatewayName, stateDirName) => {
+    expect(resolvePodmanManagedGatewayAuthority({ HOME: "/home/test" }, gatewayPort)).toEqual({
+      gatewayName,
+      stateDir: `/home/test/.local/state/nemoclaw/${stateDirName}`,
+    });
+  });
+
+  it("preserves an explicit native gateway state-directory authority", () => {
+    expect(
+      resolvePodmanManagedGatewayAuthority(
+        {
+          HOME: "/home/test",
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: " /run/user/1000/nemoclaw-gateway ",
+        },
+        18080,
+      ),
+    ).toEqual({
+      gatewayName: "nemoclaw-18080",
+      stateDir: "/run/user/1000/nemoclaw-gateway",
+    });
+  });
+
   it("emits exact replacement health until OpenShell observes the sandbox as Ready", () => {
     let time = 0;
     const capture = vi.fn(() => ({
@@ -319,6 +346,58 @@ describe("Podman managed-bootstrap runtime surface", () => {
         ],
       }),
     ).toEqual(["--mount", `type=image,source=${image},destination=/opt/openshell/bin,rw=false`]);
+  });
+
+  it("restores the exact OpenShell named-volume workspace authority before replacement start", () => {
+    const mountpoint =
+      "/home/test/.local/share/containers/storage/volumes/openshell-sandbox-sandbox-alpha-workspace/_data";
+    const prepareManagedWorkspaceRoot = vi.fn(() => ({
+      path: mountpoint,
+      device: "8",
+      inode: "9001",
+      uid: 0 as const,
+      gid: 999,
+      mode: 0o1775 as const,
+    }));
+    const capture = vi.fn(() => ({
+      status: 0,
+      stdout: `openshell-sandbox-sandbox-alpha-workspace\n${mountpoint}\n`,
+      stderr: "",
+      error: undefined,
+    }));
+
+    preparePodmanManagedWorkspaceAuthority({
+      engine: { ...engine(), capture, prepareManagedWorkspaceRoot },
+      inspect: {
+        Mounts: [
+          {
+            Type: "volume",
+            Name: "openshell-sandbox-sandbox-alpha-workspace",
+            Driver: "local",
+            Source: mountpoint,
+            Destination: "/sandbox",
+            RW: true,
+          },
+        ],
+      },
+      sandboxId: "sandbox-alpha",
+      agentGid: 999,
+    });
+
+    expect(capture).toHaveBeenCalledExactlyOnceWith(
+      [
+        "volume",
+        "inspect",
+        "--format",
+        "{{.Name}}\n{{.Mountpoint}}",
+        "openshell-sandbox-sandbox-alpha-workspace",
+      ],
+      15_000,
+    );
+    expect(prepareManagedWorkspaceRoot).toHaveBeenCalledExactlyOnceWith({
+      path: mountpoint,
+      gid: 999,
+    });
   });
 
   it("reproduces the exact OpenShell Podman token secret on the replacement", () => {

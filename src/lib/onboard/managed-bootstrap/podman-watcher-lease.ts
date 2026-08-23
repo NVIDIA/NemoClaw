@@ -290,19 +290,31 @@ function assertStopped(
   receipt: Readonly<PodmanGatewayWatcherSnapshot>,
   deps: PodmanManagedGatewayWatcherControllerDeps,
 ): void {
-  if (deps.isProcessInstanceAlive(receipt)) {
-    throw new PodmanGatewayWatcherLeaseError(
-      "The captured OpenShell watcher process instance is still alive.",
-      true,
-    );
-  }
   if (!deps.isOwnerStopped(receipt)) {
     throw new PodmanGatewayWatcherLeaseError(
       "The captured OpenShell watcher lifecycle owner is not proven stopped.",
       true,
     );
   }
-  if (readTargetWatchers(receipt, deps).length !== 0) {
+  const watchers = readTargetWatchers(receipt, deps);
+  if (watchers.length === 0) {
+    if (deps.isProcessInstanceAlive(receipt)) {
+      throw new PodmanGatewayWatcherLeaseError(
+        "The captured OpenShell watcher process instance is still alive.",
+        true,
+      );
+    }
+    return;
+  }
+  const retained = watchers[0] as Readonly<PodmanGatewayWatcherSnapshot> | undefined;
+  if (
+    receipt.ownerKind !== "standalone" ||
+    watchers.length !== 1 ||
+    !retained ||
+    !sameProcessInstance(receipt, retained) ||
+    !deps.isProcessInstanceAlive(retained) ||
+    deps.isHealthy(retained)
+  ) {
     throw new PodmanGatewayWatcherLeaseError(
       "A target-bound OpenShell watcher appeared while the durable stop lease was held.",
       true,
@@ -359,7 +371,7 @@ function exactHealthyReplacement(
   receipt: Readonly<PodmanGatewayWatcherSnapshot>,
   deps: PodmanManagedGatewayWatcherControllerDeps,
 ): Readonly<PodmanGatewayWatcherSnapshot> | null {
-  if (deps.isProcessInstanceAlive(receipt) || deps.isOwnerStopped(receipt)) return null;
+  if (deps.isOwnerStopped(receipt)) return null;
   const watchers = readTargetWatchers(receipt, deps);
   if (watchers.length === 0) return null;
   if (watchers.length !== 1) {
@@ -392,20 +404,25 @@ function resumeAndProve(
   }
   if (existing.length === 1) {
     const current = existing[0] as Readonly<PodmanGatewayWatcherSnapshot>;
+    if (!sameLaunchOwner(receipt, current) || !deps.isProcessInstanceAlive(current)) {
+      throw new PodmanGatewayWatcherLeaseError(
+        "A target-bound OpenShell watcher exists without exact healthy owner proof.",
+        true,
+      );
+    }
+    if (!deps.isOwnerStopped(receipt) && deps.isHealthy(current)) return current;
     if (
-      !sameLaunchOwner(receipt, current) ||
-      deps.isOwnerStopped(receipt) ||
-      !deps.isProcessInstanceAlive(current) ||
-      !deps.isHealthy(current)
+      receipt.ownerKind !== "standalone" ||
+      !sameProcessInstance(receipt, current) ||
+      !deps.isOwnerStopped(receipt)
     ) {
       throw new PodmanGatewayWatcherLeaseError(
         "A target-bound OpenShell watcher exists without exact healthy owner proof.",
         true,
       );
     }
-    return current;
   }
-  if (!deps.isOwnerStopped(receipt)) {
+  if (existing.length === 0 && !deps.isOwnerStopped(receipt)) {
     throw new PodmanGatewayWatcherLeaseError(
       "The captured owner is neither stopped nor serving an exact healthy watcher.",
       true,

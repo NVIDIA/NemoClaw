@@ -206,6 +206,44 @@ export type RuntimeProviderLifecycleStopOutcome = RuntimeProviderLifecycleResult
   readonly state?: "already-stopped" | "stopped";
 };
 
+/** Opaque provider-owned identity for one observed sandbox runtime resource. */
+export interface RuntimeProviderPrivilegedSandboxTarget {
+  readonly providerId: string;
+  readonly resourceHandle: string;
+}
+
+export interface RuntimeProviderPrivilegedSandboxCommandInput {
+  readonly sandbox: SandboxEntry;
+  readonly sandboxName: string;
+  readonly command: readonly string[];
+  readonly input?: Buffer;
+  readonly sanitizeEnvironment: boolean;
+  readonly expectedResourceHandle?: string;
+  readonly timeoutMs: number;
+  readonly maxOutputBytes?: number;
+}
+
+export interface RuntimeProviderPrivilegedSandboxCommandResult {
+  readonly status: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly stdout: Buffer;
+  readonly stderr: Buffer;
+  readonly error?: Error;
+}
+
+export interface RuntimeProviderPrivilegedSandboxControl {
+  resolveTarget(
+    input: Pick<RuntimeProviderPrivilegedSandboxCommandInput, "sandbox" | "sandboxName">,
+  ): RuntimeProviderPrivilegedSandboxTarget;
+  execute(
+    input: RuntimeProviderPrivilegedSandboxCommandInput,
+  ): RuntimeProviderPrivilegedSandboxCommandResult;
+  /** Docker-only compatibility for E2E probes that invoke the Docker CLI directly. */
+  buildLegacyDockerArgv?(
+    input: Omit<RuntimeProviderPrivilegedSandboxCommandInput, "timeoutMs">,
+  ): string[];
+}
+
 export interface RuntimeProviderLifecycleStopHooks {
   readonly beforeStop: () => void;
 }
@@ -458,6 +496,7 @@ export type RuntimeProviderHostLocalInferenceSurface =
 export type RuntimeProviderLifecycleSurface =
   | RuntimeProviderSupportedSurface<{
       readonly channelStopTransport: RuntimeProviderChannelStopTransport;
+      readonly privilegedSandboxControl: RuntimeProviderPrivilegedSandboxControl;
       start(input: RuntimeProviderLifecycleInput): RuntimeProviderLifecycleResult;
       verifyStarted(
         input: RuntimeProviderLifecycleInput,

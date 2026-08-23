@@ -176,6 +176,9 @@ function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): Podma
             stderr: "",
           };
         case "container":
+          if (args[1] === "exec") {
+            return { status: 0, stdout: "uid=0\n", stderr: "" };
+          }
           return {
             status: 0,
             stdout: JSON.stringify([
@@ -290,6 +293,43 @@ describe("managed Podman runtime provider", () => {
         ([args]) => (args as readonly string[])[0] === "start",
       ),
     ).toBe(true);
+  });
+
+  it("executes privileged control through the lifecycle-bound Podman engine", () => {
+    const runtime = providerHarness("openclaw");
+    const lifecycle = runtime.providers.podman?.lifecycle;
+    if (!lifecycle || lifecycle.supported !== true) throw new Error("Podman lifecycle missing");
+
+    lifecycle.start({
+      environment: {},
+      log: vi.fn(),
+      sandbox: runtime.entry,
+      sandboxName: runtime.sandboxName,
+    });
+    const target = lifecycle.privilegedSandboxControl.resolveTarget({
+      sandbox: runtime.entry,
+      sandboxName: runtime.sandboxName,
+    });
+    const result = lifecycle.privilegedSandboxControl.execute({
+      sandbox: runtime.entry,
+      sandboxName: runtime.sandboxName,
+      command: ["/usr/bin/id", "-u"],
+      expectedResourceHandle: target.resourceHandle,
+      sanitizeEnvironment: false,
+      timeoutMs: 9000,
+    });
+
+    expect(target).toEqual({ providerId: "podman", resourceHandle: CONTAINER_ID });
+    expect(result).toMatchObject({ status: 0, signal: null });
+    expect(result.stdout.toString("utf8")).toBe("uid=0\n");
+    expect(runtime.lifecycle.capture).toHaveBeenLastCalledWith(
+      ["container", "exec", "--user", "root", CONTAINER_ID, "/usr/bin/id", "-u"],
+      9000,
+      undefined,
+    );
+    expect(
+      JSON.stringify((runtime.lifecycle.capture as ReturnType<typeof vi.fn>).mock.calls),
+    ).not.toContain("docker");
   });
 
   it("is available through the production-selectable registry", () => {

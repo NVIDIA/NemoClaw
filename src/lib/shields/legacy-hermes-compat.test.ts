@@ -185,7 +185,7 @@ describe("legacy Hermes shields compatibility", () => {
   let spies: MockInstance[];
   let runSpy: MockInstance;
   let dockerExecSpy: MockInstance;
-  let privilegedExecArgvSpy: MockInstance;
+  let privilegedCaptureSpy: MockInstance;
   let applyStateDirLockModeSpy: MockInstance;
   let inferenceConvergenceSpy: MockInstance;
   let auditSpy: MockInstance;
@@ -222,9 +222,11 @@ describe("legacy Hermes shields compatibility", () => {
     runSpy = vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
     dockerExecSpy = vi.spyOn(dockerExec, "dockerExecFileSync");
     applyStateDirLockModeSpy = vi.spyOn(stateDirLock, "applyStateDirLockMode").mockReturnValue([]);
-    privilegedExecArgvSpy = vi
-      .spyOn(privilegedExec, "privilegedSandboxExecArgv")
-      .mockImplementation((_sandboxName: unknown, cmd: unknown) => cmd as string[]);
+    privilegedCaptureSpy = vi
+      .spyOn(privilegedExec, "capturePrivilegedSandboxCommand")
+      .mockImplementation((_sandboxName: unknown, cmd: unknown) =>
+        Buffer.from(dockerExec.dockerExecFileSync(cmd as string[])),
+      );
     inferenceConvergenceSpy = vi
       .spyOn(relockReconfirm, "waitForHermesInferenceRouteConvergence")
       .mockReturnValue({
@@ -258,7 +260,7 @@ describe("legacy Hermes shields compatibility", () => {
         lifecycleGeneration: "legacy-generation",
         workload: { kind: "managed-image" },
       })),
-      privilegedExecArgvSpy,
+      privilegedCaptureSpy,
       dockerExecSpy,
       applyStateDirLockModeSpy,
       vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]),
@@ -570,8 +572,12 @@ describe("legacy Hermes shields compatibility", () => {
         );
       }),
     ).toBe(true);
-    expect(privilegedExecArgvSpy).toHaveBeenCalled();
-    expect(privilegedExecArgvSpy.mock.calls.every((call) => call[3] === true)).toBe(true);
+    expect(privilegedCaptureSpy).toHaveBeenCalled();
+    expect(
+      privilegedCaptureSpy.mock.calls.every(
+        (call) => (call[2] as { sanitizeEnvironment?: boolean }).sanitizeEnvironment === true,
+      ),
+    ).toBe(true);
   });
 
   it("pins one capability decision across policy and config mutation", () => {
@@ -827,16 +833,14 @@ describe("legacy Hermes shields compatibility", () => {
       });
     });
 
-    it.each(
-      [
-          "provider:mutable/locked",
-          "verified-mutable",
-          "policy",
-          "provider:locked/locked",
-          "route",
-          "audit",
-        ],
-    )(
+    it.each([
+      "provider:mutable/locked",
+      "verified-mutable",
+      "policy",
+      "provider:locked/locked",
+      "route",
+      "audit",
+    ])(
       "completes a timed retained unlock once and leaves its retry side effects idempotent [%s]",
       (event) => {
         const statePaths = requireSource("../state/paths.js") as typeof import("../state/paths");
@@ -1468,7 +1472,7 @@ describe("legacy Hermes shields compatibility", () => {
       registrySpy.mockReturnValue({ ...sandbox, lifecycleGeneration: undefined });
 
       expect(() => shields.lockAgentConfig(sandbox.name, target, false, false)).toThrow(
-        /registry authority has no lifecycle generation/u,
+        /authority has no lifecycle generation/u,
       );
       expect(commands.some((command) => command.includes("--help"))).toBe(false);
     });
