@@ -27,9 +27,9 @@ const PLATFORM_INTERNAL_ERROR_POLICY: HostedRunnerLossPolicy = {
 };
 
 const SOURCE_WORKFLOW = {
-  workflowName: "CI / Platform Evidence",
+  workflowName: "CI / Platform Compatibility",
   path: ".github/workflows/platform-vitest-main.yaml",
-  runName: "CI / Platform Evidence",
+  runName: "CI / Platform Compatibility",
   events: ["push"],
   policy: PLATFORM_INTERNAL_ERROR_POLICY,
   allowedRunnerLabels: ["ubuntu-latest", "windows-latest", "macos-26"],

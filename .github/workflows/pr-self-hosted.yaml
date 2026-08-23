@@ -13,7 +13,7 @@
 #
 # See: https://docs.gha-runners.nvidia.com/platform/onboarding/pull-request-testing/
 
-name: CI / Self-Hosted PR
+name: E2E / Self-Hosted PR Qualification
 
 on:
   push:

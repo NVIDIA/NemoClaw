@@ -1,14 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: E2E / Main Retry
+name: E2E / Main Retry Evidence
 
 run-name: E2E retry evidence for source run ${{ github.event.workflow_run.id }} attempt ${{ github.event.workflow_run.run_attempt }}
 
 on:
   workflow_run:
     workflows:
-      - E2E
+      - E2E / Main and Manual Suite
     types:
       - completed
 
