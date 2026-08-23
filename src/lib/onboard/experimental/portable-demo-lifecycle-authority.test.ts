@@ -10,6 +10,7 @@ import type { PodmanSocketAuthorityDeps } from "../../adapters/podman";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import {
   installPortableDemoSandboxLifecycle,
+  type PortableDemoDestroyContext,
   type PortableDemoLifecycleDeps,
   portableDemoLifecycleInternals,
   preparePortableDemoSandboxDestroyAuthority,
@@ -39,6 +40,26 @@ const STARTUP_ARGV = [
   "/usr/local/bin/nemoclaw-start",
 ];
 const temporaryDirectories: string[] = [];
+const invalidDestroyContexts: Array<
+  readonly [string, PortableDemoDestroyContext | null]
+> = [
+  ["a missing registry record", null],
+  [
+    "a non-OpenClaw registry record",
+    {
+      agent: "hermes",
+      lifecycleGeneration: CONTAINER_ID,
+      openshellDriver: "docker",
+    },
+  ],
+  [
+    "a registry record with an omitted agent",
+    {
+      lifecycleGeneration: CONTAINER_ID,
+      openshellDriver: "docker",
+    },
+  ],
+];
 
 function temporaryStateDir(): string {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-authority-"));
@@ -151,11 +172,7 @@ function installReceipt(stateDir: string, runtime: ReturnType<typeof createPodma
 function prepareDestroyAuthority(
   stateDir: string,
   runtime: ReturnType<typeof createPodman>,
-  readContext: () => {
-    agent: string;
-    lifecycleGeneration: string;
-    openshellDriver: string;
-  } = () => ({
+  readContext: () => PortableDemoDestroyContext | null = () => ({
     agent: "openclaw",
     lifecycleGeneration: CONTAINER_ID,
     openshellDriver: "docker",
@@ -177,6 +194,33 @@ afterEach(() => {
 });
 
 describe("portable demo lifecycle authority", () => {
+  it("accepts a legacy null OpenClaw registry identity for Portable destroy", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime);
+    const authority = prepareDestroyAuthority(stateDir, runtime, () => ({
+      agent: null,
+      lifecycleGeneration: CONTAINER_ID,
+      openshellDriver: "docker",
+    }));
+
+    expect(authority).not.toBeNull();
+    expect(() => authority?.revalidate()).not.toThrow();
+  });
+
+  it.each(invalidDestroyContexts)(
+    "refuses %s during Portable destroy",
+    (_description, context) => {
+      const stateDir = temporaryStateDir();
+      const runtime = createPodman();
+      installReceipt(stateDir, runtime);
+
+      expect(() => prepareDestroyAuthority(stateDir, runtime, () => context)).toThrow(
+        "does not match the OpenClaw sandbox registry",
+      );
+    },
+  );
+
   it("revalidates schema-4 Portable destroy authority without removing its Podman container (#9189)", () => {
     const stateDir = temporaryStateDir();
     const runtime = createPodman();
@@ -187,6 +231,41 @@ describe("portable demo lifecycle authority", () => {
     expect(() => authority?.revalidate()).not.toThrow();
     runtime.setPresent(false);
     expect(() => authority?.verifyAbsent()).not.toThrow();
+    expect(
+      runtime.podman.mock.calls.some(([args]) => {
+        const command = args[0] === "--url" ? args.slice(2) : args;
+        return command[0] === "rm";
+      }),
+    ).toBe(false);
+  });
+
+  it("refuses a changed Portable receipt during destroy revalidation", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime);
+    const authority = prepareDestroyAuthority(stateDir, runtime);
+    const filePath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
+    const receipt = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    receipt.dashboardPort = 18790;
+    fs.writeFileSync(filePath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+
+    expect(() => authority?.revalidate()).toThrow("receipt changed");
+    expect(
+      runtime.podman.mock.calls.some(([args]) => {
+        const command = args[0] === "--url" ? args.slice(2) : args;
+        return command[0] === "rm";
+      }),
+    ).toBe(false);
+  });
+
+  it("refuses a changed Portable container presence during destroy revalidation", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime);
+    const authority = prepareDestroyAuthority(stateDir, runtime);
+    runtime.setPresent(false);
+
+    expect(() => authority?.revalidate()).toThrow("container presence changed");
     expect(
       runtime.podman.mock.calls.some(([args]) => {
         const command = args[0] === "--url" ? args.slice(2) : args;
@@ -221,6 +300,12 @@ describe("portable demo lifecycle authority", () => {
     runtime.setContainerId(CONTAINER_ID);
     runtime.setManagedLabel("false");
     expect(() => authority?.revalidate()).toThrow("OpenShell identity does not match");
+    expect(
+      runtime.podman.mock.calls.some(([args]) => {
+        const command = args[0] === "--url" ? args.slice(2) : args;
+        return command[0] === "rm";
+      }),
+    ).toBe(false);
   });
 
   it("refuses a changed current-user Podman socket inode during Portable destroy (#9189)", () => {
