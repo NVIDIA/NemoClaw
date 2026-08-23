@@ -47,7 +47,7 @@ function agentFlagDescription(): string {
 }
 
 export const onboardUsage = [
-  `onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 export const onboardExamples = [
@@ -78,6 +78,7 @@ export type OnboardFlags = {
   "sandbox-gpu"?: boolean;
   "no-sandbox-gpu"?: boolean;
   "sandbox-gpu-device"?: string;
+  "vllm-gpu-device"?: string;
   agent?: string;
   agents?: string;
   "tool-disclosure"?: ToolDisclosure;
@@ -135,6 +136,9 @@ export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Re
     "sandbox-gpu-device": Flags.string({
       description: "NVIDIA GPU index, UUID, or CDI device name; requires --sandbox-gpu",
       dependsOn: ["sandbox-gpu"],
+    }),
+    "vllm-gpu-device": Flags.string({
+      description: "GPU index or UUID for the host-side vLLM container managed by NemoClaw",
     }),
     agent: Flags.string({ description: agentFlagDescription() }),
     agents: Flags.string({

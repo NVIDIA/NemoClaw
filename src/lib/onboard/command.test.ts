@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getCredential } from "../credentials/store";
 import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import { servingProfileProvenance } from "../inference/serving/profile-provenance";
+import { NEMOCLAW_VLLM_GPU_DEVICE_ENV } from "../inference/vllm-models";
 import { resolveOnboardOptions, runOnboardCommand, servingProfileProviderKey } from "./command";
 import type { OnboardFlags } from "./command-support";
 import { PortableInferenceDescriptorError } from "./experimental/portable-inference-descriptor";
@@ -200,6 +201,44 @@ describe("onboard command options", () => {
     expect(errors.join("\n")).toContain("legacy onboarding session");
   });
 
+  it("normalizes a vLLM GPU index or UUID and reuses the recorded device on resume", () => {
+    expect(resolve({ "vllm-gpu-device": "002" }).vllmGpuDevice).toBe("2");
+    const uuid = "GPU-69ADB14E-820E-BFB4-0993-171E73F68504";
+    const normalizedUuid = "GPU-69adb14e-820e-bfb4-0993-171e73f68504";
+    expect(resolve({ "vllm-gpu-device": uuid }).vllmGpuDevice).toBe(normalizedUuid);
+    expect(
+      resolve({ resume: true }, { loadSession: () => ({ vllmGpuDevice: normalizedUuid }) })
+        .vllmGpuDevice,
+    ).toBe(normalizedUuid);
+  });
+
+  it.each([
+    {
+      caseName: "a CDI device name",
+      flags: { "vllm-gpu-device": "nvidia.com/gpu=0" } as OnboardFlags,
+      session: null,
+    },
+    {
+      caseName: "a device added to a legacy resume",
+      flags: { resume: true, "vllm-gpu-device": "1" } as OnboardFlags,
+      session: {},
+    },
+    {
+      caseName: "a device changed during resume",
+      flags: { resume: true, "vllm-gpu-device": "1" } as OnboardFlags,
+      session: { vllmGpuDevice: "0" },
+    },
+  ])("rejects $caseName", ({ flags, session }) => {
+    const errors: string[] = [];
+    expect(() =>
+      resolve(flags, {
+        ...(session ? { loadSession: () => session } : {}),
+        error: (message = "") => errors.push(message),
+      }),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toMatch(/vllm-gpu-device|resumed GPU device/);
+  });
+
   it("maps typed oclif flags to onboarding options", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-options-"));
     const dockerfilePath = path.join(tmpDir, "Custom.Dockerfile");
@@ -219,6 +258,7 @@ describe("onboard command options", () => {
           name: "second-assistant",
           "sandbox-gpu": true,
           "sandbox-gpu-device": "nvidia.com/gpu=0",
+          "vllm-gpu-device": "2",
           agent: "dcode",
           "tool-disclosure": "direct",
           observability: true,
@@ -228,7 +268,10 @@ describe("onboard command options", () => {
           "no-ollama-autostart": true,
           "yes-i-accept-third-party-software": true,
         },
-        { listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"] },
+        {
+          listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"],
+          loadSession: () => ({ vllmGpuDevice: "2" }),
+        },
       ),
     ).toEqual({
       tempManagedRuntime: true,
@@ -241,6 +284,7 @@ describe("onboard command options", () => {
       sandboxName: "second-assistant",
       sandboxGpu: "enable",
       sandboxGpuDevice: "nvidia.com/gpu=0",
+      vllmGpuDevice: "2",
       acceptThirdPartySoftware: true,
       agent: "langchain-deepagents-code",
       agentsManifest: null,
@@ -272,6 +316,7 @@ describe("onboard command options", () => {
       sandboxName: null,
       sandboxGpu: null,
       sandboxGpuDevice: null,
+      vllmGpuDevice: null,
       acceptThirdPartySoftware: false,
       agent: null,
       agentsManifest: null,
@@ -536,6 +581,22 @@ describe("onboard command options", () => {
     expect(runOnboard).toHaveBeenCalledWith(expect.objectContaining({ resume: true }));
   });
 
+  it("scopes the selected vLLM GPU device to one onboarding run", async () => {
+    const env: NodeJS.ProcessEnv = { [NEMOCLAW_VLLM_GPU_DEVICE_ENV]: "9" };
+    let observed: string | undefined;
+    await runOnboardCommand({
+      flags: { "vllm-gpu-device": "2" },
+      env,
+      runOnboard: async (options) => {
+        observed = env[NEMOCLAW_VLLM_GPU_DEVICE_ENV];
+        expect(options.vllmGpuDevice).toBe("2");
+      },
+    });
+
+    expect(observed).toBe("2");
+    expect(env[NEMOCLAW_VLLM_GPU_DEVICE_ENV]).toBe("9");
+  });
+
   it("re-resolves once after onboard reports a pre-read race (#9035)", async () => {
     const snapshots = ["first", "second"].map((fingerprint) => ({
       effectiveResume: true,
@@ -693,9 +754,7 @@ describe("onboard command options", () => {
   ])(
     "restores every scoped command value before a handled-error exit when the provider is $providerState (#9035)",
     async ({ previousProvider }) => {
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-handled-error-environment-"),
-      );
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-handled-error-environment-"));
       const manifestPath = path.join(tmpDir, "agents.yaml");
       fs.writeFileSync(manifestPath, "agents: []\n");
       const env: NodeJS.ProcessEnv = {
