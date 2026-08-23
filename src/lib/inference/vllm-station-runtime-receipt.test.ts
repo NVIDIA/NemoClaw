@@ -53,6 +53,8 @@ function plan(): DualStationVllmPlan {
         index: 0,
         name: "NVIDIA GB300",
         uuid: "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        totalMemoryMiB: 100_000,
+        freeMemoryMiB: 95_000,
       },
     },
     peer: {
@@ -64,6 +66,8 @@ function plan(): DualStationVllmPlan {
         index: 0,
         name: "NVIDIA GB300",
         uuid: "GPU-99999999-8888-7777-6666-555555555555",
+        totalMemoryMiB: 100_000,
+        freeMemoryMiB: 95_000,
       },
     },
     rails: [

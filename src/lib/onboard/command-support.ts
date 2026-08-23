@@ -133,8 +133,7 @@ export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Re
       exclusive: ["gpu", "sandbox-gpu"],
     }),
     "sandbox-gpu-device": Flags.string({
-      description:
-        "OpenShell GPU device selector to pass to sandbox create; requires --sandbox-gpu",
+      description: "NVIDIA GPU index, UUID, or CDI device name; requires --sandbox-gpu",
       dependsOn: ["sandbox-gpu"],
     }),
     agent: Flags.string({ description: agentFlagDescription() }),
