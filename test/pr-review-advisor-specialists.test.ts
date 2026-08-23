@@ -95,6 +95,35 @@ describe("PR review advisor specialist prompts", () => {
     },
   );
 
+  it("keeps large specialist context in ordinary-read-sized Pi trace lines (#9986)", () => {
+    const largeDiff = "diff --git a/file b/file\n" + "+changed\n".repeat(80_000);
+    const largeWords = "word\n".repeat(20_000);
+    const turn = buildSpecialistInvestigateTurn("behavior", {
+      ...context,
+      diff: largeDiff,
+      controlledWords: largeWords,
+    });
+    const results = turn.contextToolResults ?? [];
+
+    expect(
+      results.filter(({ toolName }) => toolName.startsWith("pr_review_git_diff_part_")).length,
+    ).toBeGreaterThan(1);
+    expect(
+      results.filter(({ toolName }) => toolName.startsWith("pr_review_controlled_words_part_"))
+        .length,
+    ).toBeGreaterThan(1);
+    expect(
+      results.every(({ content }) => Buffer.byteLength(JSON.stringify(content)) <= 16 * 1024),
+    ).toBe(true);
+    expect(
+      results
+        .filter(({ toolName }) => toolName.startsWith("pr_review_git_diff_part_"))
+        .map(({ content }) => content)
+        .join(""),
+    ).toBe(largeDiff);
+    expect(turn.requiredToolNames).toEqual(results.map(({ toolName }) => toolName));
+  });
+
   it("passes terminology tracing only to the documentation specialist runner (#9968)", async () => {
     const directory = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-runner-"));
     onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
