@@ -43,7 +43,7 @@ function splitContextContent(content: string): string[] {
   let remaining = content;
   while (remaining.length > 0) {
     let low = 1;
-    let high = remaining.length;
+    let high = Math.min(remaining.length, MAX_SPECIALIST_CONTEXT_CHUNK_BYTES - 2);
     while (low < high) {
       const middle = Math.ceil((low + high) / 2);
       if (
@@ -54,6 +54,13 @@ function splitContextContent(content: string): string[] {
       } else {
         high = middle - 1;
       }
+    }
+    if (
+      low < remaining.length &&
+      /[\uD800-\uDBFF]/u.test(remaining[low - 1]!) &&
+      /[\uDC00-\uDFFF]/u.test(remaining[low]!)
+    ) {
+      low -= 1;
     }
     chunks.push(remaining.slice(0, low));
     remaining = remaining.slice(low);
