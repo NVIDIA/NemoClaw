@@ -2,6 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const HERMES_REBUILD_SWAP_BYTES = 32 * 1024 * 1024 * 1024;
+export const HERMES_REBUILD_SWAP_FILE = "/mnt/nemoclaw-hermes-rebuild.swap";
+
+export function hermesRebuildSwapCleanupArgs(): string[] {
+  return [
+    "bash",
+    "-c",
+    `set -euo pipefail
+swap_file="$1"
+if swapon --show --noheadings --output NAME | grep -Fx -- "$swap_file" >/dev/null; then
+  swapoff "$swap_file"
+fi
+rm -f -- "$swap_file"`,
+    "hermes-rebuild-swap-cleanup",
+    HERMES_REBUILD_SWAP_FILE,
+  ];
+}
 
 export function parseActiveSwapBytes(output: string): number {
   return output

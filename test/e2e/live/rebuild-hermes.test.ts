@@ -22,6 +22,8 @@ import {
 } from "../fixtures/file-state.ts";
 import {
   HERMES_REBUILD_SWAP_BYTES,
+  HERMES_REBUILD_SWAP_FILE,
+  hermesRebuildSwapCleanupArgs,
   needsHermesRebuildSwap,
   parseActiveSwapBytes,
 } from "../fixtures/hermes-rebuild-swap.ts";
@@ -141,11 +143,9 @@ const LIVE_TIMEOUT_MS = 70 * 60_000;
 // generous diagnostic tail without letting a stuck child exhaust the hosted
 // runner by growing the fixture's in-memory stdout/stderr buffers forever.
 const LONG_COMMAND_CAPTURE_LIMIT_BYTES = 4 * 1024 * 1024;
-const HERMES_REBUILD_SWAP_FILE = "/mnt/nemoclaw-hermes-rebuild.swap";
-
-async function ensureHermesRebuildSwap(host: HostCliClient): Promise<void> {
+async function ensureHermesRebuildSwap(host: HostCliClient): Promise<boolean> {
   const githubActions = process.env.GITHUB_ACTIONS === "true";
-  if (!githubActions) return;
+  if (!githubActions) return false;
 
   const probeOptions = {
     env: buildAvailabilityProbeEnv(),
@@ -166,7 +166,7 @@ async function ensureHermesRebuildSwap(host: HostCliClient): Promise<void> {
       githubActions,
     })
   ) {
-    return;
+    return false;
   }
 
   const provision = await host.command(
@@ -195,6 +195,14 @@ swapon "$swap_file"`,
   );
   expectExitZero(provision, "provision swap for Hermes rebuild");
 
+  return true;
+}
+
+async function verifyHermesRebuildSwap(host: HostCliClient): Promise<void> {
+  const probeOptions = {
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  };
   const verified = await host.command(
     "swapon",
     ["--show", "--bytes", "--noheadings", "--output", "SIZE"],
@@ -685,7 +693,18 @@ test(STALE_BASE_REBUILD
     "rebuild-Hermes must invoke the checked-out CLI through NEMOCLAW_CLI_BIN",
   ).toBe(CLI_ENTRYPOINT);
   await ensureRebuildHermesHostTools(host);
-  await ensureHermesRebuildSwap(host);
+  const createdRebuildSwap = await ensureHermesRebuildSwap(host);
+  if (createdRebuildSwap) {
+    cleanup.trackDisposable("remove Hermes rebuild swap", async () => {
+      const removed = await host.command("sudo", hermesRebuildSwapCleanupArgs(), {
+        artifactName: "cleanup-hermes-rebuild-swap",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 2 * 60_000,
+      });
+      expectExitZero(removed, "remove Hermes rebuild swap");
+    });
+    await verifyHermesRebuildSwap(host);
+  }
 
   const dockerInfo = await host.command("docker", ["info"], {
     artifactName: "prereq-docker-info",

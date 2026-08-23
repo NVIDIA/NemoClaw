@@ -6,6 +6,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   HERMES_REBUILD_SWAP_BYTES,
+  HERMES_REBUILD_SWAP_FILE,
+  hermesRebuildSwapCleanupArgs,
   needsHermesRebuildSwap,
   parseActiveSwapBytes,
 } from "../fixtures/hermes-rebuild-swap.ts";
@@ -52,5 +54,36 @@ describe("Hermes rebuild swap", () => {
 
     expect(ensureSwap).toBeGreaterThan(-1);
     expect(dockerProbe).toBeGreaterThan(ensureSwap);
+  });
+
+  it("cleans only the exact swap file created by the rebuild fixture", () => {
+    const cleanup = hermesRebuildSwapCleanupArgs();
+
+    expect(cleanup.at(-1)).toBe(HERMES_REBUILD_SWAP_FILE);
+    expect(cleanup.join("\n")).toContain('grep -Fx -- "$swap_file"');
+    expect(cleanup.join("\n")).toContain('swapoff "$swap_file"');
+    expect(cleanup.join("\n")).toContain('rm -f -- "$swap_file"');
+    expect(cleanup.join("\n")).not.toContain("swapoff -a");
+  });
+
+  it("registers observable cleanup before verifying created swap", () => {
+    const source = fs.readFileSync(
+      path.resolve(import.meta.dirname, "../live/rebuild-hermes.test.ts"),
+      "utf8",
+    );
+    const ensureSwap = source.indexOf("const createdRebuildSwap = await ensureHermesRebuildSwap(host);");
+    const registerCleanup = source.indexOf(
+      'cleanup.trackDisposable("remove Hermes rebuild swap"',
+      ensureSwap,
+    );
+    const verifySwap = source.indexOf("await verifyHermesRebuildSwap(host);", registerCleanup);
+    const observableFailure = source.indexOf(
+      'expectExitZero(removed, "remove Hermes rebuild swap");',
+      registerCleanup,
+    );
+
+    expect(registerCleanup).toBeGreaterThan(ensureSwap);
+    expect(observableFailure).toBeGreaterThan(registerCleanup);
+    expect(verifySwap).toBeGreaterThan(registerCleanup);
   });
 });
