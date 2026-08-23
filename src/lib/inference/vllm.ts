@@ -62,6 +62,8 @@ import {
   defaultVllmModelForPlatform,
   defaultVllmRuntimeForPlatform,
   STATION_PAIR_OPTIONAL_ORCHESTRATION,
+  NEMOCLAW_VLLM_GPU_DEVICE_ENV,
+  normalizeVllmGpuDevice,
   parseVllmExtraServeArgs,
   resolveVllmGpuMemoryUtilization,
   VLLM_EXTRA_ARGS_ENV,
@@ -254,6 +256,27 @@ function vllmDockerRunFlags(gpuFlag = "all"): string[] {
   ];
 }
 
+function replaceVllmGpuRequest(flags: readonly string[], device: string): string[] {
+  const gpuIndex = flags.indexOf("--gpus");
+  if (gpuIndex < 0 || gpuIndex === flags.length - 1 || flags.indexOf("--gpus", gpuIndex + 1) >= 0) {
+    throw new Error("managed vLLM profile must contain exactly one Docker --gpus request");
+  }
+  const selected = [...flags];
+  selected[gpuIndex + 1] = `device=${device}`;
+  return selected;
+}
+
+export function selectVllmGpuDevice(profile: VllmProfile, device: string): VllmProfile {
+  const normalized = normalizeVllmGpuDevice(device);
+  return {
+    ...profile,
+    dockerRunFlags: replaceVllmGpuRequest(profile.dockerRunFlags, normalized),
+    buildDockerRunFlags: profile.buildDockerRunFlags
+      ? () => replaceVllmGpuRequest(profile.buildDockerRunFlags!(), normalized)
+      : undefined,
+  };
+}
+
 function printHfDownloadAuthentication(nonInteractive: boolean): void {
   const authentication = hfDownloadAuthentication();
   if (authentication.authenticated) {
@@ -415,10 +438,15 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
   return { ok: true };
 }
 
-export function readGpuComputeCapabilities(): number[] {
-  const out = captureNvidiaSmi(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"], {
-    runCaptureImpl: runCapture,
-  });
+export function readGpuComputeCapabilities(device?: string): number[] {
+  const out = captureNvidiaSmi(
+    [
+      ...(device ? [`--id=${device}`] : []),
+      "--query-gpu=compute_cap",
+      "--format=csv,noheader,nounits",
+    ],
+    { runCaptureImpl: runCapture },
+  );
   if (!out) return [];
   const capabilities: number[] = [];
   for (const line of out.split("\n")) {
@@ -429,6 +457,13 @@ export function readGpuComputeCapabilities(): number[] {
     capabilities.push(Number(match[1]) * 10 + Number(match[2]));
   }
   return capabilities;
+}
+
+function readProfileGpuComputeCapabilities(profile: VllmProfile): number[] {
+  const request = profileGpuRequest(profile);
+  if (!request?.startsWith("device=")) return readGpuComputeCapabilities();
+  const device = request.slice("device=".length).split(",")[0]?.trim();
+  return readGpuComputeCapabilities(device || undefined);
 }
 
 export function formatComputeCapability(capability: number): string {
@@ -523,7 +558,10 @@ function selectedGpuMemoryDevice(
   const selector = request.slice("device=".length).split(",")[0]?.trim();
   if (!selector) return null;
   return (
-    devices.find((device) => String(device.index) === selector || device.uuid === selector) ?? null
+    devices.find(
+      (device) =>
+        String(device.index) === selector || device.uuid.toLowerCase() === selector.toLowerCase(),
+    ) ?? null
   );
 }
 
@@ -1795,6 +1833,69 @@ function resolveVllmInstallSelectionEnv(
   };
 }
 
+type VllmInstallRequestEnv =
+  | {
+      readonly ok: true;
+      readonly env: NodeJS.ProcessEnv;
+      readonly explicitModel: string;
+      readonly requestedGpuDevice: string | null;
+      readonly configuredPeer: string;
+      readonly configuredManagedClusterPeers: string;
+    }
+  | { readonly ok: false; readonly error: string };
+
+function resolveVllmInstallRequestEnv(
+  modelIntent: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): VllmInstallRequestEnv {
+  const selection = resolveVllmInstallSelectionEnv(modelIntent, env);
+  if (!selection.ok) {
+    return {
+      ok: false,
+      error: "the resumed model conflicts with NEMOCLAW_VLLM_MODEL.",
+    };
+  }
+  const rawGpuDevice = String(env[NEMOCLAW_VLLM_GPU_DEVICE_ENV] ?? "").trim();
+  let requestedGpuDevice: string | null = null;
+  try {
+    requestedGpuDevice = rawGpuDevice ? normalizeVllmGpuDevice(rawGpuDevice) : null;
+  } catch (error) {
+    return { ok: false, error: `${(error as Error).message}.` };
+  }
+  const configuredPeer = String(env[NEMOCLAW_DGX_STATION_PEER_ENV] ?? "").trim();
+  const configuredManagedClusterPeers = String(
+    env[NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV] ?? "",
+  ).trim();
+  if (requestedGpuDevice && (configuredPeer || configuredManagedClusterPeers)) {
+    return {
+      ok: false,
+      error:
+        "--vllm-gpu-device selects one host GPU and cannot be combined with managed multi-node inference.",
+    };
+  }
+  return {
+    ...selection,
+    requestedGpuDevice,
+    configuredPeer,
+    configuredManagedClusterPeers,
+  };
+}
+
+function shouldTryManagedClusterInstall(
+  hostLocalSelection: MaterializedHostLocalVllmSelection | undefined,
+  fixedServeCommand: boolean,
+  requestedGpuDevice: string | null,
+): boolean {
+  return !hostLocalSelection && !fixedServeCommand && !requestedGpuDevice;
+}
+
+function applyRequestedVllmGpuDevice(
+  profile: VllmProfile,
+  requestedGpuDevice: string | null,
+): VllmProfile {
+  return requestedGpuDevice ? selectVllmGpuDevice(profile, requestedGpuDevice) : profile;
+}
+
 /**
  * Name the process holding the serving port so the operator can act, matching
  * how the Ollama auth proxy reports its own port conflict.
@@ -1863,13 +1964,18 @@ async function runVllmInstall(
   opts: InstallVllmOptions,
   hostLocalSelection?: MaterializedHostLocalVllmSelection,
 ): Promise<{ ok: boolean }> {
-  const selection = resolveVllmInstallSelectionEnv(opts.modelIntent);
+  const selection = resolveVllmInstallRequestEnv(opts.modelIntent);
   if (!selection.ok) {
-    console.error("  vLLM install failed: the resumed model conflicts with NEMOCLAW_VLLM_MODEL.");
+    console.error(`  vLLM install failed: ${selection.error}`);
     return { ok: false };
   }
-  const { env: selectionEnv, explicitModel } = selection;
-  const configuredPeer = String(process.env[NEMOCLAW_DGX_STATION_PEER_ENV] ?? "").trim();
+  const {
+    env: selectionEnv,
+    explicitModel,
+    requestedGpuDevice,
+    configuredPeer,
+    configuredManagedClusterPeers,
+  } = selection;
   const fixedServeCommand = profile.defaultModel.fixedServeCommand === true;
   if (fixedServeCommand) {
     if (
@@ -1881,9 +1987,6 @@ async function runVllmInstall(
       );
       return { ok: false };
     }
-    const configuredManagedClusterPeers = String(
-      process.env[NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV] ?? "",
-    ).trim();
     const configuredServingPreset = String(process.env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
     if (configuredManagedClusterPeers) {
       console.error(
@@ -1898,7 +2001,7 @@ async function runVllmInstall(
       return { ok: false };
     }
   }
-  if (!hostLocalSelection && !fixedServeCommand) {
+  if (shouldTryManagedClusterInstall(hostLocalSelection, fixedServeCommand, requestedGpuDevice)) {
     const managedCluster = await tryInstallManagedClusterManagedVllm(
       {
         env: selectionEnv,
@@ -2134,6 +2237,8 @@ async function runVllmInstall(
     return { ok: false };
   }
 
+  runtimeProfile = applyRequestedVllmGpuDevice(runtimeProfile, requestedGpuDevice);
+
   // Reject a held serving port before anything durable happens. In
   // particular, managed bearer auth persists a host credential below and
   // beforeInstall publishes the selected model to onboarding state. Running
@@ -2214,7 +2319,7 @@ async function runVllmInstall(
 
   const capability = computeCapabilityPreflight(
     model,
-    readGpuComputeCapabilities(),
+    readProfileGpuComputeCapabilities(runtimeProfile),
     runtimeProfile.minComputeCapability,
   );
   if (!capability.ok) {
