@@ -11,7 +11,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   canonicalRepoReadPath,
   createRepoConfinedReadOnlyTools,
+  MAX_ADVISOR_TOOL_RESULT_JSON_BYTES,
 } from "../tools/advisors/repo-read-only-tools.mts";
+import { MAX_SPECIALIST_SESSION_LINE_BYTES } from "../tools/pr-review-advisor/specialist-sessions.mts";
 
 const tempDirs: string[] = [];
 let workspace: string;
@@ -176,6 +178,62 @@ describe("repo-confined advisor read-only tools", () => {
       { path: realPath, offset: 1, endOffset: 2, fileSize: 14, reachesEnd: false },
       { path: realPath, offset: 3, endOffset: null, fileSize: 14, reachesEnd: true },
     ]);
+  });
+
+  it("keeps escaped read results within the specialist session line limit (#9949)", async () => {
+    const lineCount = 400;
+    const escapedLine = `const value = ${JSON.stringify('\\"'.repeat(96))};`;
+    fs.writeFileSync(
+      path.join(workspace, "escaped-read.txt"),
+      `${Array.from({ length: lineCount }, () => escapedLine).join("\n")}\n`,
+      "utf8",
+    );
+    const observations: Parameters<
+      NonNullable<Parameters<typeof createRepoConfinedReadOnlyTools>[1]>
+    >[0][] = [];
+    tools = new Map(
+      createRepoConfinedReadOnlyTools(workspace, (observation) => observations.push(observation)).map(
+        (tool) => [tool.name, tool],
+      ),
+    );
+
+    let offset = 1;
+    for (let page = 0; page < 20; page += 1) {
+      const result = await execute("read", { path: "escaped-read.txt", offset });
+      expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(
+        MAX_ADVISOR_TOOL_RESULT_JSON_BYTES,
+      );
+      const sessionLine = JSON.stringify({
+        type: "message",
+        id: `result-${page}`,
+        parentId: `call-${page}`,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        message: {
+          role: "toolResult",
+          toolCallId: `call-${page}`,
+          toolName: "read",
+          content: result.content,
+          details: result.details,
+          isError: false,
+        },
+      });
+      expect(Buffer.byteLength(sessionLine, "utf8")).toBeLessThanOrEqual(
+        MAX_SPECIALIST_SESSION_LINE_BYTES,
+      );
+
+      const truncation = (
+        result.details as { truncation?: { truncated: boolean; outputLines: number } } | undefined
+      )?.truncation;
+      if (!truncation?.truncated) break;
+      expect(truncation.outputLines).toBeGreaterThan(0);
+      expect((result.content[0] as { text: string }).text).toContain(
+        `Use offset=${offset + truncation.outputLines} to continue`,
+      );
+      offset += truncation.outputLines;
+    }
+
+    expect(observations.at(-1)?.reachesEnd).toBe(true);
+    expect(observations.at(-1)?.endOffset).toBeNull();
   });
 
   it("uses one canonical path for configured and observed reads", async () => {
