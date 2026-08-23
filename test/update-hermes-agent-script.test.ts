@@ -145,6 +145,54 @@ fi
     }
   });
 
+  it("pins the latest-release GitHub API lookup to HTTPS when --tag is omitted (#9979)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-update-latest-"));
+    const repo = path.join(tmp, "repo");
+    const script = path.join(repo, "scripts", "update-hermes-agent.sh");
+    const fakeBin = path.join(tmp, "bin");
+    const curlLog = path.join(tmp, "curl-argv.log");
+    fs.mkdirSync(path.dirname(script), { recursive: true });
+    fs.mkdirSync(path.join(repo, "agents", "hermes"), { recursive: true });
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.copyFileSync(SCRIPT, script);
+    fs.chmodSync(script, 0o755);
+    fs.copyFileSync(HERMES_BASE_DOCKERFILE, path.join(repo, "agents", "hermes", "Dockerfile.base"));
+    fs.copyFileSync(HERMES_MANIFEST, path.join(repo, "agents", "hermes", "manifest.yaml"));
+    writeExecutable(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$FAKE_CURL_LOG"
+if [[ "$*" == *api.github.com* ]]; then
+  printf '{"tag_name":"v2026.6.5"}'
+fi
+`,
+    );
+
+    const run = spawnSync("bash", [script, "--check"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        HOME: path.join(tmp, "home"),
+        FAKE_CURL_LOG: curlLog,
+        NEMOCLAW_SOURCE_ROOT: undefined,
+      },
+      timeout: 10_000,
+    });
+
+    // gh_api() is only reached when --tag is omitted; #9979 pins its request
+    // (which can carry an Authorization: Bearer GITHUB_TOKEN header) to HTTPS.
+    const curlArgv = fs.readFileSync(curlLog, "utf8").trim();
+    const curlCallCount = curlArgv.split("\n").length;
+    const pinnedCallCount = curlArgv.split("--proto =https --proto-redir =https").length - 1;
+    expect(curlArgv, `${run.stdout}\n${run.stderr}`).not.toBe("");
+    expect(curlArgv).toContain("api.github.com/repos/NousResearch/hermes-agent/releases/latest");
+    expect(pinnedCallCount).toBe(curlCallCount);
+
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
   it("keeps installed-copy scanning opt-in unless rebuild needs it", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-update-home-"));
     const installedDockerfile = path.join(
