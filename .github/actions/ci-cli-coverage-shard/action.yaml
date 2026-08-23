@@ -164,7 +164,6 @@ runs:
         CLI_SHARD_COUNT: ${{ inputs.shard-count }}
       run: |
         npx vitest run --project cli --project integration --project e2e-support \
-          --maxWorkers=1 \
           --shard="${CLI_SHARD}/${CLI_SHARD_COUNT}" \
           --reporter=github-actions \
           --reporter=blob \
