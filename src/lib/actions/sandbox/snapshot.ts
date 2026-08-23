@@ -661,7 +661,7 @@ async function autoCreateSandboxFromSource(
   }
   targetPolicyAuthorityReceipt = inspectReadyClonePolicyAuthority(targetPolicyAuthorityReceipt);
   try {
-registry.registerSandbox(
+    registry.registerSandbox(
       {
         ...srcEntry,
         name: dstName,
@@ -719,7 +719,7 @@ registry.registerSandbox(
     releaseCloneHostLocalReservation();
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
-try {
+  try {
     await revalidateSnapshotPolicyAuthority(targetPolicyAuthorityReceipt);
   } catch (error) {
     throw new SnapshotCommandError([
@@ -922,13 +922,37 @@ function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): void {
   }
 }
 
-type PendingSnapshotCloneRecovery = "not-pending" | "finalized" | "removed";
+type PendingSnapshotCloneRecovery =
+  | "not-pending"
+  | "removed"
+  | { policyAuthorityReceipt: SnapshotPolicyAuthorityReceipt };
+
+async function qualifyPendingSnapshotClonePolicyAuthority(
+  targetSandbox: string,
+  sourceReceipt: SnapshotPolicyAuthorityReceipt,
+  targetLive: boolean,
+): Promise<SnapshotPolicyAuthorityReceipt> {
+  const targetReceipt = targetLive
+    ? inspectSnapshotCloneTargetPolicyAuthority(sourceReceipt, targetSandbox)
+    : {
+        ...sourceReceipt,
+        inspectLiveSource: false,
+        sourceSandboxName: targetSandbox,
+        verifyGlobalCreatePolicy: false,
+      };
+  if (targetLive) {
+    await revalidateSnapshotPolicyAuthority(targetReceipt);
+  } else {
+    await revalidateDeletedSnapshotPolicyAuthority(targetReceipt);
+  }
+  return targetReceipt;
+}
 
 async function reconcilePendingSnapshotClone(
   targetSandbox: string,
   sourceEntry: SandboxEntry,
   sourceGatewayName: string,
-  policyAuthorityReceipt: SnapshotPolicyAuthorityReceipt,
+  sourcePolicyAuthorityReceipt: SnapshotPolicyAuthorityReceipt,
 ): Promise<PendingSnapshotCloneRecovery> {
   const pending = registry.getSandbox(targetSandbox);
   if (
@@ -958,21 +982,31 @@ async function reconcilePendingSnapshotClone(
     );
   }
   const liveNames = parseLiveSandboxNames(list.output || "");
-  if (!liveNames.has(targetSandbox)) {
-    await deleteSandboxForRestore(
+  const targetLive = liveNames.has(targetSandbox);
+  const targetPolicyAuthorityReceipt = await qualifyPendingSnapshotClonePolicyAuthority(
+    targetSandbox,
+    sourcePolicyAuthorityReceipt,
+    targetLive,
+  );
+  const deletePendingClone = (): Promise<void> =>
+    deleteSandboxForRestore(
       targetSandbox,
-      () => revalidateSnapshotPolicyAuthority(policyAuthorityReceipt),
-      () => revalidateDeletedSnapshotPolicyAuthority(policyAuthorityReceipt),
+      () =>
+        targetLive
+          ? revalidateSnapshotPolicyAuthority(targetPolicyAuthorityReceipt)
+          : revalidateDeletedSnapshotPolicyAuthority(targetPolicyAuthorityReceipt),
+      () => revalidateDeletedSnapshotPolicyAuthority(targetPolicyAuthorityReceipt),
       (removalReceipt) =>
-        revalidateRemovedSnapshotPolicyAuthority(policyAuthorityReceipt, removalReceipt),
+        revalidateRemovedSnapshotPolicyAuthority(targetPolicyAuthorityReceipt, removalReceipt),
     );
+  if (!targetLive) {
+    await deletePendingClone();
     return "removed";
   }
 
-  const get = captureOpenshell(
-    ["sandbox", "get", "-g", sourceGatewayName, targetSandbox],
-    { ignoreError: true },
-  );
+  const get = captureOpenshell(["sandbox", "get", "-g", sourceGatewayName, targetSandbox], {
+    ignoreError: true,
+  });
   if (get.status !== 0) {
     throw new SnapshotCommandError(
       `Cannot reconcile pending clone '${targetSandbox}' because its live identity could not be read.`,
@@ -980,13 +1014,7 @@ async function reconcilePendingSnapshotClone(
   }
   const liveIdentityFingerprint = fingerprintSandboxLiveIdentity(get.output || "");
   if (liveIdentityFingerprint !== pending.lifecycleLiveIdentityFingerprint) {
-    await deleteSandboxForRestore(
-      targetSandbox,
-      () => revalidateSnapshotPolicyAuthority(policyAuthorityReceipt),
-      () => revalidateDeletedSnapshotPolicyAuthority(policyAuthorityReceipt),
-      (removalReceipt) =>
-        revalidateRemovedSnapshotPolicyAuthority(policyAuthorityReceipt, removalReceipt),
-    );
+    await deletePendingClone();
     return "removed";
   }
   if (!isSandboxReady(list.output || "", targetSandbox)) {
@@ -998,22 +1026,17 @@ async function reconcilePendingSnapshotClone(
     (pending.agent || "openclaw") === "openclaw" &&
     !waitForRestoredSandboxGatewaySupervisor(targetSandbox)
   ) {
-    await deleteSandboxForRestore(
-      targetSandbox,
-      () => revalidateSnapshotPolicyAuthority(policyAuthorityReceipt),
-      () => revalidateDeletedSnapshotPolicyAuthority(policyAuthorityReceipt),
-      (removalReceipt) =>
-        revalidateRemovedSnapshotPolicyAuthority(policyAuthorityReceipt, removalReceipt),
-    );
+    await deletePendingClone();
     return "removed";
   }
+  await revalidateSnapshotPolicyAuthority(targetPolicyAuthorityReceipt);
   if (!registry.finalizePendingSandboxRegistration(targetSandbox)) {
     throw new SnapshotCommandError(
       `Pending clone '${targetSandbox}' changed while its registration was being finalized. Retry the restore.`,
     );
   }
   console.log(`  ${G}\u2713${R} Recovered pending clone '${targetSandbox}'`);
-  return "finalized";
+  return { policyAuthorityReceipt: targetPolicyAuthorityReceipt };
 }
 
 function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
@@ -1578,7 +1601,7 @@ async function runSnapshotRestoreUnlocked(
   const isCrossSandboxRestore = targetSandbox !== sandboxName;
   let crossSandboxRestoreAgent: string | null = null;
   const targetEntry = isCrossSandboxRestore ? registry.getSandbox(targetSandbox) : null;
-let destinationPolicyAuthorityReceipt: SnapshotPolicyAuthorityReceipt | null = null;
+  let destinationPolicyAuthorityReceipt: SnapshotPolicyAuthorityReceipt | null = null;
   let targetExists = sourceLiveNames.has(targetSandbox) || Boolean(targetEntry);
   const hasPendingCreatedClone =
     targetEntry?.pendingRouteReservation === true &&
@@ -1830,7 +1853,7 @@ let destinationPolicyAuthorityReceipt: SnapshotPolicyAuthorityReceipt | null = n
       );
       snapshotExit(1);
     }
-    if (targetExists) {
+    if (targetExists && !hasPendingCreatedClone) {
       try {
         if (!targetEntry) {
           throw new Error(`destination sandbox '${targetSandbox}' has no durable policy authority`);
@@ -1943,24 +1966,6 @@ let destinationPolicyAuthorityReceipt: SnapshotPolicyAuthorityReceipt | null = n
         );
         snapshotExit(1);
       }
-      const pendingRecovery = await reconcilePendingSnapshotClone(
-        targetSandbox,
-        lockedSourceEntry,
-        lockedGatewayName,
-        clonePolicyAuthorityReceipt,
-      );
-      if (pendingRecovery === "finalized") return;
-      if (pendingRecovery === "removed") targetExists = false;
-      const compatibility = checkGatewayRouteCompatibility({
-        gatewayName: sourceGatewayName,
-        sandboxName: targetSandbox,
-        route: lockedSourceEntry,
-        sandboxes: registry.listSandboxes().sandboxes,
-      });
-      if (!compatibility.ok) {
-        console.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
-        snapshotExit(1);
-      }
       const operation = `clone snapshot '${sandboxName}' into sandbox '${targetSandbox}'`;
       const clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry, targetSandbox);
       let clonePolicyAuthorityReceipt: SnapshotPolicyAuthorityReceipt | null = null;
@@ -2002,15 +2007,37 @@ let destinationPolicyAuthorityReceipt: SnapshotPolicyAuthorityReceipt | null = n
         failSnapshotPolicyAuthority(targetSandbox, error);
       }
       if (!clonePolicyAuthorityReceipt) {
+        clonePolicy.cleanup?.();
         throw new SnapshotCommandError("Snapshot clone policy authority was not qualified.");
       }
-
-      // Allocate the clone's dashboard port only after policy authority and
-      // every replay requirement have been qualified.
-      const dstDashboardPort = allocateCloneDashboardPort(targetSandbox, lockedSourceEntry);
-      const dstHermesApiPort = allocateCloneHermesApiPort(targetSandbox, lockedSourceEntry);
-      const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
       try {
+        const pendingRecovery = await reconcilePendingSnapshotClone(
+          targetSandbox,
+          lockedSourceEntry,
+          lockedGatewayName,
+          clonePolicyAuthorityReceipt,
+        );
+        if (typeof pendingRecovery !== "string") {
+          policyAuthorityReceipt = pendingRecovery.policyAuthorityReceipt;
+          return;
+        }
+        if (pendingRecovery === "removed") targetExists = false;
+        const compatibility = checkGatewayRouteCompatibility({
+          gatewayName: sourceGatewayName,
+          sandboxName: targetSandbox,
+          route: lockedSourceEntry,
+          sandboxes: registry.listSandboxes().sandboxes,
+        });
+        if (!compatibility.ok) {
+          console.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
+          snapshotExit(1);
+        }
+
+        // Allocate the clone's dashboard port only after policy authority and
+        // every replay requirement have been qualified.
+        const dstDashboardPort = allocateCloneDashboardPort(targetSandbox, lockedSourceEntry);
+        const dstHermesApiPort = allocateCloneHermesApiPort(targetSandbox, lockedSourceEntry);
+        const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
         try {
           await revalidateSnapshotPolicyAuthority(clonePolicyAuthorityReceipt);
         } catch (error) {

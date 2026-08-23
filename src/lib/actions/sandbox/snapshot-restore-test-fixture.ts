@@ -205,6 +205,11 @@ export const getPresetContentGatewayStateMock = vi.fn<
 export const resolveAgentBaselinePolicyMock = vi.fn(resolveTestAgentBaselinePolicy);
 export const builtinObservabilityPolicy =
   "network_policies:\n  observability-otlp-local:\n    endpoints:\n      - host: host.openshell.internal\n";
+export const managedSourceSandboxFixture: SandboxRecord = {
+  name: "alpha",
+  agent: "openclaw",
+  policyAuthority: "nemoclaw-managed",
+};
 export const loadPresetForSandboxMock = vi.fn((_sandbox: string, preset: string) =>
   preset === "observability-otlp-local"
     ? builtinObservabilityPolicy
@@ -467,7 +472,7 @@ export function resetSnapshotRestoreMocks(): void {
       ? builtinObservabilityPolicy
       : `network_policies:\n  ${JSON.stringify(preset)}: {}\n`,
   );
-  getSandboxMock.mockReturnValue(null);
+  getSandboxMock.mockReset().mockReturnValue(null);
   isGatewayHealthyMock.mockReturnValue(true);
   listBackupsMock.mockReturnValue([]);
   loadAgentMock.mockImplementation((name: string) => ({
@@ -481,7 +486,7 @@ export function resetSnapshotRestoreMocks(): void {
   }));
   registerSandboxMock.mockReset();
   reserveSandboxInferenceRouteMock.mockReset().mockReturnValue(true);
-restoreSandboxEntryIfMissingMock.mockReset().mockReturnValue(true);
+  restoreSandboxEntryIfMissingMock.mockReset().mockReturnValue(true);
   removeSandboxMock.mockReset();
   removeSandboxRegistryEntryOutcomeMock.mockReturnValue({ status: "complete", removed: true });
   removeSandboxRegistryEntryWithReceiptMock.mockReset().mockImplementation((name: string) => {

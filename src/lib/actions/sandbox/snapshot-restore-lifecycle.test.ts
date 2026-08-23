@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
+import { refusePolicyAuthorityInspectionOnCall } from "./policy-authority/test-fixture";
 import * as f from "./snapshot-restore-test-fixture";
 
 const tempHomes: string[] = [];
@@ -71,6 +72,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
   it("restores the latest snapshot into the source sandbox", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    f.getSandboxMock.mockReturnValue({ ...f.managedSourceSandboxFixture });
     f.getLatestBackupMock.mockReturnValue({
       snapshotVersion: 4,
       name: "stable",
@@ -119,6 +121,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
   });
 
   it("keeps active-timer restore, permission repair, and policy reconciliation serialized", async () => {
+    f.getSandboxMock.mockReturnValue({ ...f.managedSourceSandboxFixture });
     f.lifecycleMock.readTimerMarkerMock.mockReturnValue({
       pid: 4242,
       sandboxName: "alpha",
@@ -408,11 +411,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       }),
     );
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
-    f.removeSandboxRegistryEntryOutcomeMock.mockReturnValue({
-      status: "blocked",
-      reason: "authority-unproven",
-      removed: false,
-    });
+    f.removeSandboxRegistryEntryWithReceiptMock.mockReturnValue(null);
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await expect(
@@ -427,6 +426,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.lifecycleMock.events).toContain("delete");
     expect(f.lifecycleMock.events).toContain("cleanup-shields");
     expect(consoleError.mock.calls.flat().join("\n")).toContain("registry entry was preserved");
+    expect(f.removeSandboxRegistryEntryWithReceiptMock).toHaveBeenCalledWith("beta");
     expect(f.getSandboxMock("beta")).toBe(destination);
     expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
     expect(f.registerSandboxMock).not.toHaveBeenCalled();
@@ -743,6 +743,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
           openshellDriver: "docker",
           provider: "nvidia-nim",
           model: "nvidia/model-a",
+          policyAuthority: "nemoclaw-managed",
           gatewayName: "nemoclaw",
           lifecycleGeneration: "clone-generation",
           lifecycleLiveIdentityFingerprint: pendingFingerprint,
@@ -772,6 +773,10 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
     expect(entries.get("beta")?.pendingRouteReservation).toBeUndefined();
+    expect(f.inspectSandboxPolicyAuthorityMock).toHaveBeenLastCalledWith({
+      gatewayName: "nemoclaw",
+      sandboxName: "beta",
+    });
   });
 
   it.each(["absent", "identity-drifted"] as const)(
@@ -800,6 +805,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
             openshellDriver: "docker",
             provider: "nvidia-nim",
             model: "nvidia/model-a",
+            policyAuthority: "nemoclaw-managed",
             gatewayName: "nemoclaw",
             lifecycleGeneration: "clone-generation",
             lifecycleLiveIdentityFingerprint: createHash("sha256")
@@ -812,9 +818,15 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       f.parseLiveSandboxNamesMock.mockImplementation((output: string) =>
         new Set(output.includes("beta Ready") ? ["alpha", "beta"] : ["alpha"]),
       );
-      f.removeSandboxRegistryEntryOutcomeMock.mockImplementation((name) => {
+      f.removeSandboxRegistryEntryWithReceiptMock.mockImplementation((name) => {
+        const entry = entries.get(name)!;
         entries.delete(name);
-        return { status: "complete", removed: true };
+        return {
+          entry: { policyAuthority: "nemoclaw-managed" as const, ...entry },
+          wasDefault: false,
+          fallbackDefault: "alpha",
+          postRemovalDefaultSelectionRevision: 1,
+        };
       });
       f.registerSandboxMock.mockImplementation((entry) =>
         entries.set(entry.name, { ...entry, pendingRouteReservation: true }),
@@ -844,7 +856,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
       await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
 
-      expect(f.removeSandboxRegistryEntryOutcomeMock).toHaveBeenCalledWith("beta");
+      expect(f.removeSandboxRegistryEntryWithReceiptMock).toHaveBeenCalledWith("beta");
       expect(f.streamSandboxCreateMock).toHaveBeenCalledTimes(1);
       expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
     },
@@ -1081,7 +1093,10 @@ describe("runSandboxSnapshot restore: gateway pairing on a freshly created desti
     const warningIndex = events.findIndex((event) => event.includes(expectedWarning));
     expect(warningIndex).toBeGreaterThanOrEqual(0);
     expect(warningIndex).toBeLessThan(events.indexOf("pairing"));
-    expect(f.establishRestoredSandboxGatewayPairingMock).toHaveBeenCalledWith("beta");
+    expect(f.establishRestoredSandboxGatewayPairingMock).toHaveBeenCalledWith(
+      "beta",
+      expect.any(Function),
+    );
   });
 
   it("fails with repair guidance when restored gateway pairing cannot be verified (#7431)", async () => {
@@ -1172,6 +1187,7 @@ describe("runSandboxSnapshot restore: gateway pairing on a freshly created desti
 
   it("leaves the working gateway credentials untouched on a self-restore", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
+    f.getSandboxMock.mockReturnValue({ ...f.managedSourceSandboxFixture });
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
     f.restoreSandboxStateMock.mockReturnValue({
       success: true,

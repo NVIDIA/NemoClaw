@@ -1283,6 +1283,7 @@ let sandboxListCalls = 0;
 let dockerPsCalls = 0;
 let sandboxCreated = false;
 let registeredSandbox = null;
+let registrationConfirmationCommands = [];
 const keepAlive = setInterval(() => {}, 1000);
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
@@ -1315,7 +1316,11 @@ runner.runCapture = (command) => {
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.registerSandbox = (entry) => { registeredSandbox = entry; return true; };
+registry.registerSandbox = (entry) => {
+  registrationConfirmationCommands = lifecycleObservationCommands.slice(-2);
+  registeredSandbox = entry;
+  return true;
+};
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
 registry.removeSandbox = () => true;
@@ -1382,7 +1387,7 @@ const { createSandbox } = require(${onboardPath});
     unrefCalls: createCommand.child.unrefCalls,
     stdoutDestroyCalls: createCommand.child.stdout.destroyCalls,
     stderrDestroyCalls: createCommand.child.stderr.destroyCalls,
-    lifecycleObservationCommands,
+    registrationConfirmationCommands,
     registeredSandbox,
   }));
   clearInterval(keepAlive);
@@ -1421,17 +1426,11 @@ const { createSandbox } = require(${onboardPath});
       payload.registeredSandbox.lifecycleLiveIdentityFingerprint,
       createHash("sha256").update("sbx-fresh-create").digest("hex"),
     );
-    const ownerScopedObservations = payload.lifecycleObservationCommands.filter(
-      (command: string) => command.includes("-g nemoclaw"),
-    );
-    assert.equal(ownerScopedObservations.length, 4);
     assert.ok(
-      ownerScopedObservations.every(
-        (command: string) =>
-          command.includes("sandbox get -g nemoclaw my-assistant") ||
-          command.includes("sandbox list -g nemoclaw"),
-      ),
-      `fresh identity observations must remain scoped to the owning gateway: ${JSON.stringify(ownerScopedObservations)}`,
+      payload.registrationConfirmationCommands[0]?.includes(
+        "sandbox get -g nemoclaw my-assistant",
+      ) && payload.registrationConfirmationCommands[1]?.includes("sandbox list -g nemoclaw"),
+      `registration must follow owner-scoped identity confirmation: ${JSON.stringify(payload.registrationConfirmationCommands)}`,
     );
   });
 });
