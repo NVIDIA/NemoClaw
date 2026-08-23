@@ -764,6 +764,7 @@ describe("PR review advisor OpenShell wrapper", () => {
   it("exposes validated specialist sessions inside the standard Pi workdir (#9949)", () => {
     const env = advisorEnvironment();
     const sessionDirectory = path.join(env.ADVISOR_WORKDIR as string, ".pr-review-advisor-sessions");
+    const sessionAlias = path.join(env.GITHUB_WORKSPACE as string, "specialist-sessions-alias");
     fs.mkdirSync(sessionDirectory);
     const sessionEntries = {
       behavior: "behavior",
@@ -778,7 +779,8 @@ describe("PR review advisor OpenShell wrapper", () => {
         `${JSON.stringify({ type: "session", id })}\n`,
       ),
     );
-    env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR = sessionDirectory;
+    fs.symlinkSync(sessionDirectory, sessionAlias, "dir");
+    env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR = sessionAlias;
     const tools = advisorTools();
 
     createAdvisorSandbox(env, tools);
@@ -797,6 +799,22 @@ describe("PR review advisor OpenShell wrapper", () => {
     );
     expect(runArgs).not.toContain(expect.stringContaining("session-reader"));
   });
+
+  it("rejects a specialist session alias outside the fixed workdir input (#9963)", () => {
+    const env = advisorEnvironment();
+    const outsideDirectory = path.join(env.GITHUB_WORKSPACE as string, "outside-sessions");
+    const outsideAlias = path.join(env.ADVISOR_WORKDIR as string, "outside-sessions-alias");
+    fs.mkdirSync(outsideDirectory);
+    fs.symlinkSync(outsideDirectory, outsideAlias, "dir");
+    env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR = outsideAlias;
+    const tools = advisorTools();
+
+    expect(() => createAdvisorSandbox(env, tools)).toThrow(
+      "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR must use the fixed workdir input path",
+    );
+    expect(tools.run).not.toHaveBeenCalled();
+  });
+
   it("rejects artifact paths that could escape the sandbox runtime directory", () => {
     const env = advisorEnvironment();
     env.PR_REVIEW_ADVISOR_ARTIFACT_DIR = "../../advisor";
