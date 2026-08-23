@@ -1722,41 +1722,41 @@ function validateSystemdServiceIdentityFromProperties(
     service.trustedBinaryPaths.some(
       (candidate) => path.normalize(candidate) === execStart.executablePath,
     );
-  if (
-    completeSnapshot &&
-    hasNoDropIns &&
-    hasExpectedExecutableHooks &&
-    trustedUnit &&
-    trustedBinary &&
-    execStart !== null
-  ) {
-    const descriptorIdentity = trustedSystemdDescriptorIdentity(
-      service,
-      fragmentPath,
-      execStart.executablePath,
-      opts,
-    );
-    const executableIdentity = inspectTrustedSystemdFile(
-      service,
-      execStart.executablePath,
-      "executable",
-      { hashContents: true, requiredModeBits: 0o100 },
-      opts,
-    )?.identity;
-    if (descriptorIdentity && executableIdentity) {
-      return {
-        ...execStart,
-        descriptorIdentity,
-        executableIdentity,
-        fragmentPath,
-        ok: true,
-      };
-    }
+  const trustFailure = (reason: string) => ({ ok: false as const, reason, trustFailure: true });
+  if (!completeSnapshot) return trustFailure("systemd service identity metadata is incomplete");
+  if (!hasNoDropIns) return trustFailure("systemd service has effective drop-ins");
+  if (!hasExpectedExecutableHooks) {
+    return trustFailure("systemd executable lifecycle hooks are not trusted");
+  }
+  if (!trustedUnit) return trustFailure("systemd service descriptor path is not trusted");
+  if (!trustedBinary || !execStart) {
+    return trustFailure("systemd service executable path is not trusted");
+  }
+  const descriptorIdentity = trustedSystemdDescriptorIdentity(
+    service,
+    fragmentPath,
+    execStart.executablePath,
+    opts,
+  );
+  if (!descriptorIdentity) {
+    return trustFailure("systemd service descriptor identity is not trusted");
+  }
+  const executableIdentity = inspectTrustedSystemdFile(
+    service,
+    execStart.executablePath,
+    "executable",
+    { hashContents: true, requiredModeBits: 0o100 },
+    opts,
+  )?.identity;
+  if (!executableIdentity) {
+    return trustFailure("systemd service executable identity is not trusted");
   }
   return {
-    ok: false,
-    reason: "service identity is not a trusted OpenShell gateway",
-    trustFailure: true,
+    ...execStart,
+    descriptorIdentity,
+    executableIdentity,
+    fragmentPath,
+    ok: true,
   };
 }
 
@@ -1829,7 +1829,7 @@ function inspectOpenShellGatewayLifecycleIdentity(
         diagnostic: identity.diagnostic,
         ok: false,
         reason: identity.trustFailure
-          ? "systemd service definition is not trusted"
+          ? (identity.reason ?? "systemd service definition is not trusted")
           : "systemd service identity query failed",
         trustFailure: identity.trustFailure === true,
       };

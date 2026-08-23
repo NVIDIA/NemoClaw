@@ -997,7 +997,7 @@ describe("docker-driver-gateway-service", () => {
     expect(result.attempted).toBe(true);
     expect(result.standaloneFallbackBlocked).toBe(true);
     expect(result.stopped).toBe(false);
-    expect(result.reason).toBe("systemd service definition is not trusted");
+    expect(result.reason).toBe("systemd executable lifecycle hooks are not trusted");
     expect(events).toEqual([systemdIdentityShowEvent(NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE)]);
   });
 
