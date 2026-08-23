@@ -216,7 +216,11 @@ function recordedBuildInvocation(agent: string): string {
   return invocation!;
 }
 
-function runBuild(sourceRoot: string, extraArgs: readonly string[] = []) {
+function runBuild(
+  sourceRoot: string,
+  extraArgs: readonly string[] = [],
+  platform = "linux/amd64",
+) {
   const output = path.join(testRoot, "contracts.json");
   return spawnSync(
     "bash",
@@ -229,7 +233,7 @@ function runBuild(sourceRoot: string, extraArgs: readonly string[] = []) {
       "--cohort",
       "protected-1-1",
       "--platform",
-      "linux/amd64",
+      platform,
       "--openclaw-base",
       `ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${DIGEST}`,
       "--hermes-base",
@@ -319,6 +323,22 @@ describe("protected managed-image source-root boundary", () => {
 });
 
 describe("protected managed-image build-cache boundary", () => {
+  it("passes the selected Buildx architecture explicitly to every Dockerfile", () => {
+    stubBuildInvocation();
+
+    const result = runBuild(REPO_ROOT, [], "linux/arm64");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(recordedBuildInvocation("openclaw")).toContain("--platform linux/arm64");
+    expect(recordedBuildInvocation("openclaw")).toContain("--build-arg TARGETARCH=arm64");
+    expect(recordedBuildInvocation("hermes")).toContain("--platform linux/arm64");
+    expect(recordedBuildInvocation("hermes")).toContain("--build-arg TARGETARCH=arm64");
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain("--platform linux/arm64");
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
+      "--build-arg TARGETARCH=arm64",
+    );
+  });
+
   it("builds every agent without optional cache arguments", () => {
     stubBuildInvocation();
 

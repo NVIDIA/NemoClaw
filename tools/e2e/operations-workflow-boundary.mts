@@ -31,6 +31,8 @@ const DOWNLOAD_ARTIFACT_ACTION =
 const PR_GATE_REPORTER = "test/e2e/risk-signal-reporter.ts";
 const LIVE_VITEST_HELPER = "tools/e2e/live-vitest-invocation.mts run --test-path";
 const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
+const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
+  "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 const PUBLICATION_REQUIRED_CONDITION = "${{ steps.publication_mode.outputs.required == '1' }}";
 const PUBLICATION_CLASSIFIER_SCRIPT =
   [
@@ -683,6 +685,10 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   }
   const evidence = findStep(live, "Record immutable Deep Agents Code base evidence");
   const upload = findStep(live, "Upload E2E artifacts");
+  const uploadPaths = String(upload.with?.path ?? "")
+    .split("\n")
+    .map((path) => path.trim())
+    .filter(Boolean);
   const liveSteps = live.steps ?? [];
   if (
     evidence.if !== "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}" ||
@@ -693,6 +699,9 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     !String(upload.with?.path ?? "").includes("dcode-base-image.json")
   ) {
     errors.push("live DCode must record its immutable base contract before E2E execution");
+  }
+  if (!uploadPaths.includes(COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH)) {
+    errors.push("live E2E must upload cold-onboard performance evidence");
   }
   if (!sameMembers(needs(workflow.jobs["staging-brev-launchable"] ?? {}), ["generate-matrix"])) {
     errors.push("staging-brev-launchable must wait only for generate-matrix");
@@ -1062,7 +1071,10 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     "scripts/scorecard/analyze-first-turn-latency.mts",
     "firstTurnLatency.readCurrentFirstTurnLatencySample",
     "currentFirstTurnLatency",
-    "runtimeHistory.loadPriorPushSummaries",
+    "scripts/scorecard/analyze-sandbox-phase-tail.mts",
+    "sandboxPhaseTail.readCurrentSandboxPhaseTailSample",
+    "currentSandboxPhaseTail",
+    "runtimeHistory.loadPriorPushHistory",
     "core.summary",
     "scorecardData",
     "slackData",

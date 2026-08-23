@@ -280,7 +280,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```bash
-$$nemoclaw onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
+$$nemoclaw onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
 <AgentOnly variant="hermes">
@@ -1056,6 +1056,9 @@ Use `--gpu` to require GPU passthrough and fail fast if an NVIDIA GPU is not det
 Use `--sandbox-gpu` or `--no-sandbox-gpu` to control only direct NVIDIA GPU access inside the sandbox.
 Use `--sandbox-gpu --sandbox-gpu-device <device>` to select an NVIDIA GPU by index (`0`), GPU UUID (`GPU-...`), or full CDI device name (`nvidia.com/gpu=0`).
 NemoClaw preserves the selection on resume.
+Use `--vllm-gpu-device <index-or-uuid>` to select the host GPU for the vLLM container that NemoClaw installs and manages.
+This selection is separate from sandbox GPU access, and NemoClaw also preserves it on resume.
+The selected GPU must satisfy the model's memory and compute-capability requirements.
 For native Docker and Podman creation, NemoClaw passes the normalized CDI name through OpenShell driver config; compatibility routes use the equivalent container-runtime selector.
 Device selection requires explicit sandbox GPU enablement.
 On ordinary native Linux Docker-driver hosts, NemoClaw uses native OpenShell GPU injection by default and never broadens confinement automatically.
@@ -4319,7 +4322,7 @@ The `$$nemoclaw setup` command is deprecated.
 Use `$$nemoclaw onboard` instead.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup
@@ -4332,7 +4335,7 @@ The `$$nemoclaw setup-spark` command is deprecated.
 Use the standard installer and run `$$nemoclaw onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup-spark
