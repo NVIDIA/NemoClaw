@@ -48,6 +48,7 @@ export default async function summarize_nemoclaw_planning_items(input: {
   const pattern =
     input.relevantPattern ??
     "^(#{1,4} )|dependency|depends|sequence|scope|acceptance|blocked|owner|state|agent|runtime|onboard|lifecycle|manifest|file|layout|PR |#[0-9]+";
+  if (typeof pattern !== "string") throw new Error("relevantPattern must be a string");
   if (pattern.length < 1 || pattern.length > 500)
     throw new Error("relevantPattern must contain 1 to 500 characters");
   if (/\)[+*{]/u.test(pattern)) throw new Error("relevantPattern must not quantify groups");
@@ -60,6 +61,7 @@ export default async function summarize_nemoclaw_planning_items(input: {
   const maxBodyMatches = Math.max(1, Math.min(30, input.maxBodyMatches ?? 20)),
     maxComments = Math.max(0, Math.min(5, input.maxComments ?? 3)),
     marker = input.commentMarker ?? "";
+  if (typeof marker !== "string") throw new Error("commentMarker must be a string");
   if (marker.length > 200) throw new Error("commentMarker must contain at most 200 characters");
   const view = async (kind, number) => {
     const fields =

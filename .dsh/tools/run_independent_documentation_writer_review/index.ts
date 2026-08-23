@@ -67,6 +67,8 @@ export default async function run_independent_documentation_writer_review(input:
       /[\0\r\n]/.test(input.model))
   )
     throw new Error("model must be a non-empty single-line string");
+  if (input.requireClean !== undefined && input.requireClean !== true)
+    throw new Error("requireClean must be true when provided");
   const reviewIdentity = input.prNumber
     ? "PR #" + input.prNumber
     : input.expectedHeadSha.slice(0, 12);
@@ -114,8 +116,7 @@ export default async function run_independent_documentation_writer_review(input:
   const headSha = identity.head;
   if (headSha !== input.expectedHeadSha)
     throw new Error("HEAD changed: expected " + input.expectedHeadSha + ", found " + headSha);
-  const requireClean = input.requireClean ?? true;
-  if (requireClean && !identity.clean)
+  if (!identity.clean)
     throw new Error("Documentation review requires a worktree with no uncommitted changes");
   const names64 = await run(
     "git diff --name-only -z --diff-filter=ACDMRTUXB " +
@@ -207,7 +208,7 @@ export default async function run_independent_documentation_writer_review(input:
   });
   if (after.head !== headSha)
     throw new Error("HEAD changed during review from " + headSha + " to " + after.head);
-  if (requireClean && after.statusFingerprint !== identity.statusFingerprint)
+  if (after.statusFingerprint !== identity.statusFingerprint)
     throw new Error("The read-only documentation review changed the worktree");
   const normalizedOutput = review.output
     .map((value) =>

@@ -13,6 +13,8 @@ let replyAndResolveReviewThread: (input: any) => Promise<any>;
 let runGitHubCli: (input: any) => Promise<any>;
 let prepareIsolatedPrWorktree: (input: any) => Promise<any>;
 let removeIsolatedPrWorktrees: (input: any) => Promise<any>;
+let runIndependentDocumentationWriterReview: (input: any) => Promise<any>;
+let summarizeNemoclawPlanningItems: (input: any) => Promise<any>;
 const fixtureRoots: string[] = [];
 
 beforeAll(async () => {
@@ -24,6 +26,10 @@ beforeAll(async () => {
   runGitHubCli = (await load("run_github_cli")).default;
   prepareIsolatedPrWorktree = (await load("prepare_isolated_pr_worktree")).default;
   removeIsolatedPrWorktrees = (await load("remove_isolated_pr_worktrees")).default;
+  runIndependentDocumentationWriterReview = (
+    await load("run_independent_documentation_writer_review")
+  ).default;
+  summarizeNemoclawPlanningItems = (await load("summarize_nemoclaw_planning_items")).default;
 });
 
 const HEAD_SHA = "a".repeat(40);
@@ -172,6 +178,80 @@ describe("reply_and_resolve_pr_review_thread", () => {
       call?.args?.some((arg: string) => arg.endsWith("/replies")),
     );
     expect(replyCalls).toHaveLength(1);
+  });
+});
+
+describe("remaining shared tool guards", () => {
+  it.each([
+    ["relevantPattern", { relevantPattern: 0 }],
+    ["commentMarker", { commentMarker: 0 }],
+  ])("rejects a non-string %s before reading GitHub", async (field, invalid) => {
+    const runGithubCli = vi.fn();
+    vi.stubGlobal("tools", { run_github_cli: runGithubCli });
+
+    await expect(
+      summarizeNemoclawPlanningItems({
+        workdir: "/workspace",
+        issues: [1],
+        ...invalid,
+      }),
+    ).rejects.toThrow(field + " must be a string");
+    expect(runGithubCli).not.toHaveBeenCalled();
+  });
+
+  it("does not allow a dirty checkout to bypass read-only review guards", async () => {
+    const readGitCheckout = vi.fn();
+    vi.stubGlobal("tools", { read_git_checkout: readGitCheckout });
+
+    await expect(
+      runIndependentDocumentationWriterReview({
+        workdir: "/workspace",
+        expectedHeadSha: HEAD_SHA,
+        summary: "Review documentation impact",
+        validationEvidence: "Focused checks passed",
+        requireClean: false,
+        apply: true,
+      }),
+    ).rejects.toThrow("requireClean must be true when provided");
+    expect(readGitCheckout).not.toHaveBeenCalled();
+  });
+
+  it("rejects a worktree identity change after documentation review", async () => {
+    const baseSha = "b".repeat(40);
+    const agentsBlobSha = "c".repeat(40);
+    const outputs: Record<string, string> = {
+      "Verify documentation review refs": baseSha + "\n" + agentsBlobSha + "\n",
+      "List documentation review files": Buffer.from("docs/example.md\0").toString("base64"),
+      "Measure documentation review diff": "100\n",
+    };
+    const bash = vi.fn(async ({ description }: { description: string }) => ({
+      kind: "foreground",
+      exitCode: 0,
+      stdout: { text: outputs[description] ?? "", truncated: false },
+      stderr: { text: "", truncated: false },
+    }));
+    const readGitCheckout = vi
+      .fn()
+      .mockResolvedValueOnce({
+        rootPresent: true,
+        head: HEAD_SHA,
+        clean: true,
+        statusFingerprint: "before",
+      })
+      .mockResolvedValueOnce({ head: HEAD_SHA, clean: false, statusFingerprint: "after" });
+    const subagent = vi.fn().mockResolvedValue({ kind: "foreground", output: [] });
+    vi.stubGlobal("tools", { bash, read_git_checkout: readGitCheckout, subagent });
+
+    await expect(
+      runIndependentDocumentationWriterReview({
+        workdir: "/workspace",
+        expectedHeadSha: HEAD_SHA,
+        summary: "Review documentation impact",
+        validationEvidence: "Focused checks passed",
+        apply: true,
+      }),
+    ).rejects.toThrow("read-only documentation review changed the worktree");
+    expect(subagent).toHaveBeenCalledOnce();
   });
 });
 
