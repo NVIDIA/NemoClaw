@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Runtime / Podman CPU Proof
+name: E2E / Rootless Podman CPU Qualification
 
 run-name: "Podman CPU proof PR #${{ github.event.pull_request.number }} commit ${{ github.event.pull_request.head.sha }}"
 

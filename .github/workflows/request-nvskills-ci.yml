@@ -10,7 +10,7 @@
 #
 # Required repository secret: NVSKILLS_CI_DISPATCH_TOKEN
 
-name: Automation / Request NVSkills CI
+name: Automation / Dispatch NVSkills CI Request
 
 on:
   issue_comment:

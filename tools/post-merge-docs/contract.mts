@@ -22,10 +22,23 @@ export function validatePostMergeDocsWorkflowBoundary(value: unknown): string[] 
   const gate = object(jobs.gate) ?? {};
   const author = object(jobs.author) ?? {};
   const publish = object(jobs.publish) ?? {};
+  const gateSteps = Array.isArray(gate.steps) ? gate.steps : [];
+  const scanSteps = gateSteps.filter((step) => object(step)?.id === "scan");
+  const scan = object(scanSteps[0]) ?? {};
+  const authorSteps = Array.isArray(author.steps) ? author.steps : [];
   const configureSteps = (Array.isArray(author.steps) ? author.steps : []).filter(
     (step) => object(step)?.name === "Configure isolated inference",
   );
   const configure = object(configureSteps[0]) ?? {};
+  const validationSteps = authorSteps.filter(
+    (step) => object(step)?.name === "Validate the documentation candidate",
+  );
+  const validation = object(validationSteps[0]) ?? {};
+  const reviewSteps = authorSteps.filter((step) => object(step)?.id === "review");
+  const rejectionSteps = authorSteps.filter(
+    (step) => object(step)?.name === "Upload the independent review report",
+  );
+  const rejection = object(rejectionSteps[0]) ?? {};
   const modelSecret = "${{ secrets.POST_MERGE_DOCS_API_KEY }}";
   const references = strings(workflow).filter((text) => /\$\{\{[^}]*\bsecrets\b/u.test(text));
   const valid =
@@ -34,7 +47,15 @@ export function validatePostMergeDocsWorkflowBoundary(value: unknown): string[] 
     Object.keys(jobs).sort().join(",") === "author,gate,publish" &&
     Object.values(jobs).every((job) => !Object.hasOwn(object(job) ?? {}, "secrets")) &&
     isDeepStrictEqual(gate.permissions, { "pull-requests": "read" }) &&
-    author.if === "${{ github.repository == 'NVIDIA/NemoClaw' }}" &&
+    isDeepStrictEqual(gate.outputs, { automate: "${{ steps.scan.outputs.automate }}" }) &&
+    scanSteps.length === 1 &&
+    typeof scan.run === "string" &&
+    scan.run.includes('test("^automation/post-merge-docs-[0-9a-f]{12}$")') &&
+    scan.run.includes('elif length == 0 or .[0].draft == true then "automation"') &&
+    scan.run.includes('elif .[0].draft == false then "maintainer"') &&
+    scan.run.includes('echo "automate=false" >> "$GITHUB_OUTPUT"') &&
+    author.if ===
+      "${{ github.repository == 'NVIDIA/NemoClaw' && needs.gate.outputs.automate == 'true' }}" &&
     isDeepStrictEqual(author.permissions, { contents: "read" }) &&
     isDeepStrictEqual(publish.permissions, {
       actions: "read",
@@ -47,6 +68,21 @@ export function validatePostMergeDocsWorkflowBoundary(value: unknown): string[] 
     isDeepStrictEqual(configure.env, { OPENAI_API_KEY: modelSecret }) &&
     configure.run ===
       'node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" configure' &&
+    validationSteps.length === 1 &&
+    validation["working-directory"] === "author/repo" &&
+    validation.run ===
+      'before_status="$(git status --porcelain=v1 --untracked-files=all)"\n' +
+        'before_diff="$(git diff --no-ext-diff --binary HEAD | sha256sum)"\n' +
+        "npm ci --ignore-scripts --no-audit --no-fund\n" +
+        "npm run docs\n" +
+        '[[ "$(git status --porcelain=v1 --untracked-files=all)" == "$before_status" ]]\n' +
+        '[[ "$(git diff --no-ext-diff --binary HEAD | sha256sum)" == "$before_diff" ]]\n' &&
+    reviewSteps.length === 1 &&
+    rejectionSteps.length === 1 &&
+    rejection.if === "${{ failure() && steps.review.outcome == 'failure' }}" &&
+    object(rejection.with)?.path === "${{ github.workspace }}/approved/review-report.txt" &&
+    object(rejection.with)?.["if-no-files-found"] === "ignore" &&
+    object(rejection.with)?.["retention-days"] === 3 &&
     !strings(publish).some((text) => /(?:POST_MERGE_DOCS|OPENAI)_API_KEY/u.test(text));
   return valid ? [] : ["workflow must separate the model credential from repository writes"];
 }

@@ -16,6 +16,7 @@ import {
   modelsForPlatform,
   parseVllmExtraServeArgs,
   preflightVllmModelEnv,
+  resolveVllmGpuMemoryUtilization,
   selectVllmModelFromEnv,
   STATION_PAIR_OPTIONAL_ORCHESTRATION,
   VLLM_EXTRA_ARGS_ENV,
@@ -786,6 +787,55 @@ describe("parseVllmExtraServeArgs", () => {
       } as NodeJS.ProcessEnv),
     ).toThrow(/control characters/);
   });
+});
+
+describe("resolveVllmGpuMemoryUtilization", () => {
+  it("uses the last appended override in either supported argv form", () => {
+    expect(
+      resolveVllmGpuMemoryUtilization(0.7, [
+        "--gpu-memory-utilization=0.8",
+        "--gpu-memory-utilization",
+        "0.5",
+      ]),
+    ).toBe(0.5);
+    expect(resolveVllmGpuMemoryUtilization(0.7, ["--gpu_memory_utilization=0.6"])).toBe(0.6);
+    expect(resolveVllmGpuMemoryUtilization(undefined, ["--max-num-seqs", "2"])).toBeUndefined();
+  });
+
+  it.each([
+    [".5", 0.5],
+    ["1.", 1],
+    ["+0.5", 0.5],
+    ["5e-1", 0.5],
+  ])("accepts the vLLM float value %s", (value, expected) => {
+    expect(resolveVllmGpuMemoryUtilization(0.7, ["--gpu-memory-utilization", value])).toBe(
+      expected,
+    );
+  });
+
+  it.each(["--gpu-memory-u", "--gpu_memory_u=0.5"])(
+    "rejects the abbreviated option %s",
+    (option) => {
+      expect(() => resolveVllmGpuMemoryUtilization(0.7, [option, "0.5"])).toThrow(
+        /must use the full --gpu-memory-utilization option name/,
+      );
+    },
+  );
+
+  it("rejects a missing utilization value", () => {
+    expect(() => resolveVllmGpuMemoryUtilization(0.7, ["--gpu-memory-utilization"])).toThrow(
+      /requires a value/,
+    );
+  });
+
+  it.each(["", ".", "+", "0", "1.1", "1e1", "5e", "0x1", "NaN", "--max-num-seqs"])(
+    "rejects invalid utilization value %j",
+    (value) => {
+      expect(() =>
+        resolveVllmGpuMemoryUtilization(0.7, ["--gpu-memory-utilization", value]),
+      ).toThrow(/decimal number greater than 0 and at most 1/);
+    },
+  );
 });
 
 describe("preflightVllmModelEnv", () => {

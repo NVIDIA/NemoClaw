@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MessagingTokenDef } from "./messaging-prep";
+import { materializeHermesPortableCreatePlan } from "./sandbox-create-plan-materialization";
 import {
   materializeSandboxCreatePlan,
   resolveSandboxCreateIntent,
@@ -13,8 +14,13 @@ import type { SandboxGpuCreateConfig } from "./sandbox-gpu-create";
 
 const sandboxGpuConfig: SandboxGpuCreateConfig = {
   sandboxGpuEnabled: true,
-  sandboxGpuDevice: "nvidia.com/gpu=0",
+  sandboxGpuDevice: null,
   hostGpuDetected: true,
+};
+
+const selectedSandboxGpuConfig: SandboxGpuCreateConfig = {
+  ...sandboxGpuConfig,
+  sandboxGpuDevice: "nvidia.com/gpu=0",
 };
 
 afterEach(() => {
@@ -171,8 +177,8 @@ describe("resolveSandboxCreateIntent", () => {
       extraProviders: ["custom-provider", "custom-provider", ""],
       staleExtraProviders: ["stale-provider", "stale-provider", ""],
       hermesToolGateways: ["github"],
-      sandboxGpuConfig,
-      gpuCreateArgs: ["--gpu", "--gpu-device", "nvidia.com/gpu=0"],
+      sandboxGpuConfig: selectedSandboxGpuConfig,
+      gpuCreateArgs: ["--gpu"],
       resourceCreateArgs: ["--cpu", "4", "--memory", "16Gi"],
       gpuRoutePlan: "native-only" as const,
       sandboxGpuLogMessage: "gpu note",
@@ -205,6 +211,7 @@ describe("resolveSandboxCreateIntent", () => {
     expect(first.staleExtraProviders).toEqual(["stale-provider"]);
     expect(first.resourceCreateArgs).toEqual(["--cpu", "4", "--memory", "16Gi"]);
     expect(first.extraPlaceholderKeys).toEqual(["TELEGRAM_BOT_TOKEN_AGENT_A"]);
+    expect(first.sandboxGpuDevice).toBe("nvidia.com/gpu=0");
     expect(first.policy).toEqual({
       basePolicyPath: "/repo/policy.yaml",
       activeMessagingChannels: ["telegram", "discord", "whatsapp"],
@@ -300,7 +307,7 @@ describe("resolveSandboxCreateIntent", () => {
       reusableMessagingProviders: ["sandbox-existing-discord"],
       extraProviders: ["custom-provider"],
       hermesToolGateways: ["github"],
-      sandboxGpuConfig,
+      sandboxGpuConfig: selectedSandboxGpuConfig,
       gpuCreateArgs: ["--gpu"],
       resourceCreateArgs: ["--memory", "16g"],
       gpuRoutePlan: "native-only",
@@ -343,6 +350,8 @@ describe("resolveSandboxCreateIntent", () => {
       "sandbox",
       "--policy",
       "/tmp/policy.yaml",
+      "--driver-config-json",
+      '{"docker":{"cdi_devices":["nvidia.com/gpu=0"]},"podman":{"cdi_devices":["nvidia.com/gpu=0"]}}',
       "--gpu",
       "--memory",
       "16g",
@@ -357,6 +366,80 @@ describe("resolveSandboxCreateIntent", () => {
     ]);
     expect(serializedIntent).not.toContain("telegram-super-secret");
     expect(JSON.stringify(intent)).toBe(serializedIntent);
+  });
+
+  it("materializes a raw GPU UUID as Docker and Podman CDI driver config", () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const intent = resolveSandboxCreateIntent({
+      basePolicyPath: "nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+      sandboxName: "portable-hermes",
+      channels: [],
+      enabledChannels: [],
+      disabledChannelNames: new Set(),
+      messagingProviderRequests: [],
+      primaryMessagingCredentialEnvKeys: [],
+      reusableMessagingChannels: [],
+      reusableMessagingProviders: [],
+      hermesToolGateways: [],
+      sandboxGpuConfig: {
+        ...sandboxGpuConfig,
+        sandboxGpuDevice: "GPU-69adb14e-820e-bfb4-0993-171e73f68504",
+      },
+      gpuCreateArgs: ["--gpu"],
+      gpuRoutePlan: "native-only",
+      sandboxGpuLogMessage: null,
+      agentName: "hermes",
+      policyTier: null,
+    });
+
+    const plan = materializeHermesPortableCreatePlan({
+      intent,
+      fromRef: "ghcr.io/nvidia/nemoclaw/hermes:test",
+    });
+    const configIndex = plan.createArgs.indexOf("--driver-config-json");
+
+    expect(JSON.parse(plan.createArgs[configIndex + 1]!)).toEqual({
+      docker: {
+        cdi_devices: ["nvidia.com/gpu=GPU-69adb14e-820e-bfb4-0993-171e73f68504"],
+      },
+      podman: {
+        cdi_devices: ["nvidia.com/gpu=GPU-69adb14e-820e-bfb4-0993-171e73f68504"],
+      },
+    });
+    expect(plan.createArgs).toContain("--gpu");
+    expect(plan.createArgs).not.toContain("--gpu-device");
+  });
+
+  it("rejects GPU device driver config without the typed GPU request", () => {
+    const intent = resolveSandboxCreateIntent({
+      basePolicyPath: "/repo/policy.yaml",
+      sandboxName: "sandbox",
+      channels: [],
+      enabledChannels: [],
+      disabledChannelNames: new Set(),
+      messagingProviderRequests: [],
+      primaryMessagingCredentialEnvKeys: [],
+      reusableMessagingChannels: [],
+      reusableMessagingProviders: [],
+      hermesToolGateways: [],
+      sandboxGpuConfig: { sandboxGpuEnabled: false, sandboxGpuDevice: "0" },
+      gpuCreateArgs: [],
+      gpuRoutePlan: "none",
+      sandboxGpuLogMessage: null,
+      policyTier: null,
+    });
+
+    expect(() =>
+      materializeSandboxCreatePlan({
+        intent,
+        fromRef: "/tmp/nemoclaw-build-1/Dockerfile",
+        messagingTokenDefs: [],
+        prepareInitialSandboxCreatePolicy: vi.fn(),
+        runProviderPreDeleteCleanup: vi.fn(),
+        upsertMessagingProviders: vi.fn(() => []),
+        getHermesToolGatewayProviderName: vi.fn(),
+      }),
+    ).toThrow("Sandbox GPU device selection requires the OpenShell GPU request.");
   });
 
   it("materializes a read-only Docker bind beside the DCode tmpfs mount", () => {

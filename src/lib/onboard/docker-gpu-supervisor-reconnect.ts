@@ -73,6 +73,19 @@ export type DockerGpuSupervisorReconnectDeps = {
   errorPhaseDebouncePolls?: number;
 };
 
+type DockerLifecycleReleaseDeps = Pick<
+  DockerGpuSupervisorReconnectDeps,
+  "runOpenshell" | "sleep"
+> & {
+  /**
+   * Corroborating evidence for an Error row from a Docker query that confirms
+   * the transaction-owned replacement is the sole labeled sandbox container.
+   * The callback must fail closed and keep its child within the supplied
+   * remaining lifecycle-release budget.
+   */
+  soleLabeledReplacementCorroboratesError?: (remainingMs: number) => boolean;
+};
+
 /**
  * Workaround contract for the OpenShell lifecycle race in #9531:
  *
@@ -83,8 +96,11 @@ export type DockerGpuSupervisorReconnectDeps = {
  * - This layer waits after backup removal and before replacement restart so
  *   OpenShell processes the stale deletion before the new registration.
  * - The caller enters this wait only after the replacement reached Ready and
- *   was deliberately stopped. A successful list must omit the sandbox name;
- *   a name-and-phase row cannot identify which container owns that lifecycle.
+ *   was deliberately stopped. A successful list normally omits the sandbox
+ *   name. An Error row is also sufficient only when a separate bounded Docker
+ *   query confirms that exact stopped replacement is the sole remaining
+ *   labeled container. This corroborates the release condition; the OpenShell
+ *   row alone is not an identity-bound ownership receipt.
  * - `waits for the sandbox name to disappear before restarting the
  *   replacement (#9531)` protects the event order. `rejects final handoff when
  *   OpenShell never releases the deleting lifecycle record (#9531)` protects
@@ -96,7 +112,7 @@ export type DockerGpuSupervisorReconnectDeps = {
 export function waitForOpenShellSandboxLifecycleRelease(
   sandboxName: string,
   timeoutSecs: number,
-  deps: Pick<DockerGpuSupervisorReconnectDeps, "runOpenshell" | "sleep">,
+  deps: DockerLifecycleReleaseDeps,
 ): boolean {
   if (!deps.runOpenshell) return false;
   const sleep = deps.sleep ?? defaultSleep;
@@ -116,9 +132,21 @@ export function waitForOpenShellSandboxLifecycleRelease(
       const output = String(result.stdout ?? "").trim();
       const entries = parseLiveSandboxEntries(output);
       const sandboxPresent = entries.some((entry) => entry.name === sandboxName);
+      const stoppedReplacementError = entries.some(
+        (entry) => entry.name === sandboxName && entry.phase === "Error",
+      );
       const hasPhaseBearingEntry = entries.some((entry) => entry.phase !== null);
       const explicitEmptyList = output === "No sandboxes found" || output === "No sandboxes found.";
-      if (explicitEmptyList || (hasPhaseBearingEntry && !sandboxPresent)) {
+      const remainingBeforeCorroborationMs = deadline - Date.now();
+      const soleLabeledReplacementCorroboratesError =
+        stoppedReplacementError &&
+        remainingBeforeCorroborationMs > 0 &&
+        deps.soleLabeledReplacementCorroboratesError?.(remainingBeforeCorroborationMs) === true;
+      if (
+        explicitEmptyList ||
+        soleLabeledReplacementCorroboratesError ||
+        (hasPhaseBearingEntry && !sandboxPresent)
+      ) {
         return true;
       }
     }

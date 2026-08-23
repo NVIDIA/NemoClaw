@@ -98,7 +98,7 @@ gh_api() {
   local url="$1"
   local -a auth=()
   [[ -n "${GITHUB_TOKEN:-}" ]] && auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
-  curl -fsSL --retry 3 --retry-delay 1 --retry-all-errors \
+  curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 --retry-delay 1 --retry-all-errors \
     --connect-timeout 10 --max-time 60 \
     -H "Accept: application/vnd.github+json" "${auth[@]}" "$url"
 }
@@ -327,7 +327,7 @@ trap 'rm -rf "$WORKDIR_TMP"' EXIT
 TARBALL="${WORKDIR_TMP}/hermes-${TAG}.tar.gz"
 TARBALL_URL="https://github.com/${GITHUB_REPO}/archive/refs/tags/${TAG}.tar.gz"
 echo "Downloading ${TARBALL_URL}"
-curl -fsSL --retry 3 --retry-delay 1 --retry-all-errors \
+curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 --retry-delay 1 --retry-all-errors \
   --connect-timeout 10 --max-time 300 \
   -o "$TARBALL" "$TARBALL_URL"
 

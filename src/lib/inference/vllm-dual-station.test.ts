@@ -133,14 +133,26 @@ function plan(): DualStationVllmPlan {
       home: "/home/nvidia",
       uid: 1000,
       gid: 1000,
-      gpu: { index: 0, name: "NVIDIA GB300", uuid: "GPU-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
+      gpu: {
+        index: 0,
+        name: "NVIDIA GB300",
+        uuid: "GPU-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        totalMemoryMiB: 100_000,
+        freeMemoryMiB: 95_000,
+      },
     },
     peer: {
       hostname: "station-b",
       home: "/home/nvidia",
       uid: 1000,
       gid: 1000,
-      gpu: { index: 0, name: "NVIDIA GB300", uuid: "GPU-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" },
+      gpu: {
+        index: 0,
+        name: "NVIDIA GB300",
+        uuid: "GPU-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        totalMemoryMiB: 100_000,
+        freeMemoryMiB: 95_000,
+      },
     },
     rails: [
       {
@@ -471,7 +483,7 @@ describe("dual DGX Station vLLM install orchestration", () => {
     });
     mocks.probeCapability.mockImplementation(() => {
       capabilityCalls += 1;
-      expect(lifecycleActive).toBe(capabilityCalls === 2);
+      expect(lifecycleActive).toBe(capabilityCalls >= 2);
       return {
         kind: "ready",
         plan: clusterPlan,
@@ -515,7 +527,7 @@ describe("dual DGX Station vLLM install orchestration", () => {
     expect(mocks.persistRuntimeReceipt).toHaveBeenCalledWith(clusterPlan);
     expect(mocks.withLifecycle).toHaveBeenCalledTimes(2);
     expect(lifecycleActive).toBe(false);
-    expect(mocks.probeCapability).toHaveBeenCalledTimes(2);
+    expect(mocks.probeCapability).toHaveBeenCalledTimes(3);
     expect(mocks.stageModelSnapshot).toHaveBeenCalledWith(clusterPlan);
 
     const readinessArgs = mocks.runCurlProbe.mock.calls[0][0] as string[];
@@ -533,6 +545,93 @@ describe("dual DGX Station vLLM install orchestration", () => {
     expect(mocks.dockerSpawn.mock.calls[0][1].env.VLLM_API_KEY).toBeUndefined();
     expect(mocks.dockerSpawn.mock.calls[0][1].env.DOCKER_CONTEXT).toBe("default");
     expect(mocks.dockerImageInspectFormat.mock.calls[0][2].env.DOCKER_CONTEXT).toBe("default");
+  });
+
+  it("rejects a busy selected Station GPU before pulls, staging, or startup", async () => {
+    const clusterPlan = plan();
+    clusterPlan.peer.gpu.freeMemoryMiB = 89_000;
+    mocks.probeCapability.mockReturnValue({
+      kind: "ready",
+      plan: clusterPlan,
+      peerModelSnapshot: "staging-required",
+    });
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
+
+    await expect(
+      installVllm(profile!, { hasImage: true, nonInteractive: true, promptFn: vi.fn() }),
+    ).resolves.toEqual({ ok: false });
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("station-b"));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("GPU-bbbbbbbb"));
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.preflightGpuRuntime).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    expect(mocks.stageModelSnapshot).not.toHaveBeenCalled();
+    expect(mocks.startManaged).not.toHaveBeenCalled();
+  });
+
+  it("accepts volatile free-memory changes without treating them as topology changes", async () => {
+    const initialPlan = plan();
+    const stagedPlan = plan();
+    const launchPlan = plan();
+    stagedPlan.local.gpu.freeMemoryMiB = 94_000;
+    launchPlan.local.gpu.freeMemoryMiB = 93_000;
+    mocks.probeCapability
+      .mockReturnValueOnce({
+        kind: "ready",
+        plan: initialPlan,
+        peerModelSnapshot: "ready",
+      })
+      .mockReturnValueOnce({
+        kind: "ready",
+        plan: stagedPlan,
+        peerModelSnapshot: "ready",
+      })
+      .mockReturnValueOnce({
+        kind: "ready",
+        plan: launchPlan,
+        peerModelSnapshot: "ready",
+      });
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
+
+    await expect(
+      installVllm(profile!, { hasImage: true, nonInteractive: true, promptFn: vi.fn() }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(mocks.startManaged).toHaveBeenCalledWith(launchPlan, { apiKey: API_KEY });
+    expect(mocks.persistRuntimeReceipt).toHaveBeenCalledWith(launchPlan);
+  });
+
+  it("refuses a busy final Station sample before key creation or launch", async () => {
+    const initialPlan = plan();
+    const stagedPlan = plan();
+    const launchPlan = plan();
+    launchPlan.peer.gpu.freeMemoryMiB = 89_000;
+    mocks.probeCapability
+      .mockReturnValueOnce({
+        kind: "ready",
+        plan: initialPlan,
+        peerModelSnapshot: "ready",
+      })
+      .mockReturnValueOnce({
+        kind: "ready",
+        plan: stagedPlan,
+        peerModelSnapshot: "ready",
+      })
+      .mockReturnValueOnce({
+        kind: "ready",
+        plan: launchPlan,
+        peerModelSnapshot: "ready",
+      });
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
+
+    await expect(
+      installVllm(profile!, { hasImage: true, nonInteractive: true, promptFn: vi.fn() }),
+    ).resolves.toEqual({ ok: false });
+
+    expect(mocks.ensureApiKey).not.toHaveBeenCalled();
+    expect(mocks.startManaged).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("station-b"));
   });
 
   it("rolls back a newly started pair when durable rollback state cannot be written", async () => {
@@ -604,7 +703,7 @@ describe("dual DGX Station vLLM install orchestration", () => {
         DUAL_STATION_VLLM_RUNTIME.modelRevision,
       ]),
     );
-    expect(mocks.probeCapability).toHaveBeenCalledTimes(2);
+    expect(mocks.probeCapability).toHaveBeenCalledTimes(3);
   });
 
   it("installs the public Nemotron Ultra model without an HF token", async () => {
@@ -623,7 +722,7 @@ describe("dual DGX Station vLLM install orchestration", () => {
       }),
     ).resolves.toEqual({ ok: true });
 
-    expect(mocks.probeCapability).toHaveBeenCalledTimes(2);
+    expect(mocks.probeCapability).toHaveBeenCalledTimes(3);
     expect(beforeInstall).toHaveBeenCalledWith("nemotron-ultra");
     expect(mocks.preflightOwnership).toHaveBeenCalled();
     expect(mocks.dockerSpawn).toHaveBeenCalled();
@@ -702,7 +801,7 @@ describe("dual DGX Station vLLM install orchestration", () => {
       mocks.stageModelSnapshot.mock.invocationCallOrder[0],
     );
     expect(mocks.startManaged.mock.invocationCallOrder[0]).toBeGreaterThan(
-      mocks.probeCapability.mock.invocationCallOrder[1],
+      mocks.probeCapability.mock.invocationCallOrder[2],
     );
   });
 
