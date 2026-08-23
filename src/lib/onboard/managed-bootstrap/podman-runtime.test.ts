@@ -253,7 +253,7 @@ describe("Podman managed-bootstrap runtime surface", () => {
       renderPodmanReplacementEnvironment(
         {
           Config: {
-            User: "0",
+            User: "0:0",
             WorkingDir: "/",
             Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
             Cmd: ["--workdir", "/sandbox"],
