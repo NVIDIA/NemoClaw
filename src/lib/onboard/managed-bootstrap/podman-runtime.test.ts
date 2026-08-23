@@ -42,6 +42,7 @@ import {
   createPodmanManagedBootstrapSurface,
   finishCommittedPodmanBootstrap,
   observePodmanBootstrapReplacementReady,
+  renderPodmanReplacementEnvironment,
   renderPodmanReplacementHealthArgs,
   renderPodmanReplacementMountArgs,
   renderPodmanReplacementRuntimeArgs,
@@ -244,6 +245,39 @@ describe("Podman managed-bootstrap runtime surface", () => {
       "10",
       "--health-start-period",
       "5000000000ns",
+    ]);
+  });
+
+  it("preserves NemoClaw workspace ownership across the managed replacement", () => {
+    expect(
+      renderPodmanReplacementEnvironment(
+        {
+          Config: {
+            User: "0",
+            WorkingDir: "/",
+            Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
+            Cmd: ["--workdir", "/sandbox"],
+            Labels: { "openshell.ai/managed-by": "openshell" },
+            Env: [
+              "OPENSHELL_OCI_IMAGE_USER=1000:1000",
+              "OPENSHELL_SANDBOX_UID=",
+              "OPENSHELL_SANDBOX_GID=",
+              "OPENSHELL_SANDBOX_COMMAND=stale",
+              "PATH=/usr/bin",
+            ],
+          },
+        },
+        {
+          plan: { profile: { agent: "hermes", fingerprint: "a".repeat(64) } },
+          bootstrapIdentity: IDENTITY,
+          intendedWorkloadArgv: ["/usr/local/bin/nemoclaw-start"],
+        } as never,
+      ),
+    ).toEqual([
+      "OPENSHELL_SANDBOX_UID=",
+      "OPENSHELL_SANDBOX_GID=",
+      "PATH=/usr/bin",
+      "OPENSHELL_SANDBOX_COMMAND=/usr/local/bin/nemoclaw-start",
     ]);
   });
 
@@ -619,6 +653,39 @@ describe("Podman managed-bootstrap runtime surface", () => {
       expect.objectContaining({ outcome: "commit" }),
     );
     expect(operationEngine.capture).not.toHaveBeenCalled();
+  });
+
+  it("uses Podman's all-GPU CDI authority when no exact device was selected", async () => {
+    vi.clearAllMocks();
+    installCoordinatorMocks();
+    const injected = adapter();
+    const input = lifecycleInput(injected.value);
+    const lifecycle = createPodmanManagedBootstrapSurface(engine()).createLifecycle({
+      ...input,
+      sandboxGpuConfig: {
+        ...input.sandboxGpuConfig,
+        mode: "1",
+        hostGpuDetected: true,
+        hostGpuPlatform: "nvidia",
+        sandboxGpuEnabled: true,
+      },
+    });
+
+    await lifecycle.runCreate(async () => ({
+      value: "created",
+      receipt: {
+        sandbox: { sandboxName: "alpha", sandboxId: "sandbox-alpha", driverId: "podman" },
+        ready: true,
+        readyAt: "2026-08-22T00:00:00.000Z",
+      },
+    }));
+
+    expect(coordinator.prepare).toHaveBeenCalledWith(
+      injected.value,
+      expect.objectContaining({
+        replacementOptions: { values: expect.objectContaining({ gpuModeArgs: ["--gpus", "all"] }) },
+      }),
+    );
   });
 
   it("wires rollback through the same provider-owned terminal transaction", async () => {

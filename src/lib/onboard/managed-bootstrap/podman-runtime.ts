@@ -23,6 +23,8 @@ import {
   startOpenShellGatewayUserService,
   stopOpenShellGatewayUserService,
 } from "../docker-driver-gateway-service";
+import { shouldOmitOpenShellOciImageUser } from "../docker-gpu-patch-clone";
+import type { DockerContainerInspect } from "../docker-gpu-patch-types";
 import { openshellSandboxCommandEnvValue } from "../docker-startup-command-env";
 import type { ManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import type { RuntimeProviderBootstrapSurface } from "../runtime-provider/contract";
@@ -531,15 +533,21 @@ function replacementCommand(
   ]);
 }
 
-function replacementEnvironment(
+export function renderPodmanReplacementEnvironment(
   inspect: JsonRecord,
   handle: ManagedBootstrapHeldWorkloadHandle,
 ): readonly string[] {
   const config = record(inspect.Config, "Config");
   const intended = openshellSandboxCommandEnvValue(handle.intendedWorkloadArgv);
   if (!intended) throw new Error("Managed bootstrap Podman intended workload argv is invalid.");
+  const omitOciImageUser = shouldOmitOpenShellOciImageUser(
+    inspect as unknown as DockerContainerInspect,
+    handle.intendedWorkloadArgv,
+  );
   const values = stringArray(config.Env ?? [], "Config.Env").filter(
-    (entry) => !entry.startsWith("OPENSHELL_SANDBOX_COMMAND="),
+    (entry) =>
+      !entry.startsWith("OPENSHELL_SANDBOX_COMMAND=") &&
+      (!omitOciImageUser || !entry.startsWith("OPENSHELL_OCI_IMAGE_USER=")),
   );
   if (values.some((entry) => !SAFE_ENV.test(entry))) {
     throw new Error("Managed bootstrap Podman environment contains an invalid assignment.");
@@ -1725,7 +1733,7 @@ export function createPodmanManagedBootstrapAdapter(
               ...renderPodmanReplacementHealthArgs(current.rawInspect),
               ...optionArgs(replacementOptions.values),
             ]),
-            environment: replacementEnvironment(current.rawInspect, handle),
+            environment: renderPodmanReplacementEnvironment(current.rawInspect, handle),
             entrypointArgv: [BOOTSTRAP_EXECUTABLE],
             commandArgv: replacementCommand(handle, snapshot),
             replacementImageContentId: snapshot.runtimeImageContentId,
@@ -2032,9 +2040,6 @@ function createLifecycle(
       }>,
     ) {
       const gpuDevice = input.sandboxGpuConfig.sandboxGpuDevice;
-      if (input.sandboxGpuConfig.sandboxGpuEnabled && !gpuDevice) {
-        throw new Error("Managed bootstrap Podman GPU selection has no CDI device authority.");
-      }
       const plan = {
         schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
         sandboxName: input.sandboxName,
@@ -2064,7 +2069,9 @@ function createLifecycle(
         replacementOptions: {
           values: {
             gpuModeArgs: input.sandboxGpuConfig.sandboxGpuEnabled
-              ? ["--device", gpuDevice as string]
+              ? gpuDevice
+                ? ["--device", gpuDevice]
+                : ["--gpus", "all"]
               : [],
             requiredUlimits: input.requiredLimits.map(
               (limit) => `${limit.name}=${String(limit.soft)}:${String(limit.hard)}`,
