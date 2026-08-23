@@ -297,18 +297,21 @@ export function relaunchManagedSupervisorSession(
           runOpenshell: runLifecycleProbe,
           ...(deps.sleep ? { sleep: deps.sleep } : {}),
         };
+        const finalized = finalize(
+          {
+            result,
+            supervisorReady: true,
+            sandboxName,
+            finalHandoffTimeoutSecs: getDockerGpuSupervisorReconnectTimeoutSecs(1),
+          },
+          lifecycleDeps,
+        );
         const outcome = {
-          ...finalize(
-            {
-              result,
-              supervisorReady: true,
-              sandboxName,
-              finalHandoffTimeoutSecs: getDockerGpuSupervisorReconnectTimeoutSecs(1),
-            },
-            lifecycleDeps,
-          ),
+          ...finalized,
           stateRestored: true,
-          stateBackupRemoved: removeSettledStateBackup(),
+          ...(finalized.finalHandoffAcknowledged === true
+            ? { stateBackupRemoved: removeSettledStateBackup() }
+            : {}),
         };
         completed = { supervisorReady, outcome };
         return outcome;

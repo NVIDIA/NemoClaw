@@ -79,7 +79,7 @@ function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
     recreate: vi.fn(() => patchResult()),
     finalize: vi.fn(({ supervisorReady }) =>
       supervisorReady
-        ? { backupRemoved: true, rolledBack: false }
+        ? { backupRemoved: true, finalHandoffAcknowledged: true, rolledBack: false }
         : { backupRemoved: false, rolledBack: true },
     ),
     ...overrides,
@@ -149,6 +149,7 @@ describe("relaunchManagedSupervisorSession", () => {
 
     expect(relaunch?.finalize(true)).toEqual({
       backupRemoved: true,
+      finalHandoffAcknowledged: true,
       rolledBack: false,
       stateRestored: true,
       stateBackupRemoved: true,
@@ -500,10 +501,32 @@ describe("relaunchManagedSupervisorSession", () => {
 
     expect(relaunch?.finalize(true)).toEqual({
       backupRemoved: true,
+      finalHandoffAcknowledged: true,
       rolledBack: false,
       stateRestored: true,
       stateBackupRemoved: false,
     });
+  });
+
+  it("retains the restored state backup when final handoff is not acknowledged (#9531)", () => {
+    const deps = baseDeps({
+      finalize: vi.fn(() => ({
+        backupRemoved: true,
+        finalHandoffAcknowledged: false,
+        lastSandboxPhase: "Deleting",
+        rolledBack: false,
+      })),
+    });
+    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
+
+    expect(relaunch?.finalize(true)).toEqual({
+      backupRemoved: true,
+      finalHandoffAcknowledged: false,
+      lastSandboxPhase: "Deleting",
+      rolledBack: false,
+      stateRestored: true,
+    });
+    expect(deps.removeBackup).not.toHaveBeenCalled();
   });
 
   it("returns null when the pinned recreation fails", () => {
