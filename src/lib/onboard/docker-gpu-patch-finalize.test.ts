@@ -68,14 +68,25 @@ describe("finalizeDockerGpuPatchBackup", () => {
     const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
     const outcome = finalizeDockerGpuPatchBackup(
-      { result: deferredCreateResult(), supervisorReady: true },
-      { dockerStop, dockerRm, dockerStart },
+      {
+        result: deferredCreateResult(),
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 60,
+      },
+      {
+        dockerStop,
+        dockerRm,
+        dockerStart,
+        runOpenshell: vi.fn(() => ({ status: 0, stdout: "No sandboxes found.\n" })),
+      },
     );
     expect(outcome).toEqual({
       backupRemoved: true,
       rolledBack: false,
       replacementStoppedForCommit: true,
       replacementRestarted: true,
+      lifecycleReleaseObserved: true,
     });
     expect(dockerStop).toHaveBeenCalledWith(
       "new-container-id",
@@ -95,6 +106,124 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(dockerRm.mock.invocationCallOrder[0]).toBeLessThan(
       dockerStart.mock.invocationCallOrder[0],
     );
+  });
+
+  it("waits for the sandbox name to disappear before restarting the replacement (#9531)", () => {
+    const events: string[] = [];
+    const dockerStop = vi.fn(() => {
+      events.push("stop replacement");
+      return { status: 0 };
+    });
+    const dockerRm = vi.fn(() => {
+      events.push("remove backup");
+      return { status: 0 };
+    });
+    const dockerStart = vi.fn(() => {
+      events.push("start replacement");
+      return { status: 0 };
+    });
+    const runOpenshell = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        events.push("observe deleting");
+        return { status: 0, stdout: "alpha  2026-08-21 05:53:16  Deleting\n" };
+      })
+      .mockImplementationOnce(() => {
+        events.push("observe error");
+        return { status: 0, stdout: "alpha  2026-08-21 05:53:18  Error\n" };
+      })
+      .mockImplementationOnce(() => {
+        events.push("observe name absence");
+        return { status: 0, stdout: "beta  2026-08-21 05:53:20  Ready\n" };
+      });
+
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result: deferredCreateResult(),
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 60,
+      },
+      { dockerStop, dockerRm, dockerStart, runOpenshell, sleep: vi.fn() },
+    );
+
+    expect(outcome).toMatchObject({
+      backupRemoved: true,
+      lifecycleReleaseObserved: true,
+      replacementRestarted: true,
+    });
+    expect(events).toEqual([
+      "stop replacement",
+      "remove backup",
+      "observe deleting",
+      "observe error",
+      "observe name absence",
+      "start replacement",
+    ]);
+  });
+
+  it("does not treat failed lifecycle probes as a release receipt (#9531)", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "Error: gateway unavailable" })
+      .mockReturnValueOnce({ status: 1, stderr: "gateway unavailable" });
+    const dockerStart = vi.fn(() => ({ status: 0 }));
+
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result: deferredCreateResult(),
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 1,
+      },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerStart,
+        runOpenshell,
+        sleep: vi.fn(),
+      },
+    );
+
+    expect(outcome).toMatchObject({
+      backupRemoved: true,
+      lifecycleReleaseObserved: false,
+      replacementRestarted: false,
+    });
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(runOpenshell.mock.calls[0]?.[1]?.timeout).toBeGreaterThan(0);
+    expect(runOpenshell.mock.calls[0]?.[1]?.timeout).toBeLessThanOrEqual(1000);
+    expect(runOpenshell.mock.calls[1]?.[1]?.timeout).toBeGreaterThan(0);
+    expect(runOpenshell.mock.calls[1]?.[1]?.timeout).toBeLessThanOrEqual(1000);
+    expect(dockerStart).not.toHaveBeenCalled();
+  });
+
+  it("does not treat an unrelated terminal lifecycle phase as the stopped replacement (#9531)", () => {
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: "alpha  2026-08-21 05:53:18  Failed\n",
+    }));
+
+    const dockerStart = vi.fn(() => ({ status: 0 }));
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result: deferredCreateResult(),
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 1,
+      },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerStart,
+        runOpenshell,
+        sleep: vi.fn(),
+      },
+    );
+
+    expect(outcome.lifecycleReleaseObserved).toBe(false);
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(dockerStart).not.toHaveBeenCalled();
   });
 
   it("rolls back to the backup container when supervisor reconnect failed", () => {
@@ -186,7 +315,15 @@ describe("finalizeDockerGpuPatchBackup", () => {
   it("is a no-op when the backup was already removed by the patch helper", () => {
     const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
     const result = { ...deferredCreateResult(), backupRemoved: true };
-    const outcome = finalizeDockerGpuPatchBackup({ result, supervisorReady: true }, { dockerRm });
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result,
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 60,
+      },
+      { dockerRm },
+    );
     expect(outcome).toEqual({ backupRemoved: true, rolledBack: false });
     expect(dockerRm).not.toHaveBeenCalled();
   });
@@ -199,19 +336,26 @@ describe("finalizeDockerGpuPatchBackup", () => {
     }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
     const outcome = finalizeDockerGpuPatchBackup(
-      { result: deferredCreateResult(), supervisorReady: true },
+      {
+        result: deferredCreateResult(),
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 60,
+      },
       { dockerStop, dockerRm, dockerStart },
     );
     expect(outcome).toEqual({
       backupRemoved: false,
       rolledBack: false,
       replacementStoppedForCommit: true,
-      replacementRestarted: true,
+      replacementRestarted: false,
+      lifecycleReleaseObserved: false,
     });
     expect(dockerRm).toHaveBeenCalledWith(
       "openshell-alpha-nemoclaw-gpu-backup-1780491860342",
       expect.objectContaining({ ignoreError: true }),
     );
+    expect(dockerStart).not.toHaveBeenCalled();
   });
 
   it("fails closed when backup removal has no exit status", () => {
@@ -219,15 +363,22 @@ describe("finalizeDockerGpuPatchBackup", () => {
     const dockerRm = vi.fn((_name: string) => ({ status: null, stderr: "timed out" }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
     const outcome = finalizeDockerGpuPatchBackup(
-      { result: deferredCreateResult(), supervisorReady: true },
+      {
+        result: deferredCreateResult(),
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 60,
+      },
       { dockerStop, dockerRm, dockerStart },
     );
     expect(outcome).toEqual({
       backupRemoved: false,
       rolledBack: false,
       replacementStoppedForCommit: true,
-      replacementRestarted: true,
+      replacementRestarted: false,
+      lifecycleReleaseObserved: false,
     });
+    expect(dockerStart).not.toHaveBeenCalled();
   });
 
   it("retains the backup when the replacement cannot be stopped for the final handoff", () => {
@@ -236,7 +387,12 @@ describe("finalizeDockerGpuPatchBackup", () => {
     const dockerStart = vi.fn(() => ({ status: 0 }));
 
     const outcome = finalizeDockerGpuPatchBackup(
-      { result: deferredCreateResult(), supervisorReady: true },
+      {
+        result: deferredCreateResult(),
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 60,
+      },
       { dockerStop, dockerRm, dockerStart },
     );
 
@@ -251,11 +407,17 @@ describe("finalizeDockerGpuPatchBackup", () => {
 
   it("reports a failed replacement restart after the backup is removed", () => {
     const outcome = finalizeDockerGpuPatchBackup(
-      { result: deferredCreateResult(), supervisorReady: true },
+      {
+        result: deferredCreateResult(),
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 60,
+      },
       {
         dockerStop: vi.fn(() => ({ status: 0 })),
         dockerRm: vi.fn(() => ({ status: 0 })),
         dockerStart: vi.fn(() => ({ status: 1 })),
+        runOpenshell: vi.fn(() => ({ status: 0, stdout: "No sandboxes found.\n" })),
       },
     );
 
@@ -264,6 +426,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
       rolledBack: false,
       replacementStoppedForCommit: true,
       replacementRestarted: false,
+      lifecycleReleaseObserved: true,
     });
   });
 

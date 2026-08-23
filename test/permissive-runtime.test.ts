@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import {
@@ -30,6 +30,31 @@ const MANAGED_POLICY: ExactManagedMcpPolicy = {
   policyName: "mcp-bridge-alpha",
   server: "alpha",
 };
+
+const HERMES_DISCORD_PERMISSIVE = YAML.stringify({
+  network_policies: {
+    discord: {
+      endpoints: [
+        {
+          host: "discord.com",
+          port: 443,
+          credential_binding: { provider: "{sandboxName}-discord-bridge" },
+        },
+        {
+          host: "gateway.discord.gg",
+          port: 443,
+          credential_binding: { provider: "{sandboxName}-discord-bridge" },
+        },
+        {
+          host: "*.discord.gg",
+          port: 443,
+          credential_binding: { provider: "{sandboxName}-discord-bridge" },
+        },
+        { host: "cdn.discordapp.com", port: 443 },
+      ],
+    },
+  },
+});
 
 const tempFilesToClean: string[] = [];
 
@@ -59,6 +84,57 @@ afterEach(() => {
 });
 
 describe("buildRuntimePermissivePolicy (#3942)", () => {
+  it("keeps the Hermes Discord provider binding in Shields down", () => {
+    let stagedPolicy = "";
+    const out = buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
+      livePolicyYaml: "",
+      readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
+      sandboxName: "hermes-box",
+      writeTempPolicy: (yaml) => {
+        stagedPolicy = yaml;
+        return "/staged-hermes-permissive.yaml";
+      },
+    });
+
+    expect(out).toBe("/staged-hermes-permissive.yaml");
+    const policy = YAML.parse(stagedPolicy);
+    const endpoints = policy.network_policies.discord.endpoints as Array<{
+      host: string;
+      credential_binding?: { provider?: string };
+    }>;
+    const credentialEndpoints = endpoints.filter((endpoint) =>
+      ["discord.com", "gateway.discord.gg", "*.discord.gg"].includes(endpoint.host),
+    );
+    expect(credentialEndpoints.map((endpoint) => endpoint.host).sort()).toEqual([
+      "*.discord.gg",
+      "discord.com",
+      "gateway.discord.gg",
+    ]);
+    expect(credentialEndpoints.map((endpoint) => endpoint.credential_binding?.provider)).toEqual([
+      "hermes-box-discord-bridge",
+      "hermes-box-discord-bridge",
+      "hermes-box-discord-bridge",
+    ]);
+    expect(
+      endpoints.find((endpoint) => endpoint.host === "cdn.discordapp.com")?.credential_binding,
+    ).toBeUndefined();
+    expect(stagedPolicy).not.toContain("{sandboxName}");
+  });
+
+  it("rejects an unsafe Hermes sandbox name before staging Shields down", () => {
+    const writeTempPolicy = vi.fn(() => "/must-not-stage.yaml");
+
+    expect(() =>
+      buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
+        livePolicyYaml: "",
+        readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
+        sandboxName: "bad:provider",
+        writeTempPolicy,
+      }),
+    ).toThrow("Cannot materialize the Shields-down credential provider binding");
+    expect(writeTempPolicy).not.toHaveBeenCalled();
+  });
+
   it("preserves exact managed MCP entries without copying unrelated live egress (#7952)", () => {
     const liveYaml = YAML.stringify({
       filesystem_policy: { read_write: ["/proc"] },

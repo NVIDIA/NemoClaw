@@ -14,10 +14,10 @@ const IMAGE_ENV = "NEMOCLAW_OPENCLAW_SECURITY_REVISION_IMAGE";
 const EVIDENCE_PREFIX = "NEMOCLAW_SECURITY_REVISION_EVIDENCE=";
 const OPENCLAW_ROOT = "/usr/local/lib/node_modules/openclaw";
 const OPENCLAW_ENTRYPOINT = "/usr/local/bin/openclaw";
-const TAR_VERSION = "7.5.19";
+const TAR_VERSION = "7.5.21";
 const TAR_INTEGRITY =
-  "sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==";
-const TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.19.tgz";
+  "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==";
+const TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz";
 const BRACE_EXPANSION_VERSION = "5.0.7";
 const BRACE_EXPANSION_INTEGRITY =
   "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==";
@@ -459,23 +459,24 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
     );
   });
 
-  test.each(
-    [
-        ["--network", "none"],
-        ["--cap-drop", "ALL"],
-        ["--security-opt", "no-new-privileges"],
-    ] as const,
-  )("uses an offline read-only least-privilege Docker boundary [case %#]", (option, value) => {
-    const args = secureDockerRunArgs("security-e2e", "candidate:local");
+  test.each([
+    ["--network", "none"],
+    ["--cap-drop", "ALL"],
+    ["--security-opt", "no-new-privileges"],
+  ] as const)(
+    "uses an offline read-only least-privilege Docker boundary [case %#]",
+    (option, value) => {
+      const args = secureDockerRunArgs("security-e2e", "candidate:local");
 
-    const optionIndex = args.indexOf(option);
-    expect(args.slice(optionIndex, optionIndex + 2)).toEqual([option, value]);
+      const optionIndex = args.indexOf(option);
+      expect(args.slice(optionIndex, optionIndex + 2)).toEqual([option, value]);
 
-    expect(args).not.toContain("host");
-    expect(args).toContain("--read-only");
-    expect(args.join(" ")).not.toContain("docker.sock");
-    expect(args).not.toContain("--mount");
-  });
+      expect(args).not.toContain("host");
+      expect(args).toContain("--read-only");
+      expect(args.join(" ")).not.toContain("docker.sock");
+      expect(args).not.toContain("--mount");
+    },
+  );
 
   test("rejects vulnerable or incomplete installed dependency evidence", () => {
     const good = exactEvidence();

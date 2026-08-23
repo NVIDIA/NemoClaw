@@ -42,6 +42,8 @@ import {
   type DeterministicReviewContext,
 } from "./deterministic-context.mts";
 import { buildInvestigateTurn } from "./investigate-turn.mts";
+import { validateSpecialistSessionDirectory } from "./specialist-sessions.mts";
+import { buildSynthesisTurn } from "./synthesis-turn.mts";
 import { renderSummary } from "./render-result.mts";
 import {
   buildCorrectnessTurnContext,
@@ -329,11 +331,12 @@ async function main(): Promise<void> {
   delete process.env.GH_TOKEN;
   delete process.env.GITHUB_TOKEN;
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
-  const { systemPrompt, promptTurns, securityCategoryNames } = preparePromptArtifacts({
-    artifacts,
-    metadata,
-    diff,
-  });
+  const { systemPrompt, promptTurns, securityCategoryNames, resultLimitations } =
+    preparePromptArtifacts({
+      artifacts,
+      metadata,
+      diff,
+    });
 
   const writeFailure = (reason: string): void => writeFailureArtifacts(artifacts, metadata, reason);
   const writeUnavailable = (reason: string): void =>
@@ -382,6 +385,8 @@ async function main(): Promise<void> {
       advisorExecutionErrors(sdkResult),
       submission!,
       artifacts,
+      undefined,
+      resultLimitations,
     );
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -398,6 +403,7 @@ export function persistSuccessfulReview(
   submission: ReviewSubmissionController,
   artifacts: ArtifactPaths,
   write: (path: string, value: unknown) => void = writeJson,
+  requiredLimitations: readonly string[] = [],
 ): ReviewAdvisorResult {
   if (executionErrors.length > 0) {
     throw new Error(`PR review advisor SDK execution failed: ${executionErrors.join("; ")}`);
@@ -406,7 +412,22 @@ export function persistSuccessfulReview(
   if (!submitted) {
     throw new Error("PR review advisor did not atomically submit a review result");
   }
-  const result = submitted as ReviewAdvisorResult;
+  const submittedResult = submitted as ReviewAdvisorResult;
+  const result =
+    requiredLimitations.length === 0
+      ? submittedResult
+      : {
+          ...submittedResult,
+          reviewCompleteness: {
+            ...submittedResult.reviewCompleteness,
+            limitations: [
+              ...new Set([
+                ...submittedResult.reviewCompleteness.limitations,
+                ...requiredLimitations,
+              ]),
+            ],
+          },
+        };
   write(artifacts.result, result);
   write(artifacts.finalResult, result);
   return result;
@@ -420,12 +441,33 @@ export function preparePromptArtifacts({
   artifacts: ArtifactPaths;
   metadata: ReviewMetadata;
   diff: string;
-}): { systemPrompt: string; promptTurns: AdvisorPromptTurn[]; securityCategoryNames: string[] } {
+}): {
+  systemPrompt: string;
+  promptTurns: AdvisorPromptTurn[];
+  securityCategoryNames: string[];
+  resultLimitations: string[];
+} {
   try {
     const securityRubric = readParsedTrustedSecurityRubric();
     const systemPrompt = buildSystemPrompt(securityRubric);
-    const promptTurns = buildPromptTurns({ metadata, diff });
-    return { systemPrompt, promptTurns, securityCategoryNames: securityRubric.categories };
+    const specialistSessionDirectory = process.env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR;
+    const specialistInventory = specialistSessionDirectory
+      ? validateSpecialistSessionDirectory(specialistSessionDirectory)
+      : undefined;
+    const promptTurns = specialistInventory
+      ? [buildSynthesisTurn(specialistInventory), buildChallengeAndRecordTurn()]
+      : buildPromptTurns({ metadata, diff });
+    const resultLimitations =
+      specialistInventory?.missing.map(
+        (interest) =>
+          `Specialist trace unavailable: ${interest}; synthesis did not receive dedicated ${interest} review.`,
+      ) ?? [];
+    return {
+      systemPrompt,
+      promptTurns,
+      securityCategoryNames: securityRubric.categories,
+      resultLimitations,
+    };
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
     writeFailureArtifacts(artifacts, metadata, reason);

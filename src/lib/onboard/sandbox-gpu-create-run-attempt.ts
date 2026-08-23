@@ -395,7 +395,13 @@ export function createSandboxGpuCreateAttemptRunner(
               });
               if (!readiness.ready) {
                 throw new Error(
-                  `Managed bootstrap incomplete create did not reach authoritative Ready state (${readiness.reason}).`,
+                  sandboxReadinessTracing
+                    .formatCreatedSandboxReadinessFailureMessage(
+                      input.sandboxName,
+                      readiness,
+                      input.sandboxReadyTimeoutSecs,
+                    )
+                    .trimStart(),
                 );
               }
             } else {

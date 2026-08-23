@@ -67,7 +67,7 @@ describe("runSandboxSnapshot restore: baseline exclusions", () => {
     expect(f.prepareInitialSandboxCreatePolicyMock).toHaveBeenCalledWith(
       "/repo/agents/hermes/policy-additions.yaml",
       [],
-      { agentName: "hermes", baselineExclusions: [exclusion] },
+      { agentName: "hermes", sandboxName: "beta", baselineExclusions: [exclusion] },
     );
     const createArgs = f.streamSandboxCreateMock.mock.calls[0]?.[1] ?? [];
     expect(createArgs[createArgs.indexOf("--policy") + 1]).toBe("/tmp/snapshot-clone-policy.yaml");
