@@ -447,6 +447,20 @@ describe("Podman image-owned bootstrap transaction", () => {
     expect(fake.commands).toContainEqual(["container", "logs", "--tail", "80", RUNTIME_ID]);
   });
 
+  it("reports the bounded managed startup application failure", () => {
+    const fake = harness("hermes", {
+      bootstrapLog:
+        "Managed startup image application failed: required root-owned directory is missing: /var/lib/nemoclaw/runtime-state-mutation",
+      inspectExitCode: 1,
+      inspectStatus: "exited",
+      startsRunningAfterStart: false,
+    });
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("hermes", fake))).toThrow(
+      "not stably running (status exited; exit 1; oom false; bootstrap Managed startup image application failed: required root-owned directory is missing: /var/lib/nemoclaw/runtime-state-mutation)",
+    );
+  });
+
   it("does not surface non-bootstrap container output in a replacement failure", () => {
     const fake = harness("hermes", {
       bootstrapLog: "secret-looking application output",
