@@ -14,6 +14,7 @@ import {
   buildRebuildHermesGatewayBootstrapScript,
   cleanupRebuildHermesForward,
   cleanupRebuildHermesTrackedForwards,
+  createRebuildHermesDiscordProvider,
   GATEWAY_BOOTSTRAP_MARKER,
   parseRebuildHermesCurrentBaseResult,
   requirePublishedRebuildHermesCurrentBase,
@@ -233,6 +234,41 @@ describe("rebuild-Hermes direct bootstrap", () => {
     expect(script).not.toContain('["gateway", "start"');
     expect(script).not.toContain("onboard(");
     expect(script).not.toContain("sandbox create");
+  });
+
+  it("attaches the historical sandbox to the exact Hermes Discord binding", async () => {
+    const fixture = fakeHost([probe("profile imported"), probe("provider created")]);
+
+    await createRebuildHermesDiscordProvider({
+      activeOpenshellBin: "/opt/openshell",
+      apiKey: "inference-secret",
+      discordToken: "discord-secret",
+      envFactory,
+      host: fixture.host,
+      redactionValues: ["inference-secret", "discord-secret"],
+      sandboxName: "e2e-rebuild-hermes",
+    });
+
+    expect(fixture.command.mock.calls[0]?.[1]).toEqual([
+      "provider",
+      "profile",
+      "import",
+      "--file",
+      expect.stringMatching(/discord\/provider-profile\/hermes\.yaml$/u),
+    ]);
+    expect(fixture.command.mock.calls[1]?.[1]).toEqual([
+      "provider",
+      "create",
+      "--name",
+      "e2e-rebuild-hermes-discord-bridge",
+      "--type",
+      "discord-hermes-static-v1",
+      "--credential",
+      "DISCORD_BOT_TOKEN",
+    ]);
+    expect(fixture.command.mock.calls[1]?.[2]).toMatchObject({
+      env: { DISCORD_BOT_TOKEN: "discord-secret" },
+    });
   });
 
   it("stops before gateway probes when bootstrap omits completion evidence (#7144)", async () => {

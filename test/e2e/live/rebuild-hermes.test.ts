@@ -39,6 +39,7 @@ import {
   bootstrapRebuildHermesGateway,
   cleanupRebuildHermesForward as cleanupHermesForward,
   cleanupRebuildHermesTrackedForwards,
+  createRebuildHermesDiscordProvider,
   requireRebuildHermesDashboardPort,
   requireRebuildHermesHostedInferenceRoute,
   requireRebuildHermesOpenshellBin,
@@ -959,28 +960,15 @@ test(STALE_BASE_REBUILD
     "utf8",
   );
   try {
-    const provider = await host.command(
-      "bash",
-      [
-        "-lc",
-        [
-          "set -euo pipefail",
-          '"$OPENSHELL_BIN" provider create --name "$DISCORD_PROVIDER" --type generic --credential DISCORD_BOT_TOKEN ||',
-          '  "$OPENSHELL_BIN" provider update "$DISCORD_PROVIDER" --credential DISCORD_BOT_TOKEN',
-        ].join("\n"),
-      ],
-      {
-        artifactName: "phase-3-discord-provider-create-or-update",
-        env: testEnv(apiKey, {
-          DISCORD_BOT_TOKEN: DISCORD_FAKE_TOKEN,
-          DISCORD_PROVIDER: `${SANDBOX_NAME}-discord-bridge`,
-          OPENSHELL_BIN: activeOpenshellBin,
-        }),
-        redactionValues,
-        timeoutMs: OPENSHELL_TIMEOUT_MS,
-      },
-    );
-    expectExitZero(provider, "OpenShell Discord provider create/update");
+    await createRebuildHermesDiscordProvider({
+      activeOpenshellBin,
+      apiKey,
+      discordToken: DISCORD_FAKE_TOKEN,
+      envFactory: testEnv,
+      host,
+      redactionValues,
+      sandboxName: SANDBOX_NAME,
+    });
     progress.phase("create the historical Hermes sandbox");
     const createOldSandbox = await host.command(
       activeOpenshellBin,
