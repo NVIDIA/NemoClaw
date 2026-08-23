@@ -27,9 +27,16 @@ const finalDockerfiles = [
 ] as const;
 const copyInstruction =
   "COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts";
+const hermesTarCacheSeedInstruction =
+  "COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz /tmp/nemoclaw-bundled-npm-tar.tgz";
 const patchInstruction =
   "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts";
 const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
+const hermesTarCacheSeedArguments = [
+  ...npmRootArguments,
+  "--archive",
+  "/tmp/nemoclaw-bundled-npm-tar.tgz",
+] as const;
 
 describe("bundled npm brace-expansion image remediation contract", () => {
   it("binds the replacement to the reviewed npm and registry artifact", () => {
@@ -66,10 +73,12 @@ describe("bundled npm brace-expansion image remediation contract", () => {
   )("reasserts the private package fix in the completed %s filesystem", (file) => {
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const copy = source.indexOf(copyInstruction);
+    const tarPatchArguments =
+      file === "agents/hermes/Dockerfile" ? hermesTarCacheSeedArguments : npmRootArguments;
     const tarPatch = requireSingleReviewedDockerfileRunCommand(
       source,
       "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
-      npmRootArguments,
+      tarPatchArguments,
     ).commandStart;
     const bracePatch = requireSingleReviewedDockerfileRunCommand(
       source,
@@ -78,6 +87,9 @@ describe("bundled npm brace-expansion image remediation contract", () => {
     );
 
     expect(copy, file).toBeGreaterThanOrEqual(0);
+    if (file === "agents/hermes/Dockerfile") {
+      expect(source, file).toContain(hermesTarCacheSeedInstruction);
+    }
     expect(tarPatch, file).toBeGreaterThan(copy);
     expect(bracePatch.commandStart, file).toBeGreaterThan(tarPatch);
   });
