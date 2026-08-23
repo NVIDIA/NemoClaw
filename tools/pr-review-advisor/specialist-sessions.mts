@@ -12,10 +12,7 @@ export function specialistSessionFileName(interest: AdvisorInterest): string {
   return `pr-review-${interest}-session.jsonl`;
 }
 
-export const REQUIRED_SPECIALIST_INTERESTS = [
-  "behavior",
-  "trust",
-] as const satisfies readonly AdvisorInterest[];
+export const REQUIRED_SPECIALIST_INTERESTS = ADVISOR_INTERESTS;
 
 export type SpecialistSessionInventory = Readonly<{
   directory: string;
@@ -30,12 +27,6 @@ export function validateSpecialistSessionDirectory(directory: string): Specialis
     throw new Error("Specialist session input must be a regular directory");
   }
   const realDirectory = fs.realpathSync(directory);
-  const expected = new Set(ADVISOR_INTERESTS.map(specialistSessionFileName));
-  const entries = fs.readdirSync(directory);
-  const unexpected = entries.filter((entry) => !expected.has(entry));
-  if (unexpected.length > 0) {
-    throw new Error(`Unexpected specialist session input: ${unexpected.sort().join(", ")}`);
-  }
   const files: Partial<Record<AdvisorInterest, string>> = {};
   const available: AdvisorInterest[] = [];
   const missing: AdvisorInterest[] = [];
