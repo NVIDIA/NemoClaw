@@ -9,6 +9,10 @@
  * `lazy-packages`. Rejecting those aborted the whole pre-upgrade backup
  * (#9314). They are now recorded and archived; symlink and special-file
  * rejection is unchanged.
+ *
+ * The same harness covers how a row is parsed. Rows are tab-delimited, and a
+ * tab is a legal byte in a Linux filename, so a crafted path must not be able
+ * to desynchronise the split.
  */
 
 import fs from "node:fs";
@@ -198,5 +202,34 @@ describe("pre-backup audit — multiply-linked regular files (#9314)", () => {
     expect(backup.success).toBe(false);
     expect(backup.error).toMatch(/Pre-backup audit rejected/);
     expect(backup.error).toContain("agent.sock");
+  });
+});
+
+describe("pre-backup audit — tab-delimited row parsing", () => {
+  it("rejects a symlink row carrying a tab in its path", () => {
+    // `x<TAB>../qq/evil` is one filename an agent can create inside its own
+    // state dir. `find` emits its bytes verbatim, so the row splits into four
+    // fields: the audit reads `../qq/evil` as the link target — a shape the
+    // npm-bin whitelist accepts — and discards the real target in the fourth
+    // field, whitelisting a symlink it is meant to reject.
+    const backup = backupWithAuditOutput(
+      "l\t/sandbox/.openclaw/extensions/example-not-a-real-value-1/node_modules/.bin/x\t../qq/evil\t/etc/passwd",
+    );
+
+    expect(String(backup.error ?? "")).toMatch(/Pre-backup audit rejected/);
+    expect(String(backup.error ?? "")).toContain("node_modules/.bin/x");
+    expect(backup.success).toBe(false);
+  });
+
+  it("keeps accepting a hard-link row whose empty link target was trimmed away", () => {
+    // The audit output is trimmed as a whole, so the trailing empty %l of the
+    // last row is removed and that row carries two fields. This is the normal
+    // shape of every audit that ends on a non-symlink; it must not be read as
+    // a malformed row.
+    const backup = backupWithAuditOutput(
+      "f\t/sandbox/.openclaw/workspace/lazy-packages/edge_tts/__init__.py\t",
+    );
+
+    expect(backup.error ?? "").not.toMatch(/Pre-backup audit rejected/);
   });
 });

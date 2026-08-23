@@ -1307,6 +1307,38 @@ function resolveOpenClawBackupMetadata(
   };
 }
 
+/**
+ * Classify one pre-backup audit row emitted by
+ * `find -printf "%y\t%p\t%l\n"`, where `dirPrefix` is the state-dir root the
+ * row's absolute path is reported under.
+ *
+ * A tab is a legal byte in a Linux filename, so a crafted path splits the row
+ * into extra fields: the real link target moves past the third field and is
+ * discarded, and a fragment of the row is checked against the symlink
+ * whitelist in its place, so an entry the audit is meant to reject can be
+ * recorded as allowed. Extra fields can only come from such a tab, so a row
+ * that carries them is a violation rather than something to audit further.
+ * Shorter rows are ordinary: the audit output is trimmed as a whole, which
+ * removes the trailing empty `%l` of a final non-symlink row.
+ */
+function classifyPreBackupAuditRow(
+  entry: string,
+  dirPrefix: string,
+): "whitelisted" | "hardLinked" | "violation" {
+  const parts = entry.split("\t");
+  if (parts.length > 3) return "violation";
+  const type = parts[0] || "";
+  const absPath = parts[1] || entry;
+  const linkTarget = parts[2] || "";
+  const relPath = absPath.startsWith(dirPrefix) ? absPath.slice(dirPrefix.length) : absPath;
+  if (type === "l" && isAllowedStateSymlink(relPath, linkTarget)) return "whitelisted";
+  // The audit's `find` only emits regular files through its `-links +1`
+  // branch, so a reported `f` row is a hard link. Recorded, not rejected —
+  // see the rationale at the audit command (#9314).
+  if (type === "f") return "hardLinked";
+  return "violation";
+}
+
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
   const sb = registry.getSandbox(sandboxName);
   const agentName = sb?.agent || "openclaw";
@@ -1565,9 +1597,10 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // dependency failed its pre-upgrade backup.
         //
         // The printf format emits "<type>\t<absPath>\t<linkTarget>" — %l is
-        // empty for non-symlinks but always present, so the field count is
-        // stable. Tab separator assumes state-dir paths don't contain tabs,
-        // matching the wider convention in this file.
+        // empty for non-symlinks but always present, so a well-formed row has
+        // three fields. A tab is a legal byte in a Linux filename, so
+        // `classifyPreBackupAuditRow` enforces that count instead of assuming
+        // it.
         // Per-dir `find` invocations are joined with `;` (not `&&`) and each
         // is tolerant of its own exit code via `|| true`. The base image bakes
         // a few state subdirs as root-owned (e.g. `extensions/<plugin>`,
@@ -1611,26 +1644,11 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
           const hardLinked: string[] = [];
           const violations: string[] = [];
           const dirPrefix = `${dir}/`;
+          const rows = { whitelisted, hardLinked, violation: violations };
           for (const entry of allEntries) {
             // find -printf "%y\t%p\t%l\n" → "<type>\t<absPath>\t<linkTarget>"
             // (linkTarget is empty for non-symlinks).
-            const parts = entry.split("\t");
-            const type = parts[0] || "";
-            const absPath = parts[1] || entry;
-            const linkTarget = parts[2] || "";
-            const relPath = absPath.startsWith(dirPrefix)
-              ? absPath.slice(dirPrefix.length)
-              : absPath;
-            if (type === "l" && isAllowedStateSymlink(relPath, linkTarget)) {
-              whitelisted.push(entry);
-            } else if (type === "f") {
-              // The audit's `find` only emits regular files through its
-              // `-links +1` branch, so a reported `f` row is a hard link.
-              // Recorded, not rejected — see the rationale above (#9314).
-              hardLinked.push(entry);
-            } else {
-              violations.push(entry);
-            }
+            rows[classifyPreBackupAuditRow(entry, dirPrefix)].push(entry);
           }
           if (whitelisted.length > 0) {
             _log(
