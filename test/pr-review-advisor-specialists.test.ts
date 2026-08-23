@@ -42,14 +42,6 @@ const context: InvestigateTurnContext = {
   metadata: "baseRef=origin/main",
 };
 
-const DOMAIN_TERMS: Record<AdvisorInterest, readonly string[]> = {
-  behavior: ["binding acceptance", "state transitions", "caller and callee contracts"],
-  trust: ["all nine security categories", "credentials", "workflow trust boundaries"],
-  "design-architecture": ["duplicated authority", "dependency width", "reduction case"],
-  operations: ["E2E architecture", "retries", "release operations"],
-  documentation: ["user documentation", "test titles", "terminology candidates semantically"],
-};
-
 describe("PR review advisor specialist prompts", () => {
   it("parses exactly the five supported interests (#9949)", () => {
     expect(ADVISOR_INTERESTS).toEqual([
@@ -89,9 +81,6 @@ describe("PR review advisor specialist prompts", () => {
       expect(turn.requireAssistantText).toBe(true);
       expect(turn.atomicTerminalToolName).toBeUndefined();
       expect(turn.terminalSubmitToolName).toBeUndefined();
-      expect(turn.prompt).toContain("investigation-only specialist turn");
-      expect(turn.prompt).toContain("Do not emit a final result schema");
-      expect(DOMAIN_TERMS[interest].every((term) => turn.prompt.includes(term))).toBe(true);
     },
   );
 

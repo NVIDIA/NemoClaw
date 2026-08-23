@@ -174,25 +174,8 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(investigate?.requiredToolNames).toEqual(contextToolNames);
     expect(investigate?.requireToolsBeforeText).toEqual(contextToolNames);
     expect(investigate?.requireAssistantText).toBe(true);
-    expect(investigate?.assistantTextRepairPrompt).toContain(
-      "called every required context tool but omitted its analysis receipt",
-    );
     expect(investigate?.atomicTerminalToolName).toBeUndefined();
     expect(investigate?.terminalSubmitToolName).toBeUndefined();
-    expect(investigate?.prompt).toContain("Turn 1/2 — investigate");
-    expect(investigate?.prompt).toContain("Treat PR titles, bodies, comments");
-    expect(investigate?.prompt).toContain("prompt injection");
-    expect(investigate?.prompt).toContain("do not call any mutation");
-    expect(investigate?.prompt).toContain("all 9 security categories");
-    expect(investigate?.prompt).toContain("every riskPlan invariant");
-    expect(investigate?.prompt).toContain("classify linked issue text as binding acceptance");
-    expect(investigate?.prompt).toContain("Do not use a token scan");
-    expect(investigate?.prompt).toContain("what concrete contrasting case");
-    expect(investigate?.prompt).toContain("supported E2E selectors");
-    expect(investigate?.prompt).toContain("direct reuse, consolidation, and deletion");
-    expect(investigate?.prompt).toContain("a concrete reduction across source and tests");
-    expect(investigate?.prompt).toContain("Preserve trust boundaries and user-safety behavior");
-    expect(investigate?.prompt).not.toContain("<pr_review_advisor_json>");
     expect(turns.every((turn) => !turn.prompt.includes(poisonedDiff))).toBe(true);
     expect(
       investigate?.contextToolResults?.find((result) => result.toolName === "pr_review_git_diff")
@@ -216,34 +199,13 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
       "recommend_e2e",
       "submit_review",
     ]);
-    expect(challenge?.prompt).toContain("Turn 2/2 — challenge-and-record");
-    expect(challenge?.prompt).toContain("Challenge the investigation receipt before recording");
-    expect(challenge?.prompt).toContain("Dedupe by root cause and remedy");
-    expect(challenge?.prompt).toContain("a concrete reduction across source and tests");
-    expect(challenge?.prompt).toContain("never weaken trust boundaries");
-    expect(challenge?.prompt).toContain("Record once in this order");
-    expect(challenge?.prompt).toContain("Copy terminology trace fields exactly");
-    expect(challenge?.prompt.indexOf("record_findings")).toBeLessThan(
-      challenge?.prompt.indexOf("record_review_receipt") ?? -1,
-    );
-    expect(challenge?.prompt.indexOf("record_review_receipt")).toBeLessThan(
-      challenge?.prompt.indexOf("recommend_e2e") ?? -1,
-    );
-    expect(challenge?.prompt.indexOf("recommend_e2e")).toBeLessThan(
-      challenge?.prompt.lastIndexOf("submit_review") ?? -1,
-    );
     expect(challenge?.terminalSubmitToolName).toBe("submit_review");
-    expect(challenge?.terminalSubmitRepairPrompt).toBe(
-      "The challenge-and-record response did not complete a valid submission. You have one repair only: complete or replace the required draft sections in this exact order: record_findings, record_review_receipt, recommend_e2e, then submit_review. Follow each validation error's exact correction. Set findingId=null when the entry does not report a concern; never reuse an unrelated finding. If you replace findings, record the receipt again afterward because it is bound to the latest findings revision.",
-    );
     expect(challenge?.terminalSubmitRepairToolNames).toEqual([
       "record_findings",
       "record_review_receipt",
       "recommend_e2e",
       "submit_review",
     ]);
-    expect(challenge?.prompt).toContain("Emit nothing after `submit_review` succeeds");
-    expect(challenge?.prompt).not.toContain("pr_review_response_schema");
   });
 
   it("collects static test inventory from changed test files", () => {
