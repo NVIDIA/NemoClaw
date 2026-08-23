@@ -18,7 +18,7 @@ import * as registry from "../../../state/registry";
 import { buildMcpBridgePolicyName } from "../mcp-bridge-policy";
 import type { RebuildSandboxEntry } from "../rebuild-flow-helpers";
 import { makePreparedRecoveryManifest } from "../rebuild-flow-test-fixtures";
-import { qualifyRebuildPolicyAuthority, revalidateRebuildPolicyAuthority } from "./rebuild";
+import { qualifyRebuildPolicyAuthority } from "./rebuild";
 
 const CUSTOM_POLICY = `
 network_policies:
