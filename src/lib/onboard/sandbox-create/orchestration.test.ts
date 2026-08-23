@@ -7,9 +7,46 @@ import type { SandboxEntry } from "../../state/registry";
 import {
   applyAbsentSandboxRebuildPolicyCarryForward,
   completeHermesPortableSandboxRegistration,
+  hasManagedMcpRebuildHandoff,
   proveRecreateSourceBeforePolicyCarryForward,
   readManagedDcodeCreateSelectionDrift,
 } from "./orchestration";
+
+describe("managed MCP rebuild handoff", () => {
+  const targetIntentFingerprint = "a".repeat(64);
+  const recreateTransaction = {
+    id: "recreate-1",
+    targetGeneration: "generation-1",
+    targetIntentFingerprint,
+  };
+
+  it("accepts only a handoff bound to the same recreate transaction", () => {
+    expect(
+      hasManagedMcpRebuildHandoff({
+        recreate: true,
+        toolDisclosure: "progressive",
+        observabilityEnabled: false,
+        recreateJournalTargetIntentFingerprint: targetIntentFingerprint,
+        recreateTransaction,
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["mismatched", "b".repeat(64)],
+  ])("rejects a %s outer rebuild handoff", (_label, handoff) => {
+    expect(
+      hasManagedMcpRebuildHandoff({
+        recreate: true,
+        toolDisclosure: "progressive",
+        observabilityEnabled: false,
+        ...(handoff ? { recreateJournalTargetIntentFingerprint: handoff } : {}),
+        recreateTransaction,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("authoritative rebuild policy carry-forward", () => {
   it("proves the journaled source before mutating its preserved policy row (#9792)", () => {

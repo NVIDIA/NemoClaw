@@ -84,6 +84,16 @@ export const wechatManifest = {
       },
     },
     {
+      id: "wechat-openclaw-channel",
+      kind: "json-fragment",
+      agent: "openclaw",
+      target: "openclaw.json",
+      fragment: {
+        path: "channels.openclaw-weixin",
+        value: {},
+      },
+    },
+    {
       id: "wechat-hermes-env",
       kind: "env-lines",
       agent: "hermes",

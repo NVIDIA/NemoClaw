@@ -300,7 +300,7 @@ async function assertColdOnboardPerformance(input: {
   const responseChars = assistantReply.length;
 
   await input.artifacts.writeJson("onboard-progress-budget.json", {
-    schemaVersion: "nemoclaw.full_e2e_cold_performance.v3",
+    schemaVersion: "nemoclaw.full_e2e_cold_performance.v4",
     sandbox: SANDBOX_NAME,
     installExitCode: input.install.exitCode,
     firstTurnExitCode: turn.exitCode,
@@ -319,6 +319,15 @@ async function assertColdOnboardPerformance(input: {
       model: input.model,
       provider: input.providerName,
       promptContract: "sentinel-v1",
+    },
+    sandboxPhaseCohort: {
+      agent: "openclaw",
+      baseBuildMode: usedAuthoritativeLocalBaseBuild
+        ? "authoritative-local-base-build"
+        : "published-base",
+      platform: process.platform,
+      setupMode: SETUP_MODE,
+      workloadKind: workload.kind,
     },
     onboardSecs: Math.ceil(traceWindow.durationMs / 1_000),
     rootStartToFirstTurnCompletionSecs,
@@ -354,8 +363,12 @@ async function assertColdOnboardPerformance(input: {
     `expected the sentinel first agent reply, got: ${turnText}`,
   ).toBe(true);
   for (const anomaly of performanceEvaluation.anomalies) {
+    const title =
+      anomaly.kind === "first-turn-latency-tail"
+        ? "Hosted first-turn latency anomaly"
+        : "Sandbox phase latency anomaly";
     console.warn(
-      `::warning title=Hosted first-turn latency anomaly::root-end-to-first-turn-completion ${anomaly.measurementMs}ms exceeded ${anomaly.budgetMs}ms by ${anomaly.overageMs}ms after all deterministic cold-onboard budgets passed`,
+      `::warning title=${title}::${anomaly.kind} measured ${anomaly.measurementMs}ms against ${anomaly.budgetMs}ms, an overage of ${anomaly.overageMs}ms`,
     );
   }
   expect(

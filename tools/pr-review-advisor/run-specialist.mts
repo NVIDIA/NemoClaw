@@ -55,7 +55,7 @@ export function renderSpecialistSummary(interest: AdvisorInterest, text: string)
     .split("-")
     .map((part) => part[0]!.toUpperCase() + part.slice(1))
     .join(" / ");
-  return `# PR Review Advisor — ${title} specialist\n\n> Evidence for synthesis and human review. The primary advisor remains authoritative.\n\n${text.trim()}\n`;
+  return `# PR Review Advisor — ${title} specialist\n\n> Evidence for synthesis and human review. Synthesis publishes the final review.\n\n${text.trim()}\n`;
 }
 
 export function writeSpecialistSummary(
@@ -65,6 +65,16 @@ export function writeSpecialistSummary(
 ): string {
   const file = path.join(outDir, `pr-review-${interest}-summary.md`);
   fs.writeFileSync(file, renderSpecialistSummary(interest, text));
+  return file;
+}
+
+export function writeSpecialistDiff(configDir: string, diff: string): string {
+  const directory = path.join(configDir, "context");
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  fs.chmodSync(directory, 0o700);
+  const file = path.join(directory, "diff.patch");
+  fs.writeFileSync(file, diff, { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
   return file;
 }
 
@@ -106,10 +116,7 @@ async function main(): Promise<void> {
   delete process.env.GH_TOKEN;
   delete process.env.GITHUB_TOKEN;
 
-  const diffDirectory = path.join(process.cwd(), ".pr-review-advisor-context");
-  fs.mkdirSync(diffDirectory, { recursive: true });
-  const diffPath = path.join(diffDirectory, "diff.patch");
-  fs.writeFileSync(diffPath, diff);
+  const diffPath = writeSpecialistDiff(configDir, diff);
 
   const turn = buildSpecialistInvestigateTurn(interest, {
     metadata: JSON.stringify({ version: 1, baseRef, headRef, headSha, changedFiles }, null, 2),

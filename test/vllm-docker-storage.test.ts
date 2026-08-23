@@ -237,9 +237,19 @@ realDockerTest(
       fs.mkdirSync(blockedHome);
       fs.writeFileSync(path.join(blockedHome, ".cache"), "not a directory\n");
       fs.writeFileSync(statfsLogPath, "");
-      fs.writeFileSync(path.join(fakeBinDir, "nvidia-smi"), "#!/bin/sh\nexit 0\n", {
-        mode: 0o755,
-      });
+      fs.writeFileSync(
+        path.join(fakeBinDir, "nvidia-smi"),
+        `#!/bin/sh
+case "$#:$1:$2" in
+  2:--query-gpu=compute_cap:--format=csv,noheader,nounits) printf '9.0\\n' ;;
+  2:--query-gpu=index,uuid,memory.total,memory.free:--format=csv,noheader,nounits)
+    printf '0, GPU-storage-proof, 131072, 131072\\n'
+    ;;
+  *) exit 64 ;;
+esac
+`,
+        { mode: 0o755 },
+      );
       fs.writeFileSync(path.join(fakeBinDir, "curl"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
       fs.writeFileSync(
         path.join(fakeBinDir, "docker"),
