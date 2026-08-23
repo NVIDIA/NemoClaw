@@ -18,7 +18,7 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -190,24 +190,16 @@ export type BundledNpmTarRegistryDependencies = Readonly<{
   prepareReplacement?: (commandRunner: BundledNpmTarCommandRunner) => PreparedReplacement;
 }>;
 
-function prepareFixedTarReplacement(
+function prepareFixedTarReplacementFromArchive(
+  archivePath: string,
   commandRunner: BundledNpmTarCommandRunner,
 ): PreparedReplacement {
+  if (!isAbsolute(archivePath)) {
+    throw new Error("npm bundled tar replacement archive path must be absolute");
+  }
   const rootDirectory = mkdtempSync(join(tmpdir(), "nemoclaw-npm-tar-bootstrap-"));
-  const archivePath = join(rootDirectory, `tar-${FIXED_TAR_VERSION}.tgz`);
   const replacementRoot = join(rootDirectory, "replacement");
   try {
-    commandRunner("curl", [
-      "--proto",
-      "=https",
-      "--tlsv1.2",
-      "--fail",
-      "--silent",
-      "--show-error",
-      "--output",
-      archivePath,
-      FIXED_TAR_TARBALL,
-    ]);
     const archiveDescriptor = openSync(archivePath, constants.O_RDONLY | constants.O_NOFOLLOW);
     let archiveBytes: Buffer;
     try {
@@ -247,18 +239,49 @@ function prepareFixedTarReplacement(
   }
 }
 
-export function patchBundledNpmTarFromRegistry(
+function prepareFixedTarReplacement(
+  commandRunner: BundledNpmTarCommandRunner,
+): PreparedReplacement {
+  const rootDirectory = mkdtempSync(join(tmpdir(), "nemoclaw-npm-tar-download-"));
+  const archivePath = join(rootDirectory, `tar-${FIXED_TAR_VERSION}.tgz`);
+  try {
+    commandRunner("curl", [
+      "--proto",
+      "=https",
+      "--tlsv1.2",
+      "--fail",
+      "--silent",
+      "--show-error",
+      "--output",
+      archivePath,
+      FIXED_TAR_TARBALL,
+    ]);
+    const prepared = prepareFixedTarReplacementFromArchive(archivePath, commandRunner);
+    return {
+      cleanup: () => {
+        prepared.cleanup();
+        rmSync(rootDirectory, { force: true, recursive: true });
+      },
+      replacementRoot: prepared.replacementRoot,
+    };
+  } catch (error) {
+    rmSync(rootDirectory, { force: true, recursive: true });
+    throw error;
+  }
+}
+
+function patchBundledNpmTarWithPreparedReplacement(
   npmRoot: string,
-  dependencies: BundledNpmTarRegistryDependencies = {},
+  commandRunner: BundledNpmTarCommandRunner,
+  prepareReplacement: () => PreparedReplacement,
 ): BundledNpmTarState {
-  const commandRunner = dependencies.commandRunner ?? run;
   const current = inspectBundledNpmTar(npmRoot);
   if (current.state === "fixed") {
     commandRunner("npm", ["--version"]);
     commandRunner("npx", ["--version"]);
     return current;
   }
-  const prepared = (dependencies.prepareReplacement ?? prepareFixedTarReplacement)(commandRunner);
+  const prepared = prepareReplacement();
   try {
     const result = patchBundledNpmTar({
       npmRoot,
@@ -272,10 +295,38 @@ export function patchBundledNpmTarFromRegistry(
   }
 }
 
+export function patchBundledNpmTarFromRegistry(
+  npmRoot: string,
+  dependencies: BundledNpmTarRegistryDependencies = {},
+): BundledNpmTarState {
+  const commandRunner = dependencies.commandRunner ?? run;
+  return patchBundledNpmTarWithPreparedReplacement(npmRoot, commandRunner, () =>
+    (dependencies.prepareReplacement ?? prepareFixedTarReplacement)(commandRunner),
+  );
+}
+
+export function patchBundledNpmTarFromArchive(
+  npmRoot: string,
+  archivePath: string,
+  commandRunner: BundledNpmTarCommandRunner = run,
+): BundledNpmTarState {
+  return patchBundledNpmTarWithPreparedReplacement(npmRoot, commandRunner, () =>
+    prepareFixedTarReplacementFromArchive(archivePath, commandRunner),
+  );
+}
+
 function argument(name: string): string {
   const index = process.argv.indexOf(name);
   const value = index >= 0 ? process.argv[index + 1] : undefined;
   if (!value || value.startsWith("--")) throw new Error(`${name} is required`);
+  return value;
+}
+
+function optionalArgument(name: string): string | undefined {
+  const index = process.argv.indexOf(name);
+  if (index < 0) return undefined;
+  const value = process.argv[index + 1];
+  if (!value || value.startsWith("--")) throw new Error(`${name} requires a value`);
   return value;
 }
 
@@ -285,7 +336,12 @@ function isMainModule(): boolean {
 
 if (isMainModule()) {
   try {
-    const result = patchBundledNpmTarFromRegistry(argument("--npm-root"));
+    const npmRoot = argument("--npm-root");
+    const archivePath = optionalArgument("--archive");
+    const result = archivePath
+      ? patchBundledNpmTarFromArchive(npmRoot, archivePath)
+      : patchBundledNpmTarFromRegistry(npmRoot);
+    if (archivePath) rmSync(archivePath);
     process.stdout.write(
       `Verified npm@${result.npmVersion} bundled tar@${result.tarVersion} (minimum ${MINIMUM_SAFE_TAR_VERSION})\n`,
     );

@@ -14,6 +14,7 @@ import {
   FIXED_TAR_VERSION,
   MINIMUM_SAFE_TAR_VERSION,
   patchBundledNpmTar,
+  patchBundledNpmTarFromArchive,
   patchBundledNpmTarFromRegistry,
   verifyBundledNpmTar,
 } from "../scripts/patch-bundled-npm-tar.mts";
@@ -121,6 +122,24 @@ describe("npm bundled node-tar remediation", () => {
 
     expect(result).toMatchObject({ state: "fixed", tarVersion: FIXED_TAR_VERSION });
     expect(commands).toEqual(["curl", "tar", "npm", "npx", "cleanup"]);
+  });
+
+  it("patches from the reviewed local cache seed without a registry request", () => {
+    const target = fixture("11.16.0", "7.5.15");
+    const archive = path.join(
+      import.meta.dirname,
+      "..",
+      "tools",
+      "mcp-tool-discovery-runtime",
+      "npm-cache-seed",
+      `tar-${FIXED_TAR_VERSION}.tgz`,
+    );
+
+    expect(patchBundledNpmTarFromArchive(target.npmRoot, archive)).toMatchObject({
+      npmVersion: "11.16.0",
+      state: "fixed",
+      tarVersion: FIXED_TAR_VERSION,
+    });
   });
 
   it("rejects mismatched tar@7.5.21 archive bytes before extraction or npm-tree mutation (#9933)", () => {
