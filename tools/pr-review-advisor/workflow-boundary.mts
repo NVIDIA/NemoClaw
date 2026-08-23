@@ -6,19 +6,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 
+import { ADVISOR_INTERESTS } from "./specialists.mts";
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW = join(ROOT, ".github", "workflows", "pr-review-advisor.yaml");
 const DEFAULT_LOCK = join(ROOT, "package-lock.json");
 const DEFAULT_POLICY = join(ROOT, "tools", "pr-review-advisor", "openshell-policy.yaml");
 const ACTION_PIN = /^[^@\s]+\/[^@\s]+@[0-9a-f]{40}(?:\s*#.*)?$/u;
 const SANDBOX_NAME = /^(?!.*--)[a-z]([a-z0-9-]*[a-z0-9])?$/u;
-const INTERESTS = new Set([
-  "behavior",
-  "trust",
-  "design-architecture",
-  "operations",
-  "documentation",
-]);
+const INTERESTS = new Set(ADVISOR_INTERESTS);
 const READ_PERMISSIONS = {
   actions: "read",
   checks: "read",
