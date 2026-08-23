@@ -800,17 +800,29 @@ evidence directory; a preparation failure produces no lane artifact. After
 workspace preparation, `cleanup.json` records the final cleanup result. The
 identity receipt records onboarding, inference, and full E2E as `not-run`.
 
-`BREV_API_KEY` and `BREV_ORG_ID` are environment values only in the preparation
-step on the GitHub-hosted runner. `brev login` writes them to
-`$HOME/.brev/credentials.json` under a job-private `HOME`; later Brev steps read
-that file through cleanup.
-The workflow then removes the file and verifies its absence before artifact
-upload. The image dispatch token is available as `GH_TOKEN` only to the identity
+The identity job runs on `ubuntu-latest`. GitHub assigns a fresh hosted-runner VM
+to the job and decommissions the VM after the job finishes. `BREV_API_KEY` and
+`BREV_ORG_ID` are environment values only in the preparation step. `brev login`
+writes the raw API key and organization identifier to the runner account's
+`$HOME/.brev/credentials.json` inside an owner-only `.brev` directory. Later
+trusted Brev steps read that file through workspace cleanup.
+
+A successful `brev refresh` writes the Brev user SSH private key to
+`$HOME/.brev/brev.pem`, generated host entries to `$HOME/.brev/ssh_config`, and
+an include directive to `$HOME/.ssh/config`. Brev and OpenSSH use this runner
+account home so the SSH readiness check can read the host entry. The workflow
+removes the API credential file and verifies its absence before artifact upload.
+The SSH private key and configuration remain on the hosted-runner VM until
+GitHub decommissions it.
+
+The image dispatch token is available as `GH_TOKEN` only to the identity
 validation step on the GitHub-hosted runner. Ending that step removes its
-process access. Removing the local Brev file and ending the token-bearing step
-do not revoke the issuer-side credentials; they remain valid until they expire
-or an administrator revokes them. These credentials are not sent to the
-Launchable workspace, and the job does not receive an inference credential.
+process access. Removing the local Brev API credential file and ending the
+token-bearing step do not revoke the issuer-side credentials. They remain valid
+until they expire or an administrator revokes them. The job does not check out
+candidate code on the hosted runner. It does not send `BREV_API_KEY`,
+`BREV_ORG_ID`, `GH_TOKEN`, or the Brev user SSH private key to the Launchable
+workspace, and it does not receive an inference credential.
 After the identity validation step, a reserved cleanup step rechecks only the exact
 workflow-owned workspace name. The job is absent from push, default, full, and
 release-required selections.

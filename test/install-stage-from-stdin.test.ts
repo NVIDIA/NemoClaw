@@ -74,7 +74,7 @@ function runEntryGuardInFixture(tmp: string, opts: EntryGuardOptions): StagingOu
     if [[ -z "$_test_bash_source" ]] && [[ -z "\${NEMOCLAW_INSTALLER_STAGED:-}" ]]; then
       _installer_url="\${NEMOCLAW_INSTALLER_URL:-https://www.nvidia.com/nemoclaw.sh}"
       if _staged="$(mktemp /tmp/nemoclaw-installer-XXXXXX 2>/dev/null)" \\
-         && curl -fsSL "$_installer_url" -o "$_staged" 2>/dev/null \\
+         && curl -fsSL --proto '=https' --proto-redir '=https' "$_installer_url" -o "$_staged" 2>/dev/null \\
          && [[ -s "$_staged" ]] \\
          && head -1 "$_staged" | grep -qE '^#!.*(sh|bash)' \\
          && bash -n "$_staged" 2>/dev/null; then
