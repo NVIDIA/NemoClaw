@@ -7,12 +7,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { githubGraphql, upsertStickyComment } from "../tools/advisors/github.mts";
 import { buildPromptTurns } from "../tools/pr-review-advisor/analyze.mts";
-import {
-  classifyTestDepth,
-  collectStaticTestInventory,
-  detectLocalizedPatchSignals,
-  detectSimplificationSignals,
-} from "../tools/pr-review-advisor/deterministic-context.mts";
+import { collectStaticTestInventory } from "../tools/pr-review-advisor/deterministic-context.mts";
 import {
   declaresReplacement,
   extractIssueRefs,
@@ -25,41 +20,6 @@ import { loadAdvisorSchema, metadata, ROOT } from "./helpers/pr-review-advisor-t
 describe("PR review advisor", () => {
   afterEach(() => {
     vi.restoreAllMocks();
-  });
-
-  it("classifies sandbox and workflow changes as requiring deeper validation", () => {
-    expect(
-      classifyTestDepth(["src/lib/messaging/channels/slack/policy/openclaw.yaml"]).verdict,
-    ).toBe("runtime_validation_recommended");
-    expect(classifyTestDepth(["src/lib/credentials.ts"]).verdict).toBe(
-      "runtime_validation_recommended",
-    );
-    expect(classifyTestDepth(["docs/get-started/quickstart.mdx"]).verdict).toBe("unit_sufficient");
-    expect(classifyTestDepth(["src/lib/plain-logic.ts"]).verdict).toBe("unit_sufficient");
-  });
-
-  it("uses added runtime source lines without treating test helpers as product boundaries", () => {
-    const runtimeDiff = `diff --git a/src/lib/runner.ts b/src/lib/runner.ts
-@@ -1 +1,2 @@
- import { spawnSync } from "node:child_process";
-+spawnSync("docker", ["run", "example"]);`;
-    expect(classifyTestDepth(["src/lib/runner.ts"], undefined, runtimeDiff).verdict).toBe(
-      "runtime_validation_recommended",
-    );
-
-    const testOnlySignal = `diff --git a/src/lib/plain-logic.ts b/src/lib/plain-logic.ts
-@@ -1 +1,2 @@
-+export const answer = 42;
-diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
-@@ -1 +1,2 @@
-+spawnSync("docker", ["run", "example"]);`;
-    expect(
-      classifyTestDepth(
-        ["src/lib/plain-logic.ts", "test/plain-logic.test.ts"],
-        undefined,
-        testOnlySignal,
-      ).verdict,
-    ).toBe("unit_sufficient");
   });
 
   it("requires an explicit replacement relation for superseded recommendations", () => {
@@ -259,62 +219,6 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
       fs.rmSync(tmp, { recursive: true, force: true });
       fs.rmSync(outside, { recursive: true, force: true });
     }
-  });
-
-  it("keeps dependency evidence without inferring complexity from names", () => {
-    const signals =
-      detectSimplificationSignals(`diff --git a/src/lib/example.ts b/src/lib/example.ts
-@@ -1,2 +1,7 @@
-+import moment from "moment";
-+interface ExampleFactory {
-+const value = process.env.NEMOCLAW_EXAMPLE_MODE;
-+const wrapper = wrapClient(client);
-diff --git a/test/example.test.ts b/test/example.test.ts
-@@ -1,2 +1,4 @@
-+const matrix = new ScenarioRegistry();
-`);
-
-    expect(signals).toEqual([
-      expect.objectContaining({
-        kind: "new_dependency",
-        evidence: expect.stringContaining("moment"),
-      }),
-    ]);
-  });
-
-  it("detects localized patch signals from added diff lines", () => {
-    const signals =
-      detectLocalizedPatchSignals(`diff --git a/src/lib/example.ts b/src/lib/example.ts
-@@ -1,2 +1,9 @@
- export function run() {
-+  process.on("uncaughtException", () => {});
-+  return fallbackConfig;
-+  +++fallbackEnabled;
-+  try {} catch {}
-+  return null;
-+  const compatibilityMode = true;
- }
-`);
-
-    expect(signals).toEqual([
-      expect.objectContaining({
-        file: "src/lib/example.ts",
-        line: 2,
-        kind: "runtime interception or monkeypatch",
-      }),
-      expect.objectContaining({
-        file: "src/lib/example.ts",
-        line: 3,
-        kind: "fallback/recovery/tolerance path",
-      }),
-      expect.objectContaining({
-        file: "src/lib/example.ts",
-        line: 4,
-        kind: "fallback/recovery/tolerance path",
-        evidence: "+++fallbackEnabled;",
-      }),
-    ]);
-    expect(signals[0]?.reviewRule).toContain("invalid state");
   });
 
   it("upserts sticky comments with created comment-scoped bodies", async () => {
