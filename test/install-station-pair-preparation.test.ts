@@ -46,6 +46,7 @@ import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const COORDINATOR = path.join(REPO_ROOT, "scripts", "prepare-dual-dgx-station.mts");
 const STATION_HELPER = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
+const FORBIDDEN_STATION_DISCOVERY_COMMANDS = ["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"] as const;
 
 function throwFixtureError(error: Error): never {
   throw error;
@@ -954,9 +955,9 @@ fi
     }
   });
 
-  it.each(["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"])(
-    "uses only deterministic rail candidates without trust enrollment or network discovery [%s]",
-    (command) => {
+  it.each([{ commands: FORBIDDEN_STATION_DISCOVERY_COMMANDS }])(
+    "uses only deterministic rail candidates without trust enrollment or network discovery",
+    ({ commands }) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-command-boundary-"));
       const bin = path.join(root, "bin");
       const stateDirectory = path.join(root, "state");
@@ -973,11 +974,13 @@ fi
       );
       fs.writeFileSync(path.join(bin, "ssh"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o700 });
 
-      fs.writeFileSync(
-        path.join(bin, command),
-        `#!/usr/bin/env bash\nprintf '%s\\n' ${JSON.stringify(command)} >>${JSON.stringify(forbiddenLog)}\nexit 97\n`,
-        { mode: 0o700 },
-      );
+      commands.forEach((command) => {
+        fs.writeFileSync(
+          path.join(bin, command),
+          `#!/usr/bin/env bash\nprintf '%s\\n' ${JSON.stringify(command)} >>${JSON.stringify(forbiddenLog)}\nexit 97\n`,
+          { mode: 0o700 },
+        );
+      });
 
       try {
         const result = spawnSync(
@@ -1015,9 +1018,9 @@ fi
     },
   );
 
-  it.each(["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"])(
-    "keeps forbidden discovery and trust enrollment unreachable through pair qualification [%s]",
-    (command) => {
+  it.each([{ commands: FORBIDDEN_STATION_DISCOVERY_COMMANDS }])(
+    "keeps forbidden discovery and trust enrollment unreachable through pair qualification",
+    ({ commands }) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-ready-boundary-"));
       const bin = path.join(root, "bin");
       const stateDirectory = path.join(root, "state");
@@ -1123,11 +1126,13 @@ exit 96
         { mode: 0o700 },
       );
 
-      fs.writeFileSync(
-        path.join(bin, command),
-        `#!/usr/bin/env bash\nprintf '%s\\n' ${JSON.stringify(command)} >>${JSON.stringify(forbiddenLog)}\nexit 97\n`,
-        { mode: 0o700 },
-      );
+      commands.forEach((command) => {
+        fs.writeFileSync(
+          path.join(bin, command),
+          `#!/usr/bin/env bash\nprintf '%s\\n' ${JSON.stringify(command)} >>${JSON.stringify(forbiddenLog)}\nexit 97\n`,
+          { mode: 0o700 },
+        );
+      });
 
       try {
         const result = spawnSync(
