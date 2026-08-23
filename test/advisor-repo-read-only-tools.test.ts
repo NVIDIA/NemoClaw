@@ -8,7 +8,10 @@ import path from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createRepoConfinedReadOnlyTools } from "../tools/advisors/repo-read-only-tools.mts";
+import {
+  canonicalRepoReadPath,
+  createRepoConfinedReadOnlyTools,
+} from "../tools/advisors/repo-read-only-tools.mts";
 
 const tempDirs: string[] = [];
 let workspace: string;
@@ -156,6 +159,7 @@ describe("repo-confined advisor read-only tools", () => {
 
   it("reports ordinary read ranges and file size (#9949)", async () => {
     fs.writeFileSync(path.join(workspace, "ranges.txt"), "one\ntwo\nthree\n", "utf8");
+    const realPath = fs.realpathSync(path.join(workspace, "ranges.txt"));
     const observations: Parameters<
       NonNullable<Parameters<typeof createRepoConfinedReadOnlyTools>[1]>
     >[0][] = [];
@@ -169,9 +173,27 @@ describe("repo-confined advisor read-only tools", () => {
     await execute("read", { path: "ranges.txt", offset: 3 });
 
     expect(observations).toEqual([
-      { path: path.join(workspace, "ranges.txt"), offset: 1, endOffset: 2, fileSize: 14, reachesEnd: false },
-      { path: path.join(workspace, "ranges.txt"), offset: 3, endOffset: null, fileSize: 14, reachesEnd: true },
+      { path: realPath, offset: 1, endOffset: 2, fileSize: 14, reachesEnd: false },
+      { path: realPath, offset: 3, endOffset: null, fileSize: 14, reachesEnd: true },
     ]);
+  });
+
+  it("uses one canonical path for configured and observed reads", async () => {
+    fs.writeFileSync(path.join(workspace, "required.txt"), "required\n", "utf8");
+    const observations: Parameters<
+      NonNullable<Parameters<typeof createRepoConfinedReadOnlyTools>[1]>
+    >[0][] = [];
+    tools = new Map(
+      createRepoConfinedReadOnlyTools(workspace, (observation) => observations.push(observation)).map(
+        (tool) => [tool.name, tool],
+      ),
+    );
+
+    const configuredPath = await canonicalRepoReadPath(workspace, "required.txt");
+    await execute("read", { path: "required.txt" });
+
+    expect(configuredPath).toBe(fs.realpathSync(path.join(workspace, "required.txt")));
+    expect(observations[0]?.path).toBe(configuredPath);
   });
 
   it("keeps ordinary read, grep, find, and ls behavior inside the workspace (#6446)", async () => {
