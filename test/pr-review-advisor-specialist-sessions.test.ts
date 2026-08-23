@@ -170,14 +170,16 @@ describe("specialist Pi session inputs", () => {
     },
   );
 
-  it("passes only available traces to synthesis and names missing domains", () => {
+  it("requires reads only for available specialist traces", () => {
     const root = fixture();
     fs.rmSync(path.join(root, specialistSessionFileName("documentation")));
     const turn = buildSynthesisTurn(validateSpecialistSessionDirectory(root));
 
-    expect(turn.prompt).not.toContain(specialistSessionFileName("documentation"));
-    expect(turn.prompt).toContain("documentation: specialist trace unavailable");
-    expect(turn.prompt).toContain("explicit review-completeness limitation");
+    expect(turn.requiredReadPaths).toEqual(
+      ADVISOR_INTERESTS.filter((interest) => interest !== "documentation").map((interest) =>
+        path.join(root, specialistSessionFileName(interest)),
+      ),
+    );
   });
 
   it("validates the complete reads already present before synthesis text", () => {
@@ -186,7 +188,6 @@ describe("specialist Pi session inputs", () => {
     const paths = turn.requiredReadPaths ?? [];
     expect(turn.activeToolNames).toEqual(["read", "grep", "find", "ls"]);
     expect(turn.seedRequiredReads).toBe(true);
-    expect(turn.prompt).toContain("Pi session already contains complete ordinary `read` calls");
     const read = (
       readPath: string,
       offset: number,
