@@ -9,7 +9,10 @@ import { defineConfig, defineProject } from "vitest/config";
 import pluginVitestProjectOptions from "./nemoclaw/vitest.project";
 import { shouldRunLiveE2E } from "./test/e2e/fixtures/live-project-gate.ts";
 import { CliCoverageSequencer } from "./test/helpers/cli-coverage-sequencer";
-import { resolveIntegrationProjectScheduling } from "./test/helpers/integration-project-scheduling";
+import {
+  resolveCliCoverageShardScheduling,
+  resolveIntegrationProjectScheduling,
+} from "./test/helpers/integration-project-scheduling";
 import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
 import { testTimeout } from "./test/helpers/timeouts";
 import { resolveVitestCoverageThresholds } from "./test/helpers/vitest-coverage-thresholds";
@@ -95,6 +98,15 @@ const controlledNonLiveEnv = {
 const fixtureUmaskSetup = "test/helpers/normalize-fixture-umask.ts";
 const isolatedTestStateSetup = "test/helpers/isolate-test-state.ts";
 const pluginVitestProject = defineProject(pluginVitestProjectOptions);
+// Pull-request jobs execute the base branch's trusted composite action, so an
+// action change in a PR cannot constrain that PR's own Vitest workers. Apply a
+// bounded cap from the validated shard environment instead; this is shared by the
+// trusted PR action and the main-branch action.
+const cliCoverageShardScheduling = resolveCliCoverageShardScheduling({
+  isCi,
+  cliShard: process.env.CLI_SHARD,
+  cliShardCount: process.env.CLI_SHARD_COUNT,
+});
 const integrationProjectScheduling = resolveIntegrationProjectScheduling({
   isCi,
   npmLifecycleEvent: process.env.npm_lifecycle_event,
@@ -104,6 +116,7 @@ const integrationProjectScheduling = resolveIntegrationProjectScheduling({
 
 export default defineConfig({
   test: {
+    ...cliCoverageShardScheduling,
     globalSetup: "test/helpers/vitest-temp-root.ts",
     tags: [
       {
