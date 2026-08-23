@@ -87,7 +87,7 @@ function makeWrapperFixture(
 }
 
 describe("LangChain Deep Agents Code managed entrypoints", () => {
-  it("uses loopback only when the build validator has no network route", () => {
+  it("uses loopback with a canonical DNS URL when the build validator has no route", () => {
     const validator = path.join(agentDir, "validate-read-only-mcp-call.py");
     const probe = spawnSync(
       "python3",
@@ -104,7 +104,7 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
           "    def __exit__(self, *_args): return False",
           "    def connect(self, _address): raise OSError(errno.ENETUNREACH, 'offline')",
           "module.socket.socket = lambda *_args: Probe()",
-          "print(module._container_address())",
+          "print(*module._validation_hosts())",
         ].join("\n"),
         validator,
       ],
@@ -112,7 +112,7 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     );
 
     expect(probe.status, probe.stderr).toBe(0);
-    expect(probe.stdout).toBe("127.0.0.1\n");
+    expect(probe.stdout).toBe("127.0.0.1 localhost\n");
   });
 
   it("exposes only the fixed deterministic read-only MCP command (#9889)", () => {
