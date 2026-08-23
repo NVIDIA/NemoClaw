@@ -190,7 +190,11 @@ export function createPodmanContainerEngine(
     executable,
     endpointArgs: ["--url", `unix://${options.socketAuthority.socketPath}`],
     allowedEnvironmentNames:
-      options.operation === "host-local-inference" ? ["NGC_API_KEY", "NIM_NGC_API_KEY"] : [],
+      options.operation === "host-local-inference"
+        ? ["NGC_API_KEY", "NIM_NGC_API_KEY"]
+        : options.operation === "managed-bootstrap"
+          ? ["CONTAINERS_CONF", "CONTAINERS_STORAGE_CONF"]
+          : [],
     commandEnvironment: options.commandEnvironment,
     capture: options.capture,
     guard: (phase) => {

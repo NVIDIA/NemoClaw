@@ -201,6 +201,13 @@ export function createCurrentPodmanOperationEngine(
       commandEnvironment: Object.freeze({
         HOME: environment.HOME ?? os.homedir(),
         PATH: environment.PATH ?? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        ...(environment.XDG_RUNTIME_DIR ? { XDG_RUNTIME_DIR: environment.XDG_RUNTIME_DIR } : {}),
+        ...(operation === "managed-bootstrap" && environment.CONTAINERS_CONF
+          ? { CONTAINERS_CONF: environment.CONTAINERS_CONF }
+          : {}),
+        ...(operation === "managed-bootstrap" && environment.CONTAINERS_STORAGE_CONF
+          ? { CONTAINERS_STORAGE_CONF: environment.CONTAINERS_STORAGE_CONF }
+          : {}),
       }),
     });
     return bound;

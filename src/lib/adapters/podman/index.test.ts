@@ -224,6 +224,12 @@ describe("Podman container engine command adapter", () => {
       executable: "/usr/bin/podman",
       executableAuthorityDeps: executableAuthorityDeps(),
       assertAuthority: vi.fn(),
+      commandEnvironment: {
+        HOME: "/home/podman",
+        XDG_RUNTIME_DIR: "/run/user/1000",
+        CONTAINERS_CONF: "/tmp/native-podman-containers.conf",
+        CONTAINERS_STORAGE_CONF: "/tmp/native-podman-storage.conf",
+      },
       capture,
     });
 
@@ -238,6 +244,14 @@ describe("Podman container engine command adapter", () => {
       ["unshare", "chmod", "1775", "--", directory],
       ["unshare", "stat", "--format=%u:%g:%a:%F", "--", directory],
     ]);
+    expect(capture.mock.calls.map((call) => call[4])).toEqual(
+      Array.from({ length: 3 }, () => ({
+        HOME: "/home/podman",
+        XDG_RUNTIME_DIR: "/run/user/1000",
+        CONTAINERS_CONF: "/tmp/native-podman-containers.conf",
+        CONTAINERS_STORAGE_CONF: "/tmp/native-podman-storage.conf",
+      })),
+    );
     expect(() => engine.captureHost(["unshare", "id"])).toThrow(
       "forbids ambient host command capture",
     );
