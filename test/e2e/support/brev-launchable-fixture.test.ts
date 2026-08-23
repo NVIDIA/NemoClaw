@@ -16,6 +16,7 @@ import {
   result,
   workspaceResult,
 } from "../../helpers/brev-launchable-client-fixture.ts";
+import { failingReadinessCommand } from "../../helpers/brev-launchable-readiness-fixture.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const roots: string[] = [];
@@ -61,6 +62,24 @@ describe("the Brev Launchable fixture owns one exact workspace lifecycle", () =>
       id: "owned-id",
     };
 
+    await expect(fixture.delete(ownership, 100)).rejects.toThrow(
+      "Brev workspace identity changed before cleanup",
+    );
+    expect(command.mock.calls.flat().some((value) => value === "delete")).toBe(false);
+  });
+
+  it("refuses to delete a replacement after readiness fails", async () => {
+    const root = temporaryRoot();
+    const readiness = failingReadinessCommand();
+    const command = vi.fn(readiness.command);
+    const fixture = createFixture(root, command);
+    const ownership = fixture.ownership("fixture-workspace");
+
+    await expect(fixture.create(ownership, "env-fixture123")).rejects.toThrow(
+      "Brev workspace entered terminal state",
+    );
+    expect(ownership.id).toBe("owned-id");
+    readiness.replace();
     await expect(fixture.delete(ownership, 100)).rejects.toThrow(
       "Brev workspace identity changed before cleanup",
     );

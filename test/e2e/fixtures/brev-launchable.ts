@@ -162,8 +162,7 @@ export class BrevLaunchableFixture {
     );
     expectExitZero(create, "create staging Brev workspace");
     ownership.accepted = true;
-    const workspace = await this.waitForWorkspace(name, 20 * 60_000);
-    ownership.id = workspace.id;
+    const workspace = await this.waitForWorkspace(ownership, 20 * 60_000);
     return workspace;
   }
 
@@ -233,7 +232,10 @@ export class BrevLaunchableFixture {
     if (!ownership.createRequested) return;
     const name = ownership.name;
     const current = await this.workspace(name);
-    if (current && ownership.id && current.id !== ownership.id) {
+    if (current && !ownership.id) {
+      throw new Error(`Brev workspace identity was not recorded before cleanup: ${name}`);
+    }
+    if (current && current.id !== ownership.id) {
       throw new Error(`Brev workspace identity changed before cleanup: ${name}`);
     }
     if (current) {
@@ -265,10 +267,15 @@ export class BrevLaunchableFixture {
     throw new Error(`Brev workspace cleanup did not confirm absence: ${name}`);
   }
 
-  private async waitForWorkspace(name: string, timeoutMs: number): Promise<BrevWorkspaceRecord> {
+  private async waitForWorkspace(
+    ownership: BrevWorkspaceOwnership,
+    timeoutMs: number,
+  ): Promise<BrevWorkspaceRecord> {
+    const name = ownership.name;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const record = await this.workspace(name);
+      if (record?.id) ownership.id ??= record.id;
       if (
         record?.status === "RUNNING" &&
         record.shellStatus === "READY" &&

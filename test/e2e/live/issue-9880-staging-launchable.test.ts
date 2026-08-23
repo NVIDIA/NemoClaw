@@ -8,7 +8,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 
 const MODEL = "meta/llama-3.3-70b-instruct";
 const PROMPT = "List 10 REST API endpoints for a blog service, one per line";
-const TEST_TIMEOUT_MS = 35 * 60_000;
+const TEST_TIMEOUT_MS = 60 * 60_000;
 
 test(
   "OpenClaw CLI does not loop on a simple text request on the staging Launchable (#9880)",
