@@ -276,6 +276,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/channels/slack/rendered-config-parser.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/slack/runtime/slack-channel-guard.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/slack/template-resolver.ts", mode: "100644" },
+  { path: "src/lib/messaging/channels/teams/contract.ts", mode: "100644" },
   {
     path: "src/lib/messaging/channels/teams/hooks/host-forward-port-conflict.test.ts",
     mode: "100644",
@@ -393,6 +394,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/manifest/registry.ts", mode: "100644" },
   { path: "src/lib/messaging/manifest/types.test.ts", mode: "100644" },
   { path: "src/lib/messaging/manifest/types.ts", mode: "100644" },
+  { path: "src/lib/messaging/managed-startup-placeholders.test.ts", mode: "100644" },
   { path: "src/lib/messaging/managed-startup-placeholders.ts", mode: "100644" },
   { path: "src/lib/messaging/persisted-placeholders.test.ts", mode: "100644" },
   { path: "src/lib/messaging/persisted-placeholders.ts", mode: "100644" },

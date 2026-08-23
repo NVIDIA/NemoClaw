@@ -65,6 +65,7 @@ function runRefreshBlock(
   refreshLog: string;
   envLog: string;
   callLog: string;
+  hashRefreshState: string;
   preRefreshState: string;
   registryState: string;
   tmpDir: string;
@@ -75,6 +76,7 @@ function runRefreshBlock(
   const callLog = path.join(tmpDir, "calls.log");
   const envLog = path.join(tmpDir, "env.log");
   const refreshLog = path.join(tmpDir, "refresh.txt");
+  const hashRefreshState = path.join(tmpDir, "hash-refresh-state.txt");
   const preRefreshState = path.join(tmpDir, "registry-state.pre.txt");
   const registryState = path.join(tmpDir, "registry-state.txt");
   const readyCounter = path.join(tmpDir, "ready-counter");
@@ -162,6 +164,7 @@ function runRefreshBlock(
     "GATEWAY_WATCHDOG_PID=",
     "GATEWAY_WATCHDOG_PID_START_IDENTITY=",
     'gateway_control_pid_is_live() { case "$1" in ""|0|1|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }',
+    `ensure_mutable_openclaw_config_hash() { cp ${JSON.stringify(registryState)} ${JSON.stringify(hashRefreshState)}; }`,
     block,
     "# Surface PLUGIN_REFRESH_PID + tracked SANDBOX_CHILD_PIDS for the test",
     'printf "PLUGIN_REFRESH_PID=%s\\n" "$PLUGIN_REFRESH_PID"',
@@ -179,7 +182,16 @@ function runRefreshBlock(
     env: { ...process.env, HOME: "/root", USER: "root" }, // adversarial: parent has wrong HOME
   });
 
-  return { result, refreshLog, envLog, callLog, preRefreshState, registryState, tmpDir };
+  return {
+    result,
+    refreshLog,
+    envLog,
+    callLog,
+    hashRefreshState,
+    preRefreshState,
+    registryState,
+    tmpDir,
+  };
 }
 
 describe("plugin refresh log preparation", () => {
@@ -352,11 +364,26 @@ describe("plugin registry refresh workaround for openclaw/openclaw#89606 (#2021)
     }
   });
 
+  it("refreshes the mutable config hash after the registry mutation completes", () => {
+    const { result, hashRefreshState, registryState, tmpDir } = runRefreshBlock();
+    try {
+      expect(result.status).toBe(0);
+      const hashedState = fs.readFileSync(hashRefreshState, "utf-8");
+      expect(hashedState).toBe(fs.readFileSync(registryState, "utf-8"));
+      expect(hashedState).toContain("plugins:nemoclaw");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("skips the refresh when the gateway never reports ready", () => {
-    const { result, refreshLog, callLog, tmpDir } = runRefreshBlock({ gatewayReadyAfter: 99 });
+    const { result, refreshLog, callLog, hashRefreshState, tmpDir } = runRefreshBlock({
+      gatewayReadyAfter: 99,
+    });
     try {
       expect(result.status).toBe(0);
       expect(fs.existsSync(refreshLog)).toBe(false);
+      expect(fs.existsSync(hashRefreshState)).toBe(false);
       const calls = fs.readFileSync(callLog, "utf-8");
       const probeCount = calls.split("\n").filter((l) => l === "gateway status").length;
       expect(probeCount).toBe(10);

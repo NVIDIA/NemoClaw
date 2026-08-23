@@ -201,6 +201,28 @@ describe("sandbox workload preparation", () => {
     }
   });
 
+  it("uses an exact-revision E2E catalog when local git describe labels differ", async () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    fs.writeFileSync(catalogPath, JSON.stringify(CATALOG), { mode: 0o600 });
+    try {
+      const prepared = await prepareSandboxWorkloadSource({
+        ...input("openclaw"),
+        version: "0.1.0",
+        catalogPath,
+        expectedCatalogRevision: REVISION,
+      });
+
+      expect(prepared.release).toBe(RELEASE);
+      expect(prepared.source).toMatchObject({
+        kind: "managed-image",
+        contract: { source: { release: RELEASE, revision: REVISION } },
+      });
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
   it("loads an exact local all-agent catalog without using the registry resolver (#7744)", async () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-catalog-"));
     const catalogPath = path.join(fixtureRoot, "catalog.json");

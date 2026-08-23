@@ -56,6 +56,17 @@ const OPENAI_GATEWAY_PROVIDER_TYPE = "openai";
  * provider environment as unclassified when an MCP provider is attached.
  * Registering an endpointless profile makes the gateway-only inference key
  * explicitly non-injectable while preserving OpenShell's inference route.
+ *
+ * invalidState: an unprofiled gateway-only inference credential revokes the
+ * otherwise valid endpoint-bound MCP credential snapshot.
+ * sourceBoundary: OpenShell owns provider-environment classification and
+ * rejects mixed snapshots atomically.
+ * whyNotSourceFix: NemoClaw must remain compatible with the pinned OpenShell
+ * 0.0.106 runtime, so it declares the missing profile contract before attach.
+ * regressionTest: mcp-bridge-provider-profile.test.ts proves exact existing
+ * profile validation and rejects credential, endpoint, and malformed drift.
+ * removalCondition: remove this import when the minimum supported OpenShell
+ * release classifies the `openai` inference credential as gateway-only itself.
  */
 function ensureOpenAiGatewayProviderProfile(): void {
   const result = ensureEndpointlessProviderProfile({

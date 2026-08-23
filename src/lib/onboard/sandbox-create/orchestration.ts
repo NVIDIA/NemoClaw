@@ -113,6 +113,28 @@ export async function completeHermesPortableSandboxRegistration(input: {
   return registered;
 }
 
+export function hasManagedMcpRebuildHandoff(
+  createIntent: SandboxCreateIntent | null | undefined,
+): boolean {
+  const handoff = createIntent?.recreateJournalTargetIntentFingerprint;
+  return Boolean(
+    handoff && createIntent?.recreateTransaction?.targetIntentFingerprint === handoff,
+  );
+}
+
+function shouldRefuseManagedMcpRecreate(
+  preservedMcpState: unknown,
+  managedMcpRebuildHandoff: boolean,
+): boolean {
+  return Boolean(preservedMcpState) && !managedMcpRebuildHandoff;
+}
+
+function hasPreservedManagedMcpRebuildHandoff(
+  preservedMcpState: unknown,
+  createIntent: SandboxCreateIntent | null | undefined,
+): boolean {
+  return Boolean(preservedMcpState) && hasManagedMcpRebuildHandoff(createIntent);
+}
 type ApplyRecreatePolicyCarryForward = (
   sandboxName: string,
   nonInteractive: boolean,
@@ -461,7 +483,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       {
         computePlan,
         managedWorkloadRebuild,
-        tempManagedRuntime,
+        tempManagedRuntime:
+          tempManagedRuntime ||
+          managedWorkloadOnboard.shouldActivateStockManagedRuntime({
+            portableLifecycle: sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent),
+            hermesPortableLifecycle: agentCreateInput.hermesPortableLifecycle,
+            agentName: requestedAgentName,
+          }),
         tempManagedRuntimeCatalog,
         agentName: requestedAgentName,
         legacyDockerfilePath,
@@ -782,7 +810,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         },
         { formatSandboxAgentName, note },
       );
-      if (preservedMcpState) {
+      const managedMcpRebuildHandoff = hasPreservedManagedMcpRebuildHandoff(
+        preservedMcpState,
+        createIntent,
+      );
+      if (shouldRefuseManagedMcpRecreate(preservedMcpState, managedMcpRebuildHandoff)) {
         for (const hint of recreateJournal.managedMcpRecreateRefusalHints({
           sandboxName,
           cliName: cliName(),

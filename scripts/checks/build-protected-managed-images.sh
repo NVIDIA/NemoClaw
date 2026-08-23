@@ -85,6 +85,7 @@ case "$platform" in
   linux/amd64) npm_target_cpu="x64" ;;
   linux/arm64) npm_target_cpu="arm64" ;;
 esac
+target_arch="${platform#linux/}"
 npm_target_os="linux"
 npm_target_libc="glibc"
 [[ "$openclaw_base" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
@@ -376,7 +377,8 @@ build_agent() {
     -f "$dockerfile_path" \
     --build-arg "BASE_IMAGE=${base_reference}" \
     --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
-    --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+    --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root" \
+    --build-arg "TARGETARCH=${target_arch}"
 
   local -a build_command=(docker buildx build
     --file "$dockerfile_path"
@@ -401,6 +403,7 @@ build_agent() {
     --build-arg "TARGETARCH=${platform#linux/}"
     --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1"
     --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+    --build-arg "TARGETARCH=${target_arch}"
     "$source_root")
   run_build_with_retry "$agent" "$image_repository" "${build_command[@]}"
 

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -22,6 +23,7 @@ import {
 } from "../../../../test/helpers/docker-state-mutation-harness";
 import { createDockerOperationAuthority } from "./docker-operation-authority";
 import {
+  DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE,
   createDockerStateMutationOwner,
   createDockerStateMutationSurface,
 } from "./docker-state-mutation";
@@ -37,6 +39,7 @@ function ownerThatStopsAfterPrepare(runtime: ReturnType<typeof harness>) {
       lifecycleGeneration: runtime.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: SANDBOX_FINGERPRINT,
       runtimeId: RUNTIME_ID,
+      hostTransportRoot: runtime.root,
       authority: runtime.authority as ReturnType<typeof createDockerOperationAuthority>,
       engineAuthorityStore: runtime.engineAuthorityStore,
       lifecycleStore: {
@@ -52,6 +55,50 @@ afterEach(() => {
 });
 
 describe("Docker runtime-provider state mutation surface", () => {
+  it("preserves safe broker diagnostics after request validation", () => {
+    const definitionsEnd = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.indexOf(
+      "\nhelper = sys.argv[1]\n",
+    );
+    expect(definitionsEnd).toBeGreaterThan(0);
+    const definitions = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.slice(
+      0,
+      definitionsEnd,
+    );
+    const probe = `${definitions}
+helper = "/definitely-missing/nemoclaw-runtime-state-mutation-control.py"
+try:
+    run_helper("acquire", b"{}\\n")
+except (OSError, RuntimeError, UnicodeError, ValueError) as error:
+    missing_helper = post_validation_failure_code(error)
+print(json.dumps({
+    "missingHelper": missing_helper,
+    "permission": post_validation_failure_code(PermissionError()),
+    "encoding": post_validation_failure_code(UnicodeDecodeError("utf-8", b"x", 0, 1, "invalid")),
+    "invalidResponse": post_validation_failure_code(ValueError()),
+    "helperProcess": json.loads(normalize_helper_stderr("acquire", 2, b"raw python error"))["code"],
+    "helperProtocol": json.loads(normalize_helper_stderr("acquire", 0, b"unexpected stderr"))["code"],
+    "timeout": json.loads(failure_stderr("acquire", "helper-timeout"))["code"],
+}, separators=(",", ":")))
+`;
+
+    expect(
+      JSON.parse(
+        execFileSync("python3", ["-I", "-c", probe], {
+          encoding: "utf8",
+          timeout: 5_000,
+        }),
+      ),
+    ).toEqual({
+      missingHelper: "helper-file-missing",
+      permission: "transport-permission-denied",
+      encoding: "transport-response-encoding-invalid",
+      invalidResponse: "transport-response-invalid",
+      helperProcess: "helper-process-failed",
+      helperProtocol: "helper-protocol-stderr",
+      timeout: "helper-timeout",
+    });
+  });
+
   it("uses one harness-owned absolute Docker executable", () => {
     const runtime = harness();
     runtime.authority.engine.capture(["version"]);
@@ -276,84 +323,33 @@ describe("Docker state mutation owner", () => {
       "activate",
       "release",
     ]);
+    expect(runtime.supervisorSignals).toEqual(["SIGSTOP", "SIGCONT"]);
     expect(runtime.lifecycleStore.listUnfinished()).toEqual([]);
     const helperCalls = runtime.capture.mock.calls.filter(([, args]) =>
-      args.includes("/usr/local/lib/nemoclaw/runtime-state-mutation-control.py"),
+      args.includes("--nemoclaw-broker"),
     );
-    expect(helperCalls.map(([, args]) => args.slice(-10))).toEqual([
-      [
-        "container",
-        "exec",
-        "--interactive",
-        "--user",
-        "root",
-        RUNTIME_ID,
-        "/opt/hermes/.venv/bin/python3",
-        "-I",
-        "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
-        "acquire",
-      ],
-      [
-        "container",
-        "exec",
-        "--interactive",
-        "--user",
-        "root",
-        RUNTIME_ID,
-        "/opt/hermes/.venv/bin/python3",
-        "-I",
-        "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
-        "assert",
-      ],
-      [
-        "container",
-        "exec",
-        "--interactive",
-        "--user",
-        "root",
-        RUNTIME_ID,
-        "/opt/hermes/.venv/bin/python3",
-        "-I",
-        "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
-        "rollback",
-      ],
-      [
-        "container",
-        "exec",
-        "--interactive",
-        "--user",
-        "root",
-        RUNTIME_ID,
-        "/opt/hermes/.venv/bin/python3",
-        "-I",
-        "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
-        "activate",
-      ],
-      [
-        "container",
-        "exec",
-        "--interactive",
-        "--user",
-        "root",
-        RUNTIME_ID,
-        "/opt/hermes/.venv/bin/python3",
-        "-I",
-        "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
-        "activate",
-      ],
-      [
-        "container",
-        "exec",
-        "--interactive",
-        "--user",
-        "root",
-        RUNTIME_ID,
-        "/opt/hermes/.venv/bin/python3",
-        "-I",
-        "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
-        "release",
-      ],
+    expect(helperCalls.map(([, args]) => args.at(-1))).toEqual([
+      "acquire",
+      "assert",
+      "rollback",
+      "activate",
+      "activate",
+      "release",
     ]);
+    expect(
+      runtime.capture.mock.calls.filter(
+        ([, args]) =>
+          args.includes("--interactive") &&
+          args.includes("/usr/local/lib/nemoclaw/runtime-state-mutation-control.py"),
+      ),
+    ).toEqual([]);
+    expect(
+      runtime.capture.mock.calls.filter(
+        ([, args]) =>
+          args.includes("--detach") &&
+          args.includes("/usr/local/lib/nemoclaw/runtime-state-mutation-control.py"),
+      ),
+    ).toHaveLength(1);
     expect(helperCalls.map(([, args, timeout]) => [args.at(-1), timeout])).toEqual([
       ["acquire", 30_000],
       ["assert", 30_000],
@@ -455,6 +451,30 @@ describe("Docker state mutation owner", () => {
     expect(runtime.helperActions.slice(-3)).toEqual(["release", "recover", "release"]);
   });
 
+  it("keeps recovery transport alive until a stopped supervisor is durably resumed", () => {
+    const runtime = harness({ failResumeOnce: true });
+    const fence = runtime.owner.acquire({ ...runtime.context, plan: plan() });
+    runtime.owner.rollback(runtime.context, fence);
+    const proof = runtime.owner.activate(runtime.context, fence);
+    const completedLedgerSha256 = "e".repeat(64);
+
+    expect(() =>
+      runtime.owner.release(runtime.context, fence, proof, completedLedgerSha256),
+    ).toThrow("Docker host supervisor resume did not complete successfully");
+    expect(runtime.state.supervisorStopped).toBe(true);
+    expect(runtime.transportBrokerActive()).toBe(true);
+    expect(runtime.lifecycleStore.listUnfinished()[0]).toMatchObject({
+      phase: "completed",
+      resultSha256: completedLedgerSha256,
+    });
+
+    expect(runtime.owner.recover(runtime.context)).toBeNull();
+    expect(runtime.supervisorSignals).toEqual(["SIGSTOP", "SIGCONT", "SIGCONT"]);
+    expect(runtime.state.supervisorStopped).toBe(false);
+    expect(runtime.transportBrokerActive()).toBe(false);
+    expect(runtime.lifecycleStore.listUnfinished()).toEqual([]);
+  });
+
   it("recovers a durable provider-release receipt without requiring the removed marker", () => {
     const runtime = harness();
     const fence = runtime.owner.acquire({ ...runtime.context, plan: plan() });
@@ -545,6 +565,73 @@ describe("Docker state mutation owner", () => {
     expect(runtime.lifecycleStore.listUnfinished()[0]?.phase).toBe("fence-established");
   });
 
+  it("publishes one content-addressed request after it host-stops managed Hermes (#9485)", () => {
+    const runtime = harness({ stateMountType: "volume" });
+
+    const acquired = runtime.owner.acquire({ ...runtime.context, plan: plan() });
+
+    expect(acquired.providerHandle).toMatch(/^docker-state-mutation-v1:/u);
+    expect(runtime.state).toMatchObject({
+      mountDriver: "local",
+      mountName: "nemoclaw-hermes-alpha-state",
+      mountType: "volume",
+      supervisorStopped: true,
+    });
+    expect(runtime.supervisorSignals).toEqual(["SIGSTOP"]);
+    const commands = runtime.capture.mock.calls.map(([, args]) => {
+      const start = args.findIndex((value) => value === "container");
+      return start < 0 ? [] : args.slice(start);
+    });
+    const stop = commands.findIndex((args) => args[1] === "kill");
+    const broker = commands.findIndex((args) => args[1] === "exec" && args.includes("--detach"));
+    const publications = commands.filter(
+      (args) => args[1] === "cp" && args.at(-1)?.endsWith(".acquire.incoming"),
+    );
+    const request = commands.indexOf(publications[0] ?? []);
+    expect(commands[stop]).toEqual(["container", "kill", "--signal", "SIGSTOP", RUNTIME_ID]);
+    expect(runtime.capture.mock.calls.find(([, args]) => args[5] === "kill")?.[1]).toEqual([
+      "--config",
+      "/tmp/nemoclaw-docker",
+      "--host",
+      "unix:///tmp/nemoclaw-docker.sock",
+      "container",
+      "kill",
+      "--signal",
+      "SIGSTOP",
+      RUNTIME_ID,
+    ]);
+    expect(broker).toBeGreaterThanOrEqual(0);
+    expect(stop).toBeGreaterThan(broker);
+    expect(publications).toHaveLength(1);
+    expect(request).toBeGreaterThan(stop);
+    expect(runtime.transportCopySourceModes).toEqual([0o644, 0o644]);
+    expect(
+      commands.some(
+        (args) =>
+          args[1] === "cp" &&
+          (args.at(-1)?.endsWith(".request") || args.at(-1)?.endsWith(".ready")),
+      ),
+    ).toBe(false);
+    expect(
+      commands.some(
+        (args) =>
+          args[1] === "exec" &&
+          args.includes("--interactive") &&
+          args.includes("/usr/local/lib/nemoclaw/runtime-state-mutation-control.py"),
+      ),
+    ).toBe(false);
+  });
+
+  it("replays one signal-terminated helper invocation through the established transport", () => {
+    const runtime = harness({ signalHelperOnce: true, stateMountType: "volume" });
+
+    const acquired = runtime.owner.acquire({ ...runtime.context, plan: plan() });
+
+    expect(acquired.providerHandle).toMatch(/^docker-state-mutation-v1:/u);
+    expect(runtime.helperActions).toEqual(["acquire", "acquire"]);
+    expect(runtime.lifecycleStore.listUnfinished()[0]?.phase).toBe("fence-established");
+  });
+
   it("recovers a durable-volume fence when acquire succeeds after its response is lost (#9485)", () => {
     const runtime = harness({ loseAcquireResponseOnce: true, stateMountType: "volume" });
     expect(runtime.state).toMatchObject({
@@ -562,6 +649,8 @@ describe("Docker state mutation owner", () => {
 
     expect(recovered?.providerHandle).toMatch(/^docker-state-mutation-v1:/u);
     expect(runtime.helperActions).toEqual(["acquire", "acquire"]);
+    expect(runtime.supervisorSignals).toEqual(["SIGSTOP", "SIGSTOP"]);
+    expect(runtime.state.supervisorStopped).toBe(true);
     expect(runtime.acquireRequests[1]).toBe(runtime.acquireRequests[0]);
     expect(runtime.lifecycleStore.listUnfinished()[0]?.phase).toBe("fence-established");
   });
@@ -656,6 +745,7 @@ describe("Docker state mutation owner", () => {
       lifecycleGeneration: runtime.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: SANDBOX_FINGERPRINT,
       runtimeId: RUNTIME_ID,
+      hostTransportRoot: runtime.root,
       authority: changedAuthority,
       engineAuthorityStore: runtime.engineAuthorityStore,
       lifecycleStore: runtime.lifecycleStore,

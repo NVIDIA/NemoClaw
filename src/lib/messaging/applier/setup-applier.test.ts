@@ -870,13 +870,13 @@ describe("MessagingSetupApplier", () => {
   });
 
   it("excludes disabled channels at the applier boundary", async () => {
-    const plan = await withEnv(
-      {
-        TELEGRAM_BOT_TOKEN: "123456:telegram-token",
-        SLACK_BOT_TOKEN: "xoxb-slack-token",
-        SLACK_APP_TOKEN: "xapp-slack-token",
-      },
-      () =>
+    const environment = {
+      TELEGRAM_BOT_TOKEN: "123456:telegram-token",
+      SLACK_BOT_TOKEN: "xoxb-slack-token",
+      SLACK_APP_TOKEN: "xapp-slack-token",
+    };
+    const [plan, enabledPlan] = await withEnv(environment, () =>
+      Promise.all([
         planner().buildPlan({
           sandboxName: "demo",
           agent: "openclaw",
@@ -885,6 +885,14 @@ describe("MessagingSetupApplier", () => {
           configuredChannels: ["telegram", "slack"],
           disabledChannels: ["telegram"],
         }),
+        planner().buildPlan({
+          sandboxName: "demo",
+          agent: "openclaw",
+          workflow: "rebuild",
+          isInteractive: false,
+          configuredChannels: ["telegram", "slack"],
+        }),
+      ]),
     );
     expect(plan.disabledChannels).toEqual(["telegram"]);
     expect(plan.credentialBindings.map((binding) => binding.channelId)).toEqual([
@@ -952,21 +960,31 @@ describe("MessagingSetupApplier", () => {
     expect(policyResult.appliedPolicyKeys).toEqual(["slack"]);
 
     const files: Record<string, string> = {
-      "/sandbox/.openclaw/openclaw.json": "{}",
+      "/sandbox/.openclaw/openclaw.json": JSON.stringify({
+        channels: { telegram: { enabled: true, stale: true } },
+      }),
     };
-    await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, {
-      runOpenshell: (args, options) => {
-        const target = String(args.at(-1));
-        if (args.includes("cat") && options?.input === undefined) {
-          return { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" };
-        }
-        if (options?.input !== undefined) {
-          files[target] = options.input;
-          return { status: 0 };
-        }
-        return { status: 1 };
+    await MessagingSetupApplier.applyAgentConfigAtOpenShell(
+      {
+        ...plan,
+        // Stop/rebuild plans retain the prior render entries so the applier can
+        // remove stale configuration restored by OpenClaw doctor.
+        agentRender: enabledPlan.agentRender,
       },
-    });
+      {
+        runOpenshell: (args, options) => {
+          const target = String(args.at(-1));
+          if (args.includes("cat") && options?.input === undefined) {
+            return { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" };
+          }
+          if (options?.input !== undefined) {
+            files[target] = options.input;
+            return { status: 0 };
+          }
+          return { status: 1 };
+        },
+      },
+    );
     const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
     expect(openclawConfig.channels.telegram).toBeUndefined();
     expect(openclawConfig.channels.slack.accounts.default).toMatchObject({
@@ -974,6 +992,65 @@ describe("MessagingSetupApplier", () => {
       appToken: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
       enabled: true,
     });
+  });
+
+  it("removes hook-created WeChat config when the channel is disabled", async () => {
+    const enabledPlan = await buildOnboardPlan(
+      {
+        WECHAT_BOT_TOKEN: "wechat-token",
+        WECHAT_ACCOUNT_ID: "wechat-account",
+      },
+      ["wechat"],
+    );
+    const stoppedPlan = await planner().buildChannelStopPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      channelId: "wechat",
+      sandboxEntry: {
+        name: "demo",
+        messaging: {
+          schemaVersion: 1,
+          plan: compactSandboxMessagingPlanForPersistence(
+            enabledPlan,
+          ) as unknown as SandboxMessagingPlan,
+        },
+      },
+    });
+    expect(stoppedPlan?.disabledChannels).toEqual(["wechat"]);
+
+    const files: Record<string, string> = {
+      "/sandbox/.openclaw/openclaw.json": JSON.stringify({
+        channels: {
+          "openclaw-weixin": {
+            accounts: {
+              "wechat-account": { enabled: true },
+            },
+          },
+        },
+        plugins: {
+          entries: {
+            "openclaw-weixin": { enabled: true },
+          },
+        },
+        preserved: true,
+      }),
+    };
+    await MessagingSetupApplier.applyAgentConfigAtOpenShell(stoppedPlan!, {
+      runOpenshell: (args, options) => {
+        const target = String(args.at(-1));
+        const reading = args.includes("cat") && options?.input === undefined;
+        const written = options?.input;
+        Object.assign(files, written === undefined ? {} : { [target]: written });
+        return reading
+          ? { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" }
+          : { status: written === undefined ? 1 : 0 };
+      },
+    });
+
+    const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
+    expect(openclawConfig.channels["openclaw-weixin"]).toBeUndefined();
+    expect(openclawConfig.plugins.entries["openclaw-weixin"]).toBeUndefined();
+    expect(openclawConfig.preserved).toBe(true);
   });
 
   it("runs post-install hook implementations and writes their build-file outputs", async () => {

@@ -74,23 +74,26 @@ export function mcporterHeadersMatchExpected(
   }
   const actualHeaders = actual as Record<string, unknown>;
   for (const [name, value] of Object.entries(expected)) {
+    if (actualHeaders[name] === value) continue;
+    const canonicalPrefix = "Bearer openshell:resolve:env:";
+    const envName = value.startsWith(canonicalPrefix) ? value.slice(canonicalPrefix.length) : "";
     const actualValue = actualHeaders[name];
-    if (actualValue === value) continue;
-    if (name.toLowerCase() !== "authorization") return false;
-    const prefix = "Bearer openshell:resolve:env:";
     if (
-      typeof actualValue !== "string" ||
-      !value.startsWith(prefix) ||
-      !actualValue.startsWith(prefix)
+      name.toLowerCase() !== "authorization" ||
+      !/^[A-Z][A-Z0-9_]{0,127}$/u.test(envName) ||
+      typeof actualValue !== "string"
     ) {
       return false;
     }
-    const envName = value.slice(prefix.length);
-    const versioned = actualValue.slice(prefix.length);
-    const suffix = `_${envName}`;
-    if (!versioned.startsWith("v") || !versioned.endsWith(suffix)) return false;
-    const revision = versioned.slice(1, -suffix.length);
-    if (!/^[0-9]{1,20}$/u.test(revision)) return false;
+    const escapedEnvName = envName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    if (
+      !new RegExp(
+        `^${canonicalPrefix.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}v[0-9]{1,20}_${escapedEnvName}$`,
+        "u",
+      ).test(actualValue)
+    ) {
+      return false;
+    }
   }
   const extraNames = Object.keys(actualHeaders).filter((name) => !Object.hasOwn(expected, name));
   if (extraNames.length === 0) return true;
