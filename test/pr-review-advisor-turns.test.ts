@@ -6,10 +6,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildRiskPlan } from "../tools/advisors/risk-plan.mts";
 import { settleAdvisorTurn } from "../tools/advisors/session.mts";
-import {
-  advisorExecutionErrors,
-  buildPromptTurns,
-} from "../tools/pr-review-advisor/analyze.mts";
+import { advisorExecutionErrors, buildPromptTurns } from "../tools/pr-review-advisor/analyze.mts";
 import { artifactPaths } from "../tools/pr-review-advisor/artifacts.mts";
 import { buildRiskPlanReviewContext } from "../tools/pr-review-advisor/turn-context.mts";
 
@@ -41,7 +38,7 @@ function metadata(
         candidateExistingCoverage: [],
       },
       simplificationSignals: [],
-            workflowSignals: [],
+      workflowSignals: [],
       localizedPatchSignals: [],
       driftEvidence: [],
       github: null,
@@ -69,7 +66,7 @@ describe("PR review advisor turn trace", () => {
     };
     const turns = buildPromptTurns({
       metadata: metadata(changedFiles, riskPlan),
-      diff: "diff --git a/x b/x",
+      diffPath: ".pr-review-advisor-context/diff.patch",
     });
     const riskBytes = turns
       .flatMap((turn) => turn.contextToolResults ?? [])

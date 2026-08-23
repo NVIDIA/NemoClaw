@@ -3,6 +3,7 @@
 
 import type { GpuDetection } from "../inference/nim";
 import type { SandboxGpuProofResult } from "../state/registry";
+import { normalizeSandboxGpuDeviceForCdi } from "./sandbox-gpu-create";
 
 export type SandboxGpuMode = "auto" | "1" | "0";
 export type SandboxGpuFlag = "enable" | "disable" | null;
@@ -69,7 +70,15 @@ export function resolveSandboxGpuConfig(
 
   let mode = resolveSandboxGpuMode({ envMode, gpu, flag: options.flag });
 
-  const requestedDevice = (options.device ?? env.NEMOCLAW_SANDBOX_GPU_DEVICE ?? "").trim() || null;
+  let requestedDevice = (options.device ?? env.NEMOCLAW_SANDBOX_GPU_DEVICE ?? "").trim() || null;
+  if (requestedDevice) {
+    try {
+      normalizeSandboxGpuDeviceForCdi(requestedDevice);
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+      requestedDevice = null;
+    }
+  }
   if (requestedDevice && mode !== "1") {
     errors.push(
       "NEMOCLAW_SANDBOX_GPU_DEVICE requires sandbox GPU mode 1; " +
