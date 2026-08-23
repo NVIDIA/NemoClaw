@@ -26,7 +26,6 @@ import {
   loadMessagingChannelPolicyPreset,
   materializeMessagingPolicySandboxName,
 } from "../messaging/channels";
-import { getActiveChannelIdsFromPlan } from "../messaging/plan-validation";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import { OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
@@ -34,7 +33,6 @@ import { ROOT, run, runCapture } from "../runner";
 import { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } from "../sandbox-name-contract";
 import { redact } from "../security/redact";
 import * as registry from "../state/registry";
-import { getMessagingPlanFromEntry } from "../state/registry-messaging";
 import type { BaselineExclusionRuntimeStatus } from "./baseline-exclusion";
 import {
   digestBaselineEntry,
@@ -2929,7 +2927,7 @@ function applyPermissivePolicy(sandboxName: string): void {
     sandbox?.agent === "hermes"
       ? filterInactiveMessagingChannelPolicies(
           policyDocument,
-          getActiveChannelIdsFromPlan(getMessagingPlanFromEntry(sandbox)),
+          registry.getActiveMessagingChannelsFromEntry(sandbox),
           "hermes",
         ).content
       : policyDocument;

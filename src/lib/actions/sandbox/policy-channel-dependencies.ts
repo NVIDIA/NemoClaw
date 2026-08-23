@@ -6,7 +6,7 @@ import type { SandboxMessagingPlan } from "../../messaging";
 import {
   restoreChannelMessagingProviderAttachments,
   rollbackMessagingProviderAttachments,
-} from "./messaging-provider-attachments";
+} from "./messaging/provider-attachments";
 
 type MessagingProviderTokenDefinition = {
   name: string;
@@ -59,13 +59,13 @@ export const policyChannelDependencies = {
     plan: SandboxMessagingPlan,
     channelId: string,
   ): string[] {
-    return restoreChannelMessagingProviderAttachments(sandboxName, plan, channelId);
+    return restoreChannelMessagingProviderAttachments(sandboxName, plan, channelId, runOpenshell);
   },
   rollbackMessagingProviderAttachments(
     sandboxName: string,
     providerNames: readonly string[],
   ): string[] {
-    return rollbackMessagingProviderAttachments(sandboxName, providerNames);
+    return rollbackMessagingProviderAttachments(sandboxName, providerNames, runOpenshell);
   },
   isMessagingProviderBindingConflict(
     error: unknown,

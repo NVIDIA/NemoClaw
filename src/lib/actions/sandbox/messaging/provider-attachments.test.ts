@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import type { SandboxMessagingPlan } from "../../messaging";
+import type { SandboxMessagingPlan } from "../../../messaging";
 import {
   parseMessagingProviderAttachmentNames,
   restoreChannelMessagingProviderAttachments,
   rollbackMessagingProviderAttachments,
-} from "./messaging-provider-attachments";
+} from "./provider-attachments";
 
 type OpenShellRunner = NonNullable<
   Parameters<typeof restoreChannelMessagingProviderAttachments>[3]

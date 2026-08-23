@@ -1,17 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { stripAnsi } from "../../adapters/openshell/client";
-import { runOpenshell } from "../../adapters/openshell/runtime";
-import type { SandboxMessagingPlan } from "../../messaging";
+import type { SandboxMessagingPlan } from "../../../messaging";
 import {
   matchesGatewayCredentialOnlyProviderBinding,
   readGatewayProviderMetadata,
-} from "../../onboard/gateway-provider-metadata";
-import { staticMessagingProviderTypeForChannel } from "../../onboard/messaging-bridge-provider";
+} from "../../../onboard/gateway-provider-metadata";
+import { staticMessagingProviderTypeForChannel } from "../../../onboard/messaging-bridge-provider";
 
-type OpenShellRunner = typeof runOpenshell;
+type OpenShellRunner = typeof import("../../../adapters/openshell/runtime").runOpenshell;
 type OpenShellResult = ReturnType<OpenShellRunner>;
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+
+function stripAnsi(value = ""): string {
+  return String(value).replace(ANSI_RE, "");
+}
 
 function commandOutput(result: OpenShellResult): string {
   const stdout = Buffer.isBuffer(result.stdout) ? result.stdout.toString("utf8") : result.stdout;
@@ -91,7 +94,7 @@ function assertMessagingProviderBinding(
 export function rollbackMessagingProviderAttachments(
   sandboxName: string,
   providerNames: readonly string[],
-  run: OpenShellRunner = runOpenshell,
+  run: OpenShellRunner,
 ): string[] {
   const failures: string[] = [];
   for (const providerName of [...providerNames].reverse()) {
@@ -114,7 +117,7 @@ export function restoreChannelMessagingProviderAttachments(
   sandboxName: string,
   plan: SandboxMessagingPlan,
   channelId: string,
-  run: OpenShellRunner = runOpenshell,
+  run: OpenShellRunner,
 ): string[] {
   const bindings = channelCredentialBindings(plan, channelId);
   if (bindings.length === 0) return [];
