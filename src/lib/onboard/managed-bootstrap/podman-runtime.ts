@@ -2036,7 +2036,7 @@ export function createPodmanManagedBootstrapAdapter(
         preparePodmanManagedHermesStateAuthority({
           engine: options.engine,
           inspect: current.rawInspect,
-          sandboxName: handle.sandbox,
+          sandboxName: handle.sandbox.sandboxName,
           agentUid: snapshot.agentIdentity.uid,
           agentGid: snapshot.agentIdentity.gid,
         });
