@@ -143,7 +143,7 @@ describe("rebuild post-restore phase", () => {
       "host-forward",
       "config-hash-final",
     ]);
-    expect(processRecovery.executeSandboxExecCommand).toHaveBeenCalledWith(
+    expect(processRecovery.executeSandboxExecCommand).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       "openclaw doctor --fix",
       300_000,
