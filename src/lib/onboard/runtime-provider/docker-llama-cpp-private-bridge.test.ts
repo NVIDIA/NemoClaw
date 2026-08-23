@@ -95,6 +95,10 @@ function privateCredentialFile(
   readonly directory: string;
   readonly file: string;
 } {
+  // defaultOpenApiKeyDescriptor() rejects a credential path that differs from
+  // its own realpath (anti symlink-swap check). os.tmpdir() resolves through
+  // a symlinked ancestor on macOS (/var -> /private/var), so realpath the
+  // created directory before building fixture paths on top of it.
   const directory = fs.realpathSync(
     fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-llama-bridge-key-")),
   );

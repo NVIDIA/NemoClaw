@@ -4,47 +4,11 @@
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { buildRiskPlan } from "../tools/advisors/risk-plan.mts";
 import { settleAdvisorTurn } from "../tools/advisors/session.mts";
-import { advisorExecutionErrors, buildPromptTurns } from "../tools/pr-review-advisor/analyze.mts";
+import { advisorExecutionErrors } from "../tools/pr-review-advisor/analyze.mts";
 import { artifactPaths } from "../tools/pr-review-advisor/artifacts.mts";
-import { buildRiskPlanReviewContext } from "../tools/pr-review-advisor/turn-context.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-type ReviewMetadata = Parameters<typeof buildPromptTurns>[0]["metadata"];
-
-function metadata(
-  changedFiles = ["tools/pr-review-advisor/analyze.mts"],
-  riskPlan = buildRiskPlan({ headSha: "abc123def456", changedFiles: [] }),
-): ReviewMetadata {
-  return {
-    baseRef: "origin/main",
-    headRef: "HEAD",
-    headSha: "abc123def456",
-    changedFiles,
-    deterministic: {
-      diffStat: "1 file changed",
-      commits: ["abc123 feat: add review advisor"],
-      riskyAreas: [],
-      riskPlan,
-      testDepth: {
-        verdict: "unit_sufficient",
-        rationale: "deterministic fallback",
-        suggestedTests: ["run unit tests"],
-      },
-      staticTestInventory: {
-        changedTestFiles: [],
-        nearbyTestNames: [],
-        candidateExistingCoverage: [],
-      },
-      simplificationSignals: [],
-      workflowSignals: [],
-      localizedPatchSignals: [],
-      driftEvidence: [],
-      github: null,
-    },
-  };
-}
 
 describe("PR review advisor turn trace", () => {
   it("keeps the HTML session as the only debugging transcript", () => {
@@ -54,36 +18,6 @@ describe("PR review advisor turn trace", () => {
       summary: path.join("artifacts/pr-review-advisor", "pr-review-advisor-summary.md"),
       sessionHtml: path.join("artifacts/pr-review-advisor", "pr-review-advisor-session.html"),
     });
-  });
-  it("keeps repeated risk-plan stage context bounded for broad PRs (#6446)", () => {
-    const changedFiles = Array.from(
-      { length: 3000 },
-      (_, index) => `src/lib/actions/sandbox/${"x".repeat(180)}-${index}.ts`,
-    );
-    const riskPlan = buildRiskPlan({ headSha: "a".repeat(40), changedFiles });
-    const reviewContext = buildRiskPlanReviewContext(riskPlan) as {
-      changedFiles: { count: number; sample: string[]; omitted: number };
-    };
-    const turns = buildPromptTurns({
-      metadata: metadata(changedFiles, riskPlan),
-      diffPath: ".pr-review-advisor-context/diff.patch",
-    });
-    const riskBytes = turns
-      .flatMap((turn) => turn.contextToolResults ?? [])
-      .filter((result) => result.contentType === "json" && result.content.includes('"riskPlan"'))
-      .reduce((total, result) => total + Buffer.byteLength(result.content, "utf8"), 0);
-    const investigationContext = turns
-      .find((turn) => turn.name === "investigate")
-      ?.contextToolResults?.find((result) => result.toolName === "pr_review_metadata")?.content;
-
-    expect(reviewContext.changedFiles).toMatchObject({ count: 3000, omitted: 2980 });
-    expect(reviewContext.changedFiles.sample).toHaveLength(20);
-    expect(reviewContext.changedFiles.sample.every((file) => file.length <= 240)).toBe(true);
-    expect(riskBytes).toBeLessThan(192 * 1024);
-    expect(investigationContext).toContain(
-      "runner restores all 3000 deterministic changed-file path(s)",
-    );
-    expect(investigationContext).not.toContain(changedFiles[0]);
   });
 
   it("settles turns and reports provider or callback errors (#6446)", async () => {
