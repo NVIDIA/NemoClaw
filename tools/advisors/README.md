@@ -9,7 +9,7 @@ Shared implementation helpers for the unified NemoClaw PR Review Advisor.
 This directory owns reusable trusted infrastructure, including:
 
 - repo-confined read-only Pi SDK session execution. The shared `read`, `grep`, `find`, and `ls` overrides mirror Pi's `@`, `~`, and Unicode-space normalization before lexical and realpath checks, reject unstable or outside paths, and delegate only canonical in-workspace paths;
-- deterministic turn-scoped context tools supplied through the `AdvisorContextToolResult` and `contextToolResults` contract after each user prompt, plus reusable validation for visible analysis turns, one bounded empty or output-limited analysis continuation when enabled, and atomic commit turns that expose only their mutation tool and allow one bounded tool-only retry;
+- deterministic turn-scoped context tools supplied through the `AdvisorContextToolResult` and `contextToolResults` contract after each user prompt, plus reusable validation for visible analysis turns and atomic commit turns that expose only their mutation tool and allow one bounded tool-only retry;
 - Git diff and metadata helpers;
 - JSON extraction and sanitization helpers;
 - artifact path and file I/O helpers;

@@ -41,9 +41,9 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 2. Prepares the target PR as inert analysis data and executes the trusted Advisor entrypoint from the workflow checkout.
 3. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
 4. Opens one Pi session per model lane and performs exactly two normal turns.
-5. The `investigate` turn has repo-confined `read`, `grep`, `find`, and `ls` tools, bounded per-file diff pages, deterministic PR context tools, and trusted terminology tracing. It examines scope, architecture and simplicity, terminology, correctness, acceptance, source-of-truth behavior, all security categories, tests, CI and operations, E2E coverage, positives, and limitations in one coherent pass. If the provider returns no receipt or reaches its output limit after loading the required context, the session permits one concise continuation without replaying fixed context.
-6. The `challenge-and-record` turn keeps repository reads and adds `record_findings`, `record_review_receipt`, `recommend_e2e`, `submit_review`, and `commit_review`. The first three replace complete in-memory draft sections. They do not update canonical state.
-7. `submit_review` is a non-terminal preflight: it validates the complete draft, deterministic E2E floors and allowlists, terminology trace bindings, finding references, and the public result schema. Rejected preflights do not mutate canonical state and may be corrected before retrying. A successful preflight assembles pending state. `commit_review` is then the single terminal action; it only confirms that validated pending state. The session runner atomically commits the state after accepting that terminal flow. Omission, provider failure, an unsettled or repeated terminal commit, or activity after it succeeds fail closed and discard pending state.
+5. The `investigate` turn has repo-confined `read`, `grep`, `find`, and `ls` tools, deterministic PR context tools, and trusted terminology tracing. It examines scope, architecture and simplicity, terminology, correctness, acceptance, source-of-truth behavior, all security categories, tests, CI and operations, E2E coverage, positives, and limitations in one coherent pass. If the model calls every required context tool but omits the analysis receipt, the runner permits one prose-only continuation.
+6. The `challenge-and-record` turn keeps repository reads and adds `record_findings`, `record_review_receipt`, `recommend_e2e`, and `submit_review`. The first three replace complete in-memory draft sections. They do not update canonical state.
+7. `submit_review` validates the complete draft, deterministic E2E floors and allowlists, terminology trace bindings, finding references, and the public result schema. A successful call validates and assembles pending state, then ends the turn. The session runner atomically commits that state only after accepting the complete terminal flow. Failed validation does not mutate canonical state. The `challenge-and-record` turn permits one continuation after an omitted submit or a settled sequence of failed submits. The continuation exposes only the recording tools and requires exactly one successful submit. The runner also accepts settled failed duplicate submit calls around one successful call because the sequential controller permits only one pending result. The protocol does not impose another submit-count ceiling after the model turn has already completed: safety comes from accepting exactly one success, requiring every other submit to settle as a non-mutating validation failure, and allowing at most one continuation. Completed read observations and settled failed duplicate submits may follow the successful submit. A provider failure, unsettled call, second success, unexpected tool, prose during repair, or prose or other tool activity after success fails closed and discards pending state.
 8. Trusted code writes the session transcript, result, and summary artifacts. The trusted publisher posts only validated artifacts for the same pull request commit.
 9. The primary GPT-5.6 Terra lane publishes the sticky comment. The Nemotron Ultra lane remains an artifact-only evaluation lane.
     The evaluation lane does not publish another review.
@@ -54,7 +54,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 cleanup sequence. It uses the shared lifecycle and credential-boundary helpers in
 `tools/openshell-agent/runtime.mts`, which are also used by the merge-conflict fixer.
 
-Provider failures, timeouts, an unsuccessful investigation continuation, and invalid or missing atomic submission fail closed and leave canonical state unchanged. Failure results retain the reason, and workflow logs retain orchestration diagnostics.
+Provider failures, timeouts, and invalid or missing atomic submission fail closed and leave canonical state unchanged. Failure results retain the reason, and workflow logs retain orchestration diagnostics.
 
 The workflow is advisory and must not be configured as an E2E-required status check. Its combined
 comment lists trusted E2E recommendations, but does not dispatch or report pass/fail for E2E jobs.
@@ -148,7 +148,7 @@ instead of failing closed without artifacts.
 - `pr-review-advisor-result.json` — validated advisor result, or execution metadata when analysis is unavailable.
 - `pr-review-advisor-final-result.json` — canonical result used for comments.
 - `pr-review-advisor-summary.md` — markdown summary used in the job summary.
-- `pr-review-advisor-session.html` — complete two-turn session transcript for debugging, including embedded session JSON, prompts, context reads, draft tools, validation, and bounded repair when used.
+- `pr-review-advisor-session.html` — complete two-turn session transcript for debugging, including embedded session JSON, prompts, context reads, draft tools, validation, and the single repair continuation when used.
 
 The parallel Nemotron Ultra lane writes the same filenames under
 `artifacts/pr-review-advisor-nemotron-ultra/` and uploads them as the
@@ -200,7 +200,7 @@ as generic commentary. The required `terminologyReview` field contains the canon
 each candidate's change type, disposition, meaning, contrast, established alternative, semantic
 impact, recommendation, trace ID, and source bound to the head commit. The dispositions are `established`,
 `justified`, `define`, `replace`, and `conflict`. The trusted terminology tools are
-`pr_review_trace_term` during investigation and `record_review_receipt` during validation preflight.
+`pr_review_trace_term` during investigation and `record_review_receipt` during atomic submission.
 Trusted tracing verifies repository evidence after the model selects a candidate; it does not scan
 or classify changed text to select terms. Every source-of-truth review item includes a `findingId`: unresolved items
 reference their covering open ledger finding, while satisfied and not-applicable items use `null`.

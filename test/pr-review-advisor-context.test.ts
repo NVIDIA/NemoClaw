@@ -174,7 +174,9 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
       "pr_review_git_diff",
     ]);
     expect(investigate?.requireAssistantText).toBe(true);
-    expect(investigate?.assistantTextRepairPrompt).toContain("concise investigation receipt");
+    expect(investigate?.assistantTextRepairPrompt).toContain(
+      "called every required context tool but omitted its analysis receipt",
+    );
     expect(investigate?.atomicTerminalToolName).toBeUndefined();
     expect(investigate?.terminalSubmitToolName).toBeUndefined();
     expect(investigate?.prompt).toContain("Turn 1/2 — investigate");
@@ -230,14 +232,12 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
       "record_review_receipt",
       "recommend_e2e",
       "submit_review",
-      "commit_review",
     ]);
     expect(challenge?.requiredToolNames).toEqual([
       "record_findings",
       "record_review_receipt",
       "recommend_e2e",
       "submit_review",
-      "commit_review",
     ]);
     expect(challenge?.prompt).toContain("Turn 2/2 — challenge-and-record");
     expect(challenge?.prompt).toContain("Challenge the investigation receipt before recording");
@@ -263,6 +263,9 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
       "Drop an unverifiable terminology decision instead of rephrasing it",
     );
     expect(challenge?.prompt).toContain(
+      "using `submit_review` retries to discover the mismatch",
+    );
+    expect(challenge?.prompt).toContain(
       "Set terminologyReview.noChangesReason only when decisions is empty",
     );
     expect(challenge?.prompt.indexOf("record_findings")).toBeLessThan(
@@ -272,15 +275,11 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
       challenge?.prompt.indexOf("recommend_e2e") ?? -1,
     );
     expect(challenge?.prompt.indexOf("recommend_e2e")).toBeLessThan(
-      challenge?.prompt.indexOf("submit_review") ?? -1,
+      challenge?.prompt.lastIndexOf("submit_review") ?? -1,
     );
-    expect(challenge?.prompt.indexOf("submit_review")).toBeLessThan(
-      challenge?.prompt.lastIndexOf("commit_review") ?? -1,
-    );
-    expect(challenge?.terminalSubmitToolName).toBe("commit_review");
-    expect(challenge?.terminalSubmitRepairPrompt).toBeUndefined();
-    expect(challenge?.terminalSubmitOutputLimitPrompt).toContain(
-      "Continue once after the output limit",
+    expect(challenge?.terminalSubmitToolName).toBe("submit_review");
+    expect(challenge?.terminalSubmitRepairPrompt).toBe(
+      "The challenge-and-record response did not complete a valid submission. You have one repair only: complete or replace the required draft sections in this exact order: record_findings, record_review_receipt, recommend_e2e, then submit_review. Follow each validation error's exact correction. Set findingId=null when the entry does not report a concern; never reuse an unrelated finding. If you replace findings, record the receipt again afterward because it is bound to the latest findings revision.",
     );
     expect(challenge?.terminalSubmitRepairToolNames).toEqual([
       "record_findings",
@@ -288,7 +287,7 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
       "recommend_e2e",
       "submit_review",
     ]);
-    expect(challenge?.prompt).toContain("Emit nothing before or after that final tool call");
+    expect(challenge?.prompt).toContain("Emit nothing after it");
     expect(challenge?.prompt).not.toContain("pr_review_response_schema");
   });
 

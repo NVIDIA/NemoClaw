@@ -597,7 +597,6 @@ export async function executeSandboxDestroy({
           current,
           hostLocalInferenceAuthority,
           listSandboxes!().sandboxes,
-          deps.hostLocalInferenceLifecycleOptions,
         );
         commonLlamaCppAuthorityRetired =
           hostLocalInferenceAuthority.receipt.service === "llama-cpp";

@@ -36,7 +36,6 @@ export const RECORD_FINDINGS_TOOL = "record_findings";
 export const RECORD_REVIEW_RECEIPT_TOOL = "record_review_receipt";
 export const RECOMMEND_E2E_TOOL = "recommend_e2e";
 export const SUBMIT_REVIEW_TOOL = "submit_review";
-export const COMMIT_REVIEW_TOOL = "commit_review";
 
 const text = Type.String({ minLength: 1 });
 const nullableText = Type.Union([text, Type.Null()]);
@@ -396,9 +395,9 @@ export function createReviewSubmissionController({
   });
   const submitReview = defineTool({
     name: SUBMIT_REVIEW_TOOL,
-    label: "Validate complete PR review",
+    label: "Submit complete PR review",
     description:
-      "Validate every draft section and assemble pending canonical state. Correct rejected draft sections and retry this preflight as needed. After it succeeds, call commit_review exactly once as the terminal action.",
+      "Validate every draft section, assemble pending canonical state, and end the turn. The session runner commits that state only after accepting the complete terminal flow.",
     parameters: Type.Object({}, { additionalProperties: false }),
     executionMode: "sequential",
     execute: async () => {
@@ -487,27 +486,12 @@ export function createReviewSubmissionController({
         findingSnapshot: candidateFindingSnapshot,
         terminologySnapshot: candidateTerminology.snapshot(),
       });
-      return toolResult({ validated: true, pending: true });
-    },
-  });
-  const commitReview = defineTool({
-    name: COMMIT_REVIEW_TOOL,
-    label: "Commit validated PR review",
-    description:
-      "End the turn with the review already validated by submit_review. Call exactly once after submit_review succeeds, with no prose or other tool calls afterward.",
-    parameters: Type.Object({}, { additionalProperties: false }),
-    executionMode: "sequential",
-    execute: async () => {
-      ensureOpen(submitted);
-      if (!pending) {
-        throw new Error("commit_review requires a successful submit_review validation");
-      }
-      return toolResult({ committed: true, pending: true }, true);
+      return toolResult({ validated: true, pending: true }, true);
     },
   });
 
   return {
-    tools: [recordFindings, recordReceipt, recommendE2e, submitReview, commitReview],
+    tools: [recordFindings, recordReceipt, recommendE2e, submitReview],
     result: () => structuredClone(submitted),
     findingSnapshot: () => findingSnapshot,
     terminologySnapshot: () => terminologySnapshot,
@@ -558,7 +542,6 @@ export const ACCEPTANCE_FINDING_REFERENCE_PAIRS = [
 export const SECURITY_FINDING_REFERENCE_PAIRS = [
   ["security", "security_violation"],
   ["security", "semantic_ambiguity"],
-  ["tests", "missing_regression"],
 ] as const;
 
 const ACCEPTANCE_FINDING_PAIRS: ReadonlySet<string> = new Set(

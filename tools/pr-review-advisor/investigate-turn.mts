@@ -91,7 +91,7 @@ export function buildInvestigateTurn(context: InvestigateTurnContext): AdvisorPr
     requireToolsBeforeText: requiredToolNames,
     requireAssistantText: true,
     assistantTextRepairPrompt:
-      "The investigation ended without a complete receipt. Continue once with a concise investigation receipt using the evidence already loaded. Do not repeat the fixed context tools or narrate the interruption.",
+      "The investigation called every required context tool but omitted its analysis receipt. Use the completed context and return the full investigation receipt for the challenge-and-record turn.",
     contextToolResults,
     prompt: `Turn 1/2 — investigate.
 
