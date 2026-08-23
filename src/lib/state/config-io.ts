@@ -292,8 +292,16 @@ export function ensureConfigDir(dirPath: string): void {
 }
 
 export function readConfigFile<T>(filePath: string, fallback: T): T {
+  const dirPath = path.dirname(filePath);
+  // SECURITY: ensureConfigDir() refuses a planted symlink before it heals
+  // anything, but the catch below tolerates every non-permission failure so a
+  // best-effort heal cannot break a read (#4628). Take the refusal where it
+  // cannot be swallowed, so a read fails closed on the same path writeConfigFile
+  // already refuses.
+  rejectSymlinksOnPath(dirPath);
+
   try {
-    ensureConfigDir(path.dirname(filePath));
+    ensureConfigDir(dirPath);
   } catch (error) {
     if (error instanceof ConfigPermissionError) {
       throw error;

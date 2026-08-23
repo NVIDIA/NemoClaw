@@ -68,6 +68,26 @@ describe("config-io", () => {
     expect(() => ensureConfigDir(nestedDir)).toThrow(/symbolic link/);
   });
 
+  it("refuses to read a config file through a symlinked config directory", () => {
+    const home = process.env.HOME || os.homedir();
+    const tmp = fs.mkdtempSync(path.join(home, ".nemoclaw-test-"));
+    tmpDirs.push(tmp);
+    const attackerDir = path.join(tmp, "attacker");
+    fs.mkdirSync(attackerDir, { mode: 0o700 });
+    writeFileWithMode(
+      path.join(attackerDir, "sandboxes.json"),
+      JSON.stringify({ sandboxes: { planted: {} } }),
+      0o600,
+    );
+    const symlinkPath = path.join(tmp, ".nemoclaw");
+    fs.symlinkSync(attackerDir, symlinkPath);
+    const plantedFile = path.join(symlinkPath, "sandboxes.json");
+
+    // The write path already refuses this exact path; the read path must agree.
+    expect(() => writeConfigFile(plantedFile, { sandboxes: {} })).toThrow(/symbolic link/);
+    expect(() => readConfigFile(plantedFile, null)).toThrow(/symbolic link/);
+  });
+
   it("allows a normal directory (no symlinks)", () => {
     const home = process.env.HOME || os.homedir();
     const tmp = fs.mkdtempSync(path.join(home, ".nemoclaw-test-"));
