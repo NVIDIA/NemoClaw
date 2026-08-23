@@ -182,7 +182,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
       return { status: 0 };
     });
     const runOpenshell = vi.fn(() => {
-      events.push("observe stopped replacement");
+      events.push("observe error");
       return { status: 0, stdout: "alpha  2026-08-23 01:40:35  Error\n" };
     });
 
@@ -204,7 +204,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(events).toEqual([
       "stop replacement",
       "remove backup",
-      "observe stopped replacement",
+      "observe error",
       "confirm exact replacement",
       "start replacement",
     ]);
@@ -215,6 +215,53 @@ describe("finalizeDockerGpuPatchBackup", () => {
         "label=openshell.ai/sandbox-name=alpha",
       ]),
       expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("caps Error corroboration to the remaining lifecycle-release budget (#9962)", () => {
+    const replacementContainerId = "a".repeat(64);
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const dockerRun = vi.fn(() => ({
+      status: 0,
+      stdout: `${replacementContainerId}\n`,
+    }));
+
+    let outcome: DockerGpuPatchFinalizeOutcome;
+    try {
+      outcome = finalizeDockerGpuPatchBackup(
+        {
+          result: { ...deferredCreateResult(), newContainerId: replacementContainerId },
+          supervisorReady: true,
+          sandboxName: "alpha",
+          lifecycleReleaseTimeoutSecs: 1,
+        },
+        {
+          dockerStop: vi.fn(() => ({ status: 0 })),
+          dockerRm: vi.fn(() => ({ status: 0 })),
+          dockerRun,
+          dockerStart: vi.fn(() => ({ status: 0 })),
+          runOpenshell: vi.fn(() => {
+            vi.setSystemTime(750);
+            return {
+              status: 0,
+              stdout: "alpha  2026-08-23 01:40:35  Error\n",
+            };
+          }),
+          sleep: vi.fn(),
+        },
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(outcome).toMatchObject({
+      lifecycleReleaseObserved: true,
+      replacementRestarted: true,
+    });
+    expect(dockerRun).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ timeout: 250 }),
     );
   });
 

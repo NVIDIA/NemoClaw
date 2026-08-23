@@ -78,12 +78,12 @@ type DockerLifecycleReleaseDeps = Pick<
   "runOpenshell" | "sleep"
 > & {
   /**
-   * Identity-bound proof that an Error row belongs to the replacement the
-   * caller deliberately stopped after it reached Ready. The callback must
-   * fail closed when Docker cannot prove the replacement is the sole labeled
-   * container for the sandbox.
+   * Corroborating evidence for an Error row from a Docker query that confirms
+   * the transaction-owned replacement is the sole labeled sandbox container.
+   * The callback must fail closed and keep its child within the supplied
+   * remaining lifecycle-release budget.
    */
-  stoppedReplacementOwnsError?: () => boolean;
+  soleLabeledReplacementCorroboratesError?: (remainingMs: number) => boolean;
 };
 
 /**
@@ -97,9 +97,10 @@ type DockerLifecycleReleaseDeps = Pick<
  *   OpenShell processes the stale deletion before the new registration.
  * - The caller enters this wait only after the replacement reached Ready and
  *   was deliberately stopped. A successful list normally omits the sandbox
- *   name. An Error row is also sufficient only when a separate Docker query
- *   proves that exact stopped replacement is the sole remaining labeled
- *   container; the OpenShell row alone is not an ownership receipt.
+ *   name. An Error row is also sufficient only when a separate bounded Docker
+ *   query confirms that exact stopped replacement is the sole remaining
+ *   labeled container. This corroborates the release condition; the OpenShell
+ *   row alone is not an identity-bound ownership receipt.
  * - `waits for the sandbox name to disappear before restarting the
  *   replacement (#9531)` protects the event order. `rejects final handoff when
  *   OpenShell never releases the deleting lifecycle record (#9531)` protects
@@ -136,11 +137,14 @@ export function waitForOpenShellSandboxLifecycleRelease(
       );
       const hasPhaseBearingEntry = entries.some((entry) => entry.phase !== null);
       const explicitEmptyList = output === "No sandboxes found" || output === "No sandboxes found.";
-      const stoppedReplacementOwnsError =
-        stoppedReplacementError && deps.stoppedReplacementOwnsError?.() === true;
+      const remainingBeforeCorroborationMs = deadline - Date.now();
+      const soleLabeledReplacementCorroboratesError =
+        stoppedReplacementError &&
+        remainingBeforeCorroborationMs > 0 &&
+        deps.soleLabeledReplacementCorroboratesError?.(remainingBeforeCorroborationMs) === true;
       if (
         explicitEmptyList ||
-        stoppedReplacementOwnsError ||
+        soleLabeledReplacementCorroboratesError ||
         (hasPhaseBearingEntry && !sandboxPresent)
       ) {
         return true;
