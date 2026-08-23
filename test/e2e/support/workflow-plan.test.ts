@@ -1066,7 +1066,7 @@ describe("E2E workflow plan", () => {
         },
         coverageMatrix: [],
         selectedJobs: ["jetson-nvmap-gpu"],
-        runtimeProvidersByJob: {},
+        runtimeProvidersByJob: { "jetson-nvmap-gpu": ["none"] },
         hermesSelected: false,
         explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
       });

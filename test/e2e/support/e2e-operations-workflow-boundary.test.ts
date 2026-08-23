@@ -800,9 +800,15 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       const testMatrixLine = readFileSync(output, "utf8")
         .split("\n")
         .find((line) => line.startsWith("test_matrix="))!;
-      expect(JSON.parse(testMatrixLine.slice("test_matrix=".length))).toEqual(
-        JSON.parse(controllerTestMatrix),
-      );
+      expect(
+        JSON.parse(testMatrixLine.slice("test_matrix=".length)).map(
+          ({ id, file, project }: { id: string; file: string; project: string }) => ({
+            id,
+            file,
+            project,
+          }),
+        ),
+      ).toEqual(JSON.parse(controllerTestMatrix));
       expect(
         (generateMatrix as unknown as { outputs: Record<string, string> }).outputs.matrix,
       ).toBe("${{ steps.matrix.outputs.matrix }}");

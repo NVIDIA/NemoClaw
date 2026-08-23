@@ -91,9 +91,14 @@ export function hasLegacyStatusRuntimeObservation(sb: registry.SandboxEntry | nu
 }
 
 export function usesManagedProviderGateway(sb: registry.SandboxEntry | null): boolean {
-  if (!sb || !sb.openshellDriver?.trim()) return false;
-  const provider = resolveRegisteredRuntimeProvider(sb.openshellDriver);
-  return provider?.gateway.launcher === "nemoclaw" && provider.bootstrap.supported === true;
+  const driverName = sb?.openshellDriver?.trim().toLowerCase();
+  if (!driverName) return false;
+  const provider = resolveRegisteredRuntimeProvider(driverName);
+  return (
+    provider?.identity.id === driverName &&
+    provider.gateway.launcher === "nemoclaw" &&
+    provider.bootstrap.supported === true
+  );
 }
 
 function isSelectedRuntimeReachable(sb: registry.SandboxEntry): boolean {

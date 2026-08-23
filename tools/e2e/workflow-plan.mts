@@ -713,7 +713,7 @@ export function buildE2eWorkflowPlan(
         testMatrix: [],
         catalogueMatrices: emptyCatalogueMatrices(),
         selectedJobs: [JETSON_DISPATCH_TARGET],
-        runtimeProvidersByJob: {},
+        runtimeProvidersByJob: { [JETSON_DISPATCH_TARGET]: ["none"] },
         hermesSelected: false,
         explicitOnlyJobs: [...inventory.explicitOnlyJobs],
       },
