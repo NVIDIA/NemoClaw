@@ -1638,18 +1638,39 @@ function validateSystemdServiceIdentity(
   return validateSystemdServiceIdentityFromProperties(service, properties, opts);
 }
 
-function expectedSystemdFileOwner(
+function expectedSystemdFileOwners(
   service: OpenShellGatewayUserServiceTarget,
   filePath: string,
   fileKind: "descriptor" | "executable",
   opts: Pick<OpenShellGatewayUserServiceOptions, "getuid">,
-): number | null {
-  if (service.serviceName === OPENSHELL_GATEWAY_USER_SERVICE) return 0;
-  if (fileKind === "descriptor") return currentUserId(opts);
-  const systemBinary = getOpenShellGatewayUserServiceBinaryPaths().some(
-    (candidate) => path.normalize(candidate) === filePath,
-  );
-  return systemBinary ? 0 : currentUserId(opts);
+): number[] {
+  if (service.serviceName === OPENSHELL_GATEWAY_USER_SERVICE) return [0];
+  const uid = currentUserId(opts);
+  if (uid === null) return [];
+  if (fileKind === "descriptor") return [uid];
+  const normalizedFilePath = path.normalize(filePath);
+  if (normalizedFilePath === path.normalize("/usr/bin/openshell-gateway")) return [0];
+  if (normalizedFilePath === path.normalize("/usr/local/bin/openshell-gateway")) {
+    return uid === 0 ? [0] : [0, uid];
+  }
+  return [uid];
+}
+
+function inspectTrustedSystemdFile(
+  service: OpenShellGatewayUserServiceTarget,
+  filePath: string,
+  fileKind: "descriptor" | "executable",
+  inspectionOptions: Pick<
+    ServiceFileIdentityOptions,
+    "contentsLimit" | "hashContents" | "requiredModeBits"
+  >,
+  opts: SystemdFileInspectionOptions,
+): { contents?: string; identity: TrustedRegularFileIdentity } | null {
+  for (const expectedUid of expectedSystemdFileOwners(service, filePath, fileKind, opts)) {
+    const inspected = inspectTrustedRegularFile(filePath, expectedUid, inspectionOptions, opts);
+    if (inspected) return inspected;
+  }
+  return null;
 }
 
 function trustedSystemdDescriptorIdentity(
@@ -1658,10 +1679,10 @@ function trustedSystemdDescriptorIdentity(
   executablePath: string,
   opts: SystemdFileInspectionOptions,
 ): TrustedRegularFileIdentity | null {
-  const expectedUid = expectedSystemdFileOwner(service, fragmentPath, "descriptor", opts);
-  const descriptor = inspectTrustedRegularFile(
+  const descriptor = inspectTrustedSystemdFile(
+    service,
     fragmentPath,
-    expectedUid,
+    "descriptor",
     service.serviceName === NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE
       ? { contentsLimit: 128 * 1024 }
       : { hashContents: true },
@@ -1715,9 +1736,10 @@ function validateSystemdServiceIdentityFromProperties(
       execStart.executablePath,
       opts,
     );
-    const executableIdentity = inspectTrustedRegularFile(
+    const executableIdentity = inspectTrustedSystemdFile(
+      service,
       execStart.executablePath,
-      expectedSystemdFileOwner(service, execStart.executablePath, "executable", opts),
+      "executable",
       { hashContents: true, requiredModeBits: 0o100 },
       opts,
     )?.identity;

@@ -2129,6 +2129,10 @@ openshell_gateway_user_bin_for_service() {
   printf "%s\n" "${user_bin_home%/}/openshell-gateway"
 }
 
+openshell_gateway_system_local_bin_for_service() {
+  printf "%s\n" "$OPENSHELL_GATEWAY_SYSTEM_LOCAL_BIN"
+}
+
 trusted_openshell_gateway_bin_for_service() {
   local gateway_bin="${1:-}"
   local user_gateway_bin
@@ -4396,7 +4400,7 @@ LEGACY_GATEWAY_PROCESS_IDENTITY=""
 inspect_trusted_legacy_openshell_gateway_process() {
   local pid_file="${1:-}" gateway_name="${2:-}" gateway_port="${3:-}"
   local old_openshell_version="${4:-}"
-  local user_gateway_bin inspection_output
+  local user_gateway_bin system_local_gateway_bin inspection_output
   local -a inspection_records=()
   LEGACY_GATEWAY_PROCESS_STATUS=""
   LEGACY_GATEWAY_PROCESS_PID=""
@@ -4404,6 +4408,8 @@ inspect_trusted_legacy_openshell_gateway_process() {
   LEGACY_GATEWAY_PROCESS_IDENTITY=""
   [[ "$pid_file" == /* && "$gateway_port" =~ ^[0-9]+$ ]] || return 1
   user_gateway_bin="$(openshell_gateway_user_bin_for_service)" || return 1
+  system_local_gateway_bin="$(openshell_gateway_system_local_bin_for_service)" || return 1
+  [[ "$system_local_gateway_bin" == /* ]] || return 1
 
   # shellcheck disable=SC2016 # JavaScript template literals must reach node unchanged.
   inspection_output="$(run_gateway_service_command node --input-type=commonjs --eval '
@@ -4763,6 +4769,7 @@ inspect_trusted_legacy_openshell_gateway_process() {
     const allowedExecutables = [
       { owner: expectedUid, path: userGatewayBin },
       { owner: 0, path: systemLocalGatewayBin },
+      { owner: expectedUid, path: systemLocalGatewayBin },
       { owner: 0, path: systemGatewayBin },
     ]
       .map((entry) => ({ ...entry, record: inspectFile(entry.path, entry.owner, true, false) }))
@@ -4805,7 +4812,7 @@ inspect_trusted_legacy_openshell_gateway_process() {
     ].join(":");
     process.stdout.write(`running\n${pid}\n${pidRecord.identity}\n${processIdentity}`);
   ' "$pid_file" "$EUID" "$gateway_name" "$gateway_port" "$user_gateway_bin" \
-    "$OPENSHELL_GATEWAY_SYSTEM_LOCAL_BIN" "$OPENSHELL_GATEWAY_SYSTEM_BIN" \
+    "$system_local_gateway_bin" "$OPENSHELL_GATEWAY_SYSTEM_BIN" \
     "$old_openshell_version" 2>/dev/null)" || return 1
 
   mapfile -t inspection_records <<<"$inspection_output"

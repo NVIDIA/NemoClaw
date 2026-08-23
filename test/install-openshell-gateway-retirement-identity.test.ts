@@ -37,9 +37,14 @@ function runInstallerBody(home: string, body: string, env: NodeJS.ProcessEnv = {
 async function spawnGateway(
   home: string,
   gatewayPort: number,
-  options: { args?: string[]; env?: NodeJS.ProcessEnv; historical?: boolean } = {},
+  options: {
+    args?: string[];
+    env?: NodeJS.ProcessEnv;
+    gatewayBin?: string;
+    historical?: boolean;
+  } = {},
 ) {
-  const gatewayBin = path.join(home, ".local", "bin", "openshell-gateway");
+  const gatewayBin = options.gatewayBin ?? path.join(home, ".local", "bin", "openshell-gateway");
   fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
   fs.copyFileSync("/usr/bin/yes", gatewayBin);
   fs.chmodSync(gatewayBin, 0o755);
@@ -338,6 +343,50 @@ it.skipIf(process.platform !== "linux")(
         process.kill(gateway.pid, "SIGKILL");
       } catch {
         // The expected successful path already stopped the gateway.
+      }
+      gateway.supervisor.kill("SIGKILL");
+    }
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "qualifies a historical gateway installed by the current user in the system-local directory (#9705)",
+  async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-retirement-user-local-system-"));
+    tempRoots.push(root);
+    const home = path.join(root, "home");
+    const runtimeDir = path.join(root, "runtime");
+    const systemLocalGatewayBin = path.join(root, "usr", "local", "bin", "openshell-gateway");
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    const desiredEnv = historicalGatewayEnv(runtimeDir, 8080);
+    const gateway = await spawnGateway(home, 8080, {
+      env: desiredEnv,
+      gatewayBin: systemLocalGatewayBin,
+      historical: true,
+    });
+    const pidFile = path.join(runtimeDir, "openshell-gateway.pid");
+    fs.writeFileSync(pidFile, `${String(gateway.pid)}\n`);
+    writeHistoricalGatewayMarker(runtimeDir, gateway, desiredEnv, "0.0.44");
+
+    try {
+      const result = runInstallerBody(
+        home,
+        `openshell_gateway_system_local_bin_for_service() { printf '%s\\n' ${JSON.stringify(systemLocalGatewayBin)}; }
+inspect_trusted_legacy_openshell_gateway_process ${JSON.stringify(pidFile)} nemoclaw 8080 0.0.44`,
+        {
+          NEMOCLAW_GATEWAY_PORT: "8080",
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: runtimeDir,
+        },
+      );
+
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(fs.existsSync(pidFile)).toBe(true);
+      expect(processExists(gateway.pid)).toBe(true);
+    } finally {
+      try {
+        process.kill(gateway.pid, "SIGKILL");
+      } catch {
+        // The assertion above reports an unexpected early exit.
       }
       gateway.supervisor.kill("SIGKILL");
     }

@@ -18,6 +18,7 @@ import { nemoclawGatewaySystemdUnitFixture } from "./__test-helpers__/docker-dri
 const HOME = "/home/nvidia";
 const NEMOCLAW_UNIT = `${HOME}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
 const NEMOCLAW_GATEWAY = `${HOME}/.local/bin/openshell-gateway`;
+const SYSTEM_LOCAL_GATEWAY = "/usr/local/bin/openshell-gateway";
 const PACKAGE_UNIT = "/usr/lib/systemd/user/openshell-gateway.service";
 const PACKAGE_GATEWAY = "/usr/bin/openshell-gateway";
 const NEMOCLAW_PRE_START = `{ path=${NEMOCLAW_GATEWAY} ; argv[]=${NEMOCLAW_GATEWAY} generate-certs --output-dir \${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal ; ignore_errors=no ; }`;
@@ -195,6 +196,37 @@ it("binds the complete gateway executable content before systemd mutations (#970
       .filter(({ filePath }) => filePath === NEMOCLAW_GATEWAY)
       .every(({ hashContents }) => hashContents === true),
   ).toBe(true);
+});
+
+it("accepts a current-user-owned system-local executable staged by the installer (#9705)", () => {
+  const systemLocalPreStart = `{ path=${SYSTEM_LOCAL_GATEWAY} ; argv[]=${SYSTEM_LOCAL_GATEWAY} generate-certs --output-dir \${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal ; ignore_errors=no ; }`;
+  const currentUserOwnedSystemLocalFile = (candidate: string) =>
+    fileStat(candidate === NEMOCLAW_UNIT || candidate === SYSTEM_LOCAL_GATEWAY ? 1000 : 0);
+  const spawnSyncImpl = vi.fn((_command: string, args: string[]) =>
+    args.includes("show")
+      ? spawnResult(
+          0,
+          "",
+          systemdSnapshot(NEMOCLAW_UNIT, SYSTEM_LOCAL_GATEWAY, {
+            ExecStartPre: systemLocalPreStart,
+          }),
+        )
+      : spawnResult(),
+  );
+
+  const result = startOpenShellGatewayUserService({
+    ...nemoclawOptions(spawnSyncImpl),
+    inspectServiceFileIdentity: serviceFileIdentitySeam(
+      currentUserOwnedSystemLocalFile,
+      (candidate) =>
+        candidate === NEMOCLAW_UNIT
+          ? nemoclawGatewaySystemdUnitFixture(SYSTEM_LOCAL_GATEWAY)
+          : `${candidate}\n`,
+    ),
+    lstatSync: currentUserOwnedSystemLocalFile as never,
+  });
+
+  expect(result.started).toBe(true);
 });
 
 it.each([
