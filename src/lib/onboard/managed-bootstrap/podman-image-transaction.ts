@@ -99,10 +99,14 @@ export interface PodmanBootstrapImageTransactionDeps {
 }
 
 interface ExactPodmanContainerState {
+  readonly error: string;
+  readonly exitCode: number | null;
   readonly imageContentId: string;
   readonly name: string;
+  readonly oomKilled: boolean | null;
   readonly runtimeId: string;
   readonly running: boolean;
+  readonly status: string;
   readonly stateVolumeMountpoint: string;
   readonly stateVolumeName: string;
 }
@@ -358,7 +362,28 @@ function parseInspect(
   ) {
     return fail("the exact replacement is not in a stable running or stopped state");
   }
-  return Object.freeze({ imageContentId, name, runtimeId, running: state.Running, ...stateVolume });
+  const exitCode =
+    typeof state.ExitCode === "number" && Number.isSafeInteger(state.ExitCode)
+      ? state.ExitCode
+      : null;
+  const oomKilled = typeof state.OOMKilled === "boolean" ? state.OOMKilled : null;
+  const status =
+    typeof state.Status === "string" && state.Status.length <= 64 && !/[\r\n\0]/u.test(state.Status)
+      ? state.Status
+      : "unknown";
+  const error =
+    typeof state.Error === "string" ? state.Error.replace(/\s+/gu, " ").trim().slice(-300) : "";
+  return Object.freeze({
+    error,
+    exitCode,
+    imageContentId,
+    name,
+    oomKilled,
+    runtimeId,
+    running: state.Running,
+    status,
+    ...stateVolume,
+  });
 }
 
 function inspectExact(
@@ -381,6 +406,10 @@ function sameState(left: ExactPodmanContainerState, right: ExactPodmanContainerS
     left.imageContentId === right.imageContentId &&
     left.name === right.name &&
     left.running === right.running &&
+    left.status === right.status &&
+    left.exitCode === right.exitCode &&
+    left.error === right.error &&
+    left.oomKilled === right.oomKilled &&
     left.stateVolumeMountpoint === right.stateVolumeMountpoint &&
     left.stateVolumeName === right.stateVolumeName
   );
@@ -394,7 +423,15 @@ function inspectStable(
   const first = inspectExact(engine, prepared);
   const second = inspectExact(engine, prepared);
   if (!sameState(first, second) || second.running !== expectedRunning) {
-    fail(`the exact replacement is not stably ${expectedRunning ? "running" : "stopped"}`);
+    const detail = [
+      `status ${second.status}`,
+      `exit ${second.exitCode === null ? "unknown" : String(second.exitCode)}`,
+      `oom ${second.oomKilled === null ? "unknown" : String(second.oomKilled)}`,
+      ...(second.error ? [`error ${second.error}`] : []),
+    ].join("; ");
+    fail(
+      `the exact replacement is not stably ${expectedRunning ? "running" : "stopped"} (${detail})`,
+    );
   }
   return second;
 }

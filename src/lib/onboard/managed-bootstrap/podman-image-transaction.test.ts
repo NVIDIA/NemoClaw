@@ -125,11 +125,15 @@ interface HarnessOptions {
   readonly inspectImage?: string;
   readonly inspectName?: string;
   readonly inspectRuntimeId?: string;
+  readonly inspectExitCode?: number;
+  readonly inspectError?: string;
+  readonly inspectStatus?: string;
   readonly inspectStateVolumeMountpoint?: string;
   readonly inspectStateVolumeMode?: string;
   readonly inspectStateVolumeName?: string;
   readonly journal?: PodmanBootstrapJournal | null;
   readonly startsRunning?: boolean;
+  readonly startsRunningAfterStart?: boolean;
 }
 
 function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
@@ -162,12 +166,21 @@ function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
               Type: "volume",
             },
           ],
-          State: { Dead: false, Paused: false, Restarting: false, Running: running },
+          State: {
+            Dead: false,
+            Error: options.inspectError ?? "",
+            ExitCode: options.inspectExitCode ?? 0,
+            OOMKilled: false,
+            Paused: false,
+            Restarting: false,
+            Running: running,
+            Status: options.inspectStatus ?? (running ? "running" : "created"),
+          },
         },
       ]),
     });
   const start = (): ContainerEngineCommandResult => {
-    running = true;
+    running = options.startsRunningAfterStart ?? true;
     return result({ stdout: RUNTIME_ID });
   };
   const stageEnvelope = (archive: Buffer | undefined): ContainerEngineCommandResult => {
@@ -415,6 +428,19 @@ describe("Podman image-owned bootstrap transaction", () => {
       "not stably stopped",
     );
     expect(fake.commands.some((command) => command[1] === "cp")).toBe(false);
+  });
+
+  it("reports the bounded Podman exit state when a replacement does not stay running", () => {
+    const fake = harness("hermes", {
+      inspectError: "bootstrap rejected",
+      inspectExitCode: 126,
+      inspectStatus: "exited",
+      startsRunningAfterStart: false,
+    });
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("hermes", fake))).toThrow(
+      "not stably running (status exited; exit 126; oom false; error bootstrap rejected)",
+    );
   });
 
   it("rejects runtime and image drift before request staging", () => {
