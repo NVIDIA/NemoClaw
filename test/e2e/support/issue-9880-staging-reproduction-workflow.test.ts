@@ -4,9 +4,13 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import {
+  cleanupIssue9880Fixtures,
+  issue9880Fixture,
+} from "../../helpers/brev-launchable-issue-9880-fixture.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
 type Step = {
@@ -35,6 +39,8 @@ const WORKFLOW_PATH = path.join(
   ".github/workflows/issue-9880-staging-reproduction.yaml",
 );
 const SCRIPT_PATH = path.join(REPO_ROOT, "tools/e2e/brev-launchable-issue-9880.sh");
+
+afterEach(() => cleanupIssue9880Fixtures());
 
 function workflow(): Workflow {
   return YAML.parse(fs.readFileSync(WORKFLOW_PATH, "utf8")) as Workflow;
@@ -127,4 +133,56 @@ describe("the staging Launchable reproduces the bounded OpenClaw CLI scenario", 
     expect(script).not.toContain("--count");
     expect(script).not.toContain("KEEP_ALIVE");
   });
+
+  it.each([
+    ["BREV_SSH_TIMEOUT_SECONDS", "0"],
+    ["BREV_SSH_TIMEOUT_SECONDS", "1+1"],
+    ["POLL_SECONDS", "0"],
+    ["POLL_SECONDS", "$(touch forbidden)"],
+  ])("rejects invalid %s before cloud operations (#9880)", (name, value) => {
+    const fixture = issue9880Fixture();
+    const result = fixture.run({ [name]: value });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(`${name} must be a positive integer`);
+    expect(fs.existsSync(fixture.calls)).toBe(false);
+    expect(fs.existsSync(fixture.state)).toBe(false);
+  });
+
+  it.each([
+    ["brev refresh", /timeout --signal=KILL [12]s brev refresh/u],
+    ["ssh", /timeout --signal=KILL [12]s ssh .* issue-9880-test true/u],
+  ])(
+    "bounds a blocked %s operation by the SSH deadline (#9880)",
+    (blockedCommand, boundedCall) => {
+      const fixture = issue9880Fixture();
+      const result = fixture.run({
+        BREV_SSH_TIMEOUT_SECONDS: "2",
+        FAKE_BLOCK_COMMAND: blockedCommand,
+      });
+
+      expect(result.status, `${result.stdout}\n${result.stderr}\n${fs.readFileSync(fixture.calls, "utf8")}`).not.toBe(0);
+      const calls = fs.readFileSync(fixture.calls, "utf8");
+      expect(`${result.stdout}\n${result.stderr}`, calls).toContain("workspace SSH readiness timed out");
+      expect(calls).toMatch(/timeout --signal=KILL [12]s brev refresh/u);
+      expect(calls).toMatch(boundedCall);
+    },
+    10_000,
+  );
+
+  it("caps poll sleep to the remaining SSH deadline (#9880)", () => {
+    const fixture = issue9880Fixture();
+    const result = fixture.run({
+      BREV_SSH_TIMEOUT_SECONDS: "2",
+      POLL_SECONDS: "9",
+    });
+
+    expect(result.status).not.toBe(0);
+    const calls = fs.readFileSync(fixture.calls, "utf8");
+    const readiness = calls.slice(calls.indexOf("timeout --signal=KILL 2s brev refresh"));
+    expect(readiness).toContain("timeout --signal=KILL 2s brev refresh");
+    expect(readiness).toMatch(/sleep [12]/u);
+    expect(readiness).not.toContain("sleep 9");
+    expect(readiness).not.toContain("timeout 0s");
+  }, 10_000);
 });

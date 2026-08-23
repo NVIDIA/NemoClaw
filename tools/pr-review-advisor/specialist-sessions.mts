@@ -8,6 +8,7 @@ import { ADVISOR_INTERESTS, type AdvisorInterest } from "./specialists.mts";
 
 export const SPECIALIST_SESSION_DIRECTORY = ".pr-review-advisor-sessions";
 export const MAX_SPECIALIST_SESSION_BYTES = 8 * 1024 * 1024;
+export const MAX_SPECIALIST_SESSION_LINE_BYTES = 50 * 1024;
 export const MAX_SPECIALIST_SESSIONS_BYTES = 32 * 1024 * 1024;
 
 export function specialistSessionFileName(interest: AdvisorInterest): string {
@@ -78,6 +79,11 @@ export function validateSpecialistSessionDirectory(directory: string): Specialis
     const lines = text.split(/\r?\n/u).filter((line) => line.length > 0);
     if (lines.length === 0) throw new Error(`Specialist session is empty: ${interest}`);
     for (const [index, line] of lines.entries()) {
+      if (Buffer.byteLength(line, "utf8") > MAX_SPECIALIST_SESSION_LINE_BYTES) {
+        throw new Error(
+          `Specialist session ${interest} line ${index + 1} exceeds the ordinary read limit`,
+        );
+      }
       try {
         JSON.parse(line);
       } catch {

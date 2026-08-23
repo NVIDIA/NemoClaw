@@ -122,6 +122,10 @@ require NVIDIA_API_KEY
 command -v gh >/dev/null 2>&1 || fail "gh is required"
 command -v ssh >/dev/null 2>&1 || fail "ssh is required"
 [[ "$BREV_LAUNCHABLE_ID" =~ ^env-[A-Za-z0-9]+$ ]] || fail "BREV_LAUNCHABLE_ID is invalid"
+for name in BREV_SSH_TIMEOUT_SECONDS POLL_SECONDS; do
+  value="${!name:-}"
+  [ -z "$value" ] || [[ "$value" =~ ^[1-9][0-9]*$ ]] || fail "$name must be a positive integer"
+done
 [[ "$NVIDIA_API_KEY" == nvapi-* ]] || fail "NVIDIA_API_KEY must be a public NVIDIA Endpoints key"
 write_cleanup_evidence NOT_OWNED
 handoff_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/issue-9880-handoff.XXXXXX")"
@@ -171,12 +175,21 @@ log "Workspace $INSTANCE_NAME ($workspace_id) is ready"
 ssh_deadline=$((SECONDS + ${BREV_SSH_TIMEOUT_SECONDS:-900}))
 ssh_ready=0
 while [ "$SECONDS" -lt "$ssh_deadline" ]; do
-  timeout 60s brev refresh >/dev/null 2>&1 || true
-  if timeout 15s ssh "${SSH_OPTIONS[@]}" "$INSTANCE_NAME" true >/dev/null 2>&1; then
+  remaining=$((ssh_deadline - SECONDS))
+  [ "$remaining" -gt 0 ] || break
+  refresh_timeout=$((remaining < 60 ? remaining : 60))
+  timeout --signal=KILL "${refresh_timeout}s" brev refresh >/dev/null 2>&1 || true
+  remaining=$((ssh_deadline - SECONDS))
+  [ "$remaining" -gt 0 ] || break
+  ssh_timeout=$((remaining < 15 ? remaining : 15))
+  if timeout --signal=KILL "${ssh_timeout}s" ssh "${SSH_OPTIONS[@]}" "$INSTANCE_NAME" true >/dev/null 2>&1; then
     ssh_ready=1
     break
   fi
-  sleep "${POLL_SECONDS:-15}"
+  remaining=$((ssh_deadline - SECONDS))
+  [ "$remaining" -gt 0 ] || break
+  poll_seconds="${POLL_SECONDS:-15}"
+  sleep "$((poll_seconds < remaining ? poll_seconds : remaining))"
 done
 [ "$ssh_ready" -eq 1 ] || fail "workspace SSH readiness timed out"
 log "SSH access to $INSTANCE_NAME succeeded"
