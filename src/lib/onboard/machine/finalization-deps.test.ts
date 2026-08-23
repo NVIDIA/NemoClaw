@@ -109,7 +109,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       kind: "settled",
     });
 
-    expect(scope.calls).toEqual(["warmup", "approval"]);
+    expect(scope.calls).toEqual(["warmup", "sleep", "approval"]);
     expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha");
     expect(scope.deps.runApproval).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
   });
