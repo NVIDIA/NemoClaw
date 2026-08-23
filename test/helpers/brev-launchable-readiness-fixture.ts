@@ -33,3 +33,40 @@ export function failingReadinessCommand(): {
     },
   };
 }
+
+export function replacementDuringReadinessCommand(): {
+  command: (_binary: string, args: string[]) => Promise<ShellProbeResult>;
+} {
+  let created = false;
+  let readinessPolls = 0;
+  const records = [
+    {
+      name: "fixture-workspace",
+      id: "owned-id",
+      status: "CREATING",
+      build_status: "PENDING",
+      shell_status: "PENDING",
+    },
+    {
+      name: "fixture-workspace",
+      id: "replacement-id",
+      status: "RUNNING",
+      build_status: "COMPLETED",
+      shell_status: "READY",
+    },
+  ];
+  return {
+    async command(_binary, args) {
+      switch (args[0]) {
+        case "ls":
+          if (!created) return result({ workspaces: [] });
+          return result({ workspaces: [records[Math.min(readinessPolls++, records.length - 1)]] });
+        case "create":
+          created = true;
+          return result("");
+        default:
+          throw new Error(`unexpected command: ${args.join(" ")}`);
+      }
+    },
+  };
+}
