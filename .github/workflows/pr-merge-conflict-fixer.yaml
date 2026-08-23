@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: PR Conflicts / Resolve
+name: Automation / Resolve PR Merge Conflicts
 
 on:
   push:
@@ -42,7 +42,7 @@ jobs:
         run: node --experimental-strip-types --no-warnings tools/pr-merge-conflict-fixer/discover.mts
 
   resolve:
-    name: Resolve PR #${{ matrix.item.pr_number }}
+    name: "Resolve PR #${{ matrix.item.pr_number }}"
     needs: scan
     if: ${{ needs.scan.outputs.count != '0' }}
     runs-on: ubuntu-24.04
@@ -116,7 +116,7 @@ jobs:
           retention-days: 1
 
   publish:
-    name: Publish PR #${{ matrix.item.pr_number }}
+    name: "Publish PR #${{ matrix.item.pr_number }}"
     needs:
       - scan
       - resolve

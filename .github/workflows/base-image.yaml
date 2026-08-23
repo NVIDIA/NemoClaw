@@ -10,7 +10,7 @@
 # Base images contain the expensive, rarely-changing layers. Complete image
 # publication consumes exact base digests from the same trusted workflow run.
 
-name: Images / Base Images
+name: Images / Publish Base and Managed Images
 
 on:
   push:
