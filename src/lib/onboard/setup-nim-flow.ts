@@ -254,14 +254,14 @@ function requireSelectedProvider(
 
 function assertVllmGpuProviderSelection(
   selected: ProviderMenuChoice,
-  recoverProvider: boolean,
+  recoveredFromSandbox: boolean,
   deps: Pick<
     SetupNimFlowDeps,
     "abortNonInteractive" | "error" | "exitProcess" | "isNonInteractive"
   >,
 ): void {
   const requestedDevice = String(process.env.NEMOCLAW_VLLM_GPU_DEVICE ?? "").trim();
-  const resumedManagedVllm = recoverProvider && selected.key === "vllm";
+  const resumedManagedVllm = recoveredFromSandbox && selected.key === "vllm";
   if (!requestedDevice || selected.key === "install-vllm" || resumedManagedVllm) return;
 
   const message =
@@ -945,7 +945,7 @@ export function createSetupNim(
         }
 
         selected = requireSelectedProvider(selected, deps);
-        assertVllmGpuProviderSelection(selected, recoverProvider, deps);
+        assertVllmGpuProviderSelection(selected, recoveredFromSandbox, deps);
         if (selected.key !== "hermesProvider") {
           hermesAuthMethod = null;
           hermesToolGateways = [];
