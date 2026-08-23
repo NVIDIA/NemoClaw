@@ -254,7 +254,7 @@ describe("Podman managed-bootstrap runtime surface", () => {
         {
           Config: {
             User: "0:0",
-            WorkingDir: "/",
+            WorkingDir: "/sandbox",
             Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
             Cmd: ["--workdir", "/sandbox"],
             Labels: { "openshell.managed": "true" },

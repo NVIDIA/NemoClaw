@@ -549,6 +549,7 @@ export function renderPodmanReplacementEnvironment(
         Config: {
           ...config,
           User: ["0:0", "root", "root:root"].includes(inspectedUser) ? "0" : inspectedUser,
+          WorkingDir: "/",
           Labels: { ...labels, "openshell.ai/managed-by": "openshell" },
         },
       }
