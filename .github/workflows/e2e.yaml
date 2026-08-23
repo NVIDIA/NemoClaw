@@ -2866,6 +2866,7 @@ jobs:
             e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json
             e2e-artifacts/live/${{ matrix.id }}/dcode-base-image.json
             e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json
+            e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json
             e2e-artifacts/live/risk-signal.json
             e2e-artifacts/live/${{ matrix.id }}/actions/
             e2e-artifacts/live/${{ matrix.id }}/logs/
@@ -5841,6 +5842,9 @@ jobs:
             const firstTurnLatency = require(
               path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-first-turn-latency.mts'),
             );
+            const sandboxPhaseTail = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-sandbox-phase-tail.mts'),
+            );
             const needs = JSON.parse(process.env.NEEDS_JSON || '{}');
 
             // GitHub's jobs API is the canonical source because `needs.live`
@@ -5880,7 +5884,11 @@ jobs:
                       firstTurnLatency.readCurrentFirstTurnLatencySample(
                         process.env.RUNTIME_ARTIFACTS,
                       ),
-                    loadPriorPushSummaries: runtimeHistory.loadPriorPushSummaries,
+                    currentSandboxPhaseTail:
+                      sandboxPhaseTail.readCurrentSandboxPhaseTailSample(
+                        process.env.RUNTIME_ARTIFACTS,
+                      ),
+                    loadPriorPushHistory: runtimeHistory.loadPriorPushHistory,
                   },
                 );
             const trace = await traceTiming.buildTraceTimingResult({ github, context, core });

@@ -396,6 +396,9 @@ build_agent() {
     --label "io.nvidia.nemoclaw.managed-image.capabilities=1"
     --label "io.nvidia.nemoclaw.managed-image.cohort=${cohort}"
     --build-arg "BASE_IMAGE=${base_reference}"
+    # Dockerfile defaults preserve direct Podman x86 builds. Pass the selected
+    # Buildx target explicitly so that default cannot override linux/arm64.
+    --build-arg "TARGETARCH=${platform#linux/}"
     --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1"
     --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
     "$source_root")

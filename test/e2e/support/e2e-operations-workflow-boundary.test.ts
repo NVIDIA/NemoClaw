@@ -19,6 +19,8 @@ import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (
   ...parameters: string[]
 ) => (...args: unknown[]) => Promise<unknown>;
+const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
+  "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 
 function workflowScript(jobName: string, stepName: string): string {
   const workflow = readE2eOperationsWorkflow();
@@ -30,6 +32,23 @@ function workflowScript(jobName: string, stepName: string): string {
 describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
   it("accepts the checked-in workflow", () => {
     expect(validateE2eOperationsWorkflowBoundary()).toEqual([]);
+  });
+
+  it("rejects a lookalike live cold-onboard performance artifact path (#6660)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const upload = workflow.jobs.live.steps!.find((step) => step.name === "Upload E2E artifacts")!;
+    upload.with!.path = String(upload.with!.path)
+      .split("\n")
+      .map((line) =>
+        line.trim() === COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH
+          ? `${COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH}.backup`
+          : line,
+      )
+      .join("\n");
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "live E2E must upload cold-onboard performance evidence",
+    );
   });
 
   it("requires the scorecard to wait for every reporting dependency", () => {
@@ -1154,15 +1173,19 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       buildRuntimeHistory: vi
         .fn()
         .mockResolvedValue("## E2E Push Runtime Trend\n\n| Target | Prior median |"),
-      loadPriorPushSummaries: vi.fn(),
+      loadPriorPushHistory: vi.fn(),
     };
     const firstTurnLatency = {
       readCurrentFirstTurnLatencySample: vi.fn().mockReturnValue(null),
+    };
+    const sandboxPhaseTail = {
+      readCurrentSandboxPhaseTailSample: vi.fn().mockReturnValue(null),
     };
     const runtimeModules = new Map<string, unknown>([
       ["path", { join: (...parts: string[]) => parts.join("/") }],
       ["/workspace/scripts/audit-test-runtime.mts", runtimeAudit],
       ["/workspace/scripts/scorecard/analyze-first-turn-latency.mts", firstTurnLatency],
+      ["/workspace/scripts/scorecard/analyze-sandbox-phase-tail.mts", sandboxPhaseTail],
       ["/workspace/scripts/scorecard/analyze-runtime-history.mts", runtimeHistory],
       ["/workspace/scripts/scorecard/coordinate-scorecard.mts", coordinator],
       ["/workspace/scripts/scorecard/analyze-trace-timing.mts", traceTiming],
@@ -1212,10 +1235,14 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "/runner/e2e-runtime-summary.json",
       {
         currentFirstTurnLatency: null,
-        loadPriorPushSummaries: runtimeHistory.loadPriorPushSummaries,
+        currentSandboxPhaseTail: null,
+        loadPriorPushHistory: runtimeHistory.loadPriorPushHistory,
       },
     );
     expect(firstTurnLatency.readCurrentFirstTurnLatencySample).toHaveBeenCalledWith(
+      "/runner/e2e-runtime-audit",
+    );
+    expect(sandboxPhaseTail.readCurrentSandboxPhaseTailSample).toHaveBeenCalledWith(
       "/runner/e2e-runtime-audit",
     );
     expect(runtimeAudit.auditTestRuntime.mock.invocationCallOrder[0]).toBeLessThan(
@@ -1263,10 +1290,12 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     };
     const runtimeHistory = { buildRuntimeHistory: vi.fn() };
     const firstTurnLatency = { readCurrentFirstTurnLatencySample: vi.fn() };
+    const sandboxPhaseTail = { readCurrentSandboxPhaseTailSample: vi.fn() };
     const runtimeModules = new Map<string, unknown>([
       ["path", { join: (...parts: string[]) => parts.join("/") }],
       ["/workspace/scripts/audit-test-runtime.mts", runtimeAudit],
       ["/workspace/scripts/scorecard/analyze-first-turn-latency.mts", firstTurnLatency],
+      ["/workspace/scripts/scorecard/analyze-sandbox-phase-tail.mts", sandboxPhaseTail],
       ["/workspace/scripts/scorecard/analyze-runtime-history.mts", runtimeHistory],
       [
         "/workspace/scripts/scorecard/coordinate-scorecard.mts",
@@ -1331,6 +1360,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     expect(runtimeAudit.formatRuntimeAuditSummary).not.toHaveBeenCalled();
     expect(runtimeAudit.collectRuntimeHistorySamples).not.toHaveBeenCalled();
     expect(firstTurnLatency.readCurrentFirstTurnLatencySample).not.toHaveBeenCalled();
+    expect(sandboxPhaseTail.readCurrentSandboxPhaseTailSample).not.toHaveBeenCalled();
     expect(runtimeHistory.buildRuntimeHistory).not.toHaveBeenCalled();
     expect(summary.addRaw).toHaveBeenCalledWith(
       expect.stringMatching(
