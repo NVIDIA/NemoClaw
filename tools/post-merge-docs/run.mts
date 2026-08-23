@@ -27,6 +27,7 @@ import { allowedDocumentationPath, nextPatchReleaseTag, readBoundedFile } from "
 const PATCH_FILE = "docs.patch";
 const REVIEW_REPORT_FILE = "review-report.txt";
 const MAX_PATCH_BYTES = 5_242_880;
+const MAX_REVIEW_REPORT_BYTES = 65_536;
 const MAX_FILE_BYTES = 1_048_576;
 const SHA = /^[0-9a-f]{40}$/u;
 const AGENT_FLAGS =
@@ -294,11 +295,10 @@ function download(env: NodeJS.ProcessEnv, name: string, tools: OpenShellTools): 
     },
     tools,
   );
-  return readBoundedFile(
-    path.join(directory, name),
-    name === PATCH_FILE ? MAX_PATCH_BYTES : 1_024,
-    true,
-  );
+  let maximum = 1_024;
+  if (name === PATCH_FILE) maximum = MAX_PATCH_BYTES;
+  if (name === REVIEW_REPORT_FILE) maximum = MAX_REVIEW_REPORT_BYTES;
+  return readBoundedFile(path.join(directory, name), maximum, true);
 }
 
 function exportArtifact(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {

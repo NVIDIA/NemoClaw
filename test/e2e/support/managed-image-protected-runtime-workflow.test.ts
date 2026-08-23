@@ -31,9 +31,12 @@ function multiarchJob(value: WorkflowRecord): Record<string, unknown> {
 }
 
 function namedStep(value: WorkflowRecord, name: string): Record<string, unknown> {
-  const step = (runtimeJob(value).steps as Array<Record<string, unknown>>).find(
-    (step) => step.name === name,
-  );
+  return namedJobStep(value, "managed-image-protected-runtime", name);
+}
+
+function namedJobStep(value: WorkflowRecord, jobId: string, name: string): Record<string, unknown> {
+  const job = (value.jobs as Record<string, Record<string, unknown>>)[jobId];
+  const step = (job.steps as Array<Record<string, unknown>>).find((step) => step.name === name);
   expect(step, `workflow step '${name}' is missing`).toBeDefined();
   return step as Record<string, unknown>;
 }
@@ -48,6 +51,96 @@ describe("protected managed-image runtime workflow", () => {
 
     expect(validateManagedImageMultiarchWorkflow(value)).toEqual([]);
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toEqual([]);
+  });
+
+  // source-shape-contract: security -- Both protected jobs must execute the shared Hermes resolver from trusted workflow code
+  it.each([
+    [
+      "managed-image-multiarch-startup",
+      "Resolve reviewed Hermes platform base image",
+      "./.trusted-hermes-resolver/.github/actions/resolve-reviewed-hermes-platform",
+      "agents/hermes/Dockerfile",
+      validateManagedImageMultiarchWorkflow,
+    ],
+    [
+      "managed-image-protected-runtime",
+      "Resolve reviewed Hermes runtime base image",
+      "./.github/actions/resolve-reviewed-hermes-platform",
+      ".candidate-runtime/agents/hermes/Dockerfile",
+      validateManagedImageProtectedRuntimeWorkflow,
+    ],
+  ] as const)(
+    "%s binds Hermes resolution to trusted workflow code",
+    (jobId, stepName, actionPath, dockerfilePath, validate) => {
+      const value = workflow();
+      const step = namedJobStep(value, jobId, stepName);
+      expect(step.uses).toBe(actionPath);
+      expect((step.with as Record<string, unknown>)["dockerfile-path"]).toBe(dockerfilePath);
+      step.uses = "./.github/actions/resolve-hermes-base-image";
+
+      expect(validate(value)).toContain(
+        `${jobId} must use the shared reviewed Hermes platform resolver`,
+      );
+
+      const changedInput = workflow();
+      const changedInputStep = namedJobStep(changedInput, jobId, stepName);
+      (changedInputStep.with as Record<string, unknown>)["dockerfile-path"] = "Dockerfile";
+      expect(validate(changedInput)).toContain(
+        `${jobId} Hermes platform resolver must bind dockerfile-path to ${dockerfilePath}`,
+      );
+    },
+  );
+
+  it("rejects a multiarch resolver from candidate source after registry authentication", () => {
+    const value = workflow();
+    namedJobStep(
+      value,
+      "managed-image-multiarch-startup",
+      "Resolve reviewed Hermes platform base image",
+    ).uses = "./.github/actions/resolve-reviewed-hermes-platform";
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup must use the shared reviewed Hermes platform resolver",
+    );
+    expect(validateE2eWorkflow(value)).toContain(
+      "managed-image-multiarch-startup step 'Resolve reviewed Hermes platform base image' action must be pinned to a full commit SHA",
+    );
+  });
+
+  it("requires the multiarch resolver checkout from the trusted workflow revision", () => {
+    const value = workflow();
+    const trustedCheckout = namedJobStep(
+      value,
+      "managed-image-multiarch-startup",
+      "Checkout trusted Hermes resolver",
+    );
+    (trustedCheckout.with as Record<string, unknown>).ref =
+      "${{ inputs.checkout_sha || github.sha }}";
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup trusted Hermes resolver checkout must bind ref to ${{ inputs.workflow_sha || github.workflow_sha }}",
+    );
+  });
+
+  // source-shape-contract: security -- Both protected jobs must reject extra resolver actions before candidate execution
+  it.each([
+    [
+      "managed-image-multiarch-startup",
+      "Resolve reviewed Hermes platform base image",
+      validateManagedImageMultiarchWorkflow,
+    ],
+    [
+      "managed-image-protected-runtime",
+      "Resolve reviewed Hermes runtime base image",
+      validateManagedImageProtectedRuntimeWorkflow,
+    ],
+  ] as const)("%s rejects duplicate Hermes resolver steps", (jobId, stepName, validate) => {
+    const value = workflow();
+    const job = (value.jobs as Record<string, Record<string, unknown>>)[jobId];
+    const step = namedJobStep(value, jobId, stepName);
+    (job.steps as Array<Record<string, unknown>>).push(structuredClone(step));
+
+    expect(validate(value)).toContain(`${jobId} must define exactly one '${stepName}' step`);
   });
 
   it("runs protected runtime checks from .candidate-runtime", () => {
