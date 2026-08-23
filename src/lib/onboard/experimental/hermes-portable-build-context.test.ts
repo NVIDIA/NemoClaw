@@ -405,18 +405,19 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
   });
 
   it.each([
-    { instruction: "RUN", option: "--network=none", continued: false },
-    { instruction: "RUN", option: "--mount=type=cache,target=/tmp/cache", continued: false },
-    { instruction: "run", option: "--network=none", continued: false },
-    { instruction: "RUN", option: "--network=none", continued: true },
+    { instruction: "RUN", option: "--network=none", continued: false, commented: false },
+    { instruction: "RUN", option: "--mount=type=cache,target=/tmp/cache", continued: false, commented: false },
+    { instruction: "run", option: "--network=none", continued: false, commented: false },
+    { instruction: "RUN", option: "--network=none", continued: true, commented: false },
+    { instruction: "RUN", option: "--mount=type=cache,target=/tmp/cache", continued: true, commented: true },
   ])(
     "rejects BuildKit-only $instruction option $option before reservation (#10007)",
-    ({ instruction, option, continued }) => {
+    ({ instruction, option, continued, commented }) => {
       const source = primaryCloneFixture();
       const dockerfile = path.join(source, "agents/hermes/Dockerfile");
       const reservationRoot = path.join(stateDir, "hermes-portable-build-context");
       const replacement = continued
-        ? `${instruction} \\\n    ${option} mkdir -p /sandbox/.nemoclaw`
+        ? `${instruction} \\\n${commented ? "    # ignored continuation comment\n" : ""}    ${option} mkdir -p /sandbox/.nemoclaw`
         : `${instruction} ${option} mkdir -p /sandbox/.nemoclaw`;
       fs.writeFileSync(
         dockerfile,

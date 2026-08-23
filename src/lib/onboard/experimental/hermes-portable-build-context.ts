@@ -250,6 +250,7 @@ function parseDockerfileSources(bytes: Buffer): readonly string[] {
   let logicalInstruction = "";
   for (const rawLine of text.split("\n")) {
     const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
     const continued = trimmed.endsWith("\\");
     const segment = continued ? trimmed.slice(0, -1).trimEnd() : trimmed;
     logicalInstruction = logicalInstruction
