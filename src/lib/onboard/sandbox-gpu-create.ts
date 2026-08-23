@@ -15,11 +15,13 @@ export function buildSandboxGpuCreateArgs(
 ): string[] {
   if (options.suppressGpuFlag) return [];
   if (!config.sandboxGpuEnabled) return [];
-  const args = ["--gpu"];
-  if (config.sandboxGpuDevice) {
-    args.push("--gpu-device", config.sandboxGpuDevice);
-  }
-  return args;
+  return ["--gpu"];
+}
+
+export function normalizeSandboxGpuDeviceForCdi(device: string | null | undefined): string | null {
+  const selector = String(device ?? "").trim();
+  if (!selector) return null;
+  return selector.startsWith("nvidia.com/gpu=") ? selector : `nvidia.com/gpu=${selector}`;
 }
 
 export function getSandboxReadyTimeoutSecs(
