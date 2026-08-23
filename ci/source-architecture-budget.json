@@ -25,7 +25,7 @@
       "src/lib/messaging/channels/index.ts": 25,
       "src/lib/onboard/gateway-binding.ts": 52,
       "src/lib/runner.ts": 87,
-      "src/lib/security/redact.ts": 53,
+      "src/lib/security/redact.ts": 54,
       "src/lib/state/onboard-session.ts": 37,
       "src/lib/state/registry.ts": 101,
       "src/lib/state/state-root.ts": 21,

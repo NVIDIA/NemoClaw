@@ -761,6 +761,60 @@ describe("PR review advisor OpenShell wrapper", () => {
     });
   });
 
+  it("exposes validated specialist sessions inside the standard Pi workdir (#9949)", () => {
+    const env = advisorEnvironment();
+    const sessionDirectory = path.join(env.ADVISOR_WORKDIR as string, ".pr-review-advisor-sessions");
+    const sessionAlias = path.join(env.GITHUB_WORKSPACE as string, "specialist-sessions-alias");
+    fs.mkdirSync(sessionDirectory);
+    const sessionEntries = {
+      behavior: "behavior",
+      trust: "trust",
+      "design-architecture": "design-architecture",
+      operations: "operations",
+      documentation: "documentation",
+    };
+    Object.entries(sessionEntries).forEach(([interest, id]) =>
+      fs.writeFileSync(
+        path.join(sessionDirectory, `pr-review-${interest}-session.jsonl`),
+        `${JSON.stringify({ type: "session", id })}\n`,
+      ),
+    );
+    fs.symlinkSync(sessionDirectory, sessionAlias, "dir");
+    env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR = sessionAlias;
+    const tools = advisorTools();
+
+    createAdvisorSandbox(env, tools);
+    runAdvisorSandbox(env, tools);
+
+    const calls = vi.mocked(tools.run).mock.calls;
+    const createArgs = calls.find(([, args]) => args.slice(0, 2).join(" ") === "sandbox create")?.[1] ?? [];
+    const driverConfigIndex = createArgs.indexOf("--driver-config-json");
+    const driverConfig = JSON.parse(createArgs[driverConfigIndex + 1] as string);
+    expect(driverConfig.docker.mounts.filter((mount: { target?: string }) => mount.target === "/pr-workdir")).toEqual([
+      expect.objectContaining({ read_only: true }),
+    ]);
+    const runArgs = calls.find(([, args]) => args.includes("/advisor/tools/pr-review-advisor/run-analysis.mts"))?.[1] ?? [];
+    expect(runArgs).toContain(
+      "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR=/pr-workdir/.pr-review-advisor-sessions",
+    );
+    expect(runArgs).not.toContain(expect.stringContaining("session-reader"));
+  });
+
+  it("rejects a specialist session alias outside the fixed workdir input (#9963)", () => {
+    const env = advisorEnvironment();
+    const outsideDirectory = path.join(env.GITHUB_WORKSPACE as string, "outside-sessions");
+    const outsideAlias = path.join(env.ADVISOR_WORKDIR as string, "outside-sessions-alias");
+    fs.mkdirSync(outsideDirectory);
+    fs.symlinkSync(outsideDirectory, outsideAlias, "dir");
+    env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR = outsideAlias;
+    const tools = advisorTools();
+
+    expect(() => createAdvisorSandbox(env, tools)).toThrow(
+      "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR must use the fixed workdir input path",
+    );
+    expect(tools.run).not.toHaveBeenCalled();
+  });
+
   it("rejects artifact paths that could escape the sandbox runtime directory", () => {
     const env = advisorEnvironment();
     env.PR_REVIEW_ADVISOR_ARTIFACT_DIR = "../../advisor";
