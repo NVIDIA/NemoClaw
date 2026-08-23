@@ -44,6 +44,7 @@ import {
   observePodmanBootstrapReplacementReady,
   renderPodmanReplacementHealthArgs,
   renderPodmanReplacementMountArgs,
+  renderPodmanReplacementSecretArgs,
 } from "./podman-runtime";
 import type { PodmanGatewayWatcherLease } from "./podman-watcher-lease";
 import { PODMAN_WATCHER_LEASE_SCHEMA_VERSION } from "./podman-watcher-lease";
@@ -283,6 +284,45 @@ describe("Podman managed-bootstrap runtime surface", () => {
         ],
       }),
     ).toEqual(["--mount", `type=image,source=${image},destination=/opt/openshell/bin,rw=false`]);
+  });
+
+  it("reproduces the exact OpenShell Podman token secret on the replacement", () => {
+    const secretId = "secret-identity";
+    const capture = vi.fn(() => ({
+      status: 0,
+      stdout: `${secretId}\n`,
+      stderr: "",
+      error: undefined,
+    }));
+
+    expect(
+      renderPodmanReplacementSecretArgs(
+        { ...engine(), capture },
+        {
+          Config: {
+            Cmd: ["--workdir", "/sandbox"],
+            Env: ["OPENSHELL_SANDBOX_TOKEN_FILE=/run/secrets/openshell-token"],
+            Secrets: [
+              {
+                Name: "openshell-token-sandbox-alpha",
+                ID: secretId,
+                UID: 0,
+                GID: 0,
+                Mode: 0o400,
+              },
+            ],
+          },
+        },
+        "sandbox-alpha",
+      ),
+    ).toEqual([
+      "--secret",
+      "openshell-token-sandbox-alpha,target=/run/secrets/openshell-token,uid=0,gid=0,mode=0400",
+    ]);
+    expect(capture).toHaveBeenCalledExactlyOnceWith(
+      ["secret", "inspect", "--format", "{{.ID}}", "openshell-token-sandbox-alpha"],
+      15_000,
+    );
   });
 
   it("persists only non-secret native gateway launch environment", () => {

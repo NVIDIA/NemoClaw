@@ -98,11 +98,14 @@ const BOOTSTRAP_EXECUTABLE = "/usr/local/bin/nemoclaw-managed-bootstrap";
 const FULL_ID = /^[a-f0-9]{64}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_ENV = /^[A-Za-z_][A-Za-z0-9_]*=/u;
+const SAFE_RESOURCE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,252}$/u;
 const LEASE_FILE = "managed-bootstrap-podman-watcher.json";
 const STANDALONE_LAUNCH_FILE = "managed-bootstrap-podman-gateway-launch.json";
 const MANAGED_BOOTSTRAP_TIMEOUT_MS = 300_000;
 const REPLACEMENT_OBSERVATION_TIMEOUT_MS = 30_000;
 const REPLACEMENT_OBSERVATION_INTERVAL_SECONDS = 0.25;
+const OPENSHELL_TOKEN_SECRET_PREFIX = "openshell-token-";
+const OPENSHELL_PROXY_SECRET_PREFIX = "openshell-proxy-auth-";
 const PERSISTABLE_ENVIRONMENT_KEYS = new Set([
   "HOME",
   "LANG",
@@ -303,6 +306,7 @@ function canonicalInspect(inspect: JsonRecord): string {
       Env: stringArray(config.Env ?? [], "Config.Env"),
       Healthcheck: record(config.Healthcheck, "Config.Healthcheck"),
       Labels: record(config.Labels ?? {}, "Config.Labels"),
+      Secrets: Array.isArray(config.Secrets) ? config.Secrets : [],
       WorkingDir: String(config.WorkingDir ?? ""),
     },
     HostConfig: hostConfig,
@@ -449,6 +453,93 @@ export function renderPodmanReplacementMountArgs(inspect: JsonRecord): string[] 
           ? ",ro"
           : "";
     args.push("--mount", `type=${type},source=${source},destination=${destination}${options}`);
+  }
+  return args;
+}
+
+function exactSecretTarget(value: string, label: string): string {
+  if (
+    !path.isAbsolute(value) ||
+    path.normalize(value) !== value ||
+    value === path.parse(value).root ||
+    value.includes(",")
+  ) {
+    throw new Error(`Managed bootstrap Podman ${label} secret target is invalid.`);
+  }
+  return value;
+}
+
+export function renderPodmanReplacementSecretArgs(
+  engine: PodmanBoundContainerEngine,
+  inspect: JsonRecord,
+  sandboxId: string,
+): string[] {
+  const config = record(inspect.Config, "Config");
+  const environmentEntries = stringArray(config.Env ?? [], "Config.Env");
+  if (environmentEntries.some((entry) => !SAFE_ENV.test(entry))) {
+    throw new Error("Managed bootstrap Podman environment contains an invalid assignment.");
+  }
+  const environment = new Map(
+    environmentEntries.map((entry) => {
+      const separator = entry.indexOf("=");
+      return [entry.slice(0, separator), entry.slice(separator + 1)] as const;
+    }),
+  );
+  const command = stringArray(config.Cmd ?? [], "Config.Cmd");
+  const proxyFlag = command.indexOf("--upstream-proxy-auth-file");
+  const targets = new Map<string, string>();
+  const tokenName = `${OPENSHELL_TOKEN_SECRET_PREFIX}${sandboxId}`;
+  const tokenTarget = environment.get("OPENSHELL_SANDBOX_TOKEN_FILE");
+  if (!tokenTarget) {
+    throw new Error("Managed bootstrap Podman token secret target is unavailable.");
+  }
+  targets.set(tokenName, exactSecretTarget(tokenTarget, "token"));
+  const proxyName = `${OPENSHELL_PROXY_SECRET_PREFIX}${sandboxId}`;
+  const proxyTarget = proxyFlag >= 0 ? command[proxyFlag + 1] : undefined;
+  if (proxyTarget) targets.set(proxyName, exactSecretTarget(proxyTarget, "proxy"));
+
+  const secrets = Array.isArray(config.Secrets)
+    ? config.Secrets.map((value) => record(value, "Config.Secrets entry"))
+    : [];
+  const args: string[] = [];
+  for (const secret of secrets) {
+    const name = String(secret.Name ?? "");
+    const id = String(secret.ID ?? "");
+    const target = targets.get(name);
+    if (!SAFE_RESOURCE_NAME.test(name) || !id || !target) {
+      throw new Error("Managed bootstrap Podman cannot reproduce an unknown runtime secret.");
+    }
+    const uid = Number(secret.UID);
+    const gid = Number(secret.GID);
+    const mode = Number(secret.Mode);
+    if (
+      !Number.isSafeInteger(uid) ||
+      uid < 0 ||
+      !Number.isSafeInteger(gid) ||
+      gid < 0 ||
+      !Number.isSafeInteger(mode) ||
+      mode < 0 ||
+      mode > 0o777
+    ) {
+      throw new Error("Managed bootstrap Podman runtime secret ownership is invalid.");
+    }
+    const inspected = capture(
+      engine,
+      ["secret", "inspect", "--format", "{{.ID}}", name],
+      "runtime secret inspection",
+      15_000,
+    ).stdout.trim();
+    if (inspected !== id) {
+      throw new Error("Managed bootstrap Podman runtime secret identity changed.");
+    }
+    args.push(
+      "--secret",
+      `${name},target=${target},uid=${String(uid)},gid=${String(gid)},mode=${mode.toString(8).padStart(4, "0")}`,
+    );
+    targets.delete(name);
+  }
+  if (targets.size !== 0) {
+    throw new Error("Managed bootstrap Podman required runtime secret is unavailable.");
   }
   return args;
 }
@@ -1471,6 +1562,11 @@ export function createPodmanManagedBootstrapAdapter(
             runtimeArgs: Object.freeze([
               ...networkArgs(current.rawInspect),
               ...renderPodmanReplacementMountArgs(current.rawInspect),
+              ...renderPodmanReplacementSecretArgs(
+                options.engine,
+                current.rawInspect,
+                current.held.sandboxId,
+              ),
               ...renderPodmanReplacementHealthArgs(current.rawInspect),
               ...optionArgs(replacementOptions.values),
             ]),
