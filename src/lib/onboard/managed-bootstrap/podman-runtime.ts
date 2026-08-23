@@ -1474,6 +1474,7 @@ export function createPodmanManagedBootstrapAdapter(
       ) {
         throw new Error("Managed bootstrap Podman prepared authority changed before activation.");
       }
+      current.watcherLease.requiesceAndProve();
       current.prepared = stopExactPodmanBootstrapOriginal({
         engine: options.engine,
         heldWorkload: current.held,
@@ -1481,6 +1482,7 @@ export function createPodmanManagedBootstrapAdapter(
         prepared: current.prepared,
         watcherLease: current.watcherLease,
       });
+      current.watcherLease.resumeForObservationAndProve();
       current.imageTransaction = startPodmanBootstrapImageTransaction({
         engine: options.engine,
         journalStore,
