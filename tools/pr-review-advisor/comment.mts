@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -54,7 +53,7 @@ type ReviewAdvisorResult = {
   terminologyReview?: {
     status?: string;
     noChangesReason?: string | null;
-    decisions?: readonly LaneTerminologyDecision[];
+    decisions?: readonly TerminologyDecision[];
   };
   e2e?: {
     coverage?: {
@@ -116,13 +115,7 @@ type FindingCounts = {
   suggestions: number;
 };
 
-type LaneFingerprints = {
-  findings: string;
-  e2e: string;
-  terminology: string;
-};
-
-type LaneTerminologyDecision = {
+type TerminologyDecision = {
   term?: string;
   disposition?: string;
   recommendation?: string;
@@ -130,41 +123,11 @@ type LaneTerminologyDecision = {
   source?: { file?: string; line?: number; headSha?: string };
 };
 
-type TrustedLaneTerminologyDecision = {
-  term: string;
-  change: "introduced" | "expanded" | "redefined";
-  disposition: "established" | "justified" | "define" | "replace" | "conflict";
-  meaning: string;
-  contrast: string | null;
-  existingTerm: string | null;
-  semanticImpact: string;
-  recommendation: string;
-  file: string;
-  line: number;
-};
-
-type LaneE2eRecommendation = {
-  id: string;
-};
-
-type LaneE2eRecommendations = {
-  recommended: LaneE2eRecommendation[];
-  optional: LaneE2eRecommendation[];
-};
-
-export type AdvisorLaneReport = {
+export type AdvisorReport = {
   status: "completed" | "failed" | "skipped" | "unavailable";
   partial: boolean;
   counts?: FindingCounts;
   confidence?: "low" | "medium" | "high";
-  fingerprints?: LaneFingerprints;
-  e2e?: LaneE2eRecommendations;
-  terminology?: TrustedLaneTerminologyDecision[];
-};
-
-export type AdvisorLaneReports = {
-  primary: AdvisorLaneReport;
-  secondOpinion: AdvisorLaneReport;
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -183,11 +146,6 @@ async function main(): Promise<void> {
     args.result || "artifacts/pr-review-advisor/pr-review-advisor-final-result.json";
   if (!args.analysisResult) {
     throw new Error("--analysis-result is required");
-  }
-  if (Boolean(args.secondOpinionAnalysisResult) !== Boolean(args.secondOpinionResult)) {
-    throw new Error(
-      "--second-opinion-analysis-result and --second-opinion-result must be provided together",
-    );
   }
   const { marker, title, label } = normalizeCommentOptions({
     marker: args.marker || process.env.PR_REVIEW_ADVISOR_COMMENT_MARKER || MARKER,
@@ -213,12 +171,7 @@ async function main(): Promise<void> {
     summaryExplicit: Boolean(args.summary),
     resultExplicit: Boolean(args.result),
   });
-  const lanes = readAdvisorLaneReports({
-    primaryAnalysisResultPath: args.analysisResult,
-    primaryResult: result,
-    secondOpinionAnalysisResultPath: args.secondOpinionAnalysisResult,
-    secondOpinionResultPath: args.secondOpinionResult,
-  });
+  const report = readAdvisorReport(args.analysisResult, result);
   const baseMetadata = {
     runId: process.env.PR_REVIEW_ADVISOR_RUN_ID || process.env.GITHUB_RUN_ID,
     runAttempt: process.env.PR_REVIEW_ADVISOR_RUN_ATTEMPT || process.env.GITHUB_RUN_ATTEMPT,
@@ -235,7 +188,7 @@ async function main(): Promise<void> {
     marker,
     title,
     metadata: baseMetadata,
-    lanes,
+    report,
   });
 
   await upsertStickyComment({
@@ -253,7 +206,7 @@ async function main(): Promise<void> {
         marker,
         title,
         metadata: { ...baseMetadata, commentId: String(comment.id) },
-        lanes,
+        report,
       }),
   });
   await deleteBotOwnedStickyComments({
@@ -316,67 +269,32 @@ export function readCommentArtifacts(
   return { summary, result };
 }
 
-export function readAdvisorLaneReports({
-  primaryAnalysisResultPath,
-  primaryResult,
-  secondOpinionAnalysisResultPath,
-  secondOpinionResultPath,
-}: {
-  primaryAnalysisResultPath: string;
-  primaryResult?: ReviewAdvisorResult;
-  secondOpinionAnalysisResultPath?: string;
-  secondOpinionResultPath?: string;
-}): AdvisorLaneReports {
-  const primaryAnalysisResult = readJsonIfExists<unknown>(primaryAnalysisResultPath);
-  if (!primaryAnalysisResult) {
-    throw new Error(`No primary advisor analysis result found at ${primaryAnalysisResultPath}`);
+export function readAdvisorReport(
+  analysisResultPath: string,
+  finalResult?: ReviewAdvisorResult,
+): AdvisorReport {
+  const analysisResult = readJsonIfExists<unknown>(analysisResultPath);
+  if (!analysisResult) {
+    throw new Error(`No advisor analysis result found at ${analysisResultPath}`);
   }
-  const primary = normalizeAdvisorLaneReport(primaryAnalysisResult, primaryResult);
-  if (!secondOpinionAnalysisResultPath || !secondOpinionResultPath) {
-    return { primary, secondOpinion: unavailableLaneReport() };
-  }
-
-  try {
-    const secondOpinionAnalysisResult = readJsonIfExists<unknown>(secondOpinionAnalysisResultPath);
-    const secondOpinionResult = readJsonIfExists<ReviewAdvisorResult>(secondOpinionResultPath);
-    return {
-      primary,
-      secondOpinion: normalizeAdvisorLaneReport(
-        secondOpinionAnalysisResult,
-        secondOpinionResult,
-        primaryResult?.headSha,
-      ),
-    };
-  } catch {
-    // The evaluation lane is deliberately non-blocking. A malformed or
-    // unreadable second-opinion artifact is reported as unavailable and can
-    // never suppress publication of the trusted primary result.
-    return { primary, secondOpinion: unavailableLaneReport() };
-  }
+  return normalizeAdvisorReport(analysisResult, finalResult);
 }
 
-export function normalizeAdvisorLaneReport(
+export function normalizeAdvisorReport(
   analysisResult: unknown,
   finalResult: unknown,
-  expectedHeadSha?: string,
-): AdvisorLaneReport {
-  if (!isRecord(analysisResult)) return unavailableLaneReport();
+): AdvisorReport {
+  if (!isRecord(analysisResult)) return unavailableAdvisorReport();
   const failed = analysisResult.failed === true;
   const skipped = analysisResult.skipped === true;
-  if (failed && skipped) return unavailableLaneReport();
+  if (failed && skipped) return unavailableAdvisorReport();
   if (skipped) return { status: "skipped", partial: false };
 
   const partial = failed && analysisResult.partial === true;
   if (failed && !partial) return { status: "failed", partial: false };
-  const structure = trustedLaneStructure(finalResult, expectedHeadSha);
-  if (failed) {
-    return {
-      status: "failed",
-      partial: true,
-      ...(structure ?? {}),
-    };
-  }
-  if (analysisResult.version !== 1 || !structure) return unavailableLaneReport();
+  const structure = trustedAdvisorStatus(finalResult);
+  if (failed) return { status: "failed", partial: true, ...(structure ?? {}) };
+  if (analysisResult.version !== 1 || !structure) return unavailableAdvisorReport();
   return { status: "completed", partial: false, ...structure };
 }
 
@@ -387,7 +305,7 @@ export function buildComment({
   marker,
   title,
   metadata,
-  lanes,
+  report,
 }: {
   summary: string;
   result?: ReviewAdvisorResult;
@@ -395,7 +313,7 @@ export function buildComment({
   marker?: string;
   title?: string;
   metadata?: CommentMetadata;
-  lanes?: AdvisorLaneReports;
+  report?: AdvisorReport;
 }): string {
   const findingRecords = collectFindingRecords(result);
   const blockerCount = findingRecords.filter(
@@ -415,7 +333,7 @@ export function buildComment({
   const findingsDetails = renderFindingsDetails(findingRecords);
   const terminologyDetails = renderTerminologyDetails(result);
   const e2eDetails = renderE2eDetails(result);
-  const laneDetails = renderAdvisorLanes(lanes);
+  const statusDetails = renderAdvisorStatus(report);
   const details = runUrl ? `\n[Workflow run details](${runUrl})` : "";
   const hiddenMetadata = renderHiddenMetadata(result, metadata);
   const posture = reviewPosture(
@@ -432,7 +350,7 @@ export function buildComment({
 **Advisor assessment:** ${posture}
 **Next action:** ${nextAction(findingRecords)}
 **Findings:** ${compactCount(blockerCount, "blocker")} · ${compactCount(warningCount, "warning")} · ${compactCount(suggestionCount, "suggestion")}
-${informational}${laneDetails}${reviewHistory}${terminologyDetails}${e2eDetails}${findingsDetails}${details}
+${informational}${statusDetails}${reviewHistory}${terminologyDetails}${e2eDetails}${findingsDetails}${details}
 
 This automated review informs maintainers. Warnings and suggestions do not require a response. A maintainer decides whether to merge.
 
@@ -440,27 +358,8 @@ This automated review informs maintainers. Warnings and suggestions do not requi
   return boundedComment(prefix, content);
 }
 
-function renderAdvisorLanes(lanes?: AdvisorLaneReports): string {
-  if (!lanes) return "";
-  const lines = [
-    "",
-    "### Model lanes",
-    `- **GPT-5.6 Terra (primary):** ${renderLaneReport(lanes.primary)}`,
-    `- **Nemotron 3 Ultra (second opinion):** ${renderLaneReport(lanes.secondOpinion)}`,
-  ];
-  const comparison = renderLaneComparison(lanes.primary, lanes.secondOpinion);
-  if (comparison) lines.push(`- **Model comparison:** ${comparison}`);
-  lines.push(...renderSecondOpinionTerminology(lanes.primary, lanes.secondOpinion));
-  lines.push(...renderSecondOpinionE2eRecommendations(lanes.primary, lanes.secondOpinion));
-  lines.push(
-    "",
-    "_Second-opinion terminology and E2E selections are advisory. Live E2E does not run automatically for pull requests._",
-    "",
-  );
-  return `${lines.join("\n")}\n`;
-}
-
-function renderLaneReport(report: AdvisorLaneReport): string {
+function renderAdvisorStatus(report?: AdvisorReport): string {
+  if (!report) return "";
   const status =
     report.status === "completed"
       ? "Completed"
@@ -471,158 +370,9 @@ function renderLaneReport(report: AdvisorLaneReport): string {
         : report.status === "skipped"
           ? "Skipped"
           : "Unavailable";
-  if (!report.counts) return status;
+  if (!report.counts) return `**Synthesis status:** ${status}\n`;
   const confidence = report.confidence ? ` · ${report.confidence} confidence` : "";
-  return `${status}${confidence} · ${compactCount(report.counts.blockers, "blocker")} · ${compactCount(report.counts.warnings, "warning")} · ${compactCount(report.counts.suggestions, "suggestion")}`;
-}
-
-function renderLaneComparison(
-  primary: AdvisorLaneReport,
-  secondOpinion: AdvisorLaneReport,
-): string | undefined {
-  if (
-    primary.status !== "completed" ||
-    secondOpinion.status !== "completed" ||
-    !primary.counts ||
-    !secondOpinion.counts ||
-    !primary.fingerprints ||
-    !secondOpinion.fingerprints
-  ) {
-    return undefined;
-  }
-  const differences = [
-    countDifference(secondOpinion.counts.blockers - primary.counts.blockers, "blocker"),
-    countDifference(secondOpinion.counts.warnings - primary.counts.warnings, "warning"),
-    countDifference(secondOpinion.counts.suggestions - primary.counts.suggestions, "suggestion"),
-  ];
-  const findingComparison =
-    primary.fingerprints.findings === secondOpinion.fingerprints.findings
-      ? "normalized findings match"
-      : "normalized findings differ";
-  const e2eComparison =
-    primary.fingerprints.e2e === secondOpinion.fingerprints.e2e
-      ? "normalized E2E selections match"
-      : "normalized E2E selections differ";
-  const terminologyComparison =
-    primary.fingerprints.terminology === secondOpinion.fingerprints.terminology
-      ? "normalized terminology decisions match"
-      : "normalized terminology decisions differ";
-  const countComparison = differences.every((difference) =>
-    difference.startsWith("the same number"),
-  )
-    ? "severity counts match"
-    : `Nemotron reported ${differences.join(", ")}`;
-  return `${findingComparison}; ${terminologyComparison}; ${e2eComparison}; ${countComparison}.`;
-}
-
-function renderSecondOpinionTerminology(
-  primary: AdvisorLaneReport,
-  secondOpinion: AdvisorLaneReport,
-): string[] {
-  if (
-    primary.status !== "completed" ||
-    secondOpinion.status !== "completed" ||
-    primary.partial ||
-    secondOpinion.partial ||
-    !primary.terminology ||
-    !secondOpinion.terminology
-  ) {
-    return [];
-  }
-  const primaryBySource = new Map(
-    primary.terminology.map((decision) => [terminologyDecisionKey(decision), decision]),
-  );
-  const secondOnly = secondOpinion.terminology.filter(
-    (decision) => !primaryBySource.has(terminologyDecisionKey(decision)),
-  );
-  const conflicts = secondOpinion.terminology.filter((decision) => {
-    const primaryDecision = primaryBySource.get(terminologyDecisionKey(decision));
-    return primaryDecision && primaryDecision.disposition !== decision.disposition;
-  });
-  if (secondOnly.length === 0 && conflicts.length === 0) return [];
-
-  const total = secondOnly.length + conflicts.length;
-  const lines = [
-    "",
-    "<details>",
-    `<summary>${compactCount(total, "terminology difference")} from the second opinion</summary>`,
-    "",
-    "_Advisory only. These are normalized differences from the primary terminology receipt._",
-    "",
-  ];
-  for (const decision of conflicts.slice(0, 10)) {
-    const primaryDecision = primaryBySource.get(terminologyDecisionKey(decision));
-    lines.push(
-      `- <code>${escapeLocationHtml(decision.term)}</code> at <code>${escapeLocationHtml(`${decision.file}:${decision.line}`)}</code>: primary classified it as <code>${escapeLocationHtml(primaryDecision?.disposition || "unknown")}</code>; the second opinion classified it as <code>${escapeLocationHtml(decision.disposition)}</code>.`,
-    );
-  }
-  for (const decision of secondOnly.slice(0, Math.max(0, 10 - conflicts.length))) {
-    lines.push(
-      `- <code>${escapeLocationHtml(decision.term)}</code> at <code>${escapeLocationHtml(`${decision.file}:${decision.line}`)}</code>: selected only by the second-opinion lane as <code>${escapeLocationHtml(decision.disposition)}</code>.`,
-    );
-  }
-  if (total > 10) lines.push(`- _${total - 10} more._`);
-  lines.push("", "</details>");
-  return lines;
-}
-
-function terminologyDecisionKey(decision: TrustedLaneTerminologyDecision): string {
-  return `${decision.term.toLocaleLowerCase()}\0${decision.file}\0${decision.line}`;
-}
-
-function renderSecondOpinionE2eRecommendations(
-  primary: AdvisorLaneReport,
-  secondOpinion: AdvisorLaneReport,
-): string[] {
-  if (
-    primary.status !== "completed" ||
-    secondOpinion.status !== "completed" ||
-    primary.partial ||
-    secondOpinion.partial ||
-    !primary.e2e ||
-    !secondOpinion.e2e
-  ) {
-    return [];
-  }
-
-  const primaryIds = new Set(
-    [...primary.e2e.recommended, ...primary.e2e.optional].map(({ id }) => id),
-  );
-  const additionalIds = new Set<string>();
-  const additional = [...secondOpinion.e2e.recommended, ...secondOpinion.e2e.optional].filter(
-    ({ id }) => {
-      if (primaryIds.has(id) || additionalIds.has(id)) return false;
-      additionalIds.add(id);
-      return true;
-    },
-  );
-  if (additional.length === 0) return [];
-
-  const lines = [
-    "",
-    "<details>",
-    `<summary>${compactCount(additional.length, "additional E2E selection")} from the second opinion</summary>`,
-    "",
-    "_Advisory only. The primary lane did not select these E2E jobs or targets._",
-    "",
-  ];
-  for (const recommendation of additional.slice(0, E2E_RENDER_LIMIT)) {
-    lines.push(
-      `- <code>${escapeLocationHtml(recommendation.id)}</code>: The completed second-opinion lane identified E2E coverage that the primary lane omitted.`,
-    );
-  }
-  if (additional.length > E2E_RENDER_LIMIT) {
-    lines.push(`- _${additional.length - E2E_RENDER_LIMIT} more._`);
-  }
-  lines.push("", "</details>");
-  return lines;
-}
-
-function countDifference(difference: number, label: string): string {
-  if (difference === 0) return `the same number of ${label}s`;
-  const direction = difference > 0 ? "more" : "fewer";
-  const count = Math.abs(difference);
-  return `${count} ${direction} ${count === 1 ? label : `${label}s`}`;
+  return `**Synthesis status:** ${status}${confidence} · ${compactCount(report.counts.blockers, "blocker")} · ${compactCount(report.counts.warnings, "warning")} · ${compactCount(report.counts.suggestions, "suggestion")}\n`;
 }
 
 function renderTerminologyDetails(result?: ReviewAdvisorResult): string {
@@ -823,20 +573,10 @@ function collectFindingRecords(result?: ReviewAdvisorResult): FindingRecord[] {
   }));
 }
 
-function trustedLaneStructure(
+function trustedAdvisorStatus(
   value: unknown,
-  expectedHeadSha?: string,
-):
-  | {
-      counts: FindingCounts;
-      confidence?: "low" | "medium" | "high";
-      fingerprints: LaneFingerprints;
-      e2e: LaneE2eRecommendations;
-      terminology: TrustedLaneTerminologyDecision[];
-    }
-  | undefined {
+): { counts: FindingCounts; confidence?: "low" | "medium" | "high" } | undefined {
   if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.findings)) return undefined;
-  if (expectedHeadSha && value.headSha !== expectedHeadSha) return undefined;
   const counts: FindingCounts = { blockers: 0, warnings: 0, suggestions: 0 };
   for (const finding of value.findings) {
     if (!isRecord(finding)) continue;
@@ -845,217 +585,16 @@ function trustedLaneStructure(
     else if (finding.severity === "suggestion") counts.suggestions += 1;
   }
   const summary = isRecord(value.summary) ? value.summary : undefined;
-  const confidence = trustedLaneConfidence(summary?.confidence);
-  const e2e = trustedLaneE2eRecommendations(value as ReviewAdvisorResult);
-  const terminology = trustedLaneTerminology(value.terminologyReview, value.headSha);
-  if (!terminology) return undefined;
+  const confidence = summary?.confidence;
   return {
     counts,
-    ...(confidence ? { confidence } : {}),
-    e2e,
-    terminology,
-    fingerprints: {
-      findings: opaqueFingerprint(normalizedFindingRecords(value.findings)),
-      e2e: opaqueFingerprint(e2eDecisionSets(value.e2e)),
-      terminology: opaqueFingerprint(terminology ?? []),
-    },
+    ...(confidence === "low" || confidence === "medium" || confidence === "high"
+      ? { confidence }
+      : {}),
   };
 }
 
-function trustedLaneTerminology(
-  value: unknown,
-  headSha: unknown,
-): TrustedLaneTerminologyDecision[] | undefined {
-  if (value === undefined) return undefined;
-  if (!isRecord(value) || typeof headSha !== "string") return undefined;
-  if (!oneOf(value.status, ["clear", "candidates", "limited"] as const)) return undefined;
-  if (!Array.isArray(value.decisions) || value.decisions.length > 20) return undefined;
-  if (!nullableBoundedText(value.noChangesReason)) return undefined;
-  if (
-    value.decisions.length > 0 &&
-    (value.status !== "candidates" || value.noChangesReason !== null)
-  ) {
-    return undefined;
-  }
-  if (
-    value.decisions.length === 0 &&
-    (value.status === "candidates" || !boundedText(value.noChangesReason))
-  ) {
-    return undefined;
-  }
-  const decisions: TrustedLaneTerminologyDecision[] = [];
-  const ids = new Set<string>();
-  for (const decision of value.decisions) {
-    if (!isRecord(decision) || !isRecord(decision.source)) return undefined;
-    const disposition = decision.disposition;
-    if (
-      !boundedText(decision.id, 80) ||
-      !/^T-[0-9]+$/u.test(decision.id) ||
-      ids.has(decision.id) ||
-      !boundedText(decision.term, 80) ||
-      // Keep this trusted-publisher inventory independent from analyzer code. The
-      // publisher runs from the base SHA and validates untrusted lane artifacts.
-      !oneOf(decision.change, ["introduced", "expanded", "redefined"] as const) ||
-      !oneOf(disposition, ["established", "justified", "define", "replace", "conflict"] as const) ||
-      !boundedText(decision.meaning) ||
-      !nullableBoundedText(decision.contrast) ||
-      !nullableBoundedText(decision.existingTerm) ||
-      !oneOf(decision.semanticImpact, [
-        "none",
-        "behavior",
-        "security",
-        "support",
-        "evidence",
-        "test",
-        "release",
-      ] as const) ||
-      !boundedText(decision.recommendation) ||
-      !boundedText(decision.traceId, 80) ||
-      !boundedText(decision.source.file, 500) ||
-      !Number.isInteger(decision.source.line) ||
-      Number(decision.source.line) < 1 ||
-      decision.source.headSha !== headSha ||
-      (disposition === "justified" && !boundedText(decision.contrast)) ||
-      (disposition === "replace" && !boundedText(decision.existingTerm))
-    ) {
-      return undefined;
-    }
-    ids.add(decision.id);
-    decisions.push({
-      term: decision.term.trim(),
-      change: decision.change,
-      disposition,
-      meaning: decision.meaning.trim(),
-      contrast: typeof decision.contrast === "string" ? decision.contrast.trim() : null,
-      existingTerm: typeof decision.existingTerm === "string" ? decision.existingTerm.trim() : null,
-      semanticImpact: decision.semanticImpact,
-      recommendation: decision.recommendation.trim(),
-      file: decision.source.file,
-      line: Number(decision.source.line),
-    });
-  }
-  return decisions.sort((left, right) => stableJson(left).localeCompare(stableJson(right)));
-}
-
-function boundedText(value: unknown, maxLength = 2000): value is string {
-  return typeof value === "string" && value.trim().length > 0 && value.length <= maxLength;
-}
-
-function nullableBoundedText(value: unknown): value is string | null {
-  return value === null || (typeof value === "string" && value.length <= 2000);
-}
-
-function oneOf<const Values extends readonly string[]>(
-  value: unknown,
-  values: Values,
-): value is Values[number] {
-  return typeof value === "string" && values.includes(value as Values[number]);
-}
-
-function normalizedFindingRecords(value: unknown[]): unknown[] {
-  return value
-    .filter(isRecord)
-    .map((finding) => ({ ...finding }))
-    .sort((left, right) => stableJson(left).localeCompare(stableJson(right)));
-}
-
-function trustedLaneConfidence(value: unknown): "low" | "medium" | "high" | undefined {
-  return value === "low" || value === "medium" || value === "high" ? value : undefined;
-}
-
-function trustedLaneE2eRecommendations(result: ReviewAdvisorResult): LaneE2eRecommendations {
-  const inventory = commentE2eInventory();
-  const changedCredentialFreeJobIds = trustedChangedCredentialFreeJobIds(result);
-  const coverage = result.e2e?.coverage;
-  const targets = result.e2e?.targets;
-  return {
-    recommended: trustedLaneE2eTier(
-      Array.isArray(coverage?.requiredTests) ? coverage.requiredTests : undefined,
-      Array.isArray(targets?.required) ? targets.required : undefined,
-      true,
-      inventory,
-      changedCredentialFreeJobIds,
-    ),
-    optional: trustedLaneE2eTier(
-      Array.isArray(coverage?.optionalTests) ? coverage.optionalTests : undefined,
-      Array.isArray(targets?.optional) ? targets.optional : undefined,
-      false,
-      inventory,
-      changedCredentialFreeJobIds,
-    ),
-  };
-}
-
-function trustedLaneE2eTier(
-  coverageItems: unknown[] | undefined,
-  targetItems: unknown[] | undefined,
-  required: boolean,
-  inventory: TrustedE2eRecommendationInventory,
-  changedCredentialFreeJobIds: ReadonlySet<string>,
-): LaneE2eRecommendation[] {
-  const ids = uniqueE2eIds([
-    ...trustedTargetIds(targetItems, required, inventory, changedCredentialFreeJobIds),
-    ...trustedCoverageIds(coverageItems, inventory),
-  ]);
-  return ids.map((id) => ({ id }));
-}
-
-function e2eDecisionSets(value: unknown): Record<string, string[]> {
-  const e2e = isRecord(value) ? value : {};
-  const coverage = isRecord(e2e.coverage) ? e2e.coverage : {};
-  const targets = isRecord(e2e.targets) ? e2e.targets : {};
-  return {
-    requiredCoverage: normalizedIds(coverage.requiredTests),
-    optionalCoverage: normalizedIds(coverage.optionalTests),
-    requiredSelectors: normalizedSelectors(targets.required),
-    optionalSelectors: normalizedSelectors(targets.optional),
-  };
-}
-
-function normalizedIds(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return [
-    ...new Set(
-      value.flatMap((item) => (isRecord(item) && typeof item.id === "string" ? [item.id] : [])),
-    ),
-  ].sort();
-}
-
-function normalizedSelectors(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return [
-    ...new Set(
-      value.flatMap((item) => {
-        if (
-          !isRecord(item) ||
-          typeof item.id !== "string" ||
-          typeof item.workflow !== "string" ||
-          typeof item.selectorType !== "string"
-        ) {
-          return [];
-        }
-        return [`${item.workflow}:${item.selectorType}:${item.id}`];
-      }),
-    ),
-  ].sort();
-}
-
-function opaqueFingerprint(value: unknown): string {
-  return createHash("sha256").update(stableJson(value)).digest("hex");
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (isRecord(value)) {
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
-
-function unavailableLaneReport(): AdvisorLaneReport {
+function unavailableAdvisorReport(): AdvisorReport {
   return { status: "unavailable", partial: false };
 }
 

@@ -8,6 +8,10 @@ import { describe, expect, it } from "vitest";
 import type { TestSpecification, Vitest } from "vitest/node";
 
 import {
+  discoverVitestCandidates,
+  expectedProjectForTestPath,
+} from "../scripts/checks/vitest-project-overlap.mts";
+import {
   assignStableShards,
   CliCoverageSequencer,
   cliTestTimingHints,
@@ -44,38 +48,20 @@ function sequencer(index: number, count: number): CliCoverageSequencer {
   } as unknown as Vitest);
 }
 
-function representativeCliCoverageEntries(): WeightedShardEntry<string>[] {
-  const measured = Object.entries(cliTestTimingHints.files).map(([file, weightMs]) => {
-    const projectName = file.startsWith("src/")
-      ? "cli"
-      : file.startsWith("test/e2e/support/")
-        ? "e2e-support"
-        : "integration";
-    return { key: `${projectName}:${file}`, weightMs, value: file };
+function currentCliCoverageEntries(): WeightedShardEntry<string>[] {
+  const coverageProjects = new Set(["cli", "integration", "e2e-support"]);
+  return [...discoverVitestCandidates()].flatMap((file) => {
+    const projectName = expectedProjectForTestPath(file);
+    return projectName && coverageProjects.has(projectName)
+      ? [
+          {
+            key: `${projectName}:${file}`,
+            weightMs: timingWeightForPath(file),
+            value: file,
+          },
+        ]
+      : [];
   });
-  const projectSizes = { cli: 832, integration: 512, "e2e-support": 116 } as const;
-  const ordinary = (Object.keys(projectSizes) as (keyof typeof projectSizes)[]).flatMap(
-    (projectName) => {
-      const measuredCount = measured.filter((entry) =>
-        entry.key.startsWith(`${projectName}:`),
-      ).length;
-      return Array.from({ length: projectSizes[projectName] - measuredCount }, (_, index) => {
-        const file =
-          projectName === "cli"
-            ? `src/lib/fixture-${index}.test.ts`
-            : projectName === "e2e-support"
-              ? `test/e2e/support/fixture-${index}.test.ts`
-              : `test/fixture-${index}.test.ts`;
-        return {
-          key: `${projectName}:${file}`,
-          weightMs: cliTestTimingHints.defaultDurationMs,
-          value: file,
-        };
-      });
-    },
-  );
-
-  return [...measured, ...ordinary];
 }
 
 describe("stable CLI coverage sharding", () => {
@@ -129,20 +115,34 @@ describe("stable CLI coverage sharding", () => {
     );
 
     expect(Object.fromEntries(owners)).toEqual({
-      "cli:src/lib/example.test.ts": 5,
-      "e2e-support:test/e2e/support/example.test.ts": 5,
+      "cli:src/lib/example.test.ts": 6,
+      "e2e-support:test/e2e/support/example.test.ts": 8,
       "integration:test/hermes-restart-config-seal-write-lock.test.ts": 6,
-      "integration:test/local-credential-helper-fields.test.ts": 5,
-      "integration:test/regular-0.test.ts": 4,
+      "integration:test/local-credential-helper-fields.test.ts": 7,
+      "integration:test/regular-0.test.ts": 6,
     });
   });
 
-  it("keeps a representative test roster balanced across the eight CI shards", () => {
-    const shards = assignStableShards(representativeCliCoverageEntries(), 8);
+  it("keeps the current test roster balanced across the twelve CI shards (#6237)", () => {
+    const shards = assignStableShards(currentCliCoverageEntries(), 12);
     const weights = shards.map((shard) => shard.totalWeightMs);
     const averageWeight = weights.reduce((total, weight) => total + weight, 0) / weights.length;
 
     expect(Math.max(...weights)).toBeLessThanOrEqual(averageWeight * 1.05);
+  });
+
+  it("balances the serialized integration lane across the twelve CI shards (#6237)", () => {
+    const integrationEntries = currentCliCoverageEntries().filter((entry) =>
+      entry.key.startsWith("integration:"),
+    );
+    expect(integrationEntries.length).toBeGreaterThan(0);
+
+    const weights = assignStableShards(integrationEntries, 12).map(
+      (shard) => shard.totalWeightMs,
+    );
+    const averageWeight = weights.reduce((total, weight) => total + weight, 0) / weights.length;
+
+    expect(Math.max(...weights)).toBeLessThanOrEqual(averageWeight * 1.1);
   });
 
   it("uses stable sharding only for projects owned by the CLI coverage matrix", () => {
@@ -179,6 +179,26 @@ describe("stable CLI coverage sharding", () => {
     const files = Object.keys(cliTestTimingHints.files);
 
     expect(cliTestTimingHints.defaultDurationMs).toBe(5_000);
+    expect(cliTestTimingHints.sources).toEqual([
+      {
+        runId: 32538808045,
+        artifactId: 9467034647,
+        headSha: "9577b175338d6cf1ead335452ade76470f1593a9",
+        recordedAt: "2026-08-22T00:40:44Z",
+      },
+      {
+        runId: 32541609216,
+        artifactId: 9467388387,
+        headSha: "1080ecce4fd4d0366e546b3e92a25c3ec158af61",
+        recordedAt: "2026-08-22T01:03:19Z",
+      },
+      {
+        runId: 32542347175,
+        artifactId: 9467589302,
+        headSha: "bb686324dd2ce19f3708c6900b3d22110e198662",
+        recordedAt: "2026-08-22T01:16:45Z",
+      },
+    ]);
     expect(files).toEqual([...files].sort());
     expect(files.length).toBeGreaterThan(50);
     files.forEach((file) => {
@@ -189,12 +209,38 @@ describe("stable CLI coverage sharding", () => {
   });
 
   it("rejects malformed timing hint manifests", () => {
-    expect(() => parseCliTestTimingHints({ schemaVersion: 2 })).toThrow(/schemaVersion 1/u);
+    expect(() => parseCliTestTimingHints({ schemaVersion: 1 })).toThrow(/schemaVersion 2/u);
     expect(() =>
       parseCliTestTimingHints({
         ...cliTestTimingHints,
         files: { "../outside.test.ts": 6_000 },
       }),
     ).toThrow(/Invalid CLI test timing hint/u);
+  });
+
+  it.each([
+    { name: "no sources", sources: [] },
+    {
+      name: "a source without an artifact ID",
+      sources: [
+        {
+          runId: 32538808045,
+          headSha: "9577b175338d6cf1ead335452ade76470f1593a9",
+          recordedAt: "2026-08-22T00:40:44Z",
+        },
+      ],
+    },
+    {
+      name: "a non-positive artifact ID",
+      sources: [{ ...cliTestTimingHints.sources[0], artifactId: 0 }],
+    },
+    {
+      name: "a non-integer artifact ID",
+      sources: [{ ...cliTestTimingHints.sources[0], artifactId: 1.5 }],
+    },
+  ])("rejects timing hint manifests with $name", ({ sources }) => {
+    expect(() => parseCliTestTimingHints({ ...cliTestTimingHints, sources })).toThrow(
+      /timing hints? (?:require source metadata|source)/u,
+    );
   });
 });

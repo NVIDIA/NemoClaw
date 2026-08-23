@@ -12,16 +12,10 @@ export function specialistSessionFileName(interest: AdvisorInterest): string {
   return `pr-review-${interest}-session.jsonl`;
 }
 
-export const REQUIRED_SPECIALIST_INTERESTS = [
-  "behavior",
-  "trust",
-] as const satisfies readonly AdvisorInterest[];
-
 export type SpecialistSessionInventory = Readonly<{
   directory: string;
-  files: Readonly<Partial<Record<AdvisorInterest, string>>>;
+  files: Readonly<Record<AdvisorInterest, string>>;
   available: readonly AdvisorInterest[];
-  missing: readonly AdvisorInterest[];
 }>;
 
 export function validateSpecialistSessionDirectory(directory: string): SpecialistSessionInventory {
@@ -30,15 +24,8 @@ export function validateSpecialistSessionDirectory(directory: string): Specialis
     throw new Error("Specialist session input must be a regular directory");
   }
   const realDirectory = fs.realpathSync(directory);
-  const expected = new Set(ADVISOR_INTERESTS.map(specialistSessionFileName));
-  const entries = fs.readdirSync(directory);
-  const unexpected = entries.filter((entry) => !expected.has(entry));
-  if (unexpected.length > 0) {
-    throw new Error(`Unexpected specialist session input: ${unexpected.sort().join(", ")}`);
-  }
-  const files: Partial<Record<AdvisorInterest, string>> = {};
+  const files = {} as Record<AdvisorInterest, string>;
   const available: AdvisorInterest[] = [];
-  const missing: AdvisorInterest[] = [];
   for (const interest of ADVISOR_INTERESTS) {
     const name = specialistSessionFileName(interest);
     const file = path.join(directory, name);
@@ -49,11 +36,7 @@ export function validateSpecialistSessionDirectory(directory: string): Specialis
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         throw new Error(`Specialist session must be a regular file: ${interest}`);
       }
-      if (REQUIRED_SPECIALIST_INTERESTS.some((required) => required === interest)) {
-        throw new Error(`Missing required specialist session: ${interest}`);
-      }
-      missing.push(interest);
-      continue;
+      throw new Error(`Missing required specialist session: ${interest}`);
     }
     let header: Record<string, unknown>;
     try {
@@ -82,5 +65,5 @@ export function validateSpecialistSessionDirectory(directory: string): Specialis
     files[interest] = file;
     available.push(interest);
   }
-  return { directory: realDirectory, files, available, missing };
+  return { directory: realDirectory, files, available };
 }

@@ -150,6 +150,8 @@ export type OnboardOptions = {
   hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
   sandboxGpu?: "enable" | "disable" | null;
   sandboxGpuDevice?: string | null;
+  /** GPU exposed to the host-side vLLM container managed by NemoClaw. */
+  vllmGpuDevice?: string | null;
   acceptThirdPartySoftware?: boolean;
   agent?: string | null;
   toolDisclosure?: import("../tool-disclosure").ToolDisclosure | null;
