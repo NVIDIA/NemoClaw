@@ -5774,7 +5774,7 @@ describe_hf_download_authentication() {
 }
 
 maybe_offer_express_install() {
-  local platform resume_file
+  local platform
   platform="$(detect_express_platform)"
   validate_express_platform_boundary "$platform"
   validate_force_station_install_override "$platform"
@@ -5825,16 +5825,13 @@ maybe_offer_express_install() {
       # preparation boundary without forcing the rest of the express policy.
       # Honor an existing exact-revision reboot resume before configuration.
       _STATION_INSTALL_MODE="provider"
-      # load_station_express_resume returns 1 both when the state file is absent
-      # and when the state probe fails. Resolve the path first so a probe or load
-      # failure stops the install instead of continuing without the exact
-      # revision state it recorded (#9879).
-      resume_file="$(station_express_resume_file)" \
+      # load_station_express_resume returns 1 for an absent state file and for a
+      # failed state probe, and calls error for every other failure. Resolve the
+      # path first so a probe failure stops the install instead of reading as an
+      # absent file, which stays non-fatal for a first install (#9879).
+      station_express_resume_file >/dev/null \
         || error "Cannot resolve the DGX Station express resume state path. Refusing to continue without exact resume state."
-      if [[ -e "$resume_file" || -L "$resume_file" ]]; then
-        load_station_express_resume \
-          || error "DGX Station express resume state exists but did not load. Refusing to continue; restore the owner-only state from the accepted revision."
-      fi
+      load_station_express_resume || true
       _SELECTED_EXPRESS_PLATFORM="$platform"
       configure_station_express_model
       info "Detected ${platform}. Using Station preparation for the explicitly selected managed-vLLM provider."
