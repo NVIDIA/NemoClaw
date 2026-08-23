@@ -123,8 +123,8 @@ describe("the staging Launchable reproduces the bounded OpenClaw CLI scenario", 
     expect(script).toContain("for attempt in 1 2 3 4 5");
     expect(script).toContain("cleanup-owned-workspace");
     expect(script).toContain("cleanup could not inspect workspace inventory");
-    expect(script).toContain("workspace SSH readiness timed out");
-    expect(script).toContain('SSH access to $INSTANCE_NAME succeeded');
+    expect(script).toContain("workspace Brev exec readiness timed out");
+    expect(script).toContain('Brev exec access to $INSTANCE_NAME succeeded');
     expect(script).toContain('classification="timeout"');
     expect(script).toContain('brev delete "$INSTANCE_NAME"');
     expect(script).toContain('jq -e --arg run "$producer_run"');
@@ -135,8 +135,8 @@ describe("the staging Launchable reproduces the bounded OpenClaw CLI scenario", 
   });
 
   it.each([
-    ["BREV_SSH_TIMEOUT_SECONDS", "0"],
-    ["BREV_SSH_TIMEOUT_SECONDS", "1+1"],
+    ["BREV_EXEC_TIMEOUT_SECONDS", "0"],
+    ["BREV_EXEC_TIMEOUT_SECONDS", "1+1"],
     ["POLL_SECONDS", "0"],
     ["POLL_SECONDS", "$(touch forbidden)"],
   ])("rejects invalid %s before cloud operations (#9880)", (name, value) => {
@@ -149,38 +149,37 @@ describe("the staging Launchable reproduces the bounded OpenClaw CLI scenario", 
     expect(fs.existsSync(fixture.state)).toBe(false);
   });
 
-  it.each([
-    ["brev refresh", /timeout --signal=KILL [12]s brev refresh/u],
-    ["ssh", /timeout --signal=KILL [12]s ssh .* issue-9880-test true/u],
-  ])(
-    "bounds a blocked %s operation by the SSH deadline (#9880)",
+  it.each([["brev exec", /timeout --signal=KILL [12]s brev exec issue-9880-test true/u]])(
+    "bounds a blocked %s operation by the Brev exec deadline (#9880)",
     (blockedCommand, boundedCall) => {
       const fixture = issue9880Fixture();
       const result = fixture.run({
-        BREV_SSH_TIMEOUT_SECONDS: "2",
+        BREV_EXEC_TIMEOUT_SECONDS: "2",
         FAKE_BLOCK_COMMAND: blockedCommand,
       });
 
       expect(result.status, `${result.stdout}\n${result.stderr}\n${fs.readFileSync(fixture.calls, "utf8")}`).not.toBe(0);
       const calls = fs.readFileSync(fixture.calls, "utf8");
-      expect(`${result.stdout}\n${result.stderr}`, calls).toContain("workspace SSH readiness timed out");
-      expect(calls).toMatch(/timeout --signal=KILL [12]s brev refresh/u);
+      expect(`${result.stdout}\n${result.stderr}`, calls).toContain("workspace Brev exec readiness timed out");
       expect(calls).toMatch(boundedCall);
     },
     10_000,
   );
 
-  it("caps poll sleep to the remaining SSH deadline (#9880)", () => {
+  it("caps poll sleep to the remaining Brev exec deadline (#9880)", () => {
     const fixture = issue9880Fixture();
     const result = fixture.run({
-      BREV_SSH_TIMEOUT_SECONDS: "2",
+      BREV_EXEC_TIMEOUT_SECONDS: "2",
       POLL_SECONDS: "9",
+      FAKE_EXEC_SUCCEEDS: "0",
     });
 
     expect(result.status).not.toBe(0);
     const calls = fs.readFileSync(fixture.calls, "utf8");
-    const readiness = calls.slice(calls.indexOf("timeout --signal=KILL 2s brev refresh"));
-    expect(readiness).toContain("timeout --signal=KILL 2s brev refresh");
+    const readinessStart = calls.search(/timeout --signal=KILL [12]s brev exec/u);
+    expect(readinessStart, calls).toBeGreaterThanOrEqual(0);
+    const readiness = calls.slice(readinessStart);
+    expect(readiness).toMatch(/timeout --signal=KILL [12]s brev exec issue-9880-test true/u);
     expect(readiness).toMatch(/sleep [12]/u);
     expect(readiness).not.toContain("sleep 9");
     expect(readiness).not.toContain("timeout 0s");

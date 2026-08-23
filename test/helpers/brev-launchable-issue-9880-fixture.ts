@@ -43,7 +43,7 @@ if [ "${"$"}{1:-}" = --signal=KILL ]; then signal="--signal=KILL "; shift; fi
 duration="$1"
 shift
 printf 'timeout %s%s %s\n' "$signal" "$duration" "$*" >> "$FAKE_CALLS"
-if [ "${"$"}{FAKE_BLOCK_COMMAND:-}" = "brev refresh" ] && [ "${"$"}{1:-} ${"$"}{2:-}" = "brev refresh" ]; then
+if [ "${"$"}{FAKE_BLOCK_COMMAND:-}" = "brev exec" ] && [ "${"$"}{1:-} ${"$"}{2:-}" = "brev exec" ]; then
   /bin/sleep "${"$"}{duration%s}"
   exit 124
 fi
@@ -83,6 +83,9 @@ case "${"$"}{1:-}" in
   create)
     printf '%s\n' '{"name":"issue-9880-test","id":"ws-1","status":"RUNNING","shell_status":"READY","build_status":"COMPLETED"}' > "$FAKE_STATE" ;;
   refresh) exit 0 ;;
+  exec)
+    if [ "${"$"}{FAKE_EXEC_SUCCEEDS:-0}" = 1 ]; then exit 0; fi
+    exit 34 ;;
   delete) rm -f "$FAKE_STATE" ;;
   *) exit 2 ;;
 esac
