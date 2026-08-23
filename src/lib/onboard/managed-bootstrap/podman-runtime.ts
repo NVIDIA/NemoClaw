@@ -234,6 +234,7 @@ function canonicalInspect(inspect: JsonRecord): string {
       Cmd: stringArray(config.Cmd ?? [], "Config.Cmd"),
       Entrypoint: stringArray(config.Entrypoint ?? [], "Config.Entrypoint"),
       Env: stringArray(config.Env ?? [], "Config.Env"),
+      Healthcheck: record(config.Healthcheck, "Config.Healthcheck"),
       Labels: record(config.Labels ?? {}, "Config.Labels"),
       WorkingDir: String(config.WorkingDir ?? ""),
     },
@@ -242,6 +243,39 @@ function canonicalInspect(inspect: JsonRecord): string {
     NetworkSettings: { Networks: networkSettings.Networks ?? {} },
   };
   return JSON.stringify(canonical);
+}
+
+function healthDuration(value: unknown, label: string, minimum: number): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum) {
+    throw new Error(`Managed bootstrap Podman ${label} is invalid.`);
+  }
+  return value;
+}
+
+/** Reproduce OpenShell's exact Podman health contract on the managed replacement. */
+export function renderPodmanReplacementHealthArgs(inspect: JsonRecord): readonly string[] {
+  const config = record(inspect.Config, "Config");
+  const health = record(config.Healthcheck, "Config.Healthcheck");
+  const test = stringArray(health.Test, "Config.Healthcheck.Test");
+  if (test.length !== 2 || test[0] !== "CMD-SHELL" || test[1]?.trim().length === 0) {
+    throw new Error("Managed bootstrap Podman health check must be one CMD-SHELL command.");
+  }
+  const interval = healthDuration(health.Interval, "health-check interval", 1);
+  const timeout = healthDuration(health.Timeout, "health-check timeout", 1_000_000_000);
+  const retries = healthDuration(health.Retries, "health-check retries", 1);
+  const startPeriod = healthDuration(health.StartPeriod, "health-check start period", 0);
+  return Object.freeze([
+    "--health-cmd",
+    test[1] as string,
+    "--health-interval",
+    `${String(interval)}ns`,
+    "--health-timeout",
+    `${String(timeout)}ns`,
+    "--health-retries",
+    String(retries),
+    "--health-start-period",
+    `${String(startPeriod)}ns`,
+  ]);
 }
 
 function replacementCommand(
@@ -1370,6 +1404,7 @@ export function createPodmanManagedBootstrapAdapter(
             runtimeArgs: Object.freeze([
               ...networkArgs(current.rawInspect),
               ...renderPodmanReplacementMountArgs(current.rawInspect),
+              ...renderPodmanReplacementHealthArgs(current.rawInspect),
               ...optionArgs(replacementOptions.values),
             ]),
             environment: replacementEnvironment(current.rawInspect, handle),

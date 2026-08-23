@@ -41,6 +41,7 @@ import {
   createPodmanManagedBootstrapAdapter,
   createPodmanManagedBootstrapSurface,
   finishCommittedPodmanBootstrap,
+  renderPodmanReplacementHealthArgs,
   renderPodmanReplacementMountArgs,
 } from "./podman-runtime";
 import type { PodmanGatewayWatcherLease } from "./podman-watcher-lease";
@@ -173,6 +174,33 @@ function installCoordinatorMocks() {
 }
 
 describe("Podman managed-bootstrap runtime surface", () => {
+  it("reproduces the OpenShell Podman health contract on the replacement", () => {
+    expect(
+      renderPodmanReplacementHealthArgs({
+        Config: {
+          Healthcheck: {
+            Test: ["CMD-SHELL", "test -S /var/run/openshell.sock"],
+            Interval: 30_000_000_000,
+            Timeout: 2_000_000_000,
+            Retries: 10,
+            StartPeriod: 5_000_000_000,
+          },
+        },
+      }),
+    ).toEqual([
+      "--health-cmd",
+      "test -S /var/run/openshell.sock",
+      "--health-interval",
+      "30000000000ns",
+      "--health-timeout",
+      "2000000000ns",
+      "--health-retries",
+      "10",
+      "--health-start-period",
+      "5000000000ns",
+    ]);
+  });
+
   it("reproduces the OpenShell supervisor image mount on the bootstrap replacement", () => {
     expect(
       renderPodmanReplacementMountArgs({
