@@ -7,16 +7,16 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerImageInspectFormat } from "../adapters/docker";
+import {
+  dockerDesktopCredentialHelperResponds,
+  readDockerCredentialStore,
+} from "../adapters/docker/credential-store";
 import { dockerSpawn } from "../adapters/docker/exec";
 import { redirectInheritedChildStdoutToStderr } from "../cli/stdout-guard";
 import {
   LOCAL_SANDBOX_IMAGE_REPO,
   PORTABLE_LOCAL_SANDBOX_IMAGE_REPO,
 } from "../domain/sandbox/image-tag";
-import {
-  dockerDesktopCredentialHelperResponds,
-  readDockerCredentialStore,
-} from "../domain/docker-credential-store";
 import { DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES } from "../domain/docker-host";
 import { isWsl } from "../platform";
 import {

@@ -4,7 +4,7 @@
 import os from "node:os";
 import path from "node:path";
 
-import { DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES } from "./docker-host";
+import { DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES } from "../../domain/docker-host";
 
 type ReadFile = (filePath: string, encoding: BufferEncoding) => string;
 type RunCapture = (

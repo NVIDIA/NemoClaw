@@ -15,13 +15,13 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { ADVISORY_CHECKS } from "../advisories/registry";
-import { runAdvisories } from "../advisories/runner";
-import { DASHBOARD_PORT } from "../core/ports";
 import {
   dockerDesktopCredentialHelperResponds,
   readDockerCredentialStore,
-} from "../domain/docker-credential-store";
+} from "../adapters/docker/credential-store";
+import { ADVISORY_CHECKS } from "../advisories/registry";
+import { runAdvisories } from "../advisories/runner";
+import { DASHBOARD_PORT } from "../core/ports";
 import {
   DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES,
   isDockerDaemonReachable,
