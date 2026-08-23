@@ -27,7 +27,7 @@ before those targets run; local runners must provide it themselves.
   Launchable boot, SSH access, the exact image, and the baked runtime identity.
   It does not run onboarding or inference and does not satisfy release
   qualification.
-- `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Evidence` for Ubuntu 26.04, macOS, and WSL.
+- `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Compatibility` for Ubuntu 26.04, macOS, and WSL.
   On shard 1, its macOS and WSL live E2E run only when the workflow tests `main` and Docker is available.
   This workflow does not publish or satisfy `Release qualification`.
 - `.github/workflows/portable-profile-e2e.yaml` publishes experimental portable-profile evidence.
@@ -91,7 +91,7 @@ If the version command fails, the action stops before the live test runs.
 This boundary keeps candidate source separate from the trusted workflow implementation.
 
 For a same-repository PR that changes a managed-image workflow path, the trusted planner also
-requires one successful `Images / Managed Images` run for the candidate commit. Before candidate
+requires one successful `Images / Build, Test, and Publish Managed Images` run for the candidate commit. Before candidate
 checkout, the planner downloads the three nonexpired contract artifacts by immutable artifact ID.
 It verifies each artifact digest, producer run, attempt, and candidate commit. The planner rejects a
 missing, incomplete, or mixed all-agent publication before E2E jobs start.
@@ -101,7 +101,7 @@ Each live E2E consumer verifies that the catalog source revision matches `checko
 does not change a managed-image workflow path keeps the released catalog behavior. The GitHub token
 is available only to the trusted planner job and is not included in the candidate CLI artifact.
 
-The same-repository `Images / Managed Images` PR workflow also runs the OpenClaw managed-image MCP
+The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the OpenClaw managed-image MCP
 discovery and lifecycle scope in two independent matrix jobs. Each job assembles one exact candidate
 catalog from the workflow's published contracts, uses a fresh runner and sandbox, records the
 authenticated discovery diagnostics, scans the evidence for fixture credentials, and must pass.
@@ -173,7 +173,7 @@ E2E tests when those boundaries are the behavior under test.
 
 ## Platform Evidence
 
-`.github/workflows/platform-vitest-main.yaml` publishes the `CI / Platform Evidence` workflow.
+`.github/workflows/platform-vitest-main.yaml` publishes the `CI / Platform Compatibility` workflow.
 It runs the Ubuntu 26.04 compatibility contracts and the full Vitest suite in four shards on macOS and WSL.
 The matrix disables `fail-fast`.
 The first macOS shard has a 60-minute budget for live E2E; the other shards have 30 minutes.
@@ -656,7 +656,7 @@ graph as the live targets:
 
 - GitHub Actions run history is the authoritative record for push and
   manual E2E results.
-- `E2E / Main Retry` publishes an advisory same-commit reliability table for
+- `E2E / Main Retry Evidence` publishes an advisory same-commit reliability table for
   trusted pushes to `main` and explicit manual qualification runs. It keeps
   first-pass success, pass-after-retry, exhausted retries, and pass/fail flips
   distinct,
@@ -884,26 +884,26 @@ qualification set.
 
 ### Hosted-Runner Recovery
 
-Hosted Runner Recovery can request one full rerun for an eligible `CI / Platform Evidence` push.
+`Automation / Recover Platform CI Runner` can request one full rerun for an eligible `CI / Platform Compatibility` push.
 It does not handle `E2E main`.
 The complete non-passing job listing must contain only authenticated hosted-runner-loss evidence for the workflow's approved runner labels.
 An ordinary assertion failure, mixed failure set, incomplete listing, custom or self-hosted label, changed evidence, or ambiguous pagination prevents recovery.
 
-For eligible `E2E main` push runs, `E2E / Main Retry` records `passed-first-attempt`, `passed-after-retry`, `failed-no-retry`, or `ignored` without requesting a workflow rerun.
+For eligible `E2E main` push runs, `E2E / Main Retry Evidence` records `passed-first-attempt`, `passed-after-retry`, `failed-no-retry`, or `ignored` without requesting a workflow rerun.
 A failed job can represent a deterministic product assertion, authentication or authorization failure, policy denial, malformed input, ambiguous mutation, cleanup failure, or an external transient.
 GitHub job conclusions do not distinguish those classes, so a broad failed-job rerun is not authorized evidence.
 External operations use the checked-in retry inventory and an explicit bounded policy; new shared paths use the bounded operation helper.
 Operation-level retry artifacts retain each attempt.
-Hosted runner loss remains owned by Hosted Runner Recovery.
+Hosted runner loss remains owned by `Automation / Recover Platform CI Runner`.
 The observer ignores manual source runs and source runs superseded by a newer `main` push, checks out only trusted default-branch code, and receives no repository secrets.
 
-The runner-allocation and internal-error failures handled by Hosted Runner
-Recovery originate in GitHub Actions, outside repository-controlled workflow
-code. Hosted Runner Recovery contains these failures without claiming to repair
+The runner-allocation and internal-error failures handled by
+`Automation / Recover Platform CI Runner` originate in GitHub Actions, outside
+repository-controlled workflow code. The workflow contains these failures without claiming to repair
 their source. Remove `.github/workflows/hosted-runner-recovery.yaml` and its
 controller only after the platform-evidence workflow records 30 consecutive days
 with no first-attempt failure accepted by the recovery classifier, or after that
-workflow stops using GitHub-hosted runners. Each accepted Hosted Runner Recovery
+workflow stops using GitHub-hosted runners. Each accepted `Automation / Recover Platform CI Runner`
 request resets that observation window.
 
 ### Runner comparison telemetry
@@ -1026,7 +1026,7 @@ to the portable free-memory value and labels that value as `memory free`.
 
 The comparison time series is diagnostic-only and is not an input to terminal
 classification or retry policy. Runner-comparison telemetry does not affect
-`E2E / Main Retry` decisions. Hosted Runner Recovery remains limited to
+`E2E / Main Retry Evidence` decisions. `Automation / Recover Platform CI Runner` remains limited to
 authenticated runner-loss evidence for its platform-evidence workflow.
 
 Treat a missing summary as unavailable evidence, not as low utilization. A
@@ -1222,7 +1222,7 @@ standing Launchable. Keep its value equal to the Launchable ID in the default
 URL owned by
 [`nemoclaw-maintainer-validate-launchable`](../../.agents/skills/nemoclaw-maintainer-validate-launchable/SKILL.md).
 
-When an eligible `E2E main` push workflow completes, `E2E / Main Retry` records its conclusion and the available source-attempt evidence.
+When an eligible `E2E main` push workflow completes, `E2E / Main Retry Evidence` records its conclusion and the available source-attempt evidence.
 It does not request a broad failed-job or workflow rerun.
 An owning E2E test can retry an external operation only through its checked-in bounded policy.
 After evaluation succeeds, the observer uploads an artifact named for the current attempt.
