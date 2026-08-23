@@ -247,14 +247,28 @@ function parseDockerfileSources(bytes: Buffer): readonly string[] {
     fail("Dockerfile is not strict UTF-8");
   }
   const local: string[] = [];
+  let logicalInstruction = "";
   for (const rawLine of text.split("\n")) {
-    const line = rawLine.trim();
-    if (/^RUN\s/iu.test(line)) {
-      const [, firstArgument] = line.split(/\s+/u);
+    const trimmed = rawLine.trim();
+    const continued = trimmed.endsWith("\\");
+    const segment = continued ? trimmed.slice(0, -1).trimEnd() : trimmed;
+    logicalInstruction = logicalInstruction
+      ? `${logicalInstruction} ${segment}`.trim()
+      : segment;
+    if (continued) continue;
+    if (/^RUN\s/iu.test(logicalInstruction)) {
+      const [, firstArgument] = logicalInstruction.split(/\s+/u);
       if (firstArgument?.startsWith("--")) {
         fail("Dockerfile has a non-Portable RUN option");
       }
     }
+    logicalInstruction = "";
+  }
+  if (logicalInstruction) {
+    fail("Dockerfile has an unterminated continued instruction");
+  }
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.trim();
     if (!/^(?:COPY|ADD)\s/iu.test(line)) continue;
     if (!/^(?:COPY|ADD)\s/u.test(line)) {
       fail("Dockerfile uses a noncanonical COPY or ADD opcode");

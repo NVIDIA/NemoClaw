@@ -405,20 +405,24 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
   });
 
   it.each([
-    ["RUN", "--network=none"],
-    ["RUN", "--mount=type=cache,target=/tmp/cache"],
-    ["run", "--network=none"],
+    { instruction: "RUN", option: "--network=none", continued: false },
+    { instruction: "RUN", option: "--mount=type=cache,target=/tmp/cache", continued: false },
+    { instruction: "run", option: "--network=none", continued: false },
+    { instruction: "RUN", option: "--network=none", continued: true },
   ])(
-    "rejects BuildKit-only %s option %s before reservation (#10007)",
-    (instruction, option) => {
+    "rejects BuildKit-only $instruction option $option before reservation (#10007)",
+    ({ instruction, option, continued }) => {
       const source = primaryCloneFixture();
       const dockerfile = path.join(source, "agents/hermes/Dockerfile");
       const reservationRoot = path.join(stateDir, "hermes-portable-build-context");
+      const replacement = continued
+        ? `${instruction} \\\n    ${option} mkdir -p /sandbox/.nemoclaw`
+        : `${instruction} ${option} mkdir -p /sandbox/.nemoclaw`;
       fs.writeFileSync(
         dockerfile,
         fs
           .readFileSync(dockerfile, "utf8")
-          .replace("RUN mkdir -p /sandbox/.nemoclaw", `${instruction} ${option} mkdir -p /sandbox/.nemoclaw`),
+          .replace("RUN mkdir -p /sandbox/.nemoclaw", replacement),
         { mode: 0o644 },
       );
       const reservationExistedBefore = fs.existsSync(reservationRoot);
