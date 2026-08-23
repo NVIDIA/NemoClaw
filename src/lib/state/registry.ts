@@ -108,6 +108,7 @@ export type {
   SandboxWorkloadReceipt,
 } from "./registry/types";
 export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
+export { normalizeSandboxMcpState };
 export {
   getConfiguredMessagingChannelsFromEntry,
   getDisabledMessagingChannelsFromEntry,

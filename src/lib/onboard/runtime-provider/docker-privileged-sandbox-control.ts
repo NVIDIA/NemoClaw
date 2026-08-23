@@ -4,8 +4,7 @@
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { dockerCapture } from "../../adapters/docker/run";
 import { resolvePortableDemoPrivilegedExecTarget } from "../experimental/portable-demo-lifecycle";
-import * as registry from "../../state/registry";
-import { compareAndSetLegacySandboxLifecycleGeneration } from "../../state/registry/lifecycle-generation";
+import { compareAndSetSandboxLifecycleGeneration } from "../../state/registry/lifecycle-generation-cas";
 import type {
   RuntimeProviderPrivilegedSandboxCommandInput,
   RuntimeProviderPrivilegedSandboxCommandResult,
@@ -44,21 +43,10 @@ const SANITIZED_PRIVILEGED_ENV = [
 
 type SandboxEntry = import("../../state/registry").SandboxEntry;
 
-function registeredSandboxNames(sandboxName: string): string[] {
-  const names = new Set<string>([sandboxName]);
-  const listed = registry.listSandboxes?.();
-  if (Array.isArray(listed?.sandboxes)) {
-    for (const entry of listed.sandboxes) {
-      if (typeof entry.name === "string" && entry.name) names.add(entry.name);
-    }
-  }
-  return Array.from(names).sort(
-    (left, right) => right.length - left.length || left.localeCompare(right),
-  );
-}
-
-function findDirectSandboxContainer(sandboxName: string): string | null {
-  const names = registeredSandboxNames(sandboxName);
+function findDirectSandboxContainer(
+  sandboxName: string,
+  registeredSandboxNames: readonly string[],
+): string | null {
   let output: string;
   try {
     output = dockerCapture(
@@ -81,7 +69,7 @@ function findDirectSandboxContainer(sandboxName: string): string | null {
       { cause: error },
     );
   }
-  return selectDockerPrivilegedSandboxTarget(sandboxName, output, names);
+  return selectDockerPrivilegedSandboxTarget(sandboxName, output, registeredSandboxNames);
 }
 
 function expectedDirectContainerPattern(sandboxName: string): string {
@@ -96,19 +84,22 @@ function portableTarget(sandboxName: string, sandbox: SandboxEntry) {
   return resolvePortableDemoPrivilegedExecTarget(sandboxName, {
     ...(sandbox.lifecycleGeneration ? { registryGeneration: sandbox.lifecycleGeneration } : {}),
     backfillRegistryGeneration: (generation) =>
-      compareAndSetLegacySandboxLifecycleGeneration(sandbox, generation),
+      compareAndSetSandboxLifecycleGeneration(sandbox, generation),
   });
 }
 
 function resolveDockerTarget(
-  input: Pick<RuntimeProviderPrivilegedSandboxCommandInput, "sandbox" | "sandboxName">,
+  input: Pick<
+    RuntimeProviderPrivilegedSandboxCommandInput,
+    "registeredSandboxNames" | "sandbox" | "sandboxName"
+  >,
 ): RuntimeProviderPrivilegedSandboxTarget {
   const portable = portableTarget(input.sandboxName, input.sandbox);
   if (portable) {
     portable.assertRuntimeAuthority();
     return Object.freeze({ providerId: "docker", resourceHandle: portable.containerId });
   }
-  const containerId = findDirectSandboxContainer(input.sandboxName);
+  const containerId = findDirectSandboxContainer(input.sandboxName, input.registeredSandboxNames);
   if (!containerId) {
     throw new DirectSandboxFallbackUnavailableError(
       `No running direct OpenShell sandbox container found for '${input.sandboxName}' ` +

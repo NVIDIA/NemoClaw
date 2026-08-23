@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   isPodmanGatewayRuntimeEnabled,
   resolveNemoClawGatewayRuntime,
-} from "./gateway-runtime-selection";
+} from "./runtime-provider/configured-runtime";
 
 describe("gateway runtime selection", () => {
   it.each([{}, { NEMOCLAW_GATEWAY_RUNTIME: "" }, { NEMOCLAW_GATEWAY_RUNTIME: "docker" }])(

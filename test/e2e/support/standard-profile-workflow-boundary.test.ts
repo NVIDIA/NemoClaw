@@ -58,8 +58,7 @@ describe("standard E2E execution profile", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { secrets: Record<string, string> }>;
     };
-    workflow.jobs["catalogue-nvidia-api"]!.secrets.NVIDIA_API_KEY =
-      "${{ secrets.NVIDIA_API_KEY }}";
+    workflow.jobs["catalogue-nvidia-api"]!.secrets.NVIDIA_API_KEY = "${{ secrets.NVIDIA_API_KEY }}";
 
     expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
       "catalogue-nvidia-api must receive only its profile secrets",
@@ -193,7 +192,9 @@ describe("standard E2E execution profile", () => {
       CANDIDATE_REPOSITORY: "NVIDIA/NemoClaw",
       CANDIDATE_SHA: "a".repeat(40),
       CATALOGUE_ID: "hermes-inference-switch",
+      COVERAGE_VARIANT: "anthropic-podman",
       ENV: "/dev/null",
+      EXECUTION_ID: "hermes-inference-switch-anthropic-podman",
       GITHUB_ENV: githubEnvironment,
       GITHUB_OUTPUT: githubOutput,
       GITHUB_WORKSPACE_VALUE: directory,
@@ -202,6 +203,7 @@ describe("standard E2E execution profile", () => {
       INSTALL_MODE: "credential-free",
       LC_ALL: "C",
       PATH: process.env.PATH ?? "",
+      RUNTIME_PROVIDER: "podman",
       SHARD: "anthropic",
       TARGET_ID: "hermes-inference-switch",
       TEST_FILE: "test/e2e/live/hermes-inference-switch.test.ts",
@@ -216,11 +218,12 @@ describe("standard E2E execution profile", () => {
       expect(valid.status, valid.stderr).toBe(0);
       expect(fs.readFileSync(githubOutput, "utf8")).toBe(
         "artifact_directory=e2e-artifacts/live/hermes-inference-switch/anthropic\n" +
-          "upload_name=e2e-hermes-inference-switch-anthropic\n",
+          "upload_name=e2e-hermes-inference-switch-anthropic-podman\n",
       );
       expect(fs.readFileSync(githubEnvironment, "utf8")).toBe(
         `E2E_ARTIFACT_DIR=${directory}/e2e-artifacts/live/hermes-inference-switch/anthropic\n` +
-          "NEMOCLAW_E2E_SHARD=anthropic\n",
+          "NEMOCLAW_E2E_SHARD=anthropic\n" +
+          "NEMOCLAW_GATEWAY_RUNTIME=podman\n",
       );
 
       const unsafe = spawnSync("bash", [...shellArguments, planScript], {
@@ -251,7 +254,10 @@ describe("standard E2E execution profile", () => {
       ARTIFACT_DIRECTORY: artifactDirectory,
       CANDIDATE_REPOSITORY: "NVIDIA/NemoClaw",
       CANDIDATE_SHA: "a".repeat(40),
+      COVERAGE_VARIANT: "default-podman",
+      EXECUTION_ID: "snapshot-commands-default-podman",
       JOB_STATUS: "success",
+      RUNTIME_PROVIDER: "podman",
       RUN_ATTEMPT: "2",
       RUN_ID: "123",
       TARGET_ID: "snapshot-commands",
@@ -278,6 +284,9 @@ describe("standard E2E execution profile", () => {
       ).toEqual({
         kind: "nemoclaw-e2e-evidence-v1",
         targetId: "snapshot-commands",
+        executionId: "snapshot-commands-default-podman",
+        coverageVariant: "default-podman",
+        runtimeProvider: "podman",
         candidate: { repository: "NVIDIA/NemoClaw", sha: "a".repeat(40) },
         workflow: {
           repository: "NVIDIA/NemoClaw",

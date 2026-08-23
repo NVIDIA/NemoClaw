@@ -208,16 +208,14 @@ function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
   const copyCompletion = (destination: string): ContainerEngineCommandResult => {
     completionAttempts += 1;
     const unavailable = options.completionUnavailableCount ?? 0;
-    if (completionAttempts <= unavailable) {
-      return result({ status: 1, stderr: "completion not found" });
-    }
-    if (
-      completionAttempts <=
-      unavailable + (options.completionMissingAfterSuccessfulCopyCount ?? 0)
-    ) {
-      return result();
-    }
-    return publishCompletion(destination);
+    const deferredResults = [
+      [unavailable, () => result({ status: 1, stderr: "completion not found" })],
+      [unavailable + (options.completionMissingAfterSuccessfulCopyCount ?? 0), () => result()],
+    ] as const;
+    return (
+      deferredResults.find(([throughAttempt]) => completionAttempts <= throughAttempt)?.[1]() ??
+      publishCompletion(destination)
+    );
   };
   const copy = (args: readonly string[], input?: Buffer): ContainerEngineCommandResult => {
     const source = args[2] as string;

@@ -15,7 +15,7 @@ import {
 import type { RuntimeProviderBundle, RuntimeProviderBundleRegistry } from "./contract";
 import { createDockerRuntimeProviderBundle, createKubernetesRuntimeProviderBundle } from "./docker";
 import { isPortableExperimentalProfile } from "../experimental/portable-profile";
-import { resolveNemoClawGatewayRuntime } from "../gateway-runtime-selection";
+import { resolveNemoClawGatewayRuntime } from "./configured-runtime";
 import type { NativeRuntimeQualificationAuthority } from "./native-qualification-authority";
 import { createCurrentPodmanRuntimeProviderBundle } from "./podman";
 import {

@@ -8,7 +8,6 @@ import os from "node:os";
 import path from "node:path";
 
 import type { PodmanBoundContainerEngine } from "../../adapters/podman";
-import { sleepSeconds } from "../../core/wait";
 import type { SandboxGpuProofResult } from "../../state/registry";
 import {
   getDockerDriverGatewayRuntimeMarkerPath,
@@ -22,11 +21,12 @@ import {
   getTrustedActiveOpenShellGatewayUserServiceIdentity,
   startOpenShellGatewayUserService,
   stopOpenShellGatewayUserService,
+  waitForOpenShellGatewayRetry,
 } from "../docker-driver-gateway-service";
 import { shouldOmitOpenShellOciImageUser } from "../docker-gpu-patch-clone";
 import type { DockerContainerInspect } from "../docker-gpu-patch-types";
 import { openshellSandboxCommandEnvValue } from "../docker-startup-command-env";
-import { resolveGatewayName, resolveGatewayStateDirName } from "../gateway-binding";
+import { resolveGatewayName, resolveGatewayStateDirName } from "../gateway-binding/identity";
 import {
   managedHermesStateVolumeLabels,
   managedHermesStateVolumeName,
@@ -257,7 +257,7 @@ export function observePodmanBootstrapReplacementReady(input: {
     throw new Error("Managed bootstrap Podman replacement runtime ID is invalid.");
   }
   const now = input.now ?? Date.now;
-  const sleep = input.sleep ?? sleepSeconds;
+  const sleep = input.sleep ?? waitForOpenShellGatewayRetry;
   const timeoutMs = input.timeoutMs ?? REPLACEMENT_OBSERVATION_TIMEOUT_MS;
   const deadline = now() + timeoutMs;
   const maxAttempts = Math.ceil(timeoutMs / (REPLACEMENT_OBSERVATION_INTERVAL_SECONDS * 1000));

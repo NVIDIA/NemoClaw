@@ -36,7 +36,10 @@ const SANITIZED_PRIVILEGED_ENV = [
 
 function resolveTarget(
   engine: PodmanContainerEngine,
-  input: Pick<RuntimeProviderPrivilegedSandboxCommandInput, "sandbox" | "sandboxName">,
+  input: Pick<
+    RuntimeProviderPrivilegedSandboxCommandInput,
+    "registeredSandboxNames" | "sandbox" | "sandboxName"
+  >,
 ): RuntimeProviderPrivilegedSandboxTarget {
   if (input.sandbox.name !== input.sandboxName) {
     throw new Error("Podman privileged control requires the registered sandbox identity.");
@@ -95,7 +98,10 @@ export function createPodmanPrivilegedSandboxControl(
   }
   return Object.freeze({
     resolveTarget: (
-      input: Pick<RuntimeProviderPrivilegedSandboxCommandInput, "sandbox" | "sandboxName">,
+      input: Pick<
+        RuntimeProviderPrivilegedSandboxCommandInput,
+        "registeredSandboxNames" | "sandbox" | "sandboxName"
+      >,
     ) => resolveTarget(engine, input),
     execute: (input: RuntimeProviderPrivilegedSandboxCommandInput) => execute(engine, input),
   });

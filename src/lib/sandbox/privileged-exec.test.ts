@@ -18,12 +18,14 @@ const requireCache: Record<string, unknown> = require.cache as any;
 const helperPath = require.resolve("./privileged-exec");
 const currentRuntimeProvidersPath = require.resolve("../onboard/runtime-provider/current");
 const runtimeProviderRegistryPath = require.resolve("../onboard/runtime-provider/registry");
+const runtimeProviderSelectionPath = require.resolve("../onboard/runtime-provider/selection");
 const dockerControlPath =
   require.resolve("../onboard/runtime-provider/docker-privileged-sandbox-control");
 const dockerRunPath = require.resolve("../adapters/docker/run");
 const portableLifecyclePath = require.resolve("../onboard/experimental/portable-demo-lifecycle");
 const registryPath = require.resolve("../state/registry");
 const lifecycleGenerationPath = require.resolve("../state/registry/lifecycle-generation");
+const lifecycleGenerationCasPath = require.resolve("../state/registry/lifecycle-generation-cas");
 const persistedLifecyclePath =
   require.resolve("../onboard/runtime-provider/persisted-engine-lifecycle");
 const statePathsPath = require.resolve("../state/paths");
@@ -69,17 +71,20 @@ function withPrivilegedExecMocks<T>(
   const priorHelper = require.cache[helperPath];
   const priorCurrentRuntimeProviders = require.cache[currentRuntimeProvidersPath];
   const priorRuntimeProviderRegistry = require.cache[runtimeProviderRegistryPath];
+  const priorRuntimeProviderSelection = require.cache[runtimeProviderSelectionPath];
   const priorDockerControl = require.cache[dockerControlPath];
   const priorDockerRun = require.cache[dockerRunPath];
   const priorPortableLifecycle = require.cache[portableLifecyclePath];
   const priorRegistry = require.cache[registryPath];
   const priorLifecycleGeneration = require.cache[lifecycleGenerationPath];
+  const priorLifecycleGenerationCas = require.cache[lifecycleGenerationCasPath];
   const priorPersistedLifecycle = require.cache[persistedLifecyclePath];
   const priorStatePaths = require.cache[statePathsPath];
   const priorTransitionLock = require.cache[transitionLockPath];
 
   delete require.cache[helperPath];
   delete require.cache[dockerControlPath];
+  delete require.cache[runtimeProviderSelectionPath];
   requireCache[dockerRunPath] = {
     id: dockerRunPath,
     filename: dockerRunPath,
@@ -110,6 +115,15 @@ function withPrivilegedExecMocks<T>(
     loaded: true,
     exports: {
       compareAndSetLegacySandboxLifecycleGeneration:
+        deps.compareAndSetLegacySandboxLifecycleGeneration ?? (() => false),
+    },
+  } as any;
+  requireCache[lifecycleGenerationCasPath] = {
+    id: lifecycleGenerationCasPath,
+    filename: lifecycleGenerationCasPath,
+    loaded: true,
+    exports: {
+      compareAndSetSandboxLifecycleGeneration:
         deps.compareAndSetLegacySandboxLifecycleGeneration ?? (() => false),
     },
   } as any;
@@ -150,24 +164,29 @@ function withPrivilegedExecMocks<T>(
     loaded: true,
     exports: { CURRENT_RUNTIME_PROVIDER_BUNDLES: {} },
   } as any;
+  const requireRuntimeProviderBundleForSandbox = (sandbox: { openshellDriver?: string | null }) => {
+    const providerId =
+      !sandbox.openshellDriver || sandbox.openshellDriver === "vm"
+        ? "docker"
+        : sandbox.openshellDriver;
+    return providerId === "docker"
+      ? {
+          identity: { id: "docker" },
+          lifecycle: { supported: true, privilegedSandboxControl: dockerControl },
+        }
+      : { identity: { id: providerId }, lifecycle: { supported: false } };
+  };
   requireCache[runtimeProviderRegistryPath] = {
     id: runtimeProviderRegistryPath,
     filename: runtimeProviderRegistryPath,
     loaded: true,
-    exports: {
-      requireRuntimeProviderBundleForSandbox: (sandbox: { openshellDriver?: string | null }) => {
-        const providerId =
-          !sandbox.openshellDriver || sandbox.openshellDriver === "vm"
-            ? "docker"
-            : sandbox.openshellDriver;
-        return providerId === "docker"
-          ? {
-              identity: { id: "docker" },
-              lifecycle: { supported: true, privilegedSandboxControl: dockerControl },
-            }
-          : { identity: { id: providerId }, lifecycle: { supported: false } };
-      },
-    },
+    exports: { requireRuntimeProviderBundleForSandbox },
+  } as any;
+  requireCache[runtimeProviderSelectionPath] = {
+    id: runtimeProviderSelectionPath,
+    filename: runtimeProviderSelectionPath,
+    loaded: true,
+    exports: { requireRuntimeProviderBundleForSandbox },
   } as any;
 
   try {
@@ -176,11 +195,13 @@ function withPrivilegedExecMocks<T>(
     restoreRequireCacheEntry(helperPath, priorHelper);
     restoreRequireCacheEntry(currentRuntimeProvidersPath, priorCurrentRuntimeProviders);
     restoreRequireCacheEntry(runtimeProviderRegistryPath, priorRuntimeProviderRegistry);
+    restoreRequireCacheEntry(runtimeProviderSelectionPath, priorRuntimeProviderSelection);
     restoreRequireCacheEntry(dockerControlPath, priorDockerControl);
     restoreRequireCacheEntry(dockerRunPath, priorDockerRun);
     restoreRequireCacheEntry(portableLifecyclePath, priorPortableLifecycle);
     restoreRequireCacheEntry(registryPath, priorRegistry);
     restoreRequireCacheEntry(lifecycleGenerationPath, priorLifecycleGeneration);
+    restoreRequireCacheEntry(lifecycleGenerationCasPath, priorLifecycleGenerationCas);
     restoreRequireCacheEntry(persistedLifecyclePath, priorPersistedLifecycle);
     restoreRequireCacheEntry(statePathsPath, priorStatePaths);
     restoreRequireCacheEntry(transitionLockPath, priorTransitionLock);

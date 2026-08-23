@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createPodmanHostLocalInferenceTestHarness } from "../../../../test/helpers/podman-host-local-inference-test-harness";
 import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
+import type { ContainerEngineCommandResult } from "../../adapters/container-engine";
 import {
   createPodmanContainerEngine,
   type PodmanBoundContainerEngine,
@@ -160,6 +161,33 @@ function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): Podma
   let running = false;
   const sandboxId = `id-${sandboxName}`;
   const containerName = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}-${sandboxId}`;
+  const containerOperations: Readonly<Record<string, () => ContainerEngineCommandResult>> = {
+    exec: () => ({ status: 0, stdout: "uid=0\n", stderr: "" }),
+    inspect: () => ({
+      status: 0,
+      stdout: JSON.stringify([
+        {
+          Id: CONTAINER_ID,
+          Name: containerName,
+          Config: {
+            Labels: {
+              [PODMAN_MANAGED_LABEL]: "true",
+              [PODMAN_SANDBOX_ID_LABEL]: sandboxId,
+              [PODMAN_SANDBOX_NAME_LABEL]: sandboxName,
+              [PODMAN_SANDBOX_NAMESPACE_LABEL]: PODMAN_SANDBOX_NAMESPACE,
+              [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
+            },
+          },
+          State: {
+            Running: running,
+            Paused: false,
+            Status: running ? "running" : "exited",
+          },
+        },
+      ]),
+      stderr: "",
+    }),
+  };
   return {
     operation: "sandbox-lifecycle",
     engineId: "podman",
@@ -176,33 +204,10 @@ function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): Podma
             stderr: "",
           };
         case "container":
-          if (args[1] === "exec") {
-            return { status: 0, stdout: "uid=0\n", stderr: "" };
-          }
-          return {
-            status: 0,
-            stdout: JSON.stringify([
-              {
-                Id: CONTAINER_ID,
-                Name: containerName,
-                Config: {
-                  Labels: {
-                    [PODMAN_MANAGED_LABEL]: "true",
-                    [PODMAN_SANDBOX_ID_LABEL]: sandboxId,
-                    [PODMAN_SANDBOX_NAME_LABEL]: sandboxName,
-                    [PODMAN_SANDBOX_NAMESPACE_LABEL]: PODMAN_SANDBOX_NAMESPACE,
-                    [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
-                  },
-                },
-                State: {
-                  Running: running,
-                  Paused: false,
-                  Status: running ? "running" : "exited",
-                },
-              },
-            ]),
-            stderr: "",
-          };
+          return (
+            containerOperations[String(args[1])] ??
+            (() => ({ status: 125, stdout: "", stderr: "unexpected container operation" }))
+          )();
         case "start":
           running = true;
           return { status: 0, stdout: CONTAINER_ID, stderr: "" };
@@ -298,19 +303,25 @@ describe("managed Podman runtime provider", () => {
   it("executes privileged control through the lifecycle-bound Podman engine", () => {
     const runtime = providerHarness("openclaw");
     const lifecycle = runtime.providers.podman?.lifecycle;
-    if (!lifecycle || lifecycle.supported !== true) throw new Error("Podman lifecycle missing");
+    expect(lifecycle).toMatchObject({ supported: true });
+    const supportedLifecycle = lifecycle as Extract<
+      NonNullable<typeof lifecycle>,
+      { readonly supported: true }
+    >;
 
-    lifecycle.start({
+    supportedLifecycle.start({
       environment: {},
       log: vi.fn(),
       sandbox: runtime.entry,
       sandboxName: runtime.sandboxName,
     });
-    const target = lifecycle.privilegedSandboxControl.resolveTarget({
+    const target = supportedLifecycle.privilegedSandboxControl.resolveTarget({
+      registeredSandboxNames: [runtime.sandboxName],
       sandbox: runtime.entry,
       sandboxName: runtime.sandboxName,
     });
-    const result = lifecycle.privilegedSandboxControl.execute({
+    const result = supportedLifecycle.privilegedSandboxControl.execute({
+      registeredSandboxNames: [runtime.sandboxName],
       sandbox: runtime.entry,
       sandboxName: runtime.sandboxName,
       command: ["/usr/bin/id", "-u"],

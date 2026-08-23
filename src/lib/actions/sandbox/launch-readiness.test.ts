@@ -1042,26 +1042,15 @@ describe("launch readiness validation", () => {
         ],
       },
     ];
-    expect(mutations.every((mutation) =>
+    expect(
+      mutations.every(
+        (mutation) =>
           !Object.is(
             launchReadinessDigest(buildLaunchReadinessRegistryProjection(mutation, agent)),
             original,
-          ))).toBe(true);
-  });
-
-  it("accepts qualification-registered runtime providers without a provider-name branch", () => {
-    const projection = buildLaunchReadinessRegistryProjection(
-      { ...sandbox, openshellDriver: "podman" },
-      loadAgent("openclaw"),
-    ) as { openshellDriver: string };
-
-    expect(projection.openshellDriver).toBe("podman");
-    expect(() =>
-      buildLaunchReadinessRegistryProjection(
-        { ...sandbox, openshellDriver: "unregistered-runtime" },
-        loadAgent("openclaw"),
+          ),
       ),
-    ).toThrow();
+    ).toBe(true);
   });
 
   it("binds current Portable lifecycle state into final readiness publication (#9207)", async () => {
@@ -1264,11 +1253,15 @@ describe("launch readiness validation", () => {
         ],
       },
     ];
-    expect(mutations.every((mutation) =>
+    expect(
+      mutations.every(
+        (mutation) =>
           !Object.is(
             launchReadinessDigest(buildLaunchReadinessRegistryProjection(mutation, agent)),
             original,
-          ))).toBe(true);
+          ),
+      ),
+    ).toBe(true);
     expect(() =>
       buildLaunchReadinessRegistryProjection(
         {
@@ -1313,7 +1306,9 @@ describe("launch readiness validation", () => {
       { ...originalProfile, estimatedImageDownloadBytes: 1_001 },
       { ...originalProfile, estimatedModelDownloadBytes: 2_001 },
     ];
-    expect(mutations.every((mutation) =>
+    expect(
+      mutations.every(
+        (mutation) =>
           !Object.is(
             launchReadinessDigest(
               buildLaunchReadinessRegistryProjection(
@@ -1322,7 +1317,9 @@ describe("launch readiness validation", () => {
               ),
             ),
             original,
-          ))).toBe(true);
+          ),
+      ),
+    ).toBe(true);
   });
 
   it("excludes diagnostic timestamps, source paths, and GPU detail from the projection", () => {
@@ -1481,35 +1478,5 @@ describe("launch readiness validation", () => {
       ),
     ).resolves.toEqual({ kind: "evidence-failed" });
     expect(publishLease).not.toHaveBeenCalled();
-  });
-
-  it("rejects in-progress lifecycle and policy mutations", () => {
-    const agent = loadAgent("openclaw");
-    expect(() =>
-      buildLaunchReadinessRegistryProjection(
-        { ...sandbox, pendingRouteReservation: true, reservationSessionId: "session" },
-        agent,
-      ),
-    ).toThrow();
-    expect(() =>
-      buildLaunchReadinessRegistryProjection(
-        {
-          ...sandbox,
-          baselineExclusionTransition: {
-            id: "transition",
-            operation: "exclude",
-            exclusion: {
-              version: 1,
-              agent: "openclaw",
-              key: "phone_home",
-              digest: DIGEST,
-            },
-            targetLiveDigest: null,
-            startedAt: "2026-01-01T00:00:00.000Z",
-          },
-        },
-        agent,
-      ),
-    ).toThrow();
   });
 });

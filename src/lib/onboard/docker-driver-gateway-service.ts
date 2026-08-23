@@ -31,6 +31,9 @@ export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER =
   "NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1";
 export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE = `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}`;
 
+/** Shared blocking wait used while observing native gateway readiness. */
+export const waitForOpenShellGatewayRetry = sleepSeconds;
+
 export interface OpenShellGatewayUserServiceOptions {
   commandExists?: (command: string) => boolean;
   env?: NodeJS.ProcessEnv;

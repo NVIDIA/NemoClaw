@@ -87,24 +87,31 @@ function harness(
   };
   const stopExactOwner = vi.fn((entry: PodmanGatewayWatcherSnapshot = initial) => {
     healthy.delete(key(entry));
-    if (!options.retainQuiescedProcess) {
-      alive.delete(key(entry));
-      watchers = [];
-    }
+    const stopByMode = {
+      remove: () => {
+        alive.delete(key(entry));
+        watchers = [];
+      },
+      retain: () => undefined,
+    } as const;
+    stopByMode[options.retainQuiescedProcess === true ? "retain" : "remove"]();
     ownerStopped = true;
   });
   const resumeSameOwner = vi.fn(() => {
-    if (options.retainQuiescedProcess && watchers.length === 1) {
-      const retained = watchers[0] as PodmanGatewayWatcherSnapshot;
-      ownerStopped = false;
-      healthy.add(key(retained));
-      return;
-    }
-    const resumed = resumeCount++ === 0 ? RESUMED : RESUMED_AGAIN;
+    const resumeByMode = {
+      replace: () => {
+        const resumed = resumeCount++ === 0 ? RESUMED : RESUMED_AGAIN;
+        watchers = [resumed];
+        alive.add(key(resumed));
+        healthy.add(key(resumed));
+      },
+      retain: () => {
+        const retained = watchers[0] as PodmanGatewayWatcherSnapshot;
+        healthy.add(key(retained));
+      },
+    } as const;
+    resumeByMode[options.retainQuiescedProcess === true ? "retain" : "replace"]();
     ownerStopped = false;
-    watchers = [resumed];
-    alive.add(key(resumed));
-    healthy.add(key(resumed));
   });
   const deps: PodmanManagedGatewayWatcherControllerDeps = {
     store,

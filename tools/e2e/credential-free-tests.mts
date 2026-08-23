@@ -8,17 +8,31 @@ import { fileURLToPath } from "node:url";
 
 import { moduleTagDeclarations, stripModuleTagDeclarations } from "./module-tags.mts";
 import { type E2eExecutionMetadata, validateE2eExecutionMetadata } from "./execution-coverage.mts";
-import { type E2eGatewayRuntime, supportsE2eGatewayRuntime } from "./gateway-runtime.mts";
+import {
+  type E2eGatewayRuntime,
+  type E2eGatewayRuntimeSupport,
+  type E2eRuntimeProvider,
+  e2eRuntimeProviders,
+  runtimeCoverageVariant,
+  runtimeExecutionId,
+  supportsE2eGatewayRuntime,
+} from "./gateway-runtime.mts";
 
 export const CREDENTIAL_FREE_TEST_TAG = "e2e/credential-free";
 export const SHARED_E2E_JOB_ID = "shared-e2e";
 
 export type CredentialFreeTestProject = "e2e-live" | "integration";
 
-export type CredentialFreeTestMatrixRow = {
+export type CredentialFreeTestDefinitionRow = {
   id: string;
   file: string;
   project: CredentialFreeTestProject;
+};
+
+export type CredentialFreeTestMatrixRow = CredentialFreeTestDefinitionRow & {
+  execution_id: string;
+  runtime_provider: E2eRuntimeProvider;
+  coverage_variant: string;
 };
 
 export type CredentialFreeTestModule = {
@@ -56,7 +70,7 @@ const CREDENTIAL_FREE_TEST_COVERAGE = {
     gatewayRuntimes: ["docker"],
   },
 } as const satisfies Readonly<
-  Record<string, E2eExecutionMetadata & { gatewayRuntimes: readonly E2eGatewayRuntime[] }>
+  Record<string, E2eExecutionMetadata & { gatewayRuntimes: E2eGatewayRuntimeSupport }>
 >;
 
 export function credentialFreeTestCoverage(id: string): E2eExecutionMetadata {
@@ -72,13 +86,15 @@ export function credentialFreeTestSupportsGatewayRuntime(
   id: string,
   runtime: E2eGatewayRuntime,
 ): boolean {
+  return supportsE2eGatewayRuntime(credentialFreeTestGatewayRuntimes(id), runtime);
+}
+
+export function credentialFreeTestGatewayRuntimes(id: string): E2eGatewayRuntimeSupport {
   if (!Object.hasOwn(CREDENTIAL_FREE_TEST_COVERAGE, id)) {
     throw new Error(`Credential-free test ${id} requires execution coverage metadata`);
   }
-  return supportsE2eGatewayRuntime(
-    CREDENTIAL_FREE_TEST_COVERAGE[id as keyof typeof CREDENTIAL_FREE_TEST_COVERAGE].gatewayRuntimes,
-    runtime,
-  );
+  return CREDENTIAL_FREE_TEST_COVERAGE[id as keyof typeof CREDENTIAL_FREE_TEST_COVERAGE]
+    .gatewayRuntimes;
 }
 
 export function credentialFreeTestProjectForFile(
@@ -158,7 +174,7 @@ export function stripCredentialFreeTestDeclarations(source: string): string {
 
 export function credentialFreeTestRowFromModule(
   module: CredentialFreeTestModule,
-): CredentialFreeTestMatrixRow {
+): CredentialFreeTestDefinitionRow {
   validateTestFile(module.file, module.project);
   const tags = credentialFreeTestTags(module.source, module.file);
   if (tags.length !== 1) {
@@ -177,7 +193,7 @@ export function credentialFreeTestRowFromModule(
 
 export function discoverCredentialFreeTestRows(
   modules: readonly CredentialFreeTestModule[],
-): CredentialFreeTestMatrixRow[] {
+): CredentialFreeTestDefinitionRow[] {
   const rows = modules.map(credentialFreeTestRowFromModule).sort((left, right) => {
     return (
       left.id.localeCompare(right.id) ||
@@ -257,15 +273,34 @@ export function listVitestCredentialFreeTestModules(
   });
 }
 
-const discoveryCache = new Map<string, CredentialFreeTestMatrixRow[]>();
+const discoveryCache = new Map<string, CredentialFreeTestDefinitionRow[]>();
 
-export function discoverCredentialFreeTests(repoRoot = REPO_ROOT): CredentialFreeTestMatrixRow[] {
+export function discoverCredentialFreeTests(
+  repoRoot = REPO_ROOT,
+): CredentialFreeTestDefinitionRow[] {
   const resolvedRoot = fs.realpathSync(repoRoot);
   const cached = discoveryCache.get(resolvedRoot);
   if (cached) return cached.map((row) => ({ ...row }));
   const rows = discoverCredentialFreeTestRows(listVitestCredentialFreeTestModules(resolvedRoot));
   discoveryCache.set(resolvedRoot, rows);
   return rows.map((row) => ({ ...row }));
+}
+
+export function credentialFreeTestMatrix(
+  rows: readonly CredentialFreeTestDefinitionRow[],
+  gatewayRuntimes: readonly E2eGatewayRuntime[],
+): CredentialFreeTestMatrixRow[] {
+  return rows.flatMap((row) => {
+    const support =
+      CREDENTIAL_FREE_TEST_COVERAGE[row.id as keyof typeof CREDENTIAL_FREE_TEST_COVERAGE]
+        .gatewayRuntimes;
+    return e2eRuntimeProviders(support, gatewayRuntimes).map((runtimeProvider) => ({
+      ...row,
+      execution_id: runtimeExecutionId(row.id, "", runtimeProvider),
+      runtime_provider: runtimeProvider,
+      coverage_variant: runtimeCoverageVariant("", runtimeProvider),
+    }));
+  });
 }
 
 const invokedFile = process.argv[1] ? path.resolve(process.argv[1]) : "";

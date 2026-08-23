@@ -14,12 +14,12 @@ import {
   DirectSandboxFallbackUnavailableError,
   PinnedSandboxResourceIdentityChangedError,
 } from "../onboard/runtime-provider/privileged-sandbox-control-errors";
-import { requireRuntimeProviderBundleForSandbox } from "../onboard/runtime-provider/registry";
 import {
   createFilePersistedEngineLifecycleStore,
   hasActivePersistedEngineStateMutationTarget,
   PERSISTED_ENGINE_LIFECYCLE_DIRECTORY,
 } from "../onboard/runtime-provider/persisted-engine-lifecycle";
+import { requireRuntimeProviderBundleForSandbox } from "../onboard/runtime-provider/selection";
 import { resolveShieldsStateDir, withShieldsTransitionLock } from "../shields/transition-lock";
 import * as registry from "../state/registry";
 
@@ -59,6 +59,19 @@ function privilegedSandboxControl(sandboxName: string): {
     );
   }
   return { sandbox, control: provider.lifecycle.privilegedSandboxControl };
+}
+
+function registeredSandboxNames(sandboxName: string): readonly string[] {
+  const names = new Set<string>([sandboxName]);
+  const listed = registry.listSandboxes?.();
+  if (Array.isArray(listed?.sandboxes)) {
+    for (const entry of listed.sandboxes) {
+      if (typeof entry.name === "string" && entry.name) names.add(entry.name);
+    }
+  }
+  return Array.from(names).sort(
+    (left, right) => right.length - left.length || left.localeCompare(right),
+  );
 }
 
 function assertNoActiveStateMutationTarget(sandboxName: string): void {
@@ -102,7 +115,11 @@ export function resolvePrivilegedSandboxTarget(
 ): RuntimeProviderPrivilegedSandboxTarget {
   assertNoActiveStateMutationTarget(sandboxName);
   const { sandbox, control } = privilegedSandboxControl(sandboxName);
-  return control.resolveTarget({ sandbox, sandboxName });
+  return control.resolveTarget({
+    registeredSandboxNames: registeredSandboxNames(sandboxName),
+    sandbox,
+    sandboxName,
+  });
 }
 
 /** Retained name for Docker compatibility code that only needs an opaque runtime handle. */
@@ -124,6 +141,7 @@ export function executePrivilegedSandboxCommand(
         ? Buffer.from(options.input)
         : Buffer.from(options.input, "utf8");
   return control.execute({
+    registeredSandboxNames: registeredSandboxNames(sandboxName),
     sandbox,
     sandboxName,
     command,
@@ -156,6 +174,7 @@ export function privilegedSandboxExecArgv(
     );
   }
   return control.buildLegacyDockerArgv({
+    registeredSandboxNames: registeredSandboxNames(sandboxName),
     sandbox,
     sandboxName,
     command,

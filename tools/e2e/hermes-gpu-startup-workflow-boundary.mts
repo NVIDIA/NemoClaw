@@ -135,7 +135,11 @@ export function validateHermesGpuStartupWorkflow(
   const matrix = asRecord(strategy.matrix);
   if (
     strategy["fail-fast"] !== false ||
-    strategy["max-parallel"] !== 1 ||
+    strategy["max-parallel"] !== 2 ||
+    JSON.stringify(matrix.scenario) !==
+      JSON.stringify(["native", "fallback", "compatibility-only"]) ||
+    matrix.runtime_provider !==
+      "${{ fromJSON(needs.generate-matrix.outputs.runtime_providers_by_job)['hermes-gpu-startup'] }}" ||
     JSON.stringify(matrix.include) !==
       JSON.stringify([
         {
@@ -149,6 +153,7 @@ export function validateHermesGpuStartupWorkflow(
           sandbox_name: "e2e-hgpu-fallback",
           observable_outcome: "Fallback GPU startup reaches the stable Ready route",
           coverage_variant: "fallback",
+          gateway_runtimes: "docker",
         },
         {
           scenario: "compatibility-only",
@@ -156,20 +161,24 @@ export function validateHermesGpuStartupWorkflow(
           observable_outcome: "Compatibility-only GPU startup reaches the stable Ready route",
           coverage_variant: "compatibility-only",
         },
-      ])
+      ]) ||
+    JSON.stringify(matrix.exclude) !==
+      JSON.stringify([{ scenario: "fallback", runtime_provider: "podman" }])
   ) {
-    errors.push(`${JOB_NAME} must serialize GPU scenarios`);
+    errors.push(`${JOB_NAME} must expand reviewed GPU scenarios by supported runtime`);
   }
 
   const jobEnv = asRecord(job.env);
   const requiredEnv = {
     E2E_ARTIFACT_DIR:
-      "${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}",
+      "${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/${{ matrix.runtime_provider }}",
+    E2E_GATEWAY_RUNTIMES: "docker,podman",
     E2E_HERMES_GPU_STARTUP_SCENARIO: "${{ matrix.scenario }}",
     E2E_JOB: "1",
     E2E_TARGET_ID: JOB_NAME,
     NEMOCLAW_AGENT: "hermes",
     NEMOCLAW_E2E_SHARD: "${{ matrix.scenario }}",
+    NEMOCLAW_GATEWAY_RUNTIME: "${{ matrix.runtime_provider }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_SANDBOX_GPU: "1",
     NEMOCLAW_SANDBOX_NAME: "${{ matrix.sandbox_name }}",
@@ -293,7 +302,7 @@ if ! @run restore`;
     nativePodmanRuntime?.name !== "Prepare native Podman E2E runtime" ||
     nativePodmanRuntime?.uses !== E2E_ACTION_PROVENANCE.nativePodmanRuntime.reference ||
     asRecord(nativePodmanRuntime?.with).enabled !==
-      "${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}" ||
+      "${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}" ||
     run.includes(SOURCE) ||
     !hasProof(
       runStep.run,
@@ -444,8 +453,10 @@ rm -rf -- @state`,
     steps.find((step) => step.name === "Upload Hermes GPU startup artifacts")?.with,
   );
   if (
-    upload.name !== "e2e-hermes-gpu-startup-${{ matrix.scenario }}" ||
-    upload.path !== "e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/"
+    upload.name !==
+      "e2e-hermes-gpu-startup-${{ matrix.scenario }}-${{ matrix.runtime_provider }}" ||
+    upload.path !==
+      "e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/${{ matrix.runtime_provider }}/"
   ) {
     errors.push(`${JOB_NAME} upload needs a scenario artifact path`);
   }

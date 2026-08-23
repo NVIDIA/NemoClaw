@@ -254,7 +254,8 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
     nativePodmanToolchainStage.uses !==
       E2E_ACTION_PROVENANCE.stageNativePodmanToolchains.reference ||
     !isDeepStrictEqual(record(nativePodmanToolchainStage.with), {
-      enabled: "${{ inputs.gateway_runtime == 'podman' && 'true' || 'false' }}",
+      enabled:
+        "${{ contains(format(',{0},', inputs.gateway_runtimes || inputs.gateway_runtime || 'docker'), ',podman,') && 'true' || 'false' }}",
       "github-token": "${{ github.token }}",
     })
   ) {

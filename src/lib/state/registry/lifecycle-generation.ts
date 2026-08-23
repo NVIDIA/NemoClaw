@@ -1,10 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isDeepStrictEqual } from "node:util";
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
-import { withLock } from "./lock";
-import { load, save } from "./persistence";
+import { compareAndSetSandboxLifecycleGeneration } from "./lifecycle-generation-cas";
 import type { SandboxEntry } from "./types";
 
 export function usesLegacyRuntimeLifecycleCompatibility(entry: SandboxEntry): boolean {
@@ -33,19 +31,9 @@ export function compareAndSetLegacySandboxLifecycleGeneration(
 ): boolean {
   if (
     !usesLegacyRuntimeLifecycleCompatibility(expected) ||
-    expected.lifecycleGeneration !== undefined ||
-    lifecycleGeneration.length === 0 ||
-    lifecycleGeneration.length > 256 ||
-    /[\u0000-\u001f\u007f-\u009f]/u.test(lifecycleGeneration)
+    expected.lifecycleGeneration !== undefined
   ) {
     return false;
   }
-  return withLock(() => {
-    const data = load();
-    const current = data.sandboxes[expected.name];
-    if (!current || !isDeepStrictEqual(current, expected)) return false;
-    current.lifecycleGeneration = lifecycleGeneration;
-    save(data);
-    return true;
-  });
+  return compareAndSetSandboxLifecycleGeneration(expected, lifecycleGeneration);
 }

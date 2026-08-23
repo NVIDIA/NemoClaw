@@ -215,6 +215,7 @@ export interface RuntimeProviderPrivilegedSandboxTarget {
 export interface RuntimeProviderPrivilegedSandboxCommandInput {
   readonly sandbox: SandboxEntry;
   readonly sandboxName: string;
+  readonly registeredSandboxNames: readonly string[];
   readonly command: readonly string[];
   readonly input?: Buffer;
   readonly sanitizeEnvironment: boolean;
@@ -233,7 +234,10 @@ export interface RuntimeProviderPrivilegedSandboxCommandResult {
 
 export interface RuntimeProviderPrivilegedSandboxControl {
   resolveTarget(
-    input: Pick<RuntimeProviderPrivilegedSandboxCommandInput, "sandbox" | "sandboxName">,
+    input: Pick<
+      RuntimeProviderPrivilegedSandboxCommandInput,
+      "registeredSandboxNames" | "sandbox" | "sandboxName"
+    >,
   ): RuntimeProviderPrivilegedSandboxTarget;
   execute(
     input: RuntimeProviderPrivilegedSandboxCommandInput,

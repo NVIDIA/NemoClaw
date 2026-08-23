@@ -8,9 +8,12 @@ import type {
 } from "./contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES, resolveCurrentRuntimeProviderBundle } from "./current";
 import {
+  requireRuntimeProviderBundleForSandbox,
   resolveRuntimeProviderBundle,
   runtimeProviderSupportsContainerEngineOperation,
 } from "./registry";
+
+export { requireRuntimeProviderBundleForSandbox };
 
 /** Resolve persisted provider metadata through the qualification-backed registry. */
 export function resolveRegisteredRuntimeProvider(

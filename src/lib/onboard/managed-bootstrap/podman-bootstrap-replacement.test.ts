@@ -280,12 +280,12 @@ class PodmanHarness {
     this.capturedEnvironmentMode = fs.statSync(environmentFile).mode & 0o777;
     const configuredResult = this.createResult;
     const labels = Object.fromEntries(
-      args.flatMap((argument, index) => {
-        if (argument !== "--label") return [];
-        const label = args[index + 1] ?? "";
-        const separator = label.indexOf("=");
-        return separator > 0 ? [[label.slice(0, separator), label.slice(separator + 1)]] : [];
-      }),
+      args
+        .map((argument, index) => ({ argument, label: args[index + 1] ?? "" }))
+        .filter(({ argument }) => argument === "--label")
+        .map(({ label }) => ({ label, separator: label.indexOf("=") }))
+        .filter(({ separator }) => separator > 0)
+        .map(({ label, separator }) => [label.slice(0, separator), label.slice(separator + 1)]),
     );
     switch (configuredResult) {
       case null:
