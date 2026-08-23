@@ -106,7 +106,13 @@ export interface PortablePodmanLifecycleTransport {
 export interface PreparedPortableDemoSandboxRemoval {
   readonly present: boolean;
   readonly receipt: PortableDemoLifecycleReceiptRecord;
+  revalidate(): void;
   removeAndVerify(): void;
+  verifyAbsent(): void;
+}
+
+export interface PreparedPortableDemoSandboxDestroyAuthority {
+  revalidate(): void;
   verifyAbsent(): void;
 }
 
@@ -167,6 +173,11 @@ export interface PortableDemoLifecycleContext {
   openshellDriver?: string | null;
   provider?: string | null;
 }
+
+export type PortableDemoDestroyContext = Pick<
+  PortableDemoLifecycleContext,
+  "agent" | "lifecycleGeneration" | "openshellDriver"
+>;
 
 function defaultPodmanCapture(env: NodeJS.ProcessEnv): ContainerEngineCommandCapture {
   return (_executable, args, timeoutMs) => {
@@ -691,35 +702,40 @@ export function preparePortableDemoSandboxRemoval(
   transport: PortablePodmanLifecycleTransport,
   stateDir = defaultStateDir(process.env),
 ): PreparedPortableDemoSandboxRemoval {
-  const loaded = loadReceipt(receiptRecord.sandboxName, stateDir);
-  if (!loaded || !isDeepStrictEqual(currentReceipt(loaded), receiptRecord)) {
-    throw new Error(
-      `Portable demo lifecycle receipt changed for sandbox '${receiptRecord.sandboxName}'`,
+  const assertReceiptAndAuthority = (): PortableDemoLifecycleReceipt => {
+    const current = loadReceipt(receiptRecord.sandboxName, stateDir);
+    if (!current || !isDeepStrictEqual(currentReceipt(current), receiptRecord)) {
+      throw new Error(
+        `Portable demo lifecycle receipt changed for sandbox '${receiptRecord.sandboxName}'`,
+      );
+    }
+    requireCurrentRegistryGeneration(current, receiptRecord.registryGeneration);
+    transport.assertRuntimeAuthority();
+    return current;
+  };
+  const inspectPresence = (): boolean => {
+    const loaded = assertReceiptAndAuthority();
+    const matches = matchingPortableSandboxContainerIds(
+      receiptRecord.sandboxName,
+      transport.podman,
     );
-  }
-  requireCurrentRegistryGeneration(loaded, receiptRecord.registryGeneration);
-  transport.assertRuntimeAuthority();
-  const matches = matchingPortableSandboxContainerIds(receiptRecord.sandboxName, transport.podman);
-  if (matches.length > 1 || (matches.length === 1 && matches[0] !== receiptRecord.containerId)) {
-    throw new Error(
-      `Portable demo lifecycle found a replaced or ambiguous container for sandbox '${receiptRecord.sandboxName}'`,
-    );
-  }
-  const initial = transport.podman(["inspect", receiptRecord.containerId]);
-  let present = true;
-  if (isMissingPodmanContainer(initial)) {
-    present = false;
-    if (matches.length !== 0) {
+    if (matches.length > 1 || (matches.length === 1 && matches[0] !== receiptRecord.containerId)) {
+      throw new Error(
+        `Portable demo lifecycle found a replaced or ambiguous container for sandbox '${receiptRecord.sandboxName}'`,
+      );
+    }
+    const result = transport.podman(["inspect", receiptRecord.containerId]);
+    if (isMissingPodmanContainer(result)) {
+      if (matches.length === 0) return false;
       throw new Error(
         `Portable demo lifecycle found a replacement container for sandbox '${receiptRecord.sandboxName}'`,
       );
     }
-  } else {
     const inspection = inspectPodmanContainer(
       receiptRecord.containerId,
       receiptRecord.sandboxName,
       transport.podman,
-      initial,
+      result,
     );
     requireReceiptOwnedInspection(loaded, inspection);
     if (matches.length !== 1) {
@@ -727,16 +743,16 @@ export function preparePortableDemoSandboxRemoval(
         `Portable demo lifecycle could not prove the label index for sandbox '${receiptRecord.sandboxName}'`,
       );
     }
-  }
-
-  const assertReceiptAndAuthority = (): void => {
-    const current = loadReceipt(receiptRecord.sandboxName, stateDir);
-    if (!current || !isDeepStrictEqual(currentReceipt(current), receiptRecord)) {
+    transport.assertRuntimeAuthority();
+    return true;
+  };
+  const present = inspectPresence();
+  const revalidate = (): void => {
+    if (inspectPresence() !== present) {
       throw new Error(
-        `Portable demo lifecycle receipt changed for sandbox '${receiptRecord.sandboxName}'`,
+        `Portable demo lifecycle container presence changed for sandbox '${receiptRecord.sandboxName}'`,
       );
     }
-    transport.assertRuntimeAuthority();
   };
   const verifyAbsent = (): void => {
     assertReceiptAndAuthority();
@@ -766,12 +782,60 @@ export function preparePortableDemoSandboxRemoval(
   return {
     present,
     receipt: receiptRecord,
+    revalidate,
     removeAndVerify: () => {
       assertReceiptAndAuthority();
       if (present) transport.podman(["rm", "--force", receiptRecord.containerId]);
       verifyAbsent();
     },
     verifyAbsent,
+  };
+}
+
+function requirePortableDemoDestroyContext(
+  sandboxName: string,
+  receipt: PortableDemoLifecycleReceiptRecord,
+  context: PortableDemoDestroyContext | null,
+): void {
+  if (
+    context?.agent !== "openclaw" ||
+    context.openshellDriver !== "docker" ||
+    context.lifecycleGeneration !== receipt.registryGeneration
+  ) {
+    throw new Error(
+      `Portable demo lifecycle receipt does not match the OpenClaw sandbox registry record for '${sandboxName}'`,
+    );
+  }
+}
+
+/** Revalidate schema-4 receipt and Podman identity without granting Podman removal authority. */
+export function preparePortableDemoSandboxDestroyAuthority(
+  sandboxName: string,
+  readContext: () => PortableDemoDestroyContext | null,
+  deps: PortableDemoLifecycleDeps = {},
+): PreparedPortableDemoSandboxDestroyAuthority | null {
+  const commandEnv = deps.env ?? process.env;
+  const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
+  const receipt = loadReceipt(sandboxName, stateDir);
+  if (!receipt) return null;
+  const receiptRecord = currentReceipt(receipt);
+  if ((deps.platform ?? process.platform) !== "linux") {
+    throw new Error("Portable demo lifecycle receipt is only valid on Linux");
+  }
+  requirePortableDemoDestroyContext(sandboxName, receiptRecord, readContext());
+  const transport = qualifiedPodmanAuthority(receipt, commandEnv, deps);
+  const prepared = preparePortableDemoSandboxRemoval(receiptRecord, transport, stateDir);
+  const assertRegistryAuthority = (): void =>
+    requirePortableDemoDestroyContext(sandboxName, receiptRecord, readContext());
+  return {
+    revalidate: () => {
+      assertRegistryAuthority();
+      prepared.revalidate();
+    },
+    verifyAbsent: () => {
+      assertRegistryAuthority();
+      prepared.verifyAbsent();
+    },
   };
 }
 
