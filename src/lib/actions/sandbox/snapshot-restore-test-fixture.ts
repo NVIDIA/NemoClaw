@@ -26,6 +26,8 @@ export type OpenshellCaptureResult = {
 };
 export type SandboxRecord = {
   name: string;
+  createdAt?: string;
+  pendingRouteReservation?: true;
   agent?: string | null;
   baselineExclusionTransition?: {
     id: string;
@@ -67,6 +69,7 @@ export type SandboxRecord = {
   credentialEnv?: string | null;
   preferredInferenceApi?: string | null;
   lifecycleGeneration?: string;
+  lifecycleLiveIdentityFingerprint?: string;
   hostLocalInferenceReceipt?: string | null;
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   dashboardPort?: number | null;
@@ -212,7 +215,7 @@ export const isGatewayHealthyMock = vi.fn(() => true);
 export const listBackupsMock = vi.fn<() => Array<Record<string, unknown>>>(() => []);
 export const stopNimContainerMock = vi.fn();
 export const stopNimContainerByNameMock = vi.fn();
-export const parseLiveSandboxNamesMock = vi.fn(() => new Set(["alpha"]));
+export const parseLiveSandboxNamesMock = vi.fn((_output: string) => new Set(["alpha"]));
 export const waitForRestoredSandboxGatewaySupervisorMock = vi.fn(() => true);
 export const prepareInitialSandboxCreatePolicyMock = vi.fn(
   (
@@ -230,7 +233,9 @@ export const prepareInitialSandboxCreatePolicyMock = vi.fn(
 export const registerSandboxMock = vi.fn();
 export const reserveSandboxInferenceRouteMock = vi.fn(() => true);
 export const restoreSandboxEntryIfMissingMock = vi.fn(() => true);
+export const removeSandboxMock = vi.fn();
 export const updateSandboxMock = vi.fn();
+export const finalizePendingSandboxRegistrationMock = vi.fn();
 export const inspectGlobalPolicyAuthorityMock =
   policyAuthorityMock.inspectGlobalPolicyAuthorityMock;
 export const inspectSandboxPolicyAuthorityMock =
@@ -387,15 +392,18 @@ vi.mock("../../state/registry", () => ({
     const record = registered ?? getSandboxMock(name);
     return record ? { policyAuthority: "nemoclaw-managed", ...record } : null;
   },
+  isRouteOnlySandboxReservation: (entry: SandboxRecord) =>
+    entry.pendingRouteReservation === true && entry.createdAt === undefined,
   listSandboxes: () => ({
     sandboxes: ["alpha", "beta", "gamma"].map((name) => getSandboxMock(name)).filter(Boolean),
     defaultSandbox: "alpha",
   }),
   registerSandbox: registerSandboxMock,
   reserveSandboxInferenceRoute: reserveSandboxInferenceRouteMock,
-  removeSandbox: vi.fn(),
+  removeSandbox: removeSandboxMock,
   restoreSandboxEntryIfMissing: restoreSandboxEntryIfMissingMock,
   updateSandbox: updateSandboxMock,
+  finalizePendingSandboxRegistration: finalizePendingSandboxRegistrationMock,
 }));
 
 vi.mock("../../state/sandbox", () => ({
@@ -473,7 +481,8 @@ export function resetSnapshotRestoreMocks(): void {
   }));
   registerSandboxMock.mockReset();
   reserveSandboxInferenceRouteMock.mockReset().mockReturnValue(true);
-  restoreSandboxEntryIfMissingMock.mockReset().mockReturnValue(true);
+restoreSandboxEntryIfMissingMock.mockReset().mockReturnValue(true);
+  removeSandboxMock.mockReset();
   removeSandboxRegistryEntryOutcomeMock.mockReturnValue({ status: "complete", removed: true });
   removeSandboxRegistryEntryWithReceiptMock.mockReset().mockImplementation((name: string) => {
     const registered = [...registerSandboxMock.mock.calls]
@@ -490,6 +499,7 @@ export function resetSnapshotRestoreMocks(): void {
       : null;
   });
   updateSandboxMock.mockReset().mockReturnValue(true);
+  finalizePendingSandboxRegistrationMock.mockReset().mockReturnValue(true);
   inspectGlobalPolicyAuthorityMock.mockReset().mockReturnValue({
     authority: "nemoclaw-managed",
     effectivePolicy: {},
