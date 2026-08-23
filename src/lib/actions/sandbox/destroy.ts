@@ -46,6 +46,7 @@ import {
 } from "./destroy-confirmation";
 import {
   executeSandboxDestroy,
+  preparePortableDemoSandboxDestroyAuthority,
   redactDestroyError,
   retirePortableLifecycleAuthority,
 } from "./destroy-execution";
@@ -480,6 +481,23 @@ async function destroySandboxUnlocked(
   const normalized = normalizeDestroySandboxOptions(options);
   if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
   const destroySession = onboardSession.loadSession();
+  let portableContainerAuthority: ReturnType<typeof preparePortableDemoSandboxDestroyAuthority>;
+  try {
+    portableContainerAuthority = preparePortableDemoSandboxDestroyAuthority(sandboxName, () => {
+      const current = registry.getSandbox(sandboxName);
+      return current
+        ? {
+            agent: current.agent,
+            lifecycleGeneration: current.lifecycleGeneration,
+            openshellDriver: current.openshellDriver,
+          }
+        : null;
+    });
+  } catch (error) {
+    throw new Error(
+      `Refusing to destroy sandbox '${sandboxName}': NemoClaw could not validate Portable lifecycle authority before the Docker preflight: ${redactDestroyError(error)}. NemoClaw removed no sandbox resources.`,
+    );
+  }
 
   const inspectContainerIdentity = () =>
     assertUnambiguousDestroyContainerIdentity(sandboxName, {
@@ -489,7 +507,7 @@ async function destroySandboxUnlocked(
       ),
       redact: redactDestroyError,
     });
-  const initialIdentity = inspectContainerIdentity();
+  const initialIdentity = portableContainerAuthority ? null : inspectContainerIdentity();
   if (initialIdentity === false) {
     process.exit(1);
   }
@@ -497,17 +515,28 @@ async function destroySandboxUnlocked(
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } =
     prepareSandboxDestroy(sandboxName);
   // Recheck identity after read-only preflight and before local mutation.
-  const preMutationIdentity = inspectContainerIdentity();
-  if (
-    preMutationIdentity === false ||
-    !isSameDestroyContainerIdentityProof(initialIdentity, preMutationIdentity)
-  ) {
-    if (preMutationIdentity !== false) {
+  if (portableContainerAuthority) {
+    try {
+      portableContainerAuthority.revalidate();
+    } catch (error) {
       console.error(
-        `  Refusing to destroy sandbox '${sandboxName}': Container identity changed during preflight. No sandbox resources were removed.`,
+        `  Refusing to destroy sandbox '${sandboxName}': NemoClaw could not revalidate Portable container identity during preflight: ${redactDestroyError(error)}. NemoClaw removed no sandbox resources.`,
       );
+      process.exit(1);
     }
-    process.exit(1);
+  } else {
+    const preMutationIdentity = inspectContainerIdentity();
+    if (
+      preMutationIdentity === false ||
+      !isSameDestroyContainerIdentityProof(initialIdentity!, preMutationIdentity)
+    ) {
+      if (preMutationIdentity !== false) {
+        console.error(
+          `  Refusing to destroy sandbox '${sandboxName}': Container identity changed during preflight. No sandbox resources were removed.`,
+        );
+      }
+      process.exit(1);
+    }
   }
   const priorHttpsPinRouteId = parseHttpsPinRouteId(sandbox?.endpointUrl);
   const destructiveResult = await executeSandboxDestroy({
@@ -519,7 +548,8 @@ async function destroySandboxUnlocked(
     sandbox,
     sandboxConfirmedAbsent,
     sandboxName,
-    expectedContainerIdentity: initialIdentity.identity,
+    expectedContainerIdentity: initialIdentity?.identity,
+    ...(portableContainerAuthority ? { portableContainerAuthority } : {}),
     stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
   });
   if (!destructiveResult.ok) {
@@ -564,6 +594,13 @@ async function destroySandboxUnlocked(
         );
         console.error(
           `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot safely discard MCP ownership.`,
+        );
+      } else if (destructiveResult.portableLifecycleOwnershipRequiresGateway) {
+        console.error(
+          `  The OpenShell gateway is unreachable. NemoClaw preserved the sandbox registry record and schema-4 Portable receipt because OpenShell sandbox deletion and absence of the exact Podman container are unconfirmed.`,
+        );
+        console.error(
+          `  Start the gateway by running '${CLI_NAME} ${sandboxName} status'. Retry destroy. --force cannot discard this ownership state until NemoClaw confirms both results.`,
         );
       } else {
         console.error(
