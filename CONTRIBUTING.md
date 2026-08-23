@@ -301,8 +301,8 @@ signature, idempotence or reconciliation evidence, per-attempt artifacts, and a
 matching [`test/e2e/RETRY_INVENTORY.md`](test/e2e/RETRY_INVENTORY.md) entry. Do
 not add unproven retries, ambiguous mutation retries, or broad failed-job
 reruns. Keep operation-level retries separate from complete workflow reruns:
-`E2E / Main Retry` records attempt evidence without requesting a broad rerun,
-and Hosted Runner Recovery owns at most one full rerun only for authenticated
+`E2E / Main Retry Evidence` records attempt evidence without requesting a broad rerun,
+and `Automation / Recover Platform CI Runner` owns at most one full rerun only for authenticated
 GitHub-hosted runner-loss evidence.
 
 ### macOS Test Dependencies

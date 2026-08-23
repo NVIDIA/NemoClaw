@@ -1,18 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { dockerImageInspectFormat } from "../adapters/docker";
+import {
+  dockerDesktopCredentialHelperResponds,
+  readDockerCredentialStore,
+} from "../adapters/docker/credential-store";
 import { dockerSpawn } from "../adapters/docker/exec";
 import { redirectInheritedChildStdoutToStderr } from "../cli/stdout-guard";
 import {
   LOCAL_SANDBOX_IMAGE_REPO,
   PORTABLE_LOCAL_SANDBOX_IMAGE_REPO,
 } from "../domain/sandbox/image-tag";
+import { DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES } from "../domain/docker-host";
+import { isWsl } from "../platform";
 import {
   SANDBOX_BUILD_CONTEXT_PREFIX,
   type SandboxBuildContextOrigin,
@@ -51,6 +57,8 @@ export interface SandboxPrebuildInput {
     options: { env: NodeJS.ProcessEnv; stdio: "inherit" },
   ) => Promise<number | null>;
   inspectImageId?: (imageRef: string) => string;
+  credentialHelperResponds?: (credsStore: string) => boolean;
+  isWslHost?: boolean;
   log?: (message: string) => void;
 }
 
@@ -66,8 +74,10 @@ interface TrustedStagedBuildContext {
   dockerfile: string;
 }
 
-function createCredentialFreeDockerConfig(): string {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-docker-config-"));
+function createCredentialFreeDockerConfig(purpose: "portable" | "wsl-buildkit"): string {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), `nemoclaw-${purpose}-docker-config-`),
+  );
   fs.chmodSync(directory, 0o700);
   fs.writeFileSync(path.join(directory, "config.json"), '{"auths":{}}\n', {
     encoding: "utf-8",
@@ -135,10 +145,12 @@ function resolveTrustedStagedBuildContext(buildCtx: string): TrustedStagedBuildC
 }
 
 /** Restrict the host Docker build to environment values used by Docker itself. */
-export function dockerBuildSubprocessEnv(): Record<string, string> {
+export function dockerBuildSubprocessEnv(
+  sourceEnv: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
   const env = buildSubprocessEnv();
   for (const key of DOCKER_ENV_NAMES) {
-    const value = process.env[key];
+    const value = sourceEnv[key];
     if (value !== undefined) env[key] = value;
   }
   for (const key of Object.keys(env)) {
@@ -154,6 +166,38 @@ export function dockerBuildSubprocessEnv(): Record<string, string> {
     }
   }
   return env;
+}
+
+function requiresCredentialFreeWslBuildConfig(
+  env: NodeJS.ProcessEnv,
+  helperResponds: (credsStore: string) => boolean,
+  isWslHost?: boolean,
+): boolean {
+  if (!isWsl({ env, isWsl: isWslHost })) return false;
+  const { credsStore } = readDockerCredentialStore(env, fs.readFileSync);
+  return (
+    credsStore !== undefined &&
+    DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES.has(credsStore) &&
+    !helperResponds(credsStore)
+  );
+}
+
+function dockerDesktopCredentialHelperRespondsFromBuild(
+  credsStore: string,
+  env: NodeJS.ProcessEnv,
+): boolean {
+  return dockerDesktopCredentialHelperResponds(credsStore, (command, options) => {
+    const [executable, ...args] = command;
+    if (!executable) return null;
+    const result = spawnSync(executable, args, {
+      encoding: "utf-8",
+      env: dockerBuildSubprocessEnv(env),
+      shell: false,
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: options?.timeout,
+    });
+    return result.error || result.status !== 0 ? null : result.stdout;
+  });
 }
 
 export function resolveSandboxPrebuildEnabled(
@@ -268,14 +312,29 @@ export async function prebuildSandboxImageIfEligible(
   log(`  Building sandbox image with ${builderName} (skips the slower in-gateway builder)...`);
 
   let status: number | null;
+  let credentialFreeWslConfig: string | null = null;
   try {
+    const buildEnv: NodeJS.ProcessEnv = {
+      ...dockerBuildSubprocessEnv(env),
+      ...(portable ? {} : { DOCKER_BUILDKIT: "1" }),
+    };
+    const helperResponds =
+      input.credentialHelperResponds ??
+      ((credsStore: string) => dockerDesktopCredentialHelperRespondsFromBuild(credsStore, env));
+    if (
+      !portable &&
+      requiresCredentialFreeWslBuildConfig(env, helperResponds, input.isWslHost)
+    ) {
+      credentialFreeWslConfig = createCredentialFreeDockerConfig("wsl-buildkit");
+      buildEnv.DOCKER_CONFIG = credentialFreeWslConfig;
+      log(
+        "  Docker Desktop credential helper is unavailable in this WSL session; using an isolated credential-free config for the generated sandbox image build.",
+      );
+    }
     status = await buildImage(
       ["build", "-t", imageRef, "-f", trustedContext.dockerfile, trustedContext.buildCtx],
       {
-        env: {
-          ...dockerBuildSubprocessEnv(),
-          ...(portable ? {} : { DOCKER_BUILDKIT: "1" }),
-        },
+        env: buildEnv,
         stdio: "inherit",
       },
     );
@@ -288,6 +347,10 @@ export async function prebuildSandboxImageIfEligible(
       `  Local ${builderName} build could not start (${detail}); using the gateway builder instead.`,
     );
     return { createArgs, imageRef: null, imageId: null };
+  } finally {
+    if (credentialFreeWslConfig !== null) {
+      fs.rmSync(credentialFreeWslConfig, { recursive: true, force: true });
+    }
   }
 
   if (status !== 0) {
@@ -303,11 +366,11 @@ export async function prebuildSandboxImageIfEligible(
     const publishImage = input.publishImage ?? buildImage;
     log("  Publishing sandbox image to the managed local registry...");
     let publishStatus: number | null;
-    const credentialFreeDockerConfig = createCredentialFreeDockerConfig();
+    const credentialFreeDockerConfig = createCredentialFreeDockerConfig("portable");
     try {
       publishStatus = await publishImage(["push", imageRef], {
         env: {
-          ...dockerBuildSubprocessEnv(),
+          ...dockerBuildSubprocessEnv(env),
           DOCKER_CONFIG: credentialFreeDockerConfig,
           REGISTRY_AUTH_FILE: path.join(credentialFreeDockerConfig, "config.json"),
         },

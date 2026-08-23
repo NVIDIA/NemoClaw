@@ -56,10 +56,9 @@ function defaultInput(env = process.env): RunAnalysisInput {
   };
 }
 
-function writeBootstrapResult(
+function writeFailureResult(
   input: RunAnalysisInput,
   reason: string,
-  failed: boolean,
   options: Required<Pick<RunAnalysisOptions, "mkdir" | "writeFile" | "runGit">>,
 ): void {
   options.mkdir(input.outDir);
@@ -78,9 +77,7 @@ function writeBootstrapResult(
     summary: {
       recommendation: "info_only",
       confidence: "low",
-      oneLine: failed
-        ? `PR review advisor failed: ${reason}`
-        : `PR review advisor skipped: ${reason}`,
+      oneLine: `PR review advisor failed: ${reason}`,
     },
     findings: [],
     terminologyReview: {
@@ -115,7 +112,7 @@ function writeBootstrapResult(
   };
   options.writeFile(
     path.join(input.outDir, "pr-review-advisor-result.json"),
-    `${JSON.stringify(failed ? { failed: true, reason } : { skipped: true, reason }, null, 2)}\n`,
+    `${JSON.stringify({ failed: true, reason }, null, 2)}\n`,
   );
   options.writeFile(
     path.join(input.outDir, "pr-review-advisor-final-result.json"),
@@ -123,7 +120,7 @@ function writeBootstrapResult(
   );
   options.writeFile(
     path.join(input.outDir, "pr-review-advisor-summary.md"),
-    `# ${input.title}\n\nAdvisor analysis ${failed ? "failed" : "skipped"}.\n\nReason: ${reason}\n`,
+    `# ${input.title}\n\nAdvisor analysis failed.\n\nReason: ${reason}\n`,
   );
 }
 
@@ -171,21 +168,6 @@ export function runPrReviewAdvisorAnalysis(
       });
       return result.status ?? 1;
     });
-  if (!fileExists(analyzePath)) {
-    console.log("Skipping PR review advisor: trusted base checkout does not contain analyze.mts");
-    writeBootstrapResult(
-      input,
-      "Trusted base checkout does not contain tools/pr-review-advisor/analyze.mts; advisor will run after the implementation lands on the base branch.",
-      false,
-      {
-        mkdir,
-        writeFile,
-        runGit,
-      },
-    );
-    return;
-  }
-
   const analysisArgs = [
     "--base",
     input.baseRef,
@@ -209,7 +191,7 @@ export function runPrReviewAdvisorAnalysis(
         const writeMissingFile = (file: string, text: string): void => {
           if (!fileExists(file)) writeFile(file, text);
         };
-        writeBootstrapResult(input, reason, true, {
+        writeFailureResult(input, reason, {
           mkdir,
           writeFile: writeMissingFile,
           runGit,

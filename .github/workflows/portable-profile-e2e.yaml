@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: E2E / Portable Profile
+name: E2E / Portable Profile on Rootless Linux
 
 run-name: "Portable profile rootless E2E for ${{ github.event.pull_request.head.sha || github.sha }}"
 

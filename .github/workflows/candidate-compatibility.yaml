@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Dependencies / OpenShell Candidate Compatibility
+name: CI / Qualify OpenShell Candidate
 run-name: "OpenShell candidate ${{ inputs.candidate }} at ${{ inputs.nemoclaw_ref }}"
 
 on:

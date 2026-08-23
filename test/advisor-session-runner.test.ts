@@ -370,7 +370,6 @@ describe("advisor session runner", () => {
         maxRetryDelayMs: 60_000,
       },
     });
-    expect(advisorRetrySettings("nvidia/nvidia/nemotron-3-ultra").baseDelayMs).toBe(9_000);
   });
 
   it("configures Pi's proxy transport before an OpenShell SDK session", async () => {

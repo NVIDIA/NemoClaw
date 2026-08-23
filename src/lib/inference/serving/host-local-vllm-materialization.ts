@@ -20,8 +20,37 @@ const MATERIALIZER_OWNED_ARGUMENTS = new Set([
 export function hostLocalVllmModelArguments(recipe: HostLocalInferenceServingRecipe): string[] {
   return recipe.spec.serve.arguments.flatMap(({ name, value }) => {
     if (MATERIALIZER_OWNED_ARGUMENTS.has(name)) return [];
+    if (name === "--gpu-memory-utilization") {
+      return [name, String(hostLocalVllmGpuMemoryUtilization(recipe))];
+    }
     return value === undefined ? [name] : [name, String(value)];
   });
+}
+
+export function hostLocalVllmGpuMemoryUtilization(
+  recipe: HostLocalInferenceServingRecipe,
+): number {
+  const matches = recipe.spec.serve.arguments.filter(
+    (argument) => argument.name === "--gpu-memory-utilization",
+  );
+  if (matches.length > 1) {
+    throw new Error(
+      `Managed vLLM recipe ${recipe.metadata.id} has duplicate --gpu-memory-utilization arguments.`,
+    );
+  }
+  const value = matches.length === 1 ? matches[0]!.value : undefined;
+  const utilization =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && /^(?:0|1)(?:\.[0-9]+)?$/.test(value)
+        ? Number(value)
+        : Number.NaN;
+  if (!Number.isFinite(utilization) || utilization <= 0 || utilization > 1) {
+    throw new Error(
+      `Managed vLLM recipe ${recipe.metadata.id} has no valid --gpu-memory-utilization.`,
+    );
+  }
+  return utilization;
 }
 
 export function hostLocalVllmDockerRunArguments(recipe: HostLocalInferenceServingRecipe): string[] {

@@ -7,6 +7,7 @@ import path from "node:path";
 import { dockerCapture, dockerRm, dockerRun } from "../adapters/docker";
 import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
+import { normalizeSandboxGpuDeviceForCdi } from "./sandbox-gpu-create";
 import type {
   DockerGpuPatchBackend,
   DockerGpuPatchDeps,
@@ -26,10 +27,9 @@ function resultText(result: {
 }
 
 function normalizeGpuDeviceForDocker(device: string | null | undefined): string {
-  const raw = String(device || "").trim();
-  if (!raw || raw === "nvidia.com/gpu=all") return "all";
-  if (raw.startsWith("nvidia.com/gpu=")) return raw.slice("nvidia.com/gpu=".length) || "all";
-  return raw;
+  const cdiDevice = normalizeSandboxGpuDeviceForCdi(device);
+  if (!cdiDevice || cdiDevice === "nvidia.com/gpu=all") return "all";
+  return cdiDevice.slice("nvidia.com/gpu=".length);
 }
 
 function normalizeGpuDeviceForCdi(device: string | null | undefined): string {
