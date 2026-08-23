@@ -121,6 +121,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
       expect(calls).toEqual([
         "--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager",
         "--user daemon-reload",
+        "--user daemon-reload",
         "--user cat openshell-gateway",
         "--user enable nemoclaw-openshell-gateway",
         "--user stop nemoclaw-openshell-gateway",
