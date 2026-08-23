@@ -31,6 +31,13 @@ const workflowMutations: Array<[string, (value: Workflow) => void, string]> = [
     `${JOB} must run only when trusted main explicitly selects it`,
   ],
   [
+    "a self-hosted runner label",
+    (value) => {
+      value.jobs[JOB]!["runs-on"] = "self-hosted";
+    },
+    `${JOB} must run on GitHub-hosted ubuntu-latest so GitHub decommissions the VM after the job`,
+  ],
+  [
     "a PR candidate SHA",
     (value) => {
       value.jobs[JOB]!.env!.CANDIDATE_SHA = "${{ inputs.checkout_sha || github.sha }}";
@@ -69,14 +76,14 @@ const workflowMutations: Array<[string, (value: Workflow) => void, string]> = [
       delete step(value, "Build, boot, and verify identity").env!
         .NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY;
     },
-    `${JOB} must bind deferred cleanup, identity mode, and its evidence directory`,
+    `${JOB} must set NEMOCLAW_BREV_DEFER_CLEANUP, NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY, and WORK_DIR to their reviewed values`,
   ],
   [
     "inline workspace cleanup",
     (value) => {
       delete step(value, "Build, boot, and verify identity").env!.NEMOCLAW_BREV_DEFER_CLEANUP;
     },
-    `${JOB} must bind deferred cleanup, identity mode, and its evidence directory`,
+    `${JOB} must set NEMOCLAW_BREV_DEFER_CLEANUP, NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY, and WORK_DIR to their reviewed values`,
   ],
   [
     "unreserved workspace cleanup",
@@ -91,9 +98,20 @@ const workflowMutations: Array<[string, (value: Workflow) => void, string]> = [
   [
     "persistent Brev credentials",
     (value) => {
-      step(value, "Remove Brev credentials").if = "success()";
+      step(value, "Remove Brev API credentials").if = "success()";
     },
-    `${JOB} must always remove and verify removal of its Brev credential file`,
+    `${JOB} must always remove and verify removal of its Brev API credential file`,
+  ],
+  [
+    "a Brev credential directory without explicit mode 0700",
+    (value) => {
+      const prepare = step(value, "Prepare the trusted identity lane");
+      prepare.run = String(prepare.run).replace(
+        'install -d -m 0700 "$HOME/.brev"',
+        'install -d "$HOME/.brev"',
+      );
+    },
+    `${JOB} preparation must retain install -d -m 0700 "$HOME/.brev"`,
   ],
   [
     "missing cleanup evidence",
@@ -120,25 +138,14 @@ const workflowMutations: Array<[string, (value: Workflow) => void, string]> = [
   [
     "a HOME override that separates Brev from OpenSSH",
     (value) => {
-      delete step(value, "Prepare the trusted identity lane").env!.HOME;
-      delete step(value, "Verify identity workspace cleanup").env!.HOME;
-      delete step(value, "Remove Brev credentials").env!.HOME;
+      step(value, "Build, boot, and verify identity").env!.HOME =
+        "${{ runner.temp }}/isolated-home";
     },
     `${JOB} steps must use the runner account home so Brev and OpenSSH share SSH configuration`,
   ],
 ];
 
 describe("exact staging Brev Launchable identity workflow boundary", () => {
-  it("accepts the runner account home for Brev and OpenSSH (#9925)", () => {
-    const value = workflow();
-    delete step(value, "Prepare the trusted identity lane").env!.HOME;
-    delete step(value, "Build, boot, and verify identity").env!.HOME;
-    delete step(value, "Verify identity workspace cleanup").env!.HOME;
-    delete step(value, "Remove Brev credentials").env!.HOME;
-
-    expect(validateE2eWorkflow(value)).toEqual([]);
-  });
-
   it("keeps the explicit trusted-main identity job valid (#9925)", () => {
     expect(validateE2eWorkflow(workflow())).toEqual([]);
   });
