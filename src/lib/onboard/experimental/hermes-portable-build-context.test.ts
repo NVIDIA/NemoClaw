@@ -356,7 +356,7 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     );
   });
 
-  it("rejects BuildKit-only local COPY options before reservation (#9921)", () => {
+  it("rejects BuildKit-only local COPY options before reservation (#10007)", () => {
     const source = primaryCloneFixture();
     const dockerfile = path.join(source, "agents/hermes/Dockerfile");
     const reservationRoot = path.join(stateDir, "hermes-portable-build-context");
@@ -378,7 +378,7 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     expect(fs.existsSync(reservationRoot)).toBe(reservationExistedBefore);
   });
 
-  it("rejects BuildKit-only remote ADD options before reservation (#9921)", () => {
+  it("rejects BuildKit-only remote ADD options before reservation (#10007)", () => {
     const source = primaryCloneFixture();
     const dockerfile = path.join(source, "agents/hermes/Dockerfile");
     const reservationRoot = path.join(stateDir, "hermes-portable-build-context");
