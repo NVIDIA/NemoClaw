@@ -3,17 +3,17 @@
 
 import { randomUUID } from "node:crypto";
 
+import { ISSUE_9880_STAGING_LAUNCHABLE_TEST_TIMEOUT_MS } from "../../../tools/e2e/staging-launchable-timeout-contract.mts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 
 const MODEL = "meta/llama-3.3-70b-instruct";
 const PROMPT = "List 10 REST API endpoints for a blog service, one per line";
-const TEST_TIMEOUT_MS = 60 * 60_000;
 
 test(
   "OpenClaw CLI does not loop on a simple text request on the staging Launchable (#9880)",
   {
-    timeout: TEST_TIMEOUT_MS,
+    timeout: ISSUE_9880_STAGING_LAUNCHABLE_TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "resolve the latest staging handoff",

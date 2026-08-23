@@ -3,15 +3,14 @@
 
 import { randomUUID } from "node:crypto";
 
+import { STAGING_LAUNCHABLE_FULL_TEST_TIMEOUT_MS } from "../../../tools/e2e/staging-launchable-timeout-contract.mts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-
-const TEST_TIMEOUT_MS = 65 * 60_000;
 
 test(
   "staging Launchable runs the baked full E2E scenario",
   {
-    timeout: TEST_TIMEOUT_MS,
+    timeout: STAGING_LAUNCHABLE_FULL_TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "resolve the latest staging handoff",

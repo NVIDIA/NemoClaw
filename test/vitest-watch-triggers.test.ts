@@ -75,6 +75,8 @@ const OPAQUE_INPUTS = [
   "scripts/e2e/sanitize-trace-timing.py",
   "test/e2e/manifests/openclaw-nvidia.yaml",
   ".github/workflows/e2e.yaml",
+  ".github/workflows/issue-9880-staging-reproduction.yaml",
+  ".github/workflows/staging-launchable-full.yaml",
   ".github/workflows/e2e-standard-profile.yaml",
   ".github/workflows/portable-profile-e2e.yaml",
   "test/e2e/fixtures/portable-profile-systemctl-shim.sh",
@@ -259,6 +261,12 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("test/e2e/manifests/openclaw-nvidia.yml")).toEqual([]);
     expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual(E2E_WORKFLOW_CONTRACTS);
+    expect(triggeredBy(".github/workflows/issue-9880-staging-reproduction.yaml")).toEqual([
+      "test/e2e/support/issue-9880-staging-reproduction-workflow.test.ts",
+    ]);
+    expect(triggeredBy(".github/workflows/staging-launchable-full.yaml")).toEqual([
+      "test/e2e/support/issue-9880-staging-reproduction-workflow.test.ts",
+    ]);
     expect(triggeredBy(".github/workflows/e2e-standard-profile.yaml")).toEqual([
       "test/e2e/support/standard-profile-workflow-boundary.test.ts",
     ]);

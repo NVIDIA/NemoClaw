@@ -237,6 +237,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests(...E2E_WORKFLOW_CONTRACTS),
   },
   {
+    pattern:
+      /(?:^|\/)\.github\/workflows\/(?:issue-9880-staging-reproduction|staging-launchable-full)\.yaml$/,
+    testsToRun: runTests("test/e2e/support/issue-9880-staging-reproduction-workflow.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)\.github\/workflows\/e2e-standard-profile\.yaml$/,
     testsToRun: runTests("test/e2e/support/standard-profile-workflow-boundary.test.ts"),
   },

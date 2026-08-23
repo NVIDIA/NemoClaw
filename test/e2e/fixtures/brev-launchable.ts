@@ -54,6 +54,7 @@ export interface BrevLaunchableFixtureOptions {
 const IMAGE_REPOSITORY = "brevdev/nemoclaw-image";
 const IMAGE_WORKFLOW = "build-launchable-e2e-image.yml";
 const DEFAULT_POLL_MS = 15_000;
+export const DEFAULT_BREV_WORKSPACE_DELETE_TIMEOUT_MS = 12 * 60_000;
 
 export class BrevLaunchableFixture {
   private readonly artifacts: ArtifactSink;
@@ -228,7 +229,10 @@ export class BrevLaunchableFixture {
     return identity;
   }
 
-  async delete(ownership: BrevWorkspaceOwnership, timeoutMs = 12 * 60_000): Promise<void> {
+  async delete(
+    ownership: BrevWorkspaceOwnership,
+    timeoutMs = DEFAULT_BREV_WORKSPACE_DELETE_TIMEOUT_MS,
+  ): Promise<void> {
     if (!ownership.createRequested) return;
     const name = ownership.name;
     const current = await this.workspace(name);
@@ -352,7 +356,9 @@ function assertStagingManifest(manifest: Record<string, unknown>, producerRunId:
     manifest.variant !== "cpu" ||
     manifest.observedFamily !== "nemoclaw-brev-staging-cpu" ||
     typeof manifest.project !== "string" ||
+    manifest.project.length === 0 ||
     typeof manifest.imageName !== "string" ||
+    manifest.imageName.length === 0 ||
     typeof manifest.nemoclawSha !== "string" ||
     !sha.test(manifest.nemoclawSha) ||
     typeof manifest.imageRepositorySha !== "string" ||

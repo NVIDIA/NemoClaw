@@ -17,7 +17,7 @@ jobs:
   test:
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 95
+    timeout-minutes: 105
     steps:
       - name: Check out trusted Vitest controller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -78,7 +78,7 @@ jobs:
           printf 'work_dir=%s\n' "$work_dir" >>"$GITHUB_OUTPUT"
 
       - name: Run the staging Launchable full scenario
-        timeout-minutes: 70
+        timeout-minutes: 80
         env:
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
           E2E_ARTIFACT_DIR: ${{ steps.prepare.outputs.work_dir }}
