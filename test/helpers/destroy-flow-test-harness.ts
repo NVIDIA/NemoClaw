@@ -33,10 +33,13 @@ export type DestroyHarness = {
   logSpy: MockInstance;
   prepareMcpBridgesForAbsentSandboxDestroySpy: MockInstance;
   prepareMcpBridgesForDestroySpy: MockInstance;
+  preparePortableDestroyAuthoritySpy: MockInstance;
   promptSpy: MockInstance;
   removeManagedHermesStateVolumeSpy: MockInstance;
   removeSandboxSpy: MockInstance;
   retirePortableLifecycleReceiptSpy: MockInstance;
+  portableDestroyRevalidateSpy: MockInstance;
+  portableDestroyVerifyAbsentSpy: MockInstance;
   revokeHttpsPinRuntimeAdapterRouteSpy: MockInstance;
   restoreMcpBridgesAfterDestroyAbortSpy: MockInstance;
   runOpenshellSpy: MockInstance;
@@ -81,6 +84,9 @@ type DestroyHarnessOptions = {
   mcpServers?: string[];
   openshellDriver?: string;
   portableCommandError?: string;
+  portableDestroyAuthority?: boolean;
+  portableDestroyPrepareError?: string;
+  portableDestroyVerifyAbsentError?: string;
   prepareMcpBridgeError?: string;
   promptResponses?: string[];
   provider?: string;
@@ -198,11 +204,36 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const portableAgentLifecycle = requireDist(
     "../../onboard/experimental/portable-agent-lifecycle.js",
   );
+  const portableDemoLifecycle = requireDist(
+    "../../onboard/experimental/portable-demo-lifecycle.js",
+  );
 
   const assertHermesPortableCommandUnavailableSpy = vi
     .spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable")
     .mockImplementation(() => {
       if (options.portableCommandError) throw new Error(options.portableCommandError);
+    });
+  const portableDestroyRevalidateSpy = vi.fn(() => {
+    events.push("portable-revalidate");
+  });
+  const portableDestroyVerifyAbsentSpy = vi.fn(() => {
+    events.push("portable-absent");
+    if (options.portableDestroyVerifyAbsentError) {
+      throw new Error(options.portableDestroyVerifyAbsentError);
+    }
+  });
+  const preparePortableDestroyAuthoritySpy = vi
+    .spyOn(portableDemoLifecycle, "preparePortableDemoSandboxDestroyAuthority")
+    .mockImplementation(() => {
+      if (options.portableDestroyPrepareError) {
+        throw new Error(options.portableDestroyPrepareError);
+      }
+      return options.portableDestroyAuthority
+        ? {
+            revalidate: portableDestroyRevalidateSpy,
+            verifyAbsent: portableDestroyVerifyAbsentSpy,
+          }
+        : null;
     });
 
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
@@ -522,6 +553,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     logSpy,
     prepareMcpBridgesForAbsentSandboxDestroySpy,
     prepareMcpBridgesForDestroySpy,
+    preparePortableDestroyAuthoritySpy,
+    portableDestroyRevalidateSpy,
+    portableDestroyVerifyAbsentSpy,
     promptSpy,
     removeManagedHermesStateVolumeSpy,
     removeSandboxSpy,
