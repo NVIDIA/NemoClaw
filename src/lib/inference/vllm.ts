@@ -600,10 +600,7 @@ function installGpuMemoryPreflight(
   return { ok: true };
 }
 
-function sameDualStationTopology(
-  left: DualStationVllmPlan,
-  right: DualStationVllmPlan,
-): boolean {
+function sameDualStationTopology(left: DualStationVllmPlan, right: DualStationVllmPlan): boolean {
   const withoutVolatileMemory = (plan: DualStationVllmPlan): DualStationVllmPlan => ({
     ...plan,
     local: {
@@ -1294,10 +1291,11 @@ function verifyDualStationVllmAuthBoundary(
 }
 
 function sanitizeContainerLogOutput(output: string): string {
-  return redact(redactFull(stripVTControlCharacters(output.replace(/\r\n?/g, "\n")))).replace(
+  const normalizedOutput = stripVTControlCharacters(output.replace(/\r\n?/g, "\n")).replace(
     /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g,
     "",
   );
+  return redact(redactFull(normalizedOutput));
 }
 
 function readContainerLogTail(
@@ -2349,11 +2347,7 @@ async function runVllmInstall(
             reason: "peer pinned model snapshot was not verified after staging.",
           };
         }
-        const memory = installGpuMemoryPreflight(
-          model,
-          runtimeProfile,
-          refreshedCapability.plan,
-        );
+        const memory = installGpuMemoryPreflight(model, runtimeProfile, refreshedCapability.plan);
         if (!memory.ok) return { ok: false as const, reason: memory.reason };
         return { ok: true as const, plan: refreshedCapability.plan };
       });
@@ -2476,10 +2470,7 @@ async function runVllmInstall(
 
         let legacyMigrationCommitted = false;
         if (start.legacyMigration) {
-          const commit = await commitDualStationLegacyMigration(
-            launchPlan,
-            start.legacyMigration,
-          );
+          const commit = await commitDualStationLegacyMigration(launchPlan, start.legacyMigration);
           if (!commit.ok) {
             await rollbackStartedPair();
             console.error(`  vLLM install failed: ${commit.reason}`);

@@ -309,9 +309,7 @@ describe("managed vLLM GPU memory preflight", () => {
   it("does not apply the recipe default after a lower appended override", async () => {
     const profile = detectVllmProfile({ type: "nvidia" })!;
     process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-27b";
-    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify([
-      "--gpu-memory-utilization=0.5",
-    ]);
+    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify(["--gpu-memory-utilization=0.5"]);
     mockHostCommands({
       computeCap: "9.0\n",
       gpuMemory: "0, GPU-1234, 100000, 60000\n",
@@ -336,10 +334,7 @@ describe("managed vLLM GPU memory preflight", () => {
     process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-27b";
     mockHostCommands({
       computeCap: "9.0\n",
-      gpuMemory: [
-        "0, GPU-1234, 100000, 80000\n",
-        "0, GPU-1234, 100000, 60000\n",
-      ],
+      gpuMemory: ["0, GPU-1234, 100000, 80000\n", "0, GPU-1234, 100000, 60000\n"],
     });
     mockDockerDaemon(profile.containerName);
 
@@ -473,7 +468,7 @@ describe("managed vLLM crash-loop watchdog", () => {
     mockDockerDaemon(
       profile!.containerName,
       "3",
-      "\u001b[31mValueError: insufficient free GPU memory\u001b[0m\r\nOPENAI_API_KEY=secret-value\u0007\u0000",
+      "\u001b[31mValueError: insufficient free GPU memory\u001b[0m\r\nOPENAI_API_KEY=secret-value\u0007\u0000\nnvap\u0000i-ABCDEFGHIJKLMN",
     );
 
     const result = await installVllm(profile!, {
@@ -494,6 +489,7 @@ describe("managed vLLM crash-loop watchdog", () => {
     expect(printedTail).toContain("ValueError: insufficient free GPU memory");
     expect(printedTail).not.toContain("\u001b");
     expect(printedTail).not.toContain("secret-value");
+    expect(printedTail).not.toContain("nvapi-ABCDEFGHIJKLMN");
     expect(printedTail).not.toMatch(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/);
   });
 
