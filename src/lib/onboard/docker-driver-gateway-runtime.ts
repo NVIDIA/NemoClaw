@@ -248,8 +248,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   ): Record<string, string> {
     const dockerHost = process.env.DOCKER_HOST;
     let podmanSocketPath: string | undefined;
-    const portable = isPortableExperimentalProfile();
-    if (portable) {
+    if (isPortableExperimentalProfile()) {
       const candidate = dockerHost?.trim();
       if (!candidate || !isSupportedGatewayDockerHost(dockerHost)) {
         throw new Error(
@@ -258,17 +257,12 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       }
       podmanSocketPath = candidate.slice("unix://".length);
     }
-    const gatewayHostRuntime = dockerDriverGatewayEnv.prepareConfiguredGatewayHostRuntime({
-      environment: process.env,
-      platform,
-      socketPath: podmanSocketPath,
-    });
     const gatewayEnv = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
       platform,
       gatewayPort: currentGatewayPort(),
       stateDir: getDockerDriverGatewayStateDir(),
       dockerNetworkName: process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
-      gatewayHostRuntime,
+      podmanSocketPath,
       getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
       resolveSandboxBin: resolveOpenShellSandboxBinary,
       enableBindMounts: deps.enableBindMounts?.() === true,
@@ -399,13 +393,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       normalizeGatewayExecutablePath,
     });
     if (identityDrift) return identityDrift;
-    const usesVmDriver =
-      platform === "darwin" &&
-      dockerDriverGatewayEnv.prepareConfiguredGatewayHostRuntime({
-        environment: process.env,
-        platform,
-      }).sandboxHostAddress === null;
-    if (usesVmDriver) {
+    if (platform === "darwin" && desiredEnv.OPENSHELL_DRIVERS === "docker") {
       const markerDrift =
         dockerDriverGatewayRuntimeMarker.getDockerDriverGatewayRuntimeMarkerDriftForStateDir(
           getDockerDriverGatewayStateDir(),
@@ -454,14 +442,9 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
         gatewayBin,
       });
     }
-    const usesVmDriver =
-      platform === "darwin" &&
-      dockerDriverGatewayEnv.prepareConfiguredGatewayHostRuntime({
-        environment: process.env,
-        platform,
-      }).sandboxHostAddress === null;
     if (
-      usesVmDriver &&
+      platform === "darwin" &&
+      desiredEnv.OPENSHELL_DRIVERS === "docker" &&
       vmDriverProcess.hasOpenShellVmDriverChildProcess(pid, (args) =>
         deps.runCapture([...args], { ignoreError: true }),
       )

@@ -459,8 +459,15 @@ export function findManagedRuntimeBoundaryViolations(): Violation[] {
 
   for (const repoPath of PROVIDER_NEUTRAL_MANAGED_RUNTIME_MODULES) {
     const sourceFile = sourceFileFor(path.join(REPO_ROOT, repoPath));
-    const isProviderIdentity = (node: ts.Node): boolean =>
-      /(?:provider|engine|openshellDriver|sandboxDriver|driver)/i.test(node.getText(sourceFile));
+    const isProviderIdentity = (node: ts.Node): boolean => {
+      const expression = node.getText(sourceFile);
+      // OPENSHELL_DRIVERS is the upstream gateway driver's configuration,
+      // not NemoClaw's opaque runtime-provider identity.
+      return (
+        !/OPENSHELL_DRIVERS/.test(expression) &&
+        /(?:provider|engine|openshellDriver|sandboxDriver|driver)/i.test(expression)
+      );
+    };
     const report = (node: ts.Node, detail: string): void => {
       const pos = position(sourceFile, node);
       addViolation(
