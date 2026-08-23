@@ -493,12 +493,12 @@ describe("ordinary OpenClaw pairing settlement", () => {
     );
   });
 
-  it("wires the direct request producer and approval to the finalized gateway (#10014)", async () => {
+  it("wires the device-authenticated request producer and approval (#10014)", async () => {
     const observePairing = vi
       .fn()
       .mockReturnValueOnce(PAIRING_ONLY)
       .mockReturnValueOnce(SETTLED);
-    const runPortableOpenClawPairingRequestProducer = vi.fn();
+    const runSandboxScopeWarmupRun = vi.fn();
     const runConnectAutoPairApprovalPass = vi.fn();
     vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
       resolveOrdinaryOpenClawPairingTarget: vi.fn(() => PAIRING_TARGET),
@@ -506,8 +506,10 @@ describe("ordinary OpenClaw pairing settlement", () => {
     vi.spyOn(finalizationHandlerRuntime, "loadPairingQualification").mockReturnValue({
       observeOrdinaryOpenClawPairingSettlement: observePairing,
     } as never);
+    vi.spyOn(finalizationHandlerRuntime, "loadAutoPairWarmup").mockReturnValue({
+      runSandboxScopeWarmupRun,
+    } as never);
     vi.spyOn(finalizationHandlerRuntime, "loadAutoPairApproval").mockReturnValue({
-      runPortableOpenClawPairingRequestProducer,
       runConnectAutoPairApprovalPass,
     } as never);
     vi.spyOn(finalizationHandlerRuntime, "loadSandboxLifecycleLock").mockReturnValue({
@@ -520,10 +522,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
     await expect(finalizationHandlerDeps.settleOrdinaryOpenClawPairing("alpha")).resolves.toEqual({
       kind: "settled",
     });
-    expect(runPortableOpenClawPairingRequestProducer).toHaveBeenCalledExactlyOnceWith(
-      "alpha",
-      "nemoclaw",
-    );
+    expect(runSandboxScopeWarmupRun).toHaveBeenCalledExactlyOnceWith("alpha");
     expect(runConnectAutoPairApprovalPass).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
   });
 
