@@ -72,7 +72,10 @@ function createPodman(runningInitially: boolean) {
     const command = args[0] === "--url" ? args.slice(2) : args;
     switch (command[0]) {
       case "version":
-        return { status: 0, stdout: JSON.stringify({ Server: { Version: "5.6.1" } }) };
+        return {
+          status: 0,
+          stdout: JSON.stringify({ Server: { Version: "5.6.1" } }),
+        };
       case "ps":
         return { status: 0, stdout: `${CONTAINER_ID}\n` };
       case "inspect":
@@ -91,7 +94,10 @@ function createPodman(runningInitially: boolean) {
                   "openshell.ai/sandbox-workspace": "default",
                 },
               },
-              State: { Running: running, Status: running ? "running" : "exited" },
+              State: {
+                Running: running,
+                Status: running ? "running" : "exited",
+              },
             },
           ]),
         };
@@ -137,7 +143,7 @@ function installReceipt(stateDir: string, podman: ReturnType<typeof createPodman
   );
 }
 
-function recover(stateDir: string, deps: PortableDemoLifecycleDeps) {
+function recover(stateDir: string, deps: PortableDemoLifecycleDeps, provider?: string | null) {
   return recoverPortableDemoSandboxLifecycle(
     "alpha",
     {
@@ -145,6 +151,7 @@ function recover(stateDir: string, deps: PortableDemoLifecycleDeps) {
       gatewayName: "nemoclaw",
       lifecycleGeneration: CONTAINER_ID,
       openshellDriver: "docker",
+      provider,
     },
     {
       platform: "linux",
@@ -202,7 +209,7 @@ describe("portable lifecycle recovery timing output", () => {
       }),
     ).toEqual({ kind: "recovered" });
     expect(timingLines(log)).toEqual([
-      "  Portable lifecycle timing: authority=0ms inspect=0ms containerStart=0ms execReady=0ms ollama=0ms gatewayHealth=0ms startupProbe=0ms startupLaunch=0ms gatewayReady=0ms total=0ms containerAction=started gatewayAction=started execAttempts=1 gatewayAttempts=2 result=recovered",
+      "  Portable lifecycle timing: authority=0ms inspect=0ms containerStart=0ms execReady=0ms ollama=0ms gatewayHealth=0ms startupProbe=0ms startupLaunch=0ms gatewayReady=0ms total=0ms containerAction=started gatewayAction=started ollamaAction=not-applicable ollamaAttempts=0 execAttempts=1 execNotReady=0 execTimeouts=0 execErrors=0 gatewayAttempts=2 gatewayNotReady=1 gatewayTimeouts=0 gatewayErrors=0 result=recovered",
     ]);
   });
 
@@ -223,7 +230,7 @@ describe("portable lifecycle recovery timing output", () => {
       }),
     ).toEqual({ kind: "already-running" });
     expect(timingLines(log)).toEqual([
-      "  Portable lifecycle timing: authority=0ms inspect=0ms containerStart=0ms execReady=0ms ollama=0ms gatewayHealth=0ms startupProbe=0ms startupLaunch=0ms gatewayReady=0ms total=0ms containerAction=reused gatewayAction=reused execAttempts=1 gatewayAttempts=1 result=already-running",
+      "  Portable lifecycle timing: authority=0ms inspect=0ms containerStart=0ms execReady=0ms ollama=0ms gatewayHealth=0ms startupProbe=0ms startupLaunch=0ms gatewayReady=0ms total=0ms containerAction=reused gatewayAction=reused ollamaAction=not-applicable ollamaAttempts=0 execAttempts=1 execNotReady=0 execTimeouts=0 execErrors=0 gatewayAttempts=1 gatewayNotReady=0 gatewayTimeouts=0 gatewayErrors=0 result=already-running",
     ]);
   });
 
@@ -231,7 +238,8 @@ describe("portable lifecycle recovery timing output", () => {
     const stateDir = temporaryStateDir();
     const podman = createPodman(true);
     const log = vi.fn();
-    let now = 0;
+    let deadlineNow = 0;
+    let diagnosticNow = 0;
     installReceipt(stateDir, podman);
 
     expect(() =>
@@ -241,16 +249,151 @@ describe("portable lifecycle recovery timing output", () => {
           args.includes("curl") ? { status: 0, stdout: "000" } : { status: 0 },
         launchOpenshell: vi.fn(),
         log,
-        now: () => now,
-        timingNow: () => now,
+        now: () => deadlineNow,
+        timingNow: () => {
+          diagnosticNow += 50_000;
+          return diagnosticNow;
+        },
         sleep: (milliseconds) => {
-          now += milliseconds;
+          deadlineNow += milliseconds;
         },
       }),
     ).toThrow("has a startup process, but its agent gateway did not pass");
     expect(timingLines(log)).toHaveLength(1);
+    expect(timingLines(log)[0]).toContain(
+      "gatewayAttempts=91 gatewayNotReady=91 gatewayTimeouts=0 gatewayErrors=0",
+    );
     expect(timingLines(log)[0]).toContain("result=failed failedStage=gatewayReady");
     expect(timingLines(log)[0]).not.toContain("has a startup process");
+  });
+
+  it("classifies exec and gateway polling outcomes without command details (#9200)", () => {
+    const stateDir = temporaryStateDir();
+    const podman = createPodman(true);
+    const log = vi.fn();
+    let deadlineNow = 0;
+    const execResults = [
+      { status: 1 },
+      {
+        status: 1,
+        error: Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }),
+      },
+      {
+        status: 1,
+        error: Object.assign(new Error("transport"), { code: "EPIPE" }),
+      },
+      { status: 0 },
+    ];
+    const gatewayResults = [
+      {
+        status: 1,
+        error: Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }),
+      },
+      {
+        status: 1,
+        error: Object.assign(new Error("transport"), { code: "EPIPE" }),
+      },
+      { status: 0, stdout: "200" },
+    ];
+    installReceipt(stateDir, podman);
+
+    expect(
+      recover(stateDir, {
+        podman,
+        captureOpenshell: (args) => {
+          const command = args.find((arg) => ["true", "pgrep", "curl"].includes(arg));
+          switch (command) {
+            case "true":
+              return execResults.shift() ?? { status: 0 };
+            case "curl":
+              return gatewayResults.shift() ?? { status: 0, stdout: "200" };
+            case "pgrep":
+              return { status: 0 };
+            default:
+              throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
+          }
+        },
+        log,
+        now: () => deadlineNow,
+        timingNow: () => 0,
+        sleep: (milliseconds) => {
+          deadlineNow += milliseconds;
+        },
+      }),
+    ).toEqual({ kind: "already-running" });
+
+    expect(timingLines(log)).toHaveLength(1);
+    expect(timingLines(log)[0]).toContain(
+      "execAttempts=4 execNotReady=1 execTimeouts=1 execErrors=1",
+    );
+    expect(timingLines(log)[0]).toContain(
+      "gatewayAttempts=3 gatewayNotReady=0 gatewayTimeouts=1 gatewayErrors=1",
+    );
+    expect(timingLines(log)[0]).not.toContain("timeout");
+    expect(timingLines(log)[0]).not.toContain("transport");
+  });
+
+  it("reports a healthy managed Ollama probe as reused (#9200)", () => {
+    const stateDir = temporaryStateDir();
+    const podman = createPodman(true);
+    const log = vi.fn();
+    installReceipt(stateDir, podman);
+
+    expect(
+      recover(
+        stateDir,
+        {
+          podman,
+          captureHost: () => ({
+            status: 0,
+            stdout: JSON.stringify({ models: [] }),
+          }),
+          captureOpenshell: (args) =>
+            args.includes("curl") ? { status: 0, stdout: "401" } : { status: 0 },
+          log,
+          now: () => 0,
+          timingNow: () => 0,
+        },
+        "ollama-local",
+      ),
+    ).toEqual({ kind: "already-running" });
+    expect(timingLines(log)).toHaveLength(1);
+    expect(timingLines(log)[0]).toContain("ollamaAction=reused ollamaAttempts=1");
+  });
+
+  it("attributes an errored startup probe to startupProbe (#9200)", () => {
+    const stateDir = temporaryStateDir();
+    const podman = createPodman(true);
+    const log = vi.fn();
+    installReceipt(stateDir, podman);
+
+    expect(() =>
+      recover(stateDir, {
+        podman,
+        captureOpenshell: (args) => {
+          const command = args.find((arg) => ["true", "pgrep", "curl"].includes(arg));
+          switch (command) {
+            case "true":
+              return { status: 0 };
+            case "curl":
+              return { status: 0, stdout: "000" };
+            case "pgrep":
+              return {
+                status: 0,
+                error: Object.assign(new Error("transport"), { code: "EPIPE" }),
+              };
+            default:
+              throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
+          }
+        },
+        log,
+        now: () => 0,
+        timingNow: () => 0,
+      }),
+    ).toThrow("startup process state could not be determined");
+    expect(timingLines(log)).toHaveLength(1);
+    expect(timingLines(log)[0]).toContain("result=failed failedStage=startupProbe");
+    expect(timingLines(log)[0]).not.toContain("transport");
   });
 
   it("preserves recovery when the diagnostic clock and writer throw (#9200)", () => {

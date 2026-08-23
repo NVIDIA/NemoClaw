@@ -21,16 +21,24 @@ describe("portable lifecycle timing recorder", () => {
       }),
     ).toBe("ok");
     recorder.setContainerAction("started");
-    recorder.incrementExecAttempts();
-    recorder.incrementExecAttempts();
+    recorder.recordExecAttempt("not-ready");
+    recorder.recordExecAttempt("timeout");
+    recorder.recordExecAttempt("error");
+    recorder.recordExecAttempt("ready");
     recorder.setGatewayAction("started");
-    recorder.incrementGatewayAttempts();
+    recorder.recordGatewayAttempt("not-ready");
+    recorder.recordGatewayAttempt("timeout");
+    recorder.recordGatewayAttempt("error");
+    recorder.recordGatewayAttempt("ready");
+    recorder.setOllamaAction("started");
+    recorder.incrementOllamaAttempts();
+    recorder.incrementOllamaAttempts();
     clock = 20;
     recorder.finish("recovered");
     recorder.finish("failed");
 
     expect(lines).toEqual([
-      "  Portable lifecycle timing: authority=7ms inspect=0ms containerStart=0ms execReady=0ms ollama=0ms gatewayHealth=0ms startupProbe=0ms startupLaunch=0ms gatewayReady=0ms total=20ms containerAction=started gatewayAction=started execAttempts=2 gatewayAttempts=1 result=recovered",
+      "  Portable lifecycle timing: authority=7ms inspect=0ms containerStart=0ms execReady=0ms ollama=0ms gatewayHealth=0ms startupProbe=0ms startupLaunch=0ms gatewayReady=0ms total=20ms containerAction=started gatewayAction=started ollamaAction=started ollamaAttempts=2 execAttempts=4 execNotReady=1 execTimeouts=1 execErrors=1 gatewayAttempts=4 gatewayNotReady=1 gatewayTimeouts=1 gatewayErrors=1 result=recovered",
     ]);
   });
 

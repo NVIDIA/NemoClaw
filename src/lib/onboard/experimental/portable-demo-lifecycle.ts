@@ -34,7 +34,11 @@ import {
   OLLAMA_PORT,
   recordUserLocalOllamaOwnership,
 } from "./ollama-user-local-runtime";
-import { createPortableLifecycleTimingRecorder } from "./portable-demo-lifecycle-timing";
+import {
+  createPortableLifecycleTimingRecorder,
+  type PortableLifecycleAttemptOutcome,
+  type PortableLifecycleTimingRecorder,
+} from "./portable-demo-lifecycle-timing";
 import {
   inspectPortablePodmanReadiness,
   portablePodmanCommandEnvironment,
@@ -961,11 +965,24 @@ function waitFor(
   return false;
 }
 
+function commandAttemptOutcome(
+  result: CommandResult,
+  ready: boolean,
+): PortableLifecycleAttemptOutcome {
+  if (ready) return "ready";
+  if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+    return "timeout";
+  }
+  if (result.error) return "error";
+  return "not-ready";
+}
+
 function gatewayIsRunning(
   receipt: PortableDemoLifecycleReceipt,
   gatewayName: string,
   capture: NonNullable<PortableDemoLifecycleDeps["captureOpenshell"]>,
   timeoutMs: number,
+  lifecycleTiming: PortableLifecycleTimingRecorder,
 ): boolean {
   const result = capture(
     openshellExecArgs(gatewayName, receipt.sandboxName, [
@@ -980,7 +997,9 @@ function gatewayIsRunning(
     ]),
     Math.min(PROBE_TIMEOUT_MS, timeoutMs),
   );
-  return result.status === 0 && /(?:^|\D)(?:200|401)\s*$/u.test(String(result.stdout ?? ""));
+  const ready = result.status === 0 && /(?:^|\D)(?:200|401)\s*$/u.test(String(result.stdout ?? ""));
+  lifecycleTiming.recordGatewayAttempt(commandAttemptOutcome(result, ready));
+  return ready;
 }
 
 function ollamaIsHealthy(
@@ -1072,6 +1091,7 @@ function recoverManagedOllama(
   stateDir: string,
   timing: Required<Pick<PortableDemoLifecycleDeps, "now" | "sleep">>,
   deps: PortableDemoLifecycleDeps,
+  lifecycleTiming: PortableLifecycleTimingRecorder,
 ): void {
   const reenrollRequested = commandEnv[PORTABLE_OLLAMA_REENROLL_ENV] === "1";
   const homeDir = commandEnv.HOME ?? os.homedir();
@@ -1083,6 +1103,7 @@ function recoverManagedOllama(
     }
     return;
   }
+  lifecycleTiming.setOllamaAction("checking");
   if (reenrollRequested) {
     const binPath = path.join(homeDir, ".local", "bin", "ollama");
     assertManagedOllamaBinary(binPath);
@@ -1094,12 +1115,22 @@ function recoverManagedOllama(
   const captureHost =
     deps.captureHost ??
     ((command, args, timeoutMs) => defaultCaptureHost(command, args, timeoutMs, commandEnv));
-  if (ollamaIsHealthy(captureHost, PROBE_TIMEOUT_MS)) return;
+  const checkOllamaHealth = (timeoutMs: number): boolean => {
+    lifecycleTiming.incrementOllamaAttempts();
+    return ollamaIsHealthy(captureHost, timeoutMs);
+  };
+  if (checkOllamaHealth(PROBE_TIMEOUT_MS)) {
+    lifecycleTiming.setOllamaAction("reused");
+    return;
+  }
 
   const binPath = deps.loadManagedOllama
     ? deps.loadManagedOllama()
     : loadUserLocalOllamaOwnership({ homeDir, stateDir });
-  if (!binPath) return;
+  if (!binPath) {
+    lifecycleTiming.setOllamaAction("not-owned");
+    return;
+  }
   const executable = openManagedOllamaBinary(binPath);
 
   try {
@@ -1122,6 +1153,7 @@ function recoverManagedOllama(
       OLLAMA_HOST: `127.0.0.1:${String(OLLAMA_PORT)}`,
     };
     delete launchEnv[PORTABLE_OLLAMA_REENROLL_ENV];
+    lifecycleTiming.setOllamaAction("start-attempted");
     launchHost(
       `/proc/self/fd/${String(MANAGED_EXECUTABLE_CHILD_FD)}`,
       ["serve"],
@@ -1132,13 +1164,14 @@ function recoverManagedOllama(
     executable.close();
   }
   const recovered = waitFor(OLLAMA_STARTUP_TIMEOUT_MS, timing, (remainingMs) =>
-    ollamaIsHealthy(captureHost, remainingMs),
+    checkOllamaHealth(remainingMs),
   );
   if (!recovered) {
     throw new Error(
       `NemoClaw-managed Ollama did not become healthy at http://127.0.0.1:${String(OLLAMA_PORT)}/api/tags within 30 seconds; start the receipt-bound executable at ${JSON.stringify(binPath)} with the 'serve' argument, then retry`,
     );
   }
+  lifecycleTiming.setOllamaAction("started");
   (deps.log ?? console.log)("  Portable demo lifecycle restarted NemoClaw-managed Ollama.");
 }
 
@@ -1294,12 +1327,13 @@ export function recoverPortableDemoSandboxLifecycle(
   const gatewayName = context.gatewayName;
   const execReady = lifecycleTiming.measure("execReady", () =>
     waitFor(EXEC_READY_TIMEOUT_MS, timing, (remainingMs) => {
-      lifecycleTiming.incrementExecAttempts();
       const result = capture(
         openshellExecArgs(gatewayName, sandboxName, ["true"]),
         Math.min(PROBE_TIMEOUT_MS, remainingMs),
       );
-      return result.status === 0 && !result.error;
+      const ready = result.status === 0 && !result.error;
+      lifecycleTiming.recordExecAttempt(commandAttemptOutcome(result, ready));
+      return ready;
     }),
   );
   if (!execReady) {
@@ -1308,11 +1342,10 @@ export function recoverPortableDemoSandboxLifecycle(
     throw new Error(`Portable sandbox '${sandboxName}' did not reconnect to the OpenShell gateway`);
   }
   lifecycleTiming.measure("ollama", () =>
-    recoverManagedOllama(context, commandEnv, stateDir, timing, deps),
+    recoverManagedOllama(context, commandEnv, stateDir, timing, deps, lifecycleTiming),
   );
-  lifecycleTiming.incrementGatewayAttempts();
   const gatewayRunning = lifecycleTiming.measure("gatewayHealth", () =>
-    gatewayIsRunning(receipt, gatewayName, capture, PROBE_TIMEOUT_MS),
+    gatewayIsRunning(receipt, gatewayName, capture, PROBE_TIMEOUT_MS, lifecycleTiming),
   );
   const refreshStartup = receipt.schemaVersion === 1;
   if (!refreshStartup && gatewayRunning) {
@@ -1368,8 +1401,7 @@ export function recoverPortableDemoSandboxLifecycle(
       lifecycleTiming.setGatewayAction("waited");
       const recovered = lifecycleTiming.measure("gatewayReady", () =>
         waitFor(STARTUP_TIMEOUT_MS, timing, (remainingMs) => {
-          lifecycleTiming.incrementGatewayAttempts();
-          return gatewayIsRunning(receipt, gatewayName, capture, remainingMs);
+          return gatewayIsRunning(receipt, gatewayName, capture, remainingMs, lifecycleTiming);
         }),
       );
       if (recovered) {
@@ -1377,10 +1409,12 @@ export function recoverPortableDemoSandboxLifecycle(
         return { kind: "already-running" };
       }
     }
-    lifecycleTiming.markFailureStage(startupProbe.status === 0 ? "gatewayReady" : "startupProbe");
+    lifecycleTiming.markFailureStage(
+      startupProbe.status === 0 && !startupProbe.error ? "gatewayReady" : "startupProbe",
+    );
     lifecycleTiming.finish("failed");
     throw new Error(
-      startupProbe.status === 0
+      startupProbe.status === 0 && !startupProbe.error
         ? `Portable sandbox '${sandboxName}' has a startup process, but its agent gateway did not pass the dashboard health check`
         : `Portable sandbox '${sandboxName}' startup process state could not be determined`,
     );
@@ -1395,8 +1429,7 @@ export function recoverPortableDemoSandboxLifecycle(
   );
   const recovered = lifecycleTiming.measure("gatewayReady", () =>
     waitFor(STARTUP_TIMEOUT_MS, timing, (remainingMs) => {
-      lifecycleTiming.incrementGatewayAttempts();
-      return gatewayIsRunning(receipt, gatewayName, capture, remainingMs);
+      return gatewayIsRunning(receipt, gatewayName, capture, remainingMs, lifecycleTiming);
     }),
   );
   if (!recovered) {
