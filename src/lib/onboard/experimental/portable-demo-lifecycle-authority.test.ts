@@ -300,6 +300,12 @@ describe("portable demo lifecycle authority", () => {
     runtime.setContainerId(CONTAINER_ID);
     runtime.setManagedLabel("false");
     expect(() => authority?.revalidate()).toThrow("OpenShell identity does not match");
+    expect(
+      runtime.podman.mock.calls.some(([args]) => {
+        const command = args[0] === "--url" ? args.slice(2) : args;
+        return command[0] === "rm";
+      }),
+    ).toBe(false);
   });
 
   it("refuses a changed current-user Podman socket inode during Portable destroy (#9189)", () => {

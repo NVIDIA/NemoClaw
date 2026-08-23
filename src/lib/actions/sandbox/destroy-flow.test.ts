@@ -446,26 +446,39 @@ describe("destroySandbox flow", () => {
     );
   });
 
-  it("stops before OpenShell deletion when Portable identity changes at the delete boundary", async () => {
+  it("releases lifecycle locks before exiting on Portable identity drift and permits retry", async () => {
     const harness = createDestroyHarness({ portableDestroyAuthority: true });
-    harness.portableDestroyRevalidateSpy
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => {
-        throw new Error("Portable receipt changed during destroy");
-      });
-
-    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
-      "process.exit(1)",
+    const recordRevalidation = () => harness.events.push("portable-revalidate");
+    const revalidateAtDeleteBoundary = vi.fn(recordRevalidation).mockImplementationOnce(() => {
+      throw new Error("Portable receipt changed during destroy");
+    });
+    harness.portableDestroyRevalidateSpy.mockImplementation(() =>
+      harness.events.at(-1) === "detach" ? revalidateAtDeleteBoundary() : recordRevalidation(),
     );
+    exitSpy.mockImplementationOnce(((code?: number | string | null) => {
+      harness.lifecycleLockEvents.push("process-exit");
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
 
-    expect(harness.portableDestroyRevalidateSpy).toHaveBeenCalledTimes(6);
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.portableDestroyRevalidateSpy.mock.calls.length).toBeGreaterThanOrEqual(6);
+    expect(harness.lifecycleLockEvents).toEqual(["acquired", "released", "process-exit"]);
     expect(harness.events).not.toContain("delete");
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+    expect(harness.lifecycleLockEvents).toEqual([
+      "acquired",
+      "released",
+      "process-exit",
+      "acquired",
+      "released",
+    ]);
+    expect(harness.events.filter((event) => event === "delete")).toHaveLength(1);
+    expect(harness.removeSandboxSpy).toHaveBeenCalledOnce();
+    expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledOnce();
   });
 
   it("redacts credentials from an invalid schema-4 Portable receipt refusal and releases the lifecycle lock before retry (#9189)", async () => {
