@@ -16,7 +16,11 @@ import type {
   ExactManagedMcpPolicy,
   ManagedMcpPolicyOmission,
 } from "../actions/sandbox/mcp-bridge-policy";
-import { materializeMessagingPolicySandboxName } from "../messaging/channels/policy";
+import {
+  filterInactiveMessagingChannelPolicies,
+  materializeMessagingPolicySandboxName,
+  messagingChannelsPresentInPolicy,
+} from "../messaging/channels/policy";
 import { cleanupTempDir, secureTempFile } from "../onboard/temp-files";
 
 export {
@@ -141,7 +145,11 @@ export function buildRuntimePermissivePolicy(
     if (materialized === null) {
       throw new Error("Cannot materialize the Shields-down credential provider binding");
     }
-    baseYaml = materialized;
+    baseYaml = filterInactiveMessagingChannelPolicies(
+      materialized,
+      messagingChannelsPresentInPolicy(deps.livePolicyYaml, "hermes"),
+      "hermes",
+    ).content;
   }
   const base = safeYamlObject(baseYaml);
   if (!base) {

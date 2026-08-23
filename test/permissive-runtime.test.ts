@@ -87,7 +87,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
   it("keeps the Hermes Discord provider binding in Shields down", () => {
     let stagedPolicy = "";
     const out = buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
-      livePolicyYaml: "",
+      livePolicyYaml: HERMES_DISCORD_PERMISSIVE,
       readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
@@ -119,6 +119,22 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       endpoints.find((endpoint) => endpoint.host === "cdn.discordapp.com")?.credential_binding,
     ).toBeUndefined();
     expect(stagedPolicy).not.toContain("{sandboxName}");
+  });
+
+  it("removes inactive Hermes Discord bindings before Shields down", () => {
+    let stagedPolicy = "";
+    buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
+      livePolicyYaml: BASE_PERMISSIVE,
+      readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
+      sandboxName: "hermes-box",
+      writeTempPolicy: (yaml) => {
+        stagedPolicy = yaml;
+        return "/staged-hermes-permissive.yaml";
+      },
+    });
+
+    expect(YAML.parse(stagedPolicy).network_policies?.discord).toBeUndefined();
+    expect(stagedPolicy).not.toContain("hermes-box-discord-bridge");
   });
 
   it("rejects an unsafe Hermes sandbox name before staging Shields down", () => {

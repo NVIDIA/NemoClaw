@@ -18,6 +18,7 @@ import { CLI_NAME } from "../cli/branding";
 import {
   getMessagingPolicyKeyAliases,
   getMessagingPolicyPresetValidationWarnings,
+  filterInactiveMessagingChannelPolicies,
   isMessagingChannelPolicyPreset,
   listBuiltInMessagingChannelManifests,
   listMessagingChannelPolicyPresets,
@@ -25,6 +26,7 @@ import {
   loadMessagingChannelPolicyPreset,
   materializeMessagingPolicySandboxName,
 } from "../messaging/channels";
+import { getActiveChannelIdsFromPlan } from "../messaging/plan-validation";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import { OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
@@ -32,6 +34,7 @@ import { ROOT, run, runCapture } from "../runner";
 import { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } from "../sandbox-name-contract";
 import { redact } from "../security/redact";
 import * as registry from "../state/registry";
+import { getMessagingPlanFromEntry } from "../state/registry-messaging";
 import type { BaselineExclusionRuntimeStatus } from "./baseline-exclusion";
 import {
   digestBaselineEntry,
@@ -2920,8 +2923,20 @@ function applyPermissivePolicy(sandboxName: string): void {
   if (!fs.existsSync(policyPath)) {
     throw new Error(`Permissive policy not found: ${policyPath}`);
   }
+  const sandbox = registry.getSandbox(sandboxName);
   const policyDocument = fs.readFileSync(policyPath, "utf-8");
-  const materializedPolicy = materializeMessagingPolicySandboxName(policyDocument, sandboxName);
+  const channelFilteredPolicy =
+    sandbox?.agent === "hermes"
+      ? filterInactiveMessagingChannelPolicies(
+          policyDocument,
+          getActiveChannelIdsFromPlan(getMessagingPlanFromEntry(sandbox)),
+          "hermes",
+        ).content
+      : policyDocument;
+  const materializedPolicy = materializeMessagingPolicySandboxName(
+    channelFilteredPolicy,
+    sandboxName,
+  );
   if (materializedPolicy === null) {
     throw new Error("Cannot materialize the permissive policy credential provider binding");
   }

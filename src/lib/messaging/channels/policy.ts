@@ -8,7 +8,10 @@ import YAML from "yaml";
 import { isValidName } from "../../sandbox-name-contract";
 import { ROOT } from "../../state/paths";
 import type { MessagingAgentId } from "../manifest";
-import { listMessagingPolicyPresetMetadata } from "./metadata";
+import {
+  getMessagingPolicyKeysByChannel,
+  listMessagingPolicyPresetMetadata,
+} from "./metadata";
 
 type PolicyPresetLocator = {
   readonly channelId: string;
@@ -65,6 +68,63 @@ export function materializeMessagingPolicySandboxName(
   if (!content.includes("{sandboxName}")) return content;
   if (sandboxName === undefined || sandboxName === null || !isValidName(sandboxName)) return null;
   return content.replaceAll("{sandboxName}", sandboxName);
+}
+
+export function filterInactiveMessagingChannelPolicies(
+  content: string,
+  activeChannels: readonly string[],
+  agent: MessagingAgentId,
+): { content: string; changed: boolean } {
+  let parsed: unknown;
+  try {
+    parsed = YAML.parse(content);
+  } catch {
+    return { content, changed: false };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { content, changed: false };
+  }
+  const policy = parsed as Record<string, unknown>;
+  const networkPolicies = policy.network_policies;
+  if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
+    return { content, changed: false };
+  }
+
+  const active = new Set(activeChannels);
+  const entries = networkPolicies as Record<string, unknown>;
+  let changed = false;
+  for (const [channel, policyKeys] of Object.entries(
+    getMessagingPolicyKeysByChannel({ agent }),
+  )) {
+    if (active.has(channel)) continue;
+    for (const key of policyKeys) {
+      if (!Object.hasOwn(entries, key)) continue;
+      delete entries[key];
+      changed = true;
+    }
+  }
+  return { content: changed ? YAML.stringify(policy) : content, changed };
+}
+
+export function messagingChannelsPresentInPolicy(
+  content: string,
+  agent: MessagingAgentId,
+): string[] {
+  let parsed: unknown;
+  try {
+    parsed = YAML.parse(content);
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+  const networkPolicies = (parsed as Record<string, unknown>).network_policies;
+  if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
+    return [];
+  }
+  const keys = new Set(Object.keys(networkPolicies));
+  return Object.entries(getMessagingPolicyKeysByChannel({ agent }))
+    .filter(([, policyKeys]) => policyKeys.some((key) => keys.has(key)))
+    .map(([channel]) => channel);
 }
 
 function normalizeAgent(

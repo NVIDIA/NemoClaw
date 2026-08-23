@@ -12,6 +12,9 @@ import YAML from "yaml";
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "policy", "index.ts"));
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"));
+const PLAN_FIXTURE_PATH = JSON.stringify(
+  path.join(REPO_ROOT, "test", "helpers", "messaging-plan-fixtures.ts"),
+);
 const SOURCE_NODE_ARGS = ["--import", "tsx"];
 
 function parseResultPayload(stdout: string): { error: string } {
@@ -21,7 +24,7 @@ function parseResultPayload(stdout: string): { error: string } {
   return JSON.parse(stdout.slice(markerIndex + marker.length));
 }
 
-function runHermesPermissivePolicy(policySetStatus: number): {
+function runHermesPermissivePolicy(policySetStatus: number, discordActive = false): {
   result: ReturnType<typeof spawnSync>;
   policy: string;
   stagedPath: string;
@@ -35,7 +38,18 @@ function runHermesPermissivePolicy(policySetStatus: number): {
   const script = String.raw`
 const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
-registry.registerSandbox({ name: "hermes-sandbox", agent: "hermes", policies: [] });
+const { makeMessagingPlan } = require(${PLAN_FIXTURE_PATH});
+registry.registerSandbox({
+  name: "hermes-sandbox",
+  agent: "hermes",
+  policies: [],
+  ...(Boolean(${discordActive}) ? {
+    messaging: {
+      schemaVersion: 1,
+      plan: makeMessagingPlan({ sandboxName: "hermes-sandbox", agent: "hermes", channels: ["discord"] }),
+    },
+  } : {}),
+});
 policies.applyPermissivePolicy("hermes-sandbox");
 `;
   fs.writeFileSync(
@@ -90,7 +104,7 @@ describe("applyPermissivePolicy", () => {
     ["success", 0],
     ["OpenShell rejection", 17],
   ])(
-    "materializes the Hermes Discord provider and removes staged policy material after %s",
+    "removes inactive Hermes Discord policy and staged material after %s",
     (_case, policySetStatus) => {
       const observed = runHermesPermissivePolicy(policySetStatus);
       try {
@@ -98,31 +112,31 @@ describe("applyPermissivePolicy", () => {
         expect(observed.stagedMode).toBe("600");
         expect(fs.existsSync(observed.stagedPath)).toBe(false);
         const policy = YAML.parse(observed.policy);
-        const endpoints = policy.network_policies.discord.endpoints as Array<{
-          host?: string;
-          credential_binding?: { provider?: string };
-        }>;
-        const credentialEndpoints = endpoints.filter((endpoint) =>
-          ["discord.com", "gateway.discord.gg", "*.discord.gg"].includes(endpoint.host ?? ""),
-        );
-        expect(credentialEndpoints.map((endpoint) => endpoint.host).sort()).toEqual([
-          "*.discord.gg",
-          "discord.com",
-          "gateway.discord.gg",
-        ]);
-        expect(
-          credentialEndpoints.map((endpoint) => endpoint.credential_binding?.provider),
-        ).toEqual([
-          "hermes-sandbox-discord-bridge",
-          "hermes-sandbox-discord-bridge",
-          "hermes-sandbox-discord-bridge",
-        ]);
+        expect(policy.network_policies.discord).toBeUndefined();
         expect(observed.policy).not.toContain("{sandboxName}");
       } finally {
         observed.cleanup();
       }
     },
   );
+
+  it("keeps materialized Hermes Discord bindings for an active channel", () => {
+    const observed = runHermesPermissivePolicy(0, true);
+    try {
+      const endpoints = YAML.parse(observed.policy).network_policies.discord.endpoints as Array<{
+        credential_binding?: { provider?: string };
+      }>;
+      expect(endpoints.filter((endpoint) => endpoint.credential_binding)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            credential_binding: { provider: "hermes-sandbox-discord-bridge" },
+          }),
+        ]),
+      );
+    } finally {
+      observed.cleanup();
+    }
+  });
 
   it("rejects an invalid sandbox name before the permissive policy command", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-permissive-invalid-"));
