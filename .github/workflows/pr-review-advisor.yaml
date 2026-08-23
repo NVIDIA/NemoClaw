@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: PR Review / Advisor
+name: Automation / PR Review Advisor
 
 on:
   # The target event loads this workflow from the trusted base branch and makes
@@ -106,7 +106,7 @@ jobs:
       PR_REVIEW_ADVISOR_COMMENT_MARKER: "<!-- nemoclaw-pr-review-advisor -->"
       PR_REVIEW_ADVISOR_COMMENT_TITLE: PR Review Advisor
       PR_REVIEW_ADVISOR_COMMENT_LABEL: PR review advisor
-      PR_REVIEW_ADVISOR_WORKFLOW_NAME: "PR Review / Advisor"
+      PR_REVIEW_ADVISOR_WORKFLOW_NAME: "Automation / PR Review Advisor"
       SANDBOX_NAME: ${{ matrix.advisor.sandbox_name }}
       # Only executable code from this checkout may run in the analysis job.
       ADVISOR_DIR: ${{ github.workspace }}/advisor
@@ -467,7 +467,7 @@ jobs:
       PR_REVIEW_ADVISOR_COMMENT_MARKER: "<!-- nemoclaw-pr-review-advisor -->"
       PR_REVIEW_ADVISOR_COMMENT_TITLE: PR Review Advisor
       PR_REVIEW_ADVISOR_COMMENT_LABEL: PR review advisor
-      PR_REVIEW_ADVISOR_WORKFLOW_NAME: "PR Review / Advisor"
+      PR_REVIEW_ADVISOR_WORKFLOW_NAME: "Automation / PR Review Advisor"
       PR_REVIEW_ADVISOR_WORKFLOW_PATH: .github/workflows/pr-review-advisor.yaml
       PR_REVIEW_ADVISOR_EVENT_NAME: ${{ github.event_name }}
       PR_REVIEW_ADVISOR_RUN_ID: ${{ github.run_id }}
