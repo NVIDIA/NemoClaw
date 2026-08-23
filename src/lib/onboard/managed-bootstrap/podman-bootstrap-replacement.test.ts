@@ -687,6 +687,7 @@ describe("Podman bootstrap stopped replacement", () => {
 
   it("stops only the exact original after the stopped replacement remains stable", () => {
     const harness = new PodmanHarness();
+    const capture = vi.spyOn(harness.engine, "capture");
     const store = journalStore();
     const watcher = watcherLease();
     const prepared = prepare(harness, store, watcher.lease);
@@ -703,6 +704,7 @@ describe("Podman bootstrap stopped replacement", () => {
     expect(harness.original.running).toBe(false);
     expect(harness.replacement?.running).toBe(false);
     expect(harness.calls).toContainEqual(["container", "stop", ORIGINAL_RUNTIME_ID]);
+    expect(capture).toHaveBeenCalledWith(["container", "stop", ORIGINAL_RUNTIME_ID], 60_000);
     expect(watcher.resumeAndProve).not.toHaveBeenCalled();
   });
 

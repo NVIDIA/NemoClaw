@@ -45,6 +45,7 @@ const MAX_ARGUMENTS = 512;
 const MAX_ARGUMENT_BYTES = 16 * 1024;
 const MAX_ENVIRONMENT_BYTES = 256 * 1024;
 const CREATE_TIMEOUT_MS = 300_000;
+const STOP_TIMEOUT_MS = 60_000;
 
 const FORBIDDEN_RUNTIME_FLAGS = new Set([
   "--cidfile",
@@ -1092,7 +1093,11 @@ export function stopExactPodmanBootstrapOriginal(
       stateVolume,
     ),
   );
-  const stop = captureWhileWatcherStopped(input, ["container", "stop", journal.originalRuntimeId]);
+  const stop = captureWhileWatcherStopped(
+    input,
+    ["container", "stop", journal.originalRuntimeId],
+    STOP_TIMEOUT_MS,
+  );
   requireZero(stop, "Podman bootstrap original-container stop");
   inspectStableContainer(input, expectedOriginal(journal, input.heldWorkload, false));
   inspectStableContainer(
