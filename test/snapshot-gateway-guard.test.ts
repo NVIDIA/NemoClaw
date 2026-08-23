@@ -217,6 +217,7 @@ function makeVmRestoreToEnv(
   cloneIdentity = "fixture-clone-1",
   cloneReady = true,
   revalidatedCloneIdentity = cloneIdentity,
+  supervisorReady = true,
 ): Record<string, string> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
@@ -235,6 +236,9 @@ function makeVmRestoreToEnv(
   const cloneIdentityCapturedMarker = path.join(home, "clone-1-identity-captured");
   const markCloneReady = cloneReady ? `touch ${JSON.stringify(cloneReadyMarker)}` : ":";
   const gatewayLifecycleLog = path.join(home, "gateway-lifecycle.log");
+  const supervisorProbe = supervisorReady
+    ? 'printf "GATEWAY_PID=123\\n"; exit 0'
+    : 'printf "SUPERVISOR_INVALID\\n" >&2; exit 1';
   const dashboardBind = process.env.WSL_DISTRO_NAME ? "0.0.0.0" : "127.0.0.1";
   writeExecutable(path.join(localBin, "openshell"), [
     'case "$1 $2" in',
@@ -300,7 +304,7 @@ function makeVmRestoreToEnv(
     'if [ "$1" = "exec" ]; then',
     '  case "$*" in',
     '    *"/usr/local/bin/nemoclaw-gateway-control restart "*) printf "restart clone-1\\n" >> "$LIFECYCLE_LOG"; printf "GATEWAY_PID=123\\n"; exit 0 ;;',
-    '    *"/usr/local/bin/nemoclaw-gateway-control probe "*) printf "GATEWAY_PID=123\\n"; exit 0 ;;',
+    `    *"/usr/local/bin/nemoclaw-gateway-control probe "*) ${supervisorProbe} ;;`,
     '    *"/usr/bin/id -u sandbox"*) printf "1000\\n"; exit 0 ;;',
     '    *"/usr/bin/id -g sandbox"*) printf "1000\\n"; exit 0 ;;',
     "  esac",
@@ -443,6 +447,27 @@ describe("snapshot VM-driver gateway guard", () => {
       fs.readFileSync(path.join(env.HOME, ".nemoclaw", "sandboxes.json"), "utf8"),
     );
     expect(registryState.sandboxes["clone-1"]).toBeUndefined();
+    expect(fs.existsSync(env.NEMOCLAW_TEST_SNAPSHOT_RESTORE_MARKER)).toBe(false);
+  }, 15000);
+
+  it("snapshot restore --to removes registration when the clone supervisor is not ready (#9733)", () => {
+    const env = makeVmRestoreToEnv(
+      "nemoclaw-snap-vm-gw-restore-to-supervisor-not-ready-",
+      { imageTag: "openshell/sandbox-from:fast-path-test" },
+      "fixture-clone-1",
+      true,
+      "fixture-clone-1",
+      false,
+    );
+
+    const r = runCli("alpha snapshot restore baseline --to clone-1", env);
+    expect(r.code, r.out).toBe(1);
+    const registryState = JSON.parse(
+      fs.readFileSync(path.join(env.HOME, ".nemoclaw", "sandboxes.json"), "utf8"),
+    );
+    expect(registryState.sandboxes["clone-1"]).toBeUndefined();
+    expect(r.out).toContain("Snapshot state was not restored and the clone was not registered.");
+    expect(r.out).toContain("openshell sandbox delete -g 'nemoclaw' 'clone-1'");
     expect(fs.existsSync(env.NEMOCLAW_TEST_SNAPSHOT_RESTORE_MARKER)).toBe(false);
   }, 15000);
 

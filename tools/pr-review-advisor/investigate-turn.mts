@@ -88,6 +88,8 @@ export function buildInvestigateTurn(context: InvestigateTurnContext): AdvisorPr
     requiredToolNames,
     requireToolsBeforeText: requiredToolNames,
     requireAssistantText: true,
+    assistantTextRepairPrompt:
+      "The investigation called every required context tool but omitted its analysis receipt. Use the completed context and return the full investigation receipt for the challenge-and-record turn.",
     contextToolResults,
     prompt: `Turn 1/2 — investigate.
 
