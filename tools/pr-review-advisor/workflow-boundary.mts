@@ -560,7 +560,7 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
     "review job",
     reviewJob,
     "PR_REVIEW_ADVISOR_WORKFLOW_NAME",
-    "PR Review / Advisor",
+    "Automation / PR Review Advisor",
   );
   requireEnv(
     errors,
@@ -993,7 +993,7 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
   }
   for (const [key, expected] of Object.entries({
     ADVISOR_DIR: CANONICAL_ADVISOR_DIR,
-    PR_REVIEW_ADVISOR_WORKFLOW_NAME: "PR Review / Advisor",
+    PR_REVIEW_ADVISOR_WORKFLOW_NAME: "Automation / PR Review Advisor",
     PR_REVIEW_ADVISOR_WORKFLOW_PATH: ".github/workflows/pr-review-advisor.yaml",
     PR_REVIEW_ADVISOR_EVENT_NAME: "${{ github.event_name }}",
     PR_REVIEW_ADVISOR_RUN_ID: "${{ github.run_id }}",
@@ -1393,8 +1393,8 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     return [`failed to read or parse workflow: ${workflowPath}`];
   }
 
-  if (workflow.name !== "PR Review / Advisor") {
-    errors.push("workflow name must remain PR Review / Advisor");
+  if (workflow.name !== "Automation / PR Review Advisor") {
+    errors.push("workflow name must remain Automation / PR Review Advisor");
   }
   checkAdvisorRuntimePackageLock(errors, packageLockPath);
   checkOpenShellPolicy(errors, openshellPolicyPath);

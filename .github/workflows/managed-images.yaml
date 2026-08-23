@@ -15,7 +15,7 @@
 # never contributes to the all-agent cohort, so Pi cannot reach onboarding agent
 # selection before the activation change merges.
 
-name: Images / Managed Images
+name: Images / Build, Test, and Publish Managed Images
 
 on:
   workflow_call:

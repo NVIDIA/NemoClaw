@@ -351,7 +351,7 @@ describe("PR E2E workflow dispatch reconciliation", () => {
   });
 
   it.each([
-    ["run name", { name: "E2E" }],
+    ["run name", { name: "E2E / Main and Manual Suite" }],
     ["display title", { display_title: "E2E unrelated" }],
     ["workflow path", { path: ".github/workflows/other.yaml" }],
     ["main branch", { head_branch: "release" }],
