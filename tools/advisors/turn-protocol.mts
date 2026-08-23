@@ -40,6 +40,8 @@ export type AdvisorPromptTurn = {
   requireToolsBeforeText?: string[];
   /** Ordinary read-tool paths that must finish successfully before assistant text. */
   requiredReadPaths?: string[];
+  /** Seed those read calls and results into Pi history before the first model request. */
+  seedRequiredReads?: boolean;
   /** Fail the turn when it completes without non-whitespace assistant analysis. */
   requireAssistantText?: boolean;
   /**
@@ -308,35 +310,6 @@ function atomicTerminalToolErrors(
     errors.push(`${turnName} emitted activity after successful ${toolName}`);
   }
   return errors;
-}
-
-export function requiredReadPreparationPrompt(turn: AdvisorPromptTurn): string {
-  const paths = [...new Set(turn.requiredReadPaths ?? [])];
-  return `Prepare ${turn.name} by reading every required file with ordinary \`read\` calls. Read each file contiguously from line 1 through EOF. If a read is truncated, continue at the next unread line until that file reaches EOF. Emit only \`read\` calls and no text. Do not use any other tool.\n\nRequired files:\n${paths.map((requiredPath) => `- ${requiredPath}`).join("\n")}`;
-}
-
-export function requiredReadPreparationErrors(
-  turnName: string,
-  events: AdvisorTurnFlowEvent[],
-  tools: AdvisorTurnTools,
-): string[] {
-  const errors = advisorTurnFlowErrors(turnName, events, {
-    ...tools,
-    requireAssistantText: false,
-  });
-  if (events.some((event) => event.type === "text" && event.text.trim())) {
-    errors.push(`${turnName} required-read preparation emitted text`);
-  }
-  const requiredPaths = new Set(tools.requiredReadPaths ?? []);
-  for (const event of events) {
-    if (event.type === "read" && !requiredPaths.has(event.path)) {
-      errors.push(`${turnName} required-read preparation read unexpected path: ${event.path}`);
-    }
-    if (event.type !== "text" && event.type !== "read" && event.toolName !== "read") {
-      errors.push(`${turnName} required-read preparation called ${event.toolName}`);
-    }
-  }
-  return [...new Set(errors)];
 }
 
 export function advisorTurnFlowErrors(
