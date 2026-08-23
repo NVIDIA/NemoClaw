@@ -206,7 +206,7 @@ describe("Podman managed-bootstrap runtime surface", () => {
             Type: "bind",
             Source: "/run/user/1000/containers/storage/overlay/example/merged",
             Destination: "/opt/openshell/bin",
-            RW: false,
+            RW: true,
           },
         ],
       }),

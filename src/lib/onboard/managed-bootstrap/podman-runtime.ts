@@ -321,10 +321,7 @@ export function renderPodmanReplacementMountArgs(inspect: JsonRecord): string[] 
       if (
         imageMounts.length !== 1 ||
         materializedBinds.length !== observed.length - 1 ||
-        materializedBinds.some(
-          (candidate) =>
-            candidate.RW !== imageMounts[0]?.RW || !path.isAbsolute(String(candidate.Source ?? "")),
-        )
+        materializedBinds.some((candidate) => !path.isAbsolute(String(candidate.Source ?? "")))
       ) {
         throw new Error(
           "Managed bootstrap Podman mount destination resolves to ambiguous runtime mounts.",
