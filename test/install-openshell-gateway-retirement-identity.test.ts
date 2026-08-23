@@ -305,7 +305,7 @@ it.skipIf(process.platform !== "linux")(
 );
 
 it.skipIf(process.platform !== "linux")(
-  "stops a historical gateway bound by its runtime marker and environment (#9705)",
+  "stops a historical gateway bound by its runtime marker when the host adds an OpenShell variable (#9705)",
   async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-retirement-old-runtime-"));
     tempRoots.push(root);
@@ -314,7 +314,10 @@ it.skipIf(process.platform !== "linux")(
     fs.mkdirSync(runtimeDir, { recursive: true });
     const desiredEnv = historicalGatewayEnv(runtimeDir, 8080);
     const gateway = await spawnGateway(home, 8080, {
-      env: desiredEnv,
+      env: {
+        ...desiredEnv,
+        OPENSHELL_DRIVER_DIR: "/inherited/host/driver",
+      },
       historical: true,
     });
     const pidFile = path.join(runtimeDir, "openshell-gateway.pid");

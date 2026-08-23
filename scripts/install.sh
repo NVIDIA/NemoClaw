@@ -2982,6 +2982,20 @@ install_nemoclaw_openshell_gateway_user_service() {
   local service_path="${service_dir}/${NEMOCLAW_GATEWAY_SERVICE_NAME}.service"
   local service_template="${NEMOCLAW_SOURCE_ROOT}/scripts/lib/openshell-gateway.service.in"
 
+  if [[ "$OPENSHELL_GATEWAY_CANONICAL_SERVICE_SET_IDENTITY_AVAILABLE" == "true" ]]; then
+    local service_root_visible=false unit_root
+    for unit_root in "${SYSTEMD_USER_MANAGER_UNIT_ROOTS[@]}"; do
+      if [[ "$unit_root" == "$service_dir" ]]; then
+        service_root_visible=true
+        break
+      fi
+    done
+    if [[ "$service_root_visible" != "true" ]]; then
+      warn "The systemd user manager does not search NemoClaw's user-service directory. The managed service was not staged; onboarding will keep the standalone gateway."
+      return 0
+    fi
+  fi
+
   if [[ -L "$service_path" ]]; then
     error "Refusing to replace symlinked OpenShell gateway user service: $service_path"
   fi
@@ -4609,7 +4623,7 @@ inspect_trusted_legacy_openshell_gateway_process() {
     const readProcessEnvironment = (pid) => {
       const raw = fs.readFileSync(`/proc/${pid}/environ`);
       if (raw.length === 0 || raw.length > 64 * 1024) return null;
-      const values = {};
+      const values = Object.create(null);
       for (const entry of raw.toString("utf8").split("\0")) {
         if (entry.length === 0) continue;
         const separator = entry.indexOf("=");
@@ -4686,14 +4700,35 @@ inspect_trusted_legacy_openshell_gateway_process() {
         "OPENSHELL_VM_DRIVER_STATE_DIR",
         "OPENSHELL_DRIVER_DIR",
       ];
-      const desiredPairs = desiredEnvironmentKeys
-        .filter((key) => typeof environment[key] === "string")
-        .sort()
-        .map((key) => [key, environment[key]]);
-      const desiredEnvironmentHash = createHash("sha256")
-        .update(JSON.stringify(desiredPairs))
-        .digest("hex");
-      if (desiredEnvironmentHash !== marker.desiredEnvHash) return null;
+      const requiredDesiredEnvironmentKeys = [
+        "OPENSHELL_DRIVERS",
+        "OPENSHELL_BIND_ADDRESS",
+        "OPENSHELL_SERVER_PORT",
+        "OPENSHELL_DB_URL",
+        "OPENSHELL_GRPC_ENDPOINT",
+        "OPENSHELL_SSH_GATEWAY_HOST",
+        "OPENSHELL_SSH_GATEWAY_PORT",
+        "OPENSHELL_DOCKER_NETWORK_NAME",
+        "OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
+      ];
+      const optionalDesiredEnvironmentKeys = desiredEnvironmentKeys.filter(
+        (key) =>
+          !requiredDesiredEnvironmentKeys.includes(key) && typeof environment[key] === "string",
+      );
+      let desiredEnvironmentMatches = 0;
+      for (let mask = 0; mask < 2 ** optionalDesiredEnvironmentKeys.length; mask += 1) {
+        const keys = [...requiredDesiredEnvironmentKeys];
+        for (let index = 0; index < optionalDesiredEnvironmentKeys.length; index += 1) {
+          if ((mask & 2 ** index) !== 0) keys.push(optionalDesiredEnvironmentKeys[index]);
+        }
+        const desiredPairs = keys.sort().map((key) => [key, environment[key]]);
+        const desiredEnvironmentHash = createHash("sha256")
+          .update(JSON.stringify(desiredPairs))
+          .digest("hex");
+        if (desiredEnvironmentHash === marker.desiredEnvHash) desiredEnvironmentMatches += 1;
+        if (desiredEnvironmentMatches > 1) return null;
+      }
+      if (desiredEnvironmentMatches !== 1) return null;
       return createHash("sha256")
         .update(markerRecord.identity)
         .update("\0")

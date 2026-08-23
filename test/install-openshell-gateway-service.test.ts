@@ -565,6 +565,21 @@ describe("install.sh OpenShell gateway service", () => {
     expect(fs.readFileSync(systemctl.log, "utf-8")).toContain("--user daemon-reload\n");
   });
 
+  it("keeps the standalone gateway when the manager does not search the managed service root (#9705)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const systemctl = writeGatewayDiscoverySystemctlStub(home, {
+      unitPaths: [path.join(home, "manager-only-units")],
+    });
+
+    const result = installWithGatewayDiscovery(home, gatewayBin, systemctl.bin);
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain("managed service was not staged");
+    expect(fs.existsSync(servicePath(home))).toBe(false);
+    expect(fs.readFileSync(systemctl.log, "utf-8")).not.toContain("--user daemon-reload\n");
+  });
+
   it.each(["list-units", "show:foreign-gateway.service"] as const)(
     "fails before staging when the %s query returns an unknown error (#9705)",
     (command) => {
