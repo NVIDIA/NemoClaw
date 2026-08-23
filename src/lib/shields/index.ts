@@ -64,6 +64,7 @@ const {
 const {
   assertLegacyMcpPolicyRestoreSafe,
   buildDeadlineRuntimeManagedMcpPolicy,
+  buildRegisteredRuntimePermissivePolicy,
   buildRuntimeManagedMcpPolicy,
   buildRuntimePermissivePolicy,
   hasManagedMcpPolicyClaims,
@@ -5092,12 +5093,21 @@ function shieldsDownWithoutHostLock(
       // policyYaml is the pre-parsed body we already captured for the
       // snapshot above — reuse it instead of re-fetching. Exact generated MCP
       // entries are overlaid without copying any unrelated live egress.
-      policyFile = buildRuntimePermissivePolicy(basePath, {
+      const permissiveDeps = {
         livePolicyYaml: policyYaml,
         managedMcpPolicies,
         readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
-        ...(target.agentName === "hermes" ? { sandboxName } : {}),
-      });
+      };
+      if (target.agentName === "hermes") {
+        const { sandbox } = resolveRegisteredSandboxAgentAuthority(sandboxName);
+        policyFile = buildRegisteredRuntimePermissivePolicy(basePath, {
+          ...permissiveDeps,
+          sandboxEntry: sandbox,
+          sandboxName,
+        });
+      } else {
+        policyFile = buildRuntimePermissivePolicy(basePath, permissiveDeps);
+      }
       policyFileIsTemp = policyFile !== basePath;
     } else if (fs.existsSync(policyName)) {
       const basePath = path.resolve(policyName);

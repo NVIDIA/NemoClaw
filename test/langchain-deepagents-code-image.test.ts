@@ -99,10 +99,7 @@ function pythonStringMap(source: string, constantName: string): Record<string, s
   );
 }
 
-function expectVersionsMatchLock(
-  requirementsLock: string,
-  versions: Record<string, string>,
-): void {
+function expectVersionsMatchLock(requirementsLock: string, versions: Record<string, string>): void {
   expect(versions, "deepagents-code must be present in the version map").toHaveProperty(
     "deepagents-code",
   );
@@ -123,16 +120,19 @@ const TARGETED_ADVISORY_VERSIONS = [
 ] as const;
 
 describe("targeted dependency advisory review", () => {
-  it.each(TARGETED_ADVISORY_VERSIONS)("documents the reviewed %s %s pin", (distribution, version) => {
-    const normalizedDistribution = distribution.replaceAll("-", "[-_]");
-    const normalizedVersion = version.replaceAll(".", "\\.");
-    expect(readAgentFile("dependency-review.md")).toMatch(
-      new RegExp(
-        `(?:^|[^A-Za-z0-9_-])${normalizedDistribution}\\s+${normalizedVersion}(?=[^0-9.]|$)`,
-        "im",
-      ),
-    );
-  });
+  it.each(TARGETED_ADVISORY_VERSIONS)(
+    "documents the reviewed %s %s pin",
+    (distribution, version) => {
+      const normalizedDistribution = distribution.replaceAll("-", "[-_]");
+      const normalizedVersion = version.replaceAll(".", "\\.");
+      expect(readAgentFile("dependency-review.md")).toMatch(
+        new RegExp(
+          `(?:^|[^A-Za-z0-9_-])${normalizedDistribution}\\s+${normalizedVersion}(?=[^0-9.]|$)`,
+          "im",
+        ),
+      );
+    },
+  );
 });
 
 function writeMinimalWheel(directory: string): string {
@@ -1173,6 +1173,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
   it("keeps image validator versions aligned with the reviewed lockfile", () => {
     const requirementsLock = readAgentFile("requirements.lock");
+    const progressiveValidator = readAgentFile("validate-progressive-tool-disclosure.py");
     const pluginMetadata = readAgentFile("profile-plugin/pyproject.toml");
     const pluginVersion = pluginMetadata.match(/^version = "([^"]+)"$/m)?.[1];
     expect(pluginVersion).toBe("0.1.0");
@@ -1185,8 +1186,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expectVersionsMatchLock(requirementsLock, profileValidatorVersions);
     expectVersionsMatchLock(
       requirementsLock,
-      pythonStringMap(readAgentFile("validate-progressive-tool-disclosure.py"), "PINNED_VERSIONS"),
+      pythonStringMap(progressiveValidator, "PINNED_VERSIONS"),
     );
+    expect(progressiveValidator).toContain('"_deepagents_code_mcp": True');
+    expect(progressiveValidator).toContain('"readOnlyHint": True');
 
     const observabilityValidator = readAgentFile("validate-observability.py");
     const observabilityVersion = observabilityValidator.match(

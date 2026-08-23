@@ -120,7 +120,11 @@ describe("messaging provider attachment lifecycle", () => {
   });
 
   it("does not mutate an attachment that already exists", () => {
-    const fixture = queuedRunner([result(EXACT_PROVIDER), result(ATTACHED_PROVIDER)]);
+    const fixture = queuedRunner([
+      result(EXACT_PROVIDER),
+      result(ATTACHED_PROVIDER),
+      result(EXACT_PROVIDER),
+    ]);
 
     expect(
       restoreChannelMessagingProviderAttachments(
@@ -131,7 +135,32 @@ describe("messaging provider attachment lifecycle", () => {
         fixture.run,
       ),
     ).toEqual([]);
-    expect(fixture.spy).toHaveBeenCalledTimes(2);
+    expect(fixture.spy.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "get", "-g", "nemoclaw-9090", "alpha-discord-bridge"],
+      ["sandbox", "provider", "-g", "nemoclaw-9090", "list", "alpha"],
+      ["provider", "get", "-g", "nemoclaw-9090", "alpha-discord-bridge"],
+    ]);
+  });
+
+  it("rejects identity drift for an attachment that already exists", () => {
+    const fixture = queuedRunner([
+      result(EXACT_PROVIDER),
+      result(ATTACHED_PROVIDER),
+      result(EXACT_PROVIDER.replace("provider-alpha-discord", "provider-replacement")),
+    ]);
+
+    expect(() =>
+      restoreChannelMessagingProviderAttachments(
+        "alpha",
+        hermesDiscordPlan(),
+        "discord",
+        "nemoclaw-9090",
+        fixture.run,
+      ),
+    ).toThrow("changed across the attachment boundary");
+    const commands = fixture.spy.mock.calls.map(([args]) => (args as string[]).join(" "));
+    expect(commands.some((command) => command.includes(" attach "))).toBe(false);
+    expect(commands.some((command) => command.includes(" detach "))).toBe(false);
   });
 
   it("does not inspect attachments for a channel without credential bindings", () => {

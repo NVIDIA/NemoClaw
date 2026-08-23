@@ -19,14 +19,12 @@ import type {
 import {
   filterInactiveMessagingChannelPolicies,
   materializeMessagingPolicySandboxName,
-  messagingChannelsPresentInPolicy,
 } from "../messaging/channels/policy";
 import { cleanupTempDir, secureTempFile } from "../onboard/temp-files";
+import { getActiveMessagingChannelsFromEntry } from "../state/registry-messaging";
+import type { SandboxEntry } from "../state/registry/types";
 
-export {
-  assertLegacyMcpPolicyRestoreSafe,
-  isManagedMcpPolicyKey,
-} from "./mcp-policy-transition";
+export { assertLegacyMcpPolicyRestoreSafe, isManagedMcpPolicyKey } from "./mcp-policy-transition";
 
 import {
   composeDeadlineManagedMcpPolicies,
@@ -100,6 +98,31 @@ export interface PermissiveRuntimeDeps {
   // binding. Supplying the target name makes composition fail closed unless
   // every placeholder can be materialized before the policy is staged.
   sandboxName?: string;
+  // Persisted manifest state is the enablement authority. Live policy can be
+  // stale during a transition and must never reactivate a disabled channel.
+  activeMessagingChannels?: readonly string[];
+}
+
+export interface RegisteredPermissiveRuntimeDeps extends Omit<
+  PermissiveRuntimeDeps,
+  "activeMessagingChannels" | "sandboxName"
+> {
+  sandboxEntry: SandboxEntry;
+  sandboxName: string;
+}
+
+export function buildRegisteredRuntimePermissivePolicy(
+  basePermissivePath: string,
+  deps: RegisteredPermissiveRuntimeDeps,
+): string {
+  if (deps.sandboxEntry.name !== deps.sandboxName || deps.sandboxEntry.agent !== "hermes") {
+    throw new Error("Cannot compose Hermes Shields-down policy without exact registry authority");
+  }
+  const { sandboxEntry, ...runtimeDeps } = deps;
+  return buildRuntimePermissivePolicy(basePermissivePath, {
+    ...runtimeDeps,
+    activeMessagingChannels: getActiveMessagingChannelsFromEntry(sandboxEntry),
+  });
 }
 
 export function buildRuntimePermissivePolicy(
@@ -110,6 +133,7 @@ export function buildRuntimePermissivePolicy(
   const liveRw = readStringList(live, "read_write");
   const liveRo = readStringList(live, "read_only");
   const managedMcpPolicies = deps.managedMcpPolicies ?? [];
+  const activeMessagingChannels = deps.activeMessagingChannels ?? [];
 
   // No live startup-sealed or filesystem state to carry forward — keep the
   // static path so the caller's apply path is unchanged unless exact managed
@@ -147,7 +171,7 @@ export function buildRuntimePermissivePolicy(
     }
     baseYaml = filterInactiveMessagingChannelPolicies(
       materialized,
-      messagingChannelsPresentInPolicy(deps.livePolicyYaml, "hermes"),
+      activeMessagingChannels,
       "hermes",
     ).content;
   }

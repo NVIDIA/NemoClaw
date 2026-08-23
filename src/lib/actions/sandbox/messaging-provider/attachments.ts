@@ -215,6 +215,8 @@ export function restoreChannelMessagingProviderAttachments(
           `OpenShell did not confirm provider '${binding.providerName}' was attached to '${sandboxName}'.`,
         );
       }
+    }
+    for (const receipt of receipts.values()) {
       assertProviderIdentityUnchanged(receipt, run);
     }
     return newlyAttached;
