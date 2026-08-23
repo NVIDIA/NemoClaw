@@ -223,6 +223,23 @@ export function createCurrentPodmanOperationEngine(
       timeout?: number,
     ) => resolve().captureHost(args, timeout),
     assertAuthority: () => resolve().assertAuthority(),
+    ...(operation === "managed-bootstrap"
+      ? {
+          prepareManagedWorkspaceRoot: (
+            input: Parameters<
+              NonNullable<PodmanBoundContainerEngine["prepareManagedWorkspaceRoot"]>
+            >[0],
+          ) => {
+            const prepare = resolve().prepareManagedWorkspaceRoot;
+            if (!prepare) {
+              throw new Error(
+                "Podman managed-bootstrap engine did not expose workspace-root preparation.",
+              );
+            }
+            return prepare(input);
+          },
+        }
+      : {}),
   });
 }
 

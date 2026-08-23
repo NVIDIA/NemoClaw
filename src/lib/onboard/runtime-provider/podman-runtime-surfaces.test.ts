@@ -18,6 +18,7 @@ import {
 import {
   capturePodmanDestroyIdentity,
   capturePodmanDestroyIdentityByName,
+  createCurrentPodmanOperationEngine,
   createPodmanRuntimeProviderSnapshotSurface,
   NATIVE_PODMAN_SANDBOX_HOST_ADDRESS,
   prepareNativePodmanGatewayHostRuntime,
@@ -167,6 +168,16 @@ describe("current Podman runtime provider", () => {
         expect.objectContaining({ operation: "workload-cleanup", engineId: "podman" }),
       ]),
     });
+  });
+
+  it("projects managed workspace preparation through the lazy production engine", () => {
+    const engine = createCurrentPodmanOperationEngine("managed-bootstrap", {
+      HOME: "/nonexistent/nemoclaw-podman-home",
+      PATH: "/nonexistent/nemoclaw-podman-bin",
+      OPENSHELL_PODMAN_SOCKET: "/nonexistent/run/podman/podman.sock",
+    });
+
+    expect(engine.prepareManagedWorkspaceRoot).toBeTypeOf("function");
   });
 
   it("projects native gateway authority independently from the portable profile", () => {
