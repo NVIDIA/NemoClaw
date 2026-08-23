@@ -8,6 +8,7 @@ const PROVIDER_PROBE_DIAGNOSTIC_LIMIT = 64 * 1024;
 const PROVIDER_PROBE_TIMEOUT_MS = 5_000;
 const MAX_PROVIDER_NAME_LENGTH = 128;
 const MAX_PROVIDER_TYPE_LENGTH = 64;
+const MAX_PROVIDER_ID_LENGTH = 128;
 const MAX_PROVIDER_KEYS = 32;
 const MAX_PROVIDER_KEY_LENGTH = 128;
 const SAFE_PROVIDER_IDENTIFIER = /^[A-Za-z0-9._:-]+$/;
@@ -22,6 +23,11 @@ export type GatewayProviderMetadata = {
   type: string;
   credentialKeys: string[];
   configKeys: string[];
+};
+
+export type GatewayProviderIdentity = GatewayProviderMetadata & {
+  id: string;
+  resourceVersion: number;
 };
 
 export type GatewayProviderBinding = {
@@ -77,12 +83,12 @@ type GatewayProviderCommandResult = {
   signal?: unknown;
 };
 
-type GatewayProviderRunner = (
+export type GatewayProviderRunner = (
   args: string[],
   options: {
     ignoreError: true;
     maxBuffer?: number;
-    suppressOutput: true;
+    suppressOutput?: true;
     stdio: ["ignore", "pipe", "pipe"];
     timeout?: number;
   },
@@ -97,6 +103,7 @@ export type GatewayCredentialOnlyProviderInspection =
 type ProviderField = "Name" | "Type" | "Credential keys" | "Config keys";
 
 const PROVIDER_FIELD_PATTERN = /^\s*(Name|Type|Credential keys|Config keys):\s*(.*?)\s*$/i;
+const PROVIDER_IDENTITY_FIELD_PATTERN = /^\s*(Id|Resource version):\s*(.*?)\s*$/i;
 const CANONICAL_PROVIDER_FIELDS = new Map<string, ProviderField>([
   ["name", "Name"],
   ["type", "Type"],
@@ -195,6 +202,38 @@ export function parseGatewayProviderMetadata(output: string): GatewayProviderMet
   return { name, type, credentialKeys, configKeys };
 }
 
+/** Parse the immutable ID and resource version with the provider binding shape. */
+export function parseGatewayProviderIdentity(output: string): GatewayProviderIdentity | null {
+  const metadata = parseGatewayProviderMetadata(output);
+  if (!metadata) return null;
+
+  const fields = new Map<string, string>();
+  for (const rawLine of output.split(/\r?\n/u)) {
+    const line = rawLine.replace(ANSI_OSC_PATTERN, "").replace(ANSI_CSI_PATTERN, "");
+    const match = line.match(PROVIDER_IDENTITY_FIELD_PATTERN);
+    if (!match) continue;
+    if (hasUnsafeRawProviderFieldValue(rawLine)) return null;
+    const field = match[1].toLowerCase();
+    if (fields.has(field)) return null;
+    fields.set(field, match[2].trim());
+  }
+
+  const id = fields.get("id");
+  const resourceVersionText = fields.get("resource version");
+  if (
+    !id ||
+    !isSafeIdentifier(id, MAX_PROVIDER_ID_LENGTH) ||
+    !resourceVersionText ||
+    !/^\d+$/u.test(resourceVersionText)
+  ) {
+    return null;
+  }
+  const resourceVersion = Number.parseInt(resourceVersionText, 10);
+  if (!Number.isSafeInteger(resourceVersion) || resourceVersion < 0) return null;
+
+  return { ...metadata, id, resourceVersion };
+}
+
 /** Distinguish an exact credential-only binding from absence and lookup failure. */
 export function inspectGatewayCredentialOnlyProviderBinding(
   expected: GatewayCredentialOnlyProviderBinding,
@@ -250,4 +289,27 @@ export function readGatewayProviderMetadata(
   const output = `${commandStreamText(result.stdout)}\n${commandStreamText(result.stderr)}`;
   const metadata = parseGatewayProviderMetadata(output);
   return metadata?.name === name ? metadata : null;
+}
+
+/** Read one gateway-scoped provider identity for a mutation precondition. */
+export function readGatewayProviderIdentity(
+  name: string,
+  runOpenshell: GatewayProviderRunner,
+  gatewayName?: string | null,
+): GatewayProviderIdentity | null {
+  if (!isSafeIdentifier(name, MAX_PROVIDER_NAME_LENGTH)) return null;
+
+  const args = ["provider", "get"];
+  if (gatewayName) args.push("-g", gatewayName);
+  args.push(name);
+  const result = runOpenshell(args, {
+    ignoreError: true,
+    suppressOutput: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.status !== 0) return null;
+
+  const output = `${commandStreamText(result.stdout)}\n${commandStreamText(result.stderr)}`;
+  const identity = parseGatewayProviderIdentity(output);
+  return identity?.name === name ? identity : null;
 }

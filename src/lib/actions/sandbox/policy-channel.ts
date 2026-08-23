@@ -80,6 +80,7 @@ import * as registry from "../../state/registry";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
+import type { MessagingProviderAttachmentReceipt } from "./messaging-provider/attachments";
 import { policyChannelDependencies } from "./policy-channel-dependencies";
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
@@ -1932,14 +1933,16 @@ async function sandboxChannelsSetEnabled(
     console.error(`  Could not persist messaging plan for '${sandboxName}'.`);
     process.exit(1);
   }
-  let restoredProviderAttachments: string[] = [];
+  let restoredProviderAttachments: MessagingProviderAttachmentReceipt[] = [];
   if (!disabled) {
     try {
+      const gatewayName = getSandboxTargetGatewayName(sandboxName);
       restoredProviderAttachments =
         policyChannelDependencies.restoreChannelMessagingProviderAttachments(
           sandboxName,
           plan,
           canonical,
+          gatewayName,
         );
     } catch (error) {
       console.error(

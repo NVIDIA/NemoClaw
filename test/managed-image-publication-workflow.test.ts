@@ -957,13 +957,14 @@ fi
     expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$GITHUB_SHA\"");
     expect(releaseIdentity.run).toContain("managed image release identity does not match");
     expect(guard.run).toContain('scripts/check-production-build-args.sh "${build_args[@]}"');
+    expect(guard.run).toContain('--build-arg "TARGETARCH=${{ matrix.arch }}"');
     expect(build.uses).toBe("docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a");
     expect(build.with).toMatchObject({
       context: ".",
       file: "${{ matrix.dockerfile }}",
       platforms: "${{ matrix.platform }}",
       "build-args":
-        "BASE_IMAGE=${{ steps.base.outputs.ref }}\nNEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1\nNEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root\n",
+        "BASE_IMAGE=${{ steps.base.outputs.ref }}\nTARGETARCH=${{ matrix.arch }}\nNEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1\nNEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root\n",
       provenance: "mode=max",
       sbom: true,
     });
