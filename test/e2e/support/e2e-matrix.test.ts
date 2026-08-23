@@ -110,13 +110,13 @@ describe("live E2E target matrix", () => {
   });
 
   it("exposes execution coverage for every executable typed target (#9167)", () => {
-    expect(buildLiveTargetMatrix()).toEqual(buildLiveTargetMatrix([], "docker"));
+    expect(buildLiveTargetMatrix()).toEqual(buildLiveTargetMatrix([], ["docker"]));
     expect(buildLiveTargetMatrix()).toHaveLength(4);
     expectExecutableTypedTargetCoverage();
   });
 
   it("keeps Docker-only typed fixtures out of the native Podman matrix", () => {
-    expect(buildLiveTargetMatrix([], "podman").map((row) => row.id)).toEqual([
+    expect(buildLiveTargetMatrix([], ["podman"]).map((row) => row.id)).toEqual([
       "ubuntu-policy-custom-missing-presets-negative",
       "ubuntu-repo-cloud-openclaw",
     ]);

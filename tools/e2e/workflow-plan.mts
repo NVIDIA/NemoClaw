@@ -970,16 +970,30 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
         credentialFreeTestSupportsGatewayRuntime(row.id, row.runtime_provider)
       );
     });
+  const validLiveTargetRows =
+    Array.isArray(plan.matrix) && plan.matrix.every(isLiveTargetMatrixEntry);
+  const uniqueExecutionIds =
+    validLiveTargetRows &&
+    validCredentialFreeTestRows &&
+    hasUniqueValues(
+      [
+        ...(plan.matrix as LiveTargetMatrixEntry[]),
+        ...(plan.testMatrix as CredentialFreeTestMatrixRow[]),
+        ...catalogueMatrixRows,
+      ],
+      (row) => row.execution_id,
+    );
   const validGatewayRuntimes =
     Array.isArray(plan.gatewayRuntimes) &&
     plan.gatewayRuntimes.length > 0 &&
     plan.gatewayRuntimes.every((runtime) => runtime === "docker" || runtime === "podman") &&
     new Set(plan.gatewayRuntimes).size === plan.gatewayRuntimes.length;
+  const selectedJobsValue = plan.selectedJobs;
   const validRuntimeProvidersByJob =
     isRecord(plan.runtimeProvidersByJob) &&
-    isStringArray(plan.selectedJobs) &&
-    Object.keys(plan.runtimeProvidersByJob).length === plan.selectedJobs.length &&
-    Object.keys(plan.runtimeProvidersByJob).every((job) => plan.selectedJobs.includes(job)) &&
+    isStringArray(selectedJobsValue) &&
+    Object.keys(plan.runtimeProvidersByJob).length === selectedJobsValue.length &&
+    Object.keys(plan.runtimeProvidersByJob).every((job) => selectedJobsValue.includes(job)) &&
     Object.values(plan.runtimeProvidersByJob).every(
       (providers) =>
         Array.isArray(providers) &&
@@ -991,17 +1005,13 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
     );
   if (
     !validGatewayRuntimes ||
-    !Array.isArray(plan.matrix) ||
-    !plan.matrix.every(isLiveTargetMatrixEntry) ||
+    !validLiveTargetRows ||
     !validCredentialFreeTestRows ||
     !isE2eExecutionRows(plan.coverageMatrix) ||
-    !hasUniqueValues(
-      [...plan.matrix, ...plan.testMatrix, ...catalogueMatrixRows],
-      (row) => row.execution_id,
-    ) ||
-    !isStringArray(plan.selectedJobs) ||
-    !plan.selectedJobs.every((job) => /^[A-Za-z0-9_-]+$/u.test(job)) ||
-    !hasUniqueValues(plan.selectedJobs, (id) => id) ||
+    !uniqueExecutionIds ||
+    !isStringArray(selectedJobsValue) ||
+    !selectedJobsValue.every((job) => /^[A-Za-z0-9_-]+$/u.test(job)) ||
+    !hasUniqueValues(selectedJobsValue, (id) => id) ||
     !validRuntimeProvidersByJob ||
     typeof plan.hermesSelected !== "boolean" ||
     !isStringArray(plan.explicitOnlyJobs) ||
