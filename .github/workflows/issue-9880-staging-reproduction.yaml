@@ -17,7 +17,7 @@ jobs:
   reproduce:
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 95
+    timeout-minutes: 140
     env:
       INSTANCE_NAME: issue-9880-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
@@ -80,7 +80,7 @@ jobs:
           printf 'work_dir=%s\n' "$work_dir" >>"$GITHUB_OUTPUT"
 
       - name: Reproduce issue 9880 on the staging Launchable
-        timeout-minutes: 80
+        timeout-minutes: 120
         env:
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
           E2E_ARTIFACT_DIR: ${{ steps.prepare.outputs.work_dir }}

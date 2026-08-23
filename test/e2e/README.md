@@ -212,8 +212,11 @@ The retired nightly caller no longer runs. The explicit
 exception: its host-side Vitest controller deploys the standing staging Launchable,
 runs five bounded fresh OpenClaw CLI sessions against the baked image, uploads
 redacted evidence, and confirms that the workflow-owned workspace is absent. It
-does not restore source copying, source installation, the legacy suite selector,
-or scheduled Brev coverage.
+constructs the Brev controller only in the issue target and binds credential-bearing
+execution and deletion to the workspace ID recorded during creation. The live test,
+cleanup, workflow step, and workflow job timeouts each contain their nested operation
+budgets. It does not restore source copying, source installation, the legacy suite
+selector, or scheduled Brev coverage.
 Each push to `main` selects E2E work from the changed files.
 Manual GPU validation must use `gpu-e2e`.
 It must not provision a generic Brev VM.

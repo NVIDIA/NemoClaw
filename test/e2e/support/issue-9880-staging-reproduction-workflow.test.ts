@@ -3,15 +3,26 @@
 
 import { describe, expect, it } from "vitest";
 
-import { ISSUE_9880_STAGING_LAUNCHABLE_TEST_TIMEOUT_MS } from "../../../tools/e2e/staging-launchable-timeout-contract.mts";
+import {
+  ISSUE_9880_STAGING_LAUNCHABLE_CLEANUP_TIMEOUT_MS,
+  ISSUE_9880_STAGING_LAUNCHABLE_ONBOARD_TIMEOUT_MS,
+  ISSUE_9880_STAGING_LAUNCHABLE_SCENARIO_TIMEOUT_MS,
+  ISSUE_9880_STAGING_LAUNCHABLE_TEST_TIMEOUT_MS,
+} from "../../../tools/e2e/staging-launchable-timeout-contract.mts";
+import {
+  DEFAULT_BREV_EXEC_READY_TIMEOUT_MS,
+  DEFAULT_BREV_IDENTITY_TIMEOUT_MS,
+  DEFAULT_BREV_STAGING_HANDOFF_TIMEOUT_MS,
+  DEFAULT_BREV_WORKSPACE_CREATE_TIMEOUT_MS,
+  DEFAULT_BREV_WORKSPACE_DELETE_TIMEOUT_MS,
+  DEFAULT_BREV_WORKSPACE_READY_TIMEOUT_MS,
+} from "../fixtures/brev-launchable.ts";
 import {
   readYaml,
   type Workflow,
   type WorkflowJob,
   type WorkflowStep,
 } from "../../helpers/e2e-workflow-contract.ts";
-import { DEFAULT_BREV_WORKSPACE_DELETE_TIMEOUT_MS } from "../fixtures/brev-launchable.ts";
-import { DEFAULT_CLEANUP_TIMEOUT_MS } from "../fixtures/cleanup.ts";
 
 const MINUTE_MS = 60_000;
 const CHECKOUT_ACTION = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
@@ -29,9 +40,13 @@ type WorkflowContract = {
   job: string;
   prepare: string;
   scenario: string;
-  testTimeoutMs: number;
   upload: string;
   workflow: string;
+};
+
+type TimeoutContract = {
+  cleanupTimeoutMs: number;
+  testTimeoutMs: number;
 };
 
 const contract = {
@@ -42,11 +57,32 @@ const contract = {
   scenario: "Reproduce issue 9880 on the staging Launchable",
   upload: "Upload issue 9880 evidence",
   inferenceCredential: "NVIDIA_API_KEY",
-  testTimeoutMs: ISSUE_9880_STAGING_LAUNCHABLE_TEST_TIMEOUT_MS,
 } as const satisfies WorkflowContract;
 
+const timeoutContract: TimeoutContract = {
+  cleanupTimeoutMs: ISSUE_9880_STAGING_LAUNCHABLE_CLEANUP_TIMEOUT_MS,
+  testTimeoutMs: ISSUE_9880_STAGING_LAUNCHABLE_TEST_TIMEOUT_MS,
+};
+
+const CONTROLLER_OPERATION_TIMEOUT_MS =
+  DEFAULT_BREV_STAGING_HANDOFF_TIMEOUT_MS +
+  DEFAULT_BREV_WORKSPACE_CREATE_TIMEOUT_MS +
+  DEFAULT_BREV_WORKSPACE_READY_TIMEOUT_MS +
+  DEFAULT_BREV_EXEC_READY_TIMEOUT_MS +
+  DEFAULT_BREV_IDENTITY_TIMEOUT_MS +
+  ISSUE_9880_STAGING_LAUNCHABLE_ONBOARD_TIMEOUT_MS +
+  ISSUE_9880_STAGING_LAUNCHABLE_SCENARIO_TIMEOUT_MS;
+
 const mutations: ReadonlyArray<
-  readonly [string, (workflow: StagingWorkflow, contract: WorkflowContract) => void, string]
+  readonly [
+    string,
+    (
+      workflow: StagingWorkflow,
+      contract: WorkflowContract,
+      timeouts: TimeoutContract,
+    ) => void,
+    string,
+  ]
 > = [
   [
     "an untrusted checkout reference",
@@ -85,22 +121,45 @@ const mutations: ReadonlyArray<
     "workflow must always remove and verify its Brev credential directory",
   ],
   [
-    "a scenario timeout without cleanup time",
-    (workflow, contract) => {
+    "a test timeout shorter than the controller lifecycle",
+    (_workflow, _contract, timeouts) => {
+      timeouts.testTimeoutMs = CONTROLLER_OPERATION_TIMEOUT_MS - 1;
+    },
+    "test timeout must contain every sequential controller operation",
+  ],
+  [
+    "a cleanup timeout that cannot contain Brev deletion",
+    (_workflow, _contract, timeouts) => {
+      timeouts.cleanupTimeoutMs = DEFAULT_BREV_WORKSPACE_DELETE_TIMEOUT_MS;
+    },
+    "cleanup timeout must exceed the Brev deletion budget",
+  ],
+  [
+    "a scenario step timeout without cleanup time",
+    (workflow, contract, timeouts) => {
       step(workflow, contract, contract.scenario)["timeout-minutes"] =
-        contract.testTimeoutMs / MINUTE_MS;
+        (timeouts.testTimeoutMs + timeouts.cleanupTimeoutMs) / MINUTE_MS - 1;
     },
     "scenario timeout must contain the live test and cleanup budgets",
+  ],
+  [
+    "a job timeout without cleanup time",
+    (workflow, contract, timeouts) => {
+      workflow.jobs[contract.job]!["timeout-minutes"] =
+        (timeouts.testTimeoutMs + timeouts.cleanupTimeoutMs) / MINUTE_MS - 1;
+    },
+    "job timeout must contain the live test and cleanup budgets",
   ],
 ];
 
 describe("rejects unsafe changes to the staging Launchable workflow for issue 9880", () => {
   it.each(mutations)("rejects %s", (_case, mutate, expected) => {
     const workflow = readStagingWorkflow();
-    expect(validateWorkflow(workflow)).not.toContain(expected);
-    mutate(workflow, contract);
+    const timeouts = structuredClone(timeoutContract);
+    expect(validateWorkflow(workflow, timeouts)).not.toContain(expected);
+    mutate(workflow, contract, timeouts);
 
-    expect(validateWorkflow(workflow)).toContain(expected);
+    expect(validateWorkflow(workflow, timeouts)).toContain(expected);
   });
 });
 
@@ -116,9 +175,20 @@ function step(
   return workflow.jobs[contract.job]!.steps!.find((entry) => entry.name === name)!;
 }
 
-function validateWorkflow(workflow: StagingWorkflow): string[] {
+function validateWorkflow(workflow: StagingWorkflow, timeouts: TimeoutContract): string[] {
   const errors: string[] = [];
   const job = workflow.jobs[contract.job] ?? {};
+
+  recordValidation(
+    errors,
+    timeouts.testTimeoutMs >= CONTROLLER_OPERATION_TIMEOUT_MS,
+    "test timeout must contain every sequential controller operation",
+  );
+  recordValidation(
+    errors,
+    timeouts.cleanupTimeoutMs > DEFAULT_BREV_WORKSPACE_DELETE_TIMEOUT_MS,
+    "cleanup timeout must exceed the Brev deletion budget",
+  );
 
   recordValidation(
     errors,
@@ -146,7 +216,7 @@ function validateWorkflow(workflow: StagingWorkflow): string[] {
   validateCheckout(errors, job, contract);
   validateAuthorization(errors, job);
   validatePreparation(errors, job, contract);
-  validateScenario(errors, job, contract);
+  validateScenario(errors, job, contract, timeouts);
   validateCredentialCleanup(errors, job, contract);
   validateEvidenceUpload(errors, job, contract);
   return errors;
@@ -200,20 +270,28 @@ function validatePreparation(errors: string[], job: WorkflowJob, contract: Workf
   );
 }
 
-function validateScenario(errors: string[], job: WorkflowJob, contract: WorkflowContract): void {
+function validateScenario(
+  errors: string[],
+  job: WorkflowJob,
+  contract: WorkflowContract,
+  timeouts: TimeoutContract,
+): void {
   const scenario = namedStep(job, contract.scenario) as
     | (WorkflowStep & { "timeout-minutes"?: number })
     | undefined;
   const scenarioTimeoutMs = Number(scenario?.["timeout-minutes"]) * MINUTE_MS;
-  const cleanupBudgetMs = Math.max(
-    DEFAULT_CLEANUP_TIMEOUT_MS,
-    DEFAULT_BREV_WORKSPACE_DELETE_TIMEOUT_MS,
-  );
   recordValidation(
     errors,
     Number.isSafeInteger(scenarioTimeoutMs) &&
-      scenarioTimeoutMs >= contract.testTimeoutMs + cleanupBudgetMs,
+      scenarioTimeoutMs >= timeouts.testTimeoutMs + timeouts.cleanupTimeoutMs,
     "scenario timeout must contain the live test and cleanup budgets",
+  );
+  const jobTimeoutMs = Number(job["timeout-minutes"]) * MINUTE_MS;
+  recordValidation(
+    errors,
+    Number.isSafeInteger(jobTimeoutMs) &&
+      jobTimeoutMs >= timeouts.testTimeoutMs + timeouts.cleanupTimeoutMs,
+    "job timeout must contain the live test and cleanup budgets",
   );
   recordValidation(
     errors,

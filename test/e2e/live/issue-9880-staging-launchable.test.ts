@@ -3,7 +3,13 @@
 
 import { randomUUID } from "node:crypto";
 
-import { ISSUE_9880_STAGING_LAUNCHABLE_TEST_TIMEOUT_MS } from "../../../tools/e2e/staging-launchable-timeout-contract.mts";
+import {
+  ISSUE_9880_STAGING_LAUNCHABLE_CLEANUP_TIMEOUT_MS,
+  ISSUE_9880_STAGING_LAUNCHABLE_ONBOARD_TIMEOUT_MS,
+  ISSUE_9880_STAGING_LAUNCHABLE_SCENARIO_TIMEOUT_MS,
+  ISSUE_9880_STAGING_LAUNCHABLE_TEST_TIMEOUT_MS,
+} from "../../../tools/e2e/staging-launchable-timeout-contract.mts";
+import { BrevLaunchableFixture } from "../fixtures/brev-launchable.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 
@@ -15,6 +21,7 @@ test(
   {
     timeout: ISSUE_9880_STAGING_LAUNCHABLE_TEST_TIMEOUT_MS,
     meta: {
+      e2eCleanupTimeoutMs: ISSUE_9880_STAGING_LAUNCHABLE_CLEANUP_TIMEOUT_MS,
       e2ePhases: [
         "resolve the latest staging handoff",
         "create and verify the issue workspace",
@@ -24,7 +31,8 @@ test(
       ],
     },
   },
-  async ({ artifacts, brevLaunchable, cleanup, progress, secrets }) => {
+  async ({ artifacts, cleanup, host, progress, secrets }) => {
+    const brevLaunchable = new BrevLaunchableFixture({ artifacts, host, secrets });
     const launchableId = secrets.required("BREV_LAUNCHABLE_ID");
     const inferenceKey = secrets.required("NVIDIA_API_KEY");
     const name = `issue-9880-${randomUUID().slice(0, 8)}`;
@@ -52,7 +60,7 @@ brev-quickstart issue-9880
         artifactName: "issue-9880-onboard",
         captureLimitBytes: 64 * 1024,
         redactionValues: [inferenceKey],
-        timeoutMs: 25 * 60_000,
+        timeoutMs: ISSUE_9880_STAGING_LAUNCHABLE_ONBOARD_TIMEOUT_MS,
       },
     );
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
@@ -61,7 +69,7 @@ brev-quickstart issue-9880
     const scenario = await brevLaunchable.execScript(ownership, scenarioScript(), {
       artifactName: "issue-9880-openclaw-cli-sessions",
       captureLimitBytes: 64 * 1024,
-      timeoutMs: 10 * 60_000,
+      timeoutMs: ISSUE_9880_STAGING_LAUNCHABLE_SCENARIO_TIMEOUT_MS,
     });
     const classification = classifyScenario(scenario);
     await artifacts.writeJson("issue-9880-result.json", {

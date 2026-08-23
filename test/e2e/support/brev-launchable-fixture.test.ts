@@ -134,7 +134,9 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
 
     await fixture.delete(ownership, 2_000);
     expect(lifecycle.absentReads()).toBeGreaterThanOrEqual(3);
-    expect(command.mock.calls.filter((call) => call[1][0] === "delete")).toHaveLength(1);
+    expect(command.mock.calls.filter((call) => call[1][0] === "delete")).toEqual([
+      ["brev", ["delete", "workspace-id"], expect.any(Object)],
+    ]);
     expect(
       JSON.parse(fs.readFileSync(path.join(root, "brev-workspace-cleanup.json"), "utf8")),
     ).toMatchObject({ status: "ABSENT", workspaceId: "workspace-id" });
@@ -218,6 +220,68 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
       "Brev workspace identity changed before Brev exec",
     );
     expect(command.mock.calls.filter((call) => call[1][0] === "exec")).toHaveLength(0);
+  });
+
+  it("binds exec to the owned ID when a replacement appears after the final list", async () => {
+    const root = temporaryRoot();
+    let currentId = "owned-id";
+    const protectedTargets: string[] = [];
+    const command = vi.fn(async (_binary: string, args: string[]) => {
+      switch (args[0]) {
+        case "ls":
+          return workspaceResult(currentId);
+        case "exec": {
+          currentId = "replacement-id";
+          const requested = args[1] ?? "";
+          const resolved = requested === "fixture-workspace" ? currentId : requested;
+          protectedTargets.push(resolved);
+          expect(resolved).not.toBe(currentId);
+          return result("");
+        }
+        default:
+          throw new Error(`unexpected command: ${args.join(" ")}`);
+      }
+    });
+    const fixture = createFixture(root, command);
+
+    await expect(
+      fixture.execScript(recordedOwnership(), "echo credential-bearing operation", {
+        artifactName: "fixture-script",
+      }),
+    ).resolves.toMatchObject({ exitCode: 0 });
+
+    expect(protectedTargets).toEqual(["owned-id"]);
+    expect(command.mock.calls.find((call) => call[1][0] === "exec")?.[1][1]).toBe("owned-id");
+  });
+
+  it("binds deletion to the owned ID when a replacement appears after the final list", async () => {
+    const root = temporaryRoot();
+    let currentId = "owned-id";
+    const protectedTargets: string[] = [];
+    const command = vi.fn(async (_binary: string, args: string[]) => {
+      switch (args[0]) {
+        case "ls":
+          return workspaceResult(currentId);
+        case "delete": {
+          currentId = "replacement-id";
+          const requested = args[1] ?? "";
+          const resolved = requested === "fixture-workspace" ? currentId : requested;
+          protectedTargets.push(resolved);
+          expect(resolved).not.toBe(currentId);
+          return result("");
+        }
+        case "refresh":
+          return result("");
+        default:
+          throw new Error(`unexpected command: ${args.join(" ")}`);
+      }
+    });
+    const fixture = createFixture(root, command);
+
+    await expect(fixture.delete(recordedOwnership(), 2_000)).resolves.toBeUndefined();
+
+    expect(protectedTargets).toEqual(["owned-id"]);
+    expect(command.mock.calls.find((call) => call[1][0] === "delete")?.[1][1]).toBe("owned-id");
   });
 
   it("removes the private local script after Brev exec returns", async () => {

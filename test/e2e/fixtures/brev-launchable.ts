@@ -54,6 +54,14 @@ export interface BrevLaunchableFixtureOptions {
 const IMAGE_REPOSITORY = "brevdev/nemoclaw-image";
 const IMAGE_WORKFLOW = "build-launchable-e2e-image.yml";
 const DEFAULT_POLL_MS = 15_000;
+export const DEFAULT_BREV_STAGING_HANDOFF_COMMAND_TIMEOUT_MS = 60_000;
+export const DEFAULT_BREV_STAGING_HANDOFF_TIMEOUT_MS =
+  2 * DEFAULT_BREV_STAGING_HANDOFF_COMMAND_TIMEOUT_MS;
+export const DEFAULT_BREV_WORKSPACE_CREATE_TIMEOUT_MS = 15 * 60_000;
+export const DEFAULT_BREV_WORKSPACE_READY_TIMEOUT_MS = 20 * 60_000;
+export const DEFAULT_BREV_EXEC_READY_TIMEOUT_MS = 15 * 60_000;
+export const DEFAULT_BREV_IDENTITY_TIMEOUT_MS = 5 * 60_000;
+export const DEFAULT_BREV_WORKSPACE_DELETE_COMMAND_TIMEOUT_MS = 60_000;
 export const DEFAULT_BREV_WORKSPACE_DELETE_TIMEOUT_MS = 12 * 60_000;
 
 export class BrevLaunchableFixture {
@@ -81,7 +89,7 @@ export class BrevLaunchableFixture {
         artifactName: "brev-staging-producer-runs",
         env: { GH_TOKEN: token },
         redactionValues: [token],
-        timeoutMs: 60_000,
+        timeoutMs: DEFAULT_BREV_STAGING_HANDOFF_COMMAND_TIMEOUT_MS,
       },
     );
     expectExitZero(runs, "list successful staging producer runs");
@@ -121,7 +129,7 @@ export class BrevLaunchableFixture {
         artifactName: "brev-staging-handoff-download",
         env: { GH_TOKEN: token },
         redactionValues: [token],
-        timeoutMs: 60_000,
+        timeoutMs: DEFAULT_BREV_STAGING_HANDOFF_COMMAND_TIMEOUT_MS,
       },
     );
     expectExitZero(download, "download latest staging image handoff");
@@ -158,16 +166,22 @@ export class BrevLaunchableFixture {
       ["create", name, "--launchable", launchableId, "--detached", "--timeout", "900"],
       {
         artifactName: "brev-workspace-create",
-        timeoutMs: 15 * 60_000,
+        timeoutMs: DEFAULT_BREV_WORKSPACE_CREATE_TIMEOUT_MS,
       },
     );
     expectExitZero(create, "create staging Brev workspace");
     ownership.accepted = true;
-    const workspace = await this.waitForWorkspace(ownership, 20 * 60_000);
+    const workspace = await this.waitForWorkspace(
+      ownership,
+      DEFAULT_BREV_WORKSPACE_READY_TIMEOUT_MS,
+    );
     return workspace;
   }
 
-  async waitForExec(ownership: BrevWorkspaceOwnership, timeoutMs = 15 * 60_000): Promise<void> {
+  async waitForExec(
+    ownership: BrevWorkspaceOwnership,
+    timeoutMs = DEFAULT_BREV_EXEC_READY_TIMEOUT_MS,
+  ): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const remaining = deadline - Date.now();
@@ -187,8 +201,8 @@ export class BrevLaunchableFixture {
     command: string,
     options: Parameters<HostCliClient["command"]>[2] = {},
   ): Promise<ShellProbeResult> {
-    await this.assertOwnedWorkspace(ownership, "Brev exec");
-    return this.host.command("brev", ["exec", ownership.name, command], options);
+    const workspaceId = await this.assertOwnedWorkspace(ownership, "Brev exec");
+    return this.host.command("brev", ["exec", workspaceId, command], options);
   }
 
   async execScript(
@@ -213,7 +227,7 @@ export class BrevLaunchableFixture {
   ): Promise<BrevRuntimeIdentity> {
     const result = await this.exec(ownership, identityCommand(), {
       artifactName: "brev-runtime-identity",
-      timeoutMs: 5 * 60_000,
+      timeoutMs: DEFAULT_BREV_IDENTITY_TIMEOUT_MS,
     });
     expectExitZero(result, "read staging runtime identity");
     const identity = JSON.parse(lastJsonLine(result.stdout)) as BrevRuntimeIdentity;
@@ -247,15 +261,18 @@ export class BrevLaunchableFixture {
       throw new Error(`Brev workspace identity changed before cleanup: ${name}`);
     }
     if (current) {
-      await this.host.command("brev", ["delete", name], {
+      await this.host.command("brev", ["delete", current.id], {
         artifactName: "brev-workspace-delete",
-        timeoutMs: 60_000,
+        timeoutMs: DEFAULT_BREV_WORKSPACE_DELETE_COMMAND_TIMEOUT_MS,
       });
     }
+    const workspaceId = ownership.id ?? current?.id;
     const deadline = Date.now() + timeoutMs;
     let absent = 0;
     while (Date.now() < deadline) {
-      const record = await this.workspace(name);
+      const record = workspaceId
+        ? await this.workspaceById(workspaceId)
+        : await this.workspace(name);
       absent = record ? 0 : absent + 1;
       if (absent >= 2) {
         await this.artifacts.writeJson("brev-workspace-cleanup.json", {
@@ -312,22 +329,35 @@ export class BrevLaunchableFixture {
   private async assertOwnedWorkspace(
     ownership: BrevWorkspaceOwnership,
     operation: string,
-  ): Promise<void> {
-    const current = await this.workspace(ownership.name);
+  ): Promise<string> {
     if (!ownership.accepted || !ownership.id) {
       throw new Error(
         `${operation} requires a recorded Brev workspace identity: ${ownership.name}`,
       );
     }
+    const current = await this.workspace(ownership.name);
     if (!current) {
       throw new Error(`Brev workspace disappeared before ${operation}: ${ownership.name}`);
     }
     if (current.id !== ownership.id) {
       throw new Error(`Brev workspace identity changed before ${operation}: ${ownership.name}`);
     }
+    return ownership.id;
   }
 
   private async workspace(name: string): Promise<BrevWorkspaceRecord | null> {
+    const matches = (await this.workspaces()).filter((record) => record.name === name);
+    if (matches.length > 1) throw new Error(`Brev workspace name is ambiguous: ${name}`);
+    return matches[0] ?? null;
+  }
+
+  private async workspaceById(id: string): Promise<BrevWorkspaceRecord | null> {
+    const matches = (await this.workspaces()).filter((record) => record.id === id);
+    if (matches.length > 1) throw new Error(`Brev workspace ID is ambiguous: ${id}`);
+    return matches[0] ?? null;
+  }
+
+  private async workspaces(): Promise<BrevWorkspaceRecord[]> {
     const result = await this.host.command("brev", ["ls", "--json"], {
       artifactName: "brev-workspace-list",
       persistArtifacts: false,
@@ -342,11 +372,7 @@ export class BrevLaunchableFixture {
           Array.isArray((root as { workspaces?: unknown }).workspaces)
         ? (root as { workspaces: unknown[] }).workspaces
         : [];
-    const matches = rows
-      .map(normalizeWorkspace)
-      .filter((record): record is BrevWorkspaceRecord => record?.name === name);
-    if (matches.length > 1) throw new Error(`Brev workspace name is ambiguous: ${name}`);
-    return matches[0] ?? null;
+    return rows.map(normalizeWorkspace).filter((record): record is BrevWorkspaceRecord => !!record);
   }
 }
 
