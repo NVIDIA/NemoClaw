@@ -49,7 +49,7 @@ describe("Hermes rebuild swap", () => {
       path.resolve(import.meta.dirname, "../live/rebuild-hermes.test.ts"),
       "utf8",
     );
-    const ensureSwap = source.indexOf("await ensureHermesRebuildSwap(host);");
+    const ensureSwap = source.indexOf("await ensureRebuildHermesSwap(host, cleanup);");
     const dockerProbe = source.indexOf('host.command("docker", ["info"]');
 
     expect(ensureSwap).toBeGreaterThan(-1);
@@ -68,17 +68,20 @@ describe("Hermes rebuild swap", () => {
 
   it("registers observable cleanup before verifying created swap", () => {
     const source = fs.readFileSync(
-      path.resolve(import.meta.dirname, "../live/rebuild-hermes.test.ts"),
+      path.resolve(import.meta.dirname, "../live/rebuild-hermes-bootstrap.ts"),
       "utf8",
     );
-    const ensureSwap = source.indexOf("const createdRebuildSwap = await ensureHermesRebuildSwap(host);");
+    const ensureSwap = source.indexOf("export async function ensureRebuildHermesSwap(");
     const registerCleanup = source.indexOf(
       'cleanup.trackDisposable("remove Hermes rebuild swap"',
       ensureSwap,
     );
-    const verifySwap = source.indexOf("await verifyHermesRebuildSwap(host);", registerCleanup);
+    const verifySwap = source.indexOf(
+      'artifactName: "prereq-hermes-rebuild-swap-after"',
+      registerCleanup,
+    );
     const observableFailure = source.indexOf(
-      'expectExitZero(removed, "remove Hermes rebuild swap");',
+      'assertExitZero(removed, "remove Hermes rebuild swap");',
       registerCleanup,
     );
 
