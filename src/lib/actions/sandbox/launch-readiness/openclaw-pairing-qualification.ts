@@ -198,6 +198,7 @@ REQUEST_SCOPES = ['operator.pairing', 'operator.write']
 TOKEN_SCOPES = ['operator.pairing', 'operator.read', 'operator.write']
 ALLOW_CANONICAL_PENDING = ${mode === "ordinary-settlement" || mode === "repair-settlement" ? "True" : "False"}
 REPORT_CANONICAL_PENDING = ${mode === "repair-settlement" ? "True" : "False"}
+REQUIRE_REPAIR_PENDING = ${mode === "repair-settlement" ? "True" : "False"}
 STRICT_SETTLEMENT = ${mode === "settlement" ? "True" : "False"}
 ED25519_SPKI_PREFIX = bytes.fromhex('302a300506032b6570032100')
 RAW_PUBLIC_KEY_RE = re.compile(r'^[A-Za-z0-9_-]{43}$')
@@ -538,6 +539,7 @@ try:
                 or 'requestedScopes' in request
                 or 'publicKeyPem' in request
                 or type(request.get('isRepair')) is not bool
+                or (REQUIRE_REPAIR_PENDING and request.get('isRepair') is not True)
                 or not valid_write_scopes
                 or not isinstance(decision, dict)
                 or decision.get('allowed') is not True

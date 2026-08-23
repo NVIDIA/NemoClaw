@@ -397,6 +397,31 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       );
     });
 
+    it("rejects a non-repair request from Portable repair settlement (#9817)", () => {
+      writePairingOnlyState();
+      writeJson(path.join(stateDirectory, "devices", "pending.json"), {
+        "canonical-cli-write": {
+          requestId: "canonical-cli-write",
+          deviceId,
+          publicKey,
+          clientId: "cli",
+          clientMode: "cli",
+          role: "operator",
+          roles: ["operator"],
+          scopes: ["operator.write"],
+          isRepair: false,
+        },
+      });
+
+      expect(observeOrdinarySettlement()).toEqual({
+        state: "pairing-only",
+        deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      expect(() => observeRepairSettlement()).toThrow(
+        "OpenClaw pairing qualification is unavailable",
+      );
+    });
+
     it("qualifies the persisted result of the complete canonical approval transition (#9023)", () => {
       const approvalPolicy = readAutoPairApprovalPolicyModule();
       expect(approvalPolicy).toBeTruthy();
