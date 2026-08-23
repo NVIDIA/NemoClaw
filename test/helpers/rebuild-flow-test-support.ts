@@ -44,6 +44,7 @@ export type RebuildFlowOverrides = {
     disposeImageRef?: () => boolean;
   };
   executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
+  executeSandboxExecCommand?: () => { status: number; stdout: string; stderr: string } | null;
   checkAndRecoverSandboxProcesses?: () => {
     checked: boolean;
     wasRunning: boolean | null;
@@ -139,6 +140,7 @@ export type RebuildFlowHarness = {
   restartSandboxGatewaySpy: MockInstance;
   errorSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
+  executeSandboxExecCommandSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   ensureRebuildAgentBaseImageSpy: MockInstance;
   ensureTargetGatewaySpy: MockInstance;

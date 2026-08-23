@@ -72,6 +72,7 @@ export type RebuildFlowOverrides = {
     error?: Error;
   };
   executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
+  executeSandboxExecCommand?: () => { status: number; stdout: string; stderr: string } | null;
   checkAndRecoverSandboxProcesses?: () => {
     checked: boolean;
     wasRunning: boolean | null;
@@ -145,6 +146,7 @@ export type RebuildFlowHarness = {
   restoreTrustedAgentBaseImageOverrideSpy: MockInstance;
   restoreTrustedAgentRemoteBaseImageOverrideSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
+  executeSandboxExecCommandSpy: MockInstance;
   checkAndRecoverSandboxProcessesSpy: MockInstance;
   restartSandboxGatewaySpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
@@ -693,6 +695,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .mockImplementation(
       overrides.executeSandboxCommand ?? (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
     );
+  const executeSandboxExecCommandSpy = vi
+    .spyOn(processRecovery, "executeSandboxExecCommand")
+    .mockImplementation(
+      overrides.executeSandboxExecCommand ??
+        (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
+    );
   const checkAndRecoverSandboxProcessesSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
     .mockImplementation(
@@ -770,6 +778,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     restoreTrustedAgentBaseImageOverrideSpy,
     restoreTrustedAgentRemoteBaseImageOverrideSpy,
     executeSandboxCommandSpy,
+    executeSandboxExecCommandSpy,
     checkAndRecoverSandboxProcessesSpy,
     restartSandboxGatewaySpy,
     ensureMessagingHostForwardAfterRebuildSpy,
