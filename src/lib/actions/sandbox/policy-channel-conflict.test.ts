@@ -1240,6 +1240,7 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
       "alpha",
       expect.any(Object),
       "teams",
+      "nemoclaw",
     );
     expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams", {
       disclosedPresetState: "absent",
@@ -1284,7 +1285,15 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
       Object.assign(current, updates);
       return true;
     });
-    restoreMessagingProviderAttachmentsMock.mockReturnValue(["alpha-teams-bridge"]);
+    const restoredReceipt = {
+      credentialKey: "MSTEAMS_APP_PASSWORD",
+      gatewayName: "nemoclaw",
+      providerId: "provider-alpha-teams",
+      providerName: "alpha-teams-bridge",
+      providerType: "teams-openclaw-static-v1",
+      resourceVersion: 7,
+    };
+    restoreMessagingProviderAttachmentsMock.mockReturnValue([restoredReceipt]);
     applyPresetMock.mockReturnValue(false);
 
     await expect(startSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
@@ -1296,7 +1305,7 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
     });
     expect(registry.getDisabledChannels("alpha")).toContain("teams");
     expect(rollbackMessagingProviderAttachmentsMock).toHaveBeenCalledWith("alpha", [
-      "alpha-teams-bridge",
+      restoredReceipt,
     ]);
     expect(rebuildSandboxMock).not.toHaveBeenCalled();
     expect(loggedText()).toContain("channels start teams");

@@ -889,6 +889,16 @@ def _validate_direct_mode_execution() -> None:
         executions.append(value)
         return "direct-proof"
 
+    # Match metadata emitted by the pinned MCP adapter. Headless Deep Agents
+    # correctly rejects unannotated MCP actions, so this execution probe must
+    # identify itself as coherently read-only instead of bypassing that guard.
+    direct_probe.metadata = {
+        "_deepagents_code_mcp": True,
+        "_deepagents_code_mcp_server": "direct-runtime-validator",
+        "destructiveHint": False,
+        "readOnlyHint": True,
+    }
+
     info = MCPServerInfo(
         name="direct-runtime-validator",
         transport="http",
@@ -1026,6 +1036,13 @@ def _validate_local_subagent_isolation() -> None:
     def isolated_probe() -> str:
         """Return an isolated probe capability."""
         return "isolated-proof"
+
+    isolated_probe.metadata = {
+        "_deepagents_code_mcp": True,
+        "_deepagents_code_mcp_server": "runtime-validator",
+        "destructiveHint": False,
+        "readOnlyHint": True,
+    }
 
     model = ScriptedModel(scenario="subagent")
     info = MCPServerInfo(

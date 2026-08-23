@@ -35,7 +35,6 @@ import {
   cleanupRebuildHermesForward as cleanupHermesForward,
   cleanupRebuildHermesTrackedForwards,
   createRebuildHermesDiscordProvider,
-  ensureRebuildHermesSwap,
   requireRebuildHermesDashboardPort,
   requireRebuildHermesHostedInferenceRoute,
   requireRebuildHermesOpenshellBin,
@@ -61,6 +60,7 @@ import {
 import { buildRebuildHermesOldSandboxDockerfile } from "./rebuild-hermes-old-sandbox.ts";
 import { REBUILD_HERMES_PHASES } from "./rebuild-hermes-phases.ts";
 import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
+import { prepareHermesRebuildSwap } from "./rebuild-hermes-swap.ts";
 import { REBUILD_HERMES_STATE } from "./rebuild-hermes-state-fixture.ts";
 import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-hermes-timing.ts";
 
@@ -616,7 +616,7 @@ test(STALE_BASE_REBUILD
     "rebuild-Hermes must invoke the checked-out CLI through NEMOCLAW_CLI_BIN",
   ).toBe(CLI_ENTRYPOINT);
   await ensureRebuildHermesHostTools(host);
-  await ensureRebuildHermesSwap(host, cleanup);
+  await prepareHermesRebuildSwap(host, cleanup);
 
   const dockerInfo = await host.command("docker", ["info"], {
     artifactName: "prereq-docker-info",

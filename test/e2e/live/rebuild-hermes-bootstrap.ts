@@ -14,16 +14,8 @@ import {
 import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/types";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero, type HostCliClient, resultText } from "../fixtures/clients/index.ts";
-import {
-  HERMES_REBUILD_SWAP_BYTES,
-  HERMES_REBUILD_SWAP_FILE,
-  hermesRebuildSwapCleanupArgs,
-  needsHermesRebuildSwap,
-  parseActiveSwapBytes,
-} from "../fixtures/hermes-rebuild-swap.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeOutputEvent, ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { requireRebuildHermesCurrentBaseIdentity } from "./rebuild-hermes-base-identity.ts";
@@ -160,73 +152,6 @@ export async function createRebuildHermesDiscordProvider(
     },
   );
   assertExitZero(provider, "create Hermes Discord provider");
-}
-
-export async function ensureRebuildHermesSwap(
-  host: HostCliClient,
-  cleanup: Pick<CleanupRegistry, "trackDisposable">,
-): Promise<void> {
-  const githubActions = process.env.GITHUB_ACTIONS === "true";
-  if (!githubActions) return;
-  const probeOptions = { env: buildAvailabilityProbeEnv(), timeoutMs: 30_000 };
-  const current = await host.command(
-    "swapon",
-    ["--show", "--bytes", "--noheadings", "--output", "SIZE"],
-    { ...probeOptions, artifactName: "prereq-hermes-rebuild-swap-before" },
-  );
-  assertExitZero(current, "inspect active swap before Hermes rebuild");
-  if (
-    !needsHermesRebuildSwap({
-      activeSwapBytes: parseActiveSwapBytes(current.stdout),
-      githubActions,
-    })
-  ) {
-    return;
-  }
-
-  const provision = await host.command(
-    "sudo",
-    [
-      "bash",
-      "-c",
-      `set -euo pipefail
-swap_file="$1"
-swap_size_bytes="$2"
-swapoff "$swap_file" 2>/dev/null || true
-rm -f "$swap_file"
-fallocate -l "$swap_size_bytes" "$swap_file"
-chmod 0600 "$swap_file"
-mkswap "$swap_file"
-swapon "$swap_file"`,
-      "hermes-rebuild-swap",
-      HERMES_REBUILD_SWAP_FILE,
-      String(HERMES_REBUILD_SWAP_BYTES),
-    ],
-    {
-      ...probeOptions,
-      artifactName: "prereq-hermes-rebuild-swap-provision",
-      timeoutMs: 2 * 60_000,
-    },
-  );
-  assertExitZero(provision, "provision swap for Hermes rebuild");
-  cleanup.trackDisposable("remove Hermes rebuild swap", async () => {
-    const removed = await host.command("sudo", hermesRebuildSwapCleanupArgs(), {
-      artifactName: "cleanup-hermes-rebuild-swap",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 2 * 60_000,
-    });
-    assertExitZero(removed, "remove Hermes rebuild swap");
-  });
-
-  const verified = await host.command(
-    "swapon",
-    ["--show", "--bytes", "--noheadings", "--output", "SIZE"],
-    { ...probeOptions, artifactName: "prereq-hermes-rebuild-swap-after" },
-  );
-  assertExitZero(verified, "inspect active swap after Hermes rebuild provisioning");
-  if (parseActiveSwapBytes(verified.stdout) < HERMES_REBUILD_SWAP_BYTES) {
-    throw new Error("Hermes rebuild swap provisioning did not meet the required capacity");
-  }
 }
 
 export function buildRebuildHermesCurrentBaseScript(): string {
