@@ -2045,6 +2045,11 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
   if (job.needs !== "generate-matrix") {
     errors.push(`${jobName} must depend only on the authorized generate-matrix job`);
   }
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push(
+      `${jobName} must run on GitHub-hosted ubuntu-latest so GitHub decommissions the VM after the job`,
+    );
+  }
   if (job["timeout-minutes"] !== 180) {
     errors.push(`${jobName} must reserve the bounded 180 minute image, boot, and cleanup window`);
   }
@@ -2119,14 +2124,19 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
     steps,
     "Verify identity workspace cleanup",
   );
-  const credentialCleanup = requireJobStep(errors, jobName, steps, "Remove Brev credentials");
+  const apiCredentialCleanup = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Remove Brev API credentials",
+  );
   const upload = requireJobStep(errors, jobName, steps, "Upload Launchable identity evidence");
   const expectedStepNames = [
     "Checkout trusted Launchable identity lane",
     "Prepare the trusted identity lane",
     "Build, boot, and verify identity",
     "Verify identity workspace cleanup",
-    "Remove Brev credentials",
+    "Remove Brev API credentials",
     "Upload Launchable identity evidence",
   ];
   if (
@@ -2142,24 +2152,23 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
     prepare &&
     execute &&
     resourceCleanup &&
-    credentialCleanup &&
+    apiCredentialCleanup &&
     upload &&
     !(
       steps.indexOf(checkout) < steps.indexOf(prepare) &&
       steps.indexOf(prepare) < steps.indexOf(execute) &&
       steps.indexOf(execute) < steps.indexOf(resourceCleanup) &&
-      steps.indexOf(resourceCleanup) < steps.indexOf(credentialCleanup) &&
-      steps.indexOf(credentialCleanup) < steps.indexOf(upload)
+      steps.indexOf(resourceCleanup) < steps.indexOf(apiCredentialCleanup) &&
+      steps.indexOf(apiCredentialCleanup) < steps.indexOf(upload)
     )
   ) {
     errors.push(
-      `${jobName} must prepare, execute, verify cleanup, remove credentials, then upload evidence`,
+      `${jobName} must prepare, execute, verify cleanup, remove API credentials, then upload evidence`,
     );
   }
 
   const trustedDispatch =
     "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'";
-  const privateHome = "${{ runner.temp }}/nemoclaw-brev-launchable-identity-home";
   const prepareEnv = asRecord(prepare?.env);
   if (
     !isDeepStrictEqual(Object.keys(prepareEnv).sort(), [
@@ -2167,7 +2176,6 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
       "BREV_CLI_SHA256",
       "BREV_CLI_VERSION",
       "BREV_ORG_ID",
-      "HOME",
     ])
   ) {
     errors.push(`${jobName} preparation step must receive only its reviewed environment`);
@@ -2180,9 +2188,6 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
     if (prepareEnv[key] !== expected) {
       errors.push(`${jobName} ${key} must use the trusted manual-dispatch guard`);
     }
-  }
-  if (prepareEnv.HOME !== privateHome) {
-    errors.push(`${jobName} must keep Brev credentials in its private runner home`);
   }
   if (
     !/^0\.\d+\.\d+$/u.test(stringValue(prepareEnv.BREV_CLI_VERSION)) ||
@@ -2197,7 +2202,7 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
   }
   const prepareRun = stringValue(prepare?.run);
   for (const required of [
-    'install -d -m 0700 "$HOME"',
+    'install -d -m 0700 "$HOME/.brev"',
     "sha256sum -c -",
     'brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"',
   ]) {
@@ -2210,7 +2215,6 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
     !isDeepStrictEqual(Object.keys(executeEnv).sort(), [
       "BREV_LAUNCHABLE_ID",
       "GH_TOKEN",
-      "HOME",
       "NEMOCLAW_BREV_DEFER_CLEANUP",
       "NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY",
       "WORK_DIR",
@@ -2231,13 +2235,12 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
     errors.push(`${jobName} image dispatch token must use the trusted manual-dispatch guard`);
   }
   if (
-    executeEnv.HOME !== privateHome ||
     executeEnv.NEMOCLAW_BREV_DEFER_CLEANUP !== "1" ||
     executeEnv.NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY !== "1" ||
     executeEnv.WORK_DIR !== "${{ steps.workspace.outputs.work_dir }}"
   ) {
     errors.push(
-      `${jobName} must bind its private home, deferred cleanup, identity mode, and evidence directory`,
+      `${jobName} must set NEMOCLAW_BREV_DEFER_CLEANUP, NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY, and WORK_DIR to their reviewed values`,
     );
   }
   for (const forbidden of [
@@ -2259,7 +2262,6 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
     !isDeepStrictEqual(resourceCleanupEnv, {
       BREV_CREATE_RECONCILE_SECONDS: "120",
       BREV_DELETE_TIMEOUT_SECONDS: "600",
-      HOME: privateHome,
       POLL_SECONDS: "15",
       WORK_DIR: "${{ steps.workspace.outputs.work_dir }}",
     })
@@ -2280,15 +2282,21 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
     }
   }
 
-  const cleanupEnv = asRecord(credentialCleanup?.env);
+  if (steps.some((currentStep) => Object.hasOwn(asRecord(currentStep.env), "HOME"))) {
+    errors.push(
+      `${jobName} steps must use the runner account home so Brev and OpenSSH share SSH configuration`,
+    );
+  }
+
+  const apiCredentialCleanupEnv = asRecord(apiCredentialCleanup?.env);
   if (
-    credentialCleanup?.if !== "always()" ||
-    !isDeepStrictEqual(cleanupEnv, { HOME: privateHome }) ||
-    !stringValue(credentialCleanup?.run).includes("$HOME/.brev/credentials.json") ||
-    !stringValue(credentialCleanup?.run).includes('rm -f -- "$credentials"') ||
-    !stringValue(credentialCleanup?.run).includes('test ! -e "$credentials"')
+    apiCredentialCleanup?.if !== "always()" ||
+    !isDeepStrictEqual(apiCredentialCleanupEnv, {}) ||
+    !stringValue(apiCredentialCleanup?.run).includes("$HOME/.brev/credentials.json") ||
+    !stringValue(apiCredentialCleanup?.run).includes('rm -f -- "$credentials"') ||
+    !stringValue(apiCredentialCleanup?.run).includes('test ! -e "$credentials"')
   ) {
-    errors.push(`${jobName} must always remove and verify removal of its Brev credential file`);
+    errors.push(`${jobName} must always remove and verify removal of its Brev API credential file`);
   }
   if (!isDeepStrictEqual(asRecord(upload?.env), {})) {
     errors.push(`${jobName} evidence upload step must not receive environment values`);

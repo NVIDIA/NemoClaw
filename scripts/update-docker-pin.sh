@@ -33,7 +33,7 @@ resolve_latest_digest() {
   local token digest
 
   # Step 1: get an auth token for the Docker Hub library repo
-  token=$(curl -fsSL --retry 3 --retry-delay 1 --retry-all-errors \
+  token=$(curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 --retry-delay 1 --retry-all-errors \
     --connect-timeout 10 --max-time 30 \
     "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/${IMAGE}:pull" \
     | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
@@ -44,7 +44,7 @@ resolve_latest_digest() {
   fi
 
   # Step 2: fetch the tag headers and use Docker-Content-Digest for the index.
-  digest=$(curl -fsSIL --retry 3 --retry-delay 1 --retry-all-errors \
+  digest=$(curl -fsSIL --proto '=https' --proto-redir '=https' --retry 3 --retry-delay 1 --retry-all-errors \
     --connect-timeout 10 --max-time 30 \
     -H "Authorization: Bearer ${token}" \
     -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json" \
