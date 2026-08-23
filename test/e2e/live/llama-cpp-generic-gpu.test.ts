@@ -42,6 +42,9 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const selected: NodeJS.ProcessEnv = {
     ...buildAvailabilityProbeEnv(process.env),
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    // PR images are published by digest only. Build the workload from this
+    // exact checkout instead of resolving the unreleased package-version tag.
+    NEMOCLAW_FROM_DOCKERFILE: path.join(REPO_ROOT, "Dockerfile"),
     NEMOCLAW_LLAMACPP_RECIPE: RECIPE_ID,
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_PROVIDER: "install-llama-cpp",
