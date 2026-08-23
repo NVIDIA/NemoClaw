@@ -10,6 +10,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 let replyAndResolveReviewThread: (input: any) => Promise<any>;
+let approveNemoclawForkWorkflowRuns: (input: any) => Promise<any>;
 let runGitHubCli: (input: any) => Promise<any>;
 let prepareIsolatedPrWorktree: (input: any) => Promise<any>;
 let removeIsolatedPrWorktrees: (input: any) => Promise<any>;
@@ -23,6 +24,7 @@ beforeAll(async () => {
     return import(/* @vite-ignore */ moduleUrl);
   };
   replyAndResolveReviewThread = (await load("reply_and_resolve_pr_review_thread")).default;
+  approveNemoclawForkWorkflowRuns = (await load("approve_nemoclaw_fork_workflow_runs")).default;
   runGitHubCli = (await load("run_github_cli")).default;
   prepareIsolatedPrWorktree = (await load("prepare_isolated_pr_worktree")).default;
   removeIsolatedPrWorktrees = (await load("remove_isolated_pr_worktrees")).default;
@@ -252,6 +254,126 @@ describe("remaining shared tool guards", () => {
       }),
     ).rejects.toThrow("read-only documentation review changed the worktree");
     expect(subagent).toHaveBeenCalledOnce();
+  });
+});
+
+describe("approve_nemoclaw_fork_workflow_runs", () => {
+  const workflow = ".github/workflows/ci.yml";
+  const action = ".github/actions/setup/action.yml";
+  const script = "scripts/setup.sh";
+  const pull = (headRefOid = HEAD_SHA) => ({
+    number: 1,
+    url: "https://github.com/NVIDIA/NemoClaw/pull/1",
+    state: "OPEN",
+    isDraft: false,
+    headRefOid,
+    baseRefName: "main",
+    mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
+    reviewDecision: "APPROVED",
+  });
+  const forkDetails = (changedFiles: number) => ({
+    number: 1,
+    isCrossRepository: true,
+    maintainerCanModify: true,
+    changedFiles,
+  });
+  const actionRequiredRun = {
+    databaseId: 10,
+    workflowName: "CI",
+    event: "pull_request",
+    status: "completed",
+    conclusion: "action_required",
+    url: "https://github.com/NVIDIA/NemoClaw/actions/runs/10",
+    headSha: HEAD_SHA,
+  };
+
+  function forkApprovalTools(files: string[], pullReads = [pull()]) {
+    const readNemoclawPr = vi.fn();
+    pullReads.forEach((value) => readNemoclawPr.mockResolvedValueOnce(value));
+    const readGithubPages = vi.fn().mockResolvedValue({
+      items: files.map((filename) => ({ filename })),
+      pagesRead: 1,
+      truncated: false,
+    });
+    const runGithubCli = vi.fn(async ({ args }: { args: string[] }) => {
+      const responses: Record<string, { stdout: string }> = {
+        pr: { stdout: JSON.stringify(forkDetails(files.length)) },
+        run: { stdout: JSON.stringify([actionRequiredRun]) },
+        api: { stdout: "" },
+      };
+      return responses[args[0]] ?? Promise.reject(new Error("unexpected GitHub CLI call"));
+    });
+    vi.stubGlobal("tools", {
+      read_nemoclaw_pr: readNemoclawPr,
+      read_github_pages: readGithubPages,
+      run_github_cli: runGithubCli,
+    });
+    return { readNemoclawPr, readGithubPages, runGithubCli };
+  }
+
+  it("rejects a changed local action that is absent from the reviewed file scope", async () => {
+    const github = forkApprovalTools([action, script]);
+
+    await expect(
+      approveNemoclawForkWorkflowRuns({
+        items: [{ number: 1, expectedHeadSha: HEAD_SHA, reviewedFiles: [script] }],
+        workdir: "/workspace",
+        apply: true,
+      }),
+    ).rejects.toThrow("reviewedFiles must exactly match all changed files");
+    expect(github.runGithubCli.mock.calls.some(([call]) => call.args.includes("POST"))).toBe(false);
+  });
+
+  it("rejects mixed workflow and script changes without the complete reviewed scope", async () => {
+    const github = forkApprovalTools([workflow, script]);
+
+    await expect(
+      approveNemoclawForkWorkflowRuns({
+        items: [{ number: 1, expectedHeadSha: HEAD_SHA, reviewedFiles: [workflow] }],
+        workdir: "/workspace",
+        apply: true,
+      }),
+    ).rejects.toThrow("reviewedFiles must exactly match all changed files");
+    expect(github.runGithubCli.mock.calls.some(([call]) => call.args.includes("POST"))).toBe(false);
+  });
+
+  it("accepts a commit-bound reviewed scope that contains every changed file", async () => {
+    forkApprovalTools([workflow, action, script]);
+
+    await expect(
+      approveNemoclawForkWorkflowRuns({
+        items: [
+          {
+            number: 1,
+            expectedHeadSha: HEAD_SHA,
+            reviewedFiles: [workflow, action, script],
+          },
+        ],
+        workdir: "/workspace",
+        apply: false,
+      }),
+    ).resolves.toMatchObject({
+      apply: false,
+      mutated: false,
+      actionRequiredRuns: 1,
+      prs: [{ headSha: HEAD_SHA, runs: [{ id: 10, action: "would-approve" }] }],
+    });
+  });
+
+  it("rejects a changed PR commit before workflow approval", async () => {
+    const changedSha = "d".repeat(40);
+    const github = forkApprovalTools([script], [pull(), pull(changedSha)]);
+
+    await expect(
+      approveNemoclawForkWorkflowRuns({
+        items: [{ number: 1, expectedHeadSha: HEAD_SHA, reviewedFiles: [script] }],
+        workdir: "/workspace",
+        apply: true,
+      }),
+    ).rejects.toThrow(`commit changed: expected ${HEAD_SHA}, found ${changedSha}`);
+    expect(github.readNemoclawPr).toHaveBeenCalledTimes(2);
+    expect(github.runGithubCli.mock.calls.some(([call]) => call.args.includes("POST"))).toBe(false);
   });
 });
 
