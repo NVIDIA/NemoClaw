@@ -4062,7 +4062,7 @@ ensure_docker() {
     info "The next step uses sudo to install Docker system-wide via the official convenience script. You may be prompted for your password."
     local docker_tmp
     docker_tmp="$(mktemp)"
-    if ! curl -fsSL https://get.docker.com -o "$docker_tmp"; then
+    if ! curl -fsSL --proto '=https' --proto-redir '=https' https://get.docker.com -o "$docker_tmp"; then
       rm -f "$docker_tmp"
       error "Failed to download the Docker convenience script from https://get.docker.com"
     fi
@@ -6182,7 +6182,7 @@ if [[ "${BASH_SOURCE[0]:-}" == "$0" ]] || { [[ -z "${BASH_SOURCE[0]:-}" ]] && { 
   if [[ -z "${BASH_SOURCE[0]:-}" ]] && [[ -z "${NEMOCLAW_INSTALLER_STAGED:-}" ]]; then
     _installer_url="${NEMOCLAW_INSTALLER_URL:-https://www.nvidia.com/nemoclaw.sh}"
     if _staged="$(mktemp /tmp/nemoclaw-installer-XXXXXX 2>/dev/null)" \
-      && curl -fsSL "$_installer_url" -o "$_staged" 2>/dev/null \
+      && curl -fsSL --proto '=https' --proto-redir '=https' "$_installer_url" -o "$_staged" 2>/dev/null \
       && [[ -s "$_staged" ]] \
       && head -1 "$_staged" | grep -qE '^#!.*(sh|bash)' \
       && bash -n "$_staged" 2>/dev/null; then
