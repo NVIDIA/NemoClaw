@@ -19,6 +19,7 @@ const ACTIVATION_PATH = "ci/protected-managed-image-runtime-activation-v1.json";
 const LIVE_TEST_PATH = "test/e2e/live/managed-image-protected-runtime.test.ts";
 const REGISTRY_IMAGE =
   "docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373";
+const REVIEWED_HERMES_PLATFORM_ACTION = "./.github/actions/resolve-reviewed-hermes-platform";
 const GUARDED_NVIDIA_API_KEY =
   "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_API_KEY || '' }}";
 
@@ -249,6 +250,19 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     '.providers == ["ollama", "nim", "vllm"]',
   ]);
 
+  const hermesBase = requireStep(
+    errors,
+    workflowSteps,
+    "Resolve reviewed Hermes runtime base image",
+  );
+  if (hermesBase?.uses !== REVIEWED_HERMES_PLATFORM_ACTION) {
+    errors.push(`${JOB_ID} must use the shared reviewed Hermes platform resolver`);
+  }
+  requireValues(errors, `${JOB_ID} Hermes platform resolver`, record(hermesBase?.with), {
+    "dockerfile-path": ".candidate-runtime/agents/hermes/Dockerfile",
+    platform: "linux/amd64",
+  });
+
   const bases = requireStep(errors, workflowSteps, "Resolve exact amd64 runtime base images");
   requireFragments(errors, bases, [
     'docker buildx imagetools inspect "$alias" --raw',
@@ -256,9 +270,11 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     'reference="${repository}@${digest}"',
     '"sha256:$(sha256sum "$exact_raw" | awk \'{print $1}\')" == "$digest"',
     "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
-    "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest",
     "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest",
   ]);
+  if (text(bases?.run).includes("ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest")) {
+    errors.push(`${JOB_ID} must resolve Hermes from the immutable reviewed Dockerfile index`);
+  }
 
   const registry = requireStep(errors, workflowSteps, "Start isolated protected runtime registry");
   requireFragments(errors, registry, [
@@ -285,6 +301,10 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     '--hermes-base "$BASE_HERMES"',
     '--dcode-base "$BASE_DCODE"',
   ]);
+  requireValues(errors, `${JOB_ID} protected runtime build bases`, record(build?.env), {
+    BASE_HERMES:
+      "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}",
+  });
 
   const install = requireStep(errors, workflowSteps, "Install OpenShell CLI");
   requireFragments(errors, install, [
@@ -345,6 +365,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Download exact protected runtime build cache",
     "Prepare E2E workspace",
     "Validate protected runtime activation contract",
+    "Resolve reviewed Hermes runtime base image",
     "Resolve exact amd64 runtime base images",
     "Start isolated protected runtime registry",
     "Build exact all-agent protected runtime images",

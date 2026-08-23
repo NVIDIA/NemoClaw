@@ -7,7 +7,11 @@ import {
   PolicyAuthorityRefusalError,
 } from "../../adapters/openshell/policy-authority";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
-import { removePortableDemoSandboxLifecycleReceipt } from "../../onboard/experimental/portable-demo-lifecycle";
+import {
+  type PreparedPortableDemoSandboxDestroyAuthority,
+  preparePortableDemoSandboxDestroyAuthority,
+  removePortableDemoSandboxLifecycleReceipt,
+} from "../../onboard/experimental/portable-demo-lifecycle";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundle,
@@ -56,6 +60,8 @@ export function retirePortableLifecycleAuthority(sandboxName: string): void {
   removePortableDemoSandboxLifecycleReceipt(sandboxName);
 }
 
+export { preparePortableDemoSandboxDestroyAuthority };
+
 type SandboxDestroyExecutionInput = {
   cleanupShieldsArtifacts: (sandboxName: string) => void;
   force: boolean;
@@ -69,6 +75,7 @@ type SandboxDestroyExecutionInput = {
   // `null` records confirmed absence; an object records the one managed
   // container observed by the pre-destroy guard.
   expectedContainerIdentity?: SandboxNameLabeledContainer | null;
+  portableContainerAuthority?: PreparedPortableDemoSandboxDestroyAuthority;
   stopInferenceResources: () => void;
   validateMcpPolicyAuthorityReceipt?: () => Promise<void>;
   runtimeProviders?: RuntimeProviderBundleRegistry;
@@ -98,6 +105,7 @@ export type SandboxDestroyExecutionResult =
       hostLocalInferenceOwnershipRequiresGateway: boolean;
       mcpOwnershipRequiresGateway: boolean;
       mcpRecoveryFailure?: string;
+      portableLifecycleOwnershipRequiresGateway?: boolean;
       shieldsRelockRequiresGateway: boolean;
       hostLocalInferenceCleanupFailure?: string;
       deleteConfirmed?: boolean;
@@ -325,6 +333,7 @@ export async function executeSandboxDestroy({
   sandboxConfirmedAbsent,
   sandboxName,
   expectedContainerIdentity,
+  portableContainerAuthority,
   stopInferenceResources,
   validateMcpPolicyAuthorityReceipt,
   runtimeProviders = CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -337,6 +346,14 @@ export async function executeSandboxDestroy({
       | { status: "ambiguous"; detail: string }
       | { status: "probe-failed"; detail: string };
     const inspectIdentityContinuity = (): IdentityContinuity => {
+      if (portableContainerAuthority) {
+        try {
+          portableContainerAuthority.revalidate();
+          return { status: "match" };
+        } catch (error) {
+          return { status: "probe-failed", detail: redactDestroyError(error) };
+        }
+      }
       if (expectedContainerIdentity === undefined) return { status: "match" };
       const verdict = classifyDestroyContainerIdentity(
         sandboxName,
@@ -551,6 +568,7 @@ export async function executeSandboxDestroy({
       force &&
       !hasMcpOwnership &&
       !hasHostLocalInferenceOwnership &&
+      portableContainerAuthority === undefined &&
       !hardened.hardeningFailed;
 
     if (deleteResult.status !== 0 && !alreadyGone && !forcedLocalCleanup) {
@@ -571,13 +589,19 @@ export async function executeSandboxDestroy({
           gatewayUnreachable && hasHostLocalInferenceOwnership,
         mcpOwnershipRequiresGateway: gatewayUnreachable && hasMcpOwnership,
         mcpRecoveryFailure,
+        portableLifecycleOwnershipRequiresGateway:
+          gatewayUnreachable && portableContainerAuthority !== undefined,
         shieldsRelockRequiresGateway: gatewayUnreachable && hardened.hardeningFailed,
       };
     }
 
-    if (!forcedLocalCleanup && expectedContainerIdentity) {
+    if (!forcedLocalCleanup && (portableContainerAuthority || expectedContainerIdentity)) {
       try {
-        removeExactDestroyContainerIdentity(sandboxName, expectedContainerIdentity, console.log);
+        if (portableContainerAuthority) {
+          portableContainerAuthority.verifyAbsent();
+        } else if (expectedContainerIdentity) {
+          removeExactDestroyContainerIdentity(sandboxName, expectedContainerIdentity, console.log);
+        }
       } catch (error) {
         const detail = redactDestroyError(error);
         return {
