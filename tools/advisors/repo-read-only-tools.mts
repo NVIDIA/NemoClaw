@@ -21,6 +21,14 @@ type RepoPathGuard = {
   resolveExisting(candidate: string): Promise<string>;
 };
 
+export type AdvisorReadObservation = Readonly<{
+  path: string;
+  offset: number;
+  endOffset: number | null;
+  fileSize: number;
+  reachesEnd: boolean;
+}>;
+
 function isContainedPath(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
   return (
@@ -86,19 +94,35 @@ function createGuardedLsOperations(guard: RepoPathGuard): LsOperations {
  * Preserve Pi's read-only tool contracts while confining every requested root to cwd.
  * Canonical paths are delegated to Pi so a checked symlink cannot redirect the operation.
  */
-export function createRepoConfinedReadOnlyTools(cwd: string): ToolDefinition[] {
+export function createRepoConfinedReadOnlyTools(
+  cwd: string,
+  onRead?: (observation: AdvisorReadObservation) => void,
+): ToolDefinition[] {
   const guard = createRepoPathGuard(cwd);
 
   const read = createReadToolDefinition(cwd);
   const executeRead = read.execute;
-  read.execute = async (toolCallId, input, signal, onUpdate, context) =>
-    executeRead(
+  read.execute = async (toolCallId, input, signal, onUpdate, context) => {
+    const resolvedPath = await guard.resolveExisting(input.path);
+    const result = await executeRead(
       toolCallId,
-      { ...input, path: await guard.resolveExisting(input.path) },
+      { ...input, path: resolvedPath },
       signal,
       onUpdate,
       context,
     );
+    const truncation = result.details?.truncation;
+    const offset = Math.max(1, input.offset ?? 1);
+    const returnedLines = truncation?.outputLines ?? input.limit;
+    onRead?.({
+      path: resolvedPath,
+      offset,
+      endOffset: returnedLines === undefined ? null : offset + returnedLines - 1,
+      fileSize: (await fs.promises.stat(resolvedPath)).size,
+      reachesEnd: input.limit === undefined && !truncation?.truncated,
+    });
+    return result;
+  };
 
   const grep = createGrepToolDefinition(cwd);
   const executeGrep = grep.execute;
