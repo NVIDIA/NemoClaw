@@ -74,6 +74,7 @@ function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
       failedFiles: [],
     })),
     removeBackup: vi.fn(() => true),
+    runOpenshell: vi.fn(() => ({ status: 0, stdout: "No sandboxes found.\n" })),
     recreate: vi.fn(() => patchResult()),
     finalize: vi.fn(({ supervisorReady }) =>
       supervisorReady
@@ -153,10 +154,15 @@ describe("relaunchManagedSupervisorSession", () => {
     });
     expect(deps.restoreState).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
     expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
-    expect(deps.finalize).toHaveBeenCalledWith({
-      result: expect.objectContaining({ newContainerId: "new-container-id" }),
-      supervisorReady: true,
-    });
+    expect(deps.finalize).toHaveBeenCalledWith(
+      {
+        lifecycleReleaseTimeoutSecs: 900,
+        result: expect.objectContaining({ newContainerId: "new-container-id" }),
+        sandboxName: "alpha",
+        supervisorReady: true,
+      },
+      { runOpenshell: deps.runOpenshell },
+    );
   });
 
   it("retries only transport-level state backup failures after a container restart", () => {
@@ -381,9 +387,26 @@ describe("relaunchManagedSupervisorSession", () => {
     });
     expect(order).toEqual(["restore-state", "restart-restored-gateway", "commit-container"]);
     expect(deps.restartRestoredManagedGateway).toHaveBeenCalledWith("new-container-id");
-    expect(deps.finalize).toHaveBeenCalledWith({
-      result: expect.objectContaining({ newContainerId: "new-container-id" }),
-      supervisorReady: true,
+    expect(deps.finalize).toHaveBeenCalledWith(
+      {
+        lifecycleReleaseTimeoutSecs: 900,
+        result: expect.objectContaining({ newContainerId: "new-container-id" }),
+        sandboxName: "alpha",
+        supervisorReady: true,
+      },
+      { runOpenshell: deps.runOpenshell },
+    );
+  });
+
+  it("uses only an injected host sleep for lifecycle polling after recreation (#9531)", () => {
+    const sleep = vi.fn();
+    const deps = baseDeps({ sleep });
+    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
+
+    expect(relaunch?.finalize(true)).toMatchObject({ backupRemoved: true, rolledBack: false });
+    expect(deps.finalize).toHaveBeenCalledWith(expect.objectContaining({ supervisorReady: true }), {
+      runOpenshell: deps.runOpenshell,
+      sleep,
     });
   });
 

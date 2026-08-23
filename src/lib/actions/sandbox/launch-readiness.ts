@@ -156,6 +156,14 @@ export type PortableOpenClawPairingSettlementResult =
         | "portable-pairing-incomplete";
     };
 
+export interface OpenClawPairingSettlementTarget {
+  readonly gatewayName: string;
+  readonly lifecycleGeneration: string;
+  readonly lifecycleLiveIdentityFingerprint: string;
+  readonly stateDirectory: string;
+  readonly version: string;
+}
+
 type LaunchReadinessPublicationValidationCategory = Extract<
   LaunchReadinessPublicationResult,
   { kind: "validation-failed" }
@@ -890,23 +898,20 @@ function portableReceiptChanged(
   );
 }
 
-function resolvePortablePairingTarget(
+function resolveOpenClawPairingSettlementTarget(
   sandboxName: string,
   entry: SandboxEntry | null,
-  registryGeneration: string,
   deps: LaunchReadinessDeps,
-): {
-  readonly gatewayName: string;
-  readonly stateDirectory: string;
-  readonly version: string;
-} | null {
+  requiredGeneration?: string,
+): OpenClawPairingSettlementTarget | null {
+  // Policy eligibility belongs to the settlement caller. Ordinary onboarding
+  // permits policy skip, while Portable pairing requires the finalized marker.
   if (
     !entry ||
     entry.name !== sandboxName ||
-    entry.agent !== "openclaw" ||
-    entry.policyPresetsFinalized !== true ||
-    entry.lifecycleGeneration !== registryGeneration ||
-    !normalizedString(entry.lifecycleLiveIdentityFingerprint) ||
+    (entry.agent !== null && entry.agent !== "openclaw") ||
+    entry.pendingRouteReservation === true ||
+    entry.reservationSessionId ||
     !Number.isInteger(entry.gatewayPort) ||
     (entry.gatewayPort ?? 0) < 1 ||
     (entry.gatewayPort ?? 0) > 65535
@@ -925,8 +930,38 @@ function resolvePortablePairingTarget(
   const version = normalizedString(entry.agentVersion);
   const expectedVersion = normalizedString(agent.expected_version);
   const stateDirectory = normalizedString(agent.config?.dir);
-  if (!version || !expectedVersion || !stateDirectory) return null;
-  return { gatewayName, stateDirectory, version };
+  const lifecycleGeneration = normalizedString(entry.lifecycleGeneration);
+  const lifecycleLiveIdentityFingerprint = normalizedString(entry.lifecycleLiveIdentityFingerprint);
+  if (
+    !version ||
+    !expectedVersion ||
+    !stateDirectory ||
+    !lifecycleGeneration ||
+    !lifecycleLiveIdentityFingerprint ||
+    (requiredGeneration !== undefined && lifecycleGeneration !== requiredGeneration)
+  ) {
+    return null;
+  }
+  return {
+    gatewayName,
+    lifecycleGeneration,
+    lifecycleLiveIdentityFingerprint,
+    stateDirectory,
+    version,
+  };
+}
+
+/** Resolve the finalized ordinary OpenClaw runtime that owns pairing state. */
+export function resolveOrdinaryOpenClawPairingTarget(
+  sandboxName: string,
+  deps: LaunchReadinessDeps = {},
+): OpenClawPairingSettlementTarget | null {
+  try {
+    const getSandbox = deps.getSandbox ?? registry.getSandbox;
+    return resolveOpenClawPairingSettlementTarget(sandboxName, getSandbox(sandboxName), deps);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -993,11 +1028,11 @@ export async function settlePortableOpenClawPairing(
     if (firstEntry.policyPresetsFinalized !== true) {
       return incompletePortablePairing("portable-policy-incomplete");
     }
-    const firstTarget = resolvePortablePairingTarget(
+    const firstTarget = resolveOpenClawPairingSettlementTarget(
       sandboxName,
       firstEntry,
-      firstReceipt.registryGeneration,
       deps,
+      firstReceipt.registryGeneration,
     );
     if (!firstTarget) return incompletePortablePairing("portable-runtime-identity-invalid");
 
@@ -1010,11 +1045,11 @@ export async function settlePortableOpenClawPairing(
       if (lockedEntry?.policyPresetsFinalized !== true) {
         return incompletePortablePairing("portable-policy-incomplete");
       }
-      const target = resolvePortablePairingTarget(
+      const target = resolveOpenClawPairingSettlementTarget(
         sandboxName,
         lockedEntry,
-        lockedReceipt.registryGeneration,
         deps,
+        lockedReceipt.registryGeneration,
       );
       if (
         !target ||

@@ -10,7 +10,9 @@ import type { PodmanSocketAuthorityDeps } from "../../adapters/podman";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import {
   installPortableDemoSandboxLifecycle,
+  type PortableDemoLifecycleDeps,
   portableDemoLifecycleInternals,
+  preparePortableDemoSandboxDestroyAuthority,
 } from "./portable-demo-lifecycle";
 
 const CONTAINER_ID = "a".repeat(64);
@@ -45,40 +47,56 @@ function temporaryStateDir(): string {
 }
 
 function createPodman() {
+  let containerId = CONTAINER_ID;
+  let managedLabel = "true";
+  let present = true;
   const podman = vi.fn((args: readonly string[], _env?: NodeJS.ProcessEnv) => {
     const command = args[0] === "--url" ? args.slice(2) : args;
     switch (command[0]) {
       case "version":
         return { status: 0, stdout: JSON.stringify({ Server: { Version: "5.6.1" } }) };
       case "ps":
-        return { status: 0, stdout: `${CONTAINER_ID}\n` };
+        return { status: 0, stdout: present ? `${CONTAINER_ID}\n` : "" };
       case "inspect":
-        return {
-          status: 0,
-          stdout: JSON.stringify([
-            {
-              Id: CONTAINER_ID,
-              Name: `openshell-default--alpha-${SANDBOX_ID}`,
-              Config: {
-                Labels: {
-                  "openshell.managed": "true",
-                  "openshell.ai/sandbox-id": SANDBOX_ID,
-                  "openshell.ai/sandbox-name": "alpha",
-                  "openshell.ai/sandbox-namespace": "",
-                  "openshell.ai/sandbox-workspace": "default",
+        return present
+          ? {
+              status: 0,
+              stdout: JSON.stringify([
+                {
+                  Id: containerId,
+                  Name: `openshell-default--alpha-${SANDBOX_ID}`,
+                  Config: {
+                    Labels: {
+                      "openshell.managed": managedLabel,
+                      "openshell.ai/sandbox-id": SANDBOX_ID,
+                      "openshell.ai/sandbox-name": "alpha",
+                      "openshell.ai/sandbox-namespace": "",
+                      "openshell.ai/sandbox-workspace": "default",
+                    },
+                  },
+                  State: { Running: true },
                 },
-              },
-              State: { Running: true },
-            },
-          ]),
-        };
+              ]),
+            }
+          : { status: 125, stderr: `Error: no such container ${CONTAINER_ID}` };
       case "update":
         return { status: 0 };
       default:
         throw new Error(`Unexpected Podman command: ${args.join(" ")}`);
     }
   });
-  return { podman };
+  return {
+    podman,
+    setContainerId(value: string) {
+      containerId = value;
+    },
+    setManagedLabel(value: string) {
+      managedLabel = value;
+    },
+    setPresent(value: boolean) {
+      present = value;
+    },
+  };
 }
 
 function socketAuthorityDeps(socketInode: () => bigint = () => 9001n): PodmanSocketAuthorityDeps {
@@ -116,6 +134,42 @@ function lifecycleDeps(authorityDeps: PodmanSocketAuthorityDeps) {
   };
 }
 
+function installReceipt(stateDir: string, runtime: ReturnType<typeof createPodman>): void {
+  installPortableDemoSandboxLifecycle(
+    "alpha",
+    STARTUP_ARGV,
+    { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+    {
+      podman: runtime.podman,
+      stateDir,
+      ...lifecycleDeps(socketAuthorityDeps()),
+    },
+  );
+  runtime.podman.mockClear();
+}
+
+function prepareDestroyAuthority(
+  stateDir: string,
+  runtime: ReturnType<typeof createPodman>,
+  readContext: () => {
+    agent: string;
+    lifecycleGeneration: string;
+    openshellDriver: string;
+  } = () => ({
+    agent: "openclaw",
+    lifecycleGeneration: CONTAINER_ID,
+    openshellDriver: "docker",
+  }),
+  overrides: Partial<PortableDemoLifecycleDeps> = {},
+) {
+  return preparePortableDemoSandboxDestroyAuthority("alpha", readContext, {
+    podman: runtime.podman,
+    stateDir,
+    ...lifecycleDeps(socketAuthorityDeps()),
+    ...overrides,
+  });
+}
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
@@ -123,6 +177,65 @@ afterEach(() => {
 });
 
 describe("portable demo lifecycle authority", () => {
+  it("revalidates schema-4 Portable destroy authority without removing its Podman container (#9189)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime);
+    const authority = prepareDestroyAuthority(stateDir, runtime);
+
+    expect(authority).not.toBeNull();
+    expect(() => authority?.revalidate()).not.toThrow();
+    runtime.setPresent(false);
+    expect(() => authority?.verifyAbsent()).not.toThrow();
+    expect(
+      runtime.podman.mock.calls.some(([args]) => {
+        const command = args[0] === "--url" ? args.slice(2) : args;
+        return command[0] === "rm";
+      }),
+    ).toBe(false);
+  });
+
+  it("refuses a changed registry lifecycle generation during Portable destroy (#9189)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime);
+    let lifecycleGeneration = CONTAINER_ID;
+    const authority = prepareDestroyAuthority(stateDir, runtime, () => ({
+      agent: "openclaw",
+      lifecycleGeneration,
+      openshellDriver: "docker",
+    }));
+    lifecycleGeneration = "replacement-generation";
+
+    expect(() => authority?.revalidate()).toThrow("does not match the OpenClaw sandbox registry");
+  });
+
+  it("refuses a changed Podman container ID or required label during Portable destroy (#9189)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime);
+    const authority = prepareDestroyAuthority(stateDir, runtime);
+
+    runtime.setContainerId("b".repeat(64));
+    expect(() => authority?.revalidate()).toThrow("OpenShell identity does not match");
+    runtime.setContainerId(CONTAINER_ID);
+    runtime.setManagedLabel("false");
+    expect(() => authority?.revalidate()).toThrow("OpenShell identity does not match");
+  });
+
+  it("refuses a changed current-user Podman socket inode during Portable destroy (#9189)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime);
+    let inode = 9001n;
+    const authority = prepareDestroyAuthority(stateDir, runtime, undefined, {
+      podmanSocketAuthorityDeps: socketAuthorityDeps(() => inode),
+    });
+    inode = 9002n;
+
+    expect(() => authority?.revalidate()).toThrow("changed after it was qualified");
+  });
+
   it("records the exact OpenShell container and applies the unless-stopped restart policy (#8441)", () => {
     const stateDir = temporaryStateDir();
     const { podman } = createPodman();

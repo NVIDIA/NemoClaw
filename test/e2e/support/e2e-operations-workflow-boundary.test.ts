@@ -640,6 +640,16 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       1,
       "::error::Launchable PR E2E requires a branch in NVIDIA/NemoClaw\n",
     ],
+    [
+      "identity smoke PR selector",
+      "NVIDIA/NemoClaw",
+      "NVIDIA",
+      "Organization",
+      "false",
+      "staging-brev-launchable-identity",
+      1,
+      "::error::Launchable identity smoke runs only against trusted main\n",
+    ],
   ])(
     "authorizes Launchable PR E2E for %s",
     (
