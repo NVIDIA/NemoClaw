@@ -25,6 +25,7 @@ import {
   type GitHubReviewContext,
   serializePreparedGitHubContext,
 } from "./github-context.mts";
+import { validateSpecialistSessionDirectory } from "./specialist-sessions.mts";
 
 const ADVISOR_CONTEXT_DIRECTORY_NAME = "pr-review-advisor-context";
 const ADVISOR_RUNTIME_DIRECTORY_NAME = "pr-review-advisor-runtime";
@@ -41,6 +42,7 @@ const SANDBOX_CONTEXT_DIR = `/${ADVISOR_CONTEXT_DIRECTORY_NAME}`;
 const SANDBOX_RUNTIME_DIR = `/sandbox/${ADVISOR_RUNTIME_DIRECTORY_NAME}`;
 const SANDBOX_TOOLS_DIR = `/${ADVISOR_TOOLS_DIRECTORY_NAME}`;
 const SANDBOX_CONTEXT_PATH = `${SANDBOX_CONTEXT_DIR}/${ADVISOR_CONTEXT_FILE_NAME}`;
+const SANDBOX_SPECIALIST_SESSION_DIR = `${SANDBOX_WORKDIR}/.pr-review-advisor-sessions`;
 const ADVISOR_RUNTIME_TMPFS_BYTES = 512 * 1024 * 1024;
 const SANDBOX_API_KEY = "unused";
 const DEFAULT_SANDBOX_TIMEOUT_SECONDS = 2100;
@@ -296,6 +298,13 @@ export function createAdvisorSandbox(
     "advisor tools directory",
   );
   const sandboxName = required(env.SANDBOX_NAME, "SANDBOX_NAME");
+  if (env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR) {
+    const expected = path.join(advisorWorkdir, ".pr-review-advisor-sessions");
+    if (path.resolve(env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR) !== expected) {
+      throw new Error("PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR must use the fixed workdir input path");
+    }
+    validateSpecialistSessionDirectory(expected);
+  }
 
   createOpenShellSandbox(
     env,
@@ -339,9 +348,11 @@ function passthroughEnvironment(env: NodeJS.ProcessEnv): Record<string, string> 
     "PR_REVIEW_ADVISOR_COMMENT_MARKER",
     "PR_REVIEW_ADVISOR_COMMENT_TITLE",
     "PR_REVIEW_ADVISOR_HEARTBEAT_MS",
+    "PR_REVIEW_ADVISOR_INTEREST",
     "PR_REVIEW_ADVISOR_MAX_CAPTURE_BYTES",
     "PR_REVIEW_ADVISOR_MODEL",
     "PR_REVIEW_ADVISOR_RUN_ANALYSIS",
+    "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR",
     "PR_REVIEW_ADVISOR_TIMEOUT_MS",
     "PR_REVIEW_ADVISOR_UNAVAILABLE_REASON",
     "PR_REVIEW_ADVISOR_WORKFLOW_NAME",
@@ -391,13 +402,18 @@ export function runAdvisorSandbox(
         PR_REVIEW_ADVISOR_BASE_URL: ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
         PR_REVIEW_ADVISOR_CONFIG_DIR: `${SANDBOX_RUNTIME_DIR}/config`,
         PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH: SANDBOX_CONTEXT_PATH,
+        ...(env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR
+          ? { PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR: SANDBOX_SPECIALIST_SESSION_DIR }
+          : {}),
         TMPDIR: `${SANDBOX_RUNTIME_DIR}/tmp`,
       },
       command: [
         "/usr/bin/node",
         "--experimental-strip-types",
         "--no-warnings",
-        `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/run-analysis.mts`,
+        env.PR_REVIEW_ADVISOR_INTEREST
+          ? `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/run-specialist.mts`
+          : `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/run-analysis.mts`,
       ],
     },
     tools,
