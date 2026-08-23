@@ -478,7 +478,6 @@ try:
 
     if STRICT_SETTLEMENT and pending:
         reject()
-    ordinary_local_write_pending_ids = []
     for request_id, request in pending.items():
         if (
             not isinstance(request_id, str)
@@ -493,31 +492,27 @@ try:
             # that exact intermediate state so the owning controller can reach
             # its one approval pass. Its final observation still requires the
             # settled scopes and no same-device pending request.
-            matches_device = request.get('deviceId') == device_id
-            matches_public_key = request.get('publicKey') == device_public_key
-            if matches_device or matches_public_key:
-                decision = approval_request_decision(request)
-                request_scopes = request.get('scopes')
-                valid_write_scopes = (
-                    exact_string_set(request_scopes, ['operator.write'])
-                    or exact_string_set(request_scopes, REQUEST_SCOPES)
-                )
-                if (
-                    not matches_device
-                    or not matches_public_key
-                    or request.get('clientId') != 'cli'
-                    or request.get('clientMode') != 'cli'
-                    or request.get('role') != 'operator'
-                    or not exact_string_set(request.get('roles'), REQUIRED_ROLES)
-                    or 'requestedScopes' in request
-                    or 'publicKeyPem' in request
-                    or type(request.get('isRepair')) is not bool
-                    or not valid_write_scopes
-                    or not isinstance(decision, dict)
-                    or decision.get('allowed') is not True
-                ):
-                    reject()
-                ordinary_local_write_pending_ids.append(request_id)
+            decision = approval_request_decision(request)
+            request_scopes = request.get('scopes')
+            valid_write_scopes = (
+                exact_string_set(request_scopes, ['operator.write'])
+                or exact_string_set(request_scopes, REQUEST_SCOPES)
+            )
+            if (
+                request.get('deviceId') != device_id
+                or request.get('publicKey') != device_public_key
+                or request.get('clientId') != 'cli'
+                or request.get('clientMode') != 'cli'
+                or request.get('role') != 'operator'
+                or not exact_string_set(request.get('roles'), REQUIRED_ROLES)
+                or 'requestedScopes' in request
+                or 'publicKeyPem' in request
+                or type(request.get('isRepair')) is not bool
+                or not valid_write_scopes
+                or not isinstance(decision, dict)
+                or decision.get('allowed') is not True
+            ):
+                reject()
             continue
         decision = approval_request_decision(request)
         if decision.get('reason') == 'malformed-scopes':
@@ -545,9 +540,8 @@ try:
         and exact_string_set(paired_operator.get('scopes'), PAIRING_ONLY_SCOPES)
         and exact_string_set(auth_operator.get('scopes'), PAIRING_ONLY_SCOPES)
     )
-    if ORDINARY_SETTLEMENT and ordinary_local_write_pending_ids:
-        if len(ordinary_local_write_pending_ids) != 1 or not pairing_only:
-            reject()
+    if ORDINARY_SETTLEMENT and pending and (len(pending) != 1 or not pairing_only):
+        reject()
     if not settled and not pairing_only:
         reject()
 
