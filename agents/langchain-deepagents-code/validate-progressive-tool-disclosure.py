@@ -916,6 +916,7 @@ def _validate_direct_mode_execution() -> None:
                 enable_memory=False,
                 enable_skills=False,
                 enable_shell=False,
+                mcp_tools=[direct_probe],
                 mcp_server_info=[info],
             )
             agent.invoke(
@@ -1049,6 +1050,7 @@ def _validate_local_subagent_isolation() -> None:
             enable_memory=False,
             enable_skills=False,
             enable_shell=False,
+            mcp_tools=[isolated_probe],
             mcp_server_info=[info],
         )
         agent.invoke(
