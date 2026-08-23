@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { parseOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
-import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import { detectTegraDeviceGroupGids } from "../docker-gpu-jetson-groups";
 import { buildDockerGpuMode, selectDockerGpuPatchMode } from "../docker-gpu-patch-mode";
 import type { DockerGpuPatchMode } from "../docker-gpu-patch-types";
@@ -54,63 +52,14 @@ type CompleteOwnerCleanupInput = Readonly<{
 }>;
 
 /**
- * Consume OpenShell's name-only deletion API only after binding that name to
- * the durable sandbox ID retained by the managed-bootstrap transaction.
+ * Retain the owner-cleanup handoff until OpenShell exposes deletion bound to a
+ * durable sandbox ID. A preceding ID lookup cannot authorize the current
+ * name-only delete because a same-name replacement can race between calls.
  */
-export async function completeDockerManagedNativeGpuFallbackOwnerCleanup(
+export function completeDockerManagedNativeGpuFallbackOwnerCleanup(
   input: CompleteOwnerCleanupInput,
 ): Promise<ManagedBootstrapNativeGpuFallbackOwnerCleanupOutcome> {
-  const { handoff } = input;
-  try {
-    const lookup = input.runOpenshell(["sandbox", "get", handoff.sandboxName], {
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    if (
-      lookup.error ||
-      Number(lookup.status ?? 1) !== 0 ||
-      parseOpenShellSandboxId(String(lookup.stdout ?? "")) !== handoff.sandboxId
-    ) {
-      return handoff;
-    }
-    const deletion = input.runOpenshell(["sandbox", "delete", handoff.sandboxName], {
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    const deleteStatus = Number(deletion.status ?? 1);
-    const { alreadyGone } = getSandboxDeleteOutcome({
-      status: deletion.status ?? null,
-      stdout: String(deletion.stdout ?? ""),
-      stderr: String(deletion.stderr ?? ""),
-    });
-    if (deletion.error || (deleteStatus !== 0 && !alreadyGone)) return handoff;
-
-    const recovery = await input.recoverUnfinished();
-    const exactReceipt = recovery.receipts.find(
-      (receipt) =>
-        receipt.providerId === input.providerId &&
-        receipt.sourcePhase === "owner-cleanup-required" &&
-        receipt.bootstrapIdentity === input.bootstrapIdentity &&
-        receipt.outcome === "rolled-back" &&
-        receipt.sandbox.sandboxName === handoff.sandboxName &&
-        receipt.sandbox.sandboxId === handoff.sandboxId &&
-        receipt.sandbox.driverId === input.providerId &&
-        receipt.finalization.bootstrapIdentity === input.bootstrapIdentity &&
-        receipt.finalization.outcome === "rolled-back" &&
-        receipt.finalization.sandbox.sandboxName === handoff.sandboxName &&
-        receipt.finalization.sandbox.sandboxId === handoff.sandboxId &&
-        receipt.finalization.sandbox.driverId === input.providerId,
-    );
-    if (!exactReceipt) return handoff;
-    return Object.freeze({
-      kind: "openshell-owner-cleanup-completed",
-      sandboxName: handoff.sandboxName,
-      sandboxId: handoff.sandboxId,
-      runtimeId: handoff.runtimeId,
-    });
-  } catch {
-    return handoff;
-  }
+  return Promise.resolve(input.handoff);
 }
 
 function dockerReplacementOptions(

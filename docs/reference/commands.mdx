@@ -3822,7 +3822,8 @@ NemoClaw does not truncate or rename a registered sandbox identity.
 Follow [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes) to transfer state to a compatible replacement before you rerun the command.
 
 Each rebuild reuses the same workspace backup-and-restore flow as `$$nemoclaw <name> rebuild`, so workspace files survive the upgrade.
-If the registry is unreachable (offline or firewalled hosts), NemoClaw falls back to the unpinned `:latest` tag and reports that the digest could not be resolved instead of failing.
+If the registry or required managed-image catalog evidence is unavailable, NemoClaw fails closed instead of selecting an unpinned image.
+Restore registry access, then rerun the command so NemoClaw can validate the exact image digest.
 During installer recovery, a registered sandbox that is not Ready can also be rebuilt from its validated latest backup.
 That recovery requires a NemoClaw-managed image fingerprint or the installer's explicit confirmation for a listed pre-fingerprint OpenClaw or Hermes entry.
 The legacy confirmation never overrides recorded custom-image evidence.
