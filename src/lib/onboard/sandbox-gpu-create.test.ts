@@ -3,7 +3,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import { buildSandboxGpuCreateArgs, getSandboxReadyTimeoutSecs } from "./sandbox-gpu-create";
+import {
+  buildSandboxGpuCreateArgs,
+  getSandboxReadyTimeoutSecs,
+  normalizeSandboxGpuDeviceForCdi,
+} from "./sandbox-gpu-create";
 
 describe("sandbox GPU create helpers", () => {
   it("builds OpenShell sandbox GPU create args", () => {
@@ -11,7 +15,7 @@ describe("sandbox GPU create helpers", () => {
     expect(buildSandboxGpuCreateArgs({ sandboxGpuEnabled: true })).toEqual(["--gpu"]);
     expect(
       buildSandboxGpuCreateArgs({ sandboxGpuEnabled: true, sandboxGpuDevice: "nvidia.com/gpu=0" }),
-    ).toEqual(["--gpu", "--gpu-device", "nvidia.com/gpu=0"]);
+    ).toEqual(["--gpu"]);
     expect(
       buildSandboxGpuCreateArgs(
         { sandboxGpuEnabled: true, sandboxGpuDevice: "nvidia.com/gpu=0" },
@@ -19,6 +23,26 @@ describe("sandbox GPU create helpers", () => {
       ),
     ).toEqual([]);
   });
+
+  it.each([
+    ["0", "nvidia.com/gpu=0"],
+    [
+      "GPU-69adb14e-820e-bfb4-0993-171e73f68504",
+      "nvidia.com/gpu=GPU-69adb14e-820e-bfb4-0993-171e73f68504",
+    ],
+    ["nvidia.com/gpu=1", "nvidia.com/gpu=1"],
+    [" 1 ", "nvidia.com/gpu=1"],
+    ["", null],
+  ])("normalizes GPU selector %j to CDI device %j", (selector, expected) => {
+    expect(normalizeSandboxGpuDeviceForCdi(selector)).toBe(expected);
+  });
+
+  it.each(["nvidia.com/gpu=", "nvidia.com/gpu=   "])(
+    "rejects empty CDI device identifier %j",
+    (selector) => {
+      expect(() => normalizeSandboxGpuDeviceForCdi(selector)).toThrow("must include an identifier");
+    },
+  );
 
   it("keeps the default sandbox readiness timeout unless explicitly overridden", () => {
     expect(getSandboxReadyTimeoutSecs({ sandboxGpuEnabled: false }, {}, "linux")).toBe(180);

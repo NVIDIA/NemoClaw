@@ -18,7 +18,7 @@ import {
   NAME_MAX_LENGTH,
   NAME_VALID_PATTERN,
 } from "./sandbox-name-contract";
-import { redact, redactError, writeRedactedResult } from "./security/redact";
+import { redact, redactError, redactFull, writeRedactedResult } from "./security/redact";
 import { buildSubprocessEnv } from "./subprocess-env";
 
 const ROOT = path.resolve(__dirname, "..", "..");
@@ -416,6 +416,7 @@ function validateName(name: string, label = "name"): string {
 export {
   ROOT,
   redact,
+  redactFull,
   run,
   runCapture,
   runCaptureEx,
