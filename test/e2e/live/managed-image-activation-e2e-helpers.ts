@@ -27,6 +27,7 @@ import {
 } from "../fixtures/clients/index.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 
@@ -63,6 +64,20 @@ export function summarizeOnboardFailureStartupSignals(
       output.includes(marker),
     ]),
   ) as Record<OnboardFailureStartupSignal, boolean>;
+}
+
+export async function captureManagedImageOnboardPairingDiagnostics(
+  sandbox: Pick<SandboxClient, "exec">,
+  agent: ShippedManagedImageAgent,
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  if (agent !== "openclaw") return;
+  await captureIssue4462FailureDiagnostics(sandbox, {
+    env,
+    redactionValues: [API_KEY],
+    sandboxName,
+  });
 }
 
 const SANDBOX_NAMES: Record<ShippedManagedImageAgent, string> = {
@@ -473,6 +488,7 @@ async function qualifyAgent(
     },
   );
   if (onboard.exitCode !== 0) {
+    await captureManagedImageOnboardPairingDiagnostics(sandbox, agent, sandboxName, env);
     await collectOnboardFailureDockerDiagnostics(artifacts, host, agent, sandboxName, env);
   }
   expect(onboard.exitCode, resultText(onboard)).toBe(0);

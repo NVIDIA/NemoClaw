@@ -7,26 +7,25 @@
  * The connect-time approval pass (`auto-pair-approval.ts`) is purely
  * request-driven: it can only approve a scope upgrade that is already PENDING.
  * During fresh onboard the device is auto-paired with `operator.pairing` only;
- * the `operator.write` upgrade is not requested until the user's *first* real
- * `openclaw agent` run — which happens *after* onboard finalization's approval
- * pass already found nothing pending. The result is one silent embedded
- * fallback on that first run, then `connect`/`recover` fixes it.
+ * the `operator.write` upgrade is not requested until the user's first
+ * write-scope command, after onboard finalization's approval pass already found
+ * nothing pending. The result is one silent embedded fallback on that first
+ * run, then `connect`/`recover` fixes it.
  *
- * This warm-up provokes the upgrade ourselves: it runs a single, throwaway,
- * bounded `openclaw agent --agent main -m "ping"` inside the sandbox during
- * finalization. That connects to the gateway exactly as the user's first run
- * will, triggers the identical `operator.write` scope-upgrade request, and
- * makes it PENDING. The existing `runConnectAutoPairApprovalPass` (run
- * immediately after) then approves it, so `operator.write` is persisted before
- * handoff and the user's first run connects clean.
+ * This warm-up provokes the upgrade with one bounded `sessions.create` gateway
+ * call inside the sandbox during finalization. The direct call cannot fall back
+ * to an embedded inference turn, so it publishes the `operator.write`
+ * scope-upgrade request without consuming the readiness deadline on model work.
+ * The existing `runConnectAutoPairApprovalPass` then approves it, so
+ * `operator.write` is persisted before handoff and the user's first run
+ * connects without an embedded fallback.
  *
- * Contract: best-effort, non-blocking, idempotent. The warm-up run will itself
- * fall back to embedded mode on this first invocation (EXIT 0) — that is
- * expected; its output is discarded. Any failure (exec timeout, gateway not up,
- * agent error) is swallowed so finalization is never blocked; behavior then
- * degrades to the v1 first-run-falls-back-then-recover path, strictly no worse
- * than today. On re-onboard where `operator.write` is already paired the run
- * connects clean (no new pending) and the approval pass is a no-op.
+ * Contract: best-effort, bounded, idempotent. The direct call normally returns
+ * the pending-scope failure after it publishes the request, and its output is
+ * discarded. The leaf swallows execution failures, and onboarding separately
+ * observes the canonical pairing state before it reports success. On re-onboard
+ * where `operator.write` is already paired the call succeeds and the approval
+ * pass is a no-op.
  *
  * Workaround boundary (NemoClaw#4462): OpenClaw owns device-pairing semantics
  * and exposes only `devices list/get/approve` — there is no way to pre-grant a
@@ -39,20 +38,20 @@ import { spawnSync } from "node:child_process";
 import { ROOT } from "../../state/paths";
 import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 
-// Outer spawnSync cap (ms) for a throwaway warm-up call. The onboard `-m`
-// one-shot prompt ("ping") returns fast even when it falls back to embedded
-// mode, so 30s comfortably covers gateway-connect + scope-upgrade request, the
-// bounded pending-upgrade poll below, plus shell/CLI startup, while never
-// letting a wedged sandbox block onboard or restore.
+// Outer spawnSync cap (ms) for the direct write-scope probe and its bounded
+// pending-upgrade poll. The cap prevents a wedged sandbox from blocking onboard
+// or restore.
 export const WARMUP_TIMEOUT_MS = 30_000;
+export const WARMUP_PROBE_TIMEOUT_S = 5;
 
 // Bounded in-sandbox poll for the pending scope upgrade after the provoke run.
 // Worst case = WARMUP_POLL_ATTEMPTS × WARMUP_POLL_LIST_TIMEOUT_S list calls plus
 // (WARMUP_POLL_ATTEMPTS - 1) inter-attempt 1s sleeps = 5×2 + 4×1 = 14s, which
-// leaves clear headroom under WARMUP_TIMEOUT_MS (30s) for shell startup and the
-// throwaway agent run that runs first. The gateway persists the upgrade
-// requestId once created (#4504 evidence), so once the poll sees it pending the
-// downstream approval pass deterministically finds and approves it before
+// plus the 5s direct-probe timeout consume at most 19s. This leaves clear
+// headroom under WARMUP_TIMEOUT_MS (30s) for shell and Python startup. The
+// gateway persists the upgrade requestId once created (#4504 evidence), so
+// once the poll sees it pending, the downstream approval pass finds and
+// approves it before
 // handoff — making "very first real run, zero fallback" deterministic even on
 // slow/contended gateways.
 export const WARMUP_POLL_ATTEMPTS = 5;
@@ -61,21 +60,41 @@ export const WARMUP_POLL_LIST_TIMEOUT_S = 2;
 // Best-effort in-sandbox warm-up script. Always exits 0. It connects to the
 // gateway and provokes the `operator.write` scope-upgrade so the request is
 // PENDING, then POLLS `devices list` until that allowlisted upgrade is visible
-// (or the bounded deadline elapses) before returning — closing the race where
+// (or the bounded deadline elapses) before returning, closing the race where
 // the approval pass that runs immediately after could otherwise list devices
 // before the gateway has registered the upgrade. The poll bounds are
-// interpolated so the cap is asserted on real values, not source text. OpenClaw
-// 2026.7.1 otherwise omits CLI device identity for loopback shared-token auth
-// before a stored device credential exists; force pairing only on the provoke.
+// interpolated so the cap is asserted on real values, not source text. Use the
+// stored CLI device credential for the provoke. Shared gateway overrides would
+// authorize the owner instead of publishing the device's scope request.
+// OpenClaw 2026.7.1 can omit CLI identity on loopback shared auth, so force
+// device pairing only on this command.
 export const WARMUP_SCRIPT = `
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
 command -v openclaw >/dev/null 2>&1 || exit 0
-NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \\
-  openclaw agent --agent main -m "ping" \\
-  --session-id "${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)" >/dev/null 2>&1 || true
 command -v python3 >/dev/null 2>&1 || exit 0
+unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT \\
+  OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_PASSWORD \\
+  NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING \\
+  NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT || exit 0
+session_key="agent:main:${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)"
+params="$(printf '{"key":"%s","agentId":"main"}' "$session_key")"
 OPENCLAW_BIN="$(command -v openclaw)"
+OPENCLAW_BIN="$OPENCLAW_BIN" NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \\
+  python3 - "$params" <<'PYPROBE'
+import os
+import subprocess
+import sys
+
+try:
+    subprocess.run(
+        [os.environ['OPENCLAW_BIN'], 'gateway', 'call', 'sessions.create', '--params', sys.argv[1], '--json'],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        timeout=${WARMUP_PROBE_TIMEOUT_S}, env=dict(os.environ),
+    )
+except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    pass
+PYPROBE
 i=0
 while [ "$i" -lt ${WARMUP_POLL_ATTEMPTS} ]; do
   OPENCLAW_BIN="$OPENCLAW_BIN" python3 - <<'PYPOLL'
@@ -85,10 +104,24 @@ import subprocess
 import sys
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
+# The proxy environment is shared gateway routing. Settlement must instead use
+# the paired CLI identity with its current pairing-only credential so the list
+# call can observe the write-scope request that the provoke command created.
+list_env = dict(os.environ)
+for key in (
+    'OPENCLAW_GATEWAY_URL',
+    'OPENCLAW_GATEWAY_PORT',
+    'OPENCLAW_GATEWAY_TOKEN',
+    'OPENCLAW_GATEWAY_PASSWORD',
+    'NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING',
+    'NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING',
+):
+    list_env.pop(key, None)
+list_env['NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT'] = '1'
 try:
     proc = subprocess.run(
         [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=${WARMUP_POLL_LIST_TIMEOUT_S},
+        capture_output=True, text=True, timeout=${WARMUP_POLL_LIST_TIMEOUT_S}, env=list_env,
     )
 except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
     sys.exit(1)
@@ -180,8 +213,8 @@ function runSandboxWarmupScript(sandboxName: string, script: string): void {
 /**
  * Run the bounded, throwaway scope-upgrade warm-up inside the named sandbox via
  * `openshell sandbox exec`. All failure modes (timeout, sandbox-exec errors,
- * missing openclaw, gateway unreachable) are swallowed: this is best-effort and
- * must never throw — onboard finalization must not be blocked.
+ * missing openclaw, gateway unreachable) are swallowed. The finalization
+ * settlement gate decides readiness from a later canonical observation.
  */
 export function runSandboxScopeWarmupRun(sandboxName: string): void {
   runSandboxWarmupScript(sandboxName, WARMUP_SCRIPT);
