@@ -133,7 +133,7 @@ function writeReachableCanonicalSystemctlStub(
           ]
         : []),
       "    ;;",
-      `  "--user show ${options.serviceName} --property=ExecStart --property=ActiveState --property=UnitFileState")`,
+      `  "--user show ${options.serviceName} --all --property=ExecStart --property=ActiveState --property=UnitFileState")`,
       ...(metadataStatus === 0
         ? [
             `    printf '%s\\n' ${JSON.stringify(`ExecStart=${execStart}`)}`,
@@ -145,7 +145,7 @@ function writeReachableCanonicalSystemctlStub(
             `    exit ${metadataStatus}`,
           ]),
       "    ;;",
-      `  "--user show ${options.serviceName} ${systemdPropertyArgs(SYSTEMD_CANONICAL_PROPERTIES)}")`,
+      `  "--user show ${options.serviceName} --all ${systemdPropertyArgs(SYSTEMD_CANONICAL_PROPERTIES)}")`,
       ...(metadataStatus === 0
         ? SYSTEMD_CANONICAL_PROPERTIES.map(
             (property) =>
@@ -208,7 +208,7 @@ function writeChangedCanonicalIdentitySystemctlStub(
       '  "--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager")',
       "    printf '%s\\n' 'nemoclaw-openshell-gateway.service loaded active running test service'",
       "    ;;",
-      `  "--user show nemoclaw-openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_CANONICAL_PROPERTIES)}" | "--user show nemoclaw-openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}")`,
+      `  "--user show nemoclaw-openshell-gateway.service --all ${systemdPropertyArgs(SYSTEMD_CANONICAL_PROPERTIES)}" | "--user show nemoclaw-openshell-gateway.service --all ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}")`,
       `    count=$(($(cat ${JSON.stringify(snapshotCount)} 2>/dev/null || printf 0) + 1))`,
       `    printf '%s\\n' "$count" > ${JSON.stringify(snapshotCount)}`,
       `    if [[ "$count" -le ${options.changeAfterSnapshots ?? 2} ]]; then fragment=${JSON.stringify(servicePath)}; else fragment=${JSON.stringify(path.join(home, "foreign-" + sentinel + ".service"))}; fi`,
@@ -364,7 +364,7 @@ it.each([
     expect(result.status, result.stdout + result.stderr).toBe(1);
     expect(result.stderr).toContain("selected port 8080");
     expect(result.stderr).not.toContain("foreign-");
-    expect(calls).toContain(`show ${serviceName} --property=FragmentPath`);
+    expect(calls).toContain(`show ${serviceName} --all --property=FragmentPath`);
     expect(calls).not.toContain("property=Environment");
     expect(fs.existsSync(lifecycleMarker)).toBe(false);
   },
@@ -841,7 +841,7 @@ it("re-reads canonical identity immediately before a lifecycle mutation (#9705)"
   expect(result.stderr).toContain("effective service identity changed before the stop command");
   expect(result.stderr).not.toContain(sentinel);
   expect(calls).toContain(
-    `--user show nemoclaw-openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}`,
+    `--user show nemoclaw-openshell-gateway.service --all ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}`,
   );
   expect(calls).not.toContain("--user stop nemoclaw-openshell-gateway.service");
   expect(fs.existsSync(systemctl.stopMarker)).toBe(false);

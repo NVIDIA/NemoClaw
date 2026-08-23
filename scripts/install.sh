@@ -1888,6 +1888,7 @@ read_openshell_gateway_user_service_snapshot() {
   local active_state_count=0 unit_file_state_count=0
   local -a snapshot_command=(
     systemctl --user show "$service_name"
+    --all
     --property=FragmentPath --property=ExecStart --property=DropInPaths
     --property=ExecCondition --property=ExecStartPre --property=ExecStartPost --property=ExecReload
     --property=ExecStop --property=ExecStopPost
@@ -2456,7 +2457,7 @@ classify_noncanonical_openshell_gateway_user_service() {
   esac
 
   if [[ "$#" -lt 4 ]]; then
-    if service_output="$(run_gateway_service_command systemctl --user show "$service_name" \
+    if service_output="$(run_gateway_service_command systemctl --user show "$service_name" --all \
       --property=ExecStart --property=ActiveState --property=UnitFileState 2>&1)"; then
       :
     else

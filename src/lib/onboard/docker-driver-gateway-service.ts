@@ -1557,7 +1557,12 @@ export function assertNoCompetingOpenShellGatewayUserService(
       ? CANONICAL_OPENSHELL_GATEWAY_SERVICE_PROPERTIES
       : COMPETING_OPENSHELL_GATEWAY_SERVICE_PROPERTIES;
     const metadata = runSystemctlUser(
-      ["show", serviceName, ...queriedProperties.map((property) => `--property=${property}`)],
+      [
+        "show",
+        serviceName,
+        "--all",
+        ...queriedProperties.map((property) => `--property=${property}`),
+      ],
       commandOptions,
       SYSTEMCTL_USER_INSPECTION_TIMEOUT_MS,
     );
@@ -1621,6 +1626,7 @@ function validateSystemdServiceIdentity(
     [
       "show",
       service.serviceName,
+      "--all",
       ...SYSTEMD_SERVICE_IDENTITY_PROPERTIES.map((property) => `--property=${property}`),
     ],
     opts,
@@ -2025,6 +2031,7 @@ export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
     [
       "show",
       service.serviceName,
+      "--all",
       ...SYSTEMD_SERVICE_IDENTITY_PROPERTIES.map((property) => `--property=${property}`),
       "--property=ActiveState",
       "--property=MainPID",

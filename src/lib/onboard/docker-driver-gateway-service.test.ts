@@ -71,7 +71,7 @@ const SYSTEMD_IDENTITY_PROPERTY_OPTIONS = SYSTEMD_IDENTITY_PROPERTIES.map(
   (property) => `--property=${property}`,
 );
 function systemdIdentityShowEvent(serviceName: string): string {
-  return ["show", serviceName, ...SYSTEMD_IDENTITY_PROPERTY_OPTIONS].join(" ");
+  return ["show", serviceName, "--all", ...SYSTEMD_IDENTITY_PROPERTY_OPTIONS].join(" ");
 }
 
 function trustedShowOutput(
@@ -348,6 +348,7 @@ describe("docker-driver-gateway-service", () => {
         "--user",
         "show",
         "nemoclaw-openshell-gateway",
+        "--all",
         ...SYSTEMD_IDENTITY_PROPERTY_OPTIONS,
         "--property=ActiveState",
         "--property=MainPID",

@@ -77,7 +77,7 @@ function writeSystemctlStub(
       '  "--user is-active --quiet nemoclaw-openshell-gateway.service")',
       `    test -f ${JSON.stringify(active)}`,
       "    ;;",
-      `  "--user show nemoclaw-openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}")`,
+      `  "--user show nemoclaw-openshell-gateway.service --all ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}")`,
       ...(options.failedMetadataProperty
         ? ["    exit 98"]
         : [
@@ -138,13 +138,13 @@ function writeUpstreamSystemctlStub(
       'case "$*" in',
       '  "--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager")',
       "    ;;",
-      `  "--user show openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_CANONICAL_PROPERTIES)}")`,
+      `  "--user show openshell-gateway.service --all ${systemdPropertyArgs(SYSTEMD_CANONICAL_PROPERTIES)}")`,
       ...discoveryResponse.map((line) => `    ${line}`),
       "    ;;",
-      `  "--user show nemoclaw-openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_CANONICAL_PROPERTIES)}")`,
+      `  "--user show nemoclaw-openshell-gateway.service --all ${systemdPropertyArgs(SYSTEMD_CANONICAL_PROPERTIES)}")`,
       ...discoveryResponse.map((line) => `    ${line}`),
       "    ;;",
-      `  "--user show openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}")`,
+      `  "--user show openshell-gateway.service --all ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}")`,
       ...response.map((line) => `    ${line}`),
       "    ;;",
       "  *) exit 97 ;;",
@@ -224,7 +224,7 @@ function writeGatewayDiscoverySystemctlStub(
       )}`,
     ];
     return [
-      `  "--user show ${name} --property=ExecStart --property=ActiveState --property=UnitFileState")`,
+      `  "--user show ${name} --all --property=ExecStart --property=ActiveState --property=UnitFileState")`,
       ...response.map((line) => `    ${line}`),
       "    ;;",
     ];
@@ -1051,7 +1051,7 @@ describe("install.sh OpenShell gateway service", () => {
     expect(fs.existsSync(servicePath(home))).toBe(false);
     expect(fs.readFileSync(systemctl.log, "utf-8").trim().split(/\r?\n/u)).toEqual([
       "--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager",
-      `--user show openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}`,
+      `--user show openshell-gateway.service --all ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}`,
     ]);
   });
 
@@ -1307,8 +1307,8 @@ describe("install.sh OpenShell gateway service", () => {
     expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(fs.readFileSync(systemctl.log, "utf-8").trim().split(/\r?\n/)).toEqual([
       "--user is-active --quiet nemoclaw-openshell-gateway.service",
-      `--user show nemoclaw-openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}`,
-      `--user show nemoclaw-openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}`,
+      `--user show nemoclaw-openshell-gateway.service --all ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}`,
+      `--user show nemoclaw-openshell-gateway.service --all ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}`,
       "--user stop nemoclaw-openshell-gateway.service",
       "--user is-active --quiet nemoclaw-openshell-gateway.service",
     ]);
@@ -1334,7 +1334,7 @@ describe("install.sh OpenShell gateway service", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("active user service identity could not be read");
       expect(calls).toContain(
-        `--user show nemoclaw-openshell-gateway.service ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}`,
+        `--user show nemoclaw-openshell-gateway.service --all ${systemdPropertyArgs(SYSTEMD_IDENTITY_PROPERTIES)}`,
       );
       expect(calls).not.toContain("--user stop nemoclaw-openshell-gateway.service");
     },
