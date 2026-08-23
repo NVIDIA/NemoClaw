@@ -70,9 +70,11 @@ export function writeSpecialistSummary(
 
 export function writeSpecialistDiff(configDir: string, diff: string): string {
   const directory = path.join(configDir, "context");
-  fs.mkdirSync(directory, { recursive: true });
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  fs.chmodSync(directory, 0o700);
   const file = path.join(directory, "diff.patch");
-  fs.writeFileSync(file, diff);
+  fs.writeFileSync(file, diff, { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
   return file;
 }
 
