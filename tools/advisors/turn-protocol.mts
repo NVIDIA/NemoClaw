@@ -40,6 +40,8 @@ export type AdvisorPromptTurn = {
   requireToolsBeforeText?: string[];
   /** Ordinary read-tool paths that must finish successfully before assistant text. */
   requiredReadPaths?: string[];
+  /** Seed those read calls and results into Pi history before the first model request. */
+  seedRequiredReads?: boolean;
   /** Fail the turn when it completes without non-whitespace assistant analysis. */
   requireAssistantText?: boolean;
   /**
