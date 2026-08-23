@@ -38,10 +38,13 @@ export type DestroyHarness = {
   prepareMcpBridgesForDestroySpy: MockInstance;
   prepareManagedLlamaCppRuntimeCleanupSpy: MockInstance;
   cleanupManagedLlamaCppRuntimeForSandboxSpy: MockInstance;
+  preparePortableDestroyAuthoritySpy: MockInstance;
   promptSpy: MockInstance;
   removeManagedHermesStateVolumeSpy: MockInstance;
   removeSandboxSpy: MockInstance;
   retirePortableLifecycleReceiptSpy: MockInstance;
+  portableDestroyRevalidateSpy: MockInstance;
+  portableDestroyVerifyAbsentSpy: MockInstance;
   revokeHttpsPinRuntimeAdapterRouteSpy: MockInstance;
   restoreMcpBridgesAfterDestroyAbortSpy: MockInstance;
   runOpenshellSpy: MockInstance;
@@ -91,6 +94,9 @@ type DestroyHarnessOptions = {
   mcpServers?: string[];
   openshellDriver?: string;
   portableCommandError?: string;
+  portableDestroyAuthority?: boolean;
+  portableDestroyPrepareError?: string;
+  portableDestroyVerifyAbsentError?: string;
   prepareMcpBridgeError?: string;
   promptResponses?: string[];
   provider?: string;
@@ -210,6 +216,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     "../../onboard/experimental/portable-agent-lifecycle.js",
   );
   const localModelProfileCleanup = requireDist("../../inference/local-model-profile/cleanup.js");
+  const portableDemoLifecycle = requireDist(
+    "../../onboard/experimental/portable-demo-lifecycle.js",
+  );
 
   const executeSandboxDestroySpy = vi.spyOn(destroyExecution, "executeSandboxDestroy");
   if (options.executeSandboxDestroyResult) {
@@ -230,6 +239,28 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     .spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable")
     .mockImplementation(() => {
       if (options.portableCommandError) throw new Error(options.portableCommandError);
+    });
+  const portableDestroyRevalidateSpy = vi.fn(() => {
+    events.push("portable-revalidate");
+  });
+  const portableDestroyVerifyAbsentSpy = vi.fn(() => {
+    events.push("portable-absent");
+    if (options.portableDestroyVerifyAbsentError) {
+      throw new Error(options.portableDestroyVerifyAbsentError);
+    }
+  });
+  const preparePortableDestroyAuthoritySpy = vi
+    .spyOn(portableDemoLifecycle, "preparePortableDemoSandboxDestroyAuthority")
+    .mockImplementation(() => {
+      if (options.portableDestroyPrepareError) {
+        throw new Error(options.portableDestroyPrepareError);
+      }
+      return options.portableDestroyAuthority
+        ? {
+            revalidate: portableDestroyRevalidateSpy,
+            verifyAbsent: portableDestroyVerifyAbsentSpy,
+          }
+        : null;
     });
 
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
@@ -562,6 +593,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     prepareMcpBridgesForDestroySpy,
     prepareManagedLlamaCppRuntimeCleanupSpy,
     cleanupManagedLlamaCppRuntimeForSandboxSpy,
+    preparePortableDestroyAuthoritySpy,
+    portableDestroyRevalidateSpy,
+    portableDestroyVerifyAbsentSpy,
     promptSpy,
     removeManagedHermesStateVolumeSpy,
     removeSandboxSpy,
