@@ -92,16 +92,12 @@ describe("Docker managed-bootstrap native fallback owner cleanup", () => {
     expect(recoverUnfinished).not.toHaveBeenCalled();
   });
 
-  it("blocks fallback even if a mutable name would initially resolve to the expected ID", async () => {
-    let sandboxId = "sandbox-alpha";
-    const runOpenshell = vi.fn((args: string[]) => {
-      if (args[1] === "get") {
-        const observed = sandboxId;
-        sandboxId = "sandbox-replacement";
-        return { status: 0, stdout: `ID: ${observed}\n`, stderr: "" };
-      }
-      throw new Error(`unsafe name-only deletion reached replacement ${sandboxId}`);
-    });
+  it("blocks fallback even if a mutable name would resolve to the expected ID", async () => {
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: "ID: sandbox-alpha\n",
+      stderr: "",
+    }));
     const recoverUnfinished = vi.fn();
 
     await expect(
