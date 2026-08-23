@@ -26,6 +26,7 @@ export {
   classifySandboxInferenceRouteReservation,
   isCurrentSandboxInferenceRouteReservation,
   isPendingReservationForSession,
+  isPublishedSandboxRegistration,
   isRouteOnlySandboxReservation,
   normalizeSandboxInferenceRouteSelection,
   sandboxRegistrationMatchesInferenceRouteReservation,
@@ -147,6 +148,7 @@ export function getDefault(): string | null {
 export function registerSandbox(
   entry: SandboxEntry,
   routeReservation?: QualifiedSandboxInferenceRouteReservation,
+  options: { pending?: boolean } = {},
 ): SandboxEntry {
   return withLock(() => {
     const data = load();
@@ -304,9 +306,14 @@ export function registerSandbox(
       dashboardRemoteBindPrepared: entry.dashboardRemoteBindPrepared === true ? true : undefined,
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
+      pendingRouteReservation: options.pending === true ? true : undefined,
     };
     data.sandboxes[entry.name] = registered;
-    save(reversibleRemoval.claimInitialDefaultInRegistry(data, entry.name));
+    save(
+      options.pending === true
+        ? data
+        : reversibleRemoval.claimInitialDefaultInRegistry(data, entry.name),
+    );
     return structuredClone(registered);
   });
 }
@@ -461,6 +468,18 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
     assertRecordedPolicyAuthorityUnchanged(current, updates);
     data.sandboxes[name] = normalizeSandboxPolicyAttribution({ ...current, ...updates });
     save(data);
+    return true;
+  });
+}
+
+/** Atomically publish a pending registration and preserve its initial-default claim. */
+export function finalizePendingSandboxRegistration(name: string): boolean {
+  return withLock(() => {
+    const data = load();
+    const current = data.sandboxes[name];
+    if (!current || current.pendingRouteReservation !== true) return false;
+    data.sandboxes[name] = { ...current, pendingRouteReservation: undefined };
+    save(reversibleRemoval.claimInitialDefaultInRegistry(data, name));
     return true;
   });
 }

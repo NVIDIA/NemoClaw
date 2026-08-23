@@ -32,8 +32,25 @@ const inspectSandboxPolicyAuthorityMock = vi.fn((_input: { sandboxName: string }
   effectivePolicy: {},
 }));
 const getSandboxMock = vi.fn((name?: string) => harness.entries.get(name ?? "") ?? null);
-const registerSandboxMock = vi.fn((entry: Record<string, unknown>) => {
-  harness.entries.set(String(entry.name), entry);
+const registerSandboxMock = vi.fn(
+  (
+    entry: Record<string, unknown>,
+    _routeReservation?: unknown,
+    options: { pending?: boolean } = {},
+  ) => {
+    harness.entries.set(String(entry.name), {
+      ...entry,
+      ...(options.pending === true ? { pendingRouteReservation: true } : {}),
+    });
+  },
+);
+const finalizePendingSandboxRegistrationMock = vi.fn((name: string) => {
+  const entry = harness.entries.get(name);
+  const finalized =
+    entry?.pendingRouteReservation === true
+      ? { ...entry, pendingRouteReservation: undefined }
+      : null;
+  return finalized === null ? false : Boolean(harness.entries.set(name, finalized));
 });
 const reserveSandboxInferenceRouteMock = vi.fn((name: string, route: Record<string, unknown>) => {
   harness.entries.set(name, {
@@ -256,6 +273,7 @@ vi.mock("../../state/registry", () => ({
     sandboxes: [...harness.entries.values()],
     defaultSandbox: "alpha",
   })),
+  finalizePendingSandboxRegistration: finalizePendingSandboxRegistrationMock,
   registerSandbox: registerSandboxMock,
   reserveSandboxInferenceRoute: reserveSandboxInferenceRouteMock,
   removeSandbox: removeSandboxMock,
@@ -467,6 +485,15 @@ describe("snapshot restore auto-create failures", () => {
     expect(harness.preserveForRebuild).toHaveBeenCalledTimes(2);
     expect(registerSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({ name: "beta", hostLocalInferenceReceipt: receipt }),
+      undefined,
+      { pending: true },
+    );
+    expect(finalizePendingSandboxRegistrationMock).toHaveBeenCalledWith("beta");
+    expect(registerSandboxMock.mock.invocationCallOrder[0]).toBeLessThan(
+      finalizePendingSandboxRegistrationMock.mock.invocationCallOrder[0]!,
+    );
+    expect(finalizePendingSandboxRegistrationMock.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.preserveForRebuild.mock.invocationCallOrder[1]!,
     );
     expect(harness.prepareDestroy).toHaveBeenCalledTimes(2);
     expect(harness.destroy).not.toHaveBeenCalled();

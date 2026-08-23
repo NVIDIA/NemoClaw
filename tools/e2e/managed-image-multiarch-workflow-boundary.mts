@@ -34,6 +34,9 @@ const ACTIVATION_PATH = PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH;
 const DIRECT_TEST_PATH = "test/e2e/live/managed-image-multiarch-startup.test.ts";
 const REGISTRY_IMAGE =
   "docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373";
+const CHECKOUT_ACTION = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
+const TRUSTED_HERMES_RESOLVER_ROOT = ".trusted-hermes-resolver";
+const REVIEWED_HERMES_PLATFORM_ACTION = `./${TRUSTED_HERMES_RESOLVER_ROOT}/.github/actions/resolve-reviewed-hermes-platform`;
 
 function record(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -197,13 +200,49 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   ]);
 
   const checkouts = steps.filter((step) => text(step.uses).startsWith("actions/checkout@"));
-  if (checkouts.length !== 1) errors.push(`${JOB_ID} must define exactly one candidate checkout`);
-  requireValues(errors, `${JOB_ID} candidate checkout`, record(checkouts[0]?.with), {
+  if (checkouts.length !== 2) {
+    errors.push(`${JOB_ID} must define one candidate checkout and one trusted resolver checkout`);
+  }
+  const candidateCheckout = requireStep(
+    errors,
+    steps,
+    "Checkout protected managed-image candidate source",
+  );
+  const trustedResolverPath = requireStep(
+    errors,
+    steps,
+    "Validate trusted Hermes resolver checkout path",
+  );
+  const trustedResolverCheckout = requireStep(errors, steps, "Checkout trusted Hermes resolver");
+  if (
+    candidateCheckout?.uses !== CHECKOUT_ACTION ||
+    trustedResolverCheckout?.uses !== CHECKOUT_ACTION
+  ) {
+    errors.push(`${JOB_ID} must pin the candidate and trusted resolver checkouts`);
+  }
+  requireValues(errors, `${JOB_ID} candidate checkout`, record(candidateCheckout?.with), {
     repository: "${{ inputs.checkout_repository || github.repository }}",
     ref: "${{ inputs.checkout_sha || github.sha }}",
     "fetch-depth": 0,
     "persist-credentials": false,
   });
+  requireFragments(errors, trustedResolverPath, [
+    `trusted_resolver_root="$GITHUB_WORKSPACE/${TRUSTED_HERMES_RESOLVER_ROOT}"`,
+    '[[ ! -e "$trusted_resolver_root" && ! -L "$trusted_resolver_root" ]]',
+  ]);
+  requireValues(
+    errors,
+    `${JOB_ID} trusted Hermes resolver checkout`,
+    record(trustedResolverCheckout?.with),
+    {
+      repository: "${{ github.repository }}",
+      ref: "${{ inputs.workflow_sha || github.workflow_sha }}",
+      path: TRUSTED_HERMES_RESOLVER_ROOT,
+      "sparse-checkout": ".github/actions/resolve-reviewed-hermes-platform",
+      "fetch-depth": 1,
+      "persist-credentials": false,
+    },
+  );
 
   const buildx = requireStep(errors, steps, "Set up protected managed-image Buildx");
   if (buildx?.uses !== "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c") {
@@ -224,6 +263,30 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     '.platforms == ["linux/amd64", "linux/arm64"]',
   ]);
 
+  const hermesBase = requireStep(errors, steps, "Resolve reviewed Hermes platform base image");
+  if (hermesBase?.uses !== REVIEWED_HERMES_PLATFORM_ACTION) {
+    errors.push(`${JOB_ID} must use the shared reviewed Hermes platform resolver`);
+  }
+  requireValues(errors, `${JOB_ID} Hermes platform resolver`, record(hermesBase?.with), {
+    "dockerfile-path": "agents/hermes/Dockerfile",
+    platform: "${{ matrix.platform }}",
+  });
+
+  const trustedResolverCleanup = requireStep(
+    errors,
+    steps,
+    "Remove trusted Hermes resolver checkout",
+  );
+  if (trustedResolverCleanup?.if !== "always()") {
+    errors.push(`${JOB_ID} trusted Hermes resolver cleanup must always run`);
+  }
+  requireFragments(errors, trustedResolverCleanup, [
+    `trusted_resolver_root="$GITHUB_WORKSPACE/${TRUSTED_HERMES_RESOLVER_ROOT}"`,
+    '[[ -d "$trusted_resolver_root" && ! -L "$trusted_resolver_root" ]]',
+    'rm -rf -- "$trusted_resolver_root"',
+    '[[ ! -e "$trusted_resolver_root" && ! -L "$trusted_resolver_root" ]]',
+  ]);
+
   const bases = requireStep(errors, steps, "Resolve exact platform base images");
   requireFragments(errors, bases, [
     'arch="${PLATFORM#linux/}"',
@@ -232,9 +295,11 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     'reference="${repository}@${digest}"',
     '"sha256:$(sha256sum "$exact_raw" | awk \'{print $1}\')" == "$digest"',
     "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
-    "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest",
     "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest",
   ]);
+  if (text(bases?.run).includes("ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest")) {
+    errors.push(`${JOB_ID} must resolve Hermes from the immutable reviewed Dockerfile index`);
+  }
 
   const registry = requireStep(errors, steps, "Start isolated protected managed-image registry");
   requireFragments(errors, registry, [
@@ -257,6 +322,10 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     '--hermes-base "$BASE_HERMES"',
     '--dcode-base "$BASE_DCODE"',
   ]);
+  requireValues(errors, `${JOB_ID} protected build bases`, record(build?.env), {
+    BASE_HERMES:
+      "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.hermes-base.outputs.digest }}",
+  });
 
   const direct = requireStep(errors, steps, "Run every exact managed-image contract directly");
   requireFragments(errors, direct, [
@@ -314,7 +383,12 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   requireStep(errors, steps, "Clean up Docker auth");
   requireOrderedSteps(errors, steps, [
     "Validate protected exact-head dispatch",
+    "Checkout protected managed-image candidate source",
+    "Validate trusted Hermes resolver checkout path",
+    "Checkout trusted Hermes resolver",
     "Validate candidate activation contract",
+    "Resolve reviewed Hermes platform base image",
+    "Remove trusted Hermes resolver checkout",
     "Resolve exact platform base images",
     "Start isolated protected managed-image registry",
     "Build exact all-agent protected managed images",
