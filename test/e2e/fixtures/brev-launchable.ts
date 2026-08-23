@@ -66,12 +66,16 @@ export const DEFAULT_BREV_WORKSPACE_DELETE_TIMEOUT_MS = 12 * 60_000;
 
 export class BrevLaunchableFixture {
   private readonly artifacts: ArtifactSink;
+  private readonly home: string;
   private readonly host: HostCliClient;
   private readonly secrets: SecretStore;
   private readonly pollMs: number;
 
   constructor(options: BrevLaunchableFixtureOptions) {
+    const home = process.env.HOME;
+    if (!home) throw new Error("HOME is required for Brev credentials");
     this.artifacts = options.artifacts;
+    this.home = home;
     this.host = options.host;
     this.secrets = options.secrets;
     this.pollMs = options.pollMs ?? DEFAULT_POLL_MS;
@@ -161,8 +165,7 @@ export class BrevLaunchableFixture {
     const existing = await this.workspace(name);
     if (existing) throw new Error(`Brev workspace already exists: ${name}`);
     ownership.createRequested = true;
-    const create = await this.host.command(
-      "brev",
+    const create = await this.brevCommand(
       ["create", name, "--launchable", launchableId, "--detached", "--timeout", "900"],
       {
         artifactName: "brev-workspace-create",
@@ -202,7 +205,7 @@ export class BrevLaunchableFixture {
     options: Parameters<HostCliClient["command"]>[2] = {},
   ): Promise<ShellProbeResult> {
     const workspaceId = await this.assertOwnedWorkspace(ownership, "Brev exec");
-    return this.host.command("brev", ["exec", workspaceId, command], options);
+    return this.brevCommand(["exec", workspaceId, command], options);
   }
 
   async execScript(
@@ -261,7 +264,7 @@ export class BrevLaunchableFixture {
       throw new Error(`Brev workspace identity changed before cleanup: ${name}`);
     }
     if (current) {
-      await this.host.command("brev", ["delete", current.id], {
+      await this.brevCommand(["delete", current.id], {
         artifactName: "brev-workspace-delete",
         timeoutMs: DEFAULT_BREV_WORKSPACE_DELETE_COMMAND_TIMEOUT_MS,
       });
@@ -282,7 +285,7 @@ export class BrevLaunchableFixture {
         });
         return;
       }
-      await this.host.command("brev", ["refresh"], {
+      await this.brevCommand(["refresh"], {
         artifactName: "brev-cleanup-refresh",
         persistArtifacts: false,
         timeoutMs: 30_000,
@@ -358,7 +361,7 @@ export class BrevLaunchableFixture {
   }
 
   private async workspaces(): Promise<BrevWorkspaceRecord[]> {
-    const result = await this.host.command("brev", ["ls", "--json"], {
+    const result = await this.brevCommand(["ls", "--json"], {
       artifactName: "brev-workspace-list",
       persistArtifacts: false,
       timeoutMs: 30_000,
@@ -373,6 +376,16 @@ export class BrevLaunchableFixture {
         ? (root as { workspaces: unknown[] }).workspaces
         : [];
     return rows.map(normalizeWorkspace).filter((record): record is BrevWorkspaceRecord => !!record);
+  }
+
+  private brevCommand(
+    args: string[],
+    options: Parameters<HostCliClient["command"]>[2] = {},
+  ): Promise<ShellProbeResult> {
+    return this.host.command("brev", args, {
+      ...options,
+      env: { ...(options.env ?? {}), HOME: this.home },
+    });
   }
 }
 

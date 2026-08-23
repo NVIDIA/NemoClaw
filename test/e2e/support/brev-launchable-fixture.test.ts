@@ -23,6 +23,7 @@ const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("the Brev Launchable fixture binds staging identity and workspace lifecycle", () => {
@@ -83,14 +84,17 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
 
   it("accepts the runtime identity from the staging handoff", async () => {
     const root = temporaryRoot();
+    const credentialHome = path.join(root, "brev-home");
+    vi.stubEnv("HOME", credentialHome);
     const expected = stagingHandoff();
     const identity = runtimeIdentity(expected);
-    const fixture = createFixture(
-      root,
-      vi.fn(ownedExecCommand(`probe\n${JSON.stringify(identity)}`)),
-    );
+    const command = vi.fn(ownedExecCommand(`probe\n${JSON.stringify(identity)}`));
+    const fixture = createFixture(root, command);
 
     await expect(fixture.verifyIdentity(recordedOwnership(), expected)).resolves.toEqual(identity);
+    expect(command.mock.calls.find((call) => call[1][0] === "exec")?.[2]?.env).toEqual({
+      HOME: credentialHome,
+    });
     expect(
       JSON.parse(fs.readFileSync(path.join(root, "brev-runtime-identity.json"), "utf8")),
     ).toEqual(identity);
@@ -118,6 +122,8 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
 
   it("creates, verifies, and deletes the same workspace identity", async () => {
     const root = temporaryRoot();
+    const credentialHome = path.join(root, "brev-home");
+    vi.stubEnv("HOME", credentialHome);
     const lifecycle = lifecycleCommand();
     const command = vi.fn(lifecycle.command);
     const fixture = createFixture(root, command);
@@ -137,6 +143,13 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     expect(command.mock.calls.filter((call) => call[1][0] === "delete")).toEqual([
       ["brev", ["delete", "workspace-id"], expect.any(Object)],
     ]);
+    expect(command.mock.calls.find((call) => call[1][0] === "create")?.[2]?.env).toEqual({
+      HOME: credentialHome,
+    });
+    expect(command.mock.calls.find((call) => call[1][0] === "delete")?.[2]?.env).toEqual({
+      HOME: credentialHome,
+    });
+    expect(command.mock.calls.every((call) => call[2]?.env?.HOME === credentialHome)).toBe(true);
     expect(
       JSON.parse(fs.readFileSync(path.join(root, "brev-workspace-cleanup.json"), "utf8")),
     ).toMatchObject({ status: "ABSENT", workspaceId: "workspace-id" });
@@ -286,35 +299,48 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
 
   it("removes the private local script after Brev exec returns", async () => {
     const root = temporaryRoot();
+    const credentialHome = path.join(root, "brev-home");
+    vi.stubEnv("HOME", credentialHome);
     let observedScript = "";
-    const command = vi.fn(async (_binary: string, args: string[]) => {
-      switch (args[0]) {
-        case "ls":
-          return workspaceResult("owned-id");
-        case "exec": {
-          observedScript = args[2]?.slice(1) ?? "";
-          const descriptor = fs.openSync(observedScript, "r");
-          try {
-            expect(fs.fstatSync(descriptor).mode & 0o777).toBe(0o600);
-            expect(fs.readFileSync(descriptor, "utf8")).toContain("fixture script");
-          } finally {
-            fs.closeSync(descriptor);
+    const command = vi.fn(
+      async (_binary: string, args: string[], options?: ShellProbeRunOptions) => {
+        switch (args[0]) {
+          case "ls":
+            return workspaceResult("owned-id");
+          case "exec": {
+            expect(options?.env).toEqual({ FIXTURE_VALUE: "fixture", HOME: credentialHome });
+            observedScript = args[2]?.slice(1) ?? "";
+            const descriptor = fs.openSync(observedScript, "r");
+            try {
+              expect(fs.fstatSync(descriptor).mode & 0o777).toBe(0o600);
+              expect(fs.readFileSync(descriptor, "utf8")).toContain("fixture script");
+            } finally {
+              fs.closeSync(descriptor);
+            }
+            return result("");
           }
-          return result("");
+          default:
+            throw new Error(`unexpected command: ${args.join(" ")}`);
         }
-        default:
-          throw new Error(`unexpected command: ${args.join(" ")}`);
-      }
-    });
+      },
+    );
     const fixture = createFixture(root, command);
 
     await fixture.execScript(recordedOwnership(), "echo fixture script", {
       artifactName: "fixture-script",
+      env: { FIXTURE_VALUE: "fixture", HOME: "ignored" },
     });
 
     expect(observedScript).not.toBe("");
     expect(fs.existsSync(observedScript)).toBe(false);
     expect(fs.existsSync(path.dirname(observedScript))).toBe(false);
+  });
+
+  it("rejects Brev controller construction without a process HOME", () => {
+    const root = temporaryRoot();
+    vi.stubEnv("HOME", "");
+
+    expect(() => createFixture(root, vi.fn())).toThrow("HOME is required for Brev credentials");
   });
 });
 
@@ -375,8 +401,8 @@ function recordedOwnership(): BrevWorkspaceOwnership {
 
 function ownedExecCommand(
   stdout: string,
-): (_binary: string, args: string[]) => Promise<ShellProbeResult> {
-  return async (_binary, args) => {
+): (_binary: string, args: string[], _options?: ShellProbeRunOptions) => Promise<ShellProbeResult> {
+  return async (_binary, args, _options) => {
     switch (args[0]) {
       case "ls":
         return workspaceResult("owned-id");
@@ -441,14 +467,18 @@ function runtimeIdentity(
 }
 
 function lifecycleCommand(): {
-  command: (_binary: string, args: string[]) => Promise<ShellProbeResult>;
+  command: (
+    _binary: string,
+    args: string[],
+    _options?: ShellProbeRunOptions,
+  ) => Promise<ShellProbeResult>;
   absentReads: () => number;
 } {
   let present = false;
   let absent = 0;
   return {
     absentReads: () => absent,
-    async command(_binary, args) {
+    async command(_binary, args, _options) {
       switch (args[0]) {
         case "ls": {
           const response = present ? workspaceResult("workspace-id") : result({ workspaces: [] });
