@@ -36,7 +36,11 @@ export function shouldRetryMcpToolDiscoveryTransportFailure(
 export function shouldRetryMcpDiscoveryAfterRestart(
   requestsSinceAttempt: readonly FakeMcpRequest[],
 ): boolean {
-  return requestsSinceAttempt.length === 0;
+  // Status/readiness checks can hit the configured endpoint without speaking
+  // MCP. Those probes must not suppress the one bounded runtime restart: only
+  // fixture-visible MCP protocol traffic proves that the agent attempted
+  // discovery and produced a product failure worth preserving as-is.
+  return !requestsSinceAttempt.some((request) => request.rpcMethod !== undefined);
 }
 
 type McpToolDiscoveryStatusJson = {
@@ -105,13 +109,22 @@ function buildMcpToolDiscoveryDiagnostics(
     requests: requests.map((request) => ({
       httpMethod: request.method,
       rpcMethod: request.rpcMethod ?? null,
+      transport:
+        request.legacySessionId || request.negotiatedLegacySessionId
+          ? "legacy-sse"
+          : "streamable-http",
       responseStatus: request.responseStatus ?? null,
       responseHasResult: request.responseHasResult ?? null,
+      rpcIdPresent: request.rpcId !== undefined,
+      legacyPhase: request.legacyPhase ?? null,
+      legacyResponseSequence: request.legacyResponseSequence ?? null,
       sessionMetadataPresent: {
         sessionId: Boolean(request.sessionId),
         protocolVersion: Boolean(request.protocolVersion),
         negotiatedSessionId: Boolean(request.negotiatedSessionId),
         negotiatedProtocolVersion: Boolean(request.negotiatedProtocolVersion),
+        legacySessionId: Boolean(request.legacySessionId),
+        negotiatedLegacySessionId: Boolean(request.negotiatedLegacySessionId),
       },
       credentialRewriteMatched: request.auth === `Bearer ${expectedSecret}`,
     })),
@@ -134,26 +147,71 @@ export function hasSuccessfulAuthenticatedMcpDiscovery(
   requests: readonly FakeMcpRequest[],
   expectedSecret: string,
 ): boolean {
-  const authenticatedRequests = requests.filter(
-    (request) =>
-      request.method === "POST" &&
-      request.path === "/mcp" &&
-      request.auth === `Bearer ${expectedSecret}`,
-  );
-  for (const [initializeIndex, initializeRequest] of authenticatedRequests.entries()) {
+  const isAuthenticatedMcpRequest = (request: FakeMcpRequest): boolean =>
+    request.path === "/mcp" && request.auth === `Bearer ${expectedSecret}`;
+  for (const [initializeIndex, initializeRequest] of requests.entries()) {
     if (
+      !isAuthenticatedMcpRequest(initializeRequest) ||
+      initializeRequest.method !== "POST" ||
       initializeRequest.rpcMethod !== "initialize" ||
-      initializeRequest.responseStatus !== 200 ||
       initializeRequest.responseHasResult !== true ||
-      !initializeRequest.negotiatedSessionId ||
       !initializeRequest.negotiatedProtocolVersion
     ) {
       continue;
     }
+    if (initializeRequest.legacySessionId) {
+      if (
+        initializeRequest.responseStatus !== 202 ||
+        initializeRequest.sessionId !== "" ||
+        initializeRequest.protocolVersion !== "" ||
+        initializeRequest.rpcId === undefined
+      ) {
+        continue;
+      }
+      const eventStreamIndex = requests.findIndex(
+        (request, requestIndex) =>
+          requestIndex < initializeIndex &&
+          isAuthenticatedMcpRequest(request) &&
+          request.method === "GET" &&
+          request.responseStatus === 200 &&
+          request.negotiatedLegacySessionId === initializeRequest.legacySessionId,
+      );
+      if (eventStreamIndex === -1) continue;
+      const hasNegotiatedLegacyMetadata = (request: FakeMcpRequest): boolean =>
+        isAuthenticatedMcpRequest(request) &&
+        request.method === "POST" &&
+        request.legacySessionId === initializeRequest.legacySessionId &&
+        request.sessionId === "" &&
+        request.protocolVersion === initializeRequest.negotiatedProtocolVersion;
+      const initializedIndex = requests.findIndex(
+        (request, requestIndex) =>
+          requestIndex > initializeIndex &&
+          request.rpcMethod === "notifications/initialized" &&
+          request.responseStatus === 202 &&
+          hasNegotiatedLegacyMetadata(request),
+      );
+      if (initializedIndex === -1) continue;
+      const toolsListed = requests.some(
+        (request, requestIndex) =>
+          requestIndex > initializedIndex &&
+          request.rpcMethod === "tools/list" &&
+          request.rpcId !== undefined &&
+          request.responseStatus === 202 &&
+          request.responseHasResult === true &&
+          hasNegotiatedLegacyMetadata(request),
+      );
+      if (toolsListed) return true;
+      continue;
+    }
+    if (initializeRequest.responseStatus !== 200 || !initializeRequest.negotiatedSessionId) {
+      continue;
+    }
     const hasNegotiatedMetadata = (request: FakeMcpRequest) =>
+      isAuthenticatedMcpRequest(request) &&
+      request.method === "POST" &&
       request.sessionId === initializeRequest.negotiatedSessionId &&
       request.protocolVersion === initializeRequest.negotiatedProtocolVersion;
-    const initializedIndex = authenticatedRequests.findIndex(
+    const initializedIndex = requests.findIndex(
       (request, requestIndex) =>
         requestIndex > initializeIndex &&
         request.rpcMethod === "notifications/initialized" &&
@@ -161,7 +219,7 @@ export function hasSuccessfulAuthenticatedMcpDiscovery(
         hasNegotiatedMetadata(request),
     );
     if (initializedIndex === -1) continue;
-    const toolsListed = authenticatedRequests.some(
+    const toolsListed = requests.some(
       (request, requestIndex) =>
         requestIndex > initializedIndex &&
         request.rpcMethod === "tools/list" &&
@@ -199,6 +257,11 @@ export async function assertAuthenticatedMcpDiscovery(
             responseHasResult: request.responseHasResult,
             negotiatedSessionId: request.negotiatedSessionId,
             negotiatedProtocolVersion: request.negotiatedProtocolVersion,
+            legacySessionId: request.legacySessionId,
+            negotiatedLegacySessionId: request.negotiatedLegacySessionId,
+            legacyPhase: request.legacyPhase,
+            legacyResponseSequence: request.legacyResponseSequence,
+            rpcId: request.rpcId,
           })),
         };
       },
@@ -326,12 +389,47 @@ export async function assertAuthenticatedMcpToolDiscovery(
     firstToolListIndex,
     "authenticated MCP discovery must finish initialization before listing tools",
   ).toBeGreaterThan(initializedIndex);
+  const initializeRequest = discoveryRpcRequests[initializeIndex];
   const initializedRequest = discoveryRpcRequests[initializedIndex];
-  expect(initializedRequest.sessionId).toMatch(/^fake-session-\d+$/u);
-  expect(initializedRequest.protocolVersion).not.toBe("");
-  for (const request of discoveryRpcRequests.slice(initializedIndex)) {
-    expect(request.sessionId).toBe(initializedRequest.sessionId);
-    expect(request.protocolVersion).toBe(initializedRequest.protocolVersion);
+  if (initializeRequest.legacySessionId) {
+    expect(initializeRequest.responseStatus).toBe(202);
+    expect(initializeRequest.responseHasResult).toBe(true);
+    expect(initializeRequest.rpcId).not.toBeUndefined();
+    expect(initializeRequest.sessionId).toBe("");
+    expect(initializeRequest.protocolVersion).toBe("");
+    expect(initializeRequest.negotiatedProtocolVersion).not.toBe("");
+    const initializeRequestIndex = discoveryRequests.indexOf(initializeRequest);
+    const eventStreamRequest = discoveryRequests.find(
+      (request, requestIndex) =>
+        requestIndex < initializeRequestIndex &&
+        request.method === "GET" &&
+        request.path === "/mcp" &&
+        request.auth === `Bearer ${options.hostSecret}` &&
+        request.responseStatus === 200 &&
+        request.negotiatedLegacySessionId === initializeRequest.legacySessionId,
+    );
+    expect(
+      eventStreamRequest,
+      "legacy SSE discovery must correlate its authenticated GET with the POST endpoint",
+    ).toBeDefined();
+    for (const request of discoveryRpcRequests.slice(initializedIndex)) {
+      expect(request.legacySessionId).toBe(initializeRequest.legacySessionId);
+      expect(request.sessionId).toBe("");
+      expect(request.protocolVersion).toBe(initializeRequest.negotiatedProtocolVersion);
+    }
+    for (const request of discoveryRpcRequests.filter(
+      (candidate) => candidate.rpcMethod === "tools/list",
+    )) {
+      expect(request.rpcId).not.toBeUndefined();
+      expect(request.legacyResponseSequence).toBeGreaterThan(0);
+    }
+  } else {
+    expect(initializedRequest.sessionId).toMatch(/^fake-session-\d+$/u);
+    expect(initializedRequest.protocolVersion).not.toBe("");
+    for (const request of discoveryRpcRequests.slice(initializedIndex)) {
+      expect(request.sessionId).toBe(initializedRequest.sessionId);
+      expect(request.protocolVersion).toBe(initializedRequest.protocolVersion);
+    }
   }
 
   const toolListRequests = discoveryRequests.filter(
@@ -342,6 +440,7 @@ export async function assertAuthenticatedMcpToolDiscovery(
   for (const request of discoveryProtocolRequests.filter(
     (candidate) => candidate.method === "DELETE",
   )) {
+    expect(initializeRequest.legacySessionId).toBeUndefined();
     expect(request.sessionId).toBe(initializedRequest.sessionId);
     expect(request.protocolVersion).toBe(initializedRequest.protocolVersion);
   }

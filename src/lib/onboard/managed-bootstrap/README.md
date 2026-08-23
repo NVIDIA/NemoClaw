@@ -4,13 +4,13 @@
 # Managed bootstrap protocol
 
 This directory defines the driver-neutral bootstrap transaction, the Docker
-implementation registered for managed-image qualification and rebuild handoffs,
-and a dormant Podman candidate. Ordinary onboarding continues to use the
-Dockerfile path unless an internal managed-image qualification or rebuild handoff
-selects an immutable managed image. Podman remains absent from the production
-provider registry, and its bootstrap surface remains unsupported. Do not
-advertise either qualification path as a supported surface until its product
-activation gate is accepted.
+implementation registered for stock managed-image onboarding and rebuild
+handoffs, and a dormant Podman candidate. Ordinary OpenShell Docker-driver onboarding for
+the shipped OpenClaw, Hermes, and LangChain Deep Agents Code agents selects an
+immutable managed image. Portable onboarding, agents without a managed-image
+contract, and explicit `--from` custom Dockerfiles retain their existing
+workload paths. Podman remains absent from the production provider registry, and
+its bootstrap surface remains unsupported.
 
 The protocol binds one random bootstrap identity to:
 
@@ -73,10 +73,11 @@ policy.
 
 The Docker-specific layers define a private, monotonic cutover journal, a
 canonical launch-spec normalizer, and an injectable provider create lifecycle.
-The production Docker runtime bundle registers this surface for internal
-managed-image qualification and rebuild handoffs. Ordinary onboarding does not
-select it. The shared finalization surface extends rollback ownership for the
-existing Docker compatibility and startup recreation paths.
+The production Docker runtime bundle registers this surface for stock
+managed-image onboarding of the shipped agents and for managed rebuild
+handoffs. Portable onboarding, non-managed agents, and explicit custom
+Dockerfiles do not select it. The shared finalization surface extends rollback
+ownership for the existing Docker compatibility and startup recreation paths.
 
 The Docker adapter creates and validates a stopped replacement under an
 identity-derived staging name while the original remains running. It stages the
@@ -122,7 +123,7 @@ root-apply envelope, starts the exact replacement, and authenticates the
 image-owned completion for OpenClaw, Hermes, or LangChain Deep Agents Code.
 The watcher remains stopped and the journal remains authoritative throughout.
 These modules are intentionally absent from the production provider registry and
-cannot be selected by the hidden managed-image qualification path. Unit tests
+cannot be selected by the stock Docker managed-image path. Unit tests
 exercise the dormant Podman bootstrap components in isolation. Later slices must
 add persisted engine recovery, GPU and local inference, installer coverage,
 protected E2E qualification, and accepted product activation.
@@ -191,22 +192,21 @@ When recovery reports one of these records:
    identity-checked retirement path. Until that path ships, use a different
    sandbox name rather than deleting durable authority.
 
-Supported activation must include the identity-checked retirement path and
-protected recovery qualification. Current hidden Docker paths cannot create
-schema 1 or schema 2 legacy records, and the Podman candidate remains inert.
-Neither path is a supported product surface.
+Any future support for retiring schema 1 or schema 2 legacy records must include
+the identity-checked retirement path and protected recovery qualification. The
+stock Docker managed-image path cannot create these legacy records, and the
+dormant Podman candidate remains unsupported.
 
 ## Architectural disposition
 
 The runtime-provider bundle is the only bootstrap registration boundary. The
 production Docker bundle registers its create routing, replacement construction,
 native-to-compatibility fallback evidence, and deferred commit or rollback for
-internal managed-image qualification and rebuild handoffs. Central onboarding
-accepts that provider-neutral surface without a Docker or Podman selection
-branch. Ordinary onboarding continues to use the Dockerfile path. Tests register
-an MXC-style surface through the same bundle, render held launches for OpenClaw,
-Hermes, and LangChain Deep Agents Code, and exercise recovery phases across all
-three agents.
+stock managed-image onboarding and rebuild handoffs. Central onboarding accepts
+that provider-neutral surface without a Docker or Podman selection branch.
+Ordinary OpenShell Docker-driver onboarding selects it for the shipped OpenClaw, Hermes,
+and LangChain Deep Agents Code agents. Tests register an MXC-style surface
+through the same bundle and exercise recovery phases across all three agents.
 
 The coordinator remains the driver-neutral transaction authority: its receipt
 shapes, normalization, state transitions, and rollback proofs form one cohesive
@@ -221,8 +221,8 @@ production Docker registration and an MXC-style bootstrap surface through the
 same provider bundle contract.
 
 The native entrypoint and composed managed-bootstrap image runtime are compiled
-and packaged in every managed agent image. Internal Docker qualification and
-rebuild handoffs can select them; ordinary onboarding cannot. The image runtime
+and packaged in every managed agent image. Stock OpenShell Docker-driver onboarding and
+managed rebuild handoffs select them for the shipped agents. The image runtime
 composes the neutral managed-startup APIs with modes that consume the protected
 bootstrap envelope,
 bind shared-state authority to the exact attempt, publish an identity-bound
@@ -256,15 +256,16 @@ environment checks. The dependency direction is one-way: this
 managed-bootstrap composition imports managed-startup, while managed-startup
 does not import managed-bootstrap.
 The production Docker provider imports the provider-neutral create contract and
-registers its driver-specific implementation for internal managed-image
-qualification and rebuild handoffs. Podman remains absent from the production
+registers its driver-specific implementation for stock managed-image onboarding
+and rebuild handoffs. Podman remains absent from the production
 provider registry. OpenClaw, Hermes, and LangChain Deep Agents Code images
 compile and package the freestanding amd64 or arm64 native entrypoint, its
 non-executable shell body, the root-owned hold helper, the composed
 `managed-bootstrap/image-runtime.ts` bundle, and the complete capability union.
 Pull-request and publication workflows build the exact images and exercise the
 protected envelope, native bootstrap, production held-command renderer, and
-all-agent hold contracts. Ordinary onboarding continues to use Dockerfile builds,
-and no public interface advertises buildless support. Supported activation,
-canonical durable authority, and protected qualification remain tracked in
+all-agent hold contracts. Ordinary OpenShell Docker-driver onboarding selects the exact
+managed images for the shipped agents. Portable onboarding, non-managed agents,
+and explicit `--from` custom Dockerfiles retain their previous workload paths;
+native Podman remains disabled. Further provider expansion remains tracked in
 [epic #7744](https://github.com/NVIDIA/NemoClaw/issues/7744).

@@ -59,6 +59,18 @@ describe("onboard oclif command", () => {
     );
   });
 
+  it("accepts an exact managed runtime catalog without candidate activation", async () => {
+    await OnboardCliCommand.run(
+      ["--temp-managed-runtime-catalog", "managed-catalog.json"],
+      rootDir,
+    );
+
+    const [flags, deps] = vi.mocked(runOnboardAction).mock.calls[0]!;
+    expect(flags["temp-managed-runtime-catalog"]).toBe("managed-catalog.json");
+    expect(flags["temp-managed-runtime"]).toBeUndefined();
+    expect(deps).toBe(mocks.onboardRuntimeDeps);
+  });
+
   it("forwards typed sandbox GPU flags", async () => {
     await OnboardCliCommand.run(
       ["--non-interactive", "--yes", "--sandbox-gpu", "--sandbox-gpu-device", "nvidia.com/gpu=0"],
@@ -71,6 +83,21 @@ describe("onboard oclif command", () => {
         "sandbox-gpu": true,
         "sandbox-gpu-device": "nvidia.com/gpu=0",
         yes: true,
+      }),
+      mocks.onboardRuntimeDeps,
+    );
+  });
+
+  it("forwards the managed vLLM GPU device independently of sandbox GPU flags", async () => {
+    await OnboardCliCommand.run(
+      ["--non-interactive", "--vllm-gpu-device", "GPU-69adb14e-820e-bfb4-0993-171e73f68504"],
+      rootDir,
+    );
+
+    expect(runOnboardAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        "non-interactive": true,
+        "vllm-gpu-device": "GPU-69adb14e-820e-bfb4-0993-171e73f68504",
       }),
       mocks.onboardRuntimeDeps,
     );

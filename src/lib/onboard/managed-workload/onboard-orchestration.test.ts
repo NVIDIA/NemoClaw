@@ -23,6 +23,7 @@ import {
   createManagedWorkloadOnboardRuntime,
   prepareHermesPortableSandboxWorkloadForLifecycle,
   prepareOnboardSandboxWorkloadLaunch,
+  shouldActivateStockManagedRuntime,
 } from "./onboard-orchestration";
 
 function createFreshOnboardingRuntime(environment: Readonly<Record<string, string>>) {
@@ -94,6 +95,61 @@ async function expectUnsupportedHermesPortableSources(
 }
 
 describe("managed workload onboard orchestration", () => {
+  it("activates stock managed images only for shipped agents outside Portable", () => {
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        hermesPortableLifecycle: false,
+        agentName: "openclaw",
+      }),
+    ).toBe(true);
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        hermesPortableLifecycle: false,
+        agentName: "hermes",
+      }),
+    ).toBe(true);
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        hermesPortableLifecycle: false,
+        agentName: "langchain-deepagents-code",
+      }),
+    ).toBe(true);
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: true,
+        hermesPortableLifecycle: false,
+        agentName: "openclaw",
+      }),
+    ).toBe(false);
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        hermesPortableLifecycle: false,
+        agentName: "nemocua",
+      }),
+    ).toBe(false);
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        hermesPortableLifecycle: false,
+        agentName: "pi",
+      }),
+    ).toBe(false);
+  });
+
+  it("does not activate stock managed images for Hermes Portable (#9634)", () => {
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        hermesPortableLifecycle: true,
+        agentName: "hermes",
+      }),
+    ).toBe(false);
+  });
+
   it("selects only the shipped Hermes Dockerfile fallback without profile or prebuild work", async () => {
     const expectedDockerfilePath = "/workspace/agents/hermes/Dockerfile";
     const ensurePreparedProfile = vi.fn(() => null);

@@ -41,6 +41,12 @@ runs:
       shell: bash
       run: npm install --ignore-scripts
 
+    - name: Verify reviewed runtime bundles
+      shell: bash
+      run: |
+        npm --prefix tools/mcp-tool-discovery-runtime ci --ignore-scripts --no-audit --no-fund
+        npm --prefix tools/mcp-tool-discovery-runtime run bundle:reviewed:check
+
     - name: Validate config schemas
       shell: bash
       run: npm run validate:configs

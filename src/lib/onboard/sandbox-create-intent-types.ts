@@ -100,7 +100,7 @@ export type MaterializeSandboxCreatePlanInput = {
   runProviderPreDeleteCleanup(): void;
   upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],
-    options: { replaceExisting: true },
+    options: { replaceExisting: true; allowedSandboxes: readonly [string] },
   ): string[];
   getHermesToolGatewayProviderName(sandboxName: string): string;
   discloseInitialSandboxPolicy?(policy: InitialSandboxPolicy): void;
