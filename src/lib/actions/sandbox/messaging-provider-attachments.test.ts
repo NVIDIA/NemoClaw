@@ -116,6 +116,58 @@ describe("messaging provider attachment lifecycle", () => {
     expect(fixture.spy).toHaveBeenCalledTimes(2);
   });
 
+  it("rolls back an attachment when confirmation fails", () => {
+    const fixture = queuedRunner([
+      result(EXACT_PROVIDER),
+      result("No providers attached to sandbox alpha."),
+      result("Attached provider alpha-discord-bridge"),
+      result("gateway unavailable", 1),
+      result("Detached provider alpha-discord-bridge"),
+    ]);
+
+    expect(() =>
+      restoreChannelMessagingProviderAttachments(
+        "alpha",
+        hermesDiscordPlan(),
+        "discord",
+        fixture.run,
+      ),
+    ).toThrow(/gateway unavailable/u);
+    expect(fixture.spy.mock.calls.at(-1)?.[0]).toEqual([
+      "sandbox",
+      "provider",
+      "detach",
+      "alpha",
+      "alpha-discord-bridge",
+    ]);
+  });
+
+  it("rolls back an attachment when confirmation omits it", () => {
+    const fixture = queuedRunner([
+      result(EXACT_PROVIDER),
+      result("No providers attached to sandbox alpha."),
+      result("Attached provider alpha-discord-bridge"),
+      result("No providers attached to sandbox alpha."),
+      result("provider was not attached to sandbox alpha"),
+    ]);
+
+    expect(() =>
+      restoreChannelMessagingProviderAttachments(
+        "alpha",
+        hermesDiscordPlan(),
+        "discord",
+        fixture.run,
+      ),
+    ).toThrow(/did not confirm provider 'alpha-discord-bridge'/u);
+    expect(fixture.spy.mock.calls.at(-1)?.[0]).toEqual([
+      "sandbox",
+      "provider",
+      "detach",
+      "alpha",
+      "alpha-discord-bridge",
+    ]);
+  });
+
   it("does not inspect attachments for a channel without credential bindings", () => {
     const fixture = queuedRunner([]);
 

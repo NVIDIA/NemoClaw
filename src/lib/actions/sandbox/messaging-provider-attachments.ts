@@ -134,13 +134,16 @@ export function restoreChannelMessagingProviderAttachments(
           commandOutput(result) || `Failed to attach provider '${binding.providerName}'.`,
         );
       }
+      // The attach command has crossed the mutation boundary. Record it before
+      // observation so a failed or negative confirmation still compensates
+      // only the provider that was absent at the initial attachment check.
+      newlyAttached.push(binding.providerName);
       const attachedAfter = listMessagingProviderAttachments(sandboxName, run);
       if (!attachedAfter.has(binding.providerName)) {
         throw new Error(
           `OpenShell did not confirm provider '${binding.providerName}' was attached to '${sandboxName}'.`,
         );
       }
-      newlyAttached.push(binding.providerName);
     }
     return newlyAttached;
   } catch (error) {
