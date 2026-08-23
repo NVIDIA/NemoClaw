@@ -152,12 +152,19 @@ function packageOptions(spawnSyncImpl: SpawnSyncLike, lstatSync = trustedLstat) 
   };
 }
 
-it("uses one complete effective systemd snapshot before service state changes (#9705)", () => {
+it("accepts omitted empty systemd command lists before service state changes (#9705)", () => {
   const events: string[] = [];
   const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
     events.push(args.slice(1).join(" "));
     return args.includes("show")
-      ? spawnResult(0, "", systemdSnapshot(NEMOCLAW_UNIT, NEMOCLAW_GATEWAY))
+      ? spawnResult(
+          0,
+          "",
+          systemdSnapshot(NEMOCLAW_UNIT, NEMOCLAW_GATEWAY)
+            .split("\n")
+            .filter((line) => !/^Exec(?:Condition|StartPost|Reload|Stop|StopPost)=$/u.test(line))
+            .join("\n"),
+        )
       : spawnResult();
   });
 

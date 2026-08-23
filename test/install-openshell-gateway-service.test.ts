@@ -83,7 +83,7 @@ function writeSystemctlStub(
         : [
             `    printf 'FragmentPath=%s\\n' ${JSON.stringify(options.fragmentPath ?? unitPath)}`,
             `    printf 'ExecStart={ path=%s ; argv[]=%s ; ignore_errors=no ; }\\n' ${JSON.stringify(gatewayBin)} ${JSON.stringify(gatewayBin)}`,
-            `    printf '%s\\n' 'DropInPaths=' 'ExecCondition=' ${JSON.stringify(`ExecStartPre={ path=${gatewayBin} ; argv[]=${gatewayBin} generate-certs --output-dir \${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal ; ignore_errors=no ; }`)} 'ExecStartPost=' 'ExecReload=' 'ExecStop=' 'ExecStopPost='`,
+            `    printf '%s\\n' 'DropInPaths=' ${JSON.stringify(`ExecStartPre={ path=${gatewayBin} ; argv[]=${gatewayBin} generate-certs --output-dir \${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal ; ignore_errors=no ; }`)}`,
           ]),
       "    ;;",
       '  "--user stop nemoclaw-openshell-gateway.service")',
@@ -1291,7 +1291,7 @@ describe("install.sh OpenShell gateway service", () => {
     },
   );
 
-  it("uses complete atomic snapshots before stopping the trusted service (#9705)", () => {
+  it("accepts omitted empty command lists in atomic snapshots before stopping the trusted service (#9705)", () => {
     const home = makeTempRoot();
     const gatewayBin = userGatewayBin(home);
     const staged = stageService(home, gatewayBin);

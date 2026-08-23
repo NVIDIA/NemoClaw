@@ -1209,6 +1209,7 @@ function findSystemdUserServiceActivation(
 function parseSystemctlShow(
   output: string,
   expectedProperties: readonly string[],
+  omittedEmptyProperties: readonly string[] = [],
 ): Record<string, string> | null {
   const expected = new Set(expectedProperties);
   const properties: Record<string, string> = {};
@@ -1218,6 +1219,9 @@ function parseSystemctlShow(
     const property = separator > 0 ? line.slice(0, separator) : "";
     if (!expected.has(property) || Object.hasOwn(properties, property)) return null;
     properties[property] = line.slice(separator + 1).trim();
+  }
+  for (const property of omittedEmptyProperties) {
+    if (expected.has(property) && !Object.hasOwn(properties, property)) properties[property] = "";
   }
   return expectedProperties.every((property) => Object.hasOwn(properties, property))
     ? properties
@@ -1246,6 +1250,15 @@ const SYSTEMD_SERVICE_IDENTITY_PROPERTIES = [
   "FragmentPath",
   "ExecStart",
   "DropInPaths",
+  "ExecCondition",
+  "ExecStartPre",
+  "ExecStartPost",
+  "ExecReload",
+  "ExecStop",
+  "ExecStopPost",
+] as const;
+
+const SYSTEMD_OPTIONAL_EMPTY_COMMAND_PROPERTIES = [
   "ExecCondition",
   "ExecStartPre",
   "ExecStartPost",
@@ -1573,7 +1586,11 @@ export function assertNoCompetingOpenShellGatewayUserService(
     }
     let classifiedMetadata = metadata.stdout ?? "";
     if (canonicalDefaultPortService) {
-      const properties = parseSystemctlShow(classifiedMetadata, queriedProperties);
+      const properties = parseSystemctlShow(
+        classifiedMetadata,
+        queriedProperties,
+        SYSTEMD_OPTIONAL_EMPTY_COMMAND_PROPERTIES,
+      );
       if (!properties) {
         throw new OpenShellGatewayServiceTrustError(
           `Could not inspect same-user service ${serviceName} because systemd returned malformed metadata.`,
@@ -1633,7 +1650,11 @@ function validateSystemdServiceIdentity(
     SYSTEMCTL_USER_INSPECTION_TIMEOUT_MS,
   );
   if (!result.ok) return { diagnostic: result.diagnostic, ok: false, reason: result.reason };
-  const properties = parseSystemctlShow(result.stdout ?? "", SYSTEMD_SERVICE_IDENTITY_PROPERTIES);
+  const properties = parseSystemctlShow(
+    result.stdout ?? "",
+    SYSTEMD_SERVICE_IDENTITY_PROPERTIES,
+    SYSTEMD_OPTIONAL_EMPTY_COMMAND_PROPERTIES,
+  );
   if (!properties) {
     return {
       ok: false,
@@ -2040,11 +2061,11 @@ export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
     SYSTEMCTL_USER_INSPECTION_TIMEOUT_MS,
   );
   if (!result.ok) return null;
-  const properties = parseSystemctlShow(result.stdout ?? "", [
-    ...SYSTEMD_SERVICE_IDENTITY_PROPERTIES,
-    "ActiveState",
-    "MainPID",
-  ]);
+  const properties = parseSystemctlShow(
+    result.stdout ?? "",
+    [...SYSTEMD_SERVICE_IDENTITY_PROPERTIES, "ActiveState", "MainPID"],
+    SYSTEMD_OPTIONAL_EMPTY_COMMAND_PROPERTIES,
+  );
   if (!properties) return null;
   const identity = validateSystemdServiceIdentityFromProperties(service, properties, opts);
   if (properties.ActiveState !== "active" || !identity.ok) {

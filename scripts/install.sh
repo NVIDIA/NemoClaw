@@ -1984,9 +1984,8 @@ read_openshell_gateway_user_service_snapshot() {
   done <<<"$service_output"
 
   if [[ "$fragment_count" -ne 1 || "$exec_start_count" -ne 1 || "$drop_in_count" -ne 1 ||
-    "$condition_count" -ne 1 ||
-    "$start_pre_count" -ne 1 || "$start_post_count" -ne 1 || "$reload_count" -ne 1 ||
-    "$stop_count" -ne 1 || "$stop_post_count" -ne 1 ]]; then
+    "$condition_count" -gt 1 || "$start_pre_count" -gt 1 || "$start_post_count" -gt 1 ||
+    "$reload_count" -gt 1 || "$stop_count" -gt 1 || "$stop_post_count" -gt 1 ]]; then
     OPENSHELL_GATEWAY_SERVICE_SNAPSHOT_ERROR="The service metadata query returned an incomplete identity snapshot."
     return 1
   fi
@@ -4864,11 +4863,33 @@ revalidate_trusted_legacy_openshell_gateway_process() {
   fi
 }
 
+legacy_openshell_gateway_process_stopped() {
+  local pid_file="${1:-}" gateway_name="${2:-}" gateway_port="${3:-}"
+  local expected_snapshot="${4:-}" old_openshell_version="${5:-}"
+  local expected_pid="${6:-}" expected_pid_file_identity="${7:-}" current_snapshot
+  if ! inspect_trusted_legacy_openshell_gateway_process \
+    "$pid_file" "$gateway_name" "$gateway_port" "$old_openshell_version"; then
+    inspect_trusted_legacy_openshell_gateway_process \
+      "$pid_file" "$gateway_name" "$gateway_port" "$old_openshell_version" \
+      || error "Could not verify that the legacy OpenShell gateway process stopped."
+  fi
+  if [[ "$LEGACY_GATEWAY_PROCESS_PID" != "$expected_pid" ||
+    "$LEGACY_GATEWAY_PID_FILE_IDENTITY" != "$expected_pid_file_identity" ]]; then
+    error "Refusing to continue legacy OpenShell gateway retirement because its target identity changed."
+  fi
+  [[ "$LEGACY_GATEWAY_PROCESS_STATUS" == "stale" ]] && return 0
+  current_snapshot="$(legacy_gateway_process_snapshot)"
+  [[ "$LEGACY_GATEWAY_PROCESS_STATUS" == "running" &&
+    "$current_snapshot" == "$expected_snapshot" ]] && return 1
+  error "Refusing to continue legacy OpenShell gateway retirement because its target identity changed."
+}
+
 stop_legacy_openshell_gateway_process() {
   [ "$(uname -s)" = "Linux" ] || return 1
 
   local old_openshell_version="${1:-}"
   local gateway_name gateway_port runtime_dir pid_file pid pid_file_identity expected_snapshot attempt
+  local stopped=false
   gateway_port="$(resolve_nemoclaw_gateway_port)" || return 2
   gateway_name="$(nemoclaw_gateway_name)" || return 2
   if [ -n "${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-}" ]; then
@@ -4895,21 +4916,36 @@ stop_legacy_openshell_gateway_process() {
   kill "$pid" 2>/dev/null \
     || error "Could not stop the recorded legacy OpenShell gateway process ${pid}."
   for attempt in {1..50}; do
-    kill -0 "$pid" 2>/dev/null || break
+    if legacy_openshell_gateway_process_stopped \
+      "$pid_file" "$gateway_name" "$gateway_port" "$expected_snapshot" \
+      "$old_openshell_version" "$pid" "$pid_file_identity"; then
+      stopped=true
+      break
+    fi
     sleep 0.2
   done
-  if kill -0 "$pid" 2>/dev/null; then
+  if [[ "$stopped" == "false" ]]; then
     revalidate_trusted_legacy_openshell_gateway_process \
       "$pid_file" "$gateway_name" "$gateway_port" "$expected_snapshot" "$old_openshell_version"
-    kill -KILL "$pid" 2>/dev/null \
-      || error "Could not terminate the recorded legacy OpenShell gateway process ${pid}."
+    if ! kill -KILL "$pid" 2>/dev/null; then
+      legacy_openshell_gateway_process_stopped \
+        "$pid_file" "$gateway_name" "$gateway_port" "$expected_snapshot" \
+        "$old_openshell_version" "$pid" "$pid_file_identity" \
+        || error "Could not terminate the recorded legacy OpenShell gateway process ${pid}."
+      stopped=true
+    fi
     for attempt in {1..10}; do
-      kill -0 "$pid" 2>/dev/null || break
+      if legacy_openshell_gateway_process_stopped \
+        "$pid_file" "$gateway_name" "$gateway_port" "$expected_snapshot" \
+        "$old_openshell_version" "$pid" "$pid_file_identity"; then
+        stopped=true
+        break
+      fi
       sleep 0.1
     done
   fi
-  kill -0 "$pid" 2>/dev/null \
-    && error "The recorded legacy OpenShell gateway process ${pid} did not stop."
+  [[ "$stopped" == "true" ]] \
+    || error "The recorded legacy OpenShell gateway process ${pid} did not stop."
   remove_trusted_legacy_gateway_pid_file "$pid_file" "$pid_file_identity"
 }
 

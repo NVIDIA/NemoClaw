@@ -310,6 +310,53 @@ it.skipIf(process.platform !== "linux")(
 );
 
 it.skipIf(process.platform !== "linux")(
+  "accepts a gateway exit that races with the final termination signal (#9705)",
+  async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-retirement-pid-exit-race-"));
+    tempRoots.push(root);
+    const home = path.join(root, "home");
+    const runtimeDir = path.join(root, "runtime");
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    const gateway = await spawnGateway(home, 8080);
+    const pidFile = path.join(runtimeDir, "openshell-gateway.pid");
+    fs.writeFileSync(pidFile, `${String(gateway.pid)}\n`);
+
+    try {
+      const result = runInstallerBody(
+        home,
+        [
+          `gateway_pid=${String(gateway.pid)}`,
+          "kill() {",
+          '  if [[ "${1:-}" == "-KILL" ]]; then',
+          '    builtin kill -KILL "$2" 2>/dev/null || true',
+          "    return 1",
+          "  fi",
+          '  [[ "${1:-}" == "$gateway_pid" ]] && return 0',
+          '  builtin kill "$@"',
+          "}",
+          "sleep() { :; }",
+          "stop_legacy_openshell_gateway_process",
+        ].join("\n"),
+        {
+          NEMOCLAW_GATEWAY_PORT: "8080",
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: runtimeDir,
+        },
+      );
+
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(fs.existsSync(pidFile)).toBe(false);
+    } finally {
+      try {
+        process.kill(gateway.pid, "SIGKILL");
+      } catch {
+        // The expected successful path already stopped the gateway.
+      }
+      gateway.supervisor.kill("SIGKILL");
+    }
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
   "stops a historical gateway bound by its runtime marker when the host adds an OpenShell variable (#9705)",
   async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-retirement-old-runtime-"));
