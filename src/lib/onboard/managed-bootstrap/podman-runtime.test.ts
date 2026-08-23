@@ -42,6 +42,7 @@ import {
   createPodmanManagedBootstrapSurface,
   finishCommittedPodmanBootstrap,
   observePodmanBootstrapReplacementReady,
+  preparePodmanManagedHermesStateAuthority,
   preparePodmanManagedWorkspaceAuthority,
   resolvePodmanManagedGatewayAuthority,
   renderPodmanReplacementEnvironment,
@@ -398,6 +399,67 @@ describe("Podman managed-bootstrap runtime surface", () => {
     expect(prepareManagedWorkspaceRoot).toHaveBeenCalledExactlyOnceWith({
       path: mountpoint,
       gid: 999,
+    });
+  });
+
+  it("restores the exact owned Hermes state-volume root before replacement start", () => {
+    const mountpoint =
+      "/home/test/.local/share/containers/storage/volumes/nemoclaw-hermes-state-v1-alpha/_data";
+    const prepareManagedVolumeRoot = vi.fn(() => ({
+      path: mountpoint,
+      device: "8",
+      inode: "9002",
+      uid: 1000,
+      gid: 1000,
+      mode: 0o3770 as const,
+    }));
+    const labels = {
+      "io.nvidia.nemoclaw.hermes-state.managed": "true",
+      "io.nvidia.nemoclaw.hermes-state.schema": "1",
+      "io.nvidia.nemoclaw.hermes-state.sandbox": "alpha",
+      "io.nvidia.nemoclaw.hermes-state.target": "/sandbox/.hermes",
+    };
+    const capture = vi.fn(() => ({
+      status: 0,
+      stdout: `nemoclaw-hermes-state-v1-alpha\n${mountpoint}\n${JSON.stringify(labels)}\n`,
+      stderr: "",
+      error: undefined,
+    }));
+
+    preparePodmanManagedHermesStateAuthority({
+      engine: { ...engine(), capture, prepareManagedVolumeRoot },
+      inspect: {
+        Mounts: [
+          {
+            Type: "volume",
+            Name: "nemoclaw-hermes-state-v1-alpha",
+            Driver: "local",
+            Source: mountpoint,
+            Destination: "/sandbox/.hermes",
+            RW: true,
+          },
+        ],
+      },
+      sandboxName: "alpha",
+      agentUid: 1000,
+      agentGid: 1000,
+    });
+
+    expect(capture).toHaveBeenCalledExactlyOnceWith(
+      [
+        "volume",
+        "inspect",
+        "--format",
+        "{{.Name}}\n{{.Mountpoint}}\n{{json .Labels}}",
+        "nemoclaw-hermes-state-v1-alpha",
+      ],
+      15_000,
+    );
+    expect(prepareManagedVolumeRoot).toHaveBeenCalledExactlyOnceWith({
+      path: mountpoint,
+      uid: 1000,
+      gid: 1000,
+      mode: 0o3770,
     });
   });
 

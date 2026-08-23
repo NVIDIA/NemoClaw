@@ -178,6 +178,7 @@ describe("current Podman runtime provider", () => {
     });
 
     expect(engine.prepareManagedWorkspaceRoot).toBeTypeOf("function");
+    expect(engine.prepareManagedVolumeRoot).toBeTypeOf("function");
   });
 
   it("projects native gateway authority independently from the portable profile", () => {

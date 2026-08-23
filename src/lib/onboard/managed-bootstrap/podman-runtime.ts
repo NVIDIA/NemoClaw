@@ -27,6 +27,11 @@ import { shouldOmitOpenShellOciImageUser } from "../docker-gpu-patch-clone";
 import type { DockerContainerInspect } from "../docker-gpu-patch-types";
 import { openshellSandboxCommandEnvValue } from "../docker-startup-command-env";
 import { resolveGatewayName, resolveGatewayStateDirName } from "../gateway-binding";
+import {
+  managedHermesStateVolumeLabels,
+  managedHermesStateVolumeName,
+  MANAGED_HERMES_STATE_ROOT,
+} from "../managed-workload/hermes-state-volume";
 import type { ManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import type { RuntimeProviderBootstrapSurface } from "../runtime-provider/contract";
 import {
@@ -704,6 +709,88 @@ export function preparePodmanManagedWorkspaceAuthority(input: {
     !/^\d+$/u.test(receipt.inode)
   ) {
     throw new Error("Managed bootstrap Podman workspace-root receipt is invalid.");
+  }
+}
+
+/** Restore Hermes' exact writable state-root contract before the replacement starts. */
+export function preparePodmanManagedHermesStateAuthority(input: {
+  readonly engine: PodmanBoundContainerEngine;
+  readonly inspect: JsonRecord;
+  readonly sandboxName: string;
+  readonly agentUid: number;
+  readonly agentGid: number;
+}): void {
+  const expectedName = managedHermesStateVolumeName(input.sandboxName);
+  if (!SAFE_RESOURCE_NAME.test(expectedName) || !Array.isArray(input.inspect.Mounts)) {
+    throw new Error("Managed bootstrap Podman Hermes state-volume identity is invalid.");
+  }
+  const matches = input.inspect.Mounts.map((value) => record(value, "mount")).filter(
+    (mount) => mount.Destination === MANAGED_HERMES_STATE_ROOT,
+  );
+  if (matches.length !== 1) {
+    throw new Error("Managed bootstrap Podman Hermes state must resolve to one exact mount.");
+  }
+  const mount = matches[0] as JsonRecord;
+  const mountpoint = String(mount.Source ?? "");
+  if (
+    mount.Type !== "volume" ||
+    mount.Name !== expectedName ||
+    mount.RW !== true ||
+    (mount.Driver !== undefined && mount.Driver !== "" && mount.Driver !== "local") ||
+    !path.isAbsolute(mountpoint) ||
+    path.normalize(mountpoint) !== mountpoint ||
+    mountpoint === path.parse(mountpoint).root
+  ) {
+    throw new Error("Managed bootstrap Podman Hermes state-volume authority is invalid.");
+  }
+  const expectedLabels = managedHermesStateVolumeLabels(input.sandboxName);
+  const inspected = capture(
+    input.engine,
+    ["volume", "inspect", "--format", "{{.Name}}\n{{.Mountpoint}}\n{{json .Labels}}", expectedName],
+    "Hermes state-volume inspection",
+    15_000,
+  ).stdout.trimEnd();
+  const separator = inspected.lastIndexOf("\n");
+  if (separator < 0) {
+    throw new Error("Managed bootstrap Podman Hermes state-volume evidence is incomplete.");
+  }
+  const identity = inspected.slice(0, separator);
+  let labels: unknown;
+  try {
+    labels = JSON.parse(inspected.slice(separator + 1));
+  } catch {
+    throw new Error("Managed bootstrap Podman Hermes state-volume labels are invalid.");
+  }
+  if (
+    identity !== `${expectedName}\n${mountpoint}` ||
+    !labels ||
+    typeof labels !== "object" ||
+    Array.isArray(labels) ||
+    !Object.entries(expectedLabels).every(
+      ([name, value]) => (labels as Record<string, unknown>)[name] === value,
+    )
+  ) {
+    throw new Error("Managed bootstrap Podman Hermes state-volume ownership changed.");
+  }
+  const prepare = input.engine.prepareManagedVolumeRoot;
+  if (!prepare) {
+    throw new Error("Managed bootstrap Podman volume-root preparation is unavailable.");
+  }
+  const receipt = prepare({
+    path: mountpoint,
+    uid: input.agentUid,
+    gid: input.agentGid,
+    mode: 0o3770,
+  });
+  if (
+    receipt.path !== mountpoint ||
+    receipt.uid !== input.agentUid ||
+    receipt.gid !== input.agentGid ||
+    receipt.mode !== 0o3770 ||
+    !/^\d+$/u.test(receipt.device) ||
+    !/^\d+$/u.test(receipt.inode)
+  ) {
+    throw new Error("Managed bootstrap Podman Hermes state-root receipt is invalid.");
   }
 }
 
@@ -1945,6 +2032,15 @@ export function createPodmanManagedBootstrapAdapter(
         sandboxId: current.held.sandboxId,
         agentGid: snapshot.agentIdentity.gid,
       });
+      if (handle.plan.profile.agent === "hermes") {
+        preparePodmanManagedHermesStateAuthority({
+          engine: options.engine,
+          inspect: current.rawInspect,
+          sandboxName: handle.sandbox,
+          agentUid: snapshot.agentIdentity.uid,
+          agentGid: snapshot.agentIdentity.gid,
+        });
+      }
       current.watcherLease.resumeForObservationAndProve();
       current.imageTransaction = startPodmanBootstrapImageTransaction({
         engine: options.engine,

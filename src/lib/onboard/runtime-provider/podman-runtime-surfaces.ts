@@ -245,6 +245,19 @@ export function createCurrentPodmanOperationEngine(
             }
             return prepare(input);
           },
+          prepareManagedVolumeRoot: (
+            input: Parameters<
+              NonNullable<PodmanBoundContainerEngine["prepareManagedVolumeRoot"]>
+            >[0],
+          ) => {
+            const prepare = resolve().prepareManagedVolumeRoot;
+            if (!prepare) {
+              throw new Error(
+                "Podman managed-bootstrap engine did not expose volume-root preparation.",
+              );
+            }
+            return prepare(input);
+          },
         }
       : {}),
   });

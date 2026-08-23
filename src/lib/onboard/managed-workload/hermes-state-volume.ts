@@ -118,7 +118,9 @@ function boundedDetail(result: ContainerEngineRunResult): string {
   return commandOutput(result).replace(/\s+/gu, " ").slice(0, 500) || "Docker command failed";
 }
 
-function expectedLabels(sandboxName: string): Readonly<Record<string, string>> {
+export function managedHermesStateVolumeLabels(
+  sandboxName: string,
+): Readonly<Record<string, string>> {
   return Object.freeze({
     [MANAGED_LABEL]: "true",
     [SCHEMA_LABEL]: "1",
@@ -223,7 +225,7 @@ function removeOwnedVolume(
   if (observation.status === "failed") {
     return { status: "failed", detail: observation.detail, volumeName };
   }
-  if (!labelsMatch(observation.labels, expectedLabels(sandboxName))) {
+  if (!labelsMatch(observation.labels, managedHermesStateVolumeLabels(sandboxName))) {
     return {
       status: "not-owned",
       detail: "the exact NemoClaw ownership labels are absent or changed",
@@ -257,7 +259,7 @@ export function prepareManagedHermesStateVolume(
           throw new Error("Managed Hermes state volume requires runtime provider authority.");
         })());
   const volumeName = managedHermesStateVolumeName(context.sandboxName);
-  const labels = expectedLabels(context.sandboxName);
+  const labels = managedHermesStateVolumeLabels(context.sandboxName);
   const before = inspectVolume(volumeName, runDocker);
   if (before.status === "failed") {
     throw new Error(`Cannot inspect managed Hermes state volume '${volumeName}': ${before.detail}`);

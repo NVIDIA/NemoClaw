@@ -257,6 +257,42 @@ describe("Podman container engine command adapter", () => {
     );
   });
 
+  it("prepares one exact managed-bootstrap volume root without recursive ownership changes", ({
+    onTestFinished,
+  }) => {
+    const directory = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-volume-")),
+    );
+    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const capture = vi.fn<ContainerEngineCommandCapture>((_executable, args) => ({
+      status: 0,
+      stdout: args.includes("--format=%u:%g:%a:%F") ? "1000:1000:3770:directory\n" : "",
+      stderr: "",
+    }));
+    const engine = createPodmanContainerEngine({
+      operation: "managed-bootstrap",
+      socketAuthority: AUTHORITY,
+      executable: "/usr/bin/podman",
+      executableAuthorityDeps: executableAuthorityDeps(),
+      assertAuthority: vi.fn(),
+      capture,
+    });
+
+    expect(
+      engine.prepareManagedVolumeRoot?.({
+        path: directory,
+        uid: 1000,
+        gid: 1000,
+        mode: 0o3770,
+      }),
+    ).toMatchObject({ path: directory, uid: 1000, gid: 1000, mode: 0o3770 });
+    expect(capture.mock.calls.map((call) => call[1])).toEqual([
+      ["unshare", "chown", "--no-dereference", "1000:1000", "--", directory],
+      ["unshare", "chmod", "3770", "--", directory],
+      ["unshare", "stat", "--format=%u:%g:%a:%F", "--", directory],
+    ]);
+  });
+
   it("shares only socket authority across real operation-scoped engines", () => {
     const common = {
       socketAuthority: AUTHORITY,

@@ -63,6 +63,15 @@ export interface PodmanManagedWorkspaceRootReceipt {
   readonly mode: 0o1775;
 }
 
+export interface PodmanManagedVolumeRootReceipt {
+  readonly path: string;
+  readonly device: string;
+  readonly inode: string;
+  readonly uid: number;
+  readonly gid: number;
+  readonly mode: 0o1775 | 0o3770;
+}
+
 /** Podman engine whose exact socket and executable authority can be revalidated on demand. */
 export interface PodmanBoundContainerEngine extends PodmanContainerEngine {
   readonly assertAuthority: () => void;
@@ -71,6 +80,13 @@ export interface PodmanBoundContainerEngine extends PodmanContainerEngine {
     readonly path: string;
     readonly gid: number;
   }) => PodmanManagedWorkspaceRootReceipt;
+  /** Exact, non-recursive local user-namespace mutation for one managed volume root. */
+  readonly prepareManagedVolumeRoot?: (input: {
+    readonly path: string;
+    readonly uid: number;
+    readonly gid: number;
+    readonly mode: 0o1775 | 0o3770;
+  }) => PodmanManagedVolumeRootReceipt;
 }
 
 export function resolvePodmanExecutablePath(env: NodeJS.ProcessEnv = process.env): string {
@@ -241,12 +257,14 @@ export function createPodmanContainerEngine(
     assertAuthority: () => assertBoundAuthority(true),
   };
   if (!protectsRuntimeMutation) return Object.freeze(boundEngine);
-  const prepareManagedWorkspaceRoot = (input: {
+  const prepareManagedVolumeRoot = (input: {
     readonly path: string;
+    readonly uid: number;
     readonly gid: number;
-  }): PodmanManagedWorkspaceRootReceipt => {
+    readonly mode: 0o1775 | 0o3770;
+  }): PodmanManagedVolumeRootReceipt => {
     if (options.operation !== "managed-bootstrap") {
-      throw new Error("Podman workspace-root preparation requires managed-bootstrap authority.");
+      throw new Error("Podman volume-root preparation requires managed-bootstrap authority.");
     }
     if (
       !path.isAbsolute(input.path) ||
@@ -254,14 +272,22 @@ export function createPodmanContainerEngine(
       input.path === path.parse(input.path).root ||
       fs.realpathSync(input.path) !== input.path
     ) {
-      throw new Error("Podman managed workspace mountpoint is invalid.");
+      throw new Error("Podman managed volume mountpoint is invalid.");
     }
-    if (!Number.isSafeInteger(input.gid) || input.gid < 1 || input.gid > 2_147_483_647) {
-      throw new Error("Podman managed workspace group identity is invalid.");
+    if (
+      !Number.isSafeInteger(input.uid) ||
+      input.uid < 0 ||
+      input.uid > 2_147_483_647 ||
+      !Number.isSafeInteger(input.gid) ||
+      input.gid < 1 ||
+      input.gid > 2_147_483_647 ||
+      (input.mode !== 0o1775 && input.mode !== 0o3770)
+    ) {
+      throw new Error("Podman managed volume root metadata is invalid.");
     }
     const before = fs.lstatSync(input.path, { bigint: true });
     if (!before.isDirectory() || before.isSymbolicLink() || before.nlink < 1n) {
-      throw new Error("Podman managed workspace mountpoint is not one stable directory.");
+      throw new Error("Podman managed volume mountpoint is not one stable directory.");
     }
     const runLocal = (args: readonly string[], action: string) => {
       const result = boundEngine.captureHost(args, 15_000);
@@ -276,23 +302,31 @@ export function createPodmanContainerEngine(
           .trim()
           .slice(-600);
         throw new Error(
-          `Podman managed workspace ${action} failed (exit ${String(result.status)}): ${detail}`,
+          `Podman managed volume ${action} failed (exit ${String(result.status)}): ${detail}`,
         );
       }
       return result;
     };
     runLocal(
-      ["unshare", "chown", "--no-dereference", `0:${String(input.gid)}`, "--", input.path],
+      [
+        "unshare",
+        "chown",
+        "--no-dereference",
+        `${String(input.uid)}:${String(input.gid)}`,
+        "--",
+        input.path,
+      ],
       "ownership preparation",
     );
-    runLocal(["unshare", "chmod", "1775", "--", input.path], "mode preparation");
+    const mode = input.mode.toString(8);
+    runLocal(["unshare", "chmod", mode, "--", input.path], "mode preparation");
     const observed = runLocal(
       ["unshare", "stat", "--format=%u:%g:%a:%F", "--", input.path],
       "authority observation",
     ).stdout.trim();
-    if (observed !== `0:${String(input.gid)}:1775:directory`) {
+    if (observed !== `${String(input.uid)}:${String(input.gid)}:${mode}:directory`) {
       throw new Error(
-        `Podman managed workspace authority is invalid after preparation (${observed || "empty observation"}).`,
+        `Podman managed volume authority is invalid after preparation (${observed || "empty observation"}).`,
       );
     }
     const after = fs.lstatSync(input.path, { bigint: true });
@@ -302,20 +336,34 @@ export function createPodmanContainerEngine(
       after.dev !== before.dev ||
       after.ino !== before.ino
     ) {
-      throw new Error("Podman managed workspace mountpoint changed during preparation.");
+      throw new Error("Podman managed volume mountpoint changed during preparation.");
     }
     return Object.freeze({
       path: input.path,
       device: after.dev.toString(),
       inode: after.ino.toString(),
-      uid: 0 as const,
+      uid: input.uid,
       gid: input.gid,
-      mode: 0o1775 as const,
+      mode: input.mode,
     });
+  };
+  const prepareManagedWorkspaceRoot = (input: {
+    readonly path: string;
+    readonly gid: number;
+  }): PodmanManagedWorkspaceRootReceipt => {
+    const receipt = prepareManagedVolumeRoot({
+      path: input.path,
+      uid: 0,
+      gid: input.gid,
+      mode: 0o1775,
+    });
+    return Object.freeze({ ...receipt, uid: 0 as const, mode: 0o1775 as const });
   };
   return Object.freeze({
     ...boundEngine,
-    ...(options.operation === "managed-bootstrap" ? { prepareManagedWorkspaceRoot } : {}),
+    ...(options.operation === "managed-bootstrap"
+      ? { prepareManagedVolumeRoot, prepareManagedWorkspaceRoot }
+      : {}),
     captureHost: () => {
       throw new Error(`Podman ${options.operation} forbids ambient host command capture.`);
     },
