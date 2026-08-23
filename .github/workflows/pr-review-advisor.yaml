@@ -293,7 +293,11 @@ jobs:
       - name: Publish job summary
         if: always()
         run: |
-          SUMMARY_PATH="$GITHUB_WORKSPACE/artifacts/$PR_REVIEW_ADVISOR_ARTIFACT_DIR/pr-review-advisor-summary.md"
+          if [ -n "$PR_REVIEW_ADVISOR_INTEREST" ]; then
+            SUMMARY_PATH="$GITHUB_WORKSPACE/artifacts/$PR_REVIEW_ADVISOR_ARTIFACT_DIR/pr-review-$PR_REVIEW_ADVISOR_INTEREST-summary.md"
+          else
+            SUMMARY_PATH="$GITHUB_WORKSPACE/artifacts/$PR_REVIEW_ADVISOR_ARTIFACT_DIR/pr-review-advisor-summary.md"
+          fi
           if [ -f "$SUMMARY_PATH" ]; then
             cat "$SUMMARY_PATH" >> "$GITHUB_STEP_SUMMARY"
           else

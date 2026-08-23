@@ -50,6 +50,24 @@ export function documentationSpecialistTools(
     : [];
 }
 
+export function renderSpecialistSummary(interest: AdvisorInterest, text: string): string {
+  const title = interest
+    .split("-")
+    .map((part) => part[0]!.toUpperCase() + part.slice(1))
+    .join(" / ");
+  return `# PR Review Advisor — ${title} specialist\n\n> Evidence for synthesis and human review. The primary advisor remains authoritative.\n\n${text.trim()}\n`;
+}
+
+export function writeSpecialistSummary(
+  outDir: string,
+  interest: AdvisorInterest,
+  text: string,
+): string {
+  const file = path.join(outDir, `pr-review-${interest}-summary.md`);
+  fs.writeFileSync(file, renderSpecialistSummary(interest, text));
+  return file;
+}
+
 export function runSpecialistAdvisor(
   interest: AdvisorInterest,
   refs: { baseRef: string; headRef: string },
@@ -132,6 +150,7 @@ async function main(): Promise<void> {
   );
   const errors = advisorRunErrors(run);
   if (errors.length > 0) throw new Error(errors.join("; "));
+  writeSpecialistSummary(outDir, interest, run.text);
   if (!run.sessionFile) throw new Error("Pi did not persist a specialist JSONL session");
   const sessionStat = fs.lstatSync(run.sessionFile);
   if (!sessionStat.isFile() || sessionStat.isSymbolicLink()) {
