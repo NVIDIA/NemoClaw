@@ -412,10 +412,7 @@ function loadAuthority(
       inferencePeers,
     );
     if (!admittedAbsence.inference || sharing.disposition === "shared") {
-      assertPreparedHostLocalInferenceRuntimePresent(runtime.bundle, inferenceRow, inference, {
-        environment: input.env,
-        homeDir: input.homeDir,
-      });
+      assertPreparedHostLocalInferenceRuntimePresent(runtime.bundle, inferenceRow, inference);
     }
     const provider = prepareHermesPortableOllamaProviderRetirement({
       directory: runtime.inferenceStateDir,
@@ -515,7 +512,6 @@ export function runHermesPortableUninstall(
             target.runtime.bundle,
             target.inferenceRow,
             target.inference,
-            { environment: input.env, homeDir: input.homeDir },
           );
           continue;
         }
@@ -524,7 +520,6 @@ export function runHermesPortableUninstall(
           target.inferenceRow,
           target.inference,
           target.inferencePeers,
-          { environment: input.env, homeDir: input.homeDir },
         );
         if (result.status === "shared" || result.status === "retained") {
           throw new Error("Hermes Portable inference retirement changed custody");
@@ -543,7 +538,6 @@ export function runHermesPortableUninstall(
             target.runtime.bundle,
             target.inferenceRow,
             target.inference,
-            { environment: input.env, homeDir: input.homeDir },
           );
         }
       }

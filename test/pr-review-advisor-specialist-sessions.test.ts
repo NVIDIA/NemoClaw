@@ -8,10 +8,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { advisorTurnFlowErrors, resolveAdvisorTurnTools } from "../tools/advisors/session.mts";
-import {
-  requiredReadPreparationErrors,
-  requiredReadPreparationPrompt,
-} from "../tools/advisors/turn-protocol.mts";
 import { buildSynthesisTurn } from "../tools/pr-review-advisor/synthesis-turn.mts";
 import { ADVISOR_INTERESTS } from "../tools/pr-review-advisor/specialists.mts";
 import {
@@ -56,7 +52,6 @@ describe("specialist Pi session inputs", () => {
     const root = fixture();
     const inventory = validateSpecialistSessionDirectory(root);
     expect(Object.keys(inventory.files)).toEqual(ADVISOR_INTERESTS);
-    expect(inventory.totalBytes).toBeGreaterThan(0);
     expect(inventory.available).toEqual(ADVISOR_INTERESTS);
     expect(inventory.missing).toEqual([]);
   });
@@ -82,142 +77,30 @@ describe("specialist Pi session inputs", () => {
     },
   );
 
-  it("passes only available traces to synthesis and names missing domains", () => {
+  it("lets synthesis inspect available traces with read-only tools", () => {
     const root = fixture();
     fs.rmSync(path.join(root, specialistSessionFileName("documentation")));
     const turn = buildSynthesisTurn(validateSpecialistSessionDirectory(root));
 
-    expect(turn.prompt).not.toContain(specialistSessionFileName("documentation"));
-    expect(turn.prompt).toContain("documentation: specialist trace unavailable");
-    expect(turn.prompt).toContain("explicit review-completeness limitation");
-  });
-
-  it("requires complete contiguous ordinary-read coverage before synthesis text", () => {
-    const turn = buildSynthesisTurn(validateSpecialistSessionDirectory(fixture()));
-    const tools = resolveAdvisorTurnTools(turn, [], new Set(["read", "grep", "find", "ls"]));
-    const paths = turn.requiredReadPaths ?? [];
     expect(turn.activeToolNames).toEqual(["read", "grep", "find", "ls"]);
-    expect(turn.prompt).toContain(
-      "Before you write any text, read each available file contiguously from line 1 through EOF",
-    );
-    expect(turn.prompt).toContain("Until every available file reaches EOF, emit only `read` calls");
-    const read = (
-      readPath: string,
-      offset: number,
-      endOffset: number | null,
-      reachesEnd: boolean,
-    ) => ({
-      type: "read" as const,
-      path: readPath,
-      offset,
-      endOffset,
-      fileSize: 256,
-      reachesEnd,
-    });
-    const complete = paths.map((readPath) => read(readPath, 1, null, true));
+    expect(turn.requiredReadPaths).toBeUndefined();
+    const tools = resolveAdvisorTurnTools(turn, [], new Set(["read", "grep", "find", "ls"]));
     const receipt = { type: "text" as const, text: "receipt" };
-    const toolCall = (toolName: string) => [
-      { type: "tool_start" as const, toolName },
-      { type: "tool_end" as const, toolName, isError: false },
-    ];
-
-    const preparationTurn = { ...turn, requiredReadPaths: [paths[0]!] };
-    expect(requiredReadPreparationPrompt(preparationTurn)).toContain(
-      `Required files:\n- ${paths[0]}`,
-    );
-    expect(requiredReadPreparationPrompt(preparationTurn)).not.toContain(paths[1]!);
-    expect(
-      requiredReadPreparationErrors("synthesize", [complete[0]!], {
-        ...tools,
-        requiredReadPaths: [paths[0]!],
-      }),
-    ).toEqual([]);
-    expect(
-      requiredReadPreparationErrors("synthesize", [receipt, complete[0]!], {
-        ...tools,
-        requiredReadPaths: [paths[0]!],
-      }),
-    ).toContain("synthesize required-read preparation emitted text");
-    expect(
-      requiredReadPreparationErrors("synthesize", [...toolCall("grep"), complete[0]!], {
-        ...tools,
-        requiredReadPaths: [paths[0]!],
-      }),
-    ).toContain("synthesize required-read preparation called grep");
-    expect(
-      requiredReadPreparationErrors("synthesize", [complete[1]!, complete[0]!], {
-        ...tools,
-        requiredReadPaths: [paths[0]!],
-      }),
-    ).toContain(`synthesize required-read preparation read unexpected path: ${paths[1]}`);
-
-    expect(advisorTurnFlowErrors("synthesize", [...complete, receipt], tools)).toEqual([]);
-    expect(
-      ["grep", "find", "ls", "other_tool"].map((toolName) =>
-        advisorTurnFlowErrors(
-          "synthesize",
-          [read(paths[0]!, 1, 10, false), ...toolCall(toolName), ...complete, receipt],
-          tools,
-        ),
-      ),
-    ).toEqual(
-      ["grep", "find", "ls", "other_tool"].map((toolName) =>
-        expect.arrayContaining([`synthesize called ${toolName} before required reads completed`]),
-      ),
+    expect(advisorTurnFlowErrors("synthesize", [receipt], tools)).toContain(
+      "synthesize omitted specialist evidence read",
     );
     expect(
       advisorTurnFlowErrors(
         "synthesize",
-        [...complete, ...["grep", "find", "ls"].flatMap(toolCall), receipt],
-        tools,
-      ),
-    ).toEqual([]);
-    const incompleteError = `synthesize incompletely read required path: ${paths[0]}`;
-    expect(
-      advisorTurnFlowErrors(
-        "synthesize",
-        [read(paths[0]!, 1, 1, false), ...complete.slice(1), receipt],
-        tools,
-      ),
-    ).toContain(incompleteError);
-    expect(
-      advisorTurnFlowErrors(
-        "synthesize",
-        [read(paths[0]!, 1, 10, false), ...complete.slice(1), receipt],
-        tools,
-      ),
-    ).toContain(incompleteError);
-    expect(
-      advisorTurnFlowErrors(
-        "synthesize",
         [
-          read(paths[0]!, 1, 10, false),
-          read(paths[0]!, 12, null, true),
-          ...complete.slice(1),
-          receipt,
-        ],
-        tools,
-      ),
-    ).toContain(incompleteError);
-    expect(
-      advisorTurnFlowErrors(
-        "synthesize",
-        [
-          read(paths[0]!, 1, 10, false),
-          receipt,
-          read(paths[0]!, 11, null, true),
-          ...complete.slice(1),
-        ],
-        tools,
-      ),
-    ).toContain(`synthesize emitted text before required read completed: ${paths[0]}`);
-    expect(
-      advisorTurnFlowErrors(
-        "synthesize",
-        [
-          read(paths[0]!, 1, 10, false),
-          read(paths[0]!, 11, null, true),
-          ...complete.slice(1),
+          {
+            type: "read",
+            path: turn.requiredReadOneOfPaths![0]!,
+            offset: 1,
+            endOffset: 20,
+            fileSize: 1000,
+            reachesEnd: false,
+          },
           receipt,
         ],
         tools,
@@ -244,17 +127,20 @@ describe("specialist Pi session inputs", () => {
     expect(() => validateSpecialistSessionDirectory(root)).toThrow(/regular file: behavior/u);
   });
 
-  it("rejects a malformed present optional session", () => {
-    const root = fixture();
-    fs.writeFileSync(path.join(root, specialistSessionFileName("operations")), "{\n");
-    expect(() => validateSpecialistSessionDirectory(root)).toThrow(/invalid JSONL/u);
-  });
+  it.each(["behavior", "operations"] as const)(
+    "accepts a native %s trace with a large message line",
+    (interest) => {
+      const root = fixture();
+      fs.appendFileSync(
+        path.join(root, specialistSessionFileName(interest)),
+        JSON.stringify({ type: "message", body: "x".repeat(51 * 1024) }) + "\n",
+      );
 
-  it("rejects malformed JSONL and non-Pi headers", () => {
-    const malformed = fixture();
-    fs.writeFileSync(path.join(malformed, specialistSessionFileName("operations")), "{\n");
-    expect(() => validateSpecialistSessionDirectory(malformed)).toThrow(/invalid JSONL/u);
+      expect(validateSpecialistSessionDirectory(root).available).toEqual(ADVISOR_INTERESTS);
+    },
+  );
 
+  it("rejects non-Pi headers", () => {
     const invalidHeader = fixture();
     fs.writeFileSync(path.join(invalidHeader, specialistSessionFileName("documentation")), "{}\n");
     expect(() => validateSpecialistSessionDirectory(invalidHeader)).toThrow(

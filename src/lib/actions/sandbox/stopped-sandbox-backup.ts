@@ -58,7 +58,8 @@ interface StartDeps {
 
 const defaultStartDeps: StartDeps = {
   getSandboxDriver: readSandboxDriver,
-  listSandboxNames: () => registry.listSandboxes().sandboxes.map((entry) => entry.name),
+  listSandboxNames: () =>
+    registry.listSandboxes().sandboxes.filter(registry.isPublishedSandboxRegistration).map((entry) => entry.name),
   listLabeledContainerNames: (sandboxName) =>
     findLabeledSandboxContainers(sandboxName).map((container) => container.name),
   dockerInspectStatus: (containerName) =>

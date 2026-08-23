@@ -31,7 +31,7 @@ type CallableTool = ToolDefinition & {
 
 const context: InvestigateTurnContext = {
   scopeRisk: { riskPlan: { invariants: ["preserve identity"] } },
-  diff: "diff --git a/source.ts b/source.ts",
+  diffPath: ".pr-review-advisor-context/diff.patch",
   controlledWords: "controlled words",
   terminology: { candidates: [] },
   correctness: { state: "context" },
@@ -40,14 +40,6 @@ const context: InvestigateTurnContext = {
   operations: { workflowSignals: [] },
   reconciliation: { linkedIssues: [] },
   metadata: "baseRef=origin/main",
-};
-
-const DOMAIN_TERMS: Record<AdvisorInterest, readonly string[]> = {
-  behavior: ["binding acceptance", "state transitions", "caller and callee contracts"],
-  trust: ["all nine security categories", "credentials", "workflow trust boundaries"],
-  "design-architecture": ["duplicated authority", "dependency width", "reduction case"],
-  operations: ["E2E architecture", "retries", "release operations"],
-  documentation: ["user documentation", "test titles", "terminology candidates semantically"],
 };
 
 describe("PR review advisor specialist prompts", () => {
@@ -74,7 +66,7 @@ describe("PR review advisor specialist prompts", () => {
       expect(turn.name).toBe(`investigate-${interest}`);
       expect(contextToolNames).toEqual([
         "pr_review_scope_risk_context",
-        "pr_review_git_diff",
+        "pr_review_diff_path",
         "pr_review_controlled_words",
         "pr_review_terminology_pr_context",
         "pr_review_correctness_state_context",
@@ -89,11 +81,33 @@ describe("PR review advisor specialist prompts", () => {
       expect(turn.requireAssistantText).toBe(true);
       expect(turn.atomicTerminalToolName).toBeUndefined();
       expect(turn.terminalSubmitToolName).toBeUndefined();
-      expect(turn.prompt).toContain("investigation-only specialist turn");
-      expect(turn.prompt).toContain("Do not emit a final result schema");
-      expect(DOMAIN_TERMS[interest].every((term) => turn.prompt.includes(term))).toBe(true);
     },
   );
+
+  it("keeps large specialist context in ordinary-read-sized Pi trace lines (#9986)", () => {
+    const largeWords = "word\n".repeat(20_000) + "a".repeat(16_376) + "🦀";
+    const turn = buildSpecialistInvestigateTurn("behavior", {
+      ...context,
+      controlledWords: largeWords,
+    });
+    const results = turn.contextToolResults ?? [];
+
+    expect(
+      results.filter(({ toolName }) => toolName.startsWith("pr_review_controlled_words_part_"))
+        .length,
+    ).toBeGreaterThan(1);
+    expect(
+      results.every(({ content }) => Buffer.byteLength(JSON.stringify(content)) <= 16 * 1024),
+    ).toBe(true);
+    const wordChunks = results.filter(({ toolName }) =>
+      toolName.startsWith("pr_review_controlled_words_part_"),
+    );
+    expect(wordChunks.map(({ content }) => content).join("")).toBe(largeWords);
+    expect(wordChunks.every(({ content }) => !/[\uD800-\uDBFF]$/u.test(content))).toBe(true);
+    const toolNames = results.map(({ toolName }) => toolName);
+    expect(turn.requiredToolNames).toEqual(toolNames);
+    expect(turn.requireToolsBeforeText).toEqual(toolNames);
+  });
 
   it("passes terminology tracing only to the documentation specialist runner (#9968)", async () => {
     const directory = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-runner-"));

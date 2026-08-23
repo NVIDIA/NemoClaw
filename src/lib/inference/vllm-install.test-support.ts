@@ -58,6 +58,34 @@ export type VllmInstallSpies = {
 
 export const MANAGED_CONTAINER_ID = "a".repeat(64);
 
+export function vllmHostCommandCapture(options: {
+  computeCap: string;
+  curl?: string;
+  gpuMemory?: string | readonly string[];
+}): (cmd: readonly string[]) => string {
+  let gpuMemorySample = 0;
+  return (cmd) => {
+    switch (cmd[0]) {
+      case "sh":
+        return "/usr/bin/tool\n";
+      case "nvidia-smi":
+        if (!cmd.includes("--query-gpu=index,uuid,memory.total,memory.free")) {
+          return options.computeCap;
+        }
+        if (!Array.isArray(options.gpuMemory)) {
+          return options.gpuMemory ?? "0, GPU-1234, 1000000, 1000000\n";
+        }
+        return (
+          options.gpuMemory[Math.min(gpuMemorySample++, options.gpuMemory.length - 1)] ?? ""
+        );
+      case "curl":
+        return options.curl ?? '{"data":[]}';
+      default:
+        return "";
+    }
+  };
+}
+
 /** Build fresh, catalog-shaped readiness evidence for downstream install unit tests. */
 export function vllmInstallTestReadiness(
   profile: VllmProfile,
@@ -275,9 +303,14 @@ export function mockSuccessfulVllmInstall(
     curl: '{"data":[]}',
     sh: "/usr/bin/tool\n",
   };
-  mocks.runCapture.mockImplementation(
-    (cmd: readonly string[]) => runCaptureByCommand[cmd[0] ?? ""] ?? "",
-  );
+  mocks.runCapture.mockImplementation((cmd: readonly string[]) => {
+    if (cmd[0] === "nvidia-smi") {
+      return cmd.includes("--query-gpu=index,uuid,memory.total,memory.free")
+        ? "0, GPU-00000000-0000-0000-0000-000000000000, 1000000, 1000000\n"
+        : "12.1\n";
+    }
+    return runCaptureByCommand[cmd[0] ?? ""] ?? "";
+  });
   mocks.dockerPullWithProgressWatchdog.mockResolvedValue({
     status: 0,
     signal: null,

@@ -88,10 +88,15 @@ async function main(): Promise<void> {
   delete process.env.GH_TOKEN;
   delete process.env.GITHUB_TOKEN;
 
+  const diffDirectory = path.join(process.cwd(), ".pr-review-advisor-context");
+  fs.mkdirSync(diffDirectory, { recursive: true });
+  const diffPath = path.join(diffDirectory, "diff.patch");
+  fs.writeFileSync(diffPath, diff);
+
   const turn = buildSpecialistInvestigateTurn(interest, {
     metadata: JSON.stringify({ version: 1, baseRef, headRef, headSha, changedFiles }, null, 2),
     scopeRisk: buildScopeRiskTurnContext(deterministic),
-    diff,
+    diffPath: path.relative(process.cwd(), diffPath),
     controlledWords: readTrustedControlledWords(),
     terminology: {
       issueReferenceLines: deterministic.github?.issueReferenceLines ?? [],
@@ -112,7 +117,6 @@ async function main(): Promise<void> {
       promptTurns: [turn],
       systemPrompt: buildSystemPrompt(readParsedTrustedSecurityRubric()),
       configDir,
-      htmlExportPath: path.join(outDir, `pr-review-${interest}-session.html`),
       timeoutMs: parsePositiveInt(process.env.PR_REVIEW_ADVISOR_TIMEOUT_MS, 900000),
       heartbeatMs: parsePositiveInt(process.env.PR_REVIEW_ADVISOR_HEARTBEAT_MS, 60000),
       maxCaptureBytes: parsePositiveInt(
