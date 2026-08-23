@@ -209,6 +209,20 @@ describe("specialist Pi session inputs", () => {
 
     expect(advisorTurnFlowErrors("synthesize", [...complete, receipt], tools)).toEqual([]);
     expect(
+      advisorTurnFlowErrors(
+        "synthesize",
+        [
+          {
+            ...complete[0]!,
+            fileSize: 0,
+          },
+          ...complete.slice(1),
+          receipt,
+        ],
+        tools,
+      ),
+    ).toEqual([]);
+    expect(
       ["grep", "find", "ls", "other_tool"].map((toolName) =>
         advisorTurnFlowErrors(
           "synthesize",

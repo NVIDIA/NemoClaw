@@ -238,8 +238,8 @@ owner, idempotence or reconciliation basis, attempt evidence, and an entry in
 unproven retries, ambiguous mutation retries, or broad failed-job reruns. A
 mutation retry is allowed only after the test reconciles the external state and
 proves repeating the same desired operation is safe. Keep bounded operation
-retries separate from complete workflow reruns: `E2E / Main Retry` records
-attempts and does not request a broad rerun, while Hosted Runner Recovery owns
+retries separate from complete workflow reruns: `E2E / Main Retry Evidence` records
+attempts and does not request a broad rerun, while `Automation / Recover Platform CI Runner` owns
 at most one full rerun only for authenticated GitHub-hosted runner-loss
 evidence.
 
