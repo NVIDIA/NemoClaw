@@ -329,10 +329,14 @@ describe("protected managed-image build-cache boundary", () => {
     const result = runBuild(REPO_ROOT, [], "linux/arm64");
 
     expect(result.status, result.stderr).toBe(0);
-    for (const invocation of recordedBuildInvocations()) {
-      expect(invocation).toContain("--platform linux/arm64");
-      expect(invocation).toContain("--build-arg TARGETARCH=arm64");
-    }
+    expect(recordedBuildInvocation("openclaw")).toContain("--platform linux/arm64");
+    expect(recordedBuildInvocation("openclaw")).toContain("--build-arg TARGETARCH=arm64");
+    expect(recordedBuildInvocation("hermes")).toContain("--platform linux/arm64");
+    expect(recordedBuildInvocation("hermes")).toContain("--build-arg TARGETARCH=arm64");
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain("--platform linux/arm64");
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
+      "--build-arg TARGETARCH=arm64",
+    );
   });
 
   it("builds every agent without optional cache arguments", () => {
