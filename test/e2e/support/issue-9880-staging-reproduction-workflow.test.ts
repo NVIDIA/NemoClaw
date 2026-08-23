@@ -12,6 +12,7 @@ import {
   issue9880Fixture,
   waitForIssue9880RemoteScript,
 } from "../../helpers/brev-launchable-issue-9880-fixture.ts";
+import { treeContainsLiteral } from "../../helpers/secret-scan.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
 type Step = {
@@ -187,14 +188,7 @@ describe("the staging Launchable reproduces the bounded OpenClaw CLI scenario", 
     await new Promise<void>((resolve) => child.once("exit", () => resolve()));
 
     expect(fs.readdirSync(fixture.root).filter((file) => file.startsWith("issue-9880-remote."))).toEqual([]);
-    const retainedSecret = fs
-      .readdirSync(fixture.root, { recursive: true })
-      .filter((entry): entry is string => typeof entry === "string")
-      .some((entry) => {
-        const file = path.join(fixture.root, entry);
-        return fs.statSync(file).isFile() && fs.readFileSync(file, "utf8").includes("nvapi-interrupt-test-secret");
-      });
-    expect(retainedSecret).toBe(false);
+    expect(treeContainsLiteral(fixture.root, "nvapi-interrupt-test-secret")).toBe(false);
   }, 10_000);
 
   it("caps poll sleep to the remaining Brev exec deadline (#9880)", () => {
