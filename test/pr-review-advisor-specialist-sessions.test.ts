@@ -12,6 +12,7 @@ import {
   advisorTurnFlowErrors,
   resolveAdvisorTurnTools,
   seedRequiredReadHistory,
+  seededReadFlowForTurn,
 } from "../tools/advisors/session.mts";
 import { buildSynthesisTurn } from "../tools/pr-review-advisor/synthesis-turn.mts";
 import { ADVISOR_INTERESTS } from "../tools/pr-review-advisor/specialists.mts";
@@ -99,6 +100,44 @@ describe("specialist Pi session inputs", () => {
       }),
       expect.objectContaining({ role: "toolResult", toolName: "read", isError: false }),
     ]);
+  });
+
+  it("does not reuse seeded reads in a later turn with the same path", () => {
+    const requiredPath = path.join(fixture(), specialistSessionFileName("behavior"));
+    const seededFlow = [
+      {
+        type: "read" as const,
+        path: requiredPath,
+        offset: 1,
+        endOffset: null,
+        fileSize: 1,
+        reachesEnd: true,
+      },
+    ];
+    const seededTurn = {
+      name: "seeded",
+      prompt: "seeded",
+      requiredReadPaths: [requiredPath],
+      seedRequiredReads: true,
+    };
+    const laterTurn = {
+      name: "later",
+      prompt: "later",
+      requiredReadPaths: [requiredPath],
+      requireAssistantText: true,
+    };
+
+    expect(seededReadFlowForTurn(seededTurn, seededFlow)).toEqual(seededFlow);
+    expect(seededReadFlowForTurn(laterTurn, seededFlow)).toEqual([]);
+    expect(
+      advisorTurnFlowErrors("later", [{ type: "text", text: "analysis" }], {
+        activeToolNames: ["read"],
+        requiredToolNames: [],
+        requireToolsBeforeText: [],
+        requiredReadPaths: [requiredPath],
+        requireAssistantText: true,
+      }),
+    ).toContain(`later omitted required read: ${requiredPath}`);
   });
 
   it("accepts the five expected native Pi JSONL sessions", () => {
