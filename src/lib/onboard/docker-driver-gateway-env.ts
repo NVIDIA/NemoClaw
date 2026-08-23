@@ -76,6 +76,7 @@ export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
 
 export interface BuildDockerDriverGatewayEnvOptions {
   platform?: NodeJS.Platform;
+  architecture?: NodeJS.Architecture;
   gatewayPort?: number;
   stateDir: string;
   dockerNetworkName?: string;
@@ -173,6 +174,7 @@ function preparePortableGatewayHostRuntime(
 
 export function prepareConfiguredGatewayHostRuntime(
   options: {
+    architecture?: NodeJS.Architecture;
     environment?: NodeJS.ProcessEnv;
     platform?: NodeJS.Platform;
     socketPath?: string;
@@ -180,10 +182,11 @@ export function prepareConfiguredGatewayHostRuntime(
 ): RuntimeProviderGatewayHostRuntime {
   const environment = options.environment ?? process.env;
   const platform = options.platform ?? process.platform;
+  const architecture = options.architecture ?? process.arch;
   if (isPortableExperimentalProfile(environment)) {
     return preparePortableGatewayHostRuntime(options.socketPath, platform);
   }
-  const provider = resolveConfiguredRuntimeProvider(platform, process.arch, environment);
+  const provider = resolveConfiguredRuntimeProvider(platform, architecture, environment);
   if (!provider.gateway.supported) {
     throw new Error("The selected runtime provider does not support a host-managed gateway.");
   }
@@ -361,6 +364,7 @@ export function warnIfGatewayWildcardBindAddress(): void {
 
 export function buildDockerDriverGatewayEnv({
   platform = process.platform,
+  architecture = process.arch,
   gatewayPort = GATEWAY_PORT,
   stateDir,
   dockerNetworkName,
@@ -374,6 +378,7 @@ export function buildDockerDriverGatewayEnv({
   const runtime =
     gatewayHostRuntime ??
     prepareConfiguredGatewayHostRuntime({
+      architecture,
       platform,
       socketPath: podmanSocketPath,
     });

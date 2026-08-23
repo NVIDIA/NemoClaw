@@ -79,6 +79,7 @@ describe("buildDockerDriverGatewayEnv", () => {
   it("uses the Docker driver on macOS without VM helper state", () => {
     const env = buildDockerDriverGatewayEnv({
       platform: "darwin",
+      architecture: "arm64",
       stateDir: "/tmp/nemoclaw-gateway",
       getDockerSupervisorImage: () => "ghcr.io/nvidia/openshell/supervisor:0.0.37",
       resolveSandboxBin: () => "/usr/local/bin/openshell-sandbox",
@@ -182,7 +183,6 @@ describe("buildDockerDriverGatewayEnv", () => {
       const env = buildDockerDriverGatewayEnv({
         platform: "linux",
         stateDir,
-        podmanSocketPath: "/run/user/1001/podman/podman.sock",
         getDockerSupervisorImage: () => "supervisor:test",
         resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
       });
@@ -190,13 +190,14 @@ describe("buildDockerDriverGatewayEnv", () => {
         OPENSHELL_DRIVERS: "podman",
         OPENSHELL_BIND_ADDRESS: "0.0.0.0",
         OPENSHELL_GRPC_ENDPOINT: `https://${PORTABLE_HOST_GATEWAY_IP}:8080`,
-        OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
       });
+      expect(path.isAbsolute(env.OPENSHELL_PODMAN_SOCKET)).toBe(true);
+      expect(env.OPENSHELL_PODMAN_SOCKET).toMatch(/\/podman\/podman\.sock$/u);
       expect(env.CONTAINERS_CONF).toBeUndefined();
       expect(env.NETAVARK_FW).toBeUndefined();
       const toml = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8");
       expect(toml).toContain('compute_drivers = ["podman"]');
-      expect(toml).toContain('socket_path = "/run/user/1001/podman/podman.sock"');
+      expect(toml).toContain(`socket_path = "${env.OPENSHELL_PODMAN_SOCKET}"`);
       expect(toml).not.toContain("supervisor_bin");
     } finally {
       vi.unstubAllEnvs();
@@ -303,6 +304,7 @@ describe("writeDockerGatewayDebEnvOverride", () => {
     const envFile = path.join(tempHome, ".config", "openshell", "gateway.env");
     const gatewayEnv = buildDockerDriverGatewayEnv({
       platform: "darwin",
+      architecture: "arm64",
       stateDir: path.join(tempHome, "state"),
       getDockerSupervisorImage: () => "ghcr.io/nvidia/openshell/supervisor:0.0.72",
       resolveSandboxBin: () => null,

@@ -24,6 +24,7 @@ const DEV_ARTIFACT_JOB = "openshell-dev-artifact";
 const CREDENTIAL_WINDOW_JOB = "openshell-credential-generation-window";
 const MCP_AGENT_SHARDS = ["openclaw", "hermes", "deepagents"] as const;
 const MATRIX_AGENT_EXPRESSION = "${{ matrix.agent }}";
+const MATRIX_RUNTIME_PROVIDER_EXPRESSION = "${{ matrix.runtime_provider }}";
 const TERMINAL_JOBS = [
   "release-qualification",
   "relevant-e2e",
@@ -67,7 +68,7 @@ const DEV_COMPATIBILITY_STEP_ID = "mcp_runtime_compatibility";
 const DEV_COMPATIBILITY_TOOL = "tools/e2e/mcp-bridge-runtime-compatibility.mts";
 const CREDENTIAL_WINDOW_ID = "openshell-credential-generation-window";
 const CREDENTIAL_WINDOW_FILE = `test/e2e/live/${CREDENTIAL_WINDOW_ID}.test.ts`;
-const CREDENTIAL_WINDOW_ARTIFACT_DIR = "e2e-artifacts/live/openshell-credential-generation-window";
+const CREDENTIAL_WINDOW_ARTIFACT_DIR = `e2e-artifacts/live/openshell-credential-generation-window/${MATRIX_RUNTIME_PROVIDER_EXPRESSION}`;
 const CREDENTIAL_WINDOW_RUN_STEP = "Run OpenShell credential generation-window live test";
 const CREDENTIAL_WINDOW_JOB_CONDITION =
   "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}";
@@ -668,7 +669,7 @@ function validateJobExecution(
   );
   for (const required of [
     "tools/e2e/assert-mcp-artifact-secrets-absent.mts",
-    `e2e-artifacts/live/${jobName}/${MATRIX_AGENT_EXPRESSION}`,
+    `e2e-artifacts/live/${jobName}/${MATRIX_AGENT_EXPRESSION}/${MATRIX_RUNTIME_PROVIDER_EXPRESSION}`,
   ]) {
     requireContains(errors, scan.run, required, `${jobName} artifact secret scan is incomplete`);
   }
@@ -688,13 +689,13 @@ function validateJobExecution(
   requireEqual(
     errors,
     uploadOptions.path,
-    `e2e-artifacts/live/${jobName}/${MATRIX_AGENT_EXPRESSION}/`,
+    `e2e-artifacts/live/${jobName}/${MATRIX_AGENT_EXPRESSION}/${MATRIX_RUNTIME_PROVIDER_EXPRESSION}/`,
     `${jobName} artifact upload must use exactly the scanned directory`,
   );
   requireEqual(
     errors,
     uploadOptions.name,
-    `e2e-${jobName}-${MATRIX_AGENT_EXPRESSION}`,
+    `e2e-${jobName}-${MATRIX_AGENT_EXPRESSION}-${MATRIX_RUNTIME_PROVIDER_EXPRESSION}`,
     `${jobName} artifact upload must use its isolated artifact name`,
   );
   if (Object.keys(uploadOptions).sort().join(",") !== "name,path") {
@@ -866,17 +867,19 @@ function validateCredentialWindowJob(
   const env = asRecord(job.env);
   const expectedEnv = {
     E2E_JOB: "1",
+    E2E_GATEWAY_RUNTIMES: "docker,podman",
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,
     E2E_AGENT_RUNTIME: "openclaw",
     E2E_OBSERVABLE_OUTCOME:
       "Credential expiry rotation detach and rebuild preserve the intended access window",
     E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT:
-      "Ubuntu Docker host; local compatible inference and MCP endpoint",
+      "Ubuntu managed runtime host; local compatible inference and MCP endpoint",
     E2E_ARTIFACT_DIR: `\${{ github.workspace }}/${CREDENTIAL_WINDOW_ARTIFACT_DIR}`,
     NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
     NEMOCLAW_OPENSHELL_CHANNEL: "stable",
     NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1",
     NEMOCLAW_RUN_LIVE_E2E: "1",
+    NEMOCLAW_GATEWAY_RUNTIME: MATRIX_RUNTIME_PROVIDER_EXPRESSION,
     OPENSHELL_DOCKER_SUPERVISOR_IMAGE: `ghcr.io/nvidia/openshell/supervisor@sha256:${STABLE_RELEASE_SUPERVISOR_INDEX}`,
   };
   if (!hasExactEntries(env, expectedEnv)) {
@@ -1006,7 +1009,7 @@ function validateCredentialWindowJob(
   const uploadOptions = asRecord(upload.with);
   if (
     !hasExactEntries(uploadOptions, {
-      name: `e2e-${CREDENTIAL_WINDOW_JOB}`,
+      name: `e2e-${CREDENTIAL_WINDOW_JOB}-${MATRIX_RUNTIME_PROVIDER_EXPRESSION}`,
       path: `${CREDENTIAL_WINDOW_ARTIFACT_DIR}/`,
     })
   ) {

@@ -101,6 +101,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   getDockerDriverGatewayEnv(
     versionOutput?: string | null,
     platform?: NodeJS.Platform,
+    architecture?: NodeJS.Architecture,
   ): Record<string, string>;
   getDockerDriverGatewayPid(): number | null;
   getDockerDriverGatewayPidFile(): string;
@@ -245,6 +246,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   function getDockerDriverGatewayEnv(
     versionOutput: string | null = null,
     platform: NodeJS.Platform = process.platform,
+    architecture: NodeJS.Architecture = process.arch,
   ): Record<string, string> {
     const dockerHost = process.env.DOCKER_HOST;
     let podmanSocketPath: string | undefined;
@@ -258,6 +260,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       podmanSocketPath = candidate.slice("unix://".length);
     }
     const gatewayEnv = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
+      architecture,
       platform,
       gatewayPort: currentGatewayPort(),
       stateDir: getDockerDriverGatewayStateDir(),

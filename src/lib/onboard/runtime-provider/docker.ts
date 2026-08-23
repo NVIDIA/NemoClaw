@@ -3,7 +3,11 @@
 
 import { captureHostCommand } from "../../actions/sandbox/doctor-host-command";
 import { dockerCapture, dockerRun } from "../../adapters/docker/run";
-import { GATEWAY_BIND_ADDRESS, getGatewayConnectHost } from "../../core/gateway-address";
+import {
+  DEFAULT_GATEWAY_BIND_ADDRESS,
+  getGatewayConnectHost,
+  parseGatewayBindAddress,
+} from "../../core/gateway-address";
 import {
   isDockerRuntimeDown,
   printDockerRuntimeDownGuidance,
@@ -533,34 +537,42 @@ export function createDockerRuntimeProviderBundle(
       supported: true,
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
-      prepareHostRuntime: () => ({
-        providerId,
-        openShellDriver: "docker",
-        bindAddress: GATEWAY_BIND_ADDRESS,
-        grpcHost: getGatewayConnectHost(),
-        sshGatewayHost: getGatewayConnectHost(),
-        portCheckHost: GATEWAY_BIND_ADDRESS,
-        socketPath: null,
-        requiredServerIpSans: [],
-        sandboxHostAddress: null,
-        usesHostGatewayRoute: false,
-        resourceOwnership: {
-          label: "openshell.ai/managed-by",
-          value: "openshell",
-        },
-        gatewayConfig: {
-          sandboxNamespace: "scoped",
-          hostGatewayIp: null,
-          includeSupervisorBin: true,
-          processOwnership: "scoped-namespace",
-        },
-        network: {
-          inspect: inspectDockerGatewayNetwork,
-          usesHostGatewayRoute: dockerGatewayUsesHostGatewayRoute,
-          run: runDockerGatewayCommand,
-          ensureProbeImageCached: ensureDockerGatewayProbeImageCached,
-        },
-      }),
+      prepareHostRuntime: (input) => {
+        const bindAddress = parseGatewayBindAddress(
+          "NEMOCLAW_GATEWAY_BIND_ADDRESS",
+          DEFAULT_GATEWAY_BIND_ADDRESS,
+          input.environment,
+        );
+        const connectHost = getGatewayConnectHost(bindAddress);
+        return {
+          providerId,
+          openShellDriver: "docker",
+          bindAddress,
+          grpcHost: connectHost,
+          sshGatewayHost: connectHost,
+          portCheckHost: bindAddress,
+          socketPath: null,
+          requiredServerIpSans: [],
+          sandboxHostAddress: null,
+          usesHostGatewayRoute: false,
+          resourceOwnership: {
+            label: "openshell.ai/managed-by",
+            value: "openshell",
+          },
+          gatewayConfig: {
+            sandboxNamespace: "scoped",
+            hostGatewayIp: null,
+            includeSupervisorBin: true,
+            processOwnership: "scoped-namespace",
+          },
+          network: {
+            inspect: inspectDockerGatewayNetwork,
+            usesHostGatewayRoute: dockerGatewayUsesHostGatewayRoute,
+            run: runDockerGatewayCommand,
+            ensureProbeImageCached: ensureDockerGatewayProbeImageCached,
+          },
+        };
+      },
     },
     workload: {
       providerId,

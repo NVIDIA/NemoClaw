@@ -644,7 +644,8 @@ function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
   // `openshell inference set` instead of the cluster CoreDNS patch. Mirrors
   // usesGatewayMetadataProbe (snapshot.ts). (#3403)
   const driver = sb?.openshellDriver;
-  if (!driver || driver === "vm") return false;
+  if (!driver) return true;
+  if (driver === "vm") return false;
   const provider = resolveRegisteredRuntimeProvider(driver);
   return provider ? provider.gateway.launcher !== "nemoclaw" : true;
 }

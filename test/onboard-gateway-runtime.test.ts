@@ -33,6 +33,7 @@ const {
   getDockerDriverGatewayEnv: (
     versionOutput?: string | null,
     platform?: NodeJS.Platform,
+    architecture?: NodeJS.Architecture,
   ) => Record<string, string>;
   getDockerDriverGatewayRuntimeDriftFromSnapshot: (snapshot: {
     processEnv: Record<string, string> | null;
@@ -85,7 +86,7 @@ describe("onboard gateway runtime helpers", () => {
     expect(linuxEnv.OPENSHELL_CLUSTER_IMAGE).toBeUndefined();
     expect(linuxEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":0.0.37");
 
-    const darwinEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "darwin");
+    const darwinEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "darwin", "arm64");
     expect(darwinEnv.OPENSHELL_DRIVERS).toBe("docker");
     expect(darwinEnv.OPENSHELL_BIND_ADDRESS).toBe("127.0.0.1");
     expect(darwinEnv.OPENSHELL_GRPC_ENDPOINT).toBe("https://127.0.0.1:8080");

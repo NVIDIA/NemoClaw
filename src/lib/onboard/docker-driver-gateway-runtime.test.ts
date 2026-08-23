@@ -332,7 +332,7 @@ describe("docker-driver gateway runtime helpers", () => {
           const { helpers, runCapture } = makeHelpers({
             runCapture: vi.fn((args) => processOutput.get(args.join(" ")) ?? ""),
           });
-          const desiredEnv = helpers.getDockerDriverGatewayEnv(null, "darwin");
+          const desiredEnv = helpers.getDockerDriverGatewayEnv(null, "darwin", "arm64");
           writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
             pid,
             desiredEnv,
