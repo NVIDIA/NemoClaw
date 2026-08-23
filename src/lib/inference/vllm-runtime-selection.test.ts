@@ -15,6 +15,7 @@ const LINUX_VLLM_RUNTIMES = [
       "vllm/vllm-openai@sha256:7eb4028507367e69cb0abfa213042d1814c27c1b499af45fbffec8f16d9cbc6f",
     minimumComputeCapability: 120,
     minimumGpuMemoryBytes: 96_000_000_000,
+    gpuMemoryUtilization: 0.75,
   },
   {
     model: "nemotron-3.5-lightning-30b",
@@ -24,13 +25,21 @@ const LINUX_VLLM_RUNTIMES = [
       "vllm/vllm-openai@sha256:c2f3b1b964e47809b722b5e75b61b1e7b39a50f70388cf2bf2418f16a9f31da2",
     minimumComputeCapability: 90,
     minimumGpuMemoryBytes: 96_000_000_000,
+    gpuMemoryUtilization: 0.75,
   },
 ] as const;
 
 describe("vLLM catalog runtime selection", () => {
   it.each(LINUX_VLLM_RUNTIMES)(
     "materializes the Linux amd64 $model runtime and enforces its GPU floor (#9673)",
-    ({ model: modelSlug, linuxPreset, image, minimumComputeCapability, minimumGpuMemoryBytes }) => {
+    ({
+      model: modelSlug,
+      linuxPreset,
+      image,
+      minimumComputeCapability,
+      minimumGpuMemoryBytes,
+      gpuMemoryUtilization,
+    }) => {
       const linuxProfile = detectVllmProfile({ platform: "linux", type: "nvidia" })!;
       const model = VLLM_MODELS.find(({ envValue }) => envValue === modelSlug)!;
       const resolved = resolveVllmModelRuntime(linuxProfile, model, "x64");
@@ -39,6 +48,7 @@ describe("vLLM catalog runtime selection", () => {
         image,
         minComputeCapability: minimumComputeCapability,
         minGpuMemoryBytes: minimumGpuMemoryBytes,
+        gpuMemoryUtilization,
         servingCatalog: { presetId: linuxPreset },
       });
       expect(
