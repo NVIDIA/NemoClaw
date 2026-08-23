@@ -259,6 +259,8 @@ function renderSingleChannelSignals(
         ? G
         : report.report.verdict === "idle" || report.report.verdict === "unpaired"
           ? YW
+          : report.report.verdict === "info"
+            ? D
           : RD;
     deps.out(`  Verdict: ${verdictColor}${report.report.verdict}${R}`);
     for (const hint of report.report.hints) {

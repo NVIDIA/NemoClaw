@@ -385,6 +385,7 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     expect(result && "report" in result && result.report.verdict).toBe("info");
     const dump = out_lines.join("\n");
     expect(dump).toMatch(/registered but currently paused/);
+    expect(dump).toMatch(/Verdict:.*info/);
     // The paused fallback must not claim it is the summary view nor tell the
     // operator to rerun the --channel command they are already running (#6887).
     const runtime =
