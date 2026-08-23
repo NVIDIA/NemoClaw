@@ -804,8 +804,10 @@ function requirePortableDemoDestroyContext(
   receipt: PortableDemoLifecycleReceiptRecord,
   context: PortableDemoDestroyContext | null,
 ): void {
+  // Portable OpenClaw registrations before #9413 stored the default agent as null.
   if (
-    context?.agent !== "openclaw" ||
+    !context ||
+    (context.agent !== "openclaw" && context.agent !== null) ||
     context.openshellDriver !== "docker" ||
     context.lifecycleGeneration !== receipt.registryGeneration
   ) {

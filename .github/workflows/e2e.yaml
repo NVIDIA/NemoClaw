@@ -2609,10 +2609,9 @@ jobs:
           BREV_CLI_SHA256: d4aa49db1716f10308a6587778a676a0c0076bd48a212d86a421ab9550bc8f32
           BREV_CLI_VERSION: 0.6.334
           BREV_ORG_ID: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && secrets.BREV_ORG_ID || '' }}
-          HOME: ${{ runner.temp }}/nemoclaw-brev-launchable-identity-home
         run: |
           set -euo pipefail
-          install -d -m 0700 "$HOME"
+          install -d -m 0700 "$HOME/.brev"
           work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-launchable-identity.XXXXXX")"
           chmod 700 "$work_dir"
           archive="${RUNNER_TEMP}/brev-cli.tar.gz"
@@ -2627,7 +2626,6 @@ jobs:
         env:
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
           GH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN || '' }}
-          HOME: ${{ runner.temp }}/nemoclaw-brev-launchable-identity-home
           NEMOCLAW_BREV_DEFER_CLEANUP: "1"
           NEMOCLAW_BREV_LAUNCHABLE_IDENTITY_ONLY: "1"
           WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
@@ -2639,15 +2637,12 @@ jobs:
         env:
           BREV_CREATE_RECONCILE_SECONDS: "120"
           BREV_DELETE_TIMEOUT_SECONDS: "600"
-          HOME: ${{ runner.temp }}/nemoclaw-brev-launchable-identity-home
           POLL_SECONDS: "15"
           WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
         run: tools/e2e/brev-launchable-e2e.sh cleanup-owned-workspace
 
-      - name: Remove Brev credentials
+      - name: Remove Brev API credentials
         if: always()
-        env:
-          HOME: ${{ runner.temp }}/nemoclaw-brev-launchable-identity-home
         run: |
           set -euo pipefail
           credentials="$HOME/.brev/credentials.json"

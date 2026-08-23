@@ -66,6 +66,15 @@ case "$*" in
         printf '%s\n' 'ERROR: failed to build: failed to solve: stream error: stream ID 71; INTERNAL_ERROR; received from server' >&2
         exit 42
         ;;
+      npm-registry-dns-once:1 | npm-registry-dns-always:1 | npm-registry-dns-always:2)
+        printf '%s\n' '#128 0.180 ERROR: curl failed: curl: (6) Could not resolve host: registry.npmjs.org' >&2
+        printf '%s\n' 'ERROR: failed to build: failed to solve: process "/bin/sh -c node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts --npm-root /usr/local/lib/node_modules/npm" did not complete successfully: exit code: 1' >&2
+        exit 42
+        ;;
+      npm-registry-dns-near-match:1)
+        printf '%s\n' '#128 0.180 ERROR: curl failed: curl: (6) Could not resolve host: registry.npmjs.com' >&2
+        exit 42
+        ;;
     esac
     ;;
   "pull "*) ;;
@@ -530,7 +539,7 @@ describe("protected managed-image build-cache boundary", () => {
   });
 });
 
-describe("protected managed-image BuildKit transport retry", () => {
+describe("protected managed-image build retry", () => {
   it("repeats the exact desired build after the isolated registry reports the revision tag absent (#9763)", () => {
     stubBuildInvocation();
     dockerBuildFailureMode = "exact-once";
@@ -576,6 +585,36 @@ describe("protected managed-image BuildKit transport retry", () => {
   it("keeps a near-match BuildKit failure terminal (#9763)", () => {
     stubBuildInvocation();
     dockerBuildFailureMode = "near-match";
+
+    const result = runBuild(REPO_ROOT);
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(42);
+    expect(recordedBuildInvocations()).toHaveLength(1);
+    expect(existsSync(registryLog)).toBe(false);
+    expect(output).toContain("outcome=failed-no-retry agent=openclaw attempt=1/2 docker-exit=42");
+  });
+
+  it("retries an exact npm registry DNS failure after the revision tag is absent", () => {
+    stubBuildInvocation();
+    dockerBuildFailureMode = "npm-registry-dns-once";
+    registryStatus = "404";
+
+    const result = runBuild(REPO_ROOT);
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(recordedBuildInvocations()).toHaveLength(4);
+    expect(recordedBuildInvocations()[1]).toBe(recordedBuildInvocations()[0]);
+    expect(output).toContain(
+      "outcome=transient-external agent=openclaw attempt=1/2 retry-in=2s failure=npm-registry-dns-resolution",
+    );
+    expect(output).toContain("outcome=passed-after-retry agent=openclaw attempt=2/2");
+  });
+
+  it("keeps a near-match npm registry DNS failure terminal", () => {
+    stubBuildInvocation();
+    dockerBuildFailureMode = "npm-registry-dns-near-match";
 
     const result = runBuild(REPO_ROOT);
     const output = `${result.stdout}${result.stderr}`;
@@ -647,6 +686,20 @@ describe("protected managed-image BuildKit transport retry", () => {
     expect(recordedBuildInvocations()).toHaveLength(2);
     expect(output).toContain(
       "outcome=exhausted agent=openclaw attempt=2/2 failure=buildkit-http2-internal-error docker-exit=42",
+    );
+  });
+
+  it("keeps repeated exact npm registry DNS failures failed after one retry", () => {
+    stubBuildInvocation();
+    dockerBuildFailureMode = "npm-registry-dns-always";
+
+    const result = runBuild(REPO_ROOT);
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(42);
+    expect(recordedBuildInvocations()).toHaveLength(2);
+    expect(output).toContain(
+      "outcome=exhausted agent=openclaw attempt=2/2 failure=npm-registry-dns-resolution docker-exit=42",
     );
   });
 });

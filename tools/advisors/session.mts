@@ -20,7 +20,6 @@ import {
   ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
   DEFAULT_ADVISOR_MODEL,
   DEFAULT_ADVISOR_PROVIDER,
-  NEMOTRON_ULTRA_ADVISOR_MODEL,
 } from "./provider-constants.mts";
 import { canonicalRepoReadPath, createRepoConfinedReadOnlyTools } from "./repo-read-only-tools.mts";
 import {
@@ -53,7 +52,6 @@ export {
   ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
   DEFAULT_ADVISOR_MODEL,
   DEFAULT_ADVISOR_PROVIDER,
-  NEMOTRON_ULTRA_ADVISOR_MODEL,
 } from "./provider-constants.mts";
 export {
   type AdvisorContextToolContentType,
@@ -72,11 +70,11 @@ export {
 
 const ADVISOR_BASE_URL_ENV = "PR_REVIEW_ADVISOR_BASE_URL";
 
-export function advisorRetrySettings(modelId: string) {
+export function advisorRetrySettings(_modelId?: string) {
   return {
     enabled: true,
     maxRetries: 4,
-    baseDelayMs: modelId === NEMOTRON_ULTRA_ADVISOR_MODEL ? 9_000 : 6_000,
+    baseDelayMs: 6_000,
     provider: {
       maxRetries: 0,
       maxRetryDelayMs: 60_000,
@@ -216,22 +214,6 @@ export function openAiAdvisorProviderConfig(
         32768,
         false,
         ["text", "image"],
-        {
-          supportsDeveloperRole: false,
-          supportsReasoningEffort: false,
-          supportsStore: false,
-          supportsStrictMode: false,
-          supportsUsageInStreaming: false,
-          maxTokensField: "max_tokens",
-        },
-      ),
-      advisorModel(
-        NEMOTRON_ULTRA_ADVISOR_MODEL,
-        "Nemotron 3 Ultra",
-        256000,
-        32768,
-        false,
-        ["text"],
         {
           supportsDeveloperRole: false,
           supportsReasoningEffort: false,
@@ -397,7 +379,7 @@ export async function runReadOnlyAdvisor(
 
   const settingsManager = SettingsManager.inMemory({
     compaction: { enabled: false },
-    retry: advisorRetrySettings(modelId),
+    retry: advisorRetrySettings(),
   });
   const resourceLoader = new DefaultResourceLoader({
     cwd: options.cwd,
