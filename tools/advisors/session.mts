@@ -650,9 +650,11 @@ export async function runReadOnlyAdvisor(
       currentTurnError = undefined;
       successfulToolNames = new Set();
       const requiredPaths = new Set(turn.requiredReadPaths ?? []);
-      currentTurnFlow = seededReadHistory.flow.filter(
-        (event) => event.type === "read" && requiredPaths.has(event.path),
-      );
+      currentTurnFlow = turn.seedRequiredReads
+        ? seededReadHistory.flow.filter(
+            (event) => event.type === "read" && requiredPaths.has(event.path),
+          )
+        : [];
       turnTextBuffers.push(currentTurnText);
       const turnIndex = `${index + 1}/${promptTurns.length}`;
       options.onTurnStart?.(turn);
@@ -681,7 +683,7 @@ export async function runReadOnlyAdvisor(
             await Promise.race([session.prompt(prompt), timeoutPromise]);
             await Promise.race([agentEndPromise, timeoutPromise]);
           };
-          if ((tools.requiredReadPaths?.length ?? 0) > 0) {
+          if (turn.seedRequiredReads && (tools.requiredReadPaths?.length ?? 0) > 0) {
             raw.append(
               `\n[${options.logPrefix}] seeded_required_reads ${turn.name} calls=${seededReadHistory.calls}\n`,
             );
