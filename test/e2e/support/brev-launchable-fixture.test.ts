@@ -107,8 +107,13 @@ describe("the Brev Launchable fixture owns one exact workspace lifecycle", () =>
     let observedScript = "";
     const command = vi.fn(async (_binary: string, args: string[]) => {
       observedScript = args[2]?.slice(1) ?? "";
-      expect(fs.statSync(observedScript).mode & 0o777).toBe(0o600);
-      expect(fs.readFileSync(observedScript, "utf8")).toContain("fixture script");
+      const descriptor = fs.openSync(observedScript, "r");
+      try {
+        expect(fs.fstatSync(descriptor).mode & 0o777).toBe(0o600);
+        expect(fs.readFileSync(descriptor, "utf8")).toContain("fixture script");
+      } finally {
+        fs.closeSync(descriptor);
+      }
       return result("");
     });
     const fixture = createFixture(root, command);
