@@ -58,8 +58,10 @@ import {
 } from "./launch-readiness/health";
 import {
   observeOpenClawPairingQualification,
+  observeOpenClawPairingRepairSettlement,
   observeOpenClawPairingSettlement,
   OpenClawPairingQualificationError,
+  type OpenClawPairingRepairObservation,
   type OpenClawPairingSettlementObservation,
 } from "./launch-readiness/openclaw-pairing-qualification";
 
@@ -113,6 +115,7 @@ export interface LaunchReadinessDeps extends LaunchReadinessHealthDeps {
   fenceLease?: typeof fenceLaunchReadinessLease;
   publishLease?: typeof publishLaunchReadinessLease;
   observeOpenClawPairingQualification?: typeof observeOpenClawPairingQualification;
+  observeOpenClawPairingRepairSettlement?: typeof observeOpenClawPairingRepairSettlement;
   observeOpenClawPairingSettlement?: typeof observeOpenClawPairingSettlement;
   runPortablePairingProducer?: typeof runPortableOpenClawPairingRequestProducer;
   runPortablePairingApproval?: typeof runPortableOpenClawPairingApproval;
@@ -966,8 +969,9 @@ export function resolveOrdinaryOpenClawPairingTarget(
 
 /**
  * Settle current Portable OpenClaw pairing under the lifecycle then owning
- * gateway-route locks. An ambiguous approval receives one strict final
- * observation and never another write.
+ * gateway-route locks. The repair observation admits only one canonical local
+ * write request; a final strict observation requires that request to be gone.
+ * An ambiguous approval receives one final observation and never another write.
  */
 export async function settlePortableOpenClawPairing(
   sandboxName: string,
@@ -981,7 +985,10 @@ export async function settlePortableOpenClawPairing(
   const updateSandbox = deps.updateSandbox ?? registry.updateSandbox;
   const withSandboxLock = deps.withSandboxLock ?? withSandboxMutationLock;
   const withGatewayLock = deps.withGatewayLock ?? withGatewayRouteMutationLock;
-  const observePairing = deps.observeOpenClawPairingSettlement ?? observeOpenClawPairingSettlement;
+  const observeRepairPairing =
+    deps.observeOpenClawPairingRepairSettlement ?? observeOpenClawPairingRepairSettlement;
+  const observeSettledPairing =
+    deps.observeOpenClawPairingSettlement ?? observeOpenClawPairingSettlement;
   const runProducer = deps.runPortablePairingProducer ?? runPortableOpenClawPairingRequestProducer;
   const runApproval = deps.runPortablePairingApproval ?? runPortableOpenClawPairingApproval;
 
@@ -1060,9 +1067,9 @@ export async function settlePortableOpenClawPairing(
         return incompletePortablePairing("portable-runtime-identity-invalid");
       }
 
-      let first: OpenClawPairingSettlementObservation;
+      let first: OpenClawPairingRepairObservation;
       try {
-        first = observePairing(
+        first = observeRepairPairing(
           sandboxName,
           target.gatewayName,
           target.version,
@@ -1073,17 +1080,21 @@ export async function settlePortableOpenClawPairing(
       }
       if (first.state === "settled") return { kind: "settled" };
 
-      runProducer(sandboxName, target.gatewayName);
+      // A canonical pending transition is the producer's completed output.
+      if (first.state === "pairing-only") {
+        runProducer(sandboxName, target.gatewayName);
+      }
       runApproval(sandboxName, target.gatewayName, first.deviceIdentitySha256);
 
       try {
-        const final = observePairing(
+        const final: OpenClawPairingSettlementObservation = observeSettledPairing(
           sandboxName,
           target.gatewayName,
           target.version,
           target.stateDirectory,
         );
-        return final.state === "settled"
+        return final.state === "settled" &&
+          final.deviceIdentitySha256 === first.deviceIdentitySha256
           ? { kind: "settled" }
           : incompletePortablePairing("portable-pairing-incomplete");
       } catch {

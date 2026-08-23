@@ -15,6 +15,7 @@ import {
 } from "../../src/lib/actions/sandbox/auto-pair-approval";
 import {
   buildOpenClawPairingObservationScript,
+  parseOpenClawPairingRepairObservation,
   parseOpenClawPairingSettlementObservation,
 } from "../../src/lib/actions/sandbox/launch-readiness/openclaw-pairing-qualification";
 import {
@@ -1258,6 +1259,38 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
     requireLiveProof(parsed, "real ordinary pairing settlement returned no observation");
     return parsed;
   };
+  const observePortableRepairPairing = () => {
+    const observation = spawnSync("sh", ["-s"], {
+      encoding: "utf8",
+      env,
+      input: buildOpenClawPairingObservationScript(
+        Buffer.from(approvalPolicy, "utf8").toString("base64"),
+        stateDir,
+        "repair-settlement",
+      ),
+      timeout: Math.min(options.timeoutMs, 60_000),
+    });
+    requireSuccess(observation, "observe real Portable repair pairing state");
+    const parsed = parseOpenClawPairingRepairObservation(observation.stdout ?? "");
+    requireLiveProof(parsed, "real Portable repair pairing state returned no observation");
+    return parsed;
+  };
+  const observeStrictPairing = () => {
+    const observation = spawnSync("sh", ["-s"], {
+      encoding: "utf8",
+      env,
+      input: buildOpenClawPairingObservationScript(
+        Buffer.from(approvalPolicy, "utf8").toString("base64"),
+        stateDir,
+        "settlement",
+      ),
+      timeout: Math.min(options.timeoutMs, 60_000),
+    });
+    requireSuccess(observation, "observe real strict pairing settlement");
+    const parsed = parseOpenClawPairingSettlementObservation(observation.stdout ?? "");
+    requireLiveProof(parsed, "real strict pairing settlement returned no observation");
+    return parsed;
+  };
   const pairedTokenApprovalScript = buildAutoPairApprovalScript(
     Buffer.from(approvalPolicy, "utf8").toString("base64"),
     {
@@ -1597,6 +1630,13 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
       pairingOnlyObservation.state === "pairing-only",
       "ordinary settlement did not observe pairing-only state before canonical approval",
     );
+    const portableRepairObservation = observePortableRepairPairing();
+    requireLiveProof(
+      portableRepairObservation.state === "pairing-pending" &&
+        portableRepairObservation.deviceIdentitySha256 ===
+          pairingOnlyObservation.deviceIdentitySha256,
+      "Portable repair observation did not preserve the canonical pending transition",
+    );
     const pendingBeforeOrdinaryApproval = fs.readFileSync(pendingPath, "utf8");
     const pairedBeforeOrdinaryApproval = fs.readFileSync(pairedPath, "utf8");
     const authBeforeOrdinaryApproval = fs.readFileSync(deviceAuthPath, "utf8");
@@ -1662,6 +1702,13 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
       settledObservation.state === "settled" &&
         settledObservation.deviceIdentitySha256 === pairingOnlyObservation.deviceIdentitySha256,
       "ordinary settlement did not preserve the canonical device through scope approval",
+    );
+    const strictSettledObservation = observeStrictPairing();
+    requireLiveProof(
+      strictSettledObservation.state === "settled" &&
+        strictSettledObservation.deviceIdentitySha256 ===
+          portableRepairObservation.deviceIdentitySha256,
+      "strict Portable observation did not preserve settled canonical state",
     );
     proofPhase = "ordinary-stored-device-approval-output";
     const ordinaryApprovalOutput = `${String(ordinaryApproval.stdout ?? "")}\n${String(ordinaryApproval.stderr ?? "")}`;

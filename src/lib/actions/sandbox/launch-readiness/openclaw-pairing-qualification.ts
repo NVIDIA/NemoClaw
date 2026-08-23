@@ -33,6 +33,11 @@ export type OpenClawPairingSettlementObservation = {
   readonly deviceIdentitySha256: string;
 };
 
+export type OpenClawPairingRepairObservation = {
+  readonly state: "pairing-only" | "pairing-pending" | "settled";
+  readonly deviceIdentitySha256: string;
+};
+
 interface ObservationProjection {
   deviceIdentitySha256: string;
   pairingStateSha256: string;
@@ -102,9 +107,7 @@ export function parseOpenClawPairingObservation(output: string): ObservationProj
   return record as unknown as ObservationProjection;
 }
 
-export function parseOpenClawPairingSettlementObservation(
-  output: string,
-): OpenClawPairingSettlementObservation | null {
+function parseOpenClawPairingSettlementRecord(output: string): Record<string, unknown> | null {
   const lines = output.trimEnd().split(/\r?\n/);
   const markerLines = lines.filter((line) => line.startsWith(SETTLEMENT_MARKER));
   if (markerLines.length !== 1 || lines.at(-1) !== markerLines[0]) return null;
@@ -119,18 +122,44 @@ export function parseOpenClawPairingSettlementObservation(
   if (
     !hasExactKeys(record, ["deviceIdentitySha256", "state"]) ||
     typeof record.deviceIdentitySha256 !== "string" ||
-    !SHA256_RE.test(record.deviceIdentitySha256) ||
-    (record.state !== "pairing-only" && record.state !== "settled")
+    !SHA256_RE.test(record.deviceIdentitySha256)
   ) {
     return null;
   }
+  return record;
+}
+
+export function parseOpenClawPairingSettlementObservation(
+  output: string,
+): OpenClawPairingSettlementObservation | null {
+  const record = parseOpenClawPairingSettlementRecord(output);
+  if (!record || (record.state !== "pairing-only" && record.state !== "settled")) return null;
   return record as OpenClawPairingSettlementObservation;
+}
+
+export function parseOpenClawPairingRepairObservation(
+  output: string,
+): OpenClawPairingRepairObservation | null {
+  const record = parseOpenClawPairingSettlementRecord(output);
+  if (
+    !record ||
+    (record.state !== "pairing-only" &&
+      record.state !== "pairing-pending" &&
+      record.state !== "settled")
+  ) {
+    return null;
+  }
+  return record as OpenClawPairingRepairObservation;
 }
 
 export function buildOpenClawPairingObservationScript(
   approvalPolicyModuleB64: string,
   stateDirectory: string,
-  mode: "ordinary-settlement" | "qualification" | "settlement" = "qualification",
+  mode:
+    | "ordinary-settlement"
+    | "qualification"
+    | "repair-settlement"
+    | "settlement" = "qualification",
 ): string {
   if (!path.posix.isAbsolute(stateDirectory)) {
     throw new OpenClawPairingQualificationError();
@@ -167,7 +196,8 @@ REQUIRED_ROLES = ['operator']
 PAIRING_ONLY_SCOPES = ['operator.pairing']
 REQUEST_SCOPES = ['operator.pairing', 'operator.write']
 TOKEN_SCOPES = ['operator.pairing', 'operator.read', 'operator.write']
-ORDINARY_SETTLEMENT = ${mode === "ordinary-settlement" ? "True" : "False"}
+ALLOW_CANONICAL_PENDING = ${mode === "ordinary-settlement" || mode === "repair-settlement" ? "True" : "False"}
+REPORT_CANONICAL_PENDING = ${mode === "repair-settlement" ? "True" : "False"}
 STRICT_SETTLEMENT = ${mode === "settlement" ? "True" : "False"}
 ED25519_SPKI_PREFIX = bytes.fromhex('302a300506032b6570032100')
 RAW_PUBLIC_KEY_RE = re.compile(r'^[A-Za-z0-9_-]{43}$')
@@ -486,7 +516,7 @@ try:
             or request.get('requestId') != request_id
         ):
             reject()
-        if ORDINARY_SETTLEMENT:
+        if ALLOW_CANONICAL_PENDING:
             # The startup watcher can publish the canonical write transition
             # before finalization observes the pairing-only device. Admit only
             # that exact intermediate state so the owning controller can reach
@@ -540,7 +570,7 @@ try:
         and exact_string_set(paired_operator.get('scopes'), PAIRING_ONLY_SCOPES)
         and exact_string_set(auth_operator.get('scopes'), PAIRING_ONLY_SCOPES)
     )
-    if ORDINARY_SETTLEMENT and pending and (len(pending) != 1 or not pairing_only):
+    if ALLOW_CANONICAL_PENDING and pending and (len(pending) != 1 or not pairing_only):
         reject()
     if not settled and not pairing_only:
         reject()
@@ -551,7 +581,7 @@ try:
     }, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
     ${
       mode !== "qualification"
-        ? "print(MARKER + json.dumps({\n        'deviceIdentitySha256': device_identity_sha256,\n        'state': 'settled' if settled else 'pairing-only',\n    }, sort_keys=True, separators=(',', ':')))\n    sys.exit(0)"
+        ? "print(MARKER + json.dumps({\n        'deviceIdentitySha256': device_identity_sha256,\n        'state': 'settled' if settled else ('pairing-pending' if REPORT_CANONICAL_PENDING and pending else 'pairing-only'),\n    }, sort_keys=True, separators=(',', ':')))\n    sys.exit(0)"
         : "if not settled:\n        reject()"
     }
 
@@ -608,7 +638,7 @@ function runOpenClawPairingObservation(
   gatewayName: string,
   openclawVersion: string,
   stateDirectory: string,
-  mode: "ordinary-settlement" | "qualification" | "settlement",
+  mode: "ordinary-settlement" | "qualification" | "repair-settlement" | "settlement",
   execDeps?: Partial<OpenClawPairingQualificationDeps>,
 ): { readonly output: string; readonly policy: string } {
   const approvalPolicy = (execDeps?.readApprovalPolicy ?? readAutoPairApprovalPolicyModule)();
@@ -666,6 +696,31 @@ export function observeOpenClawPairingSettlement(
       execDeps,
     );
     const observation = parseOpenClawPairingSettlementObservation(executed.output);
+    if (!observation) throw new OpenClawPairingQualificationError();
+    return observation;
+  } catch (error) {
+    if (error instanceof OpenClawPairingQualificationError) throw error;
+    throw new OpenClawPairingQualificationError();
+  }
+}
+
+export function observeOpenClawPairingRepairSettlement(
+  sandboxName: string,
+  gatewayName: string,
+  openclawVersion: string,
+  stateDirectory: string,
+  execDeps?: Partial<OpenClawPairingQualificationDeps>,
+): OpenClawPairingRepairObservation {
+  try {
+    const executed = runOpenClawPairingObservation(
+      sandboxName,
+      gatewayName,
+      openclawVersion,
+      stateDirectory,
+      "repair-settlement",
+      execDeps,
+    );
+    const observation = parseOpenClawPairingRepairObservation(executed.output);
     if (!observation) throw new OpenClawPairingQualificationError();
     return observation;
   } catch (error) {
