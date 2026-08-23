@@ -63,7 +63,7 @@ interface OrdinaryOpenClawPairingSettlementDeps {
     version: string,
     stateDirectory: string,
   ): OpenClawPairingSettlementObservation;
-  runWarmup(name: string): Promise<void> | void;
+  runWarmup(name: string, gatewayName: string): Promise<void> | void;
   runApproval(name: string, gatewayName: string): Promise<void> | void;
   withSandboxLock: SandboxLifecycleLock;
   withGatewayLock: GatewayRouteLock;
@@ -154,8 +154,10 @@ function defaultPairingSettlementDeps(): OrdinaryOpenClawPairingSettlementDeps {
       finalizationHandlerRuntime
         .loadPairingQualification()
         .observeOrdinaryOpenClawPairingSettlement(...args),
-    runWarmup: (name) =>
-      finalizationHandlerRuntime.loadAutoPairWarmup().runSandboxScopeWarmupRun(name),
+    runWarmup: (name, gatewayName) =>
+      finalizationHandlerRuntime
+        .loadAutoPairApproval()
+        .runPortableOpenClawPairingRequestProducer(name, gatewayName),
     runApproval: (name, gatewayName) =>
       finalizationHandlerRuntime
         .loadAutoPairApproval()
@@ -205,7 +207,7 @@ export async function settleOrdinaryOpenClawPairing(
           // state. Approval and the final exact-device observation remain the
           // only completion authority (#10014).
           try {
-            await deps.runWarmup(name);
+            await deps.runWarmup(name, target.gatewayName);
           } catch {
             // The bounded observation below remains fail closed.
           }

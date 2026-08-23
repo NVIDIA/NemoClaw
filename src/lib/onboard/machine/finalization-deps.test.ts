@@ -85,7 +85,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       "2026.7.1",
       "/sandbox/.openclaw",
     );
-    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
     expect(scope.deps.runApproval).not.toHaveBeenCalled();
   });
 
@@ -110,7 +110,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
     });
 
     expect(scope.calls).toEqual(["warmup", "sleep", "approval"]);
-    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
     expect(scope.deps.runApproval).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
   });
 
@@ -383,7 +383,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       kind: "settled",
     });
 
-    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
     expect(scope.deps.runApproval).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
     expect(scope.deps.observePairing).toHaveBeenCalledTimes(3);
     expect(now).toBe(
@@ -415,7 +415,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       reason: "pairing-unavailable",
     });
     expect(scope.deps.sleep).not.toHaveBeenCalled();
-    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
     expect(scope.deps.runApproval).not.toHaveBeenCalled();
   });
 
@@ -431,7 +431,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       reason: "pairing-unavailable",
     });
 
-    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
     expect(scope.deps.runApproval).not.toHaveBeenCalled();
   });
 
@@ -461,7 +461,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
     });
 
     expect(scope.deps.observePairing).not.toHaveBeenCalled();
-    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
     expect(scope.deps.runApproval).not.toHaveBeenCalled();
   });
 
@@ -493,12 +493,12 @@ describe("ordinary OpenClaw pairing settlement", () => {
     );
   });
 
-  it("wires default warm-up and approval adapters to the finalized gateway (#9844)", async () => {
+  it("wires the direct request producer and approval to the finalized gateway (#10014)", async () => {
     const observePairing = vi
       .fn()
       .mockReturnValueOnce(PAIRING_ONLY)
       .mockReturnValueOnce(SETTLED);
-    const runSandboxScopeWarmupRun = vi.fn();
+    const runPortableOpenClawPairingRequestProducer = vi.fn();
     const runConnectAutoPairApprovalPass = vi.fn();
     vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
       resolveOrdinaryOpenClawPairingTarget: vi.fn(() => PAIRING_TARGET),
@@ -506,10 +506,8 @@ describe("ordinary OpenClaw pairing settlement", () => {
     vi.spyOn(finalizationHandlerRuntime, "loadPairingQualification").mockReturnValue({
       observeOrdinaryOpenClawPairingSettlement: observePairing,
     } as never);
-    vi.spyOn(finalizationHandlerRuntime, "loadAutoPairWarmup").mockReturnValue({
-      runSandboxScopeWarmupRun,
-    } as never);
     vi.spyOn(finalizationHandlerRuntime, "loadAutoPairApproval").mockReturnValue({
+      runPortableOpenClawPairingRequestProducer,
       runConnectAutoPairApprovalPass,
     } as never);
     vi.spyOn(finalizationHandlerRuntime, "loadSandboxLifecycleLock").mockReturnValue({
@@ -522,7 +520,10 @@ describe("ordinary OpenClaw pairing settlement", () => {
     await expect(finalizationHandlerDeps.settleOrdinaryOpenClawPairing("alpha")).resolves.toEqual({
       kind: "settled",
     });
-    expect(runSandboxScopeWarmupRun).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(runPortableOpenClawPairingRequestProducer).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      "nemoclaw",
+    );
     expect(runConnectAutoPairApprovalPass).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
   });
 
