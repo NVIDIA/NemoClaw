@@ -18,7 +18,11 @@ import {
   servingProfileProvenance,
 } from "../inference/serving/profile-provenance";
 import type { CompiledServingCatalog, ServingProfileProvenance } from "../inference/serving/types";
-import { VLLM_EXTRA_ARGS_ENV } from "../inference/vllm-models";
+import {
+  NEMOCLAW_VLLM_GPU_DEVICE_ENV,
+  normalizeVllmGpuDevice,
+  VLLM_EXTRA_ARGS_ENV,
+} from "../inference/vllm-models";
 import {
   resolveToolDisclosureRequest,
   TOOL_DISCLOSURE_ENV,
@@ -70,6 +74,7 @@ export interface OnboardCommandOptions {
   hostMounts?: import("../state/registry/types").SandboxHostMount[];
   sandboxGpu: "enable" | "disable" | null;
   sandboxGpuDevice: string | null;
+  vllmGpuDevice: string | null;
   acceptThirdPartySoftware: boolean;
   agent: string | null;
   agentsManifest: string | null;
@@ -96,7 +101,10 @@ export interface ResolveOnboardOptionsDeps {
   listAgents?: () => string[];
   listServingProfiles?: () => ServingProfileListEntry[];
   loadServingCatalog?: () => CompiledServingCatalog;
-  loadSession?: () => { servingProfileProvenance?: ServingProfileProvenance | null } | null;
+  loadSession?: () => {
+    servingProfileProvenance?: ServingProfileProvenance | null;
+    vllmGpuDevice?: string | null;
+  } | null;
   error?: (message?: string) => void;
   exit?: (code: number) => never;
   resumeIntent?: ResolvedOnboardResumeIntent;
@@ -188,6 +196,37 @@ function resolveSandboxGpu(flags: OnboardFlags): "enable" | "disable" | null {
   if (flags["sandbox-gpu"]) return "enable";
   if (flags["no-sandbox-gpu"]) return "disable";
   return null;
+}
+
+function resolveVllmGpuDevice(
+  requested: string | undefined,
+  resume: boolean,
+  deps: ResolveOnboardOptionsDeps,
+): string | null {
+  let normalized: string | null = null;
+  if (requested !== undefined) {
+    try {
+      normalized = normalizeVllmGpuDevice(requested);
+    } catch (error) {
+      fail(deps, `  Invalid --vllm-gpu-device: ${(error as Error).message}.`);
+    }
+  }
+  if (!resume) return normalized;
+
+  const recorded = deps.loadSession?.()?.vllmGpuDevice ?? null;
+  if (!recorded) {
+    if (normalized) {
+      fail(
+        deps,
+        "  --vllm-gpu-device cannot be added while resuming a legacy onboarding session; start fresh instead.",
+      );
+    }
+    return null;
+  }
+  if (normalized && normalized !== recorded) {
+    fail(deps, `  --vllm-gpu-device ${normalized} does not match resumed GPU device ${recorded}.`);
+  }
+  return recorded;
 }
 
 function resolveHostMounts(
@@ -412,6 +451,7 @@ export function resolveOnboardOptions(
   const resume = deps.resumeIntent?.effectiveResume ?? flags.resume === true;
   const agent = resolveAgent(flags.agent, deps);
   const servingProfileProvenance = resolveServingProfileLifecycle(flags, deps, resume);
+  const vllmGpuDevice = resolveVllmGpuDevice(flags["vllm-gpu-device"], resume, deps);
   validateObservabilityAgent(flags.observability, agent, deps);
   let toolDisclosure: ToolDisclosure | null;
   try {
@@ -437,6 +477,7 @@ export function resolveOnboardOptions(
     ...(hostMounts.length > 0 ? { hostMounts } : {}),
     sandboxGpu: resolveSandboxGpu(flags),
     sandboxGpuDevice: flags["sandbox-gpu-device"] ?? null,
+    vllmGpuDevice,
     acceptThirdPartySoftware:
       flags[NOTICE_ACCEPT_FLAG_NAME] === true || String(deps.env[NOTICE_ACCEPT_ENV] || "") === "1",
     agent,
@@ -589,6 +630,7 @@ type OnboardCommandAttemptResult = "complete" | "retry" | number;
 interface OnboardCommandEnvironmentSnapshot {
   agentsManifest: string | undefined;
   toolDisclosure: string | undefined;
+  vllmGpuDevice: string | undefined;
   ollamaAutostart: { present: boolean; value: string | undefined };
 }
 
@@ -638,6 +680,8 @@ function restoreOnboardCommandEnvironment(
   restoreServingProfileEnvironment();
   if (snapshot.toolDisclosure === undefined) delete env[TOOL_DISCLOSURE_ENV];
   else env[TOOL_DISCLOSURE_ENV] = snapshot.toolDisclosure;
+  if (snapshot.vllmGpuDevice === undefined) delete env[NEMOCLAW_VLLM_GPU_DEVICE_ENV];
+  else env[NEMOCLAW_VLLM_GPU_DEVICE_ENV] = snapshot.vllmGpuDevice;
   if (snapshot.ollamaAutostart.present) {
     env.NEMOCLAW_OLLAMA_NO_AUTOSTART = snapshot.ollamaAutostart.value ?? "";
   } else {
@@ -656,6 +700,7 @@ async function runOnboardCommandAttempt(
   const environmentSnapshot: OnboardCommandEnvironmentSnapshot = {
     agentsManifest: env.NEMOCLAW_EXTRA_AGENTS_JSON,
     toolDisclosure: env[TOOL_DISCLOSURE_ENV],
+    vllmGpuDevice: env[NEMOCLAW_VLLM_GPU_DEVICE_ENV],
     ollamaAutostart: {
       present: Object.prototype.hasOwnProperty.call(env, "NEMOCLAW_OLLAMA_NO_AUTOSTART"),
       value: env.NEMOCLAW_OLLAMA_NO_AUTOSTART,
@@ -668,6 +713,8 @@ async function runOnboardCommandAttempt(
     restoreServingProfileEnvironment = applyServingProfileEnvironment(options, env);
     const toolDisclosure = toolDisclosureEnvironmentOverride(options, deps.flags);
     if (toolDisclosure) env[TOOL_DISCLOSURE_ENV] = toolDisclosure;
+    if (options.vllmGpuDevice) env[NEMOCLAW_VLLM_GPU_DEVICE_ENV] = options.vllmGpuDevice;
+    else delete env[NEMOCLAW_VLLM_GPU_DEVICE_ENV];
     if (options.noOllamaAutostart && !options.experimentalProfile) {
       env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
     }
