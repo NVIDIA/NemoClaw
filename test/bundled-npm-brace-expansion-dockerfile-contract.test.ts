@@ -37,6 +37,11 @@ const hermesTarCacheSeedArguments = [
   "--archive",
   "/tmp/nemoclaw-bundled-npm-tar.tgz",
 ] as const;
+const tarPatchArgumentsByDockerfile = {
+  Dockerfile: npmRootArguments,
+  "agents/hermes/Dockerfile": hermesTarCacheSeedArguments,
+  "agents/langchain-deepagents-code/Dockerfile": npmRootArguments,
+} as const;
 
 describe("bundled npm brace-expansion image remediation contract", () => {
   it("binds the replacement to the reviewed npm and registry artifact", () => {
@@ -73,12 +78,10 @@ describe("bundled npm brace-expansion image remediation contract", () => {
   )("reasserts the private package fix in the completed %s filesystem", (file) => {
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const copy = source.indexOf(copyInstruction);
-    const tarPatchArguments =
-      file === "agents/hermes/Dockerfile" ? hermesTarCacheSeedArguments : npmRootArguments;
     const tarPatch = requireSingleReviewedDockerfileRunCommand(
       source,
       "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
-      tarPatchArguments,
+      tarPatchArgumentsByDockerfile[file],
     ).commandStart;
     const bracePatch = requireSingleReviewedDockerfileRunCommand(
       source,
@@ -87,10 +90,13 @@ describe("bundled npm brace-expansion image remediation contract", () => {
     );
 
     expect(copy, file).toBeGreaterThanOrEqual(0);
-    if (file === "agents/hermes/Dockerfile") {
-      expect(source, file).toContain(hermesTarCacheSeedInstruction);
-    }
     expect(tarPatch, file).toBeGreaterThan(copy);
     expect(bracePatch.commandStart, file).toBeGreaterThan(tarPatch);
+  });
+
+  it("reasserts the Hermes tar repair from the locked offline cache seed", () => {
+    const source = fs.readFileSync(path.join(repoRoot, "agents/hermes/Dockerfile"), "utf8");
+
+    expect(source).toContain(hermesTarCacheSeedInstruction);
   });
 });
