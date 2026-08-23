@@ -283,6 +283,7 @@ run_build_with_retry() {
   local max_attempts=2
   local attempt
   local build_status
+  local failure_class
   local last_line
   local log_status
   local outcome
@@ -310,13 +311,17 @@ run_build_with_retry() {
     fi
 
     last_line="$(awk 'NF { line=$0 } END { sub(/\r$/, "", line); print line }' "$attempt_log")"
-    if [[ ! "$last_line" =~ ^ERROR:\ failed\ to\ build:\ failed\ to\ solve:\ stream\ error:\ stream\ ID\ [0-9]+\;\ INTERNAL_ERROR\;\ received\ from\ peer$ ]]; then
+    if [[ "$last_line" =~ ^ERROR:\ failed\ to\ build:\ failed\ to\ solve:\ stream\ error:\ stream\ ID\ [0-9]+\;\ INTERNAL_ERROR\;\ received\ from\ peer$ ]]; then
+      failure_class="buildkit-http2-internal-error"
+    elif grep -Eq '^(#[0-9]+ )?[0-9]+([.][0-9]+)? ERROR: curl failed: curl: \(6\) Could not resolve host: registry[.]npmjs[.]org$' "$attempt_log"; then
+      failure_class="npm-registry-dns-resolution"
+    else
       echo "::error::Protected managed-image build outcome=failed-no-retry agent=${agent} attempt=${attempt}/${max_attempts} docker-exit=${build_status}" >&2
       return "$build_status"
     fi
 
     if [[ "$attempt" == "$max_attempts" ]]; then
-      echo "::error::Protected managed-image build outcome=exhausted agent=${agent} attempt=${attempt}/${max_attempts} failure=buildkit-http2-internal-error docker-exit=${build_status}" >&2
+      echo "::error::Protected managed-image build outcome=exhausted agent=${agent} attempt=${attempt}/${max_attempts} failure=${failure_class} docker-exit=${build_status}" >&2
       return "$build_status"
     fi
 
@@ -325,7 +330,7 @@ run_build_with_retry() {
       return "$build_status"
     fi
 
-    echo "::warning::Protected managed-image build outcome=transient-external agent=${agent} attempt=${attempt}/${max_attempts} retry-in=2s failure=buildkit-http2-internal-error" >&2
+    echo "::warning::Protected managed-image build outcome=transient-external agent=${agent} attempt=${attempt}/${max_attempts} retry-in=2s failure=${failure_class}" >&2
     sleep 2
   done
 }
