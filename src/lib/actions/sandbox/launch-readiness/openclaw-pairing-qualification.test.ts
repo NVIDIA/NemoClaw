@@ -291,7 +291,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       expect(() => observeSettlement()).toThrow("OpenClaw pairing qualification is unavailable");
     });
 
-    it("allows unrelated pending requests but rejects same-device pending state during ordinary onboarding (#9844)", () => {
+    it("rejects unrelated or same-device pending requests during ordinary onboarding (#9844)", () => {
       writeJson(path.join(stateDirectory, "devices", "pending.json"), {
         unrelated: {
           requestId: "unrelated",
@@ -302,10 +302,9 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         },
       });
 
-      expect(observeOrdinarySettlement()).toEqual({
-        state: "settled",
-        deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
-      });
+      expect(() => observeOrdinarySettlement()).toThrow(
+        "OpenClaw pairing qualification is unavailable",
+      );
       expect(() => observeSettlement()).toThrow(
         "OpenClaw pairing qualification is unavailable",
       );
@@ -315,6 +314,55 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
           requestId: "related",
           deviceId,
           publicKey,
+          clientId: "unknown-client",
+          scopes: ["operator.admin"],
+        },
+      });
+      expect(() => observeOrdinarySettlement()).toThrow(
+        "OpenClaw pairing qualification is unavailable",
+      );
+    });
+
+    it("observes pairing-only state while one canonical scope upgrade awaits approval (#9817)", () => {
+      writePairingOnlyState();
+      writeJson(path.join(stateDirectory, "devices", "pending.json"), {
+        "canonical-cli-write": {
+          requestId: "canonical-cli-write",
+          deviceId,
+          publicKey,
+          clientId: "cli",
+          clientMode: "cli",
+          role: "operator",
+          roles: ["operator"],
+          scopes: ["operator.write"],
+          isRepair: true,
+        },
+      });
+
+      expect(observeOrdinarySettlement()).toEqual({
+        state: "pairing-only",
+        deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      expect(() => observeSettlement()).toThrow(
+        "OpenClaw pairing qualification is unavailable",
+      );
+
+      writeJson(path.join(stateDirectory, "devices", "pending.json"), {
+        first: {
+          requestId: "first",
+          deviceId,
+          publicKey,
+          clientId: "cli",
+          clientMode: "cli",
+          role: "operator",
+          roles: ["operator"],
+          scopes: ["operator.write"],
+          isRepair: true,
+        },
+        second: {
+          requestId: "second",
+          deviceId: "b".repeat(64),
+          publicKey: "unrelated-public-key",
           clientId: "unknown-client",
           scopes: ["operator.admin"],
         },
