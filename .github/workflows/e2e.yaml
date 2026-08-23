@@ -3998,11 +3998,32 @@ jobs:
               ;;
           esac
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout protected managed-image candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate trusted Hermes resolver checkout path
+        shell: bash
+        run: |
+          set -euo pipefail
+          trusted_resolver_root="$GITHUB_WORKSPACE/.trusted-hermes-resolver"
+          [[ ! -e "$trusted_resolver_root" && ! -L "$trusted_resolver_root" ]] || {
+            echo "::error::Trusted Hermes resolver checkout path already exists" >&2
+            exit 1
+          }
+
+      - name: Checkout trusted Hermes resolver
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
+          path: .trusted-hermes-resolver
+          sparse-checkout: .github/actions/resolve-reviewed-hermes-platform
+          fetch-depth: 1
           persist-credentials: false
 
       - *dockerhub-auth
@@ -4046,6 +4067,31 @@ jobs:
             exit 1
           }
           install -d -m 0700 "$E2E_ARTIFACT_DIR"
+
+      - id: hermes-base
+        name: Resolve reviewed Hermes platform base image
+        uses: ./.trusted-hermes-resolver/.github/actions/resolve-reviewed-hermes-platform
+        with:
+          dockerfile-path: agents/hermes/Dockerfile
+          platform: ${{ matrix.platform }}
+
+      - name: Remove trusted Hermes resolver checkout
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          trusted_resolver_root="$GITHUB_WORKSPACE/.trusted-hermes-resolver"
+          if [[ -e "$trusted_resolver_root" || -L "$trusted_resolver_root" ]]; then
+            [[ -d "$trusted_resolver_root" && ! -L "$trusted_resolver_root" ]] || {
+              echo "::error::Trusted Hermes resolver checkout path changed type" >&2
+              exit 1
+            }
+            rm -rf -- "$trusted_resolver_root"
+          fi
+          [[ ! -e "$trusted_resolver_root" && ! -L "$trusted_resolver_root" ]] || {
+            echo "::error::Trusted Hermes resolver checkout remained after cleanup" >&2
+            exit 1
+          }
 
       - id: bases
         name: Resolve exact platform base images
@@ -4095,9 +4141,6 @@ jobs:
           resolve_base openclaw \
             ghcr.io/nvidia/nemoclaw/sandbox-base:latest \
             ghcr.io/nvidia/nemoclaw/sandbox-base
-          resolve_base hermes \
-            ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest \
-            ghcr.io/nvidia/nemoclaw/hermes-sandbox-base
           resolve_base dcode \
             ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest \
             ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
@@ -4132,7 +4175,7 @@ jobs:
       - name: Build exact all-agent protected managed images
         env:
           BASE_DCODE: ${{ steps.bases.outputs.dcode }}
-          BASE_HERMES: ${{ steps.bases.outputs.hermes }}
+          BASE_HERMES: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.hermes-base.outputs.digest }}
           BASE_OPENCLAW: ${{ steps.bases.outputs.openclaw }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
         shell: bash
@@ -4683,6 +4726,13 @@ jobs:
           }
           install -d -m 0700 "$E2E_ARTIFACT_DIR"
 
+      - id: runtime-hermes-base
+        name: Resolve reviewed Hermes runtime base image
+        uses: ./.github/actions/resolve-reviewed-hermes-platform
+        with:
+          dockerfile-path: .candidate-runtime/agents/hermes/Dockerfile
+          platform: linux/amd64
+
       - id: runtime-bases
         name: Resolve exact amd64 runtime base images
         shell: bash
@@ -4728,9 +4778,6 @@ jobs:
           resolve_base openclaw \
             ghcr.io/nvidia/nemoclaw/sandbox-base:latest \
             ghcr.io/nvidia/nemoclaw/sandbox-base
-          resolve_base hermes \
-            ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest \
-            ghcr.io/nvidia/nemoclaw/hermes-sandbox-base
           resolve_base dcode \
             ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest \
             ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
@@ -4765,7 +4812,7 @@ jobs:
       - name: Build exact all-agent protected runtime images
         env:
           BASE_DCODE: ${{ steps.runtime-bases.outputs.dcode }}
-          BASE_HERMES: ${{ steps.runtime-bases.outputs.hermes }}
+          BASE_HERMES: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}
           BASE_OPENCLAW: ${{ steps.runtime-bases.outputs.openclaw }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
         shell: bash

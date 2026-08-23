@@ -15,10 +15,12 @@ function runHermesOptionalRuntimeValidation({
   mcpAvailable,
   httpAvailable,
   acpVersion = "0.9.0",
+  acpModuleFilename = "acp.py",
 }: {
   mcpAvailable: boolean;
   httpAvailable: boolean;
   acpVersion?: string;
+  acpModuleFilename?: string;
 }) {
   const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-runtime-"));
@@ -35,7 +37,7 @@ function runHermesOptionalRuntimeValidation({
     for (const directory of [toolsDir, acpAdapterDir, acpDistInfo]) {
       fs.mkdirSync(directory, { recursive: true });
     }
-    fs.writeFileSync(path.join(tmp, "acp.py"), "# ACP SDK fixture\n");
+    fs.writeFileSync(path.join(tmp, acpModuleFilename), "# ACP SDK fixture\n");
     fs.writeFileSync(path.join(acpAdapterDir, "__init__.py"), "");
     fs.writeFileSync(
       path.join(acpAdapterDir, "server.py"),
@@ -96,5 +98,13 @@ describe("Hermes managed optional runtime capability", () => {
     });
     expect(wrongAcp.result.status).toBe(1);
     expect(wrongAcp.result.stderr).toContain("Hermes ACP SDK version is unavailable");
+
+    const missingAcp = runHermesOptionalRuntimeValidation({
+      mcpAvailable: true,
+      httpAvailable: true,
+      acpModuleFilename: "not_acp.py",
+    });
+    expect(missingAcp.result.status).toBe(1);
+    expect(missingAcp.result.stderr).toContain("No module named 'acp'");
   });
 });

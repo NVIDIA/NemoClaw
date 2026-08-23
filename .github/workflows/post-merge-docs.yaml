@@ -17,25 +17,40 @@ concurrency:
 
 jobs:
   gate:
-    name: Validate the managed documentation PR count
+    name: Select documentation PR ownership
     runs-on: ubuntu-24.04
     permissions:
       pull-requests: read
+    outputs:
+      automate: ${{ steps.scan.outputs.automate }}
     steps:
-      - env:
+      - id: scan
+        env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          count="$(
+          owner="$(
             gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&base=main&per_page=100" |
-              jq --slurp '[.[][] | select((.head.ref | startswith("automation/post-merge-docs-")) and .head.repo.full_name == "NVIDIA/NemoClaw")] | length'
+              jq --slurp -r '
+                [.[][] | select((.head.ref | test("^automation/post-merge-docs-[0-9a-f]{12}$")) and .head.repo.full_name == "NVIDIA/NemoClaw")] |
+                if length > 1 then "invalid"
+                elif length == 0 or .[0].draft == true then "automation"
+                elif .[0].draft == false then "maintainer"
+                else "invalid"
+                end
+              '
           )"
-          [[ "$count" =~ ^[0-9]+$ && "$count" -le 1 ]]
+          [[ "$owner" == "automation" || "$owner" == "maintainer" ]]
+          if [[ "$owner" == "automation" ]]; then
+            echo "automate=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "automate=false" >> "$GITHUB_OUTPUT"
+          fi
 
   author:
     name: Author and review documentation catch-up
     needs: gate
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && needs.gate.outputs.automate == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     permissions:
@@ -91,7 +106,18 @@ jobs:
           SANDBOX_NAME: docs-main-author
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" execute
 
-      - name: Independently review the candidate
+      - name: Validate the documentation candidate
+        working-directory: author/repo
+        run: |
+          before_status="$(git status --porcelain=v1 --untracked-files=all)"
+          before_diff="$(git diff --no-ext-diff --binary HEAD | sha256sum)"
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run docs
+          [[ "$(git status --porcelain=v1 --untracked-files=all)" == "$before_status" ]]
+          [[ "$(git diff --no-ext-diff --binary HEAD | sha256sum)" == "$before_diff" ]]
+
+      - id: review
+        name: Independently review the candidate
         env:
           POST_MERGE_DOCS_ARTIFACT_DIR: ${{ github.workspace }}/approved
           POST_MERGE_DOCS_CANDIDATE_DIR: ${{ github.workspace }}/candidate
@@ -99,6 +125,15 @@ jobs:
           POST_MERGE_DOCS_WORKDIR: ${{ github.workspace }}/review
           SANDBOX_NAME: docs-main-review
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" execute
+
+      - name: Upload the independent review report
+        if: ${{ failure() && steps.review.outcome == 'failure' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          if-no-files-found: ignore
+          name: post-merge-docs-review-rejection
+          path: ${{ github.workspace }}/approved/review-report.txt
+          retention-days: 3
 
       - id: upload
         name: Upload the approved patch
