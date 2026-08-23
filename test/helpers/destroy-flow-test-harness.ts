@@ -33,6 +33,7 @@ export type DestroyHarness = {
   gatewayPinsAtSandboxList: Array<string | undefined>;
   killTimerSpy: MockInstance;
   killStaleProxySpy: MockInstance;
+  lifecycleLockEvents: string[];
   logSpy: MockInstance;
   prepareMcpBridgesForAbsentSandboxDestroySpy: MockInstance;
   prepareMcpBridgesForDestroySpy: MockInstance;
@@ -176,6 +177,7 @@ export function traceDestroyBoundaryCalls(
 export function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarness {
   resetDestroyModuleCache();
   const events: string[] = [];
+  const lifecycleLockEvents: string[] = [];
   let sandboxPresent = options.sandboxPresent !== false;
   let sessionLockBusy = false;
   const sessionState = {
@@ -204,6 +206,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const tunnelServices = requireDist("../../tunnel/services.js");
   const onboardSession = requireDist("../../state/onboard-session.js");
   const gatewayRegistry = requireDist("../../state/gateway-registry.js");
+  const mcpLifecycleLock = requireDist(
+    "../../state/mcp-lifecycle-lock.js",
+  ) as typeof import("../../src/lib/state/mcp-lifecycle-lock");
   const registry = requireDist("../../state/registry.js");
   const destroyExecution = requireDist("./destroy-execution.js");
   const destroyPreflight = requireDist("./destroy-preflight.js");
@@ -218,6 +223,18 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const localModelProfileCleanup = requireDist("../../inference/local-model-profile/cleanup.js");
   const portableDemoLifecycle = requireDist(
     "../../onboard/experimental/portable-demo-lifecycle.js",
+  );
+
+  const withMcpLifecycleLock = mcpLifecycleLock.withMcpLifecycleLock;
+  vi.spyOn(mcpLifecycleLock, "withMcpLifecycleLock").mockImplementation(
+    async (sandboxName, operation, lockOptions) => {
+      lifecycleLockEvents.push("acquired");
+      try {
+        return await withMcpLifecycleLock(sandboxName, operation, lockOptions);
+      } finally {
+        lifecycleLockEvents.push("released");
+      }
+    },
   );
 
   const executeSandboxDestroySpy = vi.spyOn(destroyExecution, "executeSandboxDestroy");
@@ -588,6 +605,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     gatewayPinsAtSandboxList,
     killTimerSpy,
     killStaleProxySpy,
+    lifecycleLockEvents,
     logSpy,
     prepareMcpBridgesForAbsentSandboxDestroySpy,
     prepareMcpBridgesForDestroySpy,

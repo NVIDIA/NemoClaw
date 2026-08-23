@@ -41,7 +41,6 @@ import {
   collectDeterministicContext,
   type DeterministicReviewContext,
 } from "./deterministic-context.mts";
-import { createGitDiffToolController } from "./git-diff-tool.mts";
 import { buildInvestigateTurn } from "./investigate-turn.mts";
 import { validateSpecialistSessionDirectory } from "./specialist-sessions.mts";
 import { buildSynthesisTurn } from "./synthesis-turn.mts";
@@ -336,6 +335,7 @@ async function main(): Promise<void> {
     preparePromptArtifacts({
       artifacts,
       metadata,
+      diff,
     });
 
   const writeFailure = (reason: string): void => writeFailureArtifacts(artifacts, metadata, reason);
@@ -366,7 +366,6 @@ async function main(): Promise<void> {
       logPrefix: "pr-review-advisor",
       baseRef,
       headRef,
-      diff,
       metadata,
       schema,
       securityCategoryNames,
@@ -437,9 +436,11 @@ export function persistSuccessfulReview(
 export function preparePromptArtifacts({
   artifacts,
   metadata,
+  diff,
 }: {
   artifacts: ArtifactPaths;
   metadata: ReviewMetadata;
+  diff: string;
 }): {
   systemPrompt: string;
   promptTurns: AdvisorPromptTurn[];
@@ -455,7 +456,7 @@ export function preparePromptArtifacts({
       : undefined;
     const promptTurns = specialistInventory
       ? [buildSynthesisTurn(specialistInventory), buildChallengeAndRecordTurn()]
-      : buildPromptTurns({ metadata });
+      : buildPromptTurns({ metadata, diffPath: writeReviewDiff(diff) });
     const resultLimitations =
       specialistInventory?.missing.map(
         (interest) =>
@@ -512,7 +513,6 @@ type AdvisorConversationOptions = {
   logPrefix: string;
   baseRef: string;
   headRef: string;
-  diff: string;
   metadata: ReviewMetadata;
   schema: Record<string, unknown>;
   securityCategoryNames: readonly string[];
@@ -529,12 +529,6 @@ async function runAdvisorConversation(
   const terminologyTools = createTerminologyToolController({
     baseRef: options.baseRef,
     headRef: options.headRef,
-  });
-  const diffTools = createGitDiffToolController({
-    baseRef: options.baseRef,
-    headRef: options.headRef,
-    changedFiles: options.metadata.changedFiles,
-    totalDiffCharacters: options.diff.length,
   });
   const submission = createReviewSubmissionController({
     metadata: {
@@ -569,7 +563,7 @@ async function runAdvisorConversation(
     credentialEnv: ADVISOR_CREDENTIAL_ENV,
     logPrefix: options.logPrefix,
     logProgress,
-    customTools: [...submission.tools, ...terminologyTools.tools, ...diffTools.tools],
+    customTools: [...submission.tools, ...terminologyTools.tools],
     onTurnComplete: (turn) => applyReviewSubmissionTurn(submission, turn),
   });
   return { run: result, submission };
@@ -601,16 +595,27 @@ export async function collectGitHubContext(
   return collectGitHubReviewContext(env);
 }
 
+export function writeReviewDiff(diff: string): string {
+  const directory = path.join(root, ".pr-review-advisor-context");
+  fs.mkdirSync(directory, { recursive: true });
+  const file = path.join(directory, "diff.patch");
+  fs.writeFileSync(file, diff);
+  return path.relative(root, file);
+}
+
 export function buildPromptTurns({
   metadata,
+  diffPath,
 }: {
   metadata: ReviewMetadata;
+  diffPath: string;
 }): AdvisorPromptTurn[] {
   const context = metadata.deterministic;
   return [
     buildInvestigateTurn({
       metadata: metadataFields(metadata),
       scopeRisk: buildScopeRiskTurnContext(context),
+      diffPath,
       controlledWords: readTrustedControlledWords(),
       terminology: {
         issueReferenceLines: context.github?.issueReferenceLines ?? [],

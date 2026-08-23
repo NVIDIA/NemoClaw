@@ -8,7 +8,6 @@ import path from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
-import { PR_REVIEW_GIT_DIFF_TOOL } from "../tools/pr-review-advisor/git-diff-tool.mts";
 import { TERMINOLOGY_TRACE_TOOL } from "../tools/pr-review-advisor/terminology.mts";
 import { runSpecialistAdvisor } from "../tools/pr-review-advisor/run-specialist.mts";
 import type { RunAdvisorResult, RunReadOnlyAdvisorOptions } from "../tools/advisors/session.mts";
@@ -32,6 +31,7 @@ type CallableTool = ToolDefinition & {
 
 const context: InvestigateTurnContext = {
   scopeRisk: { riskPlan: { invariants: ["preserve identity"] } },
+  diffPath: ".pr-review-advisor-context/diff.patch",
   controlledWords: "controlled words",
   terminology: { candidates: [] },
   correctness: { state: "context" },
@@ -40,14 +40,6 @@ const context: InvestigateTurnContext = {
   operations: { workflowSignals: [] },
   reconciliation: { linkedIssues: [] },
   metadata: "baseRef=origin/main",
-};
-
-const DOMAIN_TERMS: Record<AdvisorInterest, readonly string[]> = {
-  behavior: ["binding acceptance", "state transitions", "caller and callee contracts"],
-  trust: ["all nine security categories", "credentials", "workflow trust boundaries"],
-  "design-architecture": ["duplicated authority", "dependency width", "reduction case"],
-  operations: ["E2E architecture", "retries", "release operations"],
-  documentation: ["user documentation", "test titles", "terminology candidates semantically"],
 };
 
 describe("PR review advisor specialist prompts", () => {
@@ -66,7 +58,7 @@ describe("PR review advisor specialist prompts", () => {
   });
 
   it.each(ADVISOR_INTERESTS)(
-    "builds an investigation-only %s turn with bounded deterministic context (#9949)",
+    "builds an investigation-only %s turn with the full deterministic context (#9949)",
     (interest) => {
       const turn = buildSpecialistInvestigateTurn(interest, context);
       const contextToolNames = turn.contextToolResults?.map(({ toolName }) => toolName) ?? [];
@@ -74,6 +66,7 @@ describe("PR review advisor specialist prompts", () => {
       expect(turn.name).toBe(`investigate-${interest}`);
       expect(contextToolNames).toEqual([
         "pr_review_scope_risk_context",
+        "pr_review_diff_path",
         "pr_review_controlled_words",
         "pr_review_terminology_pr_context",
         "pr_review_correctness_state_context",
@@ -83,32 +76,22 @@ describe("PR review advisor specialist prompts", () => {
         "pr_review_reconciliation_context",
         "pr_review_metadata",
       ]);
-      expect(turn.requiredToolNames).toEqual([...contextToolNames, PR_REVIEW_GIT_DIFF_TOOL]);
-      expect(turn.requireToolsBeforeText).toEqual([...contextToolNames, PR_REVIEW_GIT_DIFF_TOOL]);
+      expect(turn.requiredToolNames).toEqual(contextToolNames);
+      expect(turn.requireToolsBeforeText).toEqual(contextToolNames);
       expect(turn.requireAssistantText).toBe(true);
       expect(turn.atomicTerminalToolName).toBeUndefined();
       expect(turn.terminalSubmitToolName).toBeUndefined();
-      expect(turn.prompt).toContain("investigation-only specialist turn");
-      expect(turn.prompt).toContain("bounded diff manifest");
-      expect(turn.prompt).toContain("Do not emit a final result schema");
-      expect(DOMAIN_TERMS[interest].every((term) => turn.prompt.includes(term))).toBe(true);
     },
   );
 
   it("keeps large specialist context in ordinary-read-sized Pi trace lines (#9986)", () => {
     const largeWords = "word\n".repeat(20_000) + "a".repeat(16_376) + "🦀";
-    const largeScopeRisk = { driftEvidence: "scope\n".repeat(40_000) };
     const turn = buildSpecialistInvestigateTurn("behavior", {
       ...context,
-      scopeRisk: largeScopeRisk,
       controlledWords: largeWords,
     });
     const results = turn.contextToolResults ?? [];
 
-    expect(
-      results.filter(({ toolName }) => toolName.startsWith("pr_review_scope_risk_context_part_"))
-        .length,
-    ).toBeGreaterThan(1);
     expect(
       results.filter(({ toolName }) => toolName.startsWith("pr_review_controlled_words_part_"))
         .length,
@@ -116,23 +99,17 @@ describe("PR review advisor specialist prompts", () => {
     expect(
       results.every(({ content }) => Buffer.byteLength(JSON.stringify(content)) <= 16 * 1024),
     ).toBe(true);
-    expect(
-      results
-        .filter(({ toolName }) => toolName.startsWith("pr_review_scope_risk_context_part_"))
-        .map(({ content }) => content)
-        .join(""),
-    ).toBe(JSON.stringify(largeScopeRisk, null, 2));
     const wordChunks = results.filter(({ toolName }) =>
       toolName.startsWith("pr_review_controlled_words_part_"),
     );
     expect(wordChunks.map(({ content }) => content).join("")).toBe(largeWords);
     expect(wordChunks.every(({ content }) => !/[\uD800-\uDBFF]$/u.test(content))).toBe(true);
     const toolNames = results.map(({ toolName }) => toolName);
-    expect(turn.requiredToolNames).toEqual([...toolNames, PR_REVIEW_GIT_DIFF_TOOL]);
-    expect(turn.requireToolsBeforeText).toEqual([...toolNames, PR_REVIEW_GIT_DIFF_TOOL]);
+    expect(turn.requiredToolNames).toEqual(toolNames);
+    expect(turn.requireToolsBeforeText).toEqual(toolNames);
   });
 
-  it("passes bounded diff access to every specialist and terminology tracing only to documentation (#9968)", async () => {
+  it("passes terminology tracing only to the documentation specialist runner (#9968)", async () => {
     const directory = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-runner-"));
     onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
     const git = (args: string[]) =>
@@ -184,17 +161,15 @@ describe("PR review advisor specialist prompts", () => {
         captured.map(([interest, tools]) => [interest, tools.map(({ name }) => name)]),
       ),
     ).toEqual({
-      behavior: [PR_REVIEW_GIT_DIFF_TOOL],
-      trust: [PR_REVIEW_GIT_DIFF_TOOL],
-      "design-architecture": [PR_REVIEW_GIT_DIFF_TOOL],
-      operations: [PR_REVIEW_GIT_DIFF_TOOL],
-      documentation: [PR_REVIEW_GIT_DIFF_TOOL, TERMINOLOGY_TRACE_TOOL],
+      behavior: [],
+      trust: [],
+      "design-architecture": [],
+      operations: [],
+      documentation: [TERMINOLOGY_TRACE_TOOL],
     });
     const documentationTools =
       captured.find(([interest]) => interest === "documentation")?.[1] ?? [];
-    const trace = documentationTools.find(
-      ({ name }) => name === TERMINOLOGY_TRACE_TOOL,
-    ) as CallableTool;
+    const trace = documentationTools[0] as CallableTool;
     const evidence = await trace.execute(
       "trace-1",
       { term: "checkout-bound" },
@@ -212,8 +187,8 @@ describe("PR review advisor specialist prompts", () => {
       const turn = buildSpecialistInvestigateTurn(interest, context);
       const expected =
         interest === "documentation"
-          ? ["read", "grep", "find", "ls", PR_REVIEW_GIT_DIFF_TOOL, TERMINOLOGY_TRACE_TOOL]
-          : ["read", "grep", "find", "ls", PR_REVIEW_GIT_DIFF_TOOL];
+          ? ["read", "grep", "find", "ls", TERMINOLOGY_TRACE_TOOL]
+          : ["read", "grep", "find", "ls"];
 
       expect(turn.activeToolNames).toEqual(expected);
       expect(turn.activeToolNames).not.toContain("record_findings");

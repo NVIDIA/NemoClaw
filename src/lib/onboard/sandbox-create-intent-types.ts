@@ -55,6 +55,7 @@ export type SandboxCreateIntent = {
   readonly staleExtraProviders: readonly string[];
   readonly hermesToolGateways: readonly string[];
   readonly policy: SandboxCreatePolicyRequest;
+  readonly sandboxGpuDevice?: string | null;
   readonly gpuCreateArgs: readonly string[];
   readonly resourceCreateArgs: readonly string[];
   readonly hostMounts?: readonly SandboxHostMount[];

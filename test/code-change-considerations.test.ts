@@ -117,6 +117,7 @@ describe("shared code change considerations", () => {
         preparePromptArtifacts({
           artifacts: artifactPaths(outDir),
           metadata: reviewMetadata,
+          diff: "",
         }),
       ).toThrow("Code change considerations malformed");
       expect(

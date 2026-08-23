@@ -13,9 +13,9 @@ import {
   createRepoConfinedReadOnlyTools,
   MAX_ADVISOR_TOOL_RESULT_JSON_BYTES,
 } from "../tools/advisors/repo-read-only-tools.mts";
-import { MAX_SPECIALIST_SESSION_LINE_BYTES } from "../tools/pr-review-advisor/specialist-sessions.mts";
 
 const tempDirs: string[] = [];
+const PI_SESSION_READ_LINE_LIMIT_BYTES = 50 * 1024;
 let workspace: string;
 let outside: string;
 let tools: Map<string, ToolDefinition>;
@@ -218,7 +218,7 @@ describe("repo-confined advisor read-only tools", () => {
         },
       });
       expect(Buffer.byteLength(sessionLine, "utf8")).toBeLessThanOrEqual(
-        MAX_SPECIALIST_SESSION_LINE_BYTES,
+        PI_SESSION_READ_LINE_LIMIT_BYTES,
       );
 
       const truncation = (

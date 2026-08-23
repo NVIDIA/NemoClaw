@@ -17,8 +17,8 @@ import {
   type RunReadOnlyAdvisorOptions,
 } from "../advisors/session.mts";
 import { collectDeterministicContext } from "./deterministic-context.mts";
-import { createGitDiffToolController } from "./git-diff-tool.mts";
 import { collectGitHubReviewContext } from "./github-context.mts";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
   buildSpecialistInvestigateTurn,
   parseAdvisorInterest,
@@ -41,50 +41,24 @@ import {
 
 const CREDENTIAL_ENV = ["PR", "REVIEW", "ADVISOR", "API", "KEY"].join("_");
 
-interface SpecialistRefs {
-  baseRef: string;
-  headRef: string;
-  changedFiles?: readonly string[];
-  totalDiffCharacters?: number;
-}
-
 export function documentationSpecialistTools(
   interest: AdvisorInterest,
   { baseRef, headRef, cwd = process.cwd() }: { baseRef: string; headRef: string; cwd?: string },
-) {
+): ToolDefinition[] {
   return interest === "documentation"
     ? createTerminologyToolController({ baseRef, headRef, cwd }).tools
     : [];
 }
 
-export function specialistTools(
-  interest: AdvisorInterest,
-  refs: SpecialistRefs,
-  cwd = process.cwd(),
-) {
-  const changedFiles = refs.changedFiles ?? getChangedFiles(refs.baseRef, refs.headRef, cwd);
-  const totalDiffCharacters =
-    refs.totalDiffCharacters ?? getDiff(refs.baseRef, refs.headRef, cwd).length;
-  const diffTools = createGitDiffToolController({
-    baseRef: refs.baseRef,
-    headRef: refs.headRef,
-    changedFiles,
-    totalDiffCharacters,
-    cwd,
-  }).tools;
-
-  return [...diffTools, ...documentationSpecialistTools(interest, { ...refs, cwd })];
-}
-
 export function runSpecialistAdvisor(
   interest: AdvisorInterest,
-  refs: SpecialistRefs,
+  refs: { baseRef: string; headRef: string },
   options: Omit<RunReadOnlyAdvisorOptions, "customTools">,
   run: (options: RunReadOnlyAdvisorOptions) => Promise<RunAdvisorResult> = runReadOnlyAdvisor,
 ): Promise<RunAdvisorResult> {
   return run({
     ...options,
-    customTools: specialistTools(interest, refs, options.cwd),
+    customTools: documentationSpecialistTools(interest, { ...refs, cwd: options.cwd }),
   });
 }
 
@@ -114,9 +88,15 @@ async function main(): Promise<void> {
   delete process.env.GH_TOKEN;
   delete process.env.GITHUB_TOKEN;
 
+  const diffDirectory = path.join(process.cwd(), ".pr-review-advisor-context");
+  fs.mkdirSync(diffDirectory, { recursive: true });
+  const diffPath = path.join(diffDirectory, "diff.patch");
+  fs.writeFileSync(diffPath, diff);
+
   const turn = buildSpecialistInvestigateTurn(interest, {
     metadata: JSON.stringify({ version: 1, baseRef, headRef, headSha, changedFiles }, null, 2),
     scopeRisk: buildScopeRiskTurnContext(deterministic),
+    diffPath: path.relative(process.cwd(), diffPath),
     controlledWords: readTrustedControlledWords(),
     terminology: {
       issueReferenceLines: deterministic.github?.issueReferenceLines ?? [],
@@ -131,7 +111,7 @@ async function main(): Promise<void> {
   });
   const run = await runSpecialistAdvisor(
     interest,
-    { baseRef, headRef, changedFiles, totalDiffCharacters: diff.length },
+    { baseRef, headRef },
     {
       cwd: process.cwd(),
       promptTurns: [turn],
