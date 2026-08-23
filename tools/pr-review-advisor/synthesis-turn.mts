@@ -8,12 +8,6 @@ export function buildSynthesisTurn(inventory: SpecialistSessionInventory): Advis
   const sessions = inventory.available
     .map((interest) => `- ${interest}: ${inventory.files[interest]}`)
     .join("\n");
-  const limitations =
-    inventory.missing.length === 0
-      ? "- none"
-      : inventory.missing
-          .map((interest) => `- ${interest}: specialist trace unavailable`)
-          .join("\n");
   return {
     name: "synthesize",
     activeToolNames: ["read", "grep", "find", "ls"],
@@ -28,10 +22,7 @@ Inspect the native Pi JSONL sessions below with ordinary filesystem tools as nee
 
 ${sessions}
 
-Unavailable specialist limitations:
-${limitations}
-
-Reflect on the available investigations as one review. Preserve every unavailable specialist listed above as an explicit review-completeness limitation; do not claim that its domain received specialist review. Verify every finding-eligible claim against the repository before retaining it. Reconcile overlap and disagreement. Combine concerns with one root cause and remedy. Reject speculation, stale evidence, style preferences, and remedies that add unsupported complexity. Confirm binding acceptance, all nine security categories, source-of-truth behavior, test depth, E2E inputs, design, operations, documentation, terminology, positives, and limitations.
+Reflect on the investigations as one review. Verify every finding-eligible claim against the repository before retaining it. Reconcile overlap and disagreement. Combine concerns with one root cause and remedy. Reject speculation, stale evidence, style preferences, and remedies that add unsupported complexity. Confirm binding acceptance, all nine security categories, source-of-truth behavior, test depth, E2E inputs, design, operations, documentation, terminology, positives, and limitations.
 
 Return a concise synthesis receipt for the challenge-and-record turn. Do not call recording, E2E recommendation, or submission tools, and do not produce final JSON in this turn.`,
   };

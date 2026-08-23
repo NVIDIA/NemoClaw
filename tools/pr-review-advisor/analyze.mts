@@ -41,23 +41,13 @@ import {
   collectDeterministicContext,
   type DeterministicReviewContext,
 } from "./deterministic-context.mts";
-import { buildInvestigateTurn } from "./investigate-turn.mts";
 import { validateSpecialistSessionDirectory } from "./specialist-sessions.mts";
 import { buildSynthesisTurn } from "./synthesis-turn.mts";
 import { renderSummary } from "./render-result.mts";
 import {
-  buildCorrectnessTurnContext,
-  buildOperationsTurnContext,
-  buildReconciliationTurnContext,
-  buildScopeRiskTurnContext,
-  buildSecurityTurnContext,
-  buildTestsTurnContext,
-} from "./turn-context.mts";
-import {
   buildSystemPrompt,
   readParsedTrustedSecurityRubric,
   readSecurityCategoryNames,
-  readTrustedControlledWords,
 } from "./trusted-guidance.mts";
 import {
   collectGitHubReviewContext,
@@ -89,8 +79,6 @@ const ADVISOR_MODEL = process.env.PR_REVIEW_ADVISOR_MODEL || DEFAULT_ADVISOR_MOD
 const ADVISOR_CREDENTIAL_ENV = ["PR", "REVIEW", "ADVISOR", "API", "KEY"].join("_");
 const RISK_CONTEXT_PATH_SAMPLE_LIMIT = 20;
 const RISK_CONTEXT_PATH_CHARACTER_LIMIT = 240;
-const METADATA_CHANGED_FILE_LIMIT = 20;
-const METADATA_CHANGED_FILE_BYTE_LIMIT = 8192;
 const CONFIDENCES = ["low", "medium", "high"] as const;
 const SUMMARY_RECOMMENDATIONS = [
   "merge_as_is",
@@ -331,13 +319,6 @@ async function main(): Promise<void> {
   delete process.env.GH_TOKEN;
   delete process.env.GITHUB_TOKEN;
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
-  const { systemPrompt, promptTurns, securityCategoryNames, resultLimitations } =
-    preparePromptArtifacts({
-      artifacts,
-      metadata,
-      diff,
-    });
-
   const writeFailure = (reason: string): void => writeFailureArtifacts(artifacts, metadata, reason);
   const writeUnavailable = (reason: string): void =>
     writeUnavailableArtifacts(artifacts, metadata, reason, false);
@@ -348,6 +329,12 @@ async function main(): Promise<void> {
     );
     process.exit(0);
   }
+
+  const { systemPrompt, promptTurns, securityCategoryNames } = preparePromptArtifacts({
+    artifacts,
+    metadata,
+    diff,
+  });
 
   logProgress(
     `Launching PR review advisor SDK: provider=${ADVISOR_PROVIDER} model=${ADVISOR_MODEL}`,
@@ -381,13 +368,7 @@ async function main(): Promise<void> {
 
   let result: ReviewAdvisorResult;
   try {
-    result = persistSuccessfulReview(
-      advisorExecutionErrors(sdkResult),
-      submission!,
-      artifacts,
-      undefined,
-      resultLimitations,
-    );
+    result = persistSuccessfulReview(advisorExecutionErrors(sdkResult), submission!, artifacts);
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
     writeFailure(reason);
@@ -403,7 +384,6 @@ export function persistSuccessfulReview(
   submission: ReviewSubmissionController,
   artifacts: ArtifactPaths,
   write: (path: string, value: unknown) => void = writeJson,
-  requiredLimitations: readonly string[] = [],
 ): ReviewAdvisorResult {
   if (executionErrors.length > 0) {
     throw new Error(`PR review advisor SDK execution failed: ${executionErrors.join("; ")}`);
@@ -412,22 +392,7 @@ export function persistSuccessfulReview(
   if (!submitted) {
     throw new Error("PR review advisor did not atomically submit a review result");
   }
-  const submittedResult = submitted as ReviewAdvisorResult;
-  const result =
-    requiredLimitations.length === 0
-      ? submittedResult
-      : {
-          ...submittedResult,
-          reviewCompleteness: {
-            ...submittedResult.reviewCompleteness,
-            limitations: [
-              ...new Set([
-                ...submittedResult.reviewCompleteness.limitations,
-                ...requiredLimitations,
-              ]),
-            ],
-          },
-        };
+  const result = submitted as ReviewAdvisorResult;
   write(artifacts.result, result);
   write(artifacts.finalResult, result);
   return result;
@@ -445,28 +410,20 @@ export function preparePromptArtifacts({
   systemPrompt: string;
   promptTurns: AdvisorPromptTurn[];
   securityCategoryNames: string[];
-  resultLimitations: string[];
 } {
   try {
     const securityRubric = readParsedTrustedSecurityRubric();
     const systemPrompt = buildSystemPrompt(securityRubric);
     const specialistSessionDirectory = process.env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR;
-    const specialistInventory = specialistSessionDirectory
-      ? validateSpecialistSessionDirectory(specialistSessionDirectory)
-      : undefined;
-    const promptTurns = specialistInventory
-      ? [buildSynthesisTurn(specialistInventory), buildChallengeAndRecordTurn()]
-      : buildPromptTurns({ metadata, diffPath: writeReviewDiff(diff) });
-    const resultLimitations =
-      specialistInventory?.missing.map(
-        (interest) =>
-          `Specialist trace unavailable: ${interest}; synthesis did not receive dedicated ${interest} review.`,
-      ) ?? [];
+    if (!specialistSessionDirectory) {
+      throw new Error("PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR is required");
+    }
+    const specialistInventory = validateSpecialistSessionDirectory(specialistSessionDirectory);
+    const promptTurns = [buildSynthesisTurn(specialistInventory), buildChallengeAndRecordTurn()];
     return {
       systemPrompt,
       promptTurns,
       securityCategoryNames: securityRubric.categories,
-      resultLimitations,
     };
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -593,59 +550,6 @@ export async function collectGitHubContext(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<GitHubReviewContext | null> {
   return collectGitHubReviewContext(env);
-}
-
-export function writeReviewDiff(diff: string): string {
-  const directory = path.join(root, ".pr-review-advisor-context");
-  fs.mkdirSync(directory, { recursive: true });
-  const file = path.join(directory, "diff.patch");
-  fs.writeFileSync(file, diff);
-  return path.relative(root, file);
-}
-
-export function buildPromptTurns({
-  metadata,
-  diffPath,
-}: {
-  metadata: ReviewMetadata;
-  diffPath: string;
-}): AdvisorPromptTurn[] {
-  const context = metadata.deterministic;
-  return [
-    buildInvestigateTurn({
-      metadata: metadataFields(metadata),
-      scopeRisk: buildScopeRiskTurnContext(context),
-      diffPath,
-      controlledWords: readTrustedControlledWords(),
-      terminology: {
-        issueReferenceLines: context.github?.issueReferenceLines ?? [],
-        linkedIssues: context.github?.linkedIssues ?? [],
-        githubFetchError: context.github?.fetchError,
-      },
-      correctness: buildCorrectnessTurnContext(context),
-      security: buildSecurityTurnContext(context),
-      tests: buildTestsTurnContext(context),
-      operations: buildOperationsTurnContext(context),
-      reconciliation: buildReconciliationTurnContext(context),
-    }),
-    buildChallengeAndRecordTurn(),
-  ];
-}
-
-function metadataFields(metadata: ReviewMetadata): string {
-  const changedFiles = JSON.stringify(metadata.changedFiles);
-  const bounded =
-    metadata.changedFiles.length <= METADATA_CHANGED_FILE_LIMIT &&
-    Buffer.byteLength(changedFiles, "utf8") <= METADATA_CHANGED_FILE_BYTE_LIMIT;
-  return [
-    "- version: 1",
-    `- baseRef: ${JSON.stringify(metadata.baseRef)}`,
-    `- headRef: ${JSON.stringify(metadata.headRef)}`,
-    `- headSha: ${JSON.stringify(metadata.headSha)}`,
-    bounded
-      ? `- changedFiles: ${changedFiles}`
-      : `- changedFiles: [] (return an empty array; the runner restores all ${metadata.changedFiles.length} deterministic changed-file path(s) after parsing)`,
-  ].join("\n");
 }
 
 export function normalizeCombinedE2eResult(

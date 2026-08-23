@@ -1154,7 +1154,19 @@ During that lease, another `launch` still verifies these conditions:
 
 - The owning OpenShell gateway reports the exact sandbox identity in the `Ready` or `Running` state.
 - The sandbox registry, agent manifest, interactive command, policy intent, and effective parsed OpenShell network policy match the recorded identity.
-- The recorded inference selection matches the live route, and `inference.local` returns HTTP 2xx from its semantic probe when inference is configured. This is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
+<AgentOnly variant="openclaw,hermes">
+
+- The recorded inference selection matches the live route, and `inference.local` returns HTTP 2xx from its semantic probe when inference is configured.
+  This is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+- The recorded inference selection matches the live route, and `inference.local` returns HTTP 2xx from its semantic probe for every configured provider except `openrouter-api`.
+  OpenRouter's HTTP 404 response for `GET /v1/models` passes only after a bounded inference request for the recorded model succeeds.
+  This is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
+
+</AgentOnly>
 - The agent runtime and its required host-side forwards pass their semantic health checks.
 
 <AgentOnly variant="openclaw">
@@ -2590,6 +2602,7 @@ Without a preset name, a run with `NEMOCLAW_NON_INTERACTIVE=1` reports that non-
 A run without a terminal on stdin instead reports that no input is available on stdin.
 Both exit non-zero rather than open the picker.
 If the preset name is unknown, the command exits non-zero with a clear error.
+If the interactive picker receives a nonnumeric or out-of-range selection, the command prints the validation error, exits non-zero, and applies no preset.
 If a named preset is already applied, the command compares the preset content with the live policy.
 When the content matches, the command reports no changes and exits zero.
 When the content differs, the command shows the normal preview and asks for confirmation before applying the preset again.

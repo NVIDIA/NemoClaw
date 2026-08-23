@@ -63,6 +63,23 @@ If sudo is unavailable in a non-interactive run, rerun interactively or upgrade 
 An upgrade also needs sudo to restart the service onto the new binary, so it does not accept an already-loopback-only daemon as a reason to skip that step.
 A fresh install takes the latest version.
 
+Before a Linux systemd restart, NemoClaw reads the service's exact `User` and `ExecStart` executable.
+It requires one absolute executable path, one service user, a regular ELF executable, and one absolute ELF interpreter path.
+NemoClaw then runs the executable with `--version` as the service user, which proves that the executable and its interpreter can run for that user.
+After a failed run, NemoClaw verifies execute access to both paths before it considers permission repair.
+If it cannot prove execution, NemoClaw stops before it restarts the service.
+
+NemoClaw can repair execute permissions only for the regular file at `/usr/local/bin/ollama` when the root user and group own it.
+The file must have no special bits or group or world write access.
+Each ancestor from `/` through `/usr/local/bin` must be a real root-owned directory with execute access and without group or world write access.
+The repair adds the user, group, and other execute bits while preserving every other mode bit.
+NemoClaw then repeats the service-user verification.
+It does not change an ancestor directory or the ELF interpreter.
+If verification still fails, NemoClaw restores the original executable mode and stops before the service restart.
+If mode restoration fails, the error identifies the rollback failure for administrator recovery.
+Onboarding remains stopped.
+Inspect `/usr/local/bin/ollama` and restore its intended mode before you rerun onboarding.
+
 After an upgrade, NemoClaw probes the running daemon and the installed binary again.
 `ollama --version` reports the version of the daemon it can reach, so NemoClaw reads the binary's own version from the client-version line that the command prints when the two differ.
 Both versions must be readable and at or above `0.32.9` before onboarding accepts the upgrade.
