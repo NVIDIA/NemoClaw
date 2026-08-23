@@ -7,9 +7,6 @@ import path from "node:path";
 import { ADVISOR_INTERESTS, type AdvisorInterest } from "./specialists.mts";
 
 export const SPECIALIST_SESSION_DIRECTORY = ".pr-review-advisor-sessions";
-export const MAX_SPECIALIST_SESSION_BYTES = 8 * 1024 * 1024;
-export const MAX_SPECIALIST_SESSION_LINE_BYTES = 50 * 1024;
-export const MAX_SPECIALIST_SESSIONS_BYTES = 32 * 1024 * 1024;
 
 export function specialistSessionFileName(interest: AdvisorInterest): string {
   return `pr-review-${interest}-session.jsonl`;
@@ -25,7 +22,6 @@ export type SpecialistSessionInventory = Readonly<{
   files: Readonly<Partial<Record<AdvisorInterest, string>>>;
   available: readonly AdvisorInterest[];
   missing: readonly AdvisorInterest[];
-  totalBytes: number;
 }>;
 
 export function validateSpecialistSessionDirectory(directory: string): SpecialistSessionInventory {
@@ -43,7 +39,6 @@ export function validateSpecialistSessionDirectory(directory: string): Specialis
   const files: Partial<Record<AdvisorInterest, string>> = {};
   const available: AdvisorInterest[] = [];
   const missing: AdvisorInterest[] = [];
-  let totalBytes = 0;
   for (const interest of ADVISOR_INTERESTS) {
     const name = specialistSessionFileName(interest);
     const file = path.join(directory, name);
@@ -60,48 +55,32 @@ export function validateSpecialistSessionDirectory(directory: string): Specialis
       missing.push(interest);
       continue;
     }
-    let stat: fs.Stats;
-    let text: string;
+    let header: Record<string, unknown>;
     try {
-      stat = fs.fstatSync(descriptor);
+      const stat = fs.fstatSync(descriptor);
       if (!stat.isFile()) {
         throw new Error(`Specialist session must be a regular file: ${interest}`);
       }
-      if (stat.size === 0 || stat.size > MAX_SPECIALIST_SESSION_BYTES) {
-        throw new Error(
-          `Specialist session ${interest} must be between 1 and ${MAX_SPECIALIST_SESSION_BYTES} bytes`,
-        );
+      if (stat.size === 0) throw new Error(`Specialist session is empty: ${interest}`);
+      const buffer = Buffer.alloc(Math.min(stat.size, 4096));
+      fs.readSync(descriptor, buffer, 0, buffer.length, 0);
+      header = JSON.parse(buffer.toString("utf8").split(/\r?\n/u, 1)[0]!) as Record<
+        string,
+        unknown
+      >;
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error(`Specialist session ${interest} has no valid Pi session header`);
       }
-      text = fs.readFileSync(descriptor, "utf8");
+      throw error;
     } finally {
       fs.closeSync(descriptor);
     }
-    const lines = text.split(/\r?\n/u).filter((line) => line.length > 0);
-    if (lines.length === 0) throw new Error(`Specialist session is empty: ${interest}`);
-    for (const [index, line] of lines.entries()) {
-      if (Buffer.byteLength(line, "utf8") > MAX_SPECIALIST_SESSION_LINE_BYTES) {
-        throw new Error(
-          `Specialist session ${interest} line ${index + 1} exceeds the ordinary read limit`,
-        );
-      }
-      try {
-        JSON.parse(line);
-      } catch {
-        throw new Error(`Specialist session ${interest} has invalid JSONL at line ${index + 1}`);
-      }
-    }
-    const header = JSON.parse(lines[0]!) as Record<string, unknown>;
     if (header.type !== "session" || typeof header.id !== "string") {
       throw new Error(`Specialist session ${interest} has no valid Pi session header`);
     }
-    totalBytes += stat.size;
     files[interest] = file;
     available.push(interest);
   }
-  if (totalBytes > MAX_SPECIALIST_SESSIONS_BYTES) {
-    throw new Error(
-      `Specialist sessions exceed the ${MAX_SPECIALIST_SESSIONS_BYTES} byte total limit`,
-    );
-  }
-  return { directory: realDirectory, files, available, missing, totalBytes };
+  return { directory: realDirectory, files, available, missing };
 }
