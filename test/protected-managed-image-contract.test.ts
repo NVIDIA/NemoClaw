@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import {
   CANDIDATE_MANAGED_IMAGE_AGENTS,
@@ -45,6 +49,94 @@ const HEAD_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
 const WORKFLOW_SHA = "c".repeat(40);
 const COHORT = "protected-42-1";
+const ROOT = path.resolve(import.meta.dirname, "..");
+const REVIEWED_HERMES_INDEX = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"9".repeat(64)}`;
+const PLATFORM_DIGESTS = {
+  openclaw: `sha256:${"1".repeat(64)}`,
+  hermes: `sha256:${"2".repeat(64)}`,
+  dcode: `sha256:${"3".repeat(64)}`,
+} as const;
+const E2E_WORKFLOW = YAML.parse(
+  readFileSync(path.join(ROOT, ".github", "workflows", "e2e.yaml"), "utf8"),
+) as {
+  jobs?: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
+};
+
+function workflowStep(jobId: string, stepName: string): string {
+  const run = E2E_WORKFLOW.jobs?.[jobId]?.steps?.find(
+    (candidate) => candidate.name === stepName,
+  )?.run;
+  expect(run, `${jobId} must contain step ${stepName}`).toBeTypeOf("string");
+  return run ?? "";
+}
+
+function runBaseResolution(jobId: string, stepName: string) {
+  const fixture = mkdtempSync(path.join(tmpdir(), "nemoclaw-protected-bases-"));
+  const fakeBin = path.join(fixture, "bin");
+  const outputPath = path.join(fixture, "github-output");
+  const runnerTemp = path.join(fixture, "runner-temp");
+  mkdirSync(path.join(fixture, "agents", "hermes"), { recursive: true });
+  mkdirSync(fakeBin);
+  mkdirSync(runnerTemp);
+  writeFileSync(outputPath, "");
+  writeFileSync(
+    path.join(fixture, "agents", "hermes", "Dockerfile"),
+    `ARG BASE_IMAGE=${REVIEWED_HERMES_INDEX}\n`,
+  );
+  const dockerPath = path.join(fakeBin, "docker");
+  writeFileSync(
+    dockerPath,
+    `#!/bin/sh
+set -eu
+ref="$4"
+case "$ref" in
+  ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest) exit 97 ;;
+  ghcr.io/nvidia/nemoclaw/sandbox-base:latest) digest='${PLATFORM_DIGESTS.openclaw}' ;;
+  '${REVIEWED_HERMES_INDEX}') digest='${PLATFORM_DIGESTS.hermes}' ;;
+  ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest) digest='${PLATFORM_DIGESTS.dcode}' ;;
+  *@sha256:*) printf '%s\n' '{"kind":"exact"}'; exit 0 ;;
+  *) exit 98 ;;
+esac
+printf '{"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"digest":"%s","platform":{"os":"linux","architecture":"amd64"}}]}\n' "$digest"
+`,
+  );
+  chmodSync(dockerPath, 0o700);
+  const sha256sumPath = path.join(fakeBin, "sha256sum");
+  writeFileSync(
+    sha256sumPath,
+    `#!/bin/sh
+set -eu
+case "$1" in
+  *openclaw-exact.raw) digest='${PLATFORM_DIGESTS.openclaw.slice("sha256:".length)}' ;;
+  *hermes-exact.raw) digest='${PLATFORM_DIGESTS.hermes.slice("sha256:".length)}' ;;
+  *dcode-exact.raw) digest='${PLATFORM_DIGESTS.dcode.slice("sha256:".length)}' ;;
+  *) exit 99 ;;
+esac
+printf '%s  %s\n' "$digest" "$1"
+`,
+  );
+  chmodSync(sha256sumPath, 0o700);
+
+  try {
+    const result = spawnSync("bash", ["-c", workflowStep(jobId, stepName)], {
+      cwd: fixture,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GITHUB_OUTPUT: outputPath,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        PLATFORM: "linux/amd64",
+        RUNNER_TEMP: runnerTemp,
+      },
+    });
+    return {
+      result,
+      output: readFileSync(outputPath, "utf8"),
+    };
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+}
 
 function evidence(platform: ProtectedManagedImagePlatform) {
   const built = contracts(platform);
@@ -80,6 +172,20 @@ function evidenceIdentity(platform: ProtectedManagedImagePlatform) {
 }
 
 describe("protected managed-image build contract", () => {
+  it.each([
+    ["managed-image-multiarch-startup", "Resolve exact platform base images"],
+    ["managed-image-protected-runtime", "Resolve exact amd64 runtime base images"],
+  ])("%s keeps non-Hermes base resolution separate", (jobId, stepName) => {
+    const { result, output } = runBaseResolution(jobId, stepName);
+    expect(result.status, result.stderr).toBe(0);
+    expect(Object.fromEntries(output.trim().split("\n").map((line) => line.split("=")))).toEqual(
+      {
+        dcode: `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@${PLATFORM_DIGESTS.dcode}`,
+        openclaw: `ghcr.io/nvidia/nemoclaw/sandbox-base@${PLATFORM_DIGESTS.openclaw}`,
+      },
+    );
+  });
+
   it("accepts only the all-agent multiarch activation contract (#7744)", () => {
     const activation = {
       agents: PROTECTED_MANAGED_IMAGE_AGENTS,

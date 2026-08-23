@@ -76,6 +76,7 @@ type TrustedControllerSelectorMap = {
 
 const SAFE_SELECTOR_LIST_PATTERN = /^[A-Za-z0-9_-]+(?:,[A-Za-z0-9_-]+)*$/;
 const HERMES_JOB_ID = "hermes-e2e";
+const STAGING_BREV_IDENTITY_JOB_ID = "staging-brev-launchable-identity";
 const LEGACY_BOOTSTRAP_INSTALL_JOB_ID = "launchable-smoke";
 const BOOTSTRAP_INSTALL_JOB_ID = "bootstrap-install-smoke";
 const COMMIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
@@ -577,6 +578,10 @@ export function buildE2eWorkflowPlan(
   const jobs = selectorIds(selectors.jobs, "jobs");
   const targets = selectorIds(selectors.targets, "targets");
 
+  if (jobs.includes(STAGING_BREV_IDENTITY_JOB_ID) && (jobs.length !== 1 || targets.length !== 0)) {
+    throw new Error(`${STAGING_BREV_IDENTITY_JOB_ID} must be selected by itself`);
+  }
+
   for (const id of [...jobs, ...targets]) {
     const reason = catalogueExclusionReason(id);
     if (reason) {
@@ -936,10 +941,7 @@ export function writeE2eWorkflowPlanCiOutput(
     candidateRevision && !credentialsAllowed && !hasPlannerSelectors
       ? false
       : expectedHermesSelection(plannerSelectors, controllerMap.retiredSelectorSelected);
-  if (
-    !changedFiles &&
-    plan.hermesSelected !== expectedHermes
-  ) {
+  if (!changedFiles && plan.hermesSelected !== expectedHermes) {
     throw new Error("E2E planner changed the trusted Hermes selection");
   }
   const output = environment.GITHUB_OUTPUT;

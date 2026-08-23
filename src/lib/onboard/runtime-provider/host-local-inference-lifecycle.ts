@@ -85,6 +85,11 @@ export interface HostLocalInferenceLifecycleOptions {
   ) => ManagedLlamaCppLifecycleAdapter;
 }
 
+export interface HostLocalInferenceSharingAuthority {
+  readonly disposition: "exclusive" | "shared";
+  readonly sha256: string;
+}
+
 type ManagedHostLocalInferenceReceipt = HostLocalInferenceReceipt & {
   readonly service: ManagedHostLocalInferenceService;
 };
@@ -94,6 +99,10 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 
 function fail(message: string): never {
   throw new Error(`Host-local inference lifecycle authority is invalid: ${message}`);
+}
+
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function exactText(value: unknown, label: string, maxBytes = 512): string {
@@ -374,22 +383,56 @@ export function confirmHostLocalInferenceAuthority(
   );
 }
 
+function currentHostLocalInferenceRuntime(
+  provider: RuntimeProviderBundle,
+  sandbox: HostLocalInferenceLifecycleSandbox,
+  prepared: PreparedHostLocalInferenceAuthority,
+  options: HostLocalInferenceLifecycleOptions,
+): {
+  readonly receipt: ManagedHostLocalInferenceReceipt;
+  readonly runtime: HostLocalInferenceRuntime;
+} {
+  requireCurrentSandboxAuthority(provider, sandbox, prepared, "destroy");
+  const receipt = parseManagedReceipt(prepared.serializedReceipt, sandbox);
+  if (!receipt) fail("prepared receipt no longer has a managed lifecycle");
+  const runtime = requireRuntime(provider, receipt, sandbox, options);
+  return { receipt, runtime };
+}
+
 function confirmHostLocalInferenceDestroyAuthority(
   provider: RuntimeProviderBundle,
   sandbox: HostLocalInferenceLifecycleSandbox,
   prepared: PreparedHostLocalInferenceAuthority,
   options: HostLocalInferenceLifecycleOptions,
 ): HostLocalInferenceRuntime {
-  requireCurrentSandboxAuthority(provider, sandbox, prepared, "destroy");
-  const receipt = parseManagedReceipt(prepared.serializedReceipt, sandbox);
-  if (!receipt) fail("prepared receipt no longer has a managed lifecycle");
-  const runtime = requireRuntime(provider, receipt, sandbox, options);
+  const { receipt, runtime } = currentHostLocalInferenceRuntime(
+    provider,
+    sandbox,
+    prepared,
+    options,
+  );
   requireExactReceipt(
     prepared.serializedReceipt,
     runtime.prepareDestroy(receipt),
     "provider authority changed before destroy mutation",
   );
   return runtime;
+}
+
+/** Require the prepared exact managed runtime to remain present, whether running or stopped. */
+export function assertPreparedHostLocalInferenceRuntimePresent(
+  provider: RuntimeProviderBundle,
+  sandbox: HostLocalInferenceLifecycleSandbox,
+  prepared: PreparedHostLocalInferenceAuthority,
+  options: HostLocalInferenceLifecycleOptions = {},
+): void {
+  const { receipt, runtime } = currentHostLocalInferenceRuntime(
+    provider,
+    sandbox,
+    prepared,
+    options,
+  );
+  runtime.inspectManaged(receipt);
 }
 
 function sameImmutableRuntimeAuthority(
@@ -485,6 +528,36 @@ function sharedPeerStatus(
     fail("peer registry does not contain exactly one target sandbox authority");
   }
   return shared ? "shared" : "exclusive";
+}
+
+/** Bind the exact registry owners that decide whether one runtime can be removed. */
+export function inspectPreparedHostLocalInferenceSharingAuthority(
+  provider: RuntimeProviderBundle,
+  sandbox: HostLocalInferenceLifecycleSandbox,
+  prepared: PreparedHostLocalInferenceAuthority,
+  peers: readonly HostLocalInferenceLifecycleSandbox[],
+): HostLocalInferenceSharingAuthority {
+  const disposition = sharedPeerStatus(provider, sandbox, prepared, peers);
+  const authorities = peers
+    .filter(
+      (peer) =>
+        peer.name === sandbox.name || peer.hostLocalInferenceReceipt === prepared.serializedReceipt,
+    )
+    .map((peer) => {
+      const serialized =
+        peer.name === sandbox.name ? prepared.serializedReceipt : peer.hostLocalInferenceReceipt;
+      if (typeof serialized !== "string") {
+        fail("shared peer receipt disappeared while binding ownership");
+      }
+      const receipt = parseManagedReceipt(serialized, peer);
+      if (!receipt) fail("shared peer receipt no longer has a managed lifecycle");
+      return captureSandboxAuthority(provider, peer, serialized, receipt);
+    })
+    .sort((left, right) => compareCodeUnits(left.sandboxName, right.sandboxName));
+  return Object.freeze({
+    disposition,
+    sha256: createHash("sha256").update(JSON.stringify(authorities), "utf8").digest("hex"),
+  });
 }
 
 /**

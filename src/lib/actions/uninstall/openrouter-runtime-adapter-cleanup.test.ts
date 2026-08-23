@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -44,6 +45,9 @@ const OPENROUTER_RUNTIME_ADAPTER_CMDLINE =
   "/usr/bin/node /home/test/NemoClaw/dist/lib/inference/openrouter-runtime-adapter-entry.js\n";
 const HTTPS_PIN_RUNTIME_ADAPTER_CMDLINE =
   "/usr/bin/node /home/test/NemoClaw/dist/lib/inference/https-pin-runtime-adapter.js\n";
+const BEDROCK_TEST_GENERATION = "33333333333333333333333333333333";
+const BEDROCK_TEST_PROCESS_START = "linux:test-boot:300";
+const BEDROCK_TEST_TOKEN = "bedrock-test-token";
 
 const RUNTIME_ADAPTERS = [
   {
@@ -94,6 +98,7 @@ function psStub(pidStr: string, opts: { exited: Set<number>; cmdline?: string; o
       () => (opts.exited.has(pid) ? notFound() : ok(`${pidStr}\n`)),
     ],
     [["-p", pidStr, "-o", "user="].join("\0"), () => ok(`${opts.owner ?? "testuser"}\n`)],
+    [["-p", pidStr, "-o", "uid="].join("\0"), () => ok(`${String(process.getuid?.() ?? 501)}\n`)],
     [
       ["-p", pidStr, "-o", "args="].join("\0"),
       () => ok(opts.cmdline ?? OPENROUTER_RUNTIME_ADAPTER_CMDLINE),
@@ -103,6 +108,41 @@ function psStub(pidStr: string, opts: { exited: Set<number>; cmdline?: string; o
   return (args: readonly string[]): RunResult | null => {
     return responses.get(args.join("\0"))?.() ?? null;
   };
+}
+
+function writeBedrockEvidence(home: string, pid: number, cmdline: string): void {
+  const stateDir = path.join(home, ".nemoclaw");
+  const scriptPath = cmdline.trim().split(/\s+/u).at(-1)!;
+  fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(stateDir, "bedrock-runtime-adapter.pid"), `${String(pid)}\n`, {
+    mode: 0o600,
+  });
+  fs.chmodSync(path.join(stateDir, "bedrock-runtime-adapter.pid"), 0o600);
+  fs.writeFileSync(
+    path.join(stateDir, "bedrock-runtime-adapter-token"),
+    `${BEDROCK_TEST_TOKEN}\n`,
+    { mode: 0o600 },
+  );
+  fs.writeFileSync(
+    path.join(stateDir, "bedrock-runtime-adapter.json"),
+    `${JSON.stringify({
+      version: 2,
+      generation: BEDROCK_TEST_GENERATION,
+      pid,
+      processStart: BEDROCK_TEST_PROCESS_START,
+      user: os.userInfo().username,
+      uid: process.getuid?.() ?? 501,
+      executablePath: "/usr/bin/node",
+      scriptPath,
+      adapterPort: 11_436,
+      tokenHash: crypto.createHash("sha256").update(BEDROCK_TEST_TOKEN).digest("hex"),
+      endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+      region: "us-east-1",
+      credentialHash: "a".repeat(64),
+      updatedAt: "2026-08-20T00:00:00.000Z",
+    })}\n`,
+    { mode: 0o600 },
+  );
 }
 
 function defaultRun(command: string, args: readonly string[]): RunResult {
@@ -150,6 +190,11 @@ describe("runtime adapter uninstall cleanup", () => {
       const pidFile = path.join(tmpHome, ".nemoclaw", pidFilename);
       fs.mkdirSync(path.dirname(pidFile), { recursive: true });
       fs.writeFileSync(pidFile, `${String(persistedPid)}\n`);
+      switch (pidFilename) {
+        case "bedrock-runtime-adapter.pid":
+          writeBedrockEvidence(tmpHome, persistedPid, cmdline);
+          break;
+      }
 
       try {
         const result = runUninstallPlan(
@@ -165,9 +210,22 @@ describe("runtime adapter uninstall cleanup", () => {
               return true;
             },
             log: (line) => logs.push(line),
+            readProcessArgv: () => cmdline.trim().split(/\s+/u),
+            readProcessExecutable: () => "/usr/bin/node",
+            readProcessEnvironment: () => ({
+              NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_GENERATION: BEDROCK_TEST_GENERATION,
+              NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT: "11436",
+            }),
+            readProcessIdentity: () => BEDROCK_TEST_PROCESS_START,
             rmSync: fs.rmSync,
             run: runStub({
-              ps: psStub(String(persistedPid), { cmdline, exited }),
+              ps: psStub(String(persistedPid), {
+                cmdline,
+                exited,
+                ...(pidFilename === "bedrock-runtime-adapter.pid"
+                  ? { owner: os.userInfo().username }
+                  : {}),
+              }),
             }),
             runDocker: () => ok(""),
           },
@@ -183,7 +241,71 @@ describe("runtime adapter uninstall cleanup", () => {
     },
   );
 
-  it.each(RUNTIME_ADAPTERS)(
+  it("stops the uninstall plan before State cleanup when Bedrock TERM and KILL do not exit (#9552)", () => {
+    const tmpHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-uninstall-bedrock-exhaustion-"),
+    );
+    const logs: string[] = [];
+    const signals: Array<NodeJS.Signals | number | undefined> = [];
+    const scannedPorts: string[] = [];
+    writeBedrockEvidence(tmpHome, 45_552, BEDROCK_RUNTIME_ADAPTER_CMDLINE);
+
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: { HOME: tmpHome, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
+          existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          isTty: false,
+          kill: (_pid, signal) => {
+            signals.push(signal);
+            return true;
+          },
+          log: (line) => logs.push(line),
+          readProcessArgv: () => BEDROCK_RUNTIME_ADAPTER_CMDLINE.trim().split(/\s+/u),
+          readProcessExecutable: () => "/usr/bin/node",
+          readProcessEnvironment: () => ({
+            NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_GENERATION: BEDROCK_TEST_GENERATION,
+            NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT: "11436",
+          }),
+          readProcessIdentity: () => BEDROCK_TEST_PROCESS_START,
+          rmSync: fs.rmSync,
+          run: runStub({
+            lsof: (args) => {
+              scannedPorts.push(args[1] ?? "");
+              return ok();
+            },
+            ps: psStub("45552", {
+              cmdline: BEDROCK_RUNTIME_ADAPTER_CMDLINE,
+              exited: new Set(),
+              owner: os.userInfo().username,
+            }),
+          }),
+          runDocker: () => ok(""),
+          sleep: vi.fn(),
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+      expect(scannedPorts).toEqual([":11435", ":11437", ":11438", ":4000"]);
+      expect(logs.some((line) => line.endsWith("State and binaries"))).toBe(false);
+      expect(fs.existsSync(path.join(tmpHome, ".nemoclaw", "bedrock-runtime-adapter.pid"))).toBe(
+        true,
+      );
+      expect(fs.existsSync(path.join(tmpHome, ".nemoclaw", "bedrock-runtime-adapter-token"))).toBe(
+        true,
+      );
+      expect(fs.existsSync(path.join(tmpHome, ".nemoclaw", "bedrock-runtime-adapter.json"))).toBe(
+        true,
+      );
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it.each(RUNTIME_ADAPTERS.filter(({ pidFile }) => pidFile !== "bedrock-runtime-adapter.pid"))(
     "stops an owned $label orphan on its configured port$issueSuffix",
     ({ cmdline, customPort, defaultPort, envPort, label, orphanPid }) => {
       const logs: string[] = [];
@@ -271,7 +393,7 @@ describe("runtime adapter uninstall cleanup", () => {
     },
   );
 
-  it("does not signal a Bedrock marker lookalike from persisted state or port discovery (#9552)", () => {
+  it("fails closed on incomplete Bedrock PID evidence before process or port discovery (#9552)", () => {
     const foreignPid = 99995;
     const killed: number[] = [];
     const lsofPorts: string[] = [];
@@ -312,11 +434,11 @@ describe("runtime adapter uninstall cleanup", () => {
         },
       );
 
-      expect(result.exitCode).toBe(0);
-      expect(commandLineProbeCount).toBe(2);
-      expect(lsofPorts).toContain(":11436");
+      expect(result.exitCode).toBe(1);
+      expect(commandLineProbeCount).toBe(0);
+      expect(lsofPorts).not.toContain(":11436");
       expect(killed).not.toContain(foreignPid);
-      expect(fs.existsSync(pidFile)).toBe(false);
+      expect(fs.existsSync(pidFile)).toBe(true);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }

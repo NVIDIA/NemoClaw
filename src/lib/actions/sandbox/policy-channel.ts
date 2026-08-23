@@ -47,6 +47,7 @@ import {
   bridgeProviderNamesForChannel,
   bridgeSecretEnvsForChannel,
   collectMessagingBridgeTokenDefs,
+  staticMessagingProviderTypeForChannel,
 } from "../../onboard/messaging-bridge-provider";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import type { MessagingTokenDef } from "../../onboard/messaging-prep";
@@ -847,10 +848,13 @@ async function applyChannelAddToGatewayAndRegistry(
   channelName: string,
   acquired: Record<string, string>,
 ): Promise<boolean> {
+  const sandboxAgent = registry.getSandbox(sandboxName)?.agent;
+  const staticProviderType = staticMessagingProviderTypeForChannel(channelName, sandboxAgent);
   const tokenDefs: MessagingTokenDef[] = Object.entries(acquired).map(([envKey, token]) => ({
     name: bridgeProviderName(sandboxName, channelName, envKey),
     envKey,
     token,
+    ...(staticProviderType ? { providerType: staticProviderType } : {}),
   }));
   // Bridge channels declare no manifest credentials, so the loop above yields
   // nothing for them. Their provider must be created HERE (same seam onboarding
@@ -860,7 +864,7 @@ async function applyChannelAddToGatewayAndRegistry(
     sandboxName,
     // Unnormalized: the bridge profile filter owns the unset default and rejects
     // an agent no profile declares.
-    agent: registry.getSandbox(sandboxName)?.agent,
+    agent: sandboxAgent,
     enabledChannels: [channelName],
     disabledChannelNames: new Set<string>(),
     getCredential,
@@ -897,13 +901,24 @@ async function applyChannelAddToGatewayAndRegistry(
   try {
     // bestEffort: failures throw (instead of process.exit inside the helper)
     // so a partial add can be torn down below before exiting.
-    policyChannelDependencies.upsertMessagingProviders(tokenDefs, { bestEffort: true });
+    policyChannelDependencies.upsertMessagingProviders(tokenDefs, {
+      bestEffort: true,
+      requireExactBindings: true,
+    });
   } catch (err) {
     console.error(
       `  ✗ Failed to register '${channelName}' providers with the gateway: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );
+    if (policyChannelDependencies.isMessagingProviderBindingConflict(err)) {
+      if (err.mutatedProviderNames.length > 0) {
+        console.error(
+          `  ${YW}⚠${R} Provider state changed before the identity conflict; inspect ${err.mutatedProviderNames.join(", ")} before retrying.`,
+        );
+      }
+      process.exit(1);
+    }
     const teardown = await applyChannelRemoveToGatewayAndRegistry(
       sandboxName,
       channelName,
@@ -1435,12 +1450,10 @@ async function addSandboxChannelUnlocked(
     const existing = getCredential(key);
     if (existing != null) priorCreds[key] = existing;
   }
-  persistChannelTokens(acquired);
-  // Push to the gateway and update the registry NOW so that answering
-  // "rebuild later" (or running non-interactively) does not silently
-  // discard the change. Pre-fix this was safe because saveCredential()
-  // wrote credentials.json; with env-only persistence, exiting before
-  // the rebuild used to drop the queued token.
+  // Register every provider before credentials or durable channel state are
+  // saved. Exact-binding preflight can then reject the complete set without
+  // leaving a partial add behind. Credentials still persist before the policy
+  // and rebuild steps, so choosing "rebuild later" keeps the queued token.
   const registeredBridge = await applyChannelAddToGatewayAndRegistry(
     sandboxName,
     canonical,
@@ -1449,6 +1462,7 @@ async function addSandboxChannelUnlocked(
   if (registeredBridge) {
     console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
   }
+  persistChannelTokens(acquired);
 
   if (
     !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
