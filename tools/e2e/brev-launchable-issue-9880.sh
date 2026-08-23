@@ -216,10 +216,10 @@ log "Verified standing Launchable runtime identity before credential exposure"
 raw_log="$(mktemp "${RUNNER_TEMP:-/tmp}/issue-9880.XXXXXX")"
 remote_script="$(mktemp "${RUNNER_TEMP:-/tmp}/issue-9880-remote.XXXXXX")"
 chmod 600 "$raw_log" "$remote_script"
-cleanup_remote_script() { rm -f -- "$remote_script"; }
-trap cleanup_remote_script EXIT
-trap 'cleanup_remote_script; exit 130' INT
-trap 'cleanup_remote_script; exit 143' TERM
+cleanup_scenario_files() { rm -f -- "$remote_script" "$raw_log"; }
+trap cleanup_scenario_files EXIT
+trap 'cleanup_scenario_files; exit 130' INT
+trap 'cleanup_scenario_files; exit 143' TERM
 {
   printf 'export NVIDIA_INFERENCE_API_KEY=%q\n' "$NVIDIA_API_KEY"
   cat <<'REMOTE'
@@ -300,7 +300,7 @@ set +e
 timeout --signal=TERM --kill-after=10s 900s brev exec "$INSTANCE_NAME" "@$remote_script" >"$raw_log" 2>&1
 scenario_status=$?
 set -e
-cleanup_remote_script
+rm -f -- "$remote_script"
 trap - EXIT INT TERM
 remote_script=""
 redact_file "$raw_log" "$WORK_DIR/issue-9880.log"

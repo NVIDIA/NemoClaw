@@ -106,6 +106,7 @@ case "${"$"}{1:-}" in
   exec)
     if [ "${"$"}{3:-}" = true ] && [ "${"$"}{FAKE_EXEC_SUCCEEDS:-0}" = 1 ]; then exit 0; fi
     if [[ "${"$"}{3:-}" == @* ]] && [ "${"$"}{FAKE_SCENARIO_BLOCKS:-0}" = 1 ]; then
+      printf '%s\n' "${"$"}{NVIDIA_API_KEY:-}" >&2
       /bin/sleep 30
       exit 0
     fi

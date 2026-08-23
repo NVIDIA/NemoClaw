@@ -186,6 +186,7 @@ describe("the staging Launchable reproduces the bounded OpenClaw CLI scenario", 
     await completed;
 
     expect(fs.readdirSync(fixture.root).filter((file) => file.startsWith("issue-9880-remote."))).toEqual([]);
+    expect(fs.readdirSync(fixture.root).filter((file) => /^issue-9880\.[A-Za-z0-9]+$/u.test(file))).toEqual([]);
     expect(treeContainsLiteral(fixture.root, "nvapi-interrupt-test-secret")).toBe(false);
   }, 10_000);
 
