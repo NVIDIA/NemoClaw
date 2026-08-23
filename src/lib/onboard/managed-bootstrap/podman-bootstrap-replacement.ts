@@ -10,6 +10,7 @@ import type {
   ContainerEngine,
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
+import { redactFull } from "../../security/redact";
 import { containerPathsOverlap } from "../host-mount/path-overlap";
 import {
   PODMAN_BOOTSTRAP_JOURNAL_SCHEMA_VERSION,
@@ -547,9 +548,12 @@ function captureWhileWatcherStopped(
 function requireZero(result: ContainerEngineCommandResult, action: string): void {
   if (result.status === 0) return;
   const processError = result.error?.message.trim().slice(0, 400);
-  failure(
-    `${action} failed with status ${String(result.status)}${processError ? `: ${processError}` : "."}`,
-  );
+  const podmanError = result.stderr
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.startsWith("Error:"));
+  const detail = processError ?? (podmanError ? redactFull(podmanError).slice(0, 400) : undefined);
+  failure(`${action} failed with status ${String(result.status)}${detail ? `: ${detail}` : "."}`);
 }
 
 function parseJson(text: string, label: string): unknown {

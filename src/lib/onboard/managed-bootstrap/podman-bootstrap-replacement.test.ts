@@ -508,6 +508,21 @@ describe("Podman bootstrap stopped replacement", () => {
     expect(store.load(BOOTSTRAP_IDENTITY)?.phase).toBe("state-volume-created");
   });
 
+  it("surfaces a bounded redacted Podman error line when create fails", () => {
+    const harness = new PodmanHarness();
+    harness.createResult = {
+      status: 125,
+      stdout: "",
+      stderr: "Error: invalid mount token=secret-value\nsecondary output",
+    };
+    const store = journalStore();
+    const watcher = watcherLease();
+
+    expect(() => prepare(harness, store, watcher.lease)).toThrowError(
+      /failed with status 125: Error: invalid mount token=<REDACTED>/u,
+    );
+  });
+
   it("rejects identity flags supplied through provider runtime arguments", () => {
     const harness = new PodmanHarness();
     const store = journalStore();
@@ -525,26 +540,25 @@ describe("Podman bootstrap stopped replacement", () => {
     expect(harness.calls).toEqual([]);
   });
 
-  it.each([
-    "-eSECRET=1",
-    "-lcom.nvidia.nemoclaw.override=true",
-    "-d=true",
-  ])("rejects attached protected shorthand %s before invoking Podman", (argument) => {
-    const harness = new PodmanHarness();
-    const store = journalStore();
-    const watcher = watcherLease();
+  it.each(["-eSECRET=1", "-lcom.nvidia.nemoclaw.override=true", "-d=true"])(
+    "rejects attached protected shorthand %s before invoking Podman",
+    (argument) => {
+      const harness = new PodmanHarness();
+      const store = journalStore();
+      const watcher = watcherLease();
 
-    expect(() =>
-      prepareStoppedPodmanBootstrapReplacement({
-        engine: harness.engine,
-        journalStore: store,
-        watcherLease: watcher.lease,
-        plan: { ...plan, runtimeArgs: [argument] },
-      }),
-    ).toThrow("cannot set");
-    expect(store.load(BOOTSTRAP_IDENTITY)).toBeNull();
-    expect(harness.calls).toEqual([]);
-  });
+      expect(() =>
+        prepareStoppedPodmanBootstrapReplacement({
+          engine: harness.engine,
+          journalStore: store,
+          watcherLease: watcher.lease,
+          plan: { ...plan, runtimeArgs: [argument] },
+        }),
+      ).toThrow("cannot set");
+      expect(store.load(BOOTSTRAP_IDENTITY)).toBeNull();
+      expect(harness.calls).toEqual([]);
+    },
+  );
 
   it("does not confuse supported long options with protected shorthand", () => {
     const harness = new PodmanHarness();
