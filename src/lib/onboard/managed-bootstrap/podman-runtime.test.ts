@@ -331,6 +331,7 @@ describe("Podman managed-bootstrap runtime surface", () => {
           leaseId: LEASE_ID,
           phase: "stopped",
         },
+        assertStillHeld: vi.fn(),
         assertStillStopped: vi.fn(),
         resumeForObservationAndProve: vi.fn(),
         requiesceAndProve: vi.fn(),

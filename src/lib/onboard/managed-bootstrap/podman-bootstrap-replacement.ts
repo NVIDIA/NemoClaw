@@ -516,19 +516,20 @@ function assertAuthority(authority: PodmanBootstrapReplacementAuthority): void {
     failure("Podman bootstrap requires one authority-bound managed-bootstrap engine.", false);
   }
   if (
-    authority.watcherLease.record.phase !== "stopped" ||
-    typeof authority.watcherLease.assertStillStopped !== "function"
+    (authority.watcherLease.record.phase !== "stopped" &&
+      authority.watcherLease.record.phase !== "observing") ||
+    typeof authority.watcherLease.assertStillHeld !== "function"
   ) {
-    failure("Podman bootstrap requires one durable stopped-watcher lease.", false);
+    failure("Podman bootstrap requires one durable watcher transaction lease.", false);
   }
 }
 
-function captureWhileWatcherStopped(
+function captureWhileWatcherHeld(
   authority: PodmanBootstrapReplacementAuthority,
   args: readonly string[],
   timeoutMs?: number,
 ): ContainerEngineCommandResult {
-  authority.watcherLease.assertStillStopped();
+  authority.watcherLease.assertStillHeld();
   let result: ContainerEngineCommandResult | undefined;
   let commandFailure: unknown;
   try {
@@ -537,7 +538,7 @@ function captureWhileWatcherStopped(
     commandFailure = error;
   }
   try {
-    authority.watcherLease.assertStillStopped();
+    authority.watcherLease.assertStillHeld();
   } catch (error) {
     if (commandFailure === undefined) commandFailure = error;
   }
@@ -585,7 +586,7 @@ function sameMap(
 }
 
 function volumeExists(authority: PodmanBootstrapReplacementAuthority, volumeName: string): boolean {
-  const result = captureWhileWatcherStopped(authority, ["volume", "exists", volumeName]);
+  const result = captureWhileWatcherHeld(authority, ["volume", "exists", volumeName]);
   if (result.status === 0) return true;
   if (result.status === 1) return false;
   requireZero(result, "Podman bootstrap state-volume existence check");
@@ -596,7 +597,7 @@ function inspectExactStateVolume(
   authority: PodmanBootstrapReplacementAuthority,
   expected: ExactStateVolumeExpectation,
 ): ExactStateVolumeObservation {
-  const result = captureWhileWatcherStopped(authority, ["volume", "inspect", expected.name]);
+  const result = captureWhileWatcherHeld(authority, ["volume", "inspect", expected.name]);
   requireZero(result, "Podman bootstrap state-volume inspect");
   const entries = parseJson(result.stdout, "Podman bootstrap state-volume inspect");
   if (!Array.isArray(entries) || entries.length !== 1) {
@@ -690,7 +691,7 @@ function inspectExactContainer(
   expected: ExactContainerExpectation,
 ): ExactContainerObservation {
   const runtimeId = fullRuntimeId(expected.runtimeId, "Expected Podman runtime ID");
-  const result = captureWhileWatcherStopped(authority, ["container", "inspect", runtimeId]);
+  const result = captureWhileWatcherHeld(authority, ["container", "inspect", runtimeId]);
   requireZero(result, "Podman bootstrap container inspect");
   const entries = parseJson(result.stdout, "Podman bootstrap container inspect");
   if (!Array.isArray(entries) || entries.length !== 1) {
@@ -973,7 +974,7 @@ function listStagingRuntimeIds(
   authority: PodmanBootstrapReplacementAuthority,
   stagingContainerName: string,
 ): readonly string[] {
-  const result = captureWhileWatcherStopped(authority, [
+  const result = captureWhileWatcherHeld(authority, [
     "container",
     "ls",
     "--all",
@@ -1000,7 +1001,7 @@ function containerExists(
   authority: PodmanBootstrapReplacementAuthority,
   runtimeId: string,
 ): boolean {
-  const result = captureWhileWatcherStopped(authority, ["container", "exists", runtimeId]);
+  const result = captureWhileWatcherHeld(authority, ["container", "exists", runtimeId]);
   if (result.status === 0) return true;
   if (result.status === 1) return false;
   requireZero(result, "Podman bootstrap container existence check");
@@ -1024,12 +1025,12 @@ export function prepareStoppedPodmanBootstrapReplacement(
 ): PodmanBootstrapPreparedReplacement {
   assertAuthority(input);
   const plan = normalizePlan(input.plan);
-  input.watcherLease.assertStillStopped();
+  input.watcherLease.assertStillHeld();
   if (volumeExists(input, plan.replacementStateVolumeName)) {
     failure("Podman bootstrap state-volume name is already in use.", false);
   }
   input.journalStore.create(createJournal(input, plan));
-  const volumeCreate = captureWhileWatcherStopped(input, createStateVolumeArgs(plan));
+  const volumeCreate = captureWhileWatcherHeld(input, createStateVolumeArgs(plan));
   requireZero(volumeCreate, "Podman bootstrap state-volume creation");
   parseCreatedStateVolumeName(volumeCreate.stdout, plan.replacementStateVolumeName);
   const stateVolume = inspectStableStateVolume(input, {
@@ -1038,7 +1039,7 @@ export function prepareStoppedPodmanBootstrapReplacement(
   });
   input.journalStore.recordStateVolume(plan.bootstrapIdentity, stateVolume.mountpoint);
   const result = privateEnvironmentFile(plan.environment, (environmentFile) =>
-    captureWhileWatcherStopped(input, createArgs(plan, environmentFile), CREATE_TIMEOUT_MS),
+    captureWhileWatcherHeld(input, createArgs(plan, environmentFile), CREATE_TIMEOUT_MS),
   );
   requireZero(result, "Podman stopped bootstrap replacement creation");
   const replacementRuntimeId = parseCreatedRuntimeId(result.stdout);
@@ -1093,7 +1094,7 @@ export function stopExactPodmanBootstrapOriginal(
       stateVolume,
     ),
   );
-  const stop = captureWhileWatcherStopped(
+  const stop = captureWhileWatcherHeld(
     input,
     ["container", "stop", journal.originalRuntimeId],
     STOP_TIMEOUT_MS,
@@ -1166,7 +1167,7 @@ export function rollbackPodmanBootstrapBeforeCommit(
         stateVolume,
       ),
     );
-    const remove = captureWhileWatcherStopped(input, ["container", "rm", replacementRuntimeId]);
+    const remove = captureWhileWatcherHeld(input, ["container", "rm", replacementRuntimeId]);
     requireZero(remove, "Podman bootstrap replacement rollback removal");
     if (containerExists(input, replacementRuntimeId)) {
       failure("Podman bootstrap replacement remained after exact rollback removal.");
@@ -1179,7 +1180,7 @@ export function rollbackPodmanBootstrapBeforeCommit(
 
   let replacementStateVolumeRemoved = false;
   if (stateVolume) {
-    const removeVolume = captureWhileWatcherStopped(input, ["volume", "rm", stateVolume.name]);
+    const removeVolume = captureWhileWatcherHeld(input, ["volume", "rm", stateVolume.name]);
     requireZero(removeVolume, "Podman bootstrap state-volume rollback removal");
     if (volumeExists(input, stateVolume.name)) {
       failure("Podman bootstrap state volume remained after exact rollback removal.");
@@ -1193,11 +1194,7 @@ export function rollbackPodmanBootstrapBeforeCommit(
   ).running;
   let originalStarted = false;
   if (!originalWasRunning) {
-    const start = captureWhileWatcherStopped(input, [
-      "container",
-      "start",
-      journal.originalRuntimeId,
-    ]);
+    const start = captureWhileWatcherHeld(input, ["container", "start", journal.originalRuntimeId]);
     requireZero(start, "Podman bootstrap original-container rollback start");
     originalStarted = true;
   }

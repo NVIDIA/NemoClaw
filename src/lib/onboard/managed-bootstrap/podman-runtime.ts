@@ -926,6 +926,7 @@ function createProductionWatcherController(
       get record() {
         return lease.record;
       },
+      assertStillHeld: lease.assertStillHeld,
       assertStillStopped: lease.assertStillStopped,
       resumeForObservationAndProve: lease.resumeForObservationAndProve,
       requiesceAndProve: lease.requiesceAndProve,
@@ -1357,6 +1358,7 @@ export function createPodmanManagedBootstrapAdapter(
       current.watcherLease = watcherLease;
       let prepared: PodmanBootstrapPreparedReplacement;
       try {
+        watcherLease.resumeForObservationAndProve();
         prepared = prepareStoppedPodmanBootstrapReplacement({
           engine: options.engine,
           journalStore,
@@ -1378,6 +1380,7 @@ export function createPodmanManagedBootstrapAdapter(
         });
       } catch (error) {
         try {
+          watcherLease.requiesceAndProve();
           if (journalStore.load(handle.bootstrapIdentity)) {
             rollbackPodmanBootstrapBeforeCommit({
               bootstrapIdentity: handle.bootstrapIdentity,
@@ -1490,7 +1493,6 @@ export function createPodmanManagedBootstrapAdapter(
         transaction: current.imageTransaction,
         timeoutSecs,
       });
-      current.watcherLease.resumeForObservationAndProve();
       current.completion = completion;
       return completionReceipt(
         handle,

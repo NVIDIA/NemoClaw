@@ -85,6 +85,8 @@ export interface PodmanManagedGatewayWatcherControllerDeps {
 
 export interface PodmanGatewayWatcherLease {
   readonly record: PodmanGatewayWatcherLeaseRecord;
+  /** Prove the transaction still owns either exact stopped or exact observed authority. */
+  readonly assertStillHeld: () => void;
   readonly assertStillStopped: () => void;
   /** Resume the exact owner while retaining durable transaction authority. */
   readonly resumeForObservationAndProve: () => void;
@@ -460,6 +462,29 @@ function createHeldLease(
   return Object.freeze({
     get record() {
       return current;
+    },
+    assertStillHeld: () => {
+      if (released) {
+        throw new PodmanGatewayWatcherLeaseError("Podman watcher lease was already released.");
+      }
+      const durable = readLease(deps);
+      if (!durable || !sameLease(current, durable)) {
+        throw new PodmanGatewayWatcherLeaseError(
+          "Durable Podman watcher lease changed while transaction authority was held.",
+          true,
+        );
+      }
+      if (durable.phase === "stopped") {
+        assertStopped(durable, deps);
+      } else if (durable.phase === "observing") {
+        requireExclusiveCurrent(durable, deps);
+      } else {
+        throw new PodmanGatewayWatcherLeaseError(
+          "Durable Podman watcher lease has no usable transaction authority.",
+          true,
+        );
+      }
+      current = durable;
     },
     assertStillStopped: () => {
       if (released) {

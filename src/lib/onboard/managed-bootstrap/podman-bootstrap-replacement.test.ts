@@ -351,6 +351,7 @@ function watcherLease() {
       pid: 1234,
       processStartIdentity: "pid-start-1234",
     },
+    assertStillHeld: assertStillStopped,
     assertStillStopped,
     resumeForObservationAndProve,
     requiesceAndProve,

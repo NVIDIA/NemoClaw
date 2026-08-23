@@ -223,12 +223,12 @@ function exactWatcherLease(lease: PodmanGatewayWatcherLease, expectedLeaseId?: s
   if (
     !lease ||
     typeof lease !== "object" ||
-    lease.record?.phase !== "stopped" ||
+    (lease.record?.phase !== "stopped" && lease.record?.phase !== "observing") ||
     (expectedLeaseId !== undefined && lease.record.leaseId !== expectedLeaseId)
   ) {
-    fail("the exact stopped OpenShell watcher lease is unavailable");
+    fail("the exact OpenShell watcher transaction lease is unavailable");
   }
-  lease.assertStillStopped();
+  lease.assertStillHeld();
 }
 
 function commandFailure(result: ContainerEngineCommandResult, action: string): never {
@@ -572,7 +572,7 @@ export function startPodmanBootstrapImageTransaction(
   });
 }
 
-/** Poll one protected image-owned completion while the exact watcher stays stopped. */
+/** Poll one protected image-owned completion while exact watcher authority stays held. */
 export function awaitPodmanBootstrapImageTransaction(
   input: {
     readonly engine: BootstrapEngine;

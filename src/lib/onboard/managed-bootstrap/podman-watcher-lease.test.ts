@@ -161,6 +161,7 @@ describe("durable Podman OpenShell watcher lease", () => {
     lease.resumeForObservationAndProve();
     expect(fake.watchers()).toEqual([RESUMED]);
     expect(fake.durable()).toEqual(expect.objectContaining({ ...RESUMED, phase: "observing" }));
+    lease.assertStillHeld();
 
     lease.requiesceAndProve();
     expect(fake.watchers()).toEqual([]);
