@@ -57,6 +57,69 @@ export default async function remove_isolated_pr_worktrees(input: {
     throw new Error("Every path must be a strict descendant of the caller isolation namespace");
   if (!dryRun && input.apply !== true)
     throw new Error("Worktree removal requires dryRun:false and apply:true");
+  const namespaceGuardScript =
+    'const fs=require("node:fs"),p=require("node:path");' +
+    "const [rootInput,namespaceInput,candidateInput]=process.argv.slice(1);" +
+    "const root=p.normalize(rootInput),namespace=p.normalize(namespaceInput),candidate=p.normalize(candidateInput);" +
+    'const lstat=value=>{try{return fs.lstatSync(value)}catch(error){if(error&&error.code==="ENOENT")return null;throw error}};' +
+    'const inside=(parent,child,allowEqual)=>{const relative=p.relative(parent,child);return(allowEqual||relative!=="")&&!p.isAbsolute(relative)&&relative!==".."&&!relative.startsWith(".."+p.sep)};' +
+    "const projected=value=>{let current=value;const suffix=[];let status=lstat(current);while(!status){const parent=p.dirname(current);if(parent===current)process.exit(43);suffix.unshift(p.basename(current));current=parent;status=lstat(current)}let resolved=fs.realpathSync(current);for(const part of suffix)resolved=p.join(resolved,part);return p.normalize(resolved)};" +
+    "try{" +
+    "if(!inside(root,namespace,false)||!inside(namespace,candidate,true))process.exit(44);" +
+    "const relative=p.relative(root,candidate),chain=[root];let cursor=root;" +
+    "for(const part of(relative?relative.split(p.sep):[])){cursor=p.join(cursor,part);chain.push(cursor)}" +
+    "for(let index=0;index<chain.length;index+=1){const status=lstat(chain[index]);if(!status)break;if(status.isSymbolicLink())process.exit(42);if(index<chain.length-1&&!status.isDirectory())process.exit(43)}" +
+    "const canonicalRoot=projected(root),canonicalNamespace=projected(namespace),canonicalCandidate=projected(candidate);" +
+    "if(!inside(canonicalRoot,canonicalNamespace,false)||!inside(canonicalNamespace,canonicalCandidate,true))process.exit(44);" +
+    "}catch{process.exit(43)}";
+  const guardNamespace = async (candidate, description) => {
+    const guarded = await tools.bash({
+      command:
+        "node -e " +
+        quote(namespaceGuardScript) +
+        " " +
+        quote(root) +
+        " " +
+        quote(namespace) +
+        " " +
+        quote(candidate),
+      workdir: input.workdir,
+      description,
+      timeoutMs: 10000,
+    });
+    if (guarded.kind !== "foreground")
+      throw new Error("Isolation namespace validation did not finish");
+    if (guarded.exitCode === 42)
+      throw new Error("Isolation namespace contains a symlinked path component");
+    if (guarded.exitCode === 44)
+      throw new Error("Canonical worktree path escapes the caller isolation namespace");
+    if (guarded.exitCode !== 0) throw new Error("Could not validate isolation namespace");
+  };
+  const results = [],
+    errors = [],
+    unsafePaths = new Set();
+  for (const path of paths) {
+    try {
+      await guardNamespace(path, "Validate cleanup worktree namespace");
+    } catch (error) {
+      if (failure === "fail-fast") throw error;
+      unsafePaths.add(path);
+      errors.push({
+        path: parts(path).slice(namespaceParts.length).join("/"),
+        message: error instanceof Error ? error.message : "Worktree cleanup failed",
+      });
+    }
+  }
+  if (unsafePaths.size === paths.length)
+    return {
+      dryRun,
+      apply: !dryRun,
+      mutated: false,
+      failure,
+      count: 0,
+      results,
+      errors,
+    };
   const listed = await tools.bash({
     command: "git worktree list --porcelain",
     workdir: input.workdir,
@@ -75,11 +138,11 @@ export default async function remove_isolated_pr_worktrees(input: {
     else if (entry && line.startsWith("branch ")) entry.branch = line.slice(7);
     else if (entry && line === "detached") entry.detached = true;
   }
-  const results = [],
-    errors = [];
   for (const path of paths) {
     const pathIdentifier = parts(path).slice(namespaceParts.length).join("/");
+    if (unsafePaths.has(path)) continue;
     try {
+      await guardNamespace(path, "Revalidate cleanup worktree namespace");
       const item = registered.get(path);
       if (!item) throw new Error("Path is not a registered Git worktree");
       if (!item.detached)
@@ -93,6 +156,7 @@ export default async function remove_isolated_pr_worktrees(input: {
       if (!checkout.clean) throw new Error("Worktree has uncommitted changes");
       if (dryRun) results.push({ path: pathIdentifier, head: checkout.head, action: "planned" });
       else {
+        await guardNamespace(path, "Validate worktree removal namespace");
         const remove = await tools.bash({
           command: "git worktree remove " + quote(path),
           workdir: input.workdir,

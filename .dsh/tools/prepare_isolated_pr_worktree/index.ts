@@ -104,6 +104,45 @@ export default async function prepare_isolated_pr_worktree(input: {
   )
     throw new Error("path must be a strict descendant of the caller isolation namespace");
   const relativePath = targetParts.slice(namespaceParts.length).join("/");
+  const namespaceGuardScript =
+    'const fs=require("node:fs"),p=require("node:path");' +
+    "const [rootInput,namespaceInput,candidateInput]=process.argv.slice(1);" +
+    "const root=p.normalize(rootInput),namespace=p.normalize(namespaceInput),candidate=p.normalize(candidateInput);" +
+    'const lstat=value=>{try{return fs.lstatSync(value)}catch(error){if(error&&error.code==="ENOENT")return null;throw error}};' +
+    'const inside=(parent,child,allowEqual)=>{const relative=p.relative(parent,child);return(allowEqual||relative!=="")&&!p.isAbsolute(relative)&&relative!==".."&&!relative.startsWith(".."+p.sep)};' +
+    "const projected=value=>{let current=value;const suffix=[];let status=lstat(current);while(!status){const parent=p.dirname(current);if(parent===current)process.exit(43);suffix.unshift(p.basename(current));current=parent;status=lstat(current)}let resolved=fs.realpathSync(current);for(const part of suffix)resolved=p.join(resolved,part);return p.normalize(resolved)};" +
+    "try{" +
+    "if(!inside(root,namespace,false)||!inside(namespace,candidate,true))process.exit(44);" +
+    "const relative=p.relative(root,candidate),chain=[root];let cursor=root;" +
+    "for(const part of(relative?relative.split(p.sep):[])){cursor=p.join(cursor,part);chain.push(cursor)}" +
+    "for(let index=0;index<chain.length;index+=1){const status=lstat(chain[index]);if(!status)break;if(status.isSymbolicLink())process.exit(42);if(index<chain.length-1&&!status.isDirectory())process.exit(43)}" +
+    "const canonicalRoot=projected(root),canonicalNamespace=projected(namespace),canonicalCandidate=projected(candidate);" +
+    "if(!inside(canonicalRoot,canonicalNamespace,false)||!inside(canonicalNamespace,canonicalCandidate,true))process.exit(44);" +
+    "}catch{process.exit(43)}";
+  const guardNamespace = async (candidate, description) => {
+    const guarded = await tools.bash({
+      command:
+        "node -e " +
+        quote(namespaceGuardScript) +
+        " " +
+        quote(root) +
+        " " +
+        quote(namespace) +
+        " " +
+        quote(candidate),
+      workdir: input.workdir,
+      description,
+      timeoutMs: 10000,
+    });
+    if (guarded.kind !== "foreground")
+      throw new Error("Isolation namespace validation did not finish");
+    if (guarded.exitCode === 42)
+      throw new Error("Isolation namespace contains a symlinked path component");
+    if (guarded.exitCode === 44)
+      throw new Error("Canonical worktree path escapes the caller isolation namespace");
+    if (guarded.exitCode !== 0) throw new Error("Could not validate isolation namespace");
+  };
+  await guardNamespace(targetPath, "Validate isolated worktree namespace");
   const primary = await tools.read_git_checkout({
     workdir: input.workdir,
     includeRoot: false,
@@ -200,6 +239,7 @@ export default async function prepare_isolated_pr_worktree(input: {
     "Create isolated worktree parent",
     10000,
   );
+  await guardNamespace(targetPath, "Revalidate isolated worktree namespace");
   await run(
     "git fetch " +
       quote(remote) +
@@ -262,6 +302,7 @@ export default async function prepare_isolated_pr_worktree(input: {
             item.headRefOid +
             ". Pass replaceExisting:true to replace this clean worktree.",
         );
+      await guardNamespace(targetPath, "Validate stale worktree namespace");
       await run(
         "git worktree remove " + quote(targetPath),
         "Remove stale isolated worktree",
@@ -282,12 +323,14 @@ export default async function prepare_isolated_pr_worktree(input: {
       throw new Error("Path " + relativePath + " exists but is not a registered Git worktree");
     if (exists.exitCode !== 1) throw new Error("Could not inspect worktree path " + relativePath);
   }
-  if (action !== "reused")
+  if (action !== "reused") {
+    await guardNamespace(targetPath, "Validate worktree creation namespace");
     await run(
       "git worktree add --detach " + quote(targetPath) + " " + quote(item.headRefOid),
       "Create exact-commit worktree",
       30000,
     );
+  }
   const prepared = await tools.read_git_checkout({
     workdir: targetPath,
     includeRoot: false,
