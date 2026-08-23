@@ -95,6 +95,39 @@ describe("PR review advisor specialist prompts", () => {
     },
   );
 
+  it("splits oversized specialist context into ordinary-read-compatible parts", () => {
+    const oversizedContext: InvestigateTurnContext = {
+      ...context,
+      scopeRisk: { driftEvidence: "scope\n".repeat(20_000) },
+      controlledWords: "controlled term\n".repeat(8_000),
+    };
+    const turn = buildSpecialistInvestigateTurn("behavior", oversizedContext);
+    const results = turn.contextToolResults ?? [];
+    const scopeParts = results.filter(({ toolName }) =>
+      toolName.startsWith("pr_review_scope_risk_context_part_"),
+    );
+    const controlledWordParts = results.filter(({ toolName }) =>
+      toolName.startsWith("pr_review_controlled_words_part_"),
+    );
+
+    expect(scopeParts.length).toBeGreaterThan(1);
+    expect(controlledWordParts.length).toBeGreaterThan(1);
+    expect(scopeParts.map(({ content }) => content).join("")).toBe(
+      JSON.stringify(oversizedContext.scopeRisk, null, 2),
+    );
+    expect(controlledWordParts.map(({ content }) => content).join("")).toBe(
+      oversizedContext.controlledWords,
+    );
+    expect(
+      results.every(
+        ({ content }) => Buffer.byteLength(JSON.stringify(content), "utf8") <= 40 * 1024,
+      ),
+    ).toBe(true);
+    const contextToolNames = results.map(({ toolName }) => toolName);
+    expect(turn.requiredToolNames).toEqual([...contextToolNames, PR_REVIEW_GIT_DIFF_TOOL]);
+    expect(turn.requireToolsBeforeText).toEqual([...contextToolNames, PR_REVIEW_GIT_DIFF_TOOL]);
+  });
+
   it("passes bounded diff access to every specialist and terminology tracing only to documentation (#9968)", async () => {
     const directory = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-runner-"));
     onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));

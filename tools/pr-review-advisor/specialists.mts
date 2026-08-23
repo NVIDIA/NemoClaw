@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { AdvisorPromptTurn } from "../advisors/session.mts";
+import type { AdvisorContextToolResult, AdvisorPromptTurn } from "../advisors/session.mts";
 import { PR_REVIEW_GIT_DIFF_TOOL } from "./git-diff-tool.mts";
 import { buildInvestigateTurn, type InvestigateTurnContext } from "./investigate-turn.mts";
 import { TERMINOLOGY_TRACE_TOOL } from "./terminology.mts";
@@ -41,18 +41,73 @@ Use repository evidence to verify each concern. Read nearby callers, callees, te
 
 This is an investigation-only specialist turn. Do not emit a final result schema, canonical finding ID, merge recommendation, or GitHub comment. Do not call recording, E2E recommendation, or submission tools. Do not mutate files, execute repository code, access the network, run a package manager, or run tests.`;
 
+// Pi's ordinary read tool rejects a JSONL line above 50 KiB. Reserve space for
+// the session record envelope while preserving the complete context across parts.
+const MAX_SPECIALIST_CONTEXT_JSON_BYTES = 40 * 1024;
+
+function contextChunkEnd(content: string): number {
+  let low = 1;
+  let high = content.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (
+      Buffer.byteLength(JSON.stringify(content.slice(0, middle)), "utf8") <=
+      MAX_SPECIALIST_CONTEXT_JSON_BYTES
+    ) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+  if (low < content.length && /[\uD800-\uDBFF]/u.test(content[low - 1]!)) low -= 1;
+  const newline = content.lastIndexOf("\n", low - 1);
+  return newline >= 0 ? newline + 1 : low;
+}
+
+function boundedSpecialistContextResults(
+  results: readonly AdvisorContextToolResult[],
+): AdvisorContextToolResult[] {
+  return results.flatMap((result) => {
+    if (
+      Buffer.byteLength(JSON.stringify(result.content), "utf8") <=
+      MAX_SPECIALIST_CONTEXT_JSON_BYTES
+    ) {
+      return [result];
+    }
+    const parts: string[] = [];
+    let remaining = result.content;
+    while (remaining.length > 0) {
+      const end = contextChunkEnd(remaining);
+      parts.push(remaining.slice(0, end));
+      remaining = remaining.slice(end);
+    }
+    return parts.map((content, index) => ({
+      ...result,
+      toolName: `${result.toolName}_part_${index + 1}`,
+      label: `${result.label || result.toolName} (part ${index + 1} of ${parts.length})`,
+      content,
+      contentType: "text",
+    }));
+  });
+}
+
 export function buildSpecialistInvestigateTurn(
   interest: AdvisorInterest,
   context: InvestigateTurnContext,
 ): AdvisorPromptTurn {
   const fullTurn = buildInvestigateTurn(context);
+  const contextToolResults = boundedSpecialistContextResults(fullTurn.contextToolResults ?? []);
+  const contextToolNames = contextToolResults.map(({ toolName }) => toolName);
   const activeToolNames = ["read", "grep", "find", "ls", PR_REVIEW_GIT_DIFF_TOOL];
   if (interest === "documentation") activeToolNames.push(TERMINOLOGY_TRACE_TOOL);
 
   return {
     ...fullTurn,
     name: `investigate-${interest}`,
+    contextToolResults,
     activeToolNames,
+    requiredToolNames: [...contextToolNames, PR_REVIEW_GIT_DIFF_TOOL],
+    requireToolsBeforeText: [...contextToolNames, PR_REVIEW_GIT_DIFF_TOOL],
     prompt: `Investigate the ${interest} interest.
 
 ${COMMON_PROMPT}
