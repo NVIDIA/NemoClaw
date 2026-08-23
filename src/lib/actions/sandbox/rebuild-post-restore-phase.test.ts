@@ -61,7 +61,10 @@ describe("rebuild post-restore phase", () => {
       reason: "not needed",
       skipReason: "not-needed",
     } as never);
-    vi.spyOn(rebuildMcp, "restoreMcpAfterRebuild").mockResolvedValue(true);
+    vi.spyOn(rebuildMcp, "restoreMcpAfterRebuild").mockImplementation(async () => {
+      order.push("mcp");
+      return true;
+    });
     vi.spyOn(rebuildHermesPostRestore, "restartHermesGatewayAfterStateRestore").mockImplementation(
       (_sandboxName, targetAgentName) =>
         targetAgentName === "hermes" ? "restarted" : "not-applicable",
@@ -90,7 +93,12 @@ describe("rebuild post-restore phase", () => {
     );
     vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([]);
     vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
-    vi.spyOn(messagingHostForward, "ensureMessagingHostForwardAfterRebuild").mockReturnValue(true);
+    vi.spyOn(messagingHostForward, "ensureMessagingHostForwardAfterRebuild").mockImplementation(
+      () => {
+        order.push("host-forward");
+        return true;
+      },
+    );
   });
 
   afterEach(() => {
@@ -122,15 +130,19 @@ describe("rebuild post-restore phase", () => {
     };
   }
 
-  it("reconciles OpenClaw sessions after doctor and before later config writes (#7102)", async () => {
+  it("reconciles sessions after doctor, then seals config after MCP restoration (#7102, #9946)", async () => {
     await runRebuildPostRestorePhase(input());
 
-    expect(order).toEqual(["doctor", "reconcile", "messaging", "config-hash", "config-hash-final"]);
-  });
-
-  it("uses bounded OpenShell doctor execution without a direct-container fallback (#9844)", async () => {
-    await runRebuildPostRestorePhase(input());
-
+    expect(order).toEqual([
+      "doctor",
+      "reconcile",
+      "messaging",
+      "mcp",
+      "config-hash",
+      "config-hash-final",
+      "host-forward",
+      "config-hash-final",
+    ]);
     expect(processRecovery.executeSandboxExecCommand).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       "openclaw doctor --fix",
@@ -139,52 +151,90 @@ describe("rebuild post-restore phase", () => {
     );
   });
 
-  it("reports incomplete when OpenShell cannot confirm doctor completion (#9844)", async () => {
+  it("does not record a final hash without trusted doctor completion (#9946)", async () => {
     vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue(null);
     const args = input();
 
     await runRebuildPostRestorePhase(args);
 
-    expect(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).toHaveBeenCalledOnce();
+    expect(
+      rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
+    ).not.toHaveBeenCalled();
+    expect(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).not.toHaveBeenCalled();
+    expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
+    expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
     expect(args.bail).toHaveBeenCalledWith(
       "OpenClaw post-upgrade structure repair completion was not verified after rebuild.",
     );
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
     expect(output).toContain("Post-upgrade structure repair completion was not verified");
-    expect(output).toContain(
-      "OpenClaw post-upgrade structure repair did not return a trusted completion result",
-    );
-    expect(output).not.toContain("Post-upgrade structure check skipped");
     expect(output).not.toContain("rebuilt successfully");
   });
 
-  it("fails when doctor returns 255 and the final OpenClaw config hash is unverified (#9530)", async () => {
+  it("does not seal OpenClaw config after unverified MCP restoration (#9946)", async () => {
+    vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockResolvedValue(false);
+    const args = input();
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(
+      rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
+    ).not.toHaveBeenCalled();
+    expect(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).not.toHaveBeenCalled();
+    expect(args.bail).not.toHaveBeenCalled();
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(output).toContain("Mutable OpenClaw config hash was not refreshed");
+    expect(output).toContain("MCP bridge definitions were preserved but not fully refreshed");
+    expect(output).not.toContain("rebuilt successfully");
+  });
+
+  it("stops before later writes when doctor exits nonzero (#9946)", async () => {
     vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
       status: 255,
       stdout: "",
       stderr: "",
     });
-    vi.mocked(
-      rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
-    ).mockReturnValue(false);
     const args = input();
 
     await runRebuildPostRestorePhase(args);
 
-    expect(args.relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+    expect(
+      sessionModels.reconcileStalePinnedSessionModelsAfterRebuild,
+    ).not.toHaveBeenCalled();
+    expect(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).not.toHaveBeenCalled();
+    expect(shields.repairMutableConfigPerms).not.toHaveBeenCalled();
+    expect(
+      rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore,
+    ).not.toHaveBeenCalled();
+    expect(
+      rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore,
+    ).not.toHaveBeenCalled();
+    expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
+    expect(
+      rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
+    ).not.toHaveBeenCalled();
+    expect(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).not.toHaveBeenCalled();
+    expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
     expect(args.bail).toHaveBeenCalledWith(
-      "OpenClaw config integrity verification failed after rebuild.",
+      "OpenClaw post-upgrade structure repair failed during rebuild.",
     );
-    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
-      "rebuilt successfully",
-    );
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(output).toContain("Post-upgrade structure repair failed (doctor returned 255)");
+    expect(output).not.toContain("rebuilt successfully");
   });
 
-  it("fails when finalization invalidates the OpenClaw config hash after the early refresh (#9530)", async () => {
+  it("captures a completed doctor mutation and rejects a later config change (#9946)", async () => {
     let configHashValid = true;
+    vi.mocked(processRecovery.executeSandboxExecCommand).mockImplementation(() => {
+      configHashValid = false;
+      return { status: 0, stdout: "sensitive doctor output", stderr: "" };
+    });
     vi.mocked(
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
-    ).mockImplementation(() => configHashValid);
+    ).mockImplementation(() => {
+      configHashValid = true;
+      return true;
+    });
     vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockImplementation(
       () => {
         configHashValid = false;
@@ -201,17 +251,19 @@ describe("rebuild post-restore phase", () => {
     expect(
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
     ).toHaveBeenCalledOnce();
-    expect(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).toHaveBeenCalledOnce();
+    expect(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).toHaveBeenCalledTimes(2);
     expect(args.relockShieldsIfNeeded).toHaveBeenCalledWith(true);
     expect(args.bail).toHaveBeenCalledWith(
       "OpenClaw config integrity verification failed after rebuild.",
     );
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    const diagnosticLog = vi.mocked(args.log).mock.calls.flat().join("\n");
     expect(output).toContain(
       "Final OpenClaw configuration hash verification failed after post-restore finalization",
     );
     expect(output).not.toContain("Mutable OpenClaw config hash was not refreshed");
     expect(output).not.toContain("rebuilt successfully");
+    expect(diagnosticLog).not.toContain("sensitive doctor output");
   });
 
   it("does not run OpenClaw session reconciliation for another agent (#7102)", async () => {

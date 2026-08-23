@@ -245,7 +245,7 @@ describe("fixed catalog vLLM installs", () => {
     expect(runArgs.at(-1)).toContain("32768");
   });
 
-  it("replays and refreshes a checkpointed model before Docker work", async () => {
+  it("replays and refreshes a checkpointed model before Docker download work", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     const checkpointInstallIntent = vi.fn();
     mocks.resolveHostLocalVllmSelection.mockReturnValue({ kind: "not-selected" });
@@ -267,7 +267,7 @@ describe("fixed catalog vLLM installs", () => {
     );
     expect(checkpointInstallIntent).toHaveBeenCalledWith("QWEN3.6-35B-A3B-NVFP4");
     expect(checkpointInstallIntent.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.runCapture.mock.invocationCallOrder[0],
+      mocks.dockerPullWithProgressWatchdog.mock.invocationCallOrder[0],
     );
   });
 
