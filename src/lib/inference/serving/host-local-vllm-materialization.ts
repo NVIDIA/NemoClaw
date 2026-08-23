@@ -33,6 +33,11 @@ export function hostLocalVllmGpuMemoryUtilization(
   const matches = recipe.spec.serve.arguments.filter(
     (argument) => argument.name === "--gpu-memory-utilization",
   );
+  if (matches.length > 1) {
+    throw new Error(
+      `Managed vLLM recipe ${recipe.metadata.id} has duplicate --gpu-memory-utilization arguments.`,
+    );
+  }
   const value = matches.length === 1 ? matches[0]!.value : undefined;
   const utilization =
     typeof value === "number"

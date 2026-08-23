@@ -132,9 +132,14 @@ describe("host-local vLLM GPU memory materialization", () => {
   });
 
   it("rejects duplicate utilization arguments", () => {
+    const recipe = recipeWithGpuMemoryUtilization(0.75, 0.8);
+
     expect(() =>
-      hostLocalVllmGpuMemoryUtilization(recipeWithGpuMemoryUtilization(0.75, 0.8)),
-    ).toThrow("has no valid --gpu-memory-utilization");
+      hostLocalVllmGpuMemoryUtilization(recipe),
+    ).toThrow("has duplicate --gpu-memory-utilization arguments");
+    expect(() => hostLocalVllmModelArguments(recipe)).toThrow(
+      "has duplicate --gpu-memory-utilization arguments",
+    );
   });
 });
 
