@@ -56,9 +56,20 @@ function section(title: string): void {
 // Secret redaction — delegates to unified redact module (#2381).
 // ---------------------------------------------------------------------------
 
-import { redactFull as redact } from "../security/redact";
+import { redactFull, redactUrl } from "../security/redact";
+import { URL_TOKEN_PATTERN } from "../security/redact-url";
 
-export { redact };
+/**
+ * Redact collected diagnostics before they are written to the bundle or
+ * echoed to the terminal. `redactFull` covers known secret shapes but leaves
+ * URL credentials such as `http://user:password@proxy:3128` intact, so URL
+ * tokens are redacted first. This is the order the other full-replacement
+ * sinks already use — see `actions/sandbox/gateway-restart.ts` and
+ * `policy/preset-scope-render.ts`.
+ */
+export function redact(text: string): string {
+  return redactFull(text.replace(URL_TOKEN_PATTERN, (url) => redactUrl(url) ?? "<REDACTED>"));
+}
 
 // ---------------------------------------------------------------------------
 // Command runner
