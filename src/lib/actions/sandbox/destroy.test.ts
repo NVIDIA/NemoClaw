@@ -116,11 +116,33 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
   it("does not probe or block a non-Docker runtime provider", () => {
     const classify = vi.fn();
     const proceed = assertUnambiguousDestroyContainerIdentity("destroytest", {
-      providerId: "podman",
+      providerId: "unregistered-provider",
       redact: String,
       classify: classify as never,
     });
     expect(proceed).toEqual({ identity: undefined });
+    expect(classify).not.toHaveBeenCalled();
+  });
+
+  it("uses provider-owned identity before registry finalization", () => {
+    const classify = vi.fn();
+    const providerIdentity = {
+      schemaVersion: 1 as const,
+      providerId: "podman",
+      resourceHandle: "a".repeat(64),
+      ownershipSha256: "b".repeat(64),
+    };
+    const captureProviderIdentityByName = vi.fn(() => providerIdentity);
+
+    expect(
+      assertUnambiguousDestroyContainerIdentity("destroytest", {
+        providerId: "podman",
+        redact: String,
+        captureProviderIdentityByName,
+        classify: classify as never,
+      }),
+    ).toEqual({ identity: undefined, providerIdentity });
+    expect(captureProviderIdentityByName).toHaveBeenCalledWith("destroytest");
     expect(classify).not.toHaveBeenCalled();
   });
 

@@ -573,6 +573,8 @@ export type RuntimeProviderCleanupSurface =
       captureDestroyIdentity?(
         input: RuntimeProviderCleanupInput,
       ): RuntimeProviderDestroyIdentityReceipt;
+      /** Prove a provider-owned runtime created before registry finalization. */
+      captureDestroyIdentityByName?(sandboxName: string): RuntimeProviderDestroyIdentityReceipt;
       prepareDestroy(
         input: RuntimeProviderCleanupInput,
         operations: RuntimeProviderCleanupOperations,

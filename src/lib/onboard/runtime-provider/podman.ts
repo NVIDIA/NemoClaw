@@ -43,6 +43,7 @@ import type { PodmanStateMutationSurfaceOptions } from "./podman-state-mutation"
 import {
   createCurrentPodmanOperationEngine,
   capturePodmanDestroyIdentity,
+  capturePodmanDestroyIdentityByName,
   createFilePodmanRouteAuthorityStore,
   createPodmanRuntimeProviderSnapshotSurface,
   planOwnedPodmanWorkloadCleanup,
@@ -370,6 +371,8 @@ export function createPodmanRuntimeProviderBundle(
               ? {
                   captureDestroyIdentity: (input: RuntimeProviderCleanupInput) =>
                     capturePodmanDestroyIdentity(input, gatewayInspection),
+                  captureDestroyIdentityByName: (sandboxName: string) =>
+                    capturePodmanDestroyIdentityByName(sandboxName, gatewayInspection),
                 }
               : {}),
             prepareDestroy: (_input, operations) => operations.detachProviders(),

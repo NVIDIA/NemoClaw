@@ -17,6 +17,7 @@ import {
 } from "./podman-lifecycle";
 import {
   capturePodmanDestroyIdentity,
+  capturePodmanDestroyIdentityByName,
   createPodmanRuntimeProviderSnapshotSurface,
   NATIVE_PODMAN_SANDBOX_HOST_ADDRESS,
   prepareNativePodmanGatewayHostRuntime,
@@ -106,6 +107,7 @@ describe("current Podman runtime provider", () => {
     expect(first.ownershipSha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(changed.resourceHandle).toBe(first.resourceHandle);
     expect(changed.ownershipSha256).not.toBe(first.ownershipSha256);
+    expect(capturePodmanDestroyIdentityByName(SANDBOX_NAME, engine)).toEqual(changed);
   });
 
   it("rejects snapshot observation outside the exact OpenShell workspace", () => {

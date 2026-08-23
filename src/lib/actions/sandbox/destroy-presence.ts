@@ -53,6 +53,7 @@ export type AssertUnambiguousDestroyIdentityDeps = {
     sandbox: SandboxEntry,
     sandboxName: string,
   ) => RuntimeProviderDestroyIdentityReceipt;
+  captureProviderIdentityByName?: (sandboxName: string) => RuntimeProviderDestroyIdentityReceipt;
   cliName?: string;
   classify?: (sandboxName: string) => DestroyContainerIdentityVerdict;
   error?: (message: string) => void;
@@ -223,11 +224,30 @@ export function assertUnambiguousDestroyContainerIdentity(
     (providerCapture
       ? (sandbox: SandboxEntry, name: string) => providerCapture({ sandbox, sandboxName: name })
       : undefined);
+  const captureProviderIdentityByName =
+    deps.captureProviderIdentityByName ??
+    (provider?.cleanup.supported === true
+      ? provider.cleanup.captureDestroyIdentityByName
+      : undefined);
   if (deps.sandbox && captureProviderIdentity) {
     try {
       return {
         identity: undefined,
         providerIdentity: captureProviderIdentity(deps.sandbox, sandboxName),
+      };
+    } catch (error) {
+      const detail = deps.redact(error instanceof Error ? error.message : String(error));
+      (deps.error ?? ((message: string) => console.error(`  ${message}`)))(
+        `Refusing to destroy sandbox '${sandboxName}': Runtime provider identity could not be inspected (${detail}). No sandbox resources were removed.`,
+      );
+      return false;
+    }
+  }
+  if (!deps.sandbox && captureProviderIdentityByName) {
+    try {
+      return {
+        identity: undefined,
+        providerIdentity: captureProviderIdentityByName(sandboxName),
       };
     } catch (error) {
       const detail = deps.redact(error instanceof Error ? error.message : String(error));

@@ -343,7 +343,14 @@ export function capturePodmanDestroyIdentity(
   if (input.sandbox.openshellDriver !== "podman") {
     throw new Error(`Sandbox '${input.sandboxName}' belongs to another runtime provider.`);
   }
-  const container = observePodmanManagedContainer(engine, input.sandboxName);
+  return capturePodmanDestroyIdentityByName(input.sandboxName, engine);
+}
+
+export function capturePodmanDestroyIdentityByName(
+  sandboxName: string,
+  engine: PodmanBoundContainerEngine,
+): RuntimeProviderDestroyIdentityReceipt {
+  const container = observePodmanManagedContainer(engine, sandboxName);
   if (!container) {
     return Object.freeze({
       schemaVersion: 1 as const,

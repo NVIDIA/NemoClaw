@@ -506,6 +506,9 @@ function validateCleanupSurface(surface: Record<string, unknown>): void {
     if (surface.captureDestroyIdentity !== undefined) {
       requireFunction(surface, "captureDestroyIdentity", "cleanup");
     }
+    if (surface.captureDestroyIdentityByName !== undefined) {
+      requireFunction(surface, "captureDestroyIdentityByName", "cleanup");
+    }
     requireFunction(surface, "prepareDestroy", "cleanup");
     requireFunction(surface, "planOwnedWorkloadCleanup", "cleanup");
     requireFunction(surface, "removeOwnedWorkload", "cleanup");
