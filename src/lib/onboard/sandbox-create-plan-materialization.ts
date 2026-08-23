@@ -222,6 +222,7 @@ export function materializeSandboxCreatePlan({
         ? intent.policy.options.additionalPresets.filter((name) => name !== "local-inference")
         : [...intent.policy.options.additionalPresets],
       agentName: intent.policy.options.agentName,
+      sandboxName: intent.sandboxName,
       policyTier: intent.policy.options.policyTier,
       baselineExclusions: intent.policy.options.baselineExclusions.map((exclusion) => ({
         ...exclusion,

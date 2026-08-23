@@ -91,6 +91,8 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
         gatewayName: "nemoclaw-18080",
         gatewayPort: 18080,
       }),
+      undefined,
+      { pending: true },
     );
   });
 
@@ -164,6 +166,8 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     expect(createArgs).toContain(`${HERMES_API_PORT_ENV}=8643`);
     expect(f.registerSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({ name: "beta", hermesApiPort: 8643 }),
+      undefined,
+      { pending: true },
     );
   });
 
@@ -200,6 +204,8 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     expect(createArgs.some((arg) => arg.startsWith(HERMES_API_PORT_ENV))).toBe(false);
     expect(f.registerSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({ name: "beta", hermesApiPort: null }),
+      undefined,
+      { pending: true },
     );
   });
 
@@ -253,6 +259,8 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
         hermesDashboardInternalPort: 18901,
         hermesDashboardTui: true,
       }),
+      undefined,
+      { pending: true },
     );
     const createArgs = f.streamSandboxCreateMock.mock.calls[0]?.[1] ?? [];
     expect(createArgs.slice(createArgs.lastIndexOf("--") + 1)).toEqual([
@@ -379,6 +387,8 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     expect(dashboardPortMocks.findAvailableDashboardPort).not.toHaveBeenCalled();
     expect(f.registerSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({ name: "beta", dashboardPort: null }),
+      undefined,
+      { pending: true },
     );
   });
 });
