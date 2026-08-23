@@ -300,12 +300,45 @@ function networkArgs(inspect: JsonRecord): string[] {
 export function renderPodmanReplacementMountArgs(inspect: JsonRecord): string[] {
   if (!Array.isArray(inspect.Mounts)) return [];
   const args: string[] = [];
+  const mountsByDestination = new Map<string, JsonRecord[]>();
   for (const value of inspect.Mounts) {
     const mount = record(value, "mount");
-    const type = String(mount.Type ?? "");
-    const source = String(mount.Name ?? mount.Source ?? "");
     const destination = String(mount.Destination ?? "");
-    if (!source || !destination || !path.isAbsolute(destination)) {
+    if (!destination || !path.isAbsolute(destination)) {
+      throw new Error("Managed bootstrap Podman mount cannot be reproduced exactly.");
+    }
+    const mounts = mountsByDestination.get(destination) ?? [];
+    mounts.push(mount);
+    mountsByDestination.set(destination, mounts);
+  }
+  for (const [destination, observed] of mountsByDestination) {
+    let mount: JsonRecord;
+    if (observed.length === 1) {
+      mount = observed[0] as JsonRecord;
+    } else {
+      const imageMounts = observed.filter((candidate) => candidate.Type === "image");
+      const materializedBinds = observed.filter((candidate) => candidate.Type === "bind");
+      if (
+        imageMounts.length !== 1 ||
+        materializedBinds.length !== observed.length - 1 ||
+        materializedBinds.some(
+          (candidate) =>
+            candidate.RW !== imageMounts[0]?.RW || !path.isAbsolute(String(candidate.Source ?? "")),
+        )
+      ) {
+        throw new Error(
+          "Managed bootstrap Podman mount destination resolves to ambiguous runtime mounts.",
+        );
+      }
+      // Podman inspect reports both the provider-owned image-volume identity
+      // and its materialized storage bind. Recreate only the image mount;
+      // Podman resolves a fresh bind for the replacement container.
+      mount = imageMounts[0] as JsonRecord;
+    }
+    const type = String(mount.Type ?? "");
+    const name = String(mount.Name ?? "");
+    const source = name || String(mount.Source ?? "");
+    if (!source) {
       throw new Error("Managed bootstrap Podman mount cannot be reproduced exactly.");
     }
     if (type !== "volume" && type !== "bind" && type !== "image") {

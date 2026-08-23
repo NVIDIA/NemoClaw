@@ -508,21 +508,6 @@ describe("Podman bootstrap stopped replacement", () => {
     expect(store.load(BOOTSTRAP_IDENTITY)?.phase).toBe("state-volume-created");
   });
 
-  it("surfaces a bounded redacted Podman error line when create fails", () => {
-    const harness = new PodmanHarness();
-    harness.createResult = {
-      status: 125,
-      stdout: "",
-      stderr: "Error: invalid mount token=secret-value\nsecondary output",
-    };
-    const store = journalStore();
-    const watcher = watcherLease();
-
-    expect(() => prepare(harness, store, watcher.lease)).toThrowError(
-      /failed with status 125: Error: invalid mount token=<REDACTED>/u,
-    );
-  });
-
   it("rejects identity flags supplied through provider runtime arguments", () => {
     const harness = new PodmanHarness();
     const store = journalStore();

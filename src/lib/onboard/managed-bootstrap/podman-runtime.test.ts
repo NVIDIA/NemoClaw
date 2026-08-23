@@ -191,6 +191,28 @@ describe("Podman managed-bootstrap runtime surface", () => {
     ]);
   });
 
+  it("collapses Podman's materialized supervisor bind into its image-mount identity", () => {
+    const image = `sha256:${"9".repeat(64)}`;
+    expect(
+      renderPodmanReplacementMountArgs({
+        Mounts: [
+          {
+            Type: "image",
+            Source: image,
+            Destination: "/opt/openshell/bin",
+            RW: false,
+          },
+          {
+            Type: "bind",
+            Source: "/run/user/1000/containers/storage/overlay/example/merged",
+            Destination: "/opt/openshell/bin",
+            RW: false,
+          },
+        ],
+      }),
+    ).toEqual(["--mount", `type=image,source=${image},destination=/opt/openshell/bin,rw=false`]);
+  });
+
   it("persists only non-secret native gateway launch environment", () => {
     const first = buildPodmanStandaloneGatewayEnvironmentAuthority({
       PATH: "/usr/bin",
