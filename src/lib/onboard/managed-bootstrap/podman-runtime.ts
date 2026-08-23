@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { PodmanBoundContainerEngine } from "../../adapters/podman";
+import { sleepSeconds } from "../../core/wait";
 import type { SandboxGpuProofResult } from "../../state/registry";
 import {
   getDockerDriverGatewayRuntimeMarkerPath,
@@ -100,6 +101,8 @@ const SAFE_ENV = /^[A-Za-z_][A-Za-z0-9_]*=/u;
 const LEASE_FILE = "managed-bootstrap-podman-watcher.json";
 const STANDALONE_LAUNCH_FILE = "managed-bootstrap-podman-gateway-launch.json";
 const MANAGED_BOOTSTRAP_TIMEOUT_MS = 300_000;
+const REPLACEMENT_OBSERVATION_TIMEOUT_MS = 30_000;
+const REPLACEMENT_OBSERVATION_INTERVAL_SECONDS = 0.25;
 const PERSISTABLE_ENVIRONMENT_KEYS = new Set([
   "HOME",
   "LANG",
@@ -145,6 +148,8 @@ interface PodmanManagedBootstrapAdapterOptions {
   readonly gatewayPort: number;
   readonly gatewayName?: string;
   readonly watcherController?: PodmanManagedGatewayWatcherController;
+  readonly runCaptureOpenshell?: (args: string[], options?: Record<string, unknown>) => string;
+  readonly sleep?: (seconds: number) => void;
 }
 
 interface TransactionState {
@@ -217,6 +222,68 @@ function inspectRuntime(engine: PodmanBoundContainerEngine, runtimeId: string): 
     throw new Error("Managed bootstrap Podman inspect returned another runtime identity.");
   }
   return inspected;
+}
+
+export function observePodmanBootstrapReplacementReady(input: {
+  readonly engine: PodmanBoundContainerEngine;
+  readonly runtimeId: string;
+  readonly sandboxName: string;
+  readonly sandboxId: string;
+  readonly gatewayName: string;
+  readonly runCaptureOpenshell: NonNullable<
+    PodmanManagedBootstrapAdapterOptions["runCaptureOpenshell"]
+  >;
+  readonly sleep?: (seconds: number) => void;
+  readonly now?: () => number;
+  readonly timeoutMs?: number;
+}): void {
+  if (!FULL_ID.test(input.runtimeId)) {
+    throw new Error("Managed bootstrap Podman replacement runtime ID is invalid.");
+  }
+  const now = input.now ?? Date.now;
+  const sleep = input.sleep ?? sleepSeconds;
+  const timeoutMs = input.timeoutMs ?? REPLACEMENT_OBSERVATION_TIMEOUT_MS;
+  const deadline = now() + timeoutMs;
+  const maxAttempts = Math.ceil(timeoutMs / (REPLACEMENT_OBSERVATION_INTERVAL_SECONDS * 1000));
+  let lastPhase = "unobserved";
+  let lastHealthFailure = "none";
+
+  for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
+    const health = input.engine.capture(["healthcheck", "run", input.runtimeId], 15_000);
+    if (health.error || (health.status !== 0 && health.status !== 1)) {
+      commandFailure("replacement health observation", health);
+    }
+    if (health.status !== 0) {
+      lastHealthFailure = (health.stderr || health.stdout || "unhealthy").trim().slice(-300);
+    }
+
+    const output = input.runCaptureOpenshell(
+      ["sandbox", "get", "-g", input.gatewayName, input.sandboxName, "--output", "json"],
+      { ignoreError: true, timeout: 5_000 },
+    );
+    if (output.trim()) {
+      let observed: JsonRecord;
+      try {
+        observed = record(JSON.parse(output), "OpenShell replacement observation");
+      } catch {
+        throw new Error("Managed bootstrap Podman OpenShell observation returned unreadable JSON.");
+      }
+      if (observed.id !== input.sandboxId) {
+        throw new Error("Managed bootstrap Podman OpenShell sandbox identity changed.");
+      }
+      lastPhase = typeof observed.phase === "string" ? observed.phase : "unknown";
+      if (lastPhase === "Ready" && health.status === 0) return;
+    }
+    if (attempt < maxAttempts && now() < deadline) {
+      sleep(REPLACEMENT_OBSERVATION_INTERVAL_SECONDS);
+    } else {
+      break;
+    }
+  }
+
+  throw new Error(
+    `Managed bootstrap Podman replacement health was not observed by OpenShell before timeout (phase ${lastPhase}; health ${lastHealthFailure}).`,
+  );
 }
 
 function sha256(value: string): string {
@@ -1530,6 +1597,19 @@ export function createPodmanManagedBootstrapAdapter(
         transaction: current.imageTransaction,
         timeoutSecs,
       });
+      const runCaptureOpenshell = options.runCaptureOpenshell;
+      if (!runCaptureOpenshell) {
+        throw new Error("Managed bootstrap Podman requires OpenShell observation authority.");
+      }
+      observePodmanBootstrapReplacementReady({
+        engine: options.engine,
+        runtimeId: current.prepared.replacementRuntimeId,
+        sandboxName: handle.sandbox.sandboxName,
+        sandboxId: handle.sandbox.sandboxId,
+        gatewayName: options.gatewayName ?? "nemoclaw",
+        runCaptureOpenshell,
+        ...(options.sleep ? { sleep: options.sleep } : {}),
+      });
       current.completion = completion;
       return completionReceipt(
         handle,
@@ -1680,6 +1760,10 @@ function createLifecycle(
       stateRoot: input.stateRoot,
       environment: process.env,
       gatewayPort: input.network.gatewayPort,
+      ...(input.dependencies.runCaptureOpenshell
+        ? { runCaptureOpenshell: input.dependencies.runCaptureOpenshell }
+        : {}),
+      ...(input.dependencies.sleep ? { sleep: input.dependencies.sleep } : {}),
     });
   const authorityStore = input.authorityStore;
   const runtimePatch = createPodmanRuntimePatch(input.sandboxName, input);

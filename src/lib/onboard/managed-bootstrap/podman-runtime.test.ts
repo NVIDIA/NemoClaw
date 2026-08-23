@@ -41,6 +41,7 @@ import {
   createPodmanManagedBootstrapAdapter,
   createPodmanManagedBootstrapSurface,
   finishCommittedPodmanBootstrap,
+  observePodmanBootstrapReplacementReady,
   renderPodmanReplacementHealthArgs,
   renderPodmanReplacementMountArgs,
 } from "./podman-runtime";
@@ -174,6 +175,49 @@ function installCoordinatorMocks() {
 }
 
 describe("Podman managed-bootstrap runtime surface", () => {
+  it("emits exact replacement health until OpenShell observes the sandbox as Ready", () => {
+    let time = 0;
+    const capture = vi.fn(() => ({
+      status: 0,
+      stdout: "healthy",
+      stderr: "",
+      error: undefined,
+    }));
+    const phases = ["Error", "Ready"];
+    const runCaptureOpenshell = vi.fn(() =>
+      JSON.stringify({
+        id: "sandbox-alpha",
+        name: "alpha",
+        phase: phases.shift() ?? "Ready",
+      }),
+    );
+
+    observePodmanBootstrapReplacementReady({
+      engine: { ...engine(), capture },
+      runtimeId: REPLACEMENT_RUNTIME_ID,
+      sandboxName: "alpha",
+      sandboxId: "sandbox-alpha",
+      gatewayName: "nemoclaw",
+      runCaptureOpenshell,
+      sleep: (seconds) => {
+        time += seconds * 1000;
+      },
+      now: () => time,
+    });
+
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(capture).toHaveBeenNthCalledWith(
+      1,
+      ["healthcheck", "run", REPLACEMENT_RUNTIME_ID],
+      15_000,
+    );
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(runCaptureOpenshell).toHaveBeenLastCalledWith(
+      ["sandbox", "get", "-g", "nemoclaw", "alpha", "--output", "json"],
+      { ignoreError: true, timeout: 5_000 },
+    );
+  });
+
   it("reproduces the OpenShell Podman health contract on the replacement", () => {
     expect(
       renderPodmanReplacementHealthArgs({
