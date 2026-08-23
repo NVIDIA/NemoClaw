@@ -682,7 +682,7 @@ function validateVllmGpuMemoryUtilization(utilization: number): number {
 }
 
 function parseVllmGpuMemoryUtilization(value: string): number {
-  if (!/^(?:0(?:\.[0-9]+)?|1(?:\.0+)?)$/.test(value)) {
+  if (!/^[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?)|(?:\.[0-9]+))(?:[eE][+-]?[0-9]+)?$/.test(value)) {
     throw new Error(
       `${VLLM_GPU_MEMORY_UTILIZATION_ARG} must be a decimal number greater than 0 and at most 1.`,
     );

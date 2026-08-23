@@ -786,7 +786,6 @@ describe("parseVllmExtraServeArgs", () => {
         [VLLM_EXTRA_ARGS_ENV]: '["line\\nbreak"]',
       } as NodeJS.ProcessEnv),
     ).toThrow(/control characters/);
-
   });
 });
 
@@ -801,6 +800,17 @@ describe("resolveVllmGpuMemoryUtilization", () => {
     ).toBe(0.5);
     expect(resolveVllmGpuMemoryUtilization(0.7, ["--gpu_memory_utilization=0.6"])).toBe(0.6);
     expect(resolveVllmGpuMemoryUtilization(undefined, ["--max-num-seqs", "2"])).toBeUndefined();
+  });
+
+  it.each([
+    [".5", 0.5],
+    ["1.", 1],
+    ["+0.5", 0.5],
+    ["5e-1", 0.5],
+  ])("accepts the vLLM float value %s", (value, expected) => {
+    expect(resolveVllmGpuMemoryUtilization(0.7, ["--gpu-memory-utilization", value])).toBe(
+      expected,
+    );
   });
 
   it.each(["--gpu-memory-u", "--gpu_memory_u=0.5"])(
@@ -818,7 +828,7 @@ describe("resolveVllmGpuMemoryUtilization", () => {
     );
   });
 
-  it.each(["", ".5", "0", "1.1", "0x1", "NaN", "--max-num-seqs"])(
+  it.each(["", ".", "+", "0", "1.1", "1e1", "5e", "0x1", "NaN", "--max-num-seqs"])(
     "rejects invalid utilization value %j",
     (value) => {
       expect(() =>
