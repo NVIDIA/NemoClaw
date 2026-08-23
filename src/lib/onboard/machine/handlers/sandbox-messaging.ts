@@ -226,6 +226,29 @@ function selectionFromReusablePlan<Agent>(
   };
 }
 
+function hasExactGatewayCredentialBindings(
+  plan: SandboxMessagingPlan,
+  channelId: string,
+  agentName: string | undefined,
+  providerMatchesGatewayCredential:
+    | SandboxMessagingDeps<unknown>["providerMatchesGatewayCredential"]
+    | undefined,
+): boolean {
+  if (!providerMatchesGatewayCredential) return false;
+  const bindings = plan.credentialBindings.filter((binding) => binding.channelId === channelId);
+  return (
+    bindings.length > 0 &&
+    bindings.every((binding) =>
+      providerMatchesGatewayCredential(
+        binding.providerName,
+        staticMessagingProviderTypeForChannel(binding.channelId, agentName) ??
+          MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+        binding.providerEnvKey,
+      ),
+    )
+  );
+}
+
 function filterUnconfiguredHostChannelsFromSelection<Agent>(
   selection: SandboxMessagingSelection,
   agent: Agent,
@@ -247,18 +270,12 @@ function filterUnconfiguredHostChannelsFromSelection<Agent>(
   if (preserveGatewayHeldRegistrySelection && selection.plan) {
     const agentName = (agent as MessagingAgentLike | null)?.name;
     for (const channelId of unconfiguredChannels) {
-      const bindings = selection.plan.credentialBindings.filter(
-        (binding) => binding.channelId === channelId,
-      );
       if (
-        bindings.length > 0 &&
-        bindings.every((binding) =>
-          deps.providerMatchesGatewayCredential?.(
-            binding.providerName,
-            staticMessagingProviderTypeForChannel(binding.channelId, agentName) ??
-              MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-            binding.providerEnvKey,
-          ),
+        hasExactGatewayCredentialBindings(
+          selection.plan,
+          channelId,
+          agentName,
+          deps.providerMatchesGatewayCredential,
         )
       ) {
         unconfiguredChannels.delete(channelId);
