@@ -394,6 +394,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/manifest/registry.ts", mode: "100644" },
   { path: "src/lib/messaging/manifest/types.test.ts", mode: "100644" },
   { path: "src/lib/messaging/manifest/types.ts", mode: "100644" },
+  { path: "src/lib/messaging/managed-startup-placeholders.test.ts", mode: "100644" },
   { path: "src/lib/messaging/managed-startup-placeholders.ts", mode: "100644" },
   { path: "src/lib/messaging/persisted-placeholders.test.ts", mode: "100644" },
   { path: "src/lib/messaging/persisted-placeholders.ts", mode: "100644" },
