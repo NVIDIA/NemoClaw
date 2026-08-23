@@ -592,37 +592,40 @@ async function autoCreateSandboxFromSource(
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
   try {
-    registry.registerSandbox({
-      ...srcEntry,
-      name: dstName,
-      createdAt: new Date().toISOString(),
-      policies: [],
-      observabilityEnabled: sourceObservabilityEnabled,
-      // dst has its own lifecycle; don't inherit src's local NIM container
-      // reference, or destroying dst would stop src's NIM.
-      nimContainer: null,
-      // No CUDA proof has run for dst (this auto-create path passes no GPU flags),
-      // so clear src's proof rather than inheriting it — otherwise dst could show
-      // `Sandbox GPU: enabled (CUDA verified)` based on another sandbox's run (#4231).
-      sandboxGpuProof: null,
-      dashboardPort: dstDashboardPort,
-      // The spread above carries the source's API port; the clone owns its own.
-      hermesApiPort: dstHermesApiPort,
-      // The shared image keeps Hermes' image-baked internal listener port, but
-      // the public WebUI port is a per-sandbox host resource and must follow the
-      // clone's newly allocated dashboard port so rebuild validation converges.
-      hermesDashboardPort:
-        (srcEntry as SandboxEntry).hermesDashboardEnabled === true
-          ? dstDashboardPort
-          : (srcEntry as SandboxEntry).hermesDashboardPort,
-      // A legacy source may have only a gateway name (or neither binding
-      // field). Register the new clone with the complete canonical binding so
-      // stop/start, recovery, and later snapshots can address its gateway.
-      gatewayName: sourceGatewayName,
-      gatewayPort: sourceGatewayPort,
-      ...finalLifecycleRegistration,
-    });
-    cloneHostLocalReservation = null;
+    registry.registerSandbox(
+      {
+        ...srcEntry,
+        name: dstName,
+        createdAt: new Date().toISOString(),
+        policies: [],
+        observabilityEnabled: sourceObservabilityEnabled,
+        // dst has its own lifecycle; don't inherit src's local NIM container
+        // reference, or destroying dst would stop src's NIM.
+        nimContainer: null,
+        // No CUDA proof has run for dst (this auto-create path passes no GPU flags),
+        // so clear src's proof rather than inheriting it — otherwise dst could show
+        // `Sandbox GPU: enabled (CUDA verified)` based on another sandbox's run (#4231).
+        sandboxGpuProof: null,
+        dashboardPort: dstDashboardPort,
+        // The spread above carries the source's API port; the clone owns its own.
+        hermesApiPort: dstHermesApiPort,
+        // The shared image keeps Hermes' image-baked internal listener port, but
+        // the public WebUI port is a per-sandbox host resource and must follow the
+        // clone's newly allocated dashboard port so rebuild validation converges.
+        hermesDashboardPort:
+          (srcEntry as SandboxEntry).hermesDashboardEnabled === true
+            ? dstDashboardPort
+            : (srcEntry as SandboxEntry).hermesDashboardPort,
+        // A legacy source may have only a gateway name (or neither binding
+        // field). Register the new clone with the complete canonical binding so
+        // stop/start, recovery, and later snapshots can address its gateway.
+        gatewayName: sourceGatewayName,
+        gatewayPort: sourceGatewayPort,
+        ...finalLifecycleRegistration,
+      },
+      undefined,
+      { pending: true },
+    );
   } catch {
     releaseCloneHostLocalReservation();
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
@@ -630,13 +633,16 @@ async function autoCreateSandboxFromSource(
 
   const sourceAgent = (srcEntry as SandboxEntry).agent || "openclaw";
   if (sourceAgent === "openclaw" && !waitForRestoredSandboxGatewaySupervisor(dstName)) {
-    console.error(
-      `  Sandbox '${dstName}' reached OpenShell Ready, but its managed OpenClaw supervisor did not become ready.`,
-    );
-    console.error("  Snapshot state was not restored into the incomplete clone.");
-    snapshotExit(1);
+    registry.removeSandbox(dstName);
+    releaseCloneHostLocalReservation();
+    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
-
+  if (!registry.finalizePendingSandboxRegistration(dstName)) {
+    registry.removeSandbox(dstName);
+    releaseCloneHostLocalReservation();
+    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
+  }
+  cloneHostLocalReservation = null;
   console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);
 }
 
@@ -781,6 +787,81 @@ function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): void {
     console.error("  Aborting restore before deleting or overwriting local sandbox metadata.");
     snapshotExit(1);
   }
+}
+
+type PendingSnapshotCloneRecovery = "not-pending" | "finalized" | "removed";
+
+function reconcilePendingSnapshotClone(
+  targetSandbox: string,
+  sourceEntry: SandboxEntry,
+  sourceGatewayName: string,
+): PendingSnapshotCloneRecovery {
+  const pending = registry.getSandbox(targetSandbox);
+  if (
+    !pending ||
+    pending.pendingRouteReservation !== true ||
+    registry.isRouteOnlySandboxReservation(pending)
+  ) {
+    return "not-pending";
+  }
+  if (
+    pending.gatewayName !== sourceGatewayName ||
+    pending.imageTag !== sourceEntry.imageTag ||
+    typeof pending.lifecycleGeneration !== "string" ||
+    typeof pending.lifecycleLiveIdentityFingerprint !== "string"
+  ) {
+    throw new SnapshotCommandError(
+      `Pending clone '${targetSandbox}' does not match this snapshot restore. Re-run with --force only after reviewing that sandbox.`,
+    );
+  }
+
+  const list = captureOpenshell(["sandbox", "list", "-g", sourceGatewayName], {
+    ignoreError: true,
+  });
+  if (list.status !== 0) {
+    throw new SnapshotCommandError(
+      `Cannot reconcile pending clone '${targetSandbox}' because its owning gateway could not be queried.`,
+    );
+  }
+  const liveNames = parseLiveSandboxNames(list.output || "");
+  if (!liveNames.has(targetSandbox)) {
+    deleteSandboxForRestore(targetSandbox);
+    return "removed";
+  }
+
+  const get = captureOpenshell(
+    ["sandbox", "get", "-g", sourceGatewayName, targetSandbox],
+    { ignoreError: true },
+  );
+  if (get.status !== 0) {
+    throw new SnapshotCommandError(
+      `Cannot reconcile pending clone '${targetSandbox}' because its live identity could not be read.`,
+    );
+  }
+  const liveIdentityFingerprint = fingerprintSandboxLiveIdentity(get.output || "");
+  if (liveIdentityFingerprint !== pending.lifecycleLiveIdentityFingerprint) {
+    deleteSandboxForRestore(targetSandbox);
+    return "removed";
+  }
+  if (!isSandboxReady(list.output || "", targetSandbox)) {
+    throw new SnapshotCommandError(
+      `Pending clone '${targetSandbox}' has the expected identity but is not Ready yet. Retry after it becomes Ready.`,
+    );
+  }
+  if (
+    (pending.agent || "openclaw") === "openclaw" &&
+    !waitForRestoredSandboxGatewaySupervisor(targetSandbox)
+  ) {
+    deleteSandboxForRestore(targetSandbox);
+    return "removed";
+  }
+  if (!registry.finalizePendingSandboxRegistration(targetSandbox)) {
+    throw new SnapshotCommandError(
+      `Pending clone '${targetSandbox}' changed while its registration was being finalized. Retry the restore.`,
+    );
+  }
+  console.log(`  ${G}\u2713${R} Recovered pending clone '${targetSandbox}'`);
+  return "finalized";
 }
 
 function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
@@ -1259,7 +1340,10 @@ async function runSnapshotRestoreUnlocked(
   const isCrossSandboxRestore = targetSandbox !== sandboxName;
   let crossSandboxRestoreAgent: string | null = null;
   const targetEntry = isCrossSandboxRestore ? registry.getSandbox(targetSandbox) : null;
-  const targetExists = sourceLiveNames.has(targetSandbox) || Boolean(targetEntry);
+  let targetExists = sourceLiveNames.has(targetSandbox) || Boolean(targetEntry);
+  const hasPendingCreatedClone =
+    targetEntry?.pendingRouteReservation === true &&
+    !registry.isRouteOnlySandboxReservation(targetEntry);
   if (targetEntry?.baselineExclusionTransition) {
     const transition = targetEntry.baselineExclusionTransition;
     console.error(
@@ -1450,7 +1534,7 @@ async function runSnapshotRestoreUnlocked(
     // precise "destination exists" error instead of a misleading
     // "source not found" or "cannot resolve image" message when both are
     // also broken.
-    if (targetExists && !request.force) {
+    if (targetExists && !request.force && !hasPendingCreatedClone) {
       console.error(`  Destination sandbox '${targetSandbox}' already exists.`);
       console.error(
         "  Restoring into an existing sandbox is unsupported because it would silently mutate its filesystem.",
@@ -1482,7 +1566,7 @@ async function runSnapshotRestoreUnlocked(
       }
       snapshotExit(1);
     }
-    if (targetExists) {
+    if (targetExists && !hasPendingCreatedClone) {
       // --force confirmed above. Prompt for the destination name (unless
       // --yes or NEMOCLAW_NON_INTERACTIVE=1), then delete and recreate.
       const nonInteractive = process.env.NEMOCLAW_NON_INTERACTIVE === "1";
@@ -1542,6 +1626,13 @@ async function runSnapshotRestoreUnlocked(
         );
         snapshotExit(1);
       }
+      const pendingRecovery = reconcilePendingSnapshotClone(
+        targetSandbox,
+        lockedSourceEntry,
+        lockedGatewayName,
+      );
+      if (pendingRecovery === "finalized") return;
+      if (pendingRecovery === "removed") targetExists = false;
       const compatibility = checkGatewayRouteCompatibility({
         gatewayName: sourceGatewayName,
         sandboxName: targetSandbox,

@@ -348,6 +348,46 @@ describe("sandbox inference route reservation", () => {
     }
   });
 
+  it("keeps an incomplete registration hidden until its caller commits it (#9733)", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-pending-registration-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+
+      const pending = registry.registerSandbox(
+        {
+          name: "clone",
+          provider: "openai",
+          model: "test-model",
+          openshellDriver: "docker",
+          gatewayName: "nemoclaw",
+        },
+        undefined,
+        { pending: true },
+      );
+
+      expect(pending.pendingRouteReservation).toBe(true);
+      expect(registry.isPublishedSandboxRegistration(pending)).toBe(false);
+      expect(registry.getDefault()).toBeNull();
+
+      expect(registry.finalizePendingSandboxRegistration("clone")).toBe(true);
+      expect(registry.isPublishedSandboxRegistration(registry.getSandbox("clone")!)).toBe(true);
+      expect(registry.getDefault()).toBe("clone");
+
+      registry.registerSandbox({
+        name: "later",
+        provider: "openai",
+        model: "test-model",
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+      });
+      expect(registry.getDefault()).toBe("clone");
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("rejects route reservation replacement inside the registry lock (#9203)", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
     vi.stubEnv("HOME", home);

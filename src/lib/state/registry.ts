@@ -25,6 +25,7 @@ export {
   classifySandboxInferenceRouteReservation,
   isCurrentSandboxInferenceRouteReservation,
   isPendingReservationForSession,
+  isPublishedSandboxRegistration,
   isRouteOnlySandboxReservation,
   normalizeSandboxInferenceRouteSelection,
   sandboxRegistrationMatchesInferenceRouteReservation,
@@ -140,6 +141,7 @@ export function getDefault(): string | null {
 export function registerSandbox(
   entry: SandboxEntry,
   routeReservation?: QualifiedSandboxInferenceRouteReservation,
+  options: { pending?: boolean } = {},
 ): SandboxEntry {
   return withLock(() => {
     const data = load();
@@ -278,9 +280,14 @@ export function registerSandbox(
       dashboardRemoteBindPrepared: entry.dashboardRemoteBindPrepared === true ? true : undefined,
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
+      pendingRouteReservation: options.pending === true ? true : undefined,
     };
     data.sandboxes[entry.name] = registered;
-    save(reversibleRemoval.claimInitialDefaultInRegistry(data, entry.name));
+    save(
+      options.pending === true
+        ? data
+        : reversibleRemoval.claimInitialDefaultInRegistry(data, entry.name),
+    );
     return structuredClone(registered);
   });
 }
@@ -425,6 +432,18 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
   });
 }
 
+/** Atomically publish a pending registration and preserve its initial-default claim. */
+export function finalizePendingSandboxRegistration(name: string): boolean {
+  return withLock(() => {
+    const data = load();
+    const current = data.sandboxes[name];
+    if (!current || current.pendingRouteReservation !== true) return false;
+    data.sandboxes[name] = { ...current, pendingRouteReservation: undefined };
+    save(reversibleRemoval.claimInitialDefaultInRegistry(data, name));
+    return true;
+  });
+}
+
 /** Atomically capture and remove one registry row for a reversible lifecycle operation. */
 export function removeSandboxWithReceipt(name: string): SandboxRemovalReceipt | null {
   return withLock(() => {
@@ -452,13 +471,7 @@ export function restoreSandboxEntry(
 ): void {
   withLock(() => {
     const data = load();
-    save(
-      reversibleRemoval.restoreSandboxEntryInRegistry(
-        data,
-        entry,
-        options.defaultTransition,
-      ),
-    );
+    save(reversibleRemoval.restoreSandboxEntryInRegistry(data, entry, options.defaultTransition));
   });
 }
 
