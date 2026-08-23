@@ -870,11 +870,14 @@ artifact. A later early failure can retain only `lane.log`. A successful job
 contains `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`;
 `cleanup.json` exists only after the job confirms workspace absence.
 When the preinstalled full E2E fails after SSH succeeds, the job attempts to
-append bounded, redacted host state and PID 1 lifecycle classifications to
-`lane.log` before cleanup. If a probe fails or the shared budget expires,
-`lane.log` records that result and cleanup continues. The diagnostic phase is
-read-only, uses one 30-second budget, and does not retry the failed E2E or repair
-the workspace.
+append bounded, redacted host state and fixed lifecycle classifications to
+`lane.log` before cleanup. On the host, the SSH command reads the system journal
+and returns only fixed PID 1 lifecycle and OpenShell gateway bind
+classifications. Raw journal messages and credential values do not reach the
+GitHub-hosted runner or `lane.log`. If a probe fails or the shared budget
+expires, `lane.log` records that result and cleanup continues. The diagnostic
+phase is read-only, uses one 30-second budget, and does not retry the failed E2E
+or repair the workspace.
 
 Manual ordinary and full runs exclude the Jetson nvmap and DGX Spark llama.cpp
 jobs unless their independent opt-in flags are `true`.
