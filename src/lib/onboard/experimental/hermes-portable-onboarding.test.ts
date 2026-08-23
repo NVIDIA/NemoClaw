@@ -232,6 +232,28 @@ describe("Hermes portable onboarding transaction", () => {
     );
   });
 
+  it("accepts selected GPU CDI devices in the portable create intent", async () => {
+    const current = input();
+    const separator = current.createArgv.indexOf("--");
+    current.createArgv.splice(
+      separator,
+      0,
+      "--driver-config-json",
+      JSON.stringify({
+        docker: { cdi_devices: ["nvidia.com/gpu=0"] },
+        podman: { cdi_devices: ["nvidia.com/gpu=0"] },
+      }),
+      "--gpu",
+    );
+    const fixture = createHermesPortableTransactionFixture(current);
+
+    const completed = await runHermesPortableOnboardingTransaction(current, fixture.value);
+
+    expect(completed.active.receipt.phase).toBe("active");
+    expect(completed.created).toBe(true);
+    expect(fixture.events).toContain("create");
+  });
+
   it("rejects a pre-existing live sandbox before durable reservation (#9203)", async () => {
     const fixture = deps({ existingSandbox: true });
 

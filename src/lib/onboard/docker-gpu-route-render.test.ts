@@ -65,6 +65,8 @@ describe("Docker GPU route rendering", () => {
       "alpha",
       "--policy",
       "/tmp/native-policy.yaml",
+      "--driver-config-json",
+      '{"docker":{"cdi_devices":["nvidia.com/gpu=0"],"mounts":[{"type":"volume","source":"state","target":"/state"}]},"podman":{"cdi_devices":["nvidia.com/gpu=0"]}}',
       "--gpu",
       "--gpu-device",
       "nvidia.com/gpu=0",
@@ -83,9 +85,27 @@ describe("Docker GPU route rendering", () => {
       "alpha",
       "--policy",
       "/tmp/compatibility-policy.yaml",
+      "--driver-config-json",
+      '{"docker":{"mounts":[{"type":"volume","source":"state","target":"/state"}]}}',
       "--provider",
       "provider-a",
     ]);
+  });
+
+  it("removes a GPU-only driver config from the compatibility route", () => {
+    const args = [
+      "--driver-config-json",
+      '{"docker":{"cdi_devices":["nvidia.com/gpu=0"]},"podman":{"cdi_devices":["nvidia.com/gpu=0"]}}',
+      "--gpu",
+      "--policy",
+      "/tmp/native.yaml",
+    ];
+
+    expect(
+      renderSandboxCreateArgsForGpuRoute(args, "compatibility", {
+        compatibilityPolicyPath: "/tmp/compatibility.yaml",
+      }),
+    ).toEqual(["--policy", "/tmp/compatibility.yaml"]);
   });
 
   it("reuses a proven image without rebuilding the fallback source", () => {
