@@ -170,7 +170,9 @@ $$nemoclaw onboard --experimental-profile portable
 Do not run the loopback deletion command when onboarding reports another interface or prefix.
 Investigate and resolve the conflicting assignment before you rerun onboarding.
 
-If Portable onboarding reports that `openshell-docker` still uses `169.254.1.0/24`, use only the commands in that error. Before it shows a command, NemoClaw verifies the current-user Podman socket, the complete retired network record, and every running or stopped container connected to that network. Each command includes the verified socket URL and the complete 64-character resource ID.
+If Portable onboarding reports that `openshell-docker` still uses `169.254.1.0/24`, use only the commands in that error.
+Before it shows a command, NemoClaw verifies the current-user Podman socket, the complete retired network record, and every running or stopped container connected to that network.
+Each command includes the verified socket URL and the complete 64-character resource ID.
 
 When no container is connected, onboarding prints one network command:
 
@@ -178,7 +180,10 @@ When no container is connected, onboarding prints one network command:
 podman --url 'unix://<verified-current-user-socket>' network rm <64-character-network-id>
 ```
 
-When the exact NemoClaw-managed registry is the only connected container, onboarding prints the registry commands before the network command. A stopped registry does not need the first command. Run each printed command in order, and continue only after it succeeds:
+When the exact NemoClaw-managed registry is the only connected container, onboarding prints the registry commands before the network command.
+A stopped registry does not need the first command.
+Run each printed command in order.
+Continue only after it succeeds:
 
 ```bash
 podman --url 'unix://<verified-current-user-socket>' container stop <64-character-registry-id>
@@ -186,7 +191,13 @@ podman --url 'unix://<verified-current-user-socket>' container rm <64-character-
 podman --url 'unix://<verified-current-user-socket>' network rm <64-character-network-id>
 ```
 
-Do not change the socket or IDs, and do not add `--force` to any command. If inspection is inconclusive or any other container is connected, onboarding prints no removal command. Leave the network and containers unchanged. This recovery does not remove sandboxes, inference containers, or Hermes resources. Use the lifecycle that created each resource, then retry onboarding.
+Do not change the socket or IDs.
+Do not add `--force` to any command.
+If inspection is inconclusive or any other container is connected, onboarding prints no removal command.
+Leave the network and containers unchanged.
+This recovery does not remove sandboxes, inference containers, or Hermes resources.
+Use the lifecycle that created each resource.
+Then retry onboarding.
 
 Rerun Portable onboarding once the network is gone.
 </Warning>
