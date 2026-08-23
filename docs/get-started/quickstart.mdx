@@ -65,6 +65,9 @@ Review the [Prerequisites](prerequisites) before you begin.
 
   <Step title="Confirm the Sandbox Is Ready">
     Wait for the ready summary, then check the sandbox state.
+    Before it prints this summary, default-profile OpenClaw onboarding waits for exactly one matching local CLI operator device.
+    It verifies the required baseline scopes and confirms that no pairing request for the same device remains pending.
+    If this bounded readiness check does not settle, NemoClaw keeps onboarding resumable and tells you to resume or rerun onboarding.
 
     ```bash
     nemoclaw my-assistant status

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -624,6 +625,192 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
     expect(f.establishRestoredSandboxGatewayPairingMock).not.toHaveBeenCalled();
   });
+
+  it("removes a pending clone registration when finalization fails before snapshot restore", async () => {
+    const entries = new Map<string, f.SandboxRecord>([
+      [
+        "alpha",
+        {
+          name: "alpha",
+          agent: "openclaw",
+          imageTag: "nemoclaw-alpha:test",
+          openshellDriver: "docker",
+          provider: "nvidia-nim",
+          model: "nvidia/model-a",
+        },
+      ],
+    ]);
+    f.getSandboxMock.mockImplementation((name) => entries.get(name ?? "") ?? null);
+    f.registerSandboxMock.mockImplementation((entry) => entries.set(entry.name, entry));
+    f.removeSandboxMock.mockImplementation((name) => entries.delete(name));
+    f.finalizePendingSandboxRegistrationMock.mockReturnValue(false);
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).rejects.toMatchObject({
+      exitCode: 1,
+      lines: expect.arrayContaining([
+        "  Snapshot state was not restored and the clone was not registered.",
+      ]),
+    });
+
+    expect(f.registerSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "beta" }),
+      undefined,
+      { pending: true },
+    );
+    expect(f.finalizePendingSandboxRegistrationMock).toHaveBeenCalledWith("beta");
+    expect(f.removeSandboxMock).toHaveBeenCalledWith("beta");
+    expect(f.registerSandboxMock.mock.invocationCallOrder[0]).toBeLessThan(
+      f.finalizePendingSandboxRegistrationMock.mock.invocationCallOrder[0],
+    );
+    expect(f.finalizePendingSandboxRegistrationMock.mock.invocationCallOrder[0]).toBeLessThan(
+      f.removeSandboxMock.mock.invocationCallOrder[0],
+    );
+    expect(entries.has("beta")).toBe(false);
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+    expect(f.establishRestoredSandboxGatewayPairingMock).not.toHaveBeenCalled();
+  });
+
+  it("finalizes an identity-matching pending clone after a process restart", async () => {
+    const pendingFingerprint = createHash("sha256").update("beta-live-id").digest("hex");
+    const entries = new Map<string, f.SandboxRecord>([
+      [
+        "alpha",
+        {
+          name: "alpha",
+          agent: "openclaw",
+          imageTag: "nemoclaw-alpha:test",
+          openshellDriver: "docker",
+          provider: "nvidia-nim",
+          model: "nvidia/model-a",
+        },
+      ],
+      [
+        "beta",
+        {
+          name: "beta",
+          createdAt: "2026-08-20T00:00:00.000Z",
+          pendingRouteReservation: true,
+          agent: "openclaw",
+          imageTag: "nemoclaw-alpha:test",
+          openshellDriver: "docker",
+          provider: "nvidia-nim",
+          model: "nvidia/model-a",
+          gatewayName: "nemoclaw",
+          lifecycleGeneration: "clone-generation",
+          lifecycleLiveIdentityFingerprint: pendingFingerprint,
+        },
+      ],
+    ]);
+    f.getSandboxMock.mockImplementation((name) => entries.get(name ?? "") ?? null);
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.finalizePendingSandboxRegistrationMock.mockImplementation((name) => {
+      const current = entries.get(name);
+      expect(current?.pendingRouteReservation).toBe(true);
+      entries.set(name, { ...current!, pendingRouteReservation: undefined });
+      return true;
+    });
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
+
+    expect(f.finalizePendingSandboxRegistrationMock).toHaveBeenCalledWith("beta");
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
+    expect(entries.get("beta")?.pendingRouteReservation).toBeUndefined();
+  });
+
+  it.each(["absent", "identity-drifted"] as const)(
+    "cleans an %s pending clone before recreating it after a process restart",
+    async (state) => {
+      const entries = new Map<string, f.SandboxRecord>([
+        [
+          "alpha",
+          {
+            name: "alpha",
+            agent: "openclaw",
+            imageTag: "nemoclaw-alpha:test",
+            openshellDriver: "docker",
+            provider: "nvidia-nim",
+            model: "nvidia/model-a",
+          },
+        ],
+        [
+          "beta",
+          {
+            name: "beta",
+            createdAt: "2026-08-20T00:00:00.000Z",
+            pendingRouteReservation: true,
+            agent: "openclaw",
+            imageTag: "nemoclaw-alpha:test",
+            openshellDriver: "docker",
+            provider: "nvidia-nim",
+            model: "nvidia/model-a",
+            gatewayName: "nemoclaw",
+            lifecycleGeneration: "clone-generation",
+            lifecycleLiveIdentityFingerprint: createHash("sha256")
+              .update("expected-live-id")
+              .digest("hex"),
+          },
+        ],
+      ]);
+      f.getSandboxMock.mockImplementation((name) => entries.get(name ?? "") ?? null);
+      f.parseLiveSandboxNamesMock.mockImplementation((output: string) =>
+        new Set(output.includes("beta Ready") ? ["alpha", "beta"] : ["alpha"]),
+      );
+      f.removeSandboxRegistryEntryOutcomeMock.mockImplementation((name) => {
+        entries.delete(name);
+        return { status: "complete", removed: true };
+      });
+      f.registerSandboxMock.mockImplementation((entry) =>
+        entries.set(entry.name, { ...entry, pendingRouteReservation: true }),
+      );
+      f.finalizePendingSandboxRegistrationMock.mockImplementation((name) => {
+        const current = entries.get(name);
+        expect(current?.pendingRouteReservation).toBe(true);
+        entries.set(name, { ...current!, pendingRouteReservation: undefined });
+        return true;
+      });
+      f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+      let gatewayListCalls = 0;
+      f.captureOpenshellMock.mockImplementation((args) => {
+        gatewayListCalls += Number(
+          args[0] === "sandbox" && args[1] === "list" && args.includes("-g"),
+        );
+        const betaIsVisible = state === "identity-drifted" || gatewayListCalls > 1;
+        return f.openshellResponses(args, {
+          "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+          "sandbox list": {
+            status: 0,
+            output: betaIsVisible ? "alpha Ready\nbeta Ready\n" : "alpha Ready\n",
+          },
+        });
+      });
+      const { runSandboxSnapshot } = await import("./snapshot");
+
+      await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
+
+      expect(f.removeSandboxRegistryEntryOutcomeMock).toHaveBeenCalledWith("beta");
+      expect(f.streamSandboxCreateMock).toHaveBeenCalledTimes(1);
+      expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
+    },
+  );
 
   it("blocks a cross-sandbox clone before deleting the target when source policy repair is pending (#7178)", async () => {
     const common = {

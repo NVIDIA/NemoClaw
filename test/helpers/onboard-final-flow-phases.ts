@@ -258,8 +258,10 @@ export function createPhases(
       removeLegacyCredentialsFile: vi.fn(),
       cleanupStaleHostFiles: vi.fn(),
       checkAndRecoverSandboxProcesses: vi.fn(),
-      warmupScopeUpgrade: vi.fn(),
-      autoPairScopeApproval: vi.fn(),
+      settleOrdinaryOpenClawPairing: vi.fn(async () => ({ kind: "settled" as const })),
+      ordinaryOpenClawPairingIncompleteMessage: vi.fn(
+        () => "OpenClaw onboarding is incomplete; resume onboarding.",
+      ),
       readRegistryAgent: vi.fn(() => "openclaw"),
       settlePortablePairing: vi.fn(async () => ({ kind: "settled" as const })),
       portablePairingIncompleteMessage: vi.fn(
