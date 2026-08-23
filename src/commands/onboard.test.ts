@@ -76,6 +76,21 @@ describe("onboard oclif command", () => {
     );
   });
 
+  it("forwards the managed vLLM GPU device independently of sandbox GPU flags", async () => {
+    await OnboardCliCommand.run(
+      ["--non-interactive", "--vllm-gpu-device", "GPU-69adb14e-820e-bfb4-0993-171e73f68504"],
+      rootDir,
+    );
+
+    expect(runOnboardAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        "non-interactive": true,
+        "vllm-gpu-device": "GPU-69adb14e-820e-bfb4-0993-171e73f68504",
+      }),
+      mocks.onboardRuntimeDeps,
+    );
+  });
+
   it("forwards --no-gpu to the onboard action", async () => {
     await OnboardCliCommand.run(["--non-interactive", "--no-gpu"], rootDir);
 
