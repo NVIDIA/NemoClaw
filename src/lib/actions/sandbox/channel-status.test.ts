@@ -382,23 +382,23 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     deps.execSandbox = execSpy as unknown as typeof deps.execSandbox;
     const result = await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp" });
     expect(execSpy).not.toHaveBeenCalled();
-    expect(result && "verdict" in result && result.verdict).toBe("info");
+    expect(result && "report" in result && result.report.verdict).toBe("info");
     const dump = out_lines.join("\n");
     expect(dump).toMatch(/registered but currently paused/);
+    expect(dump).toMatch(/Verdict:.*info/);
     // The paused fallback must not claim it is the summary view nor tell the
     // operator to rerun the --channel command they are already running (#6887).
     const runtime =
-      result && "signals" in result
-        ? result.signals.find((s) => s.label === "Runtime health")
+      result && "report" in result
+        ? result.report.signals.find((s) => s.label === "Runtime health")
         : undefined;
     expect(runtime?.detail).toBe("not checked — whatsapp is currently paused");
     expect(runtime?.hint).toBeUndefined();
   });
 
   it("labels a paused telegram channel as paused rather than summary view under --channel (#6887)", async () => {
-    // A probe-capable channel that is paused lands on the basic report even
-    // under an explicit --channel request, since the probe is gated on
-    // !channelIsPaused. The Runtime health signal must reflect the paused state.
+    // A probe-capable channel that is paused skips the live probe but keeps the
+    // detailed envelope. The Runtime health signal must reflect the paused state.
     const execSpy = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
     const { deps } = makeDeps({
       exec: () => ({ status: 0, stdout: "", stderr: "" }),
@@ -412,11 +412,26 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
       .join("\n");
     expect(probeCommands).not.toMatch(/gateway\.log|pgrep/);
     const runtime =
-      result && "signals" in result
-        ? result.signals.find((s) => s.label === "Runtime health")
+      result && "report" in result
+        ? result.report.signals.find((s) => s.label === "Runtime health")
         : undefined;
     expect(runtime?.detail).toBe("not checked — telegram is currently paused");
     expect(runtime?.hint).toBeUndefined();
+    expect(result).toEqual({
+      schemaVersion: 1,
+      sandbox: "alpha",
+      channel: "telegram",
+      report: {
+        schemaVersion: 1,
+        agent: "openclaw",
+        channel: "telegram",
+        verdict: "info",
+        probedAt: "2026-05-28T04:00:00.000Z",
+        signals: expect.any(Array),
+        hints: expect.any(Array),
+      },
+    });
+    expect(result && (await import("./channel-status")).exitCodeFor(result)).toBe(0);
   });
 });
 
