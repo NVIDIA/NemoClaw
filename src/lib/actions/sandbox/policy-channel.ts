@@ -1930,6 +1930,29 @@ async function sandboxChannelsSetEnabled(
     console.error(`  Could not persist messaging plan for '${sandboxName}'.`);
     process.exit(1);
   }
+  let restoredProviderAttachments: string[] = [];
+  if (!disabled) {
+    try {
+      restoredProviderAttachments =
+        policyChannelDependencies.restoreChannelMessagingProviderAttachments(
+          sandboxName,
+          plan,
+          canonical,
+        );
+    } catch (error) {
+      console.error(
+        `  ${YW}⚠${R} Could not restore '${canonical}' credential provider attachments: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      const rolledBack = await persistManifestChannelDisabledPlan(sandboxName, canonical, true);
+      if (!rolledBack) {
+        console.error(
+          `  ${YW}⚠${R} Could not restore '${canonical}' to disabled state after provider attachment failed.`,
+        );
+        console.error(`    Re-run: ${CLI_NAME} ${sandboxName} channels stop ${canonical}`);
+      }
+      process.exit(1);
+    }
+  }
   // Rebuild persists only the presets it actually restores. Re-apply a
   // restarted channel's preset before a queued or immediate rebuild so the
   // registry and backup manifest carry the enabled plan's policy intent.
@@ -1941,6 +1964,15 @@ async function sandboxChannelsSetEnabled(
       disclosedPresetState,
     })
   ) {
+    const detachFailures = policyChannelDependencies.rollbackMessagingProviderAttachments(
+      sandboxName,
+      restoredProviderAttachments,
+    );
+    if (detachFailures.length > 0) {
+      console.error(
+        `  ${YW}⚠${R} Could not roll back '${canonical}' provider attachment(s): ${detachFailures.join("; ")}`,
+      );
+    }
     const rolledBack = await persistManifestChannelDisabledPlan(sandboxName, canonical, true);
     if (!rolledBack) {
       console.error(

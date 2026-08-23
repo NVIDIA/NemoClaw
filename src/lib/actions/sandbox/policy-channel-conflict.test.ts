@@ -237,6 +237,8 @@ let listSandboxesMock: MockInstance;
 let rebuildSandboxMock: MockInstance;
 let ensureMessagingHostForwardAfterRebuildMock: MockInstance;
 let scopeDisclosureMock: MockInstance;
+let restoreMessagingProviderAttachmentsMock: MockInstance;
+let rollbackMessagingProviderAttachmentsMock: MockInstance;
 
 function arrangeRegistry(opts: { current: SandboxEntry; others?: SandboxEntry[] }): void {
   const all = [opts.current, ...(opts.others ?? [])];
@@ -306,6 +308,12 @@ beforeEach(() => {
 
   // Lazy legacy-provider seam: no onboarding graph is loaded for this suite.
   upsertMock = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders").mockReturnValue([]);
+  restoreMessagingProviderAttachmentsMock = vi
+    .spyOn(policyChannelDependencies, "restoreChannelMessagingProviderAttachments")
+    .mockReturnValue([]);
+  rollbackMessagingProviderAttachmentsMock = vi
+    .spyOn(policyChannelDependencies, "rollbackMessagingProviderAttachments")
+    .mockReturnValue([]);
 
   // openshell runtime + gateway recovery.
   runOpenshellMock = vi.spyOn(runtime, "runOpenshell").mockReturnValue(successfulOpenshellResult());
@@ -1228,9 +1236,17 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
 
     await startSandboxChannel("alpha", { channel: "teams" });
 
+    expect(restoreMessagingProviderAttachmentsMock).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Object),
+      "teams",
+    );
     expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams", {
       disclosedPresetState: "absent",
     });
+    expect(restoreMessagingProviderAttachmentsMock.mock.invocationCallOrder[0]).toBeLessThan(
+      applyPresetMock.mock.invocationCallOrder[0],
+    );
     expect(rebuildSandboxMock).not.toHaveBeenCalled();
     expect(loggedText()).toContain("Change queued");
   });
@@ -1268,6 +1284,7 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
       Object.assign(current, updates);
       return true;
     });
+    restoreMessagingProviderAttachmentsMock.mockReturnValue(["alpha-teams-bridge"]);
     applyPresetMock.mockReturnValue(false);
 
     await expect(startSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
@@ -1278,8 +1295,36 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
       disclosedPresetState: "absent",
     });
     expect(registry.getDisabledChannels("alpha")).toContain("teams");
+    expect(rollbackMessagingProviderAttachmentsMock).toHaveBeenCalledWith("alpha", [
+      "alpha-teams-bridge",
+    ]);
     expect(rebuildSandboxMock).not.toHaveBeenCalled();
     expect(loggedText()).toContain("channels start teams");
+  });
+
+  it("channels start restores the disabled plan when provider attachment fails", async () => {
+    const current = makeTeamsEntry("alpha", { disabled: true });
+    arrangeRegistry({ current });
+    getDisabledChannelsMock.mockImplementation(
+      () => current.messaging?.plan.disabledChannels ?? [],
+    );
+    updateSandboxMock.mockImplementation((_name: string, updates: Partial<SandboxEntry>) => {
+      Object.assign(current, updates);
+      return true;
+    });
+    restoreMessagingProviderAttachmentsMock.mockImplementation(() => {
+      throw new Error("provider is not attached");
+    });
+
+    await expect(startSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(registry.getDisabledChannels("alpha")).toContain("teams");
+    expect(applyPresetMock).not.toHaveBeenCalled();
+    expect(rollbackMessagingProviderAttachmentsMock).not.toHaveBeenCalled();
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
+    expect(loggedText()).toContain("Could not restore 'teams' credential provider attachments");
   });
 
   it("channels start prints recovery guidance when policy and disabled-plan rollback both fail", async () => {
