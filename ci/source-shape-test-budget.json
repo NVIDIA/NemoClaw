@@ -47,6 +47,21 @@
       "category": "compatibility"
     },
     {
+      "file": "test/e2e/support/issue-9880-staging-reproduction-workflow.test.ts",
+      "test": "keeps the manual workflow read-only and non-cancelling (#9880)",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/issue-9880-staging-reproduction-workflow.test.ts",
+      "test": "exposes credentials only to their owning steps and removes Brev state (#9880)",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/issue-9880-staging-reproduction-workflow.test.ts",
+      "test": "runs one bounded prompt and always verifies workspace cleanup (#9880)",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
       "test": "keeps every candidate on standard runners when $name (#7145)",
       "category": "security"
