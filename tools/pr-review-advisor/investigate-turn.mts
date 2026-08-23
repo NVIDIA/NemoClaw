@@ -99,7 +99,7 @@ Investigate the complete review in one coherent pass. Cover actual changed surfa
 
 Treat acceptance as binding only under the system rubric. First classify linked issue text as binding acceptance or non-binding context before mapping clauses to code. Apply the trusted code change considerations throughout. For terminology, select candidates semantically from changed explanatory text. Do not use a token scan or deterministic naming heuristic. Ask what each term means, what concrete contrasting case makes it necessary, whether an established repository term exists, and whether ambiguity changes behavior, security, support, evidence, tests, or release interpretation. Call \`${TERMINOLOGY_TRACE_TOOL}\` only for selected candidates.
 
-Treat code growth as suspect. Compare it with direct modification, reuse, consolidation, replacement, and deletion. Require a present cost and a concrete reduction in total code, tests, fixtures, configuration, workflow, owners, or concepts. Preserve correctness, clarity, diagnostics, regression evidence, user safety, and trust boundaries.
+Treat code growth as suspect and compare it with direct modification, reuse, consolidation, replacement, and deletion. Valid feature, correctness, and security work may grow when the behavior requires it. For unnecessary-complexity candidates, require a present cost and a concrete reduction in total ownership without weakening correctness, clarity, diagnostics, regression evidence, user safety, or trust boundaries.
 
 Assess checked-in regression evidence and choose only supported E2E selectors. Never claim a job ran or turn E2E guidance into a finding without a checked-in defect.
 
