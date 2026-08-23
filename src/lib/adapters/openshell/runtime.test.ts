@@ -30,6 +30,16 @@ function blockingExecutable(name: string): string {
   return filePath;
 }
 
+function largeOutputExecutable(name: string): string {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-runtime-test-"));
+  directories.push(directory);
+  const filePath = path.join(directory, name);
+  fs.writeFileSync(filePath, `#!${process.execPath}\nprocess.stdout.write("x".repeat(1024));\n`, {
+    mode: 0o755,
+  });
+  return filePath;
+}
+
 afterEach(() => {
   vi.unstubAllEnvs();
   for (const directory of directories.splice(0)) {
@@ -49,6 +59,23 @@ describe("runOpenshell", () => {
 
     expect((result.error as NodeJS.ErrnoException | undefined)?.code).toBe("ETIMEDOUT");
     expect(result.signal).toBe("SIGKILL");
+  });
+
+  it("enforces the caller's output bound when stdout is captured (#9875)", () => {
+    const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`exit ${String(code)}`);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = runOpenshell([], {
+      openshellBinary: largeOutputExecutable("openshell"),
+      ignoreError: true,
+      maxBuffer: 64,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    expect((result.error as NodeJS.ErrnoException | undefined)?.code).toBe("ENOBUFS");
+    expect(exit).not.toHaveBeenCalled();
   });
 });
 

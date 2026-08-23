@@ -75,6 +75,7 @@ runner.run = (command) => {
     ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
+require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 runner.runCapture = (command) => {
   const cmd = _n(command);
   if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return sandboxRecreated ? ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10)) : sandboxDeleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
@@ -147,9 +148,10 @@ const { createSandbox } = require(${onboardPath});
         NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
         NEMOCLAW_SANDBOX_PREBUILD: "1",
       }),
+      timeoutMs: 30_000,
     });
 
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
     const payload = trailingJsonPayload<{
       sandboxName: string;
       events: Array<{ kind: string; cmd?: string; name?: string }>;

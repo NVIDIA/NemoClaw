@@ -839,6 +839,7 @@ test("mcp-bridge", {
     },
   );
 
+  const mcporterRequestOffset = fakeMcp.requests.length;
   const mcporterList = await sandbox.execShell(
     OPENCLAW_SANDBOX_NAME,
     trustedSandboxShellScript(
@@ -855,6 +856,11 @@ test("mcp-bridge", {
   );
   expectExitZero(mcporterList, "mcporter lists tools through OpenShell MCP policy");
   expect(resultText(mcporterList)).toContain("fake_echo");
+  await assertAuthenticatedMcpDiscovery(fakeMcp, {
+    requestOffset: mcporterRequestOffset,
+    expectedSecret: HOST_SECRET,
+    label: "mcporter authenticated MCP tool discovery",
+  });
   expect(fakeMcp.requests.some((request) => request.auth === `Bearer ${HOST_SECRET}`)).toBe(true);
   expect(fakeMcp.requests.every((request) => !request.auth.includes("openshell:resolve:env"))).toBe(
     true,

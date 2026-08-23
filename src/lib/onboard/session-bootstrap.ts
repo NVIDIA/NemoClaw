@@ -4,6 +4,7 @@
 import path from "node:path";
 
 import type { ServingProfileProvenance } from "../inference/serving/types";
+import { NEMOCLAW_VLLM_GPU_DEVICE_ENV, parseVllmGpuDevice } from "../inference/vllm-models";
 import { PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
 import { redact, redactFull, redactSensitiveText } from "../security/redact";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
@@ -610,6 +611,7 @@ function prepareFreshSession(
     observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
     stationExpressIntent: input.stationExpressIntent ?? null,
     servingProfileProvenance: input.servingProfileProvenance ?? null,
+    vllmGpuDevice: parseVllmGpuDevice(process.env[NEMOCLAW_VLLM_GPU_DEVICE_ENV]),
     metadata: {
       gatewayName: "nemoclaw",
       fromDockerfile: fromDockerfile || null,

@@ -72,6 +72,32 @@ describe("ordinary OpenClaw pairing target", () => {
     });
   });
 
+  it("resolves a custom Dockerfile without inventing a managed agent version", () => {
+    vi.mocked(deps.getSandbox!).mockReturnValue({
+      ...openClawEntry(),
+      agentVersion: null,
+      nemoclawVersion: null,
+      fromDockerfile: "/tmp/custom-openclaw/Dockerfile",
+    });
+
+    expect(resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME, deps)).toEqual({
+      gatewayName: GATEWAY_NAME,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: FINGERPRINT,
+      stateDirectory: "/sandbox/.openclaw",
+      version: "",
+    });
+  });
+
+  it("rejects a managed workload whose agent version is missing", () => {
+    vi.mocked(deps.getSandbox!).mockReturnValue({
+      ...openClawEntry(),
+      agentVersion: null,
+    });
+
+    expect(resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME, deps)).toBeNull();
+  });
+
   it.each([
     ["missing agent identity", { agent: undefined }],
     ["pending route reservation", { pendingRouteReservation: true }],

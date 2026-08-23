@@ -11,6 +11,7 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { TERMINOLOGY_TRACE_TOOL } from "../tools/pr-review-advisor/terminology.mts";
 import {
   runSpecialistAdvisor,
+  writeSpecialistDiff,
   writeSpecialistSummary,
 } from "../tools/pr-review-advisor/run-specialist.mts";
 import type { RunAdvisorResult, RunReadOnlyAdvisorOptions } from "../tools/advisors/session.mts";
@@ -46,6 +47,35 @@ const context: InvestigateTurnContext = {
 };
 
 describe("PR review advisor specialist prompts", () => {
+  it("writes diff evidence to a new owner-only runtime path", () => {
+    const configDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-config-"));
+    onTestFinished(() => fs.rmSync(configDir, { recursive: true, force: true }));
+    const directory = path.join(configDir, "context");
+    const expected = path.join(directory, "diff.patch");
+
+    const file = writeSpecialistDiff(configDir, "diff evidence");
+
+    expect(file).toBe(expected);
+    expect(fs.readFileSync(file, "utf8")).toBe("diff evidence");
+    expect(fs.statSync(directory).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it("tightens an existing specialist diff path", () => {
+    const configDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-config-"));
+    onTestFinished(() => fs.rmSync(configDir, { recursive: true, force: true }));
+    const directory = path.join(configDir, "context");
+    const expected = path.join(directory, "diff.patch");
+    fs.mkdirSync(directory, { mode: 0o755 });
+    fs.writeFileSync(expected, "stale", { mode: 0o644 });
+
+    writeSpecialistDiff(configDir, "diff evidence");
+
+    expect(fs.readFileSync(expected, "utf8")).toBe("diff evidence");
+    expect(fs.statSync(directory).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(expected).mode & 0o777).toBe(0o600);
+  });
+
   it("parses exactly the five supported interests (#9949)", () => {
     expect(ADVISOR_INTERESTS).toEqual([
       "behavior",

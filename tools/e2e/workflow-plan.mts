@@ -27,10 +27,12 @@ import {
   catalogueTarget,
   catalogueTargetsForChangedFiles,
   E2E_EXECUTION_PROFILES,
+  E2E_OPTIONAL_CREDENTIALS,
   E2E_TARGET_CATALOGUE,
   type E2eCatalogueMatrixRow,
   type E2eCatalogueTarget,
   type E2eExecutionProfile,
+  type E2eOptionalCredential,
   isPrCandidateCatalogueTarget,
   pathMatches,
 } from "./target-catalogue.mts";
@@ -817,6 +819,27 @@ export function withoutCredentialedCatalogueProfiles(plan: E2eWorkflowPlan): E2e
   };
 }
 
+export function withoutUnavailableOptionalCredentialTargets(
+  plan: E2eWorkflowPlan,
+  availableCredentials: ReadonlySet<E2eOptionalCredential>,
+): E2eWorkflowPlan {
+  const catalogueMatrices = Object.fromEntries(
+    E2E_EXECUTION_PROFILES.map((profile) => [
+      profile,
+      plan.catalogueMatrices[profile].filter((row) =>
+        catalogueTarget(row.id).requiredOptionalCredentials.every((credential) =>
+          availableCredentials.has(credential),
+        ),
+      ),
+    ]),
+  ) as Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>;
+  const { coverageMatrix: _coverageMatrix, ...planWithoutCoverage } = plan;
+  return withCoverageMatrix(
+    { ...planWithoutCoverage, catalogueMatrices },
+    readFreeStandingJobsInventory(),
+  );
+}
+
 function restrictUnauthorizedCandidatePlan(
   plan: E2eWorkflowPlan,
   hasPlannerSelectors: boolean,
@@ -930,12 +953,20 @@ export function writeE2eWorkflowPlanCiOutput(
     controllerMap.retiredSelectorSelected && !hasPlannerSelectors
       ? emptyE2eWorkflowPlan()
       : buildE2eWorkflowPlan(plannerSelectors, { changedFiles });
+  const availableOptionalCredentials = new Set<E2eOptionalCredential>(
+    E2E_OPTIONAL_CREDENTIALS.filter(
+      (credential) => environment[`NEMOCLAW_E2E_${credential}_AVAILABLE`] !== "false",
+    ),
+  );
+  const availabilityScopedPlan = hasPlannerSelectors
+    ? planned
+    : withoutUnavailableOptionalCredentialTargets(planned, availableOptionalCredentials);
   const candidateRevision = COMMIT_SHA_PATTERN.test(environment.NEMOCLAW_E2E_EXPECTED_SHA ?? "");
   const credentialsAllowed = environment.NEMOCLAW_E2E_CREDENTIALS_ALLOWED === "true";
   const plan = validateE2eWorkflowPlan(
     candidateRevision && !credentialsAllowed
-      ? restrictUnauthorizedCandidatePlan(planned, hasPlannerSelectors)
-      : planned,
+      ? restrictUnauthorizedCandidatePlan(availabilityScopedPlan, hasPlannerSelectors)
+      : availabilityScopedPlan,
   );
   const expectedHermes =
     candidateRevision && !credentialsAllowed && !hasPlannerSelectors
