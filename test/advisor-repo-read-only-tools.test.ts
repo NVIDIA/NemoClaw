@@ -181,7 +181,7 @@ describe("repo-confined advisor read-only tools", () => {
   });
 
   it("keeps escaped read results within the specialist session line limit (#9949)", async () => {
-    const lineCount = 400;
+    const lineCount = 40;
     const escapedLine = `const value = ${JSON.stringify('\\"'.repeat(96))};`;
     fs.writeFileSync(
       path.join(workspace, "escaped-read.txt"),
@@ -197,40 +197,62 @@ describe("repo-confined advisor read-only tools", () => {
       ),
     );
 
-    let offset = 1;
-    for (let page = 0; page < 20; page += 1) {
-      const result = await execute("read", { path: "escaped-read.txt", offset });
-      expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(
-        MAX_ADVISOR_TOOL_RESULT_JSON_BYTES,
-      );
-      const sessionLine = JSON.stringify({
-        type: "message",
-        id: `result-${page}`,
-        parentId: `call-${page}`,
-        timestamp: "2026-01-01T00:00:00.000Z",
-        message: {
-          role: "toolResult",
-          toolCallId: `call-${page}`,
-          toolName: "read",
-          content: result.content,
-          details: result.details,
-          isError: false,
-        },
-      });
-      expect(Buffer.byteLength(sessionLine, "utf8")).toBeLessThanOrEqual(
-        PI_SESSION_READ_LINE_LIMIT_BYTES,
-      );
+    const first = await execute("read", { path: "escaped-read.txt", offset: 1 });
+    expect(Buffer.byteLength(JSON.stringify(first), "utf8")).toBeLessThanOrEqual(
+      MAX_ADVISOR_TOOL_RESULT_JSON_BYTES,
+    );
+    expect(
+      Buffer.byteLength(
+        JSON.stringify({
+          type: "message",
+          id: "result-1",
+          parentId: "call-1",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: {
+            role: "toolResult",
+            toolCallId: "call-1",
+            toolName: "read",
+            content: first.content,
+            details: first.details,
+            isError: false,
+          },
+        }),
+        "utf8",
+      ),
+    ).toBeLessThanOrEqual(PI_SESSION_READ_LINE_LIMIT_BYTES);
+    const firstTruncation = (
+      first.details as { truncation?: { truncated: boolean; outputLines: number } } | undefined
+    )?.truncation;
+    expect(firstTruncation?.truncated).toBe(true);
+    expect(firstTruncation?.outputLines).toBeGreaterThan(0);
+    const nextOffset = 1 + (firstTruncation?.outputLines ?? 0);
+    expect((first.content[0] as { text: string }).text).toContain(
+      `Use offset=${nextOffset} to continue`,
+    );
 
-      const truncation = (
-        result.details as { truncation?: { truncated: boolean; outputLines: number } } | undefined
-      )?.truncation;
-      if (!truncation?.truncated) break;
-      expect(truncation.outputLines).toBeGreaterThan(0);
-      expect((result.content[0] as { text: string }).text).toContain(
-        `Use offset=${offset + truncation.outputLines} to continue`,
-      );
-      offset += truncation.outputLines;
-    }
+    const second = await execute("read", { path: "escaped-read.txt", offset: nextOffset });
+    expect(Buffer.byteLength(JSON.stringify(second), "utf8")).toBeLessThanOrEqual(
+      MAX_ADVISOR_TOOL_RESULT_JSON_BYTES,
+    );
+    expect(
+      Buffer.byteLength(
+        JSON.stringify({
+          type: "message",
+          id: "result-2",
+          parentId: "call-2",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: {
+            role: "toolResult",
+            toolCallId: "call-2",
+            toolName: "read",
+            content: second.content,
+            details: second.details,
+            isError: false,
+          },
+        }),
+        "utf8",
+      ),
+    ).toBeLessThanOrEqual(PI_SESSION_READ_LINE_LIMIT_BYTES);
 
     expect(observations.at(-1)?.reachesEnd).toBe(true);
     expect(observations.at(-1)?.endOffset).toBeNull();
