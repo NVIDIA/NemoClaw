@@ -56,7 +56,9 @@ cleanup_owned_workspace() {
     fail "cleanup refused because the ownership receipt is invalid"
   fi
   existing="$(workspace || true)"
-  workspace_id="$(jq -r '.id // ""' <<<"${existing:-{}}")"
+  if [ -n "$existing" ]; then
+    workspace_id="$(jq -r '.id // ""' <<<"$existing")"
+  fi
   if [ -n "$existing" ]; then
     log "Deleting workflow-owned workspace $INSTANCE_NAME"
     timeout 60s brev delete "$INSTANCE_NAME" || true
@@ -166,7 +168,18 @@ jq -e '.status == "RUNNING" and (.shell_status // .shellStatus) == "READY" and
   || fail "workspace readiness timed out"
 workspace_id="$(jq -r '.id // ""' <<<"$ready")"
 log "Workspace $INSTANCE_NAME ($workspace_id) is ready"
-timeout 60s brev refresh >/dev/null || fail "Brev SSH configuration refresh failed"
+ssh_deadline=$((SECONDS + ${BREV_SSH_TIMEOUT_SECONDS:-900}))
+ssh_ready=0
+while [ "$SECONDS" -lt "$ssh_deadline" ]; do
+  timeout 60s brev refresh >/dev/null 2>&1 || true
+  if timeout 15s ssh "${SSH_OPTIONS[@]}" "$INSTANCE_NAME" true >/dev/null 2>&1; then
+    ssh_ready=1
+    break
+  fi
+  sleep "${POLL_SECONDS:-15}"
+done
+[ "$ssh_ready" -eq 1 ] || fail "workspace SSH readiness timed out"
+log "SSH access to $INSTANCE_NAME succeeded"
 
 # The remote shell expands the single-quoted command.
 # shellcheck disable=SC2016
