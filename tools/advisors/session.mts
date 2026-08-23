@@ -115,7 +115,7 @@ export type RunReadOnlyAdvisorOptions = {
   promptTurns: AdvisorPromptTurn[];
   systemPrompt: string;
   configDir: string;
-  htmlExportPath: string;
+  htmlExportPath?: string;
   timeoutMs: number;
   heartbeatMs: number;
   maxCaptureBytes: number;
@@ -817,14 +817,16 @@ export async function runReadOnlyAdvisor(
     unsubscribe();
     clearInterval(heartbeat);
     if (timeout) clearTimeout(timeout);
-    try {
-      const exportedPath = await session.exportToHtml(options.htmlExportPath);
-      raw.append(`\n[${options.logPrefix}] exported_session_html=${exportedPath}\n`);
-      options.logProgress(`Exported advisor session HTML: ${exportedPath}`);
-    } catch (error: unknown) {
-      const reason = error instanceof Error ? error.message : String(error);
-      raw.append(`\n[${options.logPrefix}] failed_to_export_session_html=${reason}\n`);
-      options.logProgress(`Failed to export advisor session HTML: ${reason}`);
+    if (options.htmlExportPath) {
+      try {
+        const exportedPath = await session.exportToHtml(options.htmlExportPath);
+        raw.append(`\n[${options.logPrefix}] exported_session_html=${exportedPath}\n`);
+        options.logProgress(`Exported advisor session HTML: ${exportedPath}`);
+      } catch (error: unknown) {
+        const reason = error instanceof Error ? error.message : String(error);
+        raw.append(`\n[${options.logPrefix}] failed_to_export_session_html=${reason}\n`);
+        options.logProgress(`Failed to export advisor session HTML: ${reason}`);
+      }
     }
     session.dispose();
   }
