@@ -249,6 +249,12 @@ function parseDockerfileSources(bytes: Buffer): readonly string[] {
   const local: string[] = [];
   for (const rawLine of text.split("\n")) {
     const line = rawLine.trim();
+    if (/^RUN\s/u.test(line)) {
+      const [, firstArgument] = line.split(/\s+/u);
+      if (firstArgument?.startsWith("--")) {
+        fail("Dockerfile has a non-Portable RUN option");
+      }
+    }
     if (!/^(?:COPY|ADD)\s/iu.test(line)) continue;
     if (!/^(?:COPY|ADD)\s/u.test(line)) {
       fail("Dockerfile uses a noncanonical COPY or ADD opcode");

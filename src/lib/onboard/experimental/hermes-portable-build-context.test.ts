@@ -142,6 +142,13 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     expect(stagedDockerfile).toMatch(
       /^ADD --checksum=sha256:[a-f0-9]{64} https:\/\/files[.]pythonhosted[.]org\//mu,
     );
+    expect(stagedDockerfile).not.toMatch(/^RUN\s+--/mu);
+    expect(stagedDockerfile).toContain(
+      "COPY --from=hermes-managed-teams-wheels / /opt/nemoclaw-hermes-teams-wheels/",
+    );
+    expect(stagedDockerfile).toContain(
+      "UV_OFFLINE=true UV_FIND_LINKS=/opt/nemoclaw-hermes-teams-wheels",
+    );
     const finalStage = stagedDockerfile.slice(stagedDockerfile.lastIndexOf("FROM ${BASE_IMAGE}"));
     const payloadCopyIndex = finalStage.indexOf("COPY --from=hermes-runtime-payload / /");
     const permissionNormalizationIndex = finalStage.search(
@@ -396,6 +403,28 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     );
     expect(fs.existsSync(reservationRoot)).toBe(reservationExistedBefore);
   });
+
+  it.each(["--network=none", "--mount=type=cache,target=/tmp/cache"])(
+    "rejects BuildKit-only RUN option %s before reservation (#10007)",
+    (option) => {
+      const source = primaryCloneFixture();
+      const dockerfile = path.join(source, "agents/hermes/Dockerfile");
+      const reservationRoot = path.join(stateDir, "hermes-portable-build-context");
+      fs.writeFileSync(
+        dockerfile,
+        fs
+          .readFileSync(dockerfile, "utf8")
+          .replace("RUN mkdir -p /sandbox/.nemoclaw", `RUN ${option} mkdir -p /sandbox/.nemoclaw`),
+        { mode: 0o644 },
+      );
+      const reservationExistedBefore = fs.existsSync(reservationRoot);
+
+      expect(() => createHermesPortableBuildContextPlan(source, BUILD_SETTINGS)).toThrow(
+        "non-Portable RUN option",
+      );
+      expect(fs.existsSync(reservationRoot)).toBe(reservationExistedBefore);
+    },
+  );
 
   it("rejects source symlinks, hardlinks, and unreviewed secret paths (#9203)", () => {
     const source = primaryCloneFixture();
