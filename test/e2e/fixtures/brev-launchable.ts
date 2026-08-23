@@ -54,6 +54,7 @@ export interface BrevLaunchableFixtureOptions {
 const IMAGE_REPOSITORY = "brevdev/nemoclaw-image";
 const IMAGE_WORKFLOW = "build-launchable-e2e-image.yml";
 const DEFAULT_POLL_MS = 15_000;
+const DEFAULT_BREV_WORKSPACE_CREATE_RECONCILE_TIMEOUT_MS = 2 * 60_000;
 export const DEFAULT_BREV_STAGING_HANDOFF_COMMAND_TIMEOUT_MS = 60_000;
 export const DEFAULT_BREV_STAGING_HANDOFF_TIMEOUT_MS =
   2 * DEFAULT_BREV_STAGING_HANDOFF_COMMAND_TIMEOUT_MS;
@@ -256,10 +257,15 @@ export class BrevLaunchableFixture {
   ): Promise<void> {
     if (!ownership.createRequested) return;
     const name = ownership.name;
-    const current = await this.workspace(name);
-    if (current && !ownership.id) {
-      throw new Error(`Brev workspace identity was not recorded before cleanup: ${name}`);
+    const deadline = Date.now() + timeoutMs;
+    if (!ownership.id) {
+      const reconciled = await this.reconcileCreatedWorkspace(ownership, deadline);
+      if (!reconciled) {
+        await this.recordWorkspaceAbsent(name, "");
+        return;
+      }
     }
+    const current = await this.workspace(name);
     if (current && current.id !== ownership.id) {
       throw new Error(`Brev workspace identity changed before cleanup: ${name}`);
     }
@@ -270,7 +276,6 @@ export class BrevLaunchableFixture {
       });
     }
     const workspaceId = ownership.id ?? current?.id;
-    const deadline = Date.now() + timeoutMs;
     let absent = 0;
     while (Date.now() < deadline) {
       const record = workspaceId
@@ -278,11 +283,7 @@ export class BrevLaunchableFixture {
         : await this.workspace(name);
       absent = record ? 0 : absent + 1;
       if (absent >= 2) {
-        await this.artifacts.writeJson("brev-workspace-cleanup.json", {
-          workspaceName: name,
-          workspaceId: ownership.id ?? current?.id ?? "",
-          status: "ABSENT",
-        });
+        await this.recordWorkspaceAbsent(name, workspaceId ?? "");
         return;
       }
       await this.brevCommand(["refresh"], {
@@ -293,6 +294,58 @@ export class BrevLaunchableFixture {
       await delay(Math.min(this.pollMs, Math.max(1, deadline - Date.now())));
     }
     throw new Error(`Brev workspace cleanup did not confirm absence: ${name}`);
+  }
+
+  private async reconcileCreatedWorkspace(
+    ownership: BrevWorkspaceOwnership,
+    cleanupDeadline: number,
+  ): Promise<BrevWorkspaceRecord | null> {
+    const name = ownership.name;
+    const deadline = Math.min(
+      cleanupDeadline,
+      Date.now() + DEFAULT_BREV_WORKSPACE_CREATE_RECONCILE_TIMEOUT_MS,
+    );
+    let absent = 0;
+    let lastListError: Error | undefined;
+    while (Date.now() < deadline) {
+      try {
+        const record = await this.workspace(name);
+        lastListError = undefined;
+        if (record) {
+          if (!record.id) {
+            throw new Error(`Brev workspace identity is missing during cleanup: ${name}`);
+          }
+          ownership.id = record.id;
+          return record;
+        }
+        absent += 1;
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          !error.message.startsWith("list Brev workspaces failed:")
+        ) {
+          throw error;
+        }
+        lastListError = error;
+        absent = 0;
+      }
+      await delay(Math.min(this.pollMs, Math.max(1, deadline - Date.now())));
+    }
+    if (absent >= 2) return null;
+    if (lastListError) {
+      throw new Error(`Brev workspace identity reconciliation failed: ${name}`, {
+        cause: lastListError,
+      });
+    }
+    throw new Error(`Brev workspace identity reconciliation did not confirm absence: ${name}`);
+  }
+
+  private recordWorkspaceAbsent(name: string, id: string): Promise<string> {
+    return this.artifacts.writeJson("brev-workspace-cleanup.json", {
+      workspaceName: name,
+      workspaceId: id,
+      status: "ABSENT",
+    });
   }
 
   private async waitForWorkspace(

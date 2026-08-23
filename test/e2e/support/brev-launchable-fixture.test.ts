@@ -172,6 +172,68 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     expect(command.mock.calls.flat().some((value) => value === "delete")).toBe(false);
   });
 
+  it.each([
+    ["create command", "create"],
+    ["first readiness inventory", "readiness-list"],
+  ] as const)("reconciles the created workspace when the %s fails", async (_case, failure) => {
+    const root = temporaryRoot();
+    const command = vi.fn(ambiguousCreateCommand({ failure }));
+    const fixture = createFixture(root, command);
+    const ownership = fixture.ownership("fixture-workspace");
+
+    await expect(fixture.create(ownership, "env-fixture123")).rejects.toThrow(
+      failure === "create" ? "create staging Brev workspace failed" : "list Brev workspaces failed",
+    );
+    expect(ownership.id).toBeUndefined();
+
+    await expect(fixture.delete(ownership, 2_000)).resolves.toBeUndefined();
+    expect(ownership.id).toBe("owned-id");
+    expect(command.mock.calls.filter((call) => call[1][0] === "delete")).toEqual([
+      ["brev", ["delete", "owned-id"], expect.any(Object)],
+    ]);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(root, "brev-workspace-cleanup.json"), "utf8")),
+    ).toMatchObject({ status: "ABSENT", workspaceId: "owned-id" });
+  });
+
+  it("refuses a replacement after cleanup reconciles the created workspace ID", async () => {
+    const root = temporaryRoot();
+    const command = vi.fn(
+      ambiguousCreateCommand({ failure: "create", replaceAfterReconciliation: true }),
+    );
+    const fixture = createFixture(root, command);
+    const ownership = fixture.ownership("fixture-workspace");
+
+    await expect(fixture.create(ownership, "env-fixture123")).rejects.toThrow(
+      "create staging Brev workspace failed",
+    );
+    await expect(fixture.delete(ownership, 2_000)).rejects.toThrow(
+      "Brev workspace identity changed before cleanup",
+    );
+
+    expect(ownership.id).toBe("owned-id");
+    expect(command.mock.calls.flat().some((value) => value === "delete")).toBe(false);
+  });
+
+  it("does not treat repeated cleanup inventory failures as workspace absence", async () => {
+    const root = temporaryRoot();
+    const command = vi.fn(
+      ambiguousCreateCommand({ failure: "create", failCleanupInventory: true }),
+    );
+    const fixture = createFixture(root, command);
+    const ownership = fixture.ownership("fixture-workspace");
+
+    await expect(fixture.create(ownership, "env-fixture123")).rejects.toThrow(
+      "create staging Brev workspace failed",
+    );
+    await expect(fixture.delete(ownership, 50)).rejects.toThrow(
+      "Brev workspace identity reconciliation failed",
+    );
+
+    expect(command.mock.calls.flat().some((value) => value === "delete")).toBe(false);
+    expect(fs.existsSync(path.join(root, "brev-workspace-cleanup.json"))).toBe(false);
+  });
+
   it("refuses to delete a replacement after readiness fails", async () => {
     const root = temporaryRoot();
     const readiness = failingReadinessCommand();
@@ -497,6 +559,49 @@ function lifecycleCommand(): {
           throw new Error(`unexpected command: ${args.join(" ")}`);
       }
     },
+  };
+}
+
+function ambiguousCreateCommand(options: {
+  failCleanupInventory?: boolean;
+  failure: "create" | "readiness-list";
+  replaceAfterReconciliation?: boolean;
+}): (_binary: string, args: string[]) => Promise<ShellProbeResult> {
+  let created = false;
+  let deleted = false;
+  let firstInventoryAfterCreate = true;
+  let observedOwnedIdentity = false;
+  return async (_binary, args) => {
+    switch (args[0]) {
+      case "ls": {
+        switch (true) {
+          case !created || deleted:
+            return result({ workspaces: [] });
+          case options.failCleanupInventory ||
+            (options.failure === "readiness-list" && firstInventoryAfterCreate):
+            firstInventoryAfterCreate = false;
+            return { ...result("inventory unavailable"), exitCode: 17 };
+          case options.replaceAfterReconciliation && observedOwnedIdentity:
+            return workspaceResult("replacement-id");
+          default:
+            firstInventoryAfterCreate = false;
+            observedOwnedIdentity = true;
+            return workspaceResult("owned-id");
+        }
+      }
+      case "create":
+        created = true;
+        return options.failure === "create"
+          ? { ...result("create outcome unavailable"), exitCode: 17 }
+          : result("");
+      case "delete":
+        deleted = true;
+        return result("");
+      case "refresh":
+        return result("");
+      default:
+        throw new Error(`unexpected command: ${args.join(" ")}`);
+    }
   };
 }
 

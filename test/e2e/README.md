@@ -217,6 +217,8 @@ execution and deletion to the workspace ID recorded during creation. The live te
 cleanup, workflow step, and workflow job timeouts each contain their nested operation
 budgets. Each Brev subprocess receives only the temporary workflow `HOME` and its
 command-specific environment. The workflow removes that `HOME` after the scenario.
+Cleanup gives the unique create request a two-minute visibility window. It records the
+first exact-name workspace ID, verifies that ID again, and deletes only that ID.
 It does not restore source copying, source installation, the legacy suite selector,
 or scheduled Brev coverage.
 Each push to `main` selects E2E work from the changed files.
