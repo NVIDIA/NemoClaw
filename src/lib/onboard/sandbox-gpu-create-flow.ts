@@ -396,7 +396,10 @@ export async function runSandboxGpuCreateFlow(
             ),
           ];
           const prepared = attemptRunner.managedRouting.prepareCompatibilityLaunch({
-            createArgs: managedBootstrapCreateArgs(input.prebuild.createArgs, bootstrapIdentity),
+            createArgs: managedBootstrapCreateArgs(
+              input.prebuild.createArgs,
+              bootstrapIdentity,
+            ),
             currentRegistryImageRef: registryImageRef,
             prebuildImageId: input.prebuild.imageId,
             allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,

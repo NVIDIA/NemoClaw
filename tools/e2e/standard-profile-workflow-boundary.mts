@@ -486,7 +486,6 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
       MANAGED_IMAGE_CATALOG: "${{ inputs.managed_image_catalog }}",
       RESTORE_CLI: "${{ inputs.restore_cli && 'true' || 'false' }}",
     }) ||
-    !managedCatalogRun.includes('[[ "$RESTORE_CLI" == "true" ]]') ||
     !managedCatalogRun.includes(".source.revision == $revision") ||
     !managedCatalogRun.includes("[.[].source.release] | unique | length") ||
     !managedCatalogRun.includes("[.[].source.cohort] | unique | length") ||

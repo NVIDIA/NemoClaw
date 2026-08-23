@@ -117,7 +117,9 @@ export function hasManagedMcpRebuildHandoff(
   createIntent: SandboxCreateIntent | null | undefined,
 ): boolean {
   const handoff = createIntent?.recreateJournalTargetIntentFingerprint;
-  return Boolean(handoff && createIntent?.recreateTransaction?.targetIntentFingerprint === handoff);
+  return Boolean(
+    handoff && createIntent?.recreateTransaction?.targetIntentFingerprint === handoff,
+  );
 }
 
 function shouldRefuseManagedMcpRecreate(
