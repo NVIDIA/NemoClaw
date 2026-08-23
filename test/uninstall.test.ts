@@ -231,6 +231,7 @@ exit 0
       "--user",
       "show",
       NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
+      "--all",
       "--property=FragmentPath",
       "--property=ExecStart",
       "--property=DropInPaths",
