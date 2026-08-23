@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { moduleTagDeclarations, stripModuleTagDeclarations } from "./module-tags.mts";
 import { type E2eExecutionMetadata, validateE2eExecutionMetadata } from "./execution-coverage.mts";
+import { type E2eGatewayRuntime, supportsE2eGatewayRuntime } from "./gateway-runtime.mts";
 
 export const CREDENTIAL_FREE_TEST_TAG = "e2e/credential-free";
 export const SHARED_E2E_JOB_ID = "shared-e2e";
@@ -45,23 +46,39 @@ const CREDENTIAL_FREE_TEST_COVERAGE = {
     observableOutcome: "Buildless onboarding selects exact managed images for every agent",
     environmentOrInferenceEndpoint: "Mocked integration environment; no inference endpoint",
     unresolvedReason: "",
+    gatewayRuntimes: ["docker"],
   },
   "vllm-docker-storage": {
     agentRuntime: "none",
     observableOutcome: "vLLM storage gate accepts and rejects the intended host states",
     environmentOrInferenceEndpoint: "Native Linux Docker host; no inference endpoint",
     unresolvedReason: "",
+    gatewayRuntimes: ["docker"],
   },
-} as const satisfies Readonly<Record<string, E2eExecutionMetadata>>;
+} as const satisfies Readonly<
+  Record<string, E2eExecutionMetadata & { gatewayRuntimes: readonly E2eGatewayRuntime[] }>
+>;
 
 export function credentialFreeTestCoverage(id: string): E2eExecutionMetadata {
   if (!Object.hasOwn(CREDENTIAL_FREE_TEST_COVERAGE, id)) {
     throw new Error(`Credential-free test ${id} requires execution coverage metadata`);
   }
-  const metadata = (
-    CREDENTIAL_FREE_TEST_COVERAGE as Readonly<Record<string, E2eExecutionMetadata>>
-  )[id];
+  const { gatewayRuntimes: _gatewayRuntimes, ...metadata } =
+    CREDENTIAL_FREE_TEST_COVERAGE[id as keyof typeof CREDENTIAL_FREE_TEST_COVERAGE];
   return validateE2eExecutionMetadata(metadata, `Credential-free test ${id}`);
+}
+
+export function credentialFreeTestSupportsGatewayRuntime(
+  id: string,
+  runtime: E2eGatewayRuntime,
+): boolean {
+  if (!Object.hasOwn(CREDENTIAL_FREE_TEST_COVERAGE, id)) {
+    throw new Error(`Credential-free test ${id} requires execution coverage metadata`);
+  }
+  return supportsE2eGatewayRuntime(
+    CREDENTIAL_FREE_TEST_COVERAGE[id as keyof typeof CREDENTIAL_FREE_TEST_COVERAGE].gatewayRuntimes,
+    runtime,
+  );
 }
 
 export function credentialFreeTestProjectForFile(

@@ -44,6 +44,10 @@ import {
   validateE2eExecutionRows,
   validateE2eExecutionMetadata,
 } from "./execution-coverage.mts";
+import {
+  E2E_GATEWAY_RUNTIMES as SUPPORTED_E2E_GATEWAY_RUNTIMES,
+  type E2eGatewayRuntime,
+} from "./gateway-runtime.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
 import {
   validateTrustedHermesSwapHelperSource,
@@ -97,6 +101,13 @@ const DEFAULT_HOST_DEPENDENCY_ACTION_PATH = join(
   "host-dependency-setup",
   "action.yaml",
 );
+const DEFAULT_NATIVE_PODMAN_SETUP_ACTION_PATH = join(
+  REPO_ROOT,
+  ".github",
+  "actions",
+  "setup-native-podman-e2e",
+  "action.yaml",
+);
 const DEFAULT_HOST_DEPENDENCY_SCRIPT_PATH = join(
   REPO_ROOT,
   ".github",
@@ -123,6 +134,7 @@ export interface FreeStandingJobsInventory {
   targetToJob: Map<string, string>;
   liveTestToJobs: Map<string, string[]>;
   coverageRows: E2eExecutionRow[];
+  gatewayRuntimesByJob: Map<string, E2eGatewayRuntime[]>;
 }
 
 export interface FocusedE2eJob {
@@ -163,6 +175,7 @@ const LIVE_TEST_FILE_PATTERN = /test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
 const FREE_STANDING_DEFAULT_ENABLED_MARKER = "E2E_DEFAULT_ENABLED";
+const GATEWAY_RUNTIMES_MARKER = "E2E_GATEWAY_RUNTIMES";
 const AGENT_RUNTIME_MARKER = "E2E_AGENT_RUNTIME";
 const OUTCOME_MARKER = "E2E_OBSERVABLE_OUTCOME";
 const ENVIRONMENT_MARKER = "E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT";
@@ -527,6 +540,7 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
   const targetToJob = new Map<string, string>();
   const liveTestToJobs = new Map<string, string[]>();
   const coverageRows: E2eExecutionRow[] = [];
+  const gatewayRuntimesByJob = new Map<string, E2eGatewayRuntime[]>();
 
   for (const [jobId, rawJob] of Object.entries(jobs)) {
     const job = asRecord(rawJob);
@@ -557,6 +571,20 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
 
     allowedJobs.push(jobId);
     workflowJobs.push(jobId);
+    const declaredGatewayRuntimes =
+      stringValue(env[GATEWAY_RUNTIMES_MARKER]) || SUPPORTED_E2E_GATEWAY_RUNTIMES.join(",");
+    const gatewayRuntimes = declaredGatewayRuntimes.split(",");
+    if (
+      gatewayRuntimes.length === 0 ||
+      new Set(gatewayRuntimes).size !== gatewayRuntimes.length ||
+      gatewayRuntimes.some(
+        (runtime) => !SUPPORTED_E2E_GATEWAY_RUNTIMES.includes(runtime as E2eGatewayRuntime),
+      )
+    ) {
+      errors.push(`${jobId} job ${GATEWAY_RUNTIMES_MARKER} is invalid`);
+    } else {
+      gatewayRuntimesByJob.set(jobId, gatewayRuntimes as E2eGatewayRuntime[]);
+    }
     for (const file of collectLiveTestFiles(rawJob)) addMapValue(liveTestToJobs, file, jobId);
     if (Object.hasOwn(env, FREE_STANDING_DEFAULT_ENABLED_MARKER)) {
       if (env[FREE_STANDING_DEFAULT_ENABLED_MARKER] !== "0") {
@@ -630,6 +658,7 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
       freeStandingTargets,
       targetToJob,
       coverageRows,
+      gatewayRuntimesByJob,
       liveTestToJobs: new Map(
         [...liveTestToJobs]
           .sort(([left], [right]) => left.localeCompare(right))
@@ -658,6 +687,9 @@ function cloneFreeStandingJobsInventory(
     freeStandingTargets: [...inventory.freeStandingTargets],
     targetToJob: new Map(inventory.targetToJob),
     coverageRows: inventory.coverageRows.map((row) => ({ ...row })),
+    gatewayRuntimesByJob: new Map(
+      [...inventory.gatewayRuntimesByJob].map(([job, runtimes]) => [job, [...runtimes]]),
+    ),
     liveTestToJobs: cloneStringArrayMap(inventory.liveTestToJobs),
   };
 }
@@ -2827,12 +2859,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateLargerRunnerRouting(errors, jobs, generateMatrix, generateSteps, generateCheckout);
   const generate = requireStep(errors, generateSteps, "Generate E2E target matrix");
   validateTrustedE2ePlannerBoundary(errors, generateSteps, generate, generateCheckout);
-  validateExactPrManagedImageCatalogBoundary(
-    errors,
-    generateSteps,
-    generate,
-    generateCheckout,
-  );
+  validateExactPrManagedImageCatalogBoundary(errors, generateSteps, generate, generateCheckout);
   const generateEnv = asRecord(generate?.env);
   if (generateEnv.CHECKOUT_SHA !== "${{ inputs.checkout_sha }}") {
     errors.push("matrix generation step must bind controller checkout through CHECKOUT_SHA env");
@@ -3367,9 +3394,48 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     ...validateDockerHubAuthAction(),
     ...validateDockerHubCleanupAction(),
     ...validateHostDependencyAction(),
+    ...validateNativePodmanSetupAction(),
     ...validateE2eWorkflow(workflow),
     ...validateTrustedHermesSwapHelperSource(
       readFileSync(DEFAULT_LIVE_VITEST_INVOCATION_PATH, "utf8"),
     ),
   ];
+}
+
+export function validateNativePodmanSetupAction(
+  actionPath = DEFAULT_NATIVE_PODMAN_SETUP_ACTION_PATH,
+): string[] {
+  const action = asRecord(YAML.parse(readFileSync(actionPath, "utf8")));
+  const steps = asSteps(asRecord(action.runs).steps);
+  const start = steps.find((step) => step.name === "Start native Podman runtime");
+  const run = stringValue(start?.run);
+  const errors: string[] = [];
+
+  if (!start) return ["native Podman setup action must start the runtime"];
+  if (!run.includes('systemctl start "user-runtime-dir@${uid}.service" "user@${uid}.service"')) {
+    errors.push("native Podman setup must start the runner user manager");
+  }
+  if (!run.includes("/usr/bin/systemctl --user start dbus.socket")) {
+    errors.push("native Podman setup must start the runner user D-Bus socket");
+  }
+  if (!run.includes('[[ -S "$runtime_directory/bus" && ! -L "$runtime_directory/bus" ]]')) {
+    errors.push("native Podman setup must verify the runner user D-Bus authority");
+  }
+  if (run.includes("printf 'DOCKER_HOST=")) {
+    errors.push("native Podman setup must not expose its API socket as Docker");
+  }
+  if (
+    !run.includes('export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus"') ||
+    run.indexOf('export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus"') >
+      run.indexOf('system service --time=0 "unix://$socket_path"')
+  ) {
+    errors.push("native Podman setup must bind user D-Bus before starting the API service");
+  }
+  if (!run.includes("printf 'OPENSHELL_PODMAN_SOCKET=%s\\n'")) {
+    errors.push("native Podman setup must expose the provider-owned socket authority");
+  }
+  if (!run.includes('printf \'PATH=%s:%s\\n\' "$toolchain_install_root/bin" "$PATH"')) {
+    errors.push("native Podman setup must preserve the reviewed executable authority on PATH");
+  }
+  return errors;
 }

@@ -9,6 +9,11 @@ import { isDeepStrictEqual } from "node:util";
 
 import { type E2eAgentRuntime, validateE2eExecutionMetadata } from "./execution-coverage.mts";
 import {
+  E2E_GATEWAY_RUNTIMES,
+  type E2eGatewayRuntime,
+  supportsE2eGatewayRuntime,
+} from "./gateway-runtime.mts";
+import {
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
@@ -78,6 +83,7 @@ export interface E2eCatalogueTarget {
   artifactLayout: E2eArtifactLayout;
   selector?: string;
   environment: Readonly<Record<string, string>>;
+  gatewayRuntimes: readonly E2eGatewayRuntime[];
 }
 
 export interface E2eCatalogueMatrixRow {
@@ -129,6 +135,7 @@ type TargetOptions = Omit<
   | "prAdvisorSelectable"
   | "shard"
   | "artifactLayout"
+  | "gatewayRuntimes"
 > & {
   agentRuntime: E2eAgentRuntime;
   environmentOrInferenceEndpoint: string;
@@ -150,6 +157,7 @@ type TargetOptions = Omit<
   shard?: string;
   artifactLayout?: E2eArtifactLayout;
   testFile?: string;
+  gatewayRuntimes?: readonly E2eGatewayRuntime[];
 };
 
 function target(id: string, options: TargetOptions): E2eCatalogueTarget {
@@ -175,6 +183,7 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     shard = "default",
     artifactLayout = "target-shard",
     testFile = `test/e2e/live/${id}.test.ts`,
+    gatewayRuntimes = E2E_GATEWAY_RUNTIMES,
     ...execution
   } = options;
   return {
@@ -201,6 +210,7 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     shard,
     artifactLayout,
     installNonInteractive,
+    gatewayRuntimes,
     ...execution,
   };
 }
@@ -275,6 +285,7 @@ interface GatewayUpgradeTargetOptions {
 
 function gatewayUpgradeTarget(options: GatewayUpgradeTargetOptions): E2eCatalogueTarget {
   return target(`openshell-gateway-upgrade-${options.shard}`, {
+    gatewayRuntimes: ["docker"],
     targetId: "openshell-gateway-upgrade",
     displayName: options.displayName,
     agentRuntime: "openclaw",
@@ -763,6 +774,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("gateway-guard-recovery", {
+    gatewayRuntimes: ["docker"],
     displayName: "Gateway: restores the guard chain after recreation",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
@@ -1152,6 +1164,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   ...GATEWAY_UPGRADE_TARGETS,
   target("rebuild-openclaw", {
+    gatewayRuntimes: ["docker"],
     displayName: "Rebuild: preserves OpenClaw state and rotates the gateway token",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
@@ -1167,6 +1180,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     environment: hostedInference,
   }),
   target("rebuild-hermes", {
+    gatewayRuntimes: ["docker"],
     displayName: "Rebuild: preserves Hermes state and recovers cron dispatch",
     agentRuntime: "hermes",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
@@ -1492,6 +1506,7 @@ export const E2E_CATALOGUE_SHARED_PATHS = [
   ".github/workflows/e2e-standard-profile.yaml",
   "scripts/install-openshell.sh",
   "tools/e2e/target-catalogue.mts",
+  "tools/e2e/gateway-runtime.mts",
 ] as const;
 
 const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
@@ -1544,6 +1559,13 @@ export function validateE2eTargetCatalogue(
     }
     if (!E2E_EXECUTION_PROFILES.includes(entry.profile)) {
       throw new Error(`E2E target ${entry.id} has an invalid execution profile`);
+    }
+    if (
+      entry.gatewayRuntimes.length === 0 ||
+      new Set(entry.gatewayRuntimes).size !== entry.gatewayRuntimes.length ||
+      entry.gatewayRuntimes.some((runtime) => !E2E_GATEWAY_RUNTIMES.includes(runtime))
+    ) {
+      throw new Error(`E2E target ${entry.id} has invalid gateway runtime support`);
     }
     if (!/^[A-Za-z0-9._-]+$/u.test(entry.runner)) {
       throw new Error(`E2E target ${entry.id} has an invalid runner`);
@@ -1691,9 +1713,14 @@ export function catalogueTargetsForChangedFiles(
 export function catalogueMatrix(
   profile: E2eExecutionProfile,
   targets: readonly E2eCatalogueTarget[],
+  gatewayRuntime: E2eGatewayRuntime = "docker",
 ): E2eCatalogueMatrixRow[] {
   return targets
-    .filter((entry) => entry.profile === profile)
+    .filter(
+      (entry) =>
+        entry.profile === profile &&
+        supportsE2eGatewayRuntime(entry.gatewayRuntimes, gatewayRuntime),
+    )
     .map((entry) => ({
       id: entry.id,
       target_id: entry.targetId,

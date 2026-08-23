@@ -1,8 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { privilegedSandboxExecArgv } from "../../../src/lib/sandbox/privileged-exec.ts";
-import { buildSubprocessEnv } from "../../../src/lib/subprocess-env.ts";
+import type {
+  RuntimeProviderPrivilegedSandboxCommandResult,
+  RuntimeProviderPrivilegedSandboxTarget,
+} from "../../../src/lib/onboard/runtime-provider/contract.ts";
+import {
+  executePrivilegedSandboxCommand,
+  resolvePrivilegedSandboxTarget,
+} from "../../../src/lib/sandbox/privileged-exec.ts";
 import { buildAvailabilityProbeEnv } from "./availability-env.ts";
 import type { HostCliClient } from "./clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "./clients/sandbox.ts";
@@ -60,12 +66,10 @@ export interface SecurityPostureExpectations {
 }
 
 export interface SecurityPostureDependencies {
-  privilegedExecArgv?: typeof privilegedSandboxExecArgv;
+  executePrivilegedCommand?: typeof executePrivilegedSandboxCommand;
+  resolvePrivilegedTarget?: typeof resolvePrivilegedSandboxTarget;
 }
 
-const OPENSHELL_DEFAULT_WORKSPACE = "default";
-const OPENSHELL_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
-const OPENSHELL_SANDBOX_WORKSPACE_LABEL = "openshell.ai/sandbox-workspace";
 const OPENSHELL_SUPERVISOR_EXECUTABLE = "/opt/openshell/bin/openshell-sandbox";
 const OPENSHELL_SUPERVISOR_ARGV = [
   OPENSHELL_SUPERVISOR_EXECUTABLE,
@@ -79,7 +83,6 @@ const NEMOCLAW_START_SUPERVISOR_PATHS = [
 ] as const;
 const BASH_ARGV0 = ["bash", ...SYSTEM_BASH_EXECUTABLES] as const;
 const LIVE_PROCESS_STATES = ["D", "R", "S"] as const;
-const SAFE_OPENSHELL_IDENTITY_COMPONENT = /^[a-z0-9][a-z0-9_.-]*$/u;
 const MAX_PROC_ENTRIES = 32_768;
 const MAX_CENSUS_STABILITY_ATTEMPTS = 4;
 const MAX_CENSUS_DIAGNOSTIC_IDENTITIES = 16;
@@ -368,20 +371,6 @@ function probeEnv(): NodeJS.ProcessEnv {
     ...buildAvailabilityProbeEnv(),
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
   };
-}
-
-function subprocessEnvironmentIdentity(env: NodeJS.ProcessEnv): string {
-  return JSON.stringify(
-    Object.entries(env)
-      .filter((entry): entry is [string, string] => entry[1] !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right)),
-  );
-}
-
-function requireStablePrivilegedDockerEnvironment(expectedIdentity: string): void {
-  if (subprocessEnvironmentIdentity(buildSubprocessEnv()) !== expectedIdentity) {
-    throw new Error("privileged Docker environment changed during security posture inspection");
-  }
 }
 
 function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
@@ -711,47 +700,6 @@ export function parseSplitProcessSecurityReport(output: string): SplitProcessSec
   return validateSplitProcessSecurityReport(parsed);
 }
 
-export function parseOpenShellContainerId(output: string, sandboxName: string): string {
-  const rows = output
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (rows.length !== 1) {
-    throw new Error(
-      `expected exactly one running OpenShell Docker container for ${sandboxName}, found ${rows.length}`,
-    );
-  }
-  const [id, name, sandboxId, sandboxWorkspace, ...unexpected] = rows[0]!.split("\t");
-  const expectedName = `openshell-${OPENSHELL_DEFAULT_WORKSPACE}--${sandboxName}-${sandboxId}`;
-  if (
-    !id ||
-    !/^[0-9a-f]{64}$/u.test(id) ||
-    !name ||
-    !sandboxId ||
-    !SAFE_OPENSHELL_IDENTITY_COMPONENT.test(sandboxId) ||
-    sandboxWorkspace !== OPENSHELL_DEFAULT_WORKSPACE ||
-    unexpected.length > 0 ||
-    name !== expectedName
-  ) {
-    throw new Error(`unexpected OpenShell Docker container identity for ${sandboxName}`);
-  }
-  return id;
-}
-
-export function dockerRuntimeEndpointArgs(privilegedExecArgs: readonly string[]): string[] {
-  if (privilegedExecArgs[0] === "exec") return [];
-  const dockerHost = privilegedExecArgs[1];
-  if (
-    privilegedExecArgs[0] !== "--host" ||
-    !dockerHost ||
-    /[\u0000-\u001f\u007f-\u009f]/u.test(dockerHost) ||
-    privilegedExecArgs[2] !== "exec"
-  ) {
-    throw new Error("privileged Docker execution did not identify a supported runtime endpoint");
-  }
-  return ["--host", dockerHost];
-}
-
 export function securityPostureEnabled(): boolean {
   return securityPostureExpectations().enabled;
 }
@@ -798,66 +746,42 @@ export async function assertSecurityPosture(
   );
   requireSuccess("non-root host user", hostUser);
 
-  const privilegedExecArgv = dependencies.privilegedExecArgv ?? privilegedSandboxExecArgv;
+  const resolvePrivilegedTarget =
+    dependencies.resolvePrivilegedTarget ?? resolvePrivilegedSandboxTarget;
+  const executePrivilegedCommand =
+    dependencies.executePrivilegedCommand ?? executePrivilegedSandboxCommand;
   const splitProcessProbeCommand = ["/usr/bin/python3", "-I", "-c", SPLIT_PROCESS_SECURITY_PROBE];
-  const privilegedDockerEnv = buildSubprocessEnv();
-  const privilegedDockerEnvironmentIdentity = subprocessEnvironmentIdentity(privilegedDockerEnv);
-  const initialPrivilegedExecArgs = privilegedExecArgv(
+  const initialTarget: RuntimeProviderPrivilegedSandboxTarget =
+    resolvePrivilegedTarget(sandboxName);
+  const splitProcessProbe: RuntimeProviderPrivilegedSandboxCommandResult = executePrivilegedCommand(
     sandboxName,
     splitProcessProbeCommand,
-    false,
-    true,
-  );
-  requireStablePrivilegedDockerEnvironment(privilegedDockerEnvironmentIdentity);
-  const dockerEndpointArgs = dockerRuntimeEndpointArgs(initialPrivilegedExecArgs);
-
-  const containers = await host.command(
-    "docker",
-    [
-      ...dockerEndpointArgs,
-      "ps",
-      "--no-trunc",
-      "--filter",
-      "label=openshell.ai/managed-by=openshell",
-      "--filter",
-      `label=openshell.ai/sandbox-name=${sandboxName}`,
-      "--format",
-      `{{.ID}}\t{{.Names}}\t{{.Label "${OPENSHELL_SANDBOX_ID_LABEL}"}}\t{{.Label "${OPENSHELL_SANDBOX_WORKSPACE_LABEL}"}}`,
-    ],
     {
-      artifactName: "security-posture-container-identity",
-      env: privilegedDockerEnv,
-      timeoutMs: 30_000,
+      expectedResourceHandle: initialTarget.resourceHandle,
+      sanitizeEnvironment: true,
+      timeout: 30_000,
     },
   );
-  requireSuccess("OpenShell Docker container discovery", containers);
-  const containerId = parseOpenShellContainerId(containers.stdout, sandboxName);
-  requireStablePrivilegedDockerEnvironment(privilegedDockerEnvironmentIdentity);
-  const finalPrivilegedExecArgs = privilegedExecArgv(
-    sandboxName,
-    splitProcessProbeCommand,
-    false,
-    true,
-    containerId,
-  );
-  requireStablePrivilegedDockerEnvironment(privilegedDockerEnvironmentIdentity);
-  const finalDockerEndpointArgs = dockerRuntimeEndpointArgs(finalPrivilegedExecArgs);
+  const finalTarget = resolvePrivilegedTarget(sandboxName);
   if (
-    finalDockerEndpointArgs.length !== dockerEndpointArgs.length ||
-    finalDockerEndpointArgs.some((argument, index) => argument !== dockerEndpointArgs[index])
+    finalTarget.providerId !== initialTarget.providerId ||
+    finalTarget.resourceHandle !== initialTarget.resourceHandle
   ) {
-    throw new Error("container runtime endpoint changed before privileged inspection");
+    throw new Error("runtime provider resource identity changed during privileged inspection");
   }
-  const splitProcessProbe = await host.command("docker", finalPrivilegedExecArgs, {
-    artifactName: "security-posture-split-processes",
-    env: privilegedDockerEnv,
-    timeoutMs: 30_000,
-  });
-  requireSuccess(
-    "OpenShell and nemoclaw-start child supervisor security posture",
-    splitProcessProbe,
-  );
-  const splitProcess = parseSplitProcessSecurityReport(splitProcessProbe.stdout);
+  if (splitProcessProbe.status !== 0 || splitProcessProbe.signal || splitProcessProbe.error) {
+    const detail = [
+      splitProcessProbe.stdout.toString("utf8"),
+      splitProcessProbe.stderr.toString("utf8"),
+      splitProcessProbe.error?.message,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    throw new Error(
+      `OpenShell and nemoclaw-start child supervisor security posture failed: ${detail}`,
+    );
+  }
+  const splitProcess = parseSplitProcessSecurityReport(splitProcessProbe.stdout.toString("utf8"));
 
   const rcFiles = await sandbox.execShell(
     sandboxName,

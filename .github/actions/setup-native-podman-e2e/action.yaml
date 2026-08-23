@@ -172,9 +172,15 @@ runs:
         gid="$(id -g)"
         runtime_directory="/run/user/$uid"
         socket_path="$runtime_directory/podman/podman.sock"
-        if [[ ! -d "$runtime_directory" ]]; then
-          sudo install -d --owner="$uid" --group="$gid" --mode=0700 "$runtime_directory"
-        fi
+        sudo systemctl start "user-runtime-dir@${uid}.service" "user@${uid}.service"
+        systemctl is-active --quiet "user-runtime-dir@${uid}.service"
+        systemctl is-active --quiet "user@${uid}.service"
+        [[ -d "$runtime_directory" && ! -L "$runtime_directory" ]]
+        [[ "$(stat -c '%u:%g:%a' "$runtime_directory")" == "${uid}:${gid}:700" ]]
+        XDG_RUNTIME_DIR="$runtime_directory" /usr/bin/systemctl --user start dbus.socket
+        XDG_RUNTIME_DIR="$runtime_directory" /usr/bin/systemctl --user is-active --quiet dbus.socket
+        [[ -S "$runtime_directory/bus" && ! -L "$runtime_directory/bus" ]]
+        [[ "$(stat -c '%u' "$runtime_directory/bus")" == "$uid" ]]
         install -d -m 0700 "$runtime_directory/podman"
         storage_directory="$RUNNER_TEMP/native-podman-e2e-storage"
         storage_config="$RUNNER_TEMP/native-podman-e2e-storage.conf"
@@ -196,6 +202,7 @@ runs:
           'firewall_driver = "nftables"' >"$containers_config"
         export CONTAINERS_CONF="$containers_config"
         export CONTAINERS_STORAGE_CONF="$storage_config"
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus"
         export XDG_RUNTIME_DIR="$runtime_directory"
         service_log="$RUNNER_TEMP/native-podman-e2e-service.log"
         "${podman_command[@]}" system service --time=0 "unix://$socket_path" >"$service_log" 2>&1 &
@@ -229,8 +236,9 @@ runs:
         {
           printf 'CONTAINERS_CONF=%s\n' "$containers_config"
           printf 'CONTAINERS_STORAGE_CONF=%s\n' "$storage_config"
-          printf 'DOCKER_HOST=unix://%s\n' "$socket_path"
+          printf 'DBUS_SESSION_BUS_ADDRESS=unix:path=%s/bus\n' "$runtime_directory"
           printf 'NEMOCLAW_NATIVE_PODMAN_SERVICE_PID=%s\n' "$service_pid"
           printf 'OPENSHELL_PODMAN_SOCKET=%s\n' "$socket_path"
+          printf 'PATH=%s:%s\n' "$toolchain_install_root/bin" "$PATH"
           printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_directory"
         } >>"$GITHUB_ENV"

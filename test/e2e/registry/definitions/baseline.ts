@@ -16,6 +16,7 @@ import {
   type E2eExecutionMetadata,
   validateE2eExecutionMetadata,
 } from "../../../../tools/e2e/execution-coverage.mts";
+import type { E2eGatewayRuntime } from "../../../../tools/e2e/gateway-runtime.mts";
 
 interface CanonicalTargetInput {
   id: string;
@@ -30,6 +31,7 @@ interface CanonicalTargetInput {
   requiredSecrets?: string[];
   skippedCapabilities?: Array<Record<string, unknown>>;
   expectedFailure?: ExpectedFailureContract;
+  gatewayRuntimes?: readonly E2eGatewayRuntime[];
 }
 
 function canonicalTarget(input: CanonicalTargetInput): TargetDefinition {
@@ -53,7 +55,7 @@ function canonicalTarget(input: CanonicalTargetInput): TargetDefinition {
   if (input.expectedFailure) {
     builder = builder.expectedFailure(input.expectedFailure);
   }
-  const definition = builder.build();
+  const definition = { ...builder.build(), gatewayRuntimes: input.gatewayRuntimes };
   if (!input.executionCoverage) return definition;
   return {
     ...definition,
@@ -100,6 +102,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-repo-cloud-langchain-deepagents-code",
+    gatewayRuntimes: ["docker"],
     manifestName: "langchain-deepagents-code-nvidia",
     environment: ubuntuRepoDockerLifecycle(
       "cloud-langchain-deepagents-code",
@@ -197,6 +200,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
     // Docker container present (running, stopped, or a
     // `*-nemoclaw-gpu-backup-*` sibling).
     id: "ubuntu-repo-docker-post-reboot-recovery",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-post-reboot-recovery",
     environment: ubuntuRepoDockerLifecycle("cloud-openclaw", "post-reboot-recovery"),
     expectedStateId: "post-reboot-recovery-ready",

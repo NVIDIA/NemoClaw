@@ -88,6 +88,7 @@ describe("E2E workflow plan", () => {
   it("defaults to every release-required target and tagged credential-free test", () => {
     const plan = buildE2eWorkflowPlan();
 
+    expect(plan).toEqual(buildE2eWorkflowPlan({}, { gatewayRuntime: "docker" }));
     expect(plan.matrix).toEqual(buildLiveTargetMatrix());
     expect(plan.testMatrix).toEqual(discoverCredentialFreeTests());
     expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
@@ -110,6 +111,29 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
+    expect(plan.coverageMatrix).toHaveLength(91);
+    expect(selectedWorkflowJobs(plan)).toEqual([
+      "catalogue-brave-nvidia-inference",
+      "catalogue-github-read",
+      "catalogue-nvidia-api",
+      "catalogue-nvidia-inference",
+      "catalogue-standard",
+      "cloud-onboard",
+      "hermes-e2e",
+      "hermes-gpu-startup",
+      "live",
+      "managed-image-multiarch-startup",
+      "managed-image-protected-runtime",
+      "mcp-bridge",
+      "mcp-bridge-dev",
+      "messaging-providers",
+      "openclaw-plugin-runtime-exdev",
+      "openclaw-plugin-runtime-exdev-release",
+      "openshell-credential-generation-window",
+      "openshell-gateway-auth-contract",
+      "shared-e2e",
+      "staging-brev-launchable",
+    ]);
     expect(plan.explicitOnlyJobs).toEqual([
       "staging-brev-launchable-identity",
       "llama-cpp-dgx-spark-qualification",
@@ -118,6 +142,39 @@ describe("E2E workflow plan", () => {
     expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");
     expect(releaseRequiredWorkflowJobs()).not.toContain("staging-brev-launchable-identity");
     expect(releaseRequiredWorkflowJobs()).not.toContain("llama-cpp-dgx-spark-qualification");
+  });
+
+  it("selects only native Podman-eligible executions when explicitly requested", () => {
+    const plan = buildE2eWorkflowPlan({}, { gatewayRuntime: "podman" });
+    const catalogueIds = Object.values(plan.catalogueMatrices)
+      .flat()
+      .map((row) => row.id);
+
+    expect(plan.matrix.map((row) => row.id)).toEqual([
+      "ubuntu-policy-custom-missing-presets-negative",
+      "ubuntu-repo-cloud-openclaw",
+    ]);
+    expect(plan.testMatrix).toEqual([]);
+    expect(catalogueIds).toHaveLength(57);
+    expect(catalogueIds).not.toEqual(
+      expect.arrayContaining(["gateway-guard-recovery", "rebuild-hermes", "rebuild-openclaw"]),
+    );
+    expect(catalogueIds.some((id) => id.startsWith("openshell-gateway-upgrade-"))).toBe(false);
+    expect(selectedWorkflowJobs(plan)).toEqual([
+      "catalogue-brave-nvidia-inference",
+      "catalogue-github-read",
+      "catalogue-nvidia-api",
+      "catalogue-nvidia-inference",
+      "catalogue-standard",
+      "cloud-onboard",
+      "hermes-e2e",
+      "hermes-gpu-startup",
+      "live",
+      "mcp-bridge",
+      "mcp-bridge-dev",
+      "messaging-providers",
+      "openshell-credential-generation-window",
+    ]);
   });
 
   it("omits only targets whose optional credential is unavailable", () => {
@@ -410,6 +467,12 @@ describe("E2E workflow plan", () => {
     expect(() =>
       validateE2eTargetCatalogue([{ ...target, artifactLayout: "unreviewed" as never }]),
     ).toThrow("invalid artifact layout");
+    expect(() => validateE2eTargetCatalogue([{ ...target, gatewayRuntimes: [] }])).toThrow(
+      "invalid gateway runtime support",
+    );
+    expect(() =>
+      validateE2eTargetCatalogue([{ ...target, gatewayRuntimes: ["docker", "docker"] as never }]),
+    ).toThrow("invalid gateway runtime support");
     expect(() =>
       validateE2eTargetCatalogue([{ ...target, artifactLayout: "flat-shard", shard: "default" }]),
     ).toThrow("flat artifact layout requires a named shard");
@@ -573,6 +636,31 @@ describe("E2E workflow plan", () => {
           INFERENCE_MODE: "mock",
           NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
           NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+        },
+      );
+
+      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("uses the explicit Podman planner in the CI output path", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-podman-"));
+    const output = path.join(directory, "github-output");
+    const summary = path.join(directory, "summary.md");
+    const plan = buildE2eWorkflowPlan({}, { gatewayRuntime: "podman" });
+    try {
+      writeE2eWorkflowPlanCiOutput(
+        {},
+        {
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: summary,
+          INFERENCE_MODE: "mock",
+          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
+          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+          NEMOCLAW_GATEWAY_RUNTIME: "podman",
         },
       );
 
@@ -1173,6 +1261,18 @@ describe("E2E workflow plan", () => {
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
+  });
+
+  it("rejects an unsupported gateway runtime before writing CI output", () => {
+    expect(() =>
+      writeE2eWorkflowPlanCiOutput(
+        {},
+        {
+          INFERENCE_MODE: "mock",
+          NEMOCLAW_GATEWAY_RUNTIME: "containerd",
+        },
+      ),
+    ).toThrow("Invalid gateway runtime: containerd");
   });
 
   it("requires changed-file evidence for push planning", () => {
