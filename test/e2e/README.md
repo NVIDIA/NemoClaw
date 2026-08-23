@@ -884,7 +884,7 @@ qualification set.
 
 ### Hosted-Runner Recovery
 
-Automation / Recover Platform CI Runner Loss can request one full rerun for an eligible `CI / Platform Compatibility` push.
+`Automation / Recover Platform CI Runner` can request one full rerun for an eligible `CI / Platform Compatibility` push.
 It does not handle `E2E main`.
 The complete non-passing job listing must contain only authenticated hosted-runner-loss evidence for the workflow's approved runner labels.
 An ordinary assertion failure, mixed failure set, incomplete listing, custom or self-hosted label, changed evidence, or ambiguous pagination prevents recovery.
@@ -894,16 +894,16 @@ A failed job can represent a deterministic product assertion, authentication or 
 GitHub job conclusions do not distinguish those classes, so a broad failed-job rerun is not authorized evidence.
 External operations use the checked-in retry inventory and an explicit bounded policy; new shared paths use the bounded operation helper.
 Operation-level retry artifacts retain each attempt.
-Hosted runner loss remains owned by Automation / Recover Platform CI Runner Loss.
+Hosted runner loss remains owned by `Automation / Recover Platform CI Runner`.
 The observer ignores manual source runs and source runs superseded by a newer `main` push, checks out only trusted default-branch code, and receives no repository secrets.
 
-The runner-allocation and internal-error failures handled by Hosted Runner
-Recovery originate in GitHub Actions, outside repository-controlled workflow
-code. Automation / Recover Platform CI Runner Loss contains these failures without claiming to repair
+The runner-allocation and internal-error failures handled by
+`Automation / Recover Platform CI Runner` originate in GitHub Actions, outside
+repository-controlled workflow code. The workflow contains these failures without claiming to repair
 their source. Remove `.github/workflows/hosted-runner-recovery.yaml` and its
 controller only after the platform-evidence workflow records 30 consecutive days
 with no first-attempt failure accepted by the recovery classifier, or after that
-workflow stops using GitHub-hosted runners. Each accepted Automation / Recover Platform CI Runner Loss
+workflow stops using GitHub-hosted runners. Each accepted `Automation / Recover Platform CI Runner`
 request resets that observation window.
 
 ### Runner comparison telemetry
@@ -1026,7 +1026,7 @@ to the portable free-memory value and labels that value as `memory free`.
 
 The comparison time series is diagnostic-only and is not an input to terminal
 classification or retry policy. Runner-comparison telemetry does not affect
-`E2E / Main Retry Evidence` decisions. Automation / Recover Platform CI Runner Loss remains limited to
+`E2E / Main Retry Evidence` decisions. `Automation / Recover Platform CI Runner` remains limited to
 authenticated runner-loss evidence for its platform-evidence workflow.
 
 Treat a missing summary as unavailable evidence, not as low utilization. A

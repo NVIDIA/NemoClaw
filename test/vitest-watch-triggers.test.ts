@@ -108,11 +108,12 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
-  it("maps every workflow to the shared display-name contract", () => {
-    expect(resolveVitestWatchTests(path.resolve(".github/workflows/pr.yaml"))).toContain(
-      WORKFLOW_NAME_TEST,
-    );
-  });
+  it.each([".github/workflows/pr.yaml", ".github/workflows/pr.yml"])(
+    "maps YAML workflow files to the shared display-name contract [%s]",
+    (workflowPath) => {
+      expect(resolveVitestWatchTests(path.resolve(workflowPath))).toContain(WORKFLOW_NAME_TEST);
+    },
+  );
 
   it.each([
     ".github/workflows/release-daily-brev-image.yaml",
