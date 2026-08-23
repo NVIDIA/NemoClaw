@@ -1160,6 +1160,7 @@ class SandboxStateFlow<
       if (state.sandboxName) {
         this.deps.updateSandboxRegistry(state.sandboxName, {
           pendingRouteReservation: undefined,
+          reservationSessionId: undefined,
         });
       }
       this.deps.skippedStepMessage("sandbox", state.sandboxName);
