@@ -116,6 +116,19 @@ export function isDockerGpuCompatibilityRoute(route: SelectedDockerGpuRoute): bo
   return route === "compatibility";
 }
 
+function removeCdiDevicesFromDriverConfig(value: string): string | null {
+  const parsed = JSON.parse(value) as Record<string, unknown>;
+  for (const driverName of ["docker", "podman"]) {
+    const driver = parsed[driverName];
+    if (!driver || typeof driver !== "object" || Array.isArray(driver)) continue;
+    const config = { ...(driver as Record<string, unknown>) };
+    delete config.cdi_devices;
+    if (Object.keys(config).length === 0) delete parsed[driverName];
+    else parsed[driverName] = config;
+  }
+  return Object.keys(parsed).length > 0 ? JSON.stringify(parsed) : null;
+}
+
 /** Render one already-materialized create plan for the selected GPU route. */
 export function renderSandboxCreateArgsForGpuRoute(
   createArgs: readonly string[],
@@ -129,6 +142,16 @@ export function renderSandboxCreateArgsForGpuRoute(
     if (arg === "--gpu") continue;
     if (arg === "--gpu-device") {
       index += 1;
+      continue;
+    }
+    if (arg === "--driver-config-json") {
+      const driverConfig = createArgs[index + 1];
+      if (!driverConfig) {
+        throw new Error("Sandbox create arguments contain an empty driver config.");
+      }
+      index += 1;
+      const compatibilityConfig = removeCdiDevicesFromDriverConfig(driverConfig);
+      if (compatibilityConfig) rendered.push(arg, compatibilityConfig);
       continue;
     }
     rendered.push(arg);

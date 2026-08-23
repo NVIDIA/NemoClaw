@@ -457,19 +457,38 @@ It removes shared gateway credentials and the configuration path, and it
 disables pathname-backed device-auth reads and writes.
 The live pairing list must match the descriptor-backed preflight before one
 canonical approval can run.
-OpenClaw reloads the state under its pairing lock, rotates the token, persists
-the paired state, broadcasts the change, and responds.
-NemoClaw then verifies the exact pending-to-paired transition and atomically
-writes the rotated token to the clone's `identity/device-auth.json` with mode
-`0600`.
+OpenClaw reloads the state under its pairing lock and the version-scoped patch
+requires the authenticated device token to match the operator token in both
+the paired-device and stored-auth before-images.
+It then rotates the token and records the pending, paired, and
+`identity/device-auth.json` before- and after-images in the version 2
+self-approval journal.
+The canonical writer waits for all three state writes, commits the journal,
+and replaces it with the idle form before the handler broadcasts the change
+and responds.
+If publication is interrupted, the next locked pairing-state read restores a
+prepared journal or completes a committed journal across all three files.
+On upgrade, that read also replaces an existing version 1 idle journal or
+recovers its prepared or committed pairing snapshots before publishing the
+version 2 idle form. Recovery accepts stored authentication only when it
+matches the operator token and scopes in either version 1 snapshot, and it
+derives the selected target credential from that validated paired-device
+record.
+Prepared and committed journal snapshots contain device tokens only in a
+mode-`0600` file under a mode-`0700` directory. Approval returns success only
+after the credential-free idle journal replaces those snapshots. If that final
+rewrite fails, approval reports failure and the committed journal remains until
+the next locked pairing-state read completes and clears it.
+The wrapper then verifies the exact pending-to-paired transition and rewrites
+the same rotated token to the clone's `identity/device-auth.json` with mode
+`0600`; this remains a post-state verification boundary rather than the owner
+of stored-auth synchronization.
 The wrapper and approval child keep the old token in memory only for the
 bounded pass.
 Any pre-approval identity, state, transport, or live-preflight mismatch
 prevents the approval call.
 A post-state mismatch reports failure and does not treat the client credential
 as synchronized.
-It does not roll back a canonical server transition that OpenClaw already
-persisted.
 
 ## Transient Remote MCP Startup Recovery
 
