@@ -4,6 +4,8 @@
 import { buildChildEnv } from "./redaction.ts";
 
 const AVAILABILITY_PROBE_EXTRA_ENV_KEYS = [
+  "CONTAINERS_CONF",
+  "CONTAINERS_STORAGE_CONF",
   "DOCKER_CONFIG",
   "DOCKER_CONTEXT",
   "DOCKER_HOST",
@@ -26,7 +28,7 @@ export function buildAvailabilityProbeEnv(
   base: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
   // Availability probes run outside live target phases, but they need
-  // the same child-env and PATH policy. Add Docker discovery knobs and the
+  // the same child-env and PATH policy. Add container-runtime discovery knobs and the
   // workflow-owned local-model pull budget and exact PR catalog authority on
   // top of the shared boundary.
   return buildChildEnv(base, {
