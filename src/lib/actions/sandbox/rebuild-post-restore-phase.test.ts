@@ -31,7 +31,7 @@ describe("rebuild post-restore phase", () => {
     vi.spyOn(agentDefs, "loadAgent").mockImplementation(
       () => ({ name: agentName, expectedVersion: null }) as never,
     );
-    vi.spyOn(processRecovery, "executeSandboxCommand").mockImplementation(() => {
+    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockImplementation(() => {
       order.push("doctor");
       return { status: 0, stdout: "", stderr: "" };
     });
@@ -126,15 +126,40 @@ describe("rebuild post-restore phase", () => {
     await runRebuildPostRestorePhase(input());
 
     expect(order).toEqual(["doctor", "reconcile", "messaging", "config-hash", "config-hash-final"]);
-    expect(processRecovery.executeSandboxCommand).toHaveBeenCalledWith(
+  });
+
+  it("uses bounded OpenShell doctor execution without a direct-container fallback (#9844)", async () => {
+    await runRebuildPostRestorePhase(input());
+
+    expect(processRecovery.executeSandboxExecCommand).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       "openclaw doctor --fix",
       300_000,
+      { allowLocalDockerFallback: false },
     );
   });
 
+  it("reports incomplete when OpenShell cannot confirm doctor completion (#9844)", async () => {
+    vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue(null);
+    const args = input();
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).toHaveBeenCalledOnce();
+    expect(args.bail).toHaveBeenCalledWith(
+      "OpenClaw post-upgrade structure repair completion was not verified after rebuild.",
+    );
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(output).toContain("Post-upgrade structure repair completion was not verified");
+    expect(output).toContain(
+      "OpenClaw post-upgrade structure repair did not return a trusted completion result",
+    );
+    expect(output).not.toContain("Post-upgrade structure check skipped");
+    expect(output).not.toContain("rebuilt successfully");
+  });
+
   it("fails when doctor returns 255 and the final OpenClaw config hash is unverified (#9530)", async () => {
-    vi.mocked(processRecovery.executeSandboxCommand).mockReturnValue({
+    vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
       status: 255,
       stdout: "",
       stderr: "",
@@ -197,7 +222,7 @@ describe("rebuild post-restore phase", () => {
 
     expect(args.bail).not.toHaveBeenCalled();
     expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).not.toHaveBeenCalled();
-    expect(processRecovery.executeSandboxCommand).not.toHaveBeenCalled();
+    expect(processRecovery.executeSandboxExecCommand).not.toHaveBeenCalled();
   });
 
   it("keeps cron dispatch blocked through replacement health verification (#8472)", async () => {

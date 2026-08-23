@@ -162,6 +162,179 @@ describe("finalizeDockerGpuPatchBackup", () => {
     ]);
   });
 
+  it("accepts Error only when the stopped replacement is the sole labeled container (#9962)", () => {
+    const replacementContainerId = "a".repeat(64);
+    const events: string[] = [];
+    const dockerStop = vi.fn(() => {
+      events.push("stop replacement");
+      return { status: 0 };
+    });
+    const dockerRm = vi.fn(() => {
+      events.push("remove backup");
+      return { status: 0 };
+    });
+    const dockerRun = vi.fn(() => {
+      events.push("confirm exact replacement");
+      return { status: 0, stdout: `${replacementContainerId}\n` };
+    });
+    const dockerStart = vi.fn(() => {
+      events.push("start replacement");
+      return { status: 0 };
+    });
+    const runOpenshell = vi.fn(() => {
+      events.push("observe error");
+      return { status: 0, stdout: "alpha  2026-08-23 01:40:35  Error\n" };
+    });
+
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result: { ...deferredCreateResult(), newContainerId: replacementContainerId },
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 60,
+      },
+      { dockerStop, dockerRm, dockerRun, dockerStart, runOpenshell, sleep: vi.fn() },
+    );
+
+    expect(outcome).toMatchObject({
+      backupRemoved: true,
+      lifecycleReleaseObserved: true,
+      replacementRestarted: true,
+    });
+    expect(events).toEqual([
+      "stop replacement",
+      "remove backup",
+      "observe error",
+      "confirm exact replacement",
+      "start replacement",
+    ]);
+    expect(dockerRun).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "--no-trunc",
+        "label=openshell.ai/managed-by=openshell",
+        "label=openshell.ai/sandbox-name=alpha",
+      ]),
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("caps Error corroboration to the remaining lifecycle-release budget (#9962)", () => {
+    const replacementContainerId = "a".repeat(64);
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const dockerRun = vi.fn(() => ({
+      status: 0,
+      stdout: `${replacementContainerId}\n`,
+    }));
+
+    let outcome: DockerGpuPatchFinalizeOutcome;
+    try {
+      outcome = finalizeDockerGpuPatchBackup(
+        {
+          result: { ...deferredCreateResult(), newContainerId: replacementContainerId },
+          supervisorReady: true,
+          sandboxName: "alpha",
+          lifecycleReleaseTimeoutSecs: 1,
+        },
+        {
+          dockerStop: vi.fn(() => ({ status: 0 })),
+          dockerRm: vi.fn(() => ({ status: 0 })),
+          dockerRun,
+          dockerStart: vi.fn(() => ({ status: 0 })),
+          runOpenshell: vi.fn(() => {
+            vi.setSystemTime(750);
+            return {
+              status: 0,
+              stdout: "alpha  2026-08-23 01:40:35  Error\n",
+            };
+          }),
+          sleep: vi.fn(),
+        },
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(outcome).toMatchObject({
+      lifecycleReleaseObserved: true,
+      replacementRestarted: true,
+    });
+    expect(dockerRun).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ timeout: 250 }),
+    );
+  });
+
+  it.each([
+    ["a failed Docker query", { status: 1, stderr: "daemon unavailable" }],
+    ["no labeled container", { status: 0, stdout: "" }],
+    ["another labeled container", { status: 0, stdout: `${"b".repeat(64)}\n` }],
+    [
+      "multiple labeled containers",
+      { status: 0, stdout: `${"a".repeat(64)}\n${"b".repeat(64)}\n` },
+    ],
+    ["a truncated replacement ID", { status: 0, stdout: `${"a".repeat(12)}\n` }],
+  ])("does not accept Error with %s (#9962)", (_case, dockerResult) => {
+    const replacementContainerId = "a".repeat(64);
+    const dockerStart = vi.fn(() => ({ status: 0 }));
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result: { ...deferredCreateResult(), newContainerId: replacementContainerId },
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 1,
+      },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRun: vi.fn(() => dockerResult),
+        dockerStart,
+        runOpenshell: vi.fn(() => ({
+          status: 0,
+          stdout: "alpha  2026-08-23 01:40:35  Error\n",
+        })),
+        sleep: vi.fn(),
+      },
+    );
+
+    expect(outcome).toMatchObject({
+      lifecycleReleaseObserved: false,
+      replacementRestarted: false,
+    });
+    expect(dockerStart).not.toHaveBeenCalled();
+  });
+
+  it("does not accept Error when the exact Docker query throws (#9962)", () => {
+    const dockerStart = vi.fn(() => ({ status: 0 }));
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result: { ...deferredCreateResult(), newContainerId: "a".repeat(64) },
+        supervisorReady: true,
+        sandboxName: "alpha",
+        lifecycleReleaseTimeoutSecs: 1,
+      },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRun: vi.fn(() => {
+          throw new Error("daemon unavailable");
+        }),
+        dockerStart,
+        runOpenshell: vi.fn(() => ({
+          status: 0,
+          stdout: "alpha  2026-08-23 01:40:35  Error\n",
+        })),
+        sleep: vi.fn(),
+      },
+    );
+
+    expect(outcome).toMatchObject({
+      lifecycleReleaseObserved: false,
+      replacementRestarted: false,
+    });
+    expect(dockerStart).not.toHaveBeenCalled();
+  });
+
   it("does not treat failed lifecycle probes as a release receipt (#9531)", () => {
     const runOpenshell = vi
       .fn()
