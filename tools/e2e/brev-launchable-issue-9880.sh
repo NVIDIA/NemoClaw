@@ -217,7 +217,9 @@ raw_log="$(mktemp "${RUNNER_TEMP:-/tmp}/issue-9880.XXXXXX")"
 remote_script="$(mktemp "${RUNNER_TEMP:-/tmp}/issue-9880-remote.XXXXXX")"
 chmod 600 "$raw_log" "$remote_script"
 cleanup_remote_script() { rm -f -- "$remote_script"; }
-trap cleanup_remote_script EXIT INT TERM
+trap cleanup_remote_script EXIT
+trap 'cleanup_remote_script; exit 130' INT
+trap 'cleanup_remote_script; exit 143' TERM
 {
   printf 'export NVIDIA_INFERENCE_API_KEY=%q\n' "$NVIDIA_API_KEY"
   cat <<'REMOTE'

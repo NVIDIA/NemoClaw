@@ -14,6 +14,24 @@ function executable(file: string, source: string): void {
   fs.writeFileSync(file, source, { mode: 0o755 });
 }
 
+export function childCompletion(child: ReturnType<typeof spawn>): Promise<void> {
+  return child.exitCode !== null || child.signalCode !== null
+    ? Promise.resolve()
+    : new Promise((resolve) => child.once("exit", () => resolve()));
+}
+
+export async function childOutputAfterDelay(child: ReturnType<typeof spawn>): Promise<string> {
+  let output = "";
+  child.stdout?.on("data", (chunk) => {
+    output += chunk.toString();
+  });
+  child.stderr?.on("data", (chunk) => {
+    output += chunk.toString();
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  return output;
+}
+
 export async function waitForIssue9880RemoteScript(root: string): Promise<string[]> {
   for (let attempt = 0; attempt < 250; attempt += 1) {
     const files = fs.readdirSync(root).filter((file) => file.startsWith("issue-9880-remote."));
@@ -50,10 +68,12 @@ export function issue9880Fixture(): {
     String.raw`#!/usr/bin/env bash
 set -euo pipefail
 signal=""
-if [ "${"$"}{1:-}" = --signal=KILL ]; then signal="--signal=KILL "; shift; fi
+kill_after=""
+if [[ "${"$"}{1:-}" == --signal=* ]]; then signal="${"$"}{1} "; shift; fi
+if [[ "${"$"}{1:-}" == --kill-after=* ]]; then kill_after="${"$"}{1} "; shift; fi
 duration="$1"
 shift
-printf 'timeout %s%s %s\n' "$signal" "$duration" "$*" >> "$FAKE_CALLS"
+printf 'timeout %s%s%s %s\n' "$signal" "$kill_after" "$duration" "$*" >> "$FAKE_CALLS"
 if [ "${"$"}{FAKE_BLOCK_COMMAND:-}" = "brev exec" ] && [ "${"$"}{1:-} ${"$"}{2:-}" = "brev exec" ]; then
   /bin/sleep "${"$"}{duration%s}"
   exit 124
@@ -150,6 +170,7 @@ fi
       }),
     start: (overrides = {}, args = []) =>
       spawn("bash", [SCRIPT, ...args], {
+        detached: true,
         env: { ...env, ...overrides },
         stdio: ["ignore", "pipe", "pipe"],
       }),

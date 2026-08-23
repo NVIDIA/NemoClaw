@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import {
+  childCompletion,
+  childOutputAfterDelay,
   cleanupIssue9880Fixtures,
   issue9880Fixture,
   waitForIssue9880RemoteScript,
@@ -177,15 +179,11 @@ describe("the staging Launchable reproduces the bounded OpenClaw CLI scenario", 
       NVIDIA_API_KEY: "nvapi-interrupt-test-secret",
     });
     const remoteFiles = await waitForIssue9880RemoteScript(fixture.root);
-    expect(remoteFiles, await new Promise<string>((resolve) => {
-      let output = "";
-      child.stdout?.on("data", (chunk) => { output += chunk.toString(); });
-      child.stderr?.on("data", (chunk) => { output += chunk.toString(); });
-      setTimeout(() => resolve(output), 20);
-    })).toHaveLength(1);
+    expect(remoteFiles, await childOutputAfterDelay(child)).toHaveLength(1);
 
-    child.kill("SIGTERM");
-    await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    const completed = childCompletion(child);
+    process.kill(-child.pid!, "SIGTERM");
+    await completed;
 
     expect(fs.readdirSync(fixture.root).filter((file) => file.startsWith("issue-9880-remote."))).toEqual([]);
     expect(treeContainsLiteral(fixture.root, "nvapi-interrupt-test-secret")).toBe(false);
