@@ -136,7 +136,7 @@ export function patchBundledNpmTar(options: {
   const stagingRoot = mkdtempSync(join(dirname(livePath), ".tar.nemoclaw-stage-"));
   const stagedPath = join(stagingRoot, "replacement");
   const backupPath = `${livePath}.nemoclaw-backup-${transactionId}`;
-  let mutationStarted = false;
+  let rollbackRequired = false;
   try {
     cpSync(replacementRoot, stagedPath, { dereference: false, recursive: true });
     cpSync(livePath, backupPath, {
@@ -146,17 +146,18 @@ export function patchBundledNpmTar(options: {
       preserveTimestamps: true,
       recursive: true,
     });
-    mutationStarted = true;
+    rollbackRequired = true;
     rmSync(livePath, { recursive: true });
     renameSync(stagedPath, livePath);
     const fixed = verifyBundledNpmTar(npmRoot);
     if (fixed.tarVersion !== FIXED_TAR_VERSION) {
       throw new Error(`npm bundled tar replacement did not reach tar@${FIXED_TAR_VERSION}`);
     }
+    rollbackRequired = false;
     rmSync(backupPath, { force: true, recursive: true });
     return fixed;
   } catch (error) {
-    if (mutationStarted) {
+    if (rollbackRequired) {
       rmSync(livePath, { force: true, recursive: true });
       renameSync(backupPath, livePath);
     }

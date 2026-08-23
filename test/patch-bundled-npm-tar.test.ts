@@ -200,6 +200,33 @@ describe("npm bundled node-tar remediation", () => {
     expect(() => verifyBundledNpmTar(target.npmRoot)).toThrow("bundles affected tar@7.5.11");
   });
 
+  it("preserves the verified replacement when backup cleanup fails", () => {
+    const target = fixture("10.9.7", "7.5.11");
+    const originalRmSync = fs.rmSync.bind(fs);
+    const failBackupCleanup = (): never => {
+      throw new Error("injected backup cleanup failure");
+    };
+    const rmSpy = vi.spyOn(fs, "rmSync").mockImplementation((targetPath, options) => {
+      return String(targetPath).includes(".nemoclaw-backup-")
+        ? failBackupCleanup()
+        : originalRmSync(targetPath, options);
+    });
+    syncBuiltinESMExports();
+
+    try {
+      expect(() => patchBundledNpmTar(target)).toThrow("injected backup cleanup failure");
+    } finally {
+      rmSpy.mockRestore();
+      syncBuiltinESMExports();
+    }
+
+    expect(fs.existsSync(path.join(target.npmRoot, "node_modules", "tar", "old.js"))).toBe(false);
+    expect(
+      fs.readFileSync(path.join(target.npmRoot, "node_modules", "tar", "lib", "fixed.js"), "utf8"),
+    ).toBe("fixed\n");
+    expect(verifyBundledNpmTar(target.npmRoot).tarVersion).toBe(FIXED_TAR_VERSION);
+  });
+
   it("fails closed on npm layout drift and unsafe replacement members", () => {
     const drifted = fixture("10.9.7", "7.5.11");
     const manifestPath = path.join(drifted.npmRoot, "package.json");
