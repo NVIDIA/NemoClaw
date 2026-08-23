@@ -275,7 +275,12 @@ export class BrevLaunchableFixture {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const record = await this.workspace(name);
-      if (record?.id) ownership.id ??= record.id;
+      if (record?.id) {
+        if (ownership.id && record.id !== ownership.id) {
+          throw new Error(`Brev workspace identity changed during readiness: ${name}`);
+        }
+        ownership.id ??= record.id;
+      }
       if (
         record?.status === "RUNNING" &&
         record.shellStatus === "READY" &&

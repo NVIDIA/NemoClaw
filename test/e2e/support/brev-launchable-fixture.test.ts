@@ -86,6 +86,45 @@ describe("the Brev Launchable fixture owns one exact workspace lifecycle", () =>
     expect(command.mock.calls.flat().some((value) => value === "delete")).toBe(false);
   });
 
+  it("refuses a replacement during workspace readiness", async () => {
+    const root = temporaryRoot();
+    let created = false;
+    let readinessPolls = 0;
+    const command = vi.fn(async (_binary: string, args: string[]) => {
+      switch (args[0]) {
+        case "ls":
+          if (!created) return result({ workspaces: [] });
+          readinessPolls += 1;
+          if (readinessPolls === 1) {
+            return result({
+              workspaces: [
+                {
+                  name: "fixture-workspace",
+                  id: "owned-id",
+                  status: "CREATING",
+                  build_status: "PENDING",
+                  shell_status: "PENDING",
+                },
+              ],
+            });
+          }
+          return workspaceResult("replacement-id");
+        case "create":
+          created = true;
+          return result("");
+        default:
+          throw new Error(`unexpected command: ${args.join(" ")}`);
+      }
+    });
+    const fixture = createFixture(root, command);
+    const ownership = fixture.ownership("fixture-workspace");
+
+    await expect(fixture.create(ownership, "env-fixture123")).rejects.toThrow(
+      "Brev workspace identity changed during readiness",
+    );
+    expect(ownership.id).toBe("owned-id");
+  });
+
   it("removes the private local script after Brev exec returns", async () => {
     const root = temporaryRoot();
     let observedScript = "";
