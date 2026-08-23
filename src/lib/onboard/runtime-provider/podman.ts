@@ -287,6 +287,7 @@ export function createPodmanRuntimeProviderBundle(
       providerId,
       supported: true,
       profile: QUALIFIED_MANAGED_WORKLOAD_PROFILE,
+      managedStateMountDriverId: "podman",
       acceptsReceipt: acceptsManagedWorkloadReceipt,
     },
     hostLocalInference:

@@ -109,9 +109,19 @@ export function createManagedHermesStateVolumeOnboardLifecycle(
       ...(input.runtimeProvider ? { runtimeProvider: input.runtimeProvider } : {}),
     },
   );
+  const managedStateMountDriverId = scope
+    ? input.runtimeProvider?.workload.managedStateMountDriverId
+    : undefined;
+  if (scope && !managedStateMountDriverId) {
+    throw new Error("Managed Hermes state volume requires provider-owned mount projection.");
+  }
   return {
     materializeSandboxCreatePlan(input, materialize) {
-      return materialize({ ...input, managedStateMount: scope?.mount });
+      return materialize({
+        ...input,
+        managedStateMount: scope?.mount,
+        managedStateMountDriverId,
+      });
     },
     commit() {
       scope?.commit();

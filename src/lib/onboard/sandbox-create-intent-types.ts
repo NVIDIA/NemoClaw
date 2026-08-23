@@ -95,6 +95,8 @@ export type MaterializeSandboxCreatePlanInput = {
   intent: SandboxCreateIntent;
   fromRef: string;
   managedStateMount?: ManagedHermesStateVolumeMount | null;
+  /** Opaque provider-owned OpenShell driver-config key for the managed state mount. */
+  managedStateMountDriverId?: string | null;
   messagingTokenDefs: MessagingTokenDef[];
   runProviderPreDeleteCleanup(): void;
   upsertMessagingProviders(

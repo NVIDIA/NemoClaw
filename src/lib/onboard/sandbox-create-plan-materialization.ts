@@ -27,10 +27,16 @@ const DCODE_MCP_SNAPSHOT_TMPFS_MOUNT = {
 function buildSandboxDriverConfig(
   intent: SandboxCreateIntent,
   managedStateMount: MaterializeSandboxCreatePlanInput["managedStateMount"],
+  managedStateMountDriverId: MaterializeSandboxCreatePlanInput["managedStateMountDriverId"],
 ): string | null {
   const dockerMounts: Array<Record<string, unknown>> = (intent.hostMounts ?? []).map(
     ({ source, target }) => ({ type: "bind", source, target, read_only: true }),
   );
+  const podmanMounts: Array<Record<string, unknown>> = [];
+  const mountsByDriver = new Map<string, Array<Record<string, unknown>>>([
+    ["docker", dockerMounts],
+    ["podman", podmanMounts],
+  ]);
   if (managedStateMount) {
     const conflictingHostMount = intent.hostMounts?.find(({ target }) =>
       containerPathsOverlap(target, managedStateMount.target),
@@ -40,18 +46,23 @@ function buildSandboxDriverConfig(
         `Host mount target '${conflictingHostMount.target}' conflicts with the managed Hermes state root '${managedStateMount.target}'.`,
       );
     }
-    dockerMounts.unshift({ ...managedStateMount });
+    if (!managedStateMountDriverId) {
+      throw new Error("Managed Hermes state mount is missing its provider-owned driver config.");
+    }
+    const providerMounts = mountsByDriver.get(managedStateMountDriverId) ?? [];
+    providerMounts.unshift({ ...managedStateMount });
+    mountsByDriver.set(managedStateMountDriverId, providerMounts);
   }
-  const podmanMounts: Array<Record<string, unknown>> = [];
   if (intent.policy.options.agentName === "langchain-deepagents-code") {
     dockerMounts.unshift(DCODE_MCP_SNAPSHOT_TMPFS_MOUNT);
     podmanMounts.push(DCODE_MCP_SNAPSHOT_TMPFS_MOUNT);
   }
-  if (dockerMounts.length === 0) return null;
-  return JSON.stringify({
-    docker: { mounts: dockerMounts },
-    ...(podmanMounts.length > 0 ? { podman: { mounts: podmanMounts } } : {}),
-  });
+  const driverConfig = Object.fromEntries(
+    [...mountsByDriver].flatMap(([driverId, mounts]) =>
+      mounts.length > 0 ? [[driverId, { mounts }]] : [],
+    ),
+  );
+  return Object.keys(driverConfig).length > 0 ? JSON.stringify(driverConfig) : null;
 }
 
 export type SandboxCreatePlan = {
@@ -203,6 +214,7 @@ export function materializeSandboxCreatePlan({
   intent,
   fromRef,
   managedStateMount,
+  managedStateMountDriverId,
   messagingTokenDefs,
   runProviderPreDeleteCleanup,
   upsertMessagingProviders,
@@ -211,7 +223,11 @@ export function materializeSandboxCreatePlan({
   prepareInitialSandboxCreatePolicy = getInitialSandboxCreatePolicy,
 }: MaterializeSandboxCreatePlanInput): SandboxCreatePlan {
   const enabledMessagingTokenDefs = validateSandboxCreateIntentBindings(intent, messagingTokenDefs);
-  const driverConfig = buildSandboxDriverConfig(intent, managedStateMount);
+  const driverConfig = buildSandboxDriverConfig(
+    intent,
+    managedStateMount,
+    managedStateMountDriverId,
+  );
   const { initialSandboxPolicy, compatibilityPolicyPath } = prepareSandboxGpuRoutePolicies(
     intent.policy.basePolicyPath,
     [...intent.policy.activeMessagingChannels],

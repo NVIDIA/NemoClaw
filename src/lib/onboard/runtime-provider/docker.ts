@@ -566,6 +566,7 @@ export function createDockerRuntimeProviderBundle(
       providerId,
       supported: true,
       profile: COMPLETE_MANAGED_IMAGE_V1_PROFILE,
+      managedStateMountDriverId: "docker",
       acceptsReceipt: (receipt) => acceptsReceipt(COMPLETE_MANAGED_IMAGE_V1_PROFILE, receipt),
     },
     hostLocalInference: {

@@ -483,6 +483,8 @@ export type RuntimeProviderGatewaySurface = RuntimeProviderSupportedSurface<{
 
 export type RuntimeProviderWorkloadSurface = RuntimeProviderSupportedSurface<{
   readonly profile: RuntimeProviderWorkloadProfile;
+  /** Provider-owned OpenShell driver-config key for managed state mounts. */
+  readonly managedStateMountDriverId?: string;
   acceptsReceipt(receipt: SandboxWorkloadReceipt | undefined): boolean;
 }>;
 

@@ -183,7 +183,16 @@ describe("managed workload onboard orchestration", () => {
     const lifecycle = createManagedHermesStateVolumeOnboardLifecycle(
       {
         agentName: "hermes",
-        runtimeProvider: { identity: { id: "docker" } } as never,
+        runtimeProvider: {
+          identity: { id: "docker" },
+          workload: { managedStateMountDriverId: "docker" },
+          containerEngine: {
+            supported: true,
+            identities: [
+              { operation: "sandbox-lifecycle", engineId: "docker", displayName: "Docker" },
+            ],
+          },
+        } as never,
         sandboxName: "alpha",
         workloadKind: "managed-image",
       },
@@ -198,6 +207,7 @@ describe("managed workload onboard orchestration", () => {
 
     lifecycle.materializeSandboxCreatePlan({} as never, (input) => {
       expect(input.managedStateMount).toMatchObject({ target: "/sandbox/.hermes" });
+      expect(input.managedStateMountDriverId).toBe("docker");
       return {} as never;
     });
     exitCleanup!();
