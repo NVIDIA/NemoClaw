@@ -240,9 +240,9 @@ realDockerTest(
       fs.writeFileSync(
         path.join(fakeBinDir, "nvidia-smi"),
         `#!/bin/sh
-case "$*" in
-  *--query-gpu=compute_cap*) printf '9.0\\n' ;;
-  *--query-gpu=index,uuid,memory.total,memory.free*)
+case "$#:$1:$2" in
+  2:--query-gpu=compute_cap:--format=csv,noheader,nounits) printf '9.0\\n' ;;
+  2:--query-gpu=index,uuid,memory.total,memory.free:--format=csv,noheader,nounits)
     printf '0, GPU-storage-proof, 131072, 131072\\n'
     ;;
   *) exit 64 ;;
