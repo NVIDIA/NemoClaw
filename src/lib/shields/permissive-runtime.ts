@@ -19,14 +19,12 @@ import type {
 import {
   filterInactiveMessagingChannelPolicies,
   materializeMessagingPolicySandboxName,
-  messagingChannelsPresentInPolicy,
 } from "../messaging/channels/policy";
 import { cleanupTempDir, secureTempFile } from "../onboard/temp-files";
+import { getActiveMessagingChannelsFromEntry } from "../state/registry-messaging";
+import type { SandboxEntry } from "../state/registry/types";
 
-export {
-  assertLegacyMcpPolicyRestoreSafe,
-  isManagedMcpPolicyKey,
-} from "./mcp-policy-transition";
+export { assertLegacyMcpPolicyRestoreSafe, isManagedMcpPolicyKey } from "./mcp-policy-transition";
 
 import {
   composeDeadlineManagedMcpPolicies,
@@ -100,6 +98,31 @@ export interface PermissiveRuntimeDeps {
   // binding. Supplying the target name makes composition fail closed unless
   // every placeholder can be materialized before the policy is staged.
   sandboxName?: string;
+  // Persisted manifest state is the enablement authority. Live policy can be
+  // stale during a transition and must never reactivate a disabled channel.
+  activeMessagingChannels?: readonly string[];
+}
+
+export interface RegisteredPermissiveRuntimeDeps extends Omit<
+  PermissiveRuntimeDeps,
+  "activeMessagingChannels" | "sandboxName"
+> {
+  sandboxEntry: SandboxEntry;
+  sandboxName: string;
+}
+
+export function buildRegisteredRuntimePermissivePolicy(
+  basePermissivePath: string,
+  deps: RegisteredPermissiveRuntimeDeps,
+): string {
+  if (deps.sandboxEntry.name !== deps.sandboxName || deps.sandboxEntry.agent !== "hermes") {
+    throw new Error("Cannot compose Hermes Shields-down policy without exact registry authority");
+  }
+  const { sandboxEntry, ...runtimeDeps } = deps;
+  return buildRuntimePermissivePolicy(basePermissivePath, {
+    ...runtimeDeps,
+    activeMessagingChannels: getActiveMessagingChannelsFromEntry(sandboxEntry),
+  });
 }
 
 export function buildRuntimePermissivePolicy(
@@ -110,11 +133,9 @@ export function buildRuntimePermissivePolicy(
   const liveRw = readStringList(live, "read_write");
   const liveRo = readStringList(live, "read_only");
   const managedMcpPolicies = deps.managedMcpPolicies ?? [];
-  const discordProviderName = deps.sandboxName
-    ? `${deps.sandboxName}-discord-bridge`
-    : null;
+  const activeMessagingChannels = deps.activeMessagingChannels ?? [];
   const preserveDiscordBinding =
-    discordProviderName !== null && policyUsesCredentialProvider(live, discordProviderName);
+    deps.sandboxName !== undefined && activeMessagingChannels.includes("discord");
 
   // No live startup-sealed or filesystem state to carry forward — keep the
   // static path so the caller's apply path is unchanged unless exact managed
@@ -152,7 +173,7 @@ export function buildRuntimePermissivePolicy(
     }
     baseYaml = filterInactiveMessagingChannelPolicies(
       materialized,
-      messagingChannelsPresentInPolicy(deps.livePolicyYaml, "hermes"),
+      activeMessagingChannels,
       "hermes",
     ).content;
   }
@@ -360,30 +381,6 @@ function safeYamlObject(text: string): Record<string, unknown> | null {
     return null;
   }
   return null;
-}
-
-function policyUsesCredentialProvider(
-  policy: Record<string, unknown> | null,
-  providerName: string,
-): boolean {
-  const networkPolicies = policy?.network_policies;
-  if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
-    return false;
-  }
-  for (const networkPolicy of Object.values(networkPolicies)) {
-    if (!networkPolicy || typeof networkPolicy !== "object" || Array.isArray(networkPolicy)) {
-      continue;
-    }
-    const endpoints = (networkPolicy as Record<string, unknown>).endpoints;
-    if (!Array.isArray(endpoints)) continue;
-    for (const endpoint of endpoints) {
-      if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
-      const binding = (endpoint as Record<string, unknown>).credential_binding;
-      if (!binding || typeof binding !== "object" || Array.isArray(binding)) continue;
-      if ((binding as Record<string, unknown>).provider === providerName) return true;
-    }
-  }
-  return false;
 }
 
 function readStringList(

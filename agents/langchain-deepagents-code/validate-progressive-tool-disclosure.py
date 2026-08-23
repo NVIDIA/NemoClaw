@@ -889,6 +889,18 @@ def _validate_direct_mode_execution() -> None:
         executions.append(value)
         return "direct-proof"
 
+    # Match the exact metadata shape emitted by the pinned MCP wrapper. Without
+    # coherent read-only hints, the headless MCP guard correctly rejects this
+    # fixture before the direct executor can prove the disclosure mode.
+    direct_probe.metadata = {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+        "_deepagents_code_mcp": True,
+        "_deepagents_code_mcp_server": "direct-runtime-validator",
+    }
+
     info = MCPServerInfo(
         name="direct-runtime-validator",
         transport="http",
@@ -1026,6 +1038,15 @@ def _validate_local_subagent_isolation() -> None:
     def isolated_probe() -> str:
         """Return an isolated probe capability."""
         return "isolated-proof"
+
+    isolated_probe.metadata = {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+        "_deepagents_code_mcp": True,
+        "_deepagents_code_mcp_server": "runtime-validator",
+    }
 
     model = ScriptedModel(scenario="subagent")
     info = MCPServerInfo(

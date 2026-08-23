@@ -8,9 +8,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import {
+  buildRegisteredRuntimePermissivePolicy,
   buildRuntimePermissivePolicy,
   type ExactManagedMcpPolicy,
 } from "../src/lib/shields/permissive-runtime.js";
+import type { SandboxEntry } from "../src/lib/state/registry/types.js";
+import { makeMessagingPlan } from "./helpers/messaging-plan-fixtures.js";
 
 const BASE_PERMISSIVE = YAML.stringify({
   filesystem_policy: {
@@ -58,6 +61,22 @@ const HERMES_DISCORD_PERMISSIVE = YAML.stringify({
 
 const tempFilesToClean: string[] = [];
 
+function hermesRegistryEntry(disabledChannels: readonly "discord"[] = []): SandboxEntry {
+  return {
+    name: "hermes-box",
+    agent: "hermes",
+    messaging: {
+      schemaVersion: 1,
+      plan: makeMessagingPlan({
+        agent: "hermes",
+        channels: ["discord"],
+        disabledChannels,
+        sandboxName: "hermes-box",
+      }),
+    },
+  };
+}
+
 function trackTempForCleanup(out: string, basePath: string): void {
   // Defensive: if the helper degrades to the static base path we must
   // never try to `rm -rf` its parent dir — that would target the
@@ -86,7 +105,7 @@ afterEach(() => {
 describe("buildRuntimePermissivePolicy (#3942)", () => {
   it("keeps the Hermes Discord provider binding in Shields down", () => {
     let stagedPolicy = "";
-    const out = buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
+    const out = buildRegisteredRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
       livePolicyYaml: YAML.stringify({
         network_policies: {
           discord: {
@@ -100,6 +119,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
         },
       }),
       readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
+      sandboxEntry: hermesRegistryEntry(),
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
         stagedPolicy = yaml;
@@ -132,11 +152,23 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     expect(stagedPolicy).not.toContain("{sandboxName}");
   });
 
-  it("removes inactive Hermes Discord bindings before Shields down", () => {
+  it("removes stale live Hermes Discord bindings when persisted state disables Discord", () => {
     let stagedPolicy = "";
-    const out = buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
-      livePolicyYaml: BASE_PERMISSIVE,
+    const out = buildRegisteredRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
+      livePolicyYaml: YAML.stringify({
+        network_policies: {
+          discord: {
+            endpoints: [
+              {
+                host: "discord.com",
+                credential_binding: { provider: "hermes-box-discord-bridge" },
+              },
+            ],
+          },
+        },
+      }),
       readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
+      sandboxEntry: hermesRegistryEntry(["discord"]),
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
         stagedPolicy = yaml;
@@ -166,6 +198,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
           },
         }),
         readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
+        activeMessagingChannels: ["discord"],
         sandboxName: "bad:provider",
         writeTempPolicy,
       }),
