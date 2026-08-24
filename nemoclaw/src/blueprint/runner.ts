@@ -471,6 +471,8 @@ interface Blueprint {
   version?: string;
   min_openshell_version?: string;
   max_openshell_version?: string;
+  min_openclaw_version?: unknown;
+  profiles?: unknown;
   openshell_target?: unknown;
   components?: {
     inference?: {
@@ -964,6 +966,11 @@ export function actionExternalOpenShellTargetPlan(
     throw new Error(
       "External OpenShell target planning requires blueprint min_openshell_version and max_openshell_version.",
     );
+  }
+  for (const field of ["components", "profiles", "min_openclaw_version"] as const) {
+    if (blueprint[field] !== undefined) {
+      throw new Error(`External OpenShell target planning does not accept '${field}'.`);
+    }
   }
 
   const rid = emitRunId();
@@ -1532,6 +1539,7 @@ export async function main(
   const rawAction = argv.at(0);
   const action = isAction(rawAction) ? rawAction : undefined;
   let profile = "default";
+  let profileProvided = false;
   let planPath: string | undefined;
   let runId: string | undefined;
   let dryRun = false;
@@ -1556,6 +1564,7 @@ export async function main(
     switch (argv[i]) {
       case "--profile":
         profile = requireValue("--profile", ++i);
+        profileProvided = true;
         break;
       case "--plan":
         planPath = requireValue("--plan", ++i);
@@ -1576,6 +1585,11 @@ export async function main(
     case "plan": {
       const blueprint = loadBlueprint();
       if (blueprint.openshell_target !== undefined) {
+        if (profileProvided) {
+          throw new Error(
+            "--profile configures managed inference and is not accepted by external target-only planning.",
+          );
+        }
         if (endpointUrl !== undefined) {
           throw new Error(
             "--endpoint-url configures inference and is not accepted by external target-only planning.",

@@ -13,7 +13,11 @@
     {
       "required": ["openshell_target", "min_openshell_version", "max_openshell_version"],
       "not": {
-        "anyOf": [{ "required": ["profiles"] }, { "required": ["components"] }]
+        "anyOf": [
+          { "required": ["profiles"] },
+          { "required": ["components"] },
+          { "required": ["min_openclaw_version"] }
+        ]
       }
     }
   ],
