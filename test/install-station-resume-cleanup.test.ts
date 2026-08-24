@@ -96,8 +96,17 @@ describe("DGX Station installer resume contract", () => {
   });
 });
 
-function runProviderExpressInstall(extraEnv: Record<string, string>) {
+function runStationExpressInstall({
+  extraEnv,
+  provider = "install-vllm",
+  prepareHome,
+}: {
+  extraEnv: Record<string, string>;
+  provider?: string;
+  prepareHome?: (home: string) => void;
+}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-resume-exit-"));
+  prepareHome?.(home);
   const result = spawnSync(
     "bash",
     [
@@ -118,7 +127,8 @@ maybe_offer_express_install
         HOME: home,
         INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
         PATH: TEST_SYSTEM_PATH,
-        NEMOCLAW_PROVIDER: "install-vllm",
+        NEMOCLAW_PROVIDER: provider,
+        NON_INTERACTIVE: "1",
         ...extraEnv,
       },
       timeout: 15_000,
@@ -129,12 +139,12 @@ maybe_offer_express_install
 }
 
 describe("DGX Station installer express resume load", () => {
-  it("stops the install when the express resume state path does not resolve (#9879)", () => {
+  it("stops a provider install when the express resume state path does not resolve", () => {
     // The provider path reached `load_station_express_resume || true`, which
     // suppressed a failed state probe. The installer printed [ERROR] and still
     // exited 0, so automation recorded a blocked install as a successful one.
-    const { home, result, output } = runProviderExpressInstall({
-      NEMOCLAW_GATEWAY_PORT: "notaport",
+    const { home, result, output } = runStationExpressInstall({
+      extraEnv: { NEMOCLAW_GATEWAY_PORT: "notaport" },
     });
 
     try {
@@ -145,11 +155,45 @@ describe("DGX Station installer express resume load", () => {
     }
   });
 
-  it("continues the install when no express resume state exists (#9879)", () => {
+  it("stops a default install when the express resume state path does not resolve", () => {
+    const { home, result, output } = runStationExpressInstall({
+      extraEnv: { NEMOCLAW_GATEWAY_PORT: "notaport" },
+      provider: "",
+    });
+
+    try {
+      expect(result.status, output).toBe(1);
+      expect(output).toContain("Cannot resolve the DGX Station express resume state path");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an existing malformed express resume state", () => {
+    const { home, result, output } = runStationExpressInstall({
+      extraEnv: { NEMOCLAW_GATEWAY_PORT: "8080" },
+      prepareHome: (fixtureHome) => {
+        const stateDir = path.join(fixtureHome, ".nemoclaw");
+        fs.mkdirSync(stateDir, { mode: 0o700 });
+        fs.writeFileSync(path.join(stateDir, "station-express-resume"), "invalid\n", {
+          mode: 0o600,
+        });
+      },
+    });
+
+    try {
+      expect(result.status, output).toBe(1);
+      expect(output).toContain("DGX Station express resume state is invalid");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("continues the install when no express resume state exists", () => {
     // An absent resume file is the ordinary first-install case. It must stay
     // non-fatal, so propagating the probe failure must not reject it.
-    const { home, result, output } = runProviderExpressInstall({
-      NEMOCLAW_GATEWAY_PORT: "8080",
+    const { home, result, output } = runStationExpressInstall({
+      extraEnv: { NEMOCLAW_GATEWAY_PORT: "8080" },
     });
 
     try {
