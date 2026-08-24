@@ -165,9 +165,14 @@ const account = cfg.channels?.telegram?.accounts?.default;
 if (!account?.botToken) {
   throw new Error("missing channels.telegram.accounts.default.botToken in openclaw.json");
 }
+const runtimeToken = process.env.TELEGRAM_BOT_TOKEN ?? "";
+if (!/^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN$/.test(runtimeToken)) {
+  throw new Error("missing revision-scoped TELEGRAM_BOT_TOKEN runtime placeholder");
+}
+account.botToken = runtimeToken;
 const target = process.env.OPENCLAW_MESSAGE_TARGET || "42424242";
 const text = process.env.OPENCLAW_MESSAGE_TEXT || "NemoClaw OpenClaw Telegram plugin mock E2E";
-const token = account.botToken;
+const token = runtimeToken;
 const api = {
   sendMessage: (chatId, body, params = {}) =>
     requestFakeTelegram(
