@@ -15,6 +15,13 @@ const OLD_ROUTE_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 const ADAPTER_BASE_URL = `http://host.openshell.internal:11438/route/${NEW_ROUTE_ID}`;
 const OLD_ADAPTER_BASE_URL = `http://host.openshell.internal:11438/route/${OLD_ROUTE_ID}`;
 const PROVIDER_ID = "11111111-2222-4333-8444-555555555555";
+const OPENAI_PROFILE_OUTPUT = JSON.stringify({
+  id: "openai",
+  credentials: [],
+  endpoints: [],
+  binaries: [],
+  inference_capable: true,
+});
 
 function mockAdapter() {
   return vi.fn(async (_options: EnsureHttpsPinRuntimeAdapterOptions) => ({
@@ -43,6 +50,13 @@ function providerCapture(options: {
     ].join("\n");
   return vi.fn((args: string[]) => {
     switch (`${args[0]}:${args[1]}`) {
+      case "provider:profile":
+        return {
+          status: 0,
+          output: OPENAI_PROFILE_OUTPUT,
+          stdout: OPENAI_PROFILE_OUTPUT,
+          stderr: "",
+        };
       case "provider:get": {
         const text = output();
         return { status: 0, stdout: text, stderr: "", output: text };

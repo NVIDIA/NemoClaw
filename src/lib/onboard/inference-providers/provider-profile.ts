@@ -81,7 +81,7 @@ export function checkOpenAiInferenceProviderProfile(deps: {
     return {
       ok: false,
       messages: [
-        `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' already exists but could not be read for validation.`,
+        `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' could not be read for validation.`,
         "    Repair or remove that profile, then re-run onboarding.",
       ],
     };

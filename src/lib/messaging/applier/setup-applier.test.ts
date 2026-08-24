@@ -37,6 +37,17 @@ const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
   MSTEAMS_APP_PASSWORD: "test-teams-client-secret",
 };
 
+const EXACT_MESSAGING_PROFILE = {
+  status: 0,
+  stdout: JSON.stringify({
+    id: "nemoclaw-mcp-v1",
+    credentials: [],
+    endpoints: [],
+    binaries: [],
+    inference_capable: false,
+  }),
+};
+
 const ALL_CHANNEL_ENV = {
   TELEGRAM_BOT_TOKEN: "123456:telegram-token",
   TELEGRAM_ALLOWED_IDS: "1001,1002",
@@ -403,6 +414,8 @@ describe("MessagingSetupApplier", () => {
     const runOpenshell: MessagingOpenShellRunner = (args, options) => {
       calls.push({ args, env: options?.env });
       switch (args[1]) {
+        case "profile":
+          return EXACT_MESSAGING_PROFILE;
         case "get": {
           const name = String(args[2]);
           const credentialKey =
@@ -430,7 +443,7 @@ describe("MessagingSetupApplier", () => {
     });
 
     expect(calls.map((call) => call.args)).toEqual([
-      ["provider", "profile", "import", "--file", expect.stringMatching(/nemoclaw-mcp-v1\.yaml$/)],
+      ["provider", "profile", "export", "nemoclaw-mcp-v1", "--output", "json"],
       ["provider", "get", "demo-telegram-bridge"],
       [
         "provider",
@@ -484,10 +497,12 @@ describe("MessagingSetupApplier", () => {
     const calls: string[] = [];
     const runOpenshell: MessagingOpenShellRunner = (args) => {
       calls.push(args.join(" "));
-      return args[1] === "get"
-        ? {
-            status: 0,
-            stdout:
+      return args[1] === "profile"
+        ? EXACT_MESSAGING_PROFILE
+        : args[1] === "get"
+          ? {
+              status: 0,
+              stdout:
               "Name: demo-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
           }
         : { status: 0 };
@@ -545,7 +560,7 @@ describe("MessagingSetupApplier", () => {
     const runOpenshell: MessagingOpenShellRunner = (args) => {
       switch (args[1]) {
         case "profile":
-          return { status: 0 };
+          return EXACT_MESSAGING_PROFILE;
         case "get":
           return {
             status: 1,
@@ -584,7 +599,7 @@ describe("MessagingSetupApplier", () => {
         runOpenshell: (args) => {
           calls.push(args.join(" "));
           return args[1] === "profile"
-            ? { status: 0 }
+            ? EXACT_MESSAGING_PROFILE
             : { status: 1, stderr: "gateway unavailable" };
         },
       }),
@@ -603,7 +618,7 @@ describe("MessagingSetupApplier", () => {
         runOpenshell: (args) => {
           switch (args[1]) {
             case "profile":
-              return { status: 0 };
+              return EXACT_MESSAGING_PROFILE;
             case "get":
               return { status: 1, stderr: "provider 'demo-telegram-bridge' not found" };
             default:
@@ -626,6 +641,7 @@ describe("MessagingSetupApplier", () => {
         runOpenshell: (args) => {
           switch (args[1]) {
             case "profile":
+              return EXACT_MESSAGING_PROFILE;
             case "create":
               return { status: 0 };
             default:
@@ -655,7 +671,7 @@ describe("MessagingSetupApplier", () => {
         runOpenshell: (args) => {
           calls.push(args.join(" "));
           return args[1] === "profile"
-            ? { status: 0 }
+            ? EXACT_MESSAGING_PROFILE
             : {
                 status: 1,
                 stderr: 'Error: status: Unavailable, message: "provider not found"',
@@ -782,6 +798,8 @@ describe("MessagingSetupApplier", () => {
       env: ALL_CHANNEL_ENV,
       runOpenshell: (args) => {
         switch (args[1]) {
+          case "profile":
+            return EXACT_MESSAGING_PROFILE;
           case "get": {
             const name = String(args[2]);
             const credentialKey = providers.get(name);
@@ -929,6 +947,8 @@ describe("MessagingSetupApplier", () => {
       runOpenshell: (args) => {
         providerCalls.push([...args]);
         switch (args[1]) {
+          case "profile":
+            return EXACT_MESSAGING_PROFILE;
           case "get": {
             const name = String(args[2]);
             const credentialKey = providers.get(name);

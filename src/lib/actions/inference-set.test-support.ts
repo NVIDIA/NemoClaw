@@ -30,6 +30,25 @@ export const HERMES_TARGET: AgentConfigTarget = {
   stateLockPlanInImage: true,
 };
 
+export const OPENAI_ENDPOINTLESS_PROFILE = JSON.stringify({
+  id: "openai",
+  credentials: [],
+  endpoints: [],
+  binaries: [],
+  inference_capable: true,
+});
+
+function defaultCaptureOpenshell(
+  args: string[],
+  status: number,
+): { status: number; output: string; stdout: string; stderr: string } {
+  const output =
+    args[0] === "provider" && args[1] === "profile" && args.includes("export")
+      ? OPENAI_ENDPOINTLESS_PROFILE
+      : "";
+  return { status, output, stdout: output, stderr: "" };
+}
+
 export function baseSession(overrides: Partial<Session> = {}): Session {
   return {
     version: 1,
@@ -84,6 +103,13 @@ export function createCompatibleProviderCapture(options: {
   let providerVersion = providerPresent ? 1 : 0;
   return vi.fn((args: string[]) => {
     switch (`${args[0]}:${args[1]}`) {
+      case "provider:profile":
+        return {
+          status: 0,
+          output: OPENAI_ENDPOINTLESS_PROFILE,
+          stdout: OPENAI_ENDPOINTLESS_PROFILE,
+          stderr: "",
+        };
       case "provider:get": {
         if (!providerPresent) {
           const output =
@@ -179,12 +205,7 @@ export function createDeps(options: {
   const calls = {
     captureOpenshell: vi.fn(
       options.captureOpenshell ??
-        (() => ({
-          status: options.openshellStatus ?? 0,
-          output: "",
-          stdout: "",
-          stderr: "",
-        })),
+        ((args: string[]) => defaultCaptureOpenshell(args, options.openshellStatus ?? 0)),
     ),
     writeSandboxConfig: vi.fn(),
     recomputeSandboxConfigHash: vi.fn(),

@@ -26,11 +26,16 @@ function exportedEndpointlessProfile(id: string, inferenceCapable: boolean): str
 
 describe("OpenShell MCP provider profile", () => {
   it("imports the endpointless profile before managed provider use", () => {
-    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "Imported", stderr: "" }));
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "provider profile not found" })
+      .mockReturnValueOnce({ status: 0, stdout: "Imported", stderr: "" })
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "provider profile not found" })
+      .mockReturnValueOnce({ status: 0, stdout: "Imported", stderr: "" });
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
     expect(() => ensureMcpBridgeProviderProfile()).not.toThrow();
-    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(runOpenshell).toHaveBeenCalledTimes(4);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["provider", "profile", "import", "--file", expect.stringMatching(/openai\.yaml$/)],
       expect.any(Object),
@@ -44,13 +49,11 @@ describe("OpenShell MCP provider profile", () => {
   it("accepts existing profiles only after proving both exact endpointless boundaries", () => {
     const runOpenshell = vi
       .fn()
-      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "already exists" })
       .mockReturnValueOnce({
         status: 0,
         stdout: exportedEndpointlessProfile("openai", true),
         stderr: "",
       })
-      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "already exists" })
       .mockReturnValueOnce({
         status: 0,
         stdout: exportedEndpointlessProfile(MCP_BRIDGE_PROVIDER_TYPE, false),
@@ -72,13 +75,11 @@ describe("OpenShell MCP provider profile", () => {
   it("rejects an existing profile that can supply its own endpoint authority", () => {
     const runOpenshell = vi
       .fn()
-      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "already exists" })
       .mockReturnValueOnce({
         status: 0,
         stdout: exportedEndpointlessProfile("openai", true),
         stderr: "",
       })
-      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "already exists" })
       .mockReturnValueOnce({
         status: 0,
         stdout: JSON.stringify({
@@ -98,11 +99,14 @@ describe("OpenShell MCP provider profile", () => {
   });
 
   it("fails closed when the gateway-only OpenAI profile cannot be registered", () => {
-    const runOpenshell = vi.fn(() => ({ status: 1, stdout: "", stderr: "import rejected" }));
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "provider profile not found" })
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "import rejected" });
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
     expect(() => ensureMcpBridgeProviderProfile()).toThrow("import rejected");
-    expect(runOpenshell).toHaveBeenCalledOnce();
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -128,31 +132,44 @@ describe("OpenShell MCP provider profile", () => {
     ],
     ["malformed export output", "not-json"],
   ])("rejects an existing OpenAI profile with %s before MCP setup", (_case, stdout) => {
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "already exists" })
-      .mockReturnValueOnce({ status: 0, stdout, stderr: "" });
+    const runOpenshell = vi.fn().mockReturnValueOnce({ status: 0, stdout, stderr: "" });
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
     expect(() => ensureMcpBridgeProviderProfile()).toThrow(
       /does not match NemoClaw's gateway-only endpointless credential contract/,
     );
-    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(runOpenshell).toHaveBeenCalledOnce();
     expect(runOpenshell).toHaveBeenLastCalledWith(
       ["provider", "profile", "export", "openai", "--output", "json"],
       expect.any(Object),
     );
   });
 
-  it("fails closed with a distinct diagnostic when an existing OpenAI profile cannot be exported", () => {
+  it("fails closed when the OpenAI profile cannot be exported", () => {
+    const runOpenshell = vi.fn().mockReturnValueOnce({
+      status: 1,
+      stdout: "",
+      stderr: "export rejected",
+    });
+    setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
+
+    expect(() => ensureMcpBridgeProviderProfile()).toThrow(/could not be exported for validation/);
+    expect(runOpenshell).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed when the MCP profile cannot be exported", () => {
     const runOpenshell = vi
       .fn()
-      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "already exists" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: exportedEndpointlessProfile("openai", true),
+        stderr: "",
+      })
       .mockReturnValueOnce({ status: 1, stdout: "", stderr: "export rejected" });
     setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
     expect(() => ensureMcpBridgeProviderProfile()).toThrow(
-      /already exists but could not be exported for validation/,
+      /nemoclaw-mcp-v1.*could not be exported for validation/u,
     );
     expect(runOpenshell).toHaveBeenCalledTimes(2);
   });

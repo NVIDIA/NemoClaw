@@ -27,15 +27,23 @@ describe("messaging credential provider profile", () => {
   });
 
   it("imports the endpointless profile from the checked-in path (#9875)", () => {
-    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stderr: "provider profile not found" })
+      .mockReturnValueOnce({ status: 0 });
 
     ensureMessagingCredentialProviderProfile({
       root: "/repo",
       runOpenshell,
     });
 
-    expect(runOpenshell).toHaveBeenCalledOnce();
-    expect(runOpenshell).toHaveBeenCalledWith(
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["provider", "profile", "export", MESSAGING_CREDENTIAL_PROVIDER_TYPE, "--output", "json"],
+      { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      2,
       [
         "provider",
         "profile",
@@ -43,15 +51,12 @@ describe("messaging credential provider profile", () => {
         "--file",
         "/repo/nemoclaw-blueprint/provider-profiles/nemoclaw-mcp-v1.yaml",
       ],
-      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+      { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
     );
   });
 
-  it("validates an existing profile before accepting it (#9875)", () => {
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce({ status: 1, stderr: "profile already exists" })
-      .mockReturnValueOnce({ status: 0, stdout: EXPECTED_PROFILE });
+  it("reuses an exact existing profile without importing it (#10155)", () => {
+    const runOpenshell = vi.fn().mockReturnValueOnce({ status: 0, stdout: EXPECTED_PROFILE });
 
     expect(() =>
       ensureMessagingCredentialProviderProfile({
@@ -60,27 +65,24 @@ describe("messaging credential provider profile", () => {
       }),
     ).not.toThrow();
 
-    expect(runOpenshell).toHaveBeenNthCalledWith(
-      2,
+    expect(runOpenshell).toHaveBeenCalledOnce();
+    expect(runOpenshell).toHaveBeenCalledWith(
       ["provider", "profile", "export", MESSAGING_CREDENTIAL_PROVIDER_TYPE, "--output", "json"],
-      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+      { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
     );
   });
 
-  it("rejects an incompatible existing profile (#9875)", () => {
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce({ status: 1, stderr: "profile already exists" })
-      .mockReturnValueOnce({
-        status: 0,
-        stdout: JSON.stringify({
-          id: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-          credentials: [],
-          endpoints: ["https://example.invalid"],
-          binaries: [],
-          inference_capable: false,
-        }),
-      });
+  it("rejects an incompatible existing profile without importing it (#10155)", () => {
+    const runOpenshell = vi.fn().mockReturnValueOnce({
+      status: 0,
+      stdout: JSON.stringify({
+        id: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+        credentials: [],
+        endpoints: ["https://example.invalid"],
+        binaries: [],
+        inference_capable: false,
+      }),
+    });
 
     expect(() =>
       ensureMessagingCredentialProviderProfile({
@@ -88,29 +90,28 @@ describe("messaging credential provider profile", () => {
         runOpenshell,
       }),
     ).toThrow(/does not match NemoClaw's endpointless messaging credential contract/);
+    expect(runOpenshell).toHaveBeenCalledOnce();
   });
 
-  it("reports a failed existing-profile export separately (#9875)", () => {
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce({ status: 1, stderr: "profile already exists" })
-      .mockReturnValueOnce({ status: 1, stderr: "gateway unavailable" });
+  it("does not import when profile inspection fails (#10155)", () => {
+    const runOpenshell = vi.fn().mockReturnValueOnce({
+      status: 1,
+      stderr: "gateway unavailable",
+    });
 
     expect(() =>
       ensureMessagingCredentialProviderProfile({
         root: "/repo",
         runOpenshell,
       }),
-    ).toThrow(/already exists but could not be exported for validation/);
+    ).toThrow(/could not be exported for validation/);
+    expect(runOpenshell).toHaveBeenCalledOnce();
   });
 
   it.each(["not-json", `${EXPECTED_PROFILE}\n${EXPECTED_PROFILE}`])(
     "rejects malformed or ambiguous existing profile output (#9875)",
     (stdout) => {
-      const runOpenshell = vi
-        .fn()
-        .mockReturnValueOnce({ status: 1, stderr: "profile already exists" })
-        .mockReturnValueOnce({ status: 0, stdout });
+      const runOpenshell = vi.fn().mockReturnValueOnce({ status: 0, stdout });
 
       expect(() =>
         ensureMessagingCredentialProviderProfile({
@@ -122,10 +123,13 @@ describe("messaging credential provider profile", () => {
   );
 
   it("suppresses profile import diagnostics (#9875)", () => {
-    const runOpenshell = vi.fn(() => ({
-      status: 1,
-      stderr: "request failed with discord-credential-must-not-leak",
-    }));
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stderr: "provider profile not found" })
+      .mockReturnValueOnce({
+        status: 1,
+        stderr: "request failed with discord-credential-must-not-leak",
+      });
 
     expect(() =>
       ensureMessagingCredentialProviderProfile({
@@ -133,5 +137,46 @@ describe("messaging credential provider profile", () => {
         runOpenshell,
       }),
     ).toThrow("Could not import the OpenShell messaging credential profile.");
+  });
+
+  it("reuses an exact profile created by a concurrent importer (#10155)", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stderr: "provider profile not found" })
+      .mockReturnValueOnce({ status: 1, stderr: "provider profile already exists" })
+      .mockReturnValueOnce({ status: 0, stdout: EXPECTED_PROFILE });
+
+    expect(() =>
+      ensureMessagingCredentialProviderProfile({
+        root: "/repo",
+        runOpenshell,
+      }),
+    ).not.toThrow();
+
+    expect(runOpenshell).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects a conflicting profile created by a concurrent importer (#10155)", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stderr: "provider profile not found" })
+      .mockReturnValueOnce({ status: 1, stderr: "provider profile already exists" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: JSON.stringify({
+          id: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+          credentials: [],
+          endpoints: ["https://foreign.invalid"],
+          binaries: [],
+          inference_capable: false,
+        }),
+      });
+
+    expect(() =>
+      ensureMessagingCredentialProviderProfile({
+        root: "/repo",
+        runOpenshell,
+      }),
+    ).toThrow(/does not match NemoClaw's endpointless messaging credential contract/u);
   });
 });

@@ -84,7 +84,7 @@ function ensureOpenAiGatewayProviderProfile(): void {
   }
   if (result.reason === "export-failed") {
     throw new McpBridgeError(
-      `OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' already exists but could not be exported for validation. Refusing to classify gateway inference credentials with it.`,
+      `OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' could not be exported for validation. Refusing to classify gateway inference credentials with it.`,
     );
   }
   throw new McpBridgeError(
@@ -107,6 +107,11 @@ export function ensureMcpBridgeProviderProfile(): void {
     throw new McpBridgeError(
       result.diagnostic ||
         `Could not import OpenShell provider profile '${MCP_BRIDGE_PROVIDER_TYPE}'.`,
+    );
+  }
+  if (result.reason === "export-failed") {
+    throw new McpBridgeError(
+      `OpenShell provider profile '${MCP_BRIDGE_PROVIDER_TYPE}' could not be exported for validation. Refusing to attach MCP credentials to it.`,
     );
   }
   throw new McpBridgeError(

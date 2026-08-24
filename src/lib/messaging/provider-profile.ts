@@ -9,6 +9,7 @@ export type EndpointlessProviderProfileRunner = (
   args: string[],
   options?: {
     readonly ignoreError?: boolean;
+    readonly suppressOutput?: boolean;
     readonly stdio?: ["ignore", "pipe", "pipe"];
   },
 ) => {
@@ -70,9 +71,30 @@ export function ensureEndpointlessProviderProfile(input: {
   readonly profilePath: string;
   readonly runOpenshell: EndpointlessProviderProfileRunner;
 }): EndpointlessProviderProfileResult {
+  const exportProfile = () =>
+    input.runOpenshell(
+      ["provider", "profile", "export", input.profileId, "--output", "json"],
+      { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+    );
+
+  const exported = exportProfile();
+  if (exported.status === 0) {
+    return profileHasExpectedCredentialBoundary(outputText(exported.stdout), {
+      id: input.profileId,
+      inferenceCapable: input.inferenceCapable,
+    })
+      ? { ok: true }
+      : { ok: false, reason: "incompatible", diagnostic: "" };
+  }
+
+  const exportOutput = commandOutput(exported);
+  if (!/\b(?:custom\s+)?provider profile\b[^\r\n]*\bnot found\b/iu.test(exportOutput)) {
+    return { ok: false, reason: "export-failed", diagnostic: "" };
+  }
+
   const imported = input.runOpenshell(
     ["provider", "profile", "import", "--file", input.profilePath],
-    { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+    { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
   );
   if (imported.status === 0) return { ok: true };
 
@@ -81,15 +103,12 @@ export function ensureEndpointlessProviderProfile(input: {
     return { ok: false, reason: "import-failed", diagnostic: importOutput.trim() };
   }
 
-  const exported = input.runOpenshell(
-    ["provider", "profile", "export", input.profileId, "--output", "json"],
-    { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
-  );
-  if (exported.status !== 0) {
+  const racedExport = exportProfile();
+  if (racedExport.status !== 0) {
     return { ok: false, reason: "export-failed", diagnostic: "" };
   }
   if (
-    !profileHasExpectedCredentialBoundary(outputText(exported.stdout), {
+    !profileHasExpectedCredentialBoundary(outputText(racedExport.stdout), {
       id: input.profileId,
       inferenceCapable: input.inferenceCapable,
     })
@@ -116,7 +135,7 @@ export function ensureMessagingCredentialProviderProfile(input: {
   }
   if (result.reason === "export-failed") {
     throw new Error(
-      `OpenShell provider profile '${MESSAGING_CREDENTIAL_PROVIDER_TYPE}' already exists but could not be exported for validation.`,
+      `OpenShell provider profile '${MESSAGING_CREDENTIAL_PROVIDER_TYPE}' could not be exported for validation.`,
     );
   }
   throw new Error(
