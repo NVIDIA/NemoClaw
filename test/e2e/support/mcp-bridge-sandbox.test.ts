@@ -91,7 +91,7 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     const host = {
       command: async (_command: string, args: string[]) => {
         probeScript = args[1] ?? "";
-        return { ...denialResult(), stdout: "10.20.30.40\n" };
+        return { ...denialResult(), stdout: "route 10.20.30.40\n" };
       },
     } as unknown as HostCliClient;
 
