@@ -660,7 +660,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           'export GITHUB_SHA="$EXPECTED_SHA"',
           "wait_seconds=3000",
           'if [[ "$SELECT_NEAREST_SUCCESSFUL_PUBLICATION" == "1" ]]; then',
-          "  wait_seconds=0",
+          "  wait_seconds=300",
           "fi",
           'node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds "$wait_seconds" --poll-seconds 30',
           "",
