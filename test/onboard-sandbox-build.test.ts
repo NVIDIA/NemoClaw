@@ -17,12 +17,12 @@ import {
 } from "./helpers/onboard-split-context";
 
 beforeEach(() => {
-  vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK", "1");
+  vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG", "1");
   vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
 
 describe("onboard helpers", () => {
-  it("builds the sandbox without uploading an external OpenClaw config file", {
+  it("creates the stock managed sandbox without uploading an external OpenClaw config file", {
     timeout: 90_000,
   }, async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
@@ -109,7 +109,7 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  const sandboxName = await createSandbox(null, "gpt-5.4");
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod");
   console.log(JSON.stringify({ sandboxName, commands, registerCalls, updateCalls, defaultCalls }));
 })().catch((error) => {
   console.error(error);
@@ -163,7 +163,11 @@ const { createSandbox } = require(${onboardPath});
       entry.command.includes("sandbox create"),
     );
     assert.ok(createCommand, "expected sandbox create command");
-    assert.match(createCommand.command, /nemoclaw-start/);
+    assert.match(createCommand.command, /nemoclaw-managed-startup-hold/);
+    assert.match(
+      createCommand.command,
+      /--from ghcr\.io\/nvidia\/nemoclaw\/openclaw-sandbox@sha256:[0-9a-f]{64}/,
+    );
     assert.doesNotMatch(createCommand.command, /--upload/);
     assert.doesNotMatch(createCommand.command, /OPENCLAW_CONFIG_PATH/);
     assert.doesNotMatch(createCommand.command, /NVIDIA_INFERENCE_API_KEY=/);
@@ -177,18 +181,9 @@ const { createSandbox } = require(${onboardPath});
       ),
       "expected dashboard forward (loopback or WSL 0.0.0.0)",
     );
-    assert.ok(
-      payload.commands.some(
-        (entry: CommandEntry) =>
-          entry.command.includes("docker run -d") &&
-          entry.command.includes("OPENSHELL_SANDBOX_COMMAND=") &&
-          entry.command.includes("nemoclaw-start"),
-      ),
-      "expected the default OpenClaw startup command to be persisted in the recreated container",
-    );
   });
 
-  it("skips OpenClaw sandbox-base resolution for agent-staged Dockerfiles", async () => {
+  it("resolves the sandbox base for an explicit custom Dockerfile", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agent-base-skip-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -272,10 +267,12 @@ agentOnboard.createAgentSandbox = () => {
       "ARG NEMOCLAW_MESSAGING_PLAN_B64=",
       "ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=0",
       "ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=W10=",
+      "ARG NEMOCLAW_TOOL_DISCLOSURE=progressive",
+      "ENV NEMOCLAW_TOOL_DISCLOSURE=\${NEMOCLAW_TOOL_DISCLOSURE}",
       "ARG NEMOCLAW_BUILD_ID=default",
       "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
       "CMD [\"/bin/bash\"]",
-    ].join("\\n"),
+    ].join("\n"),
   );
   return { buildCtx, stagedDockerfile };
 };
@@ -338,6 +335,7 @@ const { createSandbox } = require(${onboardPath});
     expectedVersion: "2026.4.23",
     policyAdditionsPath: ${hermesPolicyPath},
   };
+  const customDockerfilePath = agentOnboard.createAgentSandbox().stagedDockerfile;
   await createSandbox(
     null,
     "gpt-5.4",
@@ -346,7 +344,7 @@ const { createSandbox } = require(${onboardPath});
     "hermes-sandbox",
     null,
     [],
-    null,
+    customDockerfilePath,
     agent,
     null,
     null,
@@ -378,9 +376,14 @@ const { createSandbox } = require(${onboardPath});
       commands: CommandEntry[];
       logs: string[];
       warnings: string[];
-      baseResolutionCalls: unknown[];
+      baseResolutionCalls: Array<{ imageName?: string; dockerfilePath?: string }>;
     }>(result.stdout);
-    assert.equal(payload.baseResolutionCalls.length, 0);
+    assert.equal(payload.baseResolutionCalls.length, 1);
+    assert.equal(
+      payload.baseResolutionCalls[0]?.imageName,
+      "ghcr.io/nvidia/nemoclaw/sandbox-base",
+    );
+    assert.equal(payload.baseResolutionCalls[0]?.dockerfilePath, path.join(repoRoot, "Dockerfile.base"));
     const createCommand = payload.commands.find((entry) =>
       entry.command.includes("sandbox create"),
     );
@@ -389,16 +392,16 @@ const { createSandbox } = require(${onboardPath});
     assert.doesNotMatch(createCommand.command, /TOOL_GATEWAY_USER_TOKEN=/);
     assert.doesNotMatch(createCommand.command, /NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN=/);
     assert.ok(
-      !payload.logs.some((line) => line.includes("Using sandbox base image")),
-      "Hermes agent Dockerfile path should not log OpenClaw sandbox-base usage",
+      payload.logs.some((line) => line.includes("Pinning base image to sha256:aaaaaaaaaaaa")),
+      "explicit custom Dockerfile path should log sandbox-base pinning",
     );
     assert.ok(
       !payload.warnings.some((line) => line.includes("base image")),
-      "Hermes agent Dockerfile path should not warn about OpenClaw sandbox-base availability",
+      "resolved custom Dockerfile path should not warn about sandbox-base availability",
     );
   });
 
-  it("keeps resolving the OpenClaw sandbox base image on the default Dockerfile path", async () => {
+  it("skips OpenClaw sandbox-base resolution for the stock managed image path", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-base-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -558,11 +561,10 @@ const { createSandbox } = require(${onboardPath});
       logs: string[];
       baseResolutionCalls: Array<{ imageName?: string }>;
     }>(result.stdout);
-    assert.equal(payload.baseResolutionCalls.length, 1);
-    assert.equal(payload.baseResolutionCalls[0]?.imageName, "ghcr.io/nvidia/nemoclaw/sandbox-base");
+    assert.equal(payload.baseResolutionCalls.length, 0);
     assert.ok(
-      payload.logs.some((line) => line.includes("Pinning base image to sha256:bbbbbbbbbbbb")),
-      "default OpenClaw path should still log base-image pinning",
+      !payload.logs.some((line) => line.includes("Pinning base image")),
+      "stock managed-image onboarding must not enter sandbox-base resolution",
     );
   });
 
@@ -640,7 +642,7 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.CHAT_UI_URL = "https://chat.example.com";
-  await createSandbox(null, "gpt-5.4");
+  await createSandbox(null, "gpt-5.4", "nvidia-prod");
   console.log(JSON.stringify(commands));
 })().catch((error) => {
   console.error(error);
@@ -748,7 +750,7 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  const sandboxName = await createSandbox(null, "gpt-5.4");
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod");
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
   console.error(error);
