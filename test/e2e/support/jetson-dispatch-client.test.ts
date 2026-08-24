@@ -3,6 +3,7 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -62,9 +63,23 @@ const invalidV2RequestErrors: Record<string, string> = {
   "noncanonical managed-image revision":
     "managedImageRevision must be a lowercase 40-character commit SHA",
 };
+const temporaryDirectories: string[] = [];
+
+function temporaryReceiptFile(): string {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-jetson-dispatch-"));
+  temporaryDirectories.push(directory);
+  return path.join(directory, "jetson-dispatch.json");
+}
+
+function readReceipt(receiptFile: string): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(receiptFile, "utf8")) as Record<string, unknown>;
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
+  for (const directory of temporaryDirectories.splice(0)) {
+    fs.rmSync(directory, { recursive: true });
+  }
 });
 
 describe("Jetson dispatch static HTTP contract", () => {
@@ -421,6 +436,7 @@ describe("Jetson dispatch GitHub controller", () => {
 
   it("retries status transport failures and validates the completed status (#8142)", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
+    const receiptFile = temporaryReceiptFile();
     const requestImpl = vi
       .fn()
       .mockRejectedValueOnce(new Error("transport reset"))
@@ -433,10 +449,17 @@ describe("Jetson dispatch GitHub controller", () => {
         initialStatus: queuedStatus,
         jobId: queuedStatus.jobId,
         now: () => 0,
+        receiptFile,
         request: requestImpl,
         wait: async () => {},
       }),
     ).resolves.toEqual(completedStatus);
+    expect(readReceipt(receiptFile)).toEqual({
+      schemaVersion: 1,
+      jobId: queuedStatus.jobId,
+      request: queuedStatus.request,
+      controllerState: "accepted",
+    });
   });
 
   it("requests cancellation when the controller deadline expires (#8142)", async () => {
@@ -449,13 +472,87 @@ describe("Jetson dispatch GitHub controller", () => {
         initialStatus: queuedStatus,
         jobId: queuedStatus.jobId,
         now: () => 10_000,
+        receiptFile: temporaryReceiptFile(),
         request: requestImpl,
         wait: async () => {},
       }),
-    ).rejects.toThrow("Jetson dispatcher did not complete before the controller deadline");
+    ).rejects.toThrow(
+      `Jetson dispatch ${queuedStatus.jobId} did not complete before the controller deadline; cancellation request succeeded`,
+    );
     expect(requestImpl).toHaveBeenCalledWith(
       expect.objectContaining({ method: "DELETE", path: `v1/jobs/${queuedStatus.jobId}` }),
     );
+  });
+
+  it("records a rejected deadline cancellation for operator recovery (#8142)", async () => {
+    const receiptFile = temporaryReceiptFile();
+    const requestImpl = vi.fn(async () => {
+      throw new Error("untrusted cancellation response text");
+    });
+
+    await expect(
+      pollJetsonDispatch({
+        baseUrl: new URL("https://dispatch.test/"),
+        deadlineMs: 10_000,
+        initialStatus: queuedStatus,
+        jobId: queuedStatus.jobId,
+        now: () => 10_000,
+        receiptFile,
+        request: requestImpl,
+        wait: async () => {},
+      }),
+    ).rejects.toThrow(
+      `Jetson dispatch ${queuedStatus.jobId} did not complete before the controller deadline; cancellation request failed (transport-error)`,
+    );
+    expect(readReceipt(receiptFile)).toEqual({
+      schemaVersion: 1,
+      jobId: queuedStatus.jobId,
+      request: queuedStatus.request,
+      controllerState: "cancellation-failed",
+      cancellation: {
+        attempt: 1,
+        outcome: "failed",
+        reason: "controller-deadline",
+        failure: "transport-error",
+      },
+    });
+    expect(fs.statSync(receiptFile).mode & 0o777).toBe(0o600);
+  });
+
+  it("records a rejected cancellation after repeated status failures (#8142)", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const receiptFile = temporaryReceiptFile();
+    const requestImpl = vi.fn(async () => {
+      throw new Error("status transport reset");
+    });
+
+    await expect(
+      pollJetsonDispatch({
+        baseUrl: new URL("https://dispatch.test/"),
+        deadlineMs: 10_000,
+        initialStatus: queuedStatus,
+        jobId: queuedStatus.jobId,
+        now: () => 0,
+        receiptFile,
+        request: requestImpl,
+        wait: async () => {},
+      }),
+    ).rejects.toThrow(
+      `Jetson dispatch ${queuedStatus.jobId} status failed 3 consecutive times; cancellation request failed (transport-error)`,
+    );
+    expect(requestImpl).toHaveBeenCalledTimes(4);
+    expect(readReceipt(receiptFile)).toEqual({
+      schemaVersion: 1,
+      jobId: queuedStatus.jobId,
+      request: queuedStatus.request,
+      controllerState: "cancellation-failed",
+      cancellation: {
+        attempt: 1,
+        outcome: "failed",
+        reason: "status-request-failures",
+        failure: "transport-error",
+      },
+    });
   });
 
   it("keeps the published response types compatible with the controller (#8142)", () => {

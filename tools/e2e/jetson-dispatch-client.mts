@@ -25,6 +25,22 @@ const MAX_WAIT_MS = 54 * 60_000;
 const MAX_CONSECUTIVE_POLL_FAILURES = 3;
 const OIDC_TOKEN_CACHE_MS = 4 * 60_000;
 
+type JetsonCancellationFailure =
+  | "authorization-failed"
+  | "dispatcher-http-error"
+  | "invalid-response"
+  | "job-not-found"
+  | "request-timeout"
+  | "transport-error";
+type JetsonCancellationReason =
+  | "controller-deadline"
+  | "recovery-receipt-failure"
+  | "signal"
+  | "status-request-failures";
+type JetsonCancellationResult =
+  | { outcome: "failed"; failure: JetsonCancellationFailure; receiptWritten: boolean }
+  | { outcome: "succeeded"; receiptWritten: boolean };
+
 function record(value: unknown, name: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${name} must be an object`);
@@ -165,12 +181,115 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+function writeJetsonRecoveryReceipt(
+  receiptFile: string,
+  status: JetsonDispatchStatus,
+  controllerState:
+    | "accepted"
+    | "cancellation-failed"
+    | "cancellation-request-succeeded"
+    | "cancellation-requested",
+  cancellation?: {
+    attempt: 1;
+    failure?: JetsonCancellationFailure;
+    outcome: "failed" | "pending" | "succeeded";
+    reason: JetsonCancellationReason;
+  },
+): void {
+  writePrivateRegularFile(
+    receiptFile,
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        jobId: status.jobId,
+        request: status.request,
+        controllerState,
+        ...(cancellation === undefined ? {} : { cancellation }),
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
+function classifyCancellationFailure(error: unknown): JetsonCancellationFailure {
+  const message = error instanceof Error ? error.message : "";
+  if (error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name)) {
+    return "request-timeout";
+  }
+  if (/returned HTTP (?:401|403)(?::|$)/u.test(message)) return "authorization-failed";
+  if (/returned HTTP 404(?::|$)/u.test(message)) return "job-not-found";
+  if (/returned HTTP [0-9]{3}(?::|$)/u.test(message)) return "dispatcher-http-error";
+  if (/empty response|invalid JSON|response is too large/u.test(message)) return "invalid-response";
+  return "transport-error";
+}
+
+async function cancelJetsonDispatch(options: {
+  baseUrl: URL;
+  reason: JetsonCancellationReason;
+  receiptFile: string;
+  request: typeof dispatcherRequest;
+  status: JetsonDispatchStatus;
+}): Promise<JetsonCancellationResult> {
+  const cancellation = { attempt: 1, outcome: "pending", reason: options.reason } as const;
+  try {
+    writeJetsonRecoveryReceipt(
+      options.receiptFile,
+      options.status,
+      "cancellation-requested",
+      cancellation,
+    );
+  } catch {
+    // The cancellation request must continue when the local recovery receipt cannot be updated.
+  }
+
+  let result: { outcome: "failed"; failure: JetsonCancellationFailure } | { outcome: "succeeded" };
+  try {
+    await options.request({
+      baseUrl: options.baseUrl,
+      method: "DELETE",
+      path: `v1/jobs/${options.status.jobId}`,
+      maxBytes: MAX_STATUS_BYTES,
+    });
+    result = { outcome: "succeeded" };
+  } catch (error) {
+    result = { outcome: "failed", failure: classifyCancellationFailure(error) };
+  }
+
+  let receiptWritten = true;
+  try {
+    writeJetsonRecoveryReceipt(
+      options.receiptFile,
+      options.status,
+      result.outcome === "succeeded" ? "cancellation-request-succeeded" : "cancellation-failed",
+      {
+        attempt: 1,
+        outcome: result.outcome,
+        reason: options.reason,
+        ...(result.outcome === "failed" ? { failure: result.failure } : {}),
+      },
+    );
+  } catch {
+    receiptWritten = false;
+  }
+  return { ...result, receiptWritten } as JetsonCancellationResult;
+}
+
+function cancellationResultMessage(result: JetsonCancellationResult): string {
+  const outcome =
+    result.outcome === "succeeded"
+      ? "cancellation request succeeded"
+      : `cancellation request failed (${result.failure})`;
+  return result.receiptWritten ? outcome : `${outcome}; recovery receipt update failed`;
+}
+
 export async function pollJetsonDispatch(options: {
   baseUrl: URL;
   deadlineMs: number;
   initialStatus: JetsonDispatchStatus;
   jobId: string;
   now?: () => number;
+  receiptFile: string;
   request?: typeof dispatcherRequest;
   stopping?: () => boolean;
   wait?: typeof delay;
@@ -183,16 +302,35 @@ export async function pollJetsonDispatch(options: {
   if (status.jobId !== options.jobId) {
     throw new Error("Jetson dispatcher status does not match the accepted job");
   }
+  try {
+    writeJetsonRecoveryReceipt(options.receiptFile, status, "accepted");
+  } catch {
+    const cancellation = await cancelJetsonDispatch({
+      baseUrl: options.baseUrl,
+      reason: "recovery-receipt-failure",
+      receiptFile: options.receiptFile,
+      request,
+      status,
+    });
+    throw new Error(
+      `Jetson dispatch ${options.jobId} was accepted but its recovery receipt could not be written; ${cancellationResultMessage(cancellation)}`,
+    );
+  }
   while (status.state !== "completed") {
-    if (options.stopping?.()) throw new Error("Jetson dispatch cancellation requested");
+    if (options.stopping?.()) {
+      throw new Error(`Jetson dispatch ${options.jobId} cancellation requested`);
+    }
     if (now() >= options.deadlineMs) {
-      await request({
+      const cancellation = await cancelJetsonDispatch({
         baseUrl: options.baseUrl,
-        method: "DELETE",
-        path: `v1/jobs/${options.jobId}`,
-        maxBytes: MAX_STATUS_BYTES,
-      }).catch(() => undefined);
-      throw new Error("Jetson dispatcher did not complete before the controller deadline");
+        reason: "controller-deadline",
+        receiptFile: options.receiptFile,
+        request,
+        status,
+      });
+      throw new Error(
+        `Jetson dispatch ${options.jobId} did not complete before the controller deadline; ${cancellationResultMessage(cancellation)}`,
+      );
     }
     await wait(POLL_INTERVAL_MS);
     try {
@@ -213,13 +351,17 @@ export async function pollJetsonDispatch(options: {
     } catch (error) {
       consecutiveFailures += 1;
       if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
-        await request({
+        const cancellation = await cancelJetsonDispatch({
           baseUrl: options.baseUrl,
-          method: "DELETE",
-          path: `v1/jobs/${options.jobId}`,
-          maxBytes: MAX_STATUS_BYTES,
-        }).catch(() => undefined);
-        throw error;
+          reason: "status-request-failures",
+          receiptFile: options.receiptFile,
+          request,
+          status,
+        });
+        throw new Error(
+          `Jetson dispatch ${options.jobId} status failed ${MAX_CONSECUTIVE_POLL_FAILURES} consecutive times; ${cancellationResultMessage(cancellation)}`,
+          { cause: error },
+        );
       }
       console.warn("Jetson dispatch status request failed; retrying");
     }
@@ -247,21 +389,23 @@ async function main(): Promise<void> {
   if (!path.isAbsolute(artifactDirectory)) throw new Error("E2E_ARTIFACT_DIR must be absolute");
   fs.mkdirSync(artifactDirectory, { recursive: true, mode: 0o700 });
   fs.chmodSync(artifactDirectory, 0o700);
+  const receiptFile = path.join(artifactDirectory, "jetson-dispatch.json");
 
-  let jobId: string | undefined;
+  let dispatched: JetsonDispatchStatus | undefined;
   let stopping = false;
   const cancel = (): void => {
     if (stopping) return;
     stopping = true;
-    if (!jobId) {
+    if (!dispatched) {
       process.exitCode = 1;
       return;
     }
-    void dispatcherRequest({
+    void cancelJetsonDispatch({
       baseUrl,
-      method: "DELETE",
-      path: `v1/jobs/${jobId}`,
-      maxBytes: MAX_STATUS_BYTES,
+      reason: "signal",
+      receiptFile,
+      request: dispatcherRequest,
+      status: dispatched,
     }).finally(() => {
       process.exitCode = 1;
     });
@@ -269,7 +413,7 @@ async function main(): Promise<void> {
   process.on("SIGINT", cancel);
   process.on("SIGTERM", cancel);
 
-  const dispatched = parseJetsonDispatchStatusResponse(
+  dispatched = parseJetsonDispatchStatusResponse(
     await dispatcherRequest({
       baseUrl,
       method: "POST",
@@ -279,7 +423,7 @@ async function main(): Promise<void> {
     }),
     request,
   );
-  jobId = dispatched.jobId;
+  const jobId = dispatched.jobId;
   console.log(`Jetson dispatch accepted as ${jobId}`);
   const deadline = Date.now() + MAX_WAIT_MS;
   await pollJetsonDispatch({
@@ -287,6 +431,7 @@ async function main(): Promise<void> {
     deadlineMs: deadline,
     initialStatus: dispatched,
     jobId,
+    receiptFile,
     stopping: () => stopping,
   });
 
@@ -298,10 +443,7 @@ async function main(): Promise<void> {
   });
   const artifact: JetsonDispatchArtifact = parseJetsonDispatchArtifact(artifactValue, jobId);
   const { artifactArchiveBase64, ...artifactReceipt } = artifact;
-  writePrivateRegularFile(
-    path.join(artifactDirectory, "jetson-dispatch.json"),
-    `${JSON.stringify(artifactReceipt, null, 2)}\n`,
-  );
+  writePrivateRegularFile(receiptFile, `${JSON.stringify(artifactReceipt, null, 2)}\n`);
   if (artifactArchiveBase64 !== undefined) {
     writePrivateRegularFile(
       path.join(artifactDirectory, "jetson-e2e-artifacts.tar.gz"),
