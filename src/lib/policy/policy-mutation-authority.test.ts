@@ -83,7 +83,7 @@ function reportedErrors(): string {
     .join("\n");
 }
 
-describe("policy authority mutation ownership", () => {
+describe("policy mutation authority boundary", () => {
   let sandbox: Record<string, unknown>;
 
   beforeEach(() => {
