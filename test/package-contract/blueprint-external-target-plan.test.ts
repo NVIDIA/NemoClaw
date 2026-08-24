@@ -171,7 +171,7 @@ originalWrite(JSON.stringify({ applyError, effects, planOutput, runnerUrl }));
 
 describe("packaged Blueprint Runner external target", () => {
   it(
-    "builds cleanly and keeps target-only planning free of external effects (#9872)",
+    "builds cleanly and denies network, subprocess, ambient gateway state, credential-content, and filesystem-mutation effects during target-only planning (#9872)",
     {
       timeout: 240_000,
     },
