@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 import { renderHermesPortableDockerfileBuildSettings } from "./dockerfile-patch";
 
 const DOCKERFILE = [
+  "ARG TARGETARCH",
+  "FROM scratch",
   "ARG NEMOCLAW_MODEL=old",
   "ARG NEMOCLAW_INFERENCE_PROVIDER_ID=old",
   "ARG NEMOCLAW_UPSTREAM_PROVIDER=old",
@@ -34,6 +36,7 @@ describe("Hermes portable Dockerfile settings", () => {
     expect(rendered).toContain("ARG NEMOCLAW_INFERENCE_API=openai-completions");
     expect(rendered).toContain("ARG NEMOCLAW_TOOL_DISCLOSURE=direct");
     expect(rendered).toContain("ARG CHAT_UI_URL=\n");
+    expect(rendered).toContain("ARG TARGETARCH=amd64\nFROM scratch");
   });
 
   it("rejects injected or incomplete schema-5 settings (#9203)", () => {
@@ -49,5 +52,26 @@ describe("Hermes portable Dockerfile settings", () => {
         SETTINGS,
       ),
     ).toThrow("must declare exactly one CHAT_UI_URL");
+  });
+
+  it("rejects an incomplete portable target architecture contract (#9203)", () => {
+    expect(() =>
+      renderHermesPortableDockerfileBuildSettings(
+        DOCKERFILE.replace("ARG TARGETARCH\n", ""),
+        SETTINGS,
+      ),
+    ).toThrow("must declare one unpinned global TARGETARCH");
+    expect(() =>
+      renderHermesPortableDockerfileBuildSettings(
+        DOCKERFILE.replace("ARG TARGETARCH\n", "ARG TARGETARCH=amd64\n"),
+        SETTINGS,
+      ),
+    ).toThrow("must declare one unpinned global TARGETARCH");
+    expect(() =>
+      renderHermesPortableDockerfileBuildSettings(
+        DOCKERFILE.replace("FROM scratch\n", ""),
+        SETTINGS,
+      ),
+    ).toThrow("must declare at least one build stage");
   });
 });
