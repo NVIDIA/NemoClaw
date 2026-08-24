@@ -438,6 +438,7 @@ describe("docker-driver-gateway config TOML", () => {
       expect(joined).not.toContain("nemoclaw onboard --experimental-profile portable --fresh");
     } finally {
       errSpy.mockRestore();
+      resetOnboardResumeHintForTests();
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
   });
