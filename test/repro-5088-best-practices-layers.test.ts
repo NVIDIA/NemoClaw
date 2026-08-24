@@ -68,7 +68,7 @@ describe("best-practices.mdx security-layer consistency (#5088)", () => {
     );
 
     expect(glance).toContain("does not show onboarding tier presets");
-    expect(glance).not.toMatch(/default posture immediately after onboarding/i);
+    expect(glance).not.toMatch(/default posture(?: immediately)? after onboarding/i);
   });
 
   it("documents the complete Balanced preset default", () => {
