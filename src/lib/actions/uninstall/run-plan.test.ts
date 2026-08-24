@@ -957,7 +957,11 @@ describe("uninstall run plan", () => {
         rmSync: vi.fn(),
         run: (command, args) => {
           if (command === "openshell" && args[0] === "gateway" && args[1] === "remove") {
-            return { status: 1, stdout: "", stderr: "gateway not found" };
+            return {
+              status: 1,
+              stdout: "",
+              stderr: "No gateway metadata found for 'nemoclaw'.",
+            };
           }
           if (args[0] === "-c") return ok("/fake/bin/tool\n");
           return okWithKnownGatewayList(command, args);

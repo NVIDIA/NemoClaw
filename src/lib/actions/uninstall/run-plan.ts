@@ -869,10 +869,29 @@ function deletePortableOpenShellSandbox(
   return false;
 }
 
-const GATEWAY_ALREADY_ABSENT =
-  /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i;
 const GATEWAY_REMOVE_UNSUPPORTED =
   /unrecognized subcommand ['"]remove['"]|unknown command ['"]remove['"]/i;
+
+function isExplicitGatewayRegistrationAbsence(output: string, gatewayLabel: string): boolean {
+  const clean = output.replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "");
+  const escapedLabel = gatewayLabel.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const namedGateway = `(?:['"]${escapedLabel}['"]|${escapedLabel})`;
+  const linePrefix = "(?:^|\\n)\\s*(?:Error:\\s*)?(?:×\\s*)?";
+  const lineEnd = "\\.?\\s*(?:\\n|$)";
+  return (
+    new RegExp(`${linePrefix}No gateway metadata found for ${namedGateway}${lineEnd}`, "iu").test(
+      clean,
+    ) ||
+    new RegExp(
+      `${linePrefix}gateway\\s+${namedGateway}\\s+(?:does not exist|not found)${lineEnd}`,
+      "iu",
+    ).test(clean) ||
+    new RegExp(
+      `${linePrefix}status:\\s*NotFound,\\s*message:\\s*["']gateway\\s+${escapedLabel}\\s+(?:does not exist|not found)["']${lineEnd}`,
+      "iu",
+    ).test(clean)
+  );
+}
 
 function gatewayRegistrationRemovalFailureMessage(
   gatewayLabel: string,
@@ -901,7 +920,7 @@ function removeGatewayRegistration(
   }
 
   const removeOutput = `${removeResult.stdout}\n${removeResult.stderr}`;
-  if (GATEWAY_ALREADY_ABSENT.test(removeOutput)) {
+  if (isExplicitGatewayRegistrationAbsence(removeOutput, gatewayLabel)) {
     runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
     return true;
   }
@@ -927,7 +946,12 @@ function removeGatewayRegistration(
     runtime.log(`Destroyed legacy gateway '${gatewayLabel}'`);
     return true;
   }
-  if (GATEWAY_ALREADY_ABSENT.test(`${destroyResult.stdout}\n${destroyResult.stderr}`)) {
+  if (
+    isExplicitGatewayRegistrationAbsence(
+      `${destroyResult.stdout}\n${destroyResult.stderr}`,
+      gatewayLabel,
+    )
+  ) {
     runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
     return true;
   }

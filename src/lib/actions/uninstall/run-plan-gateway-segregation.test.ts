@@ -328,47 +328,50 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     expect(openshellCalls).toContainEqual(["gateway", "destroy", "-g", "nemoclaw"]);
   });
 
-  it("does not hide a current gateway remove failure behind the legacy verb", () => {
-    const calls: Array<{ args: string[]; command: string }> = [];
-    const logs: string[] = [];
-    const rmSync = vi.fn();
-    const warnings: string[] = [];
-    const responses = new Map<string, RunResult>([
-      ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
-      ["openshell gateway remove nemoclaw", { status: 1, stdout: "", stderr: "permission denied" }],
-    ]);
-    const result = runUninstallPlan(
-      { assumeYes: true, deleteModels: false, keepOpenShell: true },
-      {
-        commandExists: (command) => command !== "docker" && command !== "pgrep",
-        env: { HOME: STATIC_TEST_HOME, TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
-        existsSync: () => false,
-        isTty: false,
-        log: (line) => logs.push(line),
-        rmSync,
-        run: (command, args) => {
-          calls.push({ args, command });
-          return responses.get([command, ...args].join(" ")) ?? ok();
+  it.each(["permission denied", "gateway service endpoint not found"])(
+    "does not hide a current gateway remove failure reported as %s behind the legacy verb",
+    (diagnostic) => {
+      const calls: Array<{ args: string[]; command: string }> = [];
+      const logs: string[] = [];
+      const rmSync = vi.fn();
+      const warnings: string[] = [];
+      const responses = new Map<string, RunResult>([
+        ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
+        ["openshell gateway remove nemoclaw", { status: 1, stdout: "", stderr: diagnostic }],
+      ]);
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: (command) => command !== "docker" && command !== "pgrep",
+          env: { HOME: STATIC_TEST_HOME, TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+          error: (line) => warnings.push(line),
+          existsSync: () => false,
+          isTty: false,
+          log: (line) => logs.push(line),
+          rmSync,
+          run: (command, args) => {
+            calls.push({ args, command });
+            return responses.get([command, ...args].join(" ")) ?? ok();
+          },
+          runDocker: () => ok(""),
         },
-        runDocker: () => ok(""),
-        error: (line) => warnings.push(line),
-      },
-    );
+      );
 
-    expect(result.exitCode).toBe(1);
-    const openshellCalls = calls
-      .filter(({ command }) => command === "openshell")
-      .map(({ args }) => args);
-    expect(openshellCalls).toContainEqual(["gateway", "remove", "nemoclaw"]);
-    expect(openshellCalls.some((args) => args[1] === "destroy")).toBe(false);
-    expect(warnings).toContain(
-      "Could not remove gateway registration 'nemoclaw': openshell gateway remove failed (exit 1).",
-    );
-    expect(warnings).not.toContain("Gateway 'nemoclaw' already removed or unreachable");
-    expect(rmSync).not.toHaveBeenCalled();
-    expect(logs).not.toContain("[3/6] NemoClaw CLI");
-    expect(logs).not.toContain("Claws retracted. Until next time.");
-  });
+      expect(result.exitCode).toBe(1);
+      const openshellCalls = calls
+        .filter(({ command }) => command === "openshell")
+        .map(({ args }) => args);
+      expect(openshellCalls).toContainEqual(["gateway", "remove", "nemoclaw"]);
+      expect(openshellCalls.some((args) => args[1] === "destroy")).toBe(false);
+      expect(warnings).toContain(
+        "Could not remove gateway registration 'nemoclaw': openshell gateway remove failed (exit 1).",
+      );
+      expect(warnings).not.toContain("Gateway 'nemoclaw' already removed or unreachable");
+      expect(rmSync).not.toHaveBeenCalled();
+      expect(logs).not.toContain("[3/6] NemoClaw CLI");
+      expect(logs).not.toContain("Claws retracted. Until next time.");
+    },
+  );
 
   it("fails closed when the legacy gateway destroy command fails", () => {
     const calls: Array<{ args: string[]; command: string }> = [];
