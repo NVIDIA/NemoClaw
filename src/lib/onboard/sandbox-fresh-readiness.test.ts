@@ -100,7 +100,10 @@ describe("fresh sandbox executable readiness", () => {
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
-        ["sandbox get alpha", [readySandboxGetResult(), readySandboxGetResult()]],
+        [
+          "sandbox get alpha",
+          [readySandboxGetResult(), readySandboxGetResult(), readySandboxGetResult()],
+        ],
         [
           "sandbox exec --name alpha -- true",
           [
@@ -123,7 +126,7 @@ describe("fresh sandbox executable readiness", () => {
       vi
         .mocked(deps.runOpenshell)
         .mock.calls.filter(([args]) => args.join(" ") === "sandbox exec --name alpha -- true"),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.anything(),

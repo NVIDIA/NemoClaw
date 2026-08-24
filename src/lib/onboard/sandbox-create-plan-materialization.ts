@@ -8,6 +8,7 @@ import type {
   SandboxCreateIntent,
   SandboxCreateMessagingProviderRequest,
 } from "./sandbox-create-intent-types";
+import { filterMessagingProvidersByEnabledChannel } from "./sandbox-create-intent";
 import { containerPathsOverlap } from "./host-mount/path-overlap";
 import { normalizeSandboxGpuDeviceForCdi } from "./sandbox-gpu-create";
 import { prepareSandboxGpuRoutePolicies } from "./sandbox-gpu-route-policy";
@@ -244,13 +245,18 @@ export function materializeSandboxCreatePlan({
   ];
 
   runProviderPreDeleteCleanup();
+  const enabledReusableMessagingProviders = filterMessagingProvidersByEnabledChannel(
+    [...intent.reusableMessagingProviders],
+    intent.messagingProviderRequests,
+    new Set(intent.disabledChannelNames),
+  );
   const messagingProviders = [
     ...new Set([
       ...upsertMessagingProviders(enabledMessagingTokenDefs, {
         replaceExisting: true,
         allowedSandboxes: [intent.sandboxName],
       }),
-      ...intent.reusableMessagingProviders,
+      ...enabledReusableMessagingProviders,
     ]),
   ];
   const createProviders = new Set<string>();

@@ -243,16 +243,21 @@ describe("resolveSandboxCreateIntent", () => {
     expect(JSON.stringify(first)).not.toContain("/tmp/");
   });
 
-  it("attaches a retained static provider while its channel runtime is stopped (#9773)", () => {
-    const intent = resolveSandboxCreateIntent({
+  it("does not attach a retained provider while its channel runtime is stopped (#9773)", () => {
+    const resolvedIntent = resolveSandboxCreateIntent({
       basePolicyPath: "/repo/hermes-policy.yaml",
       sandboxName: "sandbox",
       channels,
       enabledChannels: ["discord"],
       disabledChannelNames: new Set(["discord"]),
-      // Disabled credential definitions are not provider requests: onboard must
-      // not create or update their gateway providers during the rebuild.
-      messagingProviderRequests: [],
+      messagingProviderRequests: [
+        {
+          name: "sandbox-discord-bridge",
+          envKey: "DISCORD_BOT_TOKEN",
+          credentialConfigured: false,
+          channel: "discord",
+        },
+      ],
       primaryMessagingCredentialEnvKeys: ["DISCORD_BOT_TOKEN"],
       reusableMessagingChannels: [],
       reusableMessagingProviders: ["sandbox-discord-bridge"],
@@ -265,6 +270,12 @@ describe("resolveSandboxCreateIntent", () => {
       agentName: "hermes",
       policyTier: "balanced",
     });
+    const intent = {
+      ...resolvedIntent,
+      // Materialization must enforce the disabled-channel boundary even for a
+      // retained provider in a resumed or previously serialized intent.
+      reusableMessagingProviders: ["sandbox-discord-bridge"],
+    };
     const upsertMessagingProviders = vi.fn(() => []);
 
     const plan = materializeSandboxCreatePlan({
@@ -284,8 +295,8 @@ describe("resolveSandboxCreateIntent", () => {
       replaceExisting: true,
       allowedSandboxes: ["sandbox"],
     });
-    expect(plan.messagingProviders).toEqual(["sandbox-discord-bridge"]);
-    expect(plan.createArgs).toContain("sandbox-discord-bridge");
+    expect(plan.messagingProviders).toEqual([]);
+    expect(plan.createArgs).not.toContain("sandbox-discord-bridge");
   });
 
   it("keeps the real gateway provider while excluding direct host-local inference policy", () => {

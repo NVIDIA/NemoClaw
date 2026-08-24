@@ -34,12 +34,15 @@ describe("compiled CLI policy contracts", () => {
 const YAML = require(${YAML_PATH});
 const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
+registry.registerSandbox({ name: "openclaw-contract", agent: "openclaw", policies: [] });
 registry.registerSandbox({ name: "hermes-contract", agent: "hermes", policies: [] });
-const openclaw = YAML.parse(policies.loadPreset("telegram"));
+const openclaw = YAML.parse(policies.loadPresetForSandbox("openclaw-contract", "telegram"));
 const hermes = YAML.parse(policies.loadPresetForSandbox("hermes-contract", "telegram"));
 process.stdout.write("__RESULT__" + JSON.stringify({
   openclawKeys: Object.keys(openclaw.network_policies || {}),
   hermesKeys: Object.keys(hermes.network_policies || {}),
+  openclawProvider: openclaw.network_policies?.telegram_bot?.endpoints?.[0]?.credential_binding?.provider,
+  hermesProvider: hermes.network_policies?.telegram?.endpoints?.[0]?.credential_binding?.provider,
 }));
 `;
     fs.writeFileSync(scriptPath, script);
@@ -52,6 +55,8 @@ process.stdout.write("__RESULT__" + JSON.stringify({
     const payload = JSON.parse(result.stdout.split("__RESULT__")[1].trim());
     expect(payload.openclawKeys).toEqual(["telegram_bot"]);
     expect(payload.hermesKeys).toEqual(["telegram"]);
+    expect(payload.openclawProvider).toBe("openclaw-contract-telegram-bridge");
+    expect(payload.hermesProvider).toBe("hermes-contract-telegram-bridge");
   });
 
   describe("policy-remove custom presets", () => {

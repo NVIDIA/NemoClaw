@@ -21,6 +21,14 @@ import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 const shAvailable = spawnSync("sh", ["-c", "exit 0"], { encoding: "utf-8" }).status === 0;
 const itWithSh = shAvailable ? it : it.skip;
 
+function useWarmupExecutableFixture(script: string, executable: string): string {
+  const withFixture = script.replaceAll(WARMUP_OPENCLAW_BIN, executable);
+  return withFixture.replace(
+    `warmup_is_trusted_executable ${executable} || exit 0`,
+    `test -x ${executable} || exit 0`,
+  );
+}
+
 // NOTE on coverage shape (#4504-v2): `runSandboxScopeWarmupRun` is not exercised
 // in-process here. Like its sibling `runSandboxAutoPairApprovalPass`, the leaf
 // lazily does a raw `require("../../adapters/openshell/runtime")` — a native
@@ -50,7 +58,12 @@ describe("scope-upgrade warm-up timeout bound v2 (#4504)", () => {
 describe("warm-up payload uses native multiline OpenShell exec in v2 (#4504)", () => {
   it("keeps the real warm-up as one multiline command on the owning gateway (#10014)", () => {
     expect(WARMUP_SCRIPT).toContain("\n");
-    expect(WARMUP_SCRIPT).toContain(`test -x ${WARMUP_OPENCLAW_BIN}`);
+    expect(WARMUP_SCRIPT).toContain(
+      `warmup_is_trusted_executable ${WARMUP_OPENCLAW_BIN} || exit 0`,
+    );
+    expect(WARMUP_SCRIPT.indexOf("warmup_is_trusted_executable")).toBeLessThan(
+      WARMUP_SCRIPT.indexOf(buildTrustedProxyEnvSourceShell()),
+    );
     expect(WARMUP_SCRIPT).not.toContain("command -v openclaw");
     expect(WARMUP_SCRIPT).not.toContain("base64 -d");
     expect(WARMUP_SCRIPT).not.toContain("mktemp");
@@ -195,7 +208,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
       );
 
       try {
-        const script = WARMUP_SCRIPT.replaceAll(WARMUP_OPENCLAW_BIN, path.join(binDir, "openclaw"));
+        const script = useWarmupExecutableFixture(WARMUP_SCRIPT, path.join(binDir, "openclaw"));
         const result = spawnSync("sh", ["-c", script], {
           encoding: "utf-8",
           env: {
@@ -261,10 +274,13 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
     );
 
     try {
-      const script = WARMUP_SCRIPT.replace(
-        buildTrustedProxyEnvSourceShell(),
-        buildTrustedProxyEnvSourceShell(proxyEnv),
-      ).replaceAll(WARMUP_OPENCLAW_BIN, path.join(binDir, "openclaw"));
+      const script = useWarmupExecutableFixture(
+        WARMUP_SCRIPT.replace(
+          buildTrustedProxyEnvSourceShell(),
+          buildTrustedProxyEnvSourceShell(proxyEnv),
+        ),
+        path.join(binDir, "openclaw"),
+      );
       const result = spawnSync("sh", ["-c", script], {
         encoding: "utf-8",
         env: {
@@ -281,6 +297,50 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
       expect(fs.readFileSync(callLog, "utf8")).toMatch(
         /^url=unset\nport=18789\ntoken=shared-token\npassword=shared-password\nforce=1\nrestored=unset\nsettlement=unset\nargv=gateway call sessions\.create --params \{"key":"agent:main:nemoclaw-onboard-warmup-\d+-\d+","agentId":"main"\} --json\n$/,
       );
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  itWithSh("rejects an untrusted warm-up executable before sourcing gateway credentials", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-warmup-trust-"));
+    const openClaw = path.join(fixtureRoot, "openclaw");
+    const proxyEnv = path.join(fixtureRoot, "proxy-env.sh");
+    const sourceLog = path.join(fixtureRoot, "source.log");
+    const callLog = path.join(fixtureRoot, "call.log");
+    fs.writeFileSync(
+      openClaw,
+      ["#!/bin/sh", 'printf called > "$NEMOCLAW_TEST_CALL_LOG"', ""].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      proxyEnv,
+      [
+        "export OPENCLAW_GATEWAY_TOKEN=shared-token",
+        'printf consumed > "$NEMOCLAW_TEST_PROXY_SOURCE_LOG"',
+        "",
+      ].join("\n"),
+      { mode: 0o444 },
+    );
+
+    try {
+      const script = WARMUP_SCRIPT.replaceAll(WARMUP_OPENCLAW_BIN, openClaw).replace(
+        buildTrustedProxyEnvSourceShell(),
+        buildTrustedProxyEnvSourceShell(proxyEnv),
+      );
+      const result = spawnSync("sh", ["-c", script], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          NEMOCLAW_TEST_CALL_LOG: callLog,
+          NEMOCLAW_TEST_PROXY_SOURCE_LOG: sourceLog,
+        },
+        timeout: 10_000,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(sourceLog)).toBe(false);
+      expect(fs.existsSync(callLog)).toBe(false);
     } finally {
       fs.rmSync(fixtureRoot, { recursive: true, force: true });
     }
@@ -327,10 +387,13 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
     );
 
     try {
-      const script = WARMUP_SCRIPT.replace(
-        buildTrustedProxyEnvSourceShell(),
-        buildTrustedProxyEnvSourceShell(proxyEnv),
-      ).replaceAll(WARMUP_OPENCLAW_BIN, trustedOpenClaw);
+      const script = useWarmupExecutableFixture(
+        WARMUP_SCRIPT.replace(
+          buildTrustedProxyEnvSourceShell(),
+          buildTrustedProxyEnvSourceShell(proxyEnv),
+        ),
+        trustedOpenClaw,
+      );
       const result = spawnSync("sh", ["-c", script], {
         encoding: "utf-8",
         env: {
@@ -363,7 +426,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
         "sh",
         [
           "-c",
-          WARMUP_SCRIPT.replace(
+          useWarmupExecutableFixture(WARMUP_SCRIPT, "/usr/bin/true").replace(
             buildTrustedProxyEnvSourceShell(),
             buildTrustedProxyEnvSourceShell(unsafeProxy),
           ),

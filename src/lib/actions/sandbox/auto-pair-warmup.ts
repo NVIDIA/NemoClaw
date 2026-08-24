@@ -44,24 +44,44 @@ import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 export const WARMUP_TIMEOUT_MS = 30_000;
 export const WARMUP_PROBE_TIMEOUT_S = 5;
 export const WARMUP_OPENCLAW_BIN = "/usr/local/bin/openclaw";
+const WARMUP_PYTHON_BIN = "/usr/bin/python3";
+const WARMUP_DATE_BIN = "/bin/date";
 
 // Best-effort in-sandbox request producer. Probe failures exit 0; rejecting an
 // unsafe trusted-proxy source can exit nonzero before the outer wrapper ignores
 // the result. Keep the trusted gateway credential for the initial request,
 // before a CLI device credential exists. OpenClaw 2026.7.1 can omit CLI
 // identity on loopback shared auth, so force device pairing only on this
-// command. Finalization's canonical observer owns pairing-state polling. Use
-// only root-owned executable paths after loading the gateway credential.
+// command. Finalization's canonical observer owns pairing-state polling.
+// Validate each executable before loading the gateway credential, then invoke
+// only absolute root-owned paths.
 export const WARMUP_SCRIPT = `
+WARMUP_TRUSTED_OWNER_UID=0
+warmup_is_trusted_executable() {
+  candidate="$1"
+  test -f "$candidate" && test -x "$candidate" || return 1
+  set -- $(/bin/ls -ldnL "$candidate" 2>/dev/null) || return 1
+  case "\${1:-}" in
+    -*) ;;
+    *) return 1 ;;
+  esac
+  test "\${3:-}" = "$WARMUP_TRUSTED_OWNER_UID" || return 1
+  # Root ownership protects the owner-write bit. Reject write access available
+  # to the sandbox group or any other user before credentials enter the shell.
+  case "$1" in
+    ?????w????*|????????w?*) return 1 ;;
+  esac
+}
+warmup_is_trusted_executable ${WARMUP_OPENCLAW_BIN} || exit 0
+warmup_is_trusted_executable ${WARMUP_PYTHON_BIN} || exit 0
+warmup_is_trusted_executable ${WARMUP_DATE_BIN} || exit 0
 ${buildTrustedProxyEnvSourceShell()}
-test -x ${WARMUP_OPENCLAW_BIN} || exit 0
-test -x /usr/bin/python3 || exit 0
 unset OPENCLAW_GATEWAY_URL NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING \\
   NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT || exit 0
-session_key="agent:main:${WARMUP_SESSION_ID_PREFIX}$$-$(/bin/date +%s)"
+session_key="agent:main:${WARMUP_SESSION_ID_PREFIX}$$-$(${WARMUP_DATE_BIN} +%s)"
 params="$(printf '{"key":"%s","agentId":"main"}' "$session_key")"
 OPENCLAW_BIN="${WARMUP_OPENCLAW_BIN}" NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \\
-  /usr/bin/python3 - "$params" <<'PYPROBE'
+  ${WARMUP_PYTHON_BIN} - "$params" <<'PYPROBE'
 import os
 import subprocess
 import sys

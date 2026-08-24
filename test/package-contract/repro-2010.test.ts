@@ -21,6 +21,7 @@ const POLICIES_PATH = path.join(REPO_ROOT, "dist", "lib", "policy", "index.js");
 const RUNNER_PATH = path.join(REPO_ROOT, "dist", "lib", "runner.js");
 const CLI_PATH = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const REGISTRY_PATH = path.join(REPO_ROOT, "dist", "lib", "state", "registry.js");
+const POLICY_MATCH_SANDBOX = "policy-match";
 
 /**
  * Run a CJS script in a subprocess and return stdout.
@@ -29,8 +30,13 @@ const REGISTRY_PATH = path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"
 function runScript(body: string): { stdout: string; stderr: string; status: number | null } {
   const preamble = `
     const policies = require(${JSON.stringify(POLICIES_PATH)});
+    const registry = require(${JSON.stringify(REGISTRY_PATH)});
     const runner = require(${JSON.stringify(RUNNER_PATH)});
     const YAML = require("yaml");
+    registry.getSandbox = (name) =>
+      name === ${JSON.stringify(POLICY_MATCH_SANDBOX)}
+        ? { name, agent: "openclaw", policies: [] }
+        : null;
   `;
   const result = spawnSync(process.execPath, ["-e", preamble + body], {
     cwd: REPO_ROOT,
@@ -48,7 +54,10 @@ function buildGatewayYaml(presetNames: string[]): string {
   const { stdout } = runScript(`
     const parts = ["version: 1", "", "network_policies:"];
     for (const name of ${names}) {
-      const content = policies.loadPreset(name);
+      const content = policies.loadPresetForSandbox(
+        ${JSON.stringify(POLICY_MATCH_SANDBOX)},
+        name,
+      );
       if (!content) continue;
       const entries = policies.extractPresetEntries(content);
       if (!entries) continue;
@@ -72,7 +81,10 @@ function buildGatewayYamlWithCustom(
   const { stdout } = runScript(`
     const parts = ["version: 1", "", "network_policies:"];
     for (const name of ${names}) {
-      const content = policies.loadPreset(name);
+      const content = policies.loadPresetForSandbox(
+        ${JSON.stringify(POLICY_MATCH_SANDBOX)},
+        name,
+      );
       if (!content) continue;
       const entries = policies.extractPresetEntries(content);
       if (!entries) continue;
@@ -140,7 +152,11 @@ function callGetGatewayPresets(
       return pk.length > 0 && pk.every(k => keys.has(k));
     };
     for (const preset of policies.listPresets()) {
-      const c = policies.loadPreset(preset.name); if (!c) continue;
+      const c = policies.loadPresetForSandbox(
+        ${JSON.stringify(POLICY_MATCH_SANDBOX)},
+        preset.name,
+      );
+      if (!c) continue;
       if (matchContent(c)) matched.push(preset.name);
     }
     for (const entry of customPresets) {

@@ -339,7 +339,7 @@ async function hermesChannelIsActive(
     wechat:
       'grep -Eq "^WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN$" /sandbox/.hermes/.env',
     slack:
-      'grep -Eq "^SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN$" /sandbox/.hermes/.env && grep -Eq "^SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN$" /sandbox/.hermes/.env',
+      'grep -Eq "^SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-(v[0-9]{1,20}_)?SLACK_BOT_TOKEN$" /sandbox/.hermes/.env && grep -Eq "^SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-(v[0-9]{1,20}_)?SLACK_APP_TOKEN$" /sandbox/.hermes/.env',
     // The DM policy is derived from the mode and the allowlist rather than
     // supplied, so the live sealed .env is where that derivation is proven.
     whatsapp:

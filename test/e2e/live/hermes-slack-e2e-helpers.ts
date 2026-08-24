@@ -459,15 +459,20 @@ PY`,
     sandbox,
     SANDBOX_NAME,
     String.raw`python3 - <<'PY'
+import re
 from pathlib import Path
 text = Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
 lines = set(text.splitlines())
 required = {
-    "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-    "SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
     "API_SERVER_PORT=18642",
 }
 missing = sorted(required - lines)
+for env_key, prefix in (("SLACK_BOT_TOKEN", "xoxb"), ("SLACK_APP_TOKEN", "xapp")):
+    pattern = re.compile(
+        rf"^{env_key}={prefix}-OPENSHELL-RESOLVE-ENV-(?:v[0-9]{{1,20}}_)?{env_key}$"
+    )
+    if not any(pattern.fullmatch(line) for line in lines):
+        missing.append(env_key)
 if missing:
     print("FAIL missing " + ", ".join(missing))
 else:
@@ -491,7 +496,9 @@ import re
 from pathlib import Path
 
 secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
-slack_alias_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
+slack_alias_re = re.compile(
+    r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:v[0-9]{1,20}_)?[A-Z][A-Z0-9_]*$"
+)
 allowed_nonsecret_keys = {"API_SERVER_HOST", "API_SERVER_PORT"}
 allowed_raw_secret_keys = {"API_SERVER_KEY"}
 allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}

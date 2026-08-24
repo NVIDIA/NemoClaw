@@ -37,11 +37,12 @@ function resolveTokenProviderChannelMap(
   return providerChannels;
 }
 
-function filterMessagingProvidersByEnabledChannel(
+export function filterMessagingProvidersByEnabledChannel(
   providerNames: string[],
-  providerChannels: ReadonlyMap<string, string>,
+  requests: readonly SandboxCreateMessagingProviderRequest[],
   disabledChannelNames: ReadonlySet<string>,
 ): string[] {
+  const providerChannels = resolveTokenProviderChannelMap(requests);
   return providerNames.filter((providerName) => {
     const channel = providerChannels.get(providerName);
     return !channel || !disabledChannelNames.has(channel);
@@ -157,7 +158,6 @@ export function resolveSandboxCreateIntent({
     messagingProviderRequests,
     disabledChannelNames,
   );
-  const providerChannels = resolveTokenProviderChannelMap(messagingProviderRequests);
   const activeMessagingChannels = resolveActiveMessagingChannels({
     channels,
     disabledChannelNames,
@@ -168,7 +168,7 @@ export function resolveSandboxCreateIntent({
   });
   const enabledReusableMessagingProviders = filterMessagingProvidersByEnabledChannel(
     [...new Set(reusableMessagingProviders)],
-    providerChannels,
+    messagingProviderRequests,
     disabledChannelNames,
   );
 
