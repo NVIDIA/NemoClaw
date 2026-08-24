@@ -45,6 +45,34 @@ import {
 let stateDir: string;
 let policyPath: string;
 
+const NATIVE_GPU_CREATE = `version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /etc
+    - /app
+    - /var/log
+    - /dev/urandom
+  read_write:
+    - /tmp
+network_policies:
+  inference:
+    name: inference
+    endpoints:
+      - host: inference.local
+        port: 443
+`;
+
+const NATIVE_GPU_LIVE = `${NATIVE_GPU_CREATE.replace(
+  "    - /dev/urandom\n",
+  "    - /dev/urandom\n    - /run/nvidia-persistenced\n    - /usr/lib/wsl\n",
+).replace(
+  "    - /tmp\n",
+  "    - /tmp\n    - /proc\n    - /dev/nvidiactl\n    - /dev/nvidia-uvm\n    - /dev/nvidia0\n",
+)}`;
+
 function interruptReceiptWrite(
   marker: Buffer,
   message: string,
@@ -870,6 +898,34 @@ describe("Hermes portable onboarding transaction", () => {
     expect(resumed.active.receipt.phase).toBe("active");
     expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
     expect(fixture.events.filter((event) => event === "registry")).toHaveLength(1);
+  });
+
+  it("rejects a different allowed GPU policy enrichment after configuring publication (#10121)", async () => {
+    fs.writeFileSync(policyPath, NATIVE_GPU_CREATE, { mode: 0o600 });
+    const first = deps({ updateFails: true, policySource: NATIVE_GPU_LIVE });
+    await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
+      "restart-policy update failed",
+    );
+    expect(first.events).not.toContain("registry");
+    fs.writeFileSync(policyPath, NATIVE_GPU_CREATE, { mode: 0o600 });
+    const second = deps({
+      existingSandbox: true,
+      policySource: NATIVE_GPU_LIVE.replace("/dev/nvidia0", "/dev/nvidia1"),
+    });
+
+    await expect(runHermesPortableOnboardingTransaction(input(), second.value)).rejects.toThrow(
+      "live policy authority disagrees with the configured receipt",
+    );
+
+    expect(
+      second.podman.mock.calls.some(
+        ([args]) => Array.isArray(args) && args[0] === "container" && args[1] === "update",
+      ),
+    ).toBe(false);
+    expect(second.events).not.toContain("registry");
+    expect(
+      fs.existsSync(path.join(hermesPortableReceiptDirectory("alpha", stateDir), "active.json")),
+    ).toBe(false);
   });
 
   it("keeps a contender outside the lock through registry and active publication (#9203)", async () => {

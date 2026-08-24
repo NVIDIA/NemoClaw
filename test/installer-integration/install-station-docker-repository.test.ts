@@ -6,9 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+import { TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 
 function runSourced(body: string, extraEnv: Record<string, string> = {}) {

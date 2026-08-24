@@ -9,10 +9,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   clearStationExpressInstallerResume,
   withStationExpressResumeEnvironment,
-} from "../src/lib/onboard/station-express-resume";
-import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+} from "../../src/lib/onboard/station-express-resume";
+import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const PUBLIC_BOOTSTRAP = path.join(REPO_ROOT, "install.sh");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 const STATION_REVISION = "a".repeat(40);
@@ -1280,7 +1280,7 @@ printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s STATION_EXPRESS=%s
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-complete-"));
     vi.stubEnv("HOME", home);
     vi.resetModules();
-    const session = await import("../src/lib/state/onboard-session");
+    const session = await import("../../src/lib/state/onboard-session");
     const receipt = path.join(session.SESSION_DIR, "station-express-resume");
 
     try {

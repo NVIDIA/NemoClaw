@@ -108,88 +108,69 @@ const summarySchema = Type.Object(
   },
   { additionalProperties: false },
 );
-function createReviewReceiptSchema(securityCategoryNames: readonly string[]) {
-  if (securityCategoryNames.length === 0) {
-    throw new Error("securityCategoryNames must not be empty");
-  }
-  return Type.Object(
-    {
-      summary: summarySchema,
-      terminologyReview: Type.Object(
+const reviewReceiptSchema = Type.Object(
+  {
+    summary: summarySchema,
+    terminologyReview: Type.Object(
+      {
+        decisions: Type.Array(terminologyDecisionSchema, { maxItems: 20 }),
+        noChangesReason: Type.Union([text, Type.Null()]),
+      },
+      { additionalProperties: false },
+    ),
+    acceptanceCoverage: Type.Array(
+      Type.Object(
         {
-          decisions: Type.Array(terminologyDecisionSchema, { maxItems: 20 }),
-          noChangesReason: Type.Union([text, Type.Null()]),
-        },
-        { additionalProperties: false },
-      ),
-      acceptanceCoverage: Type.Array(
-        Type.Object(
-          {
-            clause: text,
-            status: Type.Union(
-              ["met", "partial", "missing", "unknown"].map((value) => Type.Literal(value)),
-            ),
-            evidence: text,
-            findingId: Type.Union([text, Type.Null()]),
-          },
-          { additionalProperties: false },
-        ),
-      ),
-      securityCategories: Type.Array(
-        Type.Object(
-          {
-            category: Type.Union(securityCategoryNames.map((value) => Type.Literal(value))),
-            verdict: Type.Union(["pass", "warning", "fail"].map((value) => Type.Literal(value))),
-            justification: text,
-            findingId: Type.Union([text, Type.Null()]),
-          },
-          { additionalProperties: false },
-        ),
-      ),
-      sourceOfTruthReview: Type.Array(
-        Type.Object(
-          {
-            surface: text,
-            status: Type.Union(
-              ["not_applicable", "satisfied", "needs_followup", "missing"].map((value) =>
-                Type.Literal(value),
-              ),
-            ),
-            findingId: Type.Union([text, Type.Null()]),
-            invalidState: Type.String(),
-            sourceBoundary: Type.String(),
-            whyNotSourceFix: Type.String(),
-            regressionTest: Type.String(),
-            removalCondition: Type.String(),
-            evidence: Type.String(),
-          },
-          { additionalProperties: false },
-        ),
-      ),
-      testDepth: Type.Object(
-        {
-          verdict: Type.Union(
-            [
-              "unit_sufficient",
-              "mocks_recommended",
-              "runtime_validation_recommended",
-              "unknown",
-            ].map((value) => Type.Literal(value)),
+          clause: text,
+          status: Type.Union(
+            ["met", "partial", "missing", "unknown"].map((value) => Type.Literal(value)),
           ),
-          rationale: text,
-          suggestedTests: Type.Array(Type.String()),
+          evidence: text,
+          findingId: Type.Union([text, Type.Null()]),
         },
         { additionalProperties: false },
       ),
-      positives: Type.Array(Type.String()),
-      reviewCompleteness: Type.Object(
-        { limitations: Type.Array(Type.String()), requiresHumanReview: Type.Literal(true) },
+    ),
+    sourceOfTruthReview: Type.Array(
+      Type.Object(
+        {
+          surface: text,
+          status: Type.Union(
+            ["not_applicable", "satisfied", "needs_followup", "missing"].map((value) =>
+              Type.Literal(value),
+            ),
+          ),
+          findingId: Type.Union([text, Type.Null()]),
+          invalidState: Type.String(),
+          sourceBoundary: Type.String(),
+          whyNotSourceFix: Type.String(),
+          regressionTest: Type.String(),
+          removalCondition: Type.String(),
+          evidence: Type.String(),
+        },
         { additionalProperties: false },
       ),
-    },
-    { additionalProperties: false },
-  );
-}
+    ),
+    testDepth: Type.Object(
+      {
+        verdict: Type.Union(
+          ["unit_sufficient", "mocks_recommended", "runtime_validation_recommended", "unknown"].map(
+            (value) => Type.Literal(value),
+          ),
+        ),
+        rationale: text,
+        suggestedTests: Type.Array(Type.String()),
+      },
+      { additionalProperties: false },
+    ),
+    positives: Type.Array(Type.String()),
+    reviewCompleteness: Type.Object(
+      { limitations: Type.Array(Type.String()), requiresHumanReview: Type.Literal(true) },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
 const e2eTest = Type.Object({ id: text, reason: text }, { additionalProperties: false });
 const targetRecommendation = Type.Object(
   {
@@ -272,12 +253,6 @@ type DraftReceipt = {
   summary: Record<string, unknown>;
   terminologyReview: TerminologyCommitInput;
   acceptanceCoverage: Array<Record<string, unknown> & { findingId: string | null }>;
-  securityCategories: Array<{
-    category: string;
-    verdict: "pass" | "warning" | "fail";
-    justification: string;
-    findingId: string | null;
-  }>;
   sourceOfTruthReview: Array<Record<string, unknown> & { findingId: string | null }>;
   testDepth: ReviewTestDepth;
   positives: string[];
@@ -290,7 +265,6 @@ export function createReviewSubmissionController({
   terminologyTraces = new Map(),
   normalizeE2e,
   repositoryRoot,
-  securityCategoryNames,
 }: {
   metadata: ReviewSubmissionMetadata;
   schema: Record<string, unknown>;
@@ -299,7 +273,6 @@ export function createReviewSubmissionController({
     | (() => ReadonlyMap<string, TerminologyTrace>);
   normalizeE2e: NormalizeReviewE2e;
   repositoryRoot: string;
-  securityCategoryNames: readonly string[];
 }): ReviewSubmissionController {
   let findingsDraft: ModelFindingInput[] | null = null;
   let findingsRevision = 0;
@@ -314,7 +287,6 @@ export function createReviewSubmissionController({
   let submitted: unknown | null = null;
   let findingSnapshot = validateReviewFindingSubmission([], repositoryRoot);
   let terminologySnapshot = createTerminologyLedger(metadata.headSha).snapshot();
-  const reviewReceiptSchema = createReviewReceiptSchema(securityCategoryNames);
   const ajv = new Ajv2020({ allErrors: true, strict: false });
   const validateReceipt = ajv.compile(reviewReceiptSchema);
   const validateE2e = ajv.compile(e2eSchema);
@@ -324,7 +296,7 @@ export function createReviewSubmissionController({
     name: RECORD_FINDINGS_TOOL,
     label: "Record review findings draft",
     description:
-      "Replace the complete findings draft and return stable IDs. Omit simplification for ordinary findings; provide it only for basis.kind=unnecessary_complexity. When a receipt concern will link this finding, list each exact association in receiptConcerns as acceptance:<clause>, security:<category>, or source-of-truth:<surface>. Canonical state changes only after successful terminal submission.",
+      "Replace the complete findings draft and return stable IDs. Record concrete security defects as ordinary evidence-backed findings. Omit simplification for ordinary findings; provide it only for basis.kind=unnecessary_complexity. When a receipt concern will link this finding, list each exact association in receiptConcerns as acceptance:<clause> or source-of-truth:<surface>. Canonical state changes only after successful terminal submission.",
     parameters: Type.Object(
       { findings: Type.Array(findingSchema, { maxItems: REVIEW_FINDING_LIMIT }) },
       { additionalProperties: false },
@@ -363,7 +335,7 @@ export function createReviewSubmissionController({
     name: RECORD_REVIEW_RECEIPT_TOOL,
     label: "Record review receipt draft",
     description:
-      "After record_findings, replace the complete receipt. Required root fields are summary, terminologyReview, acceptanceCoverage, securityCategories, sourceOfTruthReview, testDepth, positives, and reviewCompleteness. Use findingId=null for acceptance met/unknown, security pass, and source-of-truth satisfied/not_applicable entries. Use a returned finding ID only when that exact concern is covered by that finding. Investigation-only tools, including pr_review_trace_term, are unavailable during this turn; use only traces already captured in the investigation receipt.",
+      "After record_findings, replace the complete receipt. Required root fields are summary, terminologyReview, acceptanceCoverage, sourceOfTruthReview, testDepth, positives, and reviewCompleteness. Use findingId=null for acceptance met/unknown and source-of-truth satisfied/not_applicable entries. Use a returned finding ID only when that exact concern is covered by that finding. Investigation-only tools, including pr_review_trace_term, are unavailable during this turn; use only traces already captured in the investigation receipt.",
     parameters: reviewReceiptSchema,
     executionMode: "sequential",
     execute: async (_id, input) => {
@@ -427,9 +399,6 @@ export function createReviewSubmissionController({
             ),
           )
         : undefined;
-      await captureValidationIssue(validationIssues, () =>
-        validateSecurityCategories(receiptDraft!.securityCategories, securityCategoryNames),
-      );
       const normalizedE2e = await captureValidationIssue(validationIssues, async () => {
         const normalized = await normalizeE2e(structuredClone(e2eDraft!), metadata);
         if (!validateE2e(normalized)) {
@@ -446,10 +415,7 @@ export function createReviewSubmissionController({
         candidateTerminology.commit(receiptDraft!.terminologyReview, traces),
       );
       if (openFindings) {
-        const qualityIssues = reviewQualityIssues({
-          findings: openFindings,
-          securityCategories: receiptDraft!.securityCategories,
-        });
+        const qualityIssues = reviewQualityIssues({ findings: openFindings });
         if (qualityIssues.length > 0) {
           validationIssues.push(
             `submit_review result failed review quality validation: ${qualityIssues.join("; ")}`,
@@ -512,25 +478,6 @@ export function createReviewSubmissionController({
   };
 }
 
-function validateSecurityCategories(
-  categories: unknown[],
-  securityCategoryNames: readonly string[],
-): void {
-  const names = categories.map((value) => (value as { category?: unknown }).category);
-  const missing = securityCategoryNames.filter((name) => !names.includes(name));
-  const seen = new Set<unknown>();
-  const extras = names.filter((name) => {
-    const duplicate = seen.has(name);
-    seen.add(name);
-    return !securityCategoryNames.includes(String(name)) || duplicate;
-  });
-  if (missing.length > 0 || extras.length > 0) {
-    throw new Error(
-      `securityCategories must contain each named category exactly once; missing: ${missing.join(", ") || "none"}; unsupported or duplicate: ${extras.join(", ") || "none"}`,
-    );
-  }
-}
-
 export const ACCEPTANCE_FINDING_REFERENCE_PAIRS = [
   ["acceptance", "unmet_acceptance"],
   ["correctness", "behavior_mismatch"],
@@ -539,18 +486,9 @@ export const ACCEPTANCE_FINDING_REFERENCE_PAIRS = [
   ["scope", "unmet_acceptance"],
 ] as const;
 
-export const SECURITY_FINDING_REFERENCE_PAIRS = [
-  ["security", "security_violation"],
-  ["security", "semantic_ambiguity"],
-] as const;
-
 const ACCEPTANCE_FINDING_PAIRS: ReadonlySet<string> = new Set(
   ACCEPTANCE_FINDING_REFERENCE_PAIRS.map(([category, basisKind]) => `${category}:${basisKind}`),
 );
-const SECURITY_FINDING_PAIRS: ReadonlySet<string> = new Set(
-  SECURITY_FINDING_REFERENCE_PAIRS.map(([category, basisKind]) => `${category}:${basisKind}`),
-);
-
 const SOURCE_OF_TRUTH_FINDING_CATEGORIES = new Set([
   "correctness",
   "security",
@@ -578,17 +516,6 @@ async function receiptFindingReferenceIssues(
       (finding) => ACCEPTANCE_FINDING_PAIRS.has(findingPair(finding)),
       (entry) => `acceptance:${String(entry.clause)}`,
       (entry) => (entry.status === "missing" ? "blocker" : "warning"),
-    ),
-  );
-  await captureValidationIssue(issues, () =>
-    validateConcernEntries(
-      "securityCategories",
-      receipt.securityCategories,
-      findingsById,
-      (entry) => entry.verdict === "warning" || entry.verdict === "fail",
-      (finding) => SECURITY_FINDING_PAIRS.has(findingPair(finding)),
-      (entry) => `security:${String(entry.category)}`,
-      (entry) => (entry.verdict === "fail" ? "blocker" : "warning"),
     ),
   );
   await captureValidationIssue(issues, () =>
@@ -672,7 +599,6 @@ function publicReceiptDraft(receipt: DraftReceipt, deterministicTestDepth: Revie
   return {
     ...receipt,
     acceptanceCoverage: receipt.acceptanceCoverage.map(stripDraftFindingId),
-    securityCategories: receipt.securityCategories.map(stripDraftFindingId),
     testDepth: enforceDeterministicTestDepthFloor(receipt.testDepth, deterministicTestDepth),
   };
 }
