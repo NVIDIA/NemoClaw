@@ -56,6 +56,7 @@ const sourceOrGeneratedOpenShellPolicyBoundary =
 const {
   assertExternalPolicyRequirementContainment,
   assertMatchingPolicyAuthority,
+  assertPolicyRequirementContainment,
   parseOpenShellPolicy,
   parseSandboxPolicyAuthorityMetadata,
   withoutProviderComposedPolicies,
@@ -68,7 +69,7 @@ const sourceOrGeneratedSandboxName = importedSandboxName as typeof importedSandb
 const { assertValidName, assertValidProviderName, isValidName } =
   sourceOrGeneratedSandboxName.default ?? sourceOrGeneratedSandboxName;
 
-type Action = "plan" | "apply" | "status" | "rollback";
+type Action = "plan" | "apply" | "status" | "reconcile" | "rollback";
 
 type RollbackPlanSource = {
   sandbox_name?: unknown;
@@ -78,6 +79,9 @@ type RollbackPlanSource = {
   identity?: unknown;
   policy_authority?: unknown;
   policy_transition?: unknown;
+};
+type ReconciliationPlanSource = RollbackPlanSource & {
+  policy_additions?: unknown;
 };
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
 type RestProtocol = "rest";
@@ -108,7 +112,8 @@ interface PolicyAddition {
 
 type PolicyAdditions = { [name: string]: PolicyAddition };
 
-type BlueprintPolicyAuthorityInspection = import("../shared/openshell-policy-boundary.cjs").SandboxPolicyAuthorityInspection;
+type BlueprintPolicyAuthorityInspection =
+  import("../shared/openshell-policy-boundary.cjs").SandboxPolicyAuthorityInspection;
 
 type BlueprintPolicyAuthorityReceipt = {
   authority: BlueprintPolicyAuthorityInspection["authority"];
@@ -131,7 +136,7 @@ type StatusPolicyTransition = BlueprintPolicyTransitionReceipt & {
 };
 
 const POLICY_TRANSITION_RECONCILIATION_ACTION =
-  "Inspect the recorded gateway policy for the listed additions and reconcile the reused sandbox before retrying apply or rollback.";
+  "Run reconcile with this run ID before retrying apply or rollback.";
 
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 const REST_PROTOCOLS = new Set(["rest"]);
@@ -202,7 +207,13 @@ function isUnconfiguredInferenceRoute(output: string): boolean {
 }
 
 function isAction(value: string | undefined): value is Action {
-  return value === "plan" || value === "apply" || value === "status" || value === "rollback";
+  return (
+    value === "plan" ||
+    value === "apply" ||
+    value === "status" ||
+    value === "reconcile" ||
+    value === "rollback"
+  );
 }
 
 // Redact credential-shaped output before bounding OpenShell stderr to a compact,
@@ -718,9 +729,7 @@ function assertBlueprintPolicyAuthorityMatches(
     assertMatchingPolicyAuthority(recorded.authority, observed.authority);
   } catch (error) {
     const detail = error instanceof Error ? error.message : "policy authority is invalid";
-    throw new Error(
-      `Refusing to apply blueprint policy additions because ${detail}.`,
-    );
+    throw new Error(`Refusing to apply blueprint policy additions because ${detail}.`);
   }
 }
 
@@ -737,6 +746,20 @@ function assertBlueprintExternalPolicyRequirements(
     throw new Error(
       `Refusing to apply the blueprint: ${detail}. Ask the external policy authority to supply the exact required entries.`,
     );
+  }
+}
+
+function assertBlueprintPolicyRequirements(
+  inspection: BlueprintPolicyAuthorityInspection,
+  additions: PolicyAdditions,
+): void {
+  try {
+    assertPolicyRequirementContainment(inspection, {
+      network_policies: additions,
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "the policy requirement is invalid";
+    throw new Error(`Cannot reconcile the blueprint policy transition: ${detail}.`);
   }
 }
 
@@ -937,9 +960,7 @@ function isBlueprintPolicyTransitionReceipt(
 ): value is BlueprintPolicyTransitionReceipt {
   if (!isPlainObject(value)) return false;
   if (
-    (value.status !== "pending" &&
-      value.status !== "incomplete" &&
-      value.status !== "complete") ||
+    (value.status !== "pending" && value.status !== "incomplete" && value.status !== "complete") ||
     !isValidName(value.sandbox_name) ||
     !isValidName(value.gateway) ||
     value.expected_authority !== "nemoclaw-managed" ||
@@ -1201,7 +1222,9 @@ export async function actionApply(
   const sandboxName = sandboxCfg.name ?? "openclaw";
   const sandboxImage = sandboxCfg.image ?? "openclaw";
   const forwardPorts = sandboxCfg.forward_ports ?? [DASHBOARD_PORT];
-  const policyAdditions = blueprint.components?.policy?.additions ?? {};
+  const policyAdditions = withoutProviderComposedPolicies(
+    blueprint.components?.policy?.additions ?? {},
+  );
   const runtimeIdentityConfig = blueprint.components?.identity;
   const providerName = inferenceCfg.provider_name ?? "default";
   const providerType = inferenceCfg.provider_type ?? "openai";
@@ -1527,7 +1550,7 @@ export async function actionApply(
         );
         if (currentPolicy.exitCode !== 0) {
           throw new Error(
-            `Failed to read current policy before applying additions: ${currentPolicy.stderr}`,
+            `Failed to read current policy before applying additions: ${boundedCommandError(currentPolicy.stderr)}`,
           );
         }
 
@@ -1566,7 +1589,9 @@ export async function actionApply(
           { reject: false },
         );
         if (policySet.exitCode !== 0) {
-          throw new Error(`Failed to apply policy additions: ${policySet.stderr}`);
+          throw new Error(
+            `Failed to apply policy additions: ${boundedCommandError(policySet.stderr)}`,
+          );
         }
         policyTransition = { ...policyTransition, status: "incomplete" };
         persistRunPlan();
@@ -1698,6 +1723,86 @@ export function actionStatus(rid?: string): void {
   } catch {
     log(JSON.stringify({ run_id: name, status: "unknown" }));
   }
+}
+
+export async function actionReconcile(rid: string): Promise<void> {
+  emitRunId();
+
+  const runsDir = join(homedir(), ".nemoclaw", "state", "runs");
+  const stateDir = safeRunDir(runsDir, rid);
+  try {
+    readdirSync(stateDir);
+  } catch {
+    throw new Error(`Run ${rid} not found.`);
+  }
+
+  const planFile = join(stateDir, "plan.json");
+  let plan: ReconciliationPlanSource;
+  let transition: BlueprintPolicyTransitionReceipt;
+  let additions: PolicyAdditions;
+  try {
+    const parsedPlan: unknown = JSON.parse(readFileSync(planFile, "utf-8"));
+    if (!isPlainObject(parsedPlan)) {
+      throw new Error("plan.json must contain a JSON object");
+    }
+    plan = parsedPlan;
+    if (plan.sandbox_created_by_apply !== false) {
+      throw new Error("policy reconciliation requires a reused sandbox");
+    }
+    const sandboxName = readRollbackSandboxName(plan);
+    if (!isBlueprintPolicyTransitionReceipt(plan.policy_transition)) {
+      throw new Error("policy transition receipt is invalid");
+    }
+    transition = plan.policy_transition;
+    if (transition.sandbox_name !== sandboxName) {
+      throw new Error("policy transition sandbox does not match the run plan");
+    }
+    if (!isPolicyAdditions(plan.policy_additions)) {
+      throw new Error("policy additions are invalid");
+    }
+    additions = withoutProviderComposedPolicies(plan.policy_additions);
+    const additionNames = Object.keys(additions).sort();
+    if (
+      additionNames.length === 0 ||
+      additionNames.length !== transition.policy_addition_names.length ||
+      additionNames.some((name, index) => name !== transition.policy_addition_names[index])
+    ) {
+      throw new Error("policy transition additions do not match the run plan");
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Cannot read reconciliation plan for run ${rid}: ${detail}`);
+  }
+
+  if (transition.status === "complete") {
+    log(`Policy transition for run ${rid} is already complete.`);
+    return;
+  }
+
+  const observed = await inspectBlueprintPolicyAuthority(
+    transition.gateway,
+    transition.sandbox_name,
+  );
+  try {
+    assertMatchingPolicyAuthority(transition.expected_authority, observed.authority);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "policy authority is invalid";
+    throw new Error(`Cannot reconcile the blueprint policy transition: ${detail}.`);
+  }
+  assertBlueprintPolicyRequirements(observed, additions);
+
+  writeFileSync(
+    planFile,
+    JSON.stringify(
+      {
+        ...plan,
+        policy_transition: { ...transition, status: "complete" },
+      },
+      null,
+      2,
+    ),
+  );
+  log(`Policy transition for run ${rid} is complete.`);
 }
 
 export async function actionRollback(rid: string): Promise<void> {
@@ -1832,7 +1937,7 @@ export async function main(
       return;
     }
     throw new Error(
-      `Unknown action '${rawAction ?? "(missing)"}'. Use: plan, apply, status, rollback, snapshots`,
+      `Unknown action '${rawAction ?? "(missing)"}'. Use: plan, apply, status, reconcile, rollback, snapshots`,
     );
   }
 
@@ -1873,6 +1978,12 @@ export async function main(
     }
     case "status":
       actionStatus(runId);
+      break;
+    case "reconcile":
+      if (!runId) {
+        throw new Error("--run-id is required for reconcile");
+      }
+      await actionReconcile(runId);
       break;
     case "rollback":
       if (!runId) {

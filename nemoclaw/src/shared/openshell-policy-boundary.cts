@@ -95,7 +95,8 @@ function policyValuesEqual(left: unknown, right: unknown): boolean {
   if (Object.is(left, right)) return true;
   if (Array.isArray(left) && Array.isArray(right)) {
     return (
-      left.length === right.length && left.every((value, index) => policyValuesEqual(value, right[index]))
+      left.length === right.length &&
+      left.every((value, index) => policyValuesEqual(value, right[index]))
     );
   }
   if (!isMapping(left) || !isMapping(right)) return false;
@@ -116,18 +117,14 @@ function formatPolicyKeys(keys: readonly string[]): string {
   return keys.map((key) => JSON.stringify(key)).join(", ");
 }
 
-/**
- * Require an external policy to contain the requested entries and sections.
- * Additional externally managed content is allowed.
- */
-export function assertExternalPolicyRequirementContainment(
+function assertPolicyRequirementContainmentForOwner(
   inspection: SandboxPolicyAuthorityInspection,
   requiredPolicy: OpenShellPolicyMapping,
+  owner: string,
 ): void {
   if (!isPolicyAuthority(inspection.authority)) {
     throw new Error("the observed OpenShell policy authority is invalid");
   }
-  if (inspection.authority === "nemoclaw-managed") return;
   const effectivePolicy = policyMapping(
     inspection.effectivePolicy,
     "the observed effective policy is invalid",
@@ -179,7 +176,34 @@ export function assertExternalPolicyRequirementContainment(
       ? [`drifted sections ${formatPolicyKeys(driftedSections)}`]
       : []),
   ].join("; ");
-  throw new Error(`the externally managed policy has ${differences}`);
+  throw new Error(`the ${owner} has ${differences}`);
+}
+
+/** Require a policy to contain the requested entries and sections. */
+export function assertPolicyRequirementContainment(
+  inspection: SandboxPolicyAuthorityInspection,
+  requiredPolicy: OpenShellPolicyMapping,
+): void {
+  assertPolicyRequirementContainmentForOwner(inspection, requiredPolicy, "observed policy");
+}
+
+/**
+ * Require an external policy to contain the requested entries and sections.
+ * Additional externally managed content is allowed.
+ */
+export function assertExternalPolicyRequirementContainment(
+  inspection: SandboxPolicyAuthorityInspection,
+  requiredPolicy: OpenShellPolicyMapping,
+): void {
+  if (!isPolicyAuthority(inspection.authority)) {
+    throw new Error("the observed OpenShell policy authority is invalid");
+  }
+  if (inspection.authority === "nemoclaw-managed") return;
+  assertPolicyRequirementContainmentForOwner(
+    inspection,
+    requiredPolicy,
+    "externally managed policy",
+  );
 }
 
 function assertValidatedPolicyFields(
@@ -187,9 +211,7 @@ function assertValidatedPolicyFields(
 ): asserts policy is ValidatedOpenShellPolicyMapping {
   if (
     policy.version !== undefined &&
-    (typeof policy.version !== "number" ||
-      !Number.isInteger(policy.version) ||
-      policy.version < 1)
+    (typeof policy.version !== "number" || !Number.isInteger(policy.version) || policy.version < 1)
   ) {
     throw new Error(
       "Current policy from openshell policy get --base version must be a positive integer",

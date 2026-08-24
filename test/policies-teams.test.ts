@@ -100,6 +100,10 @@ process.stdout.write("\n__RESULT__" + JSON.stringify({
       `#!/usr/bin/env bash
 set -euo pipefail
 if [ "$1 $2" = "policy get" ]; then
+  if [[ " $* " == *" --output json "* ]]; then
+    printf '%s\n' '{"scope":"sandbox","sandbox":"hermes-sandbox","status":"effective","policy_source":"sandbox","policy":{}}'
+    exit 0
+  fi
   printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'
   exit 0
 fi

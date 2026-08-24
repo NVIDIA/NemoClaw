@@ -177,14 +177,23 @@ function assertShieldsPolicySnapshotRestoreAuthority(
   }
 }
 
-function inspectExternalPolicyRecoveryHandoff(sandboxName: string): string | null {
+type ShieldsPolicyRecoveryInspection =
+  | { status: "ready" }
+  | { status: "external"; handoff: string }
+  | { status: "unavailable"; detail: string };
+
+function inspectShieldsPolicyRecovery(sandboxName: string): ShieldsPolicyRecoveryInspection {
   try {
     assertShieldsPolicyMutationAuthority(sandboxName, "inspect Shields policy recovery");
-    return null;
+    return { status: "ready" };
   } catch (error) {
-    return isExternalPolicyAuthorityRefusalError(error)
-      ? externalPolicyRecoveryHandoff(sandboxName)
-      : null;
+    if (isExternalPolicyAuthorityRefusalError(error)) {
+      return { status: "external", handoff: externalPolicyRecoveryHandoff(sandboxName) };
+    }
+    return {
+      status: "unavailable",
+      detail: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -5924,6 +5933,7 @@ type ShieldsStatusDeps = {
   resolveConfig?: typeof resolveAgentConfig;
   verifyStateLockPlan?: (sandboxName: string, target: AgentConfigTarget) => string[];
   assertCommandAvailable?: () => void;
+  inspectPolicyRecovery?: typeof inspectShieldsPolicyRecovery;
 };
 
 function verifyHermesProviderMutableStatus(
@@ -5976,6 +5986,7 @@ function shieldsStatusWithoutHostLock(
 
   const verify = deps.verifyLockState ?? verifyShieldsLockState;
   const resolveConfig = deps.resolveConfig ?? resolveAgentConfig;
+  const inspectPolicyRecovery = deps.inspectPolicyRecovery ?? inspectShieldsPolicyRecovery;
 
   const posture = getShieldsPostureWithoutHostLock(sandboxName, allowInlineRecovery);
   const { state } = posture;
@@ -6132,7 +6143,18 @@ function shieldsStatusWithoutHostLock(
       const elapsed = downSince ? Math.floor((Date.now() - downSince.getTime()) / 1000) : 0;
       const remaining =
         state.shieldsDownTimeout != null ? Math.max(0, state.shieldsDownTimeout - elapsed) : null;
-      const recoveryHandoff = inspectExternalPolicyRecoveryHandoff(sandboxName);
+      const policyRecovery = inspectPolicyRecovery(sandboxName);
+
+      if (policyRecovery.status === "unavailable") {
+        console.error("  Shields: DOWN (RECOVERY REQUIRED — policy authority unavailable)");
+        console.error(`  Policy authority: ${policyRecovery.detail}`);
+        console.error(
+          `  Recovery: restore policy authority inspection for sandbox '${sandboxName}', then retry \`${CLI_NAME} ${sandboxName} shields status\` before relying on automatic lockdown.`,
+        );
+        throw new DeferredShieldsExit("Policy authority inspection is required", 2);
+      }
+
+      const recoveryHandoff = policyRecovery.status === "external" ? policyRecovery.handoff : null;
 
       console.log(
         recoveryHandoff

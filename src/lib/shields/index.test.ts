@@ -459,6 +459,8 @@ describe("shields — unit logic", () => {
   });
 
   describe("NC-3112: status self-heals stale expired auto-restore markers", () => {
+    const readyPolicyRecovery = () => ({ status: "ready" as const });
+
     async function loadShieldsModule() {
       const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "index.ts");
       return import(sourceModulePath);
@@ -546,7 +548,7 @@ describe("shields — unit logic", () => {
 
       const { shieldsStatus } = await loadShieldsModule();
 
-      shieldsStatus(sandboxName);
+      shieldsStatus(sandboxName, true, { inspectPolicyRecovery: readyPolicyRecovery });
 
       expect(processKillSpy).not.toHaveBeenCalled();
       expect(errorSpy).toHaveBeenCalledWith(
@@ -725,7 +727,7 @@ describe("shields — unit logic", () => {
 
       const { shieldsStatus } = await loadShieldsModule();
 
-      shieldsStatus(sandboxName);
+      shieldsStatus(sandboxName, true, { inspectPolicyRecovery: readyPolicyRecovery });
 
       expect(logSpy).toHaveBeenCalledWith("  Shields: DOWN (temporarily unlocked)");
       expect(errorSpy).toHaveBeenCalledWith(
@@ -840,7 +842,7 @@ describe("shields — unit logic", () => {
       );
 
       const { shieldsStatus } = await loadShieldsModule();
-      shieldsStatus(sandboxName);
+      shieldsStatus(sandboxName, true, { inspectPolicyRecovery: readyPolicyRecovery });
 
       expect(errorSpy).toHaveBeenCalledWith(
         "  Warning: auto-restore timer authority is expired, invalid, or no longer live; attempting inline restore.",

@@ -7,6 +7,7 @@ import YAML from "yaml";
 import {
   assertExternalPolicyRequirementContainment,
   assertMatchingPolicyAuthority,
+  assertPolicyRequirementContainment,
   parseOpenShellPolicy,
   parseSandboxPolicyAuthorityMetadata,
   stripProviderComposedPolicies,
@@ -134,9 +135,9 @@ describe("sandbox policy authority boundary", () => {
     expect(() => assertMatchingPolicyAuthority("externally-managed", "unknown")).toThrow(
       /observed OpenShell policy authority is unavailable/u,
     );
-    expect(() =>
-      assertMatchingPolicyAuthority("nemoclaw-managed", "externally-managed"),
-    ).toThrow(/changed from nemoclaw-managed to externally-managed/u);
+    expect(() => assertMatchingPolicyAuthority("nemoclaw-managed", "externally-managed")).toThrow(
+      /changed from nemoclaw-managed to externally-managed/u,
+    );
   });
 
   it("requires external entries and sections while allowing unrelated content", () => {
@@ -176,6 +177,23 @@ describe("sandbox policy authority boundary", () => {
         network_policies: [] as never,
       }),
     ).toThrow(/required network policy input is invalid/u);
+  });
+
+  it("requires recorded entries in a NemoClaw-managed policy", () => {
+    const inspection = {
+      authority: "nemoclaw-managed" as const,
+      effectivePolicy: { network_policies: { required: { allow: true } } },
+    };
+    expect(() =>
+      assertPolicyRequirementContainment(inspection, {
+        network_policies: { required: { allow: true } },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertPolicyRequirementContainment(inspection, {
+        network_policies: { missing: { allow: true } },
+      }),
+    ).toThrow(/missing entries "missing"/u);
   });
 });
 

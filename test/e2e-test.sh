@@ -157,6 +157,18 @@ trap cleanup_apply_fixture EXIT
 cat >"$FAKE_OPENSHELL_BIN/openshell" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+if [ "${1:-}" = "status" ]; then
+  printf '%s\n' 'Gateway Status' '  Status: Connected' '  Gateway: fixture-gateway'
+  exit 0
+fi
+if [ "${1:-} ${2:-}" = "policy list" ]; then
+  exit 0
+fi
+if [ "${1:-} ${2:-}" = "policy get" ] && [[ " $* " == *" --output json "* ]]; then
+  sandbox="${@: -1}"
+  printf '{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":{}}\n' "$sandbox"
+  exit 0
+fi
 case "${1:-} ${2:-} ${3:-}" in
   "policy get --base")
     printf '%s\n' 'Policy for sandbox fixture' '---'

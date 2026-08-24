@@ -58,7 +58,8 @@ vi.mock("./ssrf.js", async (importOriginal) => {
   };
 });
 
-const { actionApply, actionRollback, actionStatus } = await import("./runner.js");
+const { actionApply, actionReconcile, actionRollback, actionStatus, main } =
+  await import("./runner.js");
 
 const BASE_POLICY = `version: 1
 future_policy:
@@ -246,15 +247,22 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
   });
 
   it("fails closed when policy get --base fails", async () => {
+    const diagnostic = `MY_API_KEY=super-secret ${"policy details ".repeat(80)}`;
     mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
       args.join(" ") === "policy get -g test-gateway --base test-sandbox"
-        ? { exitCode: 1, stdout: "", stderr: "gateway unavailable" }
+        ? { exitCode: 1, stdout: "", stderr: diagnostic }
         : defaultCommandResult(args),
     );
 
-    await expect(actionApply("default", blueprint())).rejects.toThrow(
-      /Failed to read current policy.*gateway unavailable/,
+    const error = await actionApply("default", blueprint()).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      "Failed to read current policy before applying additions",
     );
+    expect((error as Error).message).toContain("MY_API_KEY=<REDACTED>");
+    expect((error as Error).message).not.toContain("super-secret");
+    expect((error as Error).message).toContain("…");
+    expect((error as Error).message.length).toBeLessThan(600);
     expect(policySetCalls()).toEqual([]);
   });
 
@@ -335,8 +343,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
           ? { exitCode: 0, stdout: "VERSION STATUS\n1 loaded\n", stderr: "" }
           : args.join(" ") === "policy get -g recorded-gateway --global --full --output json"
             ? globalPolicyAuthorityResult(additions)
-            : args.join(" ") ===
-                "policy get -g recorded-gateway --full --output json test-sandbox"
+            : args.join(" ") === "policy get -g recorded-gateway --full --output json test-sandbox"
               ? sandboxPolicyAuthorityResult("test-sandbox", "externally-managed", additions)
               : { exitCode: 0, stdout: "", stderr: "" },
     );
@@ -494,7 +501,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
         status: "incomplete",
         sandbox_name: "test-sandbox",
         reconciliation_required: true,
-        reconciliation_action: expect.stringContaining("reconcile the reused sandbox"),
+        reconciliation_action: expect.stringContaining("Run reconcile"),
       },
     });
 
@@ -502,9 +509,29 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       /policy transition for reused sandbox "test-sandbox".*is incomplete.*reconcile/u,
     );
     expect(store.has(`${planEntry?.[0].replace(/\/plan\.json$/u, "")}/rolled_back`)).toBe(false);
+
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "policy get -g test-gateway --full --output json test-sandbox"
+        ? sandboxPolicyAuthorityResult(
+            "test-sandbox",
+            "nemoclaw-managed",
+            blueprint().components!.policy!.additions!,
+          )
+        : defaultCommandResult(args),
+    );
+    stdoutCapture.reset();
+    await main(["reconcile", "--run-id", plan.run_id]);
+    expect(stdoutCapture.text()).toContain(`Policy transition for run ${plan.run_id} is complete.`);
+    expect(JSON.parse(store.get(planEntry?.[0] ?? "")?.content ?? "{}")).toMatchObject({
+      policy_transition: { status: "complete" },
+    });
+
+    await actionRollback(plan.run_id);
+    expect(store.has(`${planEntry?.[0].replace(/\/plan\.json$/u, "")}/rolled_back`)).toBe(true);
   });
 
   it("keeps a pending receipt when a reused-sandbox policy set fails (#9833)", async () => {
+    const diagnostic = `POLICY_TOKEN=super-secret ${"policy details ".repeat(80)}`;
     const responses = new Map([
       [
         "sandbox create --from openclaw --name test-sandbox --forward 18789",
@@ -518,7 +545,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
           stderr: "",
         },
       ],
-      ["policy set", { exitCode: 1, stdout: "", stderr: "policy set rejected" }],
+      ["policy set", { exitCode: 1, stdout: "", stderr: diagnostic }],
     ]);
     mockExeca.mockImplementation(
       async (_cmd: string, args: string[]) =>
@@ -527,11 +554,18 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
         defaultCommandResult(args),
     );
 
-    await expect(actionApply("default", blueprint())).rejects.toThrow(/policy set rejected/u);
-    const planEntry = [...store.values()].find((entry) =>
+    const error = await actionApply("default", blueprint()).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("Failed to apply policy additions");
+    expect((error as Error).message).toContain("POLICY_TOKEN=<REDACTED>");
+    expect((error as Error).message).not.toContain("super-secret");
+    expect((error as Error).message).toContain("…");
+    expect((error as Error).message.length).toBeLessThan(600);
+    const planEntry = [...store.entries()].find(([, entry]) =>
       entry.content?.includes('"policy_transition"'),
     );
-    expect(JSON.parse(planEntry?.content ?? "{}")).toMatchObject({
+    const plan = JSON.parse(planEntry?.[1].content ?? "{}") as { run_id: string };
+    expect(plan).toMatchObject({
       sandbox_created_by_apply: false,
       policy_transition: {
         status: "pending",
@@ -540,7 +574,61 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
         policy_addition_names: ["nim_service"],
       },
     });
+
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "policy get -g test-gateway --full --output json test-sandbox"
+        ? sandboxPolicyAuthorityResult(
+            "test-sandbox",
+            "nemoclaw-managed",
+            blueprint().components!.policy!.additions!,
+          )
+        : defaultCommandResult(args),
+    );
+    await actionReconcile(plan.run_id);
+    expect(JSON.parse(store.get(planEntry?.[0] ?? "")?.content ?? "{}")).toMatchObject({
+      policy_transition: { status: "complete" },
+    });
   });
+
+  it.each([
+    ["authority change", "externally-managed" as const, blueprint().components!.policy!.additions!],
+    ["missing addition", "nemoclaw-managed" as const, {}],
+  ])(
+    "retains an incomplete receipt after a reconciliation %s (#9833)",
+    async (_case, authority, observed) => {
+      const runId = "incomplete-transition";
+      const stateDir = `${FAKE_HOME}/.nemoclaw/state/runs/${runId}`;
+      const additions = blueprint().components!.policy!.additions!;
+      store.set(stateDir, { type: "dir" });
+      store.set(`${stateDir}/plan.json`, {
+        type: "file",
+        content: JSON.stringify({
+          run_id: runId,
+          sandbox_name: "test-sandbox",
+          sandbox_created_by_apply: false,
+          policy_additions: additions,
+          policy_transition: {
+            status: "incomplete",
+            sandbox_name: "test-sandbox",
+            gateway: "recorded-gateway",
+            expected_authority: "nemoclaw-managed",
+            policy_addition_names: ["nim_service"],
+          },
+        }),
+      });
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        args.join(" ") === "policy get -g recorded-gateway --full --output json test-sandbox"
+          ? sandboxPolicyAuthorityResult("test-sandbox", authority, observed)
+          : defaultCommandResult(args),
+      );
+
+      await expect(actionReconcile(runId)).rejects.toThrow(/Cannot reconcile/u);
+      expect(JSON.parse(store.get(`${stateDir}/plan.json`)?.content ?? "{}")).toMatchObject({
+        policy_transition: { status: "incomplete" },
+      });
+      await expect(actionRollback(runId)).rejects.toThrow(/is incomplete/u);
+    },
+  );
 
   it("rejects an invalid persisted policy transition (#9833)", async () => {
     const runId = "invalid-transition";
@@ -565,6 +653,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     stdoutCapture.reset();
     actionStatus(runId);
     expect(stdoutCapture.jsonOutput()).toEqual({ run_id: runId, status: "unknown" });
+    await expect(actionReconcile(runId)).rejects.toThrow(/policy transition receipt is invalid/u);
     await expect(actionRollback(runId)).rejects.toThrow(/policy transition receipt is invalid/u);
   });
 });
