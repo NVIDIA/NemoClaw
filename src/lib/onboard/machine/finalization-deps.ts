@@ -2,12 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS,
+  OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
+  OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
+  OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
+  OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
   type OpenClawPairingSettlementObservation,
 } from "../../actions/sandbox/launch-readiness/openclaw-pairing-qualification";
 import type { OpenClawPairingSettlementTarget } from "../../actions/sandbox/launch-readiness";
-import { WARMUP_TIMEOUT_MS } from "../../actions/sandbox/auto-pair-warmup";
 import { CONNECT_AUTO_PAIR_TIMEOUT_MS } from "../../actions/sandbox/connect-autopair-budget";
+
+export {
+  OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
+  OPENCLAW_ONBOARDING_PAIRING_POLL_MS,
+  OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS,
+  OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
+} from "../../actions/sandbox/launch-readiness/openclaw-pairing-qualification";
 
 // The lazy `require` calls avoid an import cycle because connect.ts and
 // process-recovery.ts both import onboarding helpers.
@@ -18,23 +27,6 @@ type ProcessRecoveryDeps = Pick<
 type SandboxLifecycleLock = typeof import("../../state/mcp-lifecycle-lock").withMcpLifecycleLock;
 type GatewayRouteLock =
   typeof import("../../inference/gateway-route-mutation-lock").withGatewayRouteMutationLock;
-
-// A contended gateway list can consume the watcher's full 10-second child
-// bound. Keep enough room for another complete observation window after the
-// first three attempts instead of racing the watcher at 30 seconds (#9817).
-export const OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS = 60_000;
-export const OPENCLAW_ONBOARDING_PAIRING_POLL_MS = 1_000;
-export const OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS = 30_000;
-// Keep one outer cap while reserving each bounded child's fixed budget,
-// including the settled/already-pending precheck. Pairing appearance retains
-// its existing limit, and
-// a capped warm-up can no longer consume the approval or final-read budget.
-export const OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS =
-  OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS +
-  OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS +
-  WARMUP_TIMEOUT_MS +
-  CONNECT_AUTO_PAIR_TIMEOUT_MS +
-  OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS;
 
 export type OrdinaryOpenClawPairingSettlementResult =
   | { readonly kind: "settled" }
