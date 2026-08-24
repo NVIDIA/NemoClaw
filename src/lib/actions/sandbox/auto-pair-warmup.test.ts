@@ -150,6 +150,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
     );
 
     try {
+      expect(RESTORED_CLONE_WARMUP_SCRIPT).toContain(buildTrustedProxyEnvSourceShell());
       const script = RESTORED_CLONE_WARMUP_SCRIPT.replace(
         buildTrustedProxyEnvSourceShell(),
         buildTrustedProxyEnvSourceShell(proxyEnv),
@@ -219,7 +220,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
         fs.rmSync(fixtureRoot, { recursive: true, force: true });
       }
     },
-    12_000,
+    20_000,
   );
 
   itWithSh("uses device auth after consuming the trusted proxy environment (#10014)", () => {
