@@ -800,6 +800,46 @@ node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
   );
   expectExitZero(binding, `bind ${api.kind} fake ${protocol} credential`);
 
+  await runHost(
+    host,
+    host.openshellCommandPath,
+    [
+      "sandbox",
+      "provider",
+      "attach",
+      "-g",
+      env.OPENSHELL_GATEWAY ?? "nemoclaw",
+      SANDBOX_NAME,
+      providerName,
+    ],
+    {
+      artifactName: `attach-${api.kind}-${protocol}-credential`,
+      env,
+      redactionValues,
+      timeoutMs: 60_000,
+    },
+  );
+  const attachments = await runHost(
+    host,
+    host.openshellCommandPath,
+    [
+      "sandbox",
+      "provider",
+      "list",
+      "-g",
+      env.OPENSHELL_GATEWAY ?? "nemoclaw",
+      SANDBOX_NAME,
+    ],
+    {
+      artifactName: `inspect-${api.kind}-${protocol}-attachments`,
+      env,
+      redactionValues,
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(attachments, `inspect ${api.kind} fake ${protocol} provider attachments`);
+  expect(resultText(attachments)).toContain(providerName);
+
   const publication = await runHost(
     host,
     host.openshellCommandPath,

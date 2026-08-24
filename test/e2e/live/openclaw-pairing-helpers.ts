@@ -259,6 +259,44 @@ node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
   );
   expectExitZero(binding, `${options.artifactName} credential binding`);
 
+  await options.host.command(
+    options.host.openshellCommandPath,
+    [
+      "sandbox",
+      "provider",
+      "attach",
+      "-g",
+      options.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+      options.sandboxName,
+      options.providerName,
+    ],
+    {
+      artifactName: `${options.artifactName}-provider-attachment`,
+      env: options.env,
+      redactionValues: options.redactions,
+      timeoutMs: 60_000,
+    },
+  );
+  const attachments = await options.host.command(
+    options.host.openshellCommandPath,
+    [
+      "sandbox",
+      "provider",
+      "list",
+      "-g",
+      options.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+      options.sandboxName,
+    ],
+    {
+      artifactName: `${options.artifactName}-provider-attachments`,
+      env: options.env,
+      redactionValues: options.redactions,
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(attachments, `${options.artifactName} provider attachment inventory`);
+  expect(resultText(attachments)).toContain(options.providerName);
+
   const publication = await options.host.command(
     options.host.openshellCommandPath,
     [
