@@ -10,6 +10,7 @@ import path from "node:path";
 
 import * as importedGatewayEnv from "../../../src/lib/onboard/docker-driver-gateway-env.ts";
 import * as importedGatewayLocalTls from "../../../src/lib/onboard/docker-driver-gateway-local-tls.ts";
+import * as importedBuildContextStage from "../../../src/lib/onboard/build-context-stage.ts";
 import * as importedHermesBuildContext from "../../../src/lib/onboard/experimental/hermes-portable-build-context.ts";
 import * as importedPortableHostPreparation from "../../../src/lib/onboard/experimental/portable-host-preparation.ts";
 import * as importedSandboxPrebuild from "../../../src/lib/onboard/sandbox-prebuild.ts";
@@ -46,6 +47,11 @@ const gatewayLocalTlsModule = (
     ? importedGatewayLocalTls.default
     : importedGatewayLocalTls
 ) as typeof import("../../../src/lib/onboard/docker-driver-gateway-local-tls.ts");
+const buildContextStageModule = (
+  "default" in importedBuildContextStage && importedBuildContextStage.default
+    ? importedBuildContextStage.default
+    : importedBuildContextStage
+) as typeof import("../../../src/lib/onboard/build-context-stage.ts");
 const portableHostPreparationModule = (
   "default" in importedPortableHostPreparation && importedPortableHostPreparation.default
     ? importedPortableHostPreparation.default
@@ -69,6 +75,7 @@ const buildContextModule = (
 
 const { buildDockerDriverGatewayEnv } = gatewayEnvModule;
 const { ensureDockerDriverGatewayLocalTlsBundle } = gatewayLocalTlsModule;
+const { stageCreateSandboxBuildContext } = buildContextStageModule;
 const { preparePortableExperimentalHost } = portableHostPreparationModule;
 const { createHermesPortableBuildContextPlan } = hermesBuildContextModule;
 const { prebuildSandboxImageIfEligible } = sandboxPrebuildModule;
@@ -324,13 +331,25 @@ async function main(progress: TestProgress): Promise<void> {
     );
     const hermesContext = hermesContextPlan.materialize(hermesContextInput);
     let hermesImageRef: string | null = null;
+    let cleanupHermesTemporaryBuildContext = (): boolean => true;
     try {
+      hermesContext.assertCurrent();
+      const hermesTemporaryBuildContext = stageCreateSandboxBuildContext({
+        root: fs.realpathSync(process.cwd()),
+        fromDockerfile: hermesContext.dockerfilePath,
+        agent: null,
+        createAgentSandbox: () => {
+          throw new Error("Hermes Portable E2E must stage the reviewed durable context.");
+        },
+        log: console.log,
+      });
+      cleanupHermesTemporaryBuildContext = hermesTemporaryBuildContext.cleanupBuildCtx;
       const hermesPrebuild = await prebuildSandboxImageIfEligible({
-        buildCtx: hermesContext.buildContextPath,
+        buildCtx: hermesTemporaryBuildContext.buildCtx,
         buildId: "hermes-rootless-e2e",
         createArgs: [
           "--from",
-          hermesContext.dockerfilePath,
+          hermesTemporaryBuildContext.stagedDockerfile,
           "--name",
           HERMES_PORTABLE_E2E_SANDBOX_NAME,
         ],
@@ -350,9 +369,16 @@ async function main(progress: TestProgress): Promise<void> {
         /^(?:sha256:)?[a-f0-9]{64}$/,
       );
     } finally {
-      hermesImageRef && run("podman", ["image", "rm", "--force", hermesImageRef]);
-      hermesContextRetired = hermesContextPlan.retire(hermesContextInput);
-      assert.equal(hermesContextRetired, true);
+      try {
+        hermesImageRef && run("podman", ["image", "rm", "--force", hermesImageRef]);
+      } finally {
+        try {
+          assert.equal(cleanupHermesTemporaryBuildContext(), true);
+        } finally {
+          hermesContextRetired = hermesContextPlan.retire(hermesContextInput);
+          assert.equal(hermesContextRetired, true);
+        }
+      }
     }
     assert.deepEqual(
       parseDockerNetworkIpamEntries(

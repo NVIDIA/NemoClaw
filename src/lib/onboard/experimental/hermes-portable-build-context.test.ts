@@ -462,6 +462,14 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     expect(fs.existsSync(reservationRoot)).toBe(reservationExistedBefore);
   });
 
+  it("treats a later escape-shaped Dockerfile comment as an ordinary comment (#10007)", () => {
+    const source = primaryCloneFixture();
+    const dockerfile = path.join(source, "agents/hermes/Dockerfile");
+    fs.appendFileSync(dockerfile, "\n# escape=`\n");
+
+    expect(() => createHermesPortableBuildContextPlan(source, BUILD_SETTINGS)).not.toThrow();
+  });
+
   it("rejects source symlinks, hardlinks, and unreviewed secret paths (#9203)", () => {
     const source = primaryCloneFixture();
     const script = path.join(source, "agents/hermes/start.sh");

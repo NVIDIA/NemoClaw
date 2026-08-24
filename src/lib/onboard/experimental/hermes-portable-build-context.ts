@@ -248,13 +248,24 @@ function parseDockerfileSources(bytes: Buffer): readonly string[] {
   }
   const local: string[] = [];
   let logicalInstruction = "";
+  let parserDirectiveSection = true;
   for (const rawLine of text.split("\n")) {
     const trimmed = rawLine.trim();
-    const escapeDirective = trimmed.match(/^#\s*escape\s*=\s*(\S+)\s*$/iu);
-    if (escapeDirective && escapeDirective[1] !== "\\") {
+    const parserDirective = parserDirectiveSection
+      ? trimmed.match(/^#\s*(syntax|escape|check)\s*=\s*(\S.*)\s*$/iu)
+      : null;
+    if (parserDirective?.[1]?.toLowerCase() === "escape" && parserDirective[2] !== "\\") {
       fail("Dockerfile has an unsupported escape directive");
     }
-    if (!trimmed || trimmed.startsWith("#")) continue;
+    if (!trimmed) {
+      parserDirectiveSection = false;
+      continue;
+    }
+    if (trimmed.startsWith("#")) {
+      if (!parserDirective) parserDirectiveSection = false;
+      continue;
+    }
+    parserDirectiveSection = false;
     const continued = trimmed.endsWith("\\");
     const segment = continued ? trimmed.slice(0, -1).trimEnd() : trimmed;
     logicalInstruction = logicalInstruction ? `${logicalInstruction} ${segment}`.trim() : segment;
