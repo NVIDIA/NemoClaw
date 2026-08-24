@@ -11,6 +11,8 @@ describe("Docker build guard", () => {
     "buildx build .",
     "--context default build .",
     "-H unix:///var/run/docker.sock buildx build .",
+    "buildx bake",
+    "--context default buildx bake release",
   ])("rejects a Dockerfile build recorded as %s", (trace) => {
     expect(() => assertNoDockerfileBuild(trace)).toThrow("forbidden Dockerfile build");
   });

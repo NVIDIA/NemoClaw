@@ -30,7 +30,7 @@ import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { driveInteractiveCommand } from "./onboard-interactive-pty.ts";
 import {
-  PI_IMAGE_SOURCE_PATHS,
+  derivePiImageSourcePaths,
   parsePiJsonEvents,
   parsePiInferenceEvidence,
   parsePiRuntimePackageEvidence,
@@ -323,9 +323,13 @@ test(
     expect(receipt.contract.agent).toBe("pi");
     expect(receipt.contract.platform).toBe(platform);
     expect(receipt.contract.source.repository).toBe("NVIDIA/NemoClaw");
+    const piDockerfiles = ["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"].map((file) =>
+      fs.readFileSync(path.join(REPO_ROOT, file), "utf8"),
+    );
+    const imageSourcePaths = derivePiImageSourcePaths(piDockerfiles);
     const sourceParity = await host.command(
       "git",
-      ["diff", "--quiet", receipt.contract.source.revision, "HEAD", "--", ...PI_IMAGE_SOURCE_PATHS],
+      ["diff", "--quiet", receipt.contract.source.revision, "HEAD", "--", ...imageSourcePaths],
       { artifactName: "pi-image-source-parity", env, timeoutMs: 30_000 },
     );
     expect(sourceParity.exitCode, resultText(sourceParity)).toBe(0);
@@ -428,6 +432,7 @@ test(
     );
     expect(logs.exitCode, resultText(logs)).toBe(0);
     const trace = readOptionalUtf8File(guard.tracePath);
+    expect(trace.trim(), "Docker build guard trace").not.toBe("");
     assertNoDockerfileBuild(trace);
     await artifacts.writeText("docker-argv.log", trace);
     const inferenceEvidence = await readPiInferenceEvidence(sandbox, env, inference.model);

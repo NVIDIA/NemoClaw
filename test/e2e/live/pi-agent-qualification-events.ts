@@ -16,29 +16,6 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 
 type JsonRecord = Record<string, unknown>;
 
-export const PI_IMAGE_SOURCE_PATHS = [
-  ".dockerignore",
-  "agents/pi",
-  "nemoclaw-blueprint",
-  "scripts/lib/bundled-npm-package.mts",
-  "scripts/lib/entrypoint-env-wrapper.sh",
-  "scripts/lib/patch-bundled-npm-ip-address.mts",
-  "scripts/lib/reviewed-npm-archive.mts",
-  "scripts/lib/sandbox-rlimits.sh",
-  "scripts/managed-bootstrap-entrypoint.c",
-  "scripts/managed-bootstrap-trampoline.sh",
-  "scripts/managed-startup-hold.sh",
-  "scripts/patch-bundled-npm-brace-expansion.mts",
-  "scripts/patch-bundled-npm-tar.mts",
-  "scripts/security/build-native-security-packages.sh",
-  "scripts/security/build-perl-security-packages.sh",
-  "scripts/security/patches/libssh2-1.11.1-cve-2026.patch",
-  "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
-  "scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch",
-  "scripts/upgrade-bundled-npm.mts",
-  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
-] as const;
-
 export interface PiReadTaskProof {
   readonly assistantText: string;
   readonly eventCount: number;

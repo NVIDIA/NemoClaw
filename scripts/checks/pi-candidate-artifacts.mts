@@ -38,6 +38,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import ts from "typescript";
 import { isDeepStrictEqual } from "node:util";
 import { parse as parseYaml } from "yaml";
 
@@ -392,11 +394,32 @@ export function verifyPiQualificationReceipts(sources: PiArtifactSources): strin
   const expectedDigests = receipts
     .map(({ contents }) => createHash("sha256").update(contents, "utf8").digest("hex"))
     .sort();
-  const piAuthority =
-    sources.candidateAuthority.match(/pi:\s*Object[.]freeze\(\s*\[([\s\S]*?)\]\s*\)/u)?.[1] ?? "";
-  const publishedDigests = [...piAuthority.matchAll(/"([a-f0-9]{64})"/gu)]
-    .map(([, digest]) => digest)
-    .sort();
+  const authoritySource = ts.createSourceFile(
+    PI_CANDIDATE_AUTHORITY_PATH,
+    sources.candidateAuthority,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  let publishedDigests: string[] = [];
+  const visitAuthority = (node: ts.Node): void => {
+    if (
+      ts.isPropertyAssignment(node) &&
+      node.name.getText(authoritySource) === "pi" &&
+      ts.isCallExpression(node.initializer) &&
+      node.initializer.expression.getText(authoritySource) === "Object.freeze"
+    ) {
+      const array = node.initializer.arguments[0];
+      if (array && ts.isArrayLiteralExpression(array)) {
+        publishedDigests = array.elements.flatMap((element) =>
+          ts.isStringLiteral(element) && /^[a-f0-9]{64}$/u.test(element.text) ? [element.text] : [],
+        );
+      }
+    }
+    ts.forEachChild(node, visitAuthority);
+  };
+  visitAuthority(authoritySource);
+  publishedDigests.sort();
   if (!isDeepStrictEqual(publishedDigests, expectedDigests)) {
     failures.push(
       `${PI_CANDIDATE_AUTHORITY_PATH}: accepted digests must match the exact Pi qualification receipts`,

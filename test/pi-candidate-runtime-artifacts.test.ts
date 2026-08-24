@@ -224,6 +224,28 @@ describe("Pi qualification receipts", () => {
     ).toContain("Pi qualification receipts must identify one source revision, release, and cohort");
   });
 
+  it("rejects a stale commented Pi authority before the executed entry", () => {
+    const sources = currentSources();
+    const changedAuthority = sources.candidateAuthority.replace(
+      "207930aaca3b1f233b32ddc0c5a3abe3db3123f34bb5b59a4233130befc16df5",
+      "f".repeat(64),
+    );
+    const staleAuthority = changedAuthority.replace(
+      "export const CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS",
+      `// pi: Object.freeze([
+//   "207930aaca3b1f233b32ddc0c5a3abe3db3123f34bb5b59a4233130befc16df5",
+//   "1e49356ca9a910ea52fc7a0a70164aff8b056a5530e786c8ea0e54f79858e20e",
+// ])
+export const CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS`,
+    );
+
+    expect(
+      verifyPiQualificationReceipts({ ...sources, candidateAuthority: staleAuthority }),
+    ).toContain(
+      "src/lib/agent/candidate-authority.ts: accepted digests must match the exact Pi qualification receipts",
+    );
+  });
+
   it("rejects Pi receipt digests published under another candidate", () => {
     const sources = currentSources();
     expect(

@@ -1,14 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
-
 import { describe, expect, it } from "vitest";
 
-import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
-  PI_IMAGE_SOURCE_PATHS,
   derivePiImageSourcePaths,
   parsePiJsonEvents,
   parsePiInferenceEvidence,
@@ -51,12 +46,19 @@ function events(...values: Record<string, unknown>[]): string {
 }
 
 describe("Pi qualification event oracle", () => {
-  it("keeps source parity paths aligned with both Pi Dockerfiles", () => {
-    const dockerfiles = ["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"].map((file) =>
-      fs.readFileSync(path.join(REPO_ROOT, file), "utf8"),
-    );
+  it("derives source parity paths from Dockerfile inputs", () => {
+    expect(
+      derivePiImageSourcePaths([
+        "COPY agents/pi/start.sh /usr/local/bin/start\nCOPY extra/runtime.txt /runtime.txt",
+        "COPY --from=builder /built/runtime /runtime",
+      ]),
+    ).toEqual([".dockerignore", "agents/pi", "extra/runtime.txt"]);
+  });
 
-    expect(derivePiImageSourcePaths(dockerfiles)).toEqual([...PI_IMAGE_SOURCE_PATHS].sort());
+  it("rejects ambiguous Dockerfile copy inputs", () => {
+    expect(() => derivePiImageSourcePaths(['COPY ["source", "/destination"]'])).toThrow(
+      "must use plain path operands",
+    );
   });
 
   it("accepts one successful read and an exact final response", () => {

@@ -36,11 +36,13 @@ export function createDockerBuildGuard(): DockerBuildGuard {
       `trace=${shellQuote(tracePath)}`,
       'printf \'%q \' "$@" >>"$trace"',
       "printf '\\n' >>\"$trace\"",
+      "previous=",
       'for argument in "$@"; do',
-      '  if [[ "$argument" == build ]]; then',
+      '  if [[ "$argument" == build || ("$previous" == buildx && "$argument" == bake) ]]; then',
       "    echo 'Qualification attempted a forbidden Dockerfile build' >&2",
       "    exit 97",
       "  fi",
+      '  previous="$argument"',
       "done",
       `exec ${shellQuote(realDocker)} "$@"`,
       "",
@@ -56,7 +58,7 @@ export function createDockerBuildGuard(): DockerBuildGuard {
 }
 
 export function assertNoDockerfileBuild(trace: string): void {
-  if (/(?:^|\s)build(?:\s|$)/u.test(trace)) {
+  if (/(?:^|\s)build(?:\s|$)|(?:^|\s)buildx\s+bake(?:\s|$)/u.test(trace)) {
     throw new Error("Qualification used a forbidden Dockerfile build");
   }
 }
