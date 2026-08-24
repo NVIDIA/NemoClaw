@@ -7,3 +7,24 @@ Policy modules own sandbox network-policy preset loading, tier resolution, and
 policy application helpers. They may orchestrate OpenShell policy commands while
 legacy flows are being migrated, but pure selection/planning helpers should move
 under `src/lib/domain/**` when they can be isolated.
+
+## Policy authority
+
+The policy module reads the effective OpenShell policy through the sandbox's recorded gateway.
+NemoClaw records the first qualified authority before another policy read or set.
+NemoClaw refuses the operation when it cannot write that record.
+
+Immediately before each policy set, NemoClaw reads authority again and compares it with the record.
+NemoClaw refuses the policy set when:
+
+- NemoClaw cannot determine authority.
+- Recorded and observed authority differ.
+- An external authority owns the policy.
+
+For external authority, preset requests only verify the effective policy.
+NemoClaw requires the exact preset entries before it reports success.
+NemoClaw does not set policy or record preset or custom-policy attribution.
+The external authority must supply a missing or changed entry.
+
+A legacy sandbox record retains the first qualified `policyAuthority` after a later operation fails.
+An inspection that cannot determine authority does not change the record.

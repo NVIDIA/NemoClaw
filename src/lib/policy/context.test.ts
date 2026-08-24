@@ -76,11 +76,18 @@ function mockBuiltinPresets() {
   });
 }
 
-function stubRegistry(entry: Partial<{ policies: string[]; policyTier: string }>) {
+function stubRegistry(
+  entry: Partial<{
+    policies: string[];
+    policyTier: string;
+    policyAuthority: "nemoclaw-managed" | "externally-managed";
+  }>,
+) {
   vi.mocked(registry.getSandbox).mockReturnValue({
     name: SANDBOX,
     policies: entry.policies,
     policyTier: entry.policyTier ?? null,
+    policyAuthority: entry.policyAuthority,
   } as ReturnType<typeof registry.getSandbox>);
 }
 
@@ -144,6 +151,67 @@ describe("buildPolicyContext", () => {
     expect(ctx.supportBoundaries.some((b) => b.capability === "host allowlist enforcement")).toBe(
       true,
     );
+    expect(ctx.supportBoundaries).toContainEqual({
+      capability: "shields toggle",
+      owner: "nemoclaw",
+      note: "shields up locks down mutable config",
+    });
+  });
+
+  it("attributes externally managed policy changes only to the external authority (#9833)", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    stubRegistry({
+      policies: [],
+      policyTier: "balanced",
+      policyAuthority: "externally-managed",
+    });
+    vi.mocked(registry.getBaselineExclusions).mockReturnValue([
+      {
+        version: 1,
+        agent: "openclaw",
+        key: "nous_research",
+        digest: "digest-1",
+        acknowledgedAt: "2026-07-19T00:00:00.000Z",
+      },
+    ]);
+    vi.mocked(policies.getBaselineExclusionRuntimeStatus).mockReturnValue("excluded");
+
+    const context = buildPolicyContext(SANDBOX);
+    const markdown = renderPolicyContextMarkdown(context);
+
+    expect(context.tier).toBeNull();
+    expect(getTier).not.toHaveBeenCalled();
+    expect(context.supportBoundaries).toContainEqual({
+      capability: "preset selection",
+      owner: "external",
+      note: "the external policy authority must supply a changed entry",
+    });
+    expect(context.supportBoundaries).toContainEqual({
+      capability: "shields toggle",
+      owner: "external",
+      note: "the external authority controls live policy changes; restrictive NemoClaw-owned configuration protection and cleanup may still proceed",
+    });
+    expect(context.approvalPath).toEqual({
+      inspect: "nemoclaw alpha policy list",
+      add: "Ask the external policy authority to supply a changed entry.",
+      remove: "Ask the external policy authority to supply a changed entry.",
+      excludeBaseline: "nemoclaw alpha policy exclude <key> --dry-run",
+      restoreBaseline: "Ask the external policy authority to supply a changed entry.",
+      documentation: "docs/network-policy/customize-network-policy.mdx",
+    });
+    expect(markdown).toContain(
+      "restore: Ask the external policy authority to supply a changed entry.",
+    );
+    expect(markdown).toContain(
+      "- restore a baseline entry: Ask the external policy authority to supply a changed entry.",
+    );
+    expect(markdown).toContain(
+      "- shields toggle (owner: external) — the external authority controls live policy changes; restrictive NemoClaw-owned configuration protection and cleanup may still proceed",
+    );
+    expect(markdown).toContain("`nemoclaw alpha policy exclude <key> --dry-run`");
+    expect(markdown).not.toMatch(/nemoclaw alpha policy (?:add|remove|restore)(?:\s|`)/u);
   });
 
   it("marks active presets as `verified` when the gateway agrees and `registry-only` when it disagrees", () => {
@@ -396,66 +464,66 @@ describe("buildPolicyContext", () => {
     expect(markdown).toContain("rebuild blocked");
   });
 
-  it.each([
-    "exclude",
-    "restore",
-  ] as const)("surfaces pending %s repair even when the release baseline is unreadable (#7194)", (operation) => {
-    resetMocks();
-    mockBuiltinPresets();
-    vi.mocked(getTier).mockReturnValue(null);
-    vi.mocked(registry.getBaselineExclusions).mockReturnValue([
-      {
-        version: 1,
-        agent: "openclaw",
-        key: "another_entry",
-        digest: "c".repeat(64),
-        acknowledgedAt: "2026-07-18T00:00:00.000Z",
-      },
-      {
-        version: 1,
-        agent: "openclaw",
-        key: "nous_research",
-        digest: "a".repeat(64),
-        acknowledgedAt: "2026-07-19T00:00:00.000Z",
-      },
-    ]);
-    vi.mocked(registry.getSandbox).mockReturnValue({
-      name: SANDBOX,
-      policies: [],
-      baselineExclusionTransition: {
-        id: "00000000-0000-4000-8000-000000000001",
-        operation,
-        exclusion: {
+  it.each(["exclude", "restore"] as const)(
+    "surfaces pending %s repair even when the release baseline is unreadable (#7194)",
+    (operation) => {
+      resetMocks();
+      mockBuiltinPresets();
+      vi.mocked(getTier).mockReturnValue(null);
+      vi.mocked(registry.getBaselineExclusions).mockReturnValue([
+        {
+          version: 1,
+          agent: "openclaw",
+          key: "another_entry",
+          digest: "c".repeat(64),
+          acknowledgedAt: "2026-07-18T00:00:00.000Z",
+        },
+        {
           version: 1,
           agent: "openclaw",
           key: "nous_research",
           digest: "a".repeat(64),
           acknowledgedAt: "2026-07-19T00:00:00.000Z",
         },
-        targetLiveDigest: operation === "restore" ? "b".repeat(64) : null,
-        startedAt: "2026-07-19T00:00:00.000Z",
-      },
-    });
-    vi.mocked(policies.getBaselineExclusionRuntimeStatus).mockReturnValue("baseline-unreadable");
+      ]);
+      vi.mocked(registry.getSandbox).mockReturnValue({
+        name: SANDBOX,
+        policies: [],
+        baselineExclusionTransition: {
+          id: "00000000-0000-4000-8000-000000000001",
+          operation,
+          exclusion: {
+            version: 1,
+            agent: "openclaw",
+            key: "nous_research",
+            digest: "a".repeat(64),
+            acknowledgedAt: "2026-07-19T00:00:00.000Z",
+          },
+          targetLiveDigest: operation === "restore" ? "b".repeat(64) : null,
+          startedAt: "2026-07-19T00:00:00.000Z",
+        },
+      });
+      vi.mocked(policies.getBaselineExclusionRuntimeStatus).mockReturnValue("baseline-unreadable");
 
-    const ctx = buildPolicyContext(SANDBOX);
+      const ctx = buildPolicyContext(SANDBOX);
 
-    expect(ctx.baselineExclusions).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ key: "another_entry", status: "baseline-unreadable" }),
-        expect.objectContaining({
-          key: "nous_research",
-          status: operation === "exclude" ? "pending-exclude-repair" : "pending-restore-repair",
-        }),
-      ]),
-    );
-    expect(ctx.baselineExclusions).toHaveLength(2);
-    expect(policies.getBaselineExclusionRuntimeStatus).toHaveBeenCalledOnce();
-    expect(policies.getBaselineExclusionRuntimeStatus).toHaveBeenCalledWith(
-      SANDBOX,
-      expect.objectContaining({ key: "another_entry" }),
-    );
-  });
+      expect(ctx.baselineExclusions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ key: "another_entry", status: "baseline-unreadable" }),
+          expect.objectContaining({
+            key: "nous_research",
+            status: operation === "exclude" ? "pending-exclude-repair" : "pending-restore-repair",
+          }),
+        ]),
+      );
+      expect(ctx.baselineExclusions).toHaveLength(2);
+      expect(policies.getBaselineExclusionRuntimeStatus).toHaveBeenCalledOnce();
+      expect(policies.getBaselineExclusionRuntimeStatus).toHaveBeenCalledWith(
+        SANDBOX,
+        expect.objectContaining({ key: "another_entry" }),
+      );
+    },
+  );
 });
 
 describe("renderPolicyContextMarkdown", () => {
@@ -508,24 +576,20 @@ describe("renderPolicyContextMarkdown", () => {
       gatewayPresets: null,
       agentBase: false,
     },
-  ])("renders the $status verification status (#9079)", ({
-    status,
-    applied,
-    gatewayPresets,
-    agentBase,
-  }) => {
-    resetMocks();
-    mockBuiltinPresets();
-    stubTier();
-    stubRegistry({ policies: applied, policyTier: "balanced" });
-    vi.mocked(policies.isAgentBasePreset).mockReturnValue(agentBase);
+  ])(
+    "renders the $status verification status (#9079)",
+    ({ status, applied, gatewayPresets, agentBase }) => {
+      resetMocks();
+      mockBuiltinPresets();
+      stubTier();
+      stubRegistry({ policies: applied, policyTier: "balanced" });
+      vi.mocked(policies.isAgentBasePreset).mockReturnValue(agentBase);
 
-    const md = renderPolicyContextMarkdown(
-      buildPolicyContext(SANDBOX, { gatewayPresets }),
-    );
+      const md = renderPolicyContextMarkdown(buildPolicyContext(SANDBOX, { gatewayPresets }));
 
-    expect(md).toContain(`status: ${status}`);
-  });
+      expect(md).toContain(`status: ${status}`);
+    },
+  );
 
   it("states which verification statuses confirm gateway enforcement (#9079)", () => {
     resetMocks();
