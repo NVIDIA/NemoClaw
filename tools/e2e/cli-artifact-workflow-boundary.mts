@@ -269,6 +269,8 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
     !isDeepStrictEqual(record(packageStep.env), {
       CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository || github.repository }}",
       CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
+      MANAGED_IMAGE_PUBLICATION_SHA:
+        "${{ inputs.managed_image_publication_sha || inputs.checkout_sha || github.sha }}",
       RUN_ATTEMPT: "${{ github.run_attempt }}",
       RUN_ID: "${{ github.run_id }}",
       WORKFLOW_SHA: "${{ github.workflow_sha }}",
@@ -288,8 +290,8 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
     ".sourceRevision == $candidateSha",
     "candidate CLI build identity does not match the candidate commit SHA",
     ".source.revision == $revision",
-    ".source.release == $release",
-    "managed-image catalog source identity does not match the candidate",
+    "[.[].source.release] | unique | length",
+    "managed-image catalog source identity does not match the selected publication",
     "--sort=name",
     "--mtime=@0",
     "nemoclaw/dist/shared",

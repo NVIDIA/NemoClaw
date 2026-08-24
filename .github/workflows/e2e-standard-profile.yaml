@@ -420,41 +420,32 @@ jobs:
         if: ${{ inputs.managed_image_catalog != '' }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           MANAGED_IMAGE_CATALOG: ${{ inputs.managed_image_catalog }}
-          RESTORE_CLI: ${{ inputs.restore_cli && 'true' || 'false' }}
         run: |
           set -euo pipefail
           catalog_path="${RUNNER_TEMP}/e2e-managed-image-catalog.json"
-          jq -e --arg revision "$CANDIDATE_SHA" '
+          jq -e '
             type == "object" and length > 0 and
             all(.[];
-              .source.revision == $revision and
+              (.source.revision | type == "string" and test("^[0-9a-f]{40}$")) and
               (.source.release | type == "string" and length > 0) and
               (.source.cohort | type == "string" and length > 0)
             ) and
+            ([.[].source.revision] | unique | length) == 1 and
             ([.[].source.release] | unique | length) == 1 and
             ([.[].source.cohort] | unique | length) == 1
           ' <<<"$MANAGED_IMAGE_CATALOG" >/dev/null || {
-            echo "::error::managed-image catalog source identity does not match the candidate" >&2
+            echo "::error::managed-image catalog does not contain one exact publication identity" >&2
             exit 1
           }
-          if [[ "$RESTORE_CLI" == "true" ]]; then
-            [[ -s dist/build-identity.json && ! -L dist/build-identity.json ]]
-            candidate_release="v$(jq -r '.nemoclawVersion' dist/build-identity.json)"
-            jq -e --arg release "$candidate_release" '
-              all(.[]; .source.release == $release)
-            ' <<<"$MANAGED_IMAGE_CATALOG" >/dev/null || {
-              echo "::error::managed-image catalog release does not match the restored CLI" >&2
-              exit 1
-            }
-          fi
+          catalog_revision="$(jq -er '[.[].source.revision] | unique | .[0]' <<<"$MANAGED_IMAGE_CATALOG")"
           jq -c . <<<"$MANAGED_IMAGE_CATALOG" >"$catalog_path"
           [[ -s "$catalog_path" && ! -L "$catalog_path" ]] || {
             echo "::error::temporary managed-image catalog is invalid" >&2
             exit 1
           }
           printf 'NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG=%s\n' "$catalog_path" >>"$GITHUB_ENV"
+          printf 'NEMOCLAW_E2E_MANAGED_IMAGE_REVISION=%s\n' "$catalog_revision" >>"$GITHUB_ENV"
 
       - name: Install reviewed cloudflared
         if: ${{ inputs.cloudflared }}

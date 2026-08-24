@@ -87,6 +87,12 @@ on:
         default: ""
         type: string
 
+      managed_image_publication_sha:
+        description: Optional exact same-PR managed-image publication to reuse when all later changes are outside managed-image inputs.
+        required: false
+        default: ""
+        type: string
+
       correlation_id:
         description: Run correlation ID (UUIDv4).
         required: false
@@ -597,6 +603,7 @@ jobs:
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha }}
           GITHUB_TOKEN: ${{ github.token }}
+          MANAGED_IMAGE_PUBLICATION_SHA: ${{ inputs.managed_image_publication_sha }}
           PR_NUMBER: ${{ inputs.pr_number }}
         run: node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "${RUNNER_TEMP}/pr-managed-image-catalog.json"
 
@@ -684,6 +691,7 @@ jobs:
         env:
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          MANAGED_IMAGE_PUBLICATION_SHA: ${{ inputs.managed_image_publication_sha || inputs.checkout_sha || github.sha }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
@@ -726,12 +734,17 @@ jobs:
           if [[ -e "$managed_catalog" ]]; then
             [[ -f "$managed_catalog" && ! -L "$managed_catalog" && -s "$managed_catalog" ]] ||
               { echo "::error::trusted PR managed-image catalog is not a nonempty regular file"; exit 1; }
-            candidate_release="v$(jq -r '.nemoclawVersion' dist/build-identity.json)"
-            jq -e --arg release "$candidate_release" --arg revision "$CANDIDATE_SHA" '
+            jq -e --arg revision "$MANAGED_IMAGE_PUBLICATION_SHA" '
               type == "object" and length > 0 and
-              all(.[]; .source.revision == $revision and .source.release == $release)
+              all(.[];
+                .source.revision == $revision and
+                (.source.release | type == "string" and length > 0) and
+                (.source.cohort | type == "string" and length > 0)
+              ) and
+              ([.[].source.release] | unique | length) == 1 and
+              ([.[].source.cohort] | unique | length) == 1
             ' "$managed_catalog" >/dev/null ||
-              { echo "::error::managed-image catalog source identity does not match the candidate"; exit 1; }
+              { echo "::error::managed-image catalog source identity does not match the selected publication"; exit 1; }
             install -m 0600 "$managed_catalog" dist/e2e-managed-image-catalog.json
             printf 'managed_image_catalog=%s\n' "$(jq -c . "$managed_catalog")" >>"$GITHUB_OUTPUT"
           fi
@@ -5563,27 +5576,35 @@ jobs:
       - name: Materialize cloud-onboard managed-image catalog
         if: ${{ needs.generate-matrix.outputs.managed_image_catalog != '' }}
         env:
-          CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
           MANAGED_IMAGE_CATALOG: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
         shell: bash
         run: |
           set -euo pipefail
-          candidate_release="v$(jq -r '.nemoclawVersion' dist/build-identity.json)"
           catalog_path="${RUNNER_TEMP}/e2e-managed-image-catalog.json"
-          jq -e --arg release "$candidate_release" --arg revision "$CANDIDATE_SHA" '
+          jq -e '
             type == "object" and length > 0 and
-            all(.[]; .source.revision == $revision and .source.release == $release)
+            all(.[];
+              (.source.revision | type == "string" and test("^[0-9a-f]{40}$")) and
+              (.source.release | type == "string" and length > 0) and
+              (.source.cohort | type == "string" and length > 0)
+            ) and
+            ([.[].source.revision] | unique | length) == 1 and
+            ([.[].source.release] | unique | length) == 1 and
+            ([.[].source.cohort] | unique | length) == 1
           ' <<<"$MANAGED_IMAGE_CATALOG" >/dev/null || {
-            echo "::error::managed-image catalog source identity does not match the candidate" >&2
+            echo "::error::managed-image catalog does not contain one exact publication identity" >&2
             exit 1
           }
+          catalog_revision="$(jq -er '[.[].source.revision] | unique | .[0]' <<<"$MANAGED_IMAGE_CATALOG")"
+          catalog_release="$(jq -er '[.[].source.release] | unique | .[0]' <<<"$MANAGED_IMAGE_CATALOG")"
           jq -c . <<<"$MANAGED_IMAGE_CATALOG" >"$catalog_path"
           [[ -s "$catalog_path" && ! -L "$catalog_path" ]] || {
             echo "::error::temporary managed-image catalog is invalid" >&2
             exit 1
           }
           printf 'NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG=%s\n' "$catalog_path" >>"$GITHUB_ENV"
-          printf 'NEMOCLAW_E2E_EXACT_RELEASE=%s\n' "$candidate_release" >>"$GITHUB_ENV"
+          printf 'NEMOCLAW_E2E_MANAGED_IMAGE_REVISION=%s\n' "$catalog_revision" >>"$GITHUB_ENV"
+          printf 'NEMOCLAW_E2E_EXACT_RELEASE=%s\n' "$catalog_release" >>"$GITHUB_ENV"
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh

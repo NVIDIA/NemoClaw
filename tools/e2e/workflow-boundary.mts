@@ -2658,12 +2658,13 @@ function validateExactPrManagedImageCatalogBoundary(
       CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",
       CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
       GITHUB_TOKEN: "${{ github.token }}",
+      MANAGED_IMAGE_PUBLICATION_SHA: "${{ inputs.managed_image_publication_sha }}",
       PR_NUMBER: "${{ inputs.pr_number }}",
     }) ||
     managedCatalog?.run !==
       'node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "${RUNNER_TEMP}/pr-managed-image-catalog.json"'
   ) {
-    errors.push("manual PR E2E must resolve the exact candidate managed-image publication");
+    errors.push("manual PR E2E must resolve the selected exact managed-image publication");
   }
   if (
     generate &&

@@ -21,13 +21,23 @@ import {
   assembleManagedImageCatalog,
   main,
   managedImagePublicationRequired,
+  managedImagePublicationReuseAllowed,
   parseManagedImagePullRequestPaths,
+  parseManagedImagePublicationComparison,
   selectManagedImagePublicationRun,
 } from "../../../tools/e2e/pr-managed-image-publication.mts";
 
 const CANDIDATE_SHA = "a".repeat(40);
 const PR_NUMBER = 8746;
 const WORKFLOW_ID = 12345;
+const MANAGED_IMAGE_DOCKERFILES = [
+  "Dockerfile",
+  "Dockerfile.base",
+  "agents/hermes/Dockerfile",
+  "agents/hermes/Dockerfile.base",
+  "agents/langchain-deepagents-code/Dockerfile",
+  "agents/langchain-deepagents-code/Dockerfile.base",
+] as const;
 
 function contract(agent: ManagedImageAgent, index: number): ManagedImageContractV1 {
   const image = MANAGED_IMAGE_REPOSITORIES[agent];
@@ -107,6 +117,72 @@ on:
       - "src/**/nested/**"
 `),
     ).toThrow("unsupported glob");
+  });
+
+  it("allows reuse only across host-installer and E2E-only changes", () => {
+    expect(
+      managedImagePublicationReuseAllowed([
+        "scripts/install.sh",
+        "test/e2e/fixtures/security-posture.ts",
+        "test/install-preflight-docker-bootstrap.test.ts",
+        "tools/e2e/target-catalogue.mts",
+      ]),
+    ).toBe(true);
+    expect(managedImagePublicationReuseAllowed(["scripts/managed-gateway-control.py"])).toBe(false);
+    expect(managedImagePublicationReuseAllowed(["src/lib/onboard/workload/preparation.ts"])).toBe(
+      false,
+    );
+  });
+
+  it.each(MANAGED_IMAGE_DOCKERFILES)("keeps reusable paths outside %s", (dockerfile) => {
+    const source = fs.readFileSync(dockerfile, "utf8");
+    expect(source).not.toContain("scripts/install.sh");
+    expect(source).not.toMatch(/^COPY test\//mu);
+    expect(source).not.toMatch(/^COPY tools\/e2e\//mu);
+  });
+
+  it("accepts one complete ancestor comparison with only reusable changes", () => {
+    const publicationSha = "b".repeat(40);
+    expect(
+      parseManagedImagePublicationComparison(
+        {
+          status: "ahead",
+          ahead_by: 2,
+          behind_by: 0,
+          total_commits: 2,
+          base_commit: { sha: publicationSha },
+          merge_base_commit: { sha: publicationSha },
+          commits: [{ sha: "c".repeat(40) }, { sha: CANDIDATE_SHA }],
+          files: [
+            { filename: "scripts/install.sh" },
+            { filename: "test/e2e/support/security-posture.test.ts" },
+          ],
+        },
+        { candidateSha: CANDIDATE_SHA, publicationSha },
+      ),
+    ).toEqual({
+      changedFiles: ["scripts/install.sh", "test/e2e/support/security-posture.test.ts"],
+      commits: 2,
+    });
+  });
+
+  it("rejects reuse when a managed-image input changed", () => {
+    const publicationSha = "b".repeat(40);
+    expect(() =>
+      parseManagedImagePublicationComparison(
+        {
+          status: "ahead",
+          ahead_by: 1,
+          behind_by: 0,
+          total_commits: 1,
+          base_commit: { sha: publicationSha },
+          merge_base_commit: { sha: publicationSha },
+          commits: [{ sha: CANDIDATE_SHA }],
+          files: [{ filename: "agents/hermes/Dockerfile" }],
+        },
+        { candidateSha: CANDIDATE_SHA, publicationSha },
+      ),
+    ).toThrow("changes managed-image inputs");
   });
 
   it("selects one successful workflow run for the candidate commit", () => {

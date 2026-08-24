@@ -240,6 +240,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "checkout_repository",
     "base_sha",
     "workflow_sha",
+    "managed_image_publication_sha",
     "correlation_id",
   ]) {
     const input = inputs[name];

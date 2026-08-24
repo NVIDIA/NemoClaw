@@ -259,6 +259,33 @@ describe("managed workload onboard orchestration", () => {
     }
   });
 
+  it("retains reused managed-image publication identity for live PR onboarding", async () => {
+    const candidateRevision = "b".repeat(40);
+    const publicationRevision = "a".repeat(40);
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    fs.writeFileSync(catalogPath, "{}\n", { mode: 0o600 });
+    try {
+      const { prepared, runtime } = createFreshOnboardingRuntime({
+        GITHUB_ACTIONS: "true",
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+        NEMOCLAW_E2E_EXPECTED_SHA: candidateRevision,
+        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+        NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: publicationRevision,
+      });
+
+      await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
+      expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          catalogPath,
+          expectedCatalogRevision: publicationRevision,
+        }),
+      );
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
   it("omits the qualification catalog revision outside GitHub Actions (#9385)", async () => {
     const { prepared, runtime } = createFreshOnboardingRuntime({
       E2E_MANAGED_IMAGE_REVISION: "a".repeat(40),

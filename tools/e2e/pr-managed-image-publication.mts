@@ -29,6 +29,11 @@ const MAX_CHANGED_FILES = 3_000;
 const PAGE_SIZE = 100;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/*-]+$/u;
+const REUSABLE_NON_IMAGE_PATHS = [
+  /^scripts\/install[.]sh$/u,
+  /^test\//u,
+  /^tools\/e2e\//u,
+] as const;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -36,6 +41,11 @@ export interface ManagedImagePublicationRun {
   readonly id: number;
   readonly attempt: number;
   readonly headSha: string;
+}
+
+export interface ManagedImagePublicationComparison {
+  readonly changedFiles: readonly string[];
+  readonly commits: number;
 }
 
 function record(value: unknown, label: string): JsonRecord {
@@ -80,6 +90,19 @@ function compileManagedImagePath(pattern: string): RegExp {
   throw new Error(`managed-image PR path '${pattern}' uses an unsupported glob`);
 }
 
+function validateChangedFilePath(file: string): void {
+  if (
+    file.length === 0 ||
+    file.length > 4_096 ||
+    /[\0\r\n]/u.test(file) ||
+    file.startsWith("/") ||
+    file.includes("//") ||
+    file.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw new Error("PR changed-file path is invalid");
+  }
+}
+
 /** Read the managed-image workflow path filter from the trusted workflow source. */
 export function parseManagedImagePullRequestPaths(source: string): string[] {
   const workflow = record(YAML.parse(source), "managed-image workflow");
@@ -114,19 +137,87 @@ export function managedImagePublicationRequired(
   }
   const matchers = patterns.map(compileManagedImagePath);
   for (const file of changedFiles) {
-    if (
-      file.length === 0 ||
-      file.length > 4_096 ||
-      /[\0\r\n]/u.test(file) ||
-      file.startsWith("/") ||
-      file.includes("//") ||
-      file.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
-    ) {
-      throw new Error("PR changed-file path is invalid");
-    }
+    validateChangedFilePath(file);
     if (matchers.some((matcher) => matcher.test(file))) return true;
   }
   return false;
+}
+
+/**
+ * Allow an older exact PR publication only when every later change is outside
+ * the managed-image Dockerfile inputs. This intentionally stays narrower than
+ * the workflow trigger: the host installer and E2E planning/tests do not enter
+ * any shipped managed image.
+ */
+export function managedImagePublicationReuseAllowed(changedFiles: readonly string[]): boolean {
+  if (changedFiles.length > MAX_CHANGED_FILES) {
+    throw new Error(`managed-image reuse changed-path count exceeds ${MAX_CHANGED_FILES}`);
+  }
+  return changedFiles.every((file) => {
+    validateChangedFilePath(file);
+    return REUSABLE_NON_IMAGE_PATHS.some((pattern) => pattern.test(file));
+  });
+}
+
+/** Validate one complete ancestor comparison used as image-reuse authority. */
+export function parseManagedImagePublicationComparison(
+  payload: unknown,
+  expected: { readonly candidateSha: string; readonly publicationSha: string },
+): ManagedImagePublicationComparison {
+  if (!SHA_PATTERN.test(expected.candidateSha) || !SHA_PATTERN.test(expected.publicationSha)) {
+    throw new Error("managed-image reuse SHAs are invalid");
+  }
+  const comparison = record(payload, "managed-image publication comparison");
+  exactString(
+    record(comparison.base_commit, "managed-image comparison base").sha,
+    expected.publicationSha,
+    "managed-image comparison base commit",
+  );
+  exactString(
+    record(comparison.merge_base_commit, "managed-image comparison merge base").sha,
+    expected.publicationSha,
+    "managed-image comparison merge base commit",
+  );
+  if (comparison.status !== "ahead" || comparison.behind_by !== 0) {
+    throw new Error("managed-image publication must be an ancestor of the candidate");
+  }
+  const commits = positiveInteger(comparison.total_commits, "managed-image reuse commit count");
+  if (commits > 250 || comparison.ahead_by !== commits) {
+    throw new Error("managed-image reuse comparison is incomplete");
+  }
+  if (!Array.isArray(comparison.commits) || comparison.commits.length !== commits) {
+    throw new Error("managed-image reuse commit listing is incomplete");
+  }
+  exactString(
+    record(comparison.commits.at(-1), "managed-image comparison candidate").sha,
+    expected.candidateSha,
+    "managed-image comparison candidate commit",
+  );
+  if (
+    !Array.isArray(comparison.files) ||
+    comparison.files.length === 0 ||
+    comparison.files.length >= 300
+  ) {
+    throw new Error("managed-image reuse changed-file listing is incomplete");
+  }
+  const changedFiles = comparison.files.flatMap((value) => {
+    const file = record(value, "managed-image comparison file");
+    if (typeof file.filename !== "string") {
+      throw new Error("managed-image comparison file name is invalid");
+    }
+    const paths = [file.filename];
+    if (file.previous_filename !== undefined) {
+      if (typeof file.previous_filename !== "string") {
+        throw new Error("managed-image comparison previous file name is invalid");
+      }
+      paths.push(file.previous_filename);
+    }
+    return paths;
+  });
+  if (!managedImagePublicationReuseAllowed(changedFiles)) {
+    throw new Error("candidate changes managed-image inputs after the requested publication");
+  }
+  return { changedFiles: [...new Set(changedFiles)], commits };
 }
 
 /** Select the unique successful managed-image workflow run for one PR commit. */
@@ -317,12 +408,13 @@ export async function resolvePrManagedImageCatalog(
     readonly candidateRepository: string;
     readonly candidateSha: string;
     readonly outputPath: string;
+    readonly publicationSha?: string;
     readonly prNumber: number;
     readonly token: string;
     readonly workflowSource: string;
   },
   request: (path: string) => Promise<unknown> = (apiPath) => githubRequest(apiPath, input.token),
-): Promise<"not-required" | "written"> {
+): Promise<"not-required" | "reused" | "written"> {
   if (input.candidateRepository !== REPOSITORY) return "not-required";
   if (!SHA_PATTERN.test(input.baseSha) || !SHA_PATTERN.test(input.candidateSha)) {
     throw new Error("PR base and candidate SHAs are required");
@@ -337,14 +429,25 @@ export async function resolvePrManagedImageCatalog(
   const patterns = parseManagedImagePullRequestPaths(input.workflowSource);
   if (!managedImagePublicationRequired(changedFiles, patterns)) return "not-required";
 
+  const publicationSha = input.publicationSha?.trim() || input.candidateSha;
+  if (!SHA_PATTERN.test(publicationSha)) {
+    throw new Error("managed-image publication SHA is invalid");
+  }
+  if (publicationSha !== input.candidateSha) {
+    parseManagedImagePublicationComparison(
+      await request(`/repos/${REPOSITORY}/compare/${publicationSha}...${input.candidateSha}`),
+      { candidateSha: input.candidateSha, publicationSha },
+    );
+  }
+
   const workflowId = validateWorkflow(
     await request(`/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}`),
   );
   const runs = await request(
-    `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?event=pull_request&head_sha=${input.candidateSha}&per_page=100`,
+    `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?event=pull_request&head_sha=${publicationSha}&per_page=100`,
   );
   const run = selectManagedImagePublicationRun(runs, {
-    headSha: input.candidateSha,
+    headSha: publicationSha,
     prNumber: input.prNumber,
     workflowId,
   });
@@ -372,14 +475,14 @@ export async function resolvePrManagedImageCatalog(
         JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown as ManagedImageContractV1,
       );
     }
-    const catalog = assembleManagedImageCatalog(contracts, input.candidateSha);
+    const catalog = assembleManagedImageCatalog(contracts, publicationSha);
     fs.mkdirSync(path.dirname(path.resolve(input.outputPath)), { mode: 0o700, recursive: true });
     fs.writeFileSync(input.outputPath, `${JSON.stringify(catalog)}\n`, {
       encoding: "utf8",
       flag: "wx",
       mode: 0o600,
     });
-    return "written";
+    return publicationSha === input.candidateSha ? "written" : "reused";
   } finally {
     fs.rmSync(tempDirectory, { force: true, recursive: true });
   }
@@ -407,6 +510,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     candidateRepository: env.CANDIDATE_REPOSITORY ?? "",
     candidateSha,
     outputPath: argv[0],
+    publicationSha: env.MANAGED_IMAGE_PUBLICATION_SHA,
     prNumber: requiredInteger(env.PR_NUMBER, "PR_NUMBER"),
     token: env.GITHUB_TOKEN ?? "",
     workflowSource: fs.readFileSync(WORKFLOW_PATH, "utf8"),

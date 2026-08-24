@@ -482,20 +482,16 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     managedCatalog?.if !== "${{ inputs.managed_image_catalog != '' }}" ||
     managedCatalog.shell !== EXECUTION_PLAN_SHELL ||
     !isDeepStrictEqual(record(managedCatalog.env), {
-      CANDIDATE_SHA: "${{ inputs.candidate_sha }}",
       MANAGED_IMAGE_CATALOG: "${{ inputs.managed_image_catalog }}",
-      RESTORE_CLI: "${{ inputs.restore_cli && 'true' || 'false' }}",
     }) ||
-    !managedCatalogRun.includes(".source.revision == $revision") ||
+    !managedCatalogRun.includes("[.[].source.revision] | unique | length") ||
     !managedCatalogRun.includes("[.[].source.release] | unique | length") ||
     !managedCatalogRun.includes("[.[].source.cohort] | unique | length") ||
-    !managedCatalogRun.includes('[[ "$RESTORE_CLI" == "true" ]]') ||
-    !managedCatalogRun.includes(".source.release == $release") ||
     !managedCatalogRun.includes(
-      "managed-image catalog source identity does not match the candidate",
+      "managed-image catalog does not contain one exact publication identity",
     ) ||
-    !managedCatalogRun.includes("managed-image catalog release does not match the restored CLI") ||
     !managedCatalogRun.includes("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG") ||
+    !managedCatalogRun.includes("NEMOCLAW_E2E_MANAGED_IMAGE_REVISION") ||
     managedCatalogRun.includes("NEMOCLAW_E2E_EXACT_RELEASE") ||
     managedCatalogRun.includes(".source.release = $release") ||
     workflowSteps.indexOf(managedCatalog ?? {}) !==
