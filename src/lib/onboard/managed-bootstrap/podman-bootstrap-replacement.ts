@@ -839,8 +839,8 @@ function createArgs(plan: NormalizedReplacementPlan, environmentFile: string): r
   }
   args.push(
     ...plan.runtimeArgs,
-    "--mount",
-    `type=volume,source=${plan.replacementStateVolumeName},destination=${PODMAN_BOOTSTRAP_STATE_DIRECTORY},readonly=false,relabel=shared`,
+    "--volume",
+    `${plan.replacementStateVolumeName}:${PODMAN_BOOTSTRAP_STATE_DIRECTORY}:rw,z,copy`,
     "--entrypoint",
     JSON.stringify(plan.entrypointArgv),
     plan.replacementImageContentId,

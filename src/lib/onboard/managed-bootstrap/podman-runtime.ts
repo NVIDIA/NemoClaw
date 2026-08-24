@@ -420,11 +420,18 @@ export function renderPodmanReplacementRuntimeArgs(inspect: JsonRecord): readonl
     }
     return normalized;
   };
-  for (const value of stringArray(host.CapAdd ?? [], "HostConfig.CapAdd")) {
-    args.push("--cap-add", capability(value, "added capability"));
+  const addedCapabilities = stringArray(host.CapAdd ?? [], "HostConfig.CapAdd").map((value) =>
+    capability(value, "added capability"),
+  );
+  // The managed gateway controller signals only an exact, pidfd-pinned child.
+  // OpenShell's native Podman supervisor does not need KILL and drops it, but
+  // the replacement image's root-owned lifecycle controller does.
+  for (const value of new Set([...addedCapabilities, "KILL"])) {
+    args.push("--cap-add", value);
   }
   for (const value of stringArray(host.CapDrop ?? [], "HostConfig.CapDrop")) {
-    args.push("--cap-drop", capability(value, "dropped capability"));
+    const dropped = capability(value, "dropped capability");
+    if (dropped !== "KILL") args.push("--cap-drop", dropped);
   }
   for (const value of stringArray(host.SecurityOpt ?? [], "HostConfig.SecurityOpt")) {
     args.push("--security-opt", boundedRuntimeValue(value, "security option"));

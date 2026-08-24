@@ -434,6 +434,12 @@ describe("Podman bootstrap stopped replacement", () => {
       `${PODMAN_SANDBOX_NAME_LABEL}=${SANDBOX_NAME}`,
       STATE_VOLUME_NAME,
     ]);
+    expect(harness.calls).toContainEqual(
+      expect.arrayContaining([
+        "--volume",
+        `${STATE_VOLUME_NAME}:${PODMAN_BOOTSTRAP_STATE_DIRECTORY}:rw,z,copy`,
+      ]),
+    );
     expect(harness.capturedEnvironmentMode).toBe(0o600);
     expect(harness.capturedEnvironmentContents).toBe(`${ENVIRONMENT.join("\n")}\n`);
     expect(fs.existsSync(harness.capturedEnvironmentFile as string)).toBe(false);

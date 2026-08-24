@@ -516,7 +516,7 @@ describe("Podman managed-bootstrap runtime surface", () => {
         },
         HostConfig: {
           CapAdd: ["CAP_SYS_ADMIN", "NET_ADMIN"],
-          CapDrop: ["NET_RAW"],
+          CapDrop: ["KILL", "NET_RAW"],
           SecurityOpt: ["no-new-privileges", "seccomp=unconfined"],
           ExtraHosts: ["host.openshell.internal:10.89.0.1"],
           GroupAdd: ["44"],
@@ -543,6 +543,8 @@ describe("Podman managed-bootstrap runtime surface", () => {
       "SYS_ADMIN",
       "--cap-add",
       "NET_ADMIN",
+      "--cap-add",
+      "KILL",
       "--cap-drop",
       "NET_RAW",
       "--security-opt",
