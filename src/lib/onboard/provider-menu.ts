@@ -98,7 +98,10 @@ export function buildInferenceProviderMenu(
 
   options.push(...input.vllmEntries);
 
-  if (input.hasWindowsOllama && !input.isWindowsHostOllama) {
+  if (
+    (input.hasWindowsOllama || input.isWindowsHostOllama) &&
+    (!input.isWindowsHostOllama || !input.windowsOllamaReachable)
+  ) {
     options.push({
       key: "start-windows-ollama",
       label: input.windowsHostStartLabel({
