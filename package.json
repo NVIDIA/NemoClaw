@@ -16,6 +16,7 @@
       "target": "./dist/commands"
     },
     "flexibleTaxonomy": true,
+    "helpClass": "./dist/lib/cli/nemoclaw-sandbox-help.js",
     "topicSeparator": " "
   },
   "scripts": {

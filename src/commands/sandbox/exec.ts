@@ -19,9 +19,9 @@ export default class SandboxExecCommand extends NemoClawCommand {
     "<name> [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] [--stdin|--no-stdin] -- <cmd> [args...]",
   ];
   static examples = [
-    "<%= config.bin %> sandbox exec alpha -- openclaw agent --agent main -m hi",
-    "<%= config.bin %> sandbox exec alpha --workdir /sandbox -- ls -la",
-    "printf 'hello' | <%= config.bin %> sandbox exec alpha --stdin -- cat",
+    "<%= config.bin %> alpha exec -- openclaw agent --agent main -m hi",
+    "<%= config.bin %> alpha exec --workdir /sandbox -- ls -la",
+    "printf 'hello' | <%= config.bin %> alpha exec --stdin -- cat",
   ];
   static args = {
     sandboxName: Args.string({ name: "sandbox", description: "Sandbox name", required: true }),
