@@ -106,6 +106,10 @@ function parseEndpoint(value: unknown): string {
       "external OpenShell target endpoint must be a bare HTTPS origin without credentials, path, query, or fragment",
     );
   }
+  const port = endpoint.port === "" ? undefined : Number(endpoint.port);
+  if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65_535)) {
+    throw new Error("external OpenShell target endpoint port must be between 1 and 65535");
+  }
   const hostname = endpoint.hostname.replace(/^\[|\]$/g, "").toLowerCase();
   const mappedIpv4 = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/u.exec(hostname);
   const mappedIpv4FirstByte = mappedIpv4 ? Number.parseInt(mappedIpv4[1], 16) >> 8 : undefined;
