@@ -213,14 +213,8 @@ function createPlan(
   const result = runScript(
     fixture.work,
     [
-      "node",
-      "--experimental-strip-types",
-      "--no-warnings",
-      planScriptPath,
-      "--version",
-      version,
-      "--output",
-      planPath,
+      "node", "--experimental-strip-types", "--no-warnings", planScriptPath,
+      "--version", version, "--output", planPath,
     ],
     { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
   );
@@ -233,28 +227,31 @@ function createPlan(
     previousTagCommit: remoteCommit(fixture, "refs/tags/v0.0.1"),
     nextTag: version,
     originMainCommit: releaseCommit,
+    candidateCommit: releaseCommit, candidateSelection: "current-main",
+    historicalCandidateException: "None",
   });
   expect(plan.originMainHeadline).toMatch(/^[0-9a-f]+ planned release commit$/u);
   expect(Object.keys(plan).sort()).toEqual([
-    "nextTag",
-    "originMainCommit",
-    "originMainHeadline",
-    "previousTag",
-    "previousTagCommit",
+    "candidateCommit", "candidateSelection", "historicalCandidateException", "nextTag",
+    "originMainCommit", "originMainHeadline", "previousTag", "previousTagCommit",
     "previousTagObject",
   ]);
   return { plan, result };
 }
 
 function confirmationFor(plan: Record<string, string>): string {
-  return `CONFIRM RELEASE ${plan.nextTag} ${plan.originMainCommit}`;
+  return `CONFIRM RELEASE ${plan.nextTag} ${plan.candidateCommit}`;
 }
 
 function completeBrief(plan: Record<string, string>): string {
+  const candidate = plan.candidateCommit ?? plan.originMainCommit;
   return [
     `# NemoClaw ${plan.nextTag} release brief`,
     "",
-    `- Candidate: \`${plan.originMainCommit}\``,
+    `- Candidate: \`${candidate}\``,
+    ...(plan.candidateSelection === "historical"
+      ? [`- Historical candidate exception: ${plan.historicalCandidateException}`]
+      : []),
     "",
     "## Canonical release entry",
     "",
@@ -265,8 +262,8 @@ function completeBrief(plan: Record<string, string>): string {
     "## Documentation coverage",
     "",
     "- Latest included cumulative docs PR: #100.",
-    `- Final PR commit and merge commit: \`${plan.originMainCommit}\``,
-    `- Final automated refresh coverage commit: \`${plan.originMainCommit}\``,
+    `- Final PR commit and merge commit: \`${candidate}\``,
+    `- Final automated refresh coverage commit: \`${candidate}\``,
     "- Later commits and merged PRs: Only the docs PR merge.",
     "- Changed paths: Allowed documentation paths only.",
     "- Review and checks: Approved and successful.",
@@ -275,7 +272,7 @@ function completeBrief(plan: Record<string, string>): string {
     "",
     "## Base and managed image evidence",
     "",
-    `- Base-image candidate: \`${plan.originMainCommit}\``,
+    `- Base-image candidate: \`${candidate}\``,
     "- Evidence: successful publication aggregate.",
     "",
     "## General E2E decision",
@@ -292,7 +289,14 @@ function writeBrief(fixture: Fixture, content?: string): string {
   const candidate = run(fixture.work, ["git", "rev-parse", "HEAD"]).trim();
   fs.writeFileSync(
     messageFile,
-    content ?? completeBrief({ nextTag: "v0.0.2", originMainCommit: candidate }),
+    content ??
+      completeBrief({
+        nextTag: "v0.0.2",
+        originMainCommit: candidate,
+        candidateCommit: candidate,
+        candidateSelection: "current-main",
+        historicalCandidateException: "None",
+      }),
     "utf8",
   );
   return messageFile;
@@ -1394,13 +1398,25 @@ describe("release-latest-tag.sh", () => {
     pushTag(fixture, "v0.0.1", orphanRelease);
     const releaseCommit = commit(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
-    const { plan } = createPlan(fixture, planPath, releaseCommit);
 
-    const result = cutFromPlan(fixture, planPath, confirmationFor(plan));
+    const result = runScript(
+      fixture.work,
+      [
+        "node",
+        "--experimental-strip-types",
+        "--no-warnings",
+        planScriptPath,
+        "--version",
+        "v0.0.2",
+        "--output",
+        planPath,
+      ],
+      { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
+    );
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("does not follow previous release v0.0.1");
-    expect(localTagObject(fixture, "v0.0.2")).toBe("");
+    expect(fs.existsSync(planPath)).toBe(false);
   });
 
   it("rejects replacement of the previous tag object at the same peeled commit", () => {

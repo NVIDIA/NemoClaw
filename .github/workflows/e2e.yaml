@@ -152,6 +152,7 @@ jobs:
         env:
           EXPECTED_SHA: ${{ inputs.checkout_sha || github.sha }}
           GITHUB_TOKEN: ${{ github.token }}
+          REQUIRE_MANAGED_IMAGE_PUBLICATION: "1"
         shell: bash
         run: |
           set -euo pipefail
@@ -5327,8 +5328,8 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   jetson-nvmap-gpu:
-    needs: generate-matrix
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.allow_jetson_dispatch && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'jetson-nvmap-gpu')))) }}
+    needs: [base-image-publication, generate-matrix]
+    if: ${{ always() && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.allow_jetson_dispatch && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'jetson-nvmap-gpu')))) }}
     concurrency:
       group: jetson-nvmap-gpu-dispatch
       cancel-in-progress: false

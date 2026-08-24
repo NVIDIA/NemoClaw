@@ -311,7 +311,10 @@ async def main():
         kwargs = {"gateway": URL(f"${HERMES_DISCORD_HTTP_PROXY_GATEWAY_TEMPLATE}")}
         params = inspect.signature(from_client).parameters
         if "initial" in params:
-            kwargs["initial"] = False
+            # A fresh proof must identify immediately. discord.py deliberately
+            # sleeps before a non-initial IDENTIFY, which leaves only heartbeat
+            # traffic on this short-lived credential-rewrite connection.
+            kwargs["initial"] = True
         if "compress" in params:
             kwargs["compress"] = False
         elif "zlib" in params:

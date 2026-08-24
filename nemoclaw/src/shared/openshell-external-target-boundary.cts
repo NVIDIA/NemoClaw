@@ -335,7 +335,7 @@ export function isExternalOpenShellTarget(value: unknown): value is ExternalOpen
 
 /**
  * Validate one explicit external target and return only its non-secret identity.
- * File paths and authentication contents remain inside this boundary.
+ * File paths remain inside this boundary, and authentication contents are not read.
  */
 export function buildSanitizedExternalOpenShellTargetPlan(
   value: unknown,
