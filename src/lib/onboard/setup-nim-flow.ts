@@ -910,6 +910,7 @@ export function createSetupNim(
             isWindowsHostOllama,
             ollamaRunning,
             windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
+            windowsHostOllamaReachable: windowsOllamaReachable,
             hermesProviderAvailable,
             preferManagedVllmDefault: gpu?.platform === "spark",
             ...recordedProviderReaders,

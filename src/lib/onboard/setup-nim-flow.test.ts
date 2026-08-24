@@ -373,6 +373,7 @@ describe("createSetupNim", () => {
             isWindowsHostOllama: true,
             isWsl: true,
             hasWindowsOllama: false,
+            windowsOllamaReachable: true,
             windowsHostOllamaDockerRequirement:
               getWindowsHostOllamaDockerRequirement("docker-desktop"),
           }),
