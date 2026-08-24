@@ -190,6 +190,11 @@ ADD --checksum=sha256:10b3fa0475eb572c9a81a6fe37fa16a9c500c0c91cfc148cac15692b7e
 
 FROM scratch AS hermes-managed-teams-0-wheels
 
+# Keep the selected wheel stage non-empty for classic Dockerfile builders when
+# the managed capability union is disabled. The marker is removed after the
+# selected stage is copied into the final image.
+COPY --from=hermes-wrapper-payload /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json /.empty
+
 # hadolint ignore=DL3006
 FROM hermes-managed-teams-${TARGETARCH}-wheels AS hermes-managed-teams-1-wheels
 
@@ -855,17 +860,20 @@ RUN unset SSL_CERT_FILE REQUESTS_CA_BUNDLE; \
     node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install
 
 # Managed images have no serialized messaging plan. Install their complete
-# reviewed package union from the read-only wheel set with registry access
-# disabled so this layer is independently reproducible without imported cache.
+# reviewed package union from the selected wheel stage. Portable Podman uses the
+# classic Dockerfile parser, which supports cross-stage COPY but not BuildKit's
+# RUN --mount or RUN --network options. UV_OFFLINE keeps package resolution
+# independent of registry access.
+COPY --from=hermes-managed-teams-wheels / /opt/nemoclaw-hermes-teams-wheels/
 # hadolint ignore=DL3059
-RUN --network=none --mount=from=hermes-managed-teams-wheels,target=/opt/nemoclaw-hermes-teams-wheels,ro \
-    if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
+RUN if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
         UV_OFFLINE=true UV_FIND_LINKS=/opt/nemoclaw-hermes-teams-wheels \
         node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts \
             --agent hermes --phase managed-image-capability-union; \
     fi; \
     /opt/hermes/.venv/bin/python -I -c \
-        "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual"
+        "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
+    && rm -rf /opt/nemoclaw-hermes-teams-wheels
 
 WORKDIR /sandbox
 RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:999:/sandbox"
@@ -1196,7 +1204,9 @@ RUN set -eu; \
 # The nested write-denial shell returns success after every prohibited mutation
 # fails. Create the wheel before resetting the target so the sandbox installer
 # is the next Python process to use it.
-RUN --network=none /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
+# ensurepip reads only Python's bundled wheel payload; it performs no external
+# package lookup and therefore needs no BuildKit network option.
+RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
     && /opt/hermes/.venv/bin/python -I -m pip --version \
     && chmod 644 /opt/hermes/.venv/.lock \
     && test "$(stat -c '%U:%G %a' /opt/hermes/.venv/.lock)" = "root:root 644" \
