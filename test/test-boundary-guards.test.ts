@@ -459,7 +459,7 @@ describe("compiled-test import boundary", () => {
     expect(isScannedTestPath("test/package-contract/example.test.ts")).toBe(false);
     expect(isScannedTestPath("test/e2e/example.test.ts")).toBe(false);
     expect(isScannedTestPath("test/dist-sourcemaps.test.ts")).toBe(false);
-    expect(isScannedTestPath("test/install-managed-cli-reuse.test.ts")).toBe(false);
+    expect(isScannedTestPath("test/installer-integration/install-managed-cli-reuse.test.ts")).toBe(false);
   });
 });
 
@@ -757,22 +757,8 @@ describe("Vitest project membership boundary", () => {
         ["test/coverage-ratchet.test.ts", "integration"],
         ["test/vitest-coverage-thresholds.test.ts", "integration"],
         ["test/example.test.js", "integration"],
-        ["test/install-build-dependency-preflight.test.ts", "installer-integration"],
-        ["test/install-clone-ref.test.ts", "installer-integration"],
-        ["test/install-express-prompt.test.ts", "installer-integration"],
-        ["test/install-managed-cli-reuse.test.ts", "installer-integration"],
-        ["test/install-openshell-version-pin.test.ts", "installer-integration"],
-        ["test/install-openshell-version-check.test.ts", "installer-integration"],
-        ["test/install-preflight-docker-bootstrap.test.ts", "installer-integration"],
-        ["test/install-preflight.test.ts", "installer-integration"],
-        ["test/install-station-controller-binding.test.ts", "installer-integration"],
-        ["test/install-station-pair-preparation.test.ts", "installer-integration"],
-        ["test/install-station-resume-cleanup.test.ts", "installer-integration"],
-        ["test/install-station-dgx-os.test.ts", "installer-integration"],
-        ["test/install-station-docker-repository.test.ts", "installer-integration"],
-        ["test/install-station-host-preparation.test.ts", "installer-integration"],
-        ["test/install-station-package-state.test.ts", "installer-integration"],
-        ["test/install-station-package-transaction.test.ts", "installer-integration"],
+        ["test/installer-integration/install-preflight.test.ts", "installer-integration"],
+        ["test/installer-integration/nested/example.test.ts", "installer-integration"],
         ["test/package-contract/example.test.js", "package-contract"],
         ["test/e2e/support/example.test.js", "e2e-support"],
         ["test/e2e/live/example.spec.ts", "e2e-live"],

@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import credentialBoundaryManifest from "../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json";
+import credentialBoundaryManifest from "../../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json";
 import {
   BREW_OUTCOMES,
   CANDIDATE_RUNTIME,
@@ -19,9 +19,9 @@ import {
   trustedFormulaBoundaryEvents,
   unverifiedFormulaBoundaryEvents,
   ZERO_SHA256,
-} from "./helpers/openshell-release-fixtures";
+} from "../helpers/openshell-release-fixtures";
 
-const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
+const SCRIPT = path.join(import.meta.dirname, "../..", "scripts", "install-openshell.sh");
 const REQUIRED_OPENSHELL_VERSION = credentialBoundaryManifest.openshellVersion;
 const LEGACY_OPENSHELL_VERSION = "0.0.44";
 type OpenShellFeaturePlacement = "openshell" | "gateway" | "split-mcp-gateway" | "none";
@@ -518,9 +518,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
         `Installing OpenShell from release 'v${REQUIRED_OPENSHELL_VERSION}'`,
       );
       expect(fs.readFileSync(brewLog, "utf-8")).toContain(
-        trustedFormulaBoundaryEvents(
-          "reinstall --formula nvidia/openshell/openshell",
-        ).join("\n"),
+        trustedFormulaBoundaryEvents("reinstall --formula nvidia/openshell/openshell").join("\n"),
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
