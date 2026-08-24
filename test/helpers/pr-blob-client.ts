@@ -5,6 +5,8 @@
 // It batches blob reads, falls back for large files, and retries transient
 // failures without duplicating network code in each test.
 //
+import pRetry from "p-retry";
+
 // Trust boundary: this runs from the trusted base checkout under
 // pull_request_target. It only reads GitHub's diff metadata and blob text as
 // DATA. It never executes pull-request-controlled code.
@@ -33,10 +35,8 @@ export type BlobMap = ReadonlyMap<string, string | null>;
 export type PrBlobClientOptions = {
   readonly token: string;
   readonly fetchImpl?: FetchLike;
-  /** Injectable for deterministic tests; defaults to a real timer sleep. */
-  readonly sleep?: (ms: number) => Promise<void>;
-  /** Injectable for deterministic retry jitter in tests; defaults to Math.random. */
-  readonly random?: () => number;
+  /** Overrides p-retry timing for deterministic tests. */
+  readonly retryOptions?: Pick<pRetry.Options, "minTimeout" | "maxTimeout" | "randomize">;
 };
 
 export type PrBlobClient = {
@@ -46,12 +46,18 @@ export type PrBlobClient = {
 
 type RetriableError = Error & { transient?: boolean };
 
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export function isTransientStatus(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599);
+}
+
+function responseError(url: string, response: Response): RetriableError {
+  const error: RetriableError = new Error(`${url}: HTTP ${response.status}`);
+  error.transient =
+    isTransientStatus(response.status) ||
+    (response.status === 403 &&
+      (response.headers.get("x-ratelimit-remaining") === "0" ||
+        response.headers.has("retry-after")));
+  return error;
 }
 
 function splitRepoName(fullName: string): { owner: string; name: string } {
@@ -73,34 +79,33 @@ function buildBlobQuery(paths: readonly string[]): string {
 
 export function createPrBlobClient(options: PrBlobClientOptions): PrBlobClient {
   const fetchImpl = options.fetchImpl ?? (globalThis.fetch as FetchLike);
-  const sleep = options.sleep ?? defaultSleep;
-  const random = options.random ?? Math.random;
   const headers = {
     Authorization: `Bearer ${options.token}`,
     "X-GitHub-Api-Version": "2022-11-28",
   };
 
-  async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt += 1) {
-      try {
-        return await fn();
-      } catch (error) {
-        lastError = error;
-        const err = error as RetriableError;
-        const retriable =
-          err &&
-          (err.transient === true || /HTTP (408|425|429|5\d{2})/.test(String(err.message ?? "")));
-        if (!retriable || attempt === RETRY_ATTEMPTS) throw error;
-        const jitter = random() * RETRY_BASE_MS;
-        const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** (attempt - 1)) + jitter;
-        console.error(
-          `retry: ${label} attempt ${attempt} failed (${err.message}); sleeping ${Math.round(delay)}ms`,
-        );
-        await sleep(delay);
-      }
-    }
-    throw lastError;
+  function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+    return pRetry(
+      async () => {
+        try {
+          return await fn();
+        } catch (error) {
+          if ((error as RetriableError)?.transient === true) throw error;
+          throw new pRetry.AbortError(error as Error);
+        }
+      },
+      {
+        retries: RETRY_ATTEMPTS - 1,
+        factor: 2,
+        minTimeout: RETRY_BASE_MS,
+        maxTimeout: RETRY_MAX_MS,
+        randomize: true,
+        ...options.retryOptions,
+        onFailedAttempt: (error) => {
+          console.error(`retry: ${label} attempt ${error.attemptNumber} failed (${error.message})`);
+        },
+      },
+    );
   }
 
   async function requestJson(url: string, init?: Parameters<typeof fetch>[1]): Promise<unknown> {
@@ -114,7 +119,7 @@ export function createPrBlobClient(options: PrBlobClientOptions): PrBlobClient {
       wrapped.transient = true;
       throw wrapped;
     }
-    if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+    if (!response.ok) throw responseError(url, response);
     return response.json();
   }
 
@@ -176,7 +181,7 @@ export function createPrBlobClient(options: PrBlobClientOptions): PrBlobClient {
         throw wrapped;
       }
       if (response.status === 404) return null;
-      if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+      if (!response.ok) throw responseError(url, response);
       return response.text();
     });
   }

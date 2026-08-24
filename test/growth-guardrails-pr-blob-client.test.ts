@@ -11,12 +11,14 @@ import {
   isTransientStatus,
 } from "./helpers/pr-blob-client";
 
-const DETERMINISTIC = { sleep: async () => {}, random: () => 0 } as const;
+const DETERMINISTIC = {
+  retryOptions: { minTimeout: 1, maxTimeout: 1, randomize: false },
+} as const;
 
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...headers },
   });
 }
 
@@ -126,6 +128,32 @@ describe("growth-guardrails pr-blob-client", () => {
     const blobs = await client.fetchBlobs("NVIDIA/NemoClaw", "oid", ["big.test.ts"]);
     expect(blobs.get("big.test.ts")).toBe("a\nb\n");
     expect(contentsAccept).toContain("application/vnd.github.raw");
+  });
+
+  it("retries a rate-limited 403 then succeeds", async () => {
+    const { fetchImpl, urls } = scriptedFetch([
+      async () =>
+        jsonResponse({ message: "API rate limit exceeded" }, 403, {
+          "x-ratelimit-remaining": "0",
+        }),
+      async () => jsonResponse([{ filename: "ok.ts" }]),
+    ]);
+    const client = createPrBlobClient({ token: "t", fetchImpl, ...DETERMINISTIC });
+
+    await expect(client.getPullFiles("NVIDIA/NemoClaw", "9")).resolves.toEqual([
+      { filename: "ok.ts" },
+    ]);
+    expect(urls).toHaveLength(2);
+  });
+
+  it("does not retry a permission-denied 403", async () => {
+    const { fetchImpl, urls } = scriptedFetch([
+      async () => jsonResponse({ message: "Resource not accessible" }, 403),
+    ]);
+    const client = createPrBlobClient({ token: "t", fetchImpl, ...DETERMINISTIC });
+
+    await expect(client.getPullFiles("NVIDIA/NemoClaw", "9")).rejects.toThrow(/HTTP 403/);
+    expect(urls).toHaveLength(1);
   });
 
   it("retries a transient 500 then succeeds", async () => {
