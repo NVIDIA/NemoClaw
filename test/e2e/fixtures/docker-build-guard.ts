@@ -23,9 +23,9 @@ export function createDockerBuildGuard(): DockerBuildGuard {
     timeout: 10_000,
   }).trim();
   if (!path.isAbsolute(realDocker) || !fs.statSync(realDocker).isFile()) {
-    throw new Error("Pi qualification requires one absolute Docker CLI");
+    throw new Error("Docker build guard requires one absolute Docker CLI");
   }
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-docker-guard-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-build-guard-"));
   const tracePath = path.join(root, "docker-argv.log");
   const shimPath = path.join(root, "docker");
   fs.writeFileSync(
@@ -36,10 +36,12 @@ export function createDockerBuildGuard(): DockerBuildGuard {
       `trace=${shellQuote(tracePath)}`,
       'printf \'%q \' "$@" >>"$trace"',
       "printf '\\n' >>\"$trace\"",
-      'if [[ "${1:-}" == build || ("${1:-}" == buildx && "${2:-}" == build) ]]; then',
-      "  echo 'Pi qualification attempted a forbidden Dockerfile build' >&2",
-      "  exit 97",
-      "fi",
+      'for argument in "$@"; do',
+      '  if [[ "$argument" == build ]]; then',
+      "    echo 'Qualification attempted a forbidden Dockerfile build' >&2",
+      "    exit 97",
+      "  fi",
+      "done",
       `exec ${shellQuote(realDocker)} "$@"`,
       "",
     ].join("\n"),
@@ -54,7 +56,7 @@ export function createDockerBuildGuard(): DockerBuildGuard {
 }
 
 export function assertNoDockerfileBuild(trace: string): void {
-  if (/(?:^|\n)build(?:\s|$)/u.test(trace) || /(?:^|\n)buildx\s+build(?:\s|$)/u.test(trace)) {
-    throw new Error("Pi qualification used a forbidden Dockerfile build");
+  if (/(?:^|\s)build(?:\s|$)/u.test(trace)) {
+    throw new Error("Qualification used a forbidden Dockerfile build");
   }
 }

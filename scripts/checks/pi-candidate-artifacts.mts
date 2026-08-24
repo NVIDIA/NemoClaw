@@ -392,7 +392,9 @@ export function verifyPiQualificationReceipts(sources: PiArtifactSources): strin
   const expectedDigests = receipts
     .map(({ contents }) => createHash("sha256").update(contents, "utf8").digest("hex"))
     .sort();
-  const publishedDigests = [...sources.candidateAuthority.matchAll(/"([a-f0-9]{64})"/gu)]
+  const piAuthority =
+    sources.candidateAuthority.match(/pi:\s*Object[.]freeze\(\s*\[([\s\S]*?)\]\s*\)/u)?.[1] ?? "";
+  const publishedDigests = [...piAuthority.matchAll(/"([a-f0-9]{64})"/gu)]
     .map(([, digest]) => digest)
     .sort();
   if (!isDeepStrictEqual(publishedDigests, expectedDigests)) {

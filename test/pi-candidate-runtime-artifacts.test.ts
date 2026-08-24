@@ -223,6 +223,21 @@ describe("Pi qualification receipts", () => {
       }),
     ).toContain("Pi qualification receipts must identify one source revision, release, and cohort");
   });
+
+  it("rejects Pi receipt digests published under another candidate", () => {
+    const sources = currentSources();
+    expect(
+      verifyPiQualificationReceipts({
+        ...sources,
+        candidateAuthority: sources.candidateAuthority.replace(
+          "pi: Object.freeze([",
+          "another: Object.freeze([",
+        ),
+      }),
+    ).toContain(
+      "src/lib/agent/candidate-authority.ts: accepted digests must match the exact Pi qualification receipts",
+    );
+  });
 });
 
 describe("Pi candidate contract validation", () => {

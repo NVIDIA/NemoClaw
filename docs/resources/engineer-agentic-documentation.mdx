@@ -312,14 +312,15 @@ _build/agent-variants/<source-directory>/<source-name>.<variant>.generated.mdx
 The `<variant>` value is `openclaw`, `hermes`, `deepagents`, or `pi`.
 The directory and base name before the guide variant suffix must match the canonical source path under `docs/`.
 
-When a source has a narrower scope than the established OpenClaw, Hermes, and Deep Agents shared set, or appears in the Pi guide, its frontmatter declares the exact subset:
+When a source appears in fewer guides than the established OpenClaw, Hermes, and Deep Agents shared set, or in some but not all configured guides that include Pi, its frontmatter declares the exact subset:
 
 ```yaml
 agent-variants: ["openclaw", "hermes"]
 ```
 
 The generator compares this declaration with the source's actual navigation membership and fails when the declaration is missing or differs.
-An all-variant source omits the declaration, so removing one of its navigation targets also fails until the author restores the route or explicitly declares the narrower scope.
+A source published in the established shared set or every configured guide, including Pi, may omit the declaration.
+Removing one of those navigation targets fails until the author restores the route or declares the narrower scope.
 
 This guide uses the following Fern navigation mapping:
 

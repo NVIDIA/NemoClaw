@@ -30,9 +30,13 @@ import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { driveInteractiveCommand } from "./onboard-interactive-pty.ts";
 import {
+  PI_IMAGE_SOURCE_PATHS,
   parsePiJsonEvents,
+  parsePiInferenceEvidence,
+  parsePiRuntimePackageEvidence,
   qualificationPlatform,
   qualifyPiReadTask,
+  readOptionalUtf8File,
   readPiQualificationReceipt,
 } from "./pi-agent-qualification-events.ts";
 
@@ -42,28 +46,7 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-pi-qual";
 const TASK_VERSION = "pi-read-v1";
 const LIVE_TIMEOUT_MS = 90 * 60_000;
 const PI_COMMAND_TIMEOUT_MS = 5 * 60_000;
-const IMAGE_SOURCE_PATHS = [
-  ".dockerignore",
-  "agents/pi",
-  "nemoclaw-blueprint",
-  "scripts/lib/bundled-npm-package.mts",
-  "scripts/lib/entrypoint-env-wrapper.sh",
-  "scripts/lib/patch-bundled-npm-ip-address.mts",
-  "scripts/lib/reviewed-npm-archive.mts",
-  "scripts/lib/sandbox-rlimits.sh",
-  "scripts/managed-bootstrap-entrypoint.c",
-  "scripts/managed-bootstrap-trampoline.sh",
-  "scripts/managed-startup-hold.sh",
-  "scripts/patch-bundled-npm-brace-expansion.mts",
-  "scripts/patch-bundled-npm-tar.mts",
-  "scripts/security/build-native-security-packages.sh",
-  "scripts/security/build-perl-security-packages.sh",
-  "scripts/security/patches/libssh2-1.11.1-cve-2026.patch",
-  "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
-  "scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch",
-  "scripts/upgrade-bundled-npm.mts",
-  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
-] as const;
+const PI_INTERACTIVE_READY_MARKER = "to interrupt";
 const SECURITY_PROBE = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
@@ -75,17 +58,36 @@ let bytes = 0;
 let files = 0;
 while (stack.length > 0 && files < 10000 && bytes < 32 * 1024 * 1024) {
   const current = stack.pop();
-  const status = fs.lstatSync(current);
+  let status;
+  try {
+    status = fs.lstatSync(current);
+  } catch {
+    continue;
+  }
   if (status.isSymbolicLink()) continue;
   if (status.isDirectory()) {
-    for (const entry of fs.readdirSync(current)) stack.push(path.join(current, entry));
+    try {
+      for (const entry of fs.readdirSync(current)) stack.push(path.join(current, entry));
+    } catch {}
     continue;
   }
   if (!status.isFile() || status.size > 1024 * 1024) continue;
-  files += 1;
-  bytes += status.size;
-  const contents = fs.readFileSync(current, "utf8");
-  if (/nvapi-[A-Za-z0-9_-]{10,}/.test(contents)) credentialFiles.push(current);
+  let descriptor;
+  try {
+    descriptor = fs.openSync(current, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const openStatus = fs.fstatSync(descriptor);
+    if (!openStatus.isFile() || openStatus.size > 1024 * 1024) continue;
+    const contents = fs.readFileSync(descriptor, "utf8");
+    files += 1;
+    bytes += Buffer.byteLength(contents);
+    if (/nvapi-[A-Za-z0-9_-]{10,}/.test(contents)) credentialFiles.push(current);
+  } catch {
+    continue;
+  } finally {
+    if (descriptor !== undefined) {
+      try { fs.closeSync(descriptor); } catch {}
+    }
+  }
 }
 const dockerSockets = ["/var/run/docker.sock", "/run/docker.sock"].filter((candidate) => fs.existsSync(candidate));
 const result = {credentialNames, credentialFiles, dockerSockets, files, bytes};
@@ -225,6 +227,20 @@ async function sessionInventory(sandbox: SandboxClient, env: NodeJS.ProcessEnv, 
   return result.stdout.trim();
 }
 
+async function readPiInferenceEvidence(
+  sandbox: SandboxClient,
+  env: NodeJS.ProcessEnv,
+  expectedModel: string,
+): Promise<{ api: string; model: string; route: string }> {
+  const result = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript("cat /sandbox/.pi/agent/models.json"),
+    { artifactName: "pi-managed-inference-config", env, timeoutMs: 30_000 },
+  );
+  expect(result.exitCode, resultText(result)).toBe(0);
+  return parsePiInferenceEvidence(result.stdout, expectedModel);
+}
+
 async function runInteractiveTask(
   artifacts: ArtifactSink,
   host: HostCliClient,
@@ -240,14 +256,14 @@ async function runInteractiveTask(
     env,
     progress,
     rules: [
-      { trigger: "v0.84.1", response: `${prompt}\r` },
+      { trigger: PI_INTERACTIVE_READY_MARKER, response: `${prompt}\r` },
       { trigger: token, response: "/exit\r" },
     ],
     timeoutMs: PI_COMMAND_TIMEOUT_MS,
   });
   await artifacts.writeText("pi-interactive-terminal.txt", result.output);
   expect(result.timedOut).toBe(false);
-  expect(result.firedTriggers).toContain("v0.84.1");
+  expect(result.firedTriggers).toContain(PI_INTERACTIVE_READY_MARKER);
   expect(result.firedTriggers).toContain(token);
   expect(result.output).toContain(token);
   expect(result.exitCode).toBe(0);
@@ -309,7 +325,7 @@ test(
     expect(receipt.contract.source.repository).toBe("NVIDIA/NemoClaw");
     const sourceParity = await host.command(
       "git",
-      ["diff", "--quiet", receipt.contract.source.revision, "HEAD", "--", ...IMAGE_SOURCE_PATHS],
+      ["diff", "--quiet", receipt.contract.source.revision, "HEAD", "--", ...PI_IMAGE_SOURCE_PATHS],
       { artifactName: "pi-image-source-parity", env, timeoutMs: 30_000 },
     );
     expect(sourceParity.exitCode, resultText(sourceParity)).toBe(0);
@@ -411,9 +427,10 @@ test(
       },
     );
     expect(logs.exitCode, resultText(logs)).toBe(0);
-    const trace = fs.existsSync(guard.tracePath) ? fs.readFileSync(guard.tracePath, "utf8") : "";
+    const trace = readOptionalUtf8File(guard.tracePath);
     assertNoDockerfileBuild(trace);
     await artifacts.writeText("docker-argv.log", trace);
+    const inferenceEvidence = await readPiInferenceEvidence(sandbox, env, inference.model);
 
     progress.phase("destroy Pi and publish bounded evidence");
     const openshellVersion = await host.command(host.openshellCommandPath, ["--version"], {
@@ -422,10 +439,9 @@ test(
       timeoutMs: 30_000,
     });
     expect(openshellVersion.exitCode, resultText(openshellVersion)).toBe(0);
-    const packageLock = JSON.parse(
+    const runtimePackage = parsePiRuntimePackageEvidence(
       fs.readFileSync(path.join(REPO_ROOT, "agents/pi/pi-runtime/package-lock.json"), "utf8"),
-    ) as { packages?: Record<string, { version?: string; integrity?: string }> };
-    const runtimePackage = packageLock.packages?.["node_modules/@earendil-works/pi-coding-agent"];
+    );
     const destroy = await host.nemoclaw(
       [SANDBOX_NAME, "destroy", "--yes", "--no-cleanup-gateway"],
       {
@@ -463,17 +479,15 @@ test(
       },
       runtime: {
         package: "@earendil-works/pi-coding-agent",
-        version: runtimePackage?.version,
-        integrity: runtimePackage?.integrity,
+        version: runtimePackage.version,
+        integrity: runtimePackage.integrity,
         platform,
         computeRuntime: "docker",
         openShellVersion: resultText(openshellVersion).trim(),
       },
       inference: {
         provider: inference.expectedRouteProvider,
-        api: "openai-completions",
-        route: "https://inference.local/v1",
-        model: inference.model,
+        ...inferenceEvidence,
       },
       policy: {
         sha256: createHash("sha256")

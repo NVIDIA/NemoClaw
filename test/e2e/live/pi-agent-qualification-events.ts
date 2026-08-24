@@ -11,9 +11,33 @@ import {
   managedImagePlatformForNodeArchitecture,
   parseManagedImageContractV1,
 } from "../../../src/lib/onboard/managed-image/contract.ts";
+import { INFERENCE_ROUTE_URL } from "../../../src/lib/inference/config.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
 type JsonRecord = Record<string, unknown>;
+
+export const PI_IMAGE_SOURCE_PATHS = [
+  ".dockerignore",
+  "agents/pi",
+  "nemoclaw-blueprint",
+  "scripts/lib/bundled-npm-package.mts",
+  "scripts/lib/entrypoint-env-wrapper.sh",
+  "scripts/lib/patch-bundled-npm-ip-address.mts",
+  "scripts/lib/reviewed-npm-archive.mts",
+  "scripts/lib/sandbox-rlimits.sh",
+  "scripts/managed-bootstrap-entrypoint.c",
+  "scripts/managed-bootstrap-trampoline.sh",
+  "scripts/managed-startup-hold.sh",
+  "scripts/patch-bundled-npm-brace-expansion.mts",
+  "scripts/patch-bundled-npm-tar.mts",
+  "scripts/security/build-native-security-packages.sh",
+  "scripts/security/build-perl-security-packages.sh",
+  "scripts/security/patches/libssh2-1.11.1-cve-2026.patch",
+  "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
+  "scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch",
+  "scripts/upgrade-bundled-npm.mts",
+  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
+] as const;
 
 export interface PiReadTaskProof {
   readonly assistantText: string;
@@ -25,6 +49,17 @@ export interface PiQualificationReceipt {
   readonly contract: ManagedImageContractV1;
   readonly digest: string;
   readonly path: string;
+}
+
+export interface PiInferenceEvidence {
+  readonly api: string;
+  readonly model: string;
+  readonly route: string;
+}
+
+export interface PiRuntimePackageEvidence {
+  readonly integrity: string;
+  readonly version: string;
 }
 
 function record(value: unknown, label: string): JsonRecord {
@@ -44,6 +79,78 @@ function assistantText(message: unknown): string | null {
     })
     .join("")
     .trim();
+}
+
+export function derivePiImageSourcePaths(dockerfiles: readonly string[]): string[] {
+  const paths = new Set<string>([".dockerignore"]);
+  for (const dockerfile of dockerfiles) {
+    const logicalLines = dockerfile.replace(/\\\r?\n\s*/gu, " ").split(/\r?\n/u);
+    for (const rawLine of logicalLines) {
+      const line = rawLine.trim();
+      if (!line.startsWith("COPY ")) continue;
+      const tokens = line.split(/\s+/u).slice(1);
+      if (tokens.some((token) => token.startsWith("--from="))) continue;
+      const operands = tokens.filter((token) => !token.startsWith("--"));
+      if (operands.length < 2 || operands.some((token) => /[\[\]",]/u.test(token))) {
+        throw new Error("Pi Dockerfile COPY instruction must use plain path operands");
+      }
+      for (const source of operands.slice(0, -1)) {
+        const normalized = source.replace(/\/$/u, "");
+        paths.add(normalized.startsWith("agents/pi/") ? "agents/pi" : normalized);
+      }
+    }
+  }
+  return [...paths].sort();
+}
+
+export function parsePiInferenceEvidence(
+  contents: string,
+  expectedModel: string,
+): PiInferenceEvidence {
+  const config = record(JSON.parse(contents) as unknown, "Pi managed inference configuration");
+  const providers = record(config.providers, "Pi managed inference providers");
+  const openshell = record(providers.openshell, "Pi managed inference provider");
+  const models = openshell.models;
+  const model = Array.isArray(models) ? record(models[0], "Pi managed inference model").id : null;
+  if (
+    openshell.api !== "openai-completions" ||
+    openshell.baseUrl !== INFERENCE_ROUTE_URL ||
+    model !== expectedModel
+  ) {
+    throw new Error("Pi managed inference configuration does not match the qualified route");
+  }
+  return {
+    api: openshell.api,
+    model,
+    route: openshell.baseUrl,
+  };
+}
+
+export function parsePiRuntimePackageEvidence(contents: string): PiRuntimePackageEvidence {
+  const packageLock = record(JSON.parse(contents) as unknown, "Pi runtime package lock");
+  const packages = record(packageLock.packages, "Pi runtime package lock entries");
+  const runtimePackage = record(
+    packages["node_modules/@earendil-works/pi-coding-agent"],
+    "Pi runtime package lock entry",
+  );
+  if (
+    typeof runtimePackage.version !== "string" ||
+    runtimePackage.version.length === 0 ||
+    typeof runtimePackage.integrity !== "string" ||
+    runtimePackage.integrity.length === 0
+  ) {
+    throw new Error("Pi runtime package lock entry is missing version or integrity evidence");
+  }
+  return { integrity: runtimePackage.integrity, version: runtimePackage.version };
+}
+
+export function readOptionalUtf8File(file: string): string {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return "";
+    throw error;
+  }
 }
 
 export function parsePiJsonEvents(stdout: string): JsonRecord[] {
@@ -70,11 +177,16 @@ export function readPiQualificationReceipt(platform: ManagedImagePlatform): PiQu
     REPO_ROOT,
     `ci/pi-agent-qualification-v1-${platform.replace("/", "-")}.json`,
   );
-  const metadata = fs.lstatSync(file);
-  if (!metadata.isFile() || metadata.isSymbolicLink()) {
-    throw new Error("Pi qualification receipt must be a regular non-symlink file");
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  let contents: string;
+  try {
+    if (!fs.fstatSync(descriptor).isFile()) {
+      throw new Error("Pi qualification receipt must be a regular non-symlink file");
+    }
+    contents = fs.readFileSync(descriptor, "utf8");
+  } finally {
+    fs.closeSync(descriptor);
   }
-  const contents = fs.readFileSync(file, "utf8");
   return {
     contract: parseManagedImageContractV1(JSON.parse(contents) as unknown, "pi", platform),
     digest: createHash("sha256").update(contents, "utf8").digest("hex"),
@@ -87,11 +199,13 @@ export function qualifyPiReadTask(
   expectedPath: string,
   expectedText: string,
 ): PiReadTaskProof {
-  const starts = events.filter((event) => event.type === "tool_execution_start");
+  const starts = events.flatMap((event, index) =>
+    event.type === "tool_execution_start" ? [{ event, index }] : [],
+  );
   if (starts.length !== 1) {
     throw new Error(`Pi task must start exactly one tool, observed ${String(starts.length)}`);
   }
-  const start = starts[0];
+  const { event: start, index: startIndex } = starts[0]!;
   const args = record(start.args, "Pi read arguments");
   if (
     start.toolName !== "read" ||
@@ -100,10 +214,17 @@ export function qualifyPiReadTask(
   ) {
     throw new Error("Pi task did not issue the exact read tool call");
   }
-  const end = events.find(
-    (event) => event.type === "tool_execution_end" && event.toolCallId === start.toolCallId,
+  const completions = events.flatMap((event, index) =>
+    event.type === "tool_execution_end" && event.toolCallId === start.toolCallId
+      ? [{ event, index }]
+      : [],
   );
-  if (!end || end.toolName !== "read" || end.isError !== false) {
+  if (
+    completions.length !== 1 ||
+    completions[0]!.index <= startIndex ||
+    completions[0]!.event.toolName !== "read" ||
+    completions[0]!.event.isError !== false
+  ) {
     throw new Error("Pi read tool call did not complete successfully");
   }
   const replies = events.flatMap((event) => {
