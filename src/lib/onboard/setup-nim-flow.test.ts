@@ -314,7 +314,8 @@ describe("createSetupNim", () => {
     expect(detectInferenceProviderHostState).not.toHaveBeenCalled();
   });
 
-  it("passes the Hermes Ollama context floor into local Ollama selection state (#6760)", async () => {
+  it("passes the Hermes Ollama context floor without showing the OpenClaw Input capability prompt (#6760)", async () => {
+    const maybePromptForInferenceInputCapability = vi.fn(async () => {});
     const handleRunningOllamaSelection = vi.fn<SetupNimFlowDeps["handleRunningOllamaSelection"]>(
       async (_gpu, _requestedModel, _recoveredModel, _ollamaRunning, state) => {
         expect(state.ollamaContextWindowFloor).toBe(MIN_HERMES_OLLAMA_CONTEXT_WINDOW);
@@ -334,6 +335,7 @@ describe("createSetupNim", () => {
         detectInferenceProviderHostState: () =>
           makeHostState({ hasOllama: true, ollamaHost: "127.0.0.1", ollamaRunning: true }),
         handleRunningOllamaSelection,
+        maybePromptForInferenceInputCapability,
       }),
     );
 
@@ -341,6 +343,7 @@ describe("createSetupNim", () => {
 
     expect(result.provider).toBe("ollama-local");
     expect(handleRunningOllamaSelection).toHaveBeenCalledTimes(1);
+    expect(maybePromptForInferenceInputCapability).not.toHaveBeenCalled();
   });
 
   it("applies same-gateway discovery constraints before a provider probe (#6315)", async () => {

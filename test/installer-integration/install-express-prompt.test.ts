@@ -6,9 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { runInstallerSourced } from "./helpers/installer-express-prompt-harness";
-import { runExpressPromptWithTty } from "./helpers/installer-express-prompt-pty-harness";
-import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+import { runInstallerSourced } from "../helpers/installer-express-prompt-harness";
+import { runExpressPromptWithTty } from "../helpers/installer-express-prompt-pty-harness";
+import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
 describe("installer express install prompt (sourced)", () => {
   it("drains PTY output after the child exits", () => {
@@ -82,14 +82,14 @@ detect_express_platform
 `,
       ],
       {
-        cwd: path.join(import.meta.dirname, ".."),
+        cwd: path.join(import.meta.dirname, "../.."),
         encoding: "utf-8",
         env: {
           HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-platform-detect-")),
           PATH: TEST_SYSTEM_PATH,
           INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
           STATION_PREPARE: path.join(
-            path.resolve(import.meta.dirname, ".."),
+            path.resolve(import.meta.dirname, "../.."),
             "scripts",
             "prepare-dgx-station-host.sh",
           ),
@@ -165,7 +165,7 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
 
   it("parses and documents the metadata-only Station override", () => {
     const result = spawnSync("bash", [INSTALLER_PAYLOAD, "--force-station-install", "--help"], {
-      cwd: path.join(import.meta.dirname, ".."),
+      cwd: path.join(import.meta.dirname, "../.."),
       encoding: "utf-8",
     });
     const output = `${result.stdout}${result.stderr}`;
@@ -1102,7 +1102,7 @@ printf 'NON_EXPRESS_ALLOWED\n'
 `,
       ],
       {
-        cwd: path.join(import.meta.dirname, ".."),
+        cwd: path.join(import.meta.dirname, "../.."),
         encoding: "utf-8",
         env: {
           HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-platform-override-")),
@@ -1177,7 +1177,7 @@ detect_express_platform
 `,
       ],
       {
-        cwd: path.join(import.meta.dirname, ".."),
+        cwd: path.join(import.meta.dirname, "../.."),
         encoding: "utf-8",
         env: {
           HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-wsl-detect-")),
@@ -1352,7 +1352,7 @@ printf 'PROMPT_REACHED\n'
 `,
         ],
         {
-          cwd: path.join(import.meta.dirname, ".."),
+          cwd: path.join(import.meta.dirname, "../.."),
           encoding: "utf-8",
           env: {
             HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-platform-reject-")),
@@ -1385,7 +1385,7 @@ printf 'PROMPT_REACHED\n'
 `,
       ],
       {
-        cwd: path.join(import.meta.dirname, ".."),
+        cwd: path.join(import.meta.dirname, "../.."),
         encoding: "utf-8",
         env: {
           HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-dgx-os-guidance-")),
