@@ -562,7 +562,9 @@ export function renderPolicyContextMarkdown(ctx: PolicyContext): string {
   lines.push(`- inspect: \`${ctx.approvalPath.inspect}\``);
   lines.push(`- add a preset: ${formatApprovalAction(ctx.approvalPath.add)}`);
   lines.push(`- remove a preset: ${formatApprovalAction(ctx.approvalPath.remove)}`);
-  lines.push(`- preview a baseline exclusion: \`${ctx.approvalPath.excludeBaseline}\``);
+  lines.push(
+    `- preview a baseline exclusion: ${formatApprovalAction(ctx.approvalPath.excludeBaseline)}`,
+  );
   lines.push(
     `- restore a baseline entry: ${formatApprovalAction(ctx.approvalPath.restoreBaseline)}`,
   );

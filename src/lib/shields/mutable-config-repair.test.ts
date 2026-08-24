@@ -218,7 +218,9 @@ describe("external Shields policy recovery", () => {
     harness.policyAuthoritySpy.mockReturnValue(mismatchedExternalAuthority);
     harness.policyRecoveryAuthoritySpy.mockReturnValue(mismatchedExternalAuthority);
 
-    expect(() => harness.shieldsUp(sandboxName, { throwOnError: true })).toThrow("must apply");
+    expect(() => harness.shieldsUp(sandboxName, { throwOnError: true })).toThrow(
+      "must make the effective policy",
+    );
     expect(countPolicySets(harness)).toBe(policySetsAfterDown);
     expect(harness.getOpenClawPosture()).toBe("mutable");
 
@@ -227,7 +229,9 @@ describe("external Shields policy recovery", () => {
     }) as typeof process.exit);
     expect(() => harness.shieldsStatus(sandboxName, false)).toThrow("process exit 2");
     expect(exitSpy).toHaveBeenCalledWith(2);
-    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("must apply");
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "must make the effective policy",
+    );
 
     const restoredExternalAuthority = externalAuthority(
       readRestrictivePolicy(harness, sandboxName),
@@ -266,9 +270,20 @@ describe("external Shields policy recovery", () => {
     );
 
     expect(harness.isShieldsDown(sandboxName)).toBe(true);
+    expect(harness.getOpenClawPosture()).toBe("locked");
     expect(countPolicySets(harness)).toBe(policySetsAfterDown);
+    const errors = harness.errorSpy.mock.calls.flat().join("\n");
+    expect(errors).toContain(
+      "Config remains locked; Shields remain DOWN until policy verification succeeds.",
+    );
+    expect(errors).not.toContain("Config remains unlocked");
     expect(harness.auditSpy).not.toHaveBeenCalledWith(
       expect.objectContaining({ action: "shields_up" }),
     );
+
+    harness.policyRecoveryAuthoritySpy.mockReturnValue(restoredExternalAuthority);
+    harness.shieldsUp(sandboxName, { throwOnError: true });
+    expect(harness.isShieldsDown(sandboxName)).toBe(false);
+    expect(harness.getOpenClawPosture()).toBe("locked");
   });
 });
