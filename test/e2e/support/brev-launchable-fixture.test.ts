@@ -172,6 +172,29 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     expect(command.mock.calls.flat().some((value) => value === "delete")).toBe(false);
   });
 
+  it("rejects a malformed workspace inventory before creation", async () => {
+    const root = temporaryRoot();
+    const command = vi.fn(async () => result({ status: "ok" }));
+    const fixture = createFixture(root, command);
+
+    await expect(
+      fixture.create(fixture.ownership("fixture-workspace"), "env-fixture123"),
+    ).rejects.toThrow("Brev workspace inventory has unexpected shape");
+    expect(command.mock.calls.flat().some((value) => value === "create")).toBe(false);
+  });
+
+  it("does not confirm cleanup from a malformed workspace inventory", async () => {
+    const root = temporaryRoot();
+    const command = vi.fn(async () => result({ status: "ok" }));
+    const fixture = createFixture(root, command);
+
+    await expect(fixture.delete(recordedOwnership(), 100)).rejects.toThrow(
+      "Brev workspace inventory has unexpected shape",
+    );
+    expect(command.mock.calls.flat().some((value) => value === "delete")).toBe(false);
+    expect(fs.existsSync(path.join(root, "brev-workspace-cleanup.json"))).toBe(false);
+  });
+
   it.each([
     ["create command", "create"],
     ["first readiness inventory", "readiness-list"],

@@ -55,6 +55,15 @@ export NEMOCLAW_MODEL=${shellQuote(MODEL)}
 export NEMOCLAW_PROVIDER=build
 export NEMOCLAW_AGENT=openclaw
 brev-quickstart issue-9880
+nemoclaw issue-9880 exec -- node -e '
+const fs = require("fs");
+const config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));
+const model = config?.agents?.defaults?.model?.primary;
+if (model !== "inference/meta/llama-3.3-70b-instruct") {
+  console.error("unexpected managed model: " + String(model));
+  process.exit(1);
+}
+'
 `,
       {
         artifactName: "issue-9880-onboard",

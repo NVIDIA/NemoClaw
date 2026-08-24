@@ -421,13 +421,17 @@ export class BrevLaunchableFixture {
     });
     expectExitZero(result, "list Brev workspaces");
     const root = JSON.parse(result.stdout) as unknown;
-    const rows = Array.isArray(root)
-      ? root
-      : root &&
-          typeof root === "object" &&
-          Array.isArray((root as { workspaces?: unknown }).workspaces)
-        ? (root as { workspaces: unknown[] }).workspaces
-        : [];
+    let rows: unknown[];
+    if (Array.isArray(root)) {
+      rows = root;
+    } else if (root && typeof root === "object") {
+      const workspaces = (root as { workspaces?: unknown }).workspaces;
+      if (workspaces === null) rows = [];
+      else if (Array.isArray(workspaces)) rows = workspaces;
+      else throw new Error("Brev workspace inventory has unexpected shape");
+    } else {
+      throw new Error("Brev workspace inventory has unexpected shape");
+    }
     return rows.map(normalizeWorkspace).filter((record): record is BrevWorkspaceRecord => !!record);
   }
 
