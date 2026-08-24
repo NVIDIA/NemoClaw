@@ -1510,7 +1510,8 @@ refresh_openclaw_provider_placeholders() {
   local hash_file="/sandbox/.openclaw/.config-hash"
   [ -f "$config_file" ] || return 0
 
-  if [ "$(openclaw_config_dir_owner "$(dirname "$config_file")")" = "root" ]; then
+  if [ "$(id -u)" -ne 0 ] \
+    && [ "$(openclaw_config_dir_owner "$(dirname "$config_file")")" = "root" ]; then
     printf '[config] Shields are up; preserving sealed provider placeholders unchanged\n' >&2
     return 0
   fi

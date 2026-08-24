@@ -1108,6 +1108,7 @@ test(STALE_BASE_REBUILD
   await artifacts.writeJson("phase-5-inference-route-before-rebuild.json", routeBeforeRebuild);
   progress.phase("rebuild the Hermes sandbox");
   const rebuildEnv = testEnv(undefined, {
+    DISCORD_BOT_TOKEN: DISCORD_FAKE_TOKEN,
     NEMOCLAW_REBUILD_VERBOSE: "1",
     ...baseReusePlan?.childEnv,
   });
