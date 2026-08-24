@@ -258,17 +258,20 @@ function readBoundedFile(
 }
 
 function readFileAtMost(filePath: string, maxBytes: number): Buffer {
-  const pathMetadata = lstatSync(filePath);
-  if (!pathMetadata.isFile() || pathMetadata.isSymbolicLink()) {
-    throw new Error("not a regular file");
-  }
   const descriptor = openSync(
     filePath,
     constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
   );
   try {
     const file = fstatSync(descriptor);
-    if (!file.isFile()) {
+    const pathMetadata = lstatSync(filePath);
+    if (
+      !file.isFile() ||
+      !pathMetadata.isFile() ||
+      pathMetadata.isSymbolicLink() ||
+      file.dev !== pathMetadata.dev ||
+      file.ino !== pathMetadata.ino
+    ) {
       throw new Error("not a regular file");
     }
     if (file.size > maxBytes) {

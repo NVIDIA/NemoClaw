@@ -43,6 +43,8 @@ vi.mock("node:fs", async (importOriginal) => {
     lstatSync: (filePath: string) => ({
       isFile: () => externalFileSizes.has(filePath),
       isSymbolicLink: () => false,
+      dev: 1,
+      ino: 1,
     }),
     openSync: (filePath: string) => {
       const descriptor = nextDescriptor++;
@@ -51,7 +53,12 @@ vi.mock("node:fs", async (importOriginal) => {
     },
     fstatSync: (descriptor: number) => {
       const file = descriptors.get(descriptor)!;
-      return { isFile: () => true, size: externalFileSizes.get(file.filePath)! };
+      return {
+        isFile: () => true,
+        size: externalFileSizes.get(file.filePath)!,
+        dev: 1,
+        ino: 1,
+      };
     },
     readSync: (
       descriptor: number,
