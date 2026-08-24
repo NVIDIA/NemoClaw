@@ -6,10 +6,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { runInstallerSourcedBody } from "./helpers/installer-run-fixture";
-import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+import { runInstallerSourcedBody } from "../helpers/installer-run-fixture";
+import { TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 
 function runSourced(body: string) {
@@ -342,9 +342,11 @@ printf 'MIGRATE=%s REUSE=%s\\n' "$_STATION_EXPRESS_MIGRATING_LEGACY_HEAD" "$_STA
       "REUSE=0 MIGRATE=1",
       2,
     ],
-  ] as const)("uses canonical local Docker to preserve a hidden %s head", (_kind, localInspection, expectedFlags, expectedInspections) => {
-    const { result, output, home } = runInstallerBody(
-      `
+  ] as const)(
+    "uses canonical local Docker to preserve a hidden %s head",
+    (_kind, localInspection, expectedFlags, expectedInspections) => {
+      const { result, output, home } = runInstallerBody(
+        `
 command_exists() { return 0; }
 docker() {
   printf 'host=%s context=%s args=%s,%s\n' "\${DOCKER_HOST-unset}" "\${DOCKER_CONTEXT-unset}" "$1" "$2" >>"$HOME/docker.trace"
@@ -358,23 +360,24 @@ _SELECTED_EXPRESS_PLATFORM='DGX Station'
 ensure_station_express_host
 printf 'REUSE=%s MIGRATE=%s\n' "$_STATION_EXPRESS_DEFERRED_MANAGED_PAIR" "$_STATION_EXPRESS_MIGRATING_LEGACY_HEAD"
 `,
-      {
-        DOCKER_CONTEXT: "ambient-remote",
-        DOCKER_HOST: "ssh://remote-builder.example.test",
-        LOCAL_DOCKER_INSPECTION: localInspection,
-      },
-    );
-    try {
-      expect(result.status, output).toBe(0);
-      expect(output).toContain(expectedFlags);
-      expect(output).not.toContain("FULL_PREP_MUST_NOT_RUN");
-      expect(fs.readFileSync(path.join(home, "docker.trace"), "utf8")).toBe(
-        "host=unset context=unset args=--context,default\n".repeat(expectedInspections),
+        {
+          DOCKER_CONTEXT: "ambient-remote",
+          DOCKER_HOST: "ssh://remote-builder.example.test",
+          LOCAL_DOCKER_INSPECTION: localInspection,
+        },
       );
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
+      try {
+        expect(result.status, output).toBe(0);
+        expect(output).toContain(expectedFlags);
+        expect(output).not.toContain("FULL_PREP_MUST_NOT_RUN");
+        expect(fs.readFileSync(path.join(home, "docker.trace"), "utf8")).toBe(
+          "host=unset context=unset args=--context,default\n".repeat(expectedInspections),
+        );
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("passes legacy migration to the coordinator without managed-pair reuse", () => {
     const argsFile = path.join(os.tmpdir(), `nemoclaw-legacy-args-${process.pid}-${Date.now()}`);

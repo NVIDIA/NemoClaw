@@ -65,11 +65,12 @@ describe("fresh Hermes Portable provider selection", () => {
     });
   });
 
-  it("uses the scoped Portable model before host discovery in interactive mode (#9596)", async () => {
+  it("uses the scoped Portable model without showing the OpenClaw Input capability prompt (#9596)", async () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
     const detectHostState = vi.fn(() => makeHostState());
     const handleRunningOllamaSelection = vi.fn(() => unexpected("host Ollama selection"));
     const handleInstallOllamaSelection = vi.fn(() => unexpected("host Ollama installation"));
+    const maybePromptForInferenceInputCapability = vi.fn(async () => {});
     const setupNim = createSetupNim(
       makeDeps({
         isNonInteractive: () => false,
@@ -78,6 +79,7 @@ describe("fresh Hermes Portable provider selection", () => {
         detectInferenceProviderHostState: detectHostState,
         handleRunningOllamaSelection,
         handleInstallOllamaSelection,
+        maybePromptForInferenceInputCapability,
       }),
     );
 
@@ -93,6 +95,7 @@ describe("fresh Hermes Portable provider selection", () => {
     expect(detectHostState).not.toHaveBeenCalled();
     expect(handleRunningOllamaSelection).not.toHaveBeenCalled();
     expect(handleInstallOllamaSelection).not.toHaveBeenCalled();
+    expect(maybePromptForInferenceInputCapability).not.toHaveBeenCalled();
   });
 
   it("prompts for a Portable model without discovering host runtimes (#9596)", async () => {

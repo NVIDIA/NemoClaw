@@ -1005,6 +1005,16 @@ async function handleProxy(req, res, route) {
     return;
   }
 
+  // `redirect: "manual"` above already declines to follow a 3xx here, so
+  // relaying one just hands the same redirect to the sandbox client, which
+  // does follow it. Fail closed instead, matching the pinned inference
+  // forwarder in src/lib/inference/https-pin-runtime-adapter-forward.ts.
+  if (upstreamResp.status >= 300 && upstreamResp.status < 400) {
+    await upstreamResp.body?.cancel().catch(() => {});
+    sendText(res, 502, "Upstream redirect blocked: the broker does not follow or relay redirects.");
+    return;
+  }
+
   const buffer = Buffer.from(await upstreamResp.arrayBuffer());
   res.writeHead(upstreamResp.status, forwardResponseHeaders(upstreamResp));
   res.end(buffer);
