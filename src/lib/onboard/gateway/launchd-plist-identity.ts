@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
-import fs from "node:fs";
 import path from "node:path";
+
+import {
+  inspectServiceFileIdentity,
+  type ServiceFileIdentityOptions,
+  type ServiceFileStat,
+} from "./service-file-identity";
 
 type FileNumber = bigint | number;
 
@@ -51,15 +55,10 @@ export interface LaunchdPlistFileIdentity {
   formula: LaunchdPlistDescriptorIdentity;
 }
 
-interface StableFileRead {
+interface InspectedPlistFile {
   bytes: Buffer;
+  contentSha256: string;
   descriptor: LaunchdPlistDescriptorIdentity;
-}
-
-interface StableFileMetadata {
-  descriptor: LaunchdPlistDescriptorIdentity;
-  fingerprint: string;
-  size: number;
 }
 
 type PlistValue = boolean | string | PlistValue[] | Map<string, PlistValue>;
@@ -132,46 +131,6 @@ class PlistReader {
   }
 }
 
-function validFileNumber(value: FileNumber): boolean {
-  return typeof value === "bigint" ? value >= 0n : Number.isSafeInteger(value) && value >= 0;
-}
-
-function fileNumberToBigInt(value: FileNumber): bigint | null {
-  return validFileNumber(value) ? BigInt(value) : null;
-}
-
-function stableFileMetadata(stat: LaunchdPlistStat, currentUid: number): StableFileMetadata | null {
-  const ctimeNs = fileNumberToBigInt(stat.ctimeNs);
-  const device = fileNumberToBigInt(stat.dev);
-  const inode = fileNumberToBigInt(stat.ino);
-  const mode = fileNumberToBigInt(stat.mode);
-  const mtimeNs = fileNumberToBigInt(stat.mtimeNs);
-  const linkCount = fileNumberToBigInt(stat.nlink);
-  const size = fileNumberToBigInt(stat.size);
-  const owner = fileNumberToBigInt(stat.uid);
-  if (
-    !stat.isFile() ||
-    ctimeNs === null ||
-    device === null ||
-    inode === null ||
-    mode === null ||
-    mtimeNs === null ||
-    linkCount === null ||
-    linkCount < 1n ||
-    size === null ||
-    size > BigInt(MAX_PLIST_BYTES) ||
-    owner !== BigInt(currentUid) ||
-    (mode & 0o022n) !== 0n
-  ) {
-    return null;
-  }
-  return {
-    descriptor: { device: String(device), inode: String(inode) },
-    fingerprint: [ctimeNs, device, inode, mode, mtimeNs, linkCount, size, owner].join(":"),
-    size: Number(size),
-  };
-}
-
 function sameDescriptorIdentity(
   first: LaunchdPlistDescriptorIdentity,
   second: LaunchdPlistDescriptorIdentity,
@@ -179,31 +138,14 @@ function sameDescriptorIdentity(
   return first.device === second.device && first.inode === second.inode;
 }
 
-function sameStableFileMetadata(first: StableFileMetadata, second: StableFileMetadata): boolean {
-  return first.fingerprint === second.fingerprint;
-}
-
-function defaultFstatSync(fileDescriptor: number): LaunchdPlistStat {
-  return fs.fstatSync(fileDescriptor, { bigint: true });
-}
-
-function defaultLstatSync(filePath: string): LaunchdPlistPathStat {
-  return fs.lstatSync(filePath, { bigint: true });
-}
-
-function readExactBytes(
-  fileDescriptor: number,
-  size: number,
-  readSync: NonNullable<LaunchdPlistFileIdentityOptions["readSync"]>,
-): Buffer | null {
-  const bytes = Buffer.allocUnsafe(size);
-  let offset = 0;
-  while (offset < size) {
-    const count = readSync(fileDescriptor, bytes, offset, size - offset, null);
-    if (!Number.isSafeInteger(count) || count <= 0 || count > size - offset) return null;
-    offset += count;
-  }
-  return bytes;
+function fileNumberToBigInt(value: FileNumber): bigint | null {
+  return typeof value === "bigint"
+    ? value >= 0n
+      ? value
+      : null
+    : Number.isSafeInteger(value) && value >= 0
+      ? BigInt(value)
+      : null;
 }
 
 function sameStringArray(value: PlistValue | undefined, expected: string[]): boolean {
@@ -255,90 +197,88 @@ function isCanonicalOpenShellServicePlist(bytes: Buffer, formulaPath: string): b
   );
 }
 
-function readStableFile(
+function serviceFileStat(
+  stat: LaunchdPlistStat | LaunchdPlistPathStat,
+  isSymbolicLink: () => boolean,
+): ServiceFileStat {
+  const values = {
+    ctimeNs: fileNumberToBigInt(stat.ctimeNs),
+    dev: fileNumberToBigInt(stat.dev),
+    ino: fileNumberToBigInt(stat.ino),
+    mode: fileNumberToBigInt(stat.mode),
+    mtimeNs: fileNumberToBigInt(stat.mtimeNs),
+    nlink: fileNumberToBigInt(stat.nlink),
+    size: fileNumberToBigInt(stat.size),
+    uid: fileNumberToBigInt(stat.uid),
+  };
+  if (Object.values(values).some((value) => value === null)) {
+    throw new Error("invalid launchd plist metadata");
+  }
+  return {
+    ctimeNs: values.ctimeNs as bigint,
+    dev: values.dev as bigint,
+    ino: values.ino as bigint,
+    isFile: stat.isFile,
+    isSymbolicLink,
+    mode: values.mode as bigint,
+    mtimeNs: values.mtimeNs as bigint,
+    nlink: values.nlink as bigint,
+    size: values.size as bigint,
+    uid: values.uid as bigint,
+  };
+}
+
+function inspectPlistFile(
   filePath: string,
   currentUid: number,
-  closeSync: (fileDescriptor: number) => void,
-  fstatSync: (fileDescriptor: number) => LaunchdPlistStat,
-  lstatSync: (filePath: string) => LaunchdPlistPathStat,
-  openSync: (filePath: string, flags: number) => number,
-  readSync: NonNullable<LaunchdPlistFileIdentityOptions["readSync"]>,
-): StableFileRead | null {
-  let fileDescriptor: number;
-  try {
-    fileDescriptor = openSync(
-      filePath,
-      fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW,
-    );
-  } catch {
-    return null;
-  }
-  let result: StableFileRead | null = null;
-  try {
-    const before = stableFileMetadata(fstatSync(fileDescriptor), currentUid);
-    const bytes = before ? readExactBytes(fileDescriptor, before.size, readSync) : null;
-    const after = bytes ? stableFileMetadata(fstatSync(fileDescriptor), currentUid) : null;
-    const pathStat = after ? lstatSync(filePath) : null;
-    const finalPath =
-      pathStat && !pathStat.isSymbolicLink() ? stableFileMetadata(pathStat, currentUid) : null;
-    result =
-      before &&
-      bytes &&
-      after &&
-      finalPath &&
-      sameStableFileMetadata(before, after) &&
-      sameStableFileMetadata(after, finalPath) &&
-      bytes.length > 0
-        ? { bytes, descriptor: after.descriptor }
-        : null;
-  } catch {
-    result = null;
-  }
-  try {
-    closeSync(fileDescriptor);
-  } catch {
-    result = null;
-  }
-  return result;
+  options: LaunchdPlistFileIdentityOptions,
+): InspectedPlistFile | null {
+  const inspection = inspectServiceFileIdentity({
+    closeSync: options.closeSync,
+    contentsLimit: MAX_PLIST_BYTES,
+    expectedUid: currentUid,
+    filePath,
+    fstatSync: options.fstatSync
+      ? (fileDescriptor) => serviceFileStat(options.fstatSync!(fileDescriptor), () => false)
+      : undefined,
+    lstatSync: options.lstatSync
+      ? (candidate) => {
+          const stat = options.lstatSync!(candidate);
+          return serviceFileStat(stat, stat.isSymbolicLink);
+        }
+      : undefined,
+    openSync: options.openSync,
+    readSync: options.readSync,
+  } satisfies ServiceFileIdentityOptions);
+  const contentSha256 = inspection?.identity.contentSha256;
+  return inspection?.contents && contentSha256
+    ? {
+        bytes: inspection.contents,
+        contentSha256,
+        descriptor: {
+          device: inspection.identity.device,
+          inode: inspection.identity.inode,
+        },
+      }
+    : null;
 }
 
 /** Inspect trusted launchd plist files without returning their contents or read errors. */
-export function inspectLaunchdPlistFileIdentity({
-  closeSync = fs.closeSync,
-  effectivePath,
-  fstatSync = defaultFstatSync,
-  formulaPath,
-  getuid = process.getuid as (() => number) | undefined,
-  lstatSync = defaultLstatSync,
-  openSync = fs.openSync,
-  readSync = fs.readSync,
-}: LaunchdPlistFileIdentityOptions): LaunchdPlistFileIdentity | null {
+export function inspectLaunchdPlistFileIdentity(
+  options: LaunchdPlistFileIdentityOptions,
+): LaunchdPlistFileIdentity | null {
   try {
+    const { effectivePath, formulaPath } = options;
+    const getuid = options.getuid ?? (process.getuid as (() => number) | undefined);
     if (typeof getuid !== "function") return null;
     const currentUid = getuid();
     if (!Number.isSafeInteger(currentUid) || currentUid < 0) return null;
-    const formula = readStableFile(
-      formulaPath,
-      currentUid,
-      closeSync,
-      fstatSync,
-      lstatSync,
-      openSync,
-      readSync,
-    );
+    const formula = inspectPlistFile(formulaPath, currentUid, options);
     if (!formula) return null;
     const effective =
       effectivePath === formulaPath
         ? formula
-        : readStableFile(
-            effectivePath,
-            currentUid,
-            closeSync,
-            fstatSync,
-            lstatSync,
-            openSync,
-            readSync,
-          );
+        : inspectPlistFile(effectivePath, currentUid, options);
     if (
       !effective ||
       !effective.bytes.equals(formula.bytes) ||
@@ -347,7 +287,7 @@ export function inspectLaunchdPlistFileIdentity({
       return null;
     }
     return {
-      contentSha256: createHash("sha256").update(formula.bytes).digest("hex"),
+      contentSha256: formula.contentSha256,
       effective: {
         ...effective.descriptor,
         source: effectivePath === formulaPath ? "formula" : "loaded",

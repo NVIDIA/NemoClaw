@@ -324,6 +324,29 @@ describe("launchd plist file identity", () => {
     expect(readCount).toBe(0);
   });
 
+  it("rejects a short descriptor read through the shared file inspector (#9705)", () => {
+    const options = inspectOptions();
+    const readResults = [1, 0];
+    options.readSync = (_fileDescriptor, buffer, offset) => {
+      V00106_FORMULA_PLIST.copy(buffer, offset, 0, 1);
+      return readResults.shift() ?? 0;
+    };
+
+    expect(inspectLaunchdPlistFileIdentity(options)).toBeNull();
+  });
+
+  it("rejects a descriptor that cannot be closed by the shared file inspector (#9705)", () => {
+    expect(
+      inspectLaunchdPlistFileIdentity(
+        inspectOptions({
+          close: () => {
+            throw new Error("injected close failure");
+          },
+        }),
+      ),
+    ).toBeNull();
+  });
+
   it.each([
     ["a symlink", fileStat({ symbolicLink: true })],
     ["owned by another user", fileStat({ uid: CURRENT_UID + 1 })],

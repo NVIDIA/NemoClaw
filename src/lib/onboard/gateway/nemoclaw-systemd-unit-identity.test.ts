@@ -4,20 +4,40 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { matchesNemoclawGatewaySystemdUnit } from "./nemoclaw-systemd-unit-identity";
 
 const GATEWAY_BINARY = "/home/nvidia/.local/bin/openshell-gateway";
-const UNIT_TEMPLATE = fs.readFileSync(
-  path.resolve(import.meta.dirname, "../../../../scripts/lib/openshell-gateway.service.in"),
-  "utf-8",
+const UNIT_TEMPLATE_PATH = path.resolve(
+  import.meta.dirname,
+  "../../../../scripts/lib/openshell-gateway.service.in",
 );
+const UNIT_TEMPLATE = fs.readFileSync(UNIT_TEMPLATE_PATH, "utf8");
 const UNIT = UNIT_TEMPLATE.replaceAll("@OPENSHELL_GATEWAY_BIN@", GATEWAY_BINARY);
 
 describe("NemoClaw gateway systemd unit identity", () => {
-  it("matches the complete repository-owned service template (#9705)", () => {
+  it("matches the canonical repository-owned service template (#9705)", () => {
+    const readFileSync = vi.spyOn(fs, "readFileSync");
+
     expect(matchesNemoclawGatewaySystemdUnit(UNIT, GATEWAY_BINARY)).toBe(true);
+    expect(readFileSync).toHaveBeenCalledWith(UNIT_TEMPLATE_PATH, "utf8");
+  });
+
+  it("rejects a unit when the canonical service template cannot be read (#9705)", () => {
+    vi.spyOn(fs, "readFileSync").mockImplementationOnce(() => {
+      throw new Error("read denied");
+    });
+
+    expect(matchesNemoclawGatewaySystemdUnit(UNIT, GATEWAY_BINARY)).toBe(false);
+  });
+
+  it("accepts an allowed directive change from the canonical template owner (#9705)", () => {
+    const changedTemplate = UNIT_TEMPLATE.replace("RestartSec=5s", "RestartSec=6s");
+    const changedUnit = changedTemplate.replaceAll("@OPENSHELL_GATEWAY_BIN@", GATEWAY_BINARY);
+    vi.spyOn(fs, "readFileSync").mockReturnValueOnce(changedTemplate);
+
+    expect(matchesNemoclawGatewaySystemdUnit(changedUnit, GATEWAY_BINARY)).toBe(true);
   });
 
   it.each([

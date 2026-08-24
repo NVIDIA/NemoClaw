@@ -1,37 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const NEMOCLAW_GATEWAY_UNIT_TEMPLATE = `# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1
+import fs from "node:fs";
+import path from "node:path";
 
-[Unit]
-Description=OpenShell Gateway
-Documentation=https://github.com/NVIDIA/OpenShell
-After=default.target
-
-[Service]
-Type=simple
-StateDirectory=openshell/gateway
-Environment=OPENSHELL_LOCAL_TLS_DIR=%S/openshell/tls
-EnvironmentFile=-%E/openshell/gateway.env
-ExecStartPre=@OPENSHELL_GATEWAY_BIN@ generate-certs --output-dir \${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal
-ExecStart=@OPENSHELL_GATEWAY_BIN@
-Restart=on-failure
-RestartSec=5s
-PrivateTmp=true
-UMask=0077
-
-[Install]
-WantedBy=default.target
-`;
+const NEMOCLAW_GATEWAY_UNIT_TEMPLATE_PATH = path.resolve(
+  import.meta.dirname,
+  "../../../../scripts/lib/openshell-gateway.service.in",
+);
 
 /** Match the complete repository-owned user service definition. */
 export function matchesNemoclawGatewaySystemdUnit(
   contents: string,
   gatewayBinary: string,
 ): boolean {
-  return (
-    contents === NEMOCLAW_GATEWAY_UNIT_TEMPLATE.replaceAll("@OPENSHELL_GATEWAY_BIN@", gatewayBinary)
-  );
+  try {
+    const template = fs.readFileSync(NEMOCLAW_GATEWAY_UNIT_TEMPLATE_PATH, "utf8");
+    return contents === template.replaceAll("@OPENSHELL_GATEWAY_BIN@", gatewayBinary);
+  } catch {
+    return false;
+  }
 }
