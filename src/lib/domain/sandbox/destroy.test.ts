@@ -65,6 +65,18 @@ describe("sandbox destroy helpers", () => {
       gatewayUnreachable: true,
       timedOut: true,
     });
+    expect(
+      getSandboxDeleteOutcome({
+        error: timeoutError,
+        status: null,
+        stderr: "Error: sandbox alpha not found",
+      }),
+    ).toEqual({
+      output: "Error: sandbox alpha not found",
+      alreadyGone: false,
+      gatewayUnreachable: true,
+      timedOut: true,
+    });
   });
 
   it("decides when host services should stop before final registry removal", () => {

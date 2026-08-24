@@ -75,7 +75,7 @@ export function getSandboxDeleteOutcome(deleteResult: SpawnLikeResult): {
   const failed = deleteResult.status !== 0;
   const timedOut =
     failed && (deleteResult.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
-  const alreadyGone = failed && isMissingSandboxDeleteOutput(output);
+  const alreadyGone = failed && !timedOut && isMissingSandboxDeleteOutput(output);
   return {
     output,
     alreadyGone,

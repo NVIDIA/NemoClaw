@@ -2560,8 +2560,11 @@ It clears the remaining local shields state only after deletion succeeds.
 If the pre-delete re-lock fails, the command warns and attempts to destroy the sandbox.
 If the destroy operation succeeds, it destroys the sandbox and deletes its unguarded configuration.
 If the destroy operation fails, NemoClaw keeps the local shields state and the auto-restore timer.
-The timer keeps retrying lockdown and can restore it after the sandbox is reachable again.
-NemoClaw records Shields down until a retry verifies lockdown, or until you destroy or rebuild the sandbox.
+Detached auto-restore uses one 7-attempt recovery budget to restore lockdown.
+Waiting for a verified live sandbox mutation owner does not consume an attempt.
+The deadline gate remains closed during that wait.
+If the recovery budget is exhausted, durable containment blocks new sandbox mutations.
+Run `$$nemoclaw <name> shields status` and follow its exact-generation recovery guidance.
 If deletion fails after hardening, the command keeps the surviving sandbox's locked shields state instead of cleaning it up as though deletion succeeded.
 By default, unattended final-sandbox destroys (`--yes`, `--force`, or `NEMOCLAW_NON_INTERACTIVE=1`) remove the shared NemoClaw gateway on macOS so the host listener is released, while Linux preserves it for reuse.
 Pass `--cleanup-gateway` to force removal, or `--no-cleanup-gateway` to force preservation.

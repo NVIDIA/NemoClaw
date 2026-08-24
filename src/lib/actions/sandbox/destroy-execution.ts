@@ -204,10 +204,11 @@ function wipeAndHardenLiveSandbox(
       `  ${YW}⚠${R} Could not re-lock shields for '${sandboxName}' before delete: ${detail}`,
     );
     console.warn(
-      `  Continuing with delete — '${sandboxName}' and its unguarded config are removed together. ` +
-        "If the delete fails, the auto-restore timer retries the lock within a bounded recovery " +
-        "window. If recovery is exhausted, durable containment blocks sandbox changes; " +
-        `run \`nemoclaw ${sandboxName} shields status\` and follow its recovery guidance.`,
+      `  Continuing with delete: '${sandboxName}' and its unguarded config are removed together. ` +
+        "If sandbox deletion fails, the auto-restore timer retries the transition to lockdown within its seven-attempt recovery budget. " +
+        "Waiting for a verified live sandbox mutation owner does not consume that budget. " +
+        "If the budget is exhausted, durable containment blocks sandbox mutations. " +
+        `Run \`nemoclaw ${sandboxName} shields status\` for exact-generation recovery guidance.`,
     );
     return { hardenedForDelete: false, hardeningFailed: true, timerProcessToken };
   }
