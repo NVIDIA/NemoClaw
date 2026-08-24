@@ -135,6 +135,8 @@ on:
         "src/lib/onboard/managed-bootstrap/podman-runtime.test.ts",
         "src/lib/onboard/managed-bootstrap/podman-runtime.ts",
         "src/lib/onboard/managed-workload/onboard-orchestration.test.ts",
+        "src/lib/onboard/managed-workload/onboard-orchestration.ts",
+        "src/lib/onboard/sandbox-create/orchestration.ts",
         "src/lib/onboard/sandbox-workload-preparation.test.ts",
         "src/lib/onboard/workload/preparation.ts",
         "test/e2e/fixtures/security-posture.ts",
@@ -160,6 +162,8 @@ on:
       "src/lib/onboard/managed-bootstrap/podman-image-transaction.ts",
     );
     expect(source).not.toContain("src/lib/onboard/managed-bootstrap/podman-runtime.ts");
+    expect(source).not.toContain("src/lib/onboard/managed-workload/onboard-orchestration.ts");
+    expect(source).not.toContain("src/lib/onboard/sandbox-create/orchestration.ts");
     expect(source).not.toContain("src/lib/onboard/workload/preparation.ts");
     expect(source).not.toMatch(/^COPY [.]github\/workflows\/e2e/mu);
     expect(source).not.toMatch(/^COPY src\/lib\/onboard\/.*[.]test[.]ts/mu);
