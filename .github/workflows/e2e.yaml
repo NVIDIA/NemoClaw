@@ -5599,7 +5599,6 @@ jobs:
             exit 1
           }
           catalog_revision="$(jq -er '[.[].source.revision] | unique | .[0]' <<<"$MANAGED_IMAGE_CATALOG")"
-          catalog_release="$(jq -er '[.[].source.release] | unique | .[0]' <<<"$MANAGED_IMAGE_CATALOG")"
           jq -c . <<<"$MANAGED_IMAGE_CATALOG" >"$catalog_path"
           [[ -s "$catalog_path" && ! -L "$catalog_path" ]] || {
             echo "::error::temporary managed-image catalog is invalid" >&2
@@ -5607,7 +5606,6 @@ jobs:
           }
           printf 'NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG=%s\n' "$catalog_path" >>"$GITHUB_ENV"
           printf 'NEMOCLAW_E2E_MANAGED_IMAGE_REVISION=%s\n' "$catalog_revision" >>"$GITHUB_ENV"
-          printf 'NEMOCLAW_E2E_EXACT_RELEASE=%s\n' "$catalog_release" >>"$GITHUB_ENV"
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -5617,40 +5615,6 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          if [[ -n "${NEMOCLAW_E2E_EXACT_RELEASE:-}" ]]; then
-            [[ "$NEMOCLAW_E2E_EXACT_RELEASE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-g[0-9a-f]+$ ]] || {
-              echo "::error::exact E2E release identity is invalid" >&2
-              exit 1
-            }
-            real_git="$(command -v git)"
-            [[ "$real_git" == /* ]] || { echo "::error::real git path is invalid" >&2; exit 1; }
-            shim_dir="${RUNNER_TEMP}/nemoclaw-e2e-exact-git"
-            install -d -m 0700 "$shim_dir"
-            printf '%s\n' "$NEMOCLAW_E2E_EXACT_RELEASE" >"${shim_dir}/version"
-            chmod 0600 "${shim_dir}/version"
-            {
-              printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail'
-              printf 'real_git=%q\n' "$real_git"
-              printf '%s\n' \
-                'if [[ $# -eq 4 && $1 == describe && $2 == --tags && $3 == --match && $4 == "v*" ]]; then' \
-                '  cat "$(dirname -- "$0")/version"' \
-                '  exit 0' \
-                'fi' \
-                'if [[ $# -eq 6 && $1 == -C && -n $2 && $3 == describe && $4 == --tags && $5 == --match && $6 == "v*" ]]; then' \
-                '  cat "$(dirname -- "$0")/version"' \
-                '  exit 0' \
-                'fi' \
-                'exec "$real_git" "$@"'
-            } >"${shim_dir}/git"
-            chmod 0700 "${shim_dir}/git"
-            export PATH="${shim_dir}:${PATH}"
-            profile_path="/etc/profile.d/nemoclaw-e2e-git-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sh"
-            sudo test ! -e "$profile_path" || { echo "::error::temporary E2E profile path already exists" >&2; exit 1; }
-            printf 'export PATH=%q:"$PATH"\n' "$shim_dir" | sudo tee "$profile_path" >/dev/null
-            sudo chmod 0644 "$profile_path"
-            cleanup_exact_git() { sudo rm -f -- "$profile_path"; }
-            trap cleanup_exact_git EXIT
-          fi
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           if command -v openshell >/dev/null 2>&1; then
             OPENSHELL_BIN="$(command -v openshell)"
