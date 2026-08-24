@@ -162,8 +162,8 @@ describe("deterministic PR risk plan", () => {
     "src/lib/onboard/experimental/hermes-portable-build-context.ts",
     "src/lib/onboard/experimental/portable-agent-lifecycle.ts",
     "docs/get-started/portable.mdx",
-    "src/lib/onboard/experimental/portable-profile.test.ts",
-    "src/lib/onboard/runtime-provider/podman-runtime-surfaces.test.ts",
+    "src/lib/onboard/experimental/portable-host-preparation.test.ts",
+    "src/lib/onboard/runtime-provider/podman-host-local-inference.test.ts",
   ])("keeps gateway topology review scoped away from %s (#10058)", (changedFile) => {
     const result = plan(changedFile);
 
