@@ -7,74 +7,114 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-const WORKFLOW_PATH = path.resolve(
-  import.meta.dirname,
-  "../.github/workflows/codebase-growth-guardrails.yaml",
+import { validateGrowthGuardrailsWorkflowBoundary } from "../scripts/checks/growth-guardrails-workflow-boundary.mts";
+
+const ROOT = path.resolve(import.meta.dirname, "..");
+const WORKFLOW_SOURCE = readFileSync(
+  path.join(ROOT, ".github/workflows/codebase-growth-guardrails.yaml"),
+  "utf8",
 );
-const STATIC_CHECK_ACTION_PATH = path.resolve(
-  import.meta.dirname,
-  "../.github/actions/ci-static-checks/action.yaml",
+const STATIC_ACTION_SOURCE = readFileSync(
+  path.join(ROOT, ".github/actions/ci-static-checks/action.yaml"),
+  "utf8",
 );
+
+type Value = Record<string, any>;
+
+function mutatedWorkflow(mutate: (workflow: Value) => void): string[] {
+  const workflow = YAML.parse(WORKFLOW_SOURCE) as Value;
+  mutate(workflow);
+  return validateGrowthGuardrailsWorkflowBoundary(YAML.stringify(workflow), STATIC_ACTION_SOURCE);
+}
 
 describe("codebase growth guardrails workflow trust boundary", () => {
-  // source-shape-contract: security -- The pull_request_target guardrail must run only the trusted base test and treat pull request files as data
-  it("runs the trusted Vitest guardrails against pull request data", () => {
-    const workflow = YAML.parse(readFileSync(WORKFLOW_PATH, "utf8"));
+  it("accepts the checked-in trusted workflow configuration", () => {
+    expect(validateGrowthGuardrailsWorkflowBoundary()).toEqual([]);
+  });
 
-    expect(workflow).toEqual({
-      name: "Governance / Enforce Codebase Growth Limits",
-      on: {
-        pull_request_target: {
-          types: ["opened", "reopened", "synchronize", "ready_for_review"],
-        },
+  it("accepts equivalent workflow mappings with reordered keys", () => {
+    const workflow = YAML.parse(WORKFLOW_SOURCE) as Value;
+    const reorderedWorkflow = {
+      jobs: workflow.jobs,
+      permissions: {
+        "pull-requests": workflow.permissions["pull-requests"],
+        contents: workflow.permissions.contents,
       },
-      permissions: { contents: "read", "pull-requests": "read" },
-      jobs: {
-        "codebase-growth-guardrails": {
-          name: "codebase-growth-guardrails",
-          "runs-on": "ubuntu-latest",
-          "timeout-minutes": 5,
-          steps: [
-            {
-              name: "Check out the trusted base revision",
-              uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-              with: {
-                ref: "${{ github.event.pull_request.base.sha }}",
-                "persist-credentials": false,
-              },
-            },
-            {
-              name: "Install trusted dependencies",
-              run: "npm ci --ignore-scripts --no-audit --no-fund",
-            },
-            {
-              name: "Test codebase growth guardrails",
-              env: {
-                NEMOCLAW_GROWTH_PR: "1",
-                GH_TOKEN: "${{ github.token }}",
-                PR_NUMBER: "${{ github.event.pull_request.number }}",
-                REPO: "${{ github.repository }}",
-                BASE_SHA: "${{ github.event.pull_request.base.sha }}",
-                HEAD_REPO: "${{ github.event.pull_request.head.repo.full_name }}",
-                HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
-              },
-              run: "set -euo pipefail\nnpx vitest run --project integration test/growth-guardrails.test.ts\n",
-            },
-          ],
-        },
-      },
-    });
+      on: workflow.on,
+      name: workflow.name,
+    };
 
-    const action = YAML.parse(readFileSync(STATIC_CHECK_ACTION_PATH, "utf8"));
     expect(
-      action.runs.steps.filter((step: { name?: string }) => step.name === "Run static hook checks"),
-    ).toEqual([
-      {
-        name: "Run static hook checks",
-        shell: "bash",
-        run: "npx prek run --all-files --stage pre-commit \\\n  --skip source-shape-test-budget \\\n  --skip test-skills-yaml\n",
-      },
-    ]);
-    expect(JSON.stringify(action)).not.toContain("test-size:check");
+      validateGrowthGuardrailsWorkflowBoundary(
+        YAML.stringify(reorderedWorkflow),
+        STATIC_ACTION_SOURCE,
+      ),
+    ).toEqual([]);
+  });
+
+  it.each([
+    ["trigger", (workflow: Value) => (workflow.on.pull_request = {})],
+    ["permissions", (workflow: Value) => (workflow.permissions.contents = "write")],
+    [
+      "base checkout",
+      (workflow: Value) => (workflow.jobs["codebase-growth-guardrails"].steps[0].with.ref = "main"),
+    ],
+    [
+      "checkout pin",
+      (workflow: Value) =>
+        (workflow.jobs["codebase-growth-guardrails"].steps[0].uses =
+          "actions/checkout@0000000000000000000000000000000000000000"),
+    ],
+    [
+      "checkout credentials",
+      (workflow: Value) =>
+        (workflow.jobs["codebase-growth-guardrails"].steps[0].with["persist-credentials"] = true),
+    ],
+    [
+      "dependency install",
+      (workflow: Value) =>
+        (workflow.jobs["codebase-growth-guardrails"].steps[1].run = "npm install"),
+    ],
+    [
+      "test invocation",
+      (workflow: Value) => (workflow.jobs["codebase-growth-guardrails"].steps[2].run = "npm test"),
+    ],
+    [
+      "pull request metadata",
+      (workflow: Value) =>
+        (workflow.jobs["codebase-growth-guardrails"].steps[2].env.HEAD_SHA = "untrusted"),
+    ],
+    [
+      "job permission override",
+      (workflow: Value) =>
+        (workflow.jobs["codebase-growth-guardrails"].permissions = { contents: "write" }),
+    ],
+    [
+      "failure tolerance",
+      (workflow: Value) =>
+        (workflow.jobs["codebase-growth-guardrails"].steps[2]["continue-on-error"] = true),
+    ],
+  ])("rejects a mutation to %s", (_boundary, mutate) => {
+    expect(mutatedWorkflow(mutate)).toContain(
+      "growth guardrail workflow must match the reviewed trust boundary",
+    );
+  });
+
+  it("rejects recursive test-size checks from the static action", () => {
+    const action = YAML.parse(STATIC_ACTION_SOURCE) as Value;
+    action.runs.steps.push({ run: "npm run test-size:check", shell: "bash" });
+    expect(
+      validateGrowthGuardrailsWorkflowBoundary(WORKFLOW_SOURCE, YAML.stringify(action)),
+    ).toContain("static checks must not recursively invoke test-size:check");
+  });
+
+  it("rejects removal of the reviewed static hook step", () => {
+    const action = YAML.parse(STATIC_ACTION_SOURCE) as Value;
+    action.runs.steps = action.runs.steps.filter(
+      (step: Value) => step.name !== "Run static hook checks",
+    );
+    expect(
+      validateGrowthGuardrailsWorkflowBoundary(WORKFLOW_SOURCE, YAML.stringify(action)),
+    ).toContain("static action must retain the reviewed hook-check step");
   });
 });
