@@ -319,13 +319,13 @@ describe("PR review advisor", () => {
   });
 
   it.each(["needs_rework", "blocked"])(
-    "keeps legacy public recommendation %s schema-compatible",
+    "rejects retired public recommendation %s",
     (recommendation) => {
       const schema = loadAdvisorSchema();
       const validate = new Ajv2020({ strict: false }).compile(schema);
 
       expect(validate(validResult({ summary: { ...validResult().summary, recommendation } }))).toBe(
-        true,
+        false,
       );
     },
   );

@@ -8,32 +8,32 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import "./helpers/onboard-script-mocks.cjs";
+import "../helpers/onboard-script-mocks.cjs";
 
-import { loadAgent } from "../src/lib/agent/defs";
-import { normalizeInferenceSelection } from "../src/lib/inference/selection";
-import { createSession } from "../src/lib/state/onboard-session";
-import type { SandboxEntry } from "../src/lib/state/registry/types";
-import { createHermesPortableBuildContextPlan } from "../src/lib/onboard/experimental/hermes-portable-build-context";
-import { readHermesPortableLifecycleReceipt } from "../src/lib/onboard/experimental/hermes-portable-receipt";
-import { runHermesPortableOnboardingTransaction } from "../src/lib/onboard/experimental/hermes-portable-onboarding";
-import { getHermesPortableSandboxRuntimeRegistryFields } from "../src/lib/onboard/sandbox-registry-metadata";
-import { resolveSandboxGpuConfig } from "../src/lib/onboard/sandbox-gpu-mode";
-import { completeHermesPortableSandboxRegistration } from "../src/lib/onboard/sandbox-create/orchestration";
-import { materializeHermesPortableCreatePlan } from "../src/lib/onboard/sandbox-create-plan-materialization";
-import { resolveSandboxCreateIntent } from "../src/lib/onboard/sandbox-create-intent";
-import { createPortableOnboardEnvironmentScope } from "../src/lib/onboard/session-bootstrap";
+import { loadAgent } from "../../src/lib/agent/defs";
+import { normalizeInferenceSelection } from "../../src/lib/inference/selection";
+import { createSession } from "../../src/lib/state/onboard-session";
+import type { SandboxEntry } from "../../src/lib/state/registry/types";
+import { createHermesPortableBuildContextPlan } from "../../src/lib/onboard/experimental/hermes-portable-build-context";
+import { readHermesPortableLifecycleReceipt } from "../../src/lib/onboard/experimental/hermes-portable-receipt";
+import { runHermesPortableOnboardingTransaction } from "../../src/lib/onboard/experimental/hermes-portable-onboarding";
+import { getHermesPortableSandboxRuntimeRegistryFields } from "../../src/lib/onboard/sandbox-registry-metadata";
+import { resolveSandboxGpuConfig } from "../../src/lib/onboard/sandbox-gpu-mode";
+import { completeHermesPortableSandboxRegistration } from "../../src/lib/onboard/sandbox-create/orchestration";
+import { materializeHermesPortableCreatePlan } from "../../src/lib/onboard/sandbox-create-plan-materialization";
+import { resolveSandboxCreateIntent } from "../../src/lib/onboard/sandbox-create-intent";
+import { createPortableOnboardEnvironmentScope } from "../../src/lib/onboard/session-bootstrap";
 import {
   createHermesPortableTransactionFixture,
   HERMES_PORTABLE_TEST_LIVE_IDENTITY,
   hermesPortableDescendantNames,
   hermesPortableTestOpenShellAuthority,
   makeHermesPortableCheckoutPrivate,
-} from "./helpers/hermes-portable-onboarding-fixture";
-import { INSTALLER_PAYLOAD } from "./helpers/installer-sourced-env";
-import { testTimeoutOptions } from "./helpers/timeouts";
+} from "../helpers/hermes-portable-onboarding-fixture";
+import { INSTALLER_PAYLOAD } from "../helpers/installer-sourced-env";
+import { testTimeoutOptions } from "../helpers/timeouts";
 
-const ROOT = path.resolve(import.meta.dirname, "..");
+const ROOT = path.resolve(import.meta.dirname, "../..");
 const CURL_PIPE_INSTALLER = path.join(ROOT, "install.sh");
 const BUILD_SETTINGS = {
   model: "qwen3-vl:4b",
@@ -120,8 +120,8 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
     fs.mkdirSync(homeDir, { mode: 0o700 });
     vi.stubEnv("HOME", homeDir);
     vi.resetModules();
-    const registry = await import("../src/lib/state/registry");
-    const { registerCreatedSandbox } = await import("../src/lib/onboard/sandbox-registration");
+    const registry = await import("../../src/lib/state/registry");
+    const { registerCreatedSandbox } = await import("../../src/lib/onboard/sandbox-registration");
     const sourceRevision = spawnSync("git", ["rev-parse", "HEAD"], {
       cwd: ROOT,
       encoding: "utf8",
@@ -273,9 +273,7 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
         readRegistry: () => registry.getSandbox(sandboxName),
         createSandbox: async (argv, buildContextPath) => {
           expect(buildContextPath).toContain(path.join(stateDir, "hermes-portable-build-context"));
-          expect(argv[argv.indexOf("--from") + 1]).toBe(
-            path.join(buildContextPath, "Dockerfile"),
-          );
+          expect(argv[argv.indexOf("--from") + 1]).toBe(path.join(buildContextPath, "Dockerfile"));
           expect(argv[argv.indexOf("--policy") + 1]).not.toBe(basePolicyPath);
           return { ready: true };
         },

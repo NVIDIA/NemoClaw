@@ -38,7 +38,7 @@ Skills that write or review explanatory text must follow the shared [Documentati
 | `nemoclaw-blueprint/` | YAML | Blueprint definition and network policies |
 | `nemoclaw-blueprint/model-specific-setup/` | JSON | Agent-scoped model/provider compatibility registry |
 | `scripts/` | Bash/JS/TS | Install helpers, setup, automation, E2E tooling |
-| `test/` | JavaScript (ESM) | Root-level integration tests (Vitest) |
+| `test/` | JavaScript/TypeScript (ESM) | Integration tests and explicit execution lanes (see `test/README.md`) |
 | `test/e2e/` | Bash/JS/TS | End-to-end tests, target registry, and live runner (see `test/e2e/README.md`) |
 | `docs/` | MDX/Markdown | User-facing Fern docs and Markdown routes for AI documentation clients |
 | `fern/` | YAML/CSS/SVG | Fern site configuration and shared assets |
@@ -95,7 +95,7 @@ Tests are organized into disjoint Vitest projects defined in `vitest.config.ts`:
 
 1. **`cli`** — `src/**/*.test.ts` — CLI unit tests importing source
 2. **`integration`** — `test/**/*.test.{js,ts}` — root integration tests importing source; excludes the explicit lanes below
-3. **`installer-integration`** — installer tests that spawn real `install.sh` processes
+3. **`installer-integration`** — `test/installer-integration/**/*.test.ts` — installer tests that spawn real `install.sh` processes
 4. **`package-contract`** — `test/package-contract/**/*.test.ts` — the only non-live lane that imports compiled CLI/plugin artifacts
 5. **`plugin`** — `nemoclaw/src/**/*.test.ts` — plugin unit tests co-located with source
 6. **`e2e-support`** — fast tests for the E2E fixture/support layer; this project runs in the
@@ -104,7 +104,7 @@ Tests are organized into disjoint Vitest projects defined in `vitest.config.ts`:
 
 When writing tests:
 
-- Root-level tests (`test/`) use ESM imports
+- Tests under `test/` use ESM imports and follow the directory ownership rules in `test/README.md`.
 - Plugin tests use TypeScript and are co-located with their source files
 - Import CLI source from ordinary tests. Put genuine compiled-artifact assertions under `test/package-contract/`.
 - Keep project globs disjoint and exhaustive; `npm run test:projects:check` compares filesystem candidates with Vitest and rejects missing, overlapping, or unexpected membership.

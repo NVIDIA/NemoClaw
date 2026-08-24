@@ -736,6 +736,12 @@ function proveLivePolicy(
   if (proof.intendedSemanticSha256 !== receipt.policy.intendedSemanticSha256) {
     fail("live policy proof disagrees with pending intent");
   }
+  if (
+    receipt.phase !== "pending" &&
+    proof.verifiedLivePolicySemanticSha256 !== receipt.verifiedLivePolicySemanticSha256
+  ) {
+    fail("live policy authority disagrees with the configured receipt");
+  }
   return proof.verifiedLivePolicySemanticSha256;
 }
 
