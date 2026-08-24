@@ -32,14 +32,22 @@ const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN ?? "xoxb-fake-slack-pairing-
 const SLACK_APP_TOKEN = process.env.SLACK_APP_TOKEN ?? "xapp-fake-slack-pairing-e2e";
 const LIVE_TIMEOUT_MS = 55 * 60_000;
 
-function assertSlackCapture(captureFile: string, expectedCode: string, expectedUser: string): void {
-  const rows = fs
+function readSlackCapture(captureFile: string): Record<string, unknown>[] {
+  return fs
     .readFileSync(captureFile, "utf8")
     .trim()
     .split(/\n+/)
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, unknown>);
-  const ws = rows
+}
+
+function assertSlackCapture(
+  restCaptureFile: string,
+  websocketCaptureFile: string,
+  expectedCode: string,
+  expectedUser: string,
+): void {
+  const ws = readSlackCapture(websocketCaptureFile)
     .filter(
       (row) => row.event === "websocket-message" && row.messageType === "socket_mode_client_hello",
     )
@@ -48,7 +56,7 @@ function assertSlackCapture(captureFile: string, expectedCode: string, expectedU
   expect(ws?.tokenMatchesExpected, "Slack xapp websocket token rewrite").toBe(true);
   expect(ws?.tokenLooksPlaceholder, "Slack xapp placeholder leaked").toBe(false);
 
-  const post = rows
+  const post = readSlackCapture(restCaptureFile)
     .filter((row) => row.event === "request" && row.path === "/api/chat.postMessage")
     .at(-1);
   expect(post, "fake Slack did not capture chat.postMessage").toBeTruthy();
@@ -156,18 +164,28 @@ test(
   });
 
   progress.phase("route Slack API and websocket traffic through managed policies");
-  const fakeSlack = await startFakeSlackApi(
+  const fakeSlackRest = await startFakeSlackApi(
     host,
     cleanup,
     env,
     SLACK_BOT_TOKEN,
     SLACK_APP_TOKEN,
     redactions,
+    "rest",
+  );
+  const fakeSlackWebsocket = await startFakeSlackApi(
+    host,
+    cleanup,
+    env,
+    SLACK_BOT_TOKEN,
+    SLACK_APP_TOKEN,
+    redactions,
+    "websocket",
   );
   await applyFakePolicy({
     host,
     sandboxName: SANDBOX_NAME,
-    api: fakeSlack,
+    api: fakeSlackRest,
     protocol: "rest",
     rewrite: "request-body-credential-rewrite",
     providerName: `${SANDBOX_NAME}-slack-bridge`,
@@ -178,7 +196,7 @@ test(
   await applyFakePolicy({
     host,
     sandboxName: SANDBOX_NAME,
-    api: fakeSlack,
+    api: fakeSlackWebsocket,
     protocol: "websocket",
     rewrite: "websocket-credential-rewrite",
     providerName: `${SANDBOX_NAME}-slack-app`,
@@ -193,11 +211,17 @@ test(
     sandboxName: SANDBOX_NAME,
     channel: "slack",
     redactions,
-    fakeSlackPort: fakeSlack.port,
+    fakeSlackRestPort: fakeSlackRest.port,
+    fakeSlackWebsocketPort: fakeSlackWebsocket.port,
   });
   expectExitZero(issue, "Slack pairing request creation");
   const code = extractPairingCode(resultText(issue), "PAIRING_E2E_RESULT");
-  assertSlackCapture(fakeSlack.captureFile, code, PAIRING_USER.slack);
+  assertSlackCapture(
+    fakeSlackRest.captureFile,
+    fakeSlackWebsocket.captureFile,
+    code,
+    PAIRING_USER.slack,
+  );
   await writePairingArtifacts(artifacts, "slack", { code, user: PAIRING_USER.slack });
 
   progress.phase("approve the Slack code through connect-shell");

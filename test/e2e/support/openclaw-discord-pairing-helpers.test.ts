@@ -220,37 +220,37 @@ describe("OpenClaw Discord pairing helper contracts", () => {
   it.each([
     {
       name: "missing fake port",
-      env: { FAKE_SLACK_API_PORT: "", HTTP_PROXY: "", http_proxy: "" },
-      error: "FAKE_SLACK_API_PORT must be an integer in 1..65535",
+      env: { FAKE_SLACK_REST_PORT: "", HTTP_PROXY: "", http_proxy: "" },
+      error: "FAKE_SLACK_REST_PORT must be an integer in 1..65535",
     },
     {
       name: "out-of-range fake port",
-      env: { FAKE_SLACK_API_PORT: "70000", HTTP_PROXY: "", http_proxy: "" },
-      error: "FAKE_SLACK_API_PORT must be an integer in 1..65535",
+      env: { FAKE_SLACK_REST_PORT: "70000", HTTP_PROXY: "", http_proxy: "" },
+      error: "FAKE_SLACK_REST_PORT must be an integer in 1..65535",
     },
     {
       name: "malformed proxy",
-      env: { FAKE_SLACK_API_PORT: "12345", HTTP_PROXY: "http://[", http_proxy: "" },
+      env: { FAKE_SLACK_REST_PORT: "12345", HTTP_PROXY: "http://[", http_proxy: "" },
       error: "HTTP proxy for Slack pairing probe is malformed",
     },
     {
       name: "non-HTTP proxy",
-      env: { FAKE_SLACK_API_PORT: "12345", HTTP_PROXY: "socks5://127.0.0.1:1080", http_proxy: "" },
+      env: { FAKE_SLACK_REST_PORT: "12345", HTTP_PROXY: "socks5://127.0.0.1:1080", http_proxy: "" },
       error: "Slack pairing probe only supports HTTP proxies",
     },
     {
       name: "invalid proxy port",
-      env: { FAKE_SLACK_API_PORT: "12345", HTTP_PROXY: "http://127.0.0.1:70000", http_proxy: "" },
+      env: { FAKE_SLACK_REST_PORT: "12345", HTTP_PROXY: "http://127.0.0.1:70000", http_proxy: "" },
       error: "HTTP proxy for Slack pairing probe is malformed",
     },
     {
       name: "unexpected valid proxy host",
-      env: { FAKE_SLACK_API_PORT: "12345", HTTP_PROXY: "http://127.0.0.1:3128", http_proxy: "" },
+      env: { FAKE_SLACK_REST_PORT: "12345", HTTP_PROXY: "http://127.0.0.1:3128", http_proxy: "" },
       error: "unexpected HTTP proxy for Slack pairing probe",
     },
   ])("fails closed on invalid Slack probe input before network access: $name", ({ env, error }) => {
     const result = spawnSync(process.execPath, ["--input-type=module"], {
-      input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nlet networkAttempted = false;\ntry { parseFakeSlackPort(); parseProxyTarget(); networkAttempted = true; } catch (error) { console.error(error.message); console.error("NETWORK_ATTEMPTED=" + networkAttempted); process.exit(1); }\n`,
+      input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nlet networkAttempted = false;\ntry { parseFakeSlackPort("FAKE_SLACK_REST_PORT"); parseProxyTarget(); networkAttempted = true; } catch (error) { console.error(error.message); console.error("NETWORK_ATTEMPTED=" + networkAttempted); process.exit(1); }\n`,
       encoding: "utf8",
       env: { ...process.env, ...env },
     });

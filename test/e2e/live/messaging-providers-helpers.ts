@@ -583,7 +583,13 @@ export async function startFakeDockerApi(
   host: HostCliClient,
   cleanup: (name: string, run: () => Promise<void>) => void,
   options: {
-    kind: "slack" | "telegram" | "discord-gateway" | "discord-message";
+    kind:
+      | "slack"
+      | "slack-rest"
+      | "slack-websocket"
+      | "telegram"
+      | "discord-gateway"
+      | "discord-message";
     imageScript: string;
     containerPrefix: string;
     portEnv: string;
@@ -611,7 +617,7 @@ export async function startFakeDockerApi(
     "--name",
     container,
     "-p",
-    "127.0.0.1::8080",
+    "0.0.0.0::8080",
     "-e",
     `${options.portEnv}=8080`,
     "-e",
@@ -695,7 +701,7 @@ export async function applyRestRewritePolicy(
       "update",
       SANDBOX_NAME,
       "--add-endpoint",
-      `host.openshell.internal:${api.port}:read-write:rest:enforce:request-body-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
+      `host.openshell.internal:${api.port}:read-write:rest:enforce:request-body-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16,allowed-ip=169.254.2.2/32`,
       "--add-allow",
       `host.openshell.internal:${api.port}:GET:/**`,
       "--add-allow",
@@ -730,7 +736,7 @@ export async function applyWebSocketRewritePolicy(
       "update",
       SANDBOX_NAME,
       "--add-endpoint",
-      `host.openshell.internal:${api.port}:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
+      `host.openshell.internal:${api.port}:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16,allowed-ip=169.254.2.2/32`,
       "--add-allow",
       `host.openshell.internal:${api.port}:GET:/**`,
       "--add-allow",
