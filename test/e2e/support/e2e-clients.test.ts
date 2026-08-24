@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   assertExitZero,
   type CommandRunner,
@@ -25,6 +25,7 @@ import type {
   ShellProbeRunOptions,
   TrustedShellCommand,
 } from "../fixtures/shell-probe.ts";
+import { LAUNCH_TURN_SCRIPT, runOpenClawLaunchSession } from "../live/launch-agent-turn.ts";
 import { sandboxShWithArgs } from "../live/phase6-messaging-helpers.ts";
 
 interface RunnerCall {
@@ -185,6 +186,42 @@ describe("E2E fixture clients", () => {
       "resolve OpenShell command path failed: expected exactly one non-empty absolute path",
     );
     expect(host.openshellCommandPath).toBe("openshell");
+  });
+
+  it("composes installation, OpenShell resolution, and launch in authority order", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ stdout: "installation complete\n" });
+    runner.enqueue({ stdout: "/home/runner/.local/bin/openshell\n" });
+    runner.enqueue({});
+    const host = new HostCliClient(runner);
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+
+    try {
+      const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
+        artifactName: "phase-1-install-sh",
+      });
+      expect(install.exitCode).toBe(0);
+      await host.resolveOpenShellCommandPath();
+      await runOpenClawLaunchSession({
+        artifactName: "phase-4-openclaw-launch-turn",
+        cliCommand: "nemoclaw",
+        env: {},
+        host,
+        redactionValues: [],
+        sandboxName: "alpha",
+      });
+
+      expect(runner.calls.map(({ args }) => args)).toEqual([
+        ["install.sh", "--non-interactive", "--fresh"],
+        ["-lc", 'command -v -- "$1"', "resolve-openshell-command", "openshell"],
+        ["-lc", LAUNCH_TURN_SCRIPT],
+      ]);
+      expect(runner.calls[2]?.options?.env?.NEMOCLAW_OPENSHELL_COMMAND).toBe(
+        "/home/runner/.local/bin/openshell",
+      );
+    } finally {
+      platform.mockRestore();
+    }
   });
 
   it("host client validates list/status and cleans up sandbox destroys", async () => {
