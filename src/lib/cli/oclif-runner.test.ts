@@ -317,6 +317,11 @@ describe("runOclifCommandById", () => {
     expect(
       (config.pjson.oclif as Record<string, unknown>)[PUBLIC_HELP_SANDBOX_NAME_PROPERTY],
     ).toBe("alpha");
+    expect(
+      (config.plugins.get("root")?.pjson.oclif as Record<string, unknown>)[
+        PUBLIC_HELP_SANDBOX_NAME_PROPERTY
+      ],
+    ).toBe("alpha");
   });
 
   it("formats oclif flag parse errors and exits with the oclif exit code", async () => {

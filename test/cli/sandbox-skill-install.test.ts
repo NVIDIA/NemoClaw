@@ -17,6 +17,7 @@ describe("sandbox skill install CLI dispatch", () => {
 
     expect(r.code).toBe(0);
     expect(r.out).toContain("$ nemoclaw alpha skill install <path>");
+    expect(r.out).not.toContain("$ nemoclaw sandbox skill install");
     expect(r.out).toContain("Deploy a skill directory");
     expect(r.out).not.toContain("No SKILL.md found");
   });

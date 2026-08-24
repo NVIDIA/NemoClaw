@@ -31,6 +31,7 @@ describe("sandbox help", () => {
       expect(command.code).toBe(0);
       expect(command.out).toContain("$ nemoclaw inference-box inference get [--json]");
       expect(command.out).toContain("$ nemoclaw inference-box inference get --json");
+      expect(command.out).not.toContain("$ nemoclaw sandbox inference get");
       expect(command.out).not.toContain("$ nemoclaw my-assistant inference get");
       expect(command.out).not.toContain("inference get inference get");
     },
