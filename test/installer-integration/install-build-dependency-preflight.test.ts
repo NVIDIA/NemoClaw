@@ -6,10 +6,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { writeExecutable } from "./helpers/installer-sourced-env";
-import { writeNpmStub } from "./helpers/installer-run-fixture";
+import { writeExecutable } from "../helpers/installer-sourced-env";
+import { writeNpmStub } from "../helpers/installer-run-fixture";
 
-const INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
+const INSTALLER = path.join(import.meta.dirname, "../..", "install.sh");
 
 function writeNodeStub(fakeBin: string) {
   writeExecutable(
@@ -72,7 +72,7 @@ function runWithoutStrings(env: Record<string, string> = {}) {
       env.NPM_PREFIX = path.join(tmp, "prefix");
     })();
   return spawnSync("bash", [INSTALLER], {
-    cwd: path.join(import.meta.dirname, ".."),
+    cwd: path.join(import.meta.dirname, "../.."),
     encoding: "utf-8",
     env: {
       ...process.env,
@@ -121,7 +121,7 @@ printf '#!/usr/bin/env bash\\n: > %s\\necho "not the pinned nvm installer"\\n' $
     );
 
     const result = spawnSync("bash", ["-c", `source "${INSTALLER}" 2>/dev/null; install_nodejs`], {
-      cwd: path.join(import.meta.dirname, ".."),
+      cwd: path.join(import.meta.dirname, "../.."),
       encoding: "utf-8",
       env: {
         HOME: tmp,
