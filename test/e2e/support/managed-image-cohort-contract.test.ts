@@ -42,6 +42,7 @@ function cohortContract(): Record<string, unknown> {
             platforms: Object.fromEntries(
               PLATFORMS.map((platform, platformIndex) => {
                 const platformDigest = digest(agentIndex + platformIndex + 4);
+                const workloadDigest = digest(agentIndex + platformIndex + 10);
                 const baseReference = `ghcr.io/nvidia/nemoclaw/base@${digest(agentIndex + platformIndex + 7)}`;
                 const [os, architecture] = platform.split("/");
                 return [
@@ -52,7 +53,10 @@ function cohortContract(): Record<string, unknown> {
                     baseReference,
                     publicationEvidence: {
                       candidateDescriptor: { digest: platformDigest },
-                      workloadDescriptor: { platform: { os, architecture } },
+                      workloadDescriptor: {
+                        digest: workloadDigest,
+                        platform: { os, architecture },
+                      },
                       attestations: {
                         slsa: {
                           statement: {
@@ -102,7 +106,7 @@ describe("managed-image cohort publication contract", () => {
             Object.fromEntries(
               PLATFORMS.map((platform, platformIndex) => [
                 platform,
-                `${MANAGED_IMAGE_REPOSITORIES[agent]}@${digest(agentIndex + platformIndex + 4)}`,
+                `${MANAGED_IMAGE_REPOSITORIES[agent]}@${digest(agentIndex + platformIndex + 10)}`,
               ]),
             ),
           ]),

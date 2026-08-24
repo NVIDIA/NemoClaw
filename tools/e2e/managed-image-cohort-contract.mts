@@ -222,10 +222,19 @@ export function validateManagedImageCohort(
       return [
         agent,
         Object.fromEntries(
-          PLATFORMS.map((platform) => [
-            platform,
-            record(platforms[platform], `${agent} ${platform} publication`).reference,
-          ]),
+          PLATFORMS.map((platform) => {
+            const publication = record(platforms[platform], `${agent} ${platform} publication`);
+            const workloadDescriptor = record(
+              record(publication.publicationEvidence, `${agent} ${platform} publication evidence`)
+                .workloadDescriptor,
+              `${agent} ${platform} workload descriptor`,
+            );
+            const workloadDigest = digest(
+              workloadDescriptor.digest,
+              `${agent} ${platform} workload digest`,
+            );
+            return [platform, `${MANAGED_IMAGE_REPOSITORIES[agent]}@${workloadDigest}`];
+          }),
         ),
       ];
     }),

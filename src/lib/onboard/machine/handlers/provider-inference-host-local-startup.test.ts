@@ -235,6 +235,25 @@ function llamaCppLifecycleSelection(
 }
 
 describe("provider inference host-local startup selection", () => {
+  it("does not require host-local application support for a hosted candidate provider", () => {
+    const resolver = vi.fn();
+    const resolve = createCachedHostLocalInferenceSetupResolver({
+      resolver,
+      application: "pi",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      acceleration: "cpu",
+      requireToolCalling: null,
+      freshRequireToolCalling: true,
+      allowPublishedResume: false,
+      recover: false,
+      recordToolCallingRequirement: vi.fn(),
+    });
+
+    expect(resolve("pi-sandbox")).toEqual({});
+    expect(resolver).not.toHaveBeenCalled();
+  });
+
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "dispatches a published %s llama.cpp route through the common lifecycle exactly once",
     async (application) => {

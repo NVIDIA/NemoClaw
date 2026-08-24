@@ -176,6 +176,8 @@ export function shouldAssertStockManagedImageReceipt(
   environment: NodeJS.ProcessEnv,
 ): boolean {
   if (!environment.E2E_MANAGED_IMAGE_REVISION?.trim()) return false;
+  const selectedAgent = environment.NEMOCLAW_AGENT?.trim();
+  if (selectedAgent && !isShippedManagedImageAgent(selectedAgent)) return false;
   if (environment.NEMOCLAW_FROM_DOCKERFILE?.trim()) return false;
   const executable = path.basename(command);
   let onboardArgumentIndex = -1;
