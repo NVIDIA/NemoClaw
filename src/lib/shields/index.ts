@@ -25,6 +25,8 @@ const fs = require("fs");
 const path = require("path");
 const { fork } = require("child_process");
 const { createHash, randomBytes } = require("crypto");
+const { isDeepStrictEqual } = require("util");
+const YAML: typeof import("yaml") = require("yaml");
 const { CLI_NAME }: typeof import("../cli/branding") = require("../cli/branding");
 const { isObjectRecord }: typeof import("../core/json-types") = require("../core/json-types");
 const {
@@ -43,6 +45,7 @@ const {
   resolvePermissivePolicyPath,
   assertNemoClawManagedPolicy,
   inspectPolicyMutationAuthority,
+  inspectPolicyRecoveryAuthority,
   isExternalPolicyAuthorityRefusalError,
   isPolicyAuthorityRefusalError,
   recheckPolicyMutationAuthority,
@@ -139,13 +142,23 @@ type AgentStateLockPlan = import("../agent/definition-types").AgentStateLockPlan
 type ManagedMcpPolicyOmission = import("./permissive-runtime").ManagedMcpPolicyOmission;
 type TimerMarker = import("./timer-control").TimerMarker;
 type PolicyMutationAuthority = ReturnType<typeof inspectPolicyMutationAuthority>;
+type ShieldsPolicyAuthority = PolicyMutationAuthority & {
+  shieldsPolicySnapshotPath?: string;
+};
 
 /** Require the registry-bound live authority before a Shields-owned policy mutation. */
 function assertShieldsPolicyMutationAuthority(
   sandboxName: string,
   operation: string,
-  recorded?: PolicyMutationAuthority,
-): PolicyMutationAuthority {
+  recorded?: ShieldsPolicyAuthority,
+): ShieldsPolicyAuthority {
+  if (recorded?.authority === "externally-managed" && recorded.shieldsPolicySnapshotPath) {
+    return resolveShieldsPolicySnapshotRestoreAuthority(
+      sandboxName,
+      recorded.shieldsPolicySnapshotPath,
+      recorded,
+    ).authority;
+  }
   const authority = recorded
     ? recheckPolicyMutationAuthority(sandboxName, operation, recorded)
     : inspectPolicyMutationAuthority(sandboxName, operation);
@@ -153,31 +166,88 @@ function assertShieldsPolicyMutationAuthority(
   return authority;
 }
 
-function externalPolicyRecoveryHandoff(sandboxName: string): string {
-  return (
-    `NemoClaw cannot restore or reconcile the saved Shields policy snapshot for sandbox '${sandboxName}' ` +
-    "while an external authority manages policy. The external policy authority must keep the restrictive " +
-    "policy active and return policy authority to NemoClaw management. " +
-    `Then run \`${CLI_NAME} ${sandboxName} shields up\` to restore the saved snapshot and finish the Shields transition.`
+function readShieldsPolicySnapshot(snapshotPath: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = YAML.parse(fs.readFileSync(snapshotPath, "utf-8"));
+  } catch (error) {
+    throw new Error("The saved restrictive Shields policy snapshot is unreadable or invalid", {
+      cause: error,
+    });
+  }
+  if (!isObjectRecord(parsed)) {
+    throw new Error("The saved restrictive Shields policy snapshot is not a policy mapping");
+  }
+  return parsed;
+}
+
+function externalPolicyMatchesShieldsSnapshot(
+  authority: PolicyMutationAuthority,
+  snapshotPath: string,
+): boolean {
+  return isDeepStrictEqual(
+    authority.inspection.effectivePolicy,
+    readShieldsPolicySnapshot(snapshotPath),
   );
 }
 
-function assertShieldsPolicySnapshotRestoreAuthority(
+function externalPolicyRecoveryHandoff(
   sandboxName: string,
+  snapshotPath: string,
+  restrictivePolicyVerified: boolean,
+): string {
+  return restrictivePolicyVerified
+    ? `NemoClaw verified the saved restrictive policy for sandbox '${sandboxName}' under external policy authority. ` +
+        `Run \`${CLI_NAME} ${sandboxName} shields up\` to lock configuration and finish the Shields transition without changing policy.`
+    : `NemoClaw cannot finish the Shields transition for sandbox '${sandboxName}' while its external policy differs from the saved restrictive snapshot. ` +
+        `The external policy authority must apply '${snapshotPath}' as the sandbox policy. Then run \`${CLI_NAME} ${sandboxName} shields up\`. ` +
+        "NemoClaw will verify the exact live policy and lock configuration without changing policy.";
+}
+
+type ShieldsPolicySnapshotRestoreAuthority = {
+  authority: ShieldsPolicyAuthority;
+  policyMutationAllowed: boolean;
+};
+
+function resolveShieldsPolicySnapshotRestoreAuthority(
+  sandboxName: string,
+  snapshotPath: string,
   recorded?: PolicyMutationAuthority,
-): PolicyMutationAuthority {
+): ShieldsPolicySnapshotRestoreAuthority {
+  let authority: PolicyMutationAuthority;
   try {
-    return assertShieldsPolicyMutationAuthority(
-      sandboxName,
-      "restore the Shields policy snapshot",
-      recorded,
-    );
+    authority = recorded
+      ? recheckPolicyMutationAuthority(sandboxName, "restore the Shields policy snapshot", recorded)
+      : inspectPolicyMutationAuthority(sandboxName, "restore the Shields policy snapshot");
   } catch (error) {
-    if (isExternalPolicyAuthorityRefusalError(error) && error instanceof Error) {
-      error.message = externalPolicyRecoveryHandoff(sandboxName);
-    }
-    throw error;
+    if (!isExternalPolicyAuthorityRefusalError(error)) throw error;
+    authority = inspectPolicyRecoveryAuthority(
+      sandboxName,
+      "verify the externally restored Shields policy snapshot",
+      recorded?.gatewayName,
+    );
   }
+  if (authority.authority === "nemoclaw-managed") {
+    return { authority, policyMutationAllowed: true };
+  }
+  if (!externalPolicyMatchesShieldsSnapshot(authority, snapshotPath)) {
+    throw new Error(externalPolicyRecoveryHandoff(sandboxName, snapshotPath, false));
+  }
+  const revalidated = inspectPolicyRecoveryAuthority(
+    sandboxName,
+    "finish the externally restored Shields policy snapshot verification",
+    authority.gatewayName,
+  );
+  if (
+    revalidated.authority !== "externally-managed" ||
+    !externalPolicyMatchesShieldsSnapshot(revalidated, snapshotPath)
+  ) {
+    throw new Error(externalPolicyRecoveryHandoff(sandboxName, snapshotPath, false));
+  }
+  return {
+    authority: { ...revalidated, shieldsPolicySnapshotPath: snapshotPath },
+    policyMutationAllowed: false,
+  };
 }
 
 type ShieldsPolicyRecoveryInspection =
@@ -191,7 +261,34 @@ function inspectShieldsPolicyRecovery(sandboxName: string): ShieldsPolicyRecover
     return { status: "ready" };
   } catch (error) {
     if (isExternalPolicyAuthorityRefusalError(error)) {
-      return { status: "external", handoff: externalPolicyRecoveryHandoff(sandboxName) };
+      const snapshotPath = loadShieldsState(sandboxName).shieldsPolicySnapshotPath;
+      if (!snapshotPath || !fs.existsSync(snapshotPath)) {
+        return {
+          status: "external",
+          handoff: `The saved restrictive policy snapshot for sandbox '${sandboxName}' is unavailable. Rebuild the sandbox before finishing the Shields transition.`,
+        };
+      }
+      try {
+        const authority = inspectPolicyRecoveryAuthority(
+          sandboxName,
+          "inspect externally managed Shields policy recovery",
+        );
+        return {
+          status: "external",
+          handoff: externalPolicyRecoveryHandoff(
+            sandboxName,
+            snapshotPath,
+            authority.authority === "externally-managed" &&
+              externalPolicyMatchesShieldsSnapshot(authority, snapshotPath),
+          ),
+        };
+      } catch (inspectionError) {
+        return {
+          status: "unavailable",
+          detail:
+            inspectionError instanceof Error ? inspectionError.message : String(inspectionError),
+        };
+      }
     }
     return {
       status: "unavailable",
@@ -4260,7 +4357,6 @@ function applyShieldsPolicySnapshot(
   snapshotPath: string,
   options: ShieldsPolicySnapshotRestoreOptions = {},
 ): ShieldsPolicySnapshotRestoreResult {
-  const policyAuthority = assertShieldsPolicySnapshotRestoreAuthority(sandboxName);
   const buildPolicySet = options.buildPolicySet ?? buildPolicySetCommand;
   const runPolicySet = options.runPolicySet ?? run;
   const state = loadShieldsState(sandboxName);
@@ -4313,6 +4409,18 @@ function applyShieldsPolicySnapshot(
     throw new Error("Shields state does not match the policy snapshot being restored");
   }
   const persistedSnapshotMatches = state.shieldsPolicySnapshotPath === snapshotPath;
+  const restoreAuthority = resolveShieldsPolicySnapshotRestoreAuthority(sandboxName, snapshotPath);
+  const policyAuthority = restoreAuthority.authority;
+  if (!restoreAuthority.policyMutationAllowed) {
+    return {
+      pid: process.pid,
+      output: [null, "", ""],
+      stdout: "",
+      stderr: "",
+      status: 0,
+      signal: null,
+    };
+  }
   const ownershipOmissions: ManagedMcpPolicyOmission[] = [];
   if (
     transition?.managedMcpPolicyKeys !== undefined &&
@@ -4348,7 +4456,11 @@ function applyShieldsPolicySnapshot(
         fs.readFileSync(snapshotPath, "utf-8"),
         hasManagedMcpPolicyClaims(sandboxName),
       );
-      assertShieldsPolicySnapshotRestoreAuthority(sandboxName, policyAuthority);
+      assertShieldsPolicyMutationAuthority(
+        sandboxName,
+        "restore the Shields policy snapshot",
+        policyAuthority,
+      );
       const result = runPolicySet(
         buildPolicySet(snapshotPath, sandboxName, policyAuthority.gatewayName),
         {
@@ -4387,7 +4499,11 @@ function applyShieldsPolicySnapshot(
   }
   const runtimePolicyIsTemp = runtimePolicyPath !== snapshotPath;
   try {
-    assertShieldsPolicySnapshotRestoreAuthority(sandboxName, policyAuthority);
+    assertShieldsPolicyMutationAuthority(
+      sandboxName,
+      "restore the Shields policy snapshot",
+      policyAuthority,
+    );
     const result = runPolicySet(
       buildPolicySet(runtimePolicyPath, sandboxName, policyAuthority.gatewayName),
       {
@@ -4572,9 +4688,25 @@ function activateLockdownFromSnapshot(
       error: `policy restore exited with status ${String(restoreStatus)}`,
     };
   }
+  let restoreAuthority: ShieldsPolicyAuthority;
+  try {
+    restoreAuthority = resolveShieldsPolicySnapshotRestoreAuthority(
+      sandboxName,
+      snapshotPath,
+    ).authority;
+  } catch (error) {
+    if (isPolicyAuthorityRefusalError(error)) throw error;
+    return {
+      ok: false,
+      error: `policy verification before config lock failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
   assertShieldsPolicyMutationAuthority(
     sandboxName,
     "continue restoring Shields after the policy change",
+    restoreAuthority,
   );
 
   const target = ensureConfigHashSensitiveFile(cachedTarget ?? resolveAgentConfig(sandboxName));
@@ -4597,16 +4729,38 @@ function activateLockdownFromSnapshot(
   // which mark shields UP on this result — so a reconciler revert here would
   // otherwise leave the same DRIFTED state #4663 is about. relockAndReconfirm
   // fails closed (ok:false) when the lock will not hold past the settle window.
-  assertShieldsPolicyMutationAuthority(sandboxName, "restore the Shields config lock");
+  assertShieldsPolicyMutationAuthority(
+    sandboxName,
+    "restore the Shields config lock",
+    restoreAuthority,
+  );
   const relock = relockAndReconfirm(() => {
-    assertShieldsPolicyMutationAuthority(sandboxName, "restore the Shields config lock");
+    assertShieldsPolicyMutationAuthority(
+      sandboxName,
+      "restore the Shields config lock",
+      restoreAuthority,
+    );
     return lockAgentConfig(sandboxName, target, false, allowLegacyHermesProtocol, protocol);
   });
-  assertShieldsPolicyMutationAuthority(sandboxName, "complete the Shields config lock");
+  assertShieldsPolicyMutationAuthority(
+    sandboxName,
+    "complete the Shields config lock",
+    restoreAuthority,
+  );
   if (!relock.ok || !relock.lastResult) {
     return {
       ok: false,
       error: relock.error ?? "config re-lock did not re-confirm after the settle window",
+    };
+  }
+  try {
+    resolveShieldsPolicySnapshotRestoreAuthority(sandboxName, snapshotPath);
+  } catch (error) {
+    return {
+      ok: false,
+      error: `policy verification after config lock failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
     };
   }
   return {
@@ -5649,11 +5803,7 @@ function shieldsDownWithoutHostLock(
     if (transition && timerAuthority) {
       assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
     }
-    assertShieldsPolicyMutationAuthority(
-      sandboxName,
-      "unlock the Shields config",
-      policyAuthority,
-    );
+    assertShieldsPolicyMutationAuthority(sandboxName, "unlock the Shields config", policyAuthority);
     if (
       target.agentName === "hermes" &&
       protocol === "provider-state-mutation-v2" &&
@@ -5925,11 +6075,13 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
       opts.throwOnError,
     );
   }
-  let policyAuthority: PolicyMutationAuthority;
+  let policyAuthority: ShieldsPolicyAuthority;
   try {
-    policyAuthority = state.shieldsDown
-      ? assertShieldsPolicySnapshotRestoreAuthority(sandboxName)
-      : assertShieldsPolicyMutationAuthority(sandboxName, "raise Shields");
+    policyAuthority =
+      state.shieldsDown && state.shieldsPolicySnapshotPath
+        ? resolveShieldsPolicySnapshotRestoreAuthority(sandboxName, state.shieldsPolicySnapshotPath)
+            .authority
+        : assertShieldsPolicyMutationAuthority(sandboxName, "raise Shields");
   } catch (error) {
     if (isExternalPolicyAuthorityRefusalError(error) && error instanceof Error) {
       console.error(`  ${error.message}`);
@@ -5937,11 +6089,7 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
     throw error;
   }
   if (recoveredProviderTarget) {
-    assertShieldsPolicyMutationAuthority(
-      sandboxName,
-      "continue raising Shields",
-      policyAuthority,
-    );
+    assertShieldsPolicyMutationAuthority(sandboxName, "continue raising Shields", policyAuthority);
   }
   if (opts.policySnapshotRecovery) {
     try {
@@ -5962,11 +6110,7 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
         opts.throwOnError,
       );
     }
-    assertShieldsPolicyMutationAuthority(
-      sandboxName,
-      "continue raising Shields",
-      policyAuthority,
-    );
+    assertShieldsPolicyMutationAuthority(sandboxName, "continue raising Shields", policyAuthority);
   }
   // shieldsDown === false means explicitly locked by a previous shields-up.
   // undefined (no state file) means fresh sandbox — mutable default, allow shields-up.
@@ -6004,11 +6148,7 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
     // content-trust failure (drift, sha256sum failure, unparsable
     // output) and never launderable.
     const hashIssues = issues.filter(isHashVerificationIssue);
-    assertShieldsPolicyMutationAuthority(
-      sandboxName,
-      "continue raising Shields",
-      policyAuthority,
-    );
+    assertShieldsPolicyMutationAuthority(sandboxName, "continue raising Shields", policyAuthority);
     const realHashDrift = hashIssues.filter((entry) => !entry.includes("no seal recorded"));
     if (realHashDrift.length > 0) {
       console.error("  ERROR: locked file seal cannot be trusted:");
@@ -6091,11 +6231,7 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
           return failShieldsCommand(message, opts.throwOnError);
         }
       }
-      assertShieldsPolicyMutationAuthority(
-        sandboxName,
-        "complete Shields up",
-        policyAuthority,
-      );
+      assertShieldsPolicyMutationAuthority(sandboxName, "complete Shields up", policyAuthority);
       clearTimerMarker(sandboxName);
       assertShieldsPolicyMutationAuthority(
         sandboxName,
@@ -6226,11 +6362,7 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
       target,
       protocol,
     );
-    assertShieldsPolicyMutationAuthority(
-      sandboxName,
-      "continue raising Shields",
-      policyAuthority,
-    );
+    assertShieldsPolicyMutationAuthority(sandboxName, "continue raising Shields", policyAuthority);
     if (!activation.ok) {
       console.error(`  ERROR: ${activation.error ?? "unknown restore error"}`);
       console.error("  Config remains unlocked — manual intervention required.");
@@ -6301,11 +6433,7 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
   //    captured chattrApplied + fileHashes into the persisted state so
   //    drift detection on the next `shields status` has a seal to compare
   //    against. The non-snapshot branch already persisted those above.
-  assertShieldsPolicyMutationAuthority(
-    sandboxName,
-    "record the Shields up state",
-    policyAuthority,
-  );
+  assertShieldsPolicyMutationAuthority(sandboxName, "record the Shields up state", policyAuthority);
   saveShieldsState(sandboxName, {
     shieldsDown: false,
     shieldsDownAt: null,

@@ -191,7 +191,7 @@
         "test/managed-gateway-control.test.ts",
         "test/nemoclaw-start-guard-recovery.test.ts",
         "test/e2e/support/gateway-guard-legacy-keepalive-fixture.test.ts",
-        "test/process-recovery-supervisor-relaunch.test.ts"
+        "test/process-recovery/process-recovery-supervisor-relaunch.test.ts"
       ]
     },
     {

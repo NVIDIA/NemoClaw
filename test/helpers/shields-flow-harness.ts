@@ -63,6 +63,7 @@ export type ShieldsFlowHarness = {
   logSpy: MockInstance;
   policyAuthoritySpy: MockInstance;
   policyRecheckSpy: MockInstance;
+  policyRecoveryAuthoritySpy: MockInstance;
   policySetBodies: string[];
   runCaptureSpy: MockInstance;
   runSpy: MockInstance;
@@ -401,6 +402,9 @@ export function createShieldsFlowHarness(
   const policyAuthoritySpy = vi
     .spyOn(policy, "inspectPolicyMutationAuthority")
     .mockReturnValue(policyMutationAuthority);
+  const policyRecoveryAuthoritySpy = vi
+    .spyOn(policy, "inspectPolicyRecoveryAuthority")
+    .mockReturnValue(policyMutationAuthority);
   const policyRecheckSpy = vi
     .spyOn(policy, "recheckPolicyMutationAuthority")
     .mockImplementation(options.policyAuthorityRecheck ?? (() => policyMutationAuthority));
@@ -675,6 +679,7 @@ export function createShieldsFlowHarness(
     logSpy,
     policyAuthoritySpy,
     policyRecheckSpy,
+    policyRecoveryAuthoritySpy,
     policySetBodies,
     runCaptureSpy,
     runSpy,

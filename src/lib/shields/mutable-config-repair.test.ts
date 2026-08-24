@@ -1,9 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
+import {
+  createShieldsFlowHarness,
+  externalPolicyAuthorityInspection,
+  type ShieldsFlowHarness,
+} from "../../../test/helpers/shields-flow-harness";
 
 const NORMALIZER = "/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py";
 const NORMALIZER_WATCHDOG = ["/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "15s"];
@@ -150,5 +158,117 @@ describe("mutable OpenClaw config repair", () => {
       true,
     );
     expect(dockerExecFileSync).toHaveBeenCalledTimes(3);
+  });
+});
+
+function countPolicySets(harness: ShieldsFlowHarness): number {
+  return harness.runSpy.mock.calls.filter(
+    ([command]) => Array.isArray(command) && command.includes("policy") && command.includes("set"),
+  ).length;
+}
+
+function externalAuthority(effectivePolicy: Record<string, unknown>) {
+  return {
+    authority: "externally-managed" as const,
+    authorityRecordedNow: false,
+    gatewayName: "nemoclaw",
+    inspection: {
+      authority: "externally-managed" as const,
+      effectivePolicy,
+    },
+  };
+}
+
+function readRestrictivePolicy(harness: ShieldsFlowHarness, sandboxName: string) {
+  const state = harness.getShieldsPosture(sandboxName, false).state;
+  return YAML.parse(fs.readFileSync(String(state.shieldsPolicySnapshotPath), "utf-8")) as Record<
+    string,
+    unknown
+  >;
+}
+
+describe("external Shields policy recovery", () => {
+  let externalTmpDir: string;
+
+  beforeEach(() => {
+    externalTmpDir = fs.mkdtempSync(`${os.tmpdir()}/nemoclaw-external-shields-recovery-`);
+    vi.stubEnv("HOME", externalTmpDir);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    fs.rmSync(externalTmpDir, { recursive: true, force: true });
+  });
+
+  it("locks configuration only after external authority restores the exact snapshot (#9833)", () => {
+    const sandboxName = "openclaw";
+    const harness = createShieldsFlowHarness(requireSource, externalTmpDir, {
+      confirmOpenClawInodeFlags: true,
+      initialOpenClawPosture: "locked",
+    });
+    harness.shieldsDown(sandboxName, { throwOnError: true });
+    const policySetsAfterDown = countPolicySets(harness);
+    const mismatchedExternalAuthority = {
+      authority: "externally-managed",
+      authorityRecordedNow: false,
+      gatewayName: "nemoclaw",
+      inspection: externalPolicyAuthorityInspection,
+    } as const;
+    harness.policyAuthoritySpy.mockReturnValue(mismatchedExternalAuthority);
+    harness.policyRecoveryAuthoritySpy.mockReturnValue(mismatchedExternalAuthority);
+
+    expect(() => harness.shieldsUp(sandboxName, { throwOnError: true })).toThrow("must apply");
+    expect(countPolicySets(harness)).toBe(policySetsAfterDown);
+    expect(harness.getOpenClawPosture()).toBe("mutable");
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process exit ${String(code)}`);
+    }) as typeof process.exit);
+    expect(() => harness.shieldsStatus(sandboxName, false)).toThrow("process exit 2");
+    expect(exitSpy).toHaveBeenCalledWith(2);
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("must apply");
+
+    const restoredExternalAuthority = externalAuthority(
+      readRestrictivePolicy(harness, sandboxName),
+    );
+    harness.policyAuthoritySpy.mockReturnValue(restoredExternalAuthority);
+    harness.policyRecoveryAuthoritySpy.mockReturnValue(restoredExternalAuthority);
+
+    harness.shieldsUp(sandboxName, { throwOnError: true });
+
+    expect(harness.isShieldsDown(sandboxName)).toBe(false);
+    expect(harness.getOpenClawPosture()).toBe("locked");
+    expect(countPolicySets(harness)).toBe(policySetsAfterDown);
+  });
+
+  it("withholds Shields success when external policy changes during config locking (#9833)", () => {
+    const sandboxName = "openclaw";
+    const harness = createShieldsFlowHarness(requireSource, externalTmpDir, {
+      confirmOpenClawInodeFlags: true,
+      initialOpenClawPosture: "locked",
+    });
+    harness.shieldsDown(sandboxName, { throwOnError: true });
+    const policySetsAfterDown = countPolicySets(harness);
+    const restoredExternalAuthority = externalAuthority(
+      readRestrictivePolicy(harness, sandboxName),
+    );
+    const changedExternalAuthority = externalAuthority({ version: 1, network_policies: {} });
+    harness.policyAuthoritySpy.mockReturnValue(restoredExternalAuthority);
+    harness.policyRecoveryAuthoritySpy.mockImplementation(() =>
+      harness.getOpenClawPosture() === "locked"
+        ? changedExternalAuthority
+        : restoredExternalAuthority,
+    );
+
+    expect(() => harness.shieldsUp(sandboxName, { throwOnError: true })).toThrow(
+      "policy verification after config lock failed",
+    );
+
+    expect(harness.isShieldsDown(sandboxName)).toBe(true);
+    expect(countPolicySets(harness)).toBe(policySetsAfterDown);
+    expect(harness.auditSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "shields_up" }),
+    );
   });
 });

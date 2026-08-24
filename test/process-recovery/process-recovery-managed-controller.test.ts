@@ -11,8 +11,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const requireSource = createRequire(import.meta.url);
 const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } = requireSource(
-  "../src/lib/actions/sandbox/process-recovery.ts",
-) as typeof import("../src/lib/actions/sandbox/process-recovery.js");
+  "../../src/lib/actions/sandbox/process-recovery.ts",
+) as typeof import("../../src/lib/actions/sandbox/process-recovery.js");
 
 function checkAndRecoverSandboxProcesses(
   sandboxName: string,
@@ -63,7 +63,8 @@ describe("managed gateway recovery controller", () => {
   };
   const timedOutGateway = {
     ...unrecoveredGateway,
-    recoveryFailureDetail: "the recovered gateway did not become responsive before the recovery timeout",
+    recoveryFailureDetail:
+      "the recovered gateway did not become responsive before the recovery timeout",
   };
   const controllerNonce = "a".repeat(64);
   const restartingContainerId = "b".repeat(64);
@@ -350,94 +351,97 @@ describe("managed gateway recovery controller", () => {
       expectedActions: ["recover"],
       settleSeconds: "0",
     },
-  ])("enforces managed recovery for $label", ({
-    recoverResults,
-    expectedResult,
-    expectedActions,
-    managedProbeResult,
-    managedProbeResults,
-    settleSeconds,
-  }) => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const childProcess = requireSource("node:child_process");
-    const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
+  ])(
+    "enforces managed recovery for $label",
+    ({
+      recoverResults,
+      expectedResult,
+      expectedActions,
+      managedProbeResult,
+      managedProbeResults,
+      settleSeconds,
+    }) => {
+      const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
+      const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
+      const registry = requireSource("../../src/lib/state/registry.js");
+      const childProcess = requireSource("node:child_process");
+      const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
 beta  127.0.0.1  18789  12345  running`;
-    const previousWaitSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
-    const previousPollInterval = process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS;
-    const previousSettleSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
-    let recoveryActionCalls = 0;
-    let managedProbeCalls = 0;
-    const requestGatewaySupervisorAction = vi.fn(
-      (_sandboxName: string, action: "restart" | "recover" | "probe") => {
-        const isProbe = action === "probe";
-        const probeResults = managedProbeResults ?? [managedProbeResult ?? successfulProbe];
-        const result = isProbe
-          ? probeResults[Math.min(managedProbeCalls, probeResults.length - 1)]
-          : recoverResults[Math.min(recoveryActionCalls, recoverResults.length - 1)];
-        recoveryActionCalls += Number(!isProbe);
-        managedProbeCalls += Number(isProbe);
-        return result;
-      },
-    );
-    let healthProbeCalls = 0;
-    const spawnedCommands: string[] = [];
-
-    process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "2";
-    process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "0";
-    process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = settleSeconds;
-
-    try {
-      vi.spyOn(childProcess, "spawnSync").mockImplementation(
-        (command: unknown, rawArgs: unknown) => {
-          spawnedCommands.push(String(command));
-          const isHealthProbe = getSandboxExecShellCommand(rawArgs).includes("HTTP_CODE=$(curl");
-          healthProbeCalls += Number(isHealthProbe);
-          return (
-            isHealthProbe
-              ? {
-                  status: 0,
-                  stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSTOPPED\n",
-                  stderr: "",
-                }
-              : { status: 0, stdout: "", stderr: "" }
-          ) as never;
+      const previousWaitSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
+      const previousPollInterval = process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS;
+      const previousSettleSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
+      let recoveryActionCalls = 0;
+      let managedProbeCalls = 0;
+      const requestGatewaySupervisorAction = vi.fn(
+        (_sandboxName: string, action: "restart" | "recover" | "probe") => {
+          const isProbe = action === "probe";
+          const probeResults = managedProbeResults ?? [managedProbeResult ?? successfulProbe];
+          const result = isProbe
+            ? probeResults[Math.min(managedProbeCalls, probeResults.length - 1)]
+            : recoverResults[Math.min(recoveryActionCalls, recoverResults.length - 1)];
+          recoveryActionCalls += Number(!isProbe);
+          managedProbeCalls += Number(isProbe);
+          return result;
         },
       );
-      vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
-      vi.spyOn(registry, "getSandbox").mockReturnValue({
-        name: "beta",
-        agent: "openclaw",
-        dashboardPort: 18789,
-      });
-      vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
-        status: 0,
-        output: runningForward,
-      });
+      let healthProbeCalls = 0;
+      const spawnedCommands: string[] = [];
 
-      const result = withFakeOpenshellBinary(() =>
-        checkAndRecoverSandboxProcesses("beta", {
-          quiet: true,
-          requestGatewaySupervisorAction,
-        }),
-      );
-      expect(result).toEqual(expectedResult);
-      expect(requestGatewaySupervisorAction.mock.calls).toEqual(
-        expectedActions.map((action) => ["beta", action]),
-      );
-      expect(healthProbeCalls).toBe(1);
-      expect(spawnedCommands).not.toContain("ssh");
-    } finally {
-      previousWaitSeconds === undefined
-        ? delete process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS
-        : (process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = previousWaitSeconds);
-      previousPollInterval === undefined
-        ? delete process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS
-        : (process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = previousPollInterval);
-      previousSettleSeconds === undefined
-        ? delete process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS
-        : (process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = previousSettleSeconds);
-    }
-  });
+      process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "2";
+      process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "0";
+      process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = settleSeconds;
+
+      try {
+        vi.spyOn(childProcess, "spawnSync").mockImplementation(
+          (command: unknown, rawArgs: unknown) => {
+            spawnedCommands.push(String(command));
+            const isHealthProbe = getSandboxExecShellCommand(rawArgs).includes("HTTP_CODE=$(curl");
+            healthProbeCalls += Number(isHealthProbe);
+            return (
+              isHealthProbe
+                ? {
+                    status: 0,
+                    stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSTOPPED\n",
+                    stderr: "",
+                  }
+                : { status: 0, stdout: "", stderr: "" }
+            ) as never;
+          },
+        );
+        vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
+        vi.spyOn(registry, "getSandbox").mockReturnValue({
+          name: "beta",
+          agent: "openclaw",
+          dashboardPort: 18789,
+        });
+        vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+          status: 0,
+          output: runningForward,
+        });
+
+        const result = withFakeOpenshellBinary(() =>
+          checkAndRecoverSandboxProcesses("beta", {
+            quiet: true,
+            requestGatewaySupervisorAction,
+          }),
+        );
+        expect(result).toEqual(expectedResult);
+        expect(requestGatewaySupervisorAction.mock.calls).toEqual(
+          expectedActions.map((action) => ["beta", action]),
+        );
+        expect(healthProbeCalls).toBe(1);
+        expect(spawnedCommands).not.toContain("ssh");
+      } finally {
+        previousWaitSeconds === undefined
+          ? delete process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS
+          : (process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = previousWaitSeconds);
+        previousPollInterval === undefined
+          ? delete process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS
+          : (process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = previousPollInterval);
+        previousSettleSeconds === undefined
+          ? delete process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS
+          : (process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = previousSettleSeconds);
+      }
+    },
+  );
 });
