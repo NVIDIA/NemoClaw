@@ -102,6 +102,11 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "binds trusted base publication to the generic NVIDIA GPU job",
+      "category": "security"
+    },
+    {
       "file": "test/growth-guardrails-workflow-boundary.test.ts",
       "test": "runs the trusted Vitest guardrails against pull request data",
       "category": "security"
