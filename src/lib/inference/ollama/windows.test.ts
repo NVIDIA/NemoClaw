@@ -8,6 +8,7 @@ const require = createRequire(import.meta.url);
 const childProcess = require("node:child_process");
 const WINDOWS_DIST_PATH = require.resolve("./windows");
 const RUNNER_PATH = require.resolve("../../runner");
+const LOCAL_INFERENCE_PATH = require.resolve("../local");
 const WINDOWS_OLLAMA_TAGS_URL = "http://host.docker.internal:11434/api/tags";
 
 function commandText(command: string | string[]): string {
@@ -48,6 +49,30 @@ function loadWindowsOllamaWithMocks(
 }
 
 describe("Windows Ollama helper", () => {
+  it("rejects a nonempty invalid Docker readiness response (#10100)", () => {
+    const run = vi.fn();
+    const runCapture = vi.fn((command: string | string[]) =>
+      Array.isArray(command) && command.at(-1) === WINDOWS_OLLAMA_TAGS_URL
+        ? "<html>proxy response</html>"
+        : "",
+    );
+    const localInference = require(LOCAL_INFERENCE_PATH);
+    localInference.resetOllamaHostCache();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { windows, restore, atomicsWaitSpy } = loadWindowsOllamaWithMocks(run, runCapture);
+
+    try {
+      expect(windows.awaitWindowsOllamaReady()).toBe(false);
+      expect(atomicsWaitSpy).toHaveBeenCalledTimes(15);
+      expect(runCapture).toHaveBeenCalledTimes(15);
+      expect(localInference.getResolvedOllamaHost()).toBe("127.0.0.1");
+    } finally {
+      localInference.resetOllamaHostCache();
+      restore();
+      logSpy.mockRestore();
+    }
+  });
+
   it("falls back from a stale watcher path and checks readiness from Docker Desktop (#8127)", () => {
     const watcherPath = "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama app.exe";
     const installedPath = "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe";

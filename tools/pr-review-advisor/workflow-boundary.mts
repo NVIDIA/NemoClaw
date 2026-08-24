@@ -17,6 +17,10 @@ const SANDBOX_NAME = /^(?!.*--)[a-z]([a-z0-9-]*[a-z0-9])?$/u;
 const INTERESTS = new Set(ADVISOR_INTERESTS);
 const SPECIALIST_MATRIX_EXPRESSION =
   "${{ fromJSON(needs.discover-specialists.outputs.matrix) }}";
+const BASE_REF_EXPRESSION =
+  "${{ github.event_name == 'pull_request_target' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}";
+const HEAD_REF_EXPRESSION =
+  "${{ github.event_name == 'pull_request_target' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}";
 const READ_PERMISSIONS = {
   actions: "read",
   checks: "read",
@@ -197,6 +201,12 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     errors.push(
       "specialist job env.PR_REVIEW_ADVISOR_INTEREST must be ${{ matrix.advisor.interest }}",
     );
+  const prepareInputs = namedStep(specialists, "Prepare advisor sandbox inputs");
+  const prepareEnvironment = object(prepareInputs?.env);
+  if (prepareEnvironment.BASE_REF !== BASE_REF_EXPRESSION)
+    errors.push("Prepare advisor sandbox inputs must receive the selected base ref");
+  if (prepareEnvironment.HEAD_REF !== HEAD_REF_EXPRESSION)
+    errors.push("Prepare advisor sandbox inputs must receive the selected head ref");
   requireWith(
     errors,
     namedStep(specialists, "Upload native specialist session"),
