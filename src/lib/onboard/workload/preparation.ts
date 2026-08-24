@@ -369,7 +369,7 @@ export async function prepareSandboxWorkloadSource(
       catalog,
       release,
       platform,
-      input.expectedCatalogRevision ?? null,
+      input.expectedCatalogRevision ?? input.catalogRevision ?? null,
     );
     release = catalogIdentity.release;
   }

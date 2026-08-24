@@ -206,6 +206,15 @@ describe("sandbox workload preparation", () => {
     });
   });
 
+  it("rejects a pinned registry catalog from another revision (#8142)", async () => {
+    await expect(
+      prepareSandboxWorkloadSource(
+        { ...input("openclaw"), catalogRevision: "b".repeat(40) },
+        { resolveCatalog: async () => CATALOG },
+      ),
+    ).rejects.toThrow("does not match the live E2E candidate revision");
+  });
+
   it("rejects an exact catalog from another PR commit (#9464)", async () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-catalog-"));
     const catalogPath = path.join(fixtureRoot, "catalog.json");
