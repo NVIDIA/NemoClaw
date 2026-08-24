@@ -94,9 +94,14 @@ function responseQueue(
 }
 
 function nonAuthorityCommandLines(): string[] {
+  const authorityCommands = new Set([
+    "openshell status",
+    "openshell policy list -g test-gateway --global --limit 1",
+    "openshell policy get -g test-gateway --full --output json test-sandbox",
+  ]);
   return mockExeca.mock.calls
     .map(([command, args]) => [command, ...(args ?? [])].join(" "))
-    .filter((command) => command !== "openshell status" && !command.startsWith("openshell policy "));
+    .filter((command) => !authorityCommands.has(command));
 }
 
 function blueprint(overrides: Record<string, unknown> = {}): Parameters<typeof actionApply>[1] {
