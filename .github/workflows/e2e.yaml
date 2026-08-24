@@ -2708,6 +2708,7 @@ jobs:
         include: ${{ fromJSON(needs.generate-matrix.outputs.matrix) }}
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
       NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF: ${{ needs.base-image-publication.outputs.dcode_base_ref }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"

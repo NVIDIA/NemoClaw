@@ -192,7 +192,7 @@ const agent = agentDefs.loadAgent("langchain-deepagents-code");
       HOME: tmpDir,
       PATH: `${fakeBin}:${process.env.PATH || ""}`,
       NEMOCLAW_NON_INTERACTIVE: "1",
-      NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
+      NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
       OPENSHELL_DRIVERS: scenario === "create" ? "vm" : "docker",
     },
     timeout: 15000,

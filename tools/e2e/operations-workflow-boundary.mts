@@ -730,6 +730,14 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     );
   }
   if (
+    live.env?.E2E_MANAGED_IMAGE_REVISION !==
+    "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}"
+  ) {
+    errors.push(
+      "live stock onboarding must use the selected managed-image revision when no exact PR catalog is present",
+    );
+  }
+  if (
     live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==
     "${{ needs.base-image-publication.outputs.dcode_base_ref }}"
   ) {

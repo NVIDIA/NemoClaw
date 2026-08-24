@@ -232,6 +232,10 @@ describe("base-image publication workflow boundary (#7372)", () => {
     ],
     ["live publication dependency", (value) => (value.jobs.live.needs = ["generate-matrix"])],
     [
+      "live managed-image revision",
+      (value) => (value.jobs.live.env!.E2E_MANAGED_IMAGE_REVISION = "${{ github.sha }}"),
+    ],
+    [
       "cloud-onboard publication dependency",
       (value) => (value.jobs["cloud-onboard"].needs = ["generate-matrix"]),
     ],
