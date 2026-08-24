@@ -9,12 +9,26 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes-state-volume";
 
+const preparationState = vi.hoisted(() => ({
+  prepared: undefined as unknown,
+  useUnavailableCatalog: false,
+}));
 const prepareSandboxWorkloadSource = vi.hoisted(() => vi.fn());
 
-vi.mock("../workload/preparation", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../workload/preparation")>()),
-  prepareSandboxWorkloadSource,
-}));
+vi.mock("../workload/preparation", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../workload/preparation")>();
+  const { ManagedImageCatalogUnavailableError } = await import("../managed-image/catalog");
+  prepareSandboxWorkloadSource.mockImplementation((input) =>
+    preparationState.useUnavailableCatalog
+      ? original.prepareSandboxWorkloadSource(input, {
+          resolveCatalog: async () => {
+            throw new ManagedImageCatalogUnavailableError("registry offline");
+          },
+        })
+      : Promise.resolve(preparationState.prepared),
+  );
+  return { ...original, prepareSandboxWorkloadSource };
+});
 
 vi.mock("../../core/version", () => ({ getVersion: () => "v0.0.0" }));
 
@@ -31,6 +45,7 @@ function createFreshOnboardingRuntime(
   options: {
     readonly stockManagedRuntime?: boolean;
     readonly tempManagedRuntime?: boolean;
+    readonly unavailableCatalog?: boolean;
   } = {},
 ) {
   const prepared = {
@@ -42,8 +57,9 @@ function createFreshOnboardingRuntime(
     release: "v0.0.0",
     fallbackDiagnostic: null,
   };
+  preparationState.prepared = prepared;
+  preparationState.useUnavailableCatalog = options.unavailableCatalog ?? false;
   prepareSandboxWorkloadSource.mockClear();
-  prepareSandboxWorkloadSource.mockResolvedValueOnce(prepared);
 
   const runtime = createManagedWorkloadOnboardRuntime(
     {
@@ -157,36 +173,29 @@ describe("managed workload onboard orchestration", () => {
     ).toBe(false);
   });
 
-  it("allows ordinary stock onboarding to use the trusted Dockerfile fallback", async () => {
-    const { prepared, runtime } = createFreshOnboardingRuntime({}, { stockManagedRuntime: true });
-
-    await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
-    expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({
-        policy: "prefer-managed",
-        runtime: expect.objectContaining({
-          legacyDockerfileBuilds: true,
-          managedImageSelectionPolicy: "require-managed",
-          managedImages: expect.any(Object),
-        }),
-      }),
+  it("uses the trusted Dockerfile when the stock managed-image catalog is unavailable", async () => {
+    const { runtime } = createFreshOnboardingRuntime(
+      {},
+      { stockManagedRuntime: true, unavailableCatalog: true },
     );
+
+    await expect(runtime.ensurePreparedWorkload()).resolves.toMatchObject({
+      source: {
+        kind: "legacy-dockerfile",
+        dockerfilePath: "agents/openclaw/Dockerfile",
+        reason: "contract-unavailable",
+      },
+      fallbackDiagnostic: expect.stringContaining("registry offline"),
+    });
   });
 
-  it("keeps explicit temporary managed-image onboarding strict", async () => {
-    const { prepared, runtime } = createFreshOnboardingRuntime(
+  it("rejects an unavailable catalog for explicit temporary managed-image onboarding", async () => {
+    const { runtime } = createFreshOnboardingRuntime(
       {},
-      { stockManagedRuntime: true, tempManagedRuntime: true },
+      { stockManagedRuntime: true, tempManagedRuntime: true, unavailableCatalog: true },
     );
 
-    await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
-    const preparationInput = prepareSandboxWorkloadSource.mock.calls[0]?.[0];
-    expect(preparationInput).not.toHaveProperty("policy");
-    expect(preparationInput.runtime).toMatchObject({
-      legacyDockerfileBuilds: true,
-      managedImageSelectionPolicy: "require-managed",
-    });
-    expect(preparationInput.runtime.managedImages).not.toBeNull();
+    await expect(runtime.ensurePreparedWorkload()).rejects.toThrow("registry offline");
   });
 
   it("selects only the shipped Hermes Dockerfile fallback without profile or prebuild work", async () => {
