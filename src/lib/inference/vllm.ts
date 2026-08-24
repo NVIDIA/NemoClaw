@@ -626,7 +626,7 @@ export function gpuMemoryPreflight(
         warning:
           `${profile.name} GPU ${String(device.index)} (${device.uuid}) reports [N/A] for both total and free ` +
           `memory. NemoClaw cannot pre-validate --gpu-memory-utilization=${String(utilization)} on this ` +
-          "unified-memory platform and will continue without inferring available memory.",
+          "unified-memory platform and continues without inferring available memory.",
       };
     }
     return {

@@ -412,9 +412,12 @@ describe("managed vLLM GPU memory preflight", () => {
     );
   });
 
-  it.each(["n1x", "spark"] as const)(
+  it.each([
+    ["N1x", "n1x"],
+    ["DGX Spark", "spark"],
+  ] as const)(
     "continues on qualified %s unified memory when both fields are [N/A] (#10082)",
-    async (platform) => {
+    async (_platformName, platform) => {
       const profile = detectVllmProfile({ platform })!;
       mockHostCommands({
         computeCap: "12.1\n",
@@ -564,7 +567,7 @@ describe("managed vLLM GPU memory preflight", () => {
     ]);
   });
 
-  it("keeps unavailable memory fail-closed for non-unified profiles", () => {
+  it("fails closed when a generic Linux profile reports unavailable memory (#10082)", () => {
     const profile = { ...detectVllmProfile({ type: "nvidia" })!, gpuMemoryUtilization: 0.7 };
     const model = profile.defaultModel;
 
