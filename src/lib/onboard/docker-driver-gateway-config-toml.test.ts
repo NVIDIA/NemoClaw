@@ -340,7 +340,7 @@ describe("docker-driver-gateway config TOML", () => {
       expect(() =>
         prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox"),
       ).toThrow(
-        /already configures a 'docker'-driver OpenShell gateway.*this run selected the 'podman' driver.*nemoclaw uninstall.*NEMOCLAW_GATEWAY_PORT.*NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR/s,
+        /already configures a 'docker'-driver OpenShell gateway.*this run selected the 'podman' driver.*NemoClaw-managed state.*nemoclaw uninstall.*preserves externally managed or supervised state.*lifecycle authority.*NEMOCLAW_GATEWAY_PORT.*separate state directory.*NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR/s,
       );
       expect(fs.readFileSync(configPath, "utf-8")).toBe(dockerToml);
       expect(fs.readFileSync(bundle.signingKeyPath, "utf-8")).toBe(signingKeyBefore);
@@ -408,7 +408,9 @@ describe("docker-driver-gateway config TOML", () => {
 
       expect(() =>
         prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox"),
-      ).toThrow(/cannot prove its generated gateway identity \(the config does not match NemoClaw's schema\)/);
+      ).toThrow(
+        /cannot prove its generated gateway identity \(the config does not match NemoClaw's schema\)/,
+      );
       expect(fs.readFileSync(configPath, "utf-8")).toBe(noDriversToml);
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
@@ -453,7 +455,9 @@ describe("docker-driver-gateway config TOML", () => {
 
       expect(() =>
         prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox"),
-      ).toThrow(/cannot prove its generated gateway identity \(the config could not be read safely:/);
+      ).toThrow(
+        /cannot prove its generated gateway identity \(the config could not be read safely:/,
+      );
       expect(fs.readFileSync(configPath, "utf-8")).toBe(oversizedToml);
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
@@ -604,9 +608,7 @@ describe("docker-driver-gateway config TOML", () => {
       const config = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8");
       expect(parseTomlString(config, "gateway_id")).toBe(gatewayIdForStateDir(stateDir));
       expect(parseTomlString(config, "sandbox_namespace")).toBe(gatewayIdForStateDir(stateDir));
-      expect(fs.readFileSync(path.join(stateDir, "openshell.db"), "utf-8")).toBe(
-        "legacy-database",
-      );
+      expect(fs.readFileSync(path.join(stateDir, "openshell.db"), "utf-8")).toBe("legacy-database");
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
