@@ -542,6 +542,13 @@ describe("security posture fixture", () => {
     expect(validateSplitProcessSecurityReport(report)).toEqual(report);
   });
 
+  it("accepts a root-only OpenShell supervisor without an engine-added sandbox group", () => {
+    const report = validReport();
+    report.supervisor.status.groups = ["0"];
+
+    expect(validateSplitProcessSecurityReport(report)).toEqual(report);
+  });
+
   it.each([
     {
       agent: "OpenClaw",
@@ -631,28 +638,21 @@ describe("security posture fixture", () => {
       name: "group identity",
     },
     {
-      error: /supervisor Groups expected exactly 0 1000/u,
-      mutate: (report) => {
-        report.supervisor.status.groups = ["0"];
-      },
-      name: "missing sandbox supplementary group",
-    },
-    {
-      error: /supervisor Groups expected exactly 0 1000/u,
+      error: /supervisor Groups expected exactly 0 or 0 1000/u,
       mutate: (report) => {
         report.supervisor.status.groups = ["0", "44"];
       },
       name: "wrong sandbox supplementary group",
     },
     {
-      error: /supervisor Groups expected exactly 0 1000/u,
+      error: /supervisor Groups expected exactly 0 or 0 1000/u,
       mutate: (report) => {
         report.supervisor.status.groups = ["0", "1000", "44"];
       },
       name: "extra supplementary group",
     },
     {
-      error: /supervisor Groups expected exactly 0 1000/u,
+      error: /supervisor Groups expected exactly 0 or 0 1000/u,
       mutate: (report) => {
         report.supervisor.status.groups = ["0", "0"];
       },

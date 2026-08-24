@@ -232,6 +232,23 @@ runs:
           ((.host.ociRuntime.name // .Host.OCIRuntime.Name) | ascii_downcase) == "runc"
         ' "$RUNNER_TEMP/native-podman-e2e-info.json" >/dev/null
 
+        # A Podman matrix row is qualification evidence only when Docker cannot
+        # satisfy an accidental legacy probe or resource operation. Keep this
+        # enforcement at the reusable runtime-setup boundary, never in an E2E
+        # scenario, so every Podman row proves the same provider isolation.
+        sudo systemctl stop docker.service docker.socket 2>/dev/null || true
+        sudo systemctl mask --runtime docker.service docker.socket 2>/dev/null || true
+        sudo pkill -TERM -x dockerd 2>/dev/null || true
+        sudo rm -f /var/run/docker.sock /run/docker.sock
+        ! systemctl is-active --quiet docker.service
+        ! systemctl is-active --quiet docker.socket
+        ! pgrep -x dockerd >/dev/null
+        [[ ! -S /var/run/docker.sock && ! -S /run/docker.sock ]]
+        if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+          echo "::error::Podman E2E isolation failed because Docker remains reachable" >&2
+          exit 1
+        fi
+
         sudo ip address replace 169.254.2.2/32 dev lo
         {
           printf 'CONTAINERS_CONF=%s\n' "$containers_config"

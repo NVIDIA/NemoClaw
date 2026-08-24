@@ -18,9 +18,9 @@ import { hermesDiscordHttpProxyWebSocketUrl } from "./hermes-discord-proxy.ts";
 import { type FakeDockerApi, startFakeDockerApi } from "./messaging-providers-helpers.ts";
 import {
   runSecondaryCleanup as bestEffortLifecycleCleanup,
-  dockerInfo,
   expectExitZero,
   phase6Env,
+  requirePhase6RuntimeProvider,
   resultText,
   sandboxNode,
   sandboxSh,
@@ -36,7 +36,7 @@ const DISCORD_SERVER_IDS = process.env.DISCORD_SERVER_IDS ?? "149159099275359059
 const DISCORD_ALLOWED_IDS = process.env.DISCORD_ALLOWED_IDS ?? "1005536447329222676";
 const DISCORD_REQUIRE_MENTION = process.env.DISCORD_REQUIRE_MENTION ?? "0";
 const HERMES_HEALTH_URL = "http://localhost:8642/health";
-const FAKE_DISCORD_HOST = "host.docker.internal";
+const FAKE_DISCORD_HOST = "host.openshell.internal";
 const HERMES_DISCORD_HTTP_PROXY_GATEWAY_TEMPLATE = hermesDiscordHttpProxyWebSocketUrl(
   "{host}",
   "{port}",
@@ -277,7 +277,7 @@ async def wait_for_heartbeat_ack(ws, results):
 
 async def main():
     port = int(os.environ["FAKE_DISCORD_GATEWAY_CLIENT_PORT"])
-    host = os.environ.get("FAKE_DISCORD_GATEWAY_CLIENT_HOST", "host.docker.internal")
+    host = os.environ.get("FAKE_DISCORD_GATEWAY_CLIENT_HOST", "host.openshell.internal")
     token = read_env_token()
     results = []
     client = discord.Client(intents=discord.Intents.none())
@@ -394,7 +394,9 @@ async function rawTokenSurfaceProbe(
   });
 }
 
-test("hermes-discord: Hermes Discord schema, credential isolation, and native gateway rewrite", {
+test(
+  "hermes-discord: Hermes Discord schema, credential isolation, and native gateway rewrite",
+  {
   timeout: HERMES_DISCORD_TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -407,7 +409,8 @@ test("hermes-discord: Hermes Discord schema, credential isolation, and native ga
       "finalize Hermes Discord resources",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const env = commandEnv(apiKey);
   const redactionValues = redactions(apiKey);
@@ -455,10 +458,15 @@ test("hermes-discord: Hermes Discord schema, credential isolation, and native ga
     "cleanup-hermes-discord",
   );
 
-  await precleanHermesDiscord(host, SANDBOX_NAME, env, redactionValues, "preclean-hermes-discord");
+    await precleanHermesDiscord(
+      host,
+      SANDBOX_NAME,
+      env,
+      redactionValues,
+      "preclean-hermes-discord",
+    );
 
-  const docker = await dockerInfo(host, env);
-  expectExitZero(docker, "Docker is running");
+    await requirePhase6RuntimeProvider(runtimeProvider, "Hermes Discord");
   expect(process.env.NEMOCLAW_NON_INTERACTIVE ?? env.NEMOCLAW_NON_INTERACTIVE).toBe("1");
   expect(
     process.env.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE ?? env.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE,
@@ -815,4 +823,5 @@ done`,
       cleanupVerified: process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1",
     },
   });
-});
+  },
+);

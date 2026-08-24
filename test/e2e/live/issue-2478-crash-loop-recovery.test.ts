@@ -20,9 +20,9 @@ import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
-import { ubuntuRepoDocker } from "../registry/matrix.ts";
+import { ubuntuRepoManagedRuntime } from "../registry/matrix.ts";
 
-const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
+const ENVIRONMENT = ubuntuRepoManagedRuntime("cloud-openclaw");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-2478";
 const STABILITY_SECONDS = 15;
 const COMPATIBLE_MODEL = process.env.NEMOCLAW_COMPAT_MODEL ?? "test-model";
@@ -297,7 +297,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-test("gateway recovery restores the guard chain and keeps the recovered process identity for 15 seconds (#2478)", {
+test(
+  "gateway recovery restores the guard chain and keeps the recovered process identity for 15 seconds (#2478)",
+  {
   meta: {
     e2ePhases: [
       "start the compatible endpoint and confirm host readiness",
@@ -307,7 +309,8 @@ test("gateway recovery restores the guard chain and keeps the recovered process 
       "verify the recovered process identity remains unchanged for 15 seconds",
     ],
   },
-}, async ({ artifacts, cleanup, environment, gateway, host, progress, runtime, sandbox }) => {
+  },
+  async ({ artifacts, cleanup, environment, gateway, host, progress, runtime, sandbox }) => {
   await artifacts.target.declare({
     id: "issue-2478-crash-loop-recovery",
     issues: ["#2478", "#2701"],
@@ -346,9 +349,10 @@ test("gateway recovery restores the guard chain and keeps the recovered process 
     timeoutMs: 60_000,
   });
   const preRecoveryIdentity = await gateway.resolveGatewayIdentity(instance);
-  expect(preRecoveryIdentity, "gateway process identity changed before the recovery probe").toEqual(
-    initialIdentity,
-  );
+    expect(
+      preRecoveryIdentity,
+      "gateway process identity changed before the recovery probe",
+    ).toEqual(initialIdentity);
 
   progress.phase("terminate one live gateway and verify production recovery");
   await terminateGatewayIdentity(
@@ -357,11 +361,7 @@ test("gateway recovery restores the guard chain and keeps the recovered process 
     preRecoveryIdentity!,
     "functional-recovery-terminate-gateway",
   );
-  await runProbeOnly(
-    host,
-    instance.sandboxName,
-    "functional-recovery-connect-probe-only",
-  );
+    await runProbeOnly(host, instance.sandboxName, "functional-recovery-connect-probe-only");
   const recoveredIdentity = await waitForGatewayIdentity(gateway, instance, 45_000);
   expect(
     recoveredIdentity,
@@ -390,4 +390,5 @@ test("gateway recovery restores the guard chain and keeps the recovered process 
     stableIdentity,
     stabilitySeconds: STABILITY_SECONDS,
   });
-});
+  },
+);

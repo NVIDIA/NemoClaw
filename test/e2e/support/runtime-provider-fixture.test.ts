@@ -5,7 +5,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
+import {
+  ensureConfiguredRuntimeProviderAvailable,
+  RuntimeProviderPrerequisite,
+} from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 function successfulProbe(): ShellProbeResult {
@@ -18,6 +21,10 @@ function successfulProbe(): ShellProbeResult {
     stderr: "",
     artifacts: { stdout: "", stderr: "", result: "" },
   };
+}
+
+function successfulProbeWithStdout(stdout: string): ShellProbeResult {
+  return { ...successfulProbe(), stdout };
 }
 
 describe("configured E2E runtime provider fixture", () => {
@@ -97,6 +104,64 @@ describe("configured E2E runtime provider fixture", () => {
       "docker",
       ["info"],
       expect.objectContaining({ artifactName: "portable-provider-info" }),
+    );
+  });
+
+  it("executes fixture-owned root probes through the selected Podman resource", async () => {
+    const command = vi
+      .fn<HostCliClient["command"]>()
+      .mockResolvedValueOnce(successfulProbeWithStdout(`${"a".repeat(64)}\n`))
+      .mockResolvedValueOnce(successfulProbe());
+    const runtime = new RuntimeProviderPrerequisite(
+      { command } as unknown as HostCliClient,
+      (reason) => {
+        throw new Error(reason);
+      },
+      {
+        HOME: "/home/runner",
+        PATH: "/usr/bin",
+        NEMOCLAW_GATEWAY_RUNTIME: "podman",
+        OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
+      },
+    );
+
+    await runtime.execSandboxAsRoot("alpha", ["id", "-u"], {
+      artifactName: "privileged-id",
+      sanitizeEnvironment: true,
+    });
+
+    expect(command).toHaveBeenNthCalledWith(
+      1,
+      "podman",
+      [
+        "--url",
+        "unix:///run/user/1001/podman/podman.sock",
+        "container",
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        "label=openshell.ai/sandbox-name=alpha",
+        "--format",
+        "{{.ID}}",
+      ],
+      expect.objectContaining({ artifactName: "privileged-id-resource" }),
+    );
+    expect(command).toHaveBeenNthCalledWith(
+      2,
+      "podman",
+      expect.arrayContaining([
+        "--url",
+        "unix:///run/user/1001/podman/podman.sock",
+        "container",
+        "exec",
+        "--user",
+        "root",
+        "a".repeat(64),
+        "id",
+        "-u",
+      ]),
+      expect.objectContaining({ artifactName: "privileged-id" }),
     );
   });
 });

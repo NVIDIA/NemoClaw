@@ -114,6 +114,7 @@ import {
   parseManagedBootstrapImageCompletion,
   serializeManagedBootstrapEnvelopeTar,
 } from "./envelope";
+import { prepareManagedBootstrapStateRoots } from "./state-root-authority";
 
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const FULL_SHA256_RE = /^sha256:[a-f0-9]{64}$/u;
@@ -3672,6 +3673,23 @@ export function createDockerManagedBootstrapAdapter(
         assertTransactionReplacement(authority, preparedBeforeJournal);
         assertStableRunning(originalBeforeJournal, "pre-activation original");
         assertExplicitlyStopped(preparedBeforeJournal, "pre-activation replacement");
+        prepareManagedBootstrapStateRoots({
+          inspect: originalBeforeJournal as Record<string, unknown>,
+          roots: handle.plan.managedStateRoots,
+          captureVolume: (args) => {
+            const result = deps.dockerCapture(["volume", ...args], {
+              ignoreError: true,
+              suppressOutput: true,
+              timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+            });
+            if (Number(result.status ?? 1) !== 0) {
+              throw new Error(
+                `Managed bootstrap Docker state-volume inspection failed: ${commandDetail(result)}`,
+              );
+            }
+            return String(result.stdout ?? "");
+          },
+        });
         if (
           dockerContainerName(originalBeforeJournal) !== authority.originalName ||
           dockerContainerName(preparedBeforeJournal) !== authority.replacementStagingName ||

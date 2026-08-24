@@ -65,6 +65,7 @@ function planFor(request: ReturnType<typeof requestFor>) {
     },
     profile: { agent: request.agent, fingerprint: request.profileFingerprint },
     agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+    managedStateRoots: [],
     intendedWorkloadArgv: ["env", "A=1", "/usr/local/bin/nemoclaw-start"],
     expectedSupervisorArgv: ["/runtime/sandbox-supervisor", "supervise", "--foreground"],
     metadata: { "nemoclaw.ai/managed-profile": request.profileFingerprint },

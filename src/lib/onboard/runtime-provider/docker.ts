@@ -36,6 +36,7 @@ import {
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
 } from "../managed-image/contract";
 import { queryOpenShellDockerSandboxRuntimeSnapshot } from "../openshell-docker-sandbox-containers";
+import { validateSandboxGpuPreflight } from "../sandbox-gpu-preflight";
 import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
@@ -530,6 +531,8 @@ export function createDockerRuntimeProviderBundle(
       providerId,
       supported: true,
       inspectHost: () => inspectDockerHost(deps),
+      validateSandboxGpu: (config, exitProcess) =>
+        validateSandboxGpuPreflight(config, {}, exitProcess),
       preflightLifecycle: (action, input) => dockerLifecyclePreflight(action, input, deps),
     },
     gateway: {
@@ -688,6 +691,8 @@ export function createKubernetesRuntimeProviderBundle(
       providerId,
       supported: true,
       inspectHost: () => inspectDockerHost(deps),
+      validateSandboxGpu: (config, exitProcess) =>
+        validateSandboxGpuPreflight(config, {}, exitProcess),
       preflightLifecycle: () => null,
     },
     gateway: {

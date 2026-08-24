@@ -7,6 +7,7 @@ import {
   parseManagedStartupRootApplyRequest,
   serializeManagedStartupRootApplyRequest,
 } from "../managed-startup/root-apply";
+import { isShippedManagedImageAgent } from "../managed-image/agents";
 
 export const MANAGED_BOOTSTRAP_ENVELOPE_SCHEMA_VERSION = 1 as const;
 export const MANAGED_BOOTSTRAP_REQUEST_FILE = "/var/lib/nemoclaw-managed-bootstrap-request.json";
@@ -164,7 +165,7 @@ export function serializeManagedBootstrapImageCompletion(
   ) {
     fail("image completion identity is invalid");
   }
-  if (!["openclaw", "hermes", "langchain-deepagents-code"].includes(completion.agent)) {
+  if (!isShippedManagedImageAgent(completion.agent)) {
     fail("image completion agent is invalid");
   }
   if (typeof completion.transactionPending !== "boolean") {
@@ -206,7 +207,7 @@ export function parseManagedBootstrapImageCompletion(
         .join(",") ||
     completion.schemaVersion !== MANAGED_BOOTSTRAP_ENVELOPE_SCHEMA_VERSION ||
     typeof completion.agent !== "string" ||
-    !["openclaw", "hermes", "langchain-deepagents-code"].includes(completion.agent) ||
+    !isShippedManagedImageAgent(completion.agent) ||
     typeof completion.bootstrapIdentity !== "string" ||
     !BOOTSTRAP_IDENTITY_RE.test(completion.bootstrapIdentity) ||
     typeof completion.profileFingerprint !== "string" ||

@@ -2900,12 +2900,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateLargerRunnerRouting(errors, jobs, generateMatrix, generateSteps, generateCheckout);
   const generate = requireStep(errors, generateSteps, "Generate E2E target matrix");
   validateTrustedE2ePlannerBoundary(errors, generateSteps, generate, generateCheckout);
-  validateExactPrManagedImageCatalogBoundary(
-    errors,
-    generateSteps,
-    generate,
-    generateCheckout,
-  );
+  validateExactPrManagedImageCatalogBoundary(errors, generateSteps, generate, generateCheckout);
   const generateEnv = asRecord(generate?.env);
   if (generateEnv.CHECKOUT_SHA !== "${{ inputs.checkout_sha }}") {
     errors.push("matrix generation step must bind controller checkout through CHECKOUT_SHA env");
@@ -3469,6 +3464,14 @@ export function validateNativePodmanSetupAction(
   }
   if (run.includes("printf 'DOCKER_HOST=")) {
     errors.push("native Podman setup must not expose its API socket as Docker");
+  }
+  if (
+    !run.includes("systemctl stop docker.service docker.socket") ||
+    !run.includes("systemctl mask --runtime docker.service docker.socket") ||
+    !run.includes("! pgrep -x dockerd >/dev/null") ||
+    !run.includes("docker info >/dev/null 2>&1")
+  ) {
+    errors.push("native Podman setup must make Docker unavailable before qualification");
   }
   if (
     !run.includes('export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus"') ||

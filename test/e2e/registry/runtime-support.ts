@@ -10,7 +10,7 @@ import type { TargetDefinition } from "./types.ts";
 
 const SUPPORTED_PLATFORMS = new Set(["ubuntu-local"]);
 const SUPPORTED_INSTALLS = new Set(["repo-current"]);
-const SUPPORTED_RUNTIMES = new Set(["docker-running"]);
+const SUPPORTED_RUNTIMES = new Set(["docker-running", "managed-runtime-running"]);
 const SUPPORTED_ONBOARDING = new Set([
   "cloud-openclaw",
   "cloud-openclaw-policy-custom-missing-presets",

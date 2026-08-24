@@ -139,14 +139,18 @@ function assertSmallContextCompactionPolicy(configText: string): void {
 }
 
 function loadedOllamaModels(raw: string): string[] {
-  const parsed = JSON.parse(raw) as { models?: Array<{ name?: unknown; model?: unknown }> };
+  const parsed = JSON.parse(raw) as {
+    models?: Array<{ name?: unknown; model?: unknown }>;
+  };
   return (parsed.models ?? []).flatMap((entry) => {
     const name = typeof entry.name === "string" ? entry.name : entry.model;
     return typeof name === "string" && name.trim() ? [name.trim()] : [];
   });
 }
 
-test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
+test(
+  "GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference",
+  {
   timeout: TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -158,7 +162,8 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
       "restart Ollama and recover agent inference",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip }) => {
   skipOllamaForLlamaCppCompatibility(skip);
   await artifacts.target.declare({
     id: "gpu-e2e",
@@ -199,12 +204,10 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
   });
   await cleanupGpu(host, sandbox);
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "docker-info",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+    artifactName: "runtime-info",
+      scenarioLabel: "GPU",
   });
-  expect(docker.exitCode, resultText(docker)).toBe(0);
   const nvidia = await host.command("nvidia-smi", [], {
     artifactName: "nvidia-smi",
     env: buildAvailabilityProbeEnv(),
@@ -230,7 +233,11 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
   const config = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(openClawModelConfigProjectionScript()),
-    { artifactName: "sandbox-openclaw-model-config", env: env(), timeoutMs: 30_000 },
+      {
+        artifactName: "sandbox-openclaw-model-config",
+        env: env(),
+        timeoutMs: 30_000,
+      },
   );
   expect(config.exitCode, resultText(config)).toBe(0);
   await artifacts.writeText("openclaw-model-config.json", config.stdout);
@@ -256,15 +263,15 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
   );
   expect(installLog).not.toContain("Docker GPU mode selected");
 
-  const sandboxContainers = await host.command(
-    "docker",
+    const sandboxContainers = await runtimeProvider.command(
     [
+        "container",
       "ps",
-      "-a",
+        "--all",
       "--filter",
       `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
       "--format",
-      "{{json .}}",
+        "{{.Names}}\t{{.State}}\t{{.Status}}",
     ],
     {
       artifactName: "gpu-native-route-sandbox-containers",
@@ -277,14 +284,10 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
-    .map(
-      (line) =>
-        JSON.parse(line) as {
-          Names?: string;
-          State?: string;
-          Status?: string;
-        },
-    );
+      .map((line) => {
+        const [Names = "", State = "", Status = ""] = line.split("\t");
+        return { Names, State, Status };
+      });
   expect(
     sandboxContainerInventory,
     `native GPU route must retain exactly one sandbox container; got ${sandboxContainers.stdout}`,
@@ -311,7 +314,11 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
   const proxyUnauth = await host.command(
     "curl",
     ["-sS", "-o", "/dev/null", "-w", "%{http_code}", `http://127.0.0.1:${PROXY_PORT}/api/tags`],
-    { artifactName: "ollama-proxy-unauthorized", env: env(), timeoutMs: 30_000 },
+      {
+        artifactName: "ollama-proxy-unauthorized",
+        env: env(),
+        timeoutMs: 30_000,
+      },
   );
   expect(proxyUnauth.exitCode, resultText(proxyUnauth)).toBe(0);
   expect(proxyUnauth.stdout).toBe("401");
@@ -361,7 +368,11 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
         },
       )}'`,
     ),
-    { artifactName: "sandbox-inference-local-chat", env: env(), timeoutMs: 150_000 },
+      {
+        artifactName: "sandbox-inference-local-chat",
+        env: env(),
+        timeoutMs: 150_000,
+      },
   );
   expect(chat.exitCode, resultText(chat)).toBe(0);
   expect(chatContent(chat.stdout)).toMatch(/pong/i);
@@ -406,7 +417,11 @@ done
 echo 'Ollama did not become ready after restart' >&2
 exit 1`,
     ],
-    { artifactName: "ollama-daemon-restart-unloaded", env: env(), timeoutMs: 90_000 },
+      {
+        artifactName: "ollama-daemon-restart-unloaded",
+        env: env(),
+        timeoutMs: 90_000,
+      },
   );
   expect(restart.exitCode, resultText(restart)).toBe(0);
   const restartLines = restart.stdout.trim().split("\n");
@@ -443,4 +458,5 @@ exit 1`,
   });
   expect(loaded.exitCode, resultText(loaded)).toBe(0);
   expect(loadedOllamaModels(loaded.stdout)).toContain(model);
-});
+  },
+);

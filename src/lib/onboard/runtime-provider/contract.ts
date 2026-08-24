@@ -9,6 +9,7 @@ import type {
   ManagedBootstrapRuntimeOnboardRoutingInput,
 } from "../managed-bootstrap/runtime-create";
 import type { ManagedImageSelectionPolicy } from "../workload/source";
+import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type {
   HostLocalInferenceOperation,
   HostLocalInferenceOperationInput,
@@ -471,6 +472,7 @@ export interface RuntimeProviderSnapshotRestoreReceipt {
 
 export type RuntimeProviderPreflightDoctorSurface = RuntimeProviderSupportedSurface<{
   inspectHost(): RuntimeProviderDoctorCheck;
+  validateSandboxGpu(config: SandboxGpuConfig, exitProcess: (code: number) => never): void;
   preflightLifecycle(
     action: RuntimeProviderLifecycleAction,
     input: RuntimeProviderLifecycleInput,

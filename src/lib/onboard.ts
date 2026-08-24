@@ -519,9 +519,7 @@ const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
 const overlayfsAutoFix: typeof import("./onboard/overlayfs-auto-fix") = require("./onboard/overlayfs-auto-fix");
 const { assessHost, checkPortAvailable, ensureSwap, getMemoryInfo } = preflightUtils;
-const {
-  assertDockerBridgeAndContainerDnsHealthy,
-}: typeof import("./onboard/bridge-dns-preflight") = require("./onboard/bridge-dns-preflight");
+const runtimeEffectfulPreflight: typeof import("./onboard/machine/runtime-effectful-preflight") = require("./onboard/machine/runtime-effectful-preflight");
 const agentOnboard = require("./agent/onboard");
 const agentDefs = require("./agent/defs");
 
@@ -1667,7 +1665,6 @@ const createSandboxWithBaseImageResolution =
   sandboxCreateOrchestration.createSandboxWithBaseImageResolution(
     sandboxCreateOrchestrationRuntime,
   );
-
 
 const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
   agentOnboard.createHermesApiPortScopedSandboxEntryPoints({
@@ -3039,7 +3036,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               ...options,
               allowStorageRemediation: !isGatewayExternallySupervised(),
             }),
-          assertDockerBridgeAndContainerDnsHealthy,
+          assertRuntimeProviderHealthy: (host, sandboxGpuConfig) =>
+            runtimeEffectfulPreflight.assertConfiguredRuntimeProviderHealthy(host, sandboxGpuConfig, isNonInteractive()),
           resolveSandboxGpuConfig,
           validateSandboxGpuPreflight,
           skippedStepMessage,
@@ -3308,7 +3306,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   hermesApiPortReservationScope,
                   ...createArgs,
                 ),
-
               ),
             ),
             updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),

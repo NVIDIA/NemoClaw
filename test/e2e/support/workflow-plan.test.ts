@@ -160,7 +160,7 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(56);
+    expect(catalogueIds).toHaveLength(53);
     expect(catalogueIds).not.toEqual(
       expect.arrayContaining(["gateway-guard-recovery", "rebuild-hermes", "rebuild-openclaw"]),
     );
@@ -1362,7 +1362,7 @@ describe("E2E workflow plan", () => {
       "| `cloud-onboard / docker` | openclaw | Public install onboarding hosted inference and security checks succeed | Ubuntu; NVIDIA hosted inference | retained-workflow |  |",
     );
     expect(complete.stdout).toContain(
-      "| `ubuntu-repo-cloud-openclaw / docker` | openclaw | Repository install onboarding and hosted inference succeed | Ubuntu Docker host; NVIDIA hosted inference | typed-registry |  |",
+      "| `ubuntu-repo-cloud-openclaw / docker` | openclaw | Repository install onboarding and hosted inference succeed | Ubuntu managed-runtime host; NVIDIA hosted inference | typed-registry |  |",
     );
     expect(complete.stdout).toContain(
       "| `vllm-docker-storage / docker` | none | vLLM storage gate accepts and rejects the intended host states | Native Linux Docker host; no inference endpoint | shared-e2e |  |",
@@ -1378,7 +1378,7 @@ describe("E2E workflow plan", () => {
     );
     expect(complete.stdout).toContain("### Repeated outcomes with distinct evidence");
     expect(complete.stdout).toContain(
-      "| Repository install onboarding and hosted inference succeed | `ubuntu-repo-cloud-langchain-deepagents-code / docker`, `ubuntu-repo-cloud-openclaw / docker` | agent runtime |",
+      "| Repository install onboarding and hosted inference succeed | `ubuntu-repo-cloud-langchain-deepagents-code / docker`, `ubuntu-repo-cloud-openclaw / docker` | agent runtime and environment or inference endpoint |",
     );
     expect(complete.stdout).toContain("### Intentional exclusions");
     expect(complete.stdout).toContain(

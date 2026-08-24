@@ -14,6 +14,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 
 export function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
@@ -37,6 +38,33 @@ async function preCleanBestEffort(run: () => Promise<unknown>): Promise<void> {
 
 const GATEWAY_NAME = "nemoclaw";
 const GATEWAY_PORT = resolveGatewayPortFromName(GATEWAY_NAME);
+const GATEWAY_RESOURCE_NAME = "openshell-cluster-nemoclaw";
+
+function selectedRuntimeProvider(host: HostCliClient): RuntimeProviderPrerequisite {
+  return new RuntimeProviderPrerequisite(host, (reason) => {
+    throw new Error(reason);
+  });
+}
+
+async function stopGatewayRuntimeResource(
+  host: HostCliClient,
+  artifactName: string,
+): Promise<void> {
+  const runtimeProvider = selectedRuntimeProvider(host);
+  const resources = await runtimeProvider.command(
+    ["container", "ps", "--filter", `name=^${GATEWAY_RESOURCE_NAME}$`, "--format", "{{.Names}}"],
+    { artifactName: `${artifactName}-list`, timeoutMs: 30_000 },
+  );
+  assertExitZero(resources, "list messaging-compatible gateway runtime resource");
+  if (!resources.stdout.split(/\r?\n/u).some((name) => name.trim() === GATEWAY_RESOURCE_NAME)) {
+    return;
+  }
+  const stopped = await runtimeProvider.command(["container", "stop", GATEWAY_RESOURCE_NAME], {
+    artifactName,
+    timeoutMs: 90_000,
+  });
+  assertExitZero(stopped, "stop messaging-compatible gateway runtime resource");
+}
 
 type GatewayPidState =
   | { kind: "absent" }
@@ -195,51 +223,31 @@ export async function cleanupOwnedGatewayRuntimeStrict(
   artifactName: string,
 ): Promise<void> {
   await stopOwnedGatewayPid(true);
-  const result = await host.command(
-    "bash",
-    [
-      "-lc",
-      [
-        "set -uo pipefail",
-        'cid="$(docker ps -qf "name=openshell-cluster-nemoclaw" | head -1)" || exit $?',
-        'if [ -n "$cid" ]; then docker stop "$cid" >/dev/null; fi',
-      ].join("\n"),
-    ],
-    {
-      artifactName,
-      env: commandEnv(),
-      timeoutMs: 90_000,
-    },
-  );
-  assertExitZero(result, "cleanup messaging-compatible owned gateway runtime");
+  await stopGatewayRuntimeResource(host, artifactName);
 }
 
 export async function stopGatewayRuntime(host: HostCliClient, artifactName: string): Promise<void> {
   await preCleanBestEffort(() =>
-    host.command(
-      "bash",
-      [
-        "-lc",
-        [
-          "set +e",
-          'openshell_bin="$1"',
-          '"$openshell_bin" forward stop 18789 >/dev/null 2>&1',
-          '"$openshell_bin" gateway stop -g nemoclaw >/dev/null 2>&1',
-          'cid="$(docker ps -qf "name=openshell-cluster-nemoclaw" 2>/dev/null | head -1)"',
-          'if [ -n "$cid" ]; then docker stop "$cid" >/dev/null 2>&1 || true; fi',
-          '"$openshell_bin" gateway remove nemoclaw >/dev/null 2>&1',
-          '"$openshell_bin" gateway destroy -g nemoclaw >/dev/null 2>&1',
-          "exit 0",
-        ].join("\n"),
-        "gateway-runtime-preclean",
-        host.openshellCommandPath,
-      ],
-      {
-        artifactName,
+    host.command(host.openshellCommandPath, ["forward", "stop", "18789"], {
+      artifactName: `${artifactName}-forward-stop`,
+      env: commandEnv(),
+      timeoutMs: 90_000,
+    }),
+  );
+  await preCleanBestEffort(() =>
+    host.command(host.openshellCommandPath, ["gateway", "stop", "-g", GATEWAY_NAME], {
+      artifactName: `${artifactName}-gateway-stop`,
         env: commandEnv(),
         timeoutMs: 90_000,
-      },
-    ),
+    }),
+  );
+  await preCleanBestEffort(() => stopGatewayRuntimeResource(host, artifactName));
+  await preCleanBestEffort(() =>
+    host.command(host.openshellCommandPath, ["gateway", "destroy", "-g", GATEWAY_NAME], {
+      artifactName: `${artifactName}-gateway-destroy`,
+      env: commandEnv(),
+      timeoutMs: 90_000,
+    }),
   );
   await stopOwnedGatewayPid(false);
 }

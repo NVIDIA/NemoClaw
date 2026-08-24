@@ -644,15 +644,13 @@ describe("Podman image-owned bootstrap transaction", () => {
     expect(fake.completionAttempts()).toBe(3);
   });
 
-  it("refuses to bootstrap a release candidate on Podman (#7927)", () => {
+  it("does not duplicate managed-agent support policy inside the Podman transaction", () => {
     const fake = harness("pi");
 
-    expect(() =>
+    expect(
       startPodmanBootstrapImageTransaction(startInput("pi", fake), {
         now: () => new Date("2026-08-01T12:00:00.000Z"),
       }),
-    ).toThrow(
-      "agent 'pi' is not supported on Podman; onboard it through the Docker compute runtime",
-    );
+    ).toMatchObject({ agent: "pi" });
   });
 });

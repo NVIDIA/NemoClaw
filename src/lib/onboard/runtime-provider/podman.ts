@@ -7,6 +7,7 @@ import {
   MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
 } from "../managed-image/contract";
+import { validatePodmanSandboxGpuPreflight } from "../sandbox-gpu-preflight";
 import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
@@ -258,6 +259,8 @@ export function createPodmanRuntimeProviderBundle(
       providerId,
       supported: true,
       inspectHost: () => inspectPodmanHost(hostDoctor, preflight),
+      validateSandboxGpu: (config, exitProcess) =>
+        validatePodmanSandboxGpuPreflight(config, {}, exitProcess),
       preflightLifecycle: (_action, input) => preflightLifecycle(input, hostDoctor, preflight),
     },
     gateway: {

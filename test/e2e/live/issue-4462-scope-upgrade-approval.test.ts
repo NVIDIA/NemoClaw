@@ -1218,7 +1218,7 @@ echo "ISSUE_4462_SCOPE_UPGRADE_OK device=$final_device request=\${request_id:-co
 test("keeps issue 4462 scope-upgrade approval on the gateway path without an admin leak", {
   timeout: LIVE_TIMEOUT_MS,
   meta: { e2ePhases: ISSUE_4462_SCOPE_UPGRADE_PHASES },
-}, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, secrets, skip }) => {
+}, async ({ artifacts, cleanup: cleanupRegistry, host, progress, runtimeProvider, sandbox, secrets }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   await artifacts.target.declare({
     id: "issue-4462-scope-upgrade-approval",
@@ -1235,15 +1235,10 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
     ],
   });
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "phase-0-docker-info",
-    env: env(),
-    timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+    artifactName: "phase-0-runtime-info",
+      scenarioLabel: "issue 4462 scope-upgrade approval",
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") throw new Error(resultText(docker));
-    skip(`Docker is required: ${resultText(docker)}`);
-  }
 
   cleanupRegistry.trackGateway(host, "nemoclaw", {
     artifactName: "cleanup-openshell-gateway-destroy",
@@ -1260,8 +1255,10 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
     }),
   );
   cleanupRegistry.trackSandbox(host, SANDBOX_NAME, {
-    artifactName: "cleanup-nemoclaw-destroy", env: env(),
-    redactionValues: [apiKey], timeoutMs: 120_000,
+      artifactName: "cleanup-nemoclaw-destroy",
+      env: env(),
+      redactionValues: [apiKey],
+      timeoutMs: 120_000,
   });
   trackIssue4462FailureDiagnostics(cleanupRegistry, sandbox, SANDBOX_NAME, env(), [apiKey]);
   await cleanup(host, sandbox);
@@ -1371,7 +1368,9 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
     expect(nextSnapshot.activeOperatorTokenCount).toBe(1);
     expect(nextSnapshot.deviceScopes).toEqual(freshSnapshot.deviceScopes);
     expect(nextSnapshot.approvedScopes).toEqual(freshSnapshot.approvedScopes);
-    expect(nextSnapshot.activeOperatorTokenScopes).toEqual(freshSnapshot.activeOperatorTokenScopes);
+      expect(nextSnapshot.activeOperatorTokenScopes).toEqual(
+        freshSnapshot.activeOperatorTokenScopes,
+      );
     expect(nextSnapshot.gatewayCompletedRuns).toBe(freshSnapshot.gatewayCompletedRuns + 1);
     freshSnapshot = nextSnapshot;
   }

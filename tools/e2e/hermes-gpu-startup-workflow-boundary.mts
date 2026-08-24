@@ -163,7 +163,10 @@ export function validateHermesGpuStartupWorkflow(
         },
       ]) ||
     JSON.stringify(matrix.exclude) !==
-      JSON.stringify([{ scenario: "fallback", runtime_provider: "podman" }])
+      JSON.stringify([
+        { scenario: "fallback", runtime_provider: "podman" },
+        { scenario: "compatibility-only", runtime_provider: "podman" },
+      ])
   ) {
     errors.push(`${JOB_NAME} must expand reviewed GPU scenarios by supported runtime`);
   }

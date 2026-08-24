@@ -18,7 +18,7 @@ import {
   type AgentKind,
   runSecondaryCleanup as bestEffortPreclean,
   CLI,
-  dockerInfo,
+  requirePhase6RuntimeProvider,
   expectExitZero,
   expectSandboxReady,
   installSandboxOrSkipOnRateLimit,
@@ -546,6 +546,7 @@ export async function runChannelsStopStartTarget({
   cleanup,
   host,
   progress,
+  runtimeProvider,
   sandbox,
   secrets,
   skip,
@@ -604,8 +605,7 @@ export async function runChannelsStopStartTarget({
   );
   await precleanProviders(host, env, redactions, `preclean-channels-stop-start-${AGENT}`);
 
-  const docker = await dockerInfo(host, env);
-  expect(docker.exitCode, resultText(docker)).toBe(0);
+  await requirePhase6RuntimeProvider(runtimeProvider, `${AGENT} channels stop/start`);
   progress.phase("onboard sandbox with all messaging channels");
   const onboardingEnv = GOOGLECHAT_ENABLED ? withoutGooglechatOnboardInputs(env) : env;
   const install = await installSandboxOrSkipOnRateLimit(

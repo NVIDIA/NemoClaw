@@ -476,11 +476,20 @@ function requireExactSupplementaryGroups(
   values: string[],
   expected: readonly number[],
   label: string,
+  alternatives: readonly (readonly number[])[] = [],
 ): void {
-  const exact = expected.map(String).sort();
+  const exact = [expected, ...alternatives].map((groupSet) => groupSet.map(String).sort());
   const actual = [...values].sort();
-  if (actual.length !== exact.length || actual.some((value, index) => value !== exact[index])) {
-    throw new Error(`${label} expected exactly ${exact.join(" ")}, got ${values.join(" ")}`);
+  if (
+    !exact.some(
+      (groupSet) =>
+        actual.length === groupSet.length &&
+        actual.every((value, index) => value === groupSet[index]),
+    )
+  ) {
+    throw new Error(
+      `${label} expected exactly ${exact.map((groupSet) => groupSet.join(" ")).join(" or ")}, got ${values.join(" ")}`,
+    );
   }
 }
 
@@ -515,8 +524,9 @@ function validateSupervisor(process: ProcessSecurityIdentity, sandboxGid: number
   requireExactIds(process.status.gid, 0, "OpenShell supervisor Gid");
   requireExactSupplementaryGroups(
     process.status.groups,
-    [0, sandboxGid],
+    [0],
     "OpenShell supervisor Groups",
+    [[0, sandboxGid]],
   );
   for (const field of ["capInh", "capPrm", "capEff", "capBnd", "capAmb"] as const) {
     requireCapabilityHex(process.status[field], `OpenShell supervisor ${field}`);

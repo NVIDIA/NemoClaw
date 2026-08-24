@@ -42,7 +42,6 @@ import {
   createPodmanManagedBootstrapSurface,
   finishCommittedPodmanBootstrap,
   observePodmanBootstrapReplacementReady,
-  preparePodmanManagedHermesStateAuthority,
   preparePodmanManagedWorkspaceAuthority,
   resolvePodmanManagedGatewayAuthority,
   renderPodmanReplacementEnvironment,
@@ -51,6 +50,7 @@ import {
   renderPodmanReplacementRuntimeArgs,
   renderPodmanReplacementSecretArgs,
 } from "./podman-runtime";
+import { prepareManagedBootstrapStateRoots } from "./state-root-authority";
 import type { PodmanGatewayWatcherLease } from "./podman-watcher-lease";
 import { PODMAN_WATCHER_LEASE_SCHEMA_VERSION } from "./podman-watcher-lease";
 
@@ -137,6 +137,7 @@ function lifecycleInput(adapterOverride: ManagedBootstrapAdapter) {
       manifestDigest: MANIFEST_DIGEST,
     },
     agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
+    managedStateRoots: [],
     intendedWorkloadArgv: ["/usr/local/bin/nemoclaw-start"],
     expectedSupervisorArgv: ["/opt/openshell/bin/supervisor"],
     launchArgv: ["openshell", "sandbox", "create", "--name", "alpha"],
@@ -402,9 +403,9 @@ describe("Podman managed-bootstrap runtime surface", () => {
     });
   });
 
-  it("restores the exact owned Hermes state-volume root before replacement start", () => {
+  it("prepares a synthetic declared state root without provider-specific agent logic", () => {
     const mountpoint =
-      "/home/test/.local/share/containers/storage/volumes/nemoclaw-hermes-state-v1-alpha/_data";
+      "/home/test/.local/share/containers/storage/volumes/synthetic-state-alpha/_data";
     const prepareManagedVolumeRoot = vi.fn(() => ({
       path: mountpoint,
       device: "8",
@@ -414,47 +415,47 @@ describe("Podman managed-bootstrap runtime surface", () => {
       mode: 0o3770 as const,
     }));
     const labels = {
-      "io.nvidia.nemoclaw.hermes-state.managed": "true",
-      "io.nvidia.nemoclaw.hermes-state.schema": "1",
-      "io.nvidia.nemoclaw.hermes-state.sandbox": "alpha",
-      "io.nvidia.nemoclaw.hermes-state.target": "/sandbox/.hermes",
+      "io.nvidia.nemoclaw.synthetic-state.managed": "true",
+      "io.nvidia.nemoclaw.synthetic-state.sandbox": "alpha",
     };
-    const capture = vi.fn(() => ({
-      status: 0,
-      stdout: `nemoclaw-hermes-state-v1-alpha\n${mountpoint}\n${JSON.stringify(labels)}\n`,
-      stderr: "",
-      error: undefined,
-    }));
+    const captureVolume = vi.fn(
+      () => `synthetic-state-alpha\n${mountpoint}\n${JSON.stringify(labels)}\n`,
+    );
 
-    preparePodmanManagedHermesStateAuthority({
-      engine: { ...engine(), capture, prepareManagedVolumeRoot },
+    prepareManagedBootstrapStateRoots({
       inspect: {
         Mounts: [
           {
             Type: "volume",
-            Name: "nemoclaw-hermes-state-v1-alpha",
+            Name: "synthetic-state-alpha",
             Driver: "local",
             Source: mountpoint,
-            Destination: "/sandbox/.hermes",
+            Destination: "/sandbox/.synthetic",
             RW: true,
           },
         ],
       },
-      sandboxName: "alpha",
-      agentUid: 1000,
-      agentGid: 1000,
+      roots: [
+        {
+          mountTarget: "/sandbox/.synthetic",
+          resourceIdentity: "synthetic-state-alpha",
+          ownershipLabels: labels,
+          uid: 1000,
+          gid: 1000,
+          mode: 0o3770,
+          readWrite: true,
+        },
+      ],
+      captureVolume,
+      prepareRoot: prepareManagedVolumeRoot,
     });
 
-    expect(capture).toHaveBeenCalledExactlyOnceWith(
-      [
-        "volume",
-        "inspect",
-        "--format",
-        "{{.Name}}\n{{.Mountpoint}}\n{{json .Labels}}",
-        "nemoclaw-hermes-state-v1-alpha",
-      ],
-      15_000,
-    );
+    expect(captureVolume).toHaveBeenCalledExactlyOnceWith([
+      "inspect",
+      "--format",
+      "{{.Name}}\n{{.Mountpoint}}\n{{json .Labels}}",
+      "synthetic-state-alpha",
+    ]);
     expect(prepareManagedVolumeRoot).toHaveBeenCalledExactlyOnceWith({
       path: mountpoint,
       uid: 1000,

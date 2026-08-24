@@ -24,6 +24,7 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import {
   buildSnapshotCommandEnv,
   classifySnapshotGatewayProbe,
@@ -214,17 +215,16 @@ async function expectShieldsUp(host: HostCliClient, artifactName: string): Promi
 }
 
 async function onlySandboxContainerId(
-  host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   sandboxName: string,
   artifactName: string,
 ): Promise<string> {
-  const result = await host.command(
-    "docker",
+  const result = await runtimeProvider.command(
     [
+      "container",
       "ps",
-      "-aq",
-      "--filter",
-      "label=openshell.ai/managed-by=openshell",
+      "--all",
+      "--quiet",
       "--filter",
       `label=openshell.ai/sandbox-name=${sandboxName}`,
     ],
@@ -241,14 +241,13 @@ async function onlySandboxContainerId(
 }
 
 async function rootSandboxPathMetadata(
-  host: HostCliClient,
+  runtimeProvider: RuntimeProviderPrerequisite,
   containerId: string,
   targetPath: string,
   artifactName: string,
 ): Promise<{ mode: string; owner: string }> {
-  const result = await host.command(
-    "docker",
-    ["exec", "-u", "0", containerId, "stat", "-c", "%a %U:%G", targetPath],
+  const result = await runtimeProvider.command(
+    ["container", "exec", "--user", "0", containerId, "stat", "-c", "%a %U:%G", targetPath],
     {
       artifactName,
       env: commandEnv(),
@@ -272,7 +271,9 @@ async function expectBaselineExclusionAgreement(
     timeoutMs: 60_000,
   });
   expect(status.exitCode, resultText(status)).toBe(0);
-  const statusJson = JSON.parse(status.stdout) as { baselineExclusions: string[] };
+  const statusJson = JSON.parse(status.stdout) as {
+    baselineExclusions: string[];
+  };
   expect(statusJson.baselineExclusions).toContain(BASELINE_EXCLUSION_KEY);
 
   const policyList = await host.command("nemoclaw", [sandboxName, "policy", "list"], {
@@ -320,7 +321,7 @@ test(
     timeout: LIVE_TIMEOUT_MS,
     meta: {
       e2ePhases: [
-        "confirm Docker and start hermetic inference",
+        "confirm the selected runtime and start hermetic inference",
         "onboard the snapshot sandbox",
         "create and list the first snapshot",
         "destroy, freshly onboard, and restore canonical OpenClaw workspace files",
@@ -335,7 +336,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
     await artifacts.target.declare({
       id: "snapshot-commands",
       boundary: "install.sh + nemoclaw snapshot commands + openshell sandbox exec",
@@ -361,17 +362,10 @@ test(
       ],
     });
 
-    const dockerInfo = await host.command("docker", ["info"], {
-      artifactName: "phase-0-docker-info",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "phase-0-runtime-info",
+      scenarioLabel: "snapshot commands",
     });
-    if (dockerInfo.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") {
-        throw new Error(`Docker is required for snapshot commands E2E: ${resultText(dockerInfo)}`);
-      }
-      skip(`Docker is required for snapshot commands E2E: ${resultText(dockerInfo)}`);
-    }
 
     const inference = await startFakeOpenAiCompatibleServer({
       apiKey: INFERENCE_API_KEY,
@@ -597,7 +591,7 @@ printf '%s' ${JSON.stringify(soulContent)} > "$OPENCLAW_WORKSPACE_DIR/SOUL.md"`,
     );
     expect(reapplyBaselineExclusion.exitCode, resultText(reapplyBaselineExclusion)).toBe(0);
     await expectBaselineExclusionAgreement(
-      host,
+      runtimeProvider,
       sandbox,
       SANDBOX_NAME,
       "phase-4-after-reapplying-baseline-exclusion",
@@ -952,7 +946,7 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
       "phase-10-stopped-backup-container-lookup",
     );
 
-    const stop = await host.command("docker", ["stop", stoppedContainerId], {
+    const stop = await runtimeProvider.command(["container", "stop", stoppedContainerId], {
       artifactName: "phase-10-stop-sandbox-container",
       env: commandEnv(),
       timeoutMs: 60_000,
@@ -969,9 +963,8 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
     expect(resultText(strictBackup)).toContain(`Returned '${SANDBOX_NAME}' to its stopped state`);
     expect(resultText(strictBackup)).toContain("1 backed up, 0 failed, 0 skipped");
 
-    const finalContainerState = await host.command(
-      "docker",
-      ["inspect", "--format", "{{.State.Status}}", stoppedContainerId],
+    const finalContainerState = await runtimeProvider.command(
+      ["container", "inspect", "--format", "{{.State.Status}}", stoppedContainerId],
       {
         artifactName: "phase-10-final-container-state",
         env: commandEnv(),
@@ -1008,7 +1001,7 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
     );
     expect(rebuildAfterStoppedBackup.exitCode, resultText(rebuildAfterStoppedBackup)).toBe(0);
     const rebuiltContainerId = await onlySandboxContainerId(
-      host,
+      runtimeProvider,
       SANDBOX_NAME,
       "phase-10-rebuilt-container-lookup",
     );
@@ -1105,21 +1098,27 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
     await expectShieldsUp(host, "phase-11-shields-status-before-protected-backup");
 
     const protectedDirBeforeBackup = await rootSandboxPathMetadata(
-      host,
+      runtimeProvider,
       rebuiltContainerId,
       PROTECTED_CREDENTIALS_DIR,
       "phase-11-protected-credentials-dir-before-backup",
     );
     // Confidentiality roots remain search-only for the sandbox group; every
     // descendant stays root-only and unreadable to the sandbox.
-    expect(protectedDirBeforeBackup).toEqual({ mode: "710", owner: "root:sandbox" });
+    expect(protectedDirBeforeBackup).toEqual({
+      mode: "710",
+      owner: "root:sandbox",
+    });
     const protectedFileBeforeBackup = await rootSandboxPathMetadata(
-      host,
+      runtimeProvider,
       rebuiltContainerId,
       PROTECTED_CREDENTIAL_FILE,
       "phase-11-protected-credential-file-before-backup",
     );
-    expect(protectedFileBeforeBackup).toEqual({ mode: "600", owner: "root:root" });
+    expect(protectedFileBeforeBackup).toEqual({
+      mode: "600",
+      owner: "root:root",
+    });
 
     const unreadableBeforeBackup = await sandbox.exec(
       SANDBOX_NAME,
@@ -1188,7 +1187,7 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
     await expectShieldsUp(host, "phase-11-shields-status-after-protected-backup");
     expect(
       await rootSandboxPathMetadata(
-        host,
+        runtimeProvider,
         rebuiltContainerId,
         PROTECTED_CREDENTIALS_DIR,
         "phase-11-protected-credentials-dir-after-backup",
@@ -1196,7 +1195,7 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
     ).toEqual({ mode: "710", owner: "root:sandbox" });
     expect(
       await rootSandboxPathMetadata(
-        host,
+        runtimeProvider,
         rebuiltContainerId,
         PROTECTED_CREDENTIAL_FILE,
         "phase-11-protected-credential-file-after-backup",

@@ -29,6 +29,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { pollUntil } from "../fixtures/polling.ts";
+import { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   failedStartupProcessControlCommands,
@@ -105,14 +106,24 @@ async function sandboxShell(
   });
 }
 
-async function docker(
+function selectedRuntimeProvider(host: HostCliClient): RuntimeProviderPrerequisite {
+  return new RuntimeProviderPrerequisite(host, (reason) => {
+    throw new Error(reason);
+  });
+}
+
+async function runtimeCommand(
   host: HostCliClient,
   args: string[],
-  options: { artifactName: string; timeoutMs?: number; redactionValues?: string[] } = {
-    artifactName: "docker",
+  options: {
+    artifactName: string;
+    timeoutMs?: number;
+    redactionValues?: string[];
+  } = {
+    artifactName: "runtime",
   },
 ): Promise<ShellProbeResult> {
-  return host.command("docker", args, {
+  return selectedRuntimeProvider(host).command(args, {
     artifactName: options.artifactName,
     env: commandEnv(),
     redactionValues: options.redactionValues,
@@ -156,24 +167,14 @@ async function statPath(
   return { ...parsed, raw: result.stdout.trim() };
 }
 
-async function collectStartFailureDockerLogs(
+async function collectStartFailureRuntimeLogs(
   host: HostCliClient,
   artifactPrefix: string,
   redactionValues: string[],
 ): Promise<string> {
-  const lookup = await docker(
+  const lookup = await runtimeCommand(
     host,
-    [
-      "ps",
-      "--all",
-      "--filter",
-      "label=openshell.ai/managed-by=openshell",
-      "--filter",
-      `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
-      "--filter",
-      "label=openshell.ai/sandbox-workspace=default",
-      "-q",
-    ],
+    ["ps", "--all", "--filter", `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`, "-q"],
     {
       artifactName: `${artifactPrefix}-failure-container`,
       redactionValues,
@@ -184,8 +185,8 @@ async function collectStartFailureDockerLogs(
   const result =
     lookup.exitCode !== 0 || !containerId
       ? lookup
-      : await docker(host, ["logs", "--tail", "200", containerId], {
-          artifactName: `${artifactPrefix}-failure-docker-logs`,
+      : await runtimeCommand(host, ["logs", "--tail", "200", containerId], {
+          artifactName: `${artifactPrefix}-failure-runtime-logs`,
           redactionValues,
           timeoutMs: 30_000,
         });
@@ -214,10 +215,10 @@ async function expectStopStartRecovery(
   const startFailureLogs =
     start.exitCode === 0
       ? ""
-      : await collectStartFailureDockerLogs(host, artifactPrefix, redactionValues);
+      : await collectStartFailureRuntimeLogs(host, artifactPrefix, redactionValues);
   expect(
     start.exitCode,
-    [resultText(start), startFailureLogs && `Docker logs:\n${startFailureLogs}`]
+    [resultText(start), startFailureLogs && `Runtime logs:\n${startFailureLogs}`]
       .filter(Boolean)
       .join("\n"),
   ).toBe(0);
@@ -263,7 +264,7 @@ async function expectLockedSandboxParent(
   artifactPrefix: string,
 ): Promise<void> {
   const containerId = await findSandboxContainer(host);
-  const parent = await docker(
+  const parent = await runtimeCommand(
     host,
     ["exec", "--user", "0", containerId, "stat", "-c", "%a %U:%G", "/sandbox"],
     { artifactName: `${artifactPrefix}-sandbox-parent` },
@@ -279,7 +280,7 @@ async function expectCredentialsTraversalBoundary(
 ): Promise<void> {
   const credentialsDir = "/sandbox/.openclaw/credentials";
   const seededPath = `${credentialsDir}/.nemoclaw-permission-probe`;
-  const seeded = await docker(
+  const seeded = await runtimeCommand(
     host,
     ["exec", "--user", "0", containerId, "sh", "-c", `umask 077; : > ${seededPath}`],
     { artifactName: "phase-5a-seed-credential-permission-probe" },
@@ -306,7 +307,7 @@ async function expectCredentialsTraversalBoundary(
       expect(boundary.stdout).toContain(`${operation}=denied`);
     }
   } finally {
-    await docker(host, ["exec", "--user", "0", containerId, "rm", "-f", seededPath], {
+    await runtimeCommand(host, ["exec", "--user", "0", containerId, "rm", "-f", seededPath], {
       artifactName: "phase-5a-remove-credential-permission-probe",
     });
   }
@@ -344,20 +345,11 @@ async function preCleanSandbox(
 }
 
 async function findSandboxContainer(host: HostCliClient): Promise<string> {
-  const result = await docker(
+  const result = await runtimeCommand(
     host,
-    [
-      "ps",
-      "--filter",
-      "label=openshell.ai/managed-by=openshell",
-      "--filter",
-      `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
-      "--filter",
-      "label=openshell.ai/sandbox-workspace=default",
-      "-q",
-    ],
+    ["ps", "--filter", `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`, "-q"],
     {
-      artifactName: "docker-ps-sandbox-container",
+      artifactName: "runtime-ps-sandbox-container",
       timeoutMs: 30_000,
     },
   );
@@ -382,7 +374,7 @@ async function installedStartupCensus(
     "assert census is not None",
     "print(json.dumps({'count': census[0], 'pid': census[1]}))",
   ].join("\n");
-  const result = await docker(
+  const result = await runtimeCommand(
     host,
     ["exec", "--user", "0", containerId, "python3", "-I", "-c", script],
     { artifactName, timeoutMs: 30_000 },
@@ -401,7 +393,7 @@ async function runInstalledFailedStartupUnlock(
     `plan_json=$(cat ${STATE_LOCK_PLAN_PATH})`,
     `exec timeout --signal=TERM --kill-after=5s 25m python3 -I ${CONFIG_GUARD_PATH} unlock-failed-startup --config-dir ${CONFIG_DIR} --plan-json "$plan_json"`,
   ].join("\n");
-  return docker(host, ["exec", "--user", "0", containerId, "sh", "-c", script], {
+  return runtimeCommand(host, ["exec", "--user", "0", containerId, "sh", "-c", script], {
     artifactName,
     timeoutMs: 26 * 60_000,
   });
@@ -419,6 +411,7 @@ async function waitForChildlessStartup(host: HostCliClient, containerId: string)
 }
 
 function createPolicySetChildlessBoundaryShim(
+  host: HostCliClient,
   realOpenshellPath: string,
   containerId: string,
   startupPid: number,
@@ -427,6 +420,7 @@ function createPolicySetChildlessBoundaryShim(
   const executable = path.join(directory, "openshell-childless-boundary.cjs");
   const receipt = path.join(directory, "childless-boundary.json");
   const processControl = failedStartupProcessControlCommands(containerId, startupPid);
+  const runtimeInvocation = selectedRuntimeProvider(host).hostInvocation([]);
   const childlessCensusScript = [
     "import runpy, sys, time",
     `guard = runpy.run_path(${JSON.stringify(CONFIG_GUARD_PATH)})`,
@@ -464,19 +458,22 @@ fs.writeFileSync(${JSON.stringify(receipt)}, JSON.stringify({ status: "arming" }
   flag: "wx",
   mode: 0o600,
 });
-const pause = spawnSync("docker", ${JSON.stringify(processControl.pauseSupervisor)}, {
+const runtimeCommand = ${JSON.stringify(runtimeInvocation.command)};
+const runtimePrefix = ${JSON.stringify(runtimeInvocation.args)};
+const pause = spawnSync(runtimeCommand, [...runtimePrefix, ...${JSON.stringify(processControl.pauseSupervisor)}], {
   env: process.env,
   stdio: "inherit",
 });
 if (pause.error || pause.status !== 0) process.exit(pause.status ?? 1);
-const terminate = spawnSync("docker", ${JSON.stringify(processControl.terminateStartupChild)}, {
+const terminate = spawnSync(runtimeCommand, [...runtimePrefix, ...${JSON.stringify(processControl.terminateStartupChild)}], {
   env: process.env,
   stdio: "inherit",
 });
 if (terminate.error || terminate.status !== 0) process.exit(terminate.status ?? 1);
 const childless = spawnSync(
-  "docker",
+  runtimeCommand,
   [
+    ...runtimePrefix,
     "exec",
     "--user",
     "0",
@@ -503,9 +500,25 @@ async function readOriginalConfig(
   containerId: string,
   targetFile: string,
 ): Promise<void> {
+  const invocation = selectedRuntimeProvider(host).hostInvocation([
+    "container",
+    "exec",
+    "--user",
+    "0",
+    containerId,
+    "cat",
+    CONFIG_PATH,
+  ]);
   const result = await host.command(
     "bash",
-    ["-lc", `docker exec -u 0 ${containerId} cat ${CONFIG_PATH} > ${targetFile}`],
+    [
+      "-lc",
+      'output="$1"; shift; "$@" > "$output"',
+      "runtime-config-backup",
+      targetFile,
+      invocation.command,
+      ...invocation.args,
+    ],
     {
       artifactName: "phase-5b-backup-original-config",
       env: commandEnv(),
@@ -535,11 +548,13 @@ function readTimerMarker(sandboxName: string): {
   return JSON.parse(fs.readFileSync(TIMER_FILE(sandboxName), "utf8"));
 }
 
-test("shields-config: live Shields lifecycle restores stopped OpenClaw under both postures (#8112)", {
+test(
+  "shields-config: live Shields lifecycle restores stopped OpenClaw under both postures (#8112)",
+  {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
-      "confirm Docker and onboard the shields sandbox",
+      "confirm the selected runtime and onboard the shields sandbox",
       "establish the mutable unified OpenClaw config",
       "lock config and workspace and inspect redaction",
       "restart OpenClaw with shields up",
@@ -553,7 +568,8 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
       "record shields contract evidence",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
   await artifacts.target.declare({
     id: "shields-config",
     boundary: "live-sandbox-shields-config",
@@ -575,16 +591,10 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
     ],
   });
 
-  const dockerInfo = await docker(host, ["info"], {
-    artifactName: "prereq-docker-info",
-    timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+    artifactName: "prereq-runtime-info",
+      scenarioLabel: "shields-config",
   });
-  if (dockerInfo.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(`Docker is required for shields-config live E2E: ${resultText(dockerInfo)}`);
-    }
-    skip("Docker is required for shields-config live E2E");
-  }
 
   const hosted = requireHostedInferenceConfig(secrets);
   const apiKey = hosted.apiKey;
@@ -721,16 +731,22 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
     CONFIG_PATH,
     "phase-2b-config-perms-after-doctor",
   );
-  expect(configAfterDoctor).toMatchObject({ mode: "660", owner: "sandbox:sandbox" });
+    expect(configAfterDoctor).toMatchObject({
+      mode: "660",
+      owner: "sandbox:sandbox",
+    });
   const dirAfterDoctor = await statPath(
     sandbox,
     CONFIG_DIR,
     "phase-2b-config-dir-perms-after-doctor",
   );
-  expect(dirAfterDoctor).toMatchObject({ mode: "2770", owner: "sandbox:sandbox" });
+    expect(dirAfterDoctor).toMatchObject({
+      mode: "2770",
+      owner: "sandbox:sandbox",
+    });
 
   const containerId = await findSandboxContainer(host);
-  const gatewayWrite = await docker(
+    const gatewayWrite = await runtimeCommand(
     host,
     ["exec", "-u", "gateway", containerId, "sh", "-c", `printf ' ' >>${CONFIG_PATH}`],
     {
@@ -763,12 +779,12 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
     mode: "660",
     owner: "sandbox:sandbox",
   });
-  expect(await statPath(sandbox, CONFIG_DIR, "phase-2c-config-dir-perms-after-down")).toMatchObject(
-    {
+    expect(
+      await statPath(sandbox, CONFIG_DIR, "phase-2c-config-dir-perms-after-down"),
+    ).toMatchObject({
       mode: "2770",
       owner: "sandbox:sandbox",
-    },
-  );
+    });
 
   const layoutProbe = await sandboxShell(
     sandbox,
@@ -834,7 +850,11 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
     artifactName: "phase-4-config-get-dotpath",
     redactionValues: [apiKey],
   });
-  if (dotpath.exitCode === 0 && dotpath.stdout.trim() !== "" && dotpath.stdout.trim() !== "null") {
+    if (
+      dotpath.exitCode === 0 &&
+      dotpath.stdout.trim() !== "" &&
+      dotpath.stdout.trim() !== "null"
+    ) {
     expect(dotpath.stdout).not.toMatch(/nvapi-|sk-|Bearer /);
   } else {
     await artifacts.writeJson("phase-4-dotpath-non-fatal.json", {
@@ -869,15 +889,22 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   const originalConfig = path.join(os.tmpdir(), `nemoclaw-shields-orig-${process.pid}.json`);
   await readOriginalConfig(host, containerId, originalConfig);
   try {
-    const tamper = await host.command(
-      "bash",
+      const tamper = await runtimeCommand(
+        host,
       [
-        "-lc",
+          "container",
+          "exec",
+          "--user",
+          "0",
+          containerId,
+          "sh",
+          "-c",
         [
-          `had_immutable=false`,
-          `if docker exec -u 0 ${containerId} lsattr -d ${CONFIG_PATH} 2>/dev/null | awk '{print $1}' | grep -q i; then had_immutable=true; fi`,
-          `docker exec -u 0 ${containerId} sh -c 'chattr -i ${CONFIG_PATH} 2>/dev/null || true; chmod 644 ${CONFIG_PATH} && printf " " >> ${CONFIG_PATH} && chmod 444 ${CONFIG_PATH}'`,
-          `if [ "$had_immutable" = true ]; then docker exec -u 0 ${containerId} chattr +i ${CONFIG_PATH} >/dev/null 2>&1 || true; fi`,
+            "had_immutable=false",
+            `if lsattr -d ${CONFIG_PATH} 2>/dev/null | awk '{print $1}' | grep -q i; then had_immutable=true; fi`,
+            `chattr -i ${CONFIG_PATH} 2>/dev/null || true`,
+            `chmod 644 ${CONFIG_PATH} && printf " " >> ${CONFIG_PATH} && chmod 444 ${CONFIG_PATH}`,
+            `if [ "$had_immutable" = true ]; then chattr +i ${CONFIG_PATH} >/dev/null 2>&1 || true; fi`,
         ].join("\n"),
       ],
       {
@@ -888,7 +915,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
     );
     expect(tamper.exitCode, resultText(tamper)).toBe(0);
 
-    const afterTamper = await docker(
+      const afterTamper = await runtimeCommand(
       host,
       ["exec", containerId, "stat", "-c", "%a %U:%G", CONFIG_PATH],
       {
@@ -912,11 +939,26 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
     expect(reUp.exitCode, resultText(reUp)).not.toBe(0);
     expect(resultText(reUp)).toContain("Refusing to re-seal");
   } finally {
-    await host.command(
+      const invocation = selectedRuntimeProvider(host).hostInvocation([
+        "container",
+        "exec",
+        "--interactive",
+        "--user",
+        "0",
+        containerId,
+        "sh",
+        "-c",
+        `chattr -i ${CONFIG_PATH} 2>/dev/null || true; chmod 644 ${CONFIG_PATH} && cat > ${CONFIG_PATH} && chmod 444 ${CONFIG_PATH} && chattr +i ${CONFIG_PATH} 2>/dev/null || true`,
+      ]);
+      const restore = await host.command(
       "bash",
       [
         "-lc",
-        `docker exec -i -u 0 ${containerId} sh -c 'chattr -i ${CONFIG_PATH} 2>/dev/null || true; chmod 644 ${CONFIG_PATH} && cat > ${CONFIG_PATH} && chmod 444 ${CONFIG_PATH} && chattr +i ${CONFIG_PATH} 2>/dev/null || true' < ${originalConfig}`,
+          'input="$1"; shift; exec "$@" < "$input"',
+          "runtime-config-restore",
+          originalConfig,
+          invocation.command,
+          ...invocation.args,
       ],
       {
         artifactName: "phase-5b-restore-original-config",
@@ -924,6 +966,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
         timeoutMs: 30_000,
       },
     );
+      expect(restore.exitCode, resultText(restore)).toBe(0);
     fs.rmSync(originalConfig, { force: true });
   }
 
@@ -941,11 +984,17 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   // "restart seal requires the exact shields-locked file posture" (which
   // stranded host state UNLOCKED while the tree stayed root-locked). The bytes
   // are untouched here, so it is a launderable perms drift, not content drift.
-  const permsDrift = await host.command(
-    "bash",
+    const permsDrift = await runtimeCommand(
+      host,
     [
-      "-lc",
-      `docker exec -u 0 ${containerId} sh -c 'chattr -i ${CONFIG_HASH_PATH} 2>/dev/null || true; chmod 660 ${CONFIG_HASH_PATH} && chown sandbox:sandbox ${CONFIG_HASH_PATH}'`,
+        "container",
+        "exec",
+        "--user",
+        "0",
+        containerId,
+        "sh",
+        "-c",
+        `chattr -i ${CONFIG_HASH_PATH} 2>/dev/null || true; chmod 660 ${CONFIG_HASH_PATH} && chown sandbox:sandbox ${CONFIG_HASH_PATH}`,
     ],
     {
       artifactName: "phase-5c-config-hash-perms-only-drift",
@@ -955,8 +1004,15 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   );
   expect(permsDrift.exitCode, resultText(permsDrift)).toBe(0);
 
-  const hashDrifted = await statPath(sandbox, CONFIG_HASH_PATH, "phase-5c-hash-perms-after-drift");
-  expect(hashDrifted).toMatchObject({ mode: "660", owner: "sandbox:sandbox" });
+    const hashDrifted = await statPath(
+      sandbox,
+      CONFIG_HASH_PATH,
+      "phase-5c-hash-perms-after-drift",
+    );
+    expect(hashDrifted).toMatchObject({
+      mode: "660",
+      owner: "sandbox:sandbox",
+    });
 
   // The drift-repair relock reaches the OpenClaw config guard's already-locked
   // branch. The fix re-seals the perms-only drift; before it, the guard
@@ -985,7 +1041,15 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   progress.phase("unlock shields and inspect the audit trail");
   const shieldsDown = await runNemoclaw(
     host,
-    [SANDBOX_NAME, "shields", "down", "--timeout", "15m", "--reason", "E2E shields lifecycle test"],
+      [
+        SANDBOX_NAME,
+        "shields",
+        "down",
+        "--timeout",
+        "15m",
+        "--reason",
+        "E2E shields lifecycle test",
+      ],
     { artifactName: "phase-6-shields-down" },
   );
   expect(shieldsDown.exitCode, resultText(shieldsDown)).toBe(0);
@@ -1143,7 +1207,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
     "prove installed failed-startup guard refuses a live child and supported shields down unlocks childless state",
   );
   const recoveryContainerId = await findSandboxContainer(host);
-  const removeMarkers = await docker(
+    const removeMarkers = await runtimeCommand(
     host,
     ["exec", "--user", "0", recoveryContainerId, "rm", "-f", ...STARTUP_MARKER_PATHS],
     { artifactName: "phase-12-remove-startup-markers", timeoutMs: 30_000 },
@@ -1186,7 +1250,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   );
   cleanup.trackDisposable(`resume stopped supervisor for ${SANDBOX_NAME}`, async () => {
     await resumeSupervisorIfPaused(supervisorPaused, async () => {
-      const resume = await docker(host, processControl.resumeSupervisor, {
+        const resume = await runtimeCommand(host, processControl.resumeSupervisor, {
         artifactName: "cleanup-phase-12-resume-startup-supervisor",
         timeoutMs: 30_000,
       });
@@ -1206,6 +1270,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   const realOpenshellPath = openshellResolution.stdout.trim();
   expect(path.isAbsolute(realOpenshellPath), realOpenshellPath).toBe(true);
   const policyBoundary = createPolicySetChildlessBoundaryShim(
+      host,
     realOpenshellPath,
     recoveryContainerId,
     liveCensus.pid ?? 0,
@@ -1244,7 +1309,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
     status: "childless",
   });
   await waitForChildlessStartup(host, recoveryContainerId);
-  const unlockedPaths = await docker(
+    const unlockedPaths = await runtimeCommand(
     host,
     [
       "exec",
@@ -1265,7 +1330,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
     { mode: "2770", owner: "sandbox:sandbox" },
   ]);
 
-  const resumeSupervisor = await docker(host, processControl.resumeSupervisor, {
+    const resumeSupervisor = await runtimeCommand(host, processControl.resumeSupervisor, {
     artifactName: "phase-12-resume-startup-supervisor",
     timeoutMs: 30_000,
   });
@@ -1275,7 +1340,9 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   // The supported host command owns the policy receipt and config mutation as
   // one transition. Resume only after it commits the mutable posture, then
   // prove ordinary stop/start recovery remains available before relocking.
-  await expectStopStartRecovery(host, sandbox, "DOWN", "phase-12-restart-after-recovery", [apiKey]);
+    await expectStopStartRecovery(host, sandbox, "DOWN", "phase-12-restart-after-recovery", [
+      apiKey,
+    ]);
   const relockAfterRecovery = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
     artifactName: "phase-12-relock-after-recovery",
   });
@@ -1303,4 +1370,5 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
       inheritedMutationLockAcceptedByStateGuard: true,
     },
   });
-});
+  },
+);

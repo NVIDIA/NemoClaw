@@ -34,6 +34,7 @@ import {
   type ManagedStartupOnboardProfileInput,
 } from "../managed-startup/onboard-profile";
 import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
+import { managedStartupStateRoots } from "../managed-startup/state-roots";
 import { getChannelsFromPlan } from "../messaging-plan-session";
 import type { MessagingTokenDef } from "../messaging-prep";
 import { resolveSandboxBuildContext, resolveSandboxBuildPatch } from "../prepared-dcode-rebuild";
@@ -72,10 +73,9 @@ import {
 } from "../workload/rebuild";
 import { resolveSandboxWorkloadRuntimeCapabilities } from "../workload/runtime";
 import {
-  prepareManagedHermesStateVolume,
-  type ManagedHermesStateVolumeContext,
-  type ManagedHermesStateVolumeDeps,
-} from "./hermes-state-volume";
+  prepareManagedStateVolumes,
+  type ManagedStateVolumeDeps,
+} from "./managed-state-volumes";
 
 type ManagedProfileInput = Omit<
   ManagedStartupOnboardProfileInput,
@@ -86,7 +86,7 @@ type SandboxInferenceConfig = import("../../inference/config").SandboxInferenceC
 type SupportedBootstrap = Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
 type BootstrapProvider = RuntimeProviderBundle & { readonly bootstrap: SupportedBootstrap };
 
-export type ManagedHermesStateVolumeOnboardLifecycle = {
+export type ManagedStateVolumeOnboardLifecycle = {
   materializeSandboxCreatePlan(
     input: MaterializeSandboxCreatePlanInput,
     materialize: (input: MaterializeSandboxCreatePlanInput) => SandboxCreatePlan,
@@ -94,19 +94,15 @@ export type ManagedHermesStateVolumeOnboardLifecycle = {
   commit(): void;
 };
 
-export function createManagedHermesStateVolumeOnboardLifecycle(
-  input: Omit<ManagedHermesStateVolumeContext, "runtimeProviderId"> & {
+export function createManagedStateVolumeOnboardLifecycle(
+  input: {
+    readonly roots: readonly import("../managed-startup/state-roots").ManagedStartupStateRoot[];
     readonly runtimeProvider: RuntimeProviderBundle | null;
   },
-  deps: ManagedHermesStateVolumeDeps = {},
-): ManagedHermesStateVolumeOnboardLifecycle {
-  const scope = prepareManagedHermesStateVolume(
-    {
-      agentName: input.agentName,
-      runtimeProviderId: input.runtimeProvider?.identity.id,
-      sandboxName: input.sandboxName,
-      workloadKind: input.workloadKind,
-    },
+  deps: ManagedStateVolumeDeps = {},
+): ManagedStateVolumeOnboardLifecycle {
+  const scope = prepareManagedStateVolumes(
+    { roots: input.roots },
     {
       ...deps,
       ...(input.runtimeProvider ? { runtimeProvider: input.runtimeProvider } : {}),
@@ -116,13 +112,13 @@ export function createManagedHermesStateVolumeOnboardLifecycle(
     ? input.runtimeProvider?.workload.managedStateMountDriverId
     : undefined;
   if (scope && !managedStateMountDriverId) {
-    throw new Error("Managed Hermes state volume requires provider-owned mount projection.");
+    throw new Error("Managed state volumes require provider-owned mount projection.");
   }
   return {
     materializeSandboxCreatePlan(input, materialize) {
       return materialize({
         ...input,
-        managedStateMount: scope?.mount,
+        managedStateMounts: scope?.mounts,
         managedStateMountDriverId,
       });
     },
@@ -586,6 +582,7 @@ export function resolveOnboardManagedBootstrapLaunch(input: {
       "Managed image onboarding is missing its identity-bound bootstrap launch contract.",
     );
   }
+  const agentIdentity = managedImageRuntimeIdentity(input.workload.source.contract.agent);
   return {
     bootstrapIdentity: input.bootstrapIdentity,
     stateRoot: input.stateRoot,
@@ -596,7 +593,12 @@ export function resolveOnboardManagedBootstrapLaunch(input: {
       repository: input.workload.source.contract.image,
       manifestDigest: input.workload.source.contract.digest,
     },
-    agentIdentity: managedImageRuntimeIdentity(input.workload.source.contract.agent),
+    agentIdentity,
+    managedStateRoots: managedStartupStateRoots({
+      agent: input.workload.source.contract.agent,
+      sandboxName: input.request.sandboxName,
+      agentIdentity,
+    }),
     intendedWorkloadArgv: input.intendedWorkloadArgv,
     expectedSupervisorArgv: OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
   } as const;

@@ -671,7 +671,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       TAVILY_API_KEY: "",
     },
   }),
-  managedRuntimeTarget("concurrent-gateway-ports", {
+  dockerOnlyTarget("concurrent-gateway-ports", {
     displayName: "Gateway: isolates ports for concurrent sandboxes",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu Docker host; local gateway; no inference endpoint",
@@ -969,7 +969,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
-  managedRuntimeTarget("llama-cpp-generic-gpu", {
+  dockerOnlyTarget("llama-cpp-generic-gpu", {
     displayName: "Inference: completes an agent turn with llama.cpp on a generic NVIDIA GPU",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "NVIDIA GPU runner; local llama.cpp",
@@ -1234,7 +1234,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
-  managedRuntimeTarget("rebuild-hermes-stale-base", {
+  dockerOnlyTarget("rebuild-hermes-stale-base", {
     displayName: "Rebuild: refreshes a stale Hermes base and restores state",
     agentRuntime: "hermes",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",

@@ -232,6 +232,7 @@ export interface SandboxGpuCreateFlowInput {
     readonly request: ManagedStartupRootApplyRequest;
     readonly image: ManagedBootstrapImageIdentity;
     readonly agentIdentity: ManagedBootstrapAgentIdentity;
+    readonly managedStateRoots: readonly import("./managed-startup/state-roots").ManagedStartupStateRoot[];
     readonly intendedWorkloadArgv: readonly string[];
     readonly expectedSupervisorArgv: readonly string[];
   } | null;

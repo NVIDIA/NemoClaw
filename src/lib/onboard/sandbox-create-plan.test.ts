@@ -522,12 +522,14 @@ describe("resolveSandboxCreateIntent", () => {
     const plan = materializeSandboxCreatePlan({
       intent,
       fromRef: `ghcr.io/nvidia/nemoclaw/hermes@sha256:${"a".repeat(64)}`,
-      managedStateMount: {
-        type: "volume",
-        source: "nemoclaw-hermes-state-v1-hermes-box",
-        target: "/sandbox/.hermes",
-        read_only: false,
-      },
+      managedStateMounts: [
+        {
+          type: "volume",
+          source: "nemoclaw-hermes-state-v1-hermes-box",
+          target: "/sandbox/.hermes",
+          read_only: false,
+        },
+      ],
       managedStateMountDriverId: "docker",
       messagingTokenDefs: [],
       prepareInitialSandboxCreatePolicy: vi.fn(() => ({
@@ -582,7 +584,7 @@ describe("resolveSandboxCreateIntent", () => {
     const plan = materializeSandboxCreatePlan({
       intent,
       fromRef: `ghcr.io/nvidia/nemoclaw/hermes@sha256:${"a".repeat(64)}`,
-      managedStateMount: mount,
+      managedStateMounts: [mount],
       managedStateMountDriverId: "opaque-native-driver",
       messagingTokenDefs: [],
       prepareInitialSandboxCreatePolicy: vi.fn(() => ({
@@ -625,12 +627,14 @@ describe("resolveSandboxCreateIntent", () => {
       materializeSandboxCreatePlan({
         intent,
         fromRef: `ghcr.io/nvidia/nemoclaw/hermes@sha256:${"a".repeat(64)}`,
-        managedStateMount: {
-          type: "volume",
-          source: "nemoclaw-hermes-state-v1-hermes-box",
-          target: "/sandbox/.hermes",
-          read_only: false,
-        },
+        managedStateMounts: [
+          {
+            type: "volume",
+            source: "nemoclaw-hermes-state-v1-hermes-box",
+            target: "/sandbox/.hermes",
+            read_only: false,
+          },
+        ],
         managedStateMountDriverId: "docker",
         messagingTokenDefs: [],
         prepareInitialSandboxCreatePolicy: vi.fn(() => ({
@@ -641,7 +645,7 @@ describe("resolveSandboxCreateIntent", () => {
         upsertMessagingProviders: vi.fn(() => []),
         getHermesToolGatewayProviderName: vi.fn(),
       }),
-    ).toThrow(/conflicts with the managed Hermes state root/u);
+    ).toThrow(/conflicts with the managed state root/u);
   });
 
   it("cleans up the prepared policy when disclosure fails before provider effects (#7179)", () => {

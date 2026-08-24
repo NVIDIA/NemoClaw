@@ -14,7 +14,6 @@ import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import {
-  assertDockerAvailable,
   cleanupDeviceAuthSandbox,
   commandEnv,
   DASHBOARD_PORT,
@@ -35,7 +34,9 @@ function assertStatusNotOffline(output: string, context: string): void {
   );
 }
 
-test("device auth health probes treat 401 as live instead of offline (#2342)", {
+test(
+  "device auth health probes treat 401 as live instead of offline (#2342)",
+  {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -45,7 +46,8 @@ test("device auth health probes treat 401 as live instead of offline (#2342)", {
       "recover stopped OpenClaw gateway",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
   const installLog = artifacts.pathFor("phase-1-install-device-auth-health.log");
   // The sandbox cannot reach runner loopback, so expose the fixture through
   // OpenShell's host bridge while keeping readiness checks local to the runner.
@@ -82,12 +84,10 @@ test("device auth health probes treat 401 as live instead of offline (#2342)", {
     ],
   });
 
-  const dockerInfo = await host.command("docker", ["info"], {
-    artifactName: "phase-0-docker-info",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+    artifactName: "phase-0-runtime-info",
+      scenarioLabel: "device auth health",
   });
-  assertDockerAvailable(dockerInfo, skip);
 
   const cleanupEnv = commandEnv();
   cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
@@ -224,4 +224,5 @@ test("device auth health probes treat 401 as live instead of offline (#2342)", {
   expect(recoveryStatus.exitCode, resultText(recoveryStatus)).toBe(0);
   assertStatusNotOffline(resultText(recoveryStatus), "recovery status");
   await waitForRecoveryArtifact(artifacts, sandbox);
-});
+  },
+);

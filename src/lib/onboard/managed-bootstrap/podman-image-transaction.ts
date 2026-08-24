@@ -37,6 +37,7 @@ const FULL_RUNTIME_ID = /^[a-f0-9]{64}$/u;
 const IMAGE_CONTENT_ID = /^sha256:[a-f0-9]{64}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,252}$/u;
+const SAFE_AGENT_ID = /^[a-z0-9][a-z0-9-]{0,127}$/u;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const DEFAULT_START_TIMEOUT_MS = 90_000;
 const DEFAULT_POLL_INTERVAL_MS = 250;
@@ -44,13 +45,6 @@ const MAX_TIMEOUT_SECONDS = 3_600;
 
 type BootstrapEngine = ContainerEngine & { readonly authorityId: string };
 type ManagedStartupAgent = ManagedStartupRootApplyRequest["agent"];
-
-const PODMAN_BOOTSTRAP_AGENTS = Object.freeze({
-  openclaw: true,
-  hermes: true,
-  "langchain-deepagents-code": true,
-  pi: false,
-} satisfies Record<ManagedStartupAgent, boolean>);
 
 export interface PodmanBootstrapImageTransactionInput {
   readonly engine: BootstrapEngine;
@@ -131,15 +125,8 @@ function exactEngine(engine: BootstrapEngine, expectedAuthorityId?: string): Boo
 }
 
 function exactAgent(value: string): ManagedStartupAgent {
-  if (Object.prototype.hasOwnProperty.call(PODMAN_BOOTSTRAP_AGENTS, value)) {
-    if (PODMAN_BOOTSTRAP_AGENTS[value as ManagedStartupAgent]) {
-      return value as ManagedStartupAgent;
-    }
-    return fail(
-      `agent '${value}' is not supported on Podman; onboard it through the Docker compute runtime`,
-    );
-  }
-  return fail("the managed agent is unsupported");
+  if (!SAFE_AGENT_ID.test(value)) fail("the managed agent identity is invalid");
+  return value as ManagedStartupAgent;
 }
 
 function exactSha256(value: string, label: string): string {

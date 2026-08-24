@@ -226,7 +226,7 @@ test(
     timeout: HERMES_E2E_TEST_TIMEOUT_MS,
     meta: { e2ePhases: HERMES_E2E_PHASES },
   },
-  async ({ artifacts, cleanup, host, inference, progress, sandbox }) => {
+  async ({ artifacts, cleanup, host, inference, progress, runtimeProvider, sandbox }) => {
     await artifacts.target.declare({
       id: "hermes-e2e",
       boundary: `install.sh --non-interactive --fresh + Hermes sandbox runtime + ${inference.mode} inference adapter`,
@@ -288,12 +288,10 @@ test(
     await cleanupHermes("pre-cleanup");
 
     // Phase 1: prerequisites.
-    const dockerInfo = await host.command("docker", ["info"], {
-      artifactName: "phase-1-docker-info",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "phase-1-runtime-info",
+      scenarioLabel: "Hermes",
     });
-    expect(dockerInfo.exitCode, resultText(dockerInfo)).toBe(0);
 
     expect(fs.existsSync(path.join(REPO_ROOT, "agents", "hermes", "manifest.yaml"))).toBe(true);
 
@@ -412,7 +410,7 @@ test(
     await expectPackageDatabaseReadOnly({
       artifactPrefix: "phase-3",
       env: commandEnv(),
-      host,
+      runtimeProvider,
       sandbox,
       sandboxName: SANDBOX_NAME,
       timeoutMs: 30_000,
@@ -777,11 +775,14 @@ test(
       });
       expect(restartForwardList.exitCode, resultText(restartForwardList)).toBe(0);
       expect(forwardListHasRunningPort(restartForwardList.stdout, SANDBOX_NAME, "8642")).toBe(true);
-      expect((hermesDashboardE2eEnabled() ? [HERMES_DASHBOARD_PORT] : []).every((dashboardPort) =>
+      expect(
+        (hermesDashboardE2eEnabled() ? [HERMES_DASHBOARD_PORT] : []).every((dashboardPort) =>
           Object.is(
             forwardListHasRunningPort(restartForwardList.stdout, SANDBOX_NAME, dashboardPort),
             true,
-          ))).toBe(true);
+          ),
+        ),
+      ).toBe(true);
 
       // Regression precondition for #5253: Hermes deliberately uses a Python
       // gateway, so its proxy-env and gateway process do not carry OpenClaw's
@@ -1247,11 +1248,14 @@ test(
       });
       expect(managedForwardList.exitCode, resultText(managedForwardList)).toBe(0);
       expect(forwardListHasRunningPort(managedForwardList.stdout, SANDBOX_NAME, "8642")).toBe(true);
-      expect((hermesDashboardE2eEnabled() ? [HERMES_DASHBOARD_PORT] : []).every((dashboardPort) =>
+      expect(
+        (hermesDashboardE2eEnabled() ? [HERMES_DASHBOARD_PORT] : []).every((dashboardPort) =>
           Object.is(
             forwardListHasRunningPort(managedForwardList.stdout, SANDBOX_NAME, dashboardPort),
             true,
-          ))).toBe(true);
+          ),
+        ),
+      ).toBe(true);
     }
 
     expect(routingTopologyCaptures).toBe(2);

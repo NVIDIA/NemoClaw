@@ -507,7 +507,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
     await artifacts.target.declare({
       id: "network-policy",
       boundary: "live-sandbox-network-policy",
@@ -655,7 +655,7 @@ test(
     await expectPackageDatabaseReadOnly({
       artifactPrefix: "tc-net",
       env: baseEnv(),
-      host,
+      runtimeProvider,
       sandbox,
       sandboxName: SANDBOX_NAME,
       timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,

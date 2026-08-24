@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes-state-volume";
+import { managedStartupStateRoots } from "../managed-startup/state-roots";
 
 const prepareSandboxWorkloadSource = vi.hoisted(() => vi.fn());
 
@@ -19,7 +20,7 @@ vi.mock("../workload/preparation", async (importOriginal) => ({
 vi.mock("../../core/version", () => ({ getVersion: () => "v0.0.0" }));
 
 import {
-  createManagedHermesStateVolumeOnboardLifecycle,
+  createManagedStateVolumeOnboardLifecycle,
   createManagedWorkloadOnboardRuntime,
   prepareHermesPortableSandboxWorkloadForLifecycle,
   prepareOnboardSandboxWorkloadLaunch,
@@ -180,9 +181,13 @@ describe("managed workload onboard orchestration", () => {
     const docker = createHermesStateVolumeDockerHarness();
     let exitCleanup: (() => void) | null = null;
 
-    const lifecycle = createManagedHermesStateVolumeOnboardLifecycle(
+    const lifecycle = createManagedStateVolumeOnboardLifecycle(
       {
-        agentName: "hermes",
+        roots: managedStartupStateRoots({
+          agent: "hermes",
+          sandboxName: "alpha",
+          agentIdentity: { uid: 1000, gid: 1000 },
+        }),
         runtimeProvider: {
           identity: { id: "docker" },
           workload: { managedStateMountDriverId: "docker" },
@@ -193,11 +198,9 @@ describe("managed workload onboard orchestration", () => {
             ],
           },
         } as never,
-        sandboxName: "alpha",
-        workloadKind: "managed-image",
       },
       {
-        runDocker: docker.runDocker as never,
+        runContainerEngine: docker.runDocker as never,
         registerExitCleanup: (cleanup) => {
           exitCleanup = cleanup;
           return vi.fn();
@@ -206,7 +209,9 @@ describe("managed workload onboard orchestration", () => {
     );
 
     lifecycle.materializeSandboxCreatePlan({} as never, (input) => {
-      expect(input.managedStateMount).toMatchObject({ target: "/sandbox/.hermes" });
+      expect(input.managedStateMounts).toEqual([
+        expect.objectContaining({ target: "/sandbox/.hermes" }),
+      ]);
       expect(input.managedStateMountDriverId).toBe("docker");
       return {} as never;
     });

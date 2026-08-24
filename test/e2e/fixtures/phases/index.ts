@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export {
-  type DockerRuntimeExpectation,
-  type DockerRuntimeReady,
   EnvironmentPhaseFixture,
   type EnvironmentReady,
+  type RuntimeExpectation,
+  type RuntimeReady,
 } from "./environment.ts";
 export {
   type DcodeInvalidCredentialRebuildOptions,

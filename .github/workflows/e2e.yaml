@@ -5179,6 +5179,8 @@ jobs:
         exclude:
           - scenario: fallback
             runtime_provider: podman
+          - scenario: compatibility-only
+            runtime_provider: podman
     env:
       E2E_JOB: "1"
       E2E_GATEWAY_RUNTIMES: docker,podman

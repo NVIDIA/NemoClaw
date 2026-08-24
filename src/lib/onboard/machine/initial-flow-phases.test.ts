@@ -148,7 +148,7 @@ describe("initial onboard flow phases", () => {
         runPreflight: async () => (preflightFailure ? Promise.reject(preflightFailure) : gpu),
         assessHost: () => ({}),
         assertOnboardHostReadiness: vi.fn(),
-        assertDockerBridgeAndContainerDnsHealthy: vi.fn(),
+        assertRuntimeProviderHealthy: vi.fn(),
         resolveSandboxGpuConfig: config,
         validateSandboxGpuPreflight: vi.fn(),
         skippedStepMessage: vi.fn(),
@@ -403,7 +403,8 @@ describe("initial onboard flow phases", () => {
         assertOnboardHostReadiness: vi.fn(() => {
           calls.push("assert-host-readiness");
         }),
-        assertDockerBridgeAndContainerDnsHealthy: vi.fn(() => {
+        assertRuntimeProviderHealthy: vi.fn(() => {
+          calls.push("validate-gpu-preflight");
           calls.push("assert-bridge-dns");
         }),
         resolveSandboxGpuConfig: vi.fn((detectedGpu) => {
@@ -615,10 +616,9 @@ describe("initial onboard flow phases", () => {
     ]);
   });
 
-  it.each([
-    "complete",
-    "failed",
-  ] as const)("rejects terminal %s sessions before initial repair effects", async (state) => {
+  it.each(["complete", "failed"] as const)(
+    "rejects terminal %s sessions before initial repair effects",
+    async (state) => {
     const phase: OnboardSequencePhase<Context> = {
       state: "preflight",
       run: vi.fn((ctx) => ({
@@ -646,7 +646,8 @@ describe("initial onboard flow phases", () => {
       }),
     ).rejects.toThrow("Unexpected onboarding flow state before slice entry");
     expect(phase.run).not.toHaveBeenCalled();
-  });
+    },
+  );
 
   it.each([
     { runKind: "fresh", resume: false },

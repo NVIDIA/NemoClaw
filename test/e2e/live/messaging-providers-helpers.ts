@@ -22,6 +22,7 @@ import {
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
+import { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 export { CLI_ENTRYPOINT, expectExitZero, REPO_ROOT };
@@ -300,7 +301,14 @@ export function messagingEnv(): MessagingEnv {
     env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
   }
 
-  return { env, tokens, telegramIds, telegramAllowlistKey, slackIds, wechatAccount };
+  return {
+    env,
+    tokens,
+    telegramIds,
+    telegramAllowlistKey,
+    slackIds,
+    wechatAccount,
+  };
 }
 
 export async function runSecondaryCleanup(run: () => Promise<unknown>): Promise<void> {
@@ -499,7 +507,10 @@ export async function readOpenClawConfig(
 import json
 print(json.dumps(json.load(open('/sandbox/.openclaw/openclaw.json'))))
 PY`,
-    { artifactName: "read-openclaw-config-messaging-providers", redactionValues },
+    {
+      artifactName: "read-openclaw-config-messaging-providers",
+      redactionValues,
+    },
   );
   expectExitZero(result, "read openclaw.json");
   return JSON.parse(result.stdout.trim()) as OpenClawConfig;
@@ -540,7 +551,10 @@ export async function sandboxOutput(
   artifactName: string,
   redactionValues: string[],
 ): Promise<string> {
-  const result = await runSandboxShell(sandbox, script, { artifactName, redactionValues });
+  const result = await runSandboxShell(sandbox, script, {
+    artifactName,
+    redactionValues,
+  });
   expectExitZero(result, artifactName);
   return result.stdout.trim();
 }
@@ -580,6 +594,9 @@ export async function startFakeDockerApi(
     env: NodeJS.ProcessEnv;
   },
 ): Promise<FakeDockerApi> {
+  const runtimeProvider = new RuntimeProviderPrerequisite(host, (reason) => {
+    throw new Error(reason);
+  });
   fs.mkdirSync(path.join(REPO_ROOT, ".tmp"), { recursive: true });
   const dir = fs.mkdtempSync(path.join(REPO_ROOT, ".tmp", `fake-${options.kind}.`));
   const portFile = path.join(dir, "port");
@@ -587,7 +604,7 @@ export async function startFakeDockerApi(
   const container = uniqueContainerName(options.containerPrefix);
   fs.writeFileSync(captureFile, "");
 
-  const dockerArgs = [
+  const runtimeArgs = [
     "run",
     "-d",
     "--rm",
@@ -603,9 +620,9 @@ export async function startFakeDockerApi(
     `${options.captureFileEnv}=/tmp/fake/capture.jsonl`,
   ];
   for (const [key, value] of Object.entries(options.expectedEnv)) {
-    dockerArgs.push("-e", `${key}=${value}`);
+    runtimeArgs.push("-e", `${key}=${value}`);
   }
-  dockerArgs.push(
+  runtimeArgs.push(
     "-v",
     `${dir}:/tmp/fake`,
     "-v",
@@ -617,7 +634,7 @@ export async function startFakeDockerApi(
 
   cleanup(`remove ${container}`, async () => {
     try {
-      const remove = await runHost(host, "docker", ["rm", "-f", container], {
+      const remove = await runtimeProvider.command(["rm", "--force", container], {
         artifactName: `cleanup-${container}`,
         env: options.env,
         redactionValues: options.redactionValues,
@@ -631,7 +648,7 @@ export async function startFakeDockerApi(
     }
   });
 
-  const start = await runHost(host, "docker", dockerArgs, {
+  const start = await runtimeProvider.command(runtimeArgs, {
     artifactName: `start-fake-${options.kind}-api`,
     env: options.env,
     redactionValues: options.redactionValues,
@@ -641,7 +658,7 @@ export async function startFakeDockerApi(
 
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (fs.existsSync(portFile) && fs.statSync(portFile).size > 0) {
-      const port = await runHost(host, "docker", ["port", container, "8080/tcp"], {
+      const port = await runtimeProvider.command(["port", container, "8080/tcp"], {
         artifactName: `port-fake-${options.kind}-api`,
         env: options.env,
         redactionValues: options.redactionValues,
@@ -649,7 +666,13 @@ export async function startFakeDockerApi(
       });
       const published = port.stdout.trim().split(":").at(-1)?.trim();
       if (published) {
-        return { kind: options.kind, port: published, dir, captureFile, container };
+        return {
+          kind: options.kind,
+          port: published,
+          dir,
+          captureFile,
+          container,
+        };
       }
     }
     await sleep(100);

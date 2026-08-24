@@ -11,6 +11,8 @@ import type { HermesAuthMethod } from "../hermes-auth";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import type { DcodeSelectionDriftReader } from "../dcode-selection-drift";
 import type { OwnedSandboxRecreateRuntime } from "../onboard-recreate-journal";
+import { managedImageRuntimeIdentity } from "../managed-image/agents";
+import { managedStartupStateRoots } from "../managed-startup/state-roots";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../types";
@@ -537,15 +539,22 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             managedWorkloadRuntime,
             sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent),
           );
-    const prepareHermesStateVolumeLifecycle = (
+    const prepareManagedStateVolumeLifecycle = (
       workload: Awaited<ReturnType<typeof ensurePreparedSandboxWorkload>>,
-    ) =>
-      managedWorkloadOnboard.createManagedHermesStateVolumeOnboardLifecycle({
-        agentName: requestedAgentName,
+    ) => {
+      const managedStateRoots =
+        workload.source.kind === "managed-image"
+          ? managedStartupStateRoots({
+              agent: workload.source.contract.agent,
+              sandboxName,
+              agentIdentity: managedImageRuntimeIdentity(workload.source.contract.agent),
+            })
+          : [];
+      return managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle({
+        roots: managedStateRoots,
         runtimeProvider: managedWorkloadRuntime.runtimeProvider,
-        sandboxName,
-        workloadKind: workload.source.kind,
       });
+    };
     // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
     const sandboxWasLiveDefault =
       liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
@@ -584,7 +593,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
     let pendingStateRestoreBackupPath: string | null = null,
       preparedSandboxWorkload!: Awaited<ReturnType<typeof ensurePreparedSandboxWorkload>>,
-      hermesStateVolumeLifecycle!: ReturnType<typeof prepareHermesStateVolumeLifecycle>;
+      managedStateVolumeLifecycle!: ReturnType<typeof prepareManagedStateVolumeLifecycle>;
     if (!liveExists && existingEntry)
       ({ runtime: recreateRuntime, backupPath: pendingStateRestoreBackupPath } =
         recreateProtection.selectJournalBoundPreUpgradeBackup({
@@ -869,7 +878,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         pendingStateRestore = result.backup;
       }
 
-      hermesStateVolumeLifecycle = prepareHermesStateVolumeLifecycle(preparedSandboxWorkload);
+      managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
       note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
       if (recreateRuntime.beginDelete() === "source") {
@@ -906,7 +915,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
       }
       preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
-      hermesStateVolumeLifecycle = prepareHermesStateVolumeLifecycle(preparedSandboxWorkload);
+      managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
     }
     sandboxCreatePlanMaterialization.applyOrdinaryExtraProviderReconciliation(
       agentCreateInput.hermesPortableLifecycle,
@@ -1033,7 +1042,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             },
             dependencies: {
               materializeSandboxCreatePlan: (input) =>
-                hermesStateVolumeLifecycle.materializeSandboxCreatePlan(
+                managedStateVolumeLifecycle.materializeSandboxCreatePlan(
                   input,
                   sandboxCreatePlanMaterialization.materializeSandboxCreatePlan,
                 ),
@@ -1304,7 +1313,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       cleanupInitialCreateSource();
       await completeCreatedSandboxRegistration(created, null);
     }
-    hermesStateVolumeLifecycle.commit();
+    managedStateVolumeLifecycle.commit();
     if ("complete" in recreateRuntime) recreateRuntime.complete();
     if (agentCreateInput.hermesPortableLifecycle) return sandboxName;
     return completeOrdinaryOnboardSandboxCreation(

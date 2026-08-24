@@ -48,4 +48,15 @@ describe("E2E runtime matrix", () => {
       "| `spark-install` | podman |",
     );
   });
+
+  it.each(["concurrent-gateway-ports", "llama-cpp-generic-gpu", "rebuild-hermes-stale-base"])(
+    "keeps the explicit Docker contract %s out of Podman fanout",
+    (target) => {
+      const plan = buildE2eWorkflowPlan({ jobs: target }, BOTH_RUNTIMES);
+      const rows = Object.values(plan.catalogueMatrices).flat();
+
+      expect(rows).toEqual([expect.objectContaining({ id: target, runtime_provider: "docker" })]);
+      expect(renderE2eWorkflowPlanSummary(plan)).toContain(`| \`${target}\` | podman | docker |`);
+    },
+  );
 });

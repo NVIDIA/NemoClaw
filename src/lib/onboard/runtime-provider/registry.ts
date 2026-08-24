@@ -374,6 +374,7 @@ function validateCapabilitiesSurface(surface: Record<string, unknown>): void {
 function validatePreflightDoctorSurface(surface: Record<string, unknown>): void {
   requireSupported("preflightDoctor", surface);
   requireFunction(surface, "inspectHost", "preflightDoctor");
+  requireFunction(surface, "validateSandboxGpu", "preflightDoctor");
   requireFunction(surface, "preflightLifecycle", "preflightDoctor");
 }
 

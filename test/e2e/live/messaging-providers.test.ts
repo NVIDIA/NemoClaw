@@ -73,7 +73,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip }) => {
     if (!process.env.NVIDIA_INFERENCE_API_KEY) {
       skip("NVIDIA_INFERENCE_API_KEY is required for live messaging-provider E2E");
       return;
@@ -140,13 +140,10 @@ test(
       }),
     );
 
-    const dockerInfo = await runHost(host, "docker", ["info"], {
-      artifactName: "prereq-docker-info-messaging-providers",
-      env: state.env,
-      redactionValues,
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "prereq-runtime-provider-info-messaging-providers",
+      scenarioLabel: "messaging providers",
     });
-    expectExitZero(dockerInfo, "Docker must be running");
 
     progress.phase("install the all-channel OpenClaw sandbox");
     const install = await runHost(host, "bash", ["install.sh", "--non-interactive"], {
@@ -447,12 +444,14 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     );
 
     const config = await readOpenClawConfig(sandbox, redactionValues);
-    ([
+    (
+      [
       ["M6a", "telegram", "telegram"],
       ["M6b", "discord", "discord"],
       ["M6c", "slack", "slack"],
       ["M6d", "whatsapp", "whatsapp"],
-    ] as const).forEach(([assertionId, channel, plugin]) => {
+      ] as const
+    ).forEach(([assertionId, channel, plugin]) => {
       check(channelEnabled(config, channel), `${assertionId}: channels.${channel}.enabled is true`);
       check(
         pluginEnabled(config, plugin),
@@ -582,11 +581,13 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const parsedRuntime = JSON.parse(runtimeChannels) as {
       chat?: Record<string, { installed?: unknown; origin?: unknown; accounts?: unknown }>;
     };
-    ([
+    (
+      [
       ["M6e", "telegram", "default"],
       ["M6f", "discord", "default"],
       ["M6g", "slack", "default"],
-    ] as const).forEach(([assertionId, channel, accountId]) => {
+      ] as const
+    ).forEach(([assertionId, channel, accountId]) => {
       const entry = parsedRuntime.chat?.[channel];
       check(
         entry?.installed === true &&

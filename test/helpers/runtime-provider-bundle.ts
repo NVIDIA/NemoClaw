@@ -108,6 +108,7 @@ export function createInMemoryRuntimeProviderBundle({
         status: "ok",
         detail: "ready",
       }),
+      validateSandboxGpu: () => undefined,
       preflightLifecycle: () => null,
     },
     gateway: {

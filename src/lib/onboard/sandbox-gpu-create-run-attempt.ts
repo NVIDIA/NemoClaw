@@ -298,6 +298,7 @@ export function createSandboxGpuCreateAttemptRunner(
           request: managedBootstrap.request,
           image: managedBootstrap.image,
           agentIdentity: managedBootstrap.agentIdentity,
+          managedStateRoots: managedBootstrap.managedStateRoots,
           intendedWorkloadArgv: managedBootstrap.intendedWorkloadArgv,
           expectedSupervisorArgv: managedBootstrap.expectedSupervisorArgv,
           launchArgv: attemptArgv,

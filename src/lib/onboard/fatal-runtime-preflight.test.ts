@@ -492,7 +492,10 @@ describe("runFatalOnboardRuntimePreflight", () => {
       assessHost: () => hostWithRuntime("docker"),
       detectGpu: () => null,
       warnIfHostProxyMissesLoopback: vi.fn(),
-      assertDockerBridgeAndContainerDnsHealthy: bridge,
+      assertRuntimeProviderHealthy: (_host, config) => {
+        gpu(config);
+        bridge();
+      },
       validateSandboxGpuPreflight: gpu,
     };
 
@@ -570,7 +573,10 @@ describe("readiness-gated runtime preflight", () => {
         },
         assessHost,
         detectGpu: () => null,
-        assertDockerBridgeAndContainerDnsHealthy: bridge,
+        assertRuntimeProviderHealthy: (_host, config) => {
+          validateGpu(config);
+          bridge();
+        },
         validateSandboxGpuPreflight: validateGpu,
       },
     );
@@ -609,7 +615,10 @@ describe("readiness-gated runtime preflight", () => {
         collectGatewayReadiness,
         assessHost,
         detectGpu: () => null,
-        assertDockerBridgeAndContainerDnsHealthy: bridge,
+        assertRuntimeProviderHealthy: (_host, config) => {
+          validateGpu(config);
+          bridge();
+        },
         validateSandboxGpuPreflight: validateGpu,
       },
     );
@@ -693,7 +702,10 @@ describe("readiness-gated runtime preflight", () => {
         },
         detectGpu,
         warnIfHostProxyMissesLoopback: vi.fn(),
-        assertDockerBridgeAndContainerDnsHealthy: () => calls.push("bridge-dns"),
+        assertRuntimeProviderHealthy: () => {
+          calls.push("gpu-validation");
+          calls.push("bridge-dns");
+        },
         validateSandboxGpuPreflight: () => calls.push("gpu-validation"),
       },
     );
@@ -786,7 +798,10 @@ describe("readiness-gated runtime preflight", () => {
         },
         detectGpu: () => null,
         warnIfHostProxyMissesLoopback: vi.fn(),
-        assertDockerBridgeAndContainerDnsHealthy: () => calls.push("bridge"),
+        assertRuntimeProviderHealthy: () => {
+          calls.push("gpu");
+          calls.push("bridge");
+        },
         validateSandboxGpuPreflight: () => calls.push("gpu"),
       },
     );
@@ -821,7 +836,10 @@ describe("readiness-gated runtime preflight", () => {
         },
         detectGpu: () => null,
         warnIfHostProxyMissesLoopback: vi.fn(),
-        assertDockerBridgeAndContainerDnsHealthy: () => calls.push("bridge"),
+        assertRuntimeProviderHealthy: () => {
+          calls.push("gpu");
+          calls.push("bridge");
+        },
         validateSandboxGpuPreflight: () => calls.push("gpu"),
       },
     );

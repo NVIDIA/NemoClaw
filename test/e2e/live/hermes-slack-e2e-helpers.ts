@@ -10,7 +10,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   runSecondaryCleanup as bestEffortLifecycleCleanup,
   CLI,
-  dockerInfo,
+  requirePhase6RuntimeProvider,
   expectExitZero,
   installSandboxOrSkipOnRateLimit,
   phase6Env,
@@ -242,6 +242,7 @@ export async function runHermesSlackE2E({
   cleanup,
   host,
   progress,
+  runtimeProvider,
   sandbox,
   secrets,
   skip,
@@ -304,14 +305,7 @@ export async function runHermesSlackE2E({
     providerNames: [`${SANDBOX_NAME}-slack-bridge`, `${SANDBOX_NAME}-slack-app`],
   });
 
-  const docker = await dockerInfo(host, env);
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(`Docker is required for Hermes Slack E2E: ${resultText(docker)}`);
-    }
-    skip("Docker is required for Hermes Slack E2E");
-    return;
-  }
+  await requirePhase6RuntimeProvider(runtimeProvider, "Hermes Slack");
 
   await precleanHermesSlack({ host, apiKey, artifactPrefix: "preclean-hermes-slack" });
   await precleanSandbox(host, SANDBOX_NAME, env, redactionValues, "preclean-hermes-slack-cli");

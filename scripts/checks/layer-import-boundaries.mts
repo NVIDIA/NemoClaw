@@ -56,6 +56,16 @@ const PROVIDER_NEUTRAL_MANAGED_RUNTIME_MODULES = [
   "src/lib/shields/mutable-config-repair.ts",
   "src/lib/state/registry/lifecycle-generation.ts",
 ] as const;
+const MANAGED_STATE_ROOT_PROVIDER_MODULES = [
+  "src/lib/onboard/managed-bootstrap/docker.ts",
+  "src/lib/onboard/managed-bootstrap/podman-runtime.ts",
+] as const;
+const MANAGED_AGENT_IDS = new Set([
+  "openclaw",
+  "hermes",
+  "langchain-deepagents-code",
+  "pi",
+]);
 
 function toRepoPath(absPath: string): string {
   return path.relative(REPO_ROOT, absPath).split(path.sep).join("/");
@@ -522,6 +532,70 @@ export function findManagedRuntimeBoundaryViolations(): Violation[] {
       ts.forEachChild(node, visit);
     };
     visit(sourceFile);
+  }
+
+  const managedBootstrapFiles = walk(
+    path.join(SRC_ROOT, "lib/onboard/managed-bootstrap"),
+  ).filter((absPath) => !path.basename(absPath).includes("test-fixture"));
+  const podmanProviderFiles = [
+    ...walk(path.join(SRC_ROOT, "lib/onboard/runtime-provider")),
+  ].filter((absPath) => path.basename(absPath).startsWith("podman"));
+  for (const absPath of [...managedBootstrapFiles, ...podmanProviderFiles]) {
+    const repoPath = toRepoPath(absPath);
+    const sourceFile = sourceFileFor(absPath);
+    const report = (node: ts.Node, detail: string): void => {
+      const pos = position(sourceFile, node);
+      addViolation(
+        violations,
+        repoPath,
+        pos.line,
+        pos.column,
+        "managed-state-root-neutrality",
+        detail,
+      );
+    };
+    for (const ref of collectImportRefs(absPath)) {
+      const target = resolveInternalImport(absPath, ref.specifier);
+      if (
+        podmanProviderFiles.includes(absPath) &&
+        target &&
+        /(?:^|\/)(?:hermes|openclaw)(?:[-/.]|$)/u.test(target)
+      ) {
+        addViolation(
+          violations,
+          repoPath,
+          ref.line,
+          ref.column,
+          "managed-state-root-neutrality",
+          `Podman provider code must not import agent implementation ${target}`,
+        );
+      }
+    }
+    const visit = (node: ts.Node): void => {
+      if (ts.isStringLiteralLike(node) && MANAGED_AGENT_IDS.has(node.text)) {
+        report(node, "managed bootstrap and Podman provider code must not encode agent IDs");
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+  }
+
+  for (const repoPath of MANAGED_STATE_ROOT_PROVIDER_MODULES) {
+    const absPath = path.join(REPO_ROOT, repoPath);
+    const ownsGenericStateRootPreparation = collectImportRefs(absPath).some(
+      (ref) => resolveInternalImport(absPath, ref.specifier) ===
+        "src/lib/onboard/managed-bootstrap/state-root-authority.ts",
+    );
+    if (!ownsGenericStateRootPreparation) {
+      addViolation(
+        violations,
+        repoPath,
+        1,
+        1,
+        "managed-state-root-neutrality",
+        "managed provider bootstrap must consume the generic state-root authority operation",
+      );
+    }
   }
   return violations;
 }

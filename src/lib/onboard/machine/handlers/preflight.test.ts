@@ -271,10 +271,8 @@ describe("handlePreflightState", () => {
         calls.push("gpu-runtime-proof");
         return { type: "nvidia" } as Gpu;
       },
-      validateSandboxGpuPreflight: () => {
+      assertRuntimeProviderHealthy: () => {
         calls.push("gpu-validation");
-      },
-      assertDockerBridgeAndContainerDnsHealthy: () => {
         calls.push("bridge-dns");
       },
     });

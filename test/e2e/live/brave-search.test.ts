@@ -1,14 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   assertBraveConfig,
   assertBraveResponse,
   assertBraveShellCredentialBoundary,
-  assertDockerAvailable,
   cleanupBraveNemoClawSandbox,
   cleanupBraveState,
   commandEnv,
@@ -21,7 +19,9 @@ import {
 
 const LIVE_TIMEOUT_MS = 35 * 60_000;
 
-test("Brave search preset wires policy/config, hides the real key, and performs real searches (#2687)", {
+test(
+  "Brave search preset wires policy/config, hides the real key, and performs real searches (#2687)",
+  {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -33,14 +33,16 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
       "query Brave API through credential resolver",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
   const braveKey = secrets.required("BRAVE_API_KEY");
   const inferenceKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const redactionValues = [braveKey, inferenceKey];
 
   await artifacts.target.declare({
     id: "brave-search",
-    boundary: "source CLI onboard + OpenShell policy/config + in-sandbox OpenClaw/Brave API calls",
+      boundary:
+        "source CLI onboard + OpenShell policy/config + in-sandbox OpenClaw/Brave API calls",
     sandboxName: SANDBOX_NAME,
     contracts: [
       "onboard succeeds with BRAVE_API_KEY present",
@@ -53,12 +55,10 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
     ],
   });
 
-  const dockerInfo = await host.command("docker", ["info"], {
-    artifactName: "phase-0-docker-info",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+    artifactName: "phase-0-runtime-info",
+      scenarioLabel: "Brave search",
   });
-  assertDockerAvailable(dockerInfo, skip);
 
   cleanup.trackDisposable(`delete Brave search OpenShell sandbox ${SANDBOX_NAME}`, () =>
     sandbox.cleanupSandbox(SANDBOX_NAME, {
@@ -121,4 +121,5 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
     { artifactName: "phase-4b-direct-brave-curl", timeoutMs: 60_000, redactionValues },
   );
   assertBraveResponse(resultText(curl));
-});
+  },
+);

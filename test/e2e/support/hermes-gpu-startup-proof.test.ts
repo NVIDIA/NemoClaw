@@ -12,6 +12,7 @@ import {
 } from "../live/hermes-gpu-startup-proof.ts";
 
 const HEALTHY_NEW_GATEWAY = [
+  "Container runtime: docker",
   "Starting OpenShell Docker-driver gateway...",
   "Docker-driver gateway is healthy",
 ].join("\n");
@@ -40,7 +41,9 @@ describe("Hermes GPU startup output contract", () => {
   it.each(["native-success", "compatibility-only"] as const)(
     "accepts %s output without legacy Docker container progress text (#9362)",
     (route) => {
-      expect(() => assertHermesGpuStartupOutputContract(route, HEALTHY_NEW_GATEWAY)).not.toThrow();
+      expect(() =>
+        assertHermesGpuStartupOutputContract(route, "docker", HEALTHY_NEW_GATEWAY),
+      ).not.toThrow();
     },
   );
 
@@ -52,7 +55,7 @@ describe("Hermes GPU startup output contract", () => {
     ].join("\n");
 
     expect(() =>
-      assertHermesGpuStartupOutputContract("compatibility-fallback", output),
+      assertHermesGpuStartupOutputContract("compatibility-fallback", "docker", output),
     ).not.toThrow();
   });
 
@@ -68,7 +71,7 @@ describe("Hermes GPU startup output contract", () => {
       ].join("\n");
 
       expect(() =>
-        assertHermesGpuStartupOutputContract("compatibility-fallback", output),
+        assertHermesGpuStartupOutputContract("compatibility-fallback", "docker", output),
       ).toThrow();
     },
   );
@@ -77,7 +80,7 @@ describe("Hermes GPU startup output contract", () => {
     "rejects fallback disclosure in %s output: %s (#9362)",
     (route, fragment) => {
       expect(() =>
-        assertHermesGpuStartupOutputContract(route, `${HEALTHY_NEW_GATEWAY}\n${fragment}`),
+        assertHermesGpuStartupOutputContract(route, "docker", `${HEALTHY_NEW_GATEWAY}\n${fragment}`),
       ).toThrow();
     },
   );
