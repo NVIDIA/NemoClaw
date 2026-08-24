@@ -49,7 +49,8 @@ const POST_REBOOT_DELIVERY_RUNTIME_FILES = new Set([
   "src/lib/onboard/sandbox-create-step.ts",
   "tools/e2e/onboard-timeout-contract.mts",
 ]);
-const GATEWAY_TOPOLOGY_FILES = new Set([
+export const GATEWAY_TOPOLOGY_FILES = [
+  "src/lib/core/gateway-address.ts",
   "src/lib/onboard/docker-driver-gateway-config.ts",
   "src/lib/onboard/docker-driver-gateway-env.ts",
   "src/lib/onboard/docker-driver-gateway-local-tls.ts",
@@ -61,7 +62,8 @@ const GATEWAY_TOPOLOGY_FILES = new Set([
   "src/lib/onboard/host-service-reachability.ts",
   "src/lib/onboard/runtime-provider/contract.ts",
   "src/lib/onboard/runtime-provider/podman-runtime-surfaces.ts",
-]);
+] as const;
+const GATEWAY_TOPOLOGY_FILE_SET = new Set<string>(GATEWAY_TOPOLOGY_FILES);
 const MANAGED_STARTUP_E2E_JOB_IDS = [
   "device-auth-health",
   "issue-4462-scope-upgrade-approval",
@@ -388,7 +390,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     invariants: [
       "An explicit sandbox-visible host address must be outside the sandbox network subnet, and every gateway-address projection must derive from the same authority.",
     ],
-    matches: (file) => GATEWAY_TOPOLOGY_FILES.has(file),
+    matches: (file) => GATEWAY_TOPOLOGY_FILE_SET.has(file),
   },
   {
     id: "upgrade-rebuild",

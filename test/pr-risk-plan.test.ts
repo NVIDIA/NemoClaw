@@ -7,6 +7,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildRiskPlan,
+  GATEWAY_TOPOLOGY_FILES,
   isPrE2eManualControllerJob,
   PR_E2E_TYPED_TARGET_IDS,
   RISK_RULES,
@@ -25,19 +26,6 @@ import { classifyTestDepth } from "../tools/pr-review-advisor/deterministic-cont
 
 const HEAD_SHA = "a".repeat(40);
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
-const GATEWAY_TOPOLOGY_FILES = [
-  "src/lib/onboard/docker-driver-gateway-config.ts",
-  "src/lib/onboard/docker-driver-gateway-env.ts",
-  "src/lib/onboard/docker-driver-gateway-local-tls.ts",
-  "src/lib/onboard/docker-driver-platform.ts",
-  "src/lib/onboard/experimental/hermes-portable-ollama-authority.ts",
-  "src/lib/onboard/experimental/portable-host-preparation.ts",
-  "src/lib/onboard/experimental/portable-profile.ts",
-  "src/lib/onboard/gateway-sandbox-reachability.ts",
-  "src/lib/onboard/host-service-reachability.ts",
-  "src/lib/onboard/runtime-provider/contract.ts",
-  "src/lib/onboard/runtime-provider/podman-runtime-surfaces.ts",
-];
 const GATEWAY_TOPOLOGY_INVARIANT =
   "An explicit sandbox-visible host address must be outside the sandbox network subnet, and every gateway-address projection must derive from the same authority.";
 const HERMES_SANDBOX_BOUNDARY_JOBS = [
@@ -154,6 +142,10 @@ describe("deterministic PR risk plan", () => {
       });
     },
   );
+
+  it("keeps the gateway bind-address authority in topology review (#10058)", () => {
+    expect(GATEWAY_TOPOLOGY_FILES).toContain("src/lib/core/gateway-address.ts");
+  });
 
   it("combines gateway topology projections into one focused family (#10058)", () => {
     const result = plan(...GATEWAY_TOPOLOGY_FILES);

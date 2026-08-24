@@ -94,6 +94,7 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 
 Risk plan version 19 selects the `gateway-topology` family for these production paths:
 
+- `src/lib/core/gateway-address.ts`.
 - `src/lib/onboard/docker-driver-gateway-config.ts`.
 - `src/lib/onboard/docker-driver-gateway-env.ts`.
 - `src/lib/onboard/docker-driver-gateway-local-tls.ts`.
