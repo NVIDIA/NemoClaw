@@ -6,16 +6,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 const HELPER = path.resolve(import.meta.dirname, "../fixtures/hermes-discord-policy-binding.ts");
+const TYPESCRIPT = path.resolve("node_modules/typescript/bin/tsc");
+const POLICY_BOUNDARY_CONFIG = path.resolve("nemoclaw/tsconfig.shared.json");
 const tempDirs: string[] = [];
 
 function runBinding(policyFile: string, protocol?: string) {
   return spawnSync(
     process.execPath,
     [
+      "--disable-warning=DEP0205",
       "--import",
       "tsx",
       HELPER,
@@ -30,6 +33,17 @@ function runBinding(policyFile: string, protocol?: string) {
 }
 
 describe("Hermes Discord E2E policy binding", () => {
+  beforeAll(() => {
+    const result = spawnSync(process.execPath, [TYPESCRIPT, "-p", POLICY_BOUNDARY_CONFIG], {
+      encoding: "utf8",
+      timeout: 15_000,
+    });
+    expect(
+      result.status,
+      result.stderr || result.stdout || result.error?.message || "Policy boundary build failed",
+    ).toBe(0);
+  });
+
   afterEach(() => {
     for (const tempDir of tempDirs.splice(0)) {
       fs.rmSync(tempDir, { force: true, recursive: true });

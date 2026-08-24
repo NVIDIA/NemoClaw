@@ -97,8 +97,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/base-image-resolver-helper.test.ts"),
   },
   {
-    pattern:
-      /(?:^|\/)\.github\/actions\/resolve-reviewed-hermes-platform\/action\.yaml$/,
+    pattern: /(?:^|\/)\.github\/actions\/resolve-reviewed-hermes-platform\/action\.yaml$/,
     testsToRun: runTests(
       "test/reviewed-hermes-platform-action.test.ts",
       "test/protected-managed-image-contract.test.ts",
@@ -168,6 +167,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)test\/e2e\/lib\/ci-compatible-inference\.sh$/,
     testsToRun: runTests("test/e2e/support/hosted-inference.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)nemoclaw\/src\/shared\/openshell-policy-boundary\.cts$/,
+    testsToRun: runTests("test/e2e/support/hermes-discord-policy-binding.test.ts"),
   },
   {
     pattern: /(?:^|\/)scripts\/setup-jetson\.sh$/,

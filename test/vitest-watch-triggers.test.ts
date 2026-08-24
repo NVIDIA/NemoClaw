@@ -66,6 +66,7 @@ const OPAQUE_INPUTS = [
   "agents/hermes/runtime-config-guard.py",
   "agents/hermes/mcp-config-transaction.py",
   "test/e2e/lib/ci-compatible-inference.sh",
+  "nemoclaw/src/shared/openshell-policy-boundary.cts",
   "scripts/setup-jetson.sh",
   "tools/e2e/contracts/v1/jetson-dispatch.json",
   ".github/workflows/base-image.yaml",
@@ -150,6 +151,12 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
   });
 
+  it("maps the policy parser to its spawned fixture contract (#10016)", () => {
+    expect(triggeredBy("nemoclaw/src/shared/openshell-policy-boundary.cts")).toEqual([
+      "test/e2e/support/hermes-discord-policy-binding.test.ts",
+    ]);
+  });
+
   it.each([
     ".github/actions/docker-auth-setup/action.yaml",
     ".github/actions/docker-auth-cleanup/action.yaml",
@@ -172,9 +179,7 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/actions/resolve-hermes-base-image/action.yaml")).toEqual([
       "test/base-image-resolver-helper.test.ts",
     ]);
-    expect(
-      triggeredBy(".github/actions/resolve-reviewed-hermes-platform/action.yaml"),
-    ).toEqual([
+    expect(triggeredBy(".github/actions/resolve-reviewed-hermes-platform/action.yaml")).toEqual([
       "test/reviewed-hermes-platform-action.test.ts",
       "test/protected-managed-image-contract.test.ts",
       "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
