@@ -40,8 +40,8 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 1. Runs on `pull_request_target` for internal and fork PRs, plus trusted manual dispatch.
 2. Prepares the target PR as inert analysis data and executes the trusted Advisor entrypoint from the workflow checkout.
 3. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
-4. Runs five required specialist Pi sessions for Behavior, Trust, Design / Architecture, Operations, and Documentation. Each specialist reads repository evidence and records a native session trace.
-5. Runs one synthesis advisor after all five specialist sessions complete. The synthesis advisor reads the traces as untrusted evidence, verifies retained concerns against the repository, and performs the two-turn review protocol.
+4. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist reads repository evidence and records a native session trace.
+5. Runs one synthesis advisor after every discovered specialist session completes. The synthesis advisor reads the traces as untrusted evidence, verifies retained concerns against the repository, and performs the two-turn review protocol.
 6. The `investigate` turn has repo-confined `read`, `grep`, `find`, and `ls` tools, deterministic PR context tools, and trusted terminology tracing. If the advisor calls every required context tool but omits the analysis receipt, the runner permits one prose-only continuation.
 7. The `challenge-and-record` turn adds `record_findings`, `record_review_receipt`, `recommend_e2e`, and `submit_review`. The recording tools replace complete in-memory draft sections without updating canonical state. `submit_review` validates and assembles pending state. The session runner commits that state only after it accepts the complete terminal flow. Provider failures, invalid submissions, and rejected terminal flows leave canonical state unchanged.
 8. Trusted code writes the synthesis session transcript, result, and summary artifacts.
@@ -134,7 +134,7 @@ Configure this repository secret for review analysis:
 The trusted host uses this secret only to register the OpenAI-compatible
 `https://inference-api.nvidia.com/v1` service with OpenShell. The sandboxed analyzer reaches that
 provider through `https://inference.local/v1` and does not receive the secret.
-The five specialists and the synthesis advisor use the workflow-configured model and share the same credential boundary.
+The discovered specialists and the synthesis advisor use the workflow-configured model and share the same credential boundary.
 
 If advisor credentials are unavailable, the advisor writes a low-confidence unavailable result
 instead of failing closed without artifacts.
@@ -148,9 +148,9 @@ instead of failing closed without artifacts.
 
 ## Specialist synthesis
 
-Five focused, read-only Pi sessions cover Behavior, Trust, Design / Architecture, Operations, and Documentation. All five specialist sessions are required. Each specialist uploads Pi's unchanged native JSONL session. Specialists have repository read tools but cannot record or submit the canonical review.
+Each valid Markdown prompt in `tools/pr-review-advisor/specialists` creates a focused, read-only Pi session. Every discovered specialist session is required. Each specialist uploads Pi's unchanged native JSONL session. Specialists have repository read tools but cannot record or submit the canonical review.
 
-The synthesis advisor places the five traces beside the read-only repository inside OpenShell. It treats model-authored trace content as untrusted evidence and verifies retained concerns against repository evidence. It uses the atomic submission tools to create the canonical result. An absent, invalid, or oversized specialist trace fails synthesis.
+The synthesis advisor places every discovered specialist trace beside the read-only repository inside OpenShell. It treats model-authored trace content as untrusted evidence and verifies retained concerns against repository evidence. It uses the atomic submission tools to create the canonical result. An absent, invalid, or oversized specialist trace fails synthesis.
 
 The publisher has the only pull-request write permission. It receives neither the model credential nor the specialist traces. It validates and publishes only the synthesis artifact.
 

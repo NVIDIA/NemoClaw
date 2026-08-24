@@ -21,6 +21,8 @@ import {
   observeOpenClawPairingRepairSettlement,
   observeOpenClawPairingSettlement,
   observeOrdinaryOpenClawPairingSettlement,
+  OpenClawPairingObservationRetryableError,
+  OpenClawPairingQualificationError,
   OPENCLAW_PAIRING_REQUEST_SCOPES,
   OPENCLAW_PAIRING_REQUIRED_SCOPES,
   parseOpenClawPairingObservation,
@@ -397,6 +399,33 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       );
     });
 
+    it("classifies a canonical state file that is not visible yet as retryable (#9817)", () => {
+      fs.rmSync(path.join(stateDirectory, "devices", "pending.json"));
+
+      expect(() => observeRepairSettlement()).toThrow(OpenClawPairingObservationRetryableError);
+    });
+
+    it("keeps unrelated pending requests terminal instead of retrying them (#9817)", () => {
+      writeJson(path.join(stateDirectory, "devices", "pending.json"), {
+        unrelated: {
+          requestId: "unrelated",
+          deviceId: "b".repeat(64),
+          publicKey: "unrelated-public-key",
+          clientId: "unknown-client",
+          scopes: ["operator.admin"],
+        },
+      });
+
+      let failure: unknown;
+      try {
+        observeRepairSettlement();
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(OpenClawPairingQualificationError);
+      expect(failure).not.toBeInstanceOf(OpenClawPairingObservationRetryableError);
+    });
+
     it("rejects a non-repair request from Portable repair settlement (#9817)", () => {
       writePairingOnlyState();
       writeJson(path.join(stateDirectory, "devices", "pending.json"), {
@@ -414,7 +443,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       });
 
       expect(observeOrdinarySettlement()).toEqual({
-        state: "pairing-only",
+        state: "scope-upgrade-pending",
         deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       });
       expect(() => observeRepairSettlement()).toThrow(
