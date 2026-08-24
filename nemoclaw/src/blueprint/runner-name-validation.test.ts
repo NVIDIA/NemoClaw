@@ -16,7 +16,11 @@ import {
   inMemoryFsMethods,
   resolvedEndpointFor,
 } from "./runner-mock-fixtures.js";
-import { minimalBlueprint, successResult } from "./runner-test-fixtures.js";
+import {
+  minimalBlueprint,
+  resultWithBlueprintPolicyAuthority,
+  successResult,
+} from "./runner-test-fixtures.js";
 
 const { store, addFile, addDir } = createRunnerFsStore();
 
@@ -114,7 +118,9 @@ describe("blueprint name validation (fail-closed integration)", () => {
     stdout.reset();
     vi.clearAllMocks();
     vi.spyOn(process.stdout, "write").mockImplementation(stdout.write);
-    mockExeca.mockResolvedValue(successResult());
+    mockExeca.mockImplementation(async (_command: string, args: string[]) =>
+      resultWithBlueprintPolicyAuthority(args, successResult()),
+    );
   });
 
   afterEach(() => {

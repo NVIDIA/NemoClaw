@@ -19,6 +19,7 @@ import {
   MATCHING_INFERENCE_ROUTE_LISTING,
   MATCHING_RUNTIME_PROVIDER_LISTING,
   providersV2EnabledResult,
+  resultWithBlueprintPolicyAuthority,
   successResult,
 } from "./runner-test-fixtures.js";
 
@@ -82,8 +83,20 @@ function responseQueue(
   ]);
   mockExeca.mockImplementation(async (_command: string, args: string[]) => {
     const command = args.join(" ");
-    return responses.get(command)?.shift() ?? fallbacks.get(command) ?? success;
+    const fallback = responses.get(command)?.shift() ?? fallbacks.get(command) ?? success;
+    return fallback.exitCode === undefined
+      ? fallback
+      : resultWithBlueprintPolicyAuthority(args, {
+          ...fallback,
+          exitCode: fallback.exitCode ?? 1,
+        });
   });
+}
+
+function nonAuthorityCommandLines(): string[] {
+  return mockExeca.mock.calls
+    .map(([command, args]) => [command, ...(args ?? [])].join(" "))
+    .filter((command) => command !== "openshell status" && !command.startsWith("openshell policy "));
 }
 
 function blueprint(overrides: Record<string, unknown> = {}): Parameters<typeof actionApply>[1] {
@@ -123,7 +136,10 @@ describe("blueprint identity wrapper", () => {
     realpaths.clear();
     vi.clearAllMocks();
     mockExeca.mockImplementation(async (_command: string, args: string[]) =>
-      args.join(" ") === "settings get --global --json" ? providersV2Enabled : success,
+      resultWithBlueprintPolicyAuthority(
+        args,
+        args.join(" ") === "settings get --global --json" ? providersV2Enabled : success,
+      ),
     );
     process.env.NEMOCLAW_BLUEPRINT_PATH = "/blueprint";
     store.set("/blueprint", { type: "dir" });
@@ -337,9 +353,7 @@ describe("blueprint identity wrapper", () => {
       /Failed to inspect sandbox 'test-sandbox'.*gateway configuration not found/,
     );
 
-    const commandLines = mockExeca.mock.calls.map(([command, args]) =>
-      [command, ...(args ?? [])].join(" "),
-    );
+    const commandLines = nonAuthorityCommandLines();
     expect(commandLines).toEqual(["openshell sandbox get test-sandbox"]);
   });
 
@@ -358,9 +372,7 @@ describe("blueprint identity wrapper", () => {
       /Sandbox 'test-sandbox' is not reusable.*Ready phase.*Provisioning/,
     );
 
-    const commandLines = mockExeca.mock.calls.map(([command, args]) =>
-      [command, ...(args ?? [])].join(" "),
-    );
+    const commandLines = nonAuthorityCommandLines();
     expect(commandLines).toEqual(["openshell sandbox get test-sandbox"]);
   });
 
@@ -424,9 +436,7 @@ describe("blueprint identity wrapper", () => {
       /Failed to inspect inference provider 'test-provider'.*gateway configuration not found/,
     );
 
-    const commandLines = mockExeca.mock.calls.map(([command, args]) =>
-      [command, ...(args ?? [])].join(" "),
-    );
+    const commandLines = nonAuthorityCommandLines();
     expect(commandLines).toEqual([
       "openshell sandbox get test-sandbox",
       "openshell provider get test-provider",
@@ -454,9 +464,7 @@ describe("blueprint identity wrapper", () => {
       /Inference provider 'test-provider' does not match the requested non-secret binding/,
     );
 
-    const commandLines = mockExeca.mock.calls.map(([command, args]) =>
-      [command, ...(args ?? [])].join(" "),
-    );
+    const commandLines = nonAuthorityCommandLines();
     expect(commandLines).toEqual([
       "openshell sandbox get test-sandbox",
       "openshell provider get test-provider",
@@ -483,9 +491,7 @@ describe("blueprint identity wrapper", () => {
       /Failed to inspect the active inference route.*gateway route inspection unavailable/,
     );
 
-    const commandLines = mockExeca.mock.calls.map(([command, args]) =>
-      [command, ...(args ?? [])].join(" "),
-    );
+    const commandLines = nonAuthorityCommandLines();
     expect(commandLines).toEqual([
       "openshell sandbox get test-sandbox",
       "openshell provider get test-provider",
@@ -786,7 +792,7 @@ describe("blueprint identity wrapper", () => {
           { exitCode: 0, stdout: matchingProvider, stderr: "" },
         ],
       ],
-      ["policy get --base test-sandbox", [failureResult("policy read rejected")]],
+      ["policy get -g test-gateway --base test-sandbox", [failureResult("policy read rejected")]],
     ]);
 
     await expect(
