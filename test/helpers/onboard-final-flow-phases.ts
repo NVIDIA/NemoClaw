@@ -89,6 +89,7 @@ export function sessionAt(state: OnboardMachineState): Session {
     sandboxName: "my-sandbox",
     provider: "nim",
     model: "nvidia/test",
+    policyAuthority: "nemoclaw-managed",
     machine: {
       version: MACHINE_SNAPSHOT_VERSION,
       state,

@@ -18,7 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
 
-const repoRoot = path.join(import.meta.dirname, "..");
+const repoRoot = path.join(import.meta.dirname, "../..");
 
 function runScript(scriptBody: string): SpawnSyncReturns<string> {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-5729-"));
