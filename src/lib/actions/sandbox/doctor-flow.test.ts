@@ -951,7 +951,7 @@ describe("runSandboxDoctor flow", () => {
       gatewayName: "nemoclaw-19080",
     });
     expect(harness.captureOpenShellSpy).toHaveBeenCalledWith(
-      ["sandbox", "list"],
+      ["sandbox", "list", "-g", "nemoclaw-19080"],
       expect.any(Object),
     );
     expect(harness.probeSandboxInferenceGatewayHealthSpy).toHaveBeenCalledWith("alpha");

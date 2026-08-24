@@ -8,6 +8,7 @@ import {
   agentDefs,
   agentOnboard,
   agentRuntime,
+  createSandboxInventoryFake,
   createRebuildFlowSession,
   destroy,
   dockerImage,
@@ -239,7 +240,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     resolveGatewayAuthority,
   );
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
-    result: { status: 0, output: overrides.sandboxListOutput ?? "alpha Ready" },
+    result: {
+      ok: true,
+      value: createSandboxInventoryFake(overrides.sandboxListOutput ?? "alpha Ready"),
+    },
+    recoveryAttempted: false,
+    recoverySucceeded: false,
   });
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
   vi.spyOn(dockerImage, "dockerBuild").mockReturnValue({ status: 0 });

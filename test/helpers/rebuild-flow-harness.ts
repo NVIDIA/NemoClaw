@@ -84,6 +84,39 @@ export function sourceSandboxGateway(argv: string[], verb: string): string | nul
     : null;
 }
 
+export function createSandboxInventoryFake(output: string): {
+  sandboxes: Array<{
+    name: string;
+    phase: string | null;
+    readiness: "ready" | "not_ready" | "terminal";
+  }>;
+} {
+  const terminalPhases = new Set([
+    "CrashLoopBackOff",
+    "Error",
+    "Evicted",
+    "Failed",
+    "ImagePullBackOff",
+    "Unknown",
+  ]);
+  return {
+    sandboxes: output
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [name = "", phase = null] = line.split(/\s+/u);
+        const readiness =
+          phase === "Ready" || phase === "Running"
+            ? "ready"
+            : phase && terminalPhases.has(phase)
+              ? "terminal"
+              : "not_ready";
+        return { name, phase, readiness };
+      }),
+  };
+}
+
 const harnessTempDirs: string[] = [];
 
 export function createHarnessTempDir(prefix: string): string {
