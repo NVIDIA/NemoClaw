@@ -38,30 +38,6 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const TEST_CANDIDATE_ROOTS = ["src", "test", "nemoclaw/src"] as const;
 const TEST_FILE_PATTERN = /\.(?:test|spec)\.(?:[cm]?[jt]sx?)$/;
 const SKIP_DIRECTORIES = new Set([".git", "node_modules"]);
-const INSTALLER_INTEGRATION_TESTS = new Set([
-  "test/install-build-dependency-preflight.test.ts",
-  "test/install-clone-ref.test.ts",
-  "test/install-express-prompt.test.ts",
-  "test/install-express-wsl-ollama.test.ts",
-  "test/install-forward-restore-diagnostics.test.ts",
-  "test/install-hermes-portable-active.test.ts",
-  "test/install-hermes-forward-restore.test.ts",
-  "test/install-managed-cli-reuse.test.ts",
-  "test/install-openshell-e2e-artifact.test.ts",
-  "test/install-openshell-version-pin.test.ts",
-  "test/install-openshell-version-check.test.ts",
-  "test/install-preflight-docker-bootstrap.test.ts",
-  "test/install-preflight.test.ts",
-  "test/install-station-controller-binding.test.ts",
-  "test/install-station-pair-preparation.test.ts",
-  "test/install-station-resume-cleanup.test.ts",
-  "test/install-station-dgx-os.test.ts",
-  "test/install-station-docker-repository.test.ts",
-  "test/install-station-host-preparation.test.ts",
-  "test/install-station-vllm-continuation.test.ts",
-  "test/install-station-package-state.test.ts",
-  "test/install-station-package-transaction.test.ts",
-]);
 
 function normalizeRepoPath(file: string): string {
   return file.replaceAll("\\", "/").replace(/^\.\/+/, "");
@@ -91,7 +67,7 @@ export function expectedProjectForTestPath(file: string): ExpectedVitestProject 
   const normalized = normalizeRepoPath(file);
   if (normalized.startsWith("src/")) return "cli";
   if (normalized.startsWith("nemoclaw/src/")) return "plugin";
-  if (INSTALLER_INTEGRATION_TESTS.has(normalized)) return "installer-integration";
+  if (normalized.startsWith("test/installer-integration/")) return "installer-integration";
   if (normalized.startsWith("test/package-contract/")) return "package-contract";
   if (normalized.startsWith("test/e2e/support/")) return "e2e-support";
   if (normalized.startsWith("test/e2e/live/")) return "e2e-live";

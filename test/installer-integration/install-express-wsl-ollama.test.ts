@@ -6,13 +6,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { resolveRequestedProviderSelection } from "../src/lib/onboard/provider-selection.js";
-import { runInstallerSourcedBody } from "./helpers/installer-run-fixture";
+import { resolveRequestedProviderSelection } from "../../src/lib/onboard/provider-selection.js";
+import { runInstallerSourcedBody } from "../helpers/installer-run-fixture";
 import {
   INSTALLER_PAYLOAD,
   TEST_SYSTEM_PATH,
   writeExecutable,
-} from "./helpers/installer-sourced-env";
+} from "../helpers/installer-sourced-env";
 
 describe("installer Windows WSL express Ollama selection (sourced)", () => {
   const runInstallerSourced = (body: string, extraEnv: Record<string, string> = {}) => {
