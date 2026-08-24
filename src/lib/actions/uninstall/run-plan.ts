@@ -418,43 +418,107 @@ function removePathExcept(
     deps.log(`Removed ${target}`);
     return true;
   }
-  // Only enumerate when `target` is a real directory. A symlink or non-dir
-  // would make readdirSync follow into / fail noisily; treat those as
-  // wholesale removal, matching prior behaviour for unusual shapes.
-  let stat: fs.Stats;
-  try {
-    stat = fs.lstatSync(target);
-  } catch (err) {
-    // ENOENT — gone already, nothing to do. Any other error means we cannot
-    // safely decide whether to enumerate or remove; surface it and report
-    // failure so uninstall returns a non-zero exit instead of silently
-    // claiming success while leaving state on disk.
-    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return true;
-    deps.warn(`Failed to inspect ${target}: ${err instanceof Error ? err.message : String(err)}`);
+  const noFollow = fs.constants.O_NOFOLLOW;
+  const directoryOnly = fs.constants.O_DIRECTORY;
+  if (typeof noFollow !== "number" || typeof directoryOnly !== "number") {
+    deps.warn(`Failed to clean ${target}: no-follow directory access is unavailable`);
     return false;
   }
-  if (!stat.isDirectory()) {
-    deps.rmSync(target, { force: true, recursive: true });
-    deps.log(`Removed ${target}`);
+  let descriptor: number | null = null;
+  let stagingRoot: string | null = null;
+  let stagedTarget: string | null = null;
+  try {
+    descriptor = fs.openSync(target, fs.constants.O_RDONLY | noFollow | directoryOnly);
+    const identity = fs.fstatSync(descriptor, { bigint: true });
+    const named = fs.lstatSync(target, { bigint: true });
+    if (!sameDirectoryIdentity(identity, named)) {
+      throw new Error("directory changed during inspection");
+    }
+
+    stagingRoot = fs.mkdtempSync(
+      path.join(path.dirname(target), `.${path.basename(target)}-cleanup-`),
+    );
+    stagedTarget = path.join(stagingRoot, "content");
+    fs.renameSync(target, stagedTarget);
+    if (!sameDirectoryIdentity(identity, fs.lstatSync(stagedTarget, { bigint: true }))) {
+      throw new Error("directory changed before cleanup");
+    }
+
+    const preserveSet = new Set(preserve);
+    const children = fs.readdirSync(stagedTarget);
+    for (const entry of children) {
+      if (preserveSet.has(entry)) continue;
+      if (!sameDirectoryIdentity(identity, fs.lstatSync(stagedTarget, { bigint: true }))) {
+        throw new Error("directory changed during cleanup");
+      }
+      deps.rmSync(path.join(stagedTarget, entry), { force: true, recursive: true });
+    }
+    if (!sameDirectoryIdentity(identity, fs.lstatSync(stagedTarget, { bigint: true }))) {
+      throw new Error("directory changed during cleanup");
+    }
+
+    // Track preserved order against the declared allowlist so the log line is
+    // stable across filesystems with non-deterministic readdir ordering.
+    const childSet = new Set(children);
+    const preserved = preserve.filter((name) => childSet.has(name));
+    if (preserved.length === 0) {
+      if (fs.existsSync(target)) throw new Error("directory path was replaced during cleanup");
+      fs.renameSync(stagedTarget, target);
+      stagedTarget = null;
+      if (!sameDirectoryIdentity(identity, fs.lstatSync(target, { bigint: true }))) {
+        throw new Error("directory changed before removal");
+      }
+      deps.rmSync(target, { force: true, recursive: true });
+      deps.log(`Removed ${target}`);
+      return true;
+    }
+    if (fs.existsSync(target)) throw new Error("directory path was replaced during cleanup");
+    fs.renameSync(stagedTarget, target);
+    stagedTarget = null;
+    if (!sameDirectoryIdentity(identity, fs.lstatSync(target, { bigint: true }))) {
+      throw new Error("directory changed while restoring preserved data");
+    }
+    deps.log(`Removed contents of ${target} (preserved: ${preserved.join(", ")})`);
     return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT" && descriptor === null) return true;
+    deps.warn(`Failed to clean ${target}: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  } finally {
+    if (stagedTarget && descriptor !== null) {
+      try {
+        const identity = fs.fstatSync(descriptor, { bigint: true });
+        if (
+          !fs.existsSync(target) &&
+          sameDirectoryIdentity(identity, fs.lstatSync(stagedTarget, { bigint: true }))
+        ) {
+          fs.renameSync(stagedTarget, target);
+          stagedTarget = null;
+        }
+      } catch {
+        // Leave the staged directory in place for manual recovery.
+      }
+    }
+    if (descriptor !== null) fs.closeSync(descriptor);
+    if (stagingRoot) {
+      try {
+        fs.rmdirSync(stagingRoot);
+      } catch {
+        if (stagedTarget) deps.warn(`Cleanup staging remains at ${stagedTarget}.`);
+      }
+    }
   }
-  const preserveSet = new Set(preserve);
-  const children = fs.readdirSync(target);
-  for (const entry of children) {
-    if (preserveSet.has(entry)) continue;
-    deps.rmSync(path.join(target, entry), { force: true, recursive: true });
-  }
-  // Track preserved order against the declared allowlist so the log line is
-  // stable across filesystems with non-deterministic readdir ordering.
-  const childSet = new Set(children);
-  const preserved = preserve.filter((name) => childSet.has(name));
-  if (preserved.length === 0) {
-    deps.rmSync(target, { force: true, recursive: true });
-    deps.log(`Removed ${target}`);
-    return true;
-  }
-  deps.log(`Removed contents of ${target} (preserved: ${preserved.join(", ")})`);
-  return true;
+}
+
+function sameDirectoryIdentity(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
+  return (
+    left.isDirectory() &&
+    right.isDirectory() &&
+    !right.isSymbolicLink() &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.uid === right.uid
+  );
 }
 
 function removeFileWithOptionalSudo(target: string, deps: UninstallRuntime): void {

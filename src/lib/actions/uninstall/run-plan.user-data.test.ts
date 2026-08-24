@@ -84,6 +84,7 @@ describe("uninstall run plan", () => {
         envOverrides?: Record<string, string>;
         isTty?: boolean;
         readLine?: UninstallRunDeps["readLine"];
+        warnings?: string[];
       } = {},
     ): UninstallRunDeps {
       return {
@@ -94,6 +95,7 @@ describe("uninstall run plan", () => {
           NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
           ...(opts.envOverrides ?? {}),
         } as NodeJS.ProcessEnv,
+        error: (line) => opts.warnings?.push(line),
         existsSync: tempScopedExistsSync(tmpHome),
         isTty: opts.isTty ?? false,
         log: (line) => logs.push(line),
@@ -122,9 +124,10 @@ describe("uninstall run plan", () => {
       const { tmpHome, stateDir } = setupStateDir();
       try {
         const logs: string[] = [];
+        const warnings: string[] = [];
         const result = runUninstallPlan(
           { assumeYes: true, deleteModels: false, keepOpenShell: true },
-          preserveCaseDeps(tmpHome, logs),
+          preserveCaseDeps(tmpHome, logs, { warnings }),
         );
 
         expect(result.exitCode).toBe(0);
@@ -146,6 +149,10 @@ describe("uninstall run plan", () => {
         expect(
           logs.some((line) => line.includes("preserved: rebuild-backups, backups, sandboxes.json")),
         ).toBe(true);
+        const warningText = warnings.join("\n");
+        expect(warningText).toContain("sandboxes.json");
+        expect(warningText).toContain("cannot be recovered automatically");
+        expect(warningText).toContain("--destroy-user-data");
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });
       }
@@ -178,9 +185,10 @@ describe("uninstall run plan", () => {
       const { tmpHome, stateDir } = setupStateDir();
       try {
         const logs: string[] = [];
+        const warnings: string[] = [];
         const result = runUninstallPlan(
           { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: true },
-          preserveCaseDeps(tmpHome, logs),
+          preserveCaseDeps(tmpHome, logs, { warnings }),
         );
 
         expect(result.exitCode).toBe(0);
@@ -188,6 +196,7 @@ describe("uninstall run plan", () => {
         expect(logs).toContain(`Removed ${stateDir}`);
         expect(logs).toContain("--destroy-user-data set; purging user data under ~/.nemoclaw/.");
         expectNoPreserveSignals(logs);
+        expect(warnings.join("\n")).not.toContain("cannot be recovered automatically");
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });
       }
@@ -338,18 +347,21 @@ describe("uninstall run plan", () => {
       const { tmpHome, stateDir } = setupStateDir();
       try {
         const logs: string[] = [];
+        const warnings: string[] = [];
         const replies = ["yes", ""];
         const result = runUninstallPlan(
           { assumeYes: false, deleteModels: false, keepOpenShell: true },
           preserveCaseDeps(tmpHome, logs, {
             isTty: true,
             readLine: () => replies.shift() ?? null,
+            warnings,
           }),
         );
 
         expect(result.exitCode).toBe(0);
         expectPreservedEntries(stateDir);
         expect(logs).toContain("Keeping user data.");
+        expect(warnings.join("\n")).toContain("cannot be recovered automatically");
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });
       }
@@ -413,6 +425,50 @@ describe("uninstall run plan", () => {
       } finally {
         lstatSpy.mockRestore();
         fs.rmSync(tmpHome, { recursive: true, force: true });
+      }
+    });
+
+    it("fails without following a state-directory replacement during cleanup", () => {
+      const { tmpHome, stateDir } = setupStateDir();
+      const replacementTarget = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-uninstall-replacement-target-"),
+      );
+      const originalStateDir = path.join(tmpHome, "original-state");
+      const protectedFile = path.join(replacementTarget, "keep.txt");
+      fs.writeFileSync(protectedFile, "keep");
+      const renameSync = fs.renameSync;
+      const replacements = new Map<string, (destination: fs.PathLike) => void>();
+      replacements.set(stateDir, (destination) => {
+        replacements.delete(stateDir);
+        expect(String(destination)).toContain(".nemoclaw-cleanup-");
+        renameSync(stateDir, originalStateDir);
+        fs.symlinkSync(replacementTarget, stateDir);
+      });
+      const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
+        replacements.get(String(source))?.(destination);
+        return renameSync(source, destination);
+      });
+      try {
+        const logs: string[] = [];
+        const warnings: string[] = [];
+        const result = runUninstallPlan(
+          { assumeYes: true, deleteModels: false, keepOpenShell: true },
+          preserveCaseDeps(tmpHome, logs, { warnings }),
+        );
+
+        expect(result.exitCode).toBe(1);
+        expect(fs.readFileSync(protectedFile, "utf8")).toBe("keep");
+        expect(
+          fs.existsSync(
+            path.join(originalStateDir, "rebuild-backups", "sb1", "20260101", "manifest.json"),
+          ),
+        ).toBe(true);
+        expect(warnings.join("\n")).toContain("directory changed before cleanup");
+        expect(logs).not.toContain("Claws retracted. Until next time.");
+      } finally {
+        renameSpy.mockRestore();
+        fs.rmSync(tmpHome, { recursive: true, force: true });
+        fs.rmSync(replacementTarget, { recursive: true, force: true });
       }
     });
 
