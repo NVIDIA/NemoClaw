@@ -207,6 +207,10 @@ export function validateCliArtifactRestoreAction(
     'mv "$restore_dir/nemoclaw/dist" "$GITHUB_WORKSPACE/nemoclaw/dist"',
 
     'mv "$restore_dir/dist" "$GITHUB_WORKSPACE/dist"',
+    '[[ -f "$managed_catalog" && ! -L "$managed_catalog" && -s "$managed_catalog" ]]',
+    "[to_entries[].value.source.revision] as $revisions",
+    'printf \'NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG=%s\\n\' "$managed_catalog" >>"$GITHUB_ENV"',
+    'printf \'NEMOCLAW_E2E_MANAGED_IMAGE_REVISION=%s\\n\' "$managed_revision" >>"$GITHUB_ENV"',
     'node "$GITHUB_WORKSPACE/bin/nemoclaw.js" --version',
   ]);
   return errors;

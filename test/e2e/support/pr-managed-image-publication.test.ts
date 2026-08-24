@@ -122,6 +122,7 @@ on:
   it("allows reuse only across host-installer and E2E-only changes", () => {
     expect(
       managedImagePublicationReuseAllowed([
+        ".github/actions/restore-e2e-cli-artifact/action.yaml",
         ".github/workflows/e2e-standard-profile.yaml",
         ".github/workflows/e2e.yaml",
         "scripts/install.sh",
@@ -141,6 +142,7 @@ on:
 
   it.each(MANAGED_IMAGE_DOCKERFILES)("keeps reusable paths outside %s", (dockerfile) => {
     const source = fs.readFileSync(dockerfile, "utf8");
+    expect(source).not.toContain("restore-e2e-cli-artifact");
     expect(source).not.toContain("scripts/install.sh");
     expect(source).not.toContain("src/lib/onboard/workload/preparation.ts");
     expect(source).not.toMatch(/^COPY [.]github\/workflows\/e2e/mu);

@@ -30,6 +30,7 @@ const PAGE_SIZE = 100;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/*-]+$/u;
 const REUSABLE_NON_IMAGE_PATHS = [
+  /^[.]github\/actions\/restore-e2e-cli-artifact\/action[.]yaml$/u,
   /^[.]github\/workflows\/e2e(?:-standard-profile)?[.]yaml$/u,
   /^scripts\/install[.]sh$/u,
   /^src\/lib\/onboard\/managed-workload\/onboard-orchestration[.]test[.]ts$/u,
