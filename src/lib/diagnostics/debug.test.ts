@@ -60,6 +60,17 @@ describe("redact", () => {
     const clean = "Hello world, no secrets here";
     expect(redact(clean)).toBe(clean);
   });
+
+  it("removes credentials from a URL", () => {
+    expect(redact("proxy: https://service-user:service-password@example.com/path")).toBe(
+      "proxy: https://example.com/path",
+    );
+  });
+
+  it("leaves a credential-free URL readable", () => {
+    const url = "https://integrate.api.nvidia.com/v1/models";
+    expect(redact(`probing ${url}`)).toBe(`probing ${url}`);
+  });
 });
 
 describe("createTarball", () => {
