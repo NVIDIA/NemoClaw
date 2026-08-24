@@ -80,7 +80,6 @@ import * as registry from "../../state/registry";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
-import type { MessagingProviderAttachmentReceipt } from "./messaging-provider/attachments";
 import { policyChannelDependencies } from "./policy-channel-dependencies";
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
@@ -1919,9 +1918,9 @@ async function sandboxChannelsSetEnabled(
     return;
   }
 
-  const disclosedPresetState = disabled
-    ? undefined
-    : loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "start");
+  if (!disabled) {
+    loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "start");
+  }
 
   if (dryRun) {
     console.log(`  --dry-run: would ${verb} channel '${canonical}' for '${sandboxName}'.`);
@@ -1933,60 +1932,10 @@ async function sandboxChannelsSetEnabled(
     console.error(`  Could not persist messaging plan for '${sandboxName}'.`);
     process.exit(1);
   }
-  let restoredProviderAttachments: MessagingProviderAttachmentReceipt[] = [];
-  if (!disabled) {
-    try {
-      const gatewayName = getSandboxTargetGatewayName(sandboxName);
-      restoredProviderAttachments =
-        policyChannelDependencies.restoreChannelMessagingProviderAttachments(
-          sandboxName,
-          plan,
-          canonical,
-          gatewayName,
-        );
-    } catch (error) {
-      console.error(
-        `  ${YW}⚠${R} Could not restore '${canonical}' credential provider attachments: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      const rolledBack = await persistManifestChannelDisabledPlan(sandboxName, canonical, true);
-      if (!rolledBack) {
-        console.error(
-          `  ${YW}⚠${R} Could not restore '${canonical}' to disabled state after provider attachment failed.`,
-        );
-        console.error(`    Re-run: ${CLI_NAME} ${sandboxName} channels stop ${canonical}`);
-      }
-      process.exit(1);
-    }
-  }
-  // Rebuild persists only the presets it actually restores. Re-apply a
-  // restarted channel's preset before a queued or immediate rebuild so the
-  // registry and backup manifest carry the enabled plan's policy intent.
-  // If policy application fails, put the plan back in its disabled state so
-  // runtime configuration cannot later be rebuilt without the required egress.
-  if (
-    !disabled &&
-    !applyChannelPresetIfAvailable(sandboxName, canonical, "start", {
-      disclosedPresetState,
-    })
-  ) {
-    const detachFailures = policyChannelDependencies.rollbackMessagingProviderAttachments(
-      sandboxName,
-      restoredProviderAttachments,
-    );
-    if (detachFailures.length > 0) {
-      console.error(
-        `  ${YW}⚠${R} Could not roll back '${canonical}' provider attachment(s): ${detachFailures.join("; ")}`,
-      );
-    }
-    const rolledBack = await persistManifestChannelDisabledPlan(sandboxName, canonical, true);
-    if (!rolledBack) {
-      console.error(
-        `  ${YW}⚠${R} Could not restore '${canonical}' to disabled state after its policy preset failed to apply.`,
-      );
-      console.error(`    Re-run: ${CLI_NAME} ${sandboxName} channels stop ${canonical}`);
-    }
-    process.exit(1);
-  }
+  // A rebuild that disabled every channel can leave its providers on the
+  // gateway but detached from the current sandbox. The enabled plan carries
+  // the preset into rebuild, where sandbox creation attaches each provider
+  // before OpenShell accepts its credential-bound policy.
   const state = disabled ? "disabled" : "enabled";
   console.log(`  ${G}✓${R} Marked ${canonical} ${state} for '${sandboxName}'.`);
   const rebuilt = await promptAndRebuild(sandboxName, `${verb} '${canonical}'`);
