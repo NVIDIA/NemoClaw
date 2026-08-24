@@ -9,11 +9,7 @@ import {
   NAME_ALLOWED_FORMAT,
   NAME_MAX_LENGTH,
 } from "../../sandbox-name-contract";
-import {
-  buildGlobalPolicyGetFullJsonCommand,
-  buildGlobalPolicyListCommand,
-  buildPolicyGetFullJsonCommand,
-} from "../../policy/commands";
+import { buildPolicyGetFullJsonCommand } from "../../policy/commands";
 const POLICY_AUTHORITY_CAPTURE_MAX_BYTES = 1024 * 1024;
 const POLICY_AUTHORITY_CAPTURE_TIMEOUT_MS = 30_000;
 
@@ -58,13 +54,10 @@ export type PolicyAuthorityCapture = (
   options?: { readonly maxBuffer?: number; readonly timeout?: number },
 ) => PolicyAuthorityCaptureResult;
 
-interface PolicyAuthorityInspectionOptions {
+interface SandboxPolicyAuthorityInspectionOptions {
+  readonly sandboxName: string;
   readonly gatewayName?: string;
   readonly runCaptureEx: PolicyAuthorityCapture;
-}
-
-interface SandboxPolicyAuthorityInspectionOptions extends PolicyAuthorityInspectionOptions {
-  readonly sandboxName: string;
 }
 
 function validatePolicyAuthorityName(name: string, label: string): string {
@@ -193,58 +186,6 @@ export function inspectSandboxPolicyAuthority({
   return {
     authority: metadata.policy_source === "sandbox" ? "nemoclaw-managed" : "externally-managed",
     effectivePolicy: policyObject(metadata, "sandbox"),
-  };
-}
-
-/** Inspect whether a global policy will manage sandboxes created next. */
-export function inspectGlobalPolicyAuthority({
-  gatewayName,
-  runCaptureEx,
-}: PolicyAuthorityInspectionOptions): SandboxPolicyAuthorityInspection {
-  const validatedGatewayName =
-    gatewayName === undefined
-      ? undefined
-      : validatePolicyAuthorityName(gatewayName, "gateway name");
-  const { stdout: history } = capturePolicyQuery(
-    buildGlobalPolicyListCommand(validatedGatewayName),
-    runCaptureEx,
-    "global",
-    "policy history",
-  );
-  if (history.trim().length === 0) {
-    return { authority: "nemoclaw-managed", effectivePolicy: {} };
-  }
-  const { stdout: raw } = capturePolicyQuery(
-    buildGlobalPolicyGetFullJsonCommand(validatedGatewayName),
-    runCaptureEx,
-    "global",
-    "machine-readable policy",
-  );
-  if (raw.trim().length === 0) {
-    failInspection("global", "OpenShell returned empty policy metadata");
-  }
-  const metadata = parsePolicyMetadata(raw, "global");
-  if (metadata.scope !== "global") {
-    failInspection("global", "OpenShell returned policy metadata for another scope");
-  }
-  if (Object.hasOwn(metadata, "sandbox")) {
-    failInspection("global", "OpenShell returned an unexpected sandbox identity");
-  }
-  if (metadata.policy_source !== undefined && metadata.policy_source !== "global") {
-    failInspection("global", "OpenShell returned an unknown global policy source");
-  }
-  if (metadata.status === "superseded") {
-    return { authority: "nemoclaw-managed", effectivePolicy: {} };
-  }
-  if (metadata.status !== "loaded") {
-    failInspection(
-      "global",
-      "OpenShell returned a global policy status that cannot determine authority",
-    );
-  }
-  return {
-    authority: "externally-managed",
-    effectivePolicy: policyObject(metadata, "global"),
   };
 }
 

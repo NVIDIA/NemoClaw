@@ -41,6 +41,11 @@ const {
   buildPolicySetCommand,
   parseCurrentPolicy,
   resolvePermissivePolicyPath,
+  assertNemoClawManagedPolicy,
+  inspectPolicyMutationAuthority,
+  isPolicyAuthorityRefusalError,
+  recheckPolicyMutationAuthority,
+  rejectFinalPolicySetResult: rejectFinalShieldsPolicySetResult,
 } = require("../policy");
 const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("../domain/duration");
 const {
@@ -132,6 +137,21 @@ type MutableConfigRepairResult = import("./mutable-config-perms").MutableConfigR
 type AgentStateLockPlan = import("../agent/definition-types").AgentStateLockPlan;
 type ManagedMcpPolicyOmission = import("./permissive-runtime").ManagedMcpPolicyOmission;
 type TimerMarker = import("./timer-control").TimerMarker;
+type PolicyMutationAuthority = ReturnType<typeof inspectPolicyMutationAuthority>;
+
+/** Require the registry-bound live authority before a Shields-owned policy mutation. */
+function assertShieldsPolicyMutationAuthority(
+  sandboxName: string,
+  operation: string,
+  recorded?: PolicyMutationAuthority,
+): PolicyMutationAuthority {
+  const authority = recorded
+    ? recheckPolicyMutationAuthority(sandboxName, operation, recorded)
+    : inspectPolicyMutationAuthority(sandboxName, operation);
+  assertNemoClawManagedPolicy(authority, operation);
+  return authority;
+}
+
 const STATE_DIR = resolveShieldsStateDir();
 const SHIELDS_TRANSITION_POLL_MS = 50;
 const SHIELDS_TRANSITION_HANDOFF_GRACE_MS = 500;
@@ -4004,12 +4024,13 @@ function describeRollbackTimerAuthority(
 function resolveExactManagedMcpPolicies(
   sandboxName: string,
   livePolicyYaml?: string,
+  gatewayName?: string,
 ): ReturnType<typeof inspectExactManagedMcpPolicies> {
   let effectiveLivePolicy = livePolicyYaml;
   if (!effectiveLivePolicy) {
     let rawPolicy: string;
     try {
-      rawPolicy = runCapture(buildPolicyGetCommand(sandboxName));
+      rawPolicy = runCapture(buildPolicyGetCommand(sandboxName, gatewayName));
     } catch (error) {
       throw new Error("Cannot read the live gateway policy for managed MCP reconciliation", {
         cause: error,
@@ -4025,11 +4046,14 @@ function resolveExactManagedMcpPolicies(
 
 function resolveProvableManagedMcpPoliciesForDeadline(
   sandboxName: string,
+  gatewayName?: string,
 ): ReturnType<typeof inspectProvableManagedMcpPoliciesForDeadline> {
   try {
     let effectiveLivePolicy = "";
     try {
-      effectiveLivePolicy = parseCurrentPolicy(runCapture(buildPolicyGetCommand(sandboxName)));
+      effectiveLivePolicy = parseCurrentPolicy(
+        runCapture(buildPolicyGetCommand(sandboxName, gatewayName)),
+      );
     } catch {
       // The tolerant deadline inspector records exact omissions for every claim
       // when the live policy cannot be parsed or read.
@@ -4071,6 +4095,10 @@ function applyShieldsPolicySnapshot(
   snapshotPath: string,
   options: ShieldsPolicySnapshotRestoreOptions = {},
 ): ShieldsPolicySnapshotRestoreResult {
+  const policyAuthority = assertShieldsPolicyMutationAuthority(
+    sandboxName,
+    "restore the Shields policy snapshot",
+  );
   const buildPolicySet = options.buildPolicySet ?? buildPolicySetCommand;
   const runPolicySet = options.runPolicySet ?? run;
   const state = loadShieldsState(sandboxName);
@@ -4158,15 +4186,28 @@ function applyShieldsPolicySnapshot(
         fs.readFileSync(snapshotPath, "utf-8"),
         hasManagedMcpPolicyClaims(sandboxName),
       );
-      return runPolicySet(buildPolicySet(snapshotPath, sandboxName), {
-        ignoreError: true,
-      });
+      assertShieldsPolicyMutationAuthority(
+        sandboxName,
+        "restore the Shields policy snapshot",
+        policyAuthority,
+      );
+      const result = runPolicySet(
+        buildPolicySet(snapshotPath, sandboxName, policyAuthority.gatewayName),
+        {
+          ignoreError: true,
+        },
+      );
+      rejectFinalShieldsPolicySetResult(result, "restore the Shields policy snapshot");
+      return result;
     }
   }
   let managedMcpOmissions: ManagedMcpPolicyOmission[] = [];
   let runtimePolicyPath: string;
   if (options.deadlineAuthoritative) {
-    const inspection = resolveProvableManagedMcpPoliciesForDeadline(sandboxName);
+    const inspection = resolveProvableManagedMcpPoliciesForDeadline(
+      sandboxName,
+      policyAuthority.gatewayName,
+    );
     const runtime = buildDeadlineRuntimeManagedMcpPolicy(snapshotPath, {
       managedMcpPolicies: inspection.policies,
       snapshotManagedPolicyKeys,
@@ -4175,7 +4216,11 @@ function applyShieldsPolicySnapshot(
     runtimePolicyPath = runtime.path;
     managedMcpOmissions = [...ownershipOmissions, ...inspection.omissions, ...runtime.omissions];
   } else {
-    const managedMcpPolicies = resolveExactManagedMcpPolicies(sandboxName);
+    const managedMcpPolicies = resolveExactManagedMcpPolicies(
+      sandboxName,
+      undefined,
+      policyAuthority.gatewayName,
+    );
     runtimePolicyPath = buildRuntimeManagedMcpPolicy(snapshotPath, {
       managedMcpPolicies,
       snapshotManagedPolicyKeys,
@@ -4184,9 +4229,18 @@ function applyShieldsPolicySnapshot(
   }
   const runtimePolicyIsTemp = runtimePolicyPath !== snapshotPath;
   try {
-    const result = runPolicySet(buildPolicySet(runtimePolicyPath, sandboxName), {
-      ignoreError: true,
-    });
+    assertShieldsPolicyMutationAuthority(
+      sandboxName,
+      "restore the Shields policy snapshot",
+      policyAuthority,
+    );
+    const result = runPolicySet(
+      buildPolicySet(runtimePolicyPath, sandboxName, policyAuthority.gatewayName),
+      {
+        ignoreError: true,
+      },
+    );
+    rejectFinalShieldsPolicySetResult(result, "restore the Shields policy snapshot");
     return managedMcpOmissions.length > 0 ? { ...result, managedMcpOmissions } : result;
   } finally {
     if (runtimePolicyIsTemp) {
@@ -4601,9 +4655,21 @@ function applyRecoveredShieldsDownForwardPolicy(
   completion: RecoveredShieldsDownCompletion,
 ): void {
   if (!completion.authority) return;
+  const policyAuthority = assertShieldsPolicyMutationAuthority(
+    sandboxName,
+    "reapply the interrupted Shields down policy",
+  );
   assertRecoveredShieldsDownAuthority(sandboxName, completion, completion.authority.phase);
   const policyPath = requireShieldsDownForwardPolicy(completion.authority);
-  const result = run(buildPolicySetCommand(policyPath, sandboxName), { ignoreError: true });
+  assertShieldsPolicyMutationAuthority(
+    sandboxName,
+    "reapply the interrupted Shields down policy",
+    policyAuthority,
+  );
+  const result = run(buildPolicySetCommand(policyPath, sandboxName, policyAuthority.gatewayName), {
+    ignoreError: true,
+  });
+  rejectFinalShieldsPolicySetResult(result, "reapply the interrupted Shields down policy");
   if (result.status !== 0) {
     throw new Error("Interrupted Shields down forward policy could not be reapplied");
   }
@@ -5002,6 +5068,8 @@ function shieldsDownWithoutHostLock(
     return failShieldsCommand(`Config is already unlocked for ${sandboxName}`, opts.throwOnError);
   }
 
+  const policyAuthority = assertShieldsPolicyMutationAuthority(sandboxName, "lower Shields");
+
   // Resolve the old-image compatibility contract before touching timers,
   // host state, policy, or sandbox files. A transport failure or an
   // unsupported/incomplete guard must leave an ordinary shields command with
@@ -5022,6 +5090,11 @@ function shieldsDownWithoutHostLock(
   // Kill stale auto-restore markers only when this command will actually
   // transition into shields-down. A repeated shields-down must not cancel the
   // active timer and leave the sandbox unlocked indefinitely.
+  assertShieldsPolicyMutationAuthority(
+    sandboxName,
+    "revoke stale Shields timer authority",
+    policyAuthority,
+  );
   const timerCancellation = killTimer(sandboxName);
   if (!timerCancellation.authorityRevoked) {
     const detail = timerCancellation.warnings.join("; ");
@@ -5041,10 +5114,11 @@ function shieldsDownWithoutHostLock(
   console.log("  Capturing current policy snapshot...");
   let rawPolicy: string;
   try {
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName));
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName, policyAuthority.gatewayName));
   } catch {
     rawPolicy = "";
   }
+  assertShieldsPolicyMutationAuthority(sandboxName, "continue lowering Shields", policyAuthority);
 
   const policyYaml = parseCurrentPolicy(rawPolicy);
   if (!policyYaml) {
@@ -5054,7 +5128,11 @@ function shieldsDownWithoutHostLock(
 
   let managedMcpPolicies: ReturnType<typeof inspectExactManagedMcpPolicies>;
   try {
-    managedMcpPolicies = resolveExactManagedMcpPolicies(sandboxName, policyYaml);
+    managedMcpPolicies = resolveExactManagedMcpPolicies(
+      sandboxName,
+      policyYaml,
+      policyAuthority.gatewayName,
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`  Cannot preserve managed MCP policy state: ${message}`);
@@ -5064,6 +5142,11 @@ function shieldsDownWithoutHostLock(
     );
   }
   const snapshotManagedMcpPolicyKeys = managedMcpPolicies.map((policy) => policy.key);
+  assertShieldsPolicyMutationAuthority(
+    sandboxName,
+    "capture the Shields policy snapshot",
+    policyAuthority,
+  );
 
   const snapshotPath = path.join(
     STATE_DIR,
@@ -5136,6 +5219,11 @@ function shieldsDownWithoutHostLock(
   // down. A crash can therefore never leave an untracked mutable window.
   let timerStart: FreshShieldsDownTimerStart;
   try {
+    assertShieldsPolicyMutationAuthority(
+      sandboxName,
+      "start the Shields auto-restore timer",
+      policyAuthority,
+    );
     timerStart = startFreshShieldsDownTimer({
       sandboxName,
       timeoutSeconds,
@@ -5160,6 +5248,11 @@ function shieldsDownWithoutHostLock(
     if (transition && timerAuthority) {
       assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
     }
+    assertShieldsPolicyMutationAuthority(
+      sandboxName,
+      "record the provisional Shields down state",
+      policyAuthority,
+    );
     saveShieldsState(sandboxName, {
       shieldsDown: true,
       shieldsDownAt: now,
@@ -5215,11 +5308,26 @@ function shieldsDownWithoutHostLock(
   console.log(`  Applying ${policyName} policy...`);
   let policySetResult: ReturnType<typeof run>;
   try {
-    policySetResult = run(buildPolicySetCommand(policyPathForApply, sandboxName), {
-      ignoreError: true,
-    });
+    assertShieldsPolicyMutationAuthority(
+      sandboxName,
+      "apply the Shields down policy",
+      policyAuthority,
+    );
+    policySetResult = run(
+      buildPolicySetCommand(policyPathForApply, sandboxName, policyAuthority.gatewayName),
+      {
+        ignoreError: true,
+      },
+    );
   } finally {
     cleanupRuntimePolicyFile();
+  }
+  let policyAuthorityRefusal: unknown = null;
+  try {
+    rejectFinalShieldsPolicySetResult(policySetResult, "apply the Shields down policy");
+  } catch (error) {
+    if (!isPolicyAuthorityRefusalError(error)) throw error;
+    policyAuthorityRefusal = error;
   }
   if (policySetResult.status !== 0) {
     // The permissive policy was rejected before it applied — for example,
@@ -5263,6 +5371,7 @@ function shieldsDownWithoutHostLock(
         `  ERROR: Could not apply the ${policyName} policy, and clearing the provisional Shields down record failed: ${stateMessage}`,
       );
       console.error("  The scheduled auto-restore remains authoritative.");
+      if (policyAuthorityRefusal !== null) throw policyAuthorityRefusal;
       return failShieldsCommand(`Could not apply ${policyName} policy`, opts.throwOnError);
     }
     const timerCancellation = killTimer(sandboxName);
@@ -5273,8 +5382,10 @@ function shieldsDownWithoutHostLock(
       `  ERROR: Could not apply the ${policyName} policy; the sandbox remains in the Shields up state.`,
     );
     console.error("  Shields down did not take effect. `shields status` continues to report `UP`.");
+    if (policyAuthorityRefusal !== null) throw policyAuthorityRefusal;
     return failShieldsCommand(`Could not apply ${policyName} policy`, opts.throwOnError);
   }
+  if (policyAuthorityRefusal !== null) throw policyAuthorityRefusal;
 
   // 2b. Return config to default mutable state.
   //     OpenClaw uses sandbox:sandbox 0660/2770 here so the gateway UID, which
@@ -6085,6 +6196,7 @@ function clearShieldsState(sandboxName: string): void {
 
 export {
   applyShieldsPolicySnapshot,
+  assertShieldsPolicyMutationAuthority,
   clearShieldsState,
   completeAutoRestoreTransition,
   DEFAULT_TIMEOUT_SECONDS,

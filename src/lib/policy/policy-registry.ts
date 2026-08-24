@@ -31,6 +31,8 @@ export {
   assertExternalPolicyRequirements,
   assertRecordedPolicyAuthority,
   inspectSandboxPolicyAuthority,
+  isPolicyAuthorityRefusalError,
+  PolicyAuthorityRefusalError,
 } from "../adapters/openshell/policy-authority";
 export type {
   SandboxPolicyAuthority,

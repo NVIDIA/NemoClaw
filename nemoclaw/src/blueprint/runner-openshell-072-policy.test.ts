@@ -13,6 +13,13 @@ import {
   inMemoryFsMethods,
   resolvedEndpointFor,
 } from "./runner-mock-fixtures.js";
+import {
+  gatewayStatusResult,
+  globalPolicyAuthorityResult,
+  minimalBlueprint,
+  resultWithBlueprintPolicyAuthority,
+  sandboxPolicyAuthorityResult,
+} from "./runner-test-fixtures.js";
 
 const { store } = createRunnerFsStore();
 const mockExeca = vi.fn();
@@ -108,6 +115,14 @@ function policySetCalls(): unknown[][] {
   );
 }
 
+function defaultCommandResult(args: string[]) {
+  return resultWithBlueprintPolicyAuthority(args, {
+    exitCode: 0,
+    stdout: "",
+    stderr: "",
+  });
+}
+
 function mergedPolicy(): Record<string, unknown> {
   const key = [...store.keys()].find((candidate) => candidate.endsWith("/merged-policy.yaml"));
   expect(key).toBeDefined();
@@ -152,14 +167,15 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     mockExeca.mockReset();
     vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const policyByCommand = new Map([
-      ["policy get --base test-sandbox", policyOutput(BASE_POLICY)],
-      ["policy get --full test-sandbox", policyOutput(FULL_POLICY)],
+      ["policy get -g test-gateway --base test-sandbox", policyOutput(BASE_POLICY)],
+      ["policy get -g test-gateway --full test-sandbox", policyOutput(FULL_POLICY)],
     ]);
-    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => ({
-      exitCode: 0,
-      stdout: policyByCommand.get(args.slice(0, 4).join(" ")) ?? "",
-      stderr: "",
-    }));
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
+      const policy = policyByCommand.get(args.join(" "));
+      return policy === undefined
+        ? defaultCommandResult(args)
+        : { exitCode: 0, stdout: policy, stderr: "" };
+    });
   });
 
   afterEach(() => {
@@ -171,12 +187,12 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
 
     expect(mockExeca).toHaveBeenCalledWith(
       "openshell",
-      ["policy", "get", "--base", "test-sandbox"],
+      ["policy", "get", "-g", "test-gateway", "--base", "test-sandbox"],
       expect.objectContaining({ reject: false }),
     );
     expect(mockExeca).not.toHaveBeenCalledWith(
       "openshell",
-      ["policy", "get", "--full", "test-sandbox"],
+      ["policy", "get", "-g", "test-gateway", "--full", "test-sandbox"],
       expect.anything(),
     );
 
@@ -200,14 +216,11 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     ["scalar", "future_mode", "future_mode: strict\n"],
     ["sequence", "future_features", "future_features: [audit, attribution]\n"],
   ])("fails closed for an unknown top-level %s", async (_shape, key, fragment) => {
-    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => ({
-      exitCode: 0,
-      stdout:
-        args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
-          ? policyOutput(`${fragment}${BASE_POLICY}`)
-          : "",
-      stderr: "",
-    }));
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "policy get -g test-gateway --base test-sandbox"
+        ? { exitCode: 0, stdout: policyOutput(`${fragment}${BASE_POLICY}`), stderr: "" }
+        : defaultCommandResult(args),
+    );
 
     await expect(actionApply("default", blueprint())).rejects.toThrow(
       `Current policy top-level field "${key}" must be a YAML mapping`,
@@ -217,9 +230,9 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
 
   it("fails closed when policy get --base fails", async () => {
     mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-      args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
+      args.join(" ") === "policy get -g test-gateway --base test-sandbox"
         ? { exitCode: 1, stdout: "", stderr: "gateway unavailable" }
-        : { exitCode: 0, stdout: "", stderr: "" },
+        : defaultCommandResult(args),
     );
 
     await expect(actionApply("default", blueprint())).rejects.toThrow(
@@ -229,14 +242,11 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
   });
 
   it("fails closed when policy get --base returns metadata without a policy document", async () => {
-    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => ({
-      exitCode: 0,
-      stdout:
-        args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
-          ? "Version: 1\nHash: sha256:test\n"
-          : "",
-      stderr: "",
-    }));
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "policy get -g test-gateway --base test-sandbox"
+        ? { exitCode: 0, stdout: "Version: 1\nHash: sha256:test\n", stderr: "" }
+        : defaultCommandResult(args),
+    );
 
     await expect(actionApply("default", blueprint())).rejects.toThrow(
       /does not contain a policy YAML document/,
@@ -249,14 +259,11 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     malformedBase.network_policies["_provider_unexpected"] = {
       endpoints: [{ host: "provider.invalid", port: 443, access: "full" }],
     };
-    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => ({
-      exitCode: 0,
-      stdout:
-        args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
-          ? policyOutput(YAML.stringify(malformedBase))
-          : "",
-      stderr: "",
-    }));
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "policy get -g test-gateway --base test-sandbox"
+        ? { exitCode: 0, stdout: policyOutput(YAML.stringify(malformedBase)), stderr: "" }
+        : defaultCommandResult(args),
+    );
 
     await actionApply("default", blueprint());
     const merged = mergedPolicy() as {
@@ -284,18 +291,134 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
   });
 
   it("fails closed for a legacy network_policies array instead of dropping it", async () => {
-    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => ({
-      exitCode: 0,
-      stdout:
-        args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
-          ? policyOutput("version: 1\nnetwork_policies:\n  - name: legacy\n")
-          : "",
-      stderr: "",
-    }));
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "policy get -g test-gateway --base test-sandbox"
+        ? {
+            exitCode: 0,
+            stdout: policyOutput("version: 1\nnetwork_policies:\n  - name: legacy\n"),
+            stderr: "",
+          }
+        : defaultCommandResult(args),
+    );
 
     await expect(actionApply("default", blueprint())).rejects.toThrow(
       /network_policies must be a YAML mapping/,
     );
+    expect(policySetCalls()).toEqual([]);
+  });
+
+  it("uses exact external additions without mutating policy (#9833)", async () => {
+    const bp = blueprint();
+    const additions = bp.components!.policy!.additions!;
+    vi.stubEnv("OPENSHELL_SANDBOX_POLICY", "/tmp/caller-policy.yaml");
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "status"
+        ? gatewayStatusResult("recorded-gateway")
+        : args.join(" ") === "policy list -g recorded-gateway --global --limit 1"
+          ? { exitCode: 0, stdout: "VERSION STATUS\n1 loaded\n", stderr: "" }
+          : args.join(" ") === "policy get -g recorded-gateway --global --full --output json"
+            ? globalPolicyAuthorityResult(additions)
+            : args.join(" ") ===
+                "policy get -g recorded-gateway --full --output json test-sandbox"
+              ? sandboxPolicyAuthorityResult("test-sandbox", "externally-managed", additions)
+              : { exitCode: 0, stdout: "", stderr: "" },
+    );
+
+    await actionApply("default", bp);
+
+    const policyCalls = mockExeca.mock.calls.filter(
+      (call) => Array.isArray(call[1]) && call[1][0] === "policy",
+    );
+    expect(policyCalls.every((call) => call[1].includes("recorded-gateway"))).toBe(true);
+    expect(policySetCalls()).toEqual([]);
+    const sandboxCreate = mockExeca.mock.calls.find(
+      (call) => Array.isArray(call[1]) && call[1][0] === "sandbox" && call[1][1] === "create",
+    );
+    expect(sandboxCreate?.[2].env).not.toHaveProperty("OPENSHELL_SANDBOX_POLICY");
+  });
+
+  it("refuses missing external additions before creating a sandbox (#9833)", async () => {
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "status"
+        ? gatewayStatusResult()
+        : args.join(" ") === "policy list -g test-gateway --global --limit 1"
+          ? { exitCode: 0, stdout: "VERSION STATUS\n1 loaded\n", stderr: "" }
+          : args.join(" ") === "policy get -g test-gateway --global --full --output json"
+            ? globalPolicyAuthorityResult()
+            : { exitCode: 0, stdout: "", stderr: "" },
+    );
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      /missing entries "nim_service"/,
+    );
+    expect(
+      mockExeca.mock.calls.some(
+        (call) => Array.isArray(call[1]) && call[1][0] === "sandbox" && call[1][1] === "create",
+      ),
+    ).toBe(false);
+  });
+
+  it("fails closed on malformed global authority before sandbox creation (#9833)", async () => {
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "status"
+        ? gatewayStatusResult()
+        : args.join(" ") === "policy list -g test-gateway --global --limit 1"
+          ? { exitCode: 0, stdout: "VERSION STATUS\n1 loaded\n", stderr: "" }
+          : args.join(" ") === "policy get -g test-gateway --global --full --output json"
+            ? { exitCode: 0, stdout: "{", stderr: "" }
+            : { exitCode: 0, stdout: "", stderr: "" },
+    );
+
+    await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
+      /malformed global policy authority metadata/,
+    );
+    expect(
+      mockExeca.mock.calls.some(
+        (call) => Array.isArray(call[1]) && call[1][0] === "sandbox" && call[1][1] === "create",
+      ),
+    ).toBe(false);
+  });
+
+  it("stops before provider and policy mutation when sandbox authority is malformed (#9833)", async () => {
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.join(" ") === "policy get -g test-gateway --full --output json test-sandbox"
+        ? { exitCode: 0, stdout: "{", stderr: "" }
+        : defaultCommandResult(args),
+    );
+
+    await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
+      /malformed sandbox policy authority metadata/,
+    );
+    expect(
+      mockExeca.mock.calls.some(
+        (call) => Array.isArray(call[1]) && call[1][0] === "provider" && call[1][1] === "create",
+      ),
+    ).toBe(false);
+    expect(policySetCalls()).toEqual([]);
+  });
+
+  it("rechecks authority immediately before a managed policy mutation (#9833)", async () => {
+    let sandboxAuthorityReads = 0;
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
+      switch (args.join(" ")) {
+        case "policy get -g test-gateway --base test-sandbox":
+          return {
+            exitCode: 0,
+            stdout: "Version: 1\nHash: sha256:test\n---\nversion: 1\nnetwork_policies: {}\n",
+            stderr: "",
+          };
+        case "policy get -g test-gateway --full --output json test-sandbox":
+          sandboxAuthorityReads += 1;
+          return sandboxPolicyAuthorityResult(
+            "test-sandbox",
+            sandboxAuthorityReads < 3 ? "nemoclaw-managed" : "externally-managed",
+          );
+        default:
+          return defaultCommandResult(args);
+      }
+    });
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(/policy authority changed/);
     expect(policySetCalls()).toEqual([]);
   });
 });

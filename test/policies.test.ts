@@ -515,6 +515,31 @@ exit 1
       expect(waitIdx < nameIdx).toBeTruthy();
     });
 
+    it("pins policy reads and writes to an explicit gateway (#9833)", () => {
+      expect(
+        policies
+          .buildPolicySetCommand("/tmp/policy.yaml", "my-assistant", "nemoclaw-18080")
+          .slice(1),
+      ).toEqual([
+        "policy",
+        "set",
+        "-g",
+        "nemoclaw-18080",
+        "--policy",
+        "/tmp/policy.yaml",
+        "--wait",
+        "my-assistant",
+      ]);
+      expect(policies.buildPolicyGetCommand("my-assistant", "nemoclaw-18080").slice(1)).toEqual([
+        "policy",
+        "get",
+        "-g",
+        "nemoclaw-18080",
+        "--base",
+        "my-assistant",
+      ]);
+    });
+
     it("uses the resolved openshell binary for every policy command", () => {
       const resolved = "/opt/nvidia/bin/openshell";
       const resolveSpy = vi

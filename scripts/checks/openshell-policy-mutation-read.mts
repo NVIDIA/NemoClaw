@@ -79,7 +79,11 @@ export const MUTATION_READS: readonly AuditedPolicyReadFile[] = [
   },
   {
     relativePath: "nemoclaw/src/blueprint/runner.ts",
-    expectedReads: [unclassifiedBase("actionApply")],
+    expectedReads: [
+      unclassifiedBase("actionApply"),
+      unclassifiedFull("inspectBlueprintPolicyAuthority"),
+      unclassifiedFull("inspectBlueprintPolicyAuthority"),
+    ],
   },
   {
     relativePath: "src/lib/shields/index.ts",
@@ -94,10 +98,7 @@ export const MUTATION_READS: readonly AuditedPolicyReadFile[] = [
 const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
   {
     relativePath: "src/lib/adapters/openshell/policy-authority.ts",
-    expectedReads: [
-      unclassifiedFull("inspectSandboxPolicyAuthority"),
-      unclassifiedFull("inspectGlobalPolicyAuthority"),
-    ],
+    expectedReads: [unclassifiedFull("inspectSandboxPolicyAuthority")],
   },
   {
     relativePath: "src/lib/actions/sandbox/gateway-state.ts",
@@ -124,7 +125,6 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
         failureHandling: "unclassified",
       },
       unclassifiedFull("buildPolicyGetFullJsonCommand"),
-      unclassifiedFull("buildGlobalPolicyGetFullJsonCommand"),
     ],
   },
 ] as const;
@@ -139,7 +139,6 @@ const POLICY_GET_BUILDERS = new Map<string, PolicyReadView>([
   ["buildPolicyGetCommand", "base"],
   ["buildPolicyGetFullCommand", "full"],
   ["buildPolicyGetFullJsonCommand", "full"],
-  ["buildGlobalPolicyGetFullJsonCommand", "full"],
 ]);
 
 interface PolicyBuilderBindings {

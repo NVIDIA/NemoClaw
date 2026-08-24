@@ -570,34 +570,56 @@ interface PolicySetSubmission {
   readonly status: number | null;
 }
 
-interface PolicyAuthorityContext {
+function policyAuthorityError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export interface PolicyMutationAuthority {
   readonly authority: registry.SandboxPolicyAuthority;
   readonly authorityRecordedNow: boolean;
   readonly gatewayName: string;
   readonly inspection: registry.SandboxPolicyAuthorityInspection;
 }
 
-function policyAuthorityError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+export const isPolicyAuthorityRefusalError = registry.isPolicyAuthorityRefusalError;
 
-/** Inspect live authority through the gateway recorded for this sandbox. */
-function inspectPolicyAuthority(
+/** Inspect and, when needed, persist the authority that owns one sandbox policy. */
+export function inspectPolicyMutationAuthority(
   sandboxName: string,
   operation: string,
   requestedGatewayName?: string,
   requireRecordedAuthority = false,
-): PolicyAuthorityContext {
-  const sandbox = registry.getSandbox(sandboxName);
-  const recordedGatewayName = sandbox ? resolveSandboxGatewayName(sandbox) : null;
+): PolicyMutationAuthority {
+  let sandbox: ReturnType<typeof registry.getSandbox>;
+  try {
+    sandbox = registry.getSandbox(sandboxName);
+  } catch {
+    throw new registry.PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: sandbox policy authority is unavailable.`,
+    );
+  }
+  let recordedGatewayName: string | null;
+  try {
+    recordedGatewayName = sandbox ? resolveSandboxGatewayName(sandbox) : null;
+  } catch {
+    throw new registry.PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: the recorded sandbox gateway is unavailable or invalid.`,
+    );
+  }
   if (recordedGatewayName && requestedGatewayName && requestedGatewayName !== recordedGatewayName) {
     throw new Error(
       `Refusing to ${operation}: sandbox '${sandboxName}' is recorded on gateway ` +
         `'${recordedGatewayName}', not '${requestedGatewayName}'.`,
     );
   }
-  const gatewayName =
-    recordedGatewayName ?? requestedGatewayName ?? resolveSandboxGatewayName(undefined);
+  let gatewayName: string;
+  try {
+    gatewayName = recordedGatewayName ?? requestedGatewayName ?? resolveSandboxGatewayName(undefined);
+  } catch {
+    throw new registry.PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: the sandbox gateway is unavailable or invalid.`,
+    );
+  }
   const inspection = registry.inspectSandboxPolicyAuthority({
     sandboxName,
     gatewayName,
@@ -634,12 +656,18 @@ function inspectPolicyAuthority(
       `Refusing to ${operation}: policy authority is not recorded for sandbox '${sandboxName}'.`,
     );
   }
-  if (
-    !sandbox ||
-    !registry.updateSandbox(sandboxName, {
-      policyAuthority: inspection.authority,
-    })
-  ) {
+  let authorityRecorded: boolean;
+  try {
+    authorityRecorded = Boolean(
+      sandbox &&
+      registry.updateSandbox(sandboxName, {
+        policyAuthority: inspection.authority,
+      }),
+    );
+  } catch {
+    authorityRecorded = false;
+  }
+  if (!authorityRecorded) {
     throw new Error(
       `Refusing to ${operation}: NemoClaw could not record policy authority for sandbox '${sandboxName}'.`,
     );
@@ -652,13 +680,60 @@ function inspectPolicyAuthority(
   };
 }
 
-function assertNemoClawManagedPolicy(context: PolicyAuthorityContext, operation: string): void {
-  if (context.authority === "nemoclaw-managed") return;
+/** Require NemoClaw ownership before a local policy mutation. */
+export function assertNemoClawManagedPolicy(
+  authority: PolicyMutationAuthority,
+  operation: string,
+): void {
+  if (authority.authority === "nemoclaw-managed") return;
   throw new Error(
     `Refusing to ${operation}: this sandbox policy is externally managed. ` +
       "Ask the external policy authority to change the required entry.",
   );
 }
+
+/** Recheck one recorded receipt immediately before a policy mutation. */
+export function recheckPolicyMutationAuthority(
+  sandboxName: string,
+  operation: string,
+  recorded: PolicyMutationAuthority,
+): PolicyMutationAuthority {
+  const observed = inspectPolicyMutationAuthority(
+    sandboxName,
+    operation,
+    recorded.gatewayName,
+    true,
+  );
+  registry.assertRecordedPolicyAuthority(recorded.authority, observed.authority, operation);
+  assertNemoClawManagedPolicy(observed, operation);
+  return observed;
+}
+
+/** Reject a final OpenShell policy refusal without exposing raw diagnostics. */
+export function rejectFinalPolicySetResult(
+  result: ReturnType<typeof run>,
+  operation: string,
+): void {
+  const captured = result as ReturnType<typeof run> & {
+    error?: Error;
+    stderr?: string | Buffer | null;
+  };
+  const outcome = classifyPolicySetResult({
+    status: typeof captured.status === "number" ? captured.status : null,
+    ...(captured.error ? { error: captured.error } : {}),
+    stderr: Buffer.isBuffer(captured.stderr)
+      ? captured.stderr.toString("utf8")
+      : (captured.stderr ?? null),
+  });
+  if (outcome.kind === "rejected") {
+    throw new registry.PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: OpenShell rejected the policy change: ${redact(outcome.message)}`,
+    );
+  }
+}
+
+const inspectPolicyAuthority = inspectPolicyMutationAuthority;
+type PolicyAuthorityContext = PolicyMutationAuthority;
 
 function reportPolicyAuthorityFailure(error: unknown): false {
   console.error(`  ${policyAuthorityError(error)}`);
@@ -687,13 +762,7 @@ function recheckNemoClawManagedPolicy(
   authority: PolicyAuthorityContext,
 ): boolean {
   try {
-    const observed = inspectPolicyAuthority(sandboxName, operation, authority.gatewayName, true);
-    registry.assertRecordedPolicyAuthority(
-      authority.authority,
-      observed.authority,
-      operation,
-    );
-    assertNemoClawManagedPolicy(observed, operation);
+    recheckPolicyMutationAuthority(sandboxName, operation, authority);
     return true;
   } catch (error) {
     return reportPolicyAuthorityFailure(error);
@@ -3259,11 +3328,7 @@ function applyPermissivePolicy(sandboxName: string): void {
   assertOpenshellResolvable();
   setPolicyDocument(sandboxName, materializedPolicy, { gatewayName: authority.gatewayName });
   const observed = inspectPolicyAuthority(sandboxName, operation, authority.gatewayName, true);
-  registry.assertRecordedPolicyAuthority(
-    authority.authority,
-    observed.authority,
-    operation,
-  );
+  registry.assertRecordedPolicyAuthority(authority.authority, observed.authority, operation);
   assertNemoClawManagedPolicy(observed, operation);
   console.log("  Applied permissive policy.");
 }
