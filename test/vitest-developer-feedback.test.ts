@@ -21,6 +21,10 @@ describe("Vitest developer feedback", () => {
     });
   });
 
+  it("runs fast feedback on the focused source projects (#6692)", ({ resources }) => {
+    expect(runVitestNpmScript(resources, "test:fast")).toBe(`vitest run ${focusedProjects}`);
+  });
+
   it("runs changed and watch feedback on the focused source projects (#6692)", ({ resources }) => {
     expect(runVitestNpmScript(resources, "test:changed")).toBe(
       `vitest run --changed ${focusedProjects}`,
@@ -41,4 +45,5 @@ describe("Vitest developer feedback", () => {
       `vitest run ${focusedProjects} --detectAsyncLeaks --coverage=false --reporter=default --reporter=hanging-process`,
     );
   });
+
 });
