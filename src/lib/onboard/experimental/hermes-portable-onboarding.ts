@@ -169,7 +169,10 @@ export function createHermesPortableChildEnvironment(
   runtimeAuthority?: CheckpointPortableRuntimeAuthority,
 ): NodeJS.ProcessEnv {
   assertNoOpenShellGatewayEndpointOverride(sourceEnv);
-  return buildOpenShellSubprocessEnv(sourceEnv, runtimeAuthority);
+  const environment = buildOpenShellSubprocessEnv(sourceEnv, runtimeAuthority);
+  if (!runtimeAuthority) return environment;
+  const dockerHost = `unix://${runtimeAuthority.socketPath}`;
+  return { ...environment, DOCKER_HOST: dockerHost };
 }
 
 /** Adapt the existing synchronous runner to bounded, byte-preserving OpenShell captures. */

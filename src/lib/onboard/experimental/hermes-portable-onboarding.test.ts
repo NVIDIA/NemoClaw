@@ -155,6 +155,7 @@ describe("Hermes portable onboarding transaction", () => {
       ["sandbox", "list", "-g", "nemoclaw"],
       expect.objectContaining({
         env: {
+          DOCKER_HOST: "unix:///run/user/1000/podman/podman.sock",
           HOME: "/home/test",
           PATH: "/usr/bin",
           XDG_CONFIG_HOME: "/home/test/.config",
@@ -169,6 +170,9 @@ describe("Hermes portable onboarding transaction", () => {
     expect(createHermesPortableChildEnvironment(sourceEnv, runtimeAuthority)).not.toHaveProperty(
       "XDG_CACHE_HOME",
     );
+    expect(createHermesPortableChildEnvironment(sourceEnv, runtimeAuthority)).toMatchObject({
+      DOCKER_HOST: "unix:///run/user/1000/podman/podman.sock",
+    });
     expect(() =>
       createHermesPortableChildEnvironment({ ...sourceEnv, HOME: "/home/other" }, runtimeAuthority),
     ).toThrow("HOME disagrees with runtime authority");
