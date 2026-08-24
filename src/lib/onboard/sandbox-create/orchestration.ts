@@ -483,13 +483,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       {
         computePlan,
         managedWorkloadRebuild,
-        tempManagedRuntime:
-          tempManagedRuntime ||
-          managedWorkloadOnboard.shouldActivateStockManagedRuntime({
-            portableLifecycle: sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent),
-            hermesPortableLifecycle: agentCreateInput.hermesPortableLifecycle,
-            agentName: requestedAgentName,
-          }),
+        tempManagedRuntime,
+        stockManagedRuntime: managedWorkloadOnboard.shouldActivateStockManagedRuntime({
+          portableLifecycle: sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent),
+          hermesPortableLifecycle: agentCreateInput.hermesPortableLifecycle,
+          agentName: requestedAgentName,
+        }),
         tempManagedRuntimeCatalog,
         agentName: requestedAgentName,
         legacyDockerfilePath,
