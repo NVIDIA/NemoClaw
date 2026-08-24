@@ -250,12 +250,14 @@ function parseDockerfileSources(bytes: Buffer): readonly string[] {
   let logicalInstruction = "";
   for (const rawLine of text.split("\n")) {
     const trimmed = rawLine.trim();
+    const escapeDirective = trimmed.match(/^#\s*escape\s*=\s*(\S+)\s*$/iu);
+    if (escapeDirective && escapeDirective[1] !== "\\") {
+      fail("Dockerfile has an unsupported escape directive");
+    }
     if (!trimmed || trimmed.startsWith("#")) continue;
     const continued = trimmed.endsWith("\\");
     const segment = continued ? trimmed.slice(0, -1).trimEnd() : trimmed;
-    logicalInstruction = logicalInstruction
-      ? `${logicalInstruction} ${segment}`.trim()
-      : segment;
+    logicalInstruction = logicalInstruction ? `${logicalInstruction} ${segment}`.trim() : segment;
     if (continued) continue;
     if (/^RUN\s/iu.test(logicalInstruction)) {
       const [, firstArgument] = logicalInstruction.split(/\s+/u);

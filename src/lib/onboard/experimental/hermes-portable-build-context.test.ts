@@ -406,10 +406,20 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
 
   it.each([
     { instruction: "RUN", option: "--network=none", continued: false, commented: false },
-    { instruction: "RUN", option: "--mount=type=cache,target=/tmp/cache", continued: false, commented: false },
+    {
+      instruction: "RUN",
+      option: "--mount=type=cache,target=/tmp/cache",
+      continued: false,
+      commented: false,
+    },
     { instruction: "run", option: "--network=none", continued: false, commented: false },
     { instruction: "RUN", option: "--network=none", continued: true, commented: false },
-    { instruction: "RUN", option: "--mount=type=cache,target=/tmp/cache", continued: true, commented: true },
+    {
+      instruction: "RUN",
+      option: "--mount=type=cache,target=/tmp/cache",
+      continued: true,
+      commented: true,
+    },
   ])(
     "rejects BuildKit-only $instruction option $option before reservation (#10007)",
     ({ instruction, option, continued, commented }) => {
@@ -421,9 +431,7 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
         : `${instruction} ${option} mkdir -p /sandbox/.nemoclaw`;
       fs.writeFileSync(
         dockerfile,
-        fs
-          .readFileSync(dockerfile, "utf8")
-          .replace("RUN mkdir -p /sandbox/.nemoclaw", replacement),
+        fs.readFileSync(dockerfile, "utf8").replace("RUN mkdir -p /sandbox/.nemoclaw", replacement),
         { mode: 0o644 },
       );
       const reservationExistedBefore = fs.existsSync(reservationRoot);
@@ -434,6 +442,25 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
       expect(fs.existsSync(reservationRoot)).toBe(reservationExistedBefore);
     },
   );
+
+  it("rejects a non-backslash Dockerfile escape directive before reservation (#10007)", () => {
+    const source = primaryCloneFixture();
+    const dockerfile = path.join(source, "agents/hermes/Dockerfile");
+    const reservationRoot = path.join(stateDir, "hermes-portable-build-context");
+    const bytes = fs
+      .readFileSync(dockerfile, "utf8")
+      .replace(
+        "RUN mkdir -p /sandbox/.nemoclaw",
+        "RUN `\n    --mount=type=cache,target=/tmp/cache mkdir -p /sandbox/.nemoclaw",
+      );
+    fs.writeFileSync(dockerfile, `# escape=\`\n${bytes}`, { mode: 0o644 });
+    const reservationExistedBefore = fs.existsSync(reservationRoot);
+
+    expect(() => createHermesPortableBuildContextPlan(source, BUILD_SETTINGS)).toThrow(
+      "unsupported escape directive",
+    );
+    expect(fs.existsSync(reservationRoot)).toBe(reservationExistedBefore);
+  });
 
   it("rejects source symlinks, hardlinks, and unreviewed secret paths (#9203)", () => {
     const source = primaryCloneFixture();
