@@ -81,7 +81,7 @@
     "test/cli/sandbox-status-text.test.ts": 14597,
     "test/cli/snapshot-shields.test.ts": 14050,
     "test/cli/tunnel-command.test.ts": 16882,
-    "test/credentials.test.ts": 6328,
+    "test/credentials/credentials.test.ts": 6328,
     "test/dcode-session-supervisor.test.ts": 7644,
     "test/dcode-wrapper-identity.test.ts": 11176,
     "test/deepagents-code-tui-startup-check.test.ts": 28222,
