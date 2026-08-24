@@ -406,11 +406,17 @@ describe("docker-driver-gateway config TOML", () => {
       fs.writeFileSync(configPath, noDriversToml, { encoding: "utf-8", mode: 0o600 });
       const env = baseGatewayEnv(stateDir);
 
-      expect(() =>
-        prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox"),
-      ).toThrow(
+      let error: unknown;
+      try {
+        prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox");
+      } catch (cause) {
+        error = cause;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(
         /cannot prove its generated gateway identity \(the config does not match NemoClaw's schema\)/,
       );
+      expect((error as Error).message).not.toContain("already configures");
       expect(fs.readFileSync(configPath, "utf-8")).toBe(noDriversToml);
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
