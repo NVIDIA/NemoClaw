@@ -64,13 +64,14 @@ authority to these immutable identities:
 - protected repository and producer workflow;
 - same-repository open PR and candidate repository;
 - exact latest PR commit SHA and exact base SHA;
-- workflow run ID, first attempt, and job ID;
+- exact workflow run ID, run attempt, and job ID;
 - artifact ID, bounded artifact name, and exact SHA-256 digest; and
 - qualification ID and provider ID.
 
-The activation declaration's expected source must equal the protected authority source. A local
-log, vendor receipt, partial matrix, older commit, or rerun from another attempt is supporting
-evidence. It is not activation authority.
+The activation declaration's expected source must equal the protected authority source, including
+the run attempt. The protected native-runtime-qualification producer can run only on its first
+workflow attempt. A local log, vendor receipt, partial matrix, older commit, or different source
+identity is supporting evidence. It is not activation authority.
 
 ## Product Decision
 
