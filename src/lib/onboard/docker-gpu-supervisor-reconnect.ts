@@ -73,6 +73,14 @@ export type DockerGpuSupervisorReconnectDeps = {
   errorPhaseDebouncePolls?: number;
 };
 
+type DockerLifecycleReleaseDeps = Pick<
+  DockerGpuSupervisorReconnectDeps,
+  "runOpenshell" | "sleep"
+> & {
+  /** Corroborates a retiring lifecycle row with the stopped exact replacement. */
+  soleLabeledReplacementCorroboratesRetiringPhase?: (remainingMs: number) => boolean;
+};
+
 type DockerFinalHandoffDeps = Required<
   Pick<DockerGpuSupervisorReconnectDeps, "runCaptureOpenshell" | "runOpenshell">
 > &
@@ -91,6 +99,57 @@ export type DockerFinalHandoffAcknowledgement = {
 };
 
 const FINAL_HANDOFF_TERMINAL_PHASES = new Set(["Deleting", "Failed", "CrashLoopBackOff"]);
+
+/**
+ * Wait for OpenShell to retire the pre-replacement lifecycle record before
+ * restarting the replacement. A retiring Error or Deleting row is accepted
+ * only with an identity-bound Docker corroboration.
+ */
+export function waitForOpenShellSandboxLifecycleRelease(
+  sandboxName: string,
+  timeoutSecs: number,
+  deps: DockerLifecycleReleaseDeps,
+): boolean {
+  if (!deps.runOpenshell) return false;
+  const sleep = deps.sleep ?? defaultSleep;
+  const deadline = Date.now() + Math.max(1, Math.round(timeoutSecs)) * 1000;
+  const maxAttempts = Math.max(1, Math.ceil(Math.max(1, Math.round(timeoutSecs)) / 2) + 1);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    const result = deps.runOpenshell(["sandbox", "list"], {
+      ignoreError: true,
+      suppressOutput: true,
+      timeout: Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, remainingMs),
+    });
+    if (hasZeroDockerExitStatus(result)) {
+      const output = String(result.stdout ?? "").trim();
+      const entries = parseLiveSandboxEntries(output);
+      const sandboxPresent = entries.some((entry) => entry.name === sandboxName);
+      const retiring = entries.some(
+        (entry) => entry.name === sandboxName && (entry.phase === "Error" || entry.phase === "Deleting"),
+      );
+      const corroborated =
+        retiring &&
+        deadline - Date.now() > 0 &&
+        deps.soleLabeledReplacementCorroboratesRetiringPhase?.(deadline - Date.now()) === true;
+      const explicitEmptyList = output === "No sandboxes found" || output === "No sandboxes found.";
+      if (
+        explicitEmptyList ||
+        corroborated ||
+        (entries.some((entry) => entry.phase !== null) && !sandboxPresent)
+      ) {
+        return true;
+      }
+    }
+    const remainingBeforeSleepMs = deadline - Date.now();
+    if (attempt < maxAttempts && remainingBeforeSleepMs > 0) {
+      sleep(Math.min(2, remainingBeforeSleepMs / 1000));
+    }
+  }
+  return false;
+}
 
 function exactReplacementIsRunning(
   callback: DockerFinalHandoffDeps["replacementIsExactAndRunning"],

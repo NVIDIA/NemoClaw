@@ -38,8 +38,7 @@ describe("PR review advisor OpenShell workflow boundary", () => {
   // source-shape-contract: security -- Distinct sandbox identities isolate every specialist from synthesis state.
   it("requires distinct specialist and synthesis sandboxes", () => {
     const errors = mutate((workflow) => {
-      workflow.jobs.review.strategy.matrix.advisor[0].sandbox_name =
-        workflow.jobs["review-specialists"].strategy.matrix.advisor[0].sandbox_name;
+      workflow.jobs.review.strategy.matrix.advisor[0].sandbox_name = "pr-adv-sp-beha-08bf";
     });
     expect(errors).toContain(
       "advisor, specialist, and synthesis sandbox_name values must be unique",

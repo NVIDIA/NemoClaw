@@ -7,8 +7,42 @@ import {
   getDockerGpuSupervisorReconnectErrorDebouncePolls,
   getDockerGpuSupervisorReconnectTimeoutSecs,
   waitForOpenShellFinalHandoff,
+  waitForOpenShellSandboxLifecycleRelease,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-supervisor-reconnect";
+
+describe("Docker GPU final lifecycle release", () => {
+  it("requires corroboration for a retiring lifecycle row (#9962)", () => {
+    const corroborate = vi.fn(() => true);
+
+    expect(
+      waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
+        runOpenshell: vi.fn(() => ({
+          status: 0,
+          stdout: "alpha  2026-08-23 01:40:35  Deleting\n",
+        })),
+        sleep: vi.fn(),
+        soleLabeledReplacementCorroboratesRetiringPhase: corroborate,
+      }),
+    ).toBe(true);
+    expect(corroborate).toHaveBeenCalledOnce();
+  });
+
+  it("does not accept an uncorroborated retiring lifecycle row (#9962)", () => {
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: "alpha  2026-08-23 01:40:35  Error\n",
+    }));
+
+    expect(
+      waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
+        runOpenshell,
+        sleep: vi.fn(),
+      }),
+    ).toBe(false);
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe("Docker GPU final handoff acknowledgement", () => {
   it("accepts the exact running replacement only after OpenShell reports Ready (#9531)", () => {

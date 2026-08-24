@@ -41,7 +41,11 @@ function exactDeferredCreateResult(): DockerGpuPatchResult {
 function readyHandoffDeps() {
   return {
     runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:00  Ready\n"),
-    runOpenshell: vi.fn(() => ({ status: 0 })),
+    runOpenshell: vi.fn((args: readonly string[]) =>
+      args[1] === "list"
+        ? { status: 0, stdout: "beta  2026-08-23 10:00:00  Ready\n" }
+        : { status: 0 },
+    ),
   };
 }
 
@@ -124,7 +128,11 @@ describe("finalizeDockerGpuPatchBackup", () => {
       events.push("observe ready");
       return "alpha  2026-08-23 10:00:00  Ready\n";
     });
-    const runOpenshell = vi.fn(() => {
+    const runOpenshell = vi.fn((args: readonly string[]) => {
+      if (args[1] === "list") {
+        events.push("observe lifecycle release");
+        return { status: 0, stdout: "beta  2026-08-23 10:00:00  Ready\n" };
+      }
       events.push("exec ready");
       return { status: 0 };
     });
@@ -164,12 +172,14 @@ describe("finalizeDockerGpuPatchBackup", () => {
       rolledBack: false,
       replacementStoppedForCommit: true,
       replacementRestarted: true,
+      lifecycleReleaseObserved: true,
       finalHandoffAcknowledged: true,
       lastSandboxPhase: "Ready",
     });
     expect(events).toEqual([
       "stop replacement",
       "remove backup",
+      "observe lifecycle release",
       "start replacement",
       "observe ready",
       "exec ready",
@@ -218,7 +228,11 @@ describe("finalizeDockerGpuPatchBackup", () => {
           events.push("observe deleting");
           return "alpha  2026-08-23 10:00:00  Deleting\n";
         }),
-        runOpenshell: vi.fn(() => ({ status: 1 })),
+        runOpenshell: vi.fn((args: readonly string[]) =>
+          args[1] === "list"
+            ? { status: 0, stdout: "beta  2026-08-23 10:00:00  Ready\n" }
+            : { status: 1 },
+        ),
         dockerRun: vi.fn(() => ({ status: 0, stdout: `${result.newContainerId}\n` })),
         sleep,
       },
@@ -229,6 +243,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
       rolledBack: false,
       replacementStoppedForCommit: true,
       replacementRestarted: true,
+      lifecycleReleaseObserved: true,
       finalHandoffAcknowledged: false,
       lastSandboxPhase: "Deleting",
     });

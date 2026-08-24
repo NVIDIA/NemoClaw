@@ -1346,6 +1346,26 @@ On macOS, `connect --probe-only` runs the complete preflight, including recovery
 After a successful probe and recovery, it prints a note that launch-readiness evidence is unavailable on this platform and exits zero.
 The next `launch` runs the complete preflight.
 On Linux, the publication-failure diagnostic is redacted and does not print filesystem paths or environment values.
+
+Every `connect --probe-only` completion prints at most one credential-free `Probe timing:` line.
+The line always reports these stages in this order, with cumulative whole-millisecond durations:
+
+- `readiness` waits for the sandbox state.
+- `authority` validates launch-readiness authority and evidence.
+- `lifecycle` reuses or recovers the Portable lifecycle when applicable.
+- `gateway` verifies the owning gateway path.
+- `processes` verifies or repairs managed in-sandbox processes.
+- `forward` verifies or restores required host forwards.
+- `inference` verifies the selected inference route.
+- `pairing` settles OpenClaw operator pairing when applicable.
+- `publication` publishes launch-readiness evidence on Linux.
+
+The line also reports `total`, `lifecycleAction=skipped|reused|recovered|failed`, `forwardAction=skipped|verified|restored|failed`, and `result=ready|failed`.
+A failed probe adds `failedStage=<stage>` or `failedStage=unknown`.
+Stages that do not apply or do not run report `0ms`.
+Timing collection and output are fail-open: clock or writer failures do not change the readiness work, command diagnostics, or exit status.
+Use the command exit status, not a duration or action field, as the readiness decision.
+
 Run it for health checks and scripted readiness probes; users continue to run only `$$nemoclaw launch <name>`.
 
 <AgentOnly variant="openclaw">
@@ -2474,6 +2494,8 @@ If you want to upgrade the sandbox while preserving state, use `$$nemoclaw <name
 
 If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds.
 Pass `--yes`, `-y`, or `--force`, or set `NEMOCLAW_NON_INTERACTIVE=1`, to authorize deletion without prompting in scripted workflows.
+These controls do not suppress the active-session warning.
+The warning lists the detected process IDs, and destroy still terminates those sessions with a `Broken pipe` error.
 
 Before changing a Docker-backed sandbox, NemoClaw inspects every container with the requested `openshell.ai/sandbox-name` label.
 The command continues when Docker returns no matching containers.
@@ -3554,6 +3576,14 @@ Session JSONL can contain pasted secrets, such as API keys or tokens, so exporte
 The in-sandbox staging artefact is additionally created with `umask 077` and removed after the host download completes.
 If the staging cleanup fails, the command warns with the retained path and a manual removal command.
 The retained artifact can contain session JSONL with pasted secrets.
+Run the exact command from the warning, which has this form:
+
+```bash
+openshell sandbox exec --name <sandbox-name> -- rm -f <retained-staging-path>
+```
+
+The export keeps its original success or failure result, so a cleanup warning after a successful download does not make the export fail.
+Confirm that the command prints no further cleanup warning after a later export.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -3582,6 +3612,14 @@ Session JSONL can contain pasted secrets, such as API keys or tokens, so exporte
 The in-sandbox staging artefact is additionally created with `umask 077` and removed after the host download completes.
 If the staging cleanup fails, the command warns with the retained path and a manual removal command.
 The retained artifact can contain session JSONL with pasted secrets.
+Run the exact command from the warning, which has this form:
+
+```bash
+openshell sandbox exec --name <sandbox-name> -- rm -f <retained-staging-path>
+```
+
+The export keeps its original success or failure result, so a cleanup warning after a successful download does not make the export fail.
+Confirm that the command prints no further cleanup warning after a later export.
 
 </AgentOnly>
 
