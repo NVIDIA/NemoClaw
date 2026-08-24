@@ -132,6 +132,23 @@ If `NEMOCLAW_SERVING_PRESET` is already set, it must select the same stable prof
 
 The profile selector is model-independent, so a catalog can add profiles without adding model-specific CLI flags.
 Omitting `--profile` preserves the existing provider and model defaults.
+
+### Select a Managed vLLM GPU
+
+Use `--vllm-gpu-device <index-or-uuid>` to select the host GPU for a managed single-host vLLM container.
+The value must be a non-negative index or a full `GPU-...` UUID reported by `nvidia-smi`.
+This selection is independent of `--sandbox-gpu-device`, which controls direct GPU access inside the sandbox.
+NemoClaw applies the vLLM selection to Docker placement, compute-capability validation, and GPU-memory checks.
+It rejects this selector for a non-vLLM provider or a managed multi-node topology.
+
+```bash
+$$nemoclaw onboard --profile <profile-id> --vllm-gpu-device <index-or-uuid>
+```
+
+NemoClaw requires a resumed session to reuse the recorded GPU selector.
+A legacy in-progress session cannot add one, and a resumed session cannot change one.
+Run `$$nemoclaw onboard --fresh` when you need a different GPU selection.
+
 If onboarding is interrupted, `$$nemoclaw onboard --resume` reuses the recorded catalog, preset, and recipe digests.
 It exits before runtime effects if the installed catalog changed instead of silently switching the recipe; use `$$nemoclaw onboard --fresh --profile <profile-id>` to review and start with the current definition.
 Legacy sessions that predate profile provenance still resume with their original behavior, but you cannot add `--profile` to one of those in-progress sessions.
@@ -194,6 +211,8 @@ NemoClaw also accepts `HUGGING_FACE_HUB_TOKEN` as a compatibility alias, but new
 When neither variable is present, public-model downloads continue anonymously.
 
 If `hf download` reports HTTP `429`, export `HF_TOKEN` and resume onboarding.
+After an image-pull or managed-vLLM setup failure, resume retains the validated selected model and recorded GPU selector.
+A conflicting model, a changed GPU selector, or a selector introduced only during resume stops instead of changing the recorded install intent.
 The downloader reuses files already stored in `~/.cache/huggingface` instead of starting the model download from an empty cache.
 
 ```bash
