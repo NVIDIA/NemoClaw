@@ -8,6 +8,7 @@ import YAML from "yaml";
 
 import {
   createRunnerFsStore,
+  createStdoutCapture,
   FAKE_HOME,
   FIXED_RUN_UUID,
   inMemoryFsMethods,
@@ -23,6 +24,7 @@ import {
 
 const { store } = createRunnerFsStore();
 const mockExeca = vi.fn();
+const stdoutCapture = createStdoutCapture();
 
 vi.mock("node:crypto", () => ({
   randomUUID: () => FIXED_RUN_UUID,
@@ -38,6 +40,8 @@ vi.mock("node:fs", async (importOriginal) => {
   return {
     ...original,
     mkdirSync: memory.mkdirSync,
+    readFileSync: memory.readFileSync,
+    readdirSync: memory.readdirSync,
     writeFileSync: memory.writeFileSync,
   };
 });
@@ -54,7 +58,7 @@ vi.mock("./ssrf.js", async (importOriginal) => {
   };
 });
 
-const { actionApply } = await import("./runner.js");
+const { actionApply, actionRollback, actionStatus } = await import("./runner.js");
 
 const BASE_POLICY = `version: 1
 future_policy:
@@ -164,8 +168,9 @@ function blueprint(): Parameters<typeof actionApply>[1] {
 describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
   beforeEach(() => {
     store.clear();
+    stdoutCapture.reset();
     mockExeca.mockReset();
-    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    vi.spyOn(process.stdout, "write").mockImplementation(stdoutCapture.write);
     const policyByCommand = new Map([
       ["policy get -g test-gateway --base test-sandbox", policyOutput(BASE_POLICY)],
       ["policy get -g test-gateway --full test-sandbox", policyOutput(FULL_POLICY)],
@@ -210,6 +215,18 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       nim_service: expect.any(Object),
     });
     expect(merged.network_policies).not.toHaveProperty("_provider_nvidia-inference");
+    const planEntry = [...store.values()].find((entry) =>
+      entry.content?.includes('"policy_transition"'),
+    );
+    expect(JSON.parse(planEntry?.content ?? "{}")).toMatchObject({
+      policy_transition: {
+        status: "complete",
+        sandbox_name: "test-sandbox",
+        gateway: "test-gateway",
+        expected_authority: "nemoclaw-managed",
+        policy_addition_names: ["nim_service"],
+      },
+    });
   });
 
   it.each([
@@ -401,6 +418,8 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     let sandboxAuthorityReads = 0;
     mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
       switch (args.join(" ")) {
+        case "sandbox create --from openclaw --name test-sandbox --forward 18789":
+          return { exitCode: 1, stdout: "", stderr: "sandbox already exists" };
         case "policy get -g test-gateway --base test-sandbox":
           return {
             exitCode: 0,
@@ -420,5 +439,106 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
 
     await expect(actionApply("default", blueprint())).rejects.toThrow(/policy authority changed/);
     expect(policySetCalls()).toEqual([]);
+    expect(sandboxAuthorityReads).toBe(3);
+  });
+
+  it("records and reports an incomplete reused-sandbox policy transition (#9833)", async () => {
+    let sandboxAuthorityReads = 0;
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
+      switch (args.join(" ")) {
+        case "sandbox create --from openclaw --name test-sandbox --forward 18789":
+          return { exitCode: 1, stdout: "", stderr: "sandbox already exists" };
+        case "policy get -g test-gateway --base test-sandbox":
+          return {
+            exitCode: 0,
+            stdout: "Version: 1\nHash: sha256:test\n---\nversion: 1\nnetwork_policies: {}\n",
+            stderr: "",
+          };
+        case "policy get -g test-gateway --full --output json test-sandbox":
+          sandboxAuthorityReads += 1;
+          return sandboxPolicyAuthorityResult(
+            "test-sandbox",
+            sandboxAuthorityReads < 4 ? "nemoclaw-managed" : "externally-managed",
+          );
+        default:
+          return defaultCommandResult(args);
+      }
+    });
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(/policy authority changed/);
+    expect(policySetCalls()).toHaveLength(1);
+    expect(sandboxAuthorityReads).toBe(4);
+
+    const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"));
+    expect(planEntry).toBeDefined();
+    const plan = JSON.parse(planEntry?.[1].content ?? "{}") as {
+      run_id: string;
+      sandbox_created_by_apply: boolean;
+      policy_transition: Record<string, unknown>;
+    };
+    expect(plan).toMatchObject({
+      sandbox_created_by_apply: false,
+      policy_transition: {
+        status: "incomplete",
+        sandbox_name: "test-sandbox",
+        gateway: "test-gateway",
+        expected_authority: "nemoclaw-managed",
+        policy_addition_names: ["nim_service"],
+      },
+    });
+
+    stdoutCapture.reset();
+    actionStatus(plan.run_id);
+    expect(stdoutCapture.jsonOutput()).toMatchObject({
+      policy_transition: {
+        status: "incomplete",
+        sandbox_name: "test-sandbox",
+        reconciliation_required: true,
+        reconciliation_action: expect.stringContaining("reconcile the reused sandbox"),
+      },
+    });
+
+    await expect(actionRollback(plan.run_id)).rejects.toThrow(
+      /policy transition for reused sandbox "test-sandbox".*is incomplete.*reconcile/u,
+    );
+    expect(store.has(`${planEntry?.[0].replace(/\/plan\.json$/u, "")}/rolled_back`)).toBe(false);
+  });
+
+  it("keeps a pending receipt when a reused-sandbox policy set fails (#9833)", async () => {
+    const responses = new Map([
+      [
+        "sandbox create --from openclaw --name test-sandbox --forward 18789",
+        { exitCode: 1, stdout: "", stderr: "sandbox already exists" },
+      ],
+      [
+        "policy get -g test-gateway --base test-sandbox",
+        {
+          exitCode: 0,
+          stdout: policyOutput("version: 1\nnetwork_policies: {}\n"),
+          stderr: "",
+        },
+      ],
+      ["policy set", { exitCode: 1, stdout: "", stderr: "policy set rejected" }],
+    ]);
+    mockExeca.mockImplementation(
+      async (_cmd: string, args: string[]) =>
+        responses.get(args.join(" ")) ??
+        responses.get(args.slice(0, 2).join(" ")) ??
+        defaultCommandResult(args),
+    );
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(/policy set rejected/u);
+    const planEntry = [...store.values()].find((entry) =>
+      entry.content?.includes('"policy_transition"'),
+    );
+    expect(JSON.parse(planEntry?.content ?? "{}")).toMatchObject({
+      sandbox_created_by_apply: false,
+      policy_transition: {
+        status: "pending",
+        sandbox_name: "test-sandbox",
+        gateway: "test-gateway",
+        policy_addition_names: ["nim_service"],
+      },
+    });
   });
 });

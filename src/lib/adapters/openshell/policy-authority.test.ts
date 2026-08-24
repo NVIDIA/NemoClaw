@@ -145,11 +145,11 @@ describe("OpenShell policy authority inspection", () => {
     expect(error.message).not.toContain(secret);
   });
 
-  it("fails closed when sandbox policy output is empty (#9833)", () => {
-    const runCaptureEx = vi.fn<PolicyAuthorityCapture>(() => captureResult(""));
+  it.each(["", " \n\t"])("fails closed when sandbox policy output is empty (%j) (#9833)", (raw) => {
+    const runCaptureEx = vi.fn<PolicyAuthorityCapture>(() => captureResult(raw));
 
     expect(() => inspectSandboxPolicyAuthority({ sandboxName: "alpha", runCaptureEx })).toThrow(
-      /empty policy metadata/u,
+      /empty sandbox policy authority metadata/u,
     );
   });
 
