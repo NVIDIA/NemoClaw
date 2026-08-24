@@ -2981,12 +2981,13 @@ Use `channels stop` instead of `channels remove` when you want to pause a bridge
 
 ### `$$nemoclaw <name> channels start <channel>`
 
-Re-enable a channel previously paused with `channels stop`. The channel is removed from the disabled list, the sandbox is rebuilt, and the bridge registers with the gateway again using the stored credentials.
+Re-enable a channel previously paused with `channels stop`.
 The command verifies that the sandbox's agent runtime supports the channel before reading configured or disabled channel state.
 It then requires the channel to be configured for the sandbox.
-Before the rebuild, NemoClaw reapplies the matching built-in network policy preset so the restored bridge has egress to its upstream API.
-Before updating the disabled list or applying the policy, NemoClaw prints the exact effective egress scope when the preset would open or replace access, or reports that no new egress would be opened when the preset is already effective.
-If policy restoration fails, NemoClaw rolls the channel back to disabled and exits without rebuilding into a partially active state.
+NemoClaw removes the channel from the disabled list and records it as enabled in the messaging plan.
+The rebuild uses that plan to attach the existing bridge provider before applying its matching built-in network policy preset to the replacement sandbox.
+Before updating the disabled list, NemoClaw prints the exact effective egress scope when the preset would open or replace access, or reports that no new egress would be opened when the preset is already effective.
+If the command queues the change without rebuilding, the running sandbox keeps its existing bridge and network policy until you run `$$nemoclaw <name> rebuild`.
 
 ```bash
 $$nemoclaw my-assistant channels start telegram
