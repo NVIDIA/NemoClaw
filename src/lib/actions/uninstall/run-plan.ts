@@ -464,13 +464,8 @@ function removePathExcept(
     const preserved = preserve.filter((name) => childSet.has(name));
     preservedEntries = preserved;
     if (preserved.length === 0) {
-      if (fs.existsSync(target)) throw new Error("directory path was replaced during cleanup");
-      fs.renameSync(stagedTarget, target);
+      deps.rmSync(stagedTarget, { force: true, recursive: true });
       stagedTarget = null;
-      if (!sameDirectoryIdentity(identity, fs.lstatSync(target, { bigint: true }))) {
-        throw new Error("directory changed before removal");
-      }
-      deps.rmSync(target, { force: true, recursive: true });
       deps.log(`Removed ${target}`);
       return true;
     }

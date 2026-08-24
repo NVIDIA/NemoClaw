@@ -555,6 +555,43 @@ describe("uninstall run plan", () => {
       }
     });
 
+    it("does not delete a replacement added at the canonical path during final cleanup", () => {
+      const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-"));
+      const stateDir = path.join(tmpHome, ".nemoclaw");
+      const replacementFile = path.join(stateDir, "unrelated.txt");
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "1234");
+      const removedPaths: string[] = [];
+      try {
+        const logs: string[] = [];
+        const rmSync: typeof fs.rmSync = (target, options) => {
+          const removedPath = String(target);
+          removedPaths.push(removedPath);
+          expect(removedPath).toMatch(/\.nemoclaw-cleanup-.*\/content$/u);
+          expect(fs.existsSync(stateDir)).toBe(false);
+          fs.mkdirSync(stateDir);
+          fs.writeFileSync(replacementFile, "keep");
+          fs.rmSync(target, options);
+        };
+        const result = runUninstallPlan(
+          { assumeYes: true, deleteModels: false, keepOpenShell: true },
+          {
+            ...preserveCaseDeps(tmpHome, logs),
+            rmSync,
+          },
+        );
+
+        expect(result.exitCode).toBe(0);
+        expect(removedPaths).toContainEqual(
+          expect.stringMatching(/\.nemoclaw-cleanup-.*\/content$/u),
+        );
+        expect(removedPaths).not.toContain(stateDir);
+        expect(fs.readFileSync(replacementFile, "utf8")).toBe("keep");
+      } finally {
+        fs.rmSync(tmpHome, { recursive: true, force: true });
+      }
+    });
+
     it("skips the preservation notice when no protected entries exist on disk", () => {
       const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-"));
       const stateDir = path.join(tmpHome, ".nemoclaw");
