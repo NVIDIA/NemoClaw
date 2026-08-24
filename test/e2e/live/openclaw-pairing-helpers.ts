@@ -217,7 +217,7 @@ export async function applyFakePolicy(options: {
     "update",
     options.sandboxName,
     "--add-endpoint",
-    `host.openshell.internal:${options.api.port}:read-write:${options.protocol}:enforce:${options.rewrite},allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16,allowed-ip=169.254.2.2/32`,
+    `host.openshell.internal:${options.api.port}:read-write:${options.protocol}:enforce:${options.rewrite},allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
   ];
   for (const method of methods)
     args.push("--add-allow", `host.openshell.internal:${options.api.port}:${method}:/**`);

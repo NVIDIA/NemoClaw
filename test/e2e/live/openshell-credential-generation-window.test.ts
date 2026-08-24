@@ -736,16 +736,16 @@ test("openshell-credential-generation-window", {
       placeholderAbsent: true,
     });
 
-    const detach = await sandbox.openshell(
-      ["sandbox", "provider", "detach", SANDBOX_NAME, providerName],
+    const detach = await host.nemoclaw(
+      [SANDBOX_NAME, "mcp", "remove", SERVER_NAME, "--force"],
       {
-        artifactName: "credential-window-direct-provider-detach",
-        env: openshellEnv(),
-        timeoutMs: 90_000,
+        artifactName: "credential-window-mcp-remove-for-detach",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 4 * 60_000,
       },
     );
-    expectExitZero(detach, "detach credential-window provider");
-    expect(resultText(detach)).toMatch(/Detached provider/iu);
+    expectExitZero(detach, "remove credential-window MCP bridge for provider detach");
+    expect(resultText(detach)).toMatch(/Removed MCP server/iu);
     await expectFreshCredentialAbsent(
       sandbox,
       "credential-window-fresh-credential-absent-after-detach",
@@ -766,6 +766,28 @@ test("openshell-credential-generation-window", {
     ).toBe(false);
 
     progress.phase("restart the bridge and confirm old-process fallback");
+    const reattach = await host.nemoclaw(
+      [
+        SANDBOX_NAME,
+        "mcp",
+        "add",
+        SERVER_NAME,
+        "--url",
+        tunnel.url,
+        "--env",
+        CREDENTIAL_WINDOW_ENV_NAME,
+      ],
+      {
+        artifactName: "credential-window-mcp-reattach",
+        env: {
+          ...buildAvailabilityProbeEnv(),
+          [CREDENTIAL_WINDOW_ENV_NAME]: restartSecret,
+        },
+        redactionValues: [...allSecrets],
+        timeoutMs: 4 * 60_000,
+      },
+    );
+    expectExitZero(reattach, "reattach credential-window MCP bridge");
     await rotateCredential(
       host,
       fakeMcp,

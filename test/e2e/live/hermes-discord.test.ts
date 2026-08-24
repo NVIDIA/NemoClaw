@@ -143,7 +143,7 @@ async function applyHermesFakeDiscordPolicy(options: {
       "update",
       options.sandboxName,
       "--add-endpoint",
-      `${FAKE_DISCORD_HOST}:${options.api.port}:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16,allowed-ip=169.254.2.2/32`,
+      `${FAKE_DISCORD_HOST}:${options.api.port}:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
       "--add-allow",
       `${FAKE_DISCORD_HOST}:${options.api.port}:GET:/**`,
       "--add-allow",
