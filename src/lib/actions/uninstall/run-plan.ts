@@ -448,7 +448,16 @@ function findUnreconciledCleanupTargets(target: string): readonly string[] {
 }
 
 function unreconciledCleanupWarning(target: string, stagedTargets: readonly string[]): string {
-  return `Cleanup cannot continue for ${target} because unreconciled staging remains at ${stagedTargets.join(", ")}. Do not retry uninstall until you inspect both paths without following links. If a staging entry is the intended directory, move it back to ${target}; otherwise, stop and reconcile the paths before continuing.`;
+  let targetIsAbsent = false;
+  try {
+    fs.lstatSync(target);
+  } catch (error) {
+    targetIsAbsent = (error as NodeJS.ErrnoException).code === "ENOENT";
+  }
+  const recovery = targetIsAbsent
+    ? `The canonical path is absent. If a staging entry is the intended directory, move it back to ${target}; otherwise, stop and reconcile the paths before continuing.`
+    : `The canonical path ${target} also exists. Do not move the canonical path or any staging entry. Reconcile the canonical path and each staging entry before continuing.`;
+  return `Cleanup cannot continue for ${target} because unreconciled staging remains at ${stagedTargets.join(", ")}. Do not retry uninstall until you inspect both paths without following links. ${recovery}`;
 }
 
 function preflightSelectiveCleanupTargets(

@@ -586,7 +586,12 @@ describe("uninstall run plan", () => {
         expect(warningText).toContain(`Cleanup cannot continue for ${stateDir}`);
         expect(warningText).toContain(`unreconciled staging remains at ${stagedTarget}`);
         expect(warningText).toContain("Do not retry uninstall");
-        expect(warningText).toContain(`move it back to ${stateDir}`);
+        expect(warningText).toContain(`The canonical path ${stateDir} also exists`);
+        expect(warningText).toContain("Do not move the canonical path or any staging entry");
+        expect(warningText).toContain(
+          "Reconcile the canonical path and each staging entry before continuing",
+        );
+        expect(warningText).not.toContain(`move it back to ${stateDir}`);
         expect(logs).not.toContain("Claws retracted. Until next time.");
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });
