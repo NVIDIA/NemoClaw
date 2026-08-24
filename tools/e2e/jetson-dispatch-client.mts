@@ -184,13 +184,7 @@ function delay(milliseconds: number): Promise<void> {
 function writeJetsonRecoveryReceipt(
   receiptFile: string,
   status: JetsonDispatchStatus,
-  controllerState:
-    | "accepted"
-    | "cancellation-failed"
-    | "cancellation-request-succeeded"
-    | "cancellation-requested",
   cancellation?: {
-    attempt: 1;
     failure?: JetsonCancellationFailure;
     outcome: "failed" | "pending" | "succeeded";
     reason: JetsonCancellationReason;
@@ -203,7 +197,6 @@ function writeJetsonRecoveryReceipt(
         schemaVersion: 1,
         jobId: status.jobId,
         request: status.request,
-        controllerState,
         ...(cancellation === undefined ? {} : { cancellation }),
       },
       null,
@@ -233,14 +226,9 @@ async function cancelJetsonDispatch(options: {
   request: typeof dispatcherRequest;
   status: JetsonDispatchStatus;
 }): Promise<JetsonCancellationResult> {
-  const cancellation = { attempt: 1, outcome: "pending", reason: options.reason } as const;
+  const cancellation = { outcome: "pending", reason: options.reason } as const;
   try {
-    writeJetsonRecoveryReceipt(
-      options.receiptFile,
-      options.status,
-      "cancellation-requested",
-      cancellation,
-    );
+    writeJetsonRecoveryReceipt(options.receiptFile, options.status, cancellation);
   } catch {
     // The cancellation request must continue when the local recovery receipt cannot be updated.
   }
@@ -260,17 +248,11 @@ async function cancelJetsonDispatch(options: {
 
   let receiptWritten = true;
   try {
-    writeJetsonRecoveryReceipt(
-      options.receiptFile,
-      options.status,
-      result.outcome === "succeeded" ? "cancellation-request-succeeded" : "cancellation-failed",
-      {
-        attempt: 1,
-        outcome: result.outcome,
-        reason: options.reason,
-        ...(result.outcome === "failed" ? { failure: result.failure } : {}),
-      },
-    );
+    writeJetsonRecoveryReceipt(options.receiptFile, options.status, {
+      outcome: result.outcome,
+      reason: options.reason,
+      ...(result.outcome === "failed" ? { failure: result.failure } : {}),
+    });
   } catch {
     receiptWritten = false;
   }
@@ -329,7 +311,7 @@ export async function pollJetsonDispatch(options: {
     throw new Error("Jetson dispatcher status does not match the accepted job");
   }
   try {
-    writeJetsonRecoveryReceipt(options.receiptFile, status, "accepted");
+    writeJetsonRecoveryReceipt(options.receiptFile, status);
   } catch {
     const cancellation = await cancel("recovery-receipt-failure");
     throw new Error(
@@ -338,7 +320,10 @@ export async function pollJetsonDispatch(options: {
   }
   while (status.state !== "completed") {
     if (options.stopping?.()) {
-      throw new Error(`Jetson dispatch ${options.jobId} cancellation requested`);
+      const cancellation = await cancel("signal");
+      throw new Error(
+        `Jetson dispatch ${options.jobId} cancellation requested; ${cancellationResultMessage(cancellation)}`,
+      );
     }
     if (now() >= options.deadlineMs) {
       const cancellation = await cancel("controller-deadline");

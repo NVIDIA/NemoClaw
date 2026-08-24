@@ -459,8 +459,60 @@ describe("Jetson dispatch GitHub controller", () => {
       schemaVersion: 1,
       jobId: queuedStatus.jobId,
       request: queuedStatus.request,
-      controllerState: "accepted",
     });
+  });
+
+  it("cancels an accepted job when stopping was requested during submission (#8142)", async () => {
+    const receiptFile = temporaryReceiptFile();
+    const requestImpl = vi.fn(async () => ({ job: queuedStatus }));
+
+    await expect(
+      pollJetsonDispatch({
+        baseUrl: new URL("https://dispatch.test/"),
+        deadlineMs: 10_000,
+        initialStatus: queuedStatus,
+        jobId: queuedStatus.jobId,
+        now: () => 0,
+        receiptFile,
+        request: requestImpl,
+        stopping: () => true,
+        wait: async () => {},
+      }),
+    ).rejects.toThrow(
+      `Jetson dispatch ${queuedStatus.jobId} cancellation requested; cancellation request succeeded`,
+    );
+    expect(requestImpl).toHaveBeenCalledOnce();
+    expect(requestImpl).toHaveBeenCalledWith(
+      expect.objectContaining({ method: "DELETE", path: `v1/jobs/${queuedStatus.jobId}` }),
+    );
+    expect(readReceipt(receiptFile)).toMatchObject({
+      cancellation: { outcome: "succeeded", reason: "signal" },
+    });
+  });
+
+  it("cancels an accepted job when the initial receipt cannot be written (#8142)", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-jetson-dispatch-"));
+    temporaryDirectories.push(directory);
+    const requestImpl = vi.fn(async () => ({ job: queuedStatus }));
+
+    await expect(
+      pollJetsonDispatch({
+        baseUrl: new URL("https://dispatch.test/"),
+        deadlineMs: 10_000,
+        initialStatus: queuedStatus,
+        jobId: queuedStatus.jobId,
+        now: () => 0,
+        receiptFile: directory,
+        request: requestImpl,
+        wait: async () => {},
+      }),
+    ).rejects.toThrow(
+      `Jetson dispatch ${queuedStatus.jobId} was accepted but its recovery receipt could not be written; cancellation request succeeded; recovery receipt update failed`,
+    );
+    expect(requestImpl).toHaveBeenCalledOnce();
+    expect(requestImpl).toHaveBeenCalledWith(
+      expect.objectContaining({ method: "DELETE", path: `v1/jobs/${queuedStatus.jobId}` }),
+    );
   });
 
   it("requests cancellation when the controller deadline expires (#8142)", async () => {
@@ -509,9 +561,7 @@ describe("Jetson dispatch GitHub controller", () => {
       schemaVersion: 1,
       jobId: queuedStatus.jobId,
       request: queuedStatus.request,
-      controllerState: "cancellation-failed",
       cancellation: {
-        attempt: 1,
         outcome: "failed",
         reason: "controller-deadline",
         failure: "transport-error",
@@ -569,8 +619,7 @@ describe("Jetson dispatch GitHub controller", () => {
     ]);
     expect(requestImpl).toHaveBeenCalledOnce();
     expect(readReceipt(receiptFile)).toMatchObject({
-      controllerState: "cancellation-request-succeeded",
-      cancellation: { attempt: 1, outcome: "succeeded", reason: "controller-deadline" },
+      cancellation: { outcome: "succeeded", reason: "controller-deadline" },
     });
   });
 
@@ -600,9 +649,7 @@ describe("Jetson dispatch GitHub controller", () => {
       schemaVersion: 1,
       jobId: queuedStatus.jobId,
       request: queuedStatus.request,
-      controllerState: "cancellation-failed",
       cancellation: {
-        attempt: 1,
         outcome: "failed",
         reason: "status-request-failures",
         failure: "transport-error",
