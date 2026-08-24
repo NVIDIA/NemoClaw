@@ -423,15 +423,19 @@ export function renderPodmanReplacementRuntimeArgs(inspect: JsonRecord): readonl
   const addedCapabilities = stringArray(host.CapAdd ?? [], "HostConfig.CapAdd").map((value) =>
     capability(value, "added capability"),
   );
-  // The managed gateway controller signals only an exact, pidfd-pinned child.
-  // OpenShell's native Podman supervisor does not need KILL and drops it, but
-  // the replacement image's root-owned lifecycle controller does.
-  for (const value of new Set([...addedCapabilities, "KILL"])) {
+  // OpenShell's long-running Podman supervisor deliberately drops these
+  // capabilities. The short-lived managed bootstrap replacement needs them
+  // to mutate the agent-owned workspace, preserve setgid state roots, and
+  // signal only its exact pidfd-pinned child before resuming that supervisor.
+  const bootstrapCapabilities: ReadonlySet<string> = new Set(["DAC_OVERRIDE", "FSETID", "KILL"]);
+  for (const value of new Set([...addedCapabilities, ...bootstrapCapabilities])) {
     args.push("--cap-add", value);
   }
   for (const value of stringArray(host.CapDrop ?? [], "HostConfig.CapDrop")) {
     const dropped = capability(value, "dropped capability");
-    if (dropped !== "KILL") args.push("--cap-drop", dropped);
+    if (!bootstrapCapabilities.has(dropped)) {
+      args.push("--cap-drop", dropped);
+    }
   }
   for (const value of stringArray(host.SecurityOpt ?? [], "HostConfig.SecurityOpt")) {
     args.push("--security-opt", boundedRuntimeValue(value, "security option"));
