@@ -52,6 +52,7 @@ describe("MCP bridge onboarding environment", () => {
         PATH: "/usr/bin",
         NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
         NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/tmp/managed-pr-catalog.json",
+        NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: "b".repeat(40),
         NEMOCLAW_RUN_LIVE_E2E: "1",
         OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor@sha256:test",
         UNRELATED_PARENT_VALUE: "must-not-leak",
@@ -62,6 +63,7 @@ describe("MCP bridge onboarding environment", () => {
       GITHUB_ACTIONS: "true",
       NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
       NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/tmp/managed-pr-catalog.json",
+      NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: "b".repeat(40),
       NEMOCLAW_RUN_LIVE_E2E: "1",
       OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor@sha256:test",
     });
@@ -108,14 +110,15 @@ describe("MCP bridge onboarding environment", () => {
     ]);
   });
 
-  it("accepts the exact managed image candidate revision", () => {
+  it("accepts the exact managed-image publication revision", () => {
     expect(() =>
       assertMcpBridgeManagedImageReceipt({
         environment: {
           NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
           NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/tmp/managed-pr-catalog.json",
+          NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: "b".repeat(40),
         },
-        workload: { kind: "managed-image", sourceRevision: "a".repeat(40) },
+        workload: { kind: "managed-image", sourceRevision: "b".repeat(40) },
       }),
     ).not.toThrow();
   });
@@ -159,6 +162,7 @@ describe("MCP bridge onboarding environment", () => {
         GITHUB_WORKSPACE: "/test/workspace",
         NEMOCLAW_E2E_EXPECTED_SHA: revision,
         NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/test/workspace/managed-pr-catalog.json",
+        NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: "b".repeat(40),
         NEMOCLAW_RUN_LIVE_E2E: "1",
         NEMOCLAW_UNREVIEWED_WORKFLOW_INPUT: "must-not-pass",
       },
@@ -169,6 +173,7 @@ describe("MCP bridge onboarding environment", () => {
       GITHUB_WORKSPACE: "/test/workspace",
       NEMOCLAW_E2E_EXPECTED_SHA: revision,
       NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/test/workspace/managed-pr-catalog.json",
+      NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: "b".repeat(40),
       NEMOCLAW_RUN_LIVE_E2E: "1",
     });
     expect(env.NEMOCLAW_UNREVIEWED_WORKFLOW_INPUT).toBeUndefined();

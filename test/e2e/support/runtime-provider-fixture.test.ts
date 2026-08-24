@@ -33,6 +33,7 @@ describe("configured E2E runtime provider fixture", () => {
       HOME: "/home/runner",
       PATH: "/usr/bin",
       DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1001/bus",
+      NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: "a".repeat(40),
       NEMOCLAW_GATEWAY_RUNTIME: "podman",
       OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
       XDG_RUNTIME_DIR: "/run/user/1001",
@@ -40,6 +41,7 @@ describe("configured E2E runtime provider fixture", () => {
 
     expect(env).toMatchObject({
       DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1001/bus",
+      NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: "a".repeat(40),
       NEMOCLAW_GATEWAY_RUNTIME: "podman",
       OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
       XDG_RUNTIME_DIR: "/run/user/1001",
