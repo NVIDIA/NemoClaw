@@ -162,7 +162,9 @@ describe("finalizeDockerGpuPatchBackup", () => {
     ]);
   });
 
-  it("accepts Error for the exact stopped replacement despite stale legacy name metadata (#9962)", () => {
+  it.each(["Error", "Deleting"])(
+    "accepts %s for the exact stopped replacement despite stale legacy name metadata (#9962)",
+    (phase) => {
     const replacementContainerId = "a".repeat(64);
     const events: string[] = [];
     const dockerStop = vi.fn(() => {
@@ -182,8 +184,8 @@ describe("finalizeDockerGpuPatchBackup", () => {
       return { status: 0 };
     });
     const runOpenshell = vi.fn(() => {
-      events.push("observe error");
-      return { status: 0, stdout: "restored-name  2026-08-23 01:40:35  Error\n" };
+      events.push("observe retiring phase");
+      return { status: 0, stdout: `restored-name  2026-08-23 01:40:35  ${phase}\n` };
     });
 
     const outcome = finalizeDockerGpuPatchBackup(
@@ -204,7 +206,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(events).toEqual([
       "stop replacement",
       "remove backup",
-      "observe error",
+      "observe retiring phase",
       "confirm exact replacement",
       "start replacement",
     ]);
@@ -225,7 +227,8 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(dockerRun.mock.calls[0]?.[0]).not.toContain(
       "label=openshell.ai/sandbox-name=restored-name",
     );
-  });
+    },
+  );
 
   it("caps Error corroboration to the remaining lifecycle-release budget (#9962)", () => {
     const replacementContainerId = "a".repeat(64);

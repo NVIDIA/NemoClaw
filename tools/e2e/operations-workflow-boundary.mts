@@ -640,6 +640,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         env: {
           EXPECTED_SHA: "${{ inputs.checkout_sha || github.sha }}",
           GITHUB_TOKEN: "${{ github.token }}",
+          REQUIRE_MANAGED_IMAGE_PUBLICATION: "1",
         },
         shell: "bash",
         run: [
