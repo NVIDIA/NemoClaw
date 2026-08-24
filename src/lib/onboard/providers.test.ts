@@ -103,6 +103,7 @@ const {
       replaceExisting?: boolean;
       allowedSandboxes?: readonly string[];
       requireExactBinding?: boolean;
+      revalidatePolicyRequirements?(operation: string): void;
     },
   ) => { ok: boolean; status?: number; message?: string; reason?: string };
   upsertMessagingProviders: (
@@ -117,6 +118,7 @@ const {
       allowedSandboxes?: readonly string[];
       bestEffort?: boolean;
       replaceExisting?: boolean;
+      revalidatePolicyRequirements?(operation: string): void;
       requireExactBindings?: boolean;
     },
   ) => string[];
@@ -898,6 +900,63 @@ describe("onboard provider helpers", () => {
     ]);
   });
 
+  it("revalidates policy requirements before each messaging provider mutation (#9833)", () => {
+    const commands: string[] = [];
+    const revalidationSteps = [
+      () => undefined,
+      () => undefined,
+      () => {
+        throw new Error("policy authority changed between providers");
+      },
+    ];
+
+    expect(() =>
+      upsertMessagingProviders(
+        [
+          { name: "alpha-first", envKey: "FIRST_TOKEN", token: "first" },
+          { name: "alpha-second", envKey: "SECOND_TOKEN", token: "second" },
+        ],
+        (command) => {
+          commands.push(command.join(" "));
+          return command.includes("get")
+            ? { status: 1, stdout: "", stderr: "" }
+            : { status: 0, stdout: "", stderr: "" };
+        },
+        { revalidatePolicyRequirements: () => revalidationSteps.shift()?.() },
+      ),
+    ).toThrow(/authority changed between providers/);
+    expect(commands).toEqual([
+      "provider get alpha-first",
+      "provider create --name alpha-first --type generic --credential FIRST_TOKEN",
+    ]);
+  });
+
+  it("rechecks policy authority after a provider probe and before its mutation (#9833)", () => {
+    const commands: string[] = [];
+    const revalidationSteps = [
+      () => undefined,
+      () => {
+        throw new Error("policy authority changed after provider probe");
+      },
+    ];
+
+    expect(() =>
+      upsertProvider(
+        "alpha-discord-bridge",
+        "generic",
+        "DISCORD_BOT_TOKEN",
+        null,
+        { DISCORD_BOT_TOKEN: "secret" },
+        (command) => {
+          commands.push(command.join(" "));
+          return { status: 1, stdout: "", stderr: "not found" };
+        },
+        { revalidatePolicyRequirements: () => revalidationSteps.shift()?.() },
+      ),
+    ).toThrow(/authority changed after provider probe/u);
+    expect(commands).toEqual(["provider get alpha-discord-bridge"]);
+  });
+
   it("rejects an existing generic provider when an exact credential binding is required", () => {
     const commands: string[] = [];
     const result = upsertProvider(
@@ -966,6 +1025,7 @@ describe("onboard provider helpers", () => {
       "provider update alpha-discord-bridge --credential DISCORD_BOT_TOKEN",
     ]);
   });
+
 
   it("throws instead of exiting when best-effort messaging provider upsert fails", () => {
     const originalExit = process.exit;

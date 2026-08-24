@@ -44,6 +44,19 @@ const portableCheckpointWithoutAuthority: OnboardCheckpoint = {
 };
 
 describe("locked onboarding runtime preparation", () => {
+  it("stops an invalid saved authority before resume preparation effects (#9833)", async () => {
+    const preparePortableHost = vi.fn();
+    const loadSession = vi.fn(() => {
+      throw new Error("saved policy authority is invalid");
+    });
+
+    await expect(
+      prepare({ resume: true, preparePortableHost }, true, true, loadSession),
+    ).rejects.toThrow("saved policy authority is invalid");
+    expect(loadSession).toHaveBeenCalledOnce();
+    expect(preparePortableHost).not.toHaveBeenCalled();
+  });
+
   it("rejects portable resume without selected authority before host preparation (#9035)", async () => {
     const preparePortableHost = vi.fn();
 
@@ -88,9 +101,7 @@ describe("locked onboarding runtime preparation", () => {
         () => ({
           checkpoint,
           metadata: {
-            hostMounts: [
-              { source: "/srv/project", target: "/sandbox/project", readOnly: true },
-            ],
+            hostMounts: [{ source: "/srv/project", target: "/sandbox/project", readOnly: true }],
           },
         }),
       ),

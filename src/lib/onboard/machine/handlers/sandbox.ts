@@ -305,12 +305,25 @@ export interface SandboxStateOptions<
       sandboxName: string,
     ): import("../../../messaging/plan-authority").RegistryMessagingAuthority;
     providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
+    preflightPolicyRequirements(input: {
+      gatewayName: string;
+      sandboxName: string | null;
+      agent: Agent;
+      selectedMessagingChannels: readonly string[];
+      hermesToolGateways: readonly string[];
+      gpuPassthrough: boolean;
+      provider: string | null;
+      webSearchConfig: WebSearchConfig | null;
+      observabilityEnabled: boolean;
+      operation: string;
+    }): void;
     stageSandboxCredentialProviders(input: {
       sandboxName: string;
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;
       agent: Agent;
       requiredBindings: readonly CheckpointProviderBinding[];
+      revalidatePolicyRequirements?(operation: string): void;
     }): Promise<readonly CheckpointProviderBinding[]>;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     selectResourceProfileForSandbox(): Promise<ResourceProfile | null>;
@@ -487,6 +500,7 @@ function rebuildPolicyPresetsForCreateIntent(
   session: Session | null,
   sandboxName: string,
 ): Pick<SandboxCreateIntent, "rebuildPolicyPresets"> {
+  if (session?.policyAuthority === "externally-managed") return {};
   // A later `onboard --resume` no longer has the outer rebuild's in-memory
   // options. The matching recreate journal makes its filtered session value
   // the durable replacement target instead of the preserved source row.
@@ -497,6 +511,18 @@ function rebuildPolicyPresetsForCreateIntent(
       : undefined;
   const selectedValue = Array.isArray(value) ? value : journaledValue;
   return Array.isArray(selectedValue) ? { rebuildPolicyPresets: [...selectedValue] } : {};
+}
+
+function clearExternallyManagedPolicyPresets(
+  session: Session | null,
+  updateSession: (mutator: (current: Session) => Session | void) => Session,
+): void {
+  if (session?.policyAuthority !== "externally-managed" || session.policyPresets === null) return;
+  updateSession((current) => {
+    if (current.policyAuthority === "externally-managed") current.policyPresets = null;
+    return current;
+  });
+  session.policyPresets = null;
 }
 
 /** Replace a resumed create-plan snapshot with the outer rebuild's normalized built-ins. */
@@ -1436,13 +1462,40 @@ class SandboxStateFlow<
     return { ...state, session };
   }
 
+  private revalidatePolicyRequirements(
+    sandboxName: string,
+    selectedMessagingChannels: readonly string[],
+    webSearchConfig: WebSearchConfig | null,
+    session: Session | null,
+    operation: string,
+  ): void {
+    this.deps.preflightPolicyRequirements({
+      gatewayName: this.options.gatewayName,
+      sandboxName,
+      agent: this.options.agent,
+      selectedMessagingChannels,
+      hermesToolGateways: effectiveHermesToolGatewaysForWebSearch(
+        this.options.agent as { name?: string } | null,
+        webSearchConfig as unknown as SharedWebSearchConfig | null,
+        this.options.hermesToolGateways,
+      ),
+      gpuPassthrough: session?.gpuPassthrough === true,
+      provider: this.options.provider,
+      webSearchConfig,
+      observabilityEnabled: session?.observabilityEnabled === true,
+      operation,
+    });
+  }
+
   private async registerCompletedCredentialProviders(
     sandboxName: string,
     enabledChannels: readonly string[],
+    selectedMessagingChannels: readonly string[],
     webSearchConfig: WebSearchConfig | null,
     requiredBindings: readonly CheckpointProviderBinding[],
     group: ProviderEffectGroupName,
     checkpoint: OnboardCheckpoint | null,
+    session: Session | null,
     force = false,
   ): Promise<void> {
     if (
@@ -1481,12 +1534,24 @@ class SandboxStateFlow<
     const registeredProviders = await this.deps.withGatewayRouteMutationLock(
       this.options.gatewayName,
       async () => {
+        const revalidatePolicyRequirements = (operation: string) =>
+          this.revalidatePolicyRequirements(
+            sandboxName,
+            selectedMessagingChannels,
+            webSearchConfig,
+            session,
+            operation,
+          );
+        revalidatePolicyRequirements(
+          `register credential providers for sandbox ${JSON.stringify(sandboxName)}`,
+        );
         const staged = await this.deps.stageSandboxCredentialProviders({
           sandboxName,
           enabledChannels,
           webSearchConfig,
           agent: this.options.agent,
           requiredBindings,
+          revalidatePolicyRequirements,
         });
         const stagedProviderNames = new Set<string>();
         for (const binding of staged) {
@@ -1535,10 +1600,12 @@ class SandboxStateFlow<
       await this.registerCompletedCredentialProviders(
         sandboxName,
         state.selectedMessagingChannels,
+        state.selectedMessagingChannels,
         null,
         requiredBindings,
         "messaging_providers",
         state.session?.checkpoint ?? null,
+        state.session,
         force,
       );
     };
@@ -1594,6 +1661,7 @@ class SandboxStateFlow<
     resourceProfile: ResourceProfile | null,
     hermesToolGateways: readonly string[],
   ): Promise<CompleteSandboxCreateIntent> {
+    clearExternallyManagedPolicyPresets(state.session, this.deps.updateSession);
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
     const rebuildPolicyPresetSelection = rebuildPolicyPresetsForCreateIntent(
       this.options.rebuildPolicyPresets,
@@ -1888,6 +1956,14 @@ class SandboxStateFlow<
       state.webSearchConfig as unknown as SharedWebSearchConfig | null,
       this.options.hermesToolGateways,
     );
+    const revalidatePolicyRequirements = (operation: string) =>
+      this.revalidatePolicyRequirements(
+        requestedSandboxName,
+        state.selectedMessagingChannels,
+        state.webSearchConfig,
+        state.session,
+        operation,
+      );
     const extraProviderPlan = this.deps.planRegisteredExtraProviders(this.options.gatewayName);
     const createAndRecord = async (): Promise<SandboxStepState<WebSearchConfig>> => {
       this.assertRegistryMessagingPlanUnchanged(
@@ -1969,15 +2045,18 @@ class SandboxStateFlow<
         await this.recordSandboxRecreateRepairFailure(transaction, repairMetadata, error);
         throw error;
       }
+      revalidatePolicyRequirements("complete the created sandbox");
+      let recordedTransaction: CheckpointSandboxRecreateTransaction | null;
       try {
-        const recordedTransaction = this.reloadSandboxRecreateTransaction(transaction);
+        recordedTransaction = this.reloadSandboxRecreateTransaction(transaction);
         this.retireSandboxRecreateSourceWorkload(recordedTransaction, sourceEntry, sandboxName);
         await this.recordSandboxRecreateRepairSuccess(recordedTransaction, repairMetadata);
-        this.recordSandboxRecreateRegistryCommit(recordedTransaction);
       } catch (error) {
         await this.recordSandboxRecreateRepairFailure(transaction, repairMetadata, error);
         throw error;
       }
+      revalidatePolicyRequirements("complete sandbox repair");
+      this.recordSandboxRecreateRegistryCommit(recordedTransaction);
       // createSandbox() owns the build fingerprint. In particular, reusing an
       // image must not stamp it with the current version and hide build drift.
       const {
@@ -1986,6 +2065,7 @@ class SandboxStateFlow<
         ...agentRegistryFields
       } = this.deps.getSandboxAgentRegistryFields(this.options.agent, !this.options.fromDockerfile);
       // Preserve the validated route and credential env-var name, never a credential value.
+      revalidatePolicyRequirements("register the created sandbox");
       this.deps.updateSandboxRegistry(sandboxName, {
         model: this.options.model,
         provider: this.options.provider,
@@ -1998,6 +2078,7 @@ class SandboxStateFlow<
       });
       // Finalization marks the default so a cancelled onboarding cannot leave a
       // partially configured sandbox selected as the default.
+      revalidatePolicyRequirements("complete the sandbox onboarding session");
       await this.deps.recordStepComplete(
         "sandbox",
         this.deps.toSessionUpdates({
@@ -2010,6 +2091,7 @@ class SandboxStateFlow<
           hermesToolGateways: effectiveHermesToolGateways,
         }),
       );
+      revalidatePolicyRequirements("record the final sandbox creation receipt");
       const recordedSession = this.recordSandboxCreateEffects(
         transaction,
         sandboxName,
@@ -2161,10 +2243,12 @@ class SandboxStateFlow<
     await this.registerCompletedCredentialProviders(
       requestedSandboxName,
       [],
+      nextState.selectedMessagingChannels,
       nextState.webSearchConfig,
       webSearchProviderBindings,
       "web_search_provider",
       nextState.session?.checkpoint ?? null,
+      nextState.session,
     );
     nextState = this.checkpointProviderEffectGroup(
       nextState,

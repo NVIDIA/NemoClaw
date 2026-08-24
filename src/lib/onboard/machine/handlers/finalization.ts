@@ -30,7 +30,12 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   portableProfileSelected?: boolean;
   recreateJournalHandoff?: boolean;
   deps: {
-    ensureAgentDashboardForward(sandboxName: string, agent: Agent): Promise<number> | number;
+    ensureAgentDashboardForward(
+      sandboxName: string,
+      agent: Agent,
+      revalidatePolicyRequirements?: (operation: string) => void,
+    ): Promise<number> | number;
+    revalidatePolicyRequirements?(operation: string): void;
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     /**
      * Mark this sandbox as the default. Called here (not at sandbox creation) so
@@ -229,8 +234,17 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
     // Reconcile after the final recovery because any restart above can
     // invalidate the forward created earlier in onboarding.
-    const dashboardPort = await deps.ensureAgentDashboardForward(sandboxName, agent);
+    const dashboardPort = deps.revalidatePolicyRequirements
+      ? await deps.ensureAgentDashboardForward(
+          sandboxName,
+          agent,
+          deps.revalidatePolicyRequirements,
+        )
+      : await deps.ensureAgentDashboardForward(sandboxName, agent);
     if (dashboardPort > 0) {
+      deps.revalidatePolicyRequirements?.(
+        `persist the dashboard port for sandbox '${sandboxName}'`,
+      );
       deps.persistDashboardPort(sandboxName, dashboardPort);
     }
   }

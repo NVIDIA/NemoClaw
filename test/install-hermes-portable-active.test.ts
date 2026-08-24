@@ -237,6 +237,7 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
       const createPlan = materializeHermesPortableCreatePlan({
         intent,
         fromRef: activeBuildContext.sourceDockerfilePath,
+        policyAuthority: "nemoclaw-managed",
       });
       const startupArgv = [
         "env",

@@ -7,14 +7,20 @@ import {
   NAME_ALLOWED_FORMAT,
   NAME_MAX_LENGTH,
 } from "../../sandbox-name-contract";
-import { buildPolicyGetFullJsonCommand } from "../../policy/commands";
+import {
+  buildGlobalPolicyGetFullJsonCommand,
+  buildGlobalPolicyListCommand,
+  buildPolicyGetFullJsonCommand,
+} from "../../policy/commands";
 import {
   assertExternalPolicyRequirementContainment,
   assertMatchingPolicyAuthority,
   type OpenShellPolicyAuthority,
+  parseGlobalPolicyAuthorityMetadata,
   parseSandboxPolicyAuthorityMetadata,
   type SandboxPolicyAuthorityInspection as CanonicalSandboxPolicyAuthorityInspection,
 } from "../../policy/merge";
+import { captureResolvedOpenshellCommand } from "./runtime";
 const POLICY_AUTHORITY_CAPTURE_MAX_BYTES = 1024 * 1024;
 const POLICY_AUTHORITY_CAPTURE_TIMEOUT_MS = 30_000;
 
@@ -69,7 +75,12 @@ export type PolicyAuthorityCapture = (
 interface SandboxPolicyAuthorityInspectionOptions {
   readonly sandboxName: string;
   readonly gatewayName?: string;
-  readonly runCaptureEx: PolicyAuthorityCapture;
+  readonly runCaptureEx?: PolicyAuthorityCapture;
+}
+
+interface GlobalPolicyAuthorityInspectionOptions {
+  readonly gatewayName?: string;
+  readonly runCaptureEx?: PolicyAuthorityCapture;
 }
 
 function validatePolicyAuthorityName(name: string, label: string): string {
@@ -142,7 +153,7 @@ function capturePolicyQuery(
 export function inspectSandboxPolicyAuthority({
   sandboxName,
   gatewayName,
-  runCaptureEx,
+  runCaptureEx = captureResolvedOpenshellCommand,
 }: SandboxPolicyAuthorityInspectionOptions): SandboxPolicyAuthorityInspection {
   const validatedSandboxName = validatePolicyAuthorityName(sandboxName, "sandbox name");
   const validatedGatewayName =
@@ -160,6 +171,40 @@ export function inspectSandboxPolicyAuthority({
   } catch (error) {
     failInspection(
       "sandbox",
+      error instanceof Error ? error.message : "OpenShell returned invalid policy metadata",
+    );
+  }
+}
+
+/** Inspect whether an active global policy will manage a sandbox created next. */
+export function inspectGlobalPolicyAuthority({
+  gatewayName,
+  runCaptureEx = captureResolvedOpenshellCommand,
+}: GlobalPolicyAuthorityInspectionOptions = {}): SandboxPolicyAuthorityInspection {
+  const validatedGatewayName =
+    gatewayName === undefined
+      ? undefined
+      : validatePolicyAuthorityName(gatewayName, "gateway name");
+  const { stdout: history } = capturePolicyQuery(
+    buildGlobalPolicyListCommand(validatedGatewayName),
+    runCaptureEx,
+    "global",
+    "policy history",
+  );
+  if (history.trim().length === 0) {
+    return { authority: "nemoclaw-managed", effectivePolicy: {} };
+  }
+  const { stdout: raw } = capturePolicyQuery(
+    buildGlobalPolicyGetFullJsonCommand(validatedGatewayName),
+    runCaptureEx,
+    "global",
+    "machine-readable policy",
+  );
+  try {
+    return parseGlobalPolicyAuthorityMetadata(raw);
+  } catch (error) {
+    failInspection(
+      "global",
       error instanceof Error ? error.message : "OpenShell returned invalid policy metadata",
     );
   }

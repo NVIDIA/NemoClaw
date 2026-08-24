@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
+import type { SandboxPolicyAuthority } from "../../../adapters/openshell/policy-authority";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 import {
   getActiveChannelsFromPlan,
@@ -26,6 +27,7 @@ export interface PolicyPresetEntry {
 
 export interface ActiveSandboxPolicyState {
   messaging?: { plan: SandboxMessagingPlan } | null;
+  policyAuthority?: SandboxPolicyAuthority;
   policyTier?: string | null;
   /** Preset names already applied to the sandbox, as recorded in the registry. */
   policies?: string[] | null;
@@ -171,6 +173,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     : rawRecordedPolicyPresets;
   const recordedMessagingChannels = getActiveChannelsFromPlan(latestSession?.messagingPlan);
   const activeSandbox = deps.getActiveSandbox(sandboxName);
+  const externallyManagedPolicy = activeSandbox?.policyAuthority === "externally-managed";
   const effectivePolicyTier = authoritativePolicyTier ?? activeSandbox?.policyTier ?? null;
   const activePlan = activeSandbox?.messaging?.plan;
   const activeMessagingChannels = getActiveChannelsFromPlan(activePlan);
@@ -185,9 +188,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   // the plans: a sandbox can carry a channel's egress in `policies` after every
   // plan that named the channel is gone, and only a candidate here can retire
   // it.
-  const appliedPresetMessagingChannels = messagingChannelsForPolicyPresets(
-    activeSandbox?.policies,
-  );
+  const appliedPresetMessagingChannels = messagingChannelsForPolicyPresets(activeSandbox?.policies);
   const unconfiguredMessagingChannels = deps.detectUnconfiguredMessagingChannels(
     [...recordedMessagingChannels, ...activeMessagingChannels, ...appliedPresetMessagingChannels],
     selectedMessagingChannels,
@@ -237,6 +238,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     (rawRecordedPolicyPresets?.includes("local-inference") === true ||
       deps.arePolicyPresetsApplied(sandboxName, ["local-inference"]));
   const resumePolicies =
+    !externallyManagedPolicy &&
     resume &&
     !staleLocalInferencePolicy &&
     !policyResumeSelection.recordedPolicyPresetsNeedReconcile &&
@@ -306,13 +308,16 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
         // gateway (resume reapply, non-interactive custom/suggested, the
         // interactive tier selector, or exclusion cleanup during skip). An
         // ordinary skip without exclusions returns before calling it.
-        reflectsLiveAppliedSet = true;
-        deps.updateSession((current) => {
-          current.policyPresets = policyPresets;
-          return current;
-        });
+        if (!externallyManagedPolicy) {
+          reflectsLiveAppliedSet = true;
+          deps.updateSession((current) => {
+            current.policyPresets = policyPresets;
+            return current;
+          });
+        }
       },
     });
+    if (externallyManagedPolicy) appliedPolicyPresets = [];
     // Reconcile the registry with the *effective* preset selection so a later
     // recreate/re-onboard carries the operator's exact set forward instead of
     // reapplying stale tier defaults. Done *before* recordStepComplete so an
@@ -328,7 +333,12 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     if (hostLocalInferenceRouteOnly) verifySandboxInferenceRoute();
     session = await deps.recordStepComplete(
       "policies",
-      deps.toSessionUpdates({ sandboxName, provider, model, policyPresets: appliedPolicyPresets }),
+      deps.toSessionUpdates({
+        sandboxName,
+        provider,
+        model,
+        policyPresets: externallyManagedPolicy ? null : appliedPolicyPresets,
+      }),
     );
   }
 

@@ -70,20 +70,22 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
   it.each([
     ["--gateway-endpoint", "https://other.example.test"],
     ["--gateway-endpoint=https://other.example.test"],
-  ])("rejects an explicit endpoint override before the payload separator: %j", (...endpointArgs) => {
-    expect(() =>
-      scopeGatewayOpenshellArgs(["provider", "get", ...endpointArgs, "openai-api"], GATEWAY),
-    ).toThrow(/--gateway-endpoint may bypass the gateway recorded/);
-  });
+  ])(
+    "rejects an explicit endpoint override before the payload separator: %j",
+    (...endpointArgs) => {
+      expect(() =>
+        scopeGatewayOpenshellArgs(["provider", "get", ...endpointArgs, "openai-api"], GATEWAY),
+      ).toThrow(/--gateway-endpoint may bypass the gateway recorded/);
+    },
+  );
 
-  it.each([
-    ["-g", GATEWAY],
-    ["--gateway", GATEWAY],
-    [`--gateway=${GATEWAY}`],
-  ])("accepts an identical existing target: %j", (...gatewayArgs) => {
-    const command = ["provider", "list", ...gatewayArgs];
-    expect(scopeGatewayOpenshellArgs(command, GATEWAY)).toEqual(command);
-  });
+  it.each([["-g", GATEWAY], ["--gateway", GATEWAY], [`--gateway=${GATEWAY}`]])(
+    "accepts an identical existing target: %j",
+    (...gatewayArgs) => {
+      const command = ["provider", "list", ...gatewayArgs];
+      expect(scopeGatewayOpenshellArgs(command, GATEWAY)).toEqual(command);
+    },
+  );
 
   it("rejects a conflicting, duplicate, missing, or selection-based target", () => {
     expect(() =>
@@ -131,6 +133,7 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
       null,
       undefined,
       GATEWAY,
+      { revalidatePolicyRequirements: undefined },
     );
   });
 
