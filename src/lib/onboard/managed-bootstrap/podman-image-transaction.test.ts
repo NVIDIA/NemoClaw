@@ -512,6 +512,20 @@ describe("Podman image-owned bootstrap transaction", () => {
     );
   });
 
+  it("reports the bounded Hermes runtime-state startup refusal", () => {
+    const fake = harness("hermes", {
+      bootstrapLog:
+        "runtime-state-mutation-startup-gate: held\n[SECURITY] Runtime state mutation startup gate failed.",
+      inspectExitCode: 1,
+      inspectStatus: "exited",
+      startsRunningAfterStart: false,
+    });
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("hermes", fake))).toThrow(
+      "not stably running (status exited; exit 1; oom false; bootstrap [SECURITY] Runtime state mutation startup gate failed.)",
+    );
+  });
+
   it("does not surface non-bootstrap container output in a replacement failure", () => {
     const fake = harness("hermes", {
       bootstrapLog: "secret-looking application output",

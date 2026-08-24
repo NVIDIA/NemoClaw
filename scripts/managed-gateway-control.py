@@ -1407,8 +1407,17 @@ def _http_healthy(
         return False
     finally:
         if response is not None:
-            response.close()
-        connection.close()
+            try:
+                response.close()
+            except OSError:
+                # The response has already been bounded and fully read. A
+                # transport-close race must not escape the health probe and
+                # abort the entire managed restart as a generic failure.
+                pass
+        try:
+            connection.close()
+        except OSError:
+            pass
 
 
 def _http_healthy_in_gateway_namespace(

@@ -414,9 +414,7 @@ function boundedBootstrapSecurityFailure(
   const allowed = `${result.stdout}\n${result.stderr}`
     .split(/\r?\n/u)
     .filter((line) =>
-      /^(?:\[SECURITY\] Managed bootstrap (?:entrypoint|trampoline)|Managed startup (?:image application|shared-state transaction) failed): [\x20-\x7e]{1,400}$/u.test(
-        line,
-      ),
+      /^(?:(?:\[SECURITY\] Managed bootstrap (?:entrypoint|trampoline)|Managed startup (?:image application|shared-state transaction) failed): [\x20-\x7e]{1,400}|\[SECURITY\] (?:Required runtime state mutation startup gate is unavailable|Runtime state mutation startup gate failed)\.|runtime-state-mutation-startup-gate: held)$/u.test(line),
     );
   return allowed.at(-1) ?? null;
 }
