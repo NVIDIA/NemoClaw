@@ -68,6 +68,8 @@ def marker(nonce="d" * 64, selectors=None, provider_id="docker"):
         "transactionId": "a" * 64,
         "providerId": provider_id,
         "stateRoot": "/sandbox/.hermes",
+        "stateRootDevice": "101",
+        "stateRootInode": "202",
         "plan": plan_text,
         "planSha256": hashlib.sha256(plan_text.encode()).hexdigest(),
         "projectionSha256": "b" * 64,
@@ -350,6 +352,10 @@ describe("Hermes runtime state mutation publisher", () => {
     expect(result.extra_selector).toBe("publisher-plan-selector-mismatch");
     const events = result.events as Array<[string, string[]?]>;
     expect(events.filter(([action]) => action === "begin-shields-transition")).toHaveLength(2);
+    expect(events).toContainEqual([
+      "begin-shields-transition",
+      expect.arrayContaining(["--expected-hermes-device", "101", "--expected-hermes-inode", "202"]),
+    ]);
     expect(events).toContainEqual([
       "run-state-dir-transition",
       expect.arrayContaining(["--state-action", "lock"]),

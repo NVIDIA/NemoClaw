@@ -8,6 +8,10 @@ import {
   initialDockerGpuRoute,
   type SelectedDockerGpuRoute,
 } from "./docker-gpu-route";
+import type {
+  ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff,
+  ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt,
+} from "./managed-bootstrap/runtime-create";
 import {
   type OpenShellDockerSandboxContainerQuery,
   queryOpenShellDockerSandboxContainers,
@@ -32,6 +36,8 @@ export type SandboxGpuCreateAttemptFailure = {
   stage: SandboxGpuCreateFailureStage;
   error: unknown;
   fallbackEligible: boolean;
+  nativeCleanupHandoff?: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff;
+  nativeCleanupReceipt?: ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt;
 };
 
 export type SandboxGpuCreateAttemptResult<T> =
@@ -222,10 +228,53 @@ export function cleanupNativeGpuAttemptForFallback(
   };
 }
 
+/**
+ * Keep owner-managed runtimes out of the generic mutable-name cleanup path.
+ * Only the lifecycle's exact owner-cleanup receipt may authorize the retry.
+ */
+export function cleanupNativeGpuFailureForFallback(
+  sandboxName: string,
+  failure: SandboxGpuCreateAttemptFailure,
+  deps: NativeGpuFallbackCleanupDeps,
+): NativeGpuFallbackCleanupResult {
+  if (failure.nativeCleanupReceipt) {
+    const receipt = failure.nativeCleanupReceipt;
+    if (receipt.sandboxName === sandboxName) {
+      return {
+        safe: true,
+        reason: null,
+        deleteStatus: null,
+        sandboxPresent: false,
+        containerIds: [],
+      };
+    }
+    return {
+      safe: false,
+      reason: "managed bootstrap owner cleanup receipt does not match the requested sandbox",
+      deleteStatus: null,
+      sandboxPresent: null,
+      containerIds: [receipt.runtimeId],
+    };
+  }
+  if (failure.nativeCleanupHandoff) {
+    return {
+      safe: false,
+      reason:
+        "managed bootstrap owner cleanup is required for the exact sandbox and runtime identities",
+      deleteStatus: null,
+      sandboxPresent: null,
+      containerIds: [failure.nativeCleanupHandoff.runtimeId],
+    };
+  }
+  return cleanupNativeGpuAttemptForFallback(sandboxName, deps);
+}
+
 export type SandboxGpuCreatePlanDeps<T> = {
   runAttempt(route: SelectedDockerGpuRoute): Promise<SandboxGpuCreateAttemptResult<T>>;
   captureNativeFailure?(failure: SandboxGpuCreateAttemptFailure): void;
-  cleanupNativeFailure(): NativeGpuFallbackCleanupResult | Promise<NativeGpuFallbackCleanupResult>;
+  cleanupNativeFailure(
+    failure: SandboxGpuCreateAttemptFailure,
+  ): NativeGpuFallbackCleanupResult | Promise<NativeGpuFallbackCleanupResult>;
   /** Validate and render the retry without mutating host or process state. */
   prepareCompatibilityAttempt(failure: SandboxGpuCreateAttemptFailure): void | Promise<void>;
   /** Apply compatibility side effects only after native cleanup is proven safe. */
@@ -267,7 +316,7 @@ export async function executeSandboxGpuCreatePlan<T>(
       preparationRefused: error instanceof Error ? error.message : String(error),
     };
   }
-  const cleanup = await deps.cleanupNativeFailure();
+  const cleanup = await deps.cleanupNativeFailure(first);
   if (!cleanup.safe) {
     return {
       ...first,

@@ -86,12 +86,10 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 const commands = [];
-runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null }); if (_n(command).includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
-  // provider-get returns not-found so messaging providers are created fresh
-  if (_n(command).includes("provider get")) return { status: 1 };
-  return _n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
-};
+runner.run = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({
+  commands,
+  readySandboxName: "my-assistant",
+});
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
@@ -364,12 +362,10 @@ const nonSlackMessagingEnvKeys = [
 
 const commands = [];
 let registeredSandbox = null;
-runner.run = (command, opts = {}) => {
-  const normalized = _n(command);
-  commands.push({ command: normalized, env: opts.env || null }); if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
-  if (normalized.includes("provider get")) return { status: 1 };
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
-};
+runner.run = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({
+  commands,
+  readySandboxName: "my-assistant",
+});
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
@@ -534,16 +530,16 @@ const providers = Object.keys(credentialKeys), revisions = new Map(providers.map
 const rawGatewayCredential = ${JSON.stringify(rawGatewayCredential)}, gatewaySecrets = new Map(providers.map((name) => [name, rawGatewayCredential]));
 registry.registerSandbox({ name: "my-assistant", messaging: { schemaVersion: 1, plan: ${messagingPlanLiteral(["slack", "telegram", "whatsapp"])} } });
 registry.addExtraProvider("my-assistant-extra-telegram-bot-token-agent-a"); registry.addExtraProvider("my-assistant-extra-telegram-bot-token-agent-b");
-runner.run = (command) => {
+runner.run = (command, opts = {}) => {
   const normalized = _n(command);
-  commands.push({ command: normalized }); if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
+  commands.push({ command: normalized, env: opts.env || null });
   const providerGet = normalized.match(/provider get -g nemoclaw ([^ ]+)$/)?.[1]; if (providerGet === process.env.NEMOCLAW_TEST_FAIL_PROVIDER) return { status: 2, stderr: "transport unavailable" };
-  if (providerGet && revisions.has(providerGet)) return { status: 0, stdout: "Name: " + providerGet + "\nType: " + (providerGet === "compatible-endpoint" ? "openai" : "generic") + "\nCredential keys: " + credentialKeys[providerGet] + "\nConfig keys: " + (providerGet === "compatible-endpoint" ? "OPENAI_BASE_URL" : "<none>") + "\n" };
+  if (providerGet && revisions.has(providerGet)) return { status: 0, stdout: "Name: " + providerGet + "\nType: " + (providerGet === "compatible-endpoint" ? "openai" : "nemoclaw-mcp-v1") + "\nCredential keys: " + credentialKeys[providerGet] + "\nConfig keys: " + (providerGet === "compatible-endpoint" ? "OPENAI_BASE_URL" : "<none>") + "\n" };
   const refresh = normalized.match(/provider update -g nemoclaw ([^ ]+)$/)?.[1];
   if (refresh && gatewaySecrets.has(refresh)) { if (refresh === process.env.NEMOCLAW_TEST_FAIL_PROVIDER) return { status: 1 }; revisions.set(refresh, revisions.get(refresh) + 1); return { status: 0 }; }
   if (normalized.includes("provider get")) return { status: 1 };
   return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
-};
+}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
@@ -604,7 +600,6 @@ const { createSandbox } = require(${onboardPath});
         .sort();
       const denied = runScenario("my-assistant-extra-telegram-bot-token-agent-b");
       assert.equal(denied.status, 1);
-      assert.match(denied.stderr, /preserved indeterminate attachments .*unexpected-exit/);
       const deniedPayload = parseStdoutJson(denied.stdout);
       const deniedCommands = (deniedPayload.commands as CommandEntry[]).map(
         ({ command }) => command,
@@ -641,17 +636,17 @@ const { createSandbox } = require(${onboardPath});
       assert.equal(createCommand.command.includes("GITHUB_TOKEN"), false);
       assert.equal(createCommand.rawCredentialInEnv, false);
       assert.deepEqual(registeredChannels, ["slack", "telegram", "whatsapp"]);
-      assert.deepEqual(deniedRefreshes.sort(), expectedProviders);
+      assert.deepEqual(deniedRefreshes, []);
       assert.equal(
         Object.values(deniedPayload.providerRevisions).filter((revision) => revision === 2).length,
-        expectedProviders.length - 1,
+        0,
       );
       assert.ok(deniedCommands.every((command) => !command.includes("sandbox create")));
       assert.equal(deniedPayload.registered, null);
       assert.deepEqual(deniedPayload.temporaryCreateSources, []);
       assert.match(
         deniedPayload.error,
-        /did not publish attached provider 'my-assistant-extra-telegram-bot-token-agent-b' before Docker sandbox creation/,
+        /did not confirm messaging provider 'my-assistant-extra-telegram-bot-token-agent-b' before sandbox creation/,
       );
       const combinedOutput = result.stdout + result.stderr + denied.stdout + denied.stderr;
       assert.equal(
@@ -706,11 +701,11 @@ registry.registerSandbox({
 });
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
-  commands.push({ command: normalized, env: opts.env || null }); if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
-  if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0, stdout: "Name: my-assistant-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n" };
+  commands.push({ command: normalized, env: opts.env || null });
+  if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0, stdout: "Name: my-assistant-telegram-bridge\nType: nemoclaw-mcp-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n" };
   if (normalized.includes("provider get")) return { status: 1 };
   return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
-};
+}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
@@ -1238,10 +1233,14 @@ const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "")
 const registry = require(${registryPath});
 
 const commands = [];
-runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
-};
+runner.run = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({
+  commands,
+  initialProviders: [
+    ["my-assistant-discord-bridge", "nemoclaw-mcp-v1", "DISCORD_BOT_TOKEN"],
+    ["my-assistant-slack-bridge", "nemoclaw-mcp-v1", "SLACK_BOT_TOKEN"],
+    ["my-assistant-slack-app", "nemoclaw-mcp-v1", "SLACK_APP_TOKEN"],
+  ],
+});
 runner.runCapture = (command) => {
   // Existing sandbox that is ready
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "my-assistant";
@@ -1292,9 +1291,7 @@ const { createSandbox } = require(${onboardPath});
         "should NOT delete sandbox when providers already exist in gateway",
       );
 
-      // Providers should still be upserted on reuse (credential refresh).
-      // Since the mock reports providers as existing (run returns status 0),
-      // upsertProvider issues 'update' rather than 'create'.
+      // Reuse refreshes credentials only after the mock returns the endpointless identity.
       const providerUpserts = payload.commands.filter((entry: CommandEntry) =>
         entry.command.includes("provider update"),
       );
@@ -1347,12 +1344,10 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
-runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null }); if (_n(command).includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
-  // provider-get returns not-found so messaging providers are created fresh
-  if (_n(command).includes("provider get")) return { status: 1 };
-  return _n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
-};
+runner.run = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({
+  commands,
+  readySandboxName: "my-assistant",
+});
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";

@@ -174,7 +174,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
 
   function upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],
-    options: { replaceExisting?: boolean } = {},
+    options: { replaceExisting?: boolean; allowedSandboxes?: readonly string[] } = {},
     runOpenshell: OpenshellCliHelpers["runOpenshell"] = deps.runOpenshell,
   ): string[] {
     ensureWebSearchProviderProfiles(tokenDefs, runOpenshell);

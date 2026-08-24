@@ -27,7 +27,7 @@ const PROFILE_WORKFLOW = "./.github/workflows/e2e-standard-profile.yaml";
 const CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const EXECUTION_PLAN_SHELL = "/bin/bash --noprofile --norc -e -o pipefail {0}";
 const TRUSTED_CALLER_CREDENTIAL_PREDICATE =
-  "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true')";
+  "github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true')";
 const guardedCallerSecret = (name: string): string =>
   `\${{ ${TRUSTED_CALLER_CREDENTIAL_PREDICATE} && secrets.${name} || '' }}`;
 const SKILL_AGENT_UPLOAD_PATH = `${[
@@ -158,6 +158,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       risk_signal_correlation_id:
         "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}",
       cli_artifact_provenance: "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
+      managed_image_catalog: "${{ needs.generate-matrix.outputs.managed_image_catalog }}",
       credential_boundary: contract.credentialBoundary,
       catalogue_id: "${{ matrix.id }}",
       target_id: "${{ matrix.target_id }}",
@@ -179,7 +180,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       shard: "${{ matrix.shard }}",
       artifact_layout: "${{ matrix.artifact_layout }}",
       trusted_main:
-        "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}",
+        "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}",
     })) {
       if (withInputs[name] !== expected) {
         errors.push(`${contract.job} must pass ${name} from the catalogue matrix`);
@@ -205,6 +206,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     risk_signal_expected_sha: "string",
     risk_signal_correlation_id: "string",
     cli_artifact_provenance: "string",
+    managed_image_catalog: "string",
     credential_boundary: "string",
     catalogue_id: "string",
     target_id: "string",
@@ -295,6 +297,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Install target host dependencies",
     "Prepare E2E workspace",
     "Restore exact-commit CLI artifact",
+    "Materialize temporary managed-image catalog",
     "Install reviewed cloudflared",
     "Add swap for Hermes image rebuild",
     "Initialize runner comparison telemetry",
@@ -389,6 +392,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     checkout?.uses !== CHECKOUT ||
     checkoutWith.repository !== "${{ inputs.candidate_repository }}" ||
     checkoutWith.ref !== "${{ inputs.candidate_sha }}" ||
+    checkoutWith["fetch-depth"] !== 0 ||
     checkoutWith["persist-credentials"] !== false ||
     workflowSteps.indexOf(checkout ?? {}) !== 2
   ) {
@@ -444,6 +448,40 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   ) {
     errors.push("standard E2E profile must restore the planned exact-commit CLI artifact");
   }
+  const managedCatalog = requireStep(
+    errors,
+    workflowSteps,
+    "Materialize temporary managed-image catalog",
+  );
+  const managedCatalogRun = String(managedCatalog?.run ?? "");
+  if (
+    managedCatalog?.if !== "${{ inputs.managed_image_catalog != '' }}" ||
+    managedCatalog.shell !== EXECUTION_PLAN_SHELL ||
+    !isDeepStrictEqual(record(managedCatalog.env), {
+      CANDIDATE_SHA: "${{ inputs.candidate_sha }}",
+      MANAGED_IMAGE_CATALOG: "${{ inputs.managed_image_catalog }}",
+      RESTORE_CLI: "${{ inputs.restore_cli && 'true' || 'false' }}",
+    }) ||
+    !managedCatalogRun.includes(".source.revision == $revision") ||
+    !managedCatalogRun.includes("[.[].source.release] | unique | length") ||
+    !managedCatalogRun.includes("[.[].source.cohort] | unique | length") ||
+    !managedCatalogRun.includes('[[ "$RESTORE_CLI" == "true" ]]') ||
+    !managedCatalogRun.includes(".source.release == $release") ||
+    !managedCatalogRun.includes(
+      "managed-image catalog source identity does not match the candidate",
+    ) ||
+    !managedCatalogRun.includes(
+      "managed-image catalog release does not match the restored CLI",
+    ) ||
+    !managedCatalogRun.includes("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG") ||
+    managedCatalogRun.includes("NEMOCLAW_E2E_EXACT_RELEASE") ||
+    managedCatalogRun.includes(".source.release = $release") ||
+    workflowSteps.indexOf(managedCatalog ?? {}) !== workflowSteps.indexOf(restore ?? {}) + 1
+  ) {
+    errors.push(
+      "standard E2E profile must materialize only the exact-candidate managed-image catalog",
+    );
+  }
   const cloudflared = requireStep(errors, workflowSteps, "Install reviewed cloudflared");
   const cloudflaredRun = String(cloudflared?.run ?? "");
   if (
@@ -461,14 +499,16 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     !cloudflaredRun.includes('dpkg-deb -f "${cloudflared_deb}" Package') ||
     !cloudflaredRun.includes('"${architecture}" != "amd64"') ||
     cloudflaredRun.includes("command -v cloudflared") ||
-    workflowSteps.indexOf(cloudflared ?? {}) !== workflowSteps.indexOf(restore ?? {}) + 1
+    workflowSteps.indexOf(cloudflared ?? {}) !== workflowSteps.indexOf(managedCatalog ?? {}) + 1
   ) {
     errors.push("standard E2E profile must install only the reviewed cloudflared package");
   }
   const rebuildSwap = requireStep(errors, workflowSteps, "Add swap for Hermes image rebuild");
   const rebuildSwapRun = String(rebuildSwap?.run ?? "");
   const rebuildSwapFragments = [
-    '[[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${REF}" != "refs/heads/main" ]]',
+    '[[ "${REPOSITORY}" != "NVIDIA/NemoClaw" ]]',
+    '[[ "${EVENT_NAME}" == "push" && "${REF}" != "refs/heads/main" ]]',
+    '[[ "${EVENT_NAME}" == "workflow_dispatch" && "${REF}" != refs/heads/* ]]',
     '[[ "${RUNNER_ENVIRONMENT_KIND}" != "github-hosted"',
     'fail "refusing unexpected pre-existing rebuild swap path"',
     "required_disk_bytes=$((swap_file_bytes + reserve_bytes))",

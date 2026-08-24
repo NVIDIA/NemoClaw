@@ -147,16 +147,29 @@ describe("managed snapshot profile restore", () => {
     ).toThrow(/invalid managed workload authority/u);
   });
 
-  it("rejects target profile drift and provider refusal", () => {
+  it("rebinds a same-name rebuild to its accepted replacement profile", () => {
     const receipt = workload("openclaw");
     const source = { sandboxName: "alpha", agentType: "openclaw", workload: receipt };
-    expect(() =>
-      prepareManagedSnapshotProfileRestore(
-        source,
-        sandbox("openclaw", workload("openclaw", true)),
-        provider(),
+    const replacement = workload("openclaw", true);
+
+    const plan = prepareManagedSnapshotProfileRestore(
+      source,
+      sandbox("openclaw", replacement),
+      provider(),
+    );
+
+    expect(plan?.authority.receipt).toEqual(receipt);
+    expect(plan?.providerRestoreAuthority).toEqual({
+      agent: "openclaw",
+      profileFingerprint: fingerprintManagedStartupProfile(
+        managedStartupE2eProfile("openclaw", true),
       ),
-    ).toThrow(/requires a managed image or startup-profile rebind/u);
+    });
+  });
+
+  it("rejects provider refusal and cross-sandbox or cross-agent rebind", () => {
+    const receipt = workload("openclaw");
+    const source = { sandboxName: "alpha", agentType: "openclaw", workload: receipt };
     expect(() =>
       prepareManagedSnapshotProfileRestore(source, sandbox("openclaw", receipt), provider(false)),
     ).toThrow(/does not accept the snapshot workload receipt/u);
@@ -167,6 +180,16 @@ describe("managed snapshot profile restore", () => {
         provider(true, false),
       ),
     ).toThrow(/does not support managed-profile restore/u);
+    expect(() =>
+      prepareManagedSnapshotProfileRestore(
+        source,
+        { ...sandbox("openclaw", receipt), name: "beta" },
+        provider(),
+      ),
+    ).toThrow(/requires a managed image or startup-profile rebind/u);
+    expect(() =>
+      prepareManagedSnapshotProfileRestore(source, sandbox("hermes"), provider()),
+    ).toThrow(/requires a managed image or startup-profile rebind/u);
   });
 
   it("fails before a managed cross-sandbox clone can reach image-only creation", () => {

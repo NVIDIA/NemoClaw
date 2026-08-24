@@ -80,6 +80,8 @@ export interface SandboxCreateIntent {
     readonly targetGeneration: string;
     readonly targetIntentFingerprint: string;
   };
+  /** Internal outer-rebuild authority for carrying managed MCP state through replacement. */
+  readonly recreateJournalTargetIntentFingerprint?: string;
   /** Validated non-secret Hermes environment assignments carried by a rebuild. */
   readonly rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
   /** Built-in policy presets owned by the outer authoritative rebuild lifecycle. */

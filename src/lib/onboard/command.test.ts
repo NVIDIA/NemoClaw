@@ -304,6 +304,21 @@ describe("onboard command options", () => {
     });
   });
 
+  it("accepts an exact qualification catalog without enabling candidate activation", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-catalog-only-"));
+    const managedCatalogPath = path.join(tmpDir, "managed-catalog.json");
+    fs.writeFileSync(managedCatalogPath, "{}\n");
+
+    try {
+      expect(resolve({ "temp-managed-runtime-catalog": managedCatalogPath })).toMatchObject({
+        tempManagedRuntime: false,
+        tempManagedRuntimeCatalog: managedCatalogPath,
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses explicit false/null defaults when flags are absent", () => {
     expect(resolve({})).toEqual({
       tempManagedRuntime: false,

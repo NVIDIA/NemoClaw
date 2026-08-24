@@ -274,7 +274,7 @@ describe("Docker GPU clone envelope", () => {
     expect(args).not.toContain("nofile=1024:1024");
   });
 
-  it("preserves each Docker attach stream independently", () => {
+  it("does not replay client attachment state into detached recreation", () => {
     const inspect = inspectFixture();
     Object.assign(inspect.Config!, {
       AttachStdin: true,
@@ -284,9 +284,7 @@ describe("Docker GPU clone envelope", () => {
 
     const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"));
 
-    expect(args).toEqual(
-      expect.arrayContaining(["--attach", "stdin", "--attach", "stdout", "--attach", "stderr"]),
-    );
+    expect(args).not.toContain("--attach");
   });
 
   it.each([2048, -1])("preserves the exact Docker PID limit %i", (pidsLimit) => {

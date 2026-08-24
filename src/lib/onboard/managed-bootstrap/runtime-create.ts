@@ -37,6 +37,35 @@ export interface ManagedBootstrapRuntimeLimit {
   readonly hard: number;
 }
 
+export type ManagedBootstrapNativeGpuFallbackRollbackRequest = Readonly<{
+  ownerCleanupHandoff: "native-gpu-fallback-after-absent-attachment";
+}>;
+
+export type ManagedBootstrapNativeGpuFallbackRollbackOutcome =
+  | Readonly<{ kind: "rolled-back" }>
+  | Readonly<{
+      kind: "openshell-owner-cleanup-required";
+      sandboxName: string;
+      sandboxId: string;
+      runtimeId: string;
+    }>;
+
+export type ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff = Extract<
+  ManagedBootstrapNativeGpuFallbackRollbackOutcome,
+  { readonly kind: "openshell-owner-cleanup-required" }
+>;
+
+export type ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt = Readonly<{
+  kind: "openshell-owner-cleanup-completed";
+  sandboxName: string;
+  sandboxId: string;
+  runtimeId: string;
+}>;
+
+export type ManagedBootstrapNativeGpuFallbackOwnerCleanupOutcome =
+  | ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff
+  | ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt;
+
 /** Provider-neutral lifecycle surface consumed by sandbox-create coordinators. */
 export interface ManagedBootstrapRuntimePatch {
   maybeApplyDuringCreate(): void | Promise<void>;
@@ -44,7 +73,12 @@ export interface ManagedBootstrapRuntimePatch {
   replacementRuntimeId?(): string | null;
   createFailureMessage(): string | null;
   exitOnPatchError(): void | Promise<void>;
-  rollbackManagedStartupAfterCreateFailure(): void | Promise<void>;
+  rollbackManagedStartupAfterCreateFailure(
+    request?: ManagedBootstrapNativeGpuFallbackRollbackRequest,
+  ):
+    | void
+    | ManagedBootstrapNativeGpuFallbackRollbackOutcome
+    | Promise<void | ManagedBootstrapNativeGpuFallbackRollbackOutcome>;
   ensureApplied(): void | Promise<void>;
   waitForSupervisorReconnectIfNeeded(): void | Promise<void>;
   commitAfterReady(): void | Promise<void>;
@@ -137,6 +171,10 @@ export interface ManagedBootstrapRuntimeCreateLifecycle {
    * `undefined` means activation has not selected a runtime yet; `null` fails closed.
    */
   inspectNativeRuntime?(): ManagedBootstrapRuntimeSnapshot | null | undefined;
+  /** Consume an exact provider-owned handoff before a single compatibility retry. */
+  completeNativeGpuFallbackOwnerCleanup?(
+    handoff: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff,
+  ): Promise<ManagedBootstrapNativeGpuFallbackOwnerCleanupOutcome>;
   recoverUnfinished(): Promise<ManagedBootstrapRecoveryReport>;
   prepareNetwork(): Promise<void>;
   runCreate<T>(
