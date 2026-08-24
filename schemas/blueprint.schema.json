@@ -4,7 +4,19 @@
   "title": "NemoClaw Blueprint",
   "description": "Schema for nemoclaw-blueprint/blueprint.yaml — defines sandbox orchestration, inference profiles, and policy configuration.",
   "type": "object",
-  "required": ["version", "profiles", "components"],
+  "required": ["version"],
+  "oneOf": [
+    {
+      "required": ["profiles", "components"],
+      "not": { "required": ["openshell_target"] }
+    },
+    {
+      "required": ["openshell_target", "min_openshell_version", "max_openshell_version"],
+      "not": {
+        "anyOf": [{ "required": ["profiles"] }, { "required": ["components"] }]
+      }
+    }
+  ],
   "additionalProperties": false,
   "properties": {
     "version": {

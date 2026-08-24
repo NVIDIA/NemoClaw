@@ -230,7 +230,10 @@ function readBoundedFile(
   return contents;
 }
 
-function readFileAtMost(filePath: string, maxBytes: number): Buffer {
+function withValidatedRegularFile<T>(
+  filePath: string,
+  useFile: (descriptor: number, size: number) => T,
+): T {
   const descriptor = openSync(
     filePath,
     constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
@@ -247,7 +250,15 @@ function readFileAtMost(filePath: string, maxBytes: number): Buffer {
     ) {
       throw new Error("not a regular file");
     }
-    if (file.size > maxBytes) {
+    return useFile(descriptor, file.size);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+function readFileAtMost(filePath: string, maxBytes: number): Buffer {
+  return withValidatedRegularFile(filePath, (descriptor, size) => {
+    if (size > maxBytes) {
       return Buffer.alloc(maxBytes + 1);
     }
 
@@ -259,32 +270,11 @@ function readFileAtMost(filePath: string, maxBytes: number): Buffer {
       offset += bytesRead;
     }
     return contents.subarray(0, offset);
-  } finally {
-    closeSync(descriptor);
-  }
+  });
 }
 
 function inspectRegularFileSize(filePath: string, _maxBytes: number): number {
-  const descriptor = openSync(
-    filePath,
-    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
-  );
-  try {
-    const file = fstatSync(descriptor);
-    const pathMetadata = lstatSync(filePath);
-    if (
-      !file.isFile() ||
-      !pathMetadata.isFile() ||
-      pathMetadata.isSymbolicLink() ||
-      file.dev !== pathMetadata.dev ||
-      file.ino !== pathMetadata.ino
-    ) {
-      throw new Error("not a regular file");
-    }
-    return file.size;
-  } finally {
-    closeSync(descriptor);
-  }
+  return withValidatedRegularFile(filePath, (_descriptor, size) => size);
 }
 
 function validateFileReference(
