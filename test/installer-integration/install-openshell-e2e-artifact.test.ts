@@ -10,8 +10,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-const INSTALLER = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
-const WORKFLOW = path.join(import.meta.dirname, "..", ".github", "workflows", "e2e.yaml");
+const INSTALLER = path.join(import.meta.dirname, "../..", "scripts", "install-openshell.sh");
+const WORKFLOW = path.join(import.meta.dirname, "../..", ".github", "workflows", "e2e.yaml");
 const FEATURE_MARKERS =
   "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
 

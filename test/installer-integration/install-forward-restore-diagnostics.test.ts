@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const REPOSITORY_ROOT = path.resolve(import.meta.dirname, "..");
+const REPOSITORY_ROOT = path.resolve(import.meta.dirname, "../..");
 const INSTALLER = path.join(REPOSITORY_ROOT, "scripts", "install.sh");
 const SANDBOX = "created-by-onboard";
 const PORT = "8642";

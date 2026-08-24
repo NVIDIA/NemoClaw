@@ -311,7 +311,7 @@ export function ensureSandboxPortForwardForPort(
   // its result is accepted below only after the list reports the exact target
   // owner. An unavailable list and forced bind replacement remain fail-closed.
   // NemoClaw must compensate while the supported OpenShell 0.0.85
-  // contract remains supported; test/process-recovery.test.ts locks both the
+  // contract remains supported; test/process-recovery/process-recovery.test.ts locks both the
   // delayed-release and fail-closed cases. Remove this wait only after every
   // supported OpenShell release either waits for host-listener release before
   // `forward stop` returns or exposes an authoritative listener-released state
