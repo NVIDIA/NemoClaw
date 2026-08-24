@@ -13,7 +13,7 @@ import YAML from "yaml";
 import { loadAgent } from "../../../src/lib/agent/defs.ts";
 import { prepareInitialSandboxCreatePolicy } from "../../../src/lib/onboard/initial-policy.ts";
 import { TOKEN_PREFIX_PATTERNS } from "../../../src/lib/security/secret-patterns.ts";
-import { cloudExperimentalChecksForOnboarding } from "./e2e/live/cloud-experimental-check-list.ts";
+import { cloudExperimentalChecksForOnboarding } from "../../e2e/live/cloud-experimental-check-list.ts";
 import {
   ANALYTICS_DISABLE_ENV_NAMES,
   DCODE_CANONICAL_PATH,

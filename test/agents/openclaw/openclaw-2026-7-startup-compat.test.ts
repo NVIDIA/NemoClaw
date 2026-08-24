@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { safeTmpHelpers } from "./nemoclaw-start-gateway.test-helpers";
+import { safeTmpHelpers } from "../../nemoclaw-start-gateway.test-helpers";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const NORMALIZER = path.join(ROOT, "scripts", "lib", "normalize_mutable_config_perms.py");
@@ -116,32 +116,31 @@ describe("OpenClaw 2026.7 startup compatibility", () => {
     },
   );
 
-  it.each([
-    "symlink",
-    "directory",
-    "hardlink",
-  ] as const)("rejects a %s update-check path", (kind) => {
-    const configDir = temporaryConfigDir();
-    const statePath = path.join(configDir, "update-check.json");
-    const target = path.join(path.dirname(configDir), "target.json");
-    switch (kind) {
-      case "symlink":
-        fs.writeFileSync(target, "");
-        fs.symlinkSync(target, statePath);
-        break;
-      case "directory":
-        fs.mkdirSync(statePath);
-        break;
-      case "hardlink":
-        fs.writeFileSync(target, "{}");
-        fs.linkSync(target, statePath);
-        break;
-    }
+  it.each(["symlink", "directory", "hardlink"] as const)(
+    "rejects a %s update-check path",
+    (kind) => {
+      const configDir = temporaryConfigDir();
+      const statePath = path.join(configDir, "update-check.json");
+      const target = path.join(path.dirname(configDir), "target.json");
+      switch (kind) {
+        case "symlink":
+          fs.writeFileSync(target, "");
+          fs.symlinkSync(target, statePath);
+          break;
+        case "directory":
+          fs.mkdirSync(statePath);
+          break;
+        case "hardlink":
+          fs.writeFileSync(target, "{}");
+          fs.linkSync(target, statePath);
+          break;
+      }
 
-    const result = repairUpdateCheck(configDir);
+      const result = repairUpdateCheck(configDir);
 
-    expect(result.status).toBe(1);
-  });
+      expect(result.status).toBe(1);
+    },
+  );
 
   it("starts the root-mode gateway with the sandbox home", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-home-"));
