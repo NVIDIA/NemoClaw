@@ -593,15 +593,15 @@ describe("Jetson dispatch GitHub controller", () => {
     });
   });
 
-  it("shares one cancellation request across concurrent callers (#8142)", async () => {
+  it("accepts one empty successful response for concurrent cancellation callers (#8142)", async () => {
     const receiptFile = temporaryReceiptFile();
-    let completeRequest: ((value: unknown) => void) | undefined;
-    const requestImpl = vi.fn(
-      () =>
-        new Promise((resolve) => {
-          completeRequest = resolve;
-        }),
-    );
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const requestImpl: typeof dispatcherRequest = async (options) =>
+      dispatcherRequest({
+        ...options,
+        fetchImpl,
+        tokenProvider: async () => "oidc-token",
+      });
     const cancel = createJetsonCancellation({
       baseUrl: new URL("https://dispatch.test/"),
       receiptFile,
@@ -611,13 +611,16 @@ describe("Jetson dispatch GitHub controller", () => {
 
     const deadlineCancellation = cancel("controller-deadline");
     const signalCancellation = cancel("signal");
-    completeRequest?.({ job: queuedStatus });
 
     await expect(Promise.all([deadlineCancellation, signalCancellation])).resolves.toEqual([
       { outcome: "succeeded", receiptWritten: true },
       { outcome: "succeeded", receiptWritten: true },
     ]);
-    expect(requestImpl).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledWith(
+      new URL(`https://dispatch.test/v1/jobs/${queuedStatus.jobId}`),
+      expect.objectContaining({ method: "DELETE" }),
+    );
     expect(readReceipt(receiptFile)).toMatchObject({
       cancellation: { outcome: "succeeded", reason: "controller-deadline" },
     });

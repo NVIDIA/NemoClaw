@@ -147,7 +147,10 @@ export async function dispatcherRequest(options: {
   ) {
     throw new Error("Jetson dispatcher response is too large");
   }
-  if (!response.body) throw new Error("Jetson dispatcher returned an empty response");
+  if (!response.body) {
+    if (response.ok && options.method === "DELETE") return undefined;
+    throw new Error("Jetson dispatcher returned an empty response");
+  }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let responseBytes = 0;
@@ -162,6 +165,10 @@ export async function dispatcherRequest(options: {
     chunks.push(value);
   }
   const bytes = Buffer.concat(chunks, responseBytes);
+  if (responseBytes === 0) {
+    if (response.ok && options.method === "DELETE") return undefined;
+    throw new Error("Jetson dispatcher returned an empty response");
+  }
   let payload: unknown;
   try {
     payload = JSON.parse(bytes.toString("utf8"));

@@ -154,8 +154,10 @@ archive.
 
 If a workflow fails after job acceptance, inspect `jetson-dispatch.json` before
 another dispatch. If it contains `cancellation`, inspect the recorded job in the
-operator service. Cancel the job or confirm completion before another dispatch,
-regardless of whether the cancellation outcome is pending, succeeded, or failed.
+operator service. If the file is missing or lacks cancellation data, use the job
+ID from the workflow error or logs to inspect the operator service. Cancel the
+job or confirm completion before another dispatch, regardless of whether the
+cancellation outcome is pending, succeeded, or failed.
 
 ## Live Target
 
