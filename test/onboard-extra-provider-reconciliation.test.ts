@@ -125,14 +125,8 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxNames = [
-    await createSandbox(
-      null, "gpt-5.4", undefined, undefined, undefined, undefined, undefined,
-      ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
-    ),
-    await createSandbox(
-      null, "gpt-5.4", undefined, undefined, undefined, undefined, undefined,
-      ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
-    ),
+    await createSandbox(null, "gpt-5.4", "nvidia-prod"),
+    await createSandbox(null, "gpt-5.4", "nvidia-prod"),
   ];
   console.log(JSON.stringify({
     sandboxNames,
@@ -155,6 +149,7 @@ const { createSandbox } = require(${onboardPath});
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
           NEMOCLAW_SANDBOX_PREBUILD: "1",
           OPENSHELL_GATEWAY_ENDPOINT: undefined,
         },
@@ -201,6 +196,8 @@ const { createSandbox } = require(${onboardPath});
           "provider get -g nemoclaw custom-provider",
           "provider get -g nemoclaw my-slack-bridge",
           "provider get -g nemoclaw my-slack-bridge",
+          "provider get -g nemoclaw nvidia-prod",
+          "provider get -g nemoclaw nvidia-prod",
           "provider get -g nemoclaw tavily-search",
         ].sort(),
       );

@@ -13,6 +13,7 @@ import { writeOkOpenshell } from "./helpers/onboard-openshell-fixture";
 import { type CommandEntry, onboardScriptMocksPath } from "./helpers/onboard-split-context";
 
 beforeEach(() => {
+  vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG", "1");
   vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
 
@@ -1430,10 +1431,7 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  const sandboxName = await createSandbox(
-    null, "gpt-5.4", undefined, undefined, undefined, undefined, undefined,
-    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
-  );
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod");
   const createCommand = commands.find((entry) => entry.command.includes("sandbox create"));
   fs.writeFileSync(${JSON.stringify(payloadPath)}, JSON.stringify({
     sandboxName,
@@ -1474,9 +1472,9 @@ const { createSandbox } = require(${onboardPath});
     assert.ok(payload.sandboxListCalls >= 2);
     assert.deepEqual(payload.groupKillCalls, [{ pid: -4242, signal: "SIGTERM" }]);
     assert.deepEqual(payload.killCalls, []);
-    assert.equal(payload.unrefCalls, 0);
-    assert.equal(payload.stdoutDestroyCalls, 0);
-    assert.equal(payload.stderrDestroyCalls, 0);
+    assert.equal(payload.unrefCalls, 1);
+    assert.equal(payload.stdoutDestroyCalls, 1);
+    assert.equal(payload.stderrDestroyCalls, 1);
     assert.match(payload.registeredSandbox.lifecycleGeneration, /^[0-9a-f-]{36}$/u);
     assert.equal(
       payload.registeredSandbox.lifecycleLiveIdentityFingerprint,

@@ -729,11 +729,21 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   if (!sameMembers(needs(live), ["base-image-publication", "generate-matrix"])) {
     errors.push("live E2E must wait for matrix generation and base-image publication");
   }
+  const cloudOnboard = workflow.jobs["cloud-onboard"] ?? {};
+  if (!sameMembers(needs(cloudOnboard), ["base-image-publication", "generate-matrix"])) {
+    errors.push("cloud-onboard must wait for matrix generation and base-image publication");
+  }
+  if (
+    cloudOnboard.env?.E2E_MANAGED_IMAGE_REVISION !==
+    "${{ needs.base-image-publication.outputs.managed_image_revision }}"
+  ) {
+    errors.push("cloud-onboard must use the selected managed-image cohort revision");
+  }
   if (
     live.env?.E2E_MANAGED_IMAGE_REVISION !==
       "${{ needs.base-image-publication.outputs.managed_image_revision }}" ||
     live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==
-    "${{ needs.base-image-publication.outputs.dcode_base_ref }}"
+      "${{ needs.base-image-publication.outputs.dcode_base_ref }}"
   ) {
     errors.push("live DCode must use the selected immutable base reference");
   }

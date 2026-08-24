@@ -173,7 +173,7 @@ describe("managed workload onboard orchestration", () => {
     ).toBe(false);
   });
 
-  it("rejects stock onboarding when the managed-image catalog is unavailable", async () => {
+  it("rejects an unavailable catalog for stock managed-image onboarding", async () => {
     const { runtime } = createFreshOnboardingRuntime(
       {},
       { stockManagedRuntime: true, unavailableCatalog: true },
