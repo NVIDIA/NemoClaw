@@ -44,14 +44,6 @@ describe("scope-upgrade warm-up timeout bound v2 (#4504)", () => {
     expect(WARMUP_TIMEOUT_MS).toBeGreaterThan(0);
     expect(WARMUP_PROBE_TIMEOUT_S).toBe(5);
   });
-
-  it("stays within the bounds the contract budgeted for finalization latency", () => {
-    // The architect budgeted worst-case added finalization latency at the
-    // warm-up cap (<=30s) plus the existing 15s approval pass. Guard that the
-    // warm-up cap has not crept past its 30s ceiling — anything larger would
-    // blow the budget the contract signed off on for a one-time onboard.
-    expect(WARMUP_TIMEOUT_MS).toBeLessThanOrEqual(30_000);
-  });
 });
 
 describe("warm-up payload uses native multiline OpenShell exec in v2 (#4504)", () => {

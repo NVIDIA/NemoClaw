@@ -193,6 +193,11 @@ export async function assertHermesGpuStartupProof({
     );
   }
   const managedAuthority = readManagedWorkloadAuthority(registryEntry);
+  const managedImageReference = assertHermesManagedWorkloadAuthority(
+    sandboxName,
+    registryEntry.imageTag,
+    managedAuthority,
+  );
 
   const expectedExtraPlaceholderAssignment = `NEMOCLAW_EXTRA_PLACEHOLDER_KEYS=${HERMES_GPU_EXTRA_PLACEHOLDER_KEYS.join(",")}`;
   const extraPlaceholderEnv = await host.command(
@@ -297,48 +302,33 @@ raise SystemExit(1)`,
     resultText(dockerCommandBoundary),
   ).toBe(0);
   const commandBoundary = JSON.parse(dockerCommandBoundary.stdout);
-  if (managedAuthority) {
-    const managedImageReference = assertHermesManagedWorkloadAuthority(
-      sandboxName,
-      registryEntry.imageTag,
-      managedAuthority,
-    );
-    expect(managedAuthority.agent).toBe("hermes");
-    const managedBootstrapCommand = commandBoundary.cmd;
-    expect(Array.isArray(managedBootstrapCommand)).toBe(true);
-    const bootstrapIdentity = managedBootstrapCommand[5];
-    expect(typeof bootstrapIdentity).toBe("string");
-    assertManagedBootstrapIdentity(bootstrapIdentity);
-    const agentIdentity = managedImageRuntimeIdentity(managedAuthority.agent);
-    expect(commandBoundary.entrypoint).toEqual([MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE]);
-    expect(managedBootstrapCommand).toEqual([
-      "--agent",
-      managedAuthority.agent,
-      "--profile-fingerprint",
-      fingerprintManagedStartupProfile(managedAuthority.profile),
-      "--bootstrap-identity",
-      bootstrapIdentity,
-      "--agent-uid",
-      String(agentIdentity.uid),
-      "--agent-gid",
-      String(agentIdentity.gid),
-      "--agent-workdir",
-      agentIdentity.workdir,
-      "--request-file",
-      MANAGED_BOOTSTRAP_REQUEST_FILE,
-      "--",
-      ...OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
-    ]);
-    assertHermesContainerImageAuthority(commandBoundary.image, managedImageReference);
-  } else {
-    expect(installText).toContain(
-      "Managed image unavailable; using the trusted Dockerfile recipe.",
-    );
-    expect(commandBoundary).toMatchObject({
-      cmd: ["--workdir", "/sandbox"],
-      entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
-    });
-  }
+  expect(managedAuthority!.agent).toBe("hermes");
+  const managedBootstrapCommand = commandBoundary.cmd;
+  expect(Array.isArray(managedBootstrapCommand)).toBe(true);
+  const bootstrapIdentity = managedBootstrapCommand[5];
+  expect(typeof bootstrapIdentity).toBe("string");
+  assertManagedBootstrapIdentity(bootstrapIdentity);
+  const agentIdentity = managedImageRuntimeIdentity(managedAuthority!.agent);
+  expect(commandBoundary.entrypoint).toEqual([MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE]);
+  expect(managedBootstrapCommand).toEqual([
+    "--agent",
+    managedAuthority!.agent,
+    "--profile-fingerprint",
+    fingerprintManagedStartupProfile(managedAuthority!.profile),
+    "--bootstrap-identity",
+    bootstrapIdentity,
+    "--agent-uid",
+    String(agentIdentity.uid),
+    "--agent-gid",
+    String(agentIdentity.gid),
+    "--agent-workdir",
+    agentIdentity.workdir,
+    "--request-file",
+    MANAGED_BOOTSTRAP_REQUEST_FILE,
+    "--",
+    ...OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
+  ]);
+  assertHermesContainerImageAuthority(commandBoundary.image, managedImageReference);
   expect(commandBoundary.has_openshell_sandbox_command).toBe(true);
   expect(commandBoundary.command_ends_with_nemoclaw_start).toBe(true);
   expect(commandBoundary.command_is_sleep_infinity).toBe(false);

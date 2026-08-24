@@ -5,6 +5,7 @@ import {
   buildMcpCredentialDetachedCommand,
   buildMcpCredentialRevisionObservationCommand,
 } from "../../../src/lib/actions/sandbox/mcp-bridge-provider-readiness.ts";
+import { getNetworkPolicyNames } from "../../../src/lib/onboard/initial-policy.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
@@ -295,6 +296,21 @@ async function updateProviderCredential(
   );
   expectExitZero(result, artifactName);
   expect(resultText(result)).toMatch(/Updated provider/iu);
+}
+
+async function expectPolicyAbsent(
+  sandbox: SandboxClient,
+  policyName: string,
+): Promise<void> {
+  const result = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
+    artifactName: "credential-window-confirm-binding-removal",
+    env: openshellEnv(),
+    timeoutMs: 90_000,
+  });
+  expectExitZero(result, "inspect credential-window policy after binding removal");
+  const policyNames = getNetworkPolicyNames(result.stdout);
+  expect(policyNames, "expected an unambiguous live policy document after binding removal").not.toBeNull();
+  expect(policyNames).not.toContain(policyName);
 }
 
 async function runFreshRequest(
@@ -750,6 +766,7 @@ test("openshell-credential-generation-window", {
       },
     );
     expectExitZero(removeBinding, "remove credential-window binding");
+    await expectPolicyAbsent(sandbox, policyName);
 
     const detach = await sandbox.openshell(
       ["sandbox", "provider", "detach", SANDBOX_NAME, providerName],
