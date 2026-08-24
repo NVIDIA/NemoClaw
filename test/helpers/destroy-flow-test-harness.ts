@@ -66,8 +66,9 @@ export type DestroyHarness = {
 type DestroyHarnessOptions = {
   activeTimer?: boolean;
   agent?: "openclaw" | "hermes";
+  deleteError?: Error;
   deleteOutput?: string;
-  deleteStatus?: number;
+  deleteStatus?: number | null;
   dockerPsOutput?: string;
   dockerOrphanIds?: string[];
   dockerOrphanQueryStatus?: number | null;
@@ -112,6 +113,8 @@ type DestroyHarnessOptions = {
   shieldsUpError?: Error;
   stopInferenceError?: string;
   workload?: SandboxWorkloadReceipt;
+  wipeError?: Error;
+  wipeStatus?: number | null;
 };
 
 const sandboxEntry = {
@@ -409,7 +412,12 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     switch (`${String(argv[0])}:${String(argv[1])}`) {
       case "sandbox:exec":
         events.push("wipe");
-        return { status: 0, stdout: "", stderr: "" };
+        return {
+          status: options.wipeStatus === undefined ? 0 : options.wipeStatus,
+          stdout: "",
+          stderr: "",
+          ...(options.wipeError ? { error: options.wipeError } : {}),
+        };
       case "sandbox:list":
         gatewayPinsAtSandboxList.push(process.env.OPENSHELL_GATEWAY);
         return {
@@ -420,9 +428,10 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       case "sandbox:delete":
         events.push("delete");
         return {
-          status: options.deleteStatus ?? 0,
+          status: options.deleteStatus === undefined ? 0 : options.deleteStatus,
           stdout: options.deleteOutput ?? "",
           stderr: "",
+          ...(options.deleteError ? { error: options.deleteError } : {}),
         };
       default:
         return { status: 0, stdout: "", stderr: "" };
