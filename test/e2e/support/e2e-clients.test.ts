@@ -146,6 +146,47 @@ describe("E2E fixture clients", () => {
     );
   });
 
+  it("host client resolves the configured OpenShell command through the fixture child environment", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ stdout: "/home/runner/.local/bin/openshell\n" });
+    const host = new HostCliClient(runner);
+
+    await expect(host.resolveOpenShellCommandPath()).resolves.toBe(
+      "/home/runner/.local/bin/openshell",
+    );
+
+    expect(host.openshellCommandPath).toBe("/home/runner/.local/bin/openshell");
+    expect(runner.calls).toEqual([
+      {
+        command: "bash",
+        args: ["-lc", 'command -v -- "$1"', "resolve-openshell-command", "openshell"],
+        options: {
+          artifactName: "resolve-openshell-command",
+          env: expect.objectContaining({ PATH: expect.any(String) }),
+          timeoutMs: 30_000,
+        },
+      },
+    ]);
+  });
+
+  it.each([
+    { label: "empty output", stdout: "" },
+    { label: "a relative path", stdout: "openshell\n" },
+    {
+      label: "multiple absolute paths",
+      stdout: "/home/runner/.local/bin/openshell\n/usr/bin/openshell\n",
+    },
+  ])("host client keeps its configured OpenShell command for $label", async ({ stdout }) => {
+    const runner = new FakeRunner();
+    runner.enqueue({ stdout });
+    const host = new HostCliClient(runner);
+
+    await expect(host.resolveOpenShellCommandPath()).rejects.toThrow(
+      "resolve OpenShell command path failed: expected exactly one non-empty absolute path",
+    );
+    expect(host.openshellCommandPath).toBe("openshell");
+  });
+
   it("host client validates list/status and cleans up sandbox destroys", async () => {
     const runner = new FakeRunner();
     runner.stdout = "NAME\nassistant\n";
