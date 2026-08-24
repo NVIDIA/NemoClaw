@@ -226,19 +226,6 @@ function samePull(left: Pull | undefined, right: Pull | undefined): boolean {
 function requireSamePull(expected: Pull | undefined, observed: Pull | undefined): void {
   if (!samePull(expected, observed)) fail("managed documentation PR changed during publication");
 }
-function requireAdvancedPull(previous: Pull, observed: Pull | undefined, commitSha: string): Pull {
-  if (
-    observed === undefined ||
-    observed.number !== previous.number ||
-    observed.body !== previous.body ||
-    observed.draft !== previous.draft ||
-    observed.head.ref !== previous.head.ref ||
-    observed.head.sha !== commitSha ||
-    observed.title !== previous.title
-  )
-    fail("managed documentation PR changed during publication");
-  return observed;
-}
 function pullTitle(target: string): string {
   return `docs: prepare ${target} documentation`;
 }
@@ -253,18 +240,20 @@ The workflow selects \`${target}\` by incrementing the patch component of \`${ra
 
 - Each push to \`main\` that changes a path outside the allowed documentation paths starts a cumulative authoring and independent review run.
 - An approved patch creates a verified merge commit and fast-forwards this branch.
-- The workflow never force-pushes. It stops if a person changes the branch or PR metadata.
-- Keep this PR open as a draft while code PRs merge for \`${target}\`.
+- Keep this PR as a draft while code PRs merge for \`${target}\`. The workflow owns the draft branch.
+- Mark this PR ready for review only at release cutoff. Ready status transfers branch ownership to maintainers, and later workflow runs leave the PR unchanged.
+- The workflow never force-pushes. While the PR is a draft, it stops if a person changes the branch or PR metadata.
 
 ## Release cutoff
 
 1. Stop merging code PRs intended for \`${target}\`.
-2. Add the dated \`## ${target}\` changelog entry and final documentation to this PR.
-3. Run \`npm run docs\` and complete the final review.
-4. Merge this PR. Its docs-only merge does not start another catch-up run.
-5. Ask the tag session to show this PR's coverage point, later commits and PRs, checks, reviews, and any open managed docs PR.
-6. Decide whether to proceed, create or update a docs PR for the uncovered range, or stop.
-7. Cut \`${target}\` only after you choose to proceed with the displayed documentation coverage.
+2. Mark this PR ready for review to transfer branch ownership to maintainers.
+3. Add the dated \`## ${target}\` changelog entry and final documentation to this PR.
+4. Run \`npm run docs\` and complete the final review.
+5. Merge this PR. Its docs-only merge does not start another catch-up run.
+6. Ask the tag session to show this PR's coverage point, later commits and PRs, checks, reviews, and any open managed docs PR.
+7. Decide whether to proceed, create or update a docs PR for the uncovered range, or stop.
+8. Cut \`${target}\` only after you choose to proceed with the displayed documentation coverage.
 
 ## Verification
 
@@ -286,20 +275,33 @@ Updates documentation for merged changes through \`${mainSha}\`.
 
 ${SIGN_OFF}`;
 }
-function pullMetadataMode(
+async function legacyCoverageSha(
+  repository: string,
+  commit: Commit,
+  request: Request,
+): Promise<string | undefined> {
+  const firstParent = commit.parents?.[0]?.sha;
+  if (!firstParent) return undefined;
+  if (commit.parents?.length === 1) return firstParent;
+  if (commit.parents?.length !== 2) return undefined;
+  const previous = await managedCommit(repository, firstParent, request);
+  return previous.parents?.length === 1 ? previous.parents[0]?.sha : undefined;
+}
+async function pullMetadataMode(
   pull: Pull,
   commit: Commit,
+  repository: string,
   rangeStart: string,
   target: string,
-): "current" | "legacy" {
+  request: Request,
+): Promise<"current" | "legacy"> {
   if (pull.title === pullTitle(target) && pull.body === pullBody(rangeStart, target))
     return "current";
-  const firstParent = commit.parents?.[0]?.sha;
+  const coverageSha = await legacyCoverageSha(repository, commit, request);
   if (
-    commit.parents?.length === 1 &&
-    firstParent &&
+    coverageSha &&
     pull.title === "docs: catch up after merged changes" &&
-    pull.body === legacyPullBody(firstParent)
+    pull.body === legacyPullBody(coverageSha)
   )
     return "legacy";
   return fail("managed documentation PR metadata does not match the reviewed release target");
@@ -424,7 +426,7 @@ export async function publishDocumentation(input: {
   const { patch, rangeStartTag, targetReleaseTag: target } = approval;
   const body = pullBody(rangeStartTag, target);
   const title = pullTitle(target);
-  const active = await checkpoint(repository, mainSha, request);
+  let active = await checkpoint(repository, mainSha, request);
   const temporary = fs.mkdtempSync(path.join(tmpdir(), "nemoclaw-docs-publish-"));
   try {
     const destination = path.join(temporary, "repository");
@@ -435,19 +437,24 @@ export async function publishDocumentation(input: {
     const branch = active?.head.ref ?? `${PREFIX}${mainSha.slice(0, 12)}`;
     const refPath = `/repos/${repository}/git/ref/heads/${branch}`;
     const ref = (await request("GET", refPath)) as { object?: { sha?: string } } | null;
-    let metadataMode: "current" | "legacy" | undefined;
     if (active) {
       if (ref?.object?.sha !== active.head.sha)
         fail("managed documentation PR and branch point to different commits");
       const current = await managedCommit(repository, active.head.sha, request);
-      metadataMode = pullMetadataMode(active, current, rangeStartTag, target);
+      const metadataMode = await pullMetadataMode(
+        active,
+        current,
+        repository,
+        rangeStartTag,
+        target,
+        request,
+      );
+      if (metadataMode === "legacy") {
+        requireSamePull(active, await checkpoint(repository, mainSha, request));
+        active = await updatePullMetadata(active, repository, rangeStartTag, target, request);
+      }
       if (!prepared.changes.length || current.tree?.sha === prepared.finalTree) {
-        let pending = active;
-        if (metadataMode === "legacy") {
-          requireSamePull(active, await checkpoint(repository, mainSha, request));
-          pending = await updatePullMetadata(active, repository, rangeStartTag, target, request);
-        }
-        fail(`Documentation remains pending in ${pending.html_url}`);
+        fail(`Documentation remains pending in ${active.html_url}`);
       }
     } else if (ref !== null) {
       fail("an unmanaged documentation branch already exists for this main commit");
@@ -466,11 +473,7 @@ export async function publishDocumentation(input: {
 
     if (active) {
       await updateRef(repository, branch, commitSha, request);
-      let pull = requireAdvancedPull(active, (await managed(repository, request))[0], commitSha);
-      if (metadataMode === "legacy")
-        pull = await updatePullMetadata(pull, repository, rangeStartTag, target, request);
-      else checkedPull(pull, repository, branch, body, title);
-      fail(`Documentation remains pending in ${pull.html_url}`);
+      fail(`Documentation remains pending in ${active.html_url}`);
     }
 
     try {

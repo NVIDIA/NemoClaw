@@ -132,6 +132,24 @@ If `NEMOCLAW_SERVING_PRESET` is already set, it must select the same stable prof
 
 The profile selector is model-independent, so a catalog can add profiles without adding model-specific CLI flags.
 Omitting `--profile` preserves the existing provider and model defaults.
+
+### Select a Managed vLLM GPU
+
+Use `--vllm-gpu-device <index-or-uuid>` to select the host GPU for a managed single-host vLLM container.
+The value must be a non-negative index or a full `GPU-...` UUID reported by `nvidia-smi`.
+This selection is independent of `--sandbox-gpu-device`, which controls direct GPU access inside the sandbox.
+NemoClaw applies the vLLM selection to Docker placement, compute-capability validation, and GPU-memory checks.
+It rejects this selector for an existing local vLLM provider or a managed multi-node topology.
+Only managed single-host vLLM installation accepts this selector.
+
+```bash
+$$nemoclaw onboard --profile <profile-id> --vllm-gpu-device <index-or-uuid>
+```
+
+NemoClaw requires a resumed session to reuse the recorded GPU selector.
+A legacy in-progress session cannot add one, and a resumed session cannot change one.
+Run `$$nemoclaw onboard --fresh` when you need a different GPU selection.
+
 If onboarding is interrupted, `$$nemoclaw onboard --resume` reuses the recorded catalog, preset, and recipe digests.
 It exits before runtime effects if the installed catalog changed instead of silently switching the recipe; use `$$nemoclaw onboard --fresh --profile <profile-id>` to review and start with the current definition.
 Legacy sessions that predate profile provenance still resume with their original behavior, but you cannot add `--profile` to one of those in-progress sessions.
@@ -194,6 +212,8 @@ NemoClaw also accepts `HUGGING_FACE_HUB_TOKEN` as a compatibility alias, but new
 When neither variable is present, public-model downloads continue anonymously.
 
 If `hf download` reports HTTP `429`, export `HF_TOKEN` and resume onboarding.
+After an image-pull or managed-vLLM setup failure, resume retains the validated selected model and recorded GPU selector.
+A conflicting model, a changed GPU selector, or a selector introduced only during resume stops instead of changing the recorded install intent.
 The downloader reuses files already stored in `~/.cache/huggingface` instead of starting the model download from an empty cache.
 
 ```bash
@@ -438,7 +458,7 @@ It offers the fixed local vLLM profile as option 2.
 When you select option 2, the serving catalog supplies the pinned model, runtime image, container port, and serve arguments.
 The installer rejects provider and model overrides for that fixed profile.
 `NEMOCLAW_VLLM_MODEL` can select a catalog model only when the catalog resolves it to the matching fixed recipe, but the dedicated onboarder rejects a model that does not resolve to that recipe and all serve-argument overrides before it starts the managed container.
-`NEMOCLAW_VLLM_PORT` may select another host listener.
+Set `NEMOCLAW_VLLM_PORT` to select another host listener port.
 Explicit `NEMOCLAW_MODEL` or `NEMOCLAW_VLLM_MODEL` intent retains the customizable managed-vLLM path and skips the fixed-profile choice.
 If onboarding stops after you select option 2, `$$nemoclaw onboard --resume` reuses the recorded fixed profile instead of returning to automatic serving-profile selection.
 Refer to [Choose a Local Inference Server](choose-local-inference-server#install-a-fixed-vllm-profile) for fixed-profile installation and verification.
@@ -570,6 +590,7 @@ The host checks the token before `docker pull`, so a missing or empty token stop
 
 Set `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` to a JSON array of individual non-blank `vllm serve` tokens for operator-owned options and overrides.
 NemoClaw trims and validates the array before downloads, shell-quotes each token, and appends the tokens after the registry defaults.
+When the array overrides `--gpu-memory-utilization`, NemoClaw validates the last value and uses that effective value for GPU-memory preflight, matching the final `vllm serve` command.
 
 ```bash
 NEMOCLAW_PROVIDER=install-vllm \
@@ -578,6 +599,10 @@ NEMOCLAW_PROVIDER=install-vllm \
 ```
 
 If the selected image does not support an argument, the managed container exits and NemoClaw prints the log tail.
+
+When the selected managed recipe defines a GPU-memory utilization value, NemoClaw requires valid `nvidia-smi` total/free-memory telemetry for the Docker-selected GPU before large downloads.
+It repeats the same check with fresh telemetry immediately before launch so another workload cannot consume the required free GPU memory unnoticed during the download.
+If telemetry is unavailable, the Docker-selected device cannot be resolved, or free memory is below the effective utilization requirement, onboarding stops with a diagnostic and can be resumed after the GPU state is corrected.
 
 To bound resource use while investigating long-context workflows on one DGX Spark or N1x host, select the Qwen profile.
 The following override disables async scheduling and lowers the context window, concurrent-sequence limit, and batch limit.

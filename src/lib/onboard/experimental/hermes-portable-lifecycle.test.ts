@@ -20,6 +20,7 @@ import { hermesPortableContainerInternals } from "./hermes-portable-container";
 import { resolveHermesPortableStartupContract } from "./hermes-portable-contract";
 import {
   hermesPortableLifecycleInternals,
+  prepareHermesPortableSandboxRemoval,
   recoverHermesPortableSandboxLifecycle,
   stopHermesPortableSandboxLifecycle,
 } from "./hermes-portable-lifecycle";
@@ -47,6 +48,20 @@ const LABELS = {
   "openshell.ai/sandbox-namespace": "",
   "openshell.ai/sandbox-workspace": "default",
 };
+
+function sandboxListJson(sandboxId: string, phase: string): string {
+  return JSON.stringify([
+    {
+      id: sandboxId,
+      name: SANDBOX,
+      labels: {},
+      resource_version: 1,
+      created_at: "2026-01-01T00:00:00Z",
+      phase,
+      current_policy_version: 1,
+    },
+  ]);
+}
 
 let stateDir: string;
 let policyPath: string;
@@ -591,5 +606,146 @@ describe("Hermes portable lifecycle", () => {
         { stateDir: path.join(stateDir, "state") },
       ),
     ).toThrow("OpenShell sandbox identity disagrees");
+  });
+
+  it("fails closed when the exact OpenShell sandbox is no longer Ready (#9608)", () => {
+    const receipt = activeReceipt();
+    const { deps, podman } = lifecycleDeps(receipt);
+    deps.captureOpenShell = vi.fn((args: readonly string[]) =>
+      args[0] === "policy"
+        ? { status: 0, stdout: POLICY, stderr: "" }
+        : {
+            status: 0,
+            stdout: `Name: ${SANDBOX}\nID: ${SANDBOX_ID}\nPhase: Creating\n`,
+            stderr: "",
+          },
+    );
+
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), deps),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("OpenShell sandbox identity disagrees");
+    expect(podman).not.toHaveBeenCalled();
+  });
+
+  it.each(["Ready", "Stopped"] as const)(
+    "removes one exact %s sandbox and rejects a same-name replacement on retry (#9608)",
+    (phase) => {
+      const receipt = activeReceipt();
+      const { deps, podman } = lifecycleDeps(receipt, phase === "Ready");
+      const originalPodman = podman.getMockImplementation()!;
+      let sandboxPresent = true;
+      let containerPresent = true;
+      let replacement = false;
+      const live = `Name: ${SANDBOX}\nID: ${SANDBOX_ID}\nPhase: ${phase}\n`;
+      podman.mockImplementation((args: readonly string[]) => {
+        switch (args[0]) {
+          case "container":
+            return args[1] === "inspect" && !containerPresent
+              ? { status: 125, stdout: "", stderr: "no such container" }
+              : originalPodman(args);
+          case "ps":
+            return { status: 0, stdout: containerPresent ? `${CONTAINER_ID}\n` : "", stderr: "" };
+          default:
+            return originalPodman(args);
+        }
+      });
+      deps.captureOpenShell = vi.fn((args: readonly string[]) => {
+        const command = args.slice(0, 2).join(":");
+        switch (command) {
+          case "policy:get":
+            return { status: 0, stdout: POLICY, stderr: "" };
+          case "sandbox:list":
+            return {
+              status: 0,
+              stdout: args.includes("json")
+                ? sandboxPresent
+                  ? sandboxListJson(SANDBOX_ID, phase)
+                  : "[]"
+                : live,
+              stderr: "",
+            };
+          case "sandbox:delete":
+            sandboxPresent = false;
+            containerPresent = false;
+            return { status: 0, stdout: "", stderr: "" };
+          case "sandbox:get":
+            return replacement
+              ? {
+                  status: 0,
+                  stdout: `Name: ${SANDBOX}\nID: replacement\nPhase: Ready\n`,
+                  stderr: "",
+                }
+              : sandboxPresent
+                ? { status: 0, stdout: live, stderr: "" }
+                : {
+                    status: 1,
+                    stdout: "",
+                    stderr: `Error: sandbox '${SANDBOX}' not found`,
+                  };
+          default:
+            return poisonUnexpectedCommand("OpenShell", args);
+        }
+      });
+
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => {
+          const prepared = prepareHermesPortableSandboxRemoval(SANDBOX, lifecycleContext(), deps, {
+            allowAbsent: true,
+          });
+          expect(prepared.present).toBe(true);
+          prepared.removeAndVerify();
+          prepared.verifyAbsent();
+          expect(
+            prepareHermesPortableSandboxRemoval(SANDBOX, lifecycleContext(), deps, {
+              allowAbsent: true,
+            }).present,
+          ).toBe(false);
+
+          replacement = true;
+          expect(() =>
+            prepareHermesPortableSandboxRemoval(SANDBOX, lifecycleContext(), deps, {
+              allowAbsent: true,
+            }),
+          ).toThrow("OpenShell sandbox identity disagrees");
+        },
+        { stateDir: path.join(stateDir, "state") },
+      );
+      expect(
+        deps.captureOpenShell.mock.calls.filter(([args]) => args[1] === "delete"),
+      ).toHaveLength(1);
+    },
+  );
+
+  it("rejects rendered absence text when the JSON sandbox list is malformed (#9608)", () => {
+    const receipt = activeReceipt();
+    const { deps, podman } = lifecycleDeps(receipt);
+    deps.captureOpenShell = vi.fn((args: readonly string[]) => {
+      const command = args.slice(0, 2).join(":");
+      switch (command) {
+        case "sandbox:get":
+          return { status: 1, stdout: "", stderr: `sandbox ${SANDBOX} not found` };
+        case "sandbox:list":
+          return { status: 0, stdout: "warning: stale cache", stderr: "" };
+        default:
+          return poisonUnexpectedCommand("OpenShell", args);
+      }
+    });
+
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () =>
+          prepareHermesPortableSandboxRemoval(SANDBOX, lifecycleContext(), deps, {
+            allowAbsent: true,
+          }),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("cannot prove the current OpenShell sandbox");
+    expect(podman).not.toHaveBeenCalled();
   });
 });

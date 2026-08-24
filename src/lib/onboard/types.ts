@@ -80,8 +80,12 @@ export interface SandboxCreateIntent {
     readonly targetGeneration: string;
     readonly targetIntentFingerprint: string;
   };
+  /** Internal outer-rebuild authority for carrying managed MCP state through replacement. */
+  readonly recreateJournalTargetIntentFingerprint?: string;
   /** Validated non-secret Hermes environment assignments carried by a rebuild. */
   readonly rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
+  /** Built-in policy presets owned by the outer authoritative rebuild lifecycle. */
+  readonly rebuildPolicyPresets?: readonly string[];
 }
 
 /** Durable onboarding-session identity that owns the pending inference route. */
@@ -130,6 +134,8 @@ export type OnboardOptions = {
   managedWorkloadRebuild?: import("./workload/rebuild").ManagedWorkloadRebuildHandoff;
   /** Internal validated non-secret Hermes environment assignments carried by a rebuild. */
   rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
+  /** Internal authoritative policy selection carried across sandbox recreation. */
+  rebuildPolicyPresets?: readonly string[];
   /** Internal hint for resolving the sandbox base image without repeating remote discovery. */
   baseImageResolutionHint?:
     | import("../sandbox-base-image").SandboxBaseImageResolutionMetadata
@@ -146,6 +152,8 @@ export type OnboardOptions = {
   hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
   sandboxGpu?: "enable" | "disable" | null;
   sandboxGpuDevice?: string | null;
+  /** GPU exposed to the host-side vLLM container managed by NemoClaw. */
+  vllmGpuDevice?: string | null;
   acceptThirdPartySoftware?: boolean;
   agent?: string | null;
   toolDisclosure?: import("../tool-disclosure").ToolDisclosure | null;

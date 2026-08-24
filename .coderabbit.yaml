@@ -241,6 +241,22 @@ reviews:
     - path: "tools/{advisors,pr-review-advisor}/**"
       instructions: *guardrail
 
+    - path: "tools/pr-review-advisor/specialists/**"
+      instructions: |
+        Review these files as instructions for human-style PR analysis.
+
+        Distinguish a behavior defect from missing evidence. A specialist can report
+        missing evidence when a PR makes an important claim that repository evidence
+        does not establish. The need for evidence can follow from the changed behavior
+        and does not require a separate repository rule.
+
+        Evidence can include tests, contracts, types, schemas, invariants, and reachable
+        caller behavior. A request for evidence does not always require a new test.
+
+        Evaluate whether each prompt gives its specialist a clear review outcome.
+        Preserve room for expert judgment. Suggest narrower wording when the current
+        wording would cause unsupported findings or miss a current defect.
+
 knowledge_base:
   code_guidelines:
     enabled: true

@@ -19,6 +19,11 @@ $$nemoclaw uninstall
 
 Full uninstall does not remove a Docker container or image only because its name or image reference contains `openclaw`.
 It preserves resources from a separate OpenClaw installation while continuing to remove NemoClaw and OpenShell Docker resources.
+During full uninstall, NemoClaw stops a Bedrock Runtime adapter when its recorded process ID matches the adapter command line.
+When `lsof` is available, full uninstall also scans the configured adapter port and stops only a matching process owned by the current user.
+If `lsof` is unavailable and no recorded process was stopped, uninstall warns that it skipped the orphan scan.
+A selected-gateway uninstall uses only that gateway's process record and does not scan or signal a sibling adapter.
+Uninstall preserves an unrelated process that uses the same port.
 
 | Flag | Effect |
 |---|---|
@@ -44,6 +49,38 @@ Make `brew` available through `PATH` or inspect the formula before you remove Op
 `NEMOCLAW_GATEWAY_PORT` selects the gateway instance to uninstall (`nemoclaw` for port `8080`, or `nemoclaw-<port>` for a non-default port).
 For example, `NEMOCLAW_GATEWAY_PORT=9123 $$nemoclaw uninstall` selects `nemoclaw-9123` and its port-scoped state.
 Do not use `--gateway` to select another instance; when supplied for compatibility, its value must match the derived name or uninstall stops before cleanup.
+
+## Stop the Amazon Bedrock Runtime Adapter
+
+The selected gateway can use a host-local Amazon Bedrock Runtime adapter.
+Before it removes the selected state root, uninstall stops only the adapter bound to that state.
+
+Before each signal, uninstall revalidates the canonical PID, current user, stable process start identity, lifecycle generation, executable path, launcher path, and adapter port.
+Before it deletes lifecycle evidence, uninstall revalidates process absence, the state generation, the PID, and the local bearer-token hash.
+If the adapter remains after `SIGTERM` and `SIGKILL`, uninstall exits nonzero before state-root cleanup.
+It preserves the selected gateway's PID, bearer token, any lifecycle state that was published, and prepared uninstall journal for a retry.
+If required evidence conflicts before journal preparation, uninstall preserves that evidence and does not signal a process.
+
+The lifecycle evidence is `<selected-state-root>/bedrock-runtime-adapter.pid`, `<selected-state-root>/bedrock-runtime-adapter-token`, and `<selected-state-root>/bedrock-runtime-adapter.json`.
+If startup leaves only a private PID file containing one canonical positive PID, uninstall does not signal that PID.
+Under the adapter lifecycle lock, uninstall removes only the unchanged PID file after it observes that the PID is absent twice.
+It also confirms that no bearer token, lifecycle state, or uninstall journal appeared between those checks.
+A live or uninspectable PID, malformed or changed PID file, or newly published evidence makes uninstall exit nonzero.
+Uninstall preserves the PID file and any new lifecycle evidence in those cases.
+Keep those files intact while you resolve the reported process or state conflict.
+Rerun uninstall with the same `NEMOCLAW_GATEWAY_PORT` value afterward.
+The journal is `~/.local/state/nemoclaw-bedrock-runtime-adapter/<gateway-port>/uninstall.json`.
+Onboarding refuses to start another Amazon Bedrock adapter generation while that journal or non-reusable lifecycle evidence remains.
+If an older lifecycle record cannot prove the live process generation, NemoClaw does not signal that process.
+Do not signal a process from the saved PID alone; independently verify the current user, process start, executable path, launcher path, and listening port before resolving it, then rerun uninstall.
+
+While an adapter remains alive, its process retains any forwarded AWS credential until the process exits.
+After you resolve a failed stop, rerunning uninstall retires the local bearer token and lifecycle evidence.
+Remove or rotate the upstream AWS credential through its owning AWS credential source when required.
+
+Only full uninstall checks the configured adapter port when a recorded adapter PID file is absent.
+It never signals an unbound listener without matching lifecycle state.
+A selected-gateway uninstall uses only the selected state root and does not scan for a sibling gateway's adapter.
 
 ## Delete Host Models
 
@@ -142,7 +179,8 @@ A gateway-scoped uninstall and every `--all-gateway-ports` pass exit nonzero aft
 A single full uninstall reports the process and continues.
 Before each sandbox deletion during scoped Docker cleanup, NemoClaw proves the selected configuration and running gateway identity again and passes the selected gateway name to OpenShell.
 The configuration and running process must use the state-root-specific OpenShell sandbox namespace that NemoClaw generated.
-For a NemoClaw-managed gateway, the live proof also binds the process owner, PID file, runtime marker, and command line to the exact gateway name and port.
+For a standalone NemoClaw-managed gateway, the live proof also binds the process owner, PID file, runtime marker, and command line to the exact gateway name and port.
+For a package-managed gateway, NemoClaw instead binds the trusted active service's current main process, executable, owner, and loaded sandbox namespace to the default gateway.
 For an externally supervised gateway, NemoClaw proves the configured state.
 It binds the supervisor's current main process to its owner, loaded sandbox namespace, declared executable, selected gateway name, and selected port.
 When NemoClaw can prove an owner-private, generated configuration and complete JWT bundle that predate state-root scoping, restart keeps the legacy gateway ID, JWT bundle, and Docker driver's `default` namespace.
@@ -202,16 +240,44 @@ NemoClaw preserves either directory when it contains an unrelated entry.
 Other preserved user data follows the normal `--destroy-user-data` behavior.
 After NemoClaw releases the locks, later uninstall-plan cleanup never recursively revisits the canonical receipt, sandbox registry, or `~/.config/nemoclaw/portable/containers.conf` paths.
 This preserves any new lifecycle generation published after lock release.
+<AgentOnly variant="openclaw,deepagents">
 After successful portable cleanup with `--destroy-user-data`, the sole residual regular file under `~/.nemoclaw/` is `~/.nemoclaw/portable-uninstall-retirement.json`, written at mode `0600` under a current-UID-owned, mode-`0700` `~/.nemoclaw/` directory.
 Another same-user process can change the record, so this protection assumes cooperative NemoClaw writers under that UID.
 NemoClaw retains the record until a later completed onboarding durably supersedes it.
 It contains a random local cleanup ID, receipt basenames derived from SHA-256 hashes of sandbox names, and length-framed, transaction-scoped, dictionary-testable pseudonymous fingerprints, but no raw sandbox or gateway names, absolute paths, environment values, configuration bytes, or secrets.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+After successful schema `5` Portable Ollama cleanup with `--destroy-user-data`, `~/.nemoclaw/hermes-portable-uninstall-transaction.json` remains at mode `0600` under the current-UID-owned, mode-`0700` `~/.nemoclaw/` directory.
+Another same-user process can change the journal, so this protection assumes cooperative NemoClaw writers under that UID.
+The journal is credential-free.
+A completed journal remains as exact no-op evidence for a repeated uninstall.
+While the journal records an incomplete phase, Hermes Portable onboarding stops before it publishes replacement lifecycle authority.
+Rerun full uninstall to complete the recorded cleanup before you onboard again.
+If a later completed onboarding publishes a new schema `5` lifecycle, the next uninstall replaces the completed journal with that lifecycle's exact authority before mutation.
+</AgentOnly>
+
 A repeat invocation remains on portable cleanup and performs no Docker probe or mutation, implicit OpenShell cleanup, or model cleanup.
 If NemoClaw cannot prove the required portable authority or complete a cleanup step, uninstall exits nonzero.
 Before portable retirement completes, it also keeps the installed NemoClaw CLI and source so the same version-pinned command remains available for retry.
 It preserves any existing durable retirement record and any remaining receipts, `~/.config/nemoclaw/portable/containers.conf`, gateway state, and other retry evidence, even with `--destroy-user-data`.
 Resolve the reported authority or cleanup error, keep the preserved state intact, and rerun the same full uninstall command.
 This cleanup does not change Docker uninstall, externally supervised gateways, `--keep-openshell`, scoped sibling-gateway cleanup, or non-portable profiles.
+
+<AgentOnly variant="hermes">
+For a schema `5` Portable Ollama receipt, the full-uninstall transaction extends the Portable boundary to the committed gateway provider and receipt-owned inference runtime.
+While the host fence, sorted sandbox lifecycle locks, and process-bound registry lock remain held, NemoClaw binds the exact lifecycle receipt, registry row revision and lifecycle generation, sandbox and Podman container identities and labels, provider revision and profile, inference runtime, socket, and network.
+It writes the credential-free transaction journal before the first mutation, then records sandbox, provider, inference, registry, receipt, and completion phases.
+Before each phase, it revalidates the exact authority recorded in the journal.
+If a resource disappeared after an earlier recorded action but before its phase update, the retry proves that exact absence and continues without repeating the mutation.
+An unexpected absence, same-name replacement, sandbox phase other than `Ready` or `Stopped`, changed container label set, provider revision or profile change, socket or network change, or registry authority drift stops cleanup before an unproven mutation.
+When another recorded sandbox shares the provider or inference runtime, uninstall preserves that shared resource.
+The transaction removes exact receipt-owned resources before it retires the matching registry row and lifecycle receipt.
+When both the provider and inference runtime are exclusive, it then retires their private inference state.
+If either resource is shared, it preserves that recovery state for the sibling owner.
+It never removes a Podman image.
+</AgentOnly>
+
 For Docker, if any proof is absent, uninstall exits nonzero before it signals the host gateway.
 NemoClaw preserves the gateway runtime evidence and local state.
 Keep that state intact.

@@ -29,6 +29,11 @@ import {
   type RecreateGpuPatchFn,
   type RecreateStartupPatchFn,
 } from "./docker-startup-command-sandbox-create";
+import { ManagedBootstrapOwnerCleanupRequiredError } from "./managed-bootstrap/adapter";
+import type {
+  ManagedBootstrapNativeGpuFallbackRollbackOutcome,
+  ManagedBootstrapNativeGpuFallbackRollbackRequest,
+} from "./managed-bootstrap/runtime-create";
 import { findOpenShellDockerSandboxContainerIds } from "./openshell-docker-sandbox-containers";
 
 export type { DockerGpuRoutePlan, SelectedDockerGpuRoute } from "./docker-gpu-route";
@@ -120,7 +125,9 @@ export type DockerGpuSandboxCreatePatch = {
   createFailureMessage: () => string | null;
   exitOnPatchError: () => Promise<void>;
   attachManagedBootstrapCutover: (cutover: DockerManagedBootstrapDeferredCutover) => void;
-  rollbackManagedStartupAfterCreateFailure: () => Promise<void>;
+  rollbackManagedStartupAfterCreateFailure: (
+    request?: ManagedBootstrapNativeGpuFallbackRollbackRequest,
+  ) => Promise<void | ManagedBootstrapNativeGpuFallbackRollbackOutcome>;
   ensureApplied: () => Promise<void>;
   waitForSupervisorReconnectIfNeeded: () => void;
   /**
@@ -316,9 +323,23 @@ export function createDockerGpuSandboxCreatePatch(
       managedBootstrapCutover = cutover;
     },
 
-    async rollbackManagedStartupAfterCreateFailure() {
+    async rollbackManagedStartupAfterCreateFailure(request) {
       const rollbackError = await rollbackAfterFailure();
-      if (!rollbackError) return;
+      if (!rollbackError) return request ? { kind: "rolled-back" } : undefined;
+      if (
+        request?.ownerCleanupHandoff === "native-gpu-fallback-after-absent-attachment" &&
+        options.route === "native" &&
+        options.externalRecreation === true &&
+        rollbackError instanceof ManagedBootstrapOwnerCleanupRequiredError &&
+        rollbackError.sandboxName === options.sandboxName
+      ) {
+        return Object.freeze({
+          kind: "openshell-owner-cleanup-required",
+          sandboxName: rollbackError.sandboxName,
+          sandboxId: rollbackError.sandboxId,
+          runtimeId: rollbackError.runtimeId,
+        });
+      }
       onPatchFailureExit(options.sandboxName, rollbackError, {
         ...failureDiagnosticDeps,
         additionalSummaryLines: routeAdapter.additionalSummaryLines,
@@ -327,6 +348,7 @@ export function createDockerGpuSandboxCreatePatch(
           rolledBack: false,
         },
       });
+      if (request) throw rollbackError;
     },
 
     async ensureApplied() {
@@ -468,23 +490,41 @@ export function createDockerGpuSandboxCreatePatch(
             throw failure;
           }
         }
+        const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(
+          options.timeoutSecs,
+        );
+        const finalHandoffDeadlineMs = Date.now() + supervisorReconnectTimeoutSecs * 1000;
         const finalizeOutcome = result
-          ? finalizeBackup({ result, supervisorReady: true }, options.deps)
+          ? finalizeBackup(
+              {
+                result,
+                supervisorReady: true,
+                sandboxName: options.sandboxName,
+                lifecycleReleaseTimeoutSecs: supervisorReconnectTimeoutSecs,
+              },
+              options.deps,
+            )
           : null;
         cutoverFinalized = true;
         if (!finalizeOutcome) return;
         if (finalizeOutcome.backupRemoved && finalizeOutcome.replacementRestarted === undefined) {
           return;
         }
-        if (finalizeOutcome.backupRemoved && finalizeOutcome.replacementRestarted) {
-          const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(
-            options.timeoutSecs,
+        if (
+          finalizeOutcome.backupRemoved &&
+          finalizeOutcome.replacementRestarted &&
+          finalizeOutcome.lifecycleReleaseObserved === true
+        ) {
+          const remainingReconnectTimeoutSecs = Math.max(
+            0,
+            Math.ceil((finalHandoffDeadlineMs - Date.now()) / 1000),
           );
           console.log(
-            `  Waiting for OpenShell supervisor to confirm the final container handoff (up to ${supervisorReconnectTimeoutSecs}s)...`,
+            `  Waiting for OpenShell supervisor to confirm the final container handoff (up to ${remainingReconnectTimeoutSecs}s)...`,
           );
           if (
-            waitForSupervisor(options.sandboxName, supervisorReconnectTimeoutSecs, {
+            remainingReconnectTimeoutSecs > 0 &&
+            waitForSupervisor(options.sandboxName, remainingReconnectTimeoutSecs, {
               runOpenshell: options.deps.runOpenshell,
               runCaptureOpenshell: options.deps.runCaptureOpenshell,
               sleep: options.deps.sleep,

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   executeGatewaySupervisorAction: vi.fn(),
   isShieldsDown: vi.fn(),
   runOpenshellProviderCommand: vi.fn(),
+  sleepMs: vi.fn(),
   waitUntil: vi.fn(),
 }));
 
@@ -20,6 +21,7 @@ vi.mock("../src/lib/actions/sandbox/process-recovery", () => ({
 }));
 
 vi.mock("../src/lib/core/wait", () => ({
+  sleepMs: mocks.sleepMs,
   waitUntil: mocks.waitUntil,
 }));
 

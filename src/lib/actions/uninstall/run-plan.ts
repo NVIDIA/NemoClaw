@@ -41,6 +41,7 @@ import {
 } from "../../inference/serving/managed-runtime-receipts";
 import { buildDockerGatewayDebEnvFile } from "../../onboard/docker-driver-gateway-env";
 import {
+  getTrustedActiveOpenShellGatewayUserServiceIdentity,
   getNemoclawOpenShellGatewayUserServicePath,
   getOpenShellUserConfigHome,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
@@ -69,6 +70,7 @@ import {
   listGatewayStateRoots,
   readGatewayRegistryFile,
   registryEntryGatewayPort,
+  withRegistryLockAt,
 } from "../../state/gateway-registry";
 import { stopHermesForwardWatchers } from "./hermes-forward-watcher-cleanup";
 import {
@@ -86,7 +88,7 @@ import {
   type UninstallPlan,
 } from "./plan";
 import {
-  assertHermesPortableUninstallAvailable,
+  HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE,
   hasPortableRuntimeCleanup,
   PORTABLE_RETIREMENT_STATE_ENTRIES,
   portableRetirementPreservationEntries,
@@ -116,6 +118,7 @@ export interface UninstallRunDeps {
   error?: (message: string) => void;
   existsSync?: (target: string) => boolean;
   fs?: FileSystemDeps;
+  getTrustedActiveOpenShellGatewayUserServiceIdentity?: typeof getTrustedActiveOpenShellGatewayUserServiceIdentity;
   isPortFree?: (port: number) => boolean;
   isTty?: boolean;
   kill?: (pid: number, signal?: NodeJS.Signals | number) => boolean;
@@ -125,6 +128,8 @@ export interface UninstallRunDeps {
   readProcessArgv?: (pid: number) => readonly string[] | null;
   readProcessExecutable?: (pid: number) => string | null;
   readProcessEnvironment?: (pid: number) => Record<string, string> | null;
+  realpathSync?: (target: string) => string;
+  readProcessIdentity?: (pid: number, fresh?: boolean) => string | null;
   readLine?: () => string | null;
   requireCompleteGatewayProcessCleanup?: boolean;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
@@ -475,6 +480,7 @@ interface UninstallRuntime {
   env: NodeJS.ProcessEnv;
   error: (message: string) => void;
   existsSync: (target: string) => boolean;
+  getTrustedActiveOpenShellGatewayUserServiceIdentity: typeof getTrustedActiveOpenShellGatewayUserServiceIdentity;
   isPortFree: ((port: number) => boolean) | undefined;
   isTty: boolean;
   kill: (pid: number, signal?: NodeJS.Signals | number) => boolean;
@@ -484,6 +490,8 @@ interface UninstallRuntime {
   readProcessArgv: ((pid: number) => readonly string[] | null) | undefined;
   readProcessExecutable: ((pid: number) => string | null) | undefined;
   readProcessEnvironment: ((pid: number) => Record<string, string> | null) | undefined;
+  realpathSync: (target: string) => string;
+  readProcessIdentity: ((pid: number, fresh?: boolean) => string | null) | undefined;
   readLine: () => string | null;
   requireCompleteGatewayProcessCleanup: boolean;
   resolveGatewayTeardownAuthority: GatewayTeardownAuthorityResolver;
@@ -517,6 +525,9 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     env,
     error: deps.error ?? ((message) => console.error(message)),
     existsSync: deps.existsSync ?? ((target) => fs.existsSync(target)),
+    getTrustedActiveOpenShellGatewayUserServiceIdentity:
+      deps.getTrustedActiveOpenShellGatewayUserServiceIdentity ??
+      getTrustedActiveOpenShellGatewayUserServiceIdentity,
     isPortFree: deps.isPortFree,
     // Side-effect-free TTY check + EAGAIN-tolerant reader; the
     // process.stdin/non-blocking-fd hazard is documented in core/stdin.ts.
@@ -537,6 +548,8 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     readProcessArgv: deps.readProcessArgv,
     readProcessExecutable: deps.readProcessExecutable,
     readProcessEnvironment: deps.readProcessEnvironment,
+    realpathSync: deps.realpathSync ?? fs.realpathSync.native,
+    readProcessIdentity: deps.readProcessIdentity,
     readLine: deps.readLine ?? readLineFromStdin,
     requireCompleteGatewayProcessCleanup: deps.requireCompleteGatewayProcessCleanup ?? false,
     resolveGatewayTeardownAuthority:
@@ -1414,53 +1427,46 @@ function pruneSelectedRowsFromRegistry(
   const home = path.dirname(sharedRoot);
   const registryFile = path.join(paths.nemoclawStateDir, "sandboxes.json");
   if (!pathEntryExists(registryFile, runtime) && expectedSelectedNames.length === 0) return true;
-  const lock = `${registryFile}.lock`;
-  let acquired = false;
   try {
-    assertGatewayStatePathSafe(home, lock);
-    fs.mkdirSync(lock, { mode: 0o700 });
-    acquired = true;
+    assertGatewayStatePathSafe(home, `${registryFile}.lock`);
+    // The canonical registry lock owns this directory: it writes an owner file,
+    // retries a live holder, and recovers a lock abandoned by an interrupted run.
+    return withRegistryLockAt(registryFile, () => {
+      const registry = readGatewayRegistryFile(home, registryFile);
+      if (!registry) throw new Error(`${registryFile} disappeared during scoped uninstall`);
+      const selectedNames = Object.entries(registry.sandboxes)
+        .filter(([, entry]) => registryEntryGatewayPort(entry) === GATEWAY_PORT)
+        .map(([name]) => name)
+        .sort();
+      if (JSON.stringify(selectedNames) !== JSON.stringify([...expectedSelectedNames].sort())) {
+        throw new Error(`${registryFile} changed during scoped uninstall`);
+      }
 
-    const registry = readGatewayRegistryFile(home, registryFile);
-    if (!registry) throw new Error(`${registryFile} disappeared during scoped uninstall`);
-    const selectedNames = Object.entries(registry.sandboxes)
-      .filter(([, entry]) => registryEntryGatewayPort(entry) === GATEWAY_PORT)
-      .map(([name]) => name)
-      .sort();
-    if (JSON.stringify(selectedNames) !== JSON.stringify([...expectedSelectedNames].sort())) {
-      throw new Error(`${registryFile} changed during scoped uninstall`);
-    }
-
-    if (selectedNames.length === 0) return true;
-    const remainingSandboxes = Object.fromEntries(
-      Object.entries(registry.sandboxes).filter(
-        ([, entry]) => registryEntryGatewayPort(entry) !== GATEWAY_PORT,
-      ),
-    );
-    const defaultSandbox =
-      registry.defaultSandbox && Object.hasOwn(remainingSandboxes, registry.defaultSandbox)
-        ? registry.defaultSandbox
-        : (Object.keys(remainingSandboxes).sort()[0] ?? null);
-    writeRegistryAtomic(home, registryFile, {
-      ...registry,
-      defaultSandbox,
-      sandboxes: remainingSandboxes,
+      if (selectedNames.length === 0) return true;
+      const remainingSandboxes = Object.fromEntries(
+        Object.entries(registry.sandboxes).filter(
+          ([, entry]) => registryEntryGatewayPort(entry) !== GATEWAY_PORT,
+        ),
+      );
+      const defaultSandbox =
+        registry.defaultSandbox && Object.hasOwn(remainingSandboxes, registry.defaultSandbox)
+          ? registry.defaultSandbox
+          : (Object.keys(remainingSandboxes).sort()[0] ?? null);
+      writeRegistryAtomic(home, registryFile, {
+        ...registry,
+        defaultSandbox,
+        sandboxes: remainingSandboxes,
+      });
+      runtime.log(
+        `Removed ${String(selectedNames.length)} selected-gateway row(s) from the sandbox registry.`,
+      );
+      return true;
     });
-    runtime.log(
-      `Removed ${String(selectedNames.length)} selected-gateway row(s) from the sandbox registry.`,
-    );
-    return true;
   } catch (error) {
-    const detail =
-      isErrnoException(error) && error.code === "EEXIST"
-        ? `another state operation owns ${lock}`
-        : error instanceof Error
-          ? error.message
-          : String(error);
-    runtime.warn(`Could not safely update the sandbox registry: ${detail}`);
+    runtime.warn(
+      `Could not safely update the sandbox registry: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return false;
-  } finally {
-    if (acquired) fs.rmSync(lock, { recursive: true, force: true });
   }
 }
 
@@ -1545,6 +1551,90 @@ function removeOpenShellResources(
   return true;
 }
 
+function normalizeGatewayProcessExecutable(
+  executablePath: string,
+  runtime: UninstallRuntime,
+): string {
+  try {
+    return runtime.realpathSync(executablePath);
+  } catch {
+    return path.resolve(executablePath);
+  }
+}
+
+function readGatewayProcessExecutable(pid: number, runtime: UninstallRuntime): string | null {
+  const provided = runtime.readProcessExecutable?.(pid);
+  if (provided !== undefined) return provided;
+  if (runtime.platform === "linux") {
+    try {
+      return runtime.realpathSync(`/proc/${String(pid)}/exe`);
+    } catch {
+      return null;
+    }
+  }
+  if (runtime.platform !== "darwin") return null;
+  const inspected = runtime.run("/usr/sbin/lsof", ["-a", "-p", String(pid), "-d", "txt", "-Fn"], {
+    env: runtime.env,
+  });
+  if (inspected.status !== 0) return null;
+  const executable = inspected.stdout
+    .split(/\r?\n/)
+    .find((line) => line.startsWith("n/"))
+    ?.slice(1)
+    .trim();
+  return executable && path.isAbsolute(executable) ? executable : null;
+}
+
+function packageManagedServiceGatewayProcessOwnershipFailure(
+  stateDir: string,
+  runtime: UninstallRuntime,
+): string | null {
+  const inspectService = () =>
+    runtime.getTrustedActiveOpenShellGatewayUserServiceIdentity({
+      commandExists: runtime.commandExists,
+      env: runtime.env,
+      existsSync: runtime.existsSync,
+      home: runtime.env.HOME || os.homedir(),
+      platform: runtime.platform,
+      spawnSyncImpl: runtime.run,
+      suppressUnsupportedVersionWarning: true,
+    });
+  const before = inspectService();
+  if (!before?.executablePath) {
+    return "active package-managed OpenShell gateway service identity is unavailable";
+  }
+  const expectedExecutable = normalizeGatewayProcessExecutable(before.executablePath, runtime);
+  const executableBefore = readGatewayProcessExecutable(before.pid, runtime);
+  if (
+    !executableBefore ||
+    normalizeGatewayProcessExecutable(executableBefore, runtime) !== expectedExecutable
+  ) {
+    return "live process executable does not match the trusted service executable";
+  }
+  if (!processUsesStateScopedSandboxNamespace(before.pid, stateDir, runtime)) {
+    return "gateway process owner and loaded sandbox namespace cannot be proven";
+  }
+  const after = inspectService();
+  if (
+    !after?.executablePath ||
+    after.pid !== before.pid ||
+    normalizeGatewayProcessExecutable(after.executablePath, runtime) !== expectedExecutable
+  ) {
+    return "package-managed OpenShell gateway service identity changed during validation";
+  }
+  const executableAfter = readGatewayProcessExecutable(after.pid, runtime);
+  if (
+    !executableAfter ||
+    normalizeGatewayProcessExecutable(executableAfter, runtime) !== expectedExecutable
+  ) {
+    return "package-managed OpenShell gateway service identity changed during validation";
+  }
+  if (!processUsesStateScopedSandboxNamespace(after.pid, stateDir, runtime)) {
+    return "package-managed OpenShell gateway service sandbox namespace changed during validation";
+  }
+  return null;
+}
+
 function canRemoveScopedOpenShellResources(
   paths: UninstallPaths,
   options: UninstallRunOptions,
@@ -1609,6 +1699,14 @@ function canRemoveScopedOpenShellResources(
     return false;
   }
   if (!requireLiveManagedProcess) return true;
+  if (teardownAuthority.source === "packaged-service") {
+    const reason = packageManagedServiceGatewayProcessOwnershipFailure(stateDir, runtime);
+    if (reason === null) return true;
+    runtime.warn(
+      `Refusing scoped gateway cleanup because the package-managed OpenShell gateway service identity cannot be proven: ${reason}.`,
+    );
+    return false;
+  }
   const reason = scopedHostGatewayProcessOwnershipFailure(
     {
       env: runtime.env,
@@ -1730,8 +1828,7 @@ function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): v
     const versionDir = path.join(nodeVersionsDir, version.name);
     const modulesDir = path.join(versionDir, "lib", "node_modules");
     const packageEntry = dirEntries(modulesDir).find(
-      (entry) =>
-        (entry.isDirectory() || entry.isSymbolicLink()) && entry.name === "nemoclaw",
+      (entry) => (entry.isDirectory() || entry.isSymbolicLink()) && entry.name === "nemoclaw",
     );
     const packageDir = packageEntry ? path.join(modulesDir, packageEntry.name) : null;
     const packageBins = packageDir ? nvmPackageBinTargets(packageDir) : new Map<string, string>();
@@ -2116,6 +2213,20 @@ function recordManagedModelCleanup(
   return result.ok;
 }
 
+function stopBedrockRuntimeAdapterForUninstall(
+  paths: UninstallPaths,
+  runtime: UninstallRuntime,
+  scopedToSelectedGateway: boolean,
+): void {
+  const result = stopBedrockRuntimeAdapter(paths, runtime, {
+    gatewayPort: GATEWAY_PORT,
+    scanOrphans: !scopedToSelectedGateway,
+  });
+  if (result.ok) return;
+  runtime.error(result.message);
+  throw new IncompleteBedrockRuntimeAdapterCleanupError();
+}
+
 function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string): void {
   const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], {
     env: runtime.env,
@@ -2308,7 +2419,9 @@ function removeHostModelStores(
   preserveForFailedLlamaCleanup: boolean,
 ): boolean {
   if (preserveForFailedLlamaCleanup) {
-    runtime.log("Managed llama.cpp cleanup did not complete. NemoClaw kept model stores for retry.");
+    runtime.log(
+      "Managed llama.cpp cleanup did not complete. NemoClaw kept model stores for retry.",
+    );
     return true;
   }
   if (scopedToSelectedGateway) {
@@ -2792,7 +2905,9 @@ function executePlan(
         "portable-demo-lifecycle",
         "sandboxes.json",
         "sandboxes.json.lock",
+        "portable-inference",
         "state",
+        HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE,
         ...PORTABLE_RETIREMENT_STATE_ENTRIES,
         ...portableRetirementEntries.stateRoot,
       ]
@@ -2894,15 +3009,13 @@ function executePlan(
       stopOpenRouterRuntimeAdapter(paths, runtime, {
         scanOrphans: !scopedToSelectedGateway,
       });
-      stopBedrockRuntimeAdapter(paths, runtime, {
-        scanOrphans: !scopedToSelectedGateway,
-      });
       if (scopedToSelectedGateway) {
         runtime.log("Sibling gateways remain; kept the shared HTTPS Pin Runtime adapter.");
       } else {
         stopHttpsPinRuntimeAdapter(paths, runtime);
       }
       stopModelRouter(paths, runtime, !scopedToSelectedGateway);
+      stopBedrockRuntimeAdapterForUninstall(paths, runtime, scopedToSelectedGateway);
     } else if (step.name === "OpenShell resources") {
       if (
         !executeOpenShellResourceCleanup(
@@ -3089,12 +3202,13 @@ function completePortablePlan(
   )
     return { ok: false };
   runtime.log(
-    "Kept ~/.nemoclaw/portable-uninstall-retirement.json until a later completed onboarding; it contains dictionary-testable pseudonymous fingerprints, not raw sandbox names or configuration, and another process running as this user can change it.",
+    "Kept secret-free portable cleanup evidence for exact retry and lifecycle reconciliation.",
   );
   return { ok };
 }
 
 class IncompleteHostGatewayCleanupError extends Error {}
+class IncompleteBedrockRuntimeAdapterCleanupError extends Error {}
 
 function stopHostGatewayProcessesForUninstall(
   runtime: UninstallRuntime,
@@ -3255,7 +3369,12 @@ export function runUninstallPlan(
       portableRetirementEntries,
     ));
   } catch (error) {
-    if (!(error instanceof IncompleteHostGatewayCleanupError)) throw error;
+    if (
+      !(error instanceof IncompleteHostGatewayCleanupError) &&
+      !(error instanceof IncompleteBedrockRuntimeAdapterCleanupError)
+    ) {
+      throw error;
+    }
   }
   if (ok) {
     printBye(runtime);
@@ -3276,7 +3395,6 @@ export async function runUninstallPlanProduction(
   const home = env.HOME || os.homedir();
   try {
     return await (deps.withPortableHostFence ?? withPortableHostFence)(home, () => {
-      assertHermesPortableUninstallAvailable(env);
       return runUninstallPlan(options, { ...deps, env });
     });
   } catch (error) {

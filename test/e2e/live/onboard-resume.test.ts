@@ -10,6 +10,7 @@ import {
   ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
   ONBOARD_RESUME_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
+import { parseSandboxPhase } from "../../../src/lib/state/gateway.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -19,6 +20,7 @@ import {
   cleanupCorporateCaFixture,
   corporateCaMergeProbeScript,
   createCorporateCaFixture,
+  registeredCorporateCaWorkloadKind,
 } from "../fixtures/corporate-ca.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
@@ -393,9 +395,6 @@ test(
     // Assertion: interrupted-exit-1.
     expect(firstRun.exitCode, firstText).toBe(1);
 
-    // Assertion: sandbox-created-log.
-    expect(firstText).toContain(`Sandbox '${SANDBOX_NAME}' created`);
-
     // Assertion: forced-failure-log — failure injection fired at the policies step.
     expect(firstText).toContain("[e2e] Forced onboarding failure at step 'policies'.");
 
@@ -408,6 +407,10 @@ test(
       timeoutMs: 30_000,
     });
     expect(sandboxAfterInterrupt.exitCode, sandboxAfterInterrupt.stderr).toBe(0);
+    expect(
+      parseSandboxPhase(resultText(sandboxAfterInterrupt)) === "Ready",
+      "OpenShell sandbox did not report Ready after the intended onboarding interruption. Inspect the phase-2-openshell-sandbox-get artifact.",
+    ).toBe(true);
 
     // Exercise the configured route through the sandbox. The OpenShell gateway
     // must inject the stored compatible-endpoint credential upstream; this POST
@@ -539,11 +542,15 @@ test(
     });
     expect(sandboxStatus.exitCode, sandboxStatus.stderr).toBe(0);
 
-    const corporateCaProbe = await sandbox.execShell(SANDBOX_NAME, corporateCaMergeProbeScript(), {
-      artifactName: "phase-3-corporate-ca-merge-probe",
-      env: probeEnv,
-      timeoutMs: 60_000,
-    });
+    const corporateCaProbe = await sandbox.execShell(
+      SANDBOX_NAME,
+      corporateCaMergeProbeScript(registeredCorporateCaWorkloadKind(SANDBOX_NAME)),
+      {
+        artifactName: "phase-3-corporate-ca-merge-probe",
+        env: probeEnv,
+        timeoutMs: 60_000,
+      },
+    );
     expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
 
     // Assertion: session-file-complete-state.

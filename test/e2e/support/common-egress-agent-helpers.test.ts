@@ -28,6 +28,8 @@ import {
   runOpenClawAgentAssertionRetry,
   type NvdaPersonalStockReply,
   type OpenClawAgentAttemptEvidenceOptions,
+  type OpenClawToolEvidence,
+  type PersonalStockToolEvidenceArtifact,
   validateOpenClawAgentAttemptEvidence,
 } from "../live/common-egress-agent-helpers.ts";
 
@@ -244,6 +246,38 @@ function stockAttemptValidationOptions(
     toolEvidenceValidator: (candidate) => assessPersonalStockToolEvidence(candidate).matches,
     ...overrides,
   };
+}
+
+async function expectAggregateStockFailure(
+  evidence: OpenClawToolEvidence,
+  countName: keyof PersonalStockToolEvidenceArtifact["webFetchResultCounts"],
+): Promise<void> {
+  const artifact = projectPersonalStockToolEvidenceArtifact(evidence);
+  const result = await validateOpenClawAgentAttemptEvidence(
+    stockAttemptValidationOptions({
+      reduceToolEvidence: vi.fn().mockResolvedValue({
+        exitCode: 0,
+        stdout: `__NEMOCLAW_TOOL_EVIDENCE__=${JSON.stringify(evidence)}\n`,
+      }),
+      toolEvidenceValidator: () => false,
+    }),
+  );
+
+  expect(artifact.webFetchResultCounts).toMatchObject({ total: 1, [countName]: 0 });
+  expect(artifact.qualifyingWebFetchResults).toBe(0);
+  expect(result.failure).toContain(`${countName}=0`);
+  for (const sensitiveValue of [
+    STOCK_SOURCE_URL,
+    String(STOCK_REPLY.price),
+    STOCK_REPLY.as_of,
+    stockPayload().text as string,
+    evidence.expectedStockFingerprint!,
+    "must-not-remain",
+    "web_fetch",
+  ]) {
+    expect(JSON.stringify(artifact)).not.toContain(sensitiveValue);
+    expect(result.failure).not.toContain(sensitiveValue);
+  }
 }
 
 describe("common-egress agent parsing and classification helpers", () => {
@@ -580,6 +614,19 @@ describe("common-egress agent parsing and classification helpers", () => {
       forbiddenToolCount: 1,
       matches: false,
       publicHttpsTargets: [{ hostname: "query1.finance.yahoo.com", protocol: "https:" }],
+      webFetchResultCounts: {
+        asOfMatches: 1,
+        directFetch: 0,
+        httpSuccess: 1,
+        maxCharsWithinLimit: 1,
+        paired: 1,
+        priceMatches: 1,
+        publicHttpsTarget: 1,
+        resultSuccess: 1,
+        sourceUrlMatches: 1,
+        symbolMatches: 1,
+        total: 1,
+      },
     });
     expect(serialized).not.toContain(providerSentinel);
     expect(serialized).not.toContain(toolSentinel);
@@ -599,6 +646,43 @@ describe("common-egress agent parsing and classification helpers", () => {
     expect(result.failure).toContain("forbiddenTools=1; forbiddenProviders=1");
     expect(result.failure).not.toContain(providerSentinel);
     expect(result.failure).not.toContain(toolSentinel);
+  });
+
+  it.each([
+    { predicate: "asOfMatches", countName: "asOfMatches" },
+    { predicate: "directFetch", countName: "directFetch" },
+    { predicate: "httpSuccess", countName: "httpSuccess" },
+    { predicate: "maxCharsWithinLimit", countName: "maxCharsWithinLimit" },
+    { predicate: "paired", countName: "paired" },
+    { predicate: "priceMatches", countName: "priceMatches" },
+    { predicate: "resultSuccess", countName: "resultSuccess" },
+    { predicate: "sourceUrlMatches", countName: "sourceUrlMatches" },
+    { predicate: "symbolMatches", countName: "symbolMatches" },
+  ] as const)(
+    "projects a zero $countName count when only $predicate is false",
+    async ({ predicate, countName }) => {
+      const evidence = reduceOpenClawToolEvidence(
+        stockSessionJsonLines(),
+        stockTrajectory(),
+        STOCK_REPLY,
+      );
+      const candidate = structuredClone(evidence) as OpenClawToolEvidence;
+      candidate.webFetchResults[0]![predicate] = false;
+
+      await expectAggregateStockFailure(candidate, countName);
+    },
+  );
+
+  it("projects a zero public-target count for a non-public result target", async () => {
+    const evidence = reduceOpenClawToolEvidence(
+      stockSessionJsonLines(),
+      stockTrajectory(),
+      STOCK_REPLY,
+    );
+    const candidate = structuredClone(evidence);
+    candidate.webFetchResults[0]!.target = { hostname: "127.0.0.1", protocol: "https:" };
+
+    await expectAggregateStockFailure(candidate, "publicHttpsTarget");
   });
 
   it("validates and records a successful Personal stock-fetch attempt", async () => {

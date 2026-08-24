@@ -15,6 +15,10 @@ import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../types";
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
+import {
+  publishAttachedProvidersBeforeDockerSandboxCreation,
+  validateAttachedMessagingProvidersBeforeSandboxCreation,
+} from "./provider-publication";
 
 type SandboxRecreateReasonInput = {
   sandboxName: string;
@@ -107,6 +111,64 @@ export async function completeHermesPortableSandboxRegistration(input: {
     throw new Error("Hermes portable sandbox registration returned no authority.");
   }
   return registered;
+}
+
+export function hasManagedMcpRebuildHandoff(
+  createIntent: SandboxCreateIntent | null | undefined,
+): boolean {
+  const handoff = createIntent?.recreateJournalTargetIntentFingerprint;
+  return Boolean(
+    handoff && createIntent?.recreateTransaction?.targetIntentFingerprint === handoff,
+  );
+}
+
+function shouldRefuseManagedMcpRecreate(
+  preservedMcpState: unknown,
+  managedMcpRebuildHandoff: boolean,
+): boolean {
+  return Boolean(preservedMcpState) && !managedMcpRebuildHandoff;
+}
+
+function hasPreservedManagedMcpRebuildHandoff(
+  preservedMcpState: unknown,
+  createIntent: SandboxCreateIntent | null | undefined,
+): boolean {
+  return Boolean(preservedMcpState) && hasManagedMcpRebuildHandoff(createIntent);
+}
+type ApplyRecreatePolicyCarryForward = (
+  sandboxName: string,
+  nonInteractive: boolean,
+  note: (message: string) => void,
+  rebuildPolicyPresets?: readonly string[],
+) => void;
+
+/** Reseed an outer rebuild after its owned delete leaves no live source branch. */
+export function applyAbsentSandboxRebuildPolicyCarryForward(
+  input: {
+    readonly sandboxName: string;
+    readonly liveExists: boolean;
+    readonly nonInteractive: boolean;
+    readonly note: (message: string) => void;
+    readonly rebuildPolicyPresets?: readonly string[];
+  },
+  applyRecreatePolicyCarryForward: ApplyRecreatePolicyCarryForward,
+): void {
+  if (input.liveExists || !Array.isArray(input.rebuildPolicyPresets)) return;
+  applyRecreatePolicyCarryForward(
+    input.sandboxName,
+    input.nonInteractive,
+    input.note,
+    input.rebuildPolicyPresets,
+  );
+}
+
+export function proveRecreateSourceBeforePolicyCarryForward<T>(input: {
+  readonly createRecreateRuntime: () => T;
+  readonly carryForward: () => void;
+}): T {
+  const runtime = input.createRecreateRuntime();
+  input.carryForward();
+  return runtime;
 }
 
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
@@ -345,17 +407,35 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           inspectSandboxForCreate,
           createIntent?.toolDisclosure ?? null,
         );
+    // Prove the preserved source row before replacing its stale preset list.
+    // Policy carry-forward is an owned post-delete mutation, but applying it
+    // before recreate recovery makes the journal correctly reject that row as
+    // changed before the replacement can be created.
     let recreateRuntime:
       | import("../sandbox-recreate-transaction").SandboxRecreateRuntime
-      | OwnedSandboxRecreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(
-      onboardSession,
-      createIntent?.recreateTransaction,
-      sandboxName,
-      GATEWAY_NAME,
-      existingEntry,
-      getSandboxRecreateObservation,
-      note,
-    );
+      | OwnedSandboxRecreateRuntime = proveRecreateSourceBeforePolicyCarryForward({
+      createRecreateRuntime: () =>
+        sandboxRecreateTransaction.createSandboxRecreateRuntime(
+          onboardSession,
+          createIntent?.recreateTransaction,
+          sandboxName,
+          GATEWAY_NAME,
+          existingEntry,
+          getSandboxRecreateObservation,
+          note,
+        ),
+      carryForward: () =>
+        applyAbsentSandboxRebuildPolicyCarryForward(
+          {
+            sandboxName,
+            liveExists,
+            nonInteractive: isNonInteractive(),
+            note,
+            rebuildPolicyPresets: createIntent?.rebuildPolicyPresets,
+          },
+          policyPresetCarry.applyRecreatePolicyCarryForward,
+        ),
+    });
     const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
       await dashboardPortReservationScope.release();
       ({ chatUiUrl } = sandboxReuse.applyReusedSandboxDashboardState({
@@ -403,7 +483,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       {
         computePlan,
         managedWorkloadRebuild,
-        tempManagedRuntime,
+        tempManagedRuntime:
+          tempManagedRuntime ||
+          managedWorkloadOnboard.shouldActivateStockManagedRuntime({
+            portableLifecycle: sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent),
+            hermesPortableLifecycle: agentCreateInput.hermesPortableLifecycle,
+            agentName: requestedAgentName,
+          }),
         tempManagedRuntimeCatalog,
         agentName: requestedAgentName,
         legacyDockerfilePath,
@@ -724,7 +810,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         },
         { formatSandboxAgentName, note },
       );
-      if (preservedMcpState) {
+      const managedMcpRebuildHandoff = hasPreservedManagedMcpRebuildHandoff(
+        preservedMcpState,
+        createIntent,
+      );
+      if (shouldRefuseManagedMcpRecreate(preservedMcpState, managedMcpRebuildHandoff)) {
         for (const hint of recreateJournal.managedMcpRecreateRefusalHints({
           sandboxName,
           cliName: cliName(),
@@ -753,7 +843,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         baseImageResolutionContext,
         previousEntry?.imageTag,
       );
-      policyPresetCarry.applyRecreatePolicyCarryForward(sandboxName, isNonInteractive(), note);
+      policyPresetCarry.applyRecreatePolicyCarryForward(
+        sandboxName,
+        isNonInteractive(),
+        note,
+        createIntent?.rebuildPolicyPresets,
+      );
 
       const noRestorePending =
         pendingStateRestore === null && pendingStateRestoreBackupPath === null;
@@ -1103,6 +1198,27 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
     });
 
+    const providerPreparationInput = {
+      openshellDriver: sandboxRuntimeFields.openshellDriver,
+      inferenceProvider: resolvedCreateIntent.inferenceProvider,
+      messagingProviders,
+      messagingProviderRequests: resolvedCreateIntent.messagingProviderRequests,
+      extraProviders: resolvedCreateIntent.extraProviders,
+      gatewayName: GATEWAY_NAME,
+    };
+    const providerPreparationDeps = {
+      providerExistsInGateway,
+      runOpenshell,
+      cleanupCreateSources: () => {
+        cleanupInitialCreateSource();
+        cleanupBuildContext();
+      },
+    };
+    validateAttachedMessagingProvidersBeforeSandboxCreation(
+      providerPreparationInput,
+      providerPreparationDeps,
+    );
+
     if (hermesPortableAuthority) {
       if (!portableRuntimeContext?.environmentScope) {
         throw new Error("Hermes portable onboarding is missing runtime environment authority.");
@@ -1179,6 +1295,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
       cleanupBuildContext();
     } else {
+      publishAttachedProvidersBeforeDockerSandboxCreation(
+        providerPreparationInput,
+        providerPreparationDeps,
+      );
       const created = await runCreateFlow(createArgv);
       cleanupInitialCreateSource();
       await completeCreatedSandboxRegistration(created, null);
@@ -1192,7 +1312,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxWasLiveDefault,
         runtimeFields: sandboxRuntimeFields,
         messagingProviders,
-        inferenceProvider: provider,
         liveExists,
       },
       {
@@ -1201,7 +1320,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         scriptsDir: SCRIPTS,
         gatewayName: GATEWAY_NAME,
         providerExistsInGateway,
-        runOpenshell,
         armCancelRollback: sandboxCancelRollback.arm,
         dockerInfoFormat,
         runCapture,

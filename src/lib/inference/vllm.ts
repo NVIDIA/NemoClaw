@@ -8,7 +8,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { isDeepStrictEqual } from "node:util";
+import { isDeepStrictEqual, stripVTControlCharacters } from "node:util";
 import {
   dockerCapture,
   dockerForceRm,
@@ -27,7 +27,7 @@ import { markPhaseActivity } from "../core/phase-activity";
 import { VLLM_PORT } from "../core/vllm-port";
 import { shellQuote } from "../core/shell-quote";
 import { isAffirmativeAnswer } from "../onboard/prompt-helpers";
-import { runCapture } from "../runner";
+import { redact, redactFull, runCapture } from "../runner";
 import { isSafeModelId } from "../validation";
 import {
   acquireHuggingFaceModel,
@@ -62,7 +62,10 @@ import {
   defaultVllmModelForPlatform,
   defaultVllmRuntimeForPlatform,
   STATION_PAIR_OPTIONAL_ORCHESTRATION,
+  NEMOCLAW_VLLM_GPU_DEVICE_ENV,
+  normalizeVllmGpuDevice,
   parseVllmExtraServeArgs,
+  resolveVllmGpuMemoryUtilization,
   VLLM_EXTRA_ARGS_ENV,
   VLLM_MODELS,
   vllmModelForOrchestration,
@@ -156,6 +159,8 @@ export interface VllmProfile {
   minComputeCapability?: number;
   /** Minimum GPU or unified-memory capacity selected by the runtime recipe. */
   minGpuMemoryBytes?: number;
+  /** Fraction of one selected GPU that vLLM reserves during startup. */
+  gpuMemoryUtilization?: number;
   servingCatalog?: {
     catalogDigest: string;
     presetId: string;
@@ -249,6 +254,27 @@ function vllmDockerRunFlags(gpuFlag = "all"): string[] {
     "-e",
     `HF_HOME=${HF_CACHE_CONTAINER_DIR}`,
   ];
+}
+
+function replaceVllmGpuRequest(flags: readonly string[], device: string): string[] {
+  const gpuIndex = flags.indexOf("--gpus");
+  if (gpuIndex < 0 || gpuIndex === flags.length - 1 || flags.indexOf("--gpus", gpuIndex + 1) >= 0) {
+    throw new Error("managed vLLM profile must contain exactly one Docker --gpus request");
+  }
+  const selected = [...flags];
+  selected[gpuIndex + 1] = `device=${device}`;
+  return selected;
+}
+
+export function selectVllmGpuDevice(profile: VllmProfile, device: string): VllmProfile {
+  const normalized = normalizeVllmGpuDevice(device);
+  return {
+    ...profile,
+    dockerRunFlags: replaceVllmGpuRequest(profile.dockerRunFlags, normalized),
+    buildDockerRunFlags: profile.buildDockerRunFlags
+      ? () => replaceVllmGpuRequest(profile.buildDockerRunFlags!(), normalized)
+      : undefined,
+  };
 }
 
 function printHfDownloadAuthentication(nonInteractive: boolean): void {
@@ -412,10 +438,15 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
   return { ok: true };
 }
 
-export function readGpuComputeCapabilities(): number[] {
-  const out = captureNvidiaSmi(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"], {
-    runCaptureImpl: runCapture,
-  });
+export function readGpuComputeCapabilities(device?: string): number[] {
+  const out = captureNvidiaSmi(
+    [
+      ...(device ? [`--id=${device}`] : []),
+      "--query-gpu=compute_cap",
+      "--format=csv,noheader,nounits",
+    ],
+    { runCaptureImpl: runCapture },
+  );
   if (!out) return [];
   const capabilities: number[] = [];
   for (const line of out.split("\n")) {
@@ -426,6 +457,13 @@ export function readGpuComputeCapabilities(): number[] {
     capabilities.push(Number(match[1]) * 10 + Number(match[2]));
   }
   return capabilities;
+}
+
+function readProfileGpuComputeCapabilities(profile: VllmProfile): number[] {
+  const request = profileGpuRequest(profile);
+  if (!request?.startsWith("device=")) return readGpuComputeCapabilities();
+  const device = request.slice("device=".length).split(",")[0]?.trim();
+  return readGpuComputeCapabilities(device || undefined);
 }
 
 export function formatComputeCapability(capability: number): string {
@@ -449,6 +487,170 @@ export function computeCapabilityPreflight(
       `but this host reports ${formatComputeCapability(lowest)}. ` +
       "Serve this model on a newer GPU, or select a compatible model with NEMOCLAW_VLLM_MODEL.",
   };
+}
+
+export interface GpuMemoryDevice {
+  index: number;
+  uuid: string;
+  totalBytes: bigint;
+  freeBytes: bigint;
+}
+
+export function readGpuMemoryDevices(): GpuMemoryDevice[] {
+  const out = captureNvidiaSmi(
+    ["--query-gpu=index,uuid,memory.total,memory.free", "--format=csv,noheader,nounits"],
+    { runCaptureImpl: runCapture },
+  );
+  if (!out) return [];
+  const devices: GpuMemoryDevice[] = [];
+  for (const line of out.split("\n")) {
+    const fields = line.split(",").map((field) => field.trim());
+    if (fields.length !== 4) continue;
+    const [indexRaw, uuid, totalMiBRaw, freeMiBRaw] = fields;
+    const index = Number(indexRaw);
+    const totalMiB = Number(totalMiBRaw);
+    const freeMiB = Number(freeMiBRaw);
+    if (
+      !Number.isSafeInteger(index) ||
+      index < 0 ||
+      !uuid ||
+      !Number.isSafeInteger(totalMiB) ||
+      totalMiB <= 0 ||
+      !Number.isSafeInteger(freeMiB) ||
+      freeMiB < 0 ||
+      freeMiB > totalMiB
+    ) {
+      continue;
+    }
+    devices.push({
+      index,
+      uuid,
+      totalBytes: BigInt(totalMiB) * 1024n * 1024n,
+      freeBytes: BigInt(freeMiB) * 1024n * 1024n,
+    });
+  }
+  return devices;
+}
+
+function profileGpuRequest(profile: VllmProfile): string | null {
+  let flags: readonly string[];
+  try {
+    flags = profile.buildDockerRunFlags ? profile.buildDockerRunFlags() : profile.dockerRunFlags;
+  } catch {
+    return null;
+  }
+  const index = flags.indexOf("--gpus");
+  if (index < 0 || index === flags.length - 1) return null;
+  const value = flags[index + 1]!;
+  return value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value;
+}
+
+function selectedGpuMemoryDevice(
+  request: string,
+  devices: readonly GpuMemoryDevice[],
+): GpuMemoryDevice | null {
+  // Fixed host-local recipes use one tensor-parallel worker, so vLLM starts
+  // on the first visible device even when Docker exposes every GPU.
+  if (request === "all" || request === "device=all") {
+    return devices.find((device) => device.index === 0) ?? null;
+  }
+  if (!request.startsWith("device=")) return null;
+  const selector = request.slice("device=".length).split(",")[0]?.trim();
+  if (!selector) return null;
+  return (
+    devices.find(
+      (device) =>
+        String(device.index) === selector || device.uuid.toLowerCase() === selector.toLowerCase(),
+    ) ?? null
+  );
+}
+
+export function gpuMemoryPreflight(
+  model: VllmModelDef,
+  profile: VllmProfile,
+  devices: readonly GpuMemoryDevice[] = readGpuMemoryDevices(),
+): { ok: true } | { ok: false; reason: string } {
+  const utilization = profile.gpuMemoryUtilization;
+  if (utilization === undefined) return { ok: true };
+  if (devices.length === 0) {
+    return {
+      ok: false,
+      reason:
+        `Could not read valid GPU memory telemetry for ${model.label} with nvidia-smi. ` +
+        "Verify NVIDIA driver access and GPU health, then resume onboarding.",
+    };
+  }
+  const request = profileGpuRequest(profile);
+  if (!request) {
+    return {
+      ok: false,
+      reason:
+        `Could not determine which GPU ${profile.name} will expose to ${model.label}. ` +
+        "Verify the managed vLLM GPU configuration, then resume onboarding.",
+    };
+  }
+  const device = selectedGpuMemoryDevice(request, devices);
+  if (!device) {
+    return {
+      ok: false,
+      reason:
+        `${profile.name} selects GPU '${request}', but nvidia-smi did not report that device. ` +
+        "Verify the Docker GPU selection and NVIDIA driver state, then resume onboarding.",
+    };
+  }
+  const requiredBytes = BigInt(Math.ceil(Number(device.totalBytes) * utilization));
+  if (device.freeBytes >= requiredBytes) return { ok: true };
+  const missingBytes = requiredBytes - device.freeBytes;
+  return {
+    ok: false,
+    reason:
+      `${model.label} sets --gpu-memory-utilization=${String(utilization)}, which requires about ` +
+      `${formatStorageBytes(requiredBytes)} free on GPU ${String(device.index)}, but only ` +
+      `${formatStorageBytes(device.freeBytes)} of ${formatStorageBytes(device.totalBytes)} is free. ` +
+      `Stop other GPU workloads to free at least ${formatStorageBytes(missingBytes)}, then resume onboarding.`,
+  };
+}
+
+function installGpuMemoryPreflight(
+  model: VllmModelDef,
+  profile: VllmProfile,
+  dualStationPlan: DualStationVllmPlan | null,
+): ReturnType<typeof gpuMemoryPreflight> {
+  if (!dualStationPlan) return gpuMemoryPreflight(model, profile);
+  const utilization = profile.gpuMemoryUtilization;
+  if (utilization === undefined) return { ok: true };
+  for (const node of [dualStationPlan.local, dualStationPlan.peer]) {
+    const totalBytes = BigInt(node.gpu.totalMemoryMiB) * 1024n * 1024n;
+    const freeBytes = BigInt(node.gpu.freeMemoryMiB) * 1024n * 1024n;
+    const requiredBytes = BigInt(Math.ceil(Number(totalBytes) * utilization));
+    if (freeBytes >= requiredBytes) continue;
+    const missingBytes = requiredBytes - freeBytes;
+    return {
+      ok: false,
+      reason:
+        `${model.label} sets --gpu-memory-utilization=${String(utilization)}, which requires about ` +
+        `${formatStorageBytes(requiredBytes)} free on GPU ${String(node.gpu.index)} ` +
+        `(${node.gpu.uuid}) on ${node.hostname}, but only ${formatStorageBytes(freeBytes)} of ` +
+        `${formatStorageBytes(totalBytes)} is free. Stop other GPU workloads on ${node.hostname} ` +
+        `to free at least ${formatStorageBytes(missingBytes)}, then resume onboarding.`,
+    };
+  }
+  return { ok: true };
+}
+
+function sameDualStationTopology(left: DualStationVllmPlan, right: DualStationVllmPlan): boolean {
+  const withoutVolatileMemory = (plan: DualStationVllmPlan): DualStationVllmPlan => ({
+    ...plan,
+    local: {
+      ...plan.local,
+      gpu: { ...plan.local.gpu, freeMemoryMiB: 0 },
+    },
+    peer: {
+      ...plan.peer,
+      gpu: { ...plan.peer.gpu, freeMemoryMiB: 0 },
+    },
+  });
+  return isDeepStrictEqual(withoutVolatileMemory(left), withoutVolatileMemory(right));
 }
 
 export async function pullImage(
@@ -670,6 +872,7 @@ function applyVllmRuntimeProfile(
       pullTimeoutSec: runtime.pullTimeoutSec ?? profile.pullTimeoutSec,
       minComputeCapability: runtime.minComputeCapability ?? model.minComputeCapability,
       minGpuMemoryBytes: runtime.minGpuMemoryBytes,
+      gpuMemoryUtilization: runtime.gpuMemoryUtilization,
       servingCatalog: runtime.servingCatalog ?? profile.servingCatalog,
     };
   }
@@ -1125,6 +1328,14 @@ function verifyDualStationVllmAuthBoundary(
   }
 }
 
+function sanitizeContainerLogOutput(output: string): string {
+  const normalizedOutput = stripVTControlCharacters(output.replace(/\r\n?/g, "\n")).replace(
+    /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g,
+    "",
+  );
+  return redact(redactFull(normalizedOutput));
+}
+
 function readContainerLogTail(
   profile: VllmProfile,
   lineCount = 80,
@@ -1133,9 +1344,11 @@ function readContainerLogTail(
   const output = dockerCapture(["logs", "--tail", String(lineCount), profile.containerName], {
     env: dockerEnv,
     ignoreError: true,
+    includeStderr: true,
   }).trim();
   if (!output) return [];
-  return output.split(/\r?\n/).slice(-lineCount);
+  const safeOutput = sanitizeContainerLogOutput(output);
+  return safeOutput.split(/\r?\n/).slice(-lineCount);
 }
 
 function printContainerLogTail(
@@ -1620,6 +1833,69 @@ function resolveVllmInstallSelectionEnv(
   };
 }
 
+type VllmInstallRequestEnv =
+  | {
+      readonly ok: true;
+      readonly env: NodeJS.ProcessEnv;
+      readonly explicitModel: string;
+      readonly requestedGpuDevice: string | null;
+      readonly configuredPeer: string;
+      readonly configuredManagedClusterPeers: string;
+    }
+  | { readonly ok: false; readonly error: string };
+
+function resolveVllmInstallRequestEnv(
+  modelIntent: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): VllmInstallRequestEnv {
+  const selection = resolveVllmInstallSelectionEnv(modelIntent, env);
+  if (!selection.ok) {
+    return {
+      ok: false,
+      error: "the resumed model conflicts with NEMOCLAW_VLLM_MODEL.",
+    };
+  }
+  const rawGpuDevice = String(env[NEMOCLAW_VLLM_GPU_DEVICE_ENV] ?? "").trim();
+  let requestedGpuDevice: string | null = null;
+  try {
+    requestedGpuDevice = rawGpuDevice ? normalizeVllmGpuDevice(rawGpuDevice) : null;
+  } catch (error) {
+    return { ok: false, error: `${(error as Error).message}.` };
+  }
+  const configuredPeer = String(env[NEMOCLAW_DGX_STATION_PEER_ENV] ?? "").trim();
+  const configuredManagedClusterPeers = String(
+    env[NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV] ?? "",
+  ).trim();
+  if (requestedGpuDevice && (configuredPeer || configuredManagedClusterPeers)) {
+    return {
+      ok: false,
+      error:
+        "--vllm-gpu-device selects one host GPU and cannot be combined with managed multi-node inference.",
+    };
+  }
+  return {
+    ...selection,
+    requestedGpuDevice,
+    configuredPeer,
+    configuredManagedClusterPeers,
+  };
+}
+
+function shouldTryManagedClusterInstall(
+  hostLocalSelection: MaterializedHostLocalVllmSelection | undefined,
+  fixedServeCommand: boolean,
+  requestedGpuDevice: string | null,
+): boolean {
+  return !hostLocalSelection && !fixedServeCommand && !requestedGpuDevice;
+}
+
+function applyRequestedVllmGpuDevice(
+  profile: VllmProfile,
+  requestedGpuDevice: string | null,
+): VllmProfile {
+  return requestedGpuDevice ? selectVllmGpuDevice(profile, requestedGpuDevice) : profile;
+}
+
 /**
  * Name the process holding the serving port so the operator can act, matching
  * how the Ollama auth proxy reports its own port conflict.
@@ -1688,15 +1964,18 @@ async function runVllmInstall(
   opts: InstallVllmOptions,
   hostLocalSelection?: MaterializedHostLocalVllmSelection,
 ): Promise<{ ok: boolean }> {
-  const selection = resolveVllmInstallSelectionEnv(opts.modelIntent);
+  const selection = resolveVllmInstallRequestEnv(opts.modelIntent);
   if (!selection.ok) {
-    console.error(
-      "  vLLM install failed: the resumed model conflicts with NEMOCLAW_VLLM_MODEL.",
-    );
+    console.error(`  vLLM install failed: ${selection.error}`);
     return { ok: false };
   }
-  const { env: selectionEnv, explicitModel } = selection;
-  const configuredPeer = String(process.env[NEMOCLAW_DGX_STATION_PEER_ENV] ?? "").trim();
+  const {
+    env: selectionEnv,
+    explicitModel,
+    requestedGpuDevice,
+    configuredPeer,
+    configuredManagedClusterPeers,
+  } = selection;
   const fixedServeCommand = profile.defaultModel.fixedServeCommand === true;
   if (fixedServeCommand) {
     if (
@@ -1708,9 +1987,6 @@ async function runVllmInstall(
       );
       return { ok: false };
     }
-    const configuredManagedClusterPeers = String(
-      process.env[NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV] ?? "",
-    ).trim();
     const configuredServingPreset = String(process.env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
     if (configuredManagedClusterPeers) {
       console.error(
@@ -1725,7 +2001,7 @@ async function runVllmInstall(
       return { ok: false };
     }
   }
-  if (!hostLocalSelection && !fixedServeCommand) {
+  if (shouldTryManagedClusterInstall(hostLocalSelection, fixedServeCommand, requestedGpuDevice)) {
     const managedCluster = await tryInstallManagedClusterManagedVllm(
       {
         env: selectionEnv,
@@ -1937,6 +2213,7 @@ async function runVllmInstall(
         imageDownloadSizeBytes: dualStationPlan.runtime.imageDownloadSizeBytes,
         imageUnpackedSizeBytes: undefined,
         loadTimeoutSec: dualStationPlan.runtime.loadTimeoutSeconds,
+        gpuMemoryUtilization: dualStationPlan.runtime.gpuMemoryUtilization,
       };
       if (extraServeArgs.length > 0) {
         console.error(
@@ -1946,6 +2223,21 @@ async function runVllmInstall(
       }
     }
   }
+
+  try {
+    runtimeProfile = {
+      ...runtimeProfile,
+      gpuMemoryUtilization: resolveVllmGpuMemoryUtilization(
+        runtimeProfile.gpuMemoryUtilization,
+        extraServeArgs,
+      ),
+    };
+  } catch (error) {
+    console.error(`  vLLM install failed: ${(error as Error).message}`);
+    return { ok: false };
+  }
+
+  runtimeProfile = applyRequestedVllmGpuDevice(runtimeProfile, requestedGpuDevice);
 
   // Reject a held serving port before anything durable happens. In
   // particular, managed bearer auth persists a host credential below and
@@ -2009,20 +2301,11 @@ async function runVllmInstall(
     : isAffirmativeAnswer(await opts.promptFn("  Continue? [y/N]: "));
   if (!proceed) return { ok: false };
 
-  opts.checkpointInstallIntent?.(explicitModel || model.id);
   let hostLocalApiKey: string | null = null;
-  if (!dualStationPlan && model.managedBearerAuth) {
-    try {
-      hostLocalApiKey = ensureDualStationVllmApiKey();
-    } catch (error) {
-      console.error(`  vLLM install failed: ${(error as Error).message}`);
-      return { ok: false };
-    }
-  }
-  const localDockerEnv = dualStationPlan
+  let localDockerEnv = dualStationPlan
     ? buildLocalDualStationDockerEnv()
-    : hostLocalApiKey
-      ? buildLocalManagedVllmDockerEnv({ VLLM_API_KEY: hostLocalApiKey })
+    : model.managedBearerAuth
+      ? buildLocalManagedVllmDockerEnv()
       : buildVllmDockerEnv();
 
   console.log("");
@@ -2036,13 +2319,24 @@ async function runVllmInstall(
 
   const capability = computeCapabilityPreflight(
     model,
-    readGpuComputeCapabilities(),
+    readProfileGpuComputeCapabilities(runtimeProfile),
     runtimeProfile.minComputeCapability,
   );
   if (!capability.ok) {
     console.error(`  vLLM install failed: ${capability.reason}`);
     return { ok: false };
   }
+
+  const memory = installGpuMemoryPreflight(model, runtimeProfile, dualStationPlan);
+  if (!memory.ok) {
+    console.error(`  vLLM install failed: ${memory.reason}`);
+    return { ok: false };
+  }
+
+  // Only publish resumable install intent after every read-only hardware
+  // guard passes. A rejected preflight must not create credentials or durable
+  // onboarding state.
+  opts.checkpointInstallIntent?.(explicitModel || model.id);
 
   // Fail before large downloads when either daemon has an ambiguous or
   // foreign fixed-name container. Each launch path repeats this ownership
@@ -2145,7 +2439,7 @@ async function runVllmInstall(
             reason: `dual-Station capability changed: ${reason}`,
           };
         }
-        if (!isDeepStrictEqual(refreshedCapability.plan, stagingPlan)) {
+        if (!sameDualStationTopology(refreshedCapability.plan, stagingPlan)) {
           return {
             ok: false as const,
             reason:
@@ -2158,6 +2452,8 @@ async function runVllmInstall(
             reason: "peer pinned model snapshot was not verified after staging.",
           };
         }
+        const memory = installGpuMemoryPreflight(model, runtimeProfile, refreshedCapability.plan);
+        if (!memory.ok) return { ok: false as const, reason: memory.reason };
         return { ok: true as const, plan: refreshedCapability.plan };
       });
       if (!verification.ok) {
@@ -2173,29 +2469,52 @@ async function runVllmInstall(
     }
   }
 
-  let dualStationApiKey: string | null = null;
   if (dualStationPlan) {
-    try {
-      const existingManagedBaseUrl = getDualStationManagedVllmBaseUrl();
-      const existingApiKey = existingManagedBaseUrl ? loadDualStationVllmApiKey() : null;
-      // If the key file alone was lost, create a new host-global key. The
-      // lifecycle fingerprint then forces a coordinated pair replacement
-      // under its lock instead of reusing containers bound to an unknown key.
-      dualStationApiKey = existingApiKey ?? ensureDualStationVllmApiKey();
-    } catch (err) {
-      console.error(`  vLLM install failed: ${(err as Error).message}`);
-      return { ok: false };
-    }
-  }
-
-  if (dualStationPlan) {
-    if (!dualStationApiKey) {
-      console.error("  vLLM install failed: dual-Station API key was not provisioned");
-      return { ok: false };
-    }
+    const plannedPair = dualStationPlan;
     try {
       return await withDualStationManagedVllmLifecycle(async () => {
-        const start = await startDualStationManagedVllm(dualStationPlan, {
+        const launchCapability = probeDualStationVllmCapability();
+        if (launchCapability.kind !== "ready") {
+          const reason =
+            launchCapability.kind === "unavailable"
+              ? launchCapability.reason
+              : "the explicit peer configuration disappeared";
+          console.error(`  vLLM install failed: dual-Station capability changed: ${reason}`);
+          return { ok: false };
+        }
+        if (!sameDualStationTopology(launchCapability.plan, plannedPair)) {
+          console.error(
+            "  vLLM install failed: dual-Station topology changed before launch; rerun setup against a stable pair.",
+          );
+          return { ok: false };
+        }
+        if (launchCapability.peerModelSnapshot !== "ready") {
+          console.error(
+            "  vLLM install failed: peer pinned model snapshot was not verified before launch.",
+          );
+          return { ok: false };
+        }
+        const launchPlan = launchCapability.plan;
+        const launchMemory = installGpuMemoryPreflight(model, runtimeProfile, launchPlan);
+        if (!launchMemory.ok) {
+          console.error(`  vLLM install failed: ${launchMemory.reason}`);
+          return { ok: false };
+        }
+
+        let dualStationApiKey: string;
+        try {
+          const existingManagedBaseUrl = getDualStationManagedVllmBaseUrl();
+          const existingApiKey = existingManagedBaseUrl ? loadDualStationVllmApiKey() : null;
+          // If the key file alone was lost, create a new host-global key. The
+          // lifecycle fingerprint then forces a coordinated pair replacement
+          // under its lock instead of reusing containers bound to an unknown key.
+          dualStationApiKey = existingApiKey ?? ensureDualStationVllmApiKey();
+        } catch (error) {
+          console.error(`  vLLM install failed: ${(error as Error).message}`);
+          return { ok: false };
+        }
+
+        const start = await startDualStationManagedVllm(launchPlan, {
           apiKey: dualStationApiKey,
         });
         if (!start.ok) {
@@ -2210,7 +2529,7 @@ async function runVllmInstall(
           if (start.reusedExisting) return;
           if (start.legacyMigration) {
             const rollback = await rollbackDualStationLegacyMigration(
-              dualStationPlan,
+              launchPlan,
               start.legacyMigration,
             );
             if (!rollback.ok) {
@@ -2220,7 +2539,7 @@ async function runVllmInstall(
             }
             return;
           }
-          const cleanup = await cleanupDualStationManagedVllm(dualStationPlan);
+          const cleanup = await cleanupDualStationManagedVllm(launchPlan);
           if (!cleanup.ok) console.error(`  vLLM rollback warning: ${cleanup.reason}`);
         };
 
@@ -2248,7 +2567,7 @@ async function runVllmInstall(
           return { ok: false };
         }
 
-        if (!areDualStationManagedVllmContainersRunning(dualStationPlan)) {
+        if (!areDualStationManagedVllmContainersRunning(launchPlan)) {
           await rollbackStartedPair();
           console.error("  vLLM distributed containers exited unexpectedly after readiness");
           return { ok: false };
@@ -2256,10 +2575,7 @@ async function runVllmInstall(
 
         let legacyMigrationCommitted = false;
         if (start.legacyMigration) {
-          const commit = await commitDualStationLegacyMigration(
-            dualStationPlan,
-            start.legacyMigration,
-          );
+          const commit = await commitDualStationLegacyMigration(launchPlan, start.legacyMigration);
           if (!commit.ok) {
             await rollbackStartedPair();
             console.error(`  vLLM install failed: ${commit.reason}`);
@@ -2272,10 +2588,10 @@ async function runVllmInstall(
         }
 
         try {
-          persistDualStationVllmRuntimeReceipt(dualStationPlan);
+          persistDualStationVllmRuntimeReceipt(launchPlan);
         } catch (error) {
           if (legacyMigrationCommitted) {
-            const cleanup = await cleanupDualStationManagedVllm(dualStationPlan);
+            const cleanup = await cleanupDualStationManagedVllm(launchPlan);
             if (!cleanup.ok) console.error(`  vLLM rollback warning: ${cleanup.reason}`);
           } else {
             await rollbackStartedPair();
@@ -2293,6 +2609,22 @@ async function runVllmInstall(
       console.error(
         `  vLLM install failed: dual-Station lifecycle lock failed: ${(error as Error).message}`,
       );
+      return { ok: false };
+    }
+  }
+
+  const launchMemory = installGpuMemoryPreflight(model, runtimeProfile, null);
+  if (!launchMemory.ok) {
+    console.error(`  vLLM install failed: ${launchMemory.reason}`);
+    return { ok: false };
+  }
+
+  if (model.managedBearerAuth) {
+    try {
+      hostLocalApiKey = ensureDualStationVllmApiKey();
+      localDockerEnv = buildLocalManagedVllmDockerEnv({ VLLM_API_KEY: hostLocalApiKey });
+    } catch (error) {
+      console.error(`  vLLM install failed: ${(error as Error).message}`);
       return { ok: false };
     }
   }

@@ -26,6 +26,7 @@ import {
 import { startFakeHttpsCompatibleServer } from "./https-pin-compatible-server.ts";
 import {
   CREDENTIAL_CLASSIFICATION_PATTERN,
+  captureOpenClawPairingDiagnosticsAfterFailedOnboard,
   cleanupSandbox,
   expectNoActiveSandbox,
   expectOnboardFailure,
@@ -43,7 +44,6 @@ import {
 } from "./inference-routing-helpers.ts";
 import { startPublicMcpHttpsTunnel } from "./mcp-bridge-servers.ts";
 import { startRuntimeIdentityOAuthServer } from "./runtime-identity-oauth-server.ts";
-
 // This is the PR-required inference-routing lane. Credential-backed provider
 // smokes live in inference-routing-provider-smoke.test.ts and are never selected
 // by the PR-safe workflow job.
@@ -364,6 +364,9 @@ async function runRuntimeIdentityE2EScenario(
   cleanup.add(`best-effort runtime identity sandbox cleanup for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName),
   );
+  cleanup.add(`strict runtime identity sandbox cleanup for ${sandboxName}`, () =>
+    cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
+  );
   await cleanupSandbox(host, sandbox, sandboxName);
 
   const inference = await startFakeOpenAiCompatibleServer({
@@ -402,9 +405,6 @@ async function runRuntimeIdentityE2EScenario(
     ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   );
   expectOnboardSuccess(onboard, `${scenario.testId} real OpenShell prerequisite onboard`);
-  cleanup.add(`strict runtime identity sandbox cleanup for ${sandboxName}`, () =>
-    cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
-  );
 
   // Remove stale fixture-owned objects left by a previously interrupted local
   // run. Both operations are best-effort and target only this E2E namespace.
@@ -1027,6 +1027,9 @@ test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through infere
   cleanup.add(`best-effort inference-routing compatible-endpoint cleanup for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName),
   );
+  cleanup.add(`strict inference-routing compatible-endpoint cleanup for ${sandboxName}`, () =>
+    cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
+  );
   await cleanupSandbox(host, sandbox, sandboxName);
   progress.phase("start the local compatible endpoint");
   const fake = await startFakeOpenAiCompatibleServer({
@@ -1077,9 +1080,6 @@ test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through infere
     ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   );
   expectOnboardSuccess(onboard, "TC-INF-09 compatible-endpoint onboard");
-  cleanup.add(`strict inference-routing compatible-endpoint cleanup for ${sandboxName}`, () =>
-    cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
-  );
   progress.phase("inspect the compatible provider route");
   const provider = await sandbox.openshell(
     ["provider", "get", "-g", "nemoclaw", "compatible-endpoint"],
@@ -1171,6 +1171,9 @@ test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinnin
   cleanup.add(`best-effort inference-routing https-pin cleanup for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName),
   );
+  cleanup.add(`strict inference-routing https-pin cleanup for ${sandboxName}`, () =>
+    cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
+  );
   progress.phase("clear the HTTPS pin sandbox");
   await cleanupSandbox(host, sandbox, sandboxName);
 
@@ -1242,7 +1245,6 @@ test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinnin
     requireAuthModels: true,
   });
   cleanup.add("close https-pin onboarding placeholder endpoint", () => placeholder.close());
-
   progress.phase("onboard with the placeholder endpoint");
   const onboard = await onboardSandbox(
     artifacts,
@@ -1259,10 +1261,8 @@ test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinnin
     progress,
     ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   );
+  await captureOpenClawPairingDiagnosticsAfterFailedOnboard(onboard, sandbox, sandboxName, [apiKey]);
   expectOnboardSuccess(onboard, "TC-INF-11 https-pin-endpoint placeholder onboard");
-  cleanup.add(`strict inference-routing https-pin cleanup for ${sandboxName}`, () =>
-    cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
-  );
 
   progress.phase("reject credential-bearing endpoint state");
   const userinfoEndpoint = new URL(endpointUrl);

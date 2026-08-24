@@ -262,7 +262,7 @@ export async function upgradeSandboxes(
 
   const sandboxes = registry
     .listSandboxes()
-    .sandboxes.filter((sandbox) => !registry.isRouteOnlySandboxReservation(sandbox));
+    .sandboxes.filter((sandbox) => registry.isPublishedSandboxRegistration(sandbox));
   if (sandboxes.length === 0) {
     console.log("  No sandboxes found in the registry.");
     return;

@@ -221,7 +221,7 @@ export function createHermesPortableTestInput(stateDir: string, policyPath: stri
       authority: {
         schemaVersion: 1,
         sourceRevision: "1".repeat(40),
-        dockerfileRelativePath: "agents/hermes/Dockerfile",
+        dockerfileRelativePath: "Dockerfile",
         sourceManifestSha256: "2".repeat(64),
         contextManifestSha256: "3".repeat(64),
       },
@@ -229,7 +229,7 @@ export function createHermesPortableTestInput(stateDir: string, policyPath: stri
       assertCurrentSource: vi.fn(),
       materialize: vi.fn(() => ({
         buildContextPath: "/private/staged-hermes",
-        dockerfilePath: "/private/staged-hermes/agents/hermes/Dockerfile",
+        dockerfilePath: "/private/staged-hermes/Dockerfile",
         assertCurrent: vi.fn(),
       })),
       retire: vi.fn(() => true),
@@ -272,6 +272,12 @@ export interface HermesPortableTransactionFixtureOptions {
   assertOpenShellExecutableAuthority?: () => void;
   afterRegistryCommit?: () => void | Promise<void>;
   observeSandbox?: HermesPortableOnboardingDeps<{ ready: true }>["observeSandbox"];
+  delaySandboxReadyPublicationPoll?: HermesPortableOnboardingDeps<{
+    ready: true;
+  }>["delaySandboxReadyPublicationPoll"];
+  readSandboxReadyPublicationClockMs?: HermesPortableOnboardingDeps<{
+    ready: true;
+  }>["readSandboxReadyPublicationClockMs"];
   registryOpenShellVersion?: string | null;
   registryLiveFingerprint?: string;
   existingRegistry?: boolean;
@@ -380,6 +386,12 @@ export function createHermesPortableTransactionFixture(
               liveIdentityFingerprint: HERMES_PORTABLE_TEST_LIVE_IDENTITY,
             }
           : { kind: "absent" }),
+    ...(options.delaySandboxReadyPublicationPoll
+      ? { delaySandboxReadyPublicationPoll: options.delaySandboxReadyPublicationPoll }
+      : {}),
+    ...(options.readSandboxReadyPublicationClockMs
+      ? { readSandboxReadyPublicationClockMs: options.readSandboxReadyPublicationClockMs }
+      : {}),
     createSandbox: async (argv, buildContextPath) => {
       events.push("create");
       if (options.createSandbox) {
@@ -390,7 +402,7 @@ export function createHermesPortableTransactionFixture(
       const policyIndex = argv.indexOf("--policy");
       expect(argv[policyIndex + 1]).toContain("policy.");
       expect(argv[argv.indexOf("--from") + 1]).toBe(
-        options.expectedDockerfilePath ?? "/private/staged-hermes/agents/hermes/Dockerfile",
+        options.expectedDockerfilePath ?? "/private/staged-hermes/Dockerfile",
       );
       expect(buildContextPath).toBe(options.expectedBuildContextPath ?? "/private/staged-hermes");
       present = true;

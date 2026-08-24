@@ -77,6 +77,7 @@ export interface SandboxOnboardFlowPhaseOptions<
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
   rebuildPreservedEnv?: readonly import("../../state/preserved-env").PreservedEnvFile[];
+  rebuildPolicyPresets?: readonly string[];
   hostMounts?: readonly import("../../state/registry/types").SandboxHostMount[];
   endpointProvenance: EndpointProvenanceOptions;
   recreateSandbox: (requested?: boolean) => boolean;
@@ -236,6 +237,7 @@ export function createSandboxOnboardFlowPhase<
       requestedObservabilityEnabled: options.requestedObservabilityEnabled,
       requestedDcodeAutoApprovalMode: options.requestedDcodeAutoApprovalMode,
       rebuildPreservedEnv: options.rebuildPreservedEnv,
+      rebuildPolicyPresets: options.rebuildPolicyPresets,
       hostMounts: options.hostMounts,
       recreateSandbox: options.recreateSandbox,
       session: context.session,
@@ -266,6 +268,7 @@ export function createSandboxOnboardFlowPhase<
       context: mergeSandboxCreatedContext(context, {
         session: sandboxStateResult.session,
         sandboxName: sandboxStateResult.sandboxName,
+        recreateJournalHandoff: Boolean(options.recreateJournalTargetIntentFingerprint),
         webSearchConfig: sandboxStateResult.webSearchConfig,
         webSearchConfigChanged: sandboxStateResult.webSearchConfigChanged,
         hermesToolGateways: sandboxStateResult.hermesToolGateways,

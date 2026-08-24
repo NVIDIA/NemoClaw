@@ -104,6 +104,7 @@ function registryFixture(agent: ShippedManagedImageAgent, options: RegistryFixtu
     ),
     "org.opencontainers.image.source": `https://github.com/${MANAGED_IMAGE_SOURCE_REPOSITORY}`,
     "org.opencontainers.image.revision": REVISION,
+    "org.opencontainers.image.version": RELEASE,
     "io.nvidia.nemoclaw.managed-image.cohort": COHORT,
     ...options.labels,
   };
@@ -470,6 +471,49 @@ describe("managed image GHCR catalog", () => {
       }),
     ).rejects.toThrow(/source revision does not match the expected revision/);
   });
+
+  it("discovers the immutable release from a qualification revision", async () => {
+    const publishedRelease = "v0.0.96";
+    const fixture = catalogFixture({
+      openclaw: {
+        rootReference: REVISION,
+        labels: { "org.opencontainers.image.version": publishedRelease },
+      },
+      hermes: { labels: { "org.opencontainers.image.version": publishedRelease } },
+      "langchain-deepagents-code": {
+        labels: { "org.opencontainers.image.version": publishedRelease },
+      },
+    });
+
+    const catalog = await resolveManagedImageCatalogFromGhcr({
+      release: RELEASE,
+      revision: REVISION,
+      fetchImpl: fixture.fetchImpl,
+    });
+
+    expect(
+      SHIPPED_MANAGED_IMAGE_AGENTS.map(
+        (agent) => (catalog[agent] as { source: { release: string } }).source.release,
+      ),
+    ).toEqual(SHIPPED_MANAGED_IMAGE_AGENTS.map(() => publishedRelease));
+  });
+
+  it.each(["", "0.0.97", "latest"])(
+    "rejects malformed image release label %j",
+    async (release) => {
+      const fixture = registryFixture("openclaw", {
+        labels: { "org.opencontainers.image.version": release },
+      });
+
+      await expect(
+        resolveManagedImageContractFromGhcr({
+          agent: "openclaw",
+          release: RELEASE,
+          fetchImpl: fixture.fetchImpl,
+        }),
+      ).rejects.toThrow(/image release is not a supported release version/);
+    },
+  );
 
   it("fails closed when a dependent cohort alias is torn or absent", async () => {
     const fixture = catalogFixture({ hermes: { missingRoot: true } });

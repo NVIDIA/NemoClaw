@@ -33,11 +33,14 @@ It then creates the runner, sends one validation request for the selected model,
 This path does not inspect, start, or use a host Ollama process, and it does not use the default Docker runtime.
 
 <Warning title="Portable Cleanup Boundary">
-This path covers fresh onboarding and provider selection.
-It does not establish complete `destroy` or `uninstall` cleanup for the Portable Ollama runner.
-Portable uninstall stops when it cannot prove exact cleanup authority for a Portable lifecycle receipt with schema `5`.
-It exits nonzero before deleting the runner or its receipt.
-Preserve the Portable Ollama runner and its lifecycle receipt.
+Run `$$nemoclaw uninstall` for full cleanup of a receipt-owned Portable Ollama runner.
+Before its first mutation, NemoClaw records the exact schema `5` lifecycle receipt, sandbox registry revision and lifecycle generation, sandbox and Podman container identities, committed gateway provider revision and profile, inference runtime, socket, and Portable network.
+It revalidates that authority before each cleanup phase and preserves a provider or inference runtime that another recorded sandbox shares.
+An interrupted run keeps owner-private, credential-free recovery state.
+Preserve the reported state and rerun the same command to resume the recorded phase.
+An identity change, same-name replacement, stale sandbox readiness result, changed provider profile, or other authority drift makes uninstall exit nonzero before an unproven mutation.
+The command preserves every Podman image.
+Per-sandbox `destroy` remains outside this full-uninstall cleanup contract.
 </Warning>
 
 </AgentOnly>
@@ -59,6 +62,23 @@ Linux upgrades use the sudo-driven system path because a user-local fallback wou
 If sudo is unavailable in a non-interactive run, rerun interactively or upgrade Ollama manually.
 An upgrade also needs sudo to restart the service onto the new binary, so it does not accept an already-loopback-only daemon as a reason to skip that step.
 A fresh install takes the latest version.
+
+Before a Linux systemd restart, NemoClaw reads the service's exact `User` and `ExecStart` executable.
+It requires one absolute executable path, one service user, a regular ELF executable, and one absolute ELF interpreter path.
+NemoClaw then runs the executable with `--version` as the service user, which proves that the executable and its interpreter can run for that user.
+After a failed run, NemoClaw verifies execute access to both paths before it considers permission repair.
+If it cannot prove execution, NemoClaw stops before it restarts the service.
+
+NemoClaw can repair execute permissions only for the regular file at `/usr/local/bin/ollama` when the root user and group own it.
+The file must have no special bits or group or world write access.
+Each ancestor from `/` through `/usr/local/bin` must be a real root-owned directory with execute access and without group or world write access.
+The repair adds the user, group, and other execute bits while preserving every other mode bit.
+NemoClaw then repeats the service-user verification.
+It does not change an ancestor directory or the ELF interpreter.
+If verification still fails, NemoClaw restores the original executable mode and stops before the service restart.
+If mode restoration fails, the error identifies the rollback failure for administrator recovery.
+Onboarding remains stopped.
+Inspect `/usr/local/bin/ollama` and restore its intended mode before you rerun onboarding.
 
 After an upgrade, NemoClaw probes the running daemon and the installed binary again.
 `ollama --version` reports the version of the daemon it can reach, so NemoClaw reads the binary's own version from the client-version line that the command prints when the two differ.

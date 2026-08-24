@@ -33,10 +33,12 @@ function buildAddProcessScript(
   home: string,
   crashAfter: CrashBoundary,
   includeSecret = true,
+  initializeSandbox = true,
 ): string {
   return String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 const includeSecret = ${JSON.stringify(includeSecret)};
+const initializeSandbox = ${JSON.stringify(initializeSandbox)};
 includeSecret ? (process.env.FAKE_MCP_SECRET = "host-only-secret") : delete process.env.FAKE_MCP_SECRET;
 const fs = require("node:fs");
 const path = require("node:path");
@@ -62,6 +64,7 @@ let credentialUpdatedThisProcess = false;
 let observedCredentialAbsentThisProcess = false;
 let credentialRepublishBeforeObservationCountThisProcess = 0;
 let credentialRepublishAfterAbsenceCountThisProcess = 0;
+let credentialFreeRefreshBeforeObservationCountThisProcess = 0;
 let credentialFreeRefreshAfterAbsenceCountThisProcess = 0;
 
 const registry = require("./src/lib/state/registry.js");
@@ -139,6 +142,14 @@ providerCommands.runOpenshellProviderCommand = (args) => {
       ) {
         credentialRepublishAfterAbsenceCountThisProcess += 1;
         fs.appendFileSync(marker("republish-after-observed-absence"), "republish\n", { mode: 0o600 });
+      }
+      if (
+        crashAfter === "credential-projection-delayed-hostless" &&
+        isCredentialFreeRefresh &&
+        !observedCredentialAbsentThisProcess
+      ) {
+        credentialFreeRefreshBeforeObservationCountThisProcess += 1;
+        fs.appendFileSync(marker("refresh-before-observed-absence"), "refresh\n", { mode: 0o600 });
       }
       if (
         crashAfter === "credential-projection-delayed-hostless" &&
@@ -254,7 +265,7 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
   if (command === "command -v mcporter") {
     return { status: 0, stdout: "/usr/local/bin/mcporter\n", stderr: "" };
   }
-  if (command.includes("config' 'add")) {
+  if (command.includes("config' 'add") || command.includes('"config", "add"')) {
     mark("adapter");
     if (crashAfter === "adapter") process.exit(86);
     return { status: 0, stdout: "", stderr: "" };
@@ -280,7 +291,7 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
   };
 };
 
-if (!registry.getSandbox("crash-test")) {
+if (initializeSandbox && !registry.getSandbox("crash-test")) {
   registry.registerSandbox({
     name: "crash-test",
     agent: "openclaw",
@@ -303,6 +314,26 @@ bridge.addMcpBridge("crash-test", {
   },
 );
 `;
+}
+
+function initializeSandboxRegistry(home: string): void {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `process.env.HOME = ${JSON.stringify(home)}; const registry = require("./src/lib/state/registry.js"); registry.registerSandbox({ name: "crash-test", agent: "openclaw", gatewayName: "nemoclaw" });`,
+    ],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, HOME: home },
+      timeout: 30_000,
+    },
+  );
+  expect(
+    result.status,
+    `Could not initialize the MCP race fixture:\n${result.stdout}\n${result.stderr}`,
+  ).toBe(0);
 }
 
 function runAddProcess(home: string, crashAfter: CrashBoundary, includeSecret = true) {
@@ -574,7 +605,10 @@ describe("MCP add crash consistency", () => {
   it("commits one bridge and rejects one duplicate after delayed credential projection (#9764)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-concurrent-projection-"));
     try {
-      const script = buildAddProcessScript(home, "credential-projection-coalesced");
+      // Create the fixture before either process loads the registry. The
+      // behavior under test starts at the lifecycle lock, after fixture creation.
+      initializeSandboxRegistry(home);
+      const script = buildAddProcessScript(home, "credential-projection-coalesced", true, false);
       const first = spawnScript(home, script);
       const second = spawnScript(home, script);
       const results = await Promise.all([collectProcess(first), collectProcess(second)]);
@@ -613,6 +647,7 @@ describe("MCP add crash consistency", () => {
       expect(resumed.status, `${resumed.stdout}\n${resumed.stderr}`).toBe(0);
       expect(`${resumed.stdout}\n${resumed.stderr}`).not.toContain("host-only-secret");
       expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "refresh-before-observed-absence.marker"))).toBe(false);
       const credentialFreeRefreshCount = fs
         .readFileSync(path.join(home, "refresh-after-observed-absence.marker"), "utf8")
         .split("\n")
@@ -655,6 +690,7 @@ describe("MCP add crash consistency", () => {
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(fs.existsSync(path.join(home, "observation.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "updated.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
       expect(readBridge(home).addState).toBeUndefined();

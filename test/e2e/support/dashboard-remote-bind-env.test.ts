@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   buildDashboardRemoteBindEnv,
+  dashboardForwardIsRunning,
   dashboardRemoteBindConnectStarted,
 } from "../live/dashboard-remote-bind-env.ts";
 
@@ -32,7 +33,7 @@ describe("dashboard remote-bind E2E environment", () => {
     expect(env.NEMOCLAW_DASHBOARD_BIND).toBe("0.0.0.0");
   });
 
-  it("accepts recovery proof when connect has no numeric exit code", () => {
+  it("accepts recovery proof while connect remains interactive", () => {
     expect(
       dashboardRemoteBindConnectStarted(
         {
@@ -71,6 +72,15 @@ describe("dashboard remote-bind E2E environment", () => {
         "18789",
       ),
     ).toBe(false);
+  });
+
+  it.each([
+    ["e2e-dashboard-bind 0.0.0.0 18789 4242 running", true],
+    ["e2e-dashboard-bind 0.0.0.0 18789 4242 \u001B[32mrunning\u001B[39m", true],
+    ["e2e-dashboard-bind 0.0.0.0 18789 4242 not running", false],
+    ["e2e-dashboard-bind 0.0.0.0 18789 4242 stopped", false],
+  ])("recognizes only the exact running forward status: %s", (forwardLine, expected) => {
+    expect(dashboardForwardIsRunning(forwardLine)).toBe(expected);
   });
 
   it("rejects a completed nonzero connect even when it printed recovery proof (#9606)", () => {

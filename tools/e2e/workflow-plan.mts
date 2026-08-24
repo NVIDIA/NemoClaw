@@ -27,10 +27,12 @@ import {
   catalogueTarget,
   catalogueTargetsForChangedFiles,
   E2E_EXECUTION_PROFILES,
+  E2E_OPTIONAL_CREDENTIALS,
   E2E_TARGET_CATALOGUE,
   type E2eCatalogueMatrixRow,
   type E2eCatalogueTarget,
   type E2eExecutionProfile,
+  type E2eOptionalCredential,
   isPrCandidateCatalogueTarget,
   pathMatches,
 } from "./target-catalogue.mts";
@@ -76,6 +78,7 @@ type TrustedControllerSelectorMap = {
 
 const SAFE_SELECTOR_LIST_PATTERN = /^[A-Za-z0-9_-]+(?:,[A-Za-z0-9_-]+)*$/;
 const HERMES_JOB_ID = "hermes-e2e";
+const STAGING_BREV_IDENTITY_JOB_ID = "staging-brev-launchable-identity";
 const LEGACY_BOOTSTRAP_INSTALL_JOB_ID = "launchable-smoke";
 const BOOTSTRAP_INSTALL_JOB_ID = "bootstrap-install-smoke";
 const COMMIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
@@ -577,6 +580,10 @@ export function buildE2eWorkflowPlan(
   const jobs = selectorIds(selectors.jobs, "jobs");
   const targets = selectorIds(selectors.targets, "targets");
 
+  if (jobs.includes(STAGING_BREV_IDENTITY_JOB_ID) && (jobs.length !== 1 || targets.length !== 0)) {
+    throw new Error(`${STAGING_BREV_IDENTITY_JOB_ID} must be selected by itself`);
+  }
+
   for (const id of [...jobs, ...targets]) {
     const reason = catalogueExclusionReason(id);
     if (reason) {
@@ -812,6 +819,27 @@ export function withoutCredentialedCatalogueProfiles(plan: E2eWorkflowPlan): E2e
   };
 }
 
+export function withoutUnavailableOptionalCredentialTargets(
+  plan: E2eWorkflowPlan,
+  availableCredentials: ReadonlySet<E2eOptionalCredential>,
+): E2eWorkflowPlan {
+  const catalogueMatrices = Object.fromEntries(
+    E2E_EXECUTION_PROFILES.map((profile) => [
+      profile,
+      plan.catalogueMatrices[profile].filter((row) =>
+        catalogueTarget(row.id).requiredOptionalCredentials.every((credential) =>
+          availableCredentials.has(credential),
+        ),
+      ),
+    ]),
+  ) as Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>;
+  const { coverageMatrix: _coverageMatrix, ...planWithoutCoverage } = plan;
+  return withCoverageMatrix(
+    { ...planWithoutCoverage, catalogueMatrices },
+    readFreeStandingJobsInventory(),
+  );
+}
+
 function restrictUnauthorizedCandidatePlan(
   plan: E2eWorkflowPlan,
   hasPlannerSelectors: boolean,
@@ -925,21 +953,26 @@ export function writeE2eWorkflowPlanCiOutput(
     controllerMap.retiredSelectorSelected && !hasPlannerSelectors
       ? emptyE2eWorkflowPlan()
       : buildE2eWorkflowPlan(plannerSelectors, { changedFiles });
+  const availableOptionalCredentials = new Set<E2eOptionalCredential>(
+    E2E_OPTIONAL_CREDENTIALS.filter(
+      (credential) => environment[`NEMOCLAW_E2E_${credential}_AVAILABLE`] !== "false",
+    ),
+  );
+  const availabilityScopedPlan = hasPlannerSelectors
+    ? planned
+    : withoutUnavailableOptionalCredentialTargets(planned, availableOptionalCredentials);
   const candidateRevision = COMMIT_SHA_PATTERN.test(environment.NEMOCLAW_E2E_EXPECTED_SHA ?? "");
   const credentialsAllowed = environment.NEMOCLAW_E2E_CREDENTIALS_ALLOWED === "true";
   const plan = validateE2eWorkflowPlan(
     candidateRevision && !credentialsAllowed
-      ? restrictUnauthorizedCandidatePlan(planned, hasPlannerSelectors)
-      : planned,
+      ? restrictUnauthorizedCandidatePlan(availabilityScopedPlan, hasPlannerSelectors)
+      : availabilityScopedPlan,
   );
   const expectedHermes =
     candidateRevision && !credentialsAllowed && !hasPlannerSelectors
       ? false
       : expectedHermesSelection(plannerSelectors, controllerMap.retiredSelectorSelected);
-  if (
-    !changedFiles &&
-    plan.hermesSelected !== expectedHermes
-  ) {
+  if (!changedFiles && plan.hermesSelected !== expectedHermes) {
     throw new Error("E2E planner changed the trusted Hermes selection");
   }
   const output = environment.GITHUB_OUTPUT;

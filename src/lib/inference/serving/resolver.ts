@@ -2,11 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { checkSystemReadinessSchemaVersion } from "../../readiness/compatibility.js";
+import {
+  evaluateOnboardReadinessAdmission,
+  ONBOARD_READINESS_FINDING_IDS,
+} from "../../readiness/onboard-admission.js";
 import { getSystemReadinessReferenceErrors } from "../../readiness/references.js";
 import {
   hasRemediableStorageConflict,
   STORAGE_COMPATIBLE_CAPABILITY,
 } from "../../readiness/storage-remediation.js";
+import type { SystemReadinessReport } from "../../readiness/types.js";
 import {
   getManagedInferenceMaterializerDescriptor,
   getManagedInferenceRecipeRegistrationError,
@@ -86,10 +91,56 @@ function recipeMatchesModelIntent(
   );
 }
 
+function hasManagedVllmIntent(
+  intent: ManagedInferenceSelectionIntent,
+  catalog: CompiledManagedInferenceCatalog,
+): boolean {
+  if (intent.provider === "vllm" || hasText(intent.vllmModel)) return true;
+  if (!hasText(intent.preset)) return false;
+  const presets = catalog.presets.filter(({ metadata }) => metadata.id === intent.preset);
+  return presets.length === 1 && presets[0]!.spec.plan.backend === "vllm";
+}
+
+function hasRemediableStorageFinding(report: SystemReadinessReport): boolean {
+  const storageFindings = report.findings.filter(
+    ({ id, severity }) =>
+      id === ONBOARD_READINESS_FINDING_IDS.storageIncompatible && severity === "blocking",
+  );
+  return (
+    storageFindings.length === 1 &&
+    hasRemediableStorageConflict({ ...report, findings: storageFindings })
+  );
+}
+
+function hasAdmittedReadinessException(
+  report: SystemReadinessReport,
+  allowDeferredN1xManagedVllm: boolean,
+): boolean {
+  if (report.status !== "incompatible" || report.exitCode !== 2) return false;
+  const remediableStorage = hasRemediableStorageFinding(report);
+  const admission = evaluateOnboardReadinessAdmission(report, {
+    explicitlyOptedOutGpuPassthrough: false,
+    allowUnsupportedRuntime: false,
+    allowStorageRemediation: remediableStorage,
+    allowDeferredN1xManagedVllm,
+  });
+  if (!admission.admitted || admission.waivedFindingIds.length === 0) return false;
+  const waivedFindingIds = new Set(admission.waivedFindingIds);
+  if (waivedFindingIds.size !== admission.waivedFindingIds.length) return false;
+  const allowedFindingIds = new Set<string>([
+    ONBOARD_READINESS_FINDING_IDS.storageIncompatible,
+    ...(allowDeferredN1xManagedVllm
+      ? [ONBOARD_READINESS_FINDING_IDS.n1xValidationPending]
+      : []),
+  ]);
+  return admission.waivedFindingIds.every((id) => allowedFindingIds.has(id));
+}
+
 function readinessError(
   source: ManagedInferenceReadinessSource,
   nowMs: number,
   maxAgeMs: number,
+  allowDeferredN1xManagedVllm: boolean,
 ): string | undefined {
   const { nodeId, report } = source;
   if (!hasText(nodeId)) return "readiness node ID is empty";
@@ -109,13 +160,16 @@ function readinessError(
   }
   const referenceErrors = getSystemReadinessReferenceErrors(report);
   if (referenceErrors.length > 0) return `${nodeId}: ${referenceErrors[0]}`;
-  const remediableStorage = hasRemediableStorageConflict(report);
-  if ((report.status !== "supported" || report.exitCode !== 0) && !remediableStorage) {
+  const admittedReadinessException = hasAdmittedReadinessException(
+    report,
+    allowDeferredN1xManagedVllm,
+  );
+  if ((report.status !== "supported" || report.exitCode !== 0) && !admittedReadinessException) {
     return `${nodeId}: readiness status is ${report.status}`;
   }
   if (
     report.findings.some(({ severity }) => severity === "fatal" || severity === "blocking") &&
-    !remediableStorage
+    !admittedReadinessException
   ) {
     return `${nodeId}: readiness report contains a blocking finding`;
   }
@@ -126,13 +180,14 @@ function readinessReportsError(
   sources: readonly ManagedInferenceReadinessSource[],
   nowMs: number,
   maxAgeMs: number,
+  allowDeferredN1xManagedVllm: boolean,
 ): string | undefined {
   const nodeIds = sources.map(({ nodeId }) => nodeId);
   if (new Set(nodeIds).size !== nodeIds.length) {
     return "readiness reports contain duplicate node IDs";
   }
   for (const source of sources) {
-    const error = readinessError(source, nowMs, maxAgeMs);
+    const error = readinessError(source, nowMs, maxAgeMs, allowDeferredN1xManagedVllm);
     if (error) return error;
   }
   return undefined;
@@ -242,7 +297,7 @@ function readinessRequirementMatches(
       requirement.kind === "capability" &&
       requirement.id === STORAGE_COMPATIBLE_CAPABILITY &&
       requirement.state === "present" &&
-      hasRemediableStorageConflict(report)
+      hasRemediableStorageFinding(report)
     );
   });
 }
@@ -556,7 +611,12 @@ export function resolveManagedInferenceServing<TOutput>(
       message: "Readiness freshness policy is invalid.",
     };
   }
-  const reportsError = readinessReportsError(input.readinessReports, nowMs, maxAgeMs);
+  const reportsError = readinessReportsError(
+    input.readinessReports,
+    nowMs,
+    maxAgeMs,
+    hasManagedVllmIntent(intent, catalog),
+  );
   if (reportsError) {
     return {
       outcome: "rejected",

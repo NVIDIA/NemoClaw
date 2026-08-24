@@ -30,6 +30,7 @@ import {
   selectedWorkflowJobs,
   validateE2eWorkflowPlan,
   withoutCredentialedCatalogueProfiles,
+  withoutUnavailableOptionalCredentialTargets,
   writeE2eWorkflowPlanCiOutput,
 } from "../../../tools/e2e/workflow-plan.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -109,10 +110,26 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.explicitOnlyJobs).toEqual(["llama-cpp-dgx-spark-qualification"]);
+    expect(plan.explicitOnlyJobs).toEqual([
+      "staging-brev-launchable-identity",
+      "llama-cpp-dgx-spark-qualification",
+    ]);
     expect(releaseRequiredWorkflowJobs()).toContain("live");
     expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");
+    expect(releaseRequiredWorkflowJobs()).not.toContain("staging-brev-launchable-identity");
     expect(releaseRequiredWorkflowJobs()).not.toContain("llama-cpp-dgx-spark-qualification");
+  });
+
+  it("omits only targets whose optional credential is unavailable", () => {
+    const plan = withoutUnavailableOptionalCredentialTargets(buildE2eWorkflowPlan(), new Set());
+    const braveRows = plan.catalogueMatrices["brave-nvidia-inference"].map((row) => row.id);
+
+    expect(braveRows).not.toContain("brave-search");
+    expect(braveRows).not.toContain("common-egress-agent-openclaw-balanced-weather");
+    expect(braveRows).toContain("common-egress-agent-openclaw-open-reference");
+    expect(braveRows).toContain("common-egress-agent-hermes-open-reference");
+    expect(plan.coverageMatrix.map((row) => row.id)).not.toContain("brave-search");
+    expect(() => validateE2eWorkflowPlan(plan)).not.toThrow();
   });
 
   it("keeps multiple inert declarations visibly unresolved without treating them as evidence (#9167)", () => {
@@ -150,6 +167,32 @@ describe("E2E workflow plan", () => {
         coverageMatrix: [stagingRow, ...hermesPlan.coverageMatrix],
       }),
     ).toThrow("execution coverage that does not match its execution plan");
+  });
+
+  it("selects the Launchable identity smoke only when named explicitly (#9925)", () => {
+    const plan = buildE2eWorkflowPlan({ jobs: "staging-brev-launchable-identity" });
+
+    expect(plan.selectedJobs).toEqual(["staging-brev-launchable-identity"]);
+    expect(plan.coverageMatrix).toEqual([
+      expect.objectContaining({
+        id: "staging-brev-launchable-identity",
+        source: "staging",
+        agentRuntime: "none",
+      }),
+    ]);
+    expect(selectedWorkflowJobs(plan)).toEqual(["staging-brev-launchable-identity"]);
+    expect(buildE2eWorkflowPlan().selectedJobs).not.toContain("staging-brev-launchable-identity");
+    expect(() =>
+      buildE2eWorkflowPlan({
+        jobs: "staging-brev-launchable-identity,hermes-e2e",
+      }),
+    ).toThrow("staging-brev-launchable-identity must be selected by itself");
+    expect(() =>
+      buildE2eWorkflowPlan({
+        jobs: "staging-brev-launchable-identity",
+        targets: "ubuntu-repo-cloud-openclaw",
+      }),
+    ).toThrow("staging-brev-launchable-identity must be selected by itself");
   });
 
   it("validates jobs and selects only matching credential-free tests", () => {

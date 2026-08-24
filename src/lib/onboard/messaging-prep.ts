@@ -4,12 +4,14 @@
 import type { WebSearchConfig } from "../inference/web-search";
 import * as webSearch from "../inference/web-search";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
+import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { type ChannelDef, getChannelTokenKeys } from "../sandbox/channels";
 import * as braveProviderProfile from "./brave-provider-profile";
 import {
   bridgeProviderNamesForChannel,
   collectMessagingBridgeTokenDefs,
   messagingBridgeProfilesForAgent,
+  staticMessagingProviderTypeForChannel,
 } from "./messaging-bridge-provider";
 
 export type NamedMessagingChannel = { name: string } & ChannelDef;
@@ -20,6 +22,11 @@ export interface MessagingTokenDef {
   token: string | null;
   providerType?: string;
 }
+
+type MessagingCredentialDef = MessagingTokenDef & {
+  /** The stopped-channel policy still references this static provider. */
+  retainWhileDisabled: boolean;
+};
 
 export interface CreateSandboxMessagingPrepInput {
   sandboxName: string;
@@ -78,15 +85,32 @@ export function prepareCreateSandboxMessaging(
       .filter((c) => disabledChannelNames.has(c.name))
       .flatMap((c) => getChannelTokenKeys(c)),
   );
+  const messagingProviderProfiles = messagingBridgeProfilesForAgent(input.agentName);
 
-  const messagingTokenDefs: MessagingTokenDef[] = listMessagingCredentialMetadata()
-    .map((credential) => ({
-      name: credential.providerNameTemplate.replaceAll("{sandboxName}", input.sandboxName),
-      envKey: credential.providerEnvKey,
-      token: input.getValidatedMessagingTokenByEnvKey(input.channels, credential.providerEnvKey),
-    }))
-    .filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey))
-    .filter(({ envKey }) => !disabledEnvKeys.has(envKey));
+  const messagingCredentialDefs: MessagingCredentialDef[] = listMessagingCredentialMetadata()
+    .map((credential) => {
+      const staticProviderType = staticMessagingProviderTypeForChannel(
+        credential.channelId,
+        input.agentName,
+        messagingProviderProfiles,
+      );
+      return {
+        name: credential.providerNameTemplate.replaceAll("{sandboxName}", input.sandboxName),
+        envKey: credential.providerEnvKey,
+        token: input.getValidatedMessagingTokenByEnvKey(input.channels, credential.providerEnvKey),
+        providerType: staticProviderType ?? MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+        retainWhileDisabled: staticProviderType !== null,
+      };
+    })
+    .filter(
+      ({ envKey, retainWhileDisabled }) =>
+        !enabledEnvKeys ||
+        enabledEnvKeys.has(envKey) ||
+        (retainWhileDisabled && disabledEnvKeys.has(envKey)),
+    );
+  const messagingTokenDefs: MessagingTokenDef[] = messagingCredentialDefs
+    .filter(({ envKey }) => !disabledEnvKeys.has(envKey))
+    .map(({ retainWhileDisabled: _retainWhileDisabled, ...definition }) => definition);
 
   const webSearchEnabled = braveProviderProfile.shouldEnableWebSearch(input.webSearchConfig);
   const webSearchProvider = webSearch.webSearchProviderForConfig(input.webSearchConfig);
@@ -144,7 +168,7 @@ export function prepareCreateSandboxMessaging(
   // upsertMessagingProviders wrapper). Today only Google Chat uses this.
   // Resolve the agent instead of defaulting it: an agent no manifest supports
   // must configure no bridge, not the OpenClaw one.
-  const bridgeProfiles = messagingBridgeProfilesForAgent(input.agentName);
+  const bridgeProfiles = messagingProviderProfiles.filter((profile) => profile.strategy !== null);
   messagingTokenDefs.push(
     ...collectMessagingBridgeTokenDefs({
       sandboxName: input.sandboxName,
@@ -154,6 +178,7 @@ export function prepareCreateSandboxMessaging(
       normalizeCredentialValue: input.normalizeCredentialValue,
       enabledChannels: input.enabledChannels,
       disabledChannelNames,
+      profiles: messagingProviderProfiles,
     }),
   );
 
@@ -168,16 +193,33 @@ export function prepareCreateSandboxMessaging(
   const reusableMessagingChannels: string[] = [];
 
   if (input.enabledChannels != null) {
-    for (const { name, envKey, token } of messagingTokenDefs) {
-      if (token) continue;
+    for (const {
+      name,
+      envKey,
+      token,
+      providerType,
+      retainWhileDisabled,
+    } of messagingCredentialDefs) {
       const channel = input.getMessagingChannelForEnvKey(envKey);
-      if (!channel || !input.enabledChannels.includes(channel)) continue;
-      const providerReusable = requiresExactOpenClawProviderBinding
-        ? input.providerMatchesGatewayCredential(name, "generic", envKey)
-        : input.providerExistsInGateway(name);
+      if (!channel) continue;
+      const channelDisabled = disabledChannelNames.has(channel);
+      if (!input.enabledChannels.includes(channel) && !(channelDisabled && retainWhileDisabled)) {
+        continue;
+      }
+      if (channelDisabled && !retainWhileDisabled) continue;
+      // Disabled definitions are intentionally absent from messagingTokenDefs,
+      // so even a still-readable source token cannot recreate their provider.
+      // A static credential-bound policy must instead retain the exact gateway
+      // provider already holding that authority.
+      if (token && !channelDisabled) continue;
+      const providerReusable = providerType
+        ? input.providerMatchesGatewayCredential(name, providerType, envKey)
+        : requiresExactOpenClawProviderBinding
+          ? input.providerMatchesGatewayCredential(name, "generic", envKey)
+          : input.providerExistsInGateway(name);
       if (!providerReusable) continue;
       reusableMessagingProviders.push(name);
-      if (!reusableMessagingChannels.includes(channel)) {
+      if (!channelDisabled && !reusableMessagingChannels.includes(channel)) {
         reusableMessagingChannels.push(channel);
       }
     }

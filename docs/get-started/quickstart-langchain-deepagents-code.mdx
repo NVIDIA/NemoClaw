@@ -64,6 +64,9 @@ Review the [Prerequisites](prerequisites) before you begin.
     If you accept Express setup, wait for the installer to finish, then continue with **Confirm the Sandbox Is Ready**; Express selects the provider and model non-interactively.
     If the installer does not offer Express setup, or if you enter `n` at the Express prompt on a supported non-N1x host, choose an inference provider and model, then provide its credential when prompted.
     For that interactive path, accept the suggested network policy tier on a first run.
+    With the OpenShell Docker driver, stock Deep Agents Code onboarding normally uses the release's exact managed-image digest.
+    If registry or catalog availability prevents resolution, it builds the shipped repository Dockerfile instead; it never selects an unpinned `:latest` image.
+    Invalid or inconsistent catalog evidence fails closed before sandbox creation.
   </Step>
 
   <Step title="Confirm the Sandbox Is Ready">
@@ -163,7 +166,7 @@ After the terminal smoke checks, onboarding runs `dcode --version` and compares 
 Fresh and resumed onboarding exit nonzero instead of reporting the runtime ready when the installed version is too old, uses an incompatible version scheme, or cannot be verified.
 If the version check fails, review the reported version error and run `nemo-deepagents <sandbox-name> rebuild` before resuming onboarding.
 NemoClaw writes `/sandbox/.deepagents/config.toml` with an OpenAI-compatible provider pointed at `https://inference.local/v1`, uses a scoped placeholder API key for that managed route, and sets `use_responses_api = false` for Chat Completions compatibility.
-When onboarding records a reasoning effort on a `compatible-endpoint` route that uses `openai-completions`, the managed image bakes that value into a root-owned file and Deep Agents Code model requests carry it as an `extra_body.reasoning_effort` request parameter.
+When onboarding records a reasoning effort on a `compatible-endpoint` route that uses `openai-completions`, managed startup writes that value to a root-owned file and Deep Agents Code model requests carry it as an `extra_body.reasoning_effort` request parameter.
 Leave `NEMOCLAW_REASONING_EFFORT` unset to keep the endpoint's own default.
 Deep Agents Code has no runtime `inference set` path, so re-onboard the sandbox with `nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox` to change the recorded effort.
 When you use NVIDIA Endpoints without selecting another model, new Deep Agents Code sandboxes default to `nvidia/nemotron-3-ultra-550b-a55b`.

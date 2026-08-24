@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+id: openai
+display_name: OpenAI-compatible gateway route
+description: Endpointless profile for credentials consumed by the OpenShell inference gateway
+category: inference
+credentials: []
+endpoints: []
+binaries: []
+inference_capable: true

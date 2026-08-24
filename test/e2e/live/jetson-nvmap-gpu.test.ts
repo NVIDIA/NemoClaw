@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { getBuildIdentity } from "../../../src/lib/core/version";
 import {
   OPENCLAW_SANDBOX_BASE_IMAGE,
   parseSandboxBaseImageResolutionLabels,
@@ -29,6 +30,7 @@ const INFERENCE_MODEL = "jetson-nvmap-e2e";
 const PUBLISHED_BASE_IMAGE_SOURCES = new Set(["pinned", "version-tag", "source-sha", "latest"]);
 const REGISTRY_FILE = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "sandboxes.json");
 const TIMEOUT_MS = 50 * 60_000;
+const MANAGED_IMAGE_SOURCE_REVISION = getBuildIdentity({ rootDir: REPO_ROOT }).sourceRevision;
 
 function sandboxImageTag(): string {
   expect(fs.existsSync(REGISTRY_FILE), `${REGISTRY_FILE} missing`).toBe(true);
@@ -44,10 +46,13 @@ function sandboxImageTag(): string {
 function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     ...buildAvailabilityProbeEnv(),
+    E2E_MANAGED_IMAGE_REVISION: MANAGED_IMAGE_SOURCE_REVISION,
+    GITHUB_ACTIONS: "true",
     HOME: process.env.HOME,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_JETSON_WORKSPACE: process.env.NEMOCLAW_JETSON_WORKSPACE,
     NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_E2E_EXPECTED_SHA: MANAGED_IMAGE_SOURCE_REVISION,
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_GPU: "0",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,

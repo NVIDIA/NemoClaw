@@ -58,7 +58,7 @@ function run(overrides: Record<string, unknown> = {}): unknown {
         id: 32144654845,
         run_attempt: 1,
         workflow_id: WORKFLOW_ID,
-        name: "Images / Managed Images",
+        name: "Images / Build, Test, and Publish Managed Images",
         path: ".github/workflows/managed-images.yaml",
         event: "pull_request",
         head_sha: CANDIDATE_SHA,
@@ -84,6 +84,12 @@ describe("exact PR managed-image publication (#8746, #9464)", () => {
     ).toBe(true);
     expect(
       managedImagePublicationRequired(["tools/mcp-tool-discovery-runtime/server.mts"], patterns),
+    ).toBe(true);
+    expect(
+      managedImagePublicationRequired(
+        ["src/lib/actions/sandbox/mcp-bridge-adapter-openclaw.ts"],
+        patterns,
+      ),
     ).toBe(true);
     expect(managedImagePublicationRequired(["docs/My Guide.md"], patterns)).toBe(false);
     expect(() =>
