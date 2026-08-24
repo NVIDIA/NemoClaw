@@ -560,7 +560,6 @@ describe("uninstall run plan", () => {
       const stateDir = path.join(tmpHome, ".nemoclaw");
       const replacementFile = path.join(stateDir, "unrelated.txt");
       fs.mkdirSync(stateDir, { recursive: true });
-      fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "1234");
       const removedPaths: string[] = [];
       try {
         const logs: string[] = [];
