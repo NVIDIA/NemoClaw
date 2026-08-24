@@ -23,6 +23,11 @@ export interface MessagingTokenDef {
   providerType?: string;
 }
 
+type MessagingCredentialDef = MessagingTokenDef & {
+  /** The stopped-channel policy still references this static provider. */
+  retainWhileDisabled: boolean;
+};
+
 export interface CreateSandboxMessagingPrepInput {
   sandboxName: string;
   agentName?: string | null;
@@ -82,22 +87,25 @@ export function prepareCreateSandboxMessaging(
   );
   const messagingProviderProfiles = messagingBridgeProfilesForAgent(input.agentName);
 
-  const messagingCredentialDefs: MessagingTokenDef[] = listMessagingCredentialMetadata()
-    .map((credential) => ({
-      name: credential.providerNameTemplate.replaceAll("{sandboxName}", input.sandboxName),
-      envKey: credential.providerEnvKey,
-      token: input.getValidatedMessagingTokenByEnvKey(input.channels, credential.providerEnvKey),
-      providerType:
-        staticMessagingProviderTypeForChannel(
-          credential.channelId,
-          input.agentName,
-          messagingProviderProfiles,
-        ) ?? MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-    }))
+  const messagingCredentialDefs: MessagingCredentialDef[] = listMessagingCredentialMetadata()
+    .map((credential) => {
+      const staticProviderType = staticMessagingProviderTypeForChannel(
+        credential.channelId,
+        input.agentName,
+        messagingProviderProfiles,
+      );
+      return {
+        name: credential.providerNameTemplate.replaceAll("{sandboxName}", input.sandboxName),
+        envKey: credential.providerEnvKey,
+        token: input.getValidatedMessagingTokenByEnvKey(input.channels, credential.providerEnvKey),
+        providerType: staticProviderType ?? MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+        retainWhileDisabled: staticProviderType !== null,
+      };
+    })
     .filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey));
-  const messagingTokenDefs = messagingCredentialDefs.filter(
-    ({ envKey }) => !disabledEnvKeys.has(envKey),
-  );
+  const messagingTokenDefs: MessagingTokenDef[] = messagingCredentialDefs
+    .filter(({ envKey }) => !disabledEnvKeys.has(envKey))
+    .map(({ retainWhileDisabled: _retainWhileDisabled, ...definition }) => definition);
 
   const webSearchEnabled = braveProviderProfile.shouldEnableWebSearch(input.webSearchConfig);
   const webSearchProvider = webSearch.webSearchProviderForConfig(input.webSearchConfig);
@@ -180,10 +188,22 @@ export function prepareCreateSandboxMessaging(
   const reusableMessagingChannels: string[] = [];
 
   if (input.enabledChannels != null) {
-    for (const { name, envKey, token, providerType } of messagingCredentialDefs) {
-      if (token) continue;
+    for (const {
+      name,
+      envKey,
+      token,
+      providerType,
+      retainWhileDisabled,
+    } of messagingCredentialDefs) {
       const channel = input.getMessagingChannelForEnvKey(envKey);
       if (!channel || !input.enabledChannels.includes(channel)) continue;
+      const channelDisabled = disabledChannelNames.has(channel);
+      if (channelDisabled && !retainWhileDisabled) continue;
+      // Disabled definitions are intentionally absent from messagingTokenDefs,
+      // so even a still-readable source token cannot recreate their provider.
+      // A static credential-bound policy must instead retain the exact gateway
+      // provider already holding that authority.
+      if (token && !channelDisabled) continue;
       const providerReusable = providerType
         ? input.providerMatchesGatewayCredential(name, providerType, envKey)
         : requiresExactOpenClawProviderBinding
@@ -191,7 +211,7 @@ export function prepareCreateSandboxMessaging(
           : input.providerExistsInGateway(name);
       if (!providerReusable) continue;
       reusableMessagingProviders.push(name);
-      if (!reusableMessagingChannels.includes(channel)) {
+      if (!channelDisabled && !reusableMessagingChannels.includes(channel)) {
         reusableMessagingChannels.push(channel);
       }
     }
@@ -207,6 +227,7 @@ export function prepareCreateSandboxMessaging(
     for (const profile of bridgeProfiles) {
       const channel = profile.channelId;
       if (!input.enabledChannels.includes(channel)) continue;
+      if (disabledChannelNames.has(channel)) continue;
       for (const name of bridgeProviderNamesForChannel(input.sandboxName, channel, [profile])) {
         if (messagingTokenDefs.some((def) => def.name === name && def.token)) continue;
         if (reusableMessagingProviders.includes(name)) continue;

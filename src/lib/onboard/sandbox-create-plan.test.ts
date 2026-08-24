@@ -156,7 +156,7 @@ describe("resolveSandboxCreateIntent", () => {
     expect(JSON.stringify(requests)).not.toContain("telegram-super-secret");
   });
 
-  it("resolves serializable intent and keeps stopped-channel providers attached (#9773)", () => {
+  it("resolves deterministic serializable intent without execution artifacts", () => {
     const input = {
       basePolicyPath: "/repo/policy.yaml",
       sandboxName: "sandbox",
@@ -212,10 +212,7 @@ describe("resolveSandboxCreateIntent", () => {
       "sandbox-telegram-bridge",
       "sandbox-slack-bridge",
     ]);
-    expect(first.reusableMessagingProviders).toEqual([
-      "sandbox-existing-discord",
-      "sandbox-slack-bridge",
-    ]);
+    expect(first.reusableMessagingProviders).toEqual(["sandbox-existing-discord"]);
     expect(first.extraProviders).toEqual(["custom-provider"]);
     expect(first.staleExtraProviders).toEqual(["stale-provider"]);
     expect(first.resourceCreateArgs).toEqual(["--cpu", "4", "--memory", "16Gi"]);
@@ -246,22 +243,16 @@ describe("resolveSandboxCreateIntent", () => {
     expect(JSON.stringify(first)).not.toContain("/tmp/");
   });
 
-  it("attaches an exact reusable provider while its channel runtime is stopped (#9773)", () => {
+  it("attaches a retained static provider while its channel runtime is stopped (#9773)", () => {
     const intent = resolveSandboxCreateIntent({
       basePolicyPath: "/repo/hermes-policy.yaml",
       sandboxName: "sandbox",
       channels,
       enabledChannels: ["discord"],
       disabledChannelNames: new Set(["discord"]),
-      messagingProviderRequests: [
-        {
-          name: "sandbox-discord-bridge",
-          envKey: "DISCORD_BOT_TOKEN",
-          providerType: "discord-hermes-static-v1",
-          credentialConfigured: false,
-          channel: "discord",
-        },
-      ],
+      // Disabled credential definitions are not provider requests: onboard must
+      // not create or update their gateway providers during the rebuild.
+      messagingProviderRequests: [],
       primaryMessagingCredentialEnvKeys: ["DISCORD_BOT_TOKEN"],
       reusableMessagingChannels: [],
       reusableMessagingProviders: ["sandbox-discord-bridge"],
@@ -279,14 +270,7 @@ describe("resolveSandboxCreateIntent", () => {
     const plan = materializeSandboxCreatePlan({
       intent,
       fromRef: "/tmp/Dockerfile",
-      messagingTokenDefs: [
-        {
-          name: "sandbox-discord-bridge",
-          envKey: "DISCORD_BOT_TOKEN",
-          token: null,
-          providerType: "discord-hermes-static-v1",
-        },
-      ],
+      messagingTokenDefs: [],
       runProviderPreDeleteCleanup: vi.fn(),
       upsertMessagingProviders,
       getHermesToolGatewayProviderName: vi.fn(),

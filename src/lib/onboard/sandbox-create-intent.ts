@@ -27,6 +27,27 @@ function filterMessagingProviderRequestsByEnabledChannel(
   return requests.filter(({ channel }) => !channel || !disabledChannelNames.has(channel));
 }
 
+function resolveTokenProviderChannelMap(
+  requests: readonly SandboxCreateMessagingProviderRequest[],
+): Map<string, string> {
+  const providerChannels = new Map<string, string>();
+  for (const { channel, name } of requests) {
+    if (channel) providerChannels.set(name, channel);
+  }
+  return providerChannels;
+}
+
+function filterMessagingProvidersByEnabledChannel(
+  providerNames: string[],
+  providerChannels: ReadonlyMap<string, string>,
+  disabledChannelNames: ReadonlySet<string>,
+): string[] {
+  return providerNames.filter((providerName) => {
+    const channel = providerChannels.get(providerName);
+    return !channel || !disabledChannelNames.has(channel);
+  });
+}
+
 function resolveActiveMessagingChannels({
   channels,
   disabledChannelNames,
@@ -136,6 +157,7 @@ export function resolveSandboxCreateIntent({
     messagingProviderRequests,
     disabledChannelNames,
   );
+  const providerChannels = resolveTokenProviderChannelMap(messagingProviderRequests);
   const activeMessagingChannels = resolveActiveMessagingChannels({
     channels,
     disabledChannelNames,
@@ -144,11 +166,11 @@ export function resolveSandboxCreateIntent({
     primaryMessagingCredentialEnvKeys,
     reusableMessagingChannels,
   });
-  // A credential-bound policy can outlive an active channel while the channel is
-  // stopped, Shields is lowered, or a rebuild replays preserved policy state.
-  // Keep every exact reusable provider attached to the replacement sandbox; the
-  // disabled plan still suppresses channel startup, render, and runtime effects.
-  const enabledReusableMessagingProviders = [...new Set(reusableMessagingProviders)];
+  const enabledReusableMessagingProviders = filterMessagingProvidersByEnabledChannel(
+    [...new Set(reusableMessagingProviders)],
+    providerChannels,
+    disabledChannelNames,
+  );
 
   const normalizedInferenceProvider = inferenceProvider?.trim() || null;
 
