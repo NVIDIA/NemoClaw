@@ -25,7 +25,7 @@ function prepareDiscord(
     sandboxName: SANDBOX_NAME,
     agentName: "hermes",
     channels: discord,
-    enabledChannels: ["discord"],
+    enabledChannels: disabled ? [] : ["discord"],
     disabledChannels: disabled ? ["discord"] : [],
     webSearchConfig: null,
     env: token ? { DISCORD_BOT_TOKEN: token } : {},
@@ -66,9 +66,12 @@ describe("Hermes Discord credential endpoint binding", () => {
     expect(profileYaml.endpoints).toEqual([]);
   });
 
-  it("does not reuse an untyped provider for the endpoint-bound credential", () => {
+  it.each([
+    { state: "active", disabled: false },
+    { state: "stopped", disabled: true },
+  ])("does not reuse an untyped provider for a $state channel", ({ disabled }) => {
     const providerMatches = vi.fn(() => false);
-    const result = prepareDiscord(null, providerMatches);
+    const result = prepareDiscord(null, providerMatches, disabled);
 
     expect(result.reusableMessagingProviders).toEqual([]);
     expect(result.reusableMessagingChannels).toEqual([]);

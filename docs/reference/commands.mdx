@@ -3083,6 +3083,9 @@ $$nemoclaw my-assistant channels status --channel slack --wait --timeout 180 --j
 | `--timeout <seconds>` | Stop waiting after this number of seconds (default: `180`; requires `--wait`) |
 | `--json` | Emit the status or readiness report as JSON; non-ready terminal and timeout results exit nonzero |
 
+For a detailed channel with a status probe, `--json` returns the `schemaVersion`, `sandbox`, `channel`, and `report` envelope.
+A paused channel retains that envelope even when NemoClaw skips its live probe.
+
 Each live probe is bounded by an in-sandbox `openshell sandbox exec` with a hard timeout.
 The WhatsApp probe returns strict OpenClaw status JSON to the host, where NemoClaw allowlists pairing, liveness, connection-state, and timestamp fields before rendering the report and discards phone-number and free-text error fields.
 The Hermes WhatsApp probe returns fixed session-presence booleans to the host.
@@ -3576,14 +3579,9 @@ Session JSONL can contain pasted secrets, such as API keys or tokens, so exporte
 The in-sandbox staging artefact is additionally created with `umask 077` and removed after the host download completes.
 If the staging cleanup fails, the command warns with the retained path and a manual removal command.
 The retained artifact can contain session JSONL with pasted secrets.
-Run the exact command from the warning, which has this form:
-
-```bash
-openshell sandbox exec --name <sandbox-name> -- rm -f <retained-staging-path>
-```
+Run the exact removal command from the warning, then inspect that same retained path to confirm it no longer exists.
 
 The export keeps its original success or failure result, so a cleanup warning after a successful download does not make the export fail.
-Confirm that the command prints no further cleanup warning after a later export.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -3612,14 +3610,9 @@ Session JSONL can contain pasted secrets, such as API keys or tokens, so exporte
 The in-sandbox staging artefact is additionally created with `umask 077` and removed after the host download completes.
 If the staging cleanup fails, the command warns with the retained path and a manual removal command.
 The retained artifact can contain session JSONL with pasted secrets.
-Run the exact command from the warning, which has this form:
-
-```bash
-openshell sandbox exec --name <sandbox-name> -- rm -f <retained-staging-path>
-```
+Run the exact removal command from the warning, then inspect that same retained path to confirm it no longer exists.
 
 The export keeps its original success or failure result, so a cleanup warning after a successful download does not make the export fail.
-Confirm that the command prints no further cleanup warning after a later export.
 
 </AgentOnly>
 
@@ -3801,7 +3794,7 @@ Check for a NemoClaw CLI update and, when requested, run the maintained installe
 This command is a discoverable CLI wrapper around the supported installer path:
 
 ```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+curl -fsSL --proto '=https' --proto-redir '=https' https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 ```bash

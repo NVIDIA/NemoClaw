@@ -100,11 +100,6 @@ The bot token remains in the OpenShell provider across the stop and start cycle.
 
 Google Chat stop and start cycles also preserve the bridge provider and its gateway-side refresh material.
 
-<AgentOnly variant="hermes">
-After `channels stop discord`, a Hermes rebuild keeps the existing Discord provider attached to the replacement sandbox because the policy references it.
-The Discord channel remains disabled.
-</AgentOnly>
-
 <AgentOnly variant="openclaw">
 They preserve the dedicated public webhook endpoint so the Google Cloud configuration can keep the same URL.
 The next rebuild reuses that provider without requiring the service-account JSON again.
