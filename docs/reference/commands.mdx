@@ -394,7 +394,11 @@ It also rejects stored authority or filesystem ownership drift without falling b
 
 <AgentOnly variant="openclaw">
 
-Portable OpenClaw onboarding does not enter the `complete` state until NemoClaw proves that the local CLI operator pairing is settled.
+OpenClaw onboarding does not enter the `complete` state until NemoClaw proves that the local CLI operator pairing is settled.
+Ordinary onboarding first observes the canonical local CLI device.
+If the device is not settled and has no exact pending request, NemoClaw runs one bounded request producer on the owning gateway.
+It waits for the same-device request, approves at most once, and verifies the final settled state.
+Portable onboarding accepts one exact already-pending canonical write upgrade, avoids a duplicate producer, and still requires strict same-device settlement before completion.
 The paired device must have exactly the `operator.pairing` and `operator.write` scopes.
 Any pairing request considered during bounded repair must request exactly those scopes.
 The active token and client authorization must have exactly the `operator.pairing`, `operator.read`, and `operator.write` scopes.
@@ -1365,6 +1369,12 @@ A failed probe adds `failedStage=<stage>` or `failedStage=unknown`.
 Stages that do not apply or do not run report `0ms`.
 Timing collection and output are fail-open: clock or writer failures do not change the readiness work, command diagnostics, or exit status.
 Use the command exit status, not a duration or action field, as the readiness decision.
+
+<AgentOnly variant="openclaw">
+Portable lifecycle recovery also emits one credential-free `Portable lifecycle timing:` line.
+It reports fixed authority, container, exec-readiness, Ollama, startup, and gateway stages with their durations, selected actions, attempt counts, result, and failed stage when available.
+This diagnostic does not change recovery behavior or the command exit status.
+</AgentOnly>
 
 Run it for health checks and scripted readiness probes; users continue to run only `$$nemoclaw launch <name>`.
 
@@ -2920,6 +2930,10 @@ It pulls inbound events from Pub/Sub over REST and does not create a public webh
 After registering the channel, NemoClaw asks whether to rebuild immediately.
 Running `add` for an already-configured channel overwrites the stored credentials where applicable.
 The operation is idempotent.
+Static channel credentials use a validated endpointless OpenShell provider profile so the gateway can replace their sandbox placeholders.
+NemoClaw validates the existing profile, provider type, and credential keys before it reuses a provider.
+A missing, malformed, conflicting, or incompatible provider state stops the operation before reuse.
+Hermes Discord uses its dedicated static provider type because its policy binds the Discord API and Gateway endpoints.
 Channel names are trimmed and lowercased before NemoClaw stores credentials, names bridge providers, or prints rebuild messages.
 NemoClaw requires the matching built-in network policy preset YAML to be present.
 A missing or malformed preset YAML (no `network_policies:` section) aborts `channels add` before any token prompt, registry write, or rebuild prompt.
@@ -2988,8 +3002,15 @@ Host-side removal is the supported path because managed startup (or an explicit 
 Pause one configured messaging channel without clearing its credentials.
 The command verifies that the sandbox's agent runtime supports the channel before reading configured or disabled channel state.
 It then requires the channel to be configured for the sandbox.
-The channel is marked disabled in the per-sandbox registry, and the sandbox is rebuilt so the onboard step skips registering the bridge with the gateway.
-The provider stays registered with the OpenShell gateway, so a later `channels start` brings the bridge back without re-entering tokens.
+The channel is marked disabled in the per-sandbox registry, and the rebuild omits its runtime configuration, token upsert, and startup effects.
+Generic channel providers and refresh bridges remain detached while the channel is stopped.
+</AgentOnly>
+<AgentOnly variant="hermes">
+When a stopped Hermes Discord channel keeps a credential-bound policy, the rebuild retains and attaches only the exact validated static provider that the policy requires.
+It does not start Discord or recreate the provider credentials.
+</AgentOnly>
+<AgentOnly variant="openclaw,hermes">
+The provider remains registered with the OpenShell gateway, so a later `channels start` brings the bridge back without re-entering tokens.
 
 ```bash
 $$nemoclaw my-assistant channels stop telegram
@@ -3049,6 +3070,8 @@ Rerun `$$nemoclaw <sandbox> channels status --channel whatsapp`.
 NemoClaw does not treat a Hermes session file as live inbound-health evidence.
 
 For Telegram, `--channel telegram` probes the sandbox to report the gateway process, Bot API reachability, and inbound delivery alongside the config comparison.
+Detailed non-wait JSON keeps the schema-version-1 `{schemaVersion,sandbox,channel,report}` envelope.
+When a probe-capable channel is paused, the command skips the live probe, returns `report.verdict` as `info` with paused registration and runtime-health signals, and exits 0.
 It classifies the state as `healthy`, `idle`, `token_rejected`, `unreachable`, `not_started`, `policy_gap`, `config_gap`, `unknown`, or `probe_failed`.
 A network or egress failure, or a non-authentication Bot API startup HTTP error, produces `unreachable`; a 401 or 404 response produces `token_rejected`.
 It reads the gateway's own startup and poll log breadcrumbs rather than issuing its own Bot API request, so the resolved bot token never leaves the gateway.
@@ -3788,10 +3811,11 @@ Use rebuild after a failed Deep Agents version check, after enabling Tavily Sear
 ### `$$nemoclaw update`
 
 Check for a NemoClaw CLI update and, when requested, run the maintained installer flow.
-This command is a discoverable CLI wrapper around the supported installer path:
+This command is a discoverable CLI wrapper around the supported installer path.
+The update request and every redirect require HTTPS:
 
 ```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+curl -fsSL --proto '=https' --proto-redir '=https' https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 ```bash
