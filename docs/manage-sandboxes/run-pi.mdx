@@ -1,0 +1,151 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Run and Manage Pi"
+sidebar-title: "Run and Manage Pi"
+description: "Operate Pi interactively or headlessly and manage its sandbox lifecycle and persistent state."
+description-agent: "Covers Pi terminal commands, lifecycle operations, state, snapshots, rebuild, recovery, and troubleshooting."
+keywords: ["run pi agent", "pi headless mode", "pi sandbox rebuild", "pi session backup"]
+topics: ["manage-sandboxes", "terminal-runtime", "pi"]
+tags: ["pi", "lifecycle", "backup", "recovery"]
+difficulty: "intermediate"
+audience: "operators"
+status: published
+content:
+  type: "how_to"
+agent-variants: ["pi"]
+---
+Use NemoClaw for host-side lifecycle operations and Pi for work inside the sandbox.
+
+<Note>
+Pi remains unavailable to normal installations until final release activation. These commands describe the accepted runtime once the installed release lists `pi` as a supported agent.
+</Note>
+
+## Connect and Run Pi
+
+Start the interactive terminal through the launch preflight.
+
+```bash
+nemoclaw launch <sandbox-name>
+```
+
+Open a sandbox shell when you want to invoke Pi or inspect workspace files yourself.
+
+```bash
+nemoclaw <sandbox-name> connect
+pi
+```
+
+For one non-interactive task from the host, use the managed sandbox command boundary.
+
+```bash
+nemoclaw <sandbox-name> exec --workdir /sandbox --no-tty -- \
+  pi --no-approve --print "Review the current changes"
+```
+
+For automation, select JSON mode and an explicit tool set.
+
+```bash
+nemoclaw <sandbox-name> exec --workdir /sandbox --no-tty -- \
+  pi --no-approve --mode json --print --tools read,grep,find,ls \
+    "Find the configuration entry that selects the default model"
+```
+
+Pi JSON mode emits newline-delimited events. Automation must reject malformed output, require a successful process exit, validate the expected `tool_execution_start` and `tool_execution_end` events, and validate the final assistant message independently.
+
+## Inspect Runtime State
+
+```bash
+nemoclaw <sandbox-name> status
+nemoclaw <sandbox-name> logs
+nemoclaw <sandbox-name> doctor
+nemoclaw list
+```
+
+Pi stores runtime state under `/sandbox/.pi/agent`:
+
+| Path | Ownership | Snapshot behaviour |
+|---|---|---|
+| `sessions/` | Confidential user state | Preserved |
+| `prompts/` | Read-only user resources | Preserved |
+| `themes/` | Read-only user resources | Preserved |
+| `tools/` | Executable resource state | Reconstructed, not restored |
+| `bin/` | Executable resource state | Reconstructed, not restored |
+| `settings.json` | User preferences | Restores only accepted keys |
+| `models.json` | Managed inference configuration | Reconstructed, not restored |
+
+The accepted `settings.json` restore keys are `theme`, `hideThinkingBlock`, `showCacheMissNotices`, `quietStartup`, `steeringMode`, `followUpMode`, and `defaultThinkingLevel`. Unknown keys, managed routing, authentication, project trust, and executable extension state are not restored.
+
+## Create and Restore Snapshots
+
+Finish active Pi tasks and lower Shields before creating a snapshot. Snapshot creation refuses to continue while Shields are up.
+
+```bash
+nemoclaw <sandbox-name> shields down
+nemoclaw <sandbox-name> snapshot create --name before-change
+nemoclaw <sandbox-name> snapshot list
+```
+
+Snapshots preserve declared user state. They do not preserve `auth.json`, managed route credentials, generated model configuration, project trust decisions, or executable tool and extension state.
+
+Restore replaces sandbox state from a selector returned by `snapshot list`: a version such as `v3`, an exact snapshot name, or a timestamp. Review the target and retain any newer state before continuing.
+
+```bash
+nemoclaw <sandbox-name> snapshot restore <version-or-name-or-timestamp>
+```
+
+## Rebuild and Recover
+
+Rebuild validates the recorded workload authority, resolves the current release's exact Pi image, and preserves declared Pi state.
+
+```bash
+nemoclaw <sandbox-name> rebuild --yes
+```
+
+Use recovery when status reports a stopped or inconsistent sandbox.
+
+```bash
+nemoclaw <sandbox-name> recover
+nemoclaw <sandbox-name> status
+```
+
+After a NemoClaw update, rebuild the sandbox to consume a newer reviewed Pi package and image. Each Pi update requires a new exact package integrity, dependency review, image digest, and qualification result.
+
+## Stop, Start, and Destroy
+
+Destroy removes the registered sandbox and its managed runtime resources. It does not remove gateway-held provider credentials. Create a snapshot before destroy when you need declared user state, and reset a provider credential separately after every dependent sandbox is gone.
+
+```bash
+nemoclaw <sandbox-name> stop
+nemoclaw <sandbox-name> start
+nemoclaw <sandbox-name> shields down
+nemoclaw <sandbox-name> snapshot create --name before-destroy
+nemoclaw <sandbox-name> destroy --yes
+nemoclaw credentials reset <provider> --yes
+```
+
+## Troubleshoot Pi
+
+### Resolve `Unknown agent 'pi'`
+
+The installed release has not activated Pi. Update NemoClaw only after a release lists Pi as supported. Do not enable internal candidate qualification settings.
+
+### Fix a Candidate Receipt or Managed-Image Contract Error
+
+The selected build cannot prove an accepted immutable Pi image. Do not replace the receipt, use a mutable image tag, or fall back to a host Dockerfile build. Use a release whose Pi activation and image cohort completed together.
+
+### Fix an Unsupported API
+
+Pi v1 accepts `openai-completions`. Select a Chat Completions-compatible provider or re-onboard with a supported provider and model.
+
+### Diagnose an Inference Failure
+
+Run `nemoclaw <sandbox-name> status` and `nemoclaw <sandbox-name> doctor`. Confirm that the host credential remains registered with OpenShell and that the selected model supports streaming and structured tool calls.
+
+### Load a Project Resource
+
+Headless `--no-approve` intentionally ignores project-local skills, extensions, prompts, and packages. Use an interactive session to make an explicit Pi project-trust decision. A restored backup never raises project trust automatically.
+
+### Diagnose Direct Internet Access
+
+The baseline permits only the managed inference route. GitHub, npm, and other services require explicit policy selection. Do not put provider or service credentials in Pi state to bypass the managed policy.
