@@ -1509,11 +1509,18 @@ refresh_openclaw_provider_placeholders() {
   local config_file="/sandbox/.openclaw/openclaw.json"
   local hash_file="/sandbox/.openclaw/.config-hash"
   [ -f "$config_file" ] || return 0
+  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing provider placeholder refresh — config or hash path is a symlink\n' >&2
+    return 1
+  fi
 
-  if [ "$(id -u)" -ne 0 ] \
-    && [ "$(openclaw_config_dir_owner "$(dirname "$config_file")")" = "root" ]; then
-    printf '[config] Shields are up; preserving sealed provider placeholders unchanged\n' >&2
-    return 0
+  local sealed_config=0
+  if [ "$(openclaw_config_dir_owner "$(dirname "$config_file")")" = "root" ]; then
+    if [ "$(id -u)" -ne 0 ]; then
+      printf '[config] Shields are up; preserving sealed provider placeholders unchanged\n' >&2
+      return 0
+    fi
+    sealed_config=1
   fi
 
   local keys
@@ -1677,9 +1684,37 @@ PYPLACEHOLDERKEYS
       "$_extras_accepted" "$_accepted_extra_keys" >&2
   fi
 
-  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    printf '[SECURITY] Refusing provider placeholder refresh — config or hash path is a symlink\n' >&2
-    return 1
+  local runtime_config=0
+  if [ "$sealed_config" -eq 1 ]; then
+    local key runtime_value needs_runtime_config=0
+    for key in $keys; do
+      runtime_value="${!key-}"
+      if [[ "$runtime_value" = openshell:resolve:env:* ]] \
+        && [ "$runtime_value" != "openshell:resolve:env:$key" ]; then
+        needs_runtime_config=1
+        break
+      fi
+    done
+    [ "$needs_runtime_config" -eq 1 ] || return 0
+
+    # Keep the persistent seal unchanged. OpenClaw reads this root-owned,
+    # read-only copy through OPENCLAW_CONFIG_PATH for the current process.
+    local sealed_config_file="$config_file"
+    local runtime_dir="/run/nemoclaw/openclaw-provider-config"
+    if [ -L /run/nemoclaw ] || [ -L "$runtime_dir" ]; then
+      printf '[SECURITY] Refusing provider placeholder refresh — runtime config path is a symlink\n' >&2
+      return 1
+    fi
+    install -d -o root -g root -m 755 /run/nemoclaw "$runtime_dir" || return 1
+    config_file="$runtime_dir/openclaw.json"
+    hash_file="$runtime_dir/.config-hash"
+    if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+      printf '[SECURITY] Refusing provider placeholder refresh — runtime config or hash path is a symlink\n' >&2
+      return 1
+    fi
+    emit_sandbox_sourced_file "$config_file" <"$sealed_config_file" || return 1
+    export OPENCLAW_CONFIG_PATH="$config_file"
+    runtime_config=1
   fi
 
   prepare_openclaw_config_for_write "$config_file" "$hash_file"
@@ -1858,7 +1893,8 @@ PYPLACEHOLDERS
     local _refreshed_keys
     _refreshed_keys="$(printf '%s\n' "$_placeholder_report" | sed -n 's/^refreshed=//p' | tail -n 1)"
     if [ -n "$_refreshed_keys" ]; then
-      if (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file"); then
+      if [ "$runtime_config" -eq 1 ] \
+        || (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file"); then
         printf '[config] Refreshed provider placeholders from OpenShell runtime env: %s\n' "$_refreshed_keys" >&2
       else
         _write_rc=$?

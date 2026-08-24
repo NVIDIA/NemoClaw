@@ -156,7 +156,9 @@ const { sendMessageTelegram } = await import(pathToFileURL(runtimeApiPath).href)
 if (typeof sendMessageTelegram !== "function") {
   throw new Error("installed Telegram runtime API does not export sendMessageTelegram");
 }
-const cfg = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));
+const cfg = JSON.parse(
+  fs.readFileSync(process.env.OPENCLAW_CONFIG_PATH || "/sandbox/.openclaw/openclaw.json", "utf8"),
+);
 const account = cfg.channels?.telegram?.accounts?.default;
 if (!account?.botToken) {
   throw new Error("missing channels.telegram.accounts.default.botToken in openclaw.json");
