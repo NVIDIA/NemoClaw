@@ -118,15 +118,52 @@ printf '%s\n' '{"worker":"worker-17","nonce":"request-42"}' | \
   dcode tools call-read-only worker_task_context --json
 ```
 
-The command runs only a tool that the managed MCP configuration exposes exactly once and marks coherently read-only.
-It rejects unavailable, ambiguous, mutating, malformed, oversized, and timed-out calls.
-It runs for at most 15 seconds and allows up to three seconds for cleanup.
+The command reads standard input to end-of-file and requires one UTF-8 JSON object of at most 131,072 bytes.
+It rejects terminal input, empty input, duplicate object keys, non-object JSON, non-finite constants, malformed UTF-8, and additional JSON values.
 
-Standard output contains exactly one version 1 JSON envelope.
-Successful output includes the exact tool name, `content`, and, when supplied by the MCP server, `structured_content`.
-NemoClaw redacts recognized credential-shaped values before it writes successful output.
-Errors use a bounded `data` object with `ok: false`, `status: "error"`, `code`, and `message`.
-The command writes no server diagnostics to standard error.
+The command loads only MCP servers registered through NemoClaw.
+The exact tool name must contain 1 to 128 ASCII letters, digits, underscores, or hyphens, and its first character must be alphanumeric.
+It must resolve once, identify an MCP tool, and pass the managed coherent read-only annotation check.
+A prompt, agent, or model does not select the tool, modify its arguments, or participate in the call.
+Unavailable, ambiguous, non-MCP, and mutating tools fail before invocation.
+
+For the fixed call form, standard output contains exactly one version 1 JSON envelope followed by a newline unless the write itself fails.
+`dcode tools call-read-only --help` is the exception: it prints plain usage and exits `0`.
+A successful call has this shape:
+
+```json
+{
+  "schema_version": 1,
+  "command": "tools call-read-only",
+  "data": {
+    "ok": true,
+    "status": "ok",
+    "tool": "worker_task_context",
+    "content": [],
+    "structured_content": {}
+  }
+}
+```
+
+`content` preserves the successful MCP `ToolMessage` content.
+`structured_content` appears only when the server returns one mapping under that exact artifact field.
+A tool-reported failure, unsupported result type, malformed artifact, non-finite value, cyclic value, non-string object key, or another container at depth 64 fails closed.
+A primitive value at depth 64 is accepted.
+There is no separate string-length or item-count limit.
+The input, successful result before redaction, and final serialized envelope each have a 131,072-byte bound.
+NemoClaw applies best-effort redaction for recognized credential-shaped values in successful `content` and `structured_content` without changing the JSON structure.
+This redaction does not guarantee detection of a secret embedded in ordinary content.
+
+Errors use the same envelope with a bounded `data` object containing `ok: false`, `status: "error"`, `code`, and `message`.
+Command-shape and tool-name errors exit `2`.
+A successful call exits `0`, an interrupt exits `130`, and all managed input, discovery, eligibility, invocation, result, timeout, cleanup, or runtime failures exit `1`.
+The process exit code is the result authority; automation must reject empty, malformed, additional, or unsupported-version stdout.
+
+Discovery, invocation, and normal manager cleanup share a 15-second deadline.
+After that deadline, NemoClaw cancels the task and waits up to 3 seconds for that task, including its cleanup.
+It then cancels other pending event-loop tasks and waits up to 0.1 seconds before closing the loop and emitting the fixed `timeout` error.
+The managed `dcode` wrapper suppresses Python, MCP child, logging, traceback, and write-failure diagnostics on stderr.
+A stdout write failure can therefore exit without a complete envelope and with no stderr diagnostic.
 
 This command uses only MCP servers registered through NemoClaw.
 For MCP registration and credential lifecycle operations, refer to [Add an MCP Server](../mcp-servers/add-an-mcp-server) and [Manage MCP Servers](../mcp-servers/manage-mcp-servers).
