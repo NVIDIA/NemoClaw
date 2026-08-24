@@ -179,6 +179,30 @@ describe("CLI OpenShell sandbox policy reader", () => {
     expect(JSON.stringify(read)).not.toContain("credential-value");
   });
 
+  it("classifies a stdout-only failure when stderr is empty (#9805)", async () => {
+    const diagnostic = "Error: unauthorized: token=credential-value";
+    const reader = createCliOpenShellSandboxPolicyReader({
+      capture: vi.fn(() =>
+        result({ status: 1, stdout: diagnostic, stderr: "", output: diagnostic }),
+      ),
+    });
+
+    const read = await reader.readSandboxPolicy({
+      target: selectedOpenShellGateway(),
+      sandboxName: "alpha",
+      scope: "base",
+    });
+
+    expect(read).toEqual({
+      ok: false,
+      error: {
+        kind: "authentication",
+        message: "OpenShell could not authenticate the sandbox policy read.",
+      },
+    });
+    expect(JSON.stringify(read)).not.toContain("credential-value");
+  });
+
   it.each([
     [
       "authentication",

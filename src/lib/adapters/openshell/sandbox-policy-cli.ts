@@ -69,7 +69,7 @@ function stripAnsi(value = ""): string {
 }
 
 function diagnostic(result: CapturedPolicyCommandResult): string {
-  return stripAnsi(result.stderr ?? result.output ?? "");
+  return stripAnsi(result.stderr?.trim() ? result.stderr : (result.output ?? ""));
 }
 
 function classifyCommandFailure(result: CapturedPolicyCommandResult): OpenShellSandboxError | null {
