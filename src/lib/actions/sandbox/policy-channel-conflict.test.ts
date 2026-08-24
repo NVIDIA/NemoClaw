@@ -220,6 +220,53 @@ function makeTeamsEntry(
   } as unknown as SandboxEntry;
 }
 
+function makeHermesDiscordEntry(name: string): SandboxEntry {
+  return {
+    name,
+    agent: "hermes",
+    policies: [],
+    messaging: {
+      schemaVersion: 1,
+      plan: {
+        schemaVersion: 1,
+        sandboxName: name,
+        agent: "hermes",
+        workflow: "stop-channel",
+        channels: [
+          {
+            channelId: "discord",
+            displayName: "Discord",
+            authMode: "token-paste",
+            active: false,
+            selected: true,
+            configured: true,
+            disabled: true,
+            inputs: [],
+            hooks: [],
+          },
+        ],
+        disabledChannels: ["discord"],
+        credentialBindings: [
+          {
+            channelId: "discord",
+            credentialId: "botToken",
+            sourceInput: "botToken",
+            providerName: `${name}-discord-bridge`,
+            providerEnvKey: "DISCORD_BOT_TOKEN",
+            placeholder: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+            credentialAvailable: true,
+          },
+        ],
+        networkPolicy: { presets: [], entries: [] },
+        agentRender: [],
+        buildSteps: [],
+        stateUpdates: [],
+        healthChecks: [],
+      },
+    },
+  } as unknown as SandboxEntry;
+}
+
 let spies: MockInstance[];
 let logSpy: MockInstance;
 let errSpy: MockInstance;
@@ -1200,13 +1247,8 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
 
     await startSandboxChannel("alpha", { channel: "teams" });
 
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams", {
-      disclosedPresetState: "absent",
-    });
+    expect(applyPresetMock).not.toHaveBeenCalled();
     expect(rebuildSandboxMock).toHaveBeenCalledWith("alpha", ["--yes"]);
-    expect(applyPresetMock.mock.invocationCallOrder[0]).toBeLessThan(
-      rebuildSandboxMock.mock.invocationCallOrder[0],
-    );
     expect(ensureMessagingHostForwardAfterRebuildMock).toHaveBeenCalledWith(
       "alpha",
       expect.any(Object),
@@ -1221,16 +1263,50 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
     });
   });
 
-  it("channels start reapplies its policy before a non-interactive rebuild is queued", async () => {
+  it("rebuilds before a credential-bound Hermes Discord policy reaches the replacement sandbox", async () => {
+    const current = makeHermesDiscordEntry("alpha");
+    arrangeRegistry({ current });
+    vi.mocked(defs.loadAgent).mockReturnValue(agentFixture("hermes"));
+    getDisabledChannelsMock.mockImplementation(
+      () => current.messaging?.plan.disabledChannels ?? [],
+    );
+    updateSandboxMock.mockImplementation((_name: string, updates: Partial<SandboxEntry>) => {
+      Object.assign(current, updates);
+      return true;
+    });
+    applyPresetMock.mockImplementation(() => {
+      throw new Error(
+        "credential_binding references provider 'alpha-discord-bridge', but that provider is not attached to the sandbox",
+      );
+    });
+    rebuildSandboxMock.mockImplementation(async () => {
+      expect(current.messaging?.plan.disabledChannels).toEqual([]);
+      expect(current.messaging?.plan.networkPolicy.presets).toEqual(["discord"]);
+      expect(current.messaging?.plan.credentialBindings).toContainEqual(
+        expect.objectContaining({
+          providerName: "alpha-discord-bridge",
+          providerEnvKey: "DISCORD_BOT_TOKEN",
+        }),
+      );
+    });
+
+    await startSandboxChannel("alpha", { channel: "discord" });
+
+    expect(applyPresetMock).not.toHaveBeenCalled();
+    expect(rebuildSandboxMock).toHaveBeenCalledWith("alpha", ["--yes"]);
+    expect(updateSandboxMock.mock.invocationCallOrder[0]).toBeLessThan(
+      rebuildSandboxMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("channels start defers policy application when a non-interactive rebuild is queued", async () => {
     process.env.NEMOCLAW_NON_INTERACTIVE = "1";
     arrangeRegistry({ current: makeTeamsEntry("alpha", { disabled: true }) });
     getDisabledChannelsMock.mockReturnValue(["teams"]);
 
     await startSandboxChannel("alpha", { channel: "teams" });
 
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams", {
-      disclosedPresetState: "absent",
-    });
+    expect(applyPresetMock).not.toHaveBeenCalled();
     expect(rebuildSandboxMock).not.toHaveBeenCalled();
     expect(loggedText()).toContain("Change queued");
   });
@@ -1253,48 +1329,7 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
     expect(scopeDisclosureMock.mock.invocationCallOrder[0]).toBeLessThan(
       updateSandboxMock.mock.invocationCallOrder[0],
     );
-    expect(scopeDisclosureMock.mock.invocationCallOrder[0]).toBeLessThan(
-      applyPresetMock.mock.invocationCallOrder[0],
-    );
-  });
-
-  it("channels start restores the disabled plan and skips rebuild when its policy preset fails", async () => {
-    const current = makeTeamsEntry("alpha", { disabled: true });
-    arrangeRegistry({ current });
-    getDisabledChannelsMock.mockImplementation(
-      () => current.messaging?.plan.disabledChannels ?? [],
-    );
-    updateSandboxMock.mockImplementation((_name: string, updates: Partial<SandboxEntry>) => {
-      Object.assign(current, updates);
-      return true;
-    });
-    applyPresetMock.mockReturnValue(false);
-
-    await expect(startSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams", {
-      disclosedPresetState: "absent",
-    });
-    expect(registry.getDisabledChannels("alpha")).toContain("teams");
-    expect(rebuildSandboxMock).not.toHaveBeenCalled();
-    expect(loggedText()).toContain("channels start teams");
-  });
-
-  it("channels start prints recovery guidance when policy and disabled-plan rollback both fail", async () => {
-    arrangeRegistry({ current: makeTeamsEntry("alpha", { disabled: true }) });
-    getDisabledChannelsMock.mockReturnValue(["teams"]);
-    applyPresetMock.mockReturnValue(false);
-    updateSandboxMock.mockReturnValueOnce(true).mockReturnValueOnce(false);
-
-    await expect(startSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    expect(rebuildSandboxMock).not.toHaveBeenCalled();
-    expect(loggedText()).toContain("Could not restore 'teams' to disabled state");
-    expect(loggedText()).toContain("nemoclaw alpha channels stop teams");
+    expect(applyPresetMock).not.toHaveBeenCalled();
   });
 });
 

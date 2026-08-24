@@ -3,6 +3,7 @@
 """Validate deterministic read-only MCP calls against the installed package."""
 
 import datetime
+import errno
 import ipaddress
 import json
 import signal
@@ -183,14 +184,22 @@ def _serve(mode: str, host: str, port: int, cert: Path, key: Path, marker: Path)
     )
 
 
-def _container_address() -> str:
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-        probe.connect(("10.255.255.254", 1))
-        address = probe.getsockname()[0]
+def _validation_hosts() -> tuple[str, str]:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("10.255.255.254", 1))
+            address = probe.getsockname()[0]
+    except OSError as error:
+        if error.errno != errno.ENETUNREACH:
+            raise
+        # Protected image rebuilds deliberately disable BuildKit networking.
+        # Bind to loopback while using a canonical DNS name so the validation
+        # still exercises the managed destination and local TLS/MCP contracts.
+        return "127.0.0.1", "localhost"
     parsed = ipaddress.ip_address(address)
     if parsed.version != 4 or parsed.is_loopback or parsed.is_link_local:
         raise RuntimeError("validation server did not resolve a routed IPv4 address")
-    return address
+    return address, address
 
 
 def _free_port(host: str) -> int:
@@ -208,6 +217,10 @@ def _write_certificate(directory: Path, host: str) -> tuple[Path, Path]:
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, host)])
     now = datetime.datetime.now(datetime.timezone.utc)
+    try:
+        alternative_name: x509.GeneralName = x509.IPAddress(ipaddress.ip_address(host))
+    except ValueError:
+        alternative_name = x509.DNSName(host)
     certificate = (
         x509.CertificateBuilder()
         .subject_name(name)
@@ -217,7 +230,7 @@ def _write_certificate(directory: Path, host: str) -> tuple[Path, Path]:
         .not_valid_before(now - datetime.timedelta(minutes=1))
         .not_valid_after(now + datetime.timedelta(minutes=10))
         .add_extension(
-            x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address(host))]),
+            x509.SubjectAlternativeName([alternative_name]),
             critical=False,
         )
         .sign(key, hashes.SHA256())
@@ -493,14 +506,14 @@ def main() -> None:
     if len(sys.argv) != 1:
         raise RuntimeError("invalid validation command")
 
-    host = _container_address()
-    port = _free_port(host)
-    malformed_port = _free_port(host)
+    bind_host, url_host = _validation_hosts()
+    port = _free_port(bind_host)
+    malformed_port = _free_port(bind_host)
     while malformed_port == port:
-        malformed_port = _free_port(host)
+        malformed_port = _free_port(bind_host)
     with tempfile.TemporaryDirectory(prefix="nemoclaw-read-only-mcp-") as raw_directory:
         directory = Path(raw_directory)
-        cert, key = _write_certificate(directory, host)
+        cert, key = _write_certificate(directory, url_host)
         marker = directory / "calls"
         malformed_marker = directory / "malformed-calls"
         processes = [
@@ -511,7 +524,7 @@ def main() -> None:
                     str(Path(__file__)),
                     "--server",
                     mode,
-                    host,
+                    bind_host,
                     str(server_port),
                     str(cert),
                     str(key),
@@ -527,10 +540,10 @@ def main() -> None:
             )
         ]
         try:
-            _wait_for_server(host, port, cert, processes[0])
-            _wait_for_server(host, malformed_port, cert, processes[1])
+            _wait_for_server(url_host, port, cert, processes[0])
+            _wait_for_server(url_host, malformed_port, cert, processes[1])
             _validate(
-                host,
+                url_host,
                 port,
                 malformed_port,
                 cert,

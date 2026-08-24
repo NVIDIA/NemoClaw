@@ -325,7 +325,7 @@ describe("sandbox create intent machine boundary", () => {
       (name: string, type: string, credentialEnvName: string) =>
         (name === "tm-brave-search" && type === "brave" && credentialEnvName === "BRAVE_API_KEY") ||
         (name === "tm-telegram-bridge" &&
-          type === "generic" &&
+          type === "nemoclaw-mcp-v1" &&
           credentialEnvName === "TELEGRAM_BOT_TOKEN"),
     );
     const stageSandboxCredentialProviders = vi
@@ -337,7 +337,11 @@ describe("sandbox create intent machine boundary", () => {
       .mockImplementationOnce(async () => {
         durableSession.stagedCredentialProviders.push("tm-telegram-bridge");
         return [
-          { name: "tm-telegram-bridge", type: "generic", credentialEnv: "TELEGRAM_BOT_TOKEN" },
+          {
+            name: "tm-telegram-bridge",
+            type: "nemoclaw-mcp-v1",
+            credentialEnv: "TELEGRAM_BOT_TOKEN",
+          },
         ];
       })
       .mockResolvedValue([]);
@@ -405,7 +409,7 @@ describe("sandbox create intent machine boundary", () => {
       requiredBindings: [
         {
           name: "tm-telegram-bridge",
-          type: "generic",
+          type: "nemoclaw-mcp-v1",
           credentialEnv: "TELEGRAM_BOT_TOKEN",
         },
       ],
@@ -436,7 +440,7 @@ describe("sandbox create intent machine boundary", () => {
     );
     expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
       "tm-telegram-bridge",
-      "generic",
+      "nemoclaw-mcp-v1",
       "TELEGRAM_BOT_TOKEN",
     );
     expect(calls.promptName).not.toHaveBeenCalled();

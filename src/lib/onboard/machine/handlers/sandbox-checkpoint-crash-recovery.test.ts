@@ -88,7 +88,12 @@ function fakeGatewayRunOpenshell() {
           ].join("\n"),
           stderr: "",
         }
-      : { status: 1, stdout: "", stderr: "not found" };
+      : {
+          status: 1,
+          stdout: "",
+          stderr:
+            "Error: code: 'Some requested entity was not found', message: \"provider not found\"",
+        };
   };
 
   const handleCreate = (args: string[]): StubbedRunOpenshellResult => {
@@ -824,6 +829,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
             name: "my-assistant-discord-bridge",
             envKey: "DISCORD_BOT_TOKEN",
             token: "discord-secret",
+            providerType: "nemoclaw-mcp-v1",
           },
         ],
         true,
@@ -861,7 +867,11 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     const resumedSession = getSession();
     expect(resumedSession.checkpoint?.effectGroups.messaging_providers).toBeDefined();
     expect(resumedSession.checkpoint?.bindings.registeredProviders).toEqual([
-      { name: "my-assistant-discord-bridge", type: "generic", credentialEnv: "DISCORD_BOT_TOKEN" },
+      {
+        name: "my-assistant-discord-bridge",
+        type: "nemoclaw-mcp-v1",
+        credentialEnv: "DISCORD_BOT_TOKEN",
+      },
     ]);
   });
 
@@ -899,7 +909,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(stageSandboxCredentialProviders).toHaveBeenCalledTimes(2);
     expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
       "my-assistant-discord-bridge",
-      "generic",
+      "nemoclaw-mcp-v1",
       "DISCORD_BOT_TOKEN",
     );
     expect(getSession().checkpoint?.effectGroups.messaging_providers).toBeUndefined();

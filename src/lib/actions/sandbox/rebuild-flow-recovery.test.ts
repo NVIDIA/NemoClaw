@@ -502,9 +502,14 @@ describe("rebuildSandbox flow: recovery", () => {
     const mcpEntry = {
       server: "github",
       providerName: "nemoclaw-mcp-alpha-github",
+      policyName: "mcp-bridge-github",
     };
     const harness = createRebuildFlowHarness({
       defaultSandbox: "alpha",
+      sandboxEntry: {
+        policies: ["npm", "mcp-bridge-github"],
+        policyPresetsFinalized: true,
+      },
       mcpPreparation: {
         entries: [mcpEntry],
         detachedProviderEntries: [mcpEntry],
@@ -520,7 +525,7 @@ describe("rebuildSandbox flow: recovery", () => {
 
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
     expect(harness.restoreSandboxEntrySpy.mock.calls).toEqual([
-      [expect.objectContaining({ name: "alpha" })],
+      [expect.objectContaining({ name: "alpha", policies: ["npm", "mcp-bridge-github"] })],
     ]);
   });
 

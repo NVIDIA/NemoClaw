@@ -146,11 +146,11 @@ unset _NEMOCLAW_SANDBOX_RLIMITS
 # or when dcode no longer uses inference.local.
 readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"
 readonly MANAGED_PROXY_PORT_FILE="/usr/local/share/nemoclaw/dcode-proxy-port"
-if [ -e /run/nemoclaw/managed-startup-ca-bundle.pem ] \
-  || [ -L /run/nemoclaw/managed-startup-ca-bundle.pem ]; then
-  readonly MANAGED_FETCH_CA_BUNDLE_FILE="/run/nemoclaw/managed-startup-ca-bundle.pem"
-else
+if [ -e /etc/openshell-tls/ca-bundle.pem ] \
+  || [ -L /etc/openshell-tls/ca-bundle.pem ]; then
   readonly MANAGED_FETCH_CA_BUNDLE_FILE="/etc/openshell-tls/ca-bundle.pem"
+else
+  readonly MANAGED_FETCH_CA_BUNDLE_FILE="/run/nemoclaw/managed-startup-ca-bundle.pem"
 fi
 readonly MANAGED_PROXY_OWNER_UID=0
 
@@ -229,6 +229,12 @@ validate_managed_fetch_ca_bundle() {
 PROXY_HOST="$(read_managed_proxy_value "$MANAGED_PROXY_HOST_FILE" "host")"
 PROXY_PORT="$(read_managed_proxy_value "$MANAGED_PROXY_PORT_FILE" "port")"
 validate_managed_fetch_ca_bundle
+if [ -e "$MANAGED_FETCH_CA_BUNDLE_FILE" ]; then
+  : "${SSL_CERT_FILE:=$MANAGED_FETCH_CA_BUNDLE_FILE}"
+  : "${REQUESTS_CA_BUNDLE:=$MANAGED_FETCH_CA_BUNDLE_FILE}"
+  : "${NODE_EXTRA_CA_CERTS:=$MANAGED_FETCH_CA_BUNDLE_FILE}"
+  export SSL_CERT_FILE REQUESTS_CA_BUNDLE NODE_EXTRA_CA_CERTS
+fi
 unset NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
 # Generic proxy fallbacks are outside the managed dcode contract and may carry
 # host credentials even after the scheme-specific proxy values are normalized.

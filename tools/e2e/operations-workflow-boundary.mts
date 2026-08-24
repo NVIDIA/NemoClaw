@@ -31,16 +31,23 @@ const DOWNLOAD_ARTIFACT_ACTION =
 const PR_GATE_REPORTER = "test/e2e/risk-signal-reporter.ts";
 const LIVE_VITEST_HELPER = "tools/e2e/live-vitest-invocation.mts run --test-path";
 const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
+const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
+  "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 const PUBLICATION_REQUIRED_CONDITION = "${{ steps.publication_mode.outputs.required == '1' }}";
+const PUBLICATION_REUSE_CONDITION = "${{ steps.publication_mode.outputs.reuse == '1' }}";
+const PUBLICATION_REQUIRED_OR_REUSE_CONDITION =
+  "${{ steps.publication_mode.outputs.required == '1' || steps.publication_mode.outputs.reuse == '1' }}";
 const PUBLICATION_CLASSIFIER_SCRIPT =
   [
     "set -euo pipefail",
+    "reuse=0",
     'case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in',
     "  NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
     "    required=1",
     "    ;;",
-    "  NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:controller)",
-    "    required=1",
+    "  NVIDIA/NemoClaw:refs/heads/*:workflow_dispatch:controller)",
+    "    required=0",
+    "    reuse=1",
     "    ;;",
     "  *)",
     '    echo "::error::base-image publication mode is not trusted" >&2',
@@ -48,6 +55,7 @@ const PUBLICATION_CLASSIFIER_SCRIPT =
     "    ;;",
     "esac",
     'printf \'required=%s\\n\' "${required}" >> "${GITHUB_OUTPUT}"',
+    'printf \'reuse=%s\\n\' "${reuse}" >> "${GITHUB_OUTPUT}"',
   ].join("\n") + "\n";
 const ISSUE_API_REFERENCE = /\bgithub\.rest\.issues\b/u;
 const ISSUE_MUTATION_BEYOND_COMMENT =
@@ -321,7 +329,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const authSource = String(authentication.run ?? "");
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
-    '"$WORKFLOW_REF" == "refs/heads/main"',
+    '"$WORKFLOW_REF" == refs/heads/*',
     '"$PR_NUMBER" =~ ^[1-9][0-9]*$',
     '"$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
@@ -429,7 +437,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '"$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
     '"$NVIDIA_OWNED" == "true"',
     '"$EVENT_NAME" == "workflow_dispatch"',
-    '"$REF" == "refs/heads/main"',
+    '"$REF" == refs/heads/*',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$',
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
@@ -476,8 +484,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       const trustedPublicationCheckout =
         jobName === "base-image-publication" &&
         step.name === "Check out trusted E2E workflow" &&
-        step.if === PUBLICATION_REQUIRED_CONDITION &&
-        step.with?.ref === "${{ github.sha }}";
+        step.if === PUBLICATION_REQUIRED_OR_REUSE_CONDITION &&
+        step.with?.ref === "${{ inputs.checkout_sha || github.sha }}";
       const trustedManagedImageRuntimeCheckout =
         jobName === "managed-image-protected-runtime" &&
         step.name === "Checkout trusted protected runtime qualification" &&
@@ -585,8 +593,10 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     "runs-on": "ubuntu-latest",
     "timeout-minutes": 55,
     outputs: {
-      dcode_base_contract: "${{ steps.validate_dcode_base.outputs.contract }}",
-      dcode_base_ref: "${{ steps.validate_dcode_base.outputs.base_ref }}",
+      dcode_base_contract:
+        "${{ steps.validate_dcode_base.outputs.contract || steps.validate_reused_dcode_base.outputs.contract }}",
+      dcode_base_ref:
+        "${{ steps.validate_dcode_base.outputs.base_ref || steps.validate_reused_dcode_base.outputs.base_ref }}",
     },
     permissions: {
       actions: "read",
@@ -607,17 +617,17 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       },
       {
         name: "Check out trusted E2E workflow",
-        if: PUBLICATION_REQUIRED_CONDITION,
+        if: PUBLICATION_REQUIRED_OR_REUSE_CONDITION,
         uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         with: {
-          ref: "${{ github.sha }}",
+          ref: "${{ inputs.checkout_sha || github.sha }}",
           "fetch-depth": 0,
           "persist-credentials": false,
         },
       },
       {
         name: "Set up Node for publication verification",
-        if: PUBLICATION_REQUIRED_CONDITION,
+        if: PUBLICATION_REQUIRED_OR_REUSE_CONDITION,
         uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
         with: {
           "node-version": 22,
@@ -628,10 +638,18 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         name: "Verify applicable base-image publication",
         if: PUBLICATION_REQUIRED_CONDITION,
         env: {
-          EXPECTED_SHA: "${{ github.sha }}",
+          EXPECTED_SHA: "${{ inputs.checkout_sha || github.sha }}",
           GITHUB_TOKEN: "${{ github.token }}",
+          REQUIRE_MANAGED_IMAGE_PUBLICATION: "1",
         },
-        run: "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
+        shell: "bash",
+        run: [
+          "set -euo pipefail",
+          "export GITHUB_REF=refs/heads/main",
+          'export GITHUB_SHA="$EXPECTED_SHA"',
+          "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
+          "",
+        ].join("\n"),
       },
       {
         name: "Download immutable Deep Agents Code base contract",
@@ -645,6 +663,17 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         run: 'node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract"',
       },
       {
+        name: "Download reused Deep Agents Code base contract",
+        if: PUBLICATION_REUSE_CONDITION,
+        env: {
+          GITHUB_TOKEN: "${{ github.token }}",
+          PUBLICATION_HEAD_SHA: "e38db201413b457614904187377ed9fd002d281d",
+          PUBLICATION_RUN_ATTEMPT: "1",
+          PUBLICATION_RUN_ID: "32544159037",
+        },
+        run: 'node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract-reused"',
+      },
+      {
         id: "validate_dcode_base",
         name: "Validate immutable Deep Agents Code base",
         if: PUBLICATION_REQUIRED_CONDITION,
@@ -654,6 +683,17 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
         },
         run: 'node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract/contract.json"',
+      },
+      {
+        id: "validate_reused_dcode_base",
+        name: "Validate reused Deep Agents Code base",
+        if: PUBLICATION_REUSE_CONDITION,
+        env: {
+          PUBLICATION_HEAD_SHA: "e38db201413b457614904187377ed9fd002d281d",
+          PUBLICATION_RUN_ATTEMPT: "1",
+          PUBLICATION_RUN_ID: "32544159037",
+        },
+        run: 'node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract-reused/contract.json"',
       },
     ],
   };
@@ -683,6 +723,10 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   }
   const evidence = findStep(live, "Record immutable Deep Agents Code base evidence");
   const upload = findStep(live, "Upload E2E artifacts");
+  const uploadPaths = String(upload.with?.path ?? "")
+    .split("\n")
+    .map((path) => path.trim())
+    .filter(Boolean);
   const liveSteps = live.steps ?? [];
   if (
     evidence.if !== "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}" ||
@@ -693,6 +737,9 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     !String(upload.with?.path ?? "").includes("dcode-base-image.json")
   ) {
     errors.push("live DCode must record its immutable base contract before E2E execution");
+  }
+  if (!uploadPaths.includes(COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH)) {
+    errors.push("live E2E must upload cold-onboard performance evidence");
   }
   if (!sameMembers(needs(workflow.jobs["staging-brev-launchable"] ?? {}), ["generate-matrix"])) {
     errors.push("staging-brev-launchable must wait only for generate-matrix");
@@ -1062,7 +1109,10 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     "scripts/scorecard/analyze-first-turn-latency.mts",
     "firstTurnLatency.readCurrentFirstTurnLatencySample",
     "currentFirstTurnLatency",
-    "runtimeHistory.loadPriorPushSummaries",
+    "scripts/scorecard/analyze-sandbox-phase-tail.mts",
+    "sandboxPhaseTail.readCurrentSandboxPhaseTailSample",
+    "currentSandboxPhaseTail",
+    "runtimeHistory.loadPriorPushHistory",
     "core.summary",
     "scorecardData",
     "slackData",

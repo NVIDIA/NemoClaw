@@ -9,9 +9,11 @@ import {
 } from "../live/channels-add-remove-helpers.ts";
 
 const UNCONFIGURED: OpenClawTelegramState = {
+  accountPresent: false,
   accountEnabled: false,
   channelEnabled: false,
   channelPresent: true,
+  credentialPresent: false,
   pluginEnabled: false,
   pluginPresent: true,
 };
@@ -21,30 +23,23 @@ describe("channels-add-remove Telegram configuration predicate", () => {
     expect(openClawHasConfiguredTelegram(UNCONFIGURED)).toBe(false);
   });
 
-  it("detects an enabled channel and plugin as configured (#9361)", () => {
-    expect(
-      openClawHasConfiguredTelegram({
-        ...UNCONFIGURED,
-        channelEnabled: true,
-        pluginEnabled: true,
-      }),
-    ).toBe(true);
-  });
-
   it.each([
     ["enabled channel without plugin activation", { channelEnabled: true }],
     ["enabled plugin without channel activation", { pluginEnabled: true }],
-  ])("treats %s as unconfigured (#9361)", (_case, overrides) => {
-    expect(openClawHasConfiguredTelegram({ ...UNCONFIGURED, ...overrides })).toBe(false);
+    ["present account without enabled flags", { accountPresent: true }],
+    ["enabled account without enabled flags", { accountEnabled: true }],
+    ["credential reference without enabled flags", { credentialPresent: true }],
+  ])("treats %s as configured residue (#9361)", (_case, overrides) => {
+    expect(openClawHasConfiguredTelegram({ ...UNCONFIGURED, ...overrides })).toBe(true);
   });
 
-  it("treats a removed channel with a bundled enabled plugin as unconfigured (#9361)", () => {
+  it("does not treat physical channel absence as proof when account residue remains (#9361)", () => {
     expect(
       openClawHasConfiguredTelegram({
         ...UNCONFIGURED,
         channelPresent: false,
-        pluginEnabled: true,
+        accountPresent: true,
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 });
