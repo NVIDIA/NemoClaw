@@ -86,7 +86,6 @@ function writeFailureResult(
       noChangesReason: reason,
     },
     acceptanceCoverage: [],
-    securityCategories: [],
     sourceOfTruthReview: [],
     testDepth: { verdict: "unknown", rationale: reason, suggestedTests: [] },
     e2e: {

@@ -6,11 +6,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { runInstallerSourcedBody } from "./helpers/installer-run-fixture";
-import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+import { runInstallerSourcedBody } from "../helpers/installer-run-fixture";
+import { TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
 const STATION_PREPARE = path.join(
-  path.resolve(import.meta.dirname, ".."),
+  path.resolve(import.meta.dirname, "../.."),
   "scripts",
   "prepare-dgx-station-host.sh",
 );
@@ -30,7 +30,7 @@ function runStationPreparationSourced(body: string) {
     "bash",
     ["--noprofile", "--norc", "-c", `source "$STATION_PREPARE" >/dev/null\n${body}`],
     {
-      cwd: path.resolve(import.meta.dirname, ".."),
+      cwd: path.resolve(import.meta.dirname, "../.."),
       encoding: "utf-8",
       env: { HOME: home, PATH: TEST_SYSTEM_PATH, STATION_PREPARE },
     },
