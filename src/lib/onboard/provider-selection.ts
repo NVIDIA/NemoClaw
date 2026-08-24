@@ -188,6 +188,31 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
     }
   }
 
+  const canUseWindowsHostOllama =
+    input.isWindowsHostOllama &&
+    input.windowsHostOllamaSupported &&
+    input.windowsHostOllamaReachable === true;
+
+  if (providerKey === "ollama" && input.isWindowsHostOllama && !canUseWindowsHostOllama) {
+    if (!input.windowsHostOllamaSupported) {
+      return {
+        kind: "failure",
+        reason: {
+          kind: "unsupported-windows-host-ollama",
+          providerKey,
+        },
+      };
+    }
+    const restart = findOption(input.options, "start-windows-ollama");
+    if (restart) {
+      return { kind: "selected", selected: restart, recoveredFromSandbox, recoveredModel };
+    }
+    return {
+      kind: "failure",
+      reason: { kind: "requested-provider-unavailable", providerKey },
+    };
+  }
+
   const runningDaemon = collapseWindowsInstallToRunningDaemon(input, providerKey);
   if (runningDaemon) {
     return { kind: "selected", selected: runningDaemon, recoveredFromSandbox, recoveredModel };
@@ -213,10 +238,7 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
   }
 
   const fallback = resolveProviderKeyFallback(input.options, providerKey, {
-    canUseWindowsHostOllama:
-      input.isWindowsHostOllama &&
-      input.windowsHostOllamaSupported &&
-      input.windowsHostOllamaReachable === true,
+    canUseWindowsHostOllama,
   });
   if (fallback) {
     return {
