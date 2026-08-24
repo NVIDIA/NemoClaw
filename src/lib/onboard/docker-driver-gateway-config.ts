@@ -302,10 +302,10 @@ function crossDriverGatewayConflict(
   return new Error(
     `Refusing to rewrite ${configPath}: it already configures a '${configuredDriver}'-driver ` +
       `OpenShell gateway, but this run selected the '${requestedDriver}' driver. NemoClaw does not ` +
-      `share one gateway state directory between driver types. Stop the existing '${configuredDriver}'` +
-      `-driver gateway and its sandboxes first (for example \`nemoclaw uninstall\`, or destroy the ` +
-      `sandboxes that use it), or point this run at an unused state directory with ` +
-      `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR=<path>, then retry. State directory: ${stateDir}`,
+      `share one gateway state directory between driver types. To switch drivers, run the applicable \`nemoclaw uninstall\` path that removes the ` +
+      `existing gateway state, then retry. To run both drivers concurrently, select an unused port ` +
+      `with NEMOCLAW_GATEWAY_PORT=<port>; if needed, also set ` +
+      `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR=<path>. State directory: ${stateDir}`,
   );
 }
 

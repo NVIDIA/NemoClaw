@@ -931,7 +931,7 @@ The poll count is clamped to a minimum of `1` so the health probe always runs at
 The Docker-driver gateway and the portable experimental profile's Podman-driver gateway resolve to the same default state directory when they use the same gateway port, because NemoClaw scopes that directory by port, not by driver.
 Selecting the portable experimental profile on a host that already has a Docker-driver gateway therefore refuses to rewrite that gateway's config rather than silently repurposing it for Podman.
 The error names the driver the existing config already uses and the driver this run selected.
-Docker and Podman gateways cannot reuse one state directory. Before switching drivers, stop the existing gateway and its sandboxes (for example with `$$nemoclaw uninstall`, or by destroying the sandboxes that use it), or point the new run at an unused directory with `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR=<path>`.
+Docker and Podman gateways cannot reuse one state directory. To switch drivers, use the applicable `$$nemoclaw uninstall` path that removes the existing gateway state, then retry onboarding. To run both drivers concurrently, select an unused gateway port with `NEMOCLAW_GATEWAY_PORT=<port>`; if needed, also set `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR=<path>`.
 
 #### `--from <Dockerfile>`
 

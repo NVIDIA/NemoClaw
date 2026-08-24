@@ -340,7 +340,7 @@ describe("docker-driver-gateway config TOML", () => {
       expect(() =>
         prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox"),
       ).toThrow(
-        /already configures a 'docker'-driver OpenShell gateway.*this run selected the 'podman' driver.*nemoclaw uninstall.*NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR/s,
+        /already configures a 'docker'-driver OpenShell gateway.*this run selected the 'podman' driver.*nemoclaw uninstall.*NEMOCLAW_GATEWAY_PORT.*NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR/s,
       );
       expect(fs.readFileSync(configPath, "utf-8")).toBe(dockerToml);
       expect(fs.readFileSync(bundle.signingKeyPath, "utf-8")).toBe(signingKeyBefore);
