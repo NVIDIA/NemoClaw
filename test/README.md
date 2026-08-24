@@ -28,7 +28,7 @@ The project globs in `vitest.config.ts` must remain disjoint and exhaustive.
 
 Choose the execution lane from the boundary that the test exercises.
 Within the integration project, group new tests by the behavior that owns the assertion.
-For example, `process-recovery/` owns sandbox process and forward recovery coverage.
+For example, `process-recovery/` owns sandbox process and forward recovery coverage, and `channels/` owns channel lifecycle coverage.
 Do not put an ordinary integration test in `e2e/` or `package-contract/`.
 
 Run `npm run test:projects:check` after adding or moving a test.
