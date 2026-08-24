@@ -532,6 +532,7 @@ export async function executeSandboxDestroy({
       deleteResult.status !== 0 &&
       !alreadyGone &&
       gatewayUnreachable &&
+      !timedOut &&
       force &&
       !hasMcpOwnership &&
       !hasHostLocalInferenceOwnership &&

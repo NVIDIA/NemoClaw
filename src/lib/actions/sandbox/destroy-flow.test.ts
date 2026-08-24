@@ -96,33 +96,36 @@ describe("destroySandbox flow", () => {
     );
   });
 
-  it("sets a 60-second delete timeout for a registered sandbox with no Docker container (#10106)", async () => {
-    const deleteError = Object.assign(new Error("OpenShell delete exceeded its deadline"), {
-      code: "ETIMEDOUT",
-    });
-    const harness = createDestroyHarness({
-      deleteError,
-      deleteStatus: null,
-      dockerRunResult: { status: 0, stdout: "" },
-      registeredSandboxCount: 1,
-    });
+  it.each([false, true])(
+    "sets a 60-second delete timeout and preserves a registered sandbox with force=%s (#10106)",
+    async (force) => {
+      const deleteError = Object.assign(new Error("OpenShell delete exceeded its deadline"), {
+        code: "ETIMEDOUT",
+      });
+      const harness = createDestroyHarness({
+        deleteError,
+        deleteStatus: null,
+        dockerRunResult: { status: 0, stdout: "" },
+        registeredSandboxCount: 1,
+      });
 
-    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
-      "process.exit(1)",
-    );
+      await expect(harness.destroySandbox("alpha", { force, yes: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
 
-    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.objectContaining({
-        killSignal: "SIGKILL",
-        timeout: SANDBOX_DESTROY_TIMEOUT_MS,
-      }),
-    );
-    expect(harness.errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
-      "OpenShell sandbox delete timed out after 60 seconds",
-    );
-    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
-  });
+      expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.objectContaining({
+          killSignal: "SIGKILL",
+          timeout: SANDBOX_DESTROY_TIMEOUT_MS,
+        }),
+      );
+      expect(harness.errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+        "OpenShell sandbox delete timed out after 60 seconds",
+      );
+      expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("stops when workspace cleanup times out for a sandbox with no Docker container (#10106)", async () => {
     const wipeError = Object.assign(new Error("OpenShell exec exceeded its deadline"), {
