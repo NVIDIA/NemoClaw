@@ -17,10 +17,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
 
-import type { MessagingAgentId } from "../src/lib/messaging";
-import { makeMessagingPlan } from "./helpers/messaging-plan-fixtures";
+import type { MessagingAgentId } from "../../src/lib/messaging";
+import { makeMessagingPlan } from "../helpers/messaging-plan-fixtures";
 
-const repoRoot = path.join(import.meta.dirname, "..");
+const repoRoot = path.join(import.meta.dirname, "../..");
 
 // Strip messaging-channel env vars from the parent process before spawning
 // the test subprocess so local/CI ambient values (e.g. TELEGRAM_BOT_TOKEN
