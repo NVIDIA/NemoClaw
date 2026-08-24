@@ -9,6 +9,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createGitHubOidcTokenProvider,
+  createJetsonCancellation,
   dispatcherBaseUrl,
   dispatcherRequest,
   jetsonDispatchRequestFromEnvironment,
@@ -519,11 +520,10 @@ describe("Jetson dispatch GitHub controller", () => {
     expect(fs.statSync(receiptFile).mode & 0o777).toBe(0o600);
   });
 
-  it("records a rejected cancellation after repeated status failures (#8142)", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("classifies a non-object cancellation error as an invalid response (#8142)", async () => {
     const receiptFile = temporaryReceiptFile();
     const requestImpl = vi.fn(async () => {
-      throw new Error("status transport reset");
+      throw new Error("Jetson dispatcher error must be an object");
     });
 
     await expect(
@@ -532,14 +532,69 @@ describe("Jetson dispatch GitHub controller", () => {
         deadlineMs: 10_000,
         initialStatus: queuedStatus,
         jobId: queuedStatus.jobId,
-        now: () => 0,
+        now: () => 10_000,
         receiptFile,
         request: requestImpl,
         wait: async () => {},
       }),
-    ).rejects.toThrow(
+    ).rejects.toThrow("cancellation request failed (invalid-response)");
+    expect(readReceipt(receiptFile)).toMatchObject({
+      cancellation: { failure: "invalid-response" },
+    });
+  });
+
+  it("shares one cancellation request across concurrent callers (#8142)", async () => {
+    const receiptFile = temporaryReceiptFile();
+    let completeRequest: ((value: unknown) => void) | undefined;
+    const requestImpl = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          completeRequest = resolve;
+        }),
+    );
+    const cancel = createJetsonCancellation({
+      baseUrl: new URL("https://dispatch.test/"),
+      receiptFile,
+      request: requestImpl,
+      status: queuedStatus,
+    });
+
+    const deadlineCancellation = cancel("controller-deadline");
+    const signalCancellation = cancel("signal");
+    completeRequest?.({ job: queuedStatus });
+
+    await expect(Promise.all([deadlineCancellation, signalCancellation])).resolves.toEqual([
+      { outcome: "succeeded", receiptWritten: true },
+      { outcome: "succeeded", receiptWritten: true },
+    ]);
+    expect(requestImpl).toHaveBeenCalledOnce();
+    expect(readReceipt(receiptFile)).toMatchObject({
+      controllerState: "cancellation-request-succeeded",
+      cancellation: { attempt: 1, outcome: "succeeded", reason: "controller-deadline" },
+    });
+  });
+
+  it("records a rejected cancellation after repeated status failures (#8142)", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const receiptFile = temporaryReceiptFile();
+    const requestImpl = vi.fn(async () => {
+      throw new Error("status transport reset");
+    });
+
+    const failure = pollJetsonDispatch({
+      baseUrl: new URL("https://dispatch.test/"),
+      deadlineMs: 10_000,
+      initialStatus: queuedStatus,
+      jobId: queuedStatus.jobId,
+      now: () => 0,
+      receiptFile,
+      request: requestImpl,
+      wait: async () => {},
+    });
+    await expect(failure).rejects.toThrow(
       `Jetson dispatch ${queuedStatus.jobId} status failed 3 consecutive times; cancellation request failed (transport-error)`,
     );
+    await expect(failure).rejects.not.toHaveProperty("cause");
     expect(requestImpl).toHaveBeenCalledTimes(4);
     expect(readReceipt(receiptFile)).toEqual({
       schemaVersion: 1,

@@ -220,7 +220,9 @@ function classifyCancellationFailure(error: unknown): JetsonCancellationFailure 
   if (/returned HTTP (?:401|403)(?::|$)/u.test(message)) return "authorization-failed";
   if (/returned HTTP 404(?::|$)/u.test(message)) return "job-not-found";
   if (/returned HTTP [0-9]{3}(?::|$)/u.test(message)) return "dispatcher-http-error";
-  if (/empty response|invalid JSON|response is too large/u.test(message)) return "invalid-response";
+  if (/empty response|invalid JSON|response is too large|must be an object/u.test(message)) {
+    return "invalid-response";
+  }
   return "transport-error";
 }
 
@@ -283,8 +285,24 @@ function cancellationResultMessage(result: JetsonCancellationResult): string {
   return result.receiptWritten ? outcome : `${outcome}; recovery receipt update failed`;
 }
 
+type CancelJetsonDispatch = (reason: JetsonCancellationReason) => Promise<JetsonCancellationResult>;
+
+export function createJetsonCancellation(options: {
+  baseUrl: URL;
+  receiptFile: string;
+  request: typeof dispatcherRequest;
+  status: JetsonDispatchStatus;
+}): CancelJetsonDispatch {
+  let inFlight: Promise<JetsonCancellationResult> | undefined;
+  return (reason) => {
+    inFlight ??= cancelJetsonDispatch({ ...options, reason });
+    return inFlight;
+  };
+}
+
 export async function pollJetsonDispatch(options: {
   baseUrl: URL;
+  cancel?: CancelJetsonDispatch;
   deadlineMs: number;
   initialStatus: JetsonDispatchStatus;
   jobId: string;
@@ -296,6 +314,14 @@ export async function pollJetsonDispatch(options: {
 }): Promise<JetsonDispatchStatus> {
   const now = options.now ?? Date.now;
   const request = options.request ?? dispatcherRequest;
+  const cancel =
+    options.cancel ??
+    createJetsonCancellation({
+      baseUrl: options.baseUrl,
+      receiptFile: options.receiptFile,
+      request,
+      status: options.initialStatus,
+    });
   const wait = options.wait ?? delay;
   let consecutiveFailures = 0;
   let status = options.initialStatus;
@@ -305,13 +331,7 @@ export async function pollJetsonDispatch(options: {
   try {
     writeJetsonRecoveryReceipt(options.receiptFile, status, "accepted");
   } catch {
-    const cancellation = await cancelJetsonDispatch({
-      baseUrl: options.baseUrl,
-      reason: "recovery-receipt-failure",
-      receiptFile: options.receiptFile,
-      request,
-      status,
-    });
+    const cancellation = await cancel("recovery-receipt-failure");
     throw new Error(
       `Jetson dispatch ${options.jobId} was accepted but its recovery receipt could not be written; ${cancellationResultMessage(cancellation)}`,
     );
@@ -321,13 +341,7 @@ export async function pollJetsonDispatch(options: {
       throw new Error(`Jetson dispatch ${options.jobId} cancellation requested`);
     }
     if (now() >= options.deadlineMs) {
-      const cancellation = await cancelJetsonDispatch({
-        baseUrl: options.baseUrl,
-        reason: "controller-deadline",
-        receiptFile: options.receiptFile,
-        request,
-        status,
-      });
+      const cancellation = await cancel("controller-deadline");
       throw new Error(
         `Jetson dispatch ${options.jobId} did not complete before the controller deadline; ${cancellationResultMessage(cancellation)}`,
       );
@@ -351,16 +365,9 @@ export async function pollJetsonDispatch(options: {
     } catch (error) {
       consecutiveFailures += 1;
       if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
-        const cancellation = await cancelJetsonDispatch({
-          baseUrl: options.baseUrl,
-          reason: "status-request-failures",
-          receiptFile: options.receiptFile,
-          request,
-          status,
-        });
+        const cancellation = await cancel("status-request-failures");
         throw new Error(
           `Jetson dispatch ${options.jobId} status failed ${MAX_CONSECUTIVE_POLL_FAILURES} consecutive times; ${cancellationResultMessage(cancellation)}`,
-          { cause: error },
         );
       }
       console.warn("Jetson dispatch status request failed; retrying");
@@ -392,6 +399,7 @@ async function main(): Promise<void> {
   const receiptFile = path.join(artifactDirectory, "jetson-dispatch.json");
 
   let dispatched: JetsonDispatchStatus | undefined;
+  let cancelDispatch: CancelJetsonDispatch | undefined;
   let stopping = false;
   const cancel = (): void => {
     if (stopping) return;
@@ -400,13 +408,7 @@ async function main(): Promise<void> {
       process.exitCode = 1;
       return;
     }
-    void cancelJetsonDispatch({
-      baseUrl,
-      reason: "signal",
-      receiptFile,
-      request: dispatcherRequest,
-      status: dispatched,
-    }).finally(() => {
+    void cancelDispatch?.("signal").finally(() => {
       process.exitCode = 1;
     });
   };
@@ -424,10 +426,17 @@ async function main(): Promise<void> {
     request,
   );
   const jobId = dispatched.jobId;
+  cancelDispatch = createJetsonCancellation({
+    baseUrl,
+    receiptFile,
+    request: dispatcherRequest,
+    status: dispatched,
+  });
   console.log(`Jetson dispatch accepted as ${jobId}`);
   const deadline = Date.now() + MAX_WAIT_MS;
   await pollJetsonDispatch({
     baseUrl,
+    cancel: cancelDispatch,
     deadlineMs: deadline,
     initialStatus: dispatched,
     jobId,
