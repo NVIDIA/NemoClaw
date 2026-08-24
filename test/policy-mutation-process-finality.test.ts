@@ -327,7 +327,7 @@ describe.each(POLICY_SET_FAILURES)(
   },
 );
 
-describe("applyPresets when openshell policy set succeeds", () => {
+describe("applyPresets when OpenShell policy set succeeds", () => {
   let run: ChildRun;
 
   beforeAll(() => {
