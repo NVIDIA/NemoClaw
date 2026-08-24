@@ -6,9 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+import { TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 const DRIVER_PIN_SPEC = "nvidia-driver-pinning-610=610-2ubuntu1";
 const APT_DRIVER_POLICY =
@@ -295,13 +295,12 @@ cat "$HOME/apt-cache-calls"
       retainedSpec: DKMS_SPEC,
       retainedState: "retained-compatible",
     },
-  ])("excludes $label retained packages from every APT transaction command (#7211)", ({
-    retainedSpec,
-    retainedState,
-  }) => {
-    const missingSpecs = EXPECTED_PACKAGE_SPECS.filter((spec) => spec !== retainedSpec);
-    const remainingSpecs = missingSpecs.filter((spec) => spec !== DRIVER_PIN_SPEC);
-    const { result, output } = runSourced(`
+  ])(
+    "excludes $label retained packages from every APT transaction command (#7211)",
+    ({ retainedSpec, retainedState }) => {
+      const missingSpecs = EXPECTED_PACKAGE_SPECS.filter((spec) => spec !== retainedSpec);
+      const remainingSpecs = missingSpecs.filter((spec) => spec !== DRIVER_PIN_SPEC);
+      const { result, output } = runSourced(`
 configure_repositories() { :; }
 apt-cache() { printf 'APT_CACHE %s\n' "$*" >>"$HOME/apt-cache-calls"; }
 apt-get() {
@@ -346,25 +345,26 @@ install_packages
 cat "$HOME/apt-cache-calls"
 `);
 
-    expect(result.status, output).toBe(0);
-    const expectedTuple = remainingSpecs.join(" ");
-    const aptCommands = output
-      .split("\n")
-      .filter((line) =>
-        /^(APT_CACHE show |APT_GET -s install |SUDO env .* apt-get install )/.test(line),
-      )
-      .sort();
-    expect(aptCommands).toEqual(
-      [
-        ...missingSpecs.map((spec) => `APT_CACHE show ${spec}`),
-        `APT_GET -s install --no-install-recommends --no-remove ${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${DRIVER_PIN_SPEC}`,
-        `APT_GET -s install --no-install-recommends --no-remove ${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`,
-        `SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y --no-install-recommends --no-remove ${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${DRIVER_PIN_SPEC}`,
-        `SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y --no-install-recommends --no-remove ${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`,
-      ].sort(),
-    );
-    expect(aptCommands.join("\n")).not.toContain(retainedSpec);
-  });
+      expect(result.status, output).toBe(0);
+      const expectedTuple = remainingSpecs.join(" ");
+      const aptCommands = output
+        .split("\n")
+        .filter((line) =>
+          /^(APT_CACHE show |APT_GET -s install |SUDO env .* apt-get install )/.test(line),
+        )
+        .sort();
+      expect(aptCommands).toEqual(
+        [
+          ...missingSpecs.map((spec) => `APT_CACHE show ${spec}`),
+          `APT_GET -s install --no-install-recommends --no-remove ${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${DRIVER_PIN_SPEC}`,
+          `APT_GET -s install --no-install-recommends --no-remove ${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`,
+          `SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y --no-install-recommends --no-remove ${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${DRIVER_PIN_SPEC}`,
+          `SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y --no-install-recommends --no-remove ${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`,
+        ].sort(),
+      );
+      expect(aptCommands.join("\n")).not.toContain(retainedSpec);
+    },
+  );
 
   it("rejects a simulated change to a retained dependency", () => {
     const { result, output } = runSourced(`
