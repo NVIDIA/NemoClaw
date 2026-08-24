@@ -78,6 +78,32 @@ function checkActionPins(errors: string[], name: string, job: Value): void {
   }
 }
 
+function checkSpecialistDiscoveryRuntime(errors: string[], discovery: Value): void {
+  const steps = jobSteps(discovery);
+  const setup = namedStep(discovery, "Setup Node for specialist discovery");
+  const install = namedStep(discovery, "Install specialist discovery dependencies");
+  const render = namedStep(discovery, "Read specialist prompts");
+  if (!setup) {
+    errors.push("specialist discovery must set up Node");
+  } else if (object(setup.with)["node-version"] !== "22") {
+    errors.push("specialist discovery must use Node 22");
+  }
+  if (install?.run !== "npm ci --ignore-scripts --no-audit --no-fund") {
+    errors.push("specialist discovery must install trusted locked dependencies");
+  }
+  const setupIndex = steps.indexOf(setup ?? {});
+  const installIndex = steps.indexOf(install ?? {});
+  const renderIndex = steps.indexOf(render ?? {});
+  if (
+    setupIndex < 0 ||
+    installIndex < 0 ||
+    renderIndex < 0 ||
+    !(setupIndex < installIndex && installIndex < renderIndex)
+  ) {
+    errors.push("specialist discovery must set up Node and install dependencies before rendering");
+  }
+}
+
 function checkLock(errors: string[], path: string): void {
   try {
     const packages = object(object(JSON.parse(readFileSync(path, "utf8"))).packages);
@@ -171,6 +197,7 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   checkPermissions(errors, "review-specialists", specialists, READ_PERMISSIONS);
   checkPermissions(errors, "review", review, READ_PERMISSIONS);
   checkPermissions(errors, "publish", publish, { contents: "read", "pull-requests": "write" });
+  checkSpecialistDiscoveryRuntime(errors, discovery);
   for (const [name, job] of Object.entries(jobs)) {
     if (name !== "publish" && object(object(job).permissions)["pull-requests"] === "write")
       errors.push("publish must be the only job with pull-requests: write");

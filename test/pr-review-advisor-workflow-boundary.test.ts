@@ -116,6 +116,28 @@ describe("PR review advisor workflow boundary", () => {
     expect(validatePrReviewAdvisorWorkflowBoundary()).toEqual([]);
   });
 
+  it("installs trusted dependencies before specialist discovery", () => {
+    const errors = validateMutation((value) => {
+      const steps = value.jobs["discover-specialists"].steps as Array<Record<string, any>>;
+      const setup = steps.find((step) => step.name === "Setup Node for specialist discovery")!;
+      setup.with["node-version"] = "latest";
+      const install = steps.find(
+        (step) => step.name === "Install specialist discovery dependencies",
+      )!;
+      install.run = "npm install";
+      steps.splice(steps.indexOf(install), 1);
+      steps.push(install);
+    });
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "specialist discovery must use Node 22",
+        "specialist discovery must install trusted locked dependencies",
+        "specialist discovery must set up Node and install dependencies before rendering",
+      ]),
+    );
+  });
+
   it("keeps model jobs read-only and the publisher separate", () => {
     const errors = validateMutation((value) => {
       value.jobs["review-specialists"].permissions["pull-requests"] = "write";
