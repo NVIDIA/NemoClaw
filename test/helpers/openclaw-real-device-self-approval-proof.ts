@@ -12,9 +12,13 @@ import {
   buildAutoPairApprovalScript,
   parseAutoPairApprovalReceipt,
   readAutoPairApprovalPolicyModule,
+  runPortableOpenClawPairingRequestProducer,
 } from "../../src/lib/actions/sandbox/auto-pair-approval";
+import { settlePortableOpenClawPairing } from "../../src/lib/actions/sandbox/launch-readiness";
 import {
   buildOpenClawPairingObservationScript,
+  observeOpenClawPairingRepairSettlement,
+  observeOpenClawPairingSettlement,
   parseOpenClawPairingRepairObservation,
   parseOpenClawPairingSettlementObservation,
 } from "../../src/lib/actions/sandbox/launch-readiness/openclaw-pairing-qualification";
@@ -24,6 +28,7 @@ import {
   CONNECT_AUTO_PAIR_MAX_APPROVALS,
   CONNECT_AUTO_PAIR_TIMEOUT_MS,
 } from "../../src/lib/actions/sandbox/connect-autopair-budget";
+import { resolveGatewayName } from "../../src/lib/onboard/gateway-binding";
 
 interface ProofOptions {
   dist: string;
@@ -31,6 +36,7 @@ interface ProofOptions {
   patchScript: string;
   timeoutMs: number;
   tmp: string;
+  version: string;
 }
 
 function requireSuccess(
@@ -1492,6 +1498,218 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
       String(identity.deviceId),
       "pairing settlement list",
     );
+
+    proofPhase = "portable-controller-delayed-settlement";
+    const baselinePortableState = {
+      auth: fs.readFileSync(deviceAuthPath, "utf8"),
+      paired: fs.readFileSync(pairedPath, "utf8"),
+      pending: fs.readFileSync(pendingPath, "utf8"),
+    };
+    const portableControllerBin = path.join(liveRoot, "portable-controller-bin");
+    fs.mkdirSync(portableControllerBin);
+    fs.writeFileSync(
+      path.join(portableControllerBin, "openclaw"),
+      [
+        "#!/bin/sh",
+        'exec "$NEMOCLAW_PROOF_NODE" "$NEMOCLAW_PROOF_OPENCLAW" "$@"',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    const controllerEnv: NodeJS.ProcessEnv = {
+      ...env,
+      OPENCLAW_CONFIG_PATH: configPath,
+      PATH: `${portableControllerBin}:${inheritedEnv.PATH ?? ""}`,
+    };
+    const runControllerScript = ((
+      _binary: string,
+      _args: readonly string[],
+      spawnOptions: Parameters<typeof spawnSync>[2],
+    ) =>
+      spawnSync("sh", ["-s"], {
+        ...(spawnOptions ?? {}),
+        cwd: packageDir,
+        env: controllerEnv,
+      })) as typeof spawnSync;
+    const controllerExecDeps = {
+      getOpenshellBinary: () => "openshell",
+      readApprovalPolicy: () => approvalPolicy,
+      spawnSync: runControllerScript,
+    };
+    const controllerEntry = {
+      name: "portable-controller-proof",
+      agent: "openclaw",
+      agentVersion: options.version,
+      policyPresetsFinalized: true,
+      lifecycleGeneration: "portable-controller-generation",
+      lifecycleLiveIdentityFingerprint: "portable-controller-live-identity",
+      gatewayName: resolveGatewayName(port),
+      gatewayPort: port,
+    };
+    const controllerReceipt = {
+      kind: "current" as const,
+      registryGeneration: controllerEntry.lifecycleGeneration,
+      runtimeAuthority: {
+        schemaVersion: 1,
+        kind: "podman",
+        ownership: "current-user",
+        uid: process.getuid?.() ?? 0,
+        homeDir,
+        configHome: homeDir,
+        runtimeDir: liveRoot,
+        socketPath: path.join(liveRoot, "podman.sock"),
+      },
+    };
+    const delayedPairedPath = `${pairedPath}.not-yet-visible`;
+    const delayedAuthPath = `${deviceAuthPath}.not-yet-visible`;
+    fs.renameSync(pairedPath, delayedPairedPath);
+    fs.renameSync(deviceAuthPath, delayedAuthPath);
+    const restoreInitialState = () => {
+      if (fs.existsSync(delayedPairedPath)) fs.renameSync(delayedPairedPath, pairedPath);
+      if (fs.existsSync(delayedAuthPath)) fs.renameSync(delayedAuthPath, deviceAuthPath);
+    };
+    const delayedFinalState: { value: typeof baselinePortableState | null } = { value: null };
+    let controllerNow = 0;
+    let controllerSleeps = 0;
+    let producerCalls = 0;
+    let approvalCalls = 0;
+    let controllerResult: Awaited<ReturnType<typeof settlePortableOpenClawPairing>>;
+    try {
+      controllerResult = await settlePortableOpenClawPairing(
+        controllerEntry.name,
+        { portableRequired: true },
+        {
+          classifyPortableLifecycleReceipt: () => controllerReceipt as never,
+          getSandbox: () => controllerEntry as never,
+          listAgents: () => ["openclaw"],
+          loadAgent: () =>
+            ({
+              name: "openclaw",
+              expected_version: options.version,
+              config: { dir: stateDir },
+              runtime: { interactive_command: "openclaw tui" },
+            }) as never,
+          observeOpenClawPairingRepairSettlement: (
+            sandboxName,
+            gatewayName,
+            openclawVersion,
+            stateDirectory,
+          ) =>
+            observeOpenClawPairingRepairSettlement(
+              sandboxName,
+              gatewayName,
+              openclawVersion,
+              stateDirectory,
+              controllerExecDeps,
+            ),
+          observeOpenClawPairingSettlement: (
+            sandboxName,
+            gatewayName,
+            openclawVersion,
+            stateDirectory,
+          ) =>
+            observeOpenClawPairingSettlement(
+              sandboxName,
+              gatewayName,
+              openclawVersion,
+              stateDirectory,
+              controllerExecDeps,
+            ),
+          runPortablePairingProducer: (sandboxName, gatewayName) => {
+            producerCalls += 1;
+            runPortableOpenClawPairingRequestProducer(
+              sandboxName,
+              gatewayName,
+              controllerExecDeps,
+            );
+          },
+          runPortablePairingApproval: (_sandboxName, _gatewayName, _expectedIdentity) => {
+            approvalCalls += 1;
+            const beforeApproval = {
+              auth: fs.readFileSync(deviceAuthPath, "utf8"),
+              paired: fs.readFileSync(pairedPath, "utf8"),
+              pending: fs.readFileSync(pendingPath, "utf8"),
+            };
+            const pending = readJsonObject(
+              pendingPath,
+              "production Portable controller pending state",
+            );
+            const pendingRequests = Object.values(pending).map(asRecord);
+            requireLiveProof(
+              pendingRequests.length === 1 && pendingRequests[0],
+              "production Portable controller did not produce one canonical request",
+            );
+            const requestId = pendingRequests[0].requestId;
+            requireLiveProof(
+              typeof requestId === "string" && requestId.length > 0,
+              "production Portable controller request id was invalid",
+            );
+            const approval = runCli(["devices", "approve", requestId, "--json"]);
+            requireLiveProof(
+              approval.status === 0,
+              "production Portable controller approval failed",
+            );
+            delayedFinalState.value = {
+              auth: fs.readFileSync(deviceAuthPath, "utf8"),
+              paired: fs.readFileSync(pairedPath, "utf8"),
+              pending: fs.readFileSync(pendingPath, "utf8"),
+            };
+            fs.writeFileSync(deviceAuthPath, beforeApproval.auth);
+            fs.writeFileSync(pairedPath, beforeApproval.paired);
+            fs.writeFileSync(pendingPath, beforeApproval.pending);
+            return "approved";
+          },
+          withSandboxLock: async (_name, operation) => operation(),
+          withGatewayLock: async (_name, operation) => operation(),
+          now: () => controllerNow,
+          sleep: async (milliseconds) => {
+            controllerNow += milliseconds;
+            controllerSleeps += 1;
+            if (controllerSleeps === 1) {
+              restoreInitialState();
+            } else if (controllerSleeps === 2 && delayedFinalState.value) {
+              fs.writeFileSync(deviceAuthPath, delayedFinalState.value.auth);
+              fs.writeFileSync(pairedPath, delayedFinalState.value.paired);
+              fs.writeFileSync(pendingPath, delayedFinalState.value.pending);
+              delayedFinalState.value = null;
+            }
+          },
+        },
+      );
+    } finally {
+      restoreInitialState();
+      if (delayedFinalState.value) {
+        fs.writeFileSync(deviceAuthPath, delayedFinalState.value.auth);
+        fs.writeFileSync(pairedPath, delayedFinalState.value.paired);
+        fs.writeFileSync(pendingPath, delayedFinalState.value.pending);
+      }
+    }
+    proofPhase = [
+      "portable-controller-result",
+      controllerResult.kind,
+      controllerResult.kind === "incomplete" ? controllerResult.reason : "complete",
+      `producer-${producerCalls}`,
+      `approval-${approvalCalls}`,
+      `sleeps-${controllerSleeps}`,
+    ].join("-");
+    requireLiveProof(
+      controllerResult.kind === "settled",
+      "production Portable controller did not settle delayed canonical state",
+    );
+    requireLiveProof(
+      producerCalls === 1 && approvalCalls === 1,
+      "production Portable controller repeated its request producer or approval",
+    );
+    requireLiveProof(
+      controllerSleeps === 2,
+      "production Portable controller did not observe both delayed state transitions",
+    );
+    proofPhase = "portable-controller-state-reset";
+    await stopChild(gateway);
+    fs.writeFileSync(deviceAuthPath, baselinePortableState.auth);
+    fs.writeFileSync(pairedPath, baselinePortableState.paired);
+    fs.writeFileSync(pendingPath, baselinePortableState.pending);
+    gateway = startGateway({ ...env, OPENCLAW_GATEWAY_TOKEN: gatewayToken }, true);
+    await waitForGatewayReady(gateway, port, options.timeoutMs);
 
     proofPhase = "scope-upgrade-trigger";
     const createSession = runCli([

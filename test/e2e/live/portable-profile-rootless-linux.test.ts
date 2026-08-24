@@ -10,6 +10,8 @@ import path from "node:path";
 
 import * as importedGatewayEnv from "../../../src/lib/onboard/docker-driver-gateway-env.ts";
 import * as importedGatewayLocalTls from "../../../src/lib/onboard/docker-driver-gateway-local-tls.ts";
+import * as importedBuildContextStage from "../../../src/lib/onboard/build-context-stage.ts";
+import * as importedHermesBuildContext from "../../../src/lib/onboard/experimental/hermes-portable-build-context.ts";
 import * as importedPortableHostPreparation from "../../../src/lib/onboard/experimental/portable-host-preparation.ts";
 import * as importedSandboxPrebuild from "../../../src/lib/onboard/sandbox-prebuild.ts";
 import * as importedBuildContext from "../../../src/lib/sandbox/build-context.ts";
@@ -45,11 +47,21 @@ const gatewayLocalTlsModule = (
     ? importedGatewayLocalTls.default
     : importedGatewayLocalTls
 ) as typeof import("../../../src/lib/onboard/docker-driver-gateway-local-tls.ts");
+const buildContextStageModule = (
+  "default" in importedBuildContextStage && importedBuildContextStage.default
+    ? importedBuildContextStage.default
+    : importedBuildContextStage
+) as typeof import("../../../src/lib/onboard/build-context-stage.ts");
 const portableHostPreparationModule = (
   "default" in importedPortableHostPreparation && importedPortableHostPreparation.default
     ? importedPortableHostPreparation.default
     : importedPortableHostPreparation
 ) as typeof import("../../../src/lib/onboard/experimental/portable-host-preparation.ts");
+const hermesBuildContextModule = (
+  "default" in importedHermesBuildContext && importedHermesBuildContext.default
+    ? importedHermesBuildContext.default
+    : importedHermesBuildContext
+) as typeof import("../../../src/lib/onboard/experimental/hermes-portable-build-context.ts");
 const sandboxPrebuildModule = (
   "default" in importedSandboxPrebuild && importedSandboxPrebuild.default
     ? importedSandboxPrebuild.default
@@ -63,17 +75,29 @@ const buildContextModule = (
 
 const { buildDockerDriverGatewayEnv } = gatewayEnvModule;
 const { ensureDockerDriverGatewayLocalTlsBundle } = gatewayLocalTlsModule;
+const { stageCreateSandboxBuildContext } = buildContextStageModule;
 const { preparePortableExperimentalHost } = portableHostPreparationModule;
+const { createHermesPortableBuildContextPlan } = hermesBuildContextModule;
 const { prebuildSandboxImageIfEligible } = sandboxPrebuildModule;
 const { SANDBOX_BUILD_CONTEXT_PREFIX } = buildContextModule;
 
 const BASE_IMAGE =
   "docker.io/library/ubuntu@sha256:019e8eb29a85e74d64925745884f2ec79aa27e3feab36353d24656f4d6b89467";
+const HERMES_PORTABLE_E2E_SANDBOX_NAME = "hermes-portable-e2e";
+const HERMES_PORTABLE_E2E_TRANSACTION_ID = "11111111-1111-4111-8111-111111111111";
+const HERMES_PORTABLE_E2E_CREATE_INTENT = "b".repeat(64);
+const HERMES_PORTABLE_E2E_BUILD_SETTINGS = {
+  model: "qwen3-vl:4b",
+  provider: "ollama-local",
+  preferredInferenceApi: "openai-completions",
+  toolDisclosure: "direct",
+} as const;
 const PORTABLE_PROFILE_E2E_PHASES = [
   "select the Podman-reported runtime socket",
   "prepare the rootless container runtime",
   "verify immutable non-force network removal",
   "build and publish the sandbox image",
+  "build and publish the staged Hermes image",
   "start the pinned Podman gateway",
   "verify distinct same-network routes",
   "record portable environment completion",
@@ -157,6 +181,8 @@ async function main(progress: TestProgress): Promise<void> {
   let disposableNetworkId: string | null = null;
   let disposableNetworkSubnet: string | null = null;
   let disposableNetworkInterface: string | null = null;
+  let hermesImageId: string | null = null;
+  let hermesContextRetired = false;
   const gatewayAliasPresentBefore = run("ip", ["-o", "-4", "address", "show", "dev", "lo"])
     .split("\n")
     .some((line) => line.includes(`inet ${PORTABLE_HOST_GATEWAY_IP}/32`));
@@ -289,6 +315,79 @@ async function main(progress: TestProgress): Promise<void> {
       run("podman", ["image", "inspect", "--format", "{{.Id}}", imageRef]),
       /^(?:sha256:)?[a-f0-9]{64}$/,
     );
+
+    progress.phase("build and publish the staged Hermes image");
+    const hermesContextStateDir = path.join(root, "hermes-build-state");
+    fs.mkdirSync(hermesContextStateDir, { mode: 0o700 });
+    const hermesContextInput = {
+      sandboxName: HERMES_PORTABLE_E2E_SANDBOX_NAME,
+      transactionId: HERMES_PORTABLE_E2E_TRANSACTION_ID,
+      createIntentSha256: HERMES_PORTABLE_E2E_CREATE_INTENT,
+      stateDir: hermesContextStateDir,
+    };
+    const hermesContextPlan = createHermesPortableBuildContextPlan(
+      fs.realpathSync(process.cwd()),
+      HERMES_PORTABLE_E2E_BUILD_SETTINGS,
+    );
+    const hermesContext = hermesContextPlan.materialize(hermesContextInput);
+    let hermesImageRef: string | null = null;
+    let cleanupHermesTemporaryBuildContext = (): boolean => true;
+    try {
+      hermesContext.assertCurrent();
+      const hermesTemporaryBuildContext = stageCreateSandboxBuildContext({
+        root: fs.realpathSync(process.cwd()),
+        fromDockerfile: hermesContext.dockerfilePath,
+        agent: null,
+        createAgentSandbox: () => {
+          throw new Error("Hermes Portable E2E must stage the reviewed durable context.");
+        },
+        log: console.log,
+      });
+      cleanupHermesTemporaryBuildContext = hermesTemporaryBuildContext.cleanupBuildCtx;
+      const hermesPrebuild = await prebuildSandboxImageIfEligible({
+        buildCtx: hermesTemporaryBuildContext.buildCtx,
+        buildId: "hermes-rootless-e2e",
+        createArgs: [
+          "--from",
+          hermesTemporaryBuildContext.stagedDockerfile,
+          "--name",
+          HERMES_PORTABLE_E2E_SANDBOX_NAME,
+        ],
+        sandboxName: HERMES_PORTABLE_E2E_SANDBOX_NAME,
+        dockerDriverGateway: true,
+        env: process.env,
+        origin: "generated",
+        log: console.log,
+      });
+      assert.ok(hermesPrebuild.imageRef, "The staged Hermes image was not built.");
+      assert.ok(hermesPrebuild.imageId, "The staged Hermes image identity was not proven.");
+      hermesImageRef = hermesPrebuild.imageRef;
+      assert.equal(hermesPrebuild.createArgs[1], hermesImageRef);
+      const inspectedHermesImageId = run("podman", [
+        "image",
+        "inspect",
+        "--format",
+        "{{.Id}}",
+        hermesImageRef,
+      ]).toLowerCase();
+      assert.match(inspectedHermesImageId, /^(?:sha256:)?[a-f0-9]{64}$/);
+      assert.equal(
+        inspectedHermesImageId.replace(/^sha256:/u, ""),
+        hermesPrebuild.imageId.replace(/^sha256:/u, ""),
+      );
+      hermesImageId = inspectedHermesImageId;
+    } finally {
+      try {
+        hermesImageRef && run("podman", ["image", "rm", "--force", hermesImageRef]);
+      } finally {
+        try {
+          assert.equal(cleanupHermesTemporaryBuildContext(), true);
+        } finally {
+          hermesContextRetired = hermesContextPlan.retire(hermesContextInput);
+          assert.equal(hermesContextRetired, true);
+        }
+      }
+    }
     assert.deepEqual(
       parseDockerNetworkIpamEntries(
         run("docker", [
@@ -441,6 +540,10 @@ async function main(progress: TestProgress): Promise<void> {
             hostGateway: `${PORTABLE_HOST_GATEWAY_IP}/32`,
           },
           registry: { id: currentRegistry.Id, ip: PORTABLE_REGISTRY_IP },
+          hermesPortableImage: {
+            imageId: hermesImageId,
+            stagedContextRetired: hermesContextRetired,
+          },
           authenticatedGatewayRoute: true,
           registryRoute: true,
         },
@@ -496,7 +599,7 @@ test(
   "portable profile rootless environment completes distinct authenticated gateway and registry routes",
   {
     meta: { e2ePhases: PORTABLE_PROFILE_E2E_PHASES },
-    timeout: 120_000,
+    timeout: 900_000,
   },
   async ({ progress }) => {
     await main(progress);
