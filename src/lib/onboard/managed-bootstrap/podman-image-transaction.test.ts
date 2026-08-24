@@ -498,6 +498,20 @@ describe("Podman image-owned bootstrap transaction", () => {
     );
   });
 
+  it("reports the bounded managed startup shared-state failure", () => {
+    const fake = harness("hermes", {
+      bootstrapLog:
+        "Managed startup shared-state transaction failed: managed output directory crosses a nested filesystem mount: /sandbox/.hermes",
+      inspectExitCode: 1,
+      inspectStatus: "exited",
+      startsRunningAfterStart: false,
+    });
+
+    expect(() => startPodmanBootstrapImageTransaction(startInput("hermes", fake))).toThrow(
+      "not stably running (status exited; exit 1; oom false; bootstrap Managed startup shared-state transaction failed: managed output directory crosses a nested filesystem mount: /sandbox/.hermes)",
+    );
+  });
+
   it("does not surface non-bootstrap container output in a replacement failure", () => {
     const fake = harness("hermes", {
       bootstrapLog: "secret-looking application output",

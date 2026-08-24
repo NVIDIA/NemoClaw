@@ -414,7 +414,7 @@ function boundedBootstrapSecurityFailure(
   const allowed = `${result.stdout}\n${result.stderr}`
     .split(/\r?\n/u)
     .filter((line) =>
-      /^(?:\[SECURITY\] Managed bootstrap (?:entrypoint|trampoline)|Managed startup image application failed): [\x20-\x7e]{1,400}$/u.test(
+      /^(?:\[SECURITY\] Managed bootstrap (?:entrypoint|trampoline)|Managed startup (?:image application|shared-state transaction) failed): [\x20-\x7e]{1,400}$/u.test(
         line,
       ),
     );
