@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer-cli";
 import {
-  createCliOpenShellSandboxObserver,
   namedOpenShellGateway,
   type OpenShellSandboxError,
   type OpenShellSandboxObservation,
   type OpenShellSandboxObserver,
-} from "../../adapters/openshell/sandbox-observer-cli";
+} from "../../adapters/openshell/sandbox-observer";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
   captureOpenshell,
@@ -567,10 +567,7 @@ function failConnectReadinessGatewayUnavailable(sandboxName: string, detailOutpu
   process.exit(1);
 }
 
-function failConnectReadinessObservation(
-  sandboxName: string,
-  error: OpenShellSandboxError,
-): never {
+function failConnectReadinessObservation(sandboxName: string, error: OpenShellSandboxError): never {
   if (error.kind === "transport") {
     failConnectReadinessGatewayUnavailable(sandboxName, error.message);
   }

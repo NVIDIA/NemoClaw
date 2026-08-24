@@ -58,44 +58,11 @@ export type LookupOpenShellSandboxRequest = ListOpenShellSandboxesRequest &
     sandboxName: string;
   }>;
 
-export type WaitForOpenShellSandboxReadyRequest = LookupOpenShellSandboxRequest &
-  Readonly<{
-    timeoutMs: number;
-    pollIntervalMs?: number;
-    stableReadyObservations?: number;
-    errorPhaseDebounceObservations?: number;
-  }>;
-
-export type OpenShellSandboxReadinessWait =
-  | Readonly<{
-      state: "ready";
-      sandbox: OpenShellSandboxObservation;
-      observations: number;
-    }>
-  | Readonly<{
-      state: "terminal";
-      sandbox: OpenShellSandboxObservation;
-      observations: number;
-    }>
-  | Readonly<{
-      state: "timeout";
-      lastObservation: OpenShellSandboxObservation | null;
-      observations: number;
-    }>;
-
 /** Transport-neutral sandbox observation capabilities used by NemoClaw. */
 export interface OpenShellSandboxObserver {
   listSandboxes(
     request: ListOpenShellSandboxesRequest,
   ): Promise<OpenShellSandboxResult<OpenShellSandboxInventory>>;
-
-  lookupSandbox(
-    request: LookupOpenShellSandboxRequest,
-  ): Promise<OpenShellSandboxResult<OpenShellSandboxLookup>>;
-
-  waitForSandboxReady(
-    request: WaitForOpenShellSandboxReadyRequest,
-  ): Promise<OpenShellSandboxResult<OpenShellSandboxReadinessWait>>;
 }
 
 export function namedOpenShellGateway(gatewayName: string): OpenShellGatewayTarget {

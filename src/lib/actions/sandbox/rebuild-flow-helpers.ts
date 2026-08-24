@@ -42,7 +42,7 @@ import * as sandboxState from "../../state/sandbox";
 import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import {
   getReconciledSandboxGatewayState,
-  printGatewayLifecycleHint,
+  printSandboxGatewayStateHint,
   printWrongGatewayActiveGuidance,
 } from "./gateway-state";
 import { openRebuildShieldsWindow, type RebuildShieldsWindow } from "./rebuild-shields";
@@ -250,7 +250,7 @@ export async function resolveRebuildLiveState(
       `  Sandbox '${sandboxName}' is not visible on gateway '${recordedGateway}' and its live state could not be confirmed.`,
     );
     console.error("  Your local registry entry has been preserved — nothing was removed.");
-    printGatewayLifecycleHint(reconciled.output || "", sandboxName, console.error);
+    printSandboxGatewayStateHint(reconciled, sandboxName, console.error);
   }
   bail(`Could not confirm live state of '${sandboxName}' (gateway not in a known-good state).`);
   return null;

@@ -10,7 +10,6 @@ import {
   agentDefs,
   agentRuntime,
   buildContextFingerprint,
-  createSandboxInventoryFake,
   createHarnessTempDir,
   createRebuildFlowSession,
   destroy,
@@ -107,9 +106,13 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
     result: {
       ok: true,
-      value: createSandboxInventoryFake(
-        overrides.sandboxListOutput ?? (overrides.staleRecovery ? "" : "alpha Ready"),
-      ),
+      value:
+        overrides.sandboxInventory ??
+        (overrides.staleRecovery
+          ? { sandboxes: [] }
+          : {
+              sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" }],
+            }),
     },
     recoveryAttempted: false,
     recoverySucceeded: false,

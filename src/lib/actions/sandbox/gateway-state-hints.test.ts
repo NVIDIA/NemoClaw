@@ -125,6 +125,53 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     expect(lines.join("\n")).toContain(expected);
   });
 
+  it.each([
+    {
+      label: "unreachable transport",
+      result: { status: 1, output: "Connection refused credential-value" },
+      expected: "gateway 'nemoclaw' is not reachable",
+    },
+    {
+      label: "gateway identity",
+      result: { status: 1, output: "handshake verification failed credential-value" },
+      expected: "gateway identity drift after restart",
+    },
+    {
+      label: "authentication",
+      result: { status: 1, output: "authentication failed credential-value" },
+      expected: "restore its authentication before retrying",
+    },
+    {
+      label: "timeout",
+      result: {
+        status: null,
+        output: "credential-value",
+        error: Object.assign(new Error("credential-value"), { code: "ETIMEDOUT" }),
+      },
+      expected: "did not answer before the sandbox observation timeout",
+    },
+  ])(
+    "prints typed $label guidance without raw diagnostics (#9803)",
+    async ({ result, expected }) => {
+      captureOpenshellSpy.mockReturnValue(result);
+      const lines: string[] = [];
+      vi.spyOn(console, "error").mockImplementation((line = "") => {
+        lines.push(String(line));
+      });
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+        throw new Error(`process.exit(${code ?? 0})`);
+      }) as never);
+
+      await expect(
+        gatewayState.ensureLiveSandboxOrExit("instance-a", { gatewayRecovery: "observe" }),
+      ).rejects.toThrow("process.exit(1)");
+
+      expect(lines.join("\n")).toContain(expected);
+      expect(lines.join("\n")).not.toContain("credential-value");
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    },
+  );
+
   it("classifies a failed post-recovery handshake as identity drift", async () => {
     recoverNamedGatewayRuntimeSpy.mockResolvedValue({ recovered: true, via: "start" });
     const getState = vi

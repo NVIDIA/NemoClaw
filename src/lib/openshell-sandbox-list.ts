@@ -5,14 +5,14 @@ import {
   detectOpenShellStateRpcPreflightIssue,
   printOpenShellStateRpcIssue,
 } from "./adapters/openshell/gateway-drift";
+import { createCliOpenShellSandboxObserver } from "./adapters/openshell/sandbox-observer-cli";
 import {
-  createCliOpenShellSandboxObserver,
   namedOpenShellGateway,
   selectedOpenShellGateway,
   type OpenShellSandboxInventory,
   type OpenShellSandboxObserver,
   type OpenShellSandboxResult,
-} from "./adapters/openshell/sandbox-observer-cli";
+} from "./adapters/openshell/sandbox-observer";
 import { captureOpenshell } from "./adapters/openshell/runtime";
 import { recoverNamedGatewayRuntime } from "./gateway-runtime-action";
 

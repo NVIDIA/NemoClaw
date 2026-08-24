@@ -96,7 +96,7 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
     expect(mocks.captureOpenshell).toHaveBeenCalledOnce();
     expect(mocks.captureOpenshell).toHaveBeenCalledWith(
       ["sandbox", "list"],
-      expect.objectContaining({ ignoreError: true, includeStreams: true }),
+      expect.objectContaining({ ignoreError: true, includeStreams: true, timeout: 15_000 }),
     );
     expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
@@ -105,7 +105,7 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
   it("proves and recovers an explicit gateway instead of the current selection (#6114)", async () => {
     const options = { gatewayName: "nemoclaw-12345" };
     mocks.captureOpenshell
-      .mockReturnValueOnce({ status: 1, output: "client error (Connect): Connection refused" })
+      .mockReturnValueOnce({ status: 1, output: "Status: Disconnected" })
       .mockReturnValueOnce({ status: 0, output: "alpha Ready" });
 
     const result = await captureSandboxListWithGatewayPreflightOrExit(context, options);
@@ -307,7 +307,7 @@ describe("read-only named-gateway sandbox list (#7279)", () => {
 
     expect(mocks.captureOpenshell).toHaveBeenCalledWith(
       ["sandbox", "list", "-g", "nemoclaw-18080"],
-      expect.objectContaining({ ignoreError: true, includeStreams: true }),
+      expect.objectContaining({ ignoreError: true, includeStreams: true, timeout: 15_000 }),
     );
     expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
     expect(result).toEqual({

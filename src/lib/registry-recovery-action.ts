@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { resolveOpenshell } from "./adapters/openshell/resolve";
-import {
-  createCliOpenShellSandboxObserver,
-  namedOpenShellGateway,
-} from "./adapters/openshell/sandbox-observer-cli";
+import { createCliOpenShellSandboxObserver } from "./adapters/openshell/sandbox-observer-cli";
+import { namedOpenShellGateway } from "./adapters/openshell/sandbox-observer";
 import { captureOpenshell } from "./adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
 import { GATEWAY_PORT } from "./core/ports";

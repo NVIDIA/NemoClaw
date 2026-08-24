@@ -95,7 +95,7 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
     // refuse to recreate from scratch, or it would destroy live workspace
     // state in multi-gateway setups (#4497 / #4645).
     const harness = createRebuildFlowHarness({
-      sandboxListOutput: "",
+      sandboxInventory: { sandboxes: [] },
       reconciledSandboxGatewayState: {
         state: "wrong_gateway_active",
         output: "Gateway: other-gw",
@@ -129,7 +129,7 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
     // preserve the registry entry.
     const harness = createRebuildFlowHarness({
       sandboxEntry: { gatewayName: "nemoclaw-9000", gatewayPort: 9000 },
-      sandboxListOutput: "",
+      sandboxInventory: { sandboxes: [] },
       reconciledSandboxGatewayState: {
         state: "wrong_gateway_active",
         output: "Gateway: nemoclaw",

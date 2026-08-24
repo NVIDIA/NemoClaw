@@ -78,6 +78,9 @@ describe("CLI OpenShell sandbox observer", () => {
           "\u001b[1malpha\u001b[0m 2m \u001b[32mReady\u001b[0m\n" +
           "beta Ready NotReady 1m ago\n" +
           "gamma unknown 1m ago\n" +
+          "delta Ready 2026-03-24 10:00:00 Provisioning\n" +
+          "epsilon 1m Running\n" +
+          "Error: command failed\n" +
           "No sandboxes found.",
       ),
     ).toEqual({
@@ -85,6 +88,8 @@ describe("CLI OpenShell sandbox observer", () => {
         { name: "alpha", phase: "Ready", readiness: "ready" },
         { name: "beta", phase: "NotReady", readiness: "not_ready" },
         { name: "gamma", phase: "Unknown", readiness: "terminal" },
+        { name: "delta", phase: "Provisioning", readiness: "not_ready" },
+        { name: "epsilon", phase: "Running", readiness: "ready" },
       ],
     });
   });
@@ -102,11 +107,11 @@ describe("CLI OpenShell sandbox observer", () => {
     });
   });
 
-  it("looks up a sandbox without exposing process-shaped results (#9803)", async () => {
+  it("keeps formatted get output on an explicit CLI-only compatibility path (#9803)", async () => {
     const capture = vi.fn(() => captured(0, "\u001b[1mName:\u001b[0m alpha\nPhase: Running\n"));
-    const observer = createCliOpenShellSandboxObserver({ capture });
+    const lookup = createCliOpenShellSandboxLookup({ capture });
 
-    const result = await observer.lookupSandbox({
+    const result = await lookup({
       sandboxName: "alpha",
       target: namedOpenShellGateway("nemoclaw"),
       timeoutMs: 1_000,
@@ -119,38 +124,6 @@ describe("CLI OpenShell sandbox observer", () => {
       timeout: 1_000,
     });
     expect(result).toEqual({
-      ok: true,
-      value: {
-        state: "present",
-        sandbox: { name: "alpha", phase: "Running", readiness: "ready" },
-      },
-    });
-  });
-
-  it("canonicalizes lookup phase tokens case-insensitively (#9803)", async () => {
-    const observer = createCliOpenShellSandboxObserver({
-      capture: () => captured(0, "Name: alpha\nPhase: ready\n"),
-    });
-
-    await expect(
-      observer.lookupSandbox({ sandboxName: "alpha", target: selectedOpenShellGateway() }),
-    ).resolves.toEqual({
-      ok: true,
-      value: {
-        state: "present",
-        sandbox: { name: "alpha", phase: "Ready", readiness: "ready" },
-      },
-    });
-  });
-
-  it("keeps formatted get output on an explicit CLI-only compatibility path (#9803)", async () => {
-    const lookup = createCliOpenShellSandboxLookup({
-      capture: () => captured(0, "\u001b[1mName:\u001b[0m alpha\nPhase: Running\n"),
-    });
-
-    await expect(
-      lookup({ sandboxName: "alpha", target: selectedOpenShellGateway() }),
-    ).resolves.toEqual({
       result: {
         ok: true,
         value: {
@@ -162,6 +135,25 @@ describe("CLI OpenShell sandbox observer", () => {
     });
   });
 
+  it("canonicalizes lookup phase tokens case-insensitively (#9803)", async () => {
+    const lookup = createCliOpenShellSandboxLookup({
+      capture: () => captured(0, "Name: alpha\nPhase: ready\n"),
+    });
+
+    await expect(
+      lookup({ sandboxName: "alpha", target: selectedOpenShellGateway() }),
+    ).resolves.toEqual({
+      result: {
+        ok: true,
+        value: {
+          state: "present",
+          sandbox: { name: "alpha", phase: "Ready", readiness: "ready" },
+        },
+      },
+      displayOutput: "Name: alpha\nPhase: ready",
+    });
+  });
+
   it("keeps a missing sandbox distinct from authentication failure (#9803)", async () => {
     const capture = vi
       .fn()
@@ -169,24 +161,28 @@ describe("CLI OpenShell sandbox observer", () => {
       .mockReturnValueOnce(
         captured(1, "", "Error: authentication failed: sandbox not found: bearer value"),
       );
-    const observer = createCliOpenShellSandboxObserver({ capture });
+    const lookup = createCliOpenShellSandboxLookup({ capture });
     const request = { sandboxName: "alpha", target: selectedOpenShellGateway() };
 
-    await expect(observer.lookupSandbox(request)).resolves.toEqual({
-      ok: true,
-      value: { state: "missing" },
+    await expect(lookup(request)).resolves.toEqual({
+      result: { ok: true, value: { state: "missing" } },
+      displayOutput: "",
     });
-    await expect(observer.lookupSandbox(request)).resolves.toEqual({
-      ok: false,
-      error: {
-        kind: "authentication",
-        message: "OpenShell could not authenticate the sandbox observation.",
+    await expect(lookup(request)).resolves.toEqual({
+      result: {
+        ok: false,
+        error: {
+          kind: "authentication",
+          message: "OpenShell could not authenticate the sandbox observation.",
+        },
       },
+      displayOutput: "",
     });
   });
 
   it.each([
     ["transport", "unreachable", captured(1, "", "client error (Connect): Connection refused")],
+    ["transport", "unreachable", captured(1, "", "Status: Disconnected")],
     ["transport", "identity_mismatch", captured(1, "", "handshake verification failed")],
     ["schema", undefined, captured(1, "", "protobuf decode error: invalid wire type")],
     ["command", "failed", captured(7, "", "unexpected opaque failure")],
@@ -220,82 +216,6 @@ describe("CLI OpenShell sandbox observer", () => {
     ).resolves.toEqual({
       ok: false,
       error: { kind: "timeout", message: "OpenShell sandbox observation timed out." },
-    });
-  });
-
-  it("waits for stable readiness using typed observations (#9803)", async () => {
-    const outputs = ["alpha Provisioning", "alpha Error", "alpha Ready", "alpha Running"];
-    let clock = 0;
-    const observer = createCliOpenShellSandboxObserver({
-      capture: () => captured(0, outputs.shift() ?? ""),
-      now: () => clock,
-      sleep: (ms) => {
-        clock += ms;
-      },
-    });
-
-    const result = await observer.waitForSandboxReady({
-      sandboxName: "alpha",
-      target: namedOpenShellGateway("nemoclaw"),
-      timeoutMs: 1_000,
-      pollIntervalMs: 10,
-      stableReadyObservations: 2,
-      errorPhaseDebounceObservations: 2,
-    });
-
-    expect(result).toEqual({
-      ok: true,
-      value: {
-        state: "ready",
-        sandbox: { name: "alpha", phase: "Running", readiness: "ready" },
-        observations: 4,
-      },
-    });
-  });
-
-  it("returns a terminal phase before the readiness deadline (#9803)", async () => {
-    const observer = createCliOpenShellSandboxObserver({
-      capture: () => captured(0, "alpha Failed"),
-      now: () => 0,
-      sleep: vi.fn(),
-    });
-
-    await expect(
-      observer.waitForSandboxReady({
-        sandboxName: "alpha",
-        target: selectedOpenShellGateway(),
-        timeoutMs: 1_000,
-      }),
-    ).resolves.toEqual({
-      ok: true,
-      value: {
-        state: "terminal",
-        sandbox: { name: "alpha", phase: "Failed", readiness: "terminal" },
-        observations: 1,
-      },
-    });
-  });
-
-  it("returns missing as the last observation when readiness times out (#9803)", async () => {
-    let clock = 0;
-    const observer = createCliOpenShellSandboxObserver({
-      capture: () => captured(0, "No sandboxes found."),
-      now: () => clock,
-      sleep: (ms) => {
-        clock += ms;
-      },
-    });
-
-    await expect(
-      observer.waitForSandboxReady({
-        sandboxName: "alpha",
-        target: selectedOpenShellGateway(),
-        timeoutMs: 20,
-        pollIntervalMs: 10,
-      }),
-    ).resolves.toEqual({
-      ok: true,
-      value: { state: "timeout", lastObservation: null, observations: 2 },
     });
   });
 });

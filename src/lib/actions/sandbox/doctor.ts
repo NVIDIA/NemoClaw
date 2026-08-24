@@ -5,9 +5,12 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   createCliOpenShellSandboxObserver,
-  namedOpenShellGateway,
   stripOpenShellCliAnsi,
 } from "../../adapters/openshell/sandbox-observer-cli";
+import {
+  namedOpenShellGateway,
+  type OpenShellSandboxError,
+} from "../../adapters/openshell/sandbox-observer";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { captureOpenshell } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
@@ -282,6 +285,27 @@ function liveSandboxHint(
   return `run \`${CLI_NAME} ${sandboxName} status\` or \`${CLI_NAME} ${sandboxName} logs --follow\``;
 }
 
+function liveSandboxObservationFailureHint(
+  sandboxName: string,
+  gatewayName: string,
+  error: OpenShellSandboxError,
+): string {
+  switch (error.kind) {
+    case "authentication":
+      return `restore OpenShell authentication for gateway '${gatewayName}', then retry`;
+    case "transport":
+      return error.reason === "identity_mismatch"
+        ? `run \`${CLI_NAME} ${sandboxName} status\` to inspect the recorded gateway identity, then retry`
+        : `run \`openshell status\`, restore gateway '${gatewayName}', then retry`;
+    case "schema":
+      return "use matching supported OpenShell CLI and gateway versions, then retry";
+    case "timeout":
+      return `check that gateway '${gatewayName}' responds, then retry`;
+    case "command":
+      return `run \`openshell sandbox list -g ${gatewayName}\` and correct the reported command failure`;
+  }
+}
+
 async function liveSandboxCheck(sandboxName: string, gatewayName: string): Promise<SandboxProbe> {
   const list = await createCliOpenShellSandboxObserver({
     capture: captureOpenshell,
@@ -290,9 +314,21 @@ async function liveSandboxCheck(sandboxName: string, gatewayName: string): Promi
     target: namedOpenShellGateway(gatewayName),
     timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
   });
-  const observed = list.ok
-    ? (list.value.sandboxes.find((sandbox) => sandbox.name === sandboxName) ?? null)
-    : null;
+  if (!list.ok) {
+    return {
+      reachable: false,
+      checks: [
+        {
+          group: "Sandbox",
+          label: "Live sandbox",
+          status: "fail",
+          detail: `OpenShell sandbox observation failed: ${oneLine(list.error.message)}`,
+          hint: liveSandboxObservationFailureHint(sandboxName, gatewayName, list.error),
+        },
+      ],
+    };
+  }
+  const observed = list.value.sandboxes.find((sandbox) => sandbox.name === sandboxName) ?? null;
   const present = observed !== null;
   const ready = observed ? observed.readiness === "ready" : null;
   const reachable = present && ready === true;

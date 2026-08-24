@@ -32,13 +32,16 @@ const { pruneKnownHostsEntries } = require("../../onboard/known-hosts") as {
 import { dockerStart } from "../../adapters/docker/container";
 import {
   createCliOpenShellSandboxLookup,
-  namedOpenShellGateway,
-  selectedOpenShellGateway,
   stripOpenShellCliAnsi,
   type CliOpenShellSandboxLookup,
-  type OpenShellSandboxError,
-  type OpenShellSandboxTransportReason,
 } from "../../adapters/openshell/sandbox-observer-cli";
+import {
+  namedOpenShellGateway,
+  selectedOpenShellGateway,
+  type OpenShellSandboxError,
+  type OpenShellSandboxErrorKind,
+  type OpenShellSandboxTransportReason,
+} from "../../adapters/openshell/sandbox-observer";
 import {
   detectOpenShellStateRpcPreflightIssue,
   formatOpenShellStateRpcIssue,
@@ -83,6 +86,7 @@ export type SandboxGatewayState = {
   activeGateway?: string | null;
   recoveredGateway?: boolean;
   recoveryVia?: string | null;
+  observationErrorKind?: OpenShellSandboxErrorKind;
   transportReason?: OpenShellSandboxTransportReason;
   gatewayRecoveryFailed?: boolean;
   /**
@@ -261,12 +265,17 @@ function sandboxObservationErrorState(
 ): SandboxGatewayState {
   if (error.kind === "schema") return schemaMismatchState(action);
   if (error.kind === "transport") {
-    return { state: "gateway_error", output: error.message, transportReason: error.reason };
+    return {
+      state: "gateway_error",
+      output: error.message,
+      observationErrorKind: error.kind,
+      transportReason: error.reason,
+    };
   }
   if (error.kind === "authentication" || error.kind === "timeout") {
-    return { state: "gateway_error", output: error.message };
+    return { state: "gateway_error", output: error.message, observationErrorKind: error.kind };
   }
-  return { state: "unknown_error", output: error.message };
+  return { state: "unknown_error", output: error.message, observationErrorKind: error.kind };
 }
 
 export async function getSandboxGatewayState(
@@ -587,6 +596,47 @@ export function printGatewayLifecycleHint(
   }
 }
 
+/** Print recovery guidance from a typed observation error or legacy CLI output. */
+export function printSandboxGatewayStateHint(
+  lookup: Pick<SandboxGatewayState, "observationErrorKind" | "output" | "transportReason">,
+  sandboxName: string,
+  writer: (message: string) => void = console.error,
+): void {
+  const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
+  switch (lookup.observationErrorKind) {
+    case "transport":
+      if (lookup.transportReason === "identity_mismatch") {
+        writer("  This looks like gateway identity drift after restart.");
+        writer(
+          "  Existing sandboxes may still be recorded locally, but the current gateway no longer trusts their prior connection state.",
+        );
+        writer(
+          `  Re-establish the ${CLI_DISPLAY_NAME} gateway runtime first. If the sandbox stays unreachable, recreate only that sandbox with \`${CLI_NAME} onboard\`.`,
+        );
+        return;
+      }
+      writer(
+        `  The sandbox '${sandboxName}' may still exist, but gateway '${targetGatewayName}' is not reachable.`,
+      );
+      writer("  Check `openshell status`, verify the active gateway, and retry.");
+      return;
+    case "authentication":
+      writer("  OpenShell could not authenticate the sandbox observation.");
+      writer("  Verify the active gateway and restore its authentication before retrying.");
+      return;
+    case "timeout":
+      writer("  The OpenShell gateway did not answer before the sandbox observation timeout.");
+      writer("  Check `openshell status` and retry after the gateway responds.");
+      return;
+    case "command":
+      writer("  The OpenShell sandbox observation command failed.");
+      writer("  Run `openshell status`, inspect the gateway, and retry.");
+      return;
+    default:
+      printGatewayLifecycleHint(lookup.output, sandboxName, writer);
+  }
+}
+
 export type GatewayRecoveryMode = "observe" | "recover";
 
 export async function getReconciledSandboxGatewayState(
@@ -876,7 +926,7 @@ export async function ensureLiveSandboxOrExit(
     if (lookup.output) {
       console.error(lookup.output);
     }
-    printGatewayLifecycleHint(lookup.output, sandboxName);
+    printSandboxGatewayStateHint(lookup, sandboxName);
     console.error(
       `  This sandbox-scoped command will not restart the shared host gateway. ${gatewayStartGuidance(getSandboxTargetGatewayName(sandboxName))} Then retry this command.`,
     );
@@ -899,7 +949,7 @@ export async function ensureLiveSandboxOrExit(
   if (lookup.output) {
     console.error(lookup.output);
   }
-  printGatewayLifecycleHint(lookup.output, sandboxName);
+  printSandboxGatewayStateHint(lookup, sandboxName);
   console.error("  Check `openshell status` and the active gateway, then retry.");
   return exit(1);
 }

@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { setTimeout as sleepMsAsync } from "node:timers/promises";
-
 import {
   type ListOpenShellSandboxesRequest,
   type LookupOpenShellSandboxRequest,
@@ -12,27 +10,11 @@ import {
   type OpenShellSandboxLookup,
   type OpenShellSandboxObservation,
   type OpenShellSandboxObserver,
-  type OpenShellSandboxReadinessWait,
   type OpenShellSandboxResult,
-  type WaitForOpenShellSandboxReadyRequest,
 } from "./sandbox-observer";
-
-export { namedOpenShellGateway, selectedOpenShellGateway } from "./sandbox-observer";
-export type {
-  OpenShellGatewayTarget,
-  OpenShellSandboxError,
-  OpenShellSandboxInventory,
-  OpenShellSandboxLookup,
-  OpenShellSandboxObservation,
-  OpenShellSandboxObserver,
-  OpenShellSandboxReadiness,
-  OpenShellSandboxReadinessWait,
-  OpenShellSandboxResult,
-  OpenShellSandboxTransportReason,
-} from "./sandbox-observer";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/gu;
-const DEFAULT_SANDBOX_OBSERVATION_TIMEOUT_MS = 15_000;
 
 const READY_PHASES = new Set(["Ready", "Running"]);
 const TERMINAL_PHASES = new Set([
@@ -84,8 +66,6 @@ export type CaptureSandboxCommand = (
 export type CliOpenShellSandboxObserverDeps = Readonly<{
   capture: CaptureSandboxCommand;
   defaultTimeoutMs?: number;
-  now?: () => number;
-  sleep?: (ms: number) => void | Promise<void>;
 }>;
 
 export type CliOpenShellSandboxLookupResult = Readonly<{
@@ -129,12 +109,10 @@ export function parseCliOpenShellSandboxInventory(output: string): OpenShellSand
     const columns = line.split(/\s+/u);
     const name = columns[0];
     if (!name || isNonSandboxRow(line, name)) continue;
-    const phaseColumns = columns
-      .slice(1)
-      .map((column) => CANONICAL_PHASES.get(column.toLowerCase()) ?? null);
-    const phase = phaseColumns.includes("NotReady")
-      ? "NotReady"
-      : (phaseColumns.find((column) => column !== null) ?? null);
+    let phase: string | null = null;
+    for (const column of columns.slice(1)) {
+      phase = CANONICAL_PHASES.get(column.toLowerCase()) ?? phase;
+    }
     sandboxes.push(observation(name, phase));
   }
   return { sandboxes };
@@ -195,7 +173,7 @@ function commandError(result: CapturedSandboxCommandResult): OpenShellSandboxErr
     };
   }
   if (
-    /\b(?:connection refused|client error \(connect\)|tcp connect error|transport error|connection reset|connection aborted|connection closed|no active gateway|no gateway configured)\b/iu.test(
+    /\b(?:connection refused|client error \(connect\)|tcp connect error|transport error|connection reset|connection aborted|connection closed|no active gateway|no gateway configured)\b|status:\s*disconnected/iu.test(
       output,
     )
   ) {
@@ -242,7 +220,7 @@ export function createCliOpenShellSandboxLookup(
       ignoreError: true,
       includeStderr: true,
       includeStreams: true,
-      timeout: request.timeoutMs ?? deps.defaultTimeoutMs ?? DEFAULT_SANDBOX_OBSERVATION_TIMEOUT_MS,
+      timeout: request.timeoutMs ?? deps.defaultTimeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS,
     });
     const output = commandOutput(result);
     const error = commandError(result);
@@ -268,9 +246,6 @@ export function createCliOpenShellSandboxObserver(
   deps: CliOpenShellSandboxObserverDeps,
 ): OpenShellSandboxObserver {
   const capture = deps.capture;
-  const now = deps.now ?? Date.now;
-  const sleep = deps.sleep ?? sleepMsAsync;
-  const cliLookup = createCliOpenShellSandboxLookup(deps);
 
   const listSandboxes = async (
     request: ListOpenShellSandboxesRequest,
@@ -279,72 +254,12 @@ export function createCliOpenShellSandboxObserver(
       ignoreError: true,
       includeStderr: true,
       includeStreams: true,
-      timeout: request.timeoutMs ?? deps.defaultTimeoutMs ?? DEFAULT_SANDBOX_OBSERVATION_TIMEOUT_MS,
+      timeout: request.timeoutMs ?? deps.defaultTimeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS,
     });
     const error = commandError(result);
     if (error) return failure(error);
     return success(parseCliOpenShellSandboxInventory(successfulCommandOutput(result)));
   };
 
-  const lookupSandbox = async (
-    request: LookupOpenShellSandboxRequest,
-  ): Promise<OpenShellSandboxResult<OpenShellSandboxLookup>> => {
-    return (await cliLookup(request)).result;
-  };
-
-  const waitForSandboxReady = async (
-    request: WaitForOpenShellSandboxReadyRequest,
-  ): Promise<OpenShellSandboxResult<OpenShellSandboxReadinessWait>> => {
-    const timeoutMs = Math.max(0, request.timeoutMs);
-    const pollIntervalMs = Math.max(0, request.pollIntervalMs ?? 250);
-    const stableReadyObservations = Math.max(1, Math.round(request.stableReadyObservations ?? 1));
-    const errorPhaseDebounceObservations = Math.max(
-      1,
-      Math.round(request.errorPhaseDebounceObservations ?? 1),
-    );
-    const deadline = now() + timeoutMs;
-    let observations = 0;
-    let consecutiveReady = 0;
-    let consecutiveError = 0;
-    let lastObservation: OpenShellSandboxObservation | null = null;
-
-    while (now() < deadline) {
-      const remainingMs = Math.max(1, deadline - now());
-      const listed = await listSandboxes({
-        target: request.target,
-        timeoutMs: remainingMs,
-      });
-      if (!listed.ok) return listed;
-      observations += 1;
-      const current =
-        listed.value.sandboxes.find((sandbox) => sandbox.name === request.sandboxName) ?? null;
-      lastObservation = current;
-
-      if (current?.readiness === "ready") {
-        consecutiveReady += 1;
-        consecutiveError = 0;
-        if (consecutiveReady >= stableReadyObservations) {
-          return success({ state: "ready", sandbox: current, observations });
-        }
-      } else {
-        consecutiveReady = 0;
-        if (current?.readiness === "terminal") {
-          consecutiveError = current.phase === "Error" ? consecutiveError + 1 : 0;
-          if (current.phase !== "Error" || consecutiveError >= errorPhaseDebounceObservations) {
-            return success({ state: "terminal", sandbox: current, observations });
-          }
-        } else {
-          consecutiveError = 0;
-        }
-      }
-
-      const remainingAfterObservationMs = deadline - now();
-      if (remainingAfterObservationMs <= 0) break;
-      await sleep(Math.min(pollIntervalMs, remainingAfterObservationMs));
-    }
-
-    return success({ state: "timeout", lastObservation, observations });
-  };
-
-  return { listSandboxes, lookupSandbox, waitForSandboxReady };
+  return { listSandboxes };
 }

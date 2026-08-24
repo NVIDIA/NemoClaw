@@ -503,6 +503,47 @@ describe("runSandboxDoctor flow", () => {
     },
   );
 
+  it.each([
+    {
+      label: "authentication",
+      commandOutput: "Error: authentication failed: bearer credential-value",
+      expectedDetail: "OpenShell could not authenticate the sandbox observation.",
+      expectedHint: "restore OpenShell authentication for gateway 'nemoclaw-19080'",
+    },
+    {
+      label: "transport",
+      commandOutput: "Status: Disconnected",
+      expectedDetail: "OpenShell could not reach the selected gateway.",
+      expectedHint: "run `openshell status`, restore gateway 'nemoclaw-19080'",
+    },
+  ])(
+    "reports a failed $label observation without classifying the sandbox as absent (#9803)",
+    async ({ commandOutput, expectedDetail, expectedHint }) => {
+      const harness = createDoctorHarness();
+      harness.captureOpenShellSpy.mockImplementation((args: unknown) => {
+        const argv = Array.isArray(args) ? args : [];
+        return argv[0] === "sandbox" && argv[1] === "list"
+          ? { status: 1, output: commandOutput }
+          : { status: 0, output: "" };
+      });
+
+      const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+      const liveSandbox = report?.checks.find(
+        (check) => check.group === "Sandbox" && check.label === "Live sandbox",
+      );
+
+      expect(liveSandbox).toMatchObject({
+        status: "fail",
+        detail: expect.stringContaining(expectedDetail),
+        hint: expect.stringContaining(expectedHint),
+      });
+      const rendered = `${liveSandbox?.detail ?? ""}\n${liveSandbox?.hint ?? ""}`;
+      expect(rendered).not.toContain("not present");
+      expect(rendered).not.toContain("recreate");
+      expect(rendered).not.toContain("credential-value");
+    },
+  );
+
   it("fails the JSON host check for an unknown durable runtime provider", async () => {
     const harness = createDoctorHarness();
     harness.getSandboxSpy.mockReturnValue({

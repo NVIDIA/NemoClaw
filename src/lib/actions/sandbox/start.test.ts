@@ -242,8 +242,6 @@ describe("startSandbox", () => {
       });
       const observer: OpenShellSandboxObserver = {
         listSandboxes,
-        lookupSandbox: vi.fn(),
-        waitForSandboxReady: vi.fn(),
       };
       const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
       const h = harness({
