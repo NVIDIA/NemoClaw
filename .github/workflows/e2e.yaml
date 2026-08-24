@@ -137,7 +137,7 @@ jobs:
         if: ${{ steps.publication_mode.outputs.required == '1' || steps.publication_mode.outputs.reuse == '1' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.checkout_sha || github.sha }}
+          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -2708,6 +2708,7 @@ jobs:
         include: ${{ fromJSON(needs.generate-matrix.outputs.matrix) }}
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
       NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF: ${{ needs.base-image-publication.outputs.dcode_base_ref }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -5368,7 +5369,7 @@ jobs:
           path: ${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu/
 
   cloud-onboard:
-    needs: generate-matrix
+    needs: [base-image-publication, generate-matrix]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'cloud-onboard') }}
     runs-on: ubuntu-latest
     timeout-minutes: 70
@@ -5379,6 +5380,7 @@ jobs:
       E2E_OBSERVABLE_OUTCOME: "Public install onboarding hosted inference and security checks succeed"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; NVIDIA hosted inference"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/cloud-onboard
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"

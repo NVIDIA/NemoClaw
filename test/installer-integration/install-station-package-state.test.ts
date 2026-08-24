@@ -6,9 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+import { TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 
 function runSourced(body: string, extraEnv: Record<string, string> = {}) {
@@ -179,22 +179,22 @@ package_state 'docker-ce=5:29.6.1-1~ubuntu.24.04~noble'
   it.each([
     { queryStatus: 1, expected: "missing" },
     { queryStatus: 2, expected: "query-error" },
-  ])("maps dpkg-query status $queryStatus to $expected without triggering ERR", ({
-    queryStatus,
-    expected,
-  }) => {
-    const { result, output } = runSourced(
-      `
+  ])(
+    "maps dpkg-query status $queryStatus to $expected without triggering ERR",
+    ({ queryStatus, expected }) => {
+      const { result, output } = runSourced(
+        `
 dpkg-query() { return "$PACKAGE_QUERY_STATUS"; }
 package_state 'docker-ce=5:29.6.1-1~ubuntu.24.04~noble'
 `,
-      { PACKAGE_QUERY_STATUS: String(queryStatus) },
-    );
+        { PACKAGE_QUERY_STATUS: String(queryStatus) },
+      );
 
-    expect(result.status, output).toBe(0);
-    expect(result.stdout.trim()).toBe(expected);
-    expect(output).not.toContain("command failed");
-  });
+      expect(result.status, output).toBe(0);
+      expect(result.stdout.trim()).toBe(expected);
+      expect(output).not.toContain("command failed");
+    },
+  );
 
   it("allows only the reviewed factory DKMS transition", () => {
     const body = `
@@ -229,24 +229,24 @@ assert_no_package_mismatches
     expect(output).toMatch(/package state is unhealthy or differs from the validated pins/);
   });
 
-  it.each([
-    "unattended-upgr",
-    "apt.systemd.dai",
-  ])("detects the Linux package-manager process name %s", (processName) => {
-    const { result, output } = runSourced(
-      `
+  it.each(["unattended-upgr", "apt.systemd.dai"])(
+    "detects the Linux package-manager process name %s",
+    (processName) => {
+      const { result, output } = runSourced(
+        `
 STATION_HOST_PROFILE=generic-ubuntu
 ps() { printf '4242 %s\n' "$PACKAGE_PROCESS"; }
 lslocks() { :; }
 check_package_managers_idle test
 `,
-      { PACKAGE_PROCESS: processName },
-    );
+        { PACKAGE_PROCESS: processName },
+      );
 
-    expect(result.status, output).not.toBe(0);
-    expect(output).toContain(`4242 ${processName}`);
-    expect(output).toMatch(/package-manager process is active/);
-  });
+      expect(result.status, output).not.toBe(0);
+      expect(output).toContain(`4242 ${processName}`);
+      expect(output).toMatch(/package-manager process is active/);
+    },
+  );
 
   it("allows an idle PackageKit daemon on generic Ubuntu", () => {
     const { result, output } = runSourced(
@@ -356,51 +356,51 @@ check_package_managers_idle test
     expect(output).toMatch(/package-manager process is active/);
   });
 
-  it.each([
-    "stock-dgx-os",
-    "ai-developer-tools",
-  ])("allows idle PackageKit when %s preserves the factory package stack (#7417)", (profile) => {
-    const { result, output } = runPackageKitBoundary(
-      `
+  it.each(["stock-dgx-os", "ai-developer-tools"])(
+    "allows idle PackageKit when %s preserves the factory package stack (#7417)",
+    (profile) => {
+      const { result, output } = runPackageKitBoundary(
+        `
 STATION_HOST_PROFILE="$FACTORY_PROFILE"
 ps() { printf '4242 packagekitd\n'; }
 check_package_managers_idle test
 cat "$CALLS"
 `,
-      { FACTORY_PROFILE: profile },
-    );
+        { FACTORY_PROFILE: profile },
+      );
 
-    expect(result.status, output).toBe(0);
-    expect(output).toContain("GetTransactionList");
-    expect(output).toContain("packagekit_transactions=none phase=test");
-    expect(output).toContain("package_manager=idle phase=test");
-  });
+      expect(result.status, output).toBe(0);
+      expect(output).toContain("GetTransactionList");
+      expect(output).toContain("packagekit_transactions=none phase=test");
+      expect(output).toContain("package_manager=idle phase=test");
+    },
+  );
 
-  it.each([
-    "stock-dgx-os",
-    "ai-developer-tools",
-  ])("rejects an active PackageKit transaction for %s before factory validation (#7417)", (profile) => {
-    const { result, output } = runPackageKitBoundary(
-      `
+  it.each(["stock-dgx-os", "ai-developer-tools"])(
+    "rejects an active PackageKit transaction for %s before factory validation (#7417)",
+    (profile) => {
+      const { result, output } = runPackageKitBoundary(
+        `
 STATION_HOST_PROFILE="$FACTORY_PROFILE"
 ps() { printf '4242 packagekitd\n'; }
 trap 'cat "$CALLS"' EXIT
 check_package_managers_idle 'initial Station package preflight'
 printf 'FACTORY_VALIDATION\n' >>"$CALLS"
 `,
-      {
-        FACTORY_PROFILE: profile,
-        PACKAGEKIT_TRANSACTIONS: 'ao 1 "/42_deadbeef"',
-      },
-    );
+        {
+          FACTORY_PROFILE: profile,
+          PACKAGEKIT_TRANSACTIONS: 'ao 1 "/42_deadbeef"',
+        },
+      );
 
-    expect(result.status, output).not.toBe(0);
-    expect(output).toContain("GetTransactionList");
-    expect(output).toMatch(
-      /active PackageKit transaction blocks initial Station package preflight/,
-    );
-    expect(output).not.toContain("FACTORY_VALIDATION");
-  });
+      expect(result.status, output).not.toBe(0);
+      expect(output).toContain("GetTransactionList");
+      expect(output).toMatch(
+        /active PackageKit transaction blocks initial Station package preflight/,
+      );
+      expect(output).not.toContain("FACTORY_VALIDATION");
+    },
+  );
 
   it.each(
     ["stock-dgx-os", "ai-developer-tools"].flatMap((profile) => [
@@ -417,30 +417,29 @@ printf 'FACTORY_VALIDATION\n' >>"$CALLS"
         expectedError: /inconsistent empty transaction state/,
       },
     ]),
-  )("rejects $label PackageKit state for $profile before factory validation (#7417)", ({
-    expectedError,
-    profile,
-    transactionState,
-  }) => {
-    const { result, output } = runPackageKitBoundary(
-      `
+  )(
+    "rejects $label PackageKit state for $profile before factory validation (#7417)",
+    ({ expectedError, profile, transactionState }) => {
+      const { result, output } = runPackageKitBoundary(
+        `
 STATION_HOST_PROFILE="$FACTORY_PROFILE"
 ps() { printf '4242 packagekitd\n'; }
 trap 'cat "$CALLS"' EXIT
 check_package_managers_idle 'initial Station package preflight'
 printf 'FACTORY_VALIDATION\n' >>"$CALLS"
 `,
-      {
-        FACTORY_PROFILE: profile,
-        PACKAGEKIT_TRANSACTIONS: transactionState,
-      },
-    );
+        {
+          FACTORY_PROFILE: profile,
+          PACKAGEKIT_TRANSACTIONS: transactionState,
+        },
+      );
 
-    expect(result.status, output).not.toBe(0);
-    expect(output).toContain("GetTransactionList");
-    expect(output).toMatch(expectedError);
-    expect(output).not.toContain("FACTORY_VALIDATION");
-  });
+      expect(result.status, output).not.toBe(0);
+      expect(output).toContain("GetTransactionList");
+      expect(output).toMatch(expectedError);
+      expect(output).not.toContain("FACTORY_VALIDATION");
+    },
+  );
 
   it.each([
     "/var/lib/dpkg/lock-frontend",

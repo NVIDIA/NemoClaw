@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as forwardHealth from "../src/lib/actions/sandbox/forward-health.ts";
-import { checkAndRecoverSandboxProcesses } from "../src/lib/actions/sandbox/process-recovery.ts";
-import { relaunchManagedSupervisorSession } from "../src/lib/actions/sandbox/supervisor-relaunch.ts";
-import * as openshellRuntime from "../src/lib/adapters/openshell/runtime.ts";
-import * as agentRuntime from "../src/lib/agent/runtime.ts";
-import { finalizeDockerGpuPatchBackup } from "../src/lib/onboard/docker-gpu-patch-finalize.ts";
-import * as registry from "../src/lib/state/registry.ts";
+import * as forwardHealth from "../../src/lib/actions/sandbox/forward-health.ts";
+import { checkAndRecoverSandboxProcesses } from "../../src/lib/actions/sandbox/process-recovery.ts";
+import { relaunchManagedSupervisorSession } from "../../src/lib/actions/sandbox/supervisor-relaunch.ts";
+import * as openshellRuntime from "../../src/lib/adapters/openshell/runtime.ts";
+import * as agentRuntime from "../../src/lib/agent/runtime.ts";
+import { finalizeDockerGpuPatchBackup } from "../../src/lib/onboard/docker-gpu-patch-finalize.ts";
+import * as registry from "../../src/lib/state/registry.ts";
 
 const OPENSHELL_RELAY_CHANNEL_DROPPED_STDERR = `Error:   × status: Unavailable, message: "relay
   │ channel dropped", details: [], metadata: MetadataMap { headers: {} }
@@ -792,7 +792,8 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       wasRunning: false,
       recovered: false,
       forwardRecovered: false,
-      recoveryFailureDetail: "Sandbox recovery did not complete; the previous container was restored",
+      recoveryFailureDetail:
+        "Sandbox recovery did not complete; the previous container was restored",
     });
     expect(order).toEqual(["restore-state", "post-restore-restart", "rollback-container"]);
     expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(4);
@@ -1084,9 +1085,9 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         throw new Error("opaque-finalizer-sentinel");
       },
     },
-  ])("reports the readiness failure and unconfirmed rollback when $condition (#9364)", ({
-    finalizeOutcome,
-  }) => {
+  ])(
+    "reports the readiness failure and unconfirmed rollback when $condition (#9364)",
+    ({ finalizeOutcome }) => {
       mockOpenClawSandbox("rollback-box");
       setImmediateRecoveryPolling();
       const finalize = vi.fn((_supervisorReady: boolean) => finalizeOutcome());
@@ -1132,7 +1133,8 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       expect(finalize).toHaveBeenCalledWith(false);
       expect(captureOpenshell).not.toHaveBeenCalled();
       expect(runOpenshell).not.toHaveBeenCalled();
-  });
+    },
+  );
 
   it("reports the last structured OpenShell error when readiness times out", () => {
     mockOpenClawSandbox("relay-dropped-box");

@@ -7,6 +7,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildRiskPlan,
+  GATEWAY_TOPOLOGY_FILES,
   isPrE2eManualControllerJob,
   PR_E2E_TYPED_TARGET_IDS,
   RISK_RULES,
@@ -25,6 +26,8 @@ import { classifyTestDepth } from "../tools/pr-review-advisor/deterministic-cont
 
 const HEAD_SHA = "a".repeat(40);
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+const GATEWAY_TOPOLOGY_INVARIANT =
+  "An explicit sandbox-visible host address must be outside the sandbox network subnet, and every gateway-address projection must derive from the same authority.";
 const HERMES_SANDBOX_BOUNDARY_JOBS = [
   "full-e2e",
   "hermes-e2e",
@@ -107,7 +110,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(18);
+    expect(first.version).toBe(19);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -120,6 +123,53 @@ describe("deterministic PR risk plan", () => {
     expect(result.families).toEqual([]);
     expect(result.requiredJobs).toEqual([]);
     expect(result.requiredTargets).toEqual([]);
+  });
+
+  it.each(GATEWAY_TOPOLOGY_FILES)(
+    "selects gateway topology review for %s (#10058)",
+    (changedFile) => {
+      const result = plan(changedFile);
+
+      expect(result.families).toContainEqual({
+        id: "gateway-topology",
+        summary:
+          "Gateway topology changes must keep sandbox-visible host addresses outside sandbox network subnets and use one address authority.",
+        tier: 2,
+        matchedFiles: [changedFile],
+        invariants: [GATEWAY_TOPOLOGY_INVARIANT],
+        requiredJobs: [],
+        requiredTargets: [],
+      });
+    },
+  );
+
+  it("combines gateway topology projections into one focused family (#10058)", () => {
+    const result = plan(...GATEWAY_TOPOLOGY_FILES);
+    const topologyFamilies = result.families.filter(
+      (family) => family.id === "gateway-topology",
+    );
+
+    expect(topologyFamilies).toEqual([
+      expect.objectContaining({
+        matchedFiles: GATEWAY_TOPOLOGY_FILES,
+        invariants: [GATEWAY_TOPOLOGY_INVARIANT],
+        requiredJobs: [],
+      }),
+    ]);
+  });
+
+  it.each([
+    "src/lib/onboard/experimental/hermes-portable-build-context.ts",
+    "src/lib/onboard/experimental/portable-agent-lifecycle.ts",
+    "docs/get-started/portable.mdx",
+    "src/lib/onboard/experimental/portable-host-preparation.test.ts",
+    "src/lib/onboard/runtime-provider/podman-host-local-inference.test.ts",
+  ])("keeps gateway topology review scoped away from %s (#10058)", (changedFile) => {
+    const result = plan(changedFile);
+
+    expect(result.families).not.toContainEqual(
+      expect.objectContaining({ id: "gateway-topology" }),
+    );
   });
 
   it("keeps an unmapped live test behind the control-plane exception and cloud floor (#6446)", () => {
