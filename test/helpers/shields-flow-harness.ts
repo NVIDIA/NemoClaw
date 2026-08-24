@@ -38,6 +38,7 @@ export type ShieldsFlowHarness = {
   getOpenClawPosture: () => "locked" | "mutable";
   logSpy: MockInstance;
   policyAuthoritySpy: MockInstance;
+  policyRecoveryAuthoritySpy: MockInstance;
   policySetBodies: string[];
   runCaptureSpy: MockInstance;
   runSpy: MockInstance;
@@ -369,6 +370,9 @@ export function createShieldsFlowHarness(
   const policyAuthoritySpy = vi
     .spyOn(policy, "inspectPolicyMutationAuthority")
     .mockReturnValue(policyMutationAuthority);
+  const policyRecoveryAuthoritySpy = vi
+    .spyOn(policy, "inspectPolicyRecoveryAuthority")
+    .mockReturnValue(policyMutationAuthority);
   vi.spyOn(policy, "recheckPolicyMutationAuthority").mockReturnValue(policyMutationAuthority);
   vi.spyOn(registry, "listSandboxes").mockReturnValue({
     sandboxes: [{ name: options.sandboxName ?? "openclaw", agent: resolvedAgentConfig.agentName }],
@@ -640,6 +644,7 @@ export function createShieldsFlowHarness(
     getOpenClawPosture: () => openClawPosture,
     logSpy,
     policyAuthoritySpy,
+    policyRecoveryAuthoritySpy,
     policySetBodies,
     runCaptureSpy,
     runSpy,
