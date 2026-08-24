@@ -19,6 +19,7 @@ import {
 } from "./docker-driver-gateway-jwt-bundle";
 import { PORTABLE_HOST_GATEWAY_IP } from "./docker-driver-platform";
 import { parseDockerDriverGatewayRuntimeMarker } from "./docker-driver-gateway-runtime-marker";
+import { noteOnboardResumeHintShown } from "./resume-hint";
 
 export type { DockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
 export { ensureDockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
@@ -274,6 +275,40 @@ function ambiguousGatewayConfig(configPath: string, detail: string): Error {
   );
 }
 
+/**
+ * The gateway state directory is shared by port, not by driver (#10071): a
+ * Docker-driver gateway and the portable profile's Podman-driver gateway
+ * resolve to the same default state directory when they use the same port.
+ * A well-formed NemoClaw config generated for the other driver is not
+ * evidence of tampering or corruption — it is the ordinary result of
+ * switching profiles on a host that already onboarded with the other
+ * driver. Distinguish that case from a genuinely ambiguous config so the
+ * error names a concrete recovery path instead of a generic schema
+ * complaint, and so the suggested recovery does not just repeat the exact
+ * command that failed.
+ */
+function crossDriverGatewayConflict(
+  configPath: string,
+  stateDir: string,
+  requestedDriver: DockerDriverGatewayDriver,
+  configuredDriver: DockerDriverGatewayDriver,
+): Error {
+  // The generic "onboard --resume" catch-all would repeat this exact
+  // command and hit the identical conflict again — nothing about host
+  // state changes between attempts. Recovery requires one of the two
+  // concrete actions named in the message below, so suppress the
+  // catch-all instead of printing a recovery hint that cannot help (#10071).
+  noteOnboardResumeHintShown();
+  return new Error(
+    `Refusing to rewrite ${configPath}: it already configures a '${configuredDriver}'-driver ` +
+      `OpenShell gateway, but this run selected the '${requestedDriver}' driver. NemoClaw does not ` +
+      `share one gateway state directory between driver types. Stop the existing '${configuredDriver}'` +
+      `-driver gateway and its sandboxes first (for example \`nemoclaw uninstall\`, or destroy the ` +
+      `sandboxes that use it), or point this run at an unused state directory with ` +
+      `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR=<path>, then retry. State directory: ${stateDir}`,
+  );
+}
+
 function tomlString(value: string): string {
   return JSON.stringify(value);
 }
@@ -460,6 +495,12 @@ function existingGatewayIdentityFromConfig(
     const gatewayJwt = asTomlTable(gateway?.gateway_jwt);
     const drivers = asTomlTable(openshell?.drivers);
     const driverConfig = asTomlTable(drivers?.[driver]);
+    if (!driverConfig && parsed && openshell && gateway && gatewayJwt && drivers) {
+      const otherDriver: DockerDriverGatewayDriver = driver === "docker" ? "podman" : "docker";
+      if (asTomlTable(drivers[otherDriver])) {
+        throw crossDriverGatewayConflict(configPath, stateDir, driver, otherDriver);
+      }
+    }
     if (!parsed || !openshell || !gateway || !gatewayJwt || !drivers || !driverConfig) {
       throw ambiguousGatewayConfig(configPath, "the config does not match NemoClaw's schema");
     }
