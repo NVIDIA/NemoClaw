@@ -61,6 +61,9 @@ Review the [Prerequisites](prerequisites) before you begin.
     If you accept Express setup, wait for the installer to finish, then continue with **Confirm the Sandbox Is Ready**; Express selects the provider and model non-interactively.
     If the installer does not offer Express setup, or if you enter `n` at the Express prompt on a supported non-N1x host, choose an inference provider and model, then provide its credential when prompted.
     For that interactive path, skip optional web search and messaging setup on a first run, then accept the suggested network policy tier.
+    With the OpenShell Docker driver, stock Hermes onboarding normally uses the release's exact managed-image digest.
+    If registry or catalog availability prevents resolution, it builds the shipped repository Dockerfile instead; it never selects an unpinned `:latest` image.
+    Invalid or inconsistent catalog evidence fails closed before sandbox creation.
   </Step>
 
   <Step title="Confirm the Sandbox Is Ready">
@@ -211,7 +214,7 @@ Use these details when your first-run path needs more control.
     On supported non-N1x express platforms, enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
     On N1x, declining the preview or setting only `NEMOCLAW_NO_EXPRESS=1` stops installation before onboarding.
     Accept the preview, or set `NEMOCLAW_PROVIDER=install-vllm` before installation to provide the required explicit managed-vLLM intent.
-    The first Hermes build can take several minutes because NemoClaw builds the Hermes sandbox base image when it is not already cached.
+    The first Hermes start can take several minutes while OpenShell pulls the exact managed image when it is not already cached.
     The N1x preview selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
     Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles and headless setup.
     Refer to [Set Up vLLM on Two DGX Stations](../inference/local-inference/set-up-vllm-on-two-dgx-stations) for the Deferred paired workflow.
@@ -283,7 +286,7 @@ Use these details when your first-run path needs more control.
     Use the provider variables from [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) when you choose another provider.
     Set `NEMOCLAW_WEB_SEARCH_PROVIDER=none` to disable web search explicitly.
     When the selector is unset, Hermes enables Tavily automatically when `TAVILY_API_KEY` is available and ignores `BRAVE_API_KEY`.
-    Changing or disabling Tavily requires sandbox recreation because the backend, credential attachment, and policy selection are build-time inputs.
+    Changing or disabling Tavily requires sandbox recreation because the backend, credential attachment, and policy selection are startup-profile inputs.
     Rerun onboarding with the new selection and accept recreation, or pass `--recreate-sandbox`.
   </Accordion>
 
@@ -320,7 +323,7 @@ Use these details when your first-run path needs more control.
     ```
 
     The onboard flow starts both port forwards automatically.
-    For a new sandbox, NemoClaw reserves the selected dashboard loopback port through sandbox preparation and the image build.
+    For a new sandbox, NemoClaw reserves the selected dashboard loopback port through sandbox preparation and creation.
     If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources.
     If OpenShell returns the exact `sandbox is not ready` response, NemoClaw waits 5 seconds and retries the affected forward up to 12 times.
     The readiness-specific delays total at most 1 minute and preserve the existing sandbox and selected host port.

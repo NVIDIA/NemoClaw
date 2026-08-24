@@ -43,9 +43,14 @@ function createInput(
 }
 
 describe("prepareCreateSandboxMessaging", () => {
-  it("filters token definitions by selected and disabled channels and reuses attached missing-token providers", () => {
+  it("filters token definitions and reuses missing-token providers with matching bindings", () => {
     const registerExtraPlaceholderProviders = vi.fn(() => ["SLACK_BOT_TOKEN_AGENT_A"]);
-    const providerExistsInGateway = vi.fn((name: string) => name === "demo-slack-bridge");
+    const providerMatchesGatewayCredential = vi.fn(
+      (name: string, type: string, credentialKey: string) =>
+        name === "demo-slack-bridge" &&
+        type === "nemoclaw-mcp-v1" &&
+        credentialKey === "SLACK_BOT_TOKEN",
+    );
 
     const result = prepareCreateSandboxMessaging(
       createInput({
@@ -54,7 +59,7 @@ describe("prepareCreateSandboxMessaging", () => {
         getValidatedMessagingTokenByEnvKey: (_channels, envKey) =>
           envKey === "SLACK_APP_TOKEN" ? "xapp-valid" : null,
         registerExtraPlaceholderProviders,
-        providerExistsInGateway,
+        providerMatchesGatewayCredential,
       }),
     );
 
@@ -67,7 +72,11 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(result.hasMessagingTokens).toBe(true);
     expect(result.reusableMessagingProviders).toEqual(["demo-slack-bridge"]);
     expect(result.reusableMessagingChannels).toEqual(["slack"]);
-    expect(providerExistsInGateway).toHaveBeenCalledWith("demo-slack-bridge");
+    expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "demo-slack-bridge",
+      "nemoclaw-mcp-v1",
+      "SLACK_BOT_TOKEN",
+    );
     expect(registerExtraPlaceholderProviders).toHaveBeenCalledWith(
       "demo",
       result.messagingTokenDefs,
@@ -390,6 +399,33 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(result.reusableMessagingProviders).toEqual([]);
     expect(result.reusableMessagingChannels).toEqual([]);
     expect(providerMatchesGatewayCredential).not.toHaveBeenCalled();
+  });
+
+  it("binds static messaging credentials to the endpointless provider profile (#9875)", () => {
+    const result = prepareCreateSandboxMessaging(
+      createInput({
+        enabledChannels: ["discord", "slack"],
+        getValidatedMessagingTokenByEnvKey: (_channels, envKey) => `${envKey}-value`,
+      }),
+    );
+
+    expect(result.messagingTokenDefs).toMatchObject([
+      {
+        name: "demo-discord-bridge",
+        envKey: "DISCORD_BOT_TOKEN",
+        providerType: "nemoclaw-mcp-v1",
+      },
+      {
+        name: "demo-slack-bridge",
+        envKey: "SLACK_BOT_TOKEN",
+        providerType: "nemoclaw-mcp-v1",
+      },
+      {
+        name: "demo-slack-app",
+        envKey: "SLACK_APP_TOKEN",
+        providerType: "nemoclaw-mcp-v1",
+      },
+    ]);
   });
 
   it("uses BRAVE_API_KEY from host env when the credential store has no value", () => {

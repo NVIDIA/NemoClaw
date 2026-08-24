@@ -41,6 +41,7 @@ function bashBlockContaining(source: string, marker: string): string {
   );
 }
 
+const planReadBlock = bashBlockContaining(evidence, 'PLAN_FIELDS="$EVIDENCE_DIR/plan-fields.txt"');
 const releaseEntryBlock = bashBlockUnder(evidence, "## Release Entry and Documentation Coverage");
 const docsPrSelectionBlock = bashBlockContaining(evidence, 'SELECTED_DOCS_PR="$EVIDENCE_DIR');
 const docsPrReadBlock = bashBlockContaining(evidence, 'DOCS_PR_COMMITS="$EVIDENCE_DIR');
@@ -103,7 +104,9 @@ function runReleaseEntry(
     env: {
       ...process.env,
       CANDIDATE_SHA: input.candidate,
+      CANDIDATE_SELECTION: "current-main",
       EVIDENCE_DIR: input.evidenceDir,
+      HISTORICAL_CANDIDATE_EXCEPTION: "None",
       VERSION: version,
     },
   });
@@ -227,6 +230,49 @@ describe("release candidate evidence commands", () => {
     expect(evidence).toContain("- Maintainer decision: Proceed with the candidate as shown.");
     expect(evidence).not.toContain("approved-empty");
     expect(evidence).not.toContain("Final Documentation Recheck");
+  });
+
+  it("accepts the historical plan schema and records its release-entry exception", () => {
+    const input = fixture({ "docs/changelog/2026-08-17.mdx": "# Releases\n" });
+    const previous = input.candidate;
+    git(input.root, "commit", "--allow-empty", "-m", "test: historical candidate");
+    const candidate = git(input.root, "rev-parse", "HEAD");
+    git(input.root, "commit", "--allow-empty", "-m", "test: current main");
+    const originMain = git(input.root, "rev-parse", "HEAD");
+    const reason = "Urgent QA qualification requires the preceding main commit.";
+    const planPath = path.join(input.root, "plan.json");
+    fs.writeFileSync(
+      planPath,
+      JSON.stringify({
+        candidateCommit: candidate,
+        candidateSelection: "historical",
+        historicalCandidateException: reason,
+        nextTag: "v1.2.3",
+        originMainCommit: originMain,
+        originMainHeadline: "main",
+        previousTag: "v1.2.2",
+        previousTagCommit: previous,
+        previousTagObject: previous,
+      }),
+    );
+
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `${shellHelpers}\nPLAN_PATH="$PLAN_PATH"\n${planReadBlock}\ntrap - EXIT\n${releaseEntryBlock}`,
+      ],
+      {
+        cwd: input.root,
+        encoding: "utf8",
+        env: { ...process.env, EVIDENCE_DIR: input.evidenceDir, PLAN_PATH: planPath },
+      },
+    );
+
+    expect(result.status, String(result.stderr)).toBe(0);
+    expect(fs.readFileSync(path.join(input.evidenceDir, "release-entry.md"), "utf8").trim()).toBe(
+      `Release entry exception: ${reason}`,
+    );
   });
 
   it("extracts only the exact release H2 section from a multi-entry changelog", () => {

@@ -24,7 +24,7 @@
       "src/lib/inference/web-search.ts": 21,
       "src/lib/messaging/channels/index.ts": 25,
       "src/lib/onboard/gateway-binding.ts": 52,
-      "src/lib/runner.ts": 87,
+      "src/lib/runner.ts": 86,
       "src/lib/security/redact.ts": 54,
       "src/lib/state/onboard-session.ts": 37,
       "src/lib/state/registry.ts": 101,

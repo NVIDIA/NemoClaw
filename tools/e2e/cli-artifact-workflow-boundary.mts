@@ -45,7 +45,7 @@ const CLI_ARTIFACT_DOWNLOAD_STEP = "Download exact-commit CLI artifact";
 const CLI_ARTIFACT_VERIFY_STEP = "Verify and restore exact-commit CLI artifact";
 const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
 const CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 =
-  "3578a053cede863f7aa4814d8399b4ca21ea0b77cee712e6d549c684818f11dd";
+  "80a0506fc363084ae181a7f562f56dfa1f3243a69bb433d2a78379f3a213bd45";
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
   env?: WorkflowRecord;
@@ -267,6 +267,9 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
 
     ".sourceRevision == $candidateSha",
     "candidate CLI build identity does not match the candidate commit SHA",
+    ".source.revision == $revision",
+    ".source.release == $release",
+    "managed-image catalog source identity does not match the candidate",
     "--sort=name",
     "--mtime=@0",
     "nemoclaw/dist/shared",

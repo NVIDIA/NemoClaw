@@ -35,11 +35,13 @@ import {
 } from "./experimental/portable-agent-lifecycle";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 import {
+  createManagedBootstrapIdentity,
   type ManagedBootstrapAdapter,
   type ManagedBootstrapAgentIdentity,
   type ManagedBootstrapAuthorityStore,
   type ManagedBootstrapImageIdentity,
   ManagedBootstrapRecoveryBlockedError,
+  renderManagedBootstrapHeldCommand,
 } from "./managed-bootstrap/adapter";
 import type { ManagedBootstrapRuntimePatch } from "./managed-bootstrap/runtime-create";
 import { assertPortableManagedBootstrapNotSelected } from "./managed-workload/onboard-orchestration";
@@ -51,6 +53,7 @@ import type {
 } from "./runtime-provider/contract";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
+import { managedBootstrapCreateArgs } from "./sandbox-create-launch";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
   createDirectSandboxGpuVerifier,
@@ -344,27 +347,49 @@ export async function runSandboxGpuCreateFlow(
         );
         if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
       },
-      cleanupNativeFailure: () =>
-        sandboxGpuCreateAttempt.cleanupNativeGpuAttemptForFallback(input.sandboxName, {
-          runOpenshell: deps.runOpenshell,
-          sleep: deps.sleep,
-        }),
+      cleanupNativeFailure: (failure) => {
+        return sandboxGpuCreateAttempt.cleanupNativeGpuFailureForFallback(
+          input.sandboxName,
+          failure,
+          {
+            runOpenshell: deps.runOpenshell,
+            sleep: deps.sleep,
+          },
+        );
+      },
       prepareCompatibilityAttempt: async () => {
         if (!input.compatibilityPolicyPath) {
           throw new Error("Compatibility retry policy was not materialized.");
         }
         const nativeRuntimeSnapshot = attemptRunner.state.nativeRuntimeSnapshot;
         if (attemptRunner.managedRouting) {
+          const managedBootstrap = input.managedBootstrap;
+          if (!managedBootstrap) {
+            throw new Error("Managed compatibility routing is missing bootstrap authority.");
+          }
+          const bootstrapIdentity = createManagedBootstrapIdentity();
+          const heldWorkloadArgv = [
+            ...renderManagedBootstrapHeldCommand(
+              managedBootstrap.request,
+              bootstrapIdentity,
+              managedBootstrap.intendedWorkloadArgv,
+            ),
+          ];
           const prepared = attemptRunner.managedRouting.prepareCompatibilityLaunch({
-            createArgs: input.prebuild.createArgs,
+            createArgs: managedBootstrapCreateArgs(
+              input.prebuild.createArgs,
+              bootstrapIdentity,
+            ),
             currentRegistryImageRef: registryImageRef,
             prebuildImageId: input.prebuild.imageId,
             allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
             compatibilityPolicyPath: input.compatibilityPolicyPath,
-            startupCommand: input.sandboxStartupCommand,
+            startupCommand: heldWorkloadArgv,
             runtimeSnapshot: nativeRuntimeSnapshot,
           });
           attemptRunner.state.compatibilityArgv = [...prepared.createArgv];
+          attemptRunner.state.compatibilityBootstrapIdentity = bootstrapIdentity;
+          attemptRunner.state.compatibilityHeldWorkloadArgv = heldWorkloadArgv;
           registryImageRef = prepared.registryImageRef;
         } else {
           const prebuildImageId = input.prebuild.imageId;
@@ -437,7 +462,9 @@ export async function runSandboxGpuCreateFlow(
       );
     }
     console.error(
-      hermesPortableLifecycle
+      gpuCreateOutcome.nativeCleanupHandoff
+        ? `  Managed bootstrap retained exact owner-cleanup authority for sandbox '${input.sandboxName}'. Do not delete a runtime by mutable sandbox name; preserve it for identity-bound recovery.`
+        : hermesPortableLifecycle
         ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
         : `  Manual cleanup: openshell sandbox delete "${input.sandboxName}"`,
     );

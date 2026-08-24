@@ -11,15 +11,26 @@ import YAML from "yaml";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 
-function resolverScript(): string {
+type WorkflowStep = { name?: string; run?: string; with?: Record<string, string> };
+
+function workflowSteps(job: string): WorkflowStep[] {
   const workflow = YAML.parse(
     fs.readFileSync(path.join(repoRoot, ".github/workflows/managed-images.yaml"), "utf8"),
-  ) as {
-    jobs?: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
-  };
-  const resolver = workflow.jobs?.["pr-build-and-entrypoint"]?.steps?.find(
-    ({ name }) => name === "Resolve exact linux/amd64 PR base",
-  )?.run;
+  ) as { jobs?: Record<string, { steps?: WorkflowStep[] }> };
+  return workflow.jobs?.[job]?.steps ?? [];
+}
+
+function workflowStep(job: string, name: string): WorkflowStep {
+  return (
+    workflowSteps(job).find((step) => step.name === name) ??
+    (() => {
+      throw new Error(`${job} step is missing: ${name}`);
+    })()
+  );
+}
+
+function resolverScript(): string {
+  const resolver = workflowStep("pr-build-and-entrypoint", "Resolve exact linux/amd64 PR base").run;
   return (
     resolver ??
     (() => {
@@ -27,6 +38,31 @@ function resolverScript(): string {
     })()
   );
 }
+
+it("keeps immutable DCode base metadata on exact PR and production images", () => {
+  const prJob = "pr-build-and-entrypoint";
+  const productionJob = "build-and-validate";
+  const prResolver = resolverScript();
+  const prLocalBuild = workflowStep(prJob, "Build PR managed image from local base");
+  const prRegistryBuild = workflowStep(prJob, "Build PR managed image from registry base");
+  const prPublish = workflowStep(prJob, "Publish exact same-repository PR managed image by digest");
+  const prValidate = workflowStep(prJob, "Validate exact PR managed image contract");
+  const productionBase = workflowStep(productionJob, "Validate exact base image contract");
+  const productionBuild = workflowStep(productionJob, "Build and push managed image by digest");
+  const productionValidate = workflowStep(
+    productionJob,
+    "Validate exact managed image before promotion",
+  );
+
+  expect(prResolver).toContain("sourceRevision:$revision");
+  expect(prLocalBuild.run).toContain("com.nvidia.nemoclaw.base-resolution=${RESOLUTION_LABEL}");
+  expect(prRegistryBuild.with?.labels).toContain("com.nvidia.nemoclaw.base-resolution={0}");
+  expect(prPublish.with?.labels).toContain("com.nvidia.nemoclaw.base-resolution={0}");
+  expect(productionBuild.with?.labels).toContain("com.nvidia.nemoclaw.base-resolution={0}");
+  expect(productionBase.run).toContain("sourceRevision:$revision");
+  expect(prValidate.run).toContain("managed image lost base resolution metadata");
+  expect(productionValidate.run).toContain("image lost base resolution metadata");
+});
 
 it("builds a changed PR base locally and fails closed on comparison errors", () => {
   const resolver = resolverScript();
@@ -87,6 +123,7 @@ exit 90
   );
   const environment = {
     ...process.env,
+    AGENT: "openclaw",
     BASE_ALIAS: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
     BASE_DOCKERFILE: "Dockerfile.base",
     BASE_REPOSITORY: "ghcr.io/nvidia/nemoclaw/sandbox-base",

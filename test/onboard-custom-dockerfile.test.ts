@@ -235,6 +235,7 @@ runner.run = (command, opts = {}) => {
     ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
+require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
@@ -312,9 +313,10 @@ const { createSandbox } = require(${onboardPath});
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
         },
+        timeout: 30_000,
       });
 
-      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.status, 0, result.stderr || result.error?.message);
       const payloadLine = result.stdout
         .trim()
         .split("\n")

@@ -144,9 +144,11 @@ export interface DockerStateMutationHarnessOptions {
   readonly deferAcquireOnce?: boolean;
   readonly failAcquire?: boolean;
   readonly failReleaseOnce?: boolean;
+  readonly failResumeOnce?: boolean;
   readonly lifecycleGeneration?: string;
   readonly loseAcquireResponseOnce?: boolean;
   readonly loseReleaseResponseOnce?: boolean;
+  readonly signalHelperOnce?: boolean;
   readonly stateMountType?: "bind" | "volume";
 }
 
@@ -160,6 +162,7 @@ export interface DockerStateMutationHarnessState {
   pidMode: string;
   privileged: boolean;
   overlayProc: boolean;
+  supervisorStopped: boolean;
 }
 
 function createContainerStateMutationHarness(
@@ -182,16 +185,25 @@ function createContainerStateMutationHarness(
     pidMode: "",
     privileged: false,
     overlayProc: false,
+    supervisorStopped: false,
   };
   const helperActions: string[] = [];
+  const supervisorSignals: string[] = [];
   const acquireRequests: string[] = [];
+  const transportCopySourceModes: number[] = [];
   let acquireDeferralsRemaining = options.deferAcquireOnce ? 1 : 0;
   let lostAcquireResponsesRemaining = options.loseAcquireResponseOnce ? 1 : 0;
   let releaseFailuresRemaining = options.failReleaseOnce ? 1 : 0;
+  let resumeFailuresRemaining = options.failResumeOnce ? 1 : 0;
   let lostReleaseResponsesRemaining = options.loseReleaseResponseOnce ? 1 : 0;
+  let signalledHelpersRemaining = options.signalHelperOnce ? 1 : 0;
   let marker: Record<string, unknown> | null = null;
   let releasedMarker: Record<string, unknown> | null = null;
   let deferredAcquireRequest: string | null = null;
+  let brokerActive = false;
+  let brokerReleased = false;
+  let brokerTransactionId: string | null = null;
+  const transportFiles = new Map<string, Buffer>();
 
   const acquireMarker = (request: Record<string, unknown>) => {
     const candidate = {
@@ -282,14 +294,162 @@ function createContainerStateMutationHarness(
         stderr: "",
       };
     }
+    if (command[0] === "container" && command[1] === "kill") {
+      if (
+        command.length !== 5 ||
+        command[2] !== "--signal" ||
+        !["SIGSTOP", "SIGCONT"].includes(command[3] ?? "") ||
+        command[4] !== DOCKER_STATE_MUTATION_RUNTIME_ID
+      ) {
+        return { status: 1, stdout: "", stderr: "unauthorized supervisor command" };
+      }
+      const requestedSignal = command[3] as "SIGSTOP" | "SIGCONT";
+      supervisorSignals.push(requestedSignal);
+      if (requestedSignal === "SIGCONT" && resumeFailuresRemaining > 0) {
+        resumeFailuresRemaining -= 1;
+        return { status: 1, stdout: "", stderr: "supervisor resume unavailable" };
+      }
+      state.supervisorStopped = requestedSignal === "SIGSTOP";
+      return { status: 0, stdout: `${DOCKER_STATE_MUTATION_RUNTIME_ID}\n`, stderr: "" };
+    }
+    if (command[0] === "container" && command[1] === "cp") {
+      const source = command[2] ?? "";
+      const destination = command[3] ?? "";
+      const containerPrefix = `${DOCKER_STATE_MUTATION_RUNTIME_ID}:`;
+      if (destination.startsWith(containerPrefix)) {
+        const containerPath = destination.slice(containerPrefix.length);
+        const descriptor = fs.openSync(source, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+        let payload: Buffer;
+        try {
+          transportCopySourceModes.push(fs.fstatSync(descriptor).mode & 0o777);
+          payload = fs.readFileSync(descriptor);
+        } finally {
+          fs.closeSync(descriptor);
+        }
+        transportFiles.set(containerPath, payload);
+        if (containerPath.endsWith(".incoming")) {
+          const incoming =
+            /^([a-f0-9]{64})\.(acquire|assert|publish|recover|rollback|activate|release)\.incoming$/u.exec(
+              path.posix.basename(containerPath),
+            );
+          if (incoming) {
+            const [, identity, action] = incoming;
+            const request = payload;
+            const envelope = JSON.parse(request.toString("utf8")) as { action?: string };
+            if (envelope.action === action) {
+              transportFiles.delete(containerPath);
+              const helperTimeout =
+                action === "acquire" || action === "assert"
+                  ? 30_000
+                  : action === "activate" || action === "release"
+                    ? 5 * 60_000
+                    : 15 * 60_000;
+              let helperResult = capture(
+                "docker",
+                [
+                  "container",
+                  "exec",
+                  "--nemoclaw-broker",
+                  DOCKER_STATE_MUTATION_RUNTIME_ID,
+                  "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
+                  action,
+                ],
+                helperTimeout,
+                request,
+              );
+              if (helperResult.status !== null && helperResult.status < 0) {
+                helperResult = capture(
+                  "docker",
+                  [
+                    "container",
+                    "exec",
+                    "--nemoclaw-broker",
+                    DOCKER_STATE_MUTATION_RUNTIME_ID,
+                    "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
+                    action,
+                  ],
+                  helperTimeout,
+                  request,
+                );
+              }
+              transportFiles.set(
+                `${path.posix.dirname(containerPath)}/${identity}.response`,
+                Buffer.from(
+                  `${JSON.stringify({
+                    schemaVersion: 1,
+                    action,
+                    identity,
+                    status: helperResult.status,
+                    stdout: helperResult.stdout,
+                    stderr: helperResult.stderr,
+                  })}\n`,
+                  "utf8",
+                ),
+              );
+            }
+          }
+        } else if (containerPath.endsWith(".ack")) {
+          const base = containerPath.slice(0, -4);
+          const response = transportFiles.get(`${base}.response`);
+          if (response) {
+            const parsed = JSON.parse(response.toString("utf8")) as {
+              action?: string;
+              status?: number;
+            };
+            if (parsed.action === "release" && parsed.status === 0) brokerReleased = true;
+          }
+          for (const suffix of [".response", ".ack"]) {
+            transportFiles.delete(`${base}${suffix}`);
+          }
+        } else if (
+          containerPath.endsWith("/resumed") &&
+          brokerReleased &&
+          brokerTransactionId !== null &&
+          payload.equals(Buffer.from(`${brokerTransactionId}\n`, "ascii"))
+        ) {
+          const session = path.posix.dirname(containerPath);
+          for (const file of [...transportFiles.keys()]) {
+            if (file === session || file.startsWith(`${session}/`)) transportFiles.delete(file);
+          }
+          brokerActive = false;
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      if (source.startsWith(containerPrefix)) {
+        const containerPath = source.slice(containerPrefix.length);
+        const payload = transportFiles.get(containerPath);
+        if (!payload) return { status: 1, stdout: "", stderr: "transport file unavailable" };
+        fs.writeFileSync(destination, payload, { mode: 0o600 });
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "unauthorized transport copy" };
+    }
     if (command[0] !== "container" || command[1] !== "exec") {
       return { status: 1, stdout: "", stderr: "unexpected command" };
+    }
+    if (command[2] === "--detach") {
+      const transactionId = command.at(-1) ?? "";
+      brokerActive = true;
+      brokerReleased = false;
+      brokerTransactionId = transactionId;
+      transportFiles.set(
+        `/run/nemoclaw/runtime-state-mutation/${transactionId}/ready`,
+        Buffer.from(`${transactionId}\n`, "ascii"),
+      );
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    const brokerInvocation = command[2] === "--nemoclaw-broker";
+    if (providerId === "docker" && state.supervisorStopped && !brokerInvocation) {
+      return { status: 1, stdout: "", stderr: "docker exec blocked after supervisor stop" };
     }
     const action = command.at(-1) ?? "";
     helperActions.push(action);
     const serializedRequest = input?.toString("utf8") ?? "null";
     const request = JSON.parse(serializedRequest) as Record<string, unknown>;
     if (action === "acquire") {
+      if (!state.supervisorStopped) {
+        return { status: 1, stdout: "", stderr: "supervisor-not-host-stopped" };
+      }
       acquireRequests.push(serializedRequest);
       if (options.failAcquire) {
         return { status: 1, stdout: "", stderr: "helper marker unavailable" };
@@ -374,6 +534,10 @@ function createContainerStateMutationHarness(
     } else if (releasedMarker === marker) {
       marker = null;
     }
+    if (signalledHelpersRemaining > 0) {
+      signalledHelpersRemaining -= 1;
+      return { status: -15, stdout: "", stderr: "" };
+    }
     return { status: 0, stdout: `${JSON.stringify(response)}\n`, stderr: "" };
   });
   const root = temporaryRoot();
@@ -414,6 +578,7 @@ function createContainerStateMutationHarness(
     lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: DOCKER_STATE_MUTATION_SANDBOX_FINGERPRINT,
     runtimeId: DOCKER_STATE_MUTATION_RUNTIME_ID,
+    hostTransportRoot: root,
     authority,
     engineAuthorityStore,
     lifecycleStore,
@@ -456,6 +621,9 @@ function createContainerStateMutationHarness(
     context,
     engineAuthorityStore,
     helperActions,
+    supervisorSignals,
+    transportBrokerActive: () => brokerActive,
+    transportCopySourceModes,
     lifecycleStore,
     lifecycleGeneration,
     owner,

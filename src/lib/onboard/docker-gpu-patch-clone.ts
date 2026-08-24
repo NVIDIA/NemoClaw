@@ -482,13 +482,6 @@ export function buildDockerGpuCloneRunArgs(
   pushStringFlag(args, "--workdir", config.WorkingDir);
   if (config.Tty) args.push("--tty");
   if (config.OpenStdin) args.push("--interactive");
-  for (const stream of [
-    ...(config.AttachStdin ? ["stdin"] : []),
-    ...(config.AttachStdout ? ["stdout"] : []),
-    ...(config.AttachStderr ? ["stderr"] : []),
-  ]) {
-    args.push("--attach", stream);
-  }
 
   const sandboxCommand = openshellSandboxCommandEnvValue(options.openshellSandboxCommand);
   const omitOciImageUser = shouldOmitOpenShellOciImageUser(

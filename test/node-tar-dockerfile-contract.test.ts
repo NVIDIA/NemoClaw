@@ -6,7 +6,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH } from "../scripts/patch-bundled-npm-tar.mts";
+import {
+  FIXED_TAR_VERSION,
+  NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH,
+} from "../scripts/patch-bundled-npm-tar.mts";
 import {
   dockerfileRunCommandPositions,
   requireReviewedDockerfileRunCommands,
@@ -61,6 +64,12 @@ const dockerfiles = [
 ] as const;
 const patchCommand = "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts";
 const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
+const hermesFinalArchivePath = "/tmp/nemoclaw-bundled-npm-tar.tgz";
+const hermesFinalPatchArguments = [
+  ...npmRootArguments,
+  "--archive",
+  hermesFinalArchivePath,
+] as const;
 const pinnedBaseDockerfiles = [
   "Dockerfile.base",
   "agents/hermes/Dockerfile.base",
@@ -324,12 +333,23 @@ describe("node-tar image remediation contract", () => {
       const patchRuns = requireReviewedDockerfileRunCommands(
         source,
         patchCommand,
-        npmRootArguments,
+        file === "agents/hermes/Dockerfile" ? hermesFinalPatchArguments : npmRootArguments,
         entry.patchCount,
       );
       const firstPatchRun = patchRuns[0]!.commandStart;
       const lastPatchRun = patchRuns.at(-1)!.commandStart;
       const patchInputReady = patchPayloadLayer >= 0 ? patchPayloadLayer : patchCopy;
+
+      const archiveCopy = `COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-${FIXED_TAR_VERSION}.tgz ${hermesFinalArchivePath}`;
+      const archiveCopyIndex = source.indexOf(archiveCopy);
+      expect({
+        archiveBeforePatch: archiveCopyIndex >= 0 && firstPatchRun > archiveCopyIndex,
+        archivePresent: archiveCopyIndex >= 0,
+      }).toEqual(
+        file === "agents/hermes/Dockerfile"
+          ? { archiveBeforePatch: true, archivePresent: true }
+          : { archiveBeforePatch: false, archivePresent: false },
+      );
 
       expect(reviewedCopy, file).toBeGreaterThanOrEqual(0);
       expect(

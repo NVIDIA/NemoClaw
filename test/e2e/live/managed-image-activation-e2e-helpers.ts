@@ -100,6 +100,27 @@ type DockerGuard = {
   readonly dispose: () => void;
 };
 
+export function managedActivationOnboardArgs(
+  catalogPath: string,
+  agent: ShippedManagedImageAgent,
+  sandboxName: string,
+): string[] {
+  return [
+    "onboard",
+    "--temp-managed-runtime-catalog",
+    catalogPath,
+    "--fresh",
+    "--recreate-sandbox",
+    "--non-interactive",
+    "--yes",
+    "--no-gpu",
+    "--agent",
+    agent,
+    "--name",
+    sandboxName,
+  ];
+}
+
 function requiredCatalogPath(): string {
   const value = process.env.NEMOCLAW_MANAGED_ACTIVATION_CATALOG;
   if (!value || !path.isAbsolute(value)) {
@@ -465,21 +486,7 @@ async function qualifyAgent(
 
   enterOnboardPhase(progress, agent);
   const onboard = await host.nemoclaw(
-    [
-      "onboard",
-      "--temp-managed-runtime",
-      "--temp-managed-runtime-catalog",
-      catalogPath,
-      "--fresh",
-      "--recreate-sandbox",
-      "--non-interactive",
-      "--yes",
-      "--no-gpu",
-      "--agent",
-      agent,
-      "--name",
-      sandboxName,
-    ],
+    managedActivationOnboardArgs(catalogPath, agent, sandboxName),
     {
       artifactName: `managed-activation-onboard-${agent}`,
       env,

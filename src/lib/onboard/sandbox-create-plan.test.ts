@@ -23,6 +23,12 @@ const selectedSandboxGpuConfig: SandboxGpuCreateConfig = {
   sandboxGpuDevice: "nvidia.com/gpu=0",
 };
 
+const disabledSandboxGpuConfig: SandboxGpuCreateConfig = {
+  sandboxGpuEnabled: false,
+  sandboxGpuDevice: null,
+  hostGpuDetected: false,
+};
+
 afterEach(() => {
   vi.unstubAllEnvs();
 });
@@ -237,6 +243,51 @@ describe("resolveSandboxCreateIntent", () => {
     expect(JSON.stringify(first)).not.toContain("/tmp/");
   });
 
+  it("attaches a retained static provider while its channel runtime is stopped (#9773)", () => {
+    const intent = resolveSandboxCreateIntent({
+      basePolicyPath: "/repo/hermes-policy.yaml",
+      sandboxName: "sandbox",
+      channels,
+      enabledChannels: ["discord"],
+      disabledChannelNames: new Set(["discord"]),
+      // Disabled credential definitions are not provider requests: onboard must
+      // not create or update their gateway providers during the rebuild.
+      messagingProviderRequests: [],
+      primaryMessagingCredentialEnvKeys: ["DISCORD_BOT_TOKEN"],
+      reusableMessagingChannels: [],
+      reusableMessagingProviders: ["sandbox-discord-bridge"],
+      extraProviders: [],
+      hermesToolGateways: [],
+      sandboxGpuConfig: disabledSandboxGpuConfig,
+      gpuCreateArgs: [],
+      gpuRoutePlan: "none",
+      sandboxGpuLogMessage: null,
+      agentName: "hermes",
+      policyTier: "balanced",
+    });
+    const upsertMessagingProviders = vi.fn(() => []);
+
+    const plan = materializeSandboxCreatePlan({
+      intent,
+      fromRef: "/tmp/Dockerfile",
+      messagingTokenDefs: [],
+      runProviderPreDeleteCleanup: vi.fn(),
+      upsertMessagingProviders,
+      getHermesToolGatewayProviderName: vi.fn(),
+      prepareInitialSandboxCreatePolicy: vi.fn(() => ({
+        policyPath: "/tmp/policy.yaml",
+        appliedPresets: [],
+      })),
+    });
+
+    expect(upsertMessagingProviders).toHaveBeenCalledWith([], {
+      replaceExisting: true,
+      allowedSandboxes: ["sandbox"],
+    });
+    expect(plan.messagingProviders).toEqual(["sandbox-discord-bridge"]);
+    expect(plan.createArgs).toContain("sandbox-discord-bridge");
+  });
+
   it("keeps the real gateway provider while excluding direct host-local inference policy", () => {
     const intent = resolveSandboxCreateIntent({
       basePolicyPath: "/repo/policy.yaml",
@@ -331,9 +382,13 @@ describe("resolveSandboxCreateIntent", () => {
         expect(policy.appliedPresets).toEqual(["telegram"]);
       },
       runProviderPreDeleteCleanup: () => events.push("cleanup"),
-      upsertMessagingProviders: vi.fn((receivedTokenDefs) => {
+      upsertMessagingProviders: vi.fn((receivedTokenDefs, options) => {
         events.push("upsert");
         expect(receivedTokenDefs).toEqual(tokenDefs);
+        expect(options).toEqual({
+          replaceExisting: true,
+          allowedSandboxes: ["sandbox"],
+        });
         return ["sandbox-telegram-bridge"];
       }),
       getHermesToolGatewayProviderName: (sandboxName) => {
