@@ -64,8 +64,8 @@ export function writeSpecialistSummary(
   return file;
 }
 
-export function writeSpecialistDiff(configDir: string, diff: string): string {
-  const directory = path.join(configDir, "context");
+export function writeSpecialistDiff(workspace: string, diff: string): string {
+  const directory = path.join(workspace, ".pr-review-advisor-context");
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   fs.chmodSync(directory, 0o700);
   const file = path.join(directory, "diff.patch");
@@ -112,7 +112,7 @@ async function main(): Promise<void> {
   delete process.env.GH_TOKEN;
   delete process.env.GITHUB_TOKEN;
 
-  const diffPath = writeSpecialistDiff(configDir, diff);
+  const diffPath = writeSpecialistDiff(process.cwd(), diff);
 
   const turn = buildSpecialistInvestigateTurn(interest, {
     metadata: JSON.stringify({ version: 1, baseRef, headRef, headSha, changedFiles }, null, 2),

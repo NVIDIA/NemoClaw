@@ -79,8 +79,6 @@ const CONFIDENCES = ["low", "medium", "high"] as const;
 const SUMMARY_RECOMMENDATIONS = [
   "merge_as_is",
   "merge_after_fixes",
-  "needs_rework",
-  "blocked",
   "superseded",
   "info_only",
 ] as const;

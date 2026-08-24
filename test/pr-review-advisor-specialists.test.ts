@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { canonicalRepoReadPath } from "../tools/advisors/repo-read-only-tools.mts";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { TERMINOLOGY_TRACE_TOOL } from "../tools/pr-review-advisor/terminology.mts";
@@ -49,15 +50,18 @@ const context: InvestigateTurnContext = {
 };
 
 describe("PR review advisor specialist prompts", () => {
-  it("writes diff evidence to a new owner-only runtime path", () => {
-    const configDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-config-"));
-    onTestFinished(() => fs.rmSync(configDir, { recursive: true, force: true }));
-    const directory = path.join(configDir, "context");
+  it("writes readable diff evidence inside the specialist workspace", async () => {
+    const workspace = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-workspace-"));
+    onTestFinished(() => fs.rmSync(workspace, { recursive: true, force: true }));
+    const directory = path.join(workspace, ".pr-review-advisor-context");
     const expected = path.join(directory, "diff.patch");
 
-    const file = writeSpecialistDiff(configDir, "diff evidence");
+    const file = writeSpecialistDiff(workspace, "diff evidence");
 
     expect(file).toBe(expected);
+    await expect(canonicalRepoReadPath(workspace, ".pr-review-advisor-context/diff.patch")).resolves.toBe(
+      expected,
+    );
     expect(fs.readFileSync(file, "utf8")).toBe("diff evidence");
     expect(fs.statSync(directory).mode & 0o777).toBe(0o700);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
@@ -66,7 +70,7 @@ describe("PR review advisor specialist prompts", () => {
   it("tightens an existing specialist diff path", () => {
     const configDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-config-"));
     onTestFinished(() => fs.rmSync(configDir, { recursive: true, force: true }));
-    const directory = path.join(configDir, "context");
+    const directory = path.join(configDir, ".pr-review-advisor-context");
     const expected = path.join(directory, "diff.patch");
     fs.mkdirSync(directory, { mode: 0o755 });
     fs.writeFileSync(expected, "stale", { mode: 0o644 });
