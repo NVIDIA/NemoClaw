@@ -5,7 +5,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { buildRiskPlan } from "../../tools/advisors/risk-plan.mts";
-import type { ReviewAdvisorResult, ReviewMetadata } from "../../tools/pr-review-advisor/analyze.mts";
+import type {
+  ReviewAdvisorResult,
+  ReviewMetadata,
+} from "../../tools/pr-review-advisor/analyze.mts";
 
 export const ROOT = path.resolve(import.meta.dirname, "../..");
 
@@ -26,7 +29,7 @@ export function metadata(overrides: Partial<ReviewMetadata> = {}): ReviewMetadat
       candidateExistingCoverage: [],
     },
     simplificationSignals: [],
-        workflowSignals: [],
+    workflowSignals: [],
     localizedPatchSignals: [],
     driftEvidence: [],
     github: null,
@@ -46,9 +49,7 @@ export function loadAdvisorSchema(): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(schemaPath, "utf-8")) as Record<string, unknown>;
 }
 
-export function validResult(
-  overrides: Record<string, unknown> = {},
-): ReviewAdvisorResult {
+export function validResult(overrides: Record<string, unknown> = {}): ReviewAdvisorResult {
   return {
     version: 1,
     baseRef: "origin/main",
@@ -86,13 +87,6 @@ export function validResult(
         clause: "post a sticky advisory comment",
         status: "met",
         evidence: "comment.mts uses marker",
-      },
-    ],
-    securityCategories: [
-      {
-        category: "Secrets and Credentials",
-        verdict: "pass",
-        justification: "No secrets in diff.",
       },
     ],
     sourceOfTruthReview: [
