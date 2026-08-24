@@ -238,7 +238,8 @@ describe("pre-backup audit record framing", () => {
       ]),
     );
 
-    expect(backup.error ?? "").not.toMatch(/Pre-backup audit rejected/);
+    expect(backup.success, backup.error).toBe(true);
+    expect(backup.error).toBeUndefined();
   });
 
   it("rejects output that does not contain complete field triples", () => {
