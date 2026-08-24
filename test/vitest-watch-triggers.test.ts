@@ -45,6 +45,7 @@ const E2E_WORKFLOW_CONTRACTS = [
 
 const OPAQUE_INPUTS = [
   ".github/workflows/release-daily-brev-image.yaml",
+  "test/helpers/onboard-script-mocks.cjs",
   "scripts/release-daily-brev-image.sh",
   ".github/workflows/release-lkg-brev-image.yaml",
   "scripts/release-lkg-brev-image.sh",
@@ -109,6 +110,18 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
+  it("maps the onboard child-process preload to its managed-image fixtures", () => {
+    expect(triggeredBy("test/helpers/onboard-script-mocks.cjs")).toEqual([
+      "test/onboard-extra-provider-reconciliation.test.ts",
+      "test/onboard-installer-restore-intent.test.ts",
+      "test/onboard-messaging.test.ts",
+      "test/onboard-reservation-recreate.test.ts",
+      "test/onboard-sandbox-build.test.ts",
+      "test/onboard-sandbox-recreation.test.ts",
+      "test/onboard-terminal-dashboard.test.ts",
+    ]);
+  });
+
   it.each([".github/workflows/pr.yaml", ".github/workflows/pr.yml"])(
     "maps YAML workflow files to the shared display-name contract [%s]",
     (workflowPath) => {

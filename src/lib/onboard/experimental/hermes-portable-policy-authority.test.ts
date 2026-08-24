@@ -26,6 +26,56 @@ network_policies:
 version: 1
 `);
 
+const NATIVE_GPU_CREATE = Buffer.from(`version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /etc
+    - /app
+    - /var/log
+    - /dev/urandom
+  read_write:
+    - /tmp
+network_policies:
+  inference:
+    name: inference
+    endpoints:
+      - host: inference.local
+        port: 443
+`);
+
+const NATIVE_GPU_LIVE = Buffer.from(`version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /etc
+    - /app
+    - /var/log
+    - /dev/urandom
+    - /run/nvidia-persistenced
+    - /usr/lib/wsl
+  read_write:
+    - /tmp
+    - /proc
+    - /dev/nvidiactl
+    - /dev/nvidia-uvm
+    - /dev/nvidia-uvm-tools
+    - /dev/nvidia-modeset
+    - /dev/dxg
+    - /dev/nvidia0
+    - /dev/nvidia1
+network_policies:
+  inference:
+    name: inference
+    endpoints:
+      - host: inference.local
+        port: 443
+`);
+
 function result(
   stdout: Buffer,
   status = 0,
@@ -60,6 +110,72 @@ describe("Hermes portable policy authority", () => {
       [["policy", "get", "-g", "nemoclaw", "--base", "alpha"]],
       [["policy", "get", "-g", "nemoclaw", "--full", "alpha"]],
     ]);
+  });
+
+  it("accepts only OpenShell's documented native-GPU baseline enrichment (#10121)", () => {
+    const capture = vi.fn(() => result(NATIVE_GPU_LIVE));
+
+    const proof = proveHermesPortableLivePolicy({
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+      createPolicyBytes: NATIVE_GPU_CREATE,
+      capture,
+    });
+
+    expect(proof.verifiedLivePolicySemanticSha256).not.toBe(proof.intendedSemanticSha256);
+    expect(capture).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    {
+      label: "an arbitrary added path",
+      create: NATIVE_GPU_CREATE,
+      live: NATIVE_GPU_LIVE.toString("utf8").replace("    - /dev/nvidia0\n", "    - /home\n"),
+    },
+    {
+      label: "an intended path removal",
+      create: NATIVE_GPU_CREATE,
+      live: NATIVE_GPU_LIVE.toString("utf8").replace("    - /usr\n", ""),
+    },
+    {
+      label: "a non-filesystem change",
+      create: NATIVE_GPU_CREATE,
+      live: NATIVE_GPU_LIVE.toString("utf8").replace("port: 443", "port: 8443"),
+    },
+    {
+      label: "a near-match GPU device path",
+      create: NATIVE_GPU_CREATE,
+      live: NATIVE_GPU_LIVE.toString("utf8").replace("/dev/nvidia0", "/dev/nvidia0/escape"),
+    },
+    {
+      label: "a duplicate live path",
+      create: NATIVE_GPU_CREATE,
+      live: NATIVE_GPU_LIVE.toString("utf8").replace(
+        "    - /dev/nvidia0\n",
+        "    - /dev/nvidia0\n    - /dev/nvidia0\n",
+      ),
+    },
+    {
+      label: "GPU additions without the documented /proc promotion",
+      create: NATIVE_GPU_CREATE,
+      live: NATIVE_GPU_LIVE.toString("utf8").replace("    - /proc\n", ""),
+    },
+    {
+      label: "GPU enrichment of an ordinary policy",
+      create: Buffer.from(
+        NATIVE_GPU_CREATE.toString("utf8").replace("    - /etc\n", "    - /etc\n    - /proc\n"),
+      ),
+      live: NATIVE_GPU_LIVE.toString("utf8"),
+    },
+  ])("rejects $label as unproven policy drift (#10121)", ({ create, live }) => {
+    expect(() =>
+      proveHermesPortableLivePolicy({
+        gatewayName: "nemoclaw",
+        sandboxName: "alpha",
+        createPolicyBytes: Buffer.isBuffer(create) ? create : Buffer.from(create),
+        capture: () => result(Buffer.from(live)),
+      }),
+    ).toThrow("base policy disagrees");
   });
 
   it("rejects a reserved provider entry in the exact create input (#9203)", () => {
