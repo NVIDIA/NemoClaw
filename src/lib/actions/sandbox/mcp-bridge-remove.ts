@@ -15,6 +15,7 @@ import {
 import { isAgentMcpAdapter, McpBridgeError } from "./mcp-bridge-contracts";
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import {
+  buildMcpBridgePolicyKey,
   buildRequiredMcpBridgePolicy,
   McpPolicyAuthorityRefusalError,
   qualifyMcpPolicyAuthorityReceipt,
@@ -49,8 +50,6 @@ import {
   validateSandboxName,
 } from "./mcp-bridge-validation";
 
-const MCP_REMOVE_AUTHORITY_PROBE_POLICY = "network_policies: {}\n";
-
 function rethrowMcpPolicyAuthorityRefusal(error: unknown): void {
   if (error instanceof McpPolicyAuthorityRefusalError) throw error;
 }
@@ -78,25 +77,44 @@ async function buildRequiredMcpRemovePolicy(entry: McpBridgeEntry): Promise<stri
   return buildRequiredMcpBridgePolicy(entry, target);
 }
 
+function buildMcpRemoveAuthorityProbePolicy(entry: McpBridgeEntry): string {
+  return `network_policies:\n  ${buildMcpBridgePolicyKey(entry.server)}: {}\n`;
+}
+
 async function qualifyMcpRemovePolicyAuthority(sandboxName: string, entry: McpBridgeEntry) {
   const operation = `remove MCP server '${entry.server}'`;
-  // The empty requirement authorizes no network capability. It lets legacy
-  // managed entries qualify authority without reconstructing policy they will
-  // only remove. External authority must pass the exact derived requirement
-  // below before any lifecycle effect.
-  let receipt = qualifyMcpPolicyAuthorityReceipt({
-    operation,
-    requiredPolicyContents: [MCP_REMOVE_AUTHORITY_PROBE_POLICY],
-    sandboxName,
-  });
-  if (receipt.authority === "externally-managed") {
-    receipt = qualifyMcpPolicyAuthorityReceipt({
+  const qualifyExternalPolicy = async () =>
+    qualifyMcpPolicyAuthorityReceipt({
       operation,
       requiredPolicyContents: [await buildRequiredMcpRemovePolicy(entry)],
       sandboxName,
     });
+
+  if (getSandboxOrThrow(sandboxName).policyAuthority === "externally-managed") {
+    return qualifyExternalPolicy();
   }
-  return receipt;
+
+  // This valid empty entry authorizes no endpoint or binary. Managed entries
+  // can qualify authority without resolving a URL they will only remove.
+  // Legacy external authority is persisted before requirement verification;
+  // retry that refusal with the exact derived requirement.
+  let receipt;
+  try {
+    receipt = qualifyMcpPolicyAuthorityReceipt({
+      operation,
+      requiredPolicyContents: [buildMcpRemoveAuthorityProbePolicy(entry)],
+      sandboxName,
+    });
+  } catch (error) {
+    if (
+      !(error instanceof McpPolicyAuthorityRefusalError) ||
+      getSandboxOrThrow(sandboxName).policyAuthority !== "externally-managed"
+    ) {
+      throw error;
+    }
+    return qualifyExternalPolicy();
+  }
+  return receipt.authority === "externally-managed" ? qualifyExternalPolicy() : receipt;
 }
 
 function requiresProviderDetachBeforeAdapterCleanup(entry: McpBridgeEntry): boolean {

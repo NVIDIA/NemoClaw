@@ -11,7 +11,7 @@ const harness = vi.hoisted(() => ({
   afterQualification: undefined as (() => void) | undefined,
   afterRegistryRemoval: undefined as (() => void) | undefined,
   authority: "externally-managed" as "nemoclaw-managed" | "externally-managed",
-  buildRequiredPolicy: vi.fn(() => "required external MCP policy"),
+  buildRequiredPolicy: vi.fn(() => "network_policies:\n  mcp_bridge_example:\n    endpoints: []\n"),
   detachProvider: vi.fn(),
   policyRemove: vi.fn(),
   qualifyAuthority: vi.fn(),
@@ -155,12 +155,12 @@ describe("standalone MCP remove policy authority", () => {
 
     await removeMcpBridge("alpha", "example");
 
-    expect(harness.qualifyAuthority).toHaveBeenNthCalledWith(2, {
+    expect(harness.qualifyAuthority).toHaveBeenCalledWith({
       operation: "remove MCP server 'example'",
-      requiredPolicyContents: ["required external MCP policy"],
+      requiredPolicyContents: ["network_policies:\n  mcp_bridge_example:\n    endpoints: []\n"],
       sandboxName: "alpha",
     });
-    expect(harness.qualifyAuthority).toHaveBeenCalledTimes(2);
+    expect(harness.qualifyAuthority).toHaveBeenCalledTimes(1);
     expect(harness.actions).toEqual([
       "gateway:select",
       "adapter:remove",
@@ -173,6 +173,45 @@ describe("standalone MCP remove policy authority", () => {
     expect(harness.sandbox?.mcp?.bridges).toEqual({});
     expect(harness.revalidateAuthority).toHaveBeenCalledTimes(6);
     expect(log).toHaveBeenCalledWith("  Removed MCP server 'example' from sandbox 'alpha'.");
+  });
+
+  it("qualifies managed removal without resolving the discarded endpoint (#9833)", async () => {
+    harness.authority = "nemoclaw-managed";
+    harness.sandbox = { ...harness.sandbox!, policyAuthority: "nemoclaw-managed" };
+
+    await removeMcpBridge("alpha", "example");
+
+    expect(harness.qualifyAuthority).toHaveBeenCalledWith({
+      operation: "remove MCP server 'example'",
+      requiredPolicyContents: ["network_policies:\n  mcp_bridge_example: {}\n"],
+      sandboxName: "alpha",
+    });
+    expect(harness.buildRequiredPolicy).not.toHaveBeenCalled();
+    expect(harness.policyRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries legacy external authority with the exact MCP requirement (#9833)", async () => {
+    harness.sandbox = { ...harness.sandbox!, policyAuthority: undefined };
+    harness.qualifyAuthority.mockImplementationOnce(() => {
+      harness.sandbox!.policyAuthority = "externally-managed";
+      throw new McpPolicyAuthorityRefusalError(
+        "the externally managed policy does not contain the authority probe",
+      );
+    });
+
+    await removeMcpBridge("alpha", "example");
+
+    expect(harness.qualifyAuthority).toHaveBeenNthCalledWith(1, {
+      operation: "remove MCP server 'example'",
+      requiredPolicyContents: ["network_policies:\n  mcp_bridge_example: {}\n"],
+      sandboxName: "alpha",
+    });
+    expect(harness.qualifyAuthority).toHaveBeenNthCalledWith(2, {
+      operation: "remove MCP server 'example'",
+      requiredPolicyContents: ["network_policies:\n  mcp_bridge_example:\n    endpoints: []\n"],
+      sandboxName: "alpha",
+    });
+    expect(harness.policyRemove).not.toHaveBeenCalled();
   });
 
   it("refuses managed-to-external drift before the first mutation under force (#9833)", async () => {
