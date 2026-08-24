@@ -232,6 +232,15 @@ describe("base-image publication workflow boundary (#7372)", () => {
     ],
     ["live publication dependency", (value) => (value.jobs.live.needs = ["generate-matrix"])],
     [
+      "cloud-onboard publication dependency",
+      (value) => (value.jobs["cloud-onboard"].needs = ["generate-matrix"]),
+    ],
+    [
+      "cloud-onboard managed-image revision",
+      (value) =>
+        (value.jobs["cloud-onboard"].env!.E2E_MANAGED_IMAGE_REVISION = "${{ github.sha }}"),
+    ],
+    [
       "Launchable publication dependency",
       (value) =>
         (value.jobs["staging-brev-launchable"].needs = [
