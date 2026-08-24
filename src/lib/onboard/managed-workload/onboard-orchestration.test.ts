@@ -26,12 +26,18 @@ import {
   shouldActivateStockManagedRuntime,
 } from "./onboard-orchestration";
 
-function createFreshOnboardingRuntime(environment: Readonly<Record<string, string>>) {
+function createFreshOnboardingRuntime(
+  environment: Readonly<Record<string, string>>,
+  options: {
+    readonly stockManagedRuntime?: boolean;
+    readonly tempManagedRuntime?: boolean;
+  } = {},
+) {
   const prepared = {
     source: {
       kind: "legacy-dockerfile",
       dockerfilePath: "agents/openclaw/Dockerfile",
-      reason: "managed-image-unavailable",
+      reason: "contract-unavailable",
     },
     release: "v0.0.0",
     fallbackDiagnostic: null,
@@ -43,7 +49,8 @@ function createFreshOnboardingRuntime(environment: Readonly<Record<string, strin
     {
       computePlan: { driverName: "docker" },
       managedWorkloadRebuild: null,
-      tempManagedRuntime: false,
+      tempManagedRuntime: options.tempManagedRuntime ?? false,
+      stockManagedRuntime: options.stockManagedRuntime ?? false,
       tempManagedRuntimeCatalog: null,
       agentName: "openclaw",
       legacyDockerfilePath: "agents/openclaw/Dockerfile",
@@ -148,6 +155,38 @@ describe("managed workload onboard orchestration", () => {
         agentName: "hermes",
       }),
     ).toBe(false);
+  });
+
+  it("allows ordinary stock onboarding to use the trusted Dockerfile fallback", async () => {
+    const { prepared, runtime } = createFreshOnboardingRuntime({}, { stockManagedRuntime: true });
+
+    await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
+    expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        policy: "prefer-managed",
+        runtime: expect.objectContaining({
+          legacyDockerfileBuilds: true,
+          managedImageSelectionPolicy: "require-managed",
+          managedImages: expect.any(Object),
+        }),
+      }),
+    );
+  });
+
+  it("keeps explicit temporary managed-image onboarding strict", async () => {
+    const { prepared, runtime } = createFreshOnboardingRuntime(
+      {},
+      { stockManagedRuntime: true, tempManagedRuntime: true },
+    );
+
+    await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
+    const preparationInput = prepareSandboxWorkloadSource.mock.calls[0]?.[0];
+    expect(preparationInput).not.toHaveProperty("policy");
+    expect(preparationInput.runtime).toMatchObject({
+      legacyDockerfileBuilds: true,
+      managedImageSelectionPolicy: "require-managed",
+    });
+    expect(preparationInput.runtime.managedImages).not.toBeNull();
   });
 
   it("selects only the shipped Hermes Dockerfile fallback without profile or prebuild work", async () => {
