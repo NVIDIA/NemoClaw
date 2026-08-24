@@ -90,7 +90,7 @@ function personalSupersededAgentRequiredPresets(agent: string | null | undefined
  * `setupPoliciesWithSelection` end-to-end for restricted + OpenClaw across
  * fresh-onboard, preservation, resume, and OTEL-enabled / OTEL-disabled paths,
  * including stale-applied OTEL-local cleanup with the current env disabled;
- * `test/onboard-policy-suggestions.test.ts` covers
+ * `test/onboarding/onboard-policy-suggestions.test.ts` covers
  * `suppressedAgentRequiredPresets` (env-independent) and
  * `computeSetupPresetSuggestions` (env-gated) directly.
  *

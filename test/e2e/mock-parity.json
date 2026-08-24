@@ -64,7 +64,7 @@
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/sandbox-workload-preparation.test.ts",
         "test/managed-image-publication-workflow.test.ts",
-        "test/onboard-managed-image-buildless-e2e.test.ts"
+        "test/onboarding/onboard-managed-image-buildless-e2e.test.ts"
       ]
     },
     {
@@ -95,7 +95,7 @@
         "test/e2e/support/native-runtime-qualification-case-helpers.test.ts",
         "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
         "test/e2e/support/native-runtime-qualification.test.ts",
-        "test/install-native-runtime-qualification.test.ts"
+        "test/install/install-native-runtime-qualification.test.ts"
       ]
     },
     {
@@ -126,7 +126,7 @@
         "test/blueprint-runtime-identity-lifecycle.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts",
-        "test/onboard-inference-gateway-scope.test.ts"
+        "test/onboarding/onboard-inference-gateway-scope.test.ts"
       ]
     },
     {
@@ -164,7 +164,7 @@
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts",
         "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
-        "test/installer-hash-check.test.ts",
+        "test/install/installer-hash-check.test.ts",
         "test/runner.test.ts"
       ]
     },
@@ -178,7 +178,7 @@
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts",
         "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
-        "test/installer-hash-check.test.ts",
+        "test/install/installer-hash-check.test.ts",
         "test/runner.test.ts"
       ]
     },
@@ -244,7 +244,7 @@
         "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
         "src/lib/onboard/managed-startup-image-runtime-handoff.test.ts",
         "src/lib/onboard/sandbox-create-plan.test.ts",
-        "test/onboard-extra-provider-reconciliation.test.ts",
+        "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -263,7 +263,7 @@
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
         "src/lib/onboard/sandbox-readiness-tracing.test.ts",
-        "test/onboard-extra-provider-reconciliation.test.ts",
+        "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/gateway-state.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -586,7 +586,7 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/installer-integration/install-express-prompt.test.ts",
-        "test/install-local-model-profile.test.ts"
+        "test/install/install-local-model-profile.test.ts"
       ]
     },
     {

@@ -512,7 +512,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("stale nonterminal rebuild-resume repair");
     expect(review).toContain("tracked against #4533");
     expect(review).toContain("src/lib/actions/sandbox/rebuild-resume-session.test.ts");
-    expect(review).toContain("test/onboard-resume-provider-recovery.test.ts");
+    expect(review).toContain("test/onboarding/onboard-resume-provider-recovery.test.ts");
     expect(review).toContain("machine.state='openclaw'");
     expect(review).toContain("scripts/check-production-build-args.sh");
     expect(review).toContain("every declared integrity/tarball ARG override");
@@ -527,7 +527,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     );
     expect(review).toContain("src/lib/onboard/recovered-provider-reuse.ts");
     expect(review).toContain("passes that route only in memory to the same sandbox's recreate");
-    expect(review).toContain("test/onboard-remote-recreate-credential-reuse.test.ts");
+    expect(review).toContain("test/onboarding/onboard-remote-recreate-credential-reuse.test.ts");
     expect(review).toContain("Image-Managed OpenClaw Extension Restore Boundary");
     expect(review).toContain("src/lib/state/openclaw-managed-extensions.ts");
     expect(review).toContain("issue #5896");
@@ -550,7 +550,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain('OPENCLAW_VERSION="${OPENCLAW_VERSION}"');
     expect(review).toContain("test/messaging-build-applier-integrity.test.ts");
     expect(review).toContain("test/messaging-build-applier-render-safety.test.ts");
-    expect(review).toContain("test/onboard-resume-provider-recovery.test.ts");
+    expect(review).toContain("test/onboarding/onboard-resume-provider-recovery.test.ts");
   });
 
   it("keeps every reviewed archive boundary on the shared invariant matrix (#5896)", () => {

@@ -50,13 +50,13 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)test\/helpers\/onboard-script-mocks\.cjs$/,
     testsToRun: runTests(
-      "test/onboard-extra-provider-reconciliation.test.ts",
-      "test/onboard-installer-restore-intent.test.ts",
-      "test/onboard-messaging.test.ts",
-      "test/onboard-reservation-recreate.test.ts",
-      "test/onboard-sandbox-build.test.ts",
-      "test/onboard-sandbox-recreation.test.ts",
-      "test/onboard-terminal-dashboard.test.ts",
+      "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
+      "test/onboarding/onboard-installer-restore-intent.test.ts",
+      "test/onboarding/onboard-messaging.test.ts",
+      "test/onboarding/onboard-reservation-recreate.test.ts",
+      "test/onboarding/onboard-sandbox-build.test.ts",
+      "test/onboarding/onboard-sandbox-recreation.test.ts",
+      "test/onboarding/onboard-terminal-dashboard.test.ts",
     ),
   },
   {
