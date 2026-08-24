@@ -172,7 +172,8 @@ function verifyAuthority(
   if (!fs.readFileSync(boundary.registryFile).equals(registryBytes))
     throw new Error("Completed onboarding registry changed while normalizing");
   const row = registry.sandboxes[sandboxName];
-  const expectedAgent = identity?.agent === "openclaw" ? null : identity?.agent;
+  const matchesRegistryAgent = (agent: unknown) =>
+    agent === identity?.agent || (identity?.agent === "openclaw" && agent === null);
   if (
     !identity ||
     !gateway ||
@@ -182,8 +183,8 @@ function verifyAuthority(
     row?.name !== sandboxName ||
     rawEntry.name !== sandboxName ||
     row.pendingRouteReservation === true ||
-    row.agent !== expectedAgent ||
-    rawEntry.agent !== expectedAgent ||
+    rawEntry.agent !== row.agent ||
+    !matchesRegistryAgent(row.agent) ||
     row.openshellDriver !== "docker" ||
     rawEntry.openshellDriver !== "docker" ||
     row.gatewayName !== gateway.gatewayName ||

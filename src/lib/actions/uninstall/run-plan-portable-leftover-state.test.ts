@@ -129,6 +129,7 @@ function abandonedPortableConfig(host: ReturnType<typeof scope>, mode: number): 
 function completedOpenClawAuthority(
   host: ReturnType<typeof scope>,
   profile: "default" | "portable",
+  registryAgent: null | "openclaw" = null,
 ): void {
   const portable = profile === "portable";
   const uid = process.getuid?.() ?? 1001;
@@ -201,7 +202,7 @@ function completedOpenClawAuthority(
       sandboxes: {
         [sandboxName]: {
           name: sandboxName,
-          agent: null,
+          agent: registryAgent,
           dashboardPort: 18789,
           gatewayName: gateway.gatewayName,
           gatewayPort: gateway.gatewayPort,
@@ -260,6 +261,13 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
   it("completes ordinary uninstall after completed default OpenClaw onboarding", () => {
     const host = scope("nemoclaw-uninstall-completed-openclaw-");
     completedOpenClawAuthority(host, "default");
+
+    expectOrdinaryUninstall(host);
+  });
+
+  it("completes ordinary uninstall when managed OpenClaw registration records its explicit agent (#10073)", () => {
+    const host = scope("nemoclaw-uninstall-managed-openclaw-");
+    completedOpenClawAuthority(host, "default", "openclaw");
 
     expectOrdinaryUninstall(host);
   });
