@@ -18,10 +18,11 @@ NemoClaw owns these files and settings:
 - `tools/e2e/jetson-dispatch-client.mts` obtains a GitHub OpenID Connect (OIDC)
   token, sends the exact candidate commit, validates responses, and writes
   bounded evidence.
-- `tools/e2e/jetson-dispatch-contract.mts` implements HTTP contract version
-  `1.0.0`.
-- `tools/e2e/contracts/v1/jetson-dispatch.json` contains the shared static
-  compatibility vectors for contract version `1.0.0`.
+- `tools/e2e/jetson-dispatch-contract.mts` implements HTTP contract versions
+  `1.0.0` and `2.0.0`.
+- `tools/e2e/contracts/v1/jetson-dispatch.json` and
+  `tools/e2e/contracts/v2/jetson-dispatch.json` contain the shared static
+  compatibility vectors.
 - The repository variable `JETSON_DISPATCH_URL` selects the operator-provided
   service origin.
 - `test/e2e/live/jetson-nvmap-gpu.test.ts` defines the live target.
@@ -29,20 +30,26 @@ NemoClaw owns these files and settings:
 The service implementation and device lifecycle are operator-owned
 infrastructure. NemoClaw has no build-time dependency on that implementation.
 
-## HTTP Contract 1.0.0
+## HTTP Contract 2.0.0
 
-Contract version `1.0.0` uses JSON with `schemaVersion: 1`. The controller sends
+Contract version `2.0.0` uses JSON with `schemaVersion: 2`. The controller sends
 a request body with these exact fields:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "target": "jetson-nvmap-gpu",
   "candidateSha": "<lowercase-40-character-commit-sha>",
+  "managedImageRevision": "<lowercase-40-character-commit-sha>",
   "workflowRunId": "<positive-decimal-integer>",
   "workflowRunAttempt": 1
 }
 ```
+
+`candidateSha` identifies the NemoClaw commit under test.
+`managedImageRevision` identifies the applicable successful managed-image
+publication selected by the trusted publication gate. The values can differ
+when a later main commit does not change a managed-image input.
 
 The request has no command, repository, ref, or free-form target field. The
 controller rejects missing and extra fields, any target other than
@@ -59,9 +66,9 @@ The controller uses these endpoints:
 
 Job creation and status responses wrap the status as `{ "job": <status> }`.
 The `jobId` is the lowercase SHA-256 digest of the colon-separated request
-tuple `schemaVersion`, `target`, `candidateSha`, `workflowRunId`, and
-`workflowRunAttempt`. The controller verifies that relationship before it
-accepts a status.
+tuple `schemaVersion`, `target`, `candidateSha`, `managedImageRevision`,
+`workflowRunId`, and `workflowRunAttempt`. The controller verifies that
+relationship before it accepts a status.
 
 A status advances through `queued`, `running`, and `completed`. Queued and
 running jobs have `cleanup: "pending"`. A completed job has one of these
@@ -86,14 +93,14 @@ successful result must contain the archive. The client rejects unknown fields,
 invalid timestamps, inconsistent states, a mismatched job ID, oversized
 content, and a noncanonical archive.
 
-The static vectors in
-`tools/e2e/contracts/v1/jetson-dispatch.json` are the compatibility boundary
-shared with the operator-owned service. Contract v1 is immutable at SHA-256
+The static vectors are the compatibility boundary shared with the
+operator-owned service. Contract 1.0.0 remains immutable at SHA-256
 `d50e381860ec131e92f78c25272bfdcbacb790adc9552c3aaf0778427171314c`.
-The receiver's CI and deployment gate compare its copy against NemoClaw
-`main`. The vectors include one request, queued and completed responses, one
-artifact, and rejected request examples. Publish a coordinated v2 contract
-instead of editing v1 when an incompatible wire change is required.
+Contract 2.0.0 is immutable at SHA-256
+`fbf173a23db958caa74e0b32aaf362c604caf4c86204fc0a4ce7a1865b41eeb9`.
+The receiver's CI and deployment gate compare both copies against NemoClaw
+`main`. Each vector file includes one request, queued and completed responses,
+one artifact, and rejected request examples.
 
 ## Trusted GitHub Dispatch
 
@@ -103,6 +110,11 @@ trusted `main` workflow. The manual input defaults to `false`. The workflow
 limits a manual candidate checkout to the same repository and sends the exact
 `checkout_sha` or current trusted ref commit as `candidateSha`. GitHub queues
 later Jetson jobs instead of canceling a running job.
+
+For a trusted main run, the publication gate exports the first-parent commit
+whose successful managed-image workflow covers the candidate. The controller
+sends that commit as `managedImageRevision`. A manual candidate run preserves
+the existing exact-candidate selection.
 
 The job grants only `contents: read` and `id-token: write`. The controller
 requests a short-lived GitHub OIDC token with audience
@@ -114,7 +126,7 @@ requires an HTTPS origin without user information, a path, a query, or a
 fragment. Do not put a token or other credential in that variable.
 
 The operator-owned service must remain available and compatible with contract
-version `1.0.0` for trusted `main` pushes. Keep the manual flag disabled for
+version `2.0.0` for trusted `main` pushes. Keep the manual flag disabled for
 ordinary and full manual `main` runs. Use a separate focused manual run when the
 maintainer requests the Jetson target.
 
@@ -140,7 +152,9 @@ archive.
 ## Live Target
 
 `test/e2e/live/jetson-nvmap-gpu.test.ts` runs the Jetson hardware target for the
-commit under review. The controller contract requires the
+commit under review. Managed-image lookup uses the separately dispatched
+publication commit. Candidate identity checks continue to use the commit under
+review. The controller contract requires the
 `jetson-nvmap-gpu` target ID. While
 [issue #7610](https://github.com/NVIDIA/NemoClaw/issues/7610) remains open, the
 test disables sandbox GPU access.
