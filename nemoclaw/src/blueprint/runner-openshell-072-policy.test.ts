@@ -437,7 +437,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
           sandboxAuthorityReads += 1;
           return sandboxPolicyAuthorityResult(
             "test-sandbox",
-            sandboxAuthorityReads < 3 ? "nemoclaw-managed" : "externally-managed",
+            sandboxAuthorityReads < 5 ? "nemoclaw-managed" : "externally-managed",
           );
         default:
           return defaultCommandResult(args);
@@ -446,7 +446,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
 
     await expect(actionApply("default", blueprint())).rejects.toThrow(/policy authority changed/);
     expect(policySetCalls()).toEqual([]);
-    expect(sandboxAuthorityReads).toBe(3);
+    expect(sandboxAuthorityReads).toBe(5);
   });
 
   it("records and reports an incomplete reused-sandbox policy transition (#9833)", async () => {
@@ -465,7 +465,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
           sandboxAuthorityReads += 1;
           return sandboxPolicyAuthorityResult(
             "test-sandbox",
-            sandboxAuthorityReads < 4 ? "nemoclaw-managed" : "externally-managed",
+            sandboxAuthorityReads < 6 ? "nemoclaw-managed" : "externally-managed",
           );
         default:
           return defaultCommandResult(args);
@@ -474,7 +474,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
 
     await expect(actionApply("default", blueprint())).rejects.toThrow(/policy authority changed/);
     expect(policySetCalls()).toHaveLength(1);
-    expect(sandboxAuthorityReads).toBe(4);
+    expect(sandboxAuthorityReads).toBe(6);
 
     const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"));
     expect(planEntry).toBeDefined();

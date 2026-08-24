@@ -27,8 +27,10 @@ import * as importedOpenShellPolicyBoundary from "../shared/openshell-policy-bou
 import * as importedSandboxName from "../shared/sandbox-name.cjs";
 import {
   attachRuntimeIdentity,
+  BlueprintPolicyAuthorityRefusalError,
   buildRuntimeIdentityPlan,
   compensateRuntimeIdentityApply,
+  isBlueprintPolicyAuthorityRefusalError,
   isRuntimeIdentityConfig,
   isRuntimeIdentityReceipt,
   mintRuntimeIdentityCredential,
@@ -643,7 +645,7 @@ async function runBlueprintPolicyAuthorityCommand(
       timeout: POLICY_AUTHORITY_TIMEOUT_MS,
     });
   } catch {
-    throw new Error(
+    throw new BlueprintPolicyAuthorityRefusalError(
       `OpenShell ${subject} policy authority inspection failed. Policy-dependent operations must stop.`,
     );
   }
@@ -652,7 +654,7 @@ async function runBlueprintPolicyAuthorityCommand(
     Buffer.byteLength(result.stdout, "utf8") + Buffer.byteLength(result.stderr, "utf8") >
       POLICY_AUTHORITY_MAX_BYTES
   ) {
-    throw new Error(
+    throw new BlueprintPolicyAuthorityRefusalError(
       `OpenShell ${subject} policy authority inspection failed. Policy-dependent operations must stop.`,
     );
   }
@@ -680,7 +682,7 @@ async function inspectBlueprintPolicyAuthority(
   const result = await runBlueprintPolicyAuthorityCommand(command, subject);
   if (sandboxName === undefined) {
     if (result.stdout.trim().length === 0) {
-      throw new Error(
+      throw new BlueprintPolicyAuthorityRefusalError(
         "OpenShell returned empty global policy authority metadata. Policy-dependent operations must stop.",
       );
     }
@@ -688,7 +690,7 @@ async function inspectBlueprintPolicyAuthority(
     try {
       metadata = JSON.parse(result.stdout);
     } catch {
-      throw new Error(
+      throw new BlueprintPolicyAuthorityRefusalError(
         "OpenShell returned malformed global policy authority metadata. Policy-dependent operations must stop.",
       );
     }
@@ -699,7 +701,7 @@ async function inspectBlueprintPolicyAuthority(
       (metadata.policy_source !== undefined && metadata.policy_source !== "global") ||
       Object.hasOwn(metadata, "sandbox")
     ) {
-      throw new Error(
+      throw new BlueprintPolicyAuthorityRefusalError(
         "OpenShell returned invalid global policy authority metadata. Policy-dependent operations must stop.",
       );
     }
@@ -707,7 +709,7 @@ async function inspectBlueprintPolicyAuthority(
       return { authority: "nemoclaw-managed", effectivePolicy: {} };
     }
     if (!isPlainObject(metadata.policy)) {
-      throw new Error(
+      throw new BlueprintPolicyAuthorityRefusalError(
         "OpenShell returned invalid global policy authority metadata. Policy-dependent operations must stop.",
       );
     }
@@ -717,7 +719,9 @@ async function inspectBlueprintPolicyAuthority(
     return parseSandboxPolicyAuthorityMetadata(result.stdout, sandboxName);
   } catch (error) {
     const detail = error instanceof Error ? error.message : "OpenShell returned invalid metadata";
-    throw new Error(`${detail}. Policy-dependent operations must stop.`);
+    throw new BlueprintPolicyAuthorityRefusalError(
+      `${detail}. Policy-dependent operations must stop.`,
+    );
   }
 }
 
@@ -729,7 +733,9 @@ function assertBlueprintPolicyAuthorityMatches(
     assertMatchingPolicyAuthority(recorded.authority, observed.authority);
   } catch (error) {
     const detail = error instanceof Error ? error.message : "policy authority is invalid";
-    throw new Error(`Refusing to apply blueprint policy additions because ${detail}.`);
+    throw new BlueprintPolicyAuthorityRefusalError(
+      `Refusing to apply blueprint policy additions because ${detail}.`,
+    );
   }
 }
 
@@ -743,7 +749,7 @@ function assertBlueprintExternalPolicyRequirements(
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "the policy requirement is invalid";
-    throw new Error(
+    throw new BlueprintPolicyAuthorityRefusalError(
       `Refusing to apply the blueprint: ${detail}. Ask the external policy authority to supply the exact required entries.`,
     );
   }
@@ -790,12 +796,14 @@ function runtimeIdentityCommandDeps(): RuntimeIdentityCommandDeps {
 
 function runtimeIdentityDeps(
   persistReceipt: (receipt: RuntimeIdentityReceipt) => void,
+  revalidatePolicyAuthority: () => Promise<void>,
   profilePolicy?: RuntimeIdentityProfilePolicy,
 ): RuntimeIdentityDeps {
   return {
     ...runtimeIdentityCommandDeps(),
     validateEndpointUrl,
     persistReceipt,
+    revalidatePolicyAuthority,
     blueprintPath: process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".",
     env: process.env,
     profilePolicy,
@@ -1251,6 +1259,15 @@ export async function actionApply(
   let policyTransition: BlueprintPolicyTransitionReceipt | undefined;
   let sandboxCreatedByApply = false;
   let inferenceProviderCreatedByApply = false;
+  const revalidatePolicyAuthority = async (): Promise<void> => {
+    const recorded = sandboxPolicyAuthority ?? initialPolicyAuthority;
+    const observed = await inspectBlueprintPolicyAuthority(
+      policyGateway,
+      sandboxPolicyAuthority ? sandboxName : undefined,
+    );
+    assertBlueprintPolicyAuthorityMatches(recorded, observed);
+    assertBlueprintExternalPolicyRequirements(observed, policyAdditions);
+  };
   const persistRunPlan = (): void => {
     writeFileSync(
       join(stateDir, "plan.json"),
@@ -1273,10 +1290,14 @@ export async function actionApply(
       ),
     );
   };
-  const identityDeps = runtimeIdentityDeps((receipt) => {
-    runtimeIdentityReceipt = receipt;
-    persistRunPlan();
-  }, options?.runtimeIdentityProfilePolicy);
+  const identityDeps = runtimeIdentityDeps(
+    (receipt) => {
+      runtimeIdentityReceipt = receipt;
+      persistRunPlan();
+    },
+    revalidatePolicyAuthority,
+    options?.runtimeIdentityProfilePolicy,
+  );
   persistRunPlan();
   assertBlueprintExternalPolicyRequirements(initialPolicyAuthority, policyAdditions);
 
@@ -1339,10 +1360,23 @@ export async function actionApply(
             activeRoute.timeoutSeconds === inferenceCfg.timeout_secs);
       }
 
+      if (reuseExistingSandbox) {
+        sandboxPolicyAuthority = await inspectBlueprintPolicyAuthority(policyGateway, sandboxName);
+        policyAuthorityReceipt = {
+          authority: sandboxPolicyAuthority.authority,
+          gateway: policyGateway,
+          scope: "sandbox",
+          sandbox_name: sandboxName,
+        };
+        persistRunPlan();
+        assertBlueprintExternalPolicyRequirements(sandboxPolicyAuthority, policyAdditions);
+      }
+
       progress(10, "Configuring runtime identity");
       // Establish durable state before the first identity mutation, then update
       // the receipt after each acquired resource.
       persistRunPlan();
+      await revalidatePolicyAuthority();
       runtimeIdentityReceipt = await prepareRuntimeIdentity(runtimeIdentityConfig, identityDeps);
       persistRunPlan();
     }
@@ -1351,6 +1385,7 @@ export async function actionApply(
     if (reuseExistingSandbox) {
       log(`Sandbox '${sandboxName}' already exists, reusing.`);
     } else {
+      await revalidatePolicyAuthority();
       const createArgs = [
         "openshell",
         "sandbox",
@@ -1399,8 +1434,10 @@ export async function actionApply(
         policyGateway,
         sandboxName,
       );
-      if (sandboxCreatedByApply) {
-        assertBlueprintPolicyAuthorityMatches(initialPolicyAuthority, observedPolicyAuthority);
+      const recordedPolicyAuthority =
+        sandboxPolicyAuthority ?? (sandboxCreatedByApply ? initialPolicyAuthority : null);
+      if (recordedPolicyAuthority) {
+        assertBlueprintPolicyAuthorityMatches(recordedPolicyAuthority, observedPolicyAuthority);
       }
       sandboxPolicyAuthority = observedPolicyAuthority;
       policyAuthorityReceipt = {
@@ -1417,6 +1454,7 @@ export async function actionApply(
     // sandbox's requested inference route.
     progress(50, "Configuring inference provider");
     if (reuseExistingInferenceProvider) {
+      await revalidatePolicyAuthority();
       log(`Provider '${providerName}' already exists, reusing.`);
     } else {
       const providerArgs = [
@@ -1439,6 +1477,7 @@ export async function actionApply(
         providerArgs.push("--config", `OPENAI_BASE_URL=${endpoint}`);
       }
 
+      await revalidatePolicyAuthority();
       const providerResult = await execa(providerArgs[0], providerArgs.slice(1), {
         reject: false,
         stdout: "pipe",
@@ -1485,6 +1524,7 @@ export async function actionApply(
 
     progress(70, "Setting inference route");
     if (reuseExistingInferenceRoute) {
+      await revalidatePolicyAuthority();
       log(`Inference route '${providerName} / ${model}' is already active, reusing.`);
     } else {
       const inferenceArgs = [
@@ -1499,6 +1539,7 @@ export async function actionApply(
       if (inferenceCfg.timeout_secs !== undefined) {
         inferenceArgs.push("--timeout", String(inferenceCfg.timeout_secs));
       }
+      await revalidatePolicyAuthority();
       const inferenceResult = await runCmd(inferenceArgs, { reject: false });
       // Another required mutation: without a routed provider the sandbox cannot
       // perform inference, so a non-zero result must abort the apply. (#6703)
@@ -1519,6 +1560,7 @@ export async function actionApply(
         );
       }
       assertReusableRuntimeIdentitySandbox(attachmentSandbox.stdout, sandboxName);
+      await revalidatePolicyAuthority();
       const attachmentCreated = await attachRuntimeIdentity(
         runtimeIdentityReceipt,
         sandboxName,
@@ -1529,6 +1571,7 @@ export async function actionApply(
         attachment_created: attachmentCreated,
       };
       persistRunPlan();
+      await revalidatePolicyAuthority();
       await mintRuntimeIdentityCredential(runtimeIdentityReceipt, identityDeps);
     }
 
@@ -1666,6 +1709,11 @@ export async function actionApply(
 
     const message = error instanceof Error ? error.message : String(error);
     if (cleanupFailures.length > 0) {
+      if (isBlueprintPolicyAuthorityRefusalError(error)) {
+        throw new BlueprintPolicyAuthorityRefusalError(
+          `${message}; cleanup failed: ${cleanupFailures.join("; ")}`,
+        );
+      }
       throw new Error(`${message}; cleanup failed: ${cleanupFailures.join("; ")}`);
     }
     throw error;

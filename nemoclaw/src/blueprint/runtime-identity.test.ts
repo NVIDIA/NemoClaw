@@ -14,10 +14,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   attachRuntimeIdentity,
+  BlueprintPolicyAuthorityRefusalError,
   buildRuntimeIdentityPlan,
   compensateRuntimeIdentityApply,
   isRuntimeIdentityConfig,
@@ -62,10 +63,7 @@ const matchingProviderResult: RuntimeIdentityCommandResult = {
 };
 const configuredProviderResult: RuntimeIdentityCommandResult = {
   exitCode: 0,
-  stdout: matchingProvider.replace(
-    "Credential keys: OKTA_ACCESS_TOKEN",
-    "Credential keys: <none>",
-  ),
+  stdout: matchingProvider.replace("Credential keys: OKTA_ACCESS_TOKEN", "Credential keys: <none>"),
   stderr: "",
 };
 const configuredRefreshResult: RuntimeIdentityCommandResult = {
@@ -212,6 +210,7 @@ describe("runtime identity contract", () => {
       persistReceipt: (receipt) => {
         persistedReceipts.push({ ...receipt });
       },
+      revalidatePolicyAuthority: async () => undefined,
       blueprintPath: root,
       env: environment,
     };
@@ -300,15 +299,14 @@ describe("runtime identity contract", () => {
     expect(resolveRuntimeIdentityProfilePath(config.profile_path, root)).toBe(profilePath);
   });
 
-  it.each([
-    "/absolute-profile.yaml",
-    "../outside-profile.yaml",
-    "missing-profile.yaml",
-  ])("rejects an unsafe or missing profile path: %s", (candidate) => {
-    expect(() => resolveRuntimeIdentityProfilePath(candidate, root)).toThrow(
-      /must (?:be relative|stay inside|name an existing file)/,
-    );
-  });
+  it.each(["/absolute-profile.yaml", "../outside-profile.yaml", "missing-profile.yaml"])(
+    "rejects an unsafe or missing profile path: %s",
+    (candidate) => {
+      expect(() => resolveRuntimeIdentityProfilePath(candidate, root)).toThrow(
+        /must (?:be relative|stay inside|name an existing file)/,
+      );
+    },
+  );
 
   it("rejects a directory and an outward symlink as profiles", () => {
     mkdirSync(join(root, "provider-profiles", "directory"));
@@ -397,6 +395,105 @@ describe("runtime identity contract", () => {
     ]);
 
     await expect(prepareRuntimeIdentity(config, deps)).resolves.toEqual(createdReceipt);
+  });
+
+  it("rechecks policy authority immediately before importing a runtime identity profile (#9833)", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
+    deps.revalidatePolicyAuthority = vi.fn(async () => {
+      throw new Error("policy authority changed");
+    });
+
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/policy authority changed/u);
+
+    expect(calls.map(({ args }) => commandKey(args))).toEqual([
+      "settings get --global --json",
+      "provider get acme-okta-runtime",
+    ]);
+  });
+
+  it("rechecks policy authority after exporting an existing runtime identity profile (#9833)", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
+    responses.set("provider profile import --file", [
+      { exitCode: 1, stdout: "", stderr: "profile already exists" },
+    ]);
+    responses.set("provider profile export okta-runtime-v1 --output yaml", [
+      { exitCode: 0, stdout: profileDocument, stderr: "" },
+    ]);
+    deps.revalidatePolicyAuthority = vi
+      .fn<() => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("policy authority changed"));
+
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(/policy authority changed/u);
+
+    expect(calls.map(({ args }) => commandKey(args))).toEqual([
+      "settings get --global --json",
+      "provider get acme-okta-runtime",
+      "provider profile import --file",
+      "provider profile export okta-runtime-v1 --output yaml",
+    ]);
+  });
+
+  it("deletes a created provider before propagating an authority refusal (#9833)", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider, matchingProviderResult]);
+    deps.revalidatePolicyAuthority = vi
+      .fn<() => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new BlueprintPolicyAuthorityRefusalError("policy authority changed"));
+
+    const error = await prepareRuntimeIdentity(config, deps).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(BlueprintPolicyAuthorityRefusalError);
+    expect((error as Error).message).toMatch(/policy authority changed/u);
+    expect(calls.map(({ args }) => commandKey(args))).not.toContain(
+      "provider refresh configure acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN --strategy oauth2-refresh-token --material client_id=client-id --secret-material-env refresh_token=OKTA_REFRESH_TOKEN --secret-material-env client_secret=OKTA_CLIENT_SECRET",
+    );
+    expect(calls.map(({ args }) => commandKey(args))).toContain(
+      "provider delete acme-okta-runtime",
+    );
+  });
+
+  it("deletes a created provider when authority changes during refresh configuration (#9833)", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider, matchingProviderResult]);
+    deps.revalidatePolicyAuthority = vi
+      .fn<() => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new BlueprintPolicyAuthorityRefusalError("policy authority changed"));
+
+    const error = await prepareRuntimeIdentity(config, deps).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(BlueprintPolicyAuthorityRefusalError);
+    expect(calls.map(({ args }) => commandKey(args))).toContain(
+      "provider refresh configure acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN --strategy oauth2-refresh-token --material client_id=client-id --secret-material-env refresh_token=OKTA_REFRESH_TOKEN --secret-material-env client_secret=OKTA_CLIENT_SECRET",
+    );
+    expect(calls.map(({ args }) => commandKey(args))).toContain(
+      "provider delete acme-okta-runtime",
+    );
+  });
+
+  it("preserves the typed authority refusal when provider cleanup fails (#9833)", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider, matchingProviderResult]);
+    responses.set("provider delete acme-okta-runtime", [
+      { exitCode: 1, stdout: "", stderr: "delete denied" },
+    ]);
+    deps.revalidatePolicyAuthority = vi
+      .fn<() => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new BlueprintPolicyAuthorityRefusalError("policy authority changed"));
+
+    const error = await prepareRuntimeIdentity(config, deps).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(BlueprintPolicyAuthorityRefusalError);
+    expect((error as Error).message).toMatch(
+      /policy authority changed[\s\S]*cleanup failed[\s\S]*delete denied/u,
+    );
+    expect(calls.map(({ args }) => commandKey(args))).toContain(
+      "provider delete acme-okta-runtime",
+    );
   });
 
   it("rejects an incompatible existing profile", async () => {
@@ -555,15 +652,18 @@ describe("runtime identity contract", () => {
       entraProfileDocument.replace("login.microsoftonline.com", "graph.microsoft.com"),
       /refresh token_url host 'graph\.microsoft\.com' is outside/,
     ],
-  ])("rejects an Entra profile that changes the reviewed %s", async (_boundary, profile, message) => {
-    writeFileSync(join(root, entraConfig.profile_path), profile);
-    environment.ENTRA_CLIENT_ID = "entra-client-id";
-    environment.ENTRA_REFRESH_TOKEN = "entra-refresh-secret";
-    environment.ENTRA_CLIENT_SECRET = "entra-client-secret";
+  ])(
+    "rejects an Entra profile that changes the reviewed %s",
+    async (_boundary, profile, message) => {
+      writeFileSync(join(root, entraConfig.profile_path), profile);
+      environment.ENTRA_CLIENT_ID = "entra-client-id";
+      environment.ENTRA_REFRESH_TOKEN = "entra-refresh-secret";
+      environment.ENTRA_CLIENT_SECRET = "entra-client-secret";
 
-    await expect(prepareRuntimeIdentity(entraConfig, deps)).rejects.toThrow(message);
-    expect(calls).toEqual([]);
-  });
+      await expect(prepareRuntimeIdentity(entraConfig, deps)).rejects.toThrow(message);
+      expect(calls).toEqual([]);
+    },
+  );
 
   it("rejects DNS-backed destinations unless the reviewed profile policy owns DNS", async () => {
     deps.validateEndpointUrl = async () => ({ dnsResolved: true });
@@ -961,10 +1061,9 @@ describe("runtime identity contract", () => {
 
   it("attaches a provider whose refresh is configured before its first mint", async () => {
     responses.set("provider get acme-okta-runtime", [configuredProviderResult]);
-    responses.set(
-      "provider refresh status acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN",
-      [configuredRefreshResult],
-    );
+    responses.set("provider refresh status acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN", [
+      configuredRefreshResult,
+    ]);
 
     await expect(attachRuntimeIdentity(createdReceipt, "sandbox", deps)).resolves.toBe(true);
     expect(calls.map(({ args }) => commandKey(args))).toEqual([
