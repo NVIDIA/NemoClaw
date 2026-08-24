@@ -3004,10 +3004,12 @@ The command verifies that the sandbox's agent runtime supports the channel befor
 It then requires the channel to be configured for the sandbox.
 The channel is marked disabled in the per-sandbox registry, and the rebuild omits its runtime configuration, token upsert, and startup effects.
 Generic channel providers and refresh bridges remain detached while the channel is stopped.
+</AgentOnly>
 <AgentOnly variant="hermes">
 When a stopped Hermes Discord channel keeps a credential-bound policy, the rebuild retains and attaches only the exact validated static provider that the policy requires.
 It does not start Discord or recreate the provider credentials.
 </AgentOnly>
+<AgentOnly variant="openclaw,hermes">
 The provider remains registered with the OpenShell gateway, so a later `channels start` brings the bridge back without re-entering tokens.
 
 ```bash
