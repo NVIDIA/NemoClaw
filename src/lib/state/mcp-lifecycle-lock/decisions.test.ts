@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  decideMcpLifecycleAcquisition,
   decideMcpLifecycleLock,
   decideMcpLifecycleGate,
   decideMcpLifecycleTakeover,
@@ -163,4 +164,87 @@ describe("lifecycle lock decisions", () => {
   ] as const)("maps %s takeover authority to %s", (_name, expected, observed, kind) => {
     expect(decideMcpLifecycleTakeover(expected, observed).kind).toBe(kind);
   });
+
+  it.each([
+    [
+      "committed containment",
+      { phase: "containment", observation: observation(owner()) },
+      "refuse",
+    ],
+    ["open containment gate", { phase: "containment", observation: null }, "publish"],
+    ["expired timer", { phase: "timer", deadlineExpired: true }, "wait"],
+    ["future timer", { phase: "timer", deadlineExpired: false }, "publish"],
+  ] as const)("maps the %s acquisition state to %s", (_name, input, kind) => {
+    expect(decideMcpLifecycleAcquisition(input).kind).toBe(kind);
+  });
+
+  it.each([
+    ["active main owner", "main-owner", decideMcpLifecycleLock(decisionInput()), "wait"],
+    [
+      "stale main owner",
+      "main-owner",
+      decideMcpLifecycleLock(decisionInput({ ownerDisposition: "stale" })),
+      "reap",
+    ],
+    [
+      "unverifiable main owner",
+      "main-owner",
+      decideMcpLifecycleLock(
+        decisionInput({
+          observation: observation(owner({ sandboxName: "sandbox-b" })),
+          monotonicNow: 700,
+          corruptGeneration: { generation: "20:30:10", firstSeenAt: 500 },
+          ownerDisposition: undefined,
+        }),
+      ),
+      "contain",
+    ],
+    [
+      "stale deadline owner",
+      "deadline",
+      decideMcpLifecycleLock(decisionInput({ role: "deadline", ownerDisposition: "stale" })),
+      "contain",
+    ],
+    ["active reaper", "reaper", decideMcpLifecycleLock(decisionInput({ role: "reaper" })), "wait"],
+  ] as const)("maps the %s generation to %s", (_name, phase, lock, kind) => {
+    expect(decideMcpLifecycleAcquisition({ phase, lock }).kind).toBe(kind);
+  });
+
+  it.each([
+    ["unchanged authority", false, false, false, false, "owner", "owner", "a", "a", "enter"],
+    ["replacement owner", false, false, false, false, "owner", "replacement", "a", "a", "release"],
+    ["containment", true, false, false, false, "owner", "owner", "a", "a", "release"],
+    ["deadline generation", false, true, false, false, "owner", "owner", "a", "a", "release"],
+    ["reaper generation", false, false, true, false, "owner", "owner", "a", "a", "release"],
+    ["expired timer", false, false, false, true, "owner", "owner", "a", "a", "release"],
+    ["changed authority", false, false, false, false, "owner", "owner", "a", "b", "release"],
+  ] as const)(
+    "maps published %s to %s",
+    (
+      _name,
+      containmentPresent,
+      deadlinePresent,
+      reaperPresent,
+      timerDeadlineExpired,
+      expectedOwnerToken,
+      observedOwnerToken,
+      expectedTakeoverToken,
+      observedTakeoverToken,
+      kind,
+    ) => {
+      expect(
+        decideMcpLifecycleAcquisition({
+          phase: "published",
+          containmentPresent,
+          deadlinePresent,
+          reaperPresent,
+          timerDeadlineExpired,
+          expectedOwnerToken,
+          observedOwnerToken,
+          expectedTakeoverToken,
+          observedTakeoverToken,
+        }).kind,
+      ).toBe(kind);
+    },
+  );
 });
