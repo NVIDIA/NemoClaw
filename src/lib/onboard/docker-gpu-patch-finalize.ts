@@ -11,7 +11,9 @@
 // supports that natively, NemoClaw recreates the container with GPU access
 // and uses this module to either restore the pre-patch backup before commit or
 // complete the exact stop/remove/start handoff and require OpenShell's final
-// Ready acknowledgement. Regression coverage:
+// Ready acknowledgement. Removing the old container is the irreversible
+// commit point: later failures require a sandbox rebuild rather than automatic
+// rollback. Regression coverage:
 //   * src/lib/onboard/docker-gpu-patch-finalize.test.ts — direct unit tests
 //     for exact final handoff, terminal phase, rollback, and failure outcomes.
 //   * src/lib/onboard/docker-gpu-patch-rollback.test.ts — composed
@@ -60,6 +62,7 @@ export type DockerGpuPatchFinalizeOptions =
     };
 
 export type DockerGpuPatchFinalizeOutcome = {
+  /** True once the old container has crossed the irreversible removal boundary. */
   backupRemoved: boolean;
   rolledBack: boolean;
   replacementStoppedForCommit?: boolean;
@@ -104,8 +107,7 @@ function isSoleLabeledReplacement(
       .map((line) => line.trim())
       .filter(Boolean);
     return (
-      containerIds.length === 1 &&
-      fullDockerContainerId(containerIds[0]) === expectedContainerId
+      containerIds.length === 1 && fullDockerContainerId(containerIds[0]) === expectedContainerId
     );
   } catch {
     return false;
@@ -169,9 +171,10 @@ export function finalizeDockerGpuPatchBackup(
   if (options.supervisorReady) {
     // Stop the exact replacement before retiring the exact backup, then start
     // the replacement afterward. The final start is the authoritative Docker
-    // lifecycle event. Success is withheld until OpenShell reports Ready and
-    // Docker still proves the exact replacement is the sole running labeled
-    // container (#9531).
+    // lifecycle event. Backup removal is the irreversible commit point;
+    // failures after it require a sandbox rebuild. Success is withheld until
+    // OpenShell reports Ready and Docker still proves the exact replacement is
+    // the sole running labeled container (#9531).
     if (!deps.runOpenshell || !deps.runCaptureOpenshell) {
       return {
         backupRemoved: false,
@@ -214,11 +217,7 @@ export function finalizeDockerGpuPatchBackup(
         runOpenshell: deps.runOpenshell,
         sleep: deps.sleep,
         soleLabeledReplacementCorroboratesRetiringPhase: (remainingMs) =>
-          isSoleLabeledReplacement(
-            options.result.newContainerId,
-            resolved.dockerRun,
-            remainingMs,
-          ),
+          isSoleLabeledReplacement(options.result.newContainerId, resolved.dockerRun, remainingMs),
       },
     );
     if (!lifecycleReleaseObserved) {
@@ -282,35 +281,4 @@ export function finalizeDockerGpuPatchBackup(
     resolved,
   );
   return { backupRemoved: false, ...rollback };
-}
-
-export type SupervisorReconnectOutcome =
-  | { execReady: true; backupRemoved: boolean }
-  | ({ execReady: false; error: Error } & Omit<DockerGpuPatchFinalizeOutcome, "backupRemoved">);
-
-export function reconcileSupervisorReconnect(
-  execReady: boolean,
-  refs: { newContainerId: string; backupContainerName: string; originalName: string },
-  deps: DockerGpuPatchDeps,
-): SupervisorReconnectOutcome {
-  const resolved = resolveDockerGpuPatchRollbackDeps(deps);
-  const containerOpts = {
-    ignoreError: true,
-    suppressOutput: true,
-    timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-  };
-  if (execReady) {
-    const rmResult = resolved.dockerRm(refs.backupContainerName, containerOpts);
-    return { execReady: true, backupRemoved: hasZeroDockerExitStatus(rmResult) };
-  }
-  const rollback = rollbackToBackupContainer(refs, resolved);
-  return {
-    execReady: false,
-    ...rollback,
-    error: new Error(
-      rollback.rolledBack
-        ? "OpenShell supervisor did not reconnect to the GPU-enabled container; pre-patch sandbox restored."
-        : "OpenShell supervisor did not reconnect to the GPU-enabled container and rollback failed; pre-patch sandbox was NOT restored.",
-    ),
-  };
 }

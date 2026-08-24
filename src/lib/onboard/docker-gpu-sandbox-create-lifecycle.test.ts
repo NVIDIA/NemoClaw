@@ -171,8 +171,11 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
 
     patch.maybeApplyDuringCreate();
     patch.waitForSupervisorReconnectIfNeeded();
-    await expect(patch.commitAfterReady()).rejects.toThrow("final runtime handoff");
+    await expect(patch.commitAfterReady()).rejects.toThrow("automatic rollback is unavailable");
     expect(onPatchFailureExit).toHaveBeenCalledOnce();
+    expect(onPatchFailureExit.mock.calls[0]?.[2]?.context).toMatchObject({
+      backupRemoved: true,
+    });
   });
 
   it("rejects final handoff when OpenShell reports Deleting after restart (#9531)", async () => {
@@ -202,7 +205,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
 
     patch.maybeApplyDuringCreate();
     patch.waitForSupervisorReconnectIfNeeded();
-    await expect(patch.commitAfterReady()).rejects.toThrow("final runtime handoff");
+    await expect(patch.commitAfterReady()).rejects.toThrow("automatic rollback is unavailable");
 
     expect(waitForSupervisor).toHaveBeenCalledOnce();
     expect(onPatchFailureExit).toHaveBeenCalledOnce();

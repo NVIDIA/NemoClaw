@@ -39,7 +39,9 @@ describe("Docker GPU recreate orchestration", () => {
     const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn(() => ({ status: 0 }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
-    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const runOpenshell = vi.fn((args: readonly string[]) =>
+      args[1] === "list" ? { status: 0, stdout: "No sandboxes found.\n" } : { status: 0 },
+    );
     const runCaptureOpenshell = vi.fn(() => "alpha  2026-08-23 10:00:00  Ready\n");
 
     const result = recreateOpenShellDockerSandboxWithGpu(
@@ -108,10 +110,6 @@ describe("Docker GPU recreate orchestration", () => {
       ["sandbox", "list"],
       expect.objectContaining({ ignoreError: true, suppressOutput: true }),
     );
-    expect(runOpenshell).toHaveBeenCalledTimes(2);
-    expect(dockerStart.mock.invocationCallOrder[0]).toBeLessThan(
-      runOpenshell.mock.invocationCallOrder[1],
-    );
   });
 
   it("does not report success when the final OpenShell phase is Deleting (#9531)", () => {
@@ -128,7 +126,9 @@ describe("Docker GPU recreate orchestration", () => {
           dockerRm: vi.fn(() => ({ status: 0 })),
           dockerStart: vi.fn(() => ({ status: 0 })),
           runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:00  Deleting\n"),
-          runOpenshell: vi.fn(() => ({ status: 0 })),
+          runOpenshell: vi.fn((args: readonly string[]) =>
+            args[1] === "list" ? { status: 0, stdout: "No sandboxes found.\n" } : { status: 0 },
+          ),
           sleep: vi.fn(),
           now: () => new Date("2026-05-12T00:00:00Z"),
           detectSandboxFallbackDns: vi.fn(() => null),
@@ -142,7 +142,10 @@ describe("Docker GPU recreate orchestration", () => {
 
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toContain("final replacement handoff");
+    expect((failure as Error).message).toContain("automatic rollback is unavailable");
+    expect((failure as Error).message).toContain("Rebuild the sandbox before retrying");
     expect(getDockerGpuPatchFailureContext(failure)).toMatchObject({
+      backupRemoved: true,
       oldContainerId: OLD_CONTAINER_ID,
       newContainerId: NEW_CONTAINER_ID,
       lastSandboxPhase: "Deleting",

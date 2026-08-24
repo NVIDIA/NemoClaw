@@ -128,13 +128,17 @@ describe("finalizeDockerGpuPatchBackup", () => {
       events.push("observe ready");
       return "alpha  2026-08-23 10:00:00  Ready\n";
     });
+    const runOpenshellResults = {
+      exec: { event: "exec ready", result: { status: 0 } },
+      list: {
+        event: "observe lifecycle release",
+        result: { status: 0, stdout: "beta  2026-08-23 10:00:00  Ready\n" },
+      },
+    } as const;
     const runOpenshell = vi.fn((args: readonly string[]) => {
-      if (args[1] === "list") {
-        events.push("observe lifecycle release");
-        return { status: 0, stdout: "beta  2026-08-23 10:00:00  Ready\n" };
-      }
-      events.push("exec ready");
-      return { status: 0 };
+      const response = runOpenshellResults[args[1] === "list" ? "list" : "exec"];
+      events.push(response.event);
+      return response.result;
     });
     const dockerResults = {
       ps: {
@@ -258,10 +262,14 @@ describe("finalizeDockerGpuPatchBackup", () => {
 
   it("accepts a retiring Error row only when the exact replacement has the OpenShell label (#9962)", () => {
     const result = exactDeferredCreateResult();
-    const dockerRun = vi.fn((args: readonly string[]) => {
-      if (args[0] === "inspect") return { status: 0, stdout: "true\n" };
-      return { status: 0, stdout: `${result.newContainerId}\n` };
-    });
+    const dockerRunResults = {
+      inspect: { status: 0, stdout: "true\n" },
+      ps: { status: 0, stdout: `${result.newContainerId}\n` },
+    } as const;
+    const dockerRun = vi.fn(
+      (args: readonly string[]) =>
+        dockerRunResults[String(args[0]) as keyof typeof dockerRunResults],
+    );
 
     const outcome = finalizeDockerGpuPatchBackup(
       {

@@ -128,7 +128,8 @@ export function waitForOpenShellSandboxLifecycleRelease(
       const entries = parseLiveSandboxEntries(output);
       const sandboxPresent = entries.some((entry) => entry.name === sandboxName);
       const retiring = entries.some(
-        (entry) => entry.name === sandboxName && (entry.phase === "Error" || entry.phase === "Deleting"),
+        (entry) =>
+          entry.name === sandboxName && (entry.phase === "Error" || entry.phase === "Deleting"),
       );
       const corroborated =
         retiring &&
@@ -281,7 +282,7 @@ export function waitForOpenShellSupervisorReconnect(
   timeoutSecs: number,
   deps: DockerGpuSupervisorReconnectDeps,
 ): boolean {
-  if (!deps.runOpenshell) return true;
+  if (!deps.runOpenshell) return false;
   const sleep = deps.sleep ?? defaultSleep;
   const deadline = Date.now() + Math.max(1, timeoutSecs) * 1000;
   const errorPhaseDebouncePolls =

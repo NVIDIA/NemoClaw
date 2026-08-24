@@ -521,6 +521,10 @@ export function createDockerGpuSandboxCreatePatch(
             finalizeOutcome.lastSandboxPhase
               ? ` Last OpenShell phase: ${finalizeOutcome.lastSandboxPhase}.`
               : ""
+          }${
+            finalizeOutcome.backupRemoved
+              ? " The previous container was removed at the final handoff commit point; automatic rollback is unavailable. Rebuild the sandbox before retrying."
+              : ""
           }`,
         );
         cutoverFinalizationFailure = failure;
@@ -530,6 +534,7 @@ export function createDockerGpuSandboxCreatePatch(
           additionalSummaryLines: routeAdapter.additionalSummaryLines,
           context: {
             ...failureContext(),
+            backupRemoved: finalizeOutcome.backupRemoved,
             lastSandboxPhase: finalizeOutcome.lastSandboxPhase,
           },
         });

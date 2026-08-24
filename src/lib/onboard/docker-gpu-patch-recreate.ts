@@ -406,6 +406,7 @@ export function recreateOpenShellDockerSandboxContainer(
         )
       : finalizeDockerGpuPatchBackup({ result: patchResult, supervisorReady: false }, deps);
     context.rolledBack = finalization.rolledBack;
+    context.backupRemoved = finalization.backupRemoved;
     context.replacementStopConfirmed = finalization.replacementStopConfirmed;
     context.replacementRemovalConfirmed = finalization.replacementRemovalConfirmed;
     context.replacementPresence = finalization.replacementPresence;
@@ -418,10 +419,13 @@ export function recreateOpenShellDockerSandboxContainer(
       );
     }
     if (finalization.finalHandoffAcknowledged) return result(true);
+    const rebuildRequired = finalization.backupRemoved
+      ? " The previous container was removed at the final handoff commit point; automatic rollback is unavailable. Rebuild the sandbox before retrying."
+      : "";
     throw new Error(
       finalization.lastSandboxPhase
-        ? `OpenShell did not acknowledge the final replacement handoff; last sandbox phase was ${finalization.lastSandboxPhase}.`
-        : "OpenShell did not acknowledge the final replacement handoff.",
+        ? `OpenShell did not acknowledge the final replacement handoff; last sandbox phase was ${finalization.lastSandboxPhase}.${rebuildRequired}`
+        : `OpenShell did not acknowledge the final replacement handoff.${rebuildRequired}`,
     );
   } catch (error) {
     throw decoratePatchError(error instanceof Error ? error : new Error(String(error)), context);

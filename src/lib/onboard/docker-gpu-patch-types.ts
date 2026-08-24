@@ -79,6 +79,7 @@ export type DockerGpuPatchFailureContext = {
   oldContainerId?: string | null;
   newContainerId?: string | null;
   backupContainerName?: string | null;
+  backupRemoved?: boolean;
   selectedMode?: DockerGpuPatchMode | null;
   modeAttempts?: DockerGpuPatchModeAttempt[];
   rolledBack?: boolean;

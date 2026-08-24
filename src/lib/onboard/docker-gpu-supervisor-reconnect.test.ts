@@ -40,7 +40,10 @@ describe("Docker GPU final lifecycle release", () => {
         sleep: vi.fn(),
       }),
     ).toBe(false);
-    expect(runOpenshell).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not report reconnect without an OpenShell execution boundary (#9531)", () => {
+    expect(waitForOpenShellSupervisorReconnect("alpha", 1, { sleep: vi.fn() })).toBe(false);
   });
 });
 
