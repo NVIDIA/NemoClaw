@@ -162,7 +162,9 @@ describe("finalizeDockerGpuPatchBackup", () => {
     ]);
   });
 
-  it("accepts Error only when the stopped replacement is the sole labeled container (#9962)", () => {
+  it.each(["Error", "Deleting"])(
+    "accepts %s only when the stopped replacement is the sole labeled container (#9962)",
+    (phase) => {
     const replacementContainerId = "a".repeat(64);
     const events: string[] = [];
     const dockerStop = vi.fn(() => {
@@ -183,7 +185,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
     });
     const runOpenshell = vi.fn(() => {
       events.push("observe error");
-      return { status: 0, stdout: "alpha  2026-08-23 01:40:35  Error\n" };
+      return { status: 0, stdout: `alpha  2026-08-23 01:40:35  ${phase}\n` };
     });
 
     const outcome = finalizeDockerGpuPatchBackup(
@@ -216,7 +218,8 @@ describe("finalizeDockerGpuPatchBackup", () => {
       ]),
       expect.objectContaining({ ignoreError: true }),
     );
-  });
+    },
+  );
 
   it("caps Error corroboration to the remaining lifecycle-release budget (#9962)", () => {
     const replacementContainerId = "a".repeat(64);
