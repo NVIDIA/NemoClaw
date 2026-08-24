@@ -58,10 +58,14 @@ export const GATEWAY_TOPOLOGY_FILES = [
   "src/lib/onboard/experimental/hermes-portable-ollama-authority.ts",
   "src/lib/onboard/experimental/portable-host-preparation.ts",
   "src/lib/onboard/experimental/portable-profile.ts",
+  "src/lib/onboard/gateway-host-runtime.ts",
+  "src/lib/onboard/gateway-http-readiness.ts",
+  "src/lib/onboard/gateway-recovery.ts",
   "src/lib/onboard/gateway-sandbox-reachability.ts",
+  "src/lib/onboard/gateway-tcp-readiness.ts",
   "src/lib/onboard/host-service-reachability.ts",
   "src/lib/onboard/runtime-provider/contract.ts",
-  "src/lib/onboard/runtime-provider/podman-runtime-surfaces.ts",
+  "src/lib/onboard/runtime-provider/podman-host-local-inference.ts",
 ] as const;
 const GATEWAY_TOPOLOGY_FILE_SET = new Set<string>(GATEWAY_TOPOLOGY_FILES);
 const MANAGED_STARTUP_E2E_JOB_IDS = [

@@ -102,10 +102,14 @@ Risk plan version 19 selects the `gateway-topology` family for these production 
 - `src/lib/onboard/experimental/hermes-portable-ollama-authority.ts`.
 - `src/lib/onboard/experimental/portable-host-preparation.ts`.
 - `src/lib/onboard/experimental/portable-profile.ts`.
+- `src/lib/onboard/gateway-host-runtime.ts`.
+- `src/lib/onboard/gateway-http-readiness.ts`.
+- `src/lib/onboard/gateway-recovery.ts`.
 - `src/lib/onboard/gateway-sandbox-reachability.ts`.
+- `src/lib/onboard/gateway-tcp-readiness.ts`.
 - `src/lib/onboard/host-service-reachability.ts`.
 - `src/lib/onboard/runtime-provider/contract.ts`.
-- `src/lib/onboard/runtime-provider/podman-runtime-surfaces.ts`.
+- `src/lib/onboard/runtime-provider/podman-host-local-inference.ts`.
 
 The family requires PR Review Advisor to check this invariant against the diff, sibling consumers,
 and checked-in evidence:
