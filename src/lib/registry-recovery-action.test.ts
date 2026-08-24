@@ -141,6 +141,68 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
     expect(recovered?.observabilityEnabled).toBe(true);
   });
 
+  it("recovers external policy authority without NemoClaw attribution (#9833)", async () => {
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "external",
+      provider: "nvidia",
+      model: "nemotron",
+      policyPresets: ["npm"],
+      policyAuthority: "externally-managed",
+      nimContainer: null,
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+
+    const result = await recoverRegistryEntries();
+
+    expect(result.sandboxes.find((sandbox) => sandbox.name === "external")).toEqual(
+      expect.objectContaining({
+        policyAuthority: "externally-managed",
+        policies: [],
+      }),
+    );
+    expect(mockRegistryState.sandboxes.external).not.toHaveProperty("customPolicies");
+    expect(mockRegistryState.sandboxes.external).not.toHaveProperty("baselineExclusions");
+    expect(mockRegistryState.sandboxes.external).not.toHaveProperty("policyTier");
+    expect(mockRegistryState.sandboxes.external).not.toHaveProperty("policyPresetsFinalized");
+  });
+
+  it("preserves recorded policy authority and attribution during session recovery (#9833)", async () => {
+    mockRegistryState.sandboxes.alpha = {
+      name: "alpha",
+      provider: "nvidia",
+      model: "nemotron",
+      gpuEnabled: false,
+      policies: ["weather"],
+      policyAuthority: "nemoclaw-managed",
+      policyTier: "strict",
+    };
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "alpha",
+      provider: "nvidia",
+      model: "nemotron",
+      policyPresets: ["npm"],
+      policyAuthority: "externally-managed",
+      observabilityEnabled: true,
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+    vi.mocked(resolveOpenshell).mockReturnValue("/usr/bin/openshell");
+    vi.mocked(recoverNamedGatewayRuntime).mockResolvedValue({ recovered: true } as never);
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "alpha", phase: "Ready" }]);
+
+    await recoverRegistryEntries({ requestedSandboxName: "missing" });
+
+    expect(mockRegistryState.sandboxes.alpha).toMatchObject({
+      policyAuthority: "nemoclaw-managed",
+      policies: ["weather"],
+      policyTier: "strict",
+      observabilityEnabled: true,
+    });
+  });
+
   it("restores complete custom-route identity from a confirmed session", async () => {
     vi.mocked(loadSession).mockReturnValue({
       sandboxName: "custom-route",

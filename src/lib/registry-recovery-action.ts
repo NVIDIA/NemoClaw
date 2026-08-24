@@ -50,6 +50,7 @@ type RecoveredSandboxMetadata = Partial<
     | "endpointUrl"
     | "credentialEnv"
     | "preferredInferenceApi"
+    | "policyAuthority"
   >
 > & {
   policyPresets?: string[] | null;
@@ -69,11 +70,14 @@ function buildRecoveredSandboxEntry(
     model: metadata.model || null,
     provider: metadata.provider || null,
     gpuEnabled: metadata.gpuEnabled === true,
-    policies: Array.isArray(metadata.policies)
-      ? metadata.policies
-      : Array.isArray(metadata.policyPresets)
-        ? metadata.policyPresets
-        : [],
+    policies:
+      metadata.policyAuthority === "externally-managed"
+        ? []
+        : Array.isArray(metadata.policies)
+          ? metadata.policies
+          : Array.isArray(metadata.policyPresets)
+            ? metadata.policyPresets
+            : [],
     nimContainer: metadata.nimContainer || null,
     endpointUrl: metadata.endpointUrl ?? null,
     credentialEnv: metadata.credentialEnv ?? null,
@@ -89,6 +93,9 @@ function buildRecoveredSandboxEntry(
   }
   if (typeof metadata.observabilityEnabled === "boolean") {
     entry.observabilityEnabled = metadata.observabilityEnabled;
+  }
+  if (metadata.policyAuthority !== undefined) {
+    entry.policyAuthority = metadata.policyAuthority;
   }
   return entry;
 }
@@ -143,7 +150,12 @@ function upsertRecoveredSandbox(
     }
   }
   if (existing) {
-    registry.updateSandbox(validName, entry);
+    const {
+      policies: _recoveredPolicies,
+      policyAuthority: _recoveredAuthority,
+      ...updates
+    } = entry;
+    registry.updateSandbox(validName, updates);
     return false;
   }
   registry.registerSandbox(entry);
@@ -228,6 +240,7 @@ function seedRecoveryMetadata(
       provider: session.provider || null,
       nimContainer: session.nimContainer || null,
       policyPresets: session.policyPresets || null,
+      policyAuthority: session.policyAuthority ?? undefined,
       agent: session.agent || null,
       endpointUrl: session.endpointUrl ?? null,
       credentialEnv: session.credentialEnv ?? null,
