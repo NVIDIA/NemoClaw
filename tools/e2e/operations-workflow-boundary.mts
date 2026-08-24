@@ -597,6 +597,8 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         "${{ steps.validate_dcode_base.outputs.contract || steps.validate_reused_dcode_base.outputs.contract }}",
       dcode_base_ref:
         "${{ steps.validate_dcode_base.outputs.base_ref || steps.validate_reused_dcode_base.outputs.base_ref }}",
+      managed_image_revision:
+        "${{ steps.publication.outputs.head_sha || inputs.checkout_sha || github.sha }}",
     },
     permissions: {
       actions: "read",
