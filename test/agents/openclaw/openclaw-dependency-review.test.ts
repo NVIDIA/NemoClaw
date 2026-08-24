@@ -548,8 +548,8 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("Retained older OpenClaw pins are inactive compatibility/rollback");
     expect(review).toContain("fails closed on unknown or ambiguous formatter shapes");
     expect(review).toContain('OPENCLAW_VERSION="${OPENCLAW_VERSION}"');
-    expect(review).toContain("test/messaging-build-applier-integrity.test.ts");
-    expect(review).toContain("test/messaging-build-applier-render-safety.test.ts");
+    expect(review).toContain("test/runtime/messaging/messaging-build-applier-integrity.test.ts");
+    expect(review).toContain("test/runtime/messaging/messaging-build-applier-render-safety.test.ts");
     expect(review).toContain("test/onboarding/onboard-resume-provider-recovery.test.ts");
   });
 
