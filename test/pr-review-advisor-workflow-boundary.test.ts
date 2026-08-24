@@ -49,7 +49,6 @@ function validResult(): Record<string, unknown> {
       noChangesReason: "No terminology changes.",
     },
     acceptanceCoverage: [],
-    securityCategories: [],
     sourceOfTruthReview: [],
     e2e: {
       coverage: {

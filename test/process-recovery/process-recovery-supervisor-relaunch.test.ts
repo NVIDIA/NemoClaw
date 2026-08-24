@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as forwardHealth from "../src/lib/actions/sandbox/forward-health.ts";
-import { checkAndRecoverSandboxProcesses } from "../src/lib/actions/sandbox/process-recovery.ts";
-import { relaunchManagedSupervisorSession } from "../src/lib/actions/sandbox/supervisor-relaunch.ts";
-import * as openshellRuntime from "../src/lib/adapters/openshell/runtime.ts";
-import * as agentRuntime from "../src/lib/agent/runtime.ts";
-import { finalizeDockerGpuPatchBackup } from "../src/lib/onboard/docker-gpu-patch-finalize.ts";
-import * as registry from "../src/lib/state/registry.ts";
+import * as forwardHealth from "../../src/lib/actions/sandbox/forward-health.ts";
+import { checkAndRecoverSandboxProcesses } from "../../src/lib/actions/sandbox/process-recovery.ts";
+import { relaunchManagedSupervisorSession } from "../../src/lib/actions/sandbox/supervisor-relaunch.ts";
+import * as openshellRuntime from "../../src/lib/adapters/openshell/runtime.ts";
+import * as agentRuntime from "../../src/lib/agent/runtime.ts";
+import { finalizeDockerGpuPatchBackup } from "../../src/lib/onboard/docker-gpu-patch-finalize.ts";
+import * as registry from "../../src/lib/state/registry.ts";
 
 const OPENSHELL_RELAY_CHANNEL_DROPPED_STDERR = `Error:   × status: Unavailable, message: "relay
   │ channel dropped", details: [], metadata: MetadataMap { headers: {} }
@@ -781,7 +781,8 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       wasRunning: false,
       recovered: false,
       forwardRecovered: false,
-      recoveryFailureDetail: "Sandbox recovery did not complete; the previous container was restored",
+      recoveryFailureDetail:
+        "Sandbox recovery did not complete; the previous container was restored",
     });
     expect(order).toEqual(["restore-state", "post-restore-restart", "rollback-container"]);
     expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(4);
@@ -1073,55 +1074,56 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         throw new Error("opaque-finalizer-sentinel");
       },
     },
-  ])("reports the readiness failure and unconfirmed rollback when $condition (#9364)", ({
-    finalizeOutcome,
-  }) => {
-    mockOpenClawSandbox("rollback-box");
-    setImmediateRecoveryPolling();
-    const finalize = vi.fn((_supervisorReady: boolean) => finalizeOutcome());
-    const relaunchManagedSupervisorSessionImpl = vi.fn(() => ({
-      containerId: "replacement-container-id",
-      finalize,
-    }));
-    const requestGatewaySupervisorAction = vi.fn(() => MISSING_MANAGED_SUPERVISOR);
-    const requestPinnedGatewaySupervisorAction = vi.fn(() => ACCEPTED_MANAGED_PROBE);
-    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(() => false);
-    const captureOpenshell = vi
-      .spyOn(openshellRuntime, "captureOpenshell")
-      .mockReturnValue({ status: 0, output: "" });
-    const runOpenshell = vi
-      .spyOn(openshellRuntime, "runOpenshell")
-      .mockReturnValue({ status: 0 } as never);
+  ])(
+    "reports the readiness failure and unconfirmed rollback when $condition (#9364)",
+    ({ finalizeOutcome }) => {
+      mockOpenClawSandbox("rollback-box");
+      setImmediateRecoveryPolling();
+      const finalize = vi.fn((_supervisorReady: boolean) => finalizeOutcome());
+      const relaunchManagedSupervisorSessionImpl = vi.fn(() => ({
+        containerId: "replacement-container-id",
+        finalize,
+      }));
+      const requestGatewaySupervisorAction = vi.fn(() => MISSING_MANAGED_SUPERVISOR);
+      const requestPinnedGatewaySupervisorAction = vi.fn(() => ACCEPTED_MANAGED_PROBE);
+      const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(() => false);
+      const captureOpenshell = vi
+        .spyOn(openshellRuntime, "captureOpenshell")
+        .mockReturnValue({ status: 0, output: "" });
+      const runOpenshell = vi
+        .spyOn(openshellRuntime, "runOpenshell")
+        .mockReturnValue({ status: 0 } as never);
 
-    const result = checkAndRecoverSandboxProcesses("rollback-box", {
-      quiet: true,
-      isSandboxGatewayRunningImpl: () => false,
-      requestGatewaySupervisorAction,
-      requestPinnedGatewaySupervisorAction,
-      relaunchManagedSupervisorSessionImpl,
-      waitForRecreatedSandboxOpenShellReadyImpl,
-    });
+      const result = checkAndRecoverSandboxProcesses("rollback-box", {
+        quiet: true,
+        isSandboxGatewayRunningImpl: () => false,
+        requestGatewaySupervisorAction,
+        requestPinnedGatewaySupervisorAction,
+        relaunchManagedSupervisorSessionImpl,
+        waitForRecreatedSandboxOpenShellReadyImpl,
+      });
 
-    expect(result).toMatchObject({
-      checked: true,
-      wasRunning: false,
-      recovered: false,
-      forwardRecovered: false,
-      recoveryFailureDetail: expect.stringContaining(
-        "NemoClaw could not confirm rollback to the previous sandbox container",
-      ),
-    });
-    expect("recoveryFailureDetail" in result ? result.recoveryFailureDetail : "").toContain(
-      "did not become ready in OpenShell",
-    );
-    expect("recoveryFailureDetail" in result ? result.recoveryFailureDetail : "").not.toContain(
-      "opaque-finalizer-sentinel",
-    );
-    expect(finalize).toHaveBeenCalledOnce();
-    expect(finalize).toHaveBeenCalledWith(false);
-    expect(captureOpenshell).not.toHaveBeenCalled();
-    expect(runOpenshell).not.toHaveBeenCalled();
-  });
+      expect(result).toMatchObject({
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        forwardRecovered: false,
+        recoveryFailureDetail: expect.stringContaining(
+          "NemoClaw could not confirm rollback to the previous sandbox container",
+        ),
+      });
+      expect("recoveryFailureDetail" in result ? result.recoveryFailureDetail : "").toContain(
+        "did not become ready in OpenShell",
+      );
+      expect("recoveryFailureDetail" in result ? result.recoveryFailureDetail : "").not.toContain(
+        "opaque-finalizer-sentinel",
+      );
+      expect(finalize).toHaveBeenCalledOnce();
+      expect(finalize).toHaveBeenCalledWith(false);
+      expect(captureOpenshell).not.toHaveBeenCalled();
+      expect(runOpenshell).not.toHaveBeenCalled();
+    },
+  );
 
   it("reports the last structured OpenShell error when readiness times out", () => {
     mockOpenClawSandbox("relay-dropped-box");

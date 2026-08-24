@@ -48,6 +48,18 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/github-actions-workflow-names.test.ts"),
   },
   {
+    pattern: /(?:^|\/)test\/helpers\/onboard-script-mocks\.cjs$/,
+    testsToRun: runTests(
+      "test/onboard-extra-provider-reconciliation.test.ts",
+      "test/onboard-installer-restore-intent.test.ts",
+      "test/onboard-messaging.test.ts",
+      "test/onboard-reservation-recreate.test.ts",
+      "test/onboard-sandbox-build.test.ts",
+      "test/onboard-sandbox-recreation.test.ts",
+      "test/onboard-terminal-dashboard.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)docs\/reference\/troubleshooting\.mdx$/,
     testsToRun: runTests("test/policy-finality-docs.test.ts"),
   },
