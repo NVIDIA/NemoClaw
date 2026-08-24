@@ -3,10 +3,8 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const ROOT = path.resolve(import.meta.dirname, "../..");
 const MESSAGING_PLAN_ENV_KEY = "NEMOCLAW_MESSAGING_PLAN_B64";
 
 function dockerfileEnvNames(dockerfile: string): string[] {
