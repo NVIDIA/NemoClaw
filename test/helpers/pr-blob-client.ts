@@ -5,7 +5,7 @@
 // It batches blob reads, falls back for large files, and retries transient
 // failures without duplicating network code in each test.
 //
-import pRetry from "p-retry";
+import { retryUntilAsync } from "../../src/lib/core/retry";
 
 // Trust boundary: this runs from the trusted base checkout under
 // pull_request_target. It only reads GitHub's diff metadata and blob text as
@@ -35,8 +35,8 @@ export type BlobMap = ReadonlyMap<string, string | null>;
 export type PrBlobClientOptions = {
   readonly token: string;
   readonly fetchImpl?: FetchLike;
-  /** Overrides p-retry timing for deterministic tests. */
-  readonly retryOptions?: Pick<pRetry.Options, "minTimeout" | "maxTimeout" | "randomize">;
+  /** Injectable for deterministic tests; defaults to a real timer sleep. */
+  readonly sleep?: (ms: number) => Promise<void>;
 };
 
 export type PrBlobClient = {
@@ -45,6 +45,11 @@ export type PrBlobClient = {
 };
 
 type RetriableError = Error & { transient?: boolean };
+type RetryResult<T> = { value: T } | { error: Error; transient: boolean };
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export function isTransientStatus(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599);
@@ -79,33 +84,39 @@ function buildBlobQuery(paths: readonly string[]): string {
 
 export function createPrBlobClient(options: PrBlobClientOptions): PrBlobClient {
   const fetchImpl = options.fetchImpl ?? (globalThis.fetch as FetchLike);
+  const sleep = options.sleep ?? defaultSleep;
   const headers = {
     Authorization: `Bearer ${options.token}`,
     "X-GitHub-Api-Version": "2022-11-28",
   };
 
-  function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
-    return pRetry(
+  async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+    const result = await retryUntilAsync<RetryResult<T>>(
       async () => {
         try {
-          return await fn();
+          return { value: await fn() };
         } catch (error) {
-          if ((error as RetriableError)?.transient === true) throw error;
-          throw new pRetry.AbortError(error as Error);
+          const retriable = error as RetriableError;
+          return { error: retriable, transient: retriable.transient === true };
         }
       },
       {
-        retries: RETRY_ATTEMPTS - 1,
-        factor: 2,
-        minTimeout: RETRY_BASE_MS,
-        maxTimeout: RETRY_MAX_MS,
-        randomize: true,
-        ...options.retryOptions,
-        onFailedAttempt: (error) => {
-          console.error(`retry: ${label} attempt ${error.attemptNumber} failed (${error.message})`);
+        accept: (attempt) => "value" in attempt || !attempt.transient,
+        retryDelaysMs: Array.from({ length: RETRY_ATTEMPTS - 1 }, (_, index) =>
+          Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** index),
+        ),
+        onRetry: (attempt, delayMs, attemptNumber) => {
+          if ("error" in attempt) {
+            console.error(
+              `retry: ${label} attempt ${attemptNumber} failed (${attempt.error.message}); sleeping ${delayMs}ms`,
+            );
+          }
         },
+        sleep,
       },
     );
+    if ("error" in result) throw result.error;
+    return result.value;
   }
 
   async function requestJson(url: string, init?: Parameters<typeof fetch>[1]): Promise<unknown> {

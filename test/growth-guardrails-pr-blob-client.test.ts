@@ -11,9 +11,7 @@ import {
   isTransientStatus,
 } from "./helpers/pr-blob-client";
 
-const DETERMINISTIC = {
-  retryOptions: { minTimeout: 1, maxTimeout: 1, randomize: false },
-} as const;
+const DETERMINISTIC = { sleep: async () => {} } as const;
 
 function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
