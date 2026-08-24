@@ -30,7 +30,11 @@ const PAGE_SIZE = 100;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/*-]+$/u;
 const REUSABLE_NON_IMAGE_PATHS = [
+  /^[.]github\/workflows\/e2e(?:-standard-profile)?[.]yaml$/u,
   /^scripts\/install[.]sh$/u,
+  /^src\/lib\/onboard\/managed-workload\/onboard-orchestration[.]test[.]ts$/u,
+  /^src\/lib\/onboard\/sandbox-workload-preparation[.]test[.]ts$/u,
+  /^src\/lib\/onboard\/workload\/preparation[.]ts$/u,
   /^test\//u,
   /^tools\/e2e\//u,
 ] as const;

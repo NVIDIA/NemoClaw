@@ -122,14 +122,19 @@ on:
   it("allows reuse only across host-installer and E2E-only changes", () => {
     expect(
       managedImagePublicationReuseAllowed([
+        ".github/workflows/e2e-standard-profile.yaml",
+        ".github/workflows/e2e.yaml",
         "scripts/install.sh",
+        "src/lib/onboard/managed-workload/onboard-orchestration.test.ts",
+        "src/lib/onboard/sandbox-workload-preparation.test.ts",
+        "src/lib/onboard/workload/preparation.ts",
         "test/e2e/fixtures/security-posture.ts",
         "test/install-preflight-docker-bootstrap.test.ts",
         "tools/e2e/target-catalogue.mts",
       ]),
     ).toBe(true);
     expect(managedImagePublicationReuseAllowed(["scripts/managed-gateway-control.py"])).toBe(false);
-    expect(managedImagePublicationReuseAllowed(["src/lib/onboard/workload/preparation.ts"])).toBe(
+    expect(managedImagePublicationReuseAllowed(["src/lib/onboard/workload/rebuild.ts"])).toBe(
       false,
     );
   });
@@ -137,6 +142,9 @@ on:
   it.each(MANAGED_IMAGE_DOCKERFILES)("keeps reusable paths outside %s", (dockerfile) => {
     const source = fs.readFileSync(dockerfile, "utf8");
     expect(source).not.toContain("scripts/install.sh");
+    expect(source).not.toContain("src/lib/onboard/workload/preparation.ts");
+    expect(source).not.toMatch(/^COPY [.]github\/workflows\/e2e/mu);
+    expect(source).not.toMatch(/^COPY src\/lib\/onboard\/.*[.]test[.]ts/mu);
     expect(source).not.toMatch(/^COPY test\//mu);
     expect(source).not.toMatch(/^COPY tools\/e2e\//mu);
   });
