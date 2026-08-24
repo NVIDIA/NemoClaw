@@ -14,7 +14,6 @@ import { redirectInheritedChildStdoutToStderr } from "../../cli/stdout-guard";
 import { buildSubprocessEnv } from "../../subprocess-env";
 
 export { openshellSandboxSshHost, resolveOpenshellSandboxSshHost } from "./sandbox-ssh-host";
-export { stripAnsi } from "./ansi";
 
 export type OpenshellSpawnSync = (
   command: string,
@@ -81,6 +80,12 @@ export interface CaptureOpenshellResult {
   stderr?: string;
   error?: Error;
   signal?: NodeJS.Signals | null;
+}
+
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+
+export function stripAnsi(value = ""): string {
+  return String(value).replace(ANSI_RE, "");
 }
 
 function escapeRegExp(value: string): string {

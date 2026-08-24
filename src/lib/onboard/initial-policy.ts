@@ -7,7 +7,7 @@ import { TextDecoder } from "node:util";
 import YAML from "yaml";
 
 import { isObjectRecord } from "../core/json-types";
-import { filterInactiveMessagingChannelPolicies } from "../messaging/channels";
+import { getMessagingPolicyKeysByChannel } from "../messaging/channels";
 import * as policies from "../policy";
 import {
   applyBaselineExclusions,
@@ -48,6 +48,8 @@ export function discloseInitialSandboxPolicy(policy: InitialSandboxPolicy): void
     policy.sourceBytes?.toString("utf8") ?? fs.readFileSync(policy.policyPath, "utf8"),
   );
 }
+
+const HERMES_MESSAGING_POLICY_KEYS = getMessagingPolicyKeysByChannel({ agent: "hermes" });
 
 const PROC_PATH = "/proc";
 const PROC_COMM_READ_WRITE_PATHS = ["/proc/self/comm", "/proc/self/task/*/comm"];
@@ -363,11 +365,27 @@ function filterHermesInactiveMessagingPolicies(
   policyContent: string,
   activeMessagingChannels: string[],
 ): { content: string; changed: boolean } {
-  return filterInactiveMessagingChannelPolicies(
-    policyContent,
-    activeMessagingChannels,
-    "hermes",
-  );
+  const parsed = YAML.parse(policyContent);
+  if (!isObjectRecord(parsed) || !isObjectRecord(parsed.network_policies)) {
+    return { content: policyContent, changed: false };
+  }
+
+  const active = new Set(activeMessagingChannels);
+  let changed = false;
+  for (const [channel, policyKeys] of Object.entries(HERMES_MESSAGING_POLICY_KEYS)) {
+    if (active.has(channel)) continue;
+    for (const key of policyKeys) {
+      if (Object.prototype.hasOwnProperty.call(parsed.network_policies, key)) {
+        delete parsed.network_policies[key];
+        changed = true;
+      }
+    }
+  }
+
+  return {
+    content: changed ? YAML.stringify(parsed) : policyContent,
+    changed,
+  };
 }
 
 function isHermesPolicyPath(policyPath: string): boolean {

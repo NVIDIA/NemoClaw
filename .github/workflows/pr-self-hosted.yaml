@@ -32,9 +32,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      base_sha: ${{ steps.changed.outputs.base_sha }}
-      candidate_repository: ${{ steps.changed.outputs.candidate_repository }}
-      pr_number: ${{ steps.changed.outputs.pr_number }}
       selected: ${{ steps.changed.outputs.selected }}
     steps:
       - id: changed
@@ -50,12 +47,6 @@ jobs:
           }
           pr_number="${BASH_REMATCH[1]}"
           pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number")"
-          base_sha="$(jq -er '.base.sha | select(test("^[a-f0-9]{40}$"))' <<<"$pr_json")"
-          candidate_repository="$(jq -er '.head.repo.full_name | strings | select(length > 0)' <<<"$pr_json")"
-          [[ "$candidate_repository" == "$GITHUB_REPOSITORY" ]] || {
-            echo "::error::Copied PR branch must come from the workflow repository" >&2
-            exit 1
-          }
           head_sha="$(jq -er '.head.sha | select(test("^[a-f0-9]{40}$"))' <<<"$pr_json")"
           [[ "$head_sha" == "$GITHUB_SHA" ]] || {
             echo "::error::Copied PR branch SHA does not match the current PR head" >&2
@@ -88,80 +79,14 @@ jobs:
           else
             selected=false
           fi
-          printf 'base_sha=%s\n' "$base_sha" >>"$GITHUB_OUTPUT"
-          printf 'candidate_repository=%s\n' "$candidate_repository" >>"$GITHUB_OUTPUT"
-          printf 'pr_number=%s\n' "$pr_number" >>"$GITHUB_OUTPUT"
           printf 'selected=%s\n' "$selected" >>"$GITHUB_OUTPUT"
-
-  resolve-llama-cpp-managed-images:
-    name: Resolve exact PR managed images for llama.cpp GPU
-    needs: select-llama-cpp-generic-gpu
-    if: ${{ needs.select-llama-cpp-generic-gpu.outputs.selected == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 70
-    outputs:
-      catalog_written: ${{ steps.catalog.outputs.catalog_written }}
-    permissions:
-      actions: read
-      contents: read
-      pull-requests: read
-    steps:
-      - name: Checkout exact PR head
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: ${{ github.sha }}
-
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22.19.0
-          cache: npm
-
-      - name: Install exact catalog resolver dependencies
-        run: npm ci --ignore-scripts
-
-      - id: catalog
-        name: Wait for exact PR managed-image catalog
-        env:
-          BASE_SHA: ${{ needs.select-llama-cpp-generic-gpu.outputs.base_sha }}
-          CANDIDATE_REPOSITORY: ${{ needs.select-llama-cpp-generic-gpu.outputs.candidate_repository }}
-          CANDIDATE_SHA: ${{ github.sha }}
-          GITHUB_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ needs.select-llama-cpp-generic-gpu.outputs.pr_number }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          catalog_path="${RUNNER_TEMP}/pr-managed-image-catalog.json"
-          node --experimental-strip-types --no-warnings \
-            tools/e2e/pr-managed-image-publication.mts wait \
-            "$catalog_path"
-          if [[ -e "$catalog_path" ]]; then
-            printf 'catalog_written=true\n' >>"$GITHUB_OUTPUT"
-          else
-            printf 'catalog_written=false\n' >>"$GITHUB_OUTPUT"
-          fi
-
-      - name: Upload exact PR managed-image catalog
-        if: ${{ steps.catalog.outputs.catalog_written == 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: llama-cpp-pr-managed-catalog-${{ github.sha }}
-          path: ${{ runner.temp }}/pr-managed-image-catalog.json
-          if-no-files-found: error
-          retention-days: 1
 
   llama-cpp-generic-gpu:
     name: llama.cpp on generic NVIDIA GPU
-    needs:
-      - select-llama-cpp-generic-gpu
-      - resolve-llama-cpp-managed-images
+    needs: select-llama-cpp-generic-gpu
     if: ${{ needs.select-llama-cpp-generic-gpu.outputs.selected == 'true' }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 120
-    permissions:
-      actions: read
-      contents: read
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-generic-gpu
       E2E_JOB: "1"
@@ -183,21 +108,6 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.sha }}
-
-      - name: Download exact PR managed-image catalog
-        if: ${{ needs.resolve-llama-cpp-managed-images.outputs.catalog_written == 'true' }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: llama-cpp-pr-managed-catalog-${{ github.sha }}
-          path: ${{ runner.temp }}/pr-managed-image-catalog
-
-      - name: Bind exact PR managed-image catalog
-        if: ${{ needs.resolve-llama-cpp-managed-images.outputs.catalog_written == 'true' }}
-        shell: bash
-        run: >-
-          printf 'NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG=%s\n'
-          "${RUNNER_TEMP}/pr-managed-image-catalog/pr-managed-image-catalog.json"
-          >>"$GITHUB_ENV"
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75

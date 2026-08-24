@@ -18,7 +18,6 @@ import { CLI_NAME } from "../cli/branding";
 import {
   getMessagingPolicyKeyAliases,
   getMessagingPolicyPresetValidationWarnings,
-  filterInactiveMessagingChannelPolicies,
   isMessagingChannelPolicyPreset,
   listBuiltInMessagingChannelManifests,
   listMessagingChannelPolicyPresets,
@@ -2921,20 +2920,8 @@ function applyPermissivePolicy(sandboxName: string): void {
   if (!fs.existsSync(policyPath)) {
     throw new Error(`Permissive policy not found: ${policyPath}`);
   }
-  const sandbox = registry.getSandbox(sandboxName);
   const policyDocument = fs.readFileSync(policyPath, "utf-8");
-  const channelFilteredPolicy =
-    sandbox?.agent === "hermes"
-      ? filterInactiveMessagingChannelPolicies(
-          policyDocument,
-          registry.getActiveMessagingChannelsFromEntry(sandbox),
-          "hermes",
-        ).content
-      : policyDocument;
-  const materializedPolicy = materializeMessagingPolicySandboxName(
-    channelFilteredPolicy,
-    sandboxName,
-  );
+  const materializedPolicy = materializeMessagingPolicySandboxName(policyDocument, sandboxName);
   if (materializedPolicy === null) {
     throw new Error("Cannot materialize the permissive policy credential provider binding");
   }

@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
-import type { SandboxMessagingPlan } from "../../messaging";
-import {
-  restoreChannelMessagingProviderAttachments,
-  rollbackMessagingProviderAttachments,
-  type MessagingProviderAttachmentReceipt,
-} from "./messaging-provider/attachments";
 
 type MessagingProviderTokenDefinition = {
   name: string;
@@ -55,26 +49,6 @@ type GooglechatWebhookProxy = Pick<
  * onboarding and rebuild modules at policy-channel import time.
  */
 export const policyChannelDependencies = {
-  restoreChannelMessagingProviderAttachments(
-    sandboxName: string,
-    plan: SandboxMessagingPlan,
-    channelId: string,
-    gatewayName: string,
-  ): MessagingProviderAttachmentReceipt[] {
-    return restoreChannelMessagingProviderAttachments(
-      sandboxName,
-      plan,
-      channelId,
-      gatewayName,
-      runOpenshell,
-    );
-  },
-  rollbackMessagingProviderAttachments(
-    sandboxName: string,
-    receipts: readonly MessagingProviderAttachmentReceipt[],
-  ): string[] {
-    return rollbackMessagingProviderAttachments(sandboxName, receipts, runOpenshell);
-  },
   isMessagingProviderBindingConflict(
     error: unknown,
   ): error is Error & { readonly mutatedProviderNames: readonly string[] } {

@@ -16,15 +16,13 @@ import type {
   ExactManagedMcpPolicy,
   ManagedMcpPolicyOmission,
 } from "../actions/sandbox/mcp-bridge-policy";
-import {
-  filterInactiveMessagingChannelPolicies,
-  materializeMessagingPolicySandboxName,
-} from "../messaging/channels/policy";
+import { materializeMessagingPolicySandboxName } from "../messaging/channels/policy";
 import { cleanupTempDir, secureTempFile } from "../onboard/temp-files";
-import { getActiveMessagingChannelsFromEntry } from "../state/registry-messaging";
-import type { SandboxEntry } from "../state/registry/types";
 
-export { assertLegacyMcpPolicyRestoreSafe, isManagedMcpPolicyKey } from "./mcp-policy-transition";
+export {
+  assertLegacyMcpPolicyRestoreSafe,
+  isManagedMcpPolicyKey,
+} from "./mcp-policy-transition";
 
 import {
   composeDeadlineManagedMcpPolicies,
@@ -98,31 +96,6 @@ export interface PermissiveRuntimeDeps {
   // binding. Supplying the target name makes composition fail closed unless
   // every placeholder can be materialized before the policy is staged.
   sandboxName?: string;
-  // Persisted manifest state is the enablement authority. Live policy can be
-  // stale during a transition and must never reactivate a disabled channel.
-  activeMessagingChannels?: readonly string[];
-}
-
-export interface RegisteredPermissiveRuntimeDeps extends Omit<
-  PermissiveRuntimeDeps,
-  "activeMessagingChannels" | "sandboxName"
-> {
-  sandboxEntry: SandboxEntry;
-  sandboxName: string;
-}
-
-export function buildRegisteredRuntimePermissivePolicy(
-  basePermissivePath: string,
-  deps: RegisteredPermissiveRuntimeDeps,
-): string {
-  if (deps.sandboxEntry.name !== deps.sandboxName || deps.sandboxEntry.agent !== "hermes") {
-    throw new Error("Cannot compose Hermes Shields-down policy without exact registry authority");
-  }
-  const { sandboxEntry, ...runtimeDeps } = deps;
-  return buildRuntimePermissivePolicy(basePermissivePath, {
-    ...runtimeDeps,
-    activeMessagingChannels: getActiveMessagingChannelsFromEntry(sandboxEntry),
-  });
 }
 
 export function buildRuntimePermissivePolicy(
@@ -133,7 +106,11 @@ export function buildRuntimePermissivePolicy(
   const liveRw = readStringList(live, "read_write");
   const liveRo = readStringList(live, "read_only");
   const managedMcpPolicies = deps.managedMcpPolicies ?? [];
-  const activeMessagingChannels = deps.activeMessagingChannels ?? [];
+  const discordProviderName = deps.sandboxName
+    ? `${deps.sandboxName}-discord-bridge`
+    : null;
+  const preserveDiscordBinding =
+    discordProviderName !== null && policyUsesCredentialProvider(live, discordProviderName);
 
   // No live startup-sealed or filesystem state to carry forward — keep the
   // static path so the caller's apply path is unchanged unless exact managed
@@ -164,16 +141,12 @@ export function buildRuntimePermissivePolicy(
     }
     return basePermissivePath;
   }
-  if (deps.sandboxName !== undefined) {
+  if (deps.sandboxName !== undefined && preserveDiscordBinding) {
     const materialized = materializeMessagingPolicySandboxName(baseYaml, deps.sandboxName);
     if (materialized === null) {
       throw new Error("Cannot materialize the Shields-down credential provider binding");
     }
-    baseYaml = filterInactiveMessagingChannelPolicies(
-      materialized,
-      activeMessagingChannels,
-      "hermes",
-    ).content;
+    baseYaml = materialized;
   }
   const base = safeYamlObject(baseYaml);
   if (!base) {
@@ -184,6 +157,12 @@ export function buildRuntimePermissivePolicy(
       throw new Error("Cannot parse the Shields-down policy with credential provider bindings");
     }
     return basePermissivePath;
+  }
+  if (deps.sandboxName !== undefined && !preserveDiscordBinding) {
+    const networkPolicies = base.network_policies;
+    if (networkPolicies && typeof networkPolicies === "object" && !Array.isArray(networkPolicies)) {
+      delete (networkPolicies as Record<string, unknown>).discord;
+    }
   }
   const fsPolicy =
     base.filesystem_policy && typeof base.filesystem_policy === "object"
@@ -373,6 +352,30 @@ function safeYamlObject(text: string): Record<string, unknown> | null {
     return null;
   }
   return null;
+}
+
+function policyUsesCredentialProvider(
+  policy: Record<string, unknown> | null,
+  providerName: string,
+): boolean {
+  const networkPolicies = policy?.network_policies;
+  if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
+    return false;
+  }
+  for (const networkPolicy of Object.values(networkPolicies)) {
+    if (!networkPolicy || typeof networkPolicy !== "object" || Array.isArray(networkPolicy)) {
+      continue;
+    }
+    const endpoints = (networkPolicy as Record<string, unknown>).endpoints;
+    if (!Array.isArray(endpoints)) continue;
+    for (const endpoint of endpoints) {
+      if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
+      const binding = (endpoint as Record<string, unknown>).credential_binding;
+      if (!binding || typeof binding !== "object" || Array.isArray(binding)) continue;
+      if ((binding as Record<string, unknown>).provider === providerName) return true;
+    }
+  }
+  return false;
 }
 
 function readStringList(

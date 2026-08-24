@@ -361,9 +361,7 @@ function reconcileDeps(plans: readonly (SandboxMessagingPlan | null)[]) {
       authoritative: false,
       plan: null,
     })),
-    providerMatchesGatewayCredential: vi.fn(
-      (_name: string, _type: string, _credentialEnv: string) => false,
-    ),
+    providerMatchesGatewayCredential: vi.fn(() => false),
   };
 }
 
@@ -741,71 +739,6 @@ describe("reconcileSandboxMessaging plan authority", () => {
     });
 
     expect(result).toEqual({ plan: registryPlan, selectedChannels: ["whatsapp"] });
-  });
-
-  it("preserves a gateway-held Hermes channel during an authoritative rebuild", async () => {
-    const registryPlan = discordPlan(
-      hashCredential("historical-discord-token") ?? "",
-      "hermes",
-    );
-    const deps = reconcileDeps([]);
-    deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
-      authoritative: true,
-      plan: registryPlan,
-    });
-    deps.providerMatchesGatewayCredential.mockImplementation(
-      (name, type, credentialEnv) =>
-        name === "alpha-discord-bridge" &&
-        type === "discord-hermes-static-v1" &&
-        credentialEnv === "DISCORD_BOT_TOKEN",
-    );
-    vi.stubEnv("DISCORD_BOT_TOKEN", "");
-
-    const result = await reconcileSandboxMessaging({
-      resume: true,
-      session: completedCheckpointSession(registryPlan),
-      sandboxName: "alpha",
-      agent: { name: "hermes" },
-      preserveGatewayHeldRegistrySelection: true,
-      deps,
-    });
-
-    expect(deps.providerMatchesGatewayCredential).toHaveBeenCalledWith(
-      "alpha-discord-bridge",
-      "discord-hermes-static-v1",
-      "DISCORD_BOT_TOKEN",
-    );
-    expect(deps.note).not.toHaveBeenCalledWith(
-      expect.stringContaining("No host inputs configure discord"),
-    );
-    expect(result).toEqual({ plan: registryPlan, selectedChannels: ["discord"] });
-  });
-
-  it("does not preserve an authoritative rebuild channel with a mismatched gateway binding", async () => {
-    const registryPlan = discordPlan(
-      hashCredential("historical-discord-token") ?? "",
-      "hermes",
-    );
-    const deps = reconcileDeps([]);
-    deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
-      authoritative: true,
-      plan: registryPlan,
-    });
-    vi.stubEnv("DISCORD_BOT_TOKEN", "");
-
-    const result = await reconcileSandboxMessaging({
-      resume: true,
-      session: completedCheckpointSession(registryPlan),
-      sandboxName: "alpha",
-      agent: { name: "hermes" },
-      preserveGatewayHeldRegistrySelection: true,
-      deps,
-    });
-
-    expect(result).toEqual({
-      plan: withChannelDisabled(registryPlan, "discord"),
-      selectedChannels: [],
-    });
   });
 
   it("uses the staged plan before a matching session plan during resume for a pending target", async () => {

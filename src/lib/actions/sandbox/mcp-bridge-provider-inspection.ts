@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { stripAnsi } from "../../adapters/openshell/client";
-import { parseProviderAttachmentNames } from "../../adapters/openshell/provider-attachment-table";
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
 import { listExtraProviders, type McpBridgeEntry } from "../../state/registry";
@@ -106,7 +105,23 @@ export function inspectMcpProvider(providerName: string | undefined): McpProvide
   };
 }
 
-export { parseProviderAttachmentNames as parseMcpProviderAttachmentNames } from "../../adapters/openshell/provider-attachment-table";
+export function parseMcpProviderAttachmentNames(output: string): string[] {
+  const clean = stripAnsi(output).replace(/\r/g, "").trim();
+  if (/^No providers attached to sandbox\b/m.test(clean)) return [];
+  const lines = clean
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const headerIndex = lines.findIndex((line) =>
+    /^NAME\s+TYPE\s+CREDENTIAL_KEYS\s+CONFIG_KEYS$/.test(line),
+  );
+  if (headerIndex < 0) throw new Error("missing provider attachment table header");
+  return lines.slice(headerIndex + 1).map((line) => {
+    const match = line.match(/^(\S+)\s+(\S+)\s+(\d+)\s+(\d+)$/);
+    if (!match?.[1]) throw new Error("invalid provider attachment table row");
+    return match[1];
+  });
+}
 
 export function inspectMcpProviderAttachments(
   sandboxName: string,
@@ -122,7 +137,7 @@ export function inspectMcpProviderAttachments(
   try {
     const clean = stripAnsi(output).replace(/\r/g, "").trim();
     if (/^No providers attached to sandbox\b/m.test(clean)) return { attachments: [] };
-    const names = parseProviderAttachmentNames(clean);
+    const names = parseMcpProviderAttachmentNames(clean);
     const attachments = names.map((name) => {
       const provider = inspectMcpProvider(name);
       if (

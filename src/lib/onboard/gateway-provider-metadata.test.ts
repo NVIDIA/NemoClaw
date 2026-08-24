@@ -7,9 +7,7 @@ import {
   inspectGatewayCredentialOnlyProviderBinding,
   matchesGatewayCredentialOnlyProviderBinding,
   matchesGatewayProviderBinding,
-  parseGatewayProviderIdentity,
   parseGatewayProviderMetadata,
-  readGatewayProviderIdentity,
   readGatewayProviderMetadata,
 } from "./gateway-provider-metadata";
 
@@ -139,49 +137,6 @@ describe("gateway provider metadata", () => {
       credentialKeys: ["COMPATIBLE_API_KEY"],
       configKeys: ["OPENAI_BASE_URL", "EXTRA_FLAG"],
     });
-  });
-
-  it("parses and reads the exact gateway-scoped provider mutation identity", () => {
-    const runOpenshell = vi.fn(() => ({ status: 0, stdout: COMPLETE_OUTPUT }));
-    const expected = {
-      name: "compatible-endpoint",
-      type: "openai",
-      credentialKeys: ["COMPATIBLE_API_KEY"],
-      configKeys: ["OPENAI_BASE_URL", "EXTRA_FLAG"],
-      id: "2ca3b7c7-eff4-4399-af5a-13c4984d7343",
-      resourceVersion: 1,
-    };
-
-    expect(parseGatewayProviderIdentity(COMPLETE_OUTPUT)).toEqual(expected);
-    expect(
-      readGatewayProviderIdentity("compatible-endpoint", runOpenshell, "nemoclaw-9090"),
-    ).toEqual(expected);
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["provider", "get", "-g", "nemoclaw-9090", "compatible-endpoint"],
-      {
-        ignoreError: true,
-        suppressOutput: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-  });
-
-  it.each([
-    ["duplicate ID", `${COMPLETE_OUTPUT}\nId: second-id`],
-    [
-      "non-decimal resource version",
-      COMPLETE_OUTPUT.replace("Resource version:\u001b[0m 1", "Resource version:\u001b[0m 0x10"),
-    ],
-    ["unsafe ID", COMPLETE_OUTPUT.replace("2ca3b7c7-eff4-4399-af5a-13c4984d7343", "unsafe/id")],
-    [
-      "out-of-range resource version",
-      COMPLETE_OUTPUT.replace(
-        "Resource version:\u001b[0m 1",
-        "Resource version:\u001b[0m 9007199254740993",
-      ),
-    ],
-  ])("rejects a provider identity with %s", (_label, output) => {
-    expect(parseGatewayProviderIdentity(output)).toBeNull();
   });
 
   it.each([

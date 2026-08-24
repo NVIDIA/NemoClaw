@@ -78,8 +78,6 @@ export interface ReconcileSandboxMessagingOptions<Agent> {
   readonly registryAuthoritySnapshot?: RegistryMessagingAuthority;
   readonly credentialValidationPlan?: SandboxMessagingPlan | null;
   readonly forceCredentialValidation?: boolean;
-  /** Authoritative rebuilds may preserve recorded channels backed by exact gateway bindings. */
-  readonly preserveGatewayHeldRegistrySelection?: boolean;
   readonly deps: SandboxMessagingDeps<Agent>;
 }
 
@@ -226,35 +224,10 @@ function selectionFromReusablePlan<Agent>(
   };
 }
 
-function hasExactGatewayCredentialBindings(
-  plan: SandboxMessagingPlan,
-  channelId: string,
-  agentName: string | undefined,
-  providerMatchesGatewayCredential:
-    | SandboxMessagingDeps<unknown>["providerMatchesGatewayCredential"]
-    | undefined,
-): boolean {
-  if (!providerMatchesGatewayCredential) return false;
-  const bindings = plan.credentialBindings.filter((binding) => binding.channelId === channelId);
-  return (
-    bindings.length > 0 &&
-    bindings.every((binding) =>
-      providerMatchesGatewayCredential(
-        binding.providerName,
-        staticMessagingProviderTypeForChannel(binding.channelId, agentName) ??
-          MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-        binding.providerEnvKey,
-      ),
-    )
-  );
-}
-
 function filterUnconfiguredHostChannelsFromSelection<Agent>(
   selection: SandboxMessagingSelection,
   agent: Agent,
-  deps: Pick<SandboxMessagingDeps<Agent>, "clearPlanEnv" | "note" | "writePlanToEnv"> &
-    Partial<Pick<SandboxMessagingDeps<Agent>, "providerMatchesGatewayCredential">>,
-  preserveGatewayHeldRegistrySelection = false,
+  deps: Pick<SandboxMessagingDeps<Agent>, "clearPlanEnv" | "note" | "writePlanToEnv">,
 ): SandboxMessagingSelection {
   // A registry plan records the previous selection, not the current host
   // input. Rebuild the host-backed selection so policy reconciliation can
@@ -267,21 +240,6 @@ function filterUnconfiguredHostChannelsFromSelection<Agent>(
       agent as Parameters<typeof detectUnconfiguredMessagingChannels>[2],
     ),
   );
-  if (preserveGatewayHeldRegistrySelection && selection.plan) {
-    const agentName = (agent as MessagingAgentLike | null)?.name;
-    for (const channelId of unconfiguredChannels) {
-      if (
-        hasExactGatewayCredentialBindings(
-          selection.plan,
-          channelId,
-          agentName,
-          deps.providerMatchesGatewayCredential,
-        )
-      ) {
-        unconfiguredChannels.delete(channelId);
-      }
-    }
-  }
   if (unconfiguredChannels.size === 0) return selection;
   deps.note(
     `  No host inputs configure ${[...unconfiguredChannels].join(", ")}; disabling the channel and its network egress.`,
@@ -431,12 +389,7 @@ function selectionFromRecordedChannels<Agent>(
   if (envPlan) selection = selectionFromReusablePlan(envPlan, options.agent, false, options.deps);
   else if (registryPlan)
     selection = selectionFromReusablePlan(registryPlan, options.agent, true, options.deps);
-  selection = filterUnconfiguredHostChannelsFromSelection(
-    selection,
-    options.agent,
-    options.deps,
-    options.preserveGatewayHeldRegistrySelection,
-  );
+  selection = filterUnconfiguredHostChannelsFromSelection(selection, options.agent, options.deps);
   if (selection.selectedChannels.length > 0) {
     options.deps.note(
       `  [non-interactive] Reusing messaging channel configuration: ${selection.selectedChannels.join(", ")}`,
@@ -473,7 +426,6 @@ async function selectionFromRegistryPlan<Agent>(
       selectionFromReusablePlan(registryPlan, options.agent, true, options.deps),
       options.agent,
       options.deps,
-      options.preserveGatewayHeldRegistrySelection,
     );
   }
   const activeChannels = filterChannelNamesForCurrentAgent(
@@ -502,7 +454,6 @@ async function selectionFromRegistryPlan<Agent>(
       selectionFromReusablePlan(registryPlan, options.agent, true, options.deps),
       options.agent,
       options.deps,
-      options.preserveGatewayHeldRegistrySelection,
     );
   }
   options.deps.note(
@@ -709,7 +660,6 @@ async function selectionFromRegistryAuthority<Agent>(
       selection,
       options.agent,
       options.deps,
-      options.preserveGatewayHeldRegistrySelection,
     );
   }
   if (authority.plan) return selectionFromRegistryPlan(authority.plan, options);

@@ -21,10 +21,6 @@ import type { ShellProbeOutputEvent, ShellProbeResult } from "../fixtures/shell-
 import { requireRebuildHermesCurrentBaseIdentity } from "./rebuild-hermes-base-identity.ts";
 
 const CURRENT_BASE_MARKER = "__NEMOCLAW_REBUILD_HERMES_CURRENT_BASE__";
-const HERMES_DISCORD_PROVIDER_PROFILE = path.join(
-  REPO_ROOT,
-  "src/lib/messaging/channels/discord/provider-profile/hermes.yaml",
-);
 export const GATEWAY_BOOTSTRAP_MARKER = "__NEMOCLAW_REBUILD_HERMES_GATEWAY_READY__";
 
 export interface RebuildHermesCurrentBaseResult {
@@ -57,16 +53,6 @@ interface RebuildHermesGatewayBootstrapOptions extends RebuildHermesBootstrapOpt
   artifacts: Pick<ArtifactSink, "writeJson">;
   endpointUrl: string;
   expectedModel: string;
-  sandboxName: string;
-}
-
-interface RebuildHermesDiscordProviderOptions {
-  activeOpenshellBin: string;
-  apiKey: string;
-  discordToken: string;
-  envFactory: RebuildHermesChildEnvFactory;
-  host: HostCliClient;
-  redactionValues: string[];
   sandboxName: string;
 }
 
@@ -116,42 +102,6 @@ function requireResolutionMetadata(value: unknown): SandboxBaseImageResolutionMe
     );
   }
   return value as SandboxBaseImageResolutionMetadata;
-}
-
-export async function createRebuildHermesDiscordProvider(
-  options: RebuildHermesDiscordProviderOptions,
-): Promise<void> {
-  const profile = await options.host.command(
-    options.activeOpenshellBin,
-    ["provider", "profile", "import", "--file", HERMES_DISCORD_PROVIDER_PROFILE],
-    {
-      artifactName: "phase-3-discord-provider-profile-import",
-      env: options.envFactory(options.apiKey),
-      redactionValues: options.redactionValues,
-      timeoutMs: 2 * 60_000,
-    },
-  );
-  assertExitZero(profile, "import Hermes Discord provider profile");
-  const provider = await options.host.command(
-    options.activeOpenshellBin,
-    [
-      "provider",
-      "create",
-      "--name",
-      `${options.sandboxName}-discord-bridge`,
-      "--type",
-      "discord-hermes-static-v1",
-      "--credential",
-      "DISCORD_BOT_TOKEN",
-    ],
-    {
-      artifactName: "phase-3-discord-provider-create",
-      env: options.envFactory(options.apiKey, { DISCORD_BOT_TOKEN: options.discordToken }),
-      redactionValues: options.redactionValues,
-      timeoutMs: 2 * 60_000,
-    },
-  );
-  assertExitZero(provider, "create Hermes Discord provider");
 }
 
 export function buildRebuildHermesCurrentBaseScript(): string {

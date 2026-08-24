@@ -97,6 +97,7 @@ describe("ordinary OpenClaw pairing target", () => {
 
     expect(resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME, deps)).toBeNull();
   });
+
   it.each([
     ["missing agent identity", { agent: undefined }],
     ["pending route reservation", { pendingRouteReservation: true }],

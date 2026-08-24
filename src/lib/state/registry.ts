@@ -109,7 +109,6 @@ export type {
 } from "./registry/types";
 export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
 export {
-  getActiveMessagingChannelsFromEntry,
   getConfiguredMessagingChannelsFromEntry,
   getDisabledMessagingChannelsFromEntry,
   getHydratedMessagingPlanFromEntry,
