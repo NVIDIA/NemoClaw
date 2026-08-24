@@ -175,7 +175,7 @@ export function inspectSandboxPolicyAuthority({
     "machine-readable policy",
   );
   if (raw.trim().length === 0) {
-    return { authority: "nemoclaw-managed", effectivePolicy: {} };
+    failInspection("sandbox", "OpenShell returned empty policy metadata");
   }
   const metadata = parsePolicyMetadata(raw, "sandbox");
   if (metadata.scope !== "sandbox") {
@@ -293,7 +293,10 @@ function formatPolicyKeys(keys: readonly string[]): string {
   return keys.map((key) => JSON.stringify(key)).join(", ");
 }
 
-/** Verify externally supplied policy requirements without claiming ownership. */
+/**
+ * Verify that an externally supplied policy contains each required entry and
+ * section without claiming ownership. Unrelated external entries are allowed.
+ */
 export function assertExternalPolicyRequirements({
   inspection,
   requiredPolicy,

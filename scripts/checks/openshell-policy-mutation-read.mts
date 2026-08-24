@@ -93,6 +93,13 @@ export const MUTATION_READS: readonly AuditedPolicyReadFile[] = [
 
 const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
   {
+    relativePath: "src/lib/adapters/openshell/policy-authority.ts",
+    expectedReads: [
+      unclassifiedFull("inspectSandboxPolicyAuthority"),
+      unclassifiedFull("inspectGlobalPolicyAuthority"),
+    ],
+  },
+  {
     relativePath: "src/lib/actions/sandbox/gateway-state.ts",
     expectedReads: [
       ignoredFull("getSandboxGatewayState"),
@@ -131,6 +138,8 @@ export interface DiscoveredPolicyReadSite {
 const POLICY_GET_BUILDERS = new Map<string, PolicyReadView>([
   ["buildPolicyGetCommand", "base"],
   ["buildPolicyGetFullCommand", "full"],
+  ["buildPolicyGetFullJsonCommand", "full"],
+  ["buildGlobalPolicyGetFullJsonCommand", "full"],
 ]);
 
 interface PolicyBuilderBindings {

@@ -92,6 +92,19 @@ describe("OpenShell policy mutation read discovery (#6921)", () => {
       ]);
   });
 
+  it("ignores direct policy reads with ambiguous view flags (#9833)", () => {
+    const source = [
+      "function both(sandboxName: string) {",
+      '  return runCmd(["openshell", "policy", "get", "--base", "--full", sandboxName]);',
+      "}",
+      "function neither(sandboxName: string) {",
+      '  return runCmd(["openshell", "policy", "get", sandboxName]);',
+      "}",
+    ].join("\n");
+
+    expect(classifyPolicyReadCalls(source, "/repo/src/lib/fixture.ts", "/repo")).toEqual([]);
+  });
+
   it("classifies each read by function, policy view, and failure handling", () => {
     const source = [
       'import { buildPolicyGetCommand as buildBase, buildPolicyGetFullCommand as buildFull } from "./policy/commands";',

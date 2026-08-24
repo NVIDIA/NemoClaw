@@ -242,13 +242,12 @@ describe("OpenShell policy authority inspection", () => {
     },
   );
 
-  it("recognizes NemoClaw-managed authority when sandbox policy output is empty (#9833)", () => {
+  it("fails closed when sandbox policy output is empty (#9833)", () => {
     const runCaptureEx = vi.fn<PolicyAuthorityCapture>(() => captureResult(""));
 
-    expect(inspectSandboxPolicyAuthority({ sandboxName: "alpha", runCaptureEx })).toEqual({
-      authority: "nemoclaw-managed",
-      effectivePolicy: {},
-    });
+    expect(() => inspectSandboxPolicyAuthority({ sandboxName: "alpha", runCaptureEx })).toThrow(
+      /empty policy metadata/u,
+    );
   });
 
   it.each([
