@@ -92,6 +92,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     installerTemplateSha256: [
       "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
       "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+      "8bf0c5922b6f4e0dbea5d91a03a962abc6830ea3b641e2e6c8edb9fe69c7d61a",
+      "636564dd71ab30eee30e02d1dff9a3c5e52e63d0a6d14c458bd23f6ec8156675",
     ],
     manifests: [
       {
@@ -135,6 +137,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     installerTemplateSha256: [
       "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
       "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+      "8bf0c5922b6f4e0dbea5d91a03a962abc6830ea3b641e2e6c8edb9fe69c7d61a",
+      "636564dd71ab30eee30e02d1dff9a3c5e52e63d0a6d14c458bd23f6ec8156675",
     ],
     manifests: [
       {
@@ -173,6 +177,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     installerTemplateSha256: [
       "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
       "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+      "8bf0c5922b6f4e0dbea5d91a03a962abc6830ea3b641e2e6c8edb9fe69c7d61a",
+      "636564dd71ab30eee30e02d1dff9a3c5e52e63d0a6d14c458bd23f6ec8156675",
     ],
     manifests: [
       {
@@ -202,6 +208,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     installerTemplateSha256: [
       "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
       "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+      "8bf0c5922b6f4e0dbea5d91a03a962abc6830ea3b641e2e6c8edb9fe69c7d61a",
+      "636564dd71ab30eee30e02d1dff9a3c5e52e63d0a6d14c458bd23f6ec8156675",
     ],
     manifests: [
       {
@@ -246,7 +254,10 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
       "d3ee11fd805d84c0e0f760831e091c1f16632e61cf9c1af7e7856e0aafc9de54",
       "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+      "8bf0c5922b6f4e0dbea5d91a03a962abc6830ea3b641e2e6c8edb9fe69c7d61a",
+      "636564dd71ab30eee30e02d1dff9a3c5e52e63d0a6d14c458bd23f6ec8156675",
       "741febd02f3a6b18c8aa5e34e42e23a200c8a4b09b41a7c0de045bf65b0a9bdd",
+      "79e87ccc0c5c7982b4063af21dcac878c1a7d9b4c888f4ed51724a979574203c",
     ],
     manifests: [
       {
@@ -290,6 +301,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     installerTemplateSha256: [
       "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
       "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+      "8bf0c5922b6f4e0dbea5d91a03a962abc6830ea3b641e2e6c8edb9fe69c7d61a",
+      "636564dd71ab30eee30e02d1dff9a3c5e52e63d0a6d14c458bd23f6ec8156675",
     ],
     manifests: [
       {
@@ -344,6 +357,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "5d4cdb2db60df7539193b486ac15bb9be96ec1d40fc0f739a94d4d2f0bf597a0",
       "e850e927aab619d52c5de72967137569d65dd7fa669920c7c5b558f0770140d1",
       "e7d51536442b217e3d5e77c4ba3b7c25e6a74898bf22523f7fb58627d34329cb",
+      "0dedf16fd6e2e335571c4cb095d9a856b97ad2590eaf0f9df5dbd02d08796cc2",
     ],
     manifests: [
       {

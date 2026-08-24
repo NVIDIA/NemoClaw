@@ -390,7 +390,7 @@ function addInstallerReleaseTable(
 }
 
 function applyReviewedReleaseCohorts(source: string): string {
-  const currentComment = `# regressionTest: test/install-openshell-version-check.test.ts exercises all
+  const currentComment = `# regressionTest: test/installer-integration/install-openshell-version-check.test.ts exercises all
 # nine mappings, and scripts/check-installer-hash.sh compares them with the
 # GitHub release API on every PR, main push, weekly run, and manual dispatch.
 # removalCondition: remove these entries only when NemoClaw drops that
@@ -536,7 +536,7 @@ const trustAlternateRelease = (source: string): string => {
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v9.9.9/openshell.rb",
     },
     installerTemplateSha256: [
-      "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+      "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2", "636564dd71ab30eee30e02d1dff9a3c5e52e63d0a6d14c458bd23f6ec8156675",
     ],
     manifests: [
 ${manifests}
@@ -1145,7 +1145,7 @@ describe("installer hash verification", () => {
   it("selects a second complete trusted release from the allowlist", () => {
     const result = runFixture("allowlisted-alternate-version", "9.9.9", true);
 
-    expect(result.status).toBe(0);
+    expect(result.status, result.stdout).toBe(0);
     expect(result.stdout).toContain("Checking OpenShell v9.9.9 release assets");
     expect(result.stdout).toContain("All installer hashes are current");
   });
