@@ -225,7 +225,7 @@ if [ -f "$HOME/.nemoclaw/state/runs/$RUN_ID/plan.json" ]; then
 else
   fail "Apply did not persist run state (plan.json missing for $RUN_ID)"
 fi
-rm -f "$APPLY_OUTPUT" "$APPLY_CALLS"
+cleanup_apply_fixture
 trap - EXIT
 
 # -------------------------------------------------------
