@@ -15,8 +15,13 @@ type Workflow = {
 
 const WORKFLOW_PATH = ".github/workflows/pr-self-hosted.yaml";
 const CANDIDATE_SHA = "a".repeat(40);
+const BASE_SHA = "b".repeat(40);
 
-function selectGenericGpuLane(changedFiles: readonly string[], copiedSha = CANDIDATE_SHA) {
+function selectGenericGpuLane(
+  changedFiles: readonly string[],
+  copiedSha = CANDIDATE_SHA,
+  baseSha = BASE_SHA,
+) {
   const workflow = YAML.parse(readFileSync(WORKFLOW_PATH, "utf8")) as Workflow;
   const script = workflow.jobs["select-llama-cpp-generic-gpu"]?.steps?.find(
     (step) => step.name === "Select llama.cpp generic GPU E2E from PR files",
@@ -57,7 +62,11 @@ fi
           GITHUB_SHA: copiedSha,
           PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
           PR_FILES_JSON: JSON.stringify([changedFiles.map((filename) => ({ filename }))]),
-          PR_JSON: JSON.stringify({ number: 8748, head: { sha: CANDIDATE_SHA } }),
+          PR_JSON: JSON.stringify({
+            number: 8748,
+            base: { sha: baseSha },
+            head: { sha: CANDIDATE_SHA },
+          }),
         },
       },
     );
@@ -76,17 +85,26 @@ describe("generic NVIDIA GPU PR selection", () => {
     "src/lib/onboard/fatal-runtime-preflight.ts",
     "src/lib/onboard/overlayfs-auto-fix.ts",
     "src/lib/onboard/preflight.ts",
-  ])("selects the generic NVIDIA GPU E2E job when %s can change installer readiness", (changedFile) => {
-    expect(selectGenericGpuLane([changedFile])).toBe("selected=true");
-  });
+  ])(
+    "selects the generic NVIDIA GPU E2E job when %s can change installer readiness",
+    (changedFile) => {
+      expect(selectGenericGpuLane([changedFile])).toBe(`base_sha=${BASE_SHA}\nselected=true`);
+    },
+  );
 
   it("does not select the generic NVIDIA GPU E2E job for unrelated documentation", () => {
-    expect(selectGenericGpuLane(["docs/get-started/quickstart.mdx"])).toBe("selected=false");
+    expect(selectGenericGpuLane(["docs/get-started/quickstart.mdx"])).toBe(
+      `base_sha=${BASE_SHA}\nselected=false`,
+    );
   });
 
   it("rejects a copied branch whose commit does not match the current PR head", () => {
     expect(() => selectGenericGpuLane(["scripts/install.sh"], "b".repeat(40))).toThrow(
       "Copied PR branch SHA does not match the current PR head",
     );
+  });
+
+  it("rejects a PR base that cannot identify an exact managed-image publication", () => {
+    expect(() => selectGenericGpuLane(["scripts/install.sh"], CANDIDATE_SHA, "main")).toThrow();
   });
 });

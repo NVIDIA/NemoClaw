@@ -25,11 +25,8 @@ import {
   type AdvisorInterest,
 } from "./specialists.mts";
 import { createTerminologyToolController } from "./terminology.mts";
-import {
-  buildSystemPrompt,
-  readParsedTrustedSecurityRubric,
-  readTrustedControlledWords,
-} from "./trusted-guidance.mts";
+import { SPECIALIST_DIFF_FILE_NAME } from "./specialist-context.mts";
+import { buildSystemPrompt, readTrustedControlledWords } from "./trusted-guidance.mts";
 import {
   buildCorrectnessTurnContext,
   buildOperationsTurnContext,
@@ -65,16 +62,6 @@ export function writeSpecialistSummary(
 ): string {
   const file = path.join(outDir, `pr-review-${interest}-summary.md`);
   fs.writeFileSync(file, renderSpecialistSummary(interest, text));
-  return file;
-}
-
-export function writeSpecialistDiff(configDir: string, diff: string): string {
-  const directory = path.join(configDir, "context");
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  fs.chmodSync(directory, 0o700);
-  const file = path.join(directory, "diff.patch");
-  fs.writeFileSync(file, diff, { mode: 0o600 });
-  fs.chmodSync(file, 0o600);
   return file;
 }
 
@@ -116,12 +103,19 @@ async function main(): Promise<void> {
   delete process.env.GH_TOKEN;
   delete process.env.GITHUB_TOKEN;
 
-  const diffPath = writeSpecialistDiff(configDir, diff);
+  const diffPath = path.join(
+    process.env.PR_REVIEW_ADVISOR_CONTEXT_DIR || "/pr-review-advisor-context/specialist",
+    SPECIALIST_DIFF_FILE_NAME,
+  );
+  const diffStat = fs.lstatSync(diffPath);
+  if (!diffStat.isFile() || diffStat.isSymbolicLink()) {
+    throw new Error("Prepared specialist diff must be a regular file");
+  }
 
   const turn = buildSpecialistInvestigateTurn(interest, {
     metadata: JSON.stringify({ version: 1, baseRef, headRef, headSha, changedFiles }, null, 2),
     scopeRisk: buildScopeRiskTurnContext(deterministic),
-    diffPath: path.relative(process.cwd(), diffPath),
+    diffPath,
     controlledWords: readTrustedControlledWords(),
     terminology: {
       issueReferenceLines: deterministic.github?.issueReferenceLines ?? [],
@@ -140,7 +134,7 @@ async function main(): Promise<void> {
     {
       cwd: process.cwd(),
       promptTurns: [turn],
-      systemPrompt: buildSystemPrompt(readParsedTrustedSecurityRubric()),
+      systemPrompt: buildSystemPrompt(),
       configDir,
       timeoutMs: parsePositiveInt(process.env.PR_REVIEW_ADVISOR_TIMEOUT_MS, 900000),
       heartbeatMs: parsePositiveInt(process.env.PR_REVIEW_ADVISOR_HEARTBEAT_MS, 60000),

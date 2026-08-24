@@ -10,7 +10,7 @@ import {
   INSTALLER_PAYLOAD,
   TEST_SYSTEM_PATH,
   writeExecutable,
-} from "./helpers/installer-sourced-env";
+} from "../helpers/installer-sourced-env";
 
 const INSTALL_REUSE_REVISION = "a".repeat(40);
 const COMMITTED_LOCKFILE = '{"lockfileVersion":3,"packages":{"":{"name":"nemoclaw"}}}';
