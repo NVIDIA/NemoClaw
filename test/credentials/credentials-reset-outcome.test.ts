@@ -3,8 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { formatResetOutcome } from "../src/lib/actions/credentials/reset";
-import type { ProviderDeleteWithRecoveryResult } from "../src/lib/onboard/sandbox-provider-cleanup";
+import { formatResetOutcome } from "../../src/lib/actions/credentials/reset";
+import type { ProviderDeleteWithRecoveryResult } from "../../src/lib/onboard/sandbox-provider-cleanup";
 
 function result(over: Partial<ProviderDeleteWithRecoveryResult>): ProviderDeleteWithRecoveryResult {
   return {
