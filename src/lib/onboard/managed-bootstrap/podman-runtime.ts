@@ -425,9 +425,16 @@ export function renderPodmanReplacementRuntimeArgs(inspect: JsonRecord): readonl
   );
   // OpenShell's long-running Podman supervisor deliberately drops these
   // capabilities. The short-lived managed bootstrap replacement needs them
-  // to mutate the agent-owned workspace, preserve setgid state roots, and
-  // signal only its exact pidfd-pinned child before resuming that supervisor.
-  const bootstrapCapabilities: ReadonlySet<string> = new Set(["DAC_OVERRIDE", "FSETID", "KILL"]);
+  // to restore exact ownership and modes in the agent-owned workspace,
+  // preserve setgid state roots, and signal only its exact pidfd-pinned child
+  // before resuming that supervisor.
+  const bootstrapCapabilities: ReadonlySet<string> = new Set([
+    "CHOWN",
+    "DAC_OVERRIDE",
+    "FOWNER",
+    "FSETID",
+    "KILL",
+  ]);
   for (const value of new Set([...addedCapabilities, ...bootstrapCapabilities])) {
     args.push("--cap-add", value);
   }
