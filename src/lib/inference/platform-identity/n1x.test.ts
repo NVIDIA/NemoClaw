@@ -27,7 +27,6 @@ function trustedMarker(
 function n1xFixture(overrides: Parameters<typeof collectN1xIdentity>[0] = {}) {
   const pciFields: Readonly<Record<string, string>> = {
     vendor: "0x10de\n",
-    device: "0x2e03\n",
     class: "0x030000\n",
   };
   return collectN1xIdentity({

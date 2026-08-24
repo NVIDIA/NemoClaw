@@ -165,7 +165,6 @@ exec 9<&-
 test_pci_root="$HOME/n1x-pci"
 mkdir -p "$test_pci_root/000f:01:00.0"
 printf '0x10de\n' >"$test_pci_root/000f:01:00.0/vendor"
-printf '0x2e03\n' >"$test_pci_root/000f:01:00.0/device"
 printf '0x030000\n' >"$test_pci_root/000f:01:00.0/class"
 n1x_pci_devices_path() { printf "%s" "$test_pci_root"; }
 n1x_has_pci_gpu
