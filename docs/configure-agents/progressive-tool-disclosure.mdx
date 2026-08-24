@@ -44,6 +44,8 @@ Hermes core tools remain directly visible.
 ## Understand Deep Agents Tool Search
 
 Deep Agents Code activates its middleware after at least one MCP tool loads successfully.
+It derives loaded tools from the pinned runtime's executable catalog and rejects duplicate loaded implementations before disclosure.
+A late-discovered managed MCP tool becomes available to `search_tools` after the tool loads; a gateway tool that is not loaded does not appear.
 It initially exposes `search_tools` and the core filesystem, shell, user-input, and todo tools.
 
 Each search returns up to 20 name-sorted tools whose names or descriptions match case-insensitively.
