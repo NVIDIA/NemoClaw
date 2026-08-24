@@ -370,6 +370,32 @@ describe("docker-driver-gateway config TOML", () => {
     }
   });
 
+  it("does not classify a malformed other-driver table as a cross-driver conflict (#10071)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-malformed-driver-"));
+    try {
+      const { configPath } = writePreScopedGatewayConfig(stateDir, false, "docker");
+      const malformedToml = fs
+        .readFileSync(configPath, "utf-8")
+        .replace(/^grpc_endpoint = .*$/m, 'grpc_endpoint = ""');
+      fs.writeFileSync(configPath, malformedToml, { encoding: "utf-8", mode: 0o600 });
+      const podmanEnv = baseGatewayEnv(stateDir);
+      Object.assign(podmanEnv, {
+        OPENSHELL_DRIVERS: "podman",
+        OPENSHELL_PODMAN_SOCKET: path.join(stateDir, "podman.sock"),
+      });
+
+      expect(() =>
+        prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox"),
+      ).toThrow(/driver config is incomplete/);
+      expect(() =>
+        prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox"),
+      ).not.toThrow(/already configures a 'docker'-driver/);
+      expect(fs.readFileSync(configPath, "utf-8")).toBe(malformedToml);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("still reports the generic schema mismatch when neither driver table is present (#10071)", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-no-driver-table-"));
     try {

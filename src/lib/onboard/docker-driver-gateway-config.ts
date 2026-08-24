@@ -498,7 +498,20 @@ function existingGatewayIdentityFromConfig(
     if (!driverConfig && parsed && openshell && gateway && gatewayJwt && drivers) {
       const otherDriver: DockerDriverGatewayDriver = driver === "docker" ? "podman" : "docker";
       if (asTomlTable(drivers[otherDriver])) {
-        throw crossDriverGatewayConflict(configPath, stateDir, driver, otherDriver);
+        let otherIdentity: DockerDriverGatewayIdentity | null = null;
+        try {
+          otherIdentity = existingGatewayIdentityFromConfig(
+            stateDir,
+            otherDriver,
+            allowOpenShell0044PreAuthDatabase,
+          );
+          if (otherIdentity) {
+            throw crossDriverGatewayConflict(configPath, stateDir, driver, otherDriver);
+          }
+        } finally {
+          if (otherIdentity?.kind === "legacy") closeLegacyJwtBundleProof(otherIdentity.jwtProof);
+          if (otherIdentity?.configProof) closeRegularFileProof(otherIdentity.configProof);
+        }
       }
     }
     if (!parsed || !openshell || !gateway || !gatewayJwt || !drivers || !driverConfig) {
