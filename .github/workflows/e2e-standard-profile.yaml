@@ -407,7 +407,7 @@ jobs:
 
       - name: Restore exact-commit CLI artifact
         if: ${{ inputs.restore_cli }}
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@b7ac0178721e42f35dc4514d79c620941475cd55
         with:
           provenance-json: ${{ inputs.cli_artifact_provenance }}
 
