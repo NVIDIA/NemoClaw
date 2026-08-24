@@ -1590,7 +1590,15 @@ Use `--key` to read one dotpath and `--format` to choose JSON or YAML output.
 
 ```bash
 $$nemoclaw my-assistant config get
-$$nemoclaw my-assistant config get --key model --format yaml
+<AgentOnly variant="openclaw">
+$$nemoclaw my-assistant config get --key agents.defaults.model.primary --format yaml
+</AgentOnly>
+<AgentOnly variant="hermes">
+$$nemoclaw my-assistant config get --key model.default --format yaml
+</AgentOnly>
+<AgentOnly variant="deepagents">
+$$nemoclaw my-assistant config get --key models.default --format yaml
+</AgentOnly>
 ```
 
 | Flag | Description |
