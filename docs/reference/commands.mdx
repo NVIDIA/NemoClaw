@@ -1366,7 +1366,7 @@ Stages that do not apply or do not run report `0ms`.
 Timing collection and output are fail-open: clock or writer failures do not change the readiness work, command diagnostics, or exit status.
 Use the command exit status, not a duration or action field, as the readiness decision.
 
-<AgentOnly variant="openclaw,hermes">
+<AgentOnly variant="openclaw">
 Portable lifecycle recovery also emits one credential-free `Portable lifecycle timing:` line.
 It reports fixed authority, container, exec-readiness, Ollama, startup, and gateway stages with their durations, selected actions, attempt counts, result, and failed stage when available.
 This diagnostic does not change recovery behavior or the command exit status.
