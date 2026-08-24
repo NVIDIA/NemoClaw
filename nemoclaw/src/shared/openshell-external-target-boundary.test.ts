@@ -176,6 +176,7 @@ describe("external OpenShell target boundary", () => {
     "https://user:password@openshell.example.test:8443",
     "https://openshell.example.test:8443/rpc",
     "https://openshell.example.test:8443?workspace=other",
+    "https://openshell.example.test:0",
     "https://localhost:8443",
     "https://localhost.:8443",
     "https://127.0.0.1:8443",
@@ -184,12 +185,14 @@ describe("external OpenShell target boundary", () => {
     "https://[::ffff:127.0.0.1]:8443",
   ])("rejects a malformed or non-external HTTPS endpoint before reading files [%s]", (endpoint) => {
     const readFile = reader();
+    const inspectFile = vi.fn();
     const target = { ...externalTarget(), endpoint };
 
     expect(() =>
-      buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY, { readFile }),
+      buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY, { readFile, inspectFile }),
     ).toThrow(/endpoint/);
     expect(readFile).not.toHaveBeenCalled();
+    expect(inspectFile).not.toHaveBeenCalled();
   });
 
   it.each([
