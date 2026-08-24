@@ -420,6 +420,12 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
       continued: true,
       commented: true,
     },
+    {
+      instruction: "RUN",
+      option: "--network=none",
+      continued: true,
+      commented: true,
+    },
   ])(
     "rejects BuildKit-only $instruction option $option before reservation (#10007)",
     ({ instruction, option, continued, commented }) => {
