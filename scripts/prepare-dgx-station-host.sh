@@ -112,21 +112,21 @@ readonly -a BASEOS_PACKAGE_SPECS=(
   "sssd-common=2.9.4-1.1ubuntu6.4"
 )
 
-readonly BASEOS_CLOUD_CFG_SHA256="038ba435093de59f4a21021caf6c921d63344e9aae3b88795ee5b2659f43f437"
-readonly BASEOS_CLOUD_INIT_UNIT_SHA256="e13dd95a7bfac6407ea1ce45ed6683c0f4e84c791840d305c937d38ae77d9456"
-readonly BASEOS_FLUENT_BIT_UNIT_SHA256="1854339f563e518894c156d081912595d2d6e175a1ed6692e74e88224b6bad5f"
-readonly BASEOS_FLUENT_BIT_CFG_NORMALIZED_SHA256="ffec8b1bcc628877b9a230c6b26313b5ee6b25c20398580832133dbb15349551"
-readonly BASEOS_FLUENT_BIT_PARSERS_SHA256="760e6a347874a6cbdc10c6cd21d82d1ee5388c8573ddfaab05ef37904749dbe1"
-readonly BASEOS_FLUENT_BIT_PLUGINS_SHA256="9d5aad2c1be151b4d35de53a460f9783f98ac3cc815ebc638b0e8489f4ecd577"
-readonly BASEOS_FWUPD_UNIT_SHA256="835e7c291761c247d3cd5c64652b768c6a7fdc7cc72fea1bf70fc92e4cb3cfd5"
-readonly BASEOS_FWUPD_CFG_SHA256="a25bd457c86be85a286cd175d94e30fa152eb119c95b2a7db8a495886cdd7654"
-readonly BASEOS_FWUPD_LVFS_TESTING_SHA256="f50a44def594f256a8192c1d048e08aa94f0287de804262f680b73fa62d97787"
-readonly BASEOS_FWUPD_LVFS_SHA256="c4e62d855e41dbf777972b4249da5b2b968fc723e8c7d0d55f932ba47764e98c"
-readonly BASEOS_FWUPD_VENDOR_SHA256="0f5a62990f2ddb1681349c01373b3208131e5254a0e734e6090c249c5af9a73f"
-readonly BASEOS_SSSD_AUTOFS_UNIT_SHA256="d1be2c2c33e1591ac2fa0bf656bf8dc3d52083a7e9569902e777aea827baeb1f"
-readonly BASEOS_SSSD_NSS_UNIT_SHA256="bd432f92436f5c1c142c5824fce66aded6b8be80db4fdfbbed60f222c3a97d9e"
-readonly BASEOS_SSSD_PAM_UNIT_SHA256="6760940940471d5bb1b09652b1632db1251b90c3a028efcf11a1b731bb0ab43c"
-readonly BASEOS_SSSD_PAM_PRIV_UNIT_SHA256="851fc28d7ab5ac38cd56fcad1f4125cfeb46e8ee62bbf6cbc6376c592faeb51a"
+readonly FACTORY_CLOUD_CFG_SHA256="038ba435093de59f4a21021caf6c921d63344e9aae3b88795ee5b2659f43f437"
+readonly FACTORY_CLOUD_INIT_UNIT_SHA256="e13dd95a7bfac6407ea1ce45ed6683c0f4e84c791840d305c937d38ae77d9456"
+readonly FACTORY_FLUENT_BIT_UNIT_SHA256="1854339f563e518894c156d081912595d2d6e175a1ed6692e74e88224b6bad5f"
+readonly FACTORY_FLUENT_BIT_CFG_NORMALIZED_SHA256="ffec8b1bcc628877b9a230c6b26313b5ee6b25c20398580832133dbb15349551"
+readonly FACTORY_FLUENT_BIT_PARSERS_SHA256="760e6a347874a6cbdc10c6cd21d82d1ee5388c8573ddfaab05ef37904749dbe1"
+readonly FACTORY_FLUENT_BIT_PLUGINS_SHA256="9d5aad2c1be151b4d35de53a460f9783f98ac3cc815ebc638b0e8489f4ecd577"
+readonly FACTORY_FWUPD_UNIT_SHA256="835e7c291761c247d3cd5c64652b768c6a7fdc7cc72fea1bf70fc92e4cb3cfd5"
+readonly FACTORY_FWUPD_CFG_SHA256="a25bd457c86be85a286cd175d94e30fa152eb119c95b2a7db8a495886cdd7654"
+readonly FACTORY_FWUPD_LVFS_TESTING_SHA256="f50a44def594f256a8192c1d048e08aa94f0287de804262f680b73fa62d97787"
+readonly FACTORY_FWUPD_LVFS_SHA256="c4e62d855e41dbf777972b4249da5b2b968fc723e8c7d0d55f932ba47764e98c"
+readonly FACTORY_FWUPD_VENDOR_SHA256="0f5a62990f2ddb1681349c01373b3208131e5254a0e734e6090c249c5af9a73f"
+readonly FACTORY_SSSD_AUTOFS_UNIT_SHA256="d1be2c2c33e1591ac2fa0bf656bf8dc3d52083a7e9569902e777aea827baeb1f"
+readonly FACTORY_SSSD_NSS_UNIT_SHA256="bd432f92436f5c1c142c5824fce66aded6b8be80db4fdfbbed60f222c3a97d9e"
+readonly FACTORY_SSSD_PAM_UNIT_SHA256="6760940940471d5bb1b09652b1632db1251b90c3a028efcf11a1b731bb0ab43c"
+readonly FACTORY_SSSD_PAM_PRIV_UNIT_SHA256="851fc28d7ab5ac38cd56fcad1f4125cfeb46e8ee62bbf6cbc6376c592faeb51a"
 
 dgx_station_release_path() {
   printf '%s' /etc/dgx-release
@@ -515,7 +515,7 @@ file_sha256_matches() {
   [[ "$actual" == "$expected" ]]
 }
 
-baseos_fluent_bit_config_matches() {
+factory_fluent_bit_config_matches() {
   local path=$1 expected=$2 actual
   root_owned_file_is_not_writable_by_group_or_other "$path" || return 1
   actual="$({
@@ -536,7 +536,7 @@ systemd_property_matches() {
   [[ "$actual" == "$expected" ]]
 }
 
-baseos_failed_unit_matches() {
+factory_failed_unit_matches() {
   local unit=$1 fragment=$2 unit_hash=$3 unit_state=$4 exec_status=${5:-}
   systemd_property_matches "$unit" LoadState loaded \
     && systemd_property_matches "$unit" ActiveState failed \
@@ -549,47 +549,47 @@ baseos_failed_unit_matches() {
   [[ -z "$exec_status" ]] || systemd_property_matches "$unit" ExecMainStatus "$exec_status"
 }
 
-baseos_cloud_init_failure_is_qualified() {
+factory_cloud_init_failure_is_qualified() {
   local result=/run/cloud-init/result.json
   ((NETWORK_VALIDATED == 1)) \
-    && baseos_failed_unit_matches cloud-init.service \
-      /usr/lib/systemd/system/cloud-init.service "$BASEOS_CLOUD_INIT_UNIT_SHA256" enabled 1 \
-    && file_sha256_matches /etc/cloud/cloud.cfg "$BASEOS_CLOUD_CFG_SHA256" \
+    && factory_failed_unit_matches cloud-init.service \
+      /usr/lib/systemd/system/cloud-init.service "$FACTORY_CLOUD_INIT_UNIT_SHA256" enabled 1 \
+    && file_sha256_matches /etc/cloud/cloud.cfg "$FACTORY_CLOUD_CFG_SHA256" \
     && root_owned_file_is_not_writable_by_group_or_other "$result" \
     && grep -Fq '"datasource": "DataSourceConfigDrive ' "$result" \
     && grep -Fq "\"('bootcmd', ProcessExecutionError(" "$result"
 }
 
-baseos_fluent_bit_failure_is_qualified() {
-  baseos_failed_unit_matches fluent-bit.service \
-    /usr/lib/systemd/system/fluent-bit.service "$BASEOS_FLUENT_BIT_UNIT_SHA256" enabled 1 \
-    && baseos_fluent_bit_config_matches \
-      /etc/fluent-bit/fluent-bit.conf "$BASEOS_FLUENT_BIT_CFG_NORMALIZED_SHA256" \
-    && file_sha256_matches /etc/fluent-bit/parsers.conf "$BASEOS_FLUENT_BIT_PARSERS_SHA256" \
-    && file_sha256_matches /etc/fluent-bit/plugins.conf "$BASEOS_FLUENT_BIT_PLUGINS_SHA256"
+factory_fluent_bit_failure_is_qualified() {
+  factory_failed_unit_matches fluent-bit.service \
+    /usr/lib/systemd/system/fluent-bit.service "$FACTORY_FLUENT_BIT_UNIT_SHA256" enabled 1 \
+    && factory_fluent_bit_config_matches \
+      /etc/fluent-bit/fluent-bit.conf "$FACTORY_FLUENT_BIT_CFG_NORMALIZED_SHA256" \
+    && file_sha256_matches /etc/fluent-bit/parsers.conf "$FACTORY_FLUENT_BIT_PARSERS_SHA256" \
+    && file_sha256_matches /etc/fluent-bit/plugins.conf "$FACTORY_FLUENT_BIT_PLUGINS_SHA256"
 }
 
-baseos_fwupd_failure_is_qualified() {
+factory_fwupd_failure_is_qualified() {
   ((NETWORK_VALIDATED == 1)) \
-    && baseos_failed_unit_matches fwupd-refresh.service \
-      /usr/lib/systemd/system/fwupd-refresh.service "$BASEOS_FWUPD_UNIT_SHA256" static 1 \
-    && file_sha256_matches /etc/fwupd/fwupd.conf "$BASEOS_FWUPD_CFG_SHA256" \
-    && file_sha256_matches /etc/fwupd/remotes.d/lvfs-testing.conf "$BASEOS_FWUPD_LVFS_TESTING_SHA256" \
-    && file_sha256_matches /etc/fwupd/remotes.d/lvfs.conf "$BASEOS_FWUPD_LVFS_SHA256" \
-    && file_sha256_matches /etc/fwupd/remotes.d/vendor-directory.conf "$BASEOS_FWUPD_VENDOR_SHA256"
+    && factory_failed_unit_matches fwupd-refresh.service \
+      /usr/lib/systemd/system/fwupd-refresh.service "$FACTORY_FWUPD_UNIT_SHA256" static 1 \
+    && file_sha256_matches /etc/fwupd/fwupd.conf "$FACTORY_FWUPD_CFG_SHA256" \
+    && file_sha256_matches /etc/fwupd/remotes.d/lvfs-testing.conf "$FACTORY_FWUPD_LVFS_TESTING_SHA256" \
+    && file_sha256_matches /etc/fwupd/remotes.d/lvfs.conf "$FACTORY_FWUPD_LVFS_SHA256" \
+    && file_sha256_matches /etc/fwupd/remotes.d/vendor-directory.conf "$FACTORY_FWUPD_VENDOR_SHA256"
 }
 
-baseos_sssd_socket_failure_is_qualified() {
+factory_sssd_socket_failure_is_qualified() {
   local unit=$1 hash
   [[ ! -e /etc/sssd/sssd.conf && ! -L /etc/sssd/sssd.conf ]] || return 1
   case "$unit" in
-    sssd-autofs.socket) hash="$BASEOS_SSSD_AUTOFS_UNIT_SHA256" ;;
-    sssd-nss.socket) hash="$BASEOS_SSSD_NSS_UNIT_SHA256" ;;
-    sssd-pam.socket) hash="$BASEOS_SSSD_PAM_UNIT_SHA256" ;;
-    sssd-pam-priv.socket) hash="$BASEOS_SSSD_PAM_PRIV_UNIT_SHA256" ;;
+    sssd-autofs.socket) hash="$FACTORY_SSSD_AUTOFS_UNIT_SHA256" ;;
+    sssd-nss.socket) hash="$FACTORY_SSSD_NSS_UNIT_SHA256" ;;
+    sssd-pam.socket) hash="$FACTORY_SSSD_PAM_UNIT_SHA256" ;;
+    sssd-pam-priv.socket) hash="$FACTORY_SSSD_PAM_PRIV_UNIT_SHA256" ;;
     *) return 1 ;;
   esac
-  baseos_failed_unit_matches "$unit" "/usr/lib/systemd/system/${unit}" "$hash" enabled
+  factory_failed_unit_matches "$unit" "/usr/lib/systemd/system/${unit}" "$hash" enabled
 }
 
 is_qualified_factory_failed_unit() {
@@ -607,14 +607,16 @@ is_qualified_factory_failed_unit() {
         *) return 1 ;;
       esac
       ;;
-    colossus-baseos)
-      all_baseos_packages_exact || return 1
+    stock-dgx-os | colossus-baseos)
+      if [[ "$STATION_HOST_PROFILE" == "colossus-baseos" ]]; then
+        all_baseos_packages_exact || return 1
+      fi
       case "${1:-}" in
-        cloud-init.service) baseos_cloud_init_failure_is_qualified ;;
-        fluent-bit.service) baseos_fluent_bit_failure_is_qualified ;;
-        fwupd-refresh.service) baseos_fwupd_failure_is_qualified ;;
+        cloud-init.service) factory_cloud_init_failure_is_qualified ;;
+        fluent-bit.service) factory_fluent_bit_failure_is_qualified ;;
+        fwupd-refresh.service) factory_fwupd_failure_is_qualified ;;
         sssd-autofs.socket | sssd-nss.socket | sssd-pam.socket | sssd-pam-priv.socket)
-          baseos_sssd_socket_failure_is_qualified "$1"
+          factory_sssd_socket_failure_is_qualified "$1"
           ;;
         *) return 1 ;;
       esac

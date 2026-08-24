@@ -75,6 +75,9 @@ describe("DGX Station documentation ownership", () => {
     expect(stationPreparation).toContain(
       "A resident `packagekitd` process alone does not block stock DGX OS",
     );
+    expect(stationPreparation).toContain(
+      "Stock DGX OS and Colossus BaseOS require exact reviewed systemd, unit-file, configuration-file, and failure-cause fingerprints",
+    );
     expect(quickstart).not.toContain("DGX Server for GALAXY-GB300");
     expect(stationPreparation).toContain("--force-station-install");
     expect(stationPreparation).toContain("metadata omits or varies fields");

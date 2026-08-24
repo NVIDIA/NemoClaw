@@ -784,13 +784,50 @@ all_baseos_packages_exact
     expect(drifted.result.status, drifted.output).not.toBe(0);
   });
 
+  it("allows stock DGX OS factory failures only with expected cause fingerprints (#9898)", () => {
+    const qualified = runSourced(
+      STATION_PREPARE,
+      `
+STATION_HOST_PROFILE=stock-dgx-os
+all_baseos_packages_exact() { return 1; }
+factory_cloud_init_failure_is_qualified() { return 0; }
+factory_fluent_bit_failure_is_qualified() { return 0; }
+factory_fwupd_failure_is_qualified() { return 0; }
+factory_sssd_socket_failure_is_qualified() { return 0; }
+for unit in \
+  cloud-init.service \
+  fluent-bit.service \
+  fwupd-refresh.service \
+  sssd-autofs.socket \
+  sssd-nss.socket \
+  sssd-pam-priv.socket \
+  sssd-pam.socket; do
+  is_qualified_factory_failed_unit "$unit" || exit 1
+done
+! is_qualified_factory_failed_unit unexpected.service
+`,
+    );
+    expect(qualified.result.status, qualified.output).toBe(0);
+
+    const changedCause = runSourced(
+      STATION_PREPARE,
+      `
+STATION_HOST_PROFILE=stock-dgx-os
+all_baseos_packages_exact() { return 0; }
+factory_fluent_bit_failure_is_qualified() { return 1; }
+is_qualified_factory_failed_unit fluent-bit.service
+`,
+    );
+    expect(changedCause.result.status, changedCause.output).not.toBe(0);
+  });
+
   it("allows BaseOS failures only with exact packages and the expected cause fingerprint", () => {
     const qualified = runSourced(
       STATION_PREPARE,
       `
 STATION_HOST_PROFILE=colossus-baseos
 all_baseos_packages_exact() { return 0; }
-baseos_fluent_bit_failure_is_qualified() { return 0; }
+factory_fluent_bit_failure_is_qualified() { return 0; }
 is_qualified_factory_failed_unit fluent-bit.service
 `,
     );
@@ -801,7 +838,7 @@ is_qualified_factory_failed_unit fluent-bit.service
       `
 STATION_HOST_PROFILE=colossus-baseos
 all_baseos_packages_exact() { return 1; }
-baseos_fluent_bit_failure_is_qualified() { return 0; }
+factory_fluent_bit_failure_is_qualified() { return 0; }
 is_qualified_factory_failed_unit fluent-bit.service
 `,
     );
@@ -812,20 +849,20 @@ is_qualified_factory_failed_unit fluent-bit.service
       `
 STATION_HOST_PROFILE=colossus-baseos
 all_baseos_packages_exact() { return 0; }
-baseos_fluent_bit_failure_is_qualified() { return 1; }
+factory_fluent_bit_failure_is_qualified() { return 1; }
 is_qualified_factory_failed_unit fluent-bit.service
 `,
     );
     expect(changedCause.result.status, changedCause.output).not.toBe(0);
   });
 
-  it("rejects a BaseOS failed unit when any systemd or unit-file fingerprint drifts", () => {
+  it("rejects a factory failed unit when any systemd or unit-file fingerprint drifts", () => {
     const exact = runSourced(
       STATION_PREPARE,
       `
 systemd_property_matches() { return 0; }
 file_sha256_matches() { return 0; }
-baseos_failed_unit_matches cloud-init.service /usr/lib/systemd/system/cloud-init.service HASH enabled 1
+factory_failed_unit_matches cloud-init.service /usr/lib/systemd/system/cloud-init.service HASH enabled 1
 `,
     );
     expect(exact.result.status, exact.output).toBe(0);
@@ -835,13 +872,13 @@ baseos_failed_unit_matches cloud-init.service /usr/lib/systemd/system/cloud-init
       `
 systemd_property_matches() { [[ "$2" != Result ]]; }
 file_sha256_matches() { return 0; }
-baseos_failed_unit_matches cloud-init.service /usr/lib/systemd/system/cloud-init.service HASH enabled 1
+factory_failed_unit_matches cloud-init.service /usr/lib/systemd/system/cloud-init.service HASH enabled 1
 `,
     );
     expect(drifted.result.status, drifted.output).not.toBe(0);
   });
 
-  it("qualifies the BaseOS Fluent Bit template independently of host identity", () => {
+  it("qualifies the factory Fluent Bit template independently of host identity", () => {
     const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fluent-bit-"));
     const config = path.join(configDir, "fluent-bit.conf");
     fs.writeFileSync(
@@ -871,7 +908,7 @@ baseos_failed_unit_matches cloud-init.service /usr/lib/systemd/system/cloud-init
       STATION_PREPARE,
       `
 root_owned_file_is_not_writable_by_group_or_other() { return 0; }
-baseos_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
+factory_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
 `,
       {
         EXPECTED_SHA: normalized,
@@ -886,7 +923,7 @@ baseos_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
       STATION_PREPARE,
       `
 root_owned_file_is_not_writable_by_group_or_other() { return 0; }
-baseos_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
+factory_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
 `,
       {
         EXPECTED_SHA: normalized,
@@ -901,7 +938,7 @@ baseos_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
       STATION_PREPARE,
       `
 root_owned_file_is_not_writable_by_group_or_other() { return 0; }
-baseos_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
+factory_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
 `,
       {
         EXPECTED_SHA: normalized,
