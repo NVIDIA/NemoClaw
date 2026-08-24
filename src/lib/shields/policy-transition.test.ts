@@ -157,7 +157,7 @@ describe("shields policy transition", () => {
     });
 
     expect(() => shields.applyShieldsPolicySnapshot(sandboxName, snapshotPath)).toThrow(
-      "must apply",
+      "must make the effective policy",
     );
     expect(runSpy).not.toHaveBeenCalled();
   });
