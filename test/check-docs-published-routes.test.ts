@@ -59,6 +59,11 @@ navigation:
           - changelog: ./changelog
             title: Release Notes
             slug: release-notes
+      - slug: pi
+        layout:
+          - changelog: ./changelog
+            title: Release Notes
+            slug: release-notes
 `;
 
 const repoRoot = path.join(import.meta.dirname, "..");
@@ -106,7 +111,7 @@ ${body}
 }
 
 describe("published docs route checking", () => {
-  it.each(["openclaw", "hermes", "deepagents"])(
+  it.each(["openclaw", "hermes", "deepagents", "pi"])(
     "indexes the native changelog route for %s",
     (variant) => {
       const index = buildPublishedRouteIndex(navYaml);
@@ -202,6 +207,10 @@ See [Commands](../reference/commands).
         expect.objectContaining({
           fromRoute: "/user-guide/deepagents/release-notes/2026/7/14",
           resolved: "/user-guide/deepagents/release-notes/2026/reference/commands",
+        }),
+        expect.objectContaining({
+          fromRoute: "/user-guide/pi/release-notes/2026/7/14",
+          resolved: "/user-guide/pi/release-notes/2026/reference/commands",
         }),
       ]);
     });
@@ -426,6 +435,28 @@ See [Missing Other Page](../other/missing).
         }),
       ]);
     });
+  });
+});
+
+describe("Pi documentation routes", () => {
+  const index = buildPublishedRouteIndex();
+
+  it("publishes the Pi quickstart, operations, and support reference only in the Pi guide", () => {
+    expect(index.routes.has("/user-guide/pi/get-started/quickstart")).toBe(true);
+    expect(index.routes.has("/user-guide/pi/manage-sandboxes/run-pi")).toBe(true);
+    expect(index.routes.has("/user-guide/pi/reference/commands")).toBe(true);
+    expect(index.routes.has("/user-guide/pi/reference/pi-support")).toBe(true);
+    expect([
+      index.routes.has("/user-guide/openclaw/get-started/quickstart-pi"),
+      index.routes.has("/user-guide/openclaw/manage-sandboxes/run-pi"),
+      index.routes.has("/user-guide/openclaw/reference/pi-support"),
+      index.routes.has("/user-guide/hermes/get-started/quickstart-pi"),
+      index.routes.has("/user-guide/hermes/manage-sandboxes/run-pi"),
+      index.routes.has("/user-guide/hermes/reference/pi-support"),
+      index.routes.has("/user-guide/deepagents/get-started/quickstart-pi"),
+      index.routes.has("/user-guide/deepagents/manage-sandboxes/run-pi"),
+      index.routes.has("/user-guide/deepagents/reference/pi-support"),
+    ]).toEqual([false, false, false, false, false, false, false, false, false]);
   });
 });
 
