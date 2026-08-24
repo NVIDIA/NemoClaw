@@ -275,6 +275,9 @@ export interface HermesPortableTransactionFixtureOptions {
   delaySandboxReadyPublicationPoll?: HermesPortableOnboardingDeps<{
     ready: true;
   }>["delaySandboxReadyPublicationPoll"];
+  readSandboxReadyPublicationClockMs?: HermesPortableOnboardingDeps<{
+    ready: true;
+  }>["readSandboxReadyPublicationClockMs"];
   registryOpenShellVersion?: string | null;
   registryLiveFingerprint?: string;
   existingRegistry?: boolean;
@@ -385,6 +388,9 @@ export function createHermesPortableTransactionFixture(
           : { kind: "absent" }),
     ...(options.delaySandboxReadyPublicationPoll
       ? { delaySandboxReadyPublicationPoll: options.delaySandboxReadyPublicationPoll }
+      : {}),
+    ...(options.readSandboxReadyPublicationClockMs
+      ? { readSandboxReadyPublicationClockMs: options.readSandboxReadyPublicationClockMs }
       : {}),
     createSandbox: async (argv, buildContextPath) => {
       events.push("create");

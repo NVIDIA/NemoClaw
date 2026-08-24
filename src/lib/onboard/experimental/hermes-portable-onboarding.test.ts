@@ -184,6 +184,33 @@ describe("Hermes portable onboarding transaction", () => {
     ).toThrow("HOME disagrees with runtime authority");
   });
 
+  it("caps an explicit OpenShell capture timeout at the caller budget (#9211)", () => {
+    const spawn = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      output: [],
+      pid: 1,
+      stdout: Buffer.from("[]"),
+      stderr: Buffer.alloc(0),
+      error: undefined,
+    }));
+    const capture = createHermesPortableOpenShellCapture(
+      (args) => ["/usr/bin/openshell", ...args],
+      { HOME: "/home/test", PATH: "/usr/bin" },
+      undefined,
+      undefined,
+      spawn as never,
+    );
+
+    capture(["sandbox", "list", "-g", "nemoclaw"], 1_234);
+
+    expect(spawn).toHaveBeenCalledWith(
+      "/usr/bin/openshell",
+      ["sandbox", "list", "-g", "nemoclaw"],
+      expect.objectContaining({ timeout: 1_234 }),
+    );
+  });
+
   it("rejects ambient endpoint selectors before an OpenShell child starts (#9203)", () => {
     const spawn = vi.fn();
     const capture = createHermesPortableOpenShellCapture(
@@ -255,9 +282,16 @@ describe("Hermes portable onboarding transaction", () => {
       { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" },
       present,
     ];
-    const observeSandbox = vi.fn(() => observations.shift() ?? present);
-    const delaySandboxReadyPublicationPoll = vi.fn(async () => {});
-    const fixture = deps({ observeSandbox, delaySandboxReadyPublicationPoll });
+    const observeSandbox = vi.fn((_timeoutBudgetMs?: number) => observations.shift() ?? present);
+    let nowMs = 0;
+    const delaySandboxReadyPublicationPoll = vi.fn(async (milliseconds: number) => {
+      nowMs += milliseconds;
+    });
+    const fixture = deps({
+      observeSandbox,
+      delaySandboxReadyPublicationPoll,
+      readSandboxReadyPublicationClockMs: () => nowMs,
+    });
 
     const completed = await runHermesPortableOnboardingTransaction(input(), fixture.value);
 
@@ -266,6 +300,9 @@ describe("Hermes portable onboarding transaction", () => {
     expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
     expect(delaySandboxReadyPublicationPoll).toHaveBeenCalledTimes(2);
     expect(delaySandboxReadyPublicationPoll).toHaveBeenCalledWith(1_000);
+    expect(
+      observeSandbox.mock.calls.filter(([timeoutBudgetMs]) => timeoutBudgetMs !== undefined),
+    ).toEqual([[10_000], [9_000], [8_000]]);
     expect(fixture.events[0]).toBe("lock-enter");
     expect(fixture.events.at(-1)).toBe("lock-exit");
   });
@@ -277,8 +314,15 @@ describe("Hermes portable onboarding transaction", () => {
         ? { kind: "absent" as const }
         : { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" },
     );
-    const delaySandboxReadyPublicationPoll = vi.fn(async () => {});
-    const fixture = deps({ observeSandbox, delaySandboxReadyPublicationPoll });
+    let nowMs = 0;
+    const delaySandboxReadyPublicationPoll = vi.fn(async (milliseconds: number) => {
+      nowMs += milliseconds;
+    });
+    const fixture = deps({
+      observeSandbox,
+      delaySandboxReadyPublicationPoll,
+      readSandboxReadyPublicationClockMs: () => nowMs,
+    });
 
     await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
       "cannot classify create result: exact OpenShell sandbox is not Ready",
@@ -286,8 +330,47 @@ describe("Hermes portable onboarding transaction", () => {
 
     expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
     expect(delaySandboxReadyPublicationPoll).toHaveBeenCalledTimes(10);
+    expect(observeSandbox.mock.calls.slice(2)).toEqual(
+      Array.from({ length: 10 }, (_value, index) => [10_000 - index * 1_000]),
+    );
     expect(fixture.events).not.toContain("registry");
     expect(fixture.events.at(-1)).toBe("lock-exit");
+  });
+
+  it("counts OpenShell observation time against the total Ready publication deadline (#9211)", async () => {
+    let nowMs = 0;
+    let observationIndex = 0;
+    const observationDurationsMs = [0, 0, 6_000, 3_000] as const;
+    const observations = [
+      { kind: "absent" as const },
+      { kind: "absent" as const },
+      { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" },
+      { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" },
+    ];
+    const observeSandbox = vi.fn((_timeoutBudgetMs?: number) => {
+      const currentIndex = observationIndex++;
+      nowMs += observationDurationsMs[currentIndex] ?? 0;
+      return observations[currentIndex] ?? observations.at(-1)!;
+    });
+    const delaySandboxReadyPublicationPoll = vi.fn(async (milliseconds: number) => {
+      nowMs += milliseconds;
+    });
+    const fixture = deps({
+      observeSandbox,
+      delaySandboxReadyPublicationPoll,
+      readSandboxReadyPublicationClockMs: () => nowMs,
+    });
+
+    await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
+      "cannot classify create result: exact OpenShell sandbox is not Ready",
+    );
+
+    expect(observeSandbox.mock.calls.slice(2)).toEqual([[10_000], [3_000]]);
+    expect(delaySandboxReadyPublicationPoll).toHaveBeenCalledTimes(1);
+    expect(delaySandboxReadyPublicationPoll).toHaveBeenCalledWith(1_000);
+    expect(nowMs).toBe(10_000);
+    expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
+    expect(fixture.events).not.toContain("registry");
   });
 
   it("does not retry an unrelated post-create ambiguity (#9211)", async () => {
@@ -297,8 +380,15 @@ describe("Hermes portable onboarding transaction", () => {
         ? { kind: "absent" as const }
         : { kind: "ambiguous" as const, detail: "gateway unavailable" },
     );
-    const delaySandboxReadyPublicationPoll = vi.fn(async () => {});
-    const fixture = deps({ observeSandbox, delaySandboxReadyPublicationPoll });
+    let nowMs = 0;
+    const delaySandboxReadyPublicationPoll = vi.fn(async (milliseconds: number) => {
+      nowMs += milliseconds;
+    });
+    const fixture = deps({
+      observeSandbox,
+      delaySandboxReadyPublicationPoll,
+      readSandboxReadyPublicationClockMs: () => nowMs,
+    });
 
     await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
       "cannot classify create result: gateway unavailable",
@@ -306,6 +396,7 @@ describe("Hermes portable onboarding transaction", () => {
 
     expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
     expect(delaySandboxReadyPublicationPoll).not.toHaveBeenCalled();
+    expect(observeSandbox.mock.calls.slice(2)).toEqual([[10_000]]);
     expect(fixture.events).not.toContain("registry");
   });
 
@@ -853,6 +944,47 @@ describe("Hermes portable onboarding transaction", () => {
       ]);
     },
   );
+
+  it("shares one observation budget across sandbox list and get (#9211)", () => {
+    let nowMs = 100;
+    let captureIndex = 0;
+    const captureDurationsMs = [4_000, 0] as const;
+    const captureResults = [
+      { status: 0, stdout: "alpha Ready", stderr: "" },
+      {
+        status: 0,
+        stdout: "Name: alpha\nID: sandbox-id-1\nPhase: Ready\n",
+        stderr: "",
+      },
+    ];
+    const capture = vi.fn((_args: readonly string[]) => {
+      const currentIndex = captureIndex++;
+      nowMs += captureDurationsMs[currentIndex] ?? 0;
+      return captureResults[currentIndex]!;
+    });
+
+    expect(
+      observeHermesPortableSandbox("alpha", "nemoclaw", capture, 5_000, () => nowMs),
+    ).toMatchObject({ kind: "present", sandboxId: "sandbox-id-1" });
+    expect(capture.mock.calls).toEqual([
+      [["sandbox", "list", "-g", "nemoclaw"], 5_000],
+      [["sandbox", "get", "-g", "nemoclaw", "alpha"], 1_000],
+    ]);
+  });
+
+  it("stops an observation when the first capture consumes its total budget (#9211)", () => {
+    let nowMs = 0;
+    const capture = vi.fn(() => {
+      nowMs = 5_000;
+      return { status: 0, stdout: "alpha Creating", stderr: "" };
+    });
+
+    expect(observeHermesPortableSandbox("alpha", "nemoclaw", capture, 5_000, () => nowMs)).toEqual({
+      kind: "ambiguous",
+      detail: "exact OpenShell sandbox Ready publication exceeded its total deadline",
+    });
+    expect(capture).toHaveBeenCalledTimes(1);
+  });
 
   it("accepts Ready identity only from the exact receipt gateway (#9203)", () => {
     const capture = vi

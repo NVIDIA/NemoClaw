@@ -136,8 +136,9 @@ export interface HermesPortableOnboardingDeps<T> {
   readonly assertOpenShellExecutableAuthority: (
     authority: HermesPortableOpenShellExecutableAuthority,
   ) => void;
-  readonly observeSandbox: () => HermesPortableSandboxObservation;
+  readonly observeSandbox: (timeoutBudgetMs?: number) => HermesPortableSandboxObservation;
   readonly delaySandboxReadyPublicationPoll?: (milliseconds: number) => Promise<void>;
+  readonly readSandboxReadyPublicationClockMs?: () => number;
   readonly createSandbox: (createArgv: readonly string[], buildContextPath: string) => Promise<T>;
   readonly readRegistry: () => SandboxEntry | null;
   readonly registerSandbox: (
@@ -183,11 +184,14 @@ export function createHermesPortableOpenShellCapture(
   runtimeAuthority?: CheckpointPortableRuntimeAuthority,
   executableAuthority?: HermesPortableOpenShellExecutableAuthority,
   spawn: typeof spawnSync = spawnSync,
-): (args: readonly string[]) => HermesPortableOpenShellResult & {
+): (
+  args: readonly string[],
+  timeoutMs?: number,
+) => HermesPortableOpenShellResult & {
   readonly stdout: Buffer;
   readonly stderr: Buffer;
 } {
-  return (args) => {
+  return (args, timeoutMs) => {
     assertNoExplicitOpenShellGatewayEndpoint(args);
     const [resolvedExecutable, ...argv] = openshellArgv([...args]);
     const executable = executableAuthority
@@ -201,9 +205,13 @@ export function createHermesPortableOpenShellCapture(
     if (resolvedExecutable !== executable) {
       fail("OpenShell capture resolution disagrees with executable authority");
     }
+    const boundedTimeoutMs = timeoutMs === undefined ? 5_000 : Math.floor(timeoutMs);
+    if (!Number.isFinite(boundedTimeoutMs) || boundedTimeoutMs < 1) {
+      fail("OpenShell capture timeout must be a positive finite integer");
+    }
     const result: SpawnSyncReturns<string | Buffer> = spawn(executable, argv, {
       env: createHermesPortableChildEnvironment(sourceEnv, runtimeAuthority),
-      timeout: 5_000,
+      timeout: Math.min(5_000, boundedTimeoutMs),
       maxBuffer: 512 * 1024,
       encoding: null,
     });
@@ -544,7 +552,10 @@ function strictOpenShellText(value: string | Buffer): string {
 
 const HERMES_PORTABLE_READY_PUBLICATION_POLL_INTERVAL_MS = 1_000;
 const HERMES_PORTABLE_READY_PUBLICATION_MAX_POLLS = 10;
+const HERMES_PORTABLE_READY_PUBLICATION_TIMEOUT_MS = 10_000;
 const HERMES_PORTABLE_NOT_READY_DETAIL = "exact OpenShell sandbox is not Ready";
+const HERMES_PORTABLE_READY_PUBLICATION_TIMEOUT_DETAIL =
+  "exact OpenShell sandbox Ready publication exceeded its total deadline";
 function delayHermesPortableReadyPublicationPoll(milliseconds: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, milliseconds);
@@ -555,13 +566,30 @@ function delayHermesPortableReadyPublicationPoll(milliseconds: number): Promise<
 export function observeHermesPortableSandbox(
   sandboxName: string,
   gatewayName: string,
-  capture: (args: readonly string[]) => HermesPortableOpenShellResult,
+  capture: (args: readonly string[], timeoutMs?: number) => HermesPortableOpenShellResult,
+  timeoutBudgetMs?: number,
+  readClockMs: () => number = performance.now.bind(performance),
 ): HermesPortableSandboxObservation {
-  const list = capture(["sandbox", "list", "-g", gatewayName]);
+  if (timeoutBudgetMs !== undefined && (!Number.isFinite(timeoutBudgetMs) || timeoutBudgetMs < 1)) {
+    return { kind: "ambiguous", detail: HERMES_PORTABLE_READY_PUBLICATION_TIMEOUT_DETAIL };
+  }
+  const deadlineMs = timeoutBudgetMs === undefined ? null : readClockMs() + timeoutBudgetMs;
+  const captureWithinDeadline = (args: readonly string[]): HermesPortableOpenShellResult | null => {
+    if (deadlineMs === null) return capture(args);
+    const remainingMs = Math.floor(deadlineMs - readClockMs());
+    return remainingMs < 1 ? null : capture(args, remainingMs);
+  };
+  const list = captureWithinDeadline(["sandbox", "list", "-g", gatewayName]);
+  if (!list) {
+    return { kind: "ambiguous", detail: HERMES_PORTABLE_READY_PUBLICATION_TIMEOUT_DETAIL };
+  }
   if (list.status !== 0 || list.error) {
     return { kind: "ambiguous", detail: "the selected OpenShell gateway is not proven reachable" };
   }
-  const current = capture(["sandbox", "get", "-g", gatewayName, sandboxName]);
+  const current = captureWithinDeadline(["sandbox", "get", "-g", gatewayName, sandboxName]);
+  if (!current) {
+    return { kind: "ambiguous", detail: HERMES_PORTABLE_READY_PUBLICATION_TIMEOUT_DETAIL };
+  }
   if (current.status === 0 && !current.error) {
     const output = strictOpenShellText(current.stdout);
     const sandboxId = parseOpenShellSandboxId(output);
@@ -592,20 +620,29 @@ export function observeHermesPortableSandbox(
 }
 
 async function settleCreatedHermesPortableSandboxReadyPublication(
-  initialObservation: HermesPortableSandboxObservation,
-  observeSandbox: () => HermesPortableSandboxObservation,
+  observeSandbox: (timeoutBudgetMs?: number) => HermesPortableSandboxObservation,
   delayPoll: (milliseconds: number) => Promise<void>,
+  readClockMs: () => number,
 ): Promise<HermesPortableSandboxObservation> {
-  let observation = initialObservation;
-  for (let poll = 0; poll < HERMES_PORTABLE_READY_PUBLICATION_MAX_POLLS; poll += 1) {
+  const deadlineMs = readClockMs() + HERMES_PORTABLE_READY_PUBLICATION_TIMEOUT_MS;
+  let observation: HermesPortableSandboxObservation = {
+    kind: "ambiguous",
+    detail: HERMES_PORTABLE_READY_PUBLICATION_TIMEOUT_DETAIL,
+  };
+  for (let poll = 0; poll <= HERMES_PORTABLE_READY_PUBLICATION_MAX_POLLS; poll += 1) {
+    const observationBudgetMs = Math.floor(deadlineMs - readClockMs());
+    if (observationBudgetMs < 1) return observation;
+    observation = observeSandbox(observationBudgetMs);
     if (
       observation.kind !== "ambiguous" ||
       observation.detail !== HERMES_PORTABLE_NOT_READY_DETAIL
     ) {
       return observation;
     }
-    await delayPoll(HERMES_PORTABLE_READY_PUBLICATION_POLL_INTERVAL_MS);
-    observation = observeSandbox();
+    if (poll === HERMES_PORTABLE_READY_PUBLICATION_MAX_POLLS) return observation;
+    const delayBudgetMs = Math.floor(deadlineMs - readClockMs());
+    if (delayBudgetMs < 1) return observation;
+    await delayPoll(Math.min(HERMES_PORTABLE_READY_PUBLICATION_POLL_INTERVAL_MS, delayBudgetMs));
   }
   return observation;
 }
@@ -848,9 +885,9 @@ export async function runHermesPortableOnboardingTransaction<T>(
     assertHermesPortableUninstallCompleteForOnboarding(input.stateDir);
     const assertOpenShellExecutableAuthority = (): void =>
       deps.assertOpenShellExecutableAuthority(input.openshellExecutableAuthority);
-    const observeSandbox = (): HermesPortableSandboxObservation => {
+    const observeSandbox = (timeoutBudgetMs?: number): HermesPortableSandboxObservation => {
       assertOpenShellExecutableAuthority();
-      return deps.observeSandbox();
+      return deps.observeSandbox(timeoutBudgetMs);
     };
     const capturePolicy: HermesPortablePolicyCapture = (args) => {
       assertOpenShellExecutableAuthority();
@@ -1108,11 +1145,10 @@ export async function runHermesPortableOnboardingTransaction<T>(
         buildContext.assertCurrent();
         input.buildContext.assertCurrentSource();
         created = true;
-        observation = observeSandbox();
         observation = await settleCreatedHermesPortableSandboxReadyPublication(
-          observation,
           observeSandbox,
           deps.delaySandboxReadyPublicationPoll ?? delayHermesPortableReadyPublicationPoll,
+          deps.readSandboxReadyPublicationClockMs ?? performance.now.bind(performance),
         );
         buildContext.assertCurrent();
         input.buildContext.assertCurrentSource();
@@ -1367,8 +1403,8 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
         ),
       assertOpenShellExecutableAuthority: () => assertOpenShellExecutableAuthority(),
       capturePolicy: captureOpenShell,
-      observeSandbox: () =>
-        observeHermesPortableSandbox(sandboxName, gatewayName, captureOpenShell),
+      observeSandbox: (timeoutBudgetMs) =>
+        observeHermesPortableSandbox(sandboxName, gatewayName, captureOpenShell, timeoutBudgetMs),
       createSandbox: (argv, buildContextPath) =>
         createSandbox(
           argv,

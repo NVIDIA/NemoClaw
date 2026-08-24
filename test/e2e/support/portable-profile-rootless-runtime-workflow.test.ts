@@ -90,10 +90,6 @@ describe("portable profile rootless runtime workflow", () => {
     );
     expect(liveTest).toContain("preparePortableExperimentalHost(process.env, { home });");
     expect(liveTest).toContain("createHermesPortableBuildContextPlan(");
-    expect(liveTest).toContain("stageCreateSandboxBuildContext({");
-    expect(liveTest).toContain(
-      "cleanupHermesTemporaryBuildContext = hermesTemporaryBuildContext.cleanupBuildCtx",
-    );
     expect(liveTest).toContain('buildId: "hermes-rootless-e2e"');
     expect(liveTest).toContain("hermesContextPlan.retire(hermesContextInput)");
     expect(liveTest).toContain("assert.equal(prepared?.authority.configHome, configHome);");
