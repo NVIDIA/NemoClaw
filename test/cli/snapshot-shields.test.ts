@@ -6,25 +6,25 @@ import { describe, expect, test as it } from "../helpers/owned-test-resources";
 import { runWithEnv, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
 
 describe("CLI dispatch", () => {
-  it("shields help uses native oclif usage", testTimeoutOptions(30_000), ({ testHome }) => {
+  it("shields help shows sandbox-first usage", testTimeoutOptions(30_000), ({ testHome }) => {
     const { home } = testHome;
     writeSandboxRegistry(home);
 
     const down = runWithEnv("alpha shields down --help", testHome.environment());
     expect(down.code).toBe(0);
-    expect(down.out).toContain("$ nemoclaw sandbox shields down <name>");
+    expect(down.out).toContain("$ nemoclaw alpha shields down");
 
     const up = runWithEnv("alpha shields up --help", testHome.environment());
     expect(up.code).toBe(0);
-    expect(up.out).toContain("$ nemoclaw sandbox shields up <name>");
+    expect(up.out).toContain("$ nemoclaw alpha shields up");
 
     const status = runWithEnv("alpha shields status --help", testHome.environment());
     expect(status.code).toBe(0);
-    expect(status.out).toContain("$ nemoclaw sandbox shields status <name>");
+    expect(status.out).toContain("$ nemoclaw alpha shields status");
   });
 
   it(
-    "snapshot subcommand help uses native oclif usage",
+    "snapshot subcommand help shows sandbox-first usage",
     testTimeoutOptions(30_000),
     ({ testHome }) => {
       const { home } = testHome;
@@ -32,22 +32,22 @@ describe("CLI dispatch", () => {
 
       const parent = runWithEnv("alpha snapshot --help", testHome.environment());
       expect(parent.code).toBe(0);
-      expect(parent.out).toContain("$ nemoclaw sandbox snapshot <create|list|restore> <name>");
-      expect(parent.out).toContain("sandbox snapshot create");
-      expect(parent.out).toContain("sandbox snapshot list");
+      expect(parent.out).toContain("$ nemoclaw alpha snapshot <create|list|restore>");
+      expect(parent.out).toContain("alpha snapshot create");
+      expect(parent.out).toContain("alpha snapshot list");
 
       const list = runWithEnv("alpha snapshot list --help", testHome.environment());
       expect(list.code).toBe(0);
-      expect(list.out).toContain("$ nemoclaw sandbox snapshot list <name>");
+      expect(list.out).toContain("$ nemoclaw alpha snapshot list");
 
       const create = runWithEnv("alpha snapshot create --help", testHome.environment());
       expect(create.code).toBe(0);
-      expect(create.out).toContain("$ nemoclaw sandbox snapshot create <name> [--name <label>]");
+      expect(create.out).toContain("$ nemoclaw alpha snapshot create [--name <label>]");
 
       const restore = runWithEnv("alpha snapshot restore --help", testHome.environment());
       expect(restore.code).toBe(0);
       expect(restore.out).toContain(
-        "$ nemoclaw sandbox snapshot restore <name> [selector] [--to <dst>]",
+        "$ nemoclaw alpha snapshot restore [selector] [--to <dst>]",
       );
     },
   );
