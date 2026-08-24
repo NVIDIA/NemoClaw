@@ -122,47 +122,47 @@
       "category": "security"
     },
     {
-      "file": "test/openclaw-2026-6-npm-remediation.test.ts",
+      "file": "test/agents/openclaw/openclaw-2026-6-npm-remediation.test.ts",
       "test": "rebuilds a guarded core archive with the patched fs-safe package bundled",
       "category": "security"
     },
     {
-      "file": "test/openclaw-2026-6-npm-remediation.test.ts",
+      "file": "test/agents/openclaw/openclaw-2026-6-npm-remediation.test.ts",
       "test": "rebuilds a guarded plugin archive with the patched Axios graph bundled",
       "category": "security"
     },
     {
-      "file": "test/openclaw-2026-6-npm-remediation.test.ts",
+      "file": "test/agents/openclaw/openclaw-2026-6-npm-remediation.test.ts",
       "test": "replaces the reviewed bundled Axios graph with the patched graph",
       "category": "security"
     },
     {
-      "file": "test/openclaw-2026-6-npm-remediation.test.ts",
+      "file": "test/agents/openclaw/openclaw-2026-6-npm-remediation.test.ts",
       "test": "replaces the reviewed OpenClaw core tar and brace-expansion graph",
       "category": "security"
     },
     {
-      "file": "test/openclaw-lifecycle-policy.test.ts",
+      "file": "test/agents/openclaw/openclaw-lifecycle-policy.test.ts",
       "test": "cross-checks the allowlist against every production archive install boundary",
       "category": "security"
     },
     {
-      "file": "test/openclaw-locked-install.test.ts",
+      "file": "test/agents/openclaw/openclaw-locked-install.test.ts",
       "test": "fails closed on missing required packages and symlinked package roots",
       "category": "security"
     },
     {
-      "file": "test/openclaw-locked-install.test.ts",
+      "file": "test/agents/openclaw/openclaw-locked-install.test.ts",
       "test": "rejects $name even with a test-only matching lock digest",
       "category": "security"
     },
     {
-      "file": "test/openclaw-locked-install.test.ts",
+      "file": "test/agents/openclaw/openclaw-locked-install.test.ts",
       "test": "rejects any lock byte tamper before registry metadata is consulted",
       "category": "security"
     },
     {
-      "file": "test/openclaw-locked-install.test.ts",
+      "file": "test/agents/openclaw/openclaw-locked-install.test.ts",
       "test": "rejects symlinked package manifests",
       "category": "security"
     },

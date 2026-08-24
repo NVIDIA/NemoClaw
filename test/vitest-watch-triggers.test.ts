@@ -247,7 +247,7 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy(".github/actions/build-base-image-platform/action.yaml")).toEqual([
       "test/dcode-base-image-workflow.test.ts",
-      "test/openclaw-dependency-review.test.ts",
+      "test/agents/openclaw/openclaw-dependency-review.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/base-image-platform.yaml")).toEqual([
       "test/dcode-base-image-workflow.test.ts",

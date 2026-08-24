@@ -119,7 +119,7 @@ describe("stable CLI coverage sharding", () => {
       "e2e-support:test/e2e/support/example.test.ts": 8,
       "integration:test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts": 8,
       "integration:test/local-credential-helper-fields.test.ts": 2,
-      "integration:test/regular-0.test.ts": 8,
+      "integration:test/regular-0.test.ts": 1,
     });
   });
 
