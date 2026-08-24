@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+interface:
+  display_name: "NemoClaw Runtime Provider"
+  short_description: "Implement and qualify runtime providers"
+  default_prompt: "Use $nemoclaw-maintainer-runtime-provider to add a managed runtime provider to NemoClaw."

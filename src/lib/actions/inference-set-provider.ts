@@ -7,6 +7,10 @@ import {
   matchesGatewayProviderBinding,
   parseGatewayProviderMetadata,
 } from "../onboard/gateway-provider-metadata";
+import {
+  checkOpenAiInferenceProviderProfile,
+  OPENAI_GATEWAY_PROVIDER_TYPE,
+} from "../onboard/inference-providers/provider-profile";
 import { assertHermesPortableCommandUnavailable } from "../onboard/experimental/portable-agent-lifecycle";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -284,6 +288,24 @@ export function prepareInferenceSetProviderBinding(options: {
   });
 
   const apply = (): void => {
+    if (surface.type === OPENAI_GATEWAY_PROVIDER_TYPE) {
+      const profile = checkOpenAiInferenceProviderProfile({
+        runOpenshell: (args) =>
+          captureOpenshell(
+            args[0] === "provider" && args[1] === "profile"
+              ? [args[0], args[1], "-g", gatewayName, ...args.slice(2)]
+              : args,
+            {
+              ignoreError: true,
+              includeStreams: true,
+              maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
+            },
+          ),
+      });
+      if (!profile.ok) {
+        throw new InferenceSetError(profile.messages.join("\n").trim(), 1);
+      }
+    }
     const result = captureOpenshell(
       mutationArgs({
         action,

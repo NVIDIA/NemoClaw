@@ -42,10 +42,15 @@ Use these pages first for common onboarding flows:
 - Deep Agents home: `https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/home.md`.
 - Deep Agents prerequisites: `https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/prerequisites.md`.
 - Deep Agents quickstart: `https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart.md`.
+- Pi home: `https://docs.nvidia.com/nemoclaw/latest/user-guide/pi/home.md`.
+- Pi quickstart: `https://docs.nvidia.com/nemoclaw/latest/user-guide/pi/get-started/quickstart.md`.
+- Pi operations: `https://docs.nvidia.com/nemoclaw/latest/user-guide/pi/manage-sandboxes/run-pi.md`.
+- Pi support and security: `https://docs.nvidia.com/nemoclaw/latest/user-guide/pi/reference/pi-support.md`.
+- Pi command reference: `https://docs.nvidia.com/nemoclaw/latest/user-guide/pi/reference/commands.md`.
 
 ## How to Help the User
 
-- Ask which agent variant they want to use before giving setup instructions: OpenClaw, Hermes, or Deep Agents.
+- Ask which agent variant they want to use before giving setup instructions: OpenClaw, Hermes, Deep Agents, or Pi. State that Pi remains a release candidate until the selected release activates it.
 - Ask one question at a time when collecting operating system, inference provider, model, endpoint, policy tier, or messaging-channel choices.
 - Run commands for non-technical users when your environment allows it, after explaining what the command does and getting permission.
 - Summarize important command output instead of asking the user to paste terminal output into chat.
