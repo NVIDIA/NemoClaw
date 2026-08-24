@@ -425,7 +425,7 @@ describe("Hermes 0.19.0 dependency review", () => {
       previousIndex = contractIndex;
     });
     expect(layer).toContain("-perm /022");
-    expect(layer).toContain("--network=none");
+    expect(layer).not.toContain("--network=none");
     expect(layer).toContain("PIP_NO_INDEX=1");
     expect(layer).toContain("UV_FIND_LINKS=/tmp/nemoclaw-hindsight-probe");
     expect(layer).toContain("UV_OFFLINE=1");
