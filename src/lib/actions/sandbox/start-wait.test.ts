@@ -95,24 +95,28 @@ describe("sandbox start readiness", () => {
     {
       error: {
         kind: "transport",
+        reason: "unreachable",
         message: "OpenShell could not reach the selected gateway.",
       },
       guidance: "gateway is not running or unreachable",
     },
-  ] as const)("prints accurate $error.kind readiness failure guidance (#9803)", async (testCase) => {
-    const harness = createConnectHarness();
-    const observer = {
-      listSandboxes: vi.fn().mockResolvedValue({ ok: false, error: testCase.error }),
-    } as never;
+  ] as const)(
+    "prints accurate $error.kind readiness failure guidance (#9803)",
+    async (testCase) => {
+      const harness = createConnectHarness();
+      const observer = {
+        listSandboxes: vi.fn().mockResolvedValue({ ok: false, error: testCase.error }),
+      } as never;
 
-    await expect(harness.waitForSandboxReadyOrExit("alpha", { observer })).rejects.toThrow(
-      'process.exit unexpectedly called with "1"',
-    );
+      await expect(harness.waitForSandboxReadyOrExit("alpha", { observer })).rejects.toThrow(
+        'process.exit unexpectedly called with "1"',
+      );
 
-    const output = harness.errorSpy.mock.calls.flat().join("\n");
-    expect(output).toContain(testCase.guidance);
-    expect(output.includes("gateway is not running or unreachable")).toBe(
-      testCase.error.kind === "transport",
-    );
-  });
+      const output = harness.errorSpy.mock.calls.flat().join("\n");
+      expect(output).toContain(testCase.guidance);
+      expect(output.includes("gateway is not running or unreachable")).toBe(
+        testCase.error.kind === "transport",
+      );
+    },
+  );
 });

@@ -26,9 +26,16 @@ export type OpenShellSandboxErrorKind =
   | "timeout"
   | "transport";
 
+export type OpenShellSandboxTransportReason = "identity_mismatch" | "unreachable";
+
 export type OpenShellSandboxError =
   | Readonly<{
-      kind: Exclude<OpenShellSandboxErrorKind, "command">;
+      kind: Exclude<OpenShellSandboxErrorKind, "command" | "transport">;
+      message: string;
+    }>
+  | Readonly<{
+      kind: "transport";
+      reason: OpenShellSandboxTransportReason;
       message: string;
     }>
   | Readonly<{

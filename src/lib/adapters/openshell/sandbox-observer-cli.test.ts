@@ -77,12 +77,14 @@ describe("CLI OpenShell sandbox observer", () => {
         "\u001b[1mNAME\u001b[0m CREATED PHASE\n" +
           "\u001b[1malpha\u001b[0m 2m \u001b[32mReady\u001b[0m\n" +
           "beta Ready NotReady 1m ago\n" +
+          "gamma unknown 1m ago\n" +
           "No sandboxes found.",
       ),
     ).toEqual({
       sandboxes: [
         { name: "alpha", phase: "Ready", readiness: "ready" },
         { name: "beta", phase: "NotReady", readiness: "not_ready" },
+        { name: "gamma", phase: "Unknown", readiness: "terminal" },
       ],
     });
   });
@@ -121,6 +123,22 @@ describe("CLI OpenShell sandbox observer", () => {
       value: {
         state: "present",
         sandbox: { name: "alpha", phase: "Running", readiness: "ready" },
+      },
+    });
+  });
+
+  it("canonicalizes lookup phase tokens case-insensitively (#9803)", async () => {
+    const observer = createCliOpenShellSandboxObserver({
+      capture: () => captured(0, "Name: alpha\nPhase: ready\n"),
+    });
+
+    await expect(
+      observer.lookupSandbox({ sandboxName: "alpha", target: selectedOpenShellGateway() }),
+    ).resolves.toEqual({
+      ok: true,
+      value: {
+        state: "present",
+        sandbox: { name: "alpha", phase: "Ready", readiness: "ready" },
       },
     });
   });
@@ -168,7 +186,8 @@ describe("CLI OpenShell sandbox observer", () => {
   });
 
   it.each([
-    ["transport", undefined, captured(1, "", "client error (Connect): Connection refused")],
+    ["transport", "unreachable", captured(1, "", "client error (Connect): Connection refused")],
+    ["transport", "identity_mismatch", captured(1, "", "handshake verification failed")],
     ["schema", undefined, captured(1, "", "protobuf decode error: invalid wire type")],
     ["command", "failed", captured(7, "", "unexpected opaque failure")],
     ["command", "invalid_request", captured(2, "", "unknown option")],

@@ -37,6 +37,7 @@ import {
   stripOpenShellCliAnsi,
   type CliOpenShellSandboxLookup,
   type OpenShellSandboxError,
+  type OpenShellSandboxTransportReason,
 } from "../../adapters/openshell/sandbox-observer-cli";
 import {
   detectOpenShellStateRpcPreflightIssue,
@@ -82,6 +83,7 @@ export type SandboxGatewayState = {
   activeGateway?: string | null;
   recoveredGateway?: boolean;
   recoveryVia?: string | null;
+  transportReason?: OpenShellSandboxTransportReason;
   gatewayRecoveryFailed?: boolean;
   /**
    * True when active Docker-driver sandbox recovery (#4423 part 2)
@@ -258,7 +260,10 @@ function sandboxObservationErrorState(
   action: string,
 ): SandboxGatewayState {
   if (error.kind === "schema") return schemaMismatchState(action);
-  if (error.kind === "authentication" || error.kind === "transport" || error.kind === "timeout") {
+  if (error.kind === "transport") {
+    return { state: "gateway_error", output: error.message, transportReason: error.reason };
+  }
+  if (error.kind === "authentication" || error.kind === "timeout") {
     return { state: "gateway_error", output: error.message };
   }
   return { state: "unknown_error", output: error.message };
@@ -637,7 +642,7 @@ export async function getReconciledSandboxGatewayState(
       if (retried.state === "present" || retried.state === "missing") {
         return { ...retried, recoveredGateway: true, recoveryVia: recovery.via || null };
       }
-      if (/handshake verification failed/i.test(retried.output)) {
+      if (retried.transportReason === "identity_mismatch") {
         return {
           state: "identity_drift",
           output: retried.output,

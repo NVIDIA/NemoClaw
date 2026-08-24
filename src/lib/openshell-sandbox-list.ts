@@ -67,6 +67,7 @@ export async function captureSandboxListWithGatewayRecovery(
           ok: false,
           error: {
             kind: "transport",
+            reason: "unreachable",
             message: "OpenShell could not reach the selected gateway.",
           },
         },
@@ -119,8 +120,7 @@ export async function captureSandboxListWithGatewayPreflightOrExit(
   if (!recovery.result.ok) {
     printSandboxListFailureWithRecoveryContext(recovery);
     process.exit(
-      recovery.result.error.kind === "command" &&
-        recovery.result.error.reason === "invalid_request"
+      recovery.result.error.kind === "command" && recovery.result.error.reason === "invalid_request"
         ? 2
         : 1,
     );

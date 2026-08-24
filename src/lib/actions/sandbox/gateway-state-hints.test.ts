@@ -132,7 +132,8 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
       .mockResolvedValueOnce({ state: "gateway_error", output: "transport error" })
       .mockResolvedValueOnce({
         state: "gateway_error",
-        output: "transport error: handshake verification failed",
+        output: "The selected gateway identity does not match the recorded identity.",
+        transportReason: "identity_mismatch",
       });
 
     const lookup = await gatewayState.getReconciledSandboxGatewayState("instance-a", { getState });
@@ -317,20 +318,19 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
       expectedState: "gateway_error",
       expectedGatewayRecoveryFailed: true,
     },
-  ])("maps failed gateway recovery to $expectedState", async ({
-    lifecycle,
-    expectedState,
-    expectedGatewayRecoveryFailed,
-  }) => {
-    getNamedGatewayLifecycleStateSpy.mockReturnValue(lifecycle);
+  ])(
+    "maps failed gateway recovery to $expectedState",
+    async ({ lifecycle, expectedState, expectedGatewayRecoveryFailed }) => {
+      getNamedGatewayLifecycleStateSpy.mockReturnValue(lifecycle);
 
-    const lookup = await gatewayState.getReconciledSandboxGatewayState("instance-a", {
-      getState: async () => ({ state: "gateway_error", output: "transport error" }),
-    });
+      const lookup = await gatewayState.getReconciledSandboxGatewayState("instance-a", {
+        getState: async () => ({ state: "gateway_error", output: "transport error" }),
+      });
 
-    expect(lookup.state).toBe(expectedState);
-    expect(lookup.gatewayRecoveryFailed).toBe(expectedGatewayRecoveryFailed);
-  });
+      expect(lookup.state).toBe(expectedState);
+      expect(lookup.gatewayRecoveryFailed).toBe(expectedGatewayRecoveryFailed);
+    },
+  );
 
   it("prints reconnect and recreate guidance when identity drift persists", async () => {
     captureOpenshellSpy.mockReturnValue({
@@ -405,7 +405,9 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     ).rejects.toThrow("process.exit(1)");
 
     const output = lines.join("\n");
-    expect(output).toContain("This sandbox-scoped command will not restart the shared host gateway");
+    expect(output).toContain(
+      "This sandbox-scoped command will not restart the shared host gateway",
+    );
     expect(output).toContain("Start the gateway again with `nemoclaw onboard`.");
     expect(output).not.toContain("openshell gateway start");
     expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();

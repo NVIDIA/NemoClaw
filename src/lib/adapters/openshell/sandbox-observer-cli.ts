@@ -28,6 +28,7 @@ export type {
   OpenShellSandboxReadiness,
   OpenShellSandboxReadinessWait,
   OpenShellSandboxResult,
+  OpenShellSandboxTransportReason,
 } from "./sandbox-observer";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/gu;
@@ -52,6 +53,9 @@ const KNOWN_PHASES = new Set([
   "Provisioning",
   "Terminating",
 ]);
+const CANONICAL_PHASES = new Map(
+  [...KNOWN_PHASES].map((phase) => [phase.toLowerCase(), phase] as const),
+);
 
 function isOpenShellSandboxSchemaMismatch(output: string): boolean {
   return (
@@ -125,10 +129,12 @@ export function parseCliOpenShellSandboxInventory(output: string): OpenShellSand
     const columns = line.split(/\s+/u);
     const name = columns[0];
     if (!name || isNonSandboxRow(line, name)) continue;
-    const phaseColumns = columns.slice(1);
+    const phaseColumns = columns
+      .slice(1)
+      .map((column) => CANONICAL_PHASES.get(column.toLowerCase()) ?? null);
     const phase = phaseColumns.includes("NotReady")
       ? "NotReady"
-      : (phaseColumns.find((column) => KNOWN_PHASES.has(column)) ?? null);
+      : (phaseColumns.find((column) => column !== null) ?? null);
     sandboxes.push(observation(name, phase));
   }
   return { sandboxes };
@@ -136,7 +142,8 @@ export function parseCliOpenShellSandboxInventory(output: string): OpenShellSand
 
 function parseCliOpenShellSandboxPhase(output: string): string | null {
   const match = stripOpenShellCliAnsi(output).match(/^\s*Phase:\s+(\S+)/mu);
-  return match?.[1] ?? null;
+  const phase = match?.[1] ?? null;
+  return phase ? (CANONICAL_PHASES.get(phase.toLowerCase()) ?? phase) : null;
 }
 
 function targetArgs(
@@ -180,13 +187,21 @@ function commandError(result: CapturedSandboxCommandResult): OpenShellSandboxErr
       message: "OpenShell could not authenticate the sandbox observation.",
     };
   }
+  if (/\bhandshake verification failed\b/iu.test(output)) {
+    return {
+      kind: "transport",
+      reason: "identity_mismatch",
+      message: "The selected OpenShell gateway identity does not match the recorded identity.",
+    };
+  }
   if (
-    /\b(?:connection refused|client error \(connect\)|tcp connect error|transport error|connection reset|connection aborted|connection closed|no active gateway|no gateway configured|handshake verification failed)\b/iu.test(
+    /\b(?:connection refused|client error \(connect\)|tcp connect error|transport error|connection reset|connection aborted|connection closed|no active gateway|no gateway configured)\b/iu.test(
       output,
     )
   ) {
     return {
       kind: "transport",
+      reason: "unreachable",
       message: "OpenShell could not reach the selected gateway.",
     };
   }
