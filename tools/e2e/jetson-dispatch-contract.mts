@@ -3,9 +3,11 @@
 
 import { createHash } from "node:crypto";
 
-export const JETSON_DISPATCH_CONTRACT_VERSION = "1.0.0";
+export const JETSON_DISPATCH_CONTRACT_VERSION = "2.0.0";
 export const JETSON_DISPATCH_V1_SHA256 =
   "d50e381860ec131e92f78c25272bfdcbacb790adc9552c3aaf0778427171314c";
+export const JETSON_DISPATCH_V2_SHA256 =
+  "fbf173a23db958caa74e0b32aaf362c604caf4c86204fc0a4ce7a1865b41eeb9";
 export const JETSON_DISPATCH_AUDIENCE = "nemoclaw-jetson-dispatch";
 export const JETSON_DISPATCH_TARGET = "jetson-nvmap-gpu";
 
@@ -32,13 +34,24 @@ export const MAX_JETSON_DISPATCH_ARTIFACT_RESPONSE_BYTES =
   MAX_JETSON_ARTIFACT_ARCHIVE_BASE64_CHARACTERS +
   MAX_JETSON_DISPATCH_ARTIFACT_JSON_OVERHEAD_BYTES;
 
-export interface JetsonDispatchRequest {
+export interface JetsonDispatchRequestV1 {
   schemaVersion: 1;
   target: typeof JETSON_DISPATCH_TARGET;
   candidateSha: string;
   workflowRunId: string;
   workflowRunAttempt: number;
 }
+
+export interface JetsonDispatchRequestV2 {
+  schemaVersion: 2;
+  target: typeof JETSON_DISPATCH_TARGET;
+  candidateSha: string;
+  managedImageRevision: string;
+  workflowRunId: string;
+  workflowRunAttempt: number;
+}
+
+export type JetsonDispatchRequest = JetsonDispatchRequestV1 | JetsonDispatchRequestV2;
 
 export type JetsonDispatchConclusion =
   | "cancelled"
@@ -55,7 +68,7 @@ export interface JetsonDeviceIdentity {
 }
 
 export interface JetsonDispatchStatus {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   jobId: string;
   request: JetsonDispatchRequest;
   state: "queued" | "running" | "completed";
@@ -86,6 +99,7 @@ function requireFields(
   name: string,
   required: string[],
   optional: string[] = [],
+  contractVersion = JETSON_DISPATCH_CONTRACT_VERSION,
 ): void {
   const allowed = new Set([...required, ...optional]);
   if (
@@ -93,7 +107,7 @@ function requireFields(
     Object.keys(value).some((field) => !allowed.has(field))
   ) {
     throw new Error(
-      `${name} fields do not match Jetson dispatch contract ${JETSON_DISPATCH_CONTRACT_VERSION}`,
+      `${name} fields do not match Jetson dispatch contract ${contractVersion}`,
     );
   }
 }
@@ -114,15 +128,19 @@ function positiveIntegerString(value: unknown, name: string): string {
 
 export function parseJetsonDispatchRequest(value: unknown): JetsonDispatchRequest {
   const request = record(value, "dispatch request");
-  requireFields(request, "dispatch request", [
+  const baseFields = [
     "candidateSha",
     "schemaVersion",
     "target",
     "workflowRunAttempt",
     "workflowRunId",
-  ]);
-  if (request.schemaVersion !== 1) {
-    throw new Error("dispatch request schemaVersion must be 1");
+  ];
+  if (request.schemaVersion === 1) {
+    requireFields(request, "dispatch request", baseFields, [], "1.0.0");
+  } else if (request.schemaVersion === 2) {
+    requireFields(request, "dispatch request", [...baseFields, "managedImageRevision"]);
+  } else {
+    throw new Error("dispatch request schemaVersion must be 1 or 2");
   }
   if (request.target !== JETSON_DISPATCH_TARGET) {
     throw new Error(`dispatch target must be ${JETSON_DISPATCH_TARGET}`);
@@ -130,19 +148,32 @@ export function parseJetsonDispatchRequest(value: unknown): JetsonDispatchReques
   if (typeof request.candidateSha !== "string" || !SHA_PATTERN.test(request.candidateSha)) {
     throw new Error("candidateSha must be a lowercase 40-character commit SHA");
   }
-  return {
-    schemaVersion: 1,
+  const shared = {
     target: JETSON_DISPATCH_TARGET,
     candidateSha: request.candidateSha,
     workflowRunId: positiveIntegerString(request.workflowRunId, "workflowRunId"),
     workflowRunAttempt: positiveInteger(request.workflowRunAttempt, "workflowRunAttempt"),
+  } as const;
+  if (request.schemaVersion === 1) return { schemaVersion: 1, ...shared };
+  if (
+    typeof request.managedImageRevision !== "string" ||
+    !SHA_PATTERN.test(request.managedImageRevision)
+  ) {
+    throw new Error("managedImageRevision must be a lowercase 40-character commit SHA");
+  }
+  return {
+    schemaVersion: 2,
+    ...shared,
+    managedImageRevision: request.managedImageRevision,
   };
 }
 
 function expectedJobId(request: JetsonDispatchRequest): string {
+  const managedImageRevision =
+    request.schemaVersion === 2 ? `:${request.managedImageRevision}` : "";
   return createHash("sha256")
     .update(
-      `${request.schemaVersion}:${request.target}:${request.candidateSha}:${request.workflowRunId}:${request.workflowRunAttempt}`,
+      `${request.schemaVersion}:${request.target}:${request.candidateSha}${managedImageRevision}:${request.workflowRunId}:${request.workflowRunAttempt}`,
       "utf8",
     )
     .digest("hex");
@@ -192,7 +223,7 @@ export function parseJetsonDispatchStatus(value: unknown): JetsonDispatchStatus 
   const baseFields = ["cleanup", "createdAt", "jobId", "request", "schemaVersion", "state"];
   const request = parseJetsonDispatchRequest(status.request);
   if (
-    status.schemaVersion !== 1 ||
+    status.schemaVersion !== request.schemaVersion ||
     typeof status.jobId !== "string" ||
     !JOB_ID_PATTERN.test(status.jobId) ||
     status.jobId !== expectedJobId(request)
@@ -201,12 +232,18 @@ export function parseJetsonDispatchStatus(value: unknown): JetsonDispatchStatus 
   }
   const createdAt = parseTimestamp(status.createdAt, "createdAt");
   if (status.state === "queued") {
-    requireFields(status, "queued Jetson dispatch status", baseFields);
+    requireFields(
+      status,
+      "queued Jetson dispatch status",
+      baseFields,
+      [],
+      request.schemaVersion === 1 ? "1.0.0" : JETSON_DISPATCH_CONTRACT_VERSION,
+    );
     if (status.cleanup !== "pending") {
       throw new Error("queued Jetson dispatch cleanup must be pending");
     }
     return {
-      schemaVersion: 1,
+      schemaVersion: request.schemaVersion,
       jobId: status.jobId,
       request,
       state: "queued",
@@ -215,13 +252,19 @@ export function parseJetsonDispatchStatus(value: unknown): JetsonDispatchStatus 
     };
   }
   if (status.state === "running") {
-    requireFields(status, "running Jetson dispatch status", [...baseFields, "startedAt"]);
+    requireFields(
+      status,
+      "running Jetson dispatch status",
+      [...baseFields, "startedAt"],
+      [],
+      request.schemaVersion === 1 ? "1.0.0" : JETSON_DISPATCH_CONTRACT_VERSION,
+    );
     const startedAt = parseTimestamp(status.startedAt, "startedAt");
     if (status.cleanup !== "pending" || startedAt < createdAt) {
       throw new Error("running Jetson dispatch status is invalid");
     }
     return {
-      schemaVersion: 1,
+      schemaVersion: request.schemaVersion,
       jobId: status.jobId,
       request,
       state: "running",
@@ -238,6 +281,7 @@ export function parseJetsonDispatchStatus(value: unknown): JetsonDispatchStatus 
     "completed Jetson dispatch status",
     [...baseFields, "completedAt", "conclusion", "startedAt"],
     ["device", "error"],
+    request.schemaVersion === 1 ? "1.0.0" : JETSON_DISPATCH_CONTRACT_VERSION,
   );
   if (
     typeof status.conclusion !== "string" ||
@@ -267,7 +311,7 @@ export function parseJetsonDispatchStatus(value: unknown): JetsonDispatchStatus 
     throw new Error("successful Jetson dispatch must include device identity");
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: request.schemaVersion,
     jobId: status.jobId,
     request,
     state: "completed",
@@ -315,8 +359,14 @@ export function parseJetsonDispatchArtifact(
   expectedArtifactJobId: string,
 ): JetsonDispatchArtifact {
   const artifact = record(value, "Jetson dispatch artifact");
-  requireFields(artifact, "Jetson dispatch artifact", ["log", "status"], ["artifactArchiveBase64"]);
   const status = parseJetsonDispatchStatus(artifact.status);
+  requireFields(
+    artifact,
+    "Jetson dispatch artifact",
+    ["log", "status"],
+    ["artifactArchiveBase64"],
+    status.schemaVersion === 1 ? "1.0.0" : JETSON_DISPATCH_CONTRACT_VERSION,
+  );
   if (status.jobId !== expectedArtifactJobId || status.state !== "completed") {
     throw new Error("Jetson dispatch artifact does not match its completed job");
   }
