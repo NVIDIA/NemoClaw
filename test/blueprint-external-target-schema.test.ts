@@ -53,4 +53,50 @@ describe("blueprint external OpenShell target schema", () => {
 
     expect(validate(blueprint)).toBe(false);
   });
+
+  it("accepts the mTLS authentication form", () => {
+    const blueprint = {
+      ...baseBlueprint,
+      min_openshell_version: "0.0.106",
+      max_openshell_version: "0.0.106",
+      openshell_target: {
+        ...externalTarget,
+        authentication: {
+          kind: "mtls",
+          client_certificate_file: "/run/secrets/openshell/client.crt",
+          client_key_file: "/run/secrets/openshell/client.key",
+        },
+      },
+    };
+
+    expect(validate(blueprint), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("rejects mixed authentication forms", () => {
+    const blueprint = {
+      ...baseBlueprint,
+      min_openshell_version: "0.0.106",
+      max_openshell_version: "0.0.106",
+      openshell_target: {
+        ...externalTarget,
+        authentication: {
+          kind: "oidc",
+          token_file: "/run/secrets/openshell/token",
+          client_certificate_file: "/run/secrets/openshell/client.crt",
+          client_key_file: "/run/secrets/openshell/client.key",
+        },
+      },
+    };
+
+    expect(validate(blueprint)).toBe(false);
+  });
+
+  it("rejects a target without the OpenShell release range", () => {
+    const blueprint = {
+      ...baseBlueprint,
+      openshell_target: externalTarget,
+    };
+
+    expect(validate(blueprint)).toBe(false);
+  });
 });

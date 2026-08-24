@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash, createPrivateKey, createPublicKey, X509Certificate } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
 import * as importedSandboxName from "./sandbox-name.cjs";
@@ -46,11 +46,10 @@ export interface SanitizedExternalOpenShellTargetPlan {
   lifecycle: "external";
   authentication_kind: ExternalOpenShellAuthentication["kind"];
   ca_fingerprint: string;
-  compatibility: "compatible";
 }
 
 export interface ExternalOpenShellTargetPlanDependencies {
-  readFile?: (filePath: string) => string | Buffer | Uint8Array;
+  readFile?: (filePath: string, maxBytes: number) => string | Buffer | Uint8Array;
 }
 
 type UnknownRecord = Record<string, unknown>;
@@ -115,7 +114,18 @@ function parseEndpoint(value: unknown): string {
     );
   }
   const hostname = endpoint.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  if (hostname === "localhost" || hostname === "::1" || /^127(?:\.\d{1,3}){3}$/.test(hostname)) {
+  const mappedIpv4 = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/u.exec(hostname);
+  const mappedIpv4FirstByte = mappedIpv4 ? Number.parseInt(mappedIpv4[1], 16) >> 8 : undefined;
+  if (
+    hostname === "localhost" ||
+    hostname === "localhost." ||
+    hostname === "::1" ||
+    hostname === "::" ||
+    hostname === "0.0.0.0" ||
+    /^127(?:\.\d{1,3}){3}$/u.test(hostname) ||
+    mappedIpv4FirstByte === 127 ||
+    (mappedIpv4 !== null && mappedIpv4[1] === "0" && mappedIpv4[2] === "0")
+  ) {
     throw new Error(
       "external OpenShell target endpoint must not use the same-host loopback gateway contract",
     );
@@ -234,7 +244,7 @@ function readBoundedFile(
 ): Buffer {
   let contents: Buffer;
   try {
-    contents = Buffer.from(readFile(filePath));
+    contents = Buffer.from(readFile(filePath, maxBytes));
   } catch {
     throw new Error(`external OpenShell target ${label} could not be read`);
   }
@@ -242,6 +252,30 @@ function readBoundedFile(
     throw new Error(`external OpenShell target ${label} is empty or exceeds its size limit`);
   }
   return contents;
+}
+
+function readFileAtMost(filePath: string, maxBytes: number): Buffer {
+  const descriptor = openSync(filePath, constants.O_RDONLY);
+  try {
+    const file = fstatSync(descriptor);
+    if (!file.isFile()) {
+      throw new Error("not a regular file");
+    }
+    if (file.size > maxBytes) {
+      return Buffer.alloc(maxBytes + 1);
+    }
+
+    const contents = Buffer.alloc(maxBytes + 1);
+    let offset = 0;
+    while (offset < contents.length) {
+      const bytesRead = readSync(descriptor, contents, offset, contents.length - offset, null);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    return contents.subarray(0, offset);
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function validateCaBundle(contents: Buffer): readonly Buffer[] {
@@ -306,7 +340,7 @@ export function buildSanitizedExternalOpenShellTargetPlan(
   const target = parseTarget(value);
   assertCompatibleRelease(target.expected_release, compatibility);
 
-  const readFile = dependencies.readFile ?? ((filePath: string) => readFileSync(filePath));
+  const readFile = dependencies.readFile ?? readFileAtMost;
   const caContents = readBoundedFile(
     target.trust.ca_file,
     "CA file",
@@ -351,6 +385,5 @@ export function buildSanitizedExternalOpenShellTargetPlan(
     lifecycle: "external",
     authentication_kind: target.authentication.kind,
     ca_fingerprint: `sha256:${caFingerprint.digest("hex")}`,
-    compatibility: "compatible",
   };
 }

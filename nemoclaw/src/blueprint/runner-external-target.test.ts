@@ -20,6 +20,7 @@ import { minimalBlueprint } from "./runner-test-fixtures.js";
 const { store, addFile } = createRunnerFsStore();
 const stdoutCapture = createStdoutCapture();
 const mockExeca = vi.fn();
+const fsReadCalls: number[] = [];
 
 vi.mock("node:os", () => ({ homedir: () => FAKE_HOME }));
 
@@ -31,12 +32,40 @@ vi.mock("node:crypto", async (importOriginal) => ({
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof fs>();
   const memory = inMemoryFsMethods(store, { spy: vi.fn });
+  const descriptors = new Map<number, { contents: Buffer; offset: number }>();
+  let nextDescriptor = 100;
   return {
     ...original,
     mkdirSync: memory.mkdirSync,
     readFileSync: memory.readFileSync,
     writeFileSync: memory.writeFileSync,
     readdirSync: memory.readdirSync,
+    openSync: (filePath: string) => {
+      const contents = Buffer.from(memory.readFileSync(filePath));
+      const descriptor = nextDescriptor++;
+      descriptors.set(descriptor, { contents, offset: 0 });
+      return descriptor;
+    },
+    fstatSync: (descriptor: number) => {
+      const file = descriptors.get(descriptor)!;
+      return { isFile: () => true, size: file.contents.length };
+    },
+    readSync: (
+      descriptor: number,
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      _position: number | null,
+    ) => {
+      const file = descriptors.get(descriptor)!;
+      fsReadCalls.push(descriptor);
+      const bytesRead = file.contents.copy(buffer, offset, file.offset, file.offset + length);
+      file.offset += bytesRead;
+      return bytesRead;
+    },
+    closeSync: (descriptor: number) => {
+      descriptors.delete(descriptor);
+    },
   };
 });
 
@@ -83,6 +112,7 @@ function seedExternalTarget(): void {
 describe("Blueprint Runner external OpenShell target", () => {
   beforeEach(() => {
     store.clear();
+    fsReadCalls.length = 0;
     stdoutCapture.reset();
     vi.clearAllMocks();
     delete process.env.NEMOCLAW_BLUEPRINT_PATH;
@@ -111,7 +141,6 @@ describe("Blueprint Runner external OpenShell target", () => {
         ca_fingerprint: `sha256:${createHash("sha256")
           .update(new X509Certificate(EXTERNAL_CA_PEM).raw)
           .digest("hex")}`,
-        compatibility: "compatible",
       },
       dry_run: true,
     });
@@ -139,5 +168,30 @@ describe("Blueprint Runner external OpenShell target", () => {
     expect(mockedValidateEndpoint).not.toHaveBeenCalled();
     expect(stdoutCapture.text()).not.toContain("RUN_ID:");
     expect([...store.keys()].join("\n")).not.toContain("plan.json");
+  });
+
+  it("rejects an inference endpoint override before any effect (#9872)", async () => {
+    seedExternalTarget();
+
+    await expect(
+      main(["plan", "--endpoint-url", "https://override.example.test/v1"]),
+    ).rejects.toThrow(/--endpoint-url configures inference/);
+
+    expect(mockExeca).not.toHaveBeenCalled();
+    expect(mockedValidateEndpoint).not.toHaveBeenCalled();
+    expect(stdoutCapture.text()).not.toContain("RUN_ID:");
+  });
+
+  it("rejects an oversized CA file before reading its contents (#9872)", async () => {
+    addFile("blueprint.yaml", YAML.stringify(externalTargetBlueprint()));
+    addFile(EXTERNAL_CA_FILE, "x".repeat(1024 * 1024 + 1));
+    addFile(EXTERNAL_TOKEN_FILE, EXTERNAL_TOKEN);
+
+    await expect(main(["plan"])).rejects.toThrow(/CA file is empty or exceeds its size limit/);
+
+    expect(fsReadCalls).toHaveLength(0);
+    expect(mockExeca).not.toHaveBeenCalled();
+    expect(mockedValidateEndpoint).not.toHaveBeenCalled();
+    expect(stdoutCapture.text()).not.toContain(EXTERNAL_CA_FILE);
   });
 });

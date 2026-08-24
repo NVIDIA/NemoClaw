@@ -142,6 +142,9 @@
       }
     }
   },
+  "dependentRequired": {
+    "openshell_target": ["min_openshell_version", "max_openshell_version"]
+  },
   "$defs": {
     "externalOpenShellTarget": {
       "type": "object",

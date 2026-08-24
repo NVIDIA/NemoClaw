@@ -14,15 +14,6 @@ import { redirectInheritedChildStdoutToStderr } from "../../cli/stdout-guard";
 import { buildSubprocessEnv } from "../../subprocess-env";
 
 export { openshellSandboxSshHost, resolveOpenshellSandboxSshHost } from "./sandbox-ssh-host";
-export {
-  buildSanitizedExternalOpenShellTargetPlan,
-  isExternalOpenShellTarget,
-  type ExternalOpenShellAuthentication,
-  type ExternalOpenShellTarget,
-  type ExternalOpenShellTargetPlanDependencies,
-  type OpenShellCompatibilityRange,
-  type SanitizedExternalOpenShellTargetPlan,
-} from "./external-target";
 
 export type OpenshellSpawnSync = (
   command: string,
