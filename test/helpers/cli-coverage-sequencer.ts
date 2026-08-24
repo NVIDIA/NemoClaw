@@ -43,7 +43,7 @@ const cliCoverageProjects = new Set(["cli", "integration", "e2e-support"]);
 // of relying on combined weight from the parallel CLI and E2E-support lanes.
 const stableShardSalt = "7257";
 const integrationShardSalt = "12432";
-const e2eSupportShardSalt = "13930";
+const e2eSupportShardSalt = "15448";
 // Only measured outliers are stored; new and ordinary files share the
 // conservative fallback used to estimate each stable shard's load.
 const timingHintsUrl = new URL("../../ci/cli-test-timing-hints.json", import.meta.url);
