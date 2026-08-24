@@ -32,6 +32,26 @@ describe("codebase growth guardrails workflow trust boundary", () => {
     expect(validateGrowthGuardrailsWorkflowBoundary()).toEqual([]);
   });
 
+  it("accepts equivalent workflow mappings with reordered keys", () => {
+    const workflow = YAML.parse(WORKFLOW_SOURCE) as Value;
+    const reorderedWorkflow = {
+      jobs: workflow.jobs,
+      permissions: {
+        "pull-requests": workflow.permissions["pull-requests"],
+        contents: workflow.permissions.contents,
+      },
+      on: workflow.on,
+      name: workflow.name,
+    };
+
+    expect(
+      validateGrowthGuardrailsWorkflowBoundary(
+        YAML.stringify(reorderedWorkflow),
+        STATIC_ACTION_SOURCE,
+      ),
+    ).toEqual([]);
+  });
+
   it.each([
     ["trigger", (workflow: Value) => (workflow.on.pull_request = {})],
     ["permissions", (workflow: Value) => (workflow.permissions.contents = "write")],
