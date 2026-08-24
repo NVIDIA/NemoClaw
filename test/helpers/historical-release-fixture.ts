@@ -126,12 +126,16 @@ export function createHistoricalPlan(
   };
 }
 
+function markdownText(value: string): string {
+  return value.replace(/([\\`*_[\]<>#])/g, "\\$1");
+}
+
 export function releaseBrief(plan: Record<string, string>): string {
   return [
     `# NemoClaw ${plan.nextTag} release brief`,
     "",
     `- Candidate: \`${plan.candidateCommit}\``,
-    `- Historical candidate exception: ${plan.historicalCandidateException}`,
+    `- Historical candidate exception: ${markdownText(plan.historicalCandidateException)}`,
     "",
     "## Canonical release entry",
     "",

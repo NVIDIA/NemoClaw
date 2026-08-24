@@ -27,7 +27,7 @@ import {
 } from "./helpers/historical-release-fixture";
 
 const fixtureEnvironment = { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" };
-const exception = "Urgent QA qualification requires the preceding main commit.";
+const exception = "Urgent QA qualification for issue `#123` requires the preceding main commit.";
 
 afterEach(cleanupFixtures);
 
@@ -58,7 +58,9 @@ describe("historical release candidate", () => {
     );
 
     expect(markdown).toContain("- Candidate selection: historical");
-    expect(markdown).toContain(`- Historical candidate exception: ${exception}`);
+    expect(markdown).toContain(
+      "- Historical candidate exception: Urgent QA qualification for issue \\`\\#123\\` requires the preceding main commit.",
+    );
   });
 
   it("plans an ancestor and binds its exception into the signed brief", () => {
@@ -85,7 +87,7 @@ describe("historical release candidate", () => {
     });
     expect(remoteCommit(fixture, "refs/tags/v0.0.2")).toBe(candidate);
     expect(remoteTagText(fixture, "refs/tags/v0.0.2")).toContain(
-      `- Historical candidate exception: ${exception}`,
+      "- Historical candidate exception: Urgent QA qualification for issue \\`\\#123\\` requires the preceding main commit.",
     );
   });
 

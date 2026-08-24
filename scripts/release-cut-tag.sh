@@ -143,7 +143,7 @@ require_brief_line_once() {
   local expected="$1"
   local label="$2"
   local count
-  count="$(awk -v expected="$expected" '$0 == expected { count++ } END { print count + 0 }' "$brief_snapshot")" \
+  count="$(grep -Fxc -- "$expected" "$brief_snapshot" || true)" \
     || fail "Could not validate release brief $label"
   [[ "$count" == "1" ]] || fail "Release brief must contain exactly one $label"
 }
@@ -153,7 +153,14 @@ printf -v expected_base_candidate -- "- Base-image candidate: \`%s\`" "$target"
 require_brief_line_once "$expected_docs_decision" "documentation proceed decision"
 require_brief_line_once "$expected_base_candidate" "plan-bound base-image candidate"
 if [[ "$candidate_selection" == "historical" ]]; then
-  printf -v expected_historical_exception -- "- Historical candidate exception: %s" "$historical_exception"
+  # JavaScript owns $1 in the replacement string.
+  # shellcheck disable=SC2016
+  escaped_historical_exception="$(
+    node -e 'process.stdout.write(process.argv[1].replace(/([\\`*_[\]<>#])/g, "\\$1"))' \
+      "$historical_exception"
+  )" || fail "Could not escape the historical candidate exception"
+  printf -v expected_historical_exception -- \
+    "- Historical candidate exception: %s" "$escaped_historical_exception"
   require_brief_line_once "$expected_historical_exception" "plan-bound historical candidate exception"
 else
   if grep -q '^\- Historical candidate exception:' "$brief_snapshot"; then
