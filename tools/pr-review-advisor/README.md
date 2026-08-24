@@ -92,24 +92,7 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
   job that the model omits or downgrades. The PR E2E controller separately dispatches every listed
   job without consuming the advisor's normalized result.
 
-Risk plan version 19 selects the `gateway-topology` family for these production paths:
-
-- `src/lib/core/gateway-address.ts`.
-- `src/lib/onboard/docker-driver-gateway-config.ts`.
-- `src/lib/onboard/docker-driver-gateway-env.ts`.
-- `src/lib/onboard/docker-driver-gateway-local-tls.ts`.
-- `src/lib/onboard/docker-driver-platform.ts`.
-- `src/lib/onboard/experimental/hermes-portable-ollama-authority.ts`.
-- `src/lib/onboard/experimental/portable-host-preparation.ts`.
-- `src/lib/onboard/experimental/portable-profile.ts`.
-- `src/lib/onboard/gateway-host-runtime.ts`.
-- `src/lib/onboard/gateway-http-readiness.ts`.
-- `src/lib/onboard/gateway-recovery.ts`.
-- `src/lib/onboard/gateway-sandbox-reachability.ts`.
-- `src/lib/onboard/gateway-tcp-readiness.ts`.
-- `src/lib/onboard/host-service-reachability.ts`.
-- `src/lib/onboard/runtime-provider/contract.ts`.
-- `src/lib/onboard/runtime-provider/podman-host-local-inference.ts`.
+Risk plan version 19 selects the `gateway-topology` family for the production paths in the canonical `GATEWAY_TOPOLOGY_FILES` inventory in `tools/advisors/risk-plan.mts`.
 
 The family requires PR Review Advisor to check this invariant against the diff, sibling consumers,
 and checked-in evidence:
