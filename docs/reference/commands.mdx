@@ -4552,6 +4552,14 @@ Uninstall does not otherwise target the declared external directory.
 | `--all-gateway-ports` | Uninstall every gateway port on the host, not only the port `NEMOCLAW_GATEWAY_PORT` selects |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT` |
 
+<AgentOnly variant="hermes">
+<Warning>
+For a NemoClaw-managed, non-portable Docker Hermes sandbox, uninstall removes its managed state volume even without `--destroy-user-data`.
+Back up required Hermes state first.
+NemoClaw removes only a volume with exact ownership labels; inspection or removal failure exits nonzero and preserves registry state for retry.
+</Warning>
+</AgentOnly>
+
 ```bash
 $$nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models] [--destroy-user-data] [--all-gateway-ports] [--gateway <name>]
 ```
@@ -4659,10 +4667,9 @@ With `--destroy-user-data`, that scoped path removes installer-managed user-loca
 If the OpenShell command is unavailable or its gateway list cannot be read, uninstall cannot confirm that the selected gateway is the last one, so it uses the same scoped path and preserves the shared resources.
 When the command itself is unavailable, uninstall exits nonzero before OpenShell cleanup so you can restore the command and retry.
 
-`--yes` deliberately remains non-destructive for user data.
-It only acknowledges the global `Proceed?` confirmation prompt and still preserves the listed entries.
+`--yes` only acknowledges the global `Proceed?` confirmation prompt and still preserves the listed host-side entries.
 Removing the preserved entries always requires an explicit opt-in flag (`--destroy-user-data`) or the matching env var (`NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1`).
-Existing automation using `--yes` therefore retains its safe behaviour and never loses host-side state by accident.
+Existing automation using `--yes` therefore retains those entries.
 
 Decision matrix:
 
