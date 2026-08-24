@@ -302,6 +302,18 @@ export async function assertAuthenticatedMcpDiscoveryWithOneRestart(
   }
 }
 
+export async function runHermesInitialMcpReadiness(operations: {
+  discover: () => Promise<void>;
+  inspectToolStatus: () => Promise<void>;
+  prepareModelTurn: () => Promise<void>;
+  runModelTurn: () => Promise<void>;
+}): Promise<void> {
+  await operations.discover();
+  await operations.inspectToolStatus();
+  await operations.prepareModelTurn();
+  await operations.runModelTurn();
+}
+
 export async function assertAuthenticatedMcpToolDiscovery(
   host: HostCliClient,
   fakeMcp: FakeMcpHttpsServer,

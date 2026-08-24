@@ -19,6 +19,7 @@ import {
   assertAuthenticatedMcpDiscoveryWithOneRestart,
   assertAuthenticatedMcpToolDiscovery,
   hasSuccessfulAuthenticatedMcpDiscovery,
+  runHermesInitialMcpReadiness,
   shouldRetryMcpDiscoveryAfterRestart,
   shouldRetryMcpToolDiscoveryTransportFailure,
 } from "../live/mcp-bridge-tool-discovery.ts";
@@ -478,6 +479,35 @@ describe("authenticated MCP discovery restart retry", () => {
 
     expect(restart).toHaveBeenCalledOnce();
     expect(assertDiscovery).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("Hermes initial MCP readiness", () => {
+  it("finishes discovery and tool status before the first model turn (#10155)", async () => {
+    const events: string[] = [];
+    const operation = (name: string) => async () => {
+      events.push(`${name}:started`);
+      await Promise.resolve();
+      events.push(`${name}:finished`);
+    };
+
+    await runHermesInitialMcpReadiness({
+      discover: operation("discovery"),
+      inspectToolStatus: operation("tool-status"),
+      prepareModelTurn: operation("model-preparation"),
+      runModelTurn: operation("model-turn"),
+    });
+
+    expect(events).toEqual([
+      "discovery:started",
+      "discovery:finished",
+      "tool-status:started",
+      "tool-status:finished",
+      "model-preparation:started",
+      "model-preparation:finished",
+      "model-turn:started",
+      "model-turn:finished",
+    ]);
   });
 });
 
