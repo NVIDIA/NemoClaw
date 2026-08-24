@@ -92,7 +92,18 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
   job that the model omits or downgrades. The PR E2E controller separately dispatches every listed
   job without consuming the advisor's normalized result.
 
-Risk plan version 13 maps runtime changes from these paths to the `focused-e2e` family:
+Risk plan version 19 selects the `gateway-topology` family for the production paths in the canonical `GATEWAY_TOPOLOGY_FILES` inventory in `tools/advisors/risk-plan.mts`.
+
+The family requires PR Review Advisor to check this invariant against the diff, sibling consumers,
+and checked-in evidence:
+
+> An explicit sandbox-visible host address must be outside the sandbox network subnet, and every
+> gateway-address projection must derive from the same authority.
+
+The family does not add an E2E job. Existing topology tests and workflows remain the behavior
+authority. Documentation-only and test-only changes do not select the family.
+
+The same risk plan maps runtime changes from these paths to the `focused-e2e` family:
 
 - `src/lib/onboard/managed-startup/**`.
 - `src/lib/onboard/sandbox-create-launch.ts`.
