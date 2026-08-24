@@ -108,6 +108,7 @@ describe("sandbox policy authority boundary", () => {
   it.each([
     ["empty", " \n\t", /empty sandbox policy authority metadata/u],
     ["malformed", "{", /malformed sandbox policy authority metadata/u],
+    ["non-object", "[]", /malformed sandbox policy authority metadata/u],
     [
       "mismatched",
       JSON.stringify({
@@ -157,10 +158,24 @@ describe("sandbox policy authority boundary", () => {
     ).not.toThrow();
     expect(() =>
       assertExternalPolicyRequirementContainment(inspection, {
+        filesystem_policy: { read_only: false },
         process: { user: 1000 },
         network_policies: { required: { allow: false }, missing: {} },
       }),
-    ).toThrow(/missing entries "missing"; drifted entries "required"; missing sections "process"/u);
+    ).toThrow(
+      /missing entries "missing"; drifted entries "required"; missing sections "process"; drifted sections "filesystem_policy"/u,
+    );
+    expect(() =>
+      assertExternalPolicyRequirementContainment(
+        { authority: "unknown" as never, effectivePolicy: {} },
+        {},
+      ),
+    ).toThrow(/observed OpenShell policy authority is invalid/u);
+    expect(() =>
+      assertExternalPolicyRequirementContainment(inspection, {
+        network_policies: [] as never,
+      }),
+    ).toThrow(/required network policy input is invalid/u);
   });
 });
 

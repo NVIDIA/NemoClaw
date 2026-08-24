@@ -541,4 +541,30 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       },
     });
   });
+
+  it("rejects an invalid persisted policy transition (#9833)", async () => {
+    const runId = "invalid-transition";
+    const stateDir = `${FAKE_HOME}/.nemoclaw/state/runs/${runId}`;
+    store.set(stateDir, { type: "dir" });
+    store.set(`${stateDir}/plan.json`, {
+      type: "file",
+      content: JSON.stringify({
+        run_id: runId,
+        sandbox_name: "test-sandbox",
+        sandbox_created_by_apply: false,
+        policy_transition: {
+          status: "unknown",
+          sandbox_name: "test-sandbox",
+          gateway: "test-gateway",
+          expected_authority: "nemoclaw-managed",
+          policy_addition_names: ["nim_service"],
+        },
+      }),
+    });
+
+    stdoutCapture.reset();
+    actionStatus(runId);
+    expect(stdoutCapture.jsonOutput()).toEqual({ run_id: runId, status: "unknown" });
+    await expect(actionRollback(runId)).rejects.toThrow(/policy transition receipt is invalid/u);
+  });
 });
