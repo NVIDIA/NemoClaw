@@ -21,6 +21,8 @@ export interface HandoffInput {
   previousTagCommit: string;
   targetVersion: string;
   candidateCommit: string;
+  candidateSelection: "current-main" | "historical";
+  historicalCandidateException: string;
 }
 
 export interface HandoffOutput extends HandoffInput {
@@ -79,6 +81,17 @@ function validateInput(input: HandoffInput): void {
   }
   if (!SHA.test(input.candidateCommit)) {
     throw new Error("candidate commit must be a lowercase 40-character Git SHA");
+  }
+  if (input.candidateSelection === "current-main") {
+    if (input.historicalCandidateException !== "None") {
+      throw new Error("current-main input must not contain a historical candidate exception");
+    }
+  } else if (
+    input.candidateSelection !== "historical" ||
+    !/\S/u.test(input.historicalCandidateException) ||
+    /[\u0000-\u001f\u007f]/u.test(input.historicalCandidateException)
+  ) {
+    throw new Error("historical input must contain a single-line exception reason");
   }
 }
 
@@ -168,6 +181,10 @@ export function renderHandoffMarkdown(summary: HandoffOutput): string {
     "",
     `- Previous release: ${code(summary.previousTag)} at ${code(summary.previousTagCommit)}`,
     `- Candidate: ${code(summary.candidateCommit)}`,
+    `- Candidate selection: ${summary.candidateSelection}`,
+    ...(summary.candidateSelection === "historical"
+      ? [`- Historical candidate exception: ${text(summary.historicalCandidateException)}`]
+      : []),
     `- Commits: ${summary.commitCount}`,
     `- Risky files detected: ${summary.riskyFileCount}`,
     "",
@@ -239,6 +256,9 @@ function readPlan(planPath: string): HandoffInput {
     unknown
   >;
   const expectedKeys = [
+    "candidateCommit",
+    "candidateSelection",
+    "historicalCandidateException",
     "nextTag",
     "originMainCommit",
     "originMainHeadline",
@@ -247,16 +267,36 @@ function readPlan(planPath: string): HandoffInput {
     "previousTagObject",
   ];
   if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(expectedKeys)) {
-    throw new Error("release plan must contain exactly the six supported fields");
+    throw new Error("release plan must contain exactly the nine supported fields");
   }
   if (typeof value.originMainHeadline !== "string" || !value.originMainHeadline) {
     throw new Error("release plan headline must be a nonempty string");
   }
-  const input = {
+  if (
+    value.candidateSelection !== "current-main" &&
+    value.candidateSelection !== "historical"
+  ) {
+    throw new Error("release plan candidate selection is invalid");
+  }
+  if (
+    value.candidateSelection === "current-main" &&
+    value.candidateCommit !== value.originMainCommit
+  ) {
+    throw new Error("current-main plan candidate must equal originMainCommit");
+  }
+  if (
+    value.candidateSelection === "historical" &&
+    value.candidateCommit === value.originMainCommit
+  ) {
+    throw new Error("historical plan candidate must differ from originMainCommit");
+  }
+  const input: HandoffInput = {
     previousTag: String(value.previousTag),
     previousTagCommit: String(value.previousTagCommit),
     targetVersion: String(value.nextTag),
-    candidateCommit: String(value.originMainCommit),
+    candidateCommit: String(value.candidateCommit),
+    candidateSelection: value.candidateSelection,
+    historicalCandidateException: String(value.historicalCandidateException),
   };
   validateInput(input);
   return input;
