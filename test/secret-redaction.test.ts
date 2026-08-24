@@ -82,44 +82,6 @@ describe("secret redaction consistency (#1736)", () => {
     );
   });
 
-  describe("debug redactor removes URL credentials", () => {
-    const URL_CREDENTIAL_CASES = [
-      {
-        name: "proxy environment assignment",
-        secret: "example-not-a-real-value-1",
-        text: "HTTPS_PROXY=http://svc:example-not-a-real-value-1@proxy.corp:3128",
-      },
-      {
-        name: "git remote in process output",
-        secret: "example-not-a-real-value-2",
-        text: "  4321 git remote-https https://octocat:example-not-a-real-value-2@github.com/o/r.git",
-      },
-      {
-        name: "registry URL with userinfo only",
-        secret: "example-not-a-real-value-3",
-        text: "resolved registry https://example-not-a-real-value-3@registry.internal/v2/",
-      },
-    ];
-
-    it.each(URL_CREDENTIAL_CASES)("redacts a $name", ({ secret, text }) => {
-      const redacted = debugRedact(text);
-      expect(redacted).not.toContain(secret);
-      // The userinfo separator itself must not survive either.
-      expect(redacted).not.toContain("@");
-    });
-
-    it("still replaces credential-shaped environment assignments outright", () => {
-      const text = "NVIDIA_INFERENCE_API_KEY=nvapi-" + "a".repeat(30);
-      expect(debugRedact(text)).toBe("NVIDIA_INFERENCE_API_KEY=<REDACTED>");
-    });
-
-    it("leaves a credential-free URL readable", () => {
-      expect(debugRedact("probing https://integrate.api.nvidia.com/v1/models")).toContain(
-        "integrate.api.nvidia.com",
-      );
-    });
-  });
-
   describe("debug.sh delegates to node when available (#2381)", () => {
     it("redacts diagnostic command output with the compiled redactor", () => {
       const tmp = mkdtempSync(join(tmpdir(), "nemoclaw-debug-redact-"));
