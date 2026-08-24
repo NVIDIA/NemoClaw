@@ -3,8 +3,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
+import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as defs from "../../agent/defs";
+import * as credentials from "../../credentials/store";
+import * as gatewayRuntimeAction from "../../gateway-runtime-action";
 import {
   createBuiltInChannelManifestRegistry,
   createBuiltInMessagingHookRegistry,
@@ -28,6 +31,9 @@ describe("policy channel remove/enable flows", () => {
       throw new Error(`process.exit(${code ?? 0})`);
     }) as never);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(policyChannelDependencies, "preflightSandboxPolicyAuthority").mockReturnValue(
+      "nemoclaw-managed",
+    );
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
       status: 0,
@@ -38,6 +44,7 @@ describe("policy channel remove/enable flows", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -84,14 +91,65 @@ describe("policy channel remove/enable flows", () => {
     return { rebuildSandbox, removePreset, updateSandbox };
   }
 
+  async function arrangeOpenClawSlackRemoval() {
+    const plan = await new MessagingWorkflowPlanner(
+      createBuiltInChannelManifestRegistry(),
+      createBuiltInMessagingHookRegistry(),
+      createBuiltInRenderTemplateResolver(),
+    ).buildPlan({
+      sandboxName: "alpha",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["slack"],
+      credentialAvailability: {
+        SLACK_APP_TOKEN: true,
+        SLACK_BOT_TOKEN: true,
+      },
+    });
+    const current = {
+      name: "alpha",
+      agent: "openclaw",
+      policyAuthority: "externally-managed",
+      messaging: { schemaVersion: 1, plan },
+    } as SandboxEntry;
+    vi.spyOn(defs, "loadAgent").mockReturnValue({
+      name: "openclaw",
+      displayName: "OpenClaw",
+      configPaths: { dir: "/sandbox/.openclaw" },
+      stateDirs: [],
+    } as unknown as defs.AgentDefinition);
+    vi.spyOn(registry, "getSandbox").mockReturnValue(current);
+    vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["slack"]);
+    vi.spyOn(registry, "getDisabledChannels").mockReturnValue([]);
+    const updateSandbox = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+    vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["slack"]);
+    vi.spyOn(policies, "listPresets").mockReturnValue([{ name: "slack" } as never]);
+    const removePreset = vi.spyOn(policies, "removePreset").mockImplementation(() => {
+      throw new PolicyAuthorityRefusalError("Slack policy is externally managed");
+    });
+    vi.spyOn(gatewayRuntimeAction, "recoverNamedGatewayRuntime").mockResolvedValue({
+      recovered: true,
+      before: { state: "healthy_named" },
+      after: { state: "healthy_named" },
+      attempted: false,
+    } as never);
+    const commands: string[][] = [];
+    const runOpenshell = vi
+      .spyOn(policyChannelDependencies, "runOpenshell")
+      .mockImplementation((args) => {
+        commands.push([...args]);
+        return { status: 0, stdout: "", stderr: "" } as never;
+      });
+    return { commands, removePreset, runOpenshell, updateSandbox };
+  }
+
   function expectHermesSessionCleanup(command: unknown) {
     expect(String(command)).toContain("/sandbox/.hermes/platforms/whatsapp");
     expect(String(command)).toContain(
       "/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session",
     );
-    expect(String(command)).toContain(
-      "/sandbox/.hermes/dashboard-home/platforms/whatsapp/session",
-    );
+    expect(String(command)).toContain("/sandbox/.hermes/dashboard-home/platforms/whatsapp/session");
   }
 
   async function removeWhatsappNonInteractive() {
@@ -147,10 +205,96 @@ describe("policy channel remove/enable flows", () => {
     ).toBeLessThan(updateSandbox.mock.invocationCallOrder[0]);
   });
 
+  it("does not report tokenless removal before the messaging plan is persisted (#9833)", async () => {
+    const { updateSandbox } = await arrangeHermesWhatsappRemoval();
+    updateSandbox.mockReturnValue(false);
+
+    await expect(removeWhatsappNonInteractive()).rejects.toThrow("process.exit(1)");
+
+    expect(logSpy.mock.calls.flat().join("\n")).not.toContain("Removed whatsapp channel.");
+  });
+
+  it("continues owned channel cleanup when external policy removal refuses (#9833)", async () => {
+    const { commands, removePreset, runOpenshell, updateSandbox } =
+      await arrangeOpenClawSlackRemoval();
+    vi.stubEnv("SLACK_BOT_TOKEN", "xoxb-host-only");
+    vi.stubEnv("SLACK_APP_TOKEN", "xapp-host-only");
+    vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "1");
+
+    await expect(removeSandboxChannel("alpha", { channel: "slack" })).resolves.toBeUndefined();
+
+    expect(credentials.getCredential("SLACK_BOT_TOKEN")).toBeNull();
+    expect(credentials.getCredential("SLACK_APP_TOKEN")).toBeNull();
+    expect(
+      commands.filter(
+        (args) => args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach",
+      ),
+    ).toHaveLength(2);
+    expect(commands.filter((args) => args[0] === "provider" && args[1] === "delete")).toHaveLength(
+      2,
+    );
+    const firstDetach = commands.findIndex(
+      (args) => args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach",
+    );
+    expect(firstDetach).toBeGreaterThanOrEqual(0);
+    expect(runOpenshell.mock.invocationCallOrder[firstDetach]).toBeLessThan(
+      removePreset.mock.invocationCallOrder[0],
+    );
+    expect(removePreset).toHaveBeenCalledWith("alpha", "slack");
+    expect(updateSandbox).toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("stops an owned Google Chat tunnel when external policy removal refuses (#9833)", async () => {
+    vi.spyOn(defs, "loadAgent").mockReturnValue({
+      name: "openclaw",
+      displayName: "OpenClaw",
+      configPaths: { dir: "/sandbox/.openclaw" },
+      stateDirs: [],
+    } as unknown as defs.AgentDefinition);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      policyAuthority: "externally-managed",
+    });
+    vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue([]);
+    vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["googlechat"]);
+    vi.spyOn(policies, "listPresets").mockReturnValue([{ name: "googlechat" } as never]);
+    const removePreset = vi.spyOn(policies, "removePreset").mockImplementation(() => {
+      throw new PolicyAuthorityRefusalError("Google Chat policy is externally managed");
+    });
+    vi.spyOn(gatewayRuntimeAction, "recoverNamedGatewayRuntime").mockResolvedValue({
+      recovered: true,
+      before: { state: "healthy_named" },
+      after: { state: "healthy_named" },
+      attempted: false,
+    } as never);
+    vi.spyOn(policyChannelDependencies, "runOpenshell").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    } as never);
+    const stopTunnel = vi
+      .spyOn(policyChannelDependencies, "stopGooglechatWebhookTunnel")
+      .mockImplementation(() => undefined);
+    vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "1");
+
+    await expect(removeSandboxChannel("alpha", { channel: "googlechat" })).resolves.toBeUndefined();
+
+    expect(stopTunnel).toHaveBeenCalledWith("alpha");
+    expect(removePreset).toHaveBeenCalledWith("alpha", "googlechat");
+    expect(stopTunnel.mock.invocationCallOrder[0]).toBeLessThan(
+      removePreset.mock.invocationCallOrder[0],
+    );
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
   it.each([
     { scenario: "exec transport", execStatus: 0, usesSsh: false },
     { scenario: "SSH fallback", execStatus: 1, usesSsh: true },
-  ])("clears every Hermes WhatsApp session path through $scenario", async ({ execStatus, usesSsh }) => {
+  ])(
+    "clears every Hermes WhatsApp session path through $scenario",
+    async ({ execStatus, usesSsh }) => {
       const { updateSandbox } = await arrangeHermesWhatsappRemoval();
       vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
         status: execStatus,
@@ -180,36 +324,35 @@ describe("policy channel remove/enable flows", () => {
       expect(transport.mock.invocationCallOrder[0]).toBeLessThan(
         updateSandbox.mock.invocationCallOrder[0],
       );
-    });
+    },
+  );
 
   it("keeps channel state unchanged when both Hermes cleanup transports fail", async () => {
-      const { rebuildSandbox, removePreset, updateSandbox } = await arrangeHermesWhatsappRemoval();
-      const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
-      vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
-        status: 1,
-        stdout: "",
-        stderr: "exec unavailable",
-      });
-      vi.mocked(processRecovery.executeSandboxCommand).mockReturnValue({
-        status: 1,
-        stdout: "",
-        stderr: "ssh unavailable",
-      });
-
-      await expect(removeWhatsappNonInteractive()).rejects.toThrow("process.exit(1)");
-
-      expectHermesSessionCleanup(
-        vi.mocked(processRecovery.executeSandboxExecCommand).mock.calls[0]?.[1],
-      );
-      expectHermesSessionCleanup(
-        vi.mocked(processRecovery.executeSandboxCommand).mock.calls[0]?.[1],
-      );
-
-      expect(runOpenshell).not.toHaveBeenCalled();
-      expect(updateSandbox).not.toHaveBeenCalled();
-      expect(removePreset).not.toHaveBeenCalled();
-      expect(rebuildSandbox).not.toHaveBeenCalled();
+    const { rebuildSandbox, removePreset, updateSandbox } = await arrangeHermesWhatsappRemoval();
+    const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
+    vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "exec unavailable",
     });
+    vi.mocked(processRecovery.executeSandboxCommand).mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "ssh unavailable",
+    });
+
+    await expect(removeWhatsappNonInteractive()).rejects.toThrow("process.exit(1)");
+
+    expectHermesSessionCleanup(
+      vi.mocked(processRecovery.executeSandboxExecCommand).mock.calls[0]?.[1],
+    );
+    expectHermesSessionCleanup(vi.mocked(processRecovery.executeSandboxCommand).mock.calls[0]?.[1]);
+
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+    expect(removePreset).not.toHaveBeenCalled();
+    expect(rebuildSandbox).not.toHaveBeenCalled();
+  });
 
   it("supports stop dry runs for configured Hermes channels", async () => {
     vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", agent: "hermes" });

@@ -45,6 +45,7 @@ export function ensureMessagingHostForwardAfterRebuild(
   sandboxName: string,
   plan: SandboxMessagingPlan | null | undefined,
   note: (message: string) => void = console.log,
+  revalidatePolicyAuthority?: (operation: string) => void,
 ): boolean {
   const forward = resolveMessagingHostForward(plan);
   if (!forward) return true;
@@ -67,6 +68,7 @@ export function ensureMessagingHostForwardAfterRebuild(
         name,
         port,
         label,
+        revalidatePolicyAuthority,
       ),
     note,
   });

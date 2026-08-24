@@ -24,6 +24,7 @@ export type OpenClawBridgeHealthCommandRunner = (
 export interface OpenClawBridgeHealthHookOptions {
   readonly sandboxName?: string;
   readonly executeSandboxCommand?: OpenClawBridgeHealthCommandRunner;
+  readonly beforeSuccess?: () => void;
   readonly log?: (message: string) => void;
 }
 
@@ -120,6 +121,7 @@ export function createOpenClawBridgeHealthHook(
     }
 
     if (lines.some((line) => OPENCLAW_BRIDGE_POSITIVE_STARTUP_PATTERN.test(line))) {
+      options.beforeSuccess?.();
       log(`  ✓ '${spec.channelId}' bridge startup detected in sandbox runtime log.`);
       spec.onStartupDetected?.({ channelBlock, log });
       return {};

@@ -32,6 +32,7 @@ export const WECHAT_ILINK_LOGIN_HOOK_ID = "wechat.ilinkLogin";
 export interface WechatIlinkLoginHookOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly runLogin?: () => Promise<WechatLoginResult>;
+  readonly beforePersist?: () => void;
   readonly saveCredential?: (key: string, value: string) => void;
   readonly log?: (message: string) => void;
 }
@@ -70,6 +71,7 @@ export function createWechatIlinkLoginHook(
     const { token, accountId, baseUrl, userId } = result.credentials;
     const normalizedBaseUrl = normalizeWechatIlinkBaseUrl(baseUrl);
 
+    options.beforePersist?.();
     saveCredential("WECHAT_BOT_TOKEN", token);
     env.WECHAT_BOT_TOKEN = token;
     env.WECHAT_ACCOUNT_ID = accountId;
