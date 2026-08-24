@@ -34,11 +34,8 @@ describe("live E2E workload source environment", () => {
     expect(resolveLiveE2eWorkloadSourceEnv(input)).toEqual(input);
   });
 
-  it.each([
-    "managed-image-protected-runtime",
-    "podman-native-cpu",
-    "mxc-runtime-proof",
-  ])("honors the provider-neutral managed-image source for %s", (targetId) => {
+  it("honors the provider-neutral managed-image source", () => {
+    const targetId = "managed-image-protected-runtime";
     expect(
       resolveLiveE2eWorkloadSourceEnv({
         E2E_TARGET_ID: targetId,

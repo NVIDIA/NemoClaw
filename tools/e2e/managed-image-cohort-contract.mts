@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import {
   MANAGED_IMAGE_REPOSITORIES,
   SHIPPED_MANAGED_IMAGE_AGENTS,
+  type ManagedImagePlatform,
+  type ShippedManagedImageAgent,
 } from "../../src/lib/onboard/managed-image/contract.ts";
 
 const REPOSITORY = "NVIDIA/NemoClaw";
@@ -19,9 +21,21 @@ type JsonRecord = Record<string, unknown>;
 
 export interface ManagedImageCohortIdentity {
   readonly cohort: string;
+  readonly receipt: ManagedImageCohortReceipt;
   readonly revision: string;
   readonly runAttempt: number;
   readonly runId: number;
+}
+
+export interface ManagedImageCohortReceipt {
+  readonly kind: "nemoclaw-managed-image-cohort-receipt-v1";
+  readonly cohort: string;
+  readonly revision: string;
+  readonly runAttempt: number;
+  readonly runId: number;
+  readonly images: Readonly<
+    Record<ShippedManagedImageAgent, Readonly<Record<ManagedImagePlatform, string>>>
+  >;
 }
 
 function record(value: unknown, label: string): JsonRecord {
@@ -199,8 +213,35 @@ export function validateManagedImageCohort(
     }
   }
 
+  const images = Object.fromEntries(
+    SHIPPED_MANAGED_IMAGE_AGENTS.map((agent) => {
+      const platforms = record(
+        record(agents[agent], `${agent} cohort contract`).platforms,
+        `${agent} cohort platforms`,
+      );
+      return [
+        agent,
+        Object.fromEntries(
+          PLATFORMS.map((platform) => [
+            platform,
+            record(platforms[platform], `${agent} ${platform} publication`).reference,
+          ]),
+        ),
+      ];
+    }),
+  ) as ManagedImageCohortReceipt["images"];
+  const receipt: ManagedImageCohortReceipt = {
+    kind: "nemoclaw-managed-image-cohort-receipt-v1",
+    cohort: expectedCohort,
+    revision: expected.revision,
+    runAttempt: expected.runAttempt,
+    runId: expected.runId,
+    images,
+  };
+
   return {
     cohort: expectedCohort,
+    receipt,
     revision: expected.revision,
     runAttempt: expected.runAttempt,
     runId: expected.runId,
@@ -225,7 +266,7 @@ export function main(argv = process.argv.slice(2), env = process.env): void {
   if (!env.GITHUB_OUTPUT) throw new Error("GITHUB_OUTPUT is required");
   appendFileSync(
     env.GITHUB_OUTPUT,
-    `cohort=${identity.cohort}\nrevision=${identity.revision}\nrun_attempt=${identity.runAttempt}\nrun_id=${identity.runId}\n`,
+    `cohort=${identity.cohort}\nreceipt=${JSON.stringify(identity.receipt)}\nrevision=${identity.revision}\nrun_attempt=${identity.runAttempt}\nrun_id=${identity.runId}\n`,
     "utf8",
   );
 }

@@ -1,6 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+
+import {
+  MANAGED_IMAGE_PLATFORMS,
+  MANAGED_IMAGE_REPOSITORIES,
+  parseManagedImageContractV1,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
+  type ManagedImagePlatform,
+  type ShippedManagedImageAgent,
+} from "../../../src/lib/onboard/managed-image/contract.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 
 const EXACT_MAIN_OVERLAY_KEYS = new Set([
@@ -12,6 +22,7 @@ const EXACT_MAIN_OVERLAY_KEYS = new Set([
 
 const MCP_BRIDGE_QUALIFICATION_ENV_KEYS = [
   "E2E_MANAGED_IMAGE_REVISION",
+  "E2E_MANAGED_IMAGE_COHORT_RECEIPT",
   "NEMOCLAW_E2E_EXPECTED_SHA",
   "NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG",
   "NEMOCLAW_RUN_LIVE_E2E",
@@ -25,9 +36,7 @@ const MCP_BRIDGE_ONBOARD_ARGS = [
   "--yes-i-accept-third-party-software",
 ] as const;
 
-export function buildMcpBridgeOnboardArgs(
-  environment: NodeJS.ProcessEnv = process.env,
-): string[] {
+export function buildMcpBridgeOnboardArgs(environment: NodeJS.ProcessEnv = process.env): string[] {
   const catalogPath = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim();
   return catalogPath
     ? [
@@ -42,24 +51,108 @@ export function buildMcpBridgeOnboardArgs(
 
 export function assertMcpBridgeManagedImageReceipt(options: {
   environment?: NodeJS.ProcessEnv;
+  expectedAgent: ShippedManagedImageAgent;
   workload?: Record<string, unknown>;
 }): void {
   const environment = options.environment ?? process.env;
   const selectedRevision = environment.E2E_MANAGED_IMAGE_REVISION?.trim();
+  const selectedReceipt = environment.E2E_MANAGED_IMAGE_COHORT_RECEIPT?.trim();
   const exactCandidateCatalog = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim();
   if (!selectedRevision && !exactCandidateCatalog) return;
 
-  const expectedRevision =
-    selectedRevision ?? environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
+  const expectedRevision = selectedRevision ?? environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
   if (!/^[0-9a-f]{40}$/u.test(expectedRevision)) {
     throw new Error("managed-image MCP qualification requires an exact cohort revision");
   }
+
+  const workloadPlatform = options.workload?.platform;
   if (
+    typeof workloadPlatform !== "string" ||
+    !(MANAGED_IMAGE_PLATFORMS as readonly string[]).includes(workloadPlatform)
+  ) {
+    throw new Error("managed-image MCP qualification requires an exact workload platform");
+  }
+  const expectedPlatform = workloadPlatform as ManagedImagePlatform;
+
+  let expectedReference: string;
+  let expectedCohort: string;
+  if (selectedRevision) {
+    if (!selectedReceipt || Buffer.byteLength(selectedReceipt, "utf8") > 8 * 1024) {
+      throw new Error("managed-image MCP qualification requires the selected cohort receipt");
+    }
+    let receipt: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(selectedReceipt) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+      receipt = parsed as Record<string, unknown>;
+    } catch {
+      throw new Error("managed-image MCP qualification cohort receipt is invalid");
+    }
+    const runId = receipt.runId;
+    const runAttempt = receipt.runAttempt;
+    const images = receipt.images;
+    const cohort = receipt.cohort;
+    if (
+      JSON.stringify(Object.keys(receipt).sort()) !==
+        JSON.stringify(["cohort", "images", "kind", "revision", "runAttempt", "runId"]) ||
+      receipt.kind !== "nemoclaw-managed-image-cohort-receipt-v1" ||
+      receipt.revision !== expectedRevision ||
+      !Number.isSafeInteger(runId) ||
+      Number(runId) < 1 ||
+      !Number.isSafeInteger(runAttempt) ||
+      Number(runAttempt) < 1 ||
+      cohort !== `ghrun-${String(runId)}-${String(runAttempt)}` ||
+      !images ||
+      typeof images !== "object" ||
+      Array.isArray(images) ||
+      JSON.stringify(Object.keys(images).sort()) !==
+        JSON.stringify([...SHIPPED_MANAGED_IMAGE_AGENTS].sort())
+    ) {
+      throw new Error("managed-image MCP qualification cohort receipt is invalid");
+    }
+    const agentImages = (images as Record<string, unknown>)[options.expectedAgent];
+    if (
+      !agentImages ||
+      typeof agentImages !== "object" ||
+      Array.isArray(agentImages) ||
+      JSON.stringify(Object.keys(agentImages).sort()) !==
+        JSON.stringify([...MANAGED_IMAGE_PLATFORMS].sort())
+    ) {
+      throw new Error("managed-image MCP qualification cohort receipt is invalid");
+    }
+    expectedReference = (agentImages as Record<string, unknown>)[expectedPlatform] as string;
+    expectedCohort = cohort;
+  } else {
+    let catalog: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(exactCandidateCatalog!, "utf8")) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+      catalog = parsed as Record<string, unknown>;
+    } catch {
+      throw new Error("managed-image MCP qualification catalog is invalid");
+    }
+    const contract = parseManagedImageContractV1(
+      catalog[options.expectedAgent],
+      options.expectedAgent,
+      expectedPlatform,
+    );
+    if (contract.source.revision !== expectedRevision) {
+      throw new Error("managed-image MCP qualification catalog revision is invalid");
+    }
+    expectedReference = contract.reference;
+    expectedCohort = contract.source.cohort;
+  }
+
+  if (
+    typeof expectedReference !== "string" ||
+    !expectedReference.startsWith(`${MANAGED_IMAGE_REPOSITORIES[options.expectedAgent]}@sha256:`) ||
     options.workload?.kind !== "managed-image" ||
-    options.workload.sourceRevision !== expectedRevision
+    options.workload.sourceRevision !== expectedRevision ||
+    options.workload.sourceCohort !== expectedCohort ||
+    options.workload.reference !== expectedReference
   ) {
     throw new Error(
-      "MCP qualification must use the exact managed image instead of a Dockerfile build",
+      "MCP qualification must use the exact agent image from the selected cohort receipt",
     );
   }
 }

@@ -88,7 +88,30 @@ describe("managed-image cohort publication contract", () => {
         runAttempt: RUN_ATTEMPT,
         runId: RUN_ID,
       }),
-    ).toEqual({ cohort: COHORT, revision: REVISION, runAttempt: RUN_ATTEMPT, runId: RUN_ID });
+    ).toEqual({
+      cohort: COHORT,
+      receipt: {
+        kind: "nemoclaw-managed-image-cohort-receipt-v1",
+        cohort: COHORT,
+        revision: REVISION,
+        runAttempt: RUN_ATTEMPT,
+        runId: RUN_ID,
+        images: Object.fromEntries(
+          SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, agentIndex) => [
+            agent,
+            Object.fromEntries(
+              PLATFORMS.map((platform, platformIndex) => [
+                platform,
+                `${MANAGED_IMAGE_REPOSITORIES[agent]}@${digest(agentIndex + platformIndex + 4)}`,
+              ]),
+            ),
+          ]),
+        ),
+      },
+      revision: REVISION,
+      runAttempt: RUN_ATTEMPT,
+      runId: RUN_ID,
+    });
   });
 
   it("rejects a cohort that omits one image architecture", () => {

@@ -173,6 +173,14 @@ function validateJobIdentity(
     "${{ needs.base-image-publication.outputs.managed_image_revision }}",
     `${jobName} must receive the selected managed-image cohort revision`,
   );
+  if (jobName === "mcp-bridge") {
+    requireEqual(
+      errors,
+      env.E2E_MANAGED_IMAGE_COHORT_RECEIPT,
+      "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
+      "mcp-bridge must receive the complete selected managed-image cohort receipt",
+    );
+  }
   requireEqual(
     errors,
     job["timeout-minutes"],
