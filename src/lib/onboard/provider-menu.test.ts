@@ -238,7 +238,7 @@ describe("buildInferenceProviderMenu", () => {
     expect(result.options.map((option) => option.key)).toContain("start-windows-ollama");
   });
 
-  it("omits Windows-host install when Ollama is reachable but its executable is not detected (#7472)", () => {
+  it("offers restart without executable detection and omits Windows-host install (#7472)", () => {
     const result = buildMenu({
       isWsl: true,
       hasOllama: false,
@@ -249,6 +249,7 @@ describe("buildInferenceProviderMenu", () => {
     });
 
     expect(result.options.map((option) => option.key)).toContain("ollama");
+    expect(result.options.map((option) => option.key)).toContain("start-windows-ollama");
     expect(result.options.map((option) => option.key)).not.toContain("install-windows-ollama");
   });
 });

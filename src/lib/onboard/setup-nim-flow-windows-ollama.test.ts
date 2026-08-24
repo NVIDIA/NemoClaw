@@ -136,7 +136,7 @@ describe("createSetupNim Windows-host Ollama", () => {
             ollamaRunning: true,
             isWindowsHostOllama: true,
             isWsl: true,
-            hasWindowsOllama: true,
+            hasWindowsOllama: false,
             windowsOllamaReachable: false,
             windowsHostOllamaDockerRequirement:
               getWindowsHostOllamaDockerRequirement("docker-desktop"),
