@@ -800,7 +800,28 @@ node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
   );
   expectExitZero(binding, `bind ${api.kind} fake ${protocol} credential`);
 
-  await runHost(
+  const detachment = await runHost(
+    host,
+    host.openshellCommandPath,
+    [
+      "sandbox",
+      "provider",
+      "detach",
+      "-g",
+      env.OPENSHELL_GATEWAY ?? "nemoclaw",
+      SANDBOX_NAME,
+      providerName,
+    ],
+    {
+      artifactName: `detach-${api.kind}-${protocol}-credential`,
+      env,
+      redactionValues,
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(detachment, `detach ${api.kind} fake ${protocol} credential`);
+
+  const attachment = await runHost(
     host,
     host.openshellCommandPath,
     [
@@ -819,6 +840,7 @@ node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
       timeoutMs: 60_000,
     },
   );
+  expectExitZero(attachment, `attach ${api.kind} fake ${protocol} credential`);
   const attachments = await runHost(
     host,
     host.openshellCommandPath,

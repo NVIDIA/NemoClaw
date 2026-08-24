@@ -259,7 +259,27 @@ node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
   );
   expectExitZero(binding, `${options.artifactName} credential binding`);
 
-  await options.host.command(
+  const detachment = await options.host.command(
+    options.host.openshellCommandPath,
+    [
+      "sandbox",
+      "provider",
+      "detach",
+      "-g",
+      options.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+      options.sandboxName,
+      options.providerName,
+    ],
+    {
+      artifactName: `${options.artifactName}-provider-detachment`,
+      env: options.env,
+      redactionValues: options.redactions,
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(detachment, `${options.artifactName} provider detachment`);
+
+  const attachment = await options.host.command(
     options.host.openshellCommandPath,
     [
       "sandbox",
@@ -277,6 +297,7 @@ node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
       timeoutMs: 60_000,
     },
   );
+  expectExitZero(attachment, `${options.artifactName} provider attachment`);
   const attachments = await options.host.command(
     options.host.openshellCommandPath,
     [

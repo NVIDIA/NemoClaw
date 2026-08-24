@@ -198,7 +198,27 @@ node --import tsx "$6" "$policy_file" "$3" "$4" "$5"
   expectExitZero(binding, "bind Hermes fake Discord Gateway credential");
 
   const providerName = `${options.sandboxName}-discord-bridge`;
-  await options.host.command(
+  const detachment = await options.host.command(
+    options.host.openshellCommandPath,
+    [
+      "sandbox",
+      "provider",
+      "detach",
+      "-g",
+      options.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+      options.sandboxName,
+      providerName,
+    ],
+    {
+      artifactName: "detach-hermes-fake-discord-gateway-credential",
+      env: options.env,
+      redactionValues: options.redactions,
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(detachment, "detach Hermes fake Discord Gateway credential");
+
+  const attachment = await options.host.command(
     options.host.openshellCommandPath,
     [
       "sandbox",
@@ -216,6 +236,7 @@ node --import tsx "$6" "$policy_file" "$3" "$4" "$5"
       timeoutMs: 60_000,
     },
   );
+  expectExitZero(attachment, "attach Hermes fake Discord Gateway credential");
   const attachments = await options.host.command(
     options.host.openshellCommandPath,
     [
