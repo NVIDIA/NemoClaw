@@ -39,34 +39,15 @@ import { ROOT } from "../../state/paths";
 import { buildTrustedProxyEnvSourceShell } from "./trusted-proxy-env";
 import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 
-// Outer spawnSync cap (ms) for the direct write-scope probe and its bounded
-// pending-upgrade poll. The cap prevents a wedged sandbox from blocking onboard
-// or restore.
+// Outer spawnSync cap (ms) for the direct write-scope probe. The cap prevents a
+// wedged sandbox from blocking onboard or restore.
 export const WARMUP_TIMEOUT_MS = 30_000;
 export const WARMUP_PROBE_TIMEOUT_S = 5;
 
-// Bounded in-sandbox poll for the pending scope upgrade after the provoke run.
-// Worst case = WARMUP_POLL_ATTEMPTS × WARMUP_POLL_LIST_TIMEOUT_S list calls plus
-// (WARMUP_POLL_ATTEMPTS - 1) inter-attempt 1s sleeps = 5×2 + 4×1 = 14s, which
-// plus the 5s direct-probe timeout consume at most 19s. This leaves clear
-// headroom under WARMUP_TIMEOUT_MS (30s) for shell and Python startup. The
-// gateway persists the upgrade requestId once created (#4504 evidence), so
-// once the poll sees it pending, the downstream approval pass finds and
-// approves it before
-// handoff — making "very first real run, zero fallback" deterministic even on
-// slow/contended gateways.
-export const WARMUP_POLL_ATTEMPTS = 5;
-export const WARMUP_POLL_LIST_TIMEOUT_S = 2;
-
-// Best-effort in-sandbox warm-up script. Always exits 0. It connects to the
-// gateway and provokes the `operator.write` scope-upgrade so the request is
-// PENDING, then POLLS `devices list` until that allowlisted upgrade is visible
-// (or the bounded deadline elapses) before returning, closing the race where
-// the approval pass that runs immediately after could otherwise list devices
-// before the gateway has registered the upgrade. The poll bounds are
-// interpolated so the cap is asserted on real values, not source text. Use the
-// stored CLI device credential for the provoke. Shared gateway overrides would
-// authorize the owner instead of publishing the device's scope request.
+// Best-effort in-sandbox request producer. Always exits 0. Use the stored CLI
+// device credential for the direct `sessions.create` call. Shared gateway
+// overrides would authorize the owner instead of publishing the device's scope
+// request. Finalization's canonical observer owns pairing-state polling.
 // OpenClaw 2026.7.1 can omit CLI identity on loopback shared auth, so force
 // device pairing only on this command.
 export const WARMUP_SCRIPT = `
@@ -95,81 +76,6 @@ try:
 except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
     pass
 PYPROBE
-i=0
-while [ "$i" -lt ${WARMUP_POLL_ATTEMPTS} ]; do
-  OPENCLAW_BIN="$OPENCLAW_BIN" python3 - <<'PYPOLL'
-import json
-import os
-import subprocess
-import sys
-
-OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
-try:
-    with open('/sandbox/.openclaw/identity/device.json', 'r', encoding='utf-8') as handle:
-        local_identity = json.load(handle)
-except (OSError, ValueError, TypeError):
-    sys.exit(1)
-local_device_id = local_identity.get('deviceId') if isinstance(local_identity, dict) else None
-local_public_key = local_identity.get('publicKey') if isinstance(local_identity, dict) else None
-if not isinstance(local_device_id, str) or not local_device_id:
-    sys.exit(1)
-if not isinstance(local_public_key, str) or not local_public_key:
-    sys.exit(1)
-# The proxy environment is shared gateway routing. Settlement must instead use
-# the paired CLI identity with its current pairing-only credential so the list
-# call can observe the write-scope request that the provoke command created.
-list_env = dict(os.environ)
-for key in (
-    'OPENCLAW_GATEWAY_URL',
-    'OPENCLAW_GATEWAY_PORT',
-    'OPENCLAW_GATEWAY_TOKEN',
-    'OPENCLAW_GATEWAY_PASSWORD',
-    'NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING',
-    'NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING',
-):
-    list_env.pop(key, None)
-list_env['NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT'] = '1'
-try:
-    proc = subprocess.run(
-        [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=${WARMUP_POLL_LIST_TIMEOUT_S}, env=list_env,
-    )
-except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-    sys.exit(1)
-if proc.returncode != 0 or not proc.stdout.strip():
-    sys.exit(1)
-try:
-    data = json.loads(proc.stdout)
-except ValueError:
-    sys.exit(1)
-if not isinstance(data, dict):
-    sys.exit(1)
-# The approval pass needs the request created by this local CLI flow. Do not
-# accept an unrelated paired/granted device with operator.write; an already
-# settled local device is recognized by finalization's canonical observer.
-pending = data.get('pending')
-if not isinstance(pending, list):
-    sys.exit(1)
-for device in pending:
-    if not isinstance(device, dict):
-        continue
-    if device.get('clientId') != 'cli' or device.get('clientMode') != 'cli':
-        continue
-    if device.get('deviceId') != local_device_id and device.get('publicKey') != local_public_key:
-        continue
-    scopes = device.get('scopes') or device.get('requestedScopes')
-    if isinstance(scopes, str):
-        scopes = scopes.replace(',', ' ').split()
-    if isinstance(scopes, list) and 'operator.write' in scopes:
-        sys.exit(0)
-sys.exit(1)
-PYPOLL
-  if [ "$?" -eq 0 ]; then
-    break
-  fi
-  i=$((i + 1))
-  [ "$i" -lt ${WARMUP_POLL_ATTEMPTS} ] && sleep 1
-done
 exit 0
 `;
 
