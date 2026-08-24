@@ -72,7 +72,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
     vi.restoreAllMocks();
   });
 
-  it("accepts one already-settled canonical CLI device after one idempotent producer (#10014)", async () => {
+  it("accepts one already-settled canonical CLI device without pairing writes (#9844)", async () => {
     const scope = ordinaryPairingDeps();
 
     await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
@@ -85,32 +85,27 @@ describe("ordinary OpenClaw pairing settlement", () => {
       "2026.7.1",
       "/sandbox/.openclaw",
     );
-    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
     expect(scope.deps.runApproval).not.toHaveBeenCalled();
   });
 
-  it("runs the canonical request probe before waiting for fresh pairing (#10014)", async () => {
-    const observePairing = vi.fn(() => PAIRING_ONLY);
-    observePairing.mockImplementationOnce(() => {
-      throw new Error("not published");
-    });
+  it("waits for canonical pairing before one warm-up and approval pass (#9844)", async () => {
     const scope = ordinaryPairingDeps({
-      observePairing,
-      runWarmup: vi.fn(() => {
-        scope.calls.push("warmup");
-      }),
-      runApproval: vi.fn(() => {
-        scope.calls.push("approval");
-        vi.mocked(scope.deps.observePairing).mockReturnValue(SETTLED);
-      }),
+      observePairing: vi
+        .fn()
+        .mockImplementationOnce(() => {
+          throw new Error("not published");
+        })
+        .mockReturnValueOnce(PAIRING_ONLY)
+        .mockReturnValue(SETTLED),
     });
 
     await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
       kind: "settled",
     });
 
-    expect(scope.calls).toEqual(["warmup", "sleep", "approval"]);
-    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
+    expect(scope.calls).toEqual(["sleep", "warmup", "approval"]);
+    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha");
     expect(scope.deps.runApproval).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
   });
 
@@ -154,8 +149,8 @@ describe("ordinary OpenClaw pairing settlement", () => {
     expect(events).toEqual([
       "sandbox-lock:start",
       "gateway-lock:start",
-      "warmup",
       "observe:baseline",
+      "warmup",
       "approval",
       "observe:final",
       "gateway-lock:end",
@@ -304,7 +299,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
     });
     expect(scope.deps.runWarmup).toHaveBeenCalledOnce();
     expect(scope.deps.runApproval).not.toHaveBeenCalled();
-    expect(scope.deps.observePairing).not.toHaveBeenCalled();
+    expect(scope.deps.observePairing).toHaveBeenCalledOnce();
   });
 
   it("does not observe replacement state when the runtime changes during approval (#9844)", async () => {
@@ -383,7 +378,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       kind: "settled",
     });
 
-    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
+    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha");
     expect(scope.deps.runApproval).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
     expect(scope.deps.observePairing).toHaveBeenCalledTimes(3);
     expect(now).toBe(
@@ -415,11 +410,11 @@ describe("ordinary OpenClaw pairing settlement", () => {
       reason: "pairing-unavailable",
     });
     expect(scope.deps.sleep).not.toHaveBeenCalled();
-    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
     expect(scope.deps.runApproval).not.toHaveBeenCalled();
   });
 
-  it("performs one request-producer write when a canonical CLI pairing never appears (#10014)", async () => {
+  it("performs no writes when a canonical CLI pairing never appears (#9844)", async () => {
     const scope = ordinaryPairingDeps({
       observePairing: vi.fn(() => {
         throw new Error("not published");
@@ -431,7 +426,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       reason: "pairing-unavailable",
     });
 
-    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
     expect(scope.deps.runApproval).not.toHaveBeenCalled();
   });
 
@@ -461,7 +456,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
     });
 
     expect(scope.deps.observePairing).not.toHaveBeenCalled();
-    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
     expect(scope.deps.runApproval).not.toHaveBeenCalled();
   });
 
@@ -522,7 +517,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
     await expect(finalizationHandlerDeps.settleOrdinaryOpenClawPairing("alpha")).resolves.toEqual({
       kind: "settled",
     });
-    expect(runSandboxScopeWarmupRun).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
+    expect(runSandboxScopeWarmupRun).toHaveBeenCalledExactlyOnceWith("alpha");
     expect(runConnectAutoPairApprovalPass).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
   });
 
