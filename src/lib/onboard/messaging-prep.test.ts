@@ -228,9 +228,7 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(result.missingBridgeChannels).toEqual(["googlechat"]);
   });
 
-  it("does not reuse the bridge provider of a disabled channel", () => {
-    // The matcher would accept this provider, so only the disabled guard can
-    // keep it out — and a disabled channel is not a missing one either.
+  it("retains an exact bridge provider while its channel runtime is disabled (#9773)", () => {
     const providerMatchesGatewayCredential = vi.fn(() => true);
 
     const result = prepareCreateSandboxMessaging(
@@ -241,9 +239,11 @@ describe("prepareCreateSandboxMessaging", () => {
       }),
     );
 
-    expect(result.reusableMessagingProviders).toEqual([]);
+    expect(result.reusableMessagingProviders).toEqual(["demo-googlechat-bridge"]);
+    expect(result.reusableMessagingChannels).toEqual(["googlechat"]);
+    expect(result.messagingTokenDefs.map(({ name }) => name)).not.toContain("demo-googlechat-bridge");
     expect(result.missingBridgeChannels).toEqual([]);
-    expect(providerMatchesGatewayCredential).not.toHaveBeenCalled();
+    expect(providerMatchesGatewayCredential).toHaveBeenCalled();
   });
 
   it("reports missing Brave API keys before registering extra placeholder providers", () => {

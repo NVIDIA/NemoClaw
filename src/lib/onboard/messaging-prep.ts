@@ -82,7 +82,7 @@ export function prepareCreateSandboxMessaging(
   );
   const messagingProviderProfiles = messagingBridgeProfilesForAgent(input.agentName);
 
-  const messagingTokenDefs: MessagingTokenDef[] = listMessagingCredentialMetadata()
+  const messagingCredentialDefs: MessagingTokenDef[] = listMessagingCredentialMetadata()
     .map((credential) => ({
       name: credential.providerNameTemplate.replaceAll("{sandboxName}", input.sandboxName),
       envKey: credential.providerEnvKey,
@@ -94,8 +94,10 @@ export function prepareCreateSandboxMessaging(
           messagingProviderProfiles,
         ) ?? MESSAGING_CREDENTIAL_PROVIDER_TYPE,
     }))
-    .filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey))
-    .filter(({ envKey }) => !disabledEnvKeys.has(envKey));
+    .filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey));
+  const messagingTokenDefs = messagingCredentialDefs.filter(
+    ({ envKey }) => !disabledEnvKeys.has(envKey),
+  );
 
   const webSearchEnabled = braveProviderProfile.shouldEnableWebSearch(input.webSearchConfig);
   const webSearchProvider = webSearch.webSearchProviderForConfig(input.webSearchConfig);
@@ -178,7 +180,7 @@ export function prepareCreateSandboxMessaging(
   const reusableMessagingChannels: string[] = [];
 
   if (input.enabledChannels != null) {
-    for (const { name, envKey, token, providerType } of messagingTokenDefs) {
+    for (const { name, envKey, token, providerType } of messagingCredentialDefs) {
       if (token) continue;
       const channel = input.getMessagingChannelForEnvKey(envKey);
       if (!channel || !input.enabledChannels.includes(channel)) continue;
@@ -205,7 +207,6 @@ export function prepareCreateSandboxMessaging(
     for (const profile of bridgeProfiles) {
       const channel = profile.channelId;
       if (!input.enabledChannels.includes(channel)) continue;
-      if (disabledChannelNames.has(channel)) continue;
       for (const name of bridgeProviderNamesForChannel(input.sandboxName, channel, [profile])) {
         if (messagingTokenDefs.some((def) => def.name === name && def.token)) continue;
         if (reusableMessagingProviders.includes(name)) continue;
