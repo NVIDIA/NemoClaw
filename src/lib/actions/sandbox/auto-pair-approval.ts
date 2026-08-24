@@ -26,17 +26,20 @@
  * semantics. In the reviewed OpenClaw 2026.6.10, a gateway-pinned
  * `devices approve` for a scope-upgrade can request the upgraded scopes for
  * its own connection and return the pending-scope failure it is trying to
- * resolve. The sourced runtime environment makes the list call inspect the
- * same live gateway through local loopback. For a restored pairing-only clone,
- * the approval child drops config/shared-auth overrides, pins the clone's
- * loopback URL, and accepts only its descriptor-backed identity and pairing
- * snapshots. The reviewed dist patch uses only the descriptor-backed
- * pairing token for the pinned loopback gateway and disables pathname-backed
- * stored authentication for that exact self-repair shape. It requires a
- * matching live preflight before one canonical approval, then synchronizes the
- * rotated token into the clone's client-auth store. Remove this compatibility
- * path when OpenClaw can complete scope upgrades natively through device-token
- * auth using operator.pairing.
+ * resolve. The sourced runtime environment identifies the live gateway.
+ * Ordinary list and approval children drop shared-auth overrides after pairing
+ * so they use the CLI device credential. For a restored pairing-only clone,
+ * the approval child also pins the clone's loopback URL and accepts only its
+ * descriptor-backed identity and pairing snapshots. The reviewed dist patch
+ * uses only the descriptor-backed pairing token for the pinned loopback
+ * gateway and disables pathname-backed stored authentication for that exact
+ * self-repair shape. It requires a matching live preflight before one canonical
+ * approval. The canonical writer binds the authenticated token to the paired
+ * and stored-auth before-images, then journals pending, paired, and stored-auth
+ * publication together. The wrapper verifies the resulting transition and
+ * rewrites the same rotated token to the clone's client-auth store. Remove this
+ * compatibility path when OpenClaw can complete scope upgrades natively
+ * through device-token auth using operator.pairing.
  */
 
 import { spawnSync } from "node:child_process";
@@ -292,6 +295,7 @@ def exit_with_receipt(receipt):
         approve_env['NODE_DISABLE_COMPILE_CACHE'] = '1'
         approve_env['OPENCLAW_NO_RESPAWN'] = '1'
         approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+        approve_env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)
         approve_env['NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING'] = '1'
         approve_env['NEMOCLAW_OPENCLAW_PINNED_GATEWAY_URL'] = pinned_gateway_url
         approve_env['NEMOCLAW_OPENCLAW_EXPECTED_DEVICE_ID'] = local_device_id
@@ -306,9 +310,11 @@ def exit_with_receipt(receipt):
         )
     else:
         approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+        approve_env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)
         approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)`
     : `approve_env = gateway_approval_env(os.environ)
     approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+    approve_env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)
     approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)`;
   const pairedTokenSuccess = options.localDeviceOnly
     ? `            if local_approval_auth_mode == 'paired-token':
@@ -553,10 +559,14 @@ else:
 pending = list(local_pending_by_id.values())
 `
     : `
+list_env = gateway_approval_env(os.environ)
+list_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+list_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)
+list_env['NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT'] = '1'
 try:
     proc = subprocess.run(
         [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=${listTimeoutS},
+        capture_output=True, text=True, timeout=${listTimeoutS}, env=list_env,
     )
 except subprocess.TimeoutExpired:
     ${exitWithReceipt("list-timeout")}
@@ -1204,9 +1214,7 @@ export function parsePortableOpenClawPairingApprovalReceipt(
   output: string,
 ): PortableOpenClawPairingApprovalReceipt | null {
   const lines = output.trimEnd().split(/\r?\n/u);
-  const markerLines = lines.filter((line) =>
-    line.startsWith(PORTABLE_PAIRING_APPROVAL_MARKER),
-  );
+  const markerLines = lines.filter((line) => line.startsWith(PORTABLE_PAIRING_APPROVAL_MARKER));
   if (markerLines.length !== 1 || lines.at(-1) !== markerLines[0]) return null;
   const receipt = markerLines[0]!.slice(PORTABLE_PAIRING_APPROVAL_MARKER.length);
   return ["approved", "ambiguous", "no-request", "rejected", "unavailable"].includes(receipt)
@@ -1220,8 +1228,7 @@ export function buildPortableOpenClawPairingApprovalScript(
 ): string {
   if (
     !approvalPolicyModuleB64 ||
-    Buffer.from(approvalPolicyModuleB64, "base64").toString("base64") !==
-      approvalPolicyModuleB64 ||
+    Buffer.from(approvalPolicyModuleB64, "base64").toString("base64") !== approvalPolicyModuleB64 ||
     !PORTABLE_PAIRING_SHA256_RE.test(expectedDeviceIdentitySha256)
   ) {
     throw new Error("Portable OpenClaw pairing approval inputs are invalid.");
@@ -1245,7 +1252,10 @@ import time
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 EXPECTED_IDENTITY = os.environ.get('NEMOCLAW_EXPECTED_DEVICE_IDENTITY_SHA256', '')
 REQUEST_ID_RE = re.compile(r'^[A-Za-z0-9._:-]{1,128}$')
-REQUEST_SCOPES = {'operator.pairing', 'operator.write'}
+REQUEST_SCOPE_SHAPES = {
+    frozenset({'operator.write'}),
+    frozenset({'operator.pairing', 'operator.write'}),
+}
 
 try:
     policy_source = base64.b64decode(
@@ -1317,9 +1327,9 @@ if (
     or request.get('roles') != ['operator']
     or not isinstance(scopes, list)
     or len(scopes) != len(set(scopes))
-    or set(scopes) != REQUEST_SCOPES
+    or frozenset(scopes) not in REQUEST_SCOPE_SHAPES
     or 'requestedScopes' in request
-    or type(request.get('isRepair')) is not bool
+    or request.get('isRepair') is not True
     or not isinstance(decision, dict)
     or decision.get('allowed') is not True
 ):
@@ -1328,6 +1338,7 @@ if (
 
 approve_env = gateway_approval_env(os.environ)
 approve_env.pop('NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING', None)
+approve_env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)
 approve_env.pop('NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING', None)
 try:
     approved = subprocess.run(

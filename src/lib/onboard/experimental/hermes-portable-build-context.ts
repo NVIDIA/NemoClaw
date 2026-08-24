@@ -87,6 +87,7 @@ const LOCAL_COPY_SOURCES = [
   "src/lib/messaging/",
   "src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py",
   "src/lib/tool-disclosure.ts",
+  "tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
@@ -247,6 +248,40 @@ function parseDockerfileSources(bytes: Buffer): readonly string[] {
     fail("Dockerfile is not strict UTF-8");
   }
   const local: string[] = [];
+  let logicalInstruction = "";
+  let parserDirectiveSection = true;
+  for (const rawLine of text.split("\n")) {
+    const trimmed = rawLine.trim();
+    const parserDirective = parserDirectiveSection
+      ? trimmed.match(/^#\s*(syntax|escape|check)\s*=\s*(\S.*)\s*$/iu)
+      : null;
+    if (parserDirective?.[1]?.toLowerCase() === "escape" && parserDirective[2] !== "\\") {
+      fail("Dockerfile has an unsupported escape directive");
+    }
+    if (!trimmed) {
+      parserDirectiveSection = false;
+      continue;
+    }
+    if (trimmed.startsWith("#")) {
+      if (!parserDirective) parserDirectiveSection = false;
+      continue;
+    }
+    parserDirectiveSection = false;
+    const continued = trimmed.endsWith("\\");
+    const segment = continued ? trimmed.slice(0, -1).trimEnd() : trimmed;
+    logicalInstruction = logicalInstruction ? `${logicalInstruction} ${segment}`.trim() : segment;
+    if (continued) continue;
+    if (/^RUN\s/iu.test(logicalInstruction)) {
+      const [, firstArgument] = logicalInstruction.split(/\s+/u);
+      if (firstArgument?.startsWith("--")) {
+        fail("Dockerfile has a non-Portable RUN option");
+      }
+    }
+    logicalInstruction = "";
+  }
+  if (logicalInstruction) {
+    fail("Dockerfile has an unterminated continued instruction");
+  }
   for (const rawLine of text.split("\n")) {
     const line = rawLine.trim();
     if (!/^(?:COPY|ADD)\s/iu.test(line)) continue;
@@ -266,9 +301,8 @@ function parseDockerfileSources(bytes: Buffer): readonly string[] {
       if (
         sources.length !== 1 ||
         !sources[0]!.startsWith("https://files.pythonhosted.org/") ||
-        options.length !== 2 ||
-        options[0] !== "--chmod=0444" ||
-        !/^--checksum=sha256:[a-f0-9]{64}$/u.test(options[1]!)
+        options.length !== 1 ||
+        !/^--checksum=sha256:[a-f0-9]{64}$/u.test(options[0]!)
       ) {
         fail("Dockerfile has an unsupported local or unpinned ADD instruction");
       }

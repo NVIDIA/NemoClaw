@@ -41,6 +41,14 @@ function namedJobStep(value: WorkflowRecord, jobId: string, name: string): Recor
   return step as Record<string, unknown>;
 }
 
+function namedMultiarchStep(value: WorkflowRecord, name: string): Record<string, unknown> {
+  const step = (multiarchJob(value).steps as Array<Record<string, unknown>>).find(
+    (step) => step.name === name,
+  );
+  expect(step, `workflow step '${name}' is missing`).toBeDefined();
+  return step as Record<string, unknown>;
+}
+
 describe("protected managed-image runtime workflow", () => {
   it("accepts the checked-in protected runtime job", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(workflow())).toEqual([]);
@@ -299,7 +307,17 @@ describe("protected managed-image runtime workflow", () => {
     runtimeJob(value).needs = ["generate-matrix"];
 
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
-      "managed-image-protected-runtime must depend on generate-matrix and managed-image-multiarch-startup",
+      "managed-image-protected-runtime must depend on base-image-publication, generate-matrix, and managed-image-multiarch-startup",
+    );
+  });
+
+  it("rejects a mutable DCode base in protected runtime qualification", () => {
+    const value = workflow();
+    const bases = namedStep(value, "Resolve exact amd64 runtime base images");
+    bases.run = `${String(bases.run)}\nghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest`;
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime must not resolve the DCode base from a mutable alias",
     );
   });
 
@@ -360,6 +378,35 @@ describe("protected managed-image runtime workflow", () => {
 
     expect(validateManagedImageMultiarchWorkflow(value)).toContain(
       "managed-image-multiarch-startup must use the trusted execution plan",
+    );
+  });
+
+  it("requires the validated base publication before protected multiarch startup", () => {
+    const value = workflow();
+    multiarchJob(value).needs = "generate-matrix";
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup must depend on base-image-publication and generate-matrix",
+    );
+  });
+
+  it("selects each protected DCode base from the validated platform contract", () => {
+    const value = workflow();
+    const bases = namedMultiarchStep(value, "Resolve exact platform base images");
+    (bases.env as Record<string, unknown>).DCODE_BASE_CONTRACT = "${{ inputs.base_contract }}";
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup exact base resolution must bind DCODE_BASE_CONTRACT to ${{ needs.base-image-publication.outputs.dcode_base_contract }}",
+    );
+  });
+
+  it("rejects a mutable DCode base in protected multiarch startup", () => {
+    const value = workflow();
+    const bases = namedMultiarchStep(value, "Resolve exact platform base images");
+    bases.run = `${String(bases.run)}\nghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest`;
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup must not resolve the DCode base from a mutable alias",
     );
   });
 

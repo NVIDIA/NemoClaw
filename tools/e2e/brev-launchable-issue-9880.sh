@@ -5,7 +5,6 @@
 set -euo pipefail
 
 OWNER_FILE="${WORK_DIR}.workspace-owner"
-SSH_OPTIONS=(-T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 -o LogLevel=ERROR)
 log() { printf '%s\n' "$*" | tee -a "$WORK_DIR/lane.log"; }
 fail() {
   log "FAILED: $*" >&2
@@ -120,8 +119,11 @@ require BREV_LAUNCHABLE_ID
 require GH_TOKEN
 require NVIDIA_API_KEY
 command -v gh >/dev/null 2>&1 || fail "gh is required"
-command -v ssh >/dev/null 2>&1 || fail "ssh is required"
 [[ "$BREV_LAUNCHABLE_ID" =~ ^env-[A-Za-z0-9]+$ ]] || fail "BREV_LAUNCHABLE_ID is invalid"
+for name in BREV_EXEC_TIMEOUT_SECONDS POLL_SECONDS; do
+  value="${!name:-}"
+  [ -z "$value" ] || [[ "$value" =~ ^[1-9][0-9]*$ ]] || fail "$name must be a positive integer"
+done
 [[ "$NVIDIA_API_KEY" == nvapi-* ]] || fail "NVIDIA_API_KEY must be a public NVIDIA Endpoints key"
 write_cleanup_evidence NOT_OWNED
 handoff_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/issue-9880-handoff.XXXXXX")"
@@ -168,18 +170,23 @@ jq -e '.status == "RUNNING" and (.shell_status // .shellStatus) == "READY" and
   || fail "workspace readiness timed out"
 workspace_id="$(jq -r '.id // ""' <<<"$ready")"
 log "Workspace $INSTANCE_NAME ($workspace_id) is ready"
-ssh_deadline=$((SECONDS + ${BREV_SSH_TIMEOUT_SECONDS:-900}))
-ssh_ready=0
-while [ "$SECONDS" -lt "$ssh_deadline" ]; do
-  timeout 60s brev refresh >/dev/null 2>&1 || true
-  if timeout 15s ssh "${SSH_OPTIONS[@]}" "$INSTANCE_NAME" true >/dev/null 2>&1; then
-    ssh_ready=1
+exec_deadline=$((SECONDS + ${BREV_EXEC_TIMEOUT_SECONDS:-900}))
+exec_ready=0
+while [ "$SECONDS" -lt "$exec_deadline" ]; do
+  remaining=$((exec_deadline - SECONDS))
+  [ "$remaining" -gt 0 ] || break
+  exec_timeout=$((remaining < 30 ? remaining : 30))
+  if timeout --signal=KILL "${exec_timeout}s" brev exec "$INSTANCE_NAME" true >/dev/null 2>&1; then
+    exec_ready=1
     break
   fi
-  sleep "${POLL_SECONDS:-15}"
+  remaining=$((exec_deadline - SECONDS))
+  [ "$remaining" -gt 0 ] || break
+  poll_seconds="${POLL_SECONDS:-15}"
+  sleep "$((poll_seconds < remaining ? poll_seconds : remaining))"
 done
-[ "$ssh_ready" -eq 1 ] || fail "workspace SSH readiness timed out"
-log "SSH access to $INSTANCE_NAME succeeded"
+[ "$exec_ready" -eq 1 ] || fail "workspace Brev exec readiness timed out"
+log "Brev exec access to $INSTANCE_NAME succeeded"
 
 # The remote shell expands the single-quoted command.
 # shellcheck disable=SC2016
@@ -207,8 +214,19 @@ jq -e --arg expectedBootImage "$expected_boot_image" --arg expectedSha "$expecte
 log "Verified standing Launchable runtime identity before credential exposure"
 
 raw_log="$(mktemp "${RUNNER_TEMP:-/tmp}/issue-9880.XXXXXX")"
+remote_script=""
+cleanup_scenario_files() {
+  local cleanup_status=0
+  [ -z "${remote_script:-}" ] || rm -f -- "$remote_script" || cleanup_status=$?
+  [ -z "${raw_log:-}" ] || rm -f -- "$raw_log" || cleanup_status=$?
+  return "$cleanup_status"
+}
+trap cleanup_scenario_files EXIT
+trap 'cleanup_scenario_files; exit 130' INT
+trap 'cleanup_scenario_files; exit 143' TERM
 chmod 600 "$raw_log"
-set +e
+remote_script="$(mktemp "${RUNNER_TEMP:-/tmp}/issue-9880-remote.XXXXXX")"
+chmod 600 "$remote_script"
 {
   printf 'export NVIDIA_INFERENCE_API_KEY=%q\n' "$NVIDIA_API_KEY"
   cat <<'REMOTE'
@@ -284,10 +302,16 @@ PY
 done
 if [ "$reproduced" -eq 1 ]; then exit 86; fi
 REMOTE
-} | ssh "${SSH_OPTIONS[@]}" "$INSTANCE_NAME" 'bash -s' >"$raw_log" 2>&1
+} >"$remote_script"
+set +e
+timeout --signal=TERM --kill-after=10s 900s brev exec "$INSTANCE_NAME" "@$remote_script" >"$raw_log" 2>&1
 scenario_status=$?
 set -e
+rm -f -- "$remote_script"
+remote_script=""
 redact_file "$raw_log" "$WORK_DIR/issue-9880.log"
+raw_log=""
+trap - EXIT INT TERM
 
 classification="completed"
 if [ "$scenario_status" -eq 86 ]; then

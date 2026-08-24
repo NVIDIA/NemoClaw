@@ -66,13 +66,16 @@ cp -- "$MESSAGE_FILE" "$brief_snapshot" || fail "Could not snapshot the release 
 repo_root="$(cd -- "$(git rev-parse --show-toplevel)" && pwd -P)"
 cd "$repo_root"
 
-IFS=$'\t' read -r previous_tag planned_previous_object planned_previous_commit tag target < <(
+IFS=$'\t' read -r previous_tag planned_previous_object planned_previous_commit tag target candidate_selection historical_exception < <(
   node -e '
     const fs = require("node:fs");
     const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
     const semver = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
     const sha = /^[0-9a-f]{40}$/;
     const expectedKeys = [
+      "candidateCommit",
+      "candidateSelection",
+      "historicalCandidateException",
       "nextTag",
       "originMainCommit",
       "originMainHeadline",
@@ -82,28 +85,41 @@ IFS=$'\t' read -r previous_tag planned_previous_object planned_previous_commit t
     ];
     const actualKeys = Object.keys(data).sort();
     if (JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys)) {
-      throw new Error("release plan must contain exactly the six supported fields");
+      throw new Error("release plan must contain exactly the nine supported fields");
     }
     if (!semver.test(data.previousTag)) throw new Error("previousTag must be semver");
-    if (!sha.test(data.previousTagCommit)) {
-      throw new Error("previousTagCommit must be a full SHA");
-    }
-    if (!sha.test(data.previousTagObject)) {
-      throw new Error("previousTagObject must be a full SHA");
-    }
+    if (!sha.test(data.previousTagCommit)) throw new Error("previousTagCommit must be a full SHA");
+    if (!sha.test(data.previousTagObject)) throw new Error("previousTagObject must be a full SHA");
     if (!semver.test(data.nextTag)) throw new Error("nextTag must be semver");
-    if (!sha.test(data.originMainCommit)) {
-      throw new Error("originMainCommit must be a full SHA");
-    }
+    if (!sha.test(data.originMainCommit)) throw new Error("originMainCommit must be a full SHA");
+    if (!sha.test(data.candidateCommit)) throw new Error("candidateCommit must be a full SHA");
     if (typeof data.originMainHeadline !== "string" || data.originMainHeadline.length === 0) {
       throw new Error("originMainHeadline must be a nonempty string");
+    }
+    if (data.candidateSelection === "current-main") {
+      if (data.candidateCommit !== data.originMainCommit || data.historicalCandidateException !== "None") {
+        throw new Error("current-main plan must select originMainCommit without an exception");
+      }
+    } else if (data.candidateSelection === "historical") {
+      if (data.candidateCommit === data.originMainCommit) {
+        throw new Error("historical plan must select a commit before originMainCommit");
+      }
+      if (typeof data.historicalCandidateException !== "string" ||
+          !/\S/u.test(data.historicalCandidateException) ||
+          /[\u0000-\u001f\u007f]/u.test(data.historicalCandidateException)) {
+        throw new Error("historical plan must contain a single-line exception reason");
+      }
+    } else {
+      throw new Error("candidateSelection must be current-main or historical");
     }
     process.stdout.write([
       data.previousTag,
       data.previousTagObject,
       data.previousTagCommit,
       data.nextTag,
-      data.originMainCommit,
+      data.candidateCommit,
+      data.candidateSelection,
+      data.historicalCandidateException,
     ].join("\t") + "\n");
   ' "$PLAN_PATH"
 ) || fail "Could not read release plan"
@@ -127,7 +143,7 @@ require_brief_line_once() {
   local expected="$1"
   local label="$2"
   local count
-  count="$(awk -v expected="$expected" '$0 == expected { count++ } END { print count + 0 }' "$brief_snapshot")" \
+  count="$(grep -Fxc -- "$expected" "$brief_snapshot" || true)" \
     || fail "Could not validate release brief $label"
   [[ "$count" == "1" ]] || fail "Release brief must contain exactly one $label"
 }
@@ -136,6 +152,21 @@ expected_docs_decision="- Maintainer decision: Proceed with the candidate as sho
 printf -v expected_base_candidate -- "- Base-image candidate: \`%s\`" "$target"
 require_brief_line_once "$expected_docs_decision" "documentation proceed decision"
 require_brief_line_once "$expected_base_candidate" "plan-bound base-image candidate"
+if [[ "$candidate_selection" == "historical" ]]; then
+  # JavaScript owns $1 in the replacement string.
+  # shellcheck disable=SC2016
+  escaped_historical_exception="$(
+    node -e 'process.stdout.write(process.argv[1].replace(/([\\`*_[\]<>#])/g, "\\$1"))' \
+      "$historical_exception"
+  )" || fail "Could not escape the historical candidate exception"
+  printf -v expected_historical_exception -- \
+    "- Historical candidate exception: %s" "$escaped_historical_exception"
+  require_brief_line_once "$expected_historical_exception" "plan-bound historical candidate exception"
+else
+  if grep -q '^\- Historical candidate exception:' "$brief_snapshot"; then
+    fail "Current-main release brief must not contain a historical candidate exception"
+  fi
+fi
 if grep -Eq -- "TODO_RELEASE_BRIEF|Complete before confirmation" "$brief_snapshot"; then
   fail "Release brief still contains unresolved prompts"
 fi
@@ -269,6 +300,12 @@ IFS=$'\t' read -r current_previous_tag previous_object previous_commit <<<"$high
   || fail "Remote $previous_tag changed from $planned_previous_commit to $previous_commit; stop for protected-tag remediation"
 
 git cat-file -e "${target}^{commit}" || fail "Candidate commit does not exist: $target"
+refreshed_origin_main="$(git rev-parse origin/main)" \
+  || fail "Could not resolve refreshed origin/main"
+if [[ "$candidate_selection" == "historical" ]]; then
+  [[ "$target" != "$refreshed_origin_main" ]] \
+    || fail "Historical candidate now identifies origin/main; generate a current-main plan without an exception"
+fi
 git merge-base --is-ancestor "$target" origin/main \
   || fail "Candidate commit is not reachable from origin/main: $target"
 git cat-file -e "${previous_commit}^{commit}" \

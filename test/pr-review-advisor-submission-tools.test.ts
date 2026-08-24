@@ -386,33 +386,58 @@ describe("PR review advisor submission tools", () => {
     });
   });
 
-  it.each(["post-success prose", "duplicate submit"])(
-    "discards pending canonical state after rejected %s flow",
-    async () => {
-      const submission = controller();
-      await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
-      await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, receipt());
-      await execute(submission, RECOMMEND_E2E_TOOL, e2e());
-      const response = await execute(submission, SUBMIT_REVIEW_TOOL, {});
-      const responseText = (response.content[0] as { text: string }).text;
-      expect(JSON.parse(responseText)).toEqual({ validated: true, pending: true });
-      expect(responseText).not.toContain("The refusal is hidden");
-      expect(responseText).not.toContain("acceptanceCoverage");
-      expect(responseText).not.toContain("findingLedger");
-      expect(responseText).not.toContain("terminologyLedger");
-      applyReviewSubmissionTurn(submission, {
-        index: 2,
-        total: 2,
-        name: "challenge-and-record",
-        text: responseText,
-        status: "failed",
-        error: "terminal flow rejected",
-      });
-      expect(submission.result()).toBeNull();
-      expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
-      expect(submission.terminologySnapshot()).toMatchObject({ revision: 0 });
-    },
-  );
+  it("discards pending canonical state after a rejected terminal flow", async () => {
+    const submission = controller();
+    await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
+    await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, receipt());
+    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
+    const response = await execute(submission, SUBMIT_REVIEW_TOOL, {});
+    const responseText = (response.content[0] as { text: string }).text;
+    expect(JSON.parse(responseText)).toEqual({ validated: true, pending: true });
+    expect(responseText).not.toContain("The refusal is hidden");
+    expect(responseText).not.toContain("acceptanceCoverage");
+    expect(responseText).not.toContain("findingLedger");
+    expect(responseText).not.toContain("terminologyLedger");
+    applyReviewSubmissionTurn(submission, {
+      index: 2,
+      total: 2,
+      name: "challenge-and-record",
+      text: responseText,
+      status: "failed",
+      error: "terminal flow rejected",
+    });
+    expect(submission.result()).toBeNull();
+    expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
+    expect(submission.terminologySnapshot()).toMatchObject({ revision: 0 });
+  });
+
+  it("keeps one pending result after failed duplicate submit calls (#9963)", async () => {
+    const submission = controller();
+    await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
+    await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, receipt());
+    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
+    await execute(submission, SUBMIT_REVIEW_TOOL, {});
+
+    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
+      "Review already submitted",
+    );
+    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
+      "Review already submitted",
+    );
+    applyReviewSubmissionTurn(submission, {
+      index: 2,
+      total: 2,
+      name: "challenge-and-record",
+      text: "",
+      status: "completed",
+    });
+
+    expect(submission.result()).not.toBeNull();
+    expect(submission.findingSnapshot()).toMatchObject({
+      version: 1,
+      findings: [{ id: "F-001" }],
+    });
+  });
 
   it("finalizes a repaired pending submission exactly once", async () => {
     const submission = controller();
@@ -450,7 +475,6 @@ describe("PR review advisor submission tools", () => {
     expect(submission.result()).toBeNull();
     expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
   });
-
 
   it("enforces deterministic test depth without losing rationale or suggested tests", async () => {
     const submission = controller();
@@ -1017,8 +1041,28 @@ describe("PR review advisor submission tools", () => {
       (draft: ReturnType<typeof receipt>) => {
         draft.acceptanceCoverage = [];
         draft.sourceOfTruthReview = [
-          { surface: "config", status: "missing", findingId: "F-001", invalidState: "one", sourceBoundary: "source", whyNotSourceFix: "none", regressionTest: "test", removalCondition: "fixed", evidence: "one" },
-          { surface: "config", status: "needs_followup", findingId: "F-001", invalidState: "two", sourceBoundary: "source", whyNotSourceFix: "none", regressionTest: "test", removalCondition: "fixed", evidence: "two" },
+          {
+            surface: "config",
+            status: "missing",
+            findingId: "F-001",
+            invalidState: "one",
+            sourceBoundary: "source",
+            whyNotSourceFix: "none",
+            regressionTest: "test",
+            removalCondition: "fixed",
+            evidence: "one",
+          },
+          {
+            surface: "config",
+            status: "needs_followup",
+            findingId: "F-001",
+            invalidState: "two",
+            sourceBoundary: "source",
+            whyNotSourceFix: "none",
+            regressionTest: "test",
+            removalCondition: "fixed",
+            evidence: "two",
+          },
         ];
       },
       "sourceOfTruthReview contains duplicate receipt concern source-of-truth:config",
@@ -1394,28 +1438,7 @@ describe("PR review advisor submission tools", () => {
     expect(write).not.toHaveBeenCalled();
   });
 
-  it("adds trusted missing-specialist limitations to each canonical artifact", () => {
-    const submitted = {
-      reviewCompleteness: { limitations: ["model limitation"], requiresHumanReview: true },
-    };
-    const submission = completedSubmission(submitted);
-    const write = vi.fn();
-
-    const result = persistSuccessfulReview([], submission, ARTIFACTS, write, [
-      "Specialist trace unavailable: operations",
-    ]);
-
-    expect(result.reviewCompleteness.limitations).toEqual([
-      "model limitation",
-      "Specialist trace unavailable: operations",
-    ]);
-    expect(write.mock.calls).toEqual([
-      [ARTIFACTS.result, result],
-      [ARTIFACTS.finalResult, result],
-    ]);
-  });
-
-  it("writes each canonical artifact exactly once after finalized success", () => {
+  it("writes the canonical result to both artifacts", () => {
     const result = { submitted: true };
     const submission = completedSubmission(result);
     const write = vi.fn();

@@ -22,7 +22,7 @@ describe("codebase growth guardrails workflow trust boundary", () => {
     const workflow = YAML.parse(readFileSync(WORKFLOW_PATH, "utf8"));
 
     expect(workflow).toEqual({
-      name: "CI / Codebase Growth Guardrails",
+      name: "Governance / Enforce Codebase Growth Limits",
       on: {
         pull_request_target: {
           types: ["opened", "reopened", "synchronize", "ready_for_review"],

@@ -44,6 +44,10 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)\.github\/workflows\/[^/]+\.ya?ml$/,
+    testsToRun: runTests("test/github-actions-workflow-names.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)docs\/reference\/troubleshooting\.mdx$/,
     testsToRun: runTests("test/policy-finality-docs.test.ts"),
   },
@@ -59,7 +63,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)tools\/e2e\/brev-launchable-e2e\.sh$/,
-    testsToRun: runTests("test/brev-launchable-e2e.test.ts"),
+    testsToRun: runTests(
+      "test/brev-launchable-e2e.test.ts",
+      "test/brev-launchable-gateway-diagnostics.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)managed-inference\/(?:models|presets|recipes|schemas)\/[^/]+\.(?:json|yaml)$/,

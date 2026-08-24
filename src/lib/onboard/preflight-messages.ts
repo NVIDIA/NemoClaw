@@ -14,7 +14,7 @@
 
 import { failLine, warnLine } from "../cli/terminal-style";
 import { formatNvidiaGpuPreflightLines, type GpuDetection } from "../inference/nim";
-import { cliDisplayName } from "./branding";
+import { cliDisplayName, cliName } from "./branding";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
 /** Docker cannot be reached, so onboarding cannot continue. */
@@ -94,7 +94,7 @@ export function printMessagingProviderMissing(providerName: string): void {
   console.warn(warnLine(`Messaging provider '${providerName}' was not found in the gateway.`));
   console.warn("    The credential may not be available inside the sandbox.");
   console.warn(
-    `    To fix: openshell provider create --name ${providerName} --type generic --credential <KEY>`,
+    `    To fix: rerun ${cliName()} onboard with the required messaging credentials so NemoClaw can register the OpenShell provider profile.`,
   );
 }
 

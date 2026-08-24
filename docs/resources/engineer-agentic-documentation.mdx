@@ -50,7 +50,8 @@ A push to `main` that changes a path outside the allowed documentation paths sta
 The first nonempty patch creates the managed PR.
 Its title names the next patch tag after the range-start tag.
 Its body names both tags and explains how the PR changes during development and closes at release cutoff.
-Later pushes to `main` refresh that same PR with a cumulative patch based on the triggering commit.
+Later pushes to `main` refresh that same PR only when they change a path outside `docs/**`, `fern/docs.yml`, and `fern/assets/**`.
+Each refresh uses a cumulative patch based on the triggering commit.
 Each refresh creates a merge commit whose tree exactly matches the reviewed patch applied to `main`, then fast-forwards the branch. The publisher never force-pushes or replaces a branch head that a person changed.
 Merge the cumulative PR at the release cutoff.
 A push that changes only the allowed documentation paths does not start another catch-up run.

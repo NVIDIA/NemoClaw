@@ -19,6 +19,11 @@ $$nemoclaw uninstall
 
 Full uninstall does not remove a Docker container or image only because its name or image reference contains `openclaw`.
 It preserves resources from a separate OpenClaw installation while continuing to remove NemoClaw and OpenShell Docker resources.
+During full uninstall, NemoClaw stops a Bedrock Runtime adapter when its recorded process ID matches the adapter command line.
+When `lsof` is available, full uninstall also scans the configured adapter port and stops only a matching process owned by the current user.
+If `lsof` is unavailable and no recorded process was stopped, uninstall warns that it skipped the orphan scan.
+A selected-gateway uninstall uses only that gateway's process record and does not scan or signal a sibling adapter.
+Uninstall preserves an unrelated process that uses the same port.
 
 | Flag | Effect |
 |---|---|

@@ -47,6 +47,7 @@ export interface RunOpenshellOptions extends OpenshellSpawnOptions {
   stdio?: SpawnSyncOptions["stdio"];
   input?: string;
   killSignal?: SpawnSyncOptions["killSignal"];
+  maxBuffer?: number;
 }
 
 export interface CaptureOpenshellOptions extends OpenshellSpawnOptions {
@@ -147,9 +148,16 @@ function isIgnoredTimeout(error: Error, opts: OpenshellSpawnOptions): boolean {
   return opts.ignoreError === true && (error as NodeJS.ErrnoException).code === "ETIMEDOUT";
 }
 
-function isIgnoredCaptureError(error: Error, opts: CaptureOpenshellOptions): boolean {
-  if (isIgnoredTimeout(error, opts)) return true;
+function isIgnoredBufferOverflow(error: Error, opts: OpenshellSpawnOptions): boolean {
   return opts.ignoreError === true && (error as NodeJS.ErrnoException).code === "ENOBUFS";
+}
+
+function isIgnoredRunError(error: Error, opts: RunOpenshellOptions): boolean {
+  return isIgnoredTimeout(error, opts) || isIgnoredBufferOverflow(error, opts);
+}
+
+function isIgnoredCaptureError(error: Error, opts: CaptureOpenshellOptions): boolean {
+  return isIgnoredTimeout(error, opts) || isIgnoredBufferOverflow(error, opts);
 }
 
 function shouldIncludeStderr(opts: CaptureOpenshellOptions): boolean {
@@ -207,9 +215,10 @@ export function runOpenshellCommand(
     input: opts.input,
     timeout: opts.timeout,
     killSignal: opts.killSignal,
+    maxBuffer: opts.maxBuffer,
   });
   if (result.error) {
-    if (isIgnoredTimeout(result.error, opts)) {
+    if (isIgnoredRunError(result.error, opts)) {
       return result;
     }
     return handleSpawnError(binary, args, result.error, opts);

@@ -58,6 +58,7 @@ function resolutionMetadata(
     ref: DCODE_BASE_IMAGE_AMD64_REFERENCE,
     digest: DCODE_BASE_IMAGE_AMD64_DIGEST,
     source: "override",
+    sourceRevision: DCODE_BASE_IMAGE_SOURCE_REVISION,
     imageId: `sha256:${"e".repeat(64)}`,
     os: "linux",
     architecture: "amd64",
@@ -304,6 +305,24 @@ describe("Deep Agents Code published base runtime evidence", () => {
       metadata: resolutionMetadata({ pinnedRemoteRef: DCODE_BASE_IMAGE_AMD64_REFERENCE }),
       expectedMessage: baseContractMismatch("pinned reference"),
       rejectedValues: [DCODE_BASE_IMAGE_AMD64_REFERENCE],
+    },
+    {
+      label: "a missing source revision",
+      metadata: resolutionMetadata({ sourceRevision: undefined }),
+      expectedMessage: baseContractMismatch("source revision"),
+      rejectedValues: [],
+    },
+    {
+      label: "a malformed source revision",
+      metadata: resolutionMetadata({ sourceRevision: "main" }),
+      expectedMessage: baseContractMismatch("source revision"),
+      rejectedValues: ["main"],
+    },
+    {
+      label: "a mismatched source revision",
+      metadata: resolutionMetadata({ sourceRevision: "f".repeat(40) }),
+      expectedMessage: baseContractMismatch("source revision"),
+      rejectedValues: ["f".repeat(40)],
     },
     {
       label: "an unsupported platform",

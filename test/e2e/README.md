@@ -27,7 +27,7 @@ before those targets run; local runners must provide it themselves.
   Launchable boot, SSH access, the exact image, and the baked runtime identity.
   It does not run onboarding or inference and does not satisfy release
   qualification.
-- `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Evidence` for Ubuntu 26.04, macOS, and WSL.
+- `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Compatibility` for Ubuntu 26.04, macOS, and WSL.
   On shard 1, its macOS and WSL live E2E run only when the workflow tests `main` and Docker is available.
   This workflow does not publish or satisfy `Release qualification`.
 - `.github/workflows/portable-profile-e2e.yaml` publishes experimental portable-profile evidence.
@@ -91,7 +91,7 @@ If the version command fails, the action stops before the live test runs.
 This boundary keeps candidate source separate from the trusted workflow implementation.
 
 For a same-repository PR that changes a managed-image workflow path, the trusted planner also
-requires one successful `Images / Managed Images` run for the candidate commit. Before candidate
+requires one successful `Images / Build, Test, and Publish Managed Images` run for the candidate commit. Before candidate
 checkout, the planner downloads the three nonexpired contract artifacts by immutable artifact ID.
 It verifies each artifact digest, producer run, attempt, and candidate commit. The planner rejects a
 missing, incomplete, or mixed all-agent publication before E2E jobs start.
@@ -101,7 +101,7 @@ Each live E2E consumer verifies that the catalog source revision matches `checko
 does not change a managed-image workflow path keeps the released catalog behavior. The GitHub token
 is available only to the trusted planner job and is not included in the candidate CLI artifact.
 
-The same-repository `Images / Managed Images` PR workflow also runs the OpenClaw managed-image MCP
+The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the OpenClaw managed-image MCP
 discovery and lifecycle scope in two independent matrix jobs. Each job assembles one exact candidate
 catalog from the workflow's published contracts, uses a fresh runner and sandbox, records the
 authenticated discovery diagnostics, scans the evidence for fixture credentials, and must pass.
@@ -173,7 +173,7 @@ E2E tests when those boundaries are the behavior under test.
 
 ## Platform Evidence
 
-`.github/workflows/platform-vitest-main.yaml` publishes the `CI / Platform Evidence` workflow.
+`.github/workflows/platform-vitest-main.yaml` publishes the `CI / Platform Compatibility` workflow.
 It runs the Ubuntu 26.04 compatibility contracts and the full Vitest suite in four shards on macOS and WSL.
 The matrix disables `fail-fast`.
 The first macOS shard has a 60-minute budget for live E2E; the other shards have 30 minutes.
@@ -656,7 +656,7 @@ graph as the live targets:
 
 - GitHub Actions run history is the authoritative record for push and
   manual E2E results.
-- `E2E / Main Retry` publishes an advisory same-commit reliability table for
+- `E2E / Main Retry Evidence` publishes an advisory same-commit reliability table for
   trusted pushes to `main` and explicit manual qualification runs. It keeps
   first-pass success, pass-after-retry, exhausted retries, and pass/fail flips
   distinct,
@@ -800,17 +800,29 @@ evidence directory; a preparation failure produces no lane artifact. After
 workspace preparation, `cleanup.json` records the final cleanup result. The
 identity receipt records onboarding, inference, and full E2E as `not-run`.
 
-`BREV_API_KEY` and `BREV_ORG_ID` are environment values only in the preparation
-step on the GitHub-hosted runner. `brev login` writes them to
-`$HOME/.brev/credentials.json` under a job-private `HOME`; later Brev steps read
-that file through cleanup.
-The workflow then removes the file and verifies its absence before artifact
-upload. The image dispatch token is available as `GH_TOKEN` only to the identity
+The identity job runs on `ubuntu-latest`. GitHub assigns a fresh hosted-runner VM
+to the job and decommissions the VM after the job finishes. `BREV_API_KEY` and
+`BREV_ORG_ID` are environment values only in the preparation step. `brev login`
+writes the raw API key and organization identifier to the runner account's
+`$HOME/.brev/credentials.json` inside an owner-only `.brev` directory. Later
+trusted Brev steps read that file through workspace cleanup.
+
+A successful `brev refresh` writes the Brev user SSH private key to
+`$HOME/.brev/brev.pem`, generated host entries to `$HOME/.brev/ssh_config`, and
+an include directive to `$HOME/.ssh/config`. Brev and OpenSSH use this runner
+account home so the SSH readiness check can read the host entry. The workflow
+removes the API credential file and verifies its absence before artifact upload.
+The SSH private key and configuration remain on the hosted-runner VM until
+GitHub decommissions it.
+
+The image dispatch token is available as `GH_TOKEN` only to the identity
 validation step on the GitHub-hosted runner. Ending that step removes its
-process access. Removing the local Brev file and ending the token-bearing step
-do not revoke the issuer-side credentials; they remain valid until they expire
-or an administrator revokes them. These credentials are not sent to the
-Launchable workspace, and the job does not receive an inference credential.
+process access. Removing the local Brev API credential file and ending the
+token-bearing step do not revoke the issuer-side credentials. They remain valid
+until they expire or an administrator revokes them. The job does not check out
+candidate code on the hosted runner. It does not send `BREV_API_KEY`,
+`BREV_ORG_ID`, `GH_TOKEN`, or the Brev user SSH private key to the Launchable
+workspace, and it does not receive an inference credential.
 After the identity validation step, a reserved cleanup step rechecks only the exact
 workflow-owned workspace name. The job is absent from push, default, full, and
 release-required selections.
@@ -858,11 +870,14 @@ artifact. A later early failure can retain only `lane.log`. A successful job
 contains `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`;
 `cleanup.json` exists only after the job confirms workspace absence.
 When the preinstalled full E2E fails after SSH succeeds, the job attempts to
-append bounded, redacted host state and PID 1 lifecycle classifications to
-`lane.log` before cleanup. If a probe fails or the shared budget expires,
-`lane.log` records that result and cleanup continues. The diagnostic phase is
-read-only, uses one 30-second budget, and does not retry the failed E2E or repair
-the workspace.
+append bounded, redacted host state and fixed lifecycle classifications to
+`lane.log` before cleanup. On the host, the SSH command reads the system journal
+and returns only fixed PID 1 lifecycle and OpenShell gateway bind
+classifications. Raw journal messages and credential values do not reach the
+GitHub-hosted runner or `lane.log`. If a probe fails or the shared budget
+expires, `lane.log` records that result and cleanup continues. The diagnostic
+phase is read-only, uses one 30-second budget, and does not retry the failed E2E
+or repair the workspace.
 
 Manual ordinary and full runs exclude the Jetson nvmap and DGX Spark llama.cpp
 jobs unless their independent opt-in flags are `true`.
@@ -884,26 +899,26 @@ qualification set.
 
 ### Hosted-Runner Recovery
 
-Hosted Runner Recovery can request one full rerun for an eligible `CI / Platform Evidence` push.
+`Automation / Recover Platform CI Runner` can request one full rerun for an eligible `CI / Platform Compatibility` push.
 It does not handle `E2E main`.
 The complete non-passing job listing must contain only authenticated hosted-runner-loss evidence for the workflow's approved runner labels.
 An ordinary assertion failure, mixed failure set, incomplete listing, custom or self-hosted label, changed evidence, or ambiguous pagination prevents recovery.
 
-For eligible `E2E main` push runs, `E2E / Main Retry` records `passed-first-attempt`, `passed-after-retry`, `failed-no-retry`, or `ignored` without requesting a workflow rerun.
+For eligible `E2E main` push runs, `E2E / Main Retry Evidence` records `passed-first-attempt`, `passed-after-retry`, `failed-no-retry`, or `ignored` without requesting a workflow rerun.
 A failed job can represent a deterministic product assertion, authentication or authorization failure, policy denial, malformed input, ambiguous mutation, cleanup failure, or an external transient.
 GitHub job conclusions do not distinguish those classes, so a broad failed-job rerun is not authorized evidence.
 External operations use the checked-in retry inventory and an explicit bounded policy; new shared paths use the bounded operation helper.
 Operation-level retry artifacts retain each attempt.
-Hosted runner loss remains owned by Hosted Runner Recovery.
+Hosted runner loss remains owned by `Automation / Recover Platform CI Runner`.
 The observer ignores manual source runs and source runs superseded by a newer `main` push, checks out only trusted default-branch code, and receives no repository secrets.
 
-The runner-allocation and internal-error failures handled by Hosted Runner
-Recovery originate in GitHub Actions, outside repository-controlled workflow
-code. Hosted Runner Recovery contains these failures without claiming to repair
+The runner-allocation and internal-error failures handled by
+`Automation / Recover Platform CI Runner` originate in GitHub Actions, outside
+repository-controlled workflow code. The workflow contains these failures without claiming to repair
 their source. Remove `.github/workflows/hosted-runner-recovery.yaml` and its
 controller only after the platform-evidence workflow records 30 consecutive days
 with no first-attempt failure accepted by the recovery classifier, or after that
-workflow stops using GitHub-hosted runners. Each accepted Hosted Runner Recovery
+workflow stops using GitHub-hosted runners. Each accepted `Automation / Recover Platform CI Runner`
 request resets that observation window.
 
 ### Runner comparison telemetry
@@ -1026,7 +1041,7 @@ to the portable free-memory value and labels that value as `memory free`.
 
 The comparison time series is diagnostic-only and is not an input to terminal
 classification or retry policy. Runner-comparison telemetry does not affect
-`E2E / Main Retry` decisions. Hosted Runner Recovery remains limited to
+`E2E / Main Retry Evidence` decisions. `Automation / Recover Platform CI Runner` remains limited to
 authenticated runner-loss evidence for its platform-evidence workflow.
 
 Treat a missing summary as unavailable evidence, not as low utilization. A
@@ -1222,7 +1237,7 @@ standing Launchable. Keep its value equal to the Launchable ID in the default
 URL owned by
 [`nemoclaw-maintainer-validate-launchable`](../../.agents/skills/nemoclaw-maintainer-validate-launchable/SKILL.md).
 
-When an eligible `E2E main` push workflow completes, `E2E / Main Retry` records its conclusion and the available source-attempt evidence.
+When an eligible `E2E main` push workflow completes, `E2E / Main Retry Evidence` records its conclusion and the available source-attempt evidence.
 It does not request a broad failed-job or workflow rerun.
 An owning E2E test can retry an external operation only through its checked-in bounded policy.
 After evaluation succeeds, the observer uploads an artifact named for the current attempt.
@@ -1409,8 +1424,25 @@ When every deterministic cold-onboard budget passes and the real first turn exit
 successfully with the expected sentinel, a sole root-end-to-first-turn overage
 is recorded as a structured, non-blocking hosted-latency anomaly rather than a
 PR regression.
-The same overage remains blocking when accompanied by a root-start or
-phase-budget failure.
+The same overage remains blocking when accompanied by a root-start or phase-budget failure.
+
+The checked-in `nemoclaw.onboard.phase.sandbox` budget remains 208,000 ms.
+A sandbox-phase overage qualifies for anomaly classification only when it is the sole performance overage and the run uses the published-base build mode without the authoritative local base-build allowance.
+For a qualifying overage of at most 5,000 ms, `full-e2e` records a `sandbox-phase-tail` anomaly instead of a blocking performance violation.
+An overage greater than 5,000 ms remains blocking.
+A run that applies the authoritative local base-build allowance or has another performance violation also remains blocking.
+Every other performance contract remains blocking, as do the existing first-turn command exit, BuildKit, gateway-builder no-fallback, output-silence, sentinel, E2E job outcome, and cleanup contracts.
+
+For `sandbox-phase-tail`, the trusted push scorecard uses the latest five eligible samples from the same agent, setup mode, platform, base-build mode, and workload kind.
+A current anomaly passes only when four valid prior same-cohort samples exist and none contains a sandbox-phase anomaly.
+A current anomaly remains blocking in these cases:
+
+- One or more queried prior push summaries are unavailable.
+- Fewer than four valid prior same-cohort samples are available.
+- One prior sample in the five-sample window contains a sandbox-phase anomaly.
+
+The second anomaly in the five-sample window therefore blocks immediately.
+These sandbox-phase recurrence rules do not change the hosted first-turn policy described below.
 
 The trusted push scorecard stores the current eligible sample in the
 `e2e-runtime-summary` artifact.
@@ -1424,6 +1456,9 @@ A current sample without an anomaly does not fail because of an earlier anomaly.
 Missing, malformed, or functionally unsuccessful samples do not enter the window.
 The scorecard waits for 12 eligible samples when retained history is incomplete.
 The canonical E2E uploader retains each push summary for 14 days.
+
+The sandbox-phase recurrence rule does not recalibrate the checked-in budget.
+Recalibration remains deferred until five successful samples from the same commit are available.
 
 When changed base-image inputs require the authoritative local OpenClaw base
 build, the target applies the separately calibrated 90-second allowance only to
