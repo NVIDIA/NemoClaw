@@ -287,7 +287,7 @@ describe("external OpenShell target boundary", () => {
     expect(readFile).not.toHaveBeenCalled();
   });
 
-  it("rejects invalid trust and empty authentication without exposing private input (#9872)", () => {
+  it("rejects an invalid CA bundle and empty authentication without exposing private input (#9872)", () => {
     const privateCaContents = "not-a-certificate private-ca-value";
     const invalidCaReader = reader(
       new Map([
@@ -316,7 +316,7 @@ describe("external OpenShell target boundary", () => {
     expect(output).not.toContain(AUTHENTICATION_CONTENTS);
   });
 
-  it("rejects an oversized trust file without returning its path (#9872)", () => {
+  it("rejects an oversized CA bundle without returning its path (#9872)", () => {
     const readFile = reader(new Map([[CA_FILE, "x".repeat(1024 * 1024 + 1)]]));
 
     const error = expectError(() =>
