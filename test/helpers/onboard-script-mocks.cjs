@@ -578,11 +578,7 @@ module.exports = {
   isOpenClawSecurityInventoryProbe,
   mockDockerSandboxLifecycleReleaseFromRunner,
   mockFreshOpenClawPluginDiscovery,
-  mockManagedImageBootstrap,
-  mockManagedImageCatalog,
-  mockManagedImageFallback,
   mockOnboardRunCapture,
-  mockSandboxExecCurl,
   mockStandaloneGatewayTeardownAuthority,
   normalizeCommand,
 };
