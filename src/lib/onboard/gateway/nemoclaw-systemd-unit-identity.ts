@@ -4,9 +4,11 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const NEMOCLAW_GATEWAY_UNIT_TEMPLATE_PATH = path.resolve(
-  import.meta.dirname,
-  "../../../../scripts/lib/openshell-gateway.service.in",
+import { REPOSITORY_ROOT } from "../../core/repository-root";
+
+const NEMOCLAW_GATEWAY_UNIT_TEMPLATE_PATH = path.join(
+  REPOSITORY_ROOT,
+  "scripts/lib/openshell-gateway.service.in",
 );
 
 /** Match the complete repository-owned user service definition. */
