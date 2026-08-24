@@ -752,11 +752,17 @@ describe("platform readiness qualification (#7410)", () => {
         new Map([["/fixtures/product_name", "NVIDIA DGX Spark".padEnd(5000, "x")]]).get(
           filePath,
         ) ?? unexpectedFixturePath(filePath),
-      openFile: () => {
-        throw Object.assign(new Error("missing fixture"), { code: "ENOENT" });
-      },
+      openFile: () => 17,
+      statFileDescriptor: () => trustedMarkerStat({ uid: 1000 }),
+      closeFileDescriptor: () => undefined,
     });
 
-    expect(identity).toEqual({ nvidiaPlatform: undefined, productName: undefined });
+    expect(identity).toEqual({
+      nvidiaPlatform: undefined,
+      productName: undefined,
+      n1xCandidate: true,
+      n1xFastOsMarker: false,
+      n1xPciGpu: undefined,
+    });
   });
 });
