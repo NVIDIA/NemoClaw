@@ -270,7 +270,8 @@ describe("managed vLLM GPU memory preflight", () => {
     process.env.NEMOCLAW_VLLM_MODEL = "muse-glimmer-30b";
     mockHostCommands({
       computeCap: "12.0\n",
-      gpuMemory: "0, GPU-1234, 97887, 50360\n1, GPU-5678, 97887, 90000\n",
+      gpuMemory:
+        "0, GPU-00000000-0000-0000-0000-000000000000, 97887, 50360\n1, GPU-00000000-0000-0000-0000-000000000001, 97887, 90000\n",
     });
     mockDockerDaemon(profile.containerName);
 
@@ -325,7 +326,7 @@ describe("managed vLLM GPU memory preflight", () => {
       process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify([option, "0.9"]);
       mockHostCommands({
         computeCap: "9.0\n",
-        gpuMemory: "0, GPU-1234, 100000, 80000\n",
+        gpuMemory: "0, GPU-00000000-0000-0000-0000-000000000000, 100000, 80000\n",
       });
       mockDockerDaemon(profile.containerName);
 
@@ -349,7 +350,7 @@ describe("managed vLLM GPU memory preflight", () => {
     process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify(["--gpu-memory-utilization=0.5"]);
     mockHostCommands({
       computeCap: "9.0\n",
-      gpuMemory: "0, GPU-1234, 100000, 60000\n",
+      gpuMemory: "0, GPU-00000000-0000-0000-0000-000000000000, 100000, 60000\n",
     });
     mockDockerDaemon(profile.containerName);
 
@@ -371,7 +372,10 @@ describe("managed vLLM GPU memory preflight", () => {
     process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-27b";
     mockHostCommands({
       computeCap: "9.0\n",
-      gpuMemory: ["0, GPU-1234, 100000, 80000\n", "0, GPU-1234, 100000, 60000\n"],
+      gpuMemory: [
+        "0, GPU-00000000-0000-0000-0000-000000000000, 100000, 80000\n",
+        "0, GPU-00000000-0000-0000-0000-000000000000, 100000, 60000\n",
+      ],
     });
     mockDockerDaemon(profile.containerName);
 
@@ -447,8 +451,18 @@ describe("managed vLLM GPU memory preflight", () => {
       dockerRunFlags: ["--gpus", '"device=1,0"'],
     };
     const devices = [
-      { index: 0, uuid: "GPU-1234", totalBytes: 96n, freeBytes: 40n },
-      { index: 1, uuid: "GPU-5678", totalBytes: 96n, freeBytes: 80n },
+      {
+        index: 0,
+        uuid: "GPU-00000000-0000-0000-0000-000000000000",
+        totalBytes: 96n,
+        freeBytes: 40n,
+      },
+      {
+        index: 1,
+        uuid: "GPU-00000000-0000-0000-0000-000000000001",
+        totalBytes: 96n,
+        freeBytes: 80n,
+      },
     ];
 
     expect(profile.gpuMemoryUtilization).toBe(0.75);
@@ -493,7 +507,12 @@ describe("managed vLLM GPU memory preflight", () => {
 
     expect(
       gpuMemoryPreflight(model, profile, [
-        { index: 0, uuid: "GPU-1234", totalBytes: 96n, freeBytes: 96n },
+        {
+          index: 0,
+          uuid: "GPU-00000000-0000-0000-0000-000000000000",
+          totalBytes: 96n,
+          freeBytes: 96n,
+        },
       ]),
     ).toEqual({
       ok: false,
@@ -504,13 +523,19 @@ describe("managed vLLM GPU memory preflight", () => {
   it("ignores malformed nvidia-smi memory rows and keeps valid per-device telemetry", () => {
     mockHostCommands({
       computeCap: "12.0\n",
-      gpuMemory: "malformed\n0, GPU-1234, 97887, 50360\n1, GPU-5678, N/A, N/A\n",
+      gpuMemory:
+        "malformed\n" +
+        "0, GPU-00000000-0000-0000-0000-000000000000, 97887, 50360\n" +
+        "1, malformed-uuid, 97887, 50360\n" +
+        "2, GPU-00000000-0000-0000-0000-000000000002, 1e3, 500\n" +
+        "3, GPU-00000000-0000-0000-0000-000000000003, 1000, \n" +
+        "4, GPU-00000000-0000-0000-0000-000000000004, N/A, N/A\n",
     });
 
     expect(readGpuMemoryDevices()).toEqual([
       {
         index: 0,
-        uuid: "GPU-1234",
+        uuid: "GPU-00000000-0000-0000-0000-000000000000",
         totalBytes: 102_641_958_912n,
         freeBytes: 52_806_287_360n,
       },

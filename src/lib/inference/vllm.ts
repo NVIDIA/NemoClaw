@@ -499,6 +499,7 @@ export interface GpuMemoryDevice {
 type GpuMemoryPreflightResult = { ok: true; warning?: string } | { ok: false; reason: string };
 
 const NVIDIA_GPU_INDEX_PATTERN = /^\d+$/;
+const NVIDIA_GPU_MEMORY_MIB_PATTERN = /^\d+$/;
 const NVIDIA_GPU_UUID_PATTERN = /^GPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
 export function readGpuMemoryDevices(): GpuMemoryDevice[] {
@@ -512,12 +513,19 @@ export function readGpuMemoryDevices(): GpuMemoryDevice[] {
     const fields = line.split(",").map((field) => field.trim());
     if (fields.length !== 4) continue;
     const [indexRaw, uuid, totalMiBRaw, freeMiBRaw] = fields;
-    if (!NVIDIA_GPU_INDEX_PATTERN.test(indexRaw) || !uuid) continue;
+    if (!NVIDIA_GPU_INDEX_PATTERN.test(indexRaw) || !NVIDIA_GPU_UUID_PATTERN.test(uuid)) {
+      continue;
+    }
     const index = Number(indexRaw);
     if (!Number.isSafeInteger(index) || index < 0) continue;
     if (totalMiBRaw === "[N/A]" && freeMiBRaw === "[N/A]") {
-      if (!NVIDIA_GPU_UUID_PATTERN.test(uuid)) continue;
       devices.push({ index, uuid, totalBytes: null, freeBytes: null });
+      continue;
+    }
+    if (
+      !NVIDIA_GPU_MEMORY_MIB_PATTERN.test(totalMiBRaw) ||
+      !NVIDIA_GPU_MEMORY_MIB_PATTERN.test(freeMiBRaw)
+    ) {
       continue;
     }
     const totalMiB = Number(totalMiBRaw);
