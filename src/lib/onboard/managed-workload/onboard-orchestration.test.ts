@@ -311,12 +311,22 @@ describe("managed workload onboard orchestration", () => {
 
   it("resolves final-image patch metadata after managed build-context staging", async () => {
     const resolutionMetadata = { key: "published-dcode-base" };
+    const trustedDockerfile = path.join(
+      process.cwd(),
+      "agents",
+      "langchain-deepagents-code",
+      "Dockerfile",
+    );
     let staged = false;
     const resolvePatchInput = vi.fn(() => {
       expect(staged).toBe(true);
-      return { preResolvedBaseImageMetadata: resolutionMetadata } as never;
+      return {
+        fromDockerfile: trustedDockerfile,
+        preResolvedBaseImageMetadata: resolutionMetadata,
+      } as never;
     });
     const resolveSandboxBuildPatch = vi.fn(async (input: Record<string, unknown>) => {
+      expect(input.fromDockerfile).toBeNull();
       expect(input.preResolvedBaseImageMetadata).toBe(resolutionMetadata);
       expect(input.stagedDockerfile).toBe("/tmp/nemoclaw-staged-context/Dockerfile");
       return { buildId: "dcode-build", dashboardRemoteBindPrepared: false };
@@ -362,8 +372,9 @@ describe("managed workload onboard orchestration", () => {
         agent: {
           name: "langchain-deepagents-code",
           displayName: "LangChain Deep Agents Code",
+          dockerfilePath: trustedDockerfile,
         },
-        fromDockerfile: null,
+        fromDockerfile: trustedDockerfile,
         createAgentSandbox: () => {
           staged = true;
           return {

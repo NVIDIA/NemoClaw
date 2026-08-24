@@ -473,11 +473,15 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   } else {
     const buildContext = requireLegacyBuildContext(legacyBuildContext);
     input.dependencies.prepareSandboxBuildPatchConfig({ configuredMessagingChannels });
+    const patchInput = input.legacy.resolvePatchInput();
     const patch = await (input.dependencies.resolveSandboxBuildPatch ?? resolveSandboxBuildPatch)({
       // Build-context staging resolves managed-agent base-image provenance.
       // Read the patch input only after that boundary so the final image gets
       // the exact metadata produced by the same staging operation.
-      ...input.legacy.resolvePatchInput(),
+      ...patchInput,
+      // An explicit path to the checked-in agent Dockerfile is staged through
+      // the trusted agent builder. Preserve that classification at patch time.
+      fromDockerfile: buildContext.origin === "generated" ? null : patchInput.fromDockerfile,
       selectedGpuRoute: initialGpuRoute,
       stagedDockerfile: buildContext.stagedDockerfile,
     });

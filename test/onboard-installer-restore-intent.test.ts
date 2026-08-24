@@ -101,7 +101,14 @@ registry.removeSandbox = () => true;
 
 sandboxState.getLatestBackup = (name) => {
   events.push({ kind: "getLatestBackup", name });
-  return { backupPath: PRE_UPGRADE_BACKUP, timestamp: "2026-05-25T00:00:00Z" };
+  return {
+    agentType: "openclaw",
+    dir: "/sandbox/.openclaw",
+    openclawImagePluginInstalls: [],
+    reconcileOpenClawImagePluginProvenance: true,
+    backupPath: PRE_UPGRADE_BACKUP,
+    timestamp: "2026-05-25T00:00:00Z",
+  };
 };
 sandboxState.backupSandboxState = (name) => {
   events.push({ kind: "backup", name });

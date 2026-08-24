@@ -53,9 +53,14 @@ runner.runCapture = (command) => {
   // Existing sandbox that is NOT ready
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
   if (_n(command).includes("sandbox list")) return _deleted ? "" : "my-assistant NotReady";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
+registry.getSandbox = () => ({
+  name: "my-assistant",
+  toolDisclosure: "progressive",
+  fromDockerfile: ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
+});
 childProcess.spawn = () => {
   throw new Error("unexpected sandbox create");
 };
@@ -318,7 +323,11 @@ sandboxState.backupSandboxState = (name) => {
     failedDirs: [],
     backedUpFiles: ["UPGRADE_MARKER.md"],
     failedFiles: [],
-    manifest: { backupPath: "/tmp/fake-backup-path", timestamp: "2026-05-25T00:00:00Z" },
+    manifest: {
+      agentType: "openclaw", dir: "/sandbox/.openclaw",
+      openclawImagePluginInstalls: [], reconcileOpenClawImagePluginProvenance: true,
+      backupPath: "/tmp/fake-backup-path", timestamp: "2026-05-25T00:00:00Z",
+    },
   };
 };
 sandboxState.restoreRecreatedSandboxState = (name, backupPath, options) => {
@@ -409,7 +418,7 @@ const { createSandbox } = require(${onboardPath});
     const restoreEvent = events[restoreIndex];
     assert.equal(restoreEvent?.backupPath, "/tmp/fake-backup-path", "restore must use backup path");
     assert.equal(restoreEvent?.options?.targetAgentType, "openclaw");
-    assert.equal(restoreEvent?.options?.freshOpenClawImagePluginInstalls, undefined);
+    assert.deepEqual(restoreEvent?.options?.freshOpenClawImagePluginInstalls, []);
   });
 
   it("recreate-sandbox with NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 skips backup", {
@@ -617,7 +626,11 @@ sandboxState.backupSandboxState = (name) => {
     failedDirs: [],
     backedUpFiles: ["UPGRADE_MARKER.md"],
     failedFiles: [],
-    manifest: { backupPath: "/tmp/fake-backup-notready", timestamp: "2026-05-25T00:00:00Z" },
+    manifest: {
+      agentType: "openclaw", dir: "/sandbox/.openclaw",
+      openclawImagePluginInstalls: [], reconcileOpenClawImagePluginProvenance: true,
+      backupPath: "/tmp/fake-backup-notready", timestamp: "2026-05-25T00:00:00Z",
+    },
   };
 };
 sandboxState.restoreRecreatedSandboxState = (name, backupPath) => {
