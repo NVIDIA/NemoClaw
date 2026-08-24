@@ -12,6 +12,7 @@ import { assertExitZero as expectExitZero, resultText } from "../fixtures/client
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import YAML from "yaml";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { hostAddressForSandbox } from "./mcp-bridge-sandbox.ts";
@@ -308,8 +309,15 @@ async function expectPolicyAbsent(
     timeoutMs: 90_000,
   });
   expectExitZero(result, "inspect credential-window policy after binding removal");
+  const parsedPolicy = YAML.parse(result.stdout);
+  expect(
+    parsedPolicy?.network_policies &&
+      typeof parsedPolicy.network_policies === "object" &&
+      !Array.isArray(parsedPolicy.network_policies),
+    "expected a complete live policy document after binding removal",
+  ).toBe(true);
   const policyNames = getNetworkPolicyNames(result.stdout);
-  expect(policyNames, "expected an unambiguous live policy document after binding removal").not.toBeNull();
+  expect(policyNames).not.toBeNull();
   expect(policyNames).not.toContain(policyName);
 }
 
