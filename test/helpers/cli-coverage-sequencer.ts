@@ -42,7 +42,7 @@ const cliCoverageProjects = new Set(["cli", "integration", "e2e-support"]);
 // Integration coverage is serialized, so it needs an independent salt instead
 // of relying on combined weight from the parallel CLI and E2E-support lanes.
 const stableShardSalt = "7257";
-const integrationShardSalt = "12432";
+const integrationShardSalt = "2015";
 const e2eSupportShardSalt = "13930";
 // Only measured outliers are stored; new and ordinary files share the
 // conservative fallback used to estimate each stable shard's load.
