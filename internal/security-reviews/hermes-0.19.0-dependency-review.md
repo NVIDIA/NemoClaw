@@ -200,7 +200,7 @@ Managed capability-union images add a separate six-package Teams overlay to that
 The existing base already supplies the requested `aiohttp==3.14.3`, so the union does not add a second aiohttp artifact.
 The Dockerfile binds seven exact PyPI wheels by SHA-256: five architecture-neutral wheels and one architecture-specific Dependency Injector wheel for each of amd64 and arm64.
 The four Microsoft Teams wheels and MSAL declare MIT; Dependency Injector ships the BSD 3-Clause license.
-For the union-enabled build, the selected wheel stage is mounted read-only and installed with BuildKit networking disabled plus `UV_OFFLINE=true` and `UV_FIND_LINKS` restricted to that mount.
+For the union-enabled build, the selected wheel stage is copied into `/opt/nemoclaw-hermes-teams-wheels`, and the overlay is resolved with `UV_OFFLINE=true` and `UV_FIND_LINKS` restricted to that copied directory before the directory is removed in the same `RUN` instruction.
 The union-disabled selector instead resolves an empty scratch stage, so an ordinary custom-plan build does not fetch or depend on the managed-image wheel graph.
 The recorded 95-package amd64 and arm64 capability-union evidence predates ACP and does not validate this candidate.
 Trusted base-image jobs from source commit `a42a7717c8e2d13c0c16465f8d06b6aab1e86cb3` installed and checked 90 distributions on both amd64 and arm64, identified `agent-client-protocol==0.9.0`, and completed `hermes acp --check`.
