@@ -173,6 +173,11 @@ describe("CLI dispatch", () => {
     expect(helpFlag.code).toBe(0);
     expect(helpFlag.out).toContain("nemoclaw inference <get|set>");
     expect(helpFlag.out).not.toContain("command inference not found");
+
+    const helpCommand = run("inference help 2>&1");
+    expect(helpCommand.code).toBe(0);
+    expect(helpCommand.out).toContain("nemoclaw inference <get|set>");
+    expect(helpCommand.out).not.toContain("command inference not found");
   });
 
   it("agents list exits 0 and lists global agent runtimes", () => {
