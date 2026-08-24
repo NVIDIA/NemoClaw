@@ -49,7 +49,7 @@ import path from "node:path";
 import tls from "node:tls";
 import { pathToFileURL } from "node:url";
 
-const [runnerPath, blueprintRoot, ambientRoot] = process.argv.slice(2);
+const [runnerPath, blueprintRoot, ambientRoot, credentialPath] = process.argv.slice(2);
 const effects = [];
 const forbid = (kind) => (..._args) => {
   effects.push(kind);
@@ -71,8 +71,10 @@ tls.connect = forbid("network");
 globalThis.fetch = forbid("network");
 
 const ambientPrefix = path.resolve(ambientRoot) + path.sep;
+const resolvedCredentialPath = path.resolve(credentialPath);
+const credentialDescriptors = new Set();
 const originalReaders = new Map();
-for (const name of ["accessSync", "lstatSync", "openSync", "readFileSync", "readdirSync", "statSync"]) {
+for (const name of ["accessSync", "lstatSync", "readdirSync", "statSync"]) {
   originalReaders.set(name, fs[name]);
   fs[name] = (...args) => {
     const candidate = args[0];
@@ -83,6 +85,40 @@ for (const name of ["accessSync", "lstatSync", "openSync", "readFileSync", "read
     return originalReaders.get(name)(...args);
   };
 }
+const originalOpenSync = fs.openSync;
+fs.openSync = (...args) => {
+  const descriptor = originalOpenSync(...args);
+  if (typeof args[0] === "string" && path.resolve(args[0]) === resolvedCredentialPath) {
+    credentialDescriptors.add(descriptor);
+  }
+  return descriptor;
+};
+const originalCloseSync = fs.closeSync;
+fs.closeSync = (descriptor) => {
+  credentialDescriptors.delete(descriptor);
+  return originalCloseSync(descriptor);
+};
+const originalReadFileSync = fs.readFileSync;
+fs.readFileSync = (...args) => {
+  const candidate = args[0];
+  if (typeof candidate === "string" && path.resolve(candidate) === resolvedCredentialPath) {
+    effects.push("authentication-content-read");
+    throw new Error("forbidden authentication content read");
+  }
+  if (typeof candidate === "string" && path.resolve(candidate).startsWith(ambientPrefix)) {
+    effects.push("ambient-gateway-read");
+    throw new Error("forbidden ambient gateway read");
+  }
+  return originalReadFileSync(...args);
+};
+const originalReadSync = fs.readSync;
+fs.readSync = (descriptor, ...args) => {
+  if (credentialDescriptors.has(descriptor)) {
+    effects.push("authentication-content-read");
+    throw new Error("forbidden authentication content read");
+  }
+  return originalReadSync(descriptor, ...args);
+};
 for (const name of [
   "appendFileSync",
   "chmodSync",
@@ -270,7 +306,7 @@ describe("packaged Blueprint Runner external target", () => {
         writeRuntimeProbe(probePath);
         const probe = spawnSync(
           process.execPath,
-          [probePath, installedRunner, blueprintRoot, ambientRoot],
+          [probePath, installedRunner, blueprintRoot, ambientRoot, privateAuthenticationPath],
           {
             cwd: runtimeRoot,
             encoding: "utf8",
