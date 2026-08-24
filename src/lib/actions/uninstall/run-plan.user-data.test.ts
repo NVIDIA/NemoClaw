@@ -515,6 +515,35 @@ describe("uninstall run plan", () => {
       }
     });
 
+    it("reports abandoned staged state before an uninstall retry", () => {
+      const { tmpHome, stateDir } = setupStateDir();
+      const stagingRoot = fs.mkdtempSync(
+        path.join(tmpHome, `.${path.basename(stateDir)}-cleanup-`),
+      );
+      const stagedTarget = path.join(stagingRoot, "content");
+      fs.renameSync(stateDir, stagedTarget);
+      try {
+        const logs: string[] = [];
+        const warnings: string[] = [];
+        const result = runUninstallPlan(
+          { assumeYes: true, deleteModels: false, keepOpenShell: true },
+          preserveCaseDeps(tmpHome, logs, { warnings }),
+        );
+
+        expect(result.exitCode).toBe(1);
+        expect(fs.existsSync(stateDir)).toBe(false);
+        expectPreservedEntries(stagedTarget);
+        const warningText = warnings.join("\n");
+        expect(warningText).toContain(`Cleanup cannot continue because ${stateDir} is absent`);
+        expect(warningText).toContain(`unreconciled staging remains at ${stagedTarget}`);
+        expect(warningText).toContain("Do not retry uninstall");
+        expect(warningText).toContain(`move it back to ${stateDir}`);
+        expect(logs).not.toContain("Claws retracted. Until next time.");
+      } finally {
+        fs.rmSync(tmpHome, { recursive: true, force: true });
+      }
+    });
+
     it("refuses to follow or remove ~/.nemoclaw when it is a symlink", () => {
       const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-"));
       const realTarget = fs.mkdtempSync(

@@ -406,13 +406,67 @@ function dormantHostGlobalLifecycleState(sharedRoot: string): boolean {
   }
 }
 
+function findUnreconciledCleanupTargets(target: string): readonly string[] {
+  const parent = path.dirname(target);
+  const prefix = `.${path.basename(target)}-cleanup-`;
+  let parentIdentity: fs.BigIntStats;
+  try {
+    parentIdentity = fs.lstatSync(parent, { bigint: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  if (parentIdentity.isSymbolicLink() || !parentIdentity.isDirectory()) {
+    throw new Error("parent is not a real directory");
+  }
+
+  const stagedTargets: string[] = [];
+  for (const entry of fs.readdirSync(parent)) {
+    if (!entry.startsWith(prefix)) continue;
+    const stagingRoot = path.join(parent, entry);
+    const stagedTarget = path.join(stagingRoot, "content");
+    try {
+      const rootBefore = fs.lstatSync(stagingRoot, { bigint: true });
+      if (rootBefore.isSymbolicLink() || !rootBefore.isDirectory()) continue;
+      const staged = fs.lstatSync(stagedTarget, { bigint: true });
+      const rootAfter = fs.lstatSync(stagingRoot, { bigint: true });
+      if (
+        staged.isDirectory() &&
+        !staged.isSymbolicLink() &&
+        sameDirectoryIdentity(rootBefore, rootAfter)
+      ) {
+        stagedTargets.push(stagedTarget);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  if (!sameDirectoryIdentity(parentIdentity, fs.lstatSync(parent, { bigint: true }))) {
+    throw new Error("parent changed during inspection");
+  }
+  return stagedTargets;
+}
+
 function removePathExcept(
   target: string,
   preserve: readonly string[],
   deps: Required<Pick<UninstallRunDeps, "existsSync" | "log" | "rmSync">> &
     Pick<UninstallRuntime, "warn">,
 ): boolean {
-  if (!deps.existsSync(target)) return true;
+  if (!deps.existsSync(target)) {
+    try {
+      const stagedTargets = findUnreconciledCleanupTargets(target);
+      if (stagedTargets.length === 0) return true;
+      deps.warn(
+        `Cleanup cannot continue because ${target} is absent and unreconciled staging remains at ${stagedTargets.join(", ")}. Do not retry uninstall until you inspect both paths without following links. If a staging entry is the intended directory, move it back to ${target}; otherwise, stop and reconcile the paths before continuing.`,
+      );
+    } catch (error) {
+      deps.warn(
+        `Failed to inspect interrupted cleanup state for ${target}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    return false;
+  }
   if (preserve.length === 0) {
     deps.rmSync(target, { force: true, recursive: true });
     deps.log(`Removed ${target}`);
