@@ -30,6 +30,16 @@ const copyInstruction =
 const patchCommand =
   "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts";
 const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
+const hermesTarCacheSeedArguments = [
+  ...npmRootArguments,
+  "--archive",
+  "/tmp/nemoclaw-bundled-npm-tar.tgz",
+] as const;
+const tarPatchArgumentsByDockerfile = {
+  Dockerfile: npmRootArguments,
+  "agents/hermes/Dockerfile": hermesTarCacheSeedArguments,
+  "agents/langchain-deepagents-code/Dockerfile": npmRootArguments,
+} as const;
 
 describe("bundled npm ip-address image remediation contract", () => {
   it("binds the replacement to the reviewed npm and registry artifact", () => {
@@ -65,7 +75,7 @@ describe("bundled npm ip-address image remediation contract", () => {
     const tarPatch = requireSingleReviewedDockerfileRunCommand(
       source,
       "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
-      npmRootArguments,
+      tarPatchArgumentsByDockerfile[file],
     ).commandStart;
     const bracePatch = requireSingleReviewedDockerfileRunCommand(
       source,

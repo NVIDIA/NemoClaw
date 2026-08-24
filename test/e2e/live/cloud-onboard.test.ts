@@ -12,6 +12,7 @@ import {
   cleanupCorporateCaFixture,
   corporateCaMergeProbeScript,
   createCorporateCaFixture,
+  registeredCorporateCaWorkloadKind,
 } from "../fixtures/corporate-ca.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
@@ -21,15 +22,42 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-cloud-onboard";
 const CHECKS_DIR = path.join(REPO_ROOT, "test/e2e/e2e-cloud-experimental/checks");
 const LIVE_TIMEOUT_MS = 60 * 60_000;
-const REASONING_MODEL_PROBE = String.raw`
+const REASONING_PROPAGATION_PROBE = String.raw`
 const fs = require("node:fs");
 const expectedModel = process.argv[1];
+const runtimeEnvironmentPath = "/run/nemoclaw/managed-startup-runtime.env";
+const runtimeEnvironmentStat = fs.lstatSync(runtimeEnvironmentPath);
+if (
+  !runtimeEnvironmentStat.isFile() ||
+  runtimeEnvironmentStat.isSymbolicLink() ||
+  runtimeEnvironmentStat.uid !== 0 ||
+  runtimeEnvironmentStat.gid !== 0 ||
+  (runtimeEnvironmentStat.mode & 0o777) !== 0o444
+) {
+  throw new Error("managed startup runtime environment is not a root-owned mode 0444 regular file");
+}
+const runtimeReasoningLines = fs
+  .readFileSync(runtimeEnvironmentPath, "utf8")
+  .split(/\r?\n/u)
+  .filter((line) => line.startsWith("export NEMOCLAW_REASONING="));
+if (runtimeReasoningLines.length !== 1) {
+  throw new Error("managed startup runtime environment must export NEMOCLAW_REASONING exactly once");
+}
+const runtimeReasoningMatch = /^export NEMOCLAW_REASONING='(true|false)'$/u.exec(
+  runtimeReasoningLines[0],
+);
+if (runtimeReasoningMatch === null) {
+  throw new Error("managed startup runtime environment has an invalid NEMOCLAW_REASONING export");
+}
 const config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));
 const models = config.models?.providers?.inference?.models ?? [];
 const model = models.find((entry) => entry?.id === expectedModel);
-const evidence = { modelReasoning: model?.reasoning };
+const evidence = {
+  runtimeReasoning: runtimeReasoningMatch[1],
+  modelReasoning: model?.reasoning,
+};
 console.log(JSON.stringify(evidence));
-process.exit(evidence.modelReasoning === true ? 0 : 1);
+process.exit(evidence.runtimeReasoning === "true" && evidence.modelReasoning === true ? 0 : 1);
 `;
 
 validateSandboxName(SANDBOX_NAME);
@@ -136,7 +164,7 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
       "successful onboard removes plaintext credentials.json",
       "sandbox appears healthy after cloud onboarding",
       "explicit corporate CA source is baked and merged with OpenShell trust inside the sandbox",
-      "validated compatible-endpoint reasoning reaches both the built image environment and OpenClaw model metadata",
+      "validated compatible-endpoint reasoning reaches the authenticated runtime handoff and OpenClaw model metadata",
       "installed CLI creates a non-empty diagnostics archive for the registered sandbox",
       "cloud split checks cover inference.local, security leak checks, and Landlock/read-only behavior",
       "cleanup verifies sandbox removal",
@@ -241,33 +269,21 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   expect(list.exitCode, resultText(list)).toBe(0);
   expect(list.stdout).toContain(SANDBOX_NAME);
 
-  const corporateCaProbe = await sandbox.execShell(SANDBOX_NAME, corporateCaMergeProbeScript(), {
-    artifactName: "phase-2-corporate-ca-merge-probe",
-    env: testEnv(),
-    timeoutMs: 60_000,
-  });
-  expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
-
-  progress.phase("verify compatible endpoint reasoning propagation");
-  const imageEnvironment = await host.command(
-    "bash",
-    [
-      "-lc",
-      `set -eu; container_id="$(docker ps --filter ${shellQuote(
-        `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
-      )} --format '{{.ID}}' | head -n 1)"; test -n "$container_id"; reasoning="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container_id" | sed -n 's/^NEMOCLAW_REASONING=//p')"; case "$reasoning" in true|false) printf '%s\n' "$reasoning" ;; *) exit 1 ;; esac`,
-    ],
+  const corporateCaProbe = await sandbox.execShell(
+    SANDBOX_NAME,
+    corporateCaMergeProbeScript(registeredCorporateCaWorkloadKind(SANDBOX_NAME, testHome)),
     {
-      artifactName: "phase-2-compatible-endpoint-reasoning-image-environment",
+      artifactName: "phase-2-corporate-ca-merge-probe",
       env: testEnv(),
       timeoutMs: 60_000,
     },
   );
-  expect(imageEnvironment.exitCode, resultText(imageEnvironment)).toBe(0);
-  const imageReasoning = imageEnvironment.stdout.trim();
+  expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
+
+  progress.phase("verify compatible endpoint reasoning propagation");
   const reasoningProbe = await sandbox.exec(
     SANDBOX_NAME,
-    ["node", "-e", REASONING_MODEL_PROBE, hosted.model],
+    ["node", "-e", REASONING_PROPAGATION_PROBE, hosted.model],
     {
       artifactName: "phase-2-compatible-endpoint-reasoning",
       env: testEnv(),
@@ -276,11 +292,11 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   );
   expect(reasoningProbe.exitCode, resultText(reasoningProbe)).toBe(0);
   const reasoningEvidence = JSON.parse(reasoningProbe.stdout.trim()) as {
+    runtimeReasoning: string;
     modelReasoning: boolean;
   };
-  const combinedReasoningEvidence = { imageReasoning, ...reasoningEvidence };
-  expect(combinedReasoningEvidence).toEqual({ imageReasoning: "true", modelReasoning: true });
-  await artifacts.writeJson("compatible-endpoint-reasoning.json", combinedReasoningEvidence);
+  expect(reasoningEvidence).toEqual({ runtimeReasoning: "true", modelReasoning: true });
+  await artifacts.writeJson("compatible-endpoint-reasoning.json", reasoningEvidence);
 
   progress.phase("collect scoped diagnostics from onboarded sandbox");
   const diagnosticsArchive = path.join(installCwd, "cloud-onboard-debug.tar.gz");

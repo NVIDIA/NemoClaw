@@ -3,6 +3,7 @@
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -11,6 +12,7 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { TERMINOLOGY_TRACE_TOOL } from "../tools/pr-review-advisor/terminology.mts";
 import {
   runSpecialistAdvisor,
+  writeSpecialistDiff,
   writeSpecialistSummary,
 } from "../tools/pr-review-advisor/run-specialist.mts";
 import type { RunAdvisorResult, RunReadOnlyAdvisorOptions } from "../tools/advisors/session.mts";
@@ -18,6 +20,7 @@ import {
   ADVISOR_INTERESTS,
   buildSpecialistInvestigateTurn,
   parseAdvisorInterest,
+  readAdvisorSpecialists,
   type AdvisorInterest,
 } from "../tools/pr-review-advisor/specialists.mts";
 import type { InvestigateTurnContext } from "../tools/pr-review-advisor/investigate-turn.mts";
@@ -46,17 +49,111 @@ const context: InvestigateTurnContext = {
 };
 
 describe("PR review advisor specialist prompts", () => {
-  it("parses exactly the five supported interests (#9949)", () => {
-    expect(ADVISOR_INTERESTS).toEqual([
-      "behavior",
-      "trust",
-      "design-architecture",
-      "operations",
-      "documentation",
-    ]);
+  it("writes diff evidence to a new owner-only runtime path", () => {
+    const configDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-config-"));
+    onTestFinished(() => fs.rmSync(configDir, { recursive: true, force: true }));
+    const directory = path.join(configDir, "context");
+    const expected = path.join(directory, "diff.patch");
+
+    const file = writeSpecialistDiff(configDir, "diff evidence");
+
+    expect(file).toBe(expected);
+    expect(fs.readFileSync(file, "utf8")).toBe("diff evidence");
+    expect(fs.statSync(directory).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it("tightens an existing specialist diff path", () => {
+    const configDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-config-"));
+    onTestFinished(() => fs.rmSync(configDir, { recursive: true, force: true }));
+    const directory = path.join(configDir, "context");
+    const expected = path.join(directory, "diff.patch");
+    fs.mkdirSync(directory, { mode: 0o755 });
+    fs.writeFileSync(expected, "stale", { mode: 0o644 });
+
+    writeSpecialistDiff(configDir, "diff evidence");
+
+    expect(fs.readFileSync(expected, "utf8")).toBe("diff evidence");
+    expect(fs.statSync(directory).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(expected).mode & 0o777).toBe(0o600);
+  });
+
+  it("parses every discovered specialist interest (#9949)", () => {
     expect(ADVISOR_INTERESTS.map(parseAdvisorInterest)).toEqual(ADVISOR_INTERESTS);
-    expect(() => parseAdvisorInterest("security")).toThrowError(
-      "interest must be one of: behavior, trust, design-architecture, operations, documentation",
+    expect(() => parseAdvisorInterest("missing-specialist")).toThrowError(
+      `interest must be one of: ${ADVISOR_INTERESTS.join(", ")}`,
+    );
+  });
+
+  it("renders the workflow matrix without installed packages", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "specialist-renderer-"));
+    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+    expect(() =>
+      execFileSync(process.execPath, ["--eval", "import('@earendil-works/pi-coding-agent')"], {
+        cwd: directory,
+        stdio: "ignore",
+      }),
+    ).toThrow();
+    const sourceDirectory = path.join(process.cwd(), "tools/pr-review-advisor");
+    fs.copyFileSync(
+      path.join(sourceDirectory, "render-specialist-matrix.mts"),
+      path.join(directory, "render-specialist-matrix.mts"),
+    );
+    fs.copyFileSync(
+      path.join(sourceDirectory, "specialist-catalog.mts"),
+      path.join(directory, "specialist-catalog.mts"),
+    );
+    fs.cpSync(path.join(sourceDirectory, "specialists"), path.join(directory, "specialists"), {
+      recursive: true,
+    });
+
+    const output = execFileSync(
+      process.execPath,
+      ["--experimental-strip-types", "render-specialist-matrix.mts"],
+      { cwd: directory, encoding: "utf8", env: { PATH: process.env.PATH } },
+    );
+    const matrix = JSON.parse(output) as Array<{ interest: string; sandbox_name: string }>;
+
+    expect(matrix.map(({ interest }) => interest)).toEqual(ADVISOR_INTERESTS);
+    expect(matrix.every(({ sandbox_name: sandboxName }) => sandboxName.length <= 19)).toBe(true);
+  });
+
+  it("discovers a specialist from one Markdown prompt file", () => {
+    const directory = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-prompts-"));
+    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+    fs.writeFileSync(
+      path.join(directory, "reliability.md"),
+      "Decide whether the change remains reliable.\n",
+    );
+
+    expect(readAdvisorSpecialists(directory)).toEqual([
+      {
+        interest: "reliability",
+        label: "Reliability",
+        prompt: "Decide whether the change remains reliable.",
+        sandboxName: expect.stringMatching(/^pr-adv-sp-reli-[0-9a-f]{4}$/u),
+      },
+    ]);
+  });
+
+  it("gives long specialist names distinct sandbox names", () => {
+    const directory = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-prompts-"));
+    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+    fs.writeFileSync(path.join(directory, "design-architecture.md"), "Review one design.\n");
+    fs.writeFileSync(path.join(directory, "design-archive.md"), "Review another design.\n");
+
+    const names = readAdvisorSpecialists(directory).map(({ sandboxName }) => sandboxName);
+    expect(new Set(names).size).toBe(2);
+    expect(names.every((name) => name.length <= 19)).toBe(true);
+  });
+
+  it("rejects an empty specialist prompt", () => {
+    const directory = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-prompts-"));
+    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+    fs.writeFileSync(path.join(directory, "reliability.md"), "\n");
+
+    expect(() => readAdvisorSpecialists(directory)).toThrowError(
+      "Specialist prompt is empty: reliability",
     );
   });
 
@@ -179,13 +276,14 @@ describe("PR review advisor specialist prompts", () => {
       Object.fromEntries(
         captured.map(([interest, tools]) => [interest, tools.map(({ name }) => name)]),
       ),
-    ).toEqual({
-      behavior: [],
-      trust: [],
-      "design-architecture": [],
-      operations: [],
-      documentation: [TERMINOLOGY_TRACE_TOOL],
-    });
+    ).toEqual(
+      Object.fromEntries(
+        ADVISOR_INTERESTS.map((interest) => [
+          interest,
+          interest === "documentation" ? [TERMINOLOGY_TRACE_TOOL] : [],
+        ]),
+      ),
+    );
     const documentationTools =
       captured.find(([interest]) => interest === "documentation")?.[1] ?? [];
     const trace = documentationTools[0] as CallableTool;

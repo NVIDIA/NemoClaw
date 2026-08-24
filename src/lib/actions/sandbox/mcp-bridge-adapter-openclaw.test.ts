@@ -77,6 +77,24 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
     expect(
       mcporterHeadersMatchExpected(
         {
+          Authorization: "Bearer openshell:resolve:env:v42_OTHER_TOKEN",
+          accept: "application/json, text/event-stream",
+        },
+        expected,
+      ),
+    ).toBe(false);
+    expect(
+      mcporterHeadersMatchExpected(
+        {
+          Authorization: `Bearer openshell:resolve:env:v${"1".repeat(21)}_GITHUB_TOKEN`,
+          accept: "application/json, text/event-stream",
+        },
+        expected,
+      ),
+    ).toBe(false);
+    expect(
+      mcporterHeadersMatchExpected(
+        {
           ...expected,
           accept: "application/json, text/event-stream",
           "x-unowned": "drift",

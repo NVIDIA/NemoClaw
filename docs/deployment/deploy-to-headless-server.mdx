@@ -248,6 +248,12 @@ The printed command quotes the sandbox name so that the shell treats it as one a
 It then verifies or repairs the in-sandbox agent process and host forwards without opening a shell.
 It does not restart or replace the shared host OpenShell gateway.
 
+The command prints one `Probe timing:` line with elapsed milliseconds for `readiness`, `authority`, `lifecycle`, `gateway`, `processes`, `forward`, `inference`, `pairing`, and `publication` stages.
+Use the stage values to identify where a slow or failed deployment spent its time.
+The line also reports lifecycle and forward actions and names the failed stage when available.
+Timing collection is diagnostic and fail-open.
+The command exit status remains the readiness decision: status `0` means the complete probe passed, and any nonzero status means the host is not ready for launch.
+
 Readiness requires all of these results:
 
 - The exact OpenShell sandbox row is `Ready` or `Running`.

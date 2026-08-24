@@ -280,6 +280,7 @@ def _tool_description(tool: BaseTool | dict[str, Any]) -> str:
 def assert_unique_callable_tool_names(
     tools: Sequence[object] | None,
     mcp_server_info: Sequence[object] | None,
+    mcp_tools: Sequence[object] | None = None,
 ) -> None:
     """Reject ambiguous or non-managed registrations before graph creation.
 
@@ -287,8 +288,9 @@ def assert_unique_callable_tool_names(
     registry keyed by resolved callable name. Its model schema selection and
     executor lookup do not share the same duplicate-name rule, so accepting two
     implementations can bind one schema and execute another. Keep the executor
-    registry and MCP metadata as separate views: one loaded MCP tool normally
-    appears once in each, while duplicates within either view are ambiguous.
+    registry, loaded MCP tools, and MCP metadata as separate views: one loaded
+    MCP tool normally appears in each view, while duplicates within one view are
+    ambiguous.
     """
     collisions: set[str] = set()
     registered_owners: dict[str, list[str]] = {}
@@ -331,6 +333,23 @@ def assert_unique_callable_tool_names(
         if len(owners) > 1:
             collisions.add(
                 f"resolved callable name {name!r} has multiple MCP owners "
+                f"({', '.join(owners)})"
+            )
+
+    loaded_mcp_owners: dict[str, list[str]] = {}
+    for index, tool in enumerate(mcp_tools or ()):
+        name = _tool_name(tool)
+        if name is None:
+            continue
+        owner = f"loaded MCP tool[{index}]"
+        loaded_mcp_owners.setdefault(name, []).append(owner)
+        if name in CORE_TOOL_NAMES:
+            collisions.add(f"{owner} is a non-managed owner of reserved name {name!r}")
+
+    for name, owners in loaded_mcp_owners.items():
+        if len(owners) > 1:
+            collisions.add(
+                f"resolved callable name {name!r} has multiple loaded MCP implementations "
                 f"({', '.join(owners)})"
             )
 

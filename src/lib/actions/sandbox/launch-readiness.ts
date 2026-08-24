@@ -903,6 +903,7 @@ function resolveOpenClawPairingSettlementTarget(
   entry: SandboxEntry | null,
   deps: LaunchReadinessDeps,
   requiredGeneration?: string,
+  allowUnknownCustomVersion = false,
 ): OpenClawPairingSettlementTarget | null {
   // Policy eligibility belongs to the settlement caller. Ordinary onboarding
   // permits policy skip, while Portable pairing requires the finalized marker.
@@ -927,13 +928,21 @@ function resolveOpenClawPairingSettlementTarget(
   } catch {
     return null;
   }
-  const version = normalizedString(entry.agentVersion);
+  const recordedVersion = normalizedString(entry.agentVersion);
+  // Custom Dockerfile workloads intentionally have no managed agent version:
+  // registration must not stamp the manifest's version onto unreviewed image
+  // contents. Ordinary settlement does not use the version to select a
+  // command shape, so its caller may preserve that unknown value as the empty
+  // string while retaining the exact registry and live-lifecycle checks.
+  const customDockerfile = normalizedString(entry.fromDockerfile);
+  const version =
+    recordedVersion ?? (allowUnknownCustomVersion && customDockerfile ? "" : null);
   const expectedVersion = normalizedString(agent.expected_version);
   const stateDirectory = normalizedString(agent.config?.dir);
   const lifecycleGeneration = normalizedString(entry.lifecycleGeneration);
   const lifecycleLiveIdentityFingerprint = normalizedString(entry.lifecycleLiveIdentityFingerprint);
   if (
-    !version ||
+    version === null ||
     !expectedVersion ||
     !stateDirectory ||
     !lifecycleGeneration ||
@@ -958,7 +967,13 @@ export function resolveOrdinaryOpenClawPairingTarget(
 ): OpenClawPairingSettlementTarget | null {
   try {
     const getSandbox = deps.getSandbox ?? registry.getSandbox;
-    return resolveOpenClawPairingSettlementTarget(sandboxName, getSandbox(sandboxName), deps);
+    return resolveOpenClawPairingSettlementTarget(
+      sandboxName,
+      getSandbox(sandboxName),
+      deps,
+      undefined,
+      true,
+    );
   } catch {
     return null;
   }

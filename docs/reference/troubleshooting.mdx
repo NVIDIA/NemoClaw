@@ -62,6 +62,27 @@ nvm use 22
 
 Then re-run the installer.
 
+### Installer Reports `No SHA-256 tool available (sha256sum/shasum)`
+
+The installer must verify the nvm installer before it installs or upgrades Node.js.
+It exits before running the downloaded script when neither `sha256sum` nor `shasum` is available.
+
+On Debian or Ubuntu, install `sha256sum` through `coreutils`:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y coreutils
+```
+
+On another Linux distribution, install its `coreutils` package.
+On macOS, `/usr/bin/shasum` is normally present; restore it through the operating system if it is missing.
+
+Verify that one supported tool is available, then rerun the installer:
+
+```bash
+command -v sha256sum || command -v shasum
+```
+
 ### Contributor Setup Fails with a JavaScript Heap Out-of-Memory Error
 
 This applies to a source checkout, not to an installed release.
@@ -3183,8 +3204,18 @@ sudo lsof -i :11435
 ```
 
 Stop the conflicting process and re-run `$$nemoclaw onboard`.
-The wizard cleans up stale proxy processes from previous runs automatically,
-so most failures resolve by retrying.
+The wizard cleans up stale proxy processes from previous runs automatically, so most failures resolve by retrying.
+
+If the proxy refuses to start because the backend also listens on a non-loopback interface, use the remediation that matches the reported backend:
+
+- For Ollama, bind the daemon to the reported loopback port with `OLLAMA_HOST=127.0.0.1:<port>`, then restart Ollama and rerun onboarding.
+- For an unauthenticated OpenAI-compatible endpoint, bind that endpoint server to a loopback address only on the reported port, then rerun onboarding.
+  Do not apply the Ollama setting to vLLM, llama-server, or another compatible endpoint.
+- If recovery cannot identify the backend type, bind the reported service and port to a loopback address only, then rerun onboarding.
+  The neutral diagnostic intentionally does not name Ollama.
+
+In every case, the refusal prevents a backend listener from bypassing the protected route's token check.
+For an IPv6 endpoint, keep it on its IPv6 loopback address instead of changing it to `127.0.0.1`.
 
 The proxy token is persisted to `~/.nemoclaw/ollama-proxy-token` with `0600`
 permissions.

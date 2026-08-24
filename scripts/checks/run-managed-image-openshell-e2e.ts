@@ -464,6 +464,18 @@ export function managedImageOpenShellProbe(
       'test "$(stat -c "%u:%g:%a" /usr/local/share/nemoclaw/corporate-ca.pem)" = "0:0:444"',
     ),
     probeStep(
+      "corporate CA system anchor must match the managed material",
+      "cmp -s /usr/local/share/nemoclaw/corporate-ca.pem /usr/local/share/ca-certificates/nemoclaw-corporate-ca-01.crt",
+    ),
+    probeStep(
+      "corporate CA system anchor owner, group, and mode must equal 0:0:444",
+      'test "$(stat -c "%u:%g:%a" /usr/local/share/ca-certificates/nemoclaw-corporate-ca-01.crt)" = "0:0:444"',
+    ),
+    probeStep(
+      "system trust must verify the managed corporate CA",
+      "openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt /usr/local/share/nemoclaw/corporate-ca.pem >/dev/null",
+    ),
+    probeStep(
       "managed startup CA bundle must exist and be nonempty",
       "test -s /run/nemoclaw/managed-startup-ca-bundle.pem",
     ),

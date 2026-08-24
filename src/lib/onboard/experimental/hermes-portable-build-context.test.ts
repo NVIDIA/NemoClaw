@@ -158,6 +158,11 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     ).toBe(true);
     expect(
       fs.existsSync(
+        path.join(first.buildContextPath, "src/lib/messaging/channels/teams/contract.ts"),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
         path.join(first.buildContextPath, "src/lib/messaging/managed-startup-placeholders.ts"),
       ),
     ).toBe(true);

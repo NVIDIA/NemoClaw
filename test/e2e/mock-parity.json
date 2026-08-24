@@ -101,6 +101,7 @@
       "fast": [
         "test/e2e/support/hermes-gpu-startup-fallback.test.ts",
         "test/e2e/support/hermes-gpu-startup-integrity.test.ts",
+        "test/e2e/support/hermes-gpu-startup-proof.test.ts",
         "test/e2e/support/hermes-workflow-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -229,9 +230,12 @@
         "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
         "src/lib/onboard/extra-provider-reconciliation.test.ts",
+        "src/lib/onboard/initial-policy-real-policy.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
+        "src/lib/onboard/managed-startup-image-runtime-handoff.test.ts",
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/onboard-extra-provider-reconciliation.test.ts",
+        "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -242,12 +246,15 @@
         "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
         "src/lib/onboard/extra-provider-reconciliation.test.ts",
+        "src/lib/onboard/initial-policy-real-policy.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-recreate-resume.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
+        "src/lib/onboard/managed-startup-image-runtime-handoff.test.ts",
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
         "src/lib/onboard/sandbox-readiness-tracing.test.ts",
         "test/onboard-extra-provider-reconciliation.test.ts",
+        "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/gateway-state.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
@@ -307,6 +314,9 @@
     {
       "live": "test/e2e/live/cloud-onboard.test.ts",
       "fast": [
+        "src/lib/onboard/initial-policy-real-policy.test.ts",
+        "src/lib/onboard/managed-startup-image-runtime-handoff.test.ts",
+        "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]

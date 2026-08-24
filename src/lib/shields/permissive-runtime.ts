@@ -106,6 +106,11 @@ export function buildRuntimePermissivePolicy(
   const liveRw = readStringList(live, "read_write");
   const liveRo = readStringList(live, "read_only");
   const managedMcpPolicies = deps.managedMcpPolicies ?? [];
+  const discordProviderName = deps.sandboxName
+    ? `${deps.sandboxName}-discord-bridge`
+    : null;
+  const preserveDiscordBinding =
+    discordProviderName !== null && policyUsesCredentialProvider(live, discordProviderName);
 
   // No live startup-sealed or filesystem state to carry forward — keep the
   // static path so the caller's apply path is unchanged unless exact managed
@@ -136,7 +141,7 @@ export function buildRuntimePermissivePolicy(
     }
     return basePermissivePath;
   }
-  if (deps.sandboxName !== undefined) {
+  if (deps.sandboxName !== undefined && preserveDiscordBinding) {
     const materialized = materializeMessagingPolicySandboxName(baseYaml, deps.sandboxName);
     if (materialized === null) {
       throw new Error("Cannot materialize the Shields-down credential provider binding");
@@ -152,6 +157,12 @@ export function buildRuntimePermissivePolicy(
       throw new Error("Cannot parse the Shields-down policy with credential provider bindings");
     }
     return basePermissivePath;
+  }
+  if (deps.sandboxName !== undefined && !preserveDiscordBinding) {
+    const networkPolicies = base.network_policies;
+    if (networkPolicies && typeof networkPolicies === "object" && !Array.isArray(networkPolicies)) {
+      delete (networkPolicies as Record<string, unknown>).discord;
+    }
   }
   const fsPolicy =
     base.filesystem_policy && typeof base.filesystem_policy === "object"
@@ -341,6 +352,30 @@ function safeYamlObject(text: string): Record<string, unknown> | null {
     return null;
   }
   return null;
+}
+
+function policyUsesCredentialProvider(
+  policy: Record<string, unknown> | null,
+  providerName: string,
+): boolean {
+  const networkPolicies = policy?.network_policies;
+  if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
+    return false;
+  }
+  for (const networkPolicy of Object.values(networkPolicies)) {
+    if (!networkPolicy || typeof networkPolicy !== "object" || Array.isArray(networkPolicy)) {
+      continue;
+    }
+    const endpoints = (networkPolicy as Record<string, unknown>).endpoints;
+    if (!Array.isArray(endpoints)) continue;
+    for (const endpoint of endpoints) {
+      if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
+      const binding = (endpoint as Record<string, unknown>).credential_binding;
+      if (!binding || typeof binding !== "object" || Array.isArray(binding)) continue;
+      if ((binding as Record<string, unknown>).provider === providerName) return true;
+    }
+  }
+  return false;
 }
 
 function readStringList(
