@@ -4,7 +4,131 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { setupOllamaLocalInference } from "./inference-providers/ollama-local";
-import { createProviderReviewDeps } from "./setup-inference";
+import { bindOpenAiProviderProfile, createProviderReviewDeps } from "./setup-inference";
+
+describe("bindOpenAiProviderProfile", () => {
+  it("imports the profile immediately before an OpenAI provider upsert", () => {
+    const events: string[] = [];
+    const runOpenshell = vi.fn(() => {
+      events.push("profile");
+      return { status: 0, stdout: "", stderr: "" };
+    });
+    const upsertProvider = vi.fn(() => {
+      events.push("upsert");
+      return { ok: true };
+    });
+    const profiledUpsert = bindOpenAiProviderProfile(
+      upsertProvider,
+      runOpenshell,
+      vi.fn(),
+      (code): never => {
+        throw new Error(`exit ${code}`);
+      },
+    );
+
+    expect(
+      profiledUpsert(
+        "compatible-endpoint",
+        "openai",
+        "COMPATIBLE_API_KEY",
+        "https://inference.example/v1",
+        { COMPATIBLE_API_KEY: "test-secret" },
+      ),
+    ).toEqual({ ok: true });
+
+    expect(events).toEqual(["profile", "upsert"]);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["provider", "profile", "import", "--file", expect.stringMatching(/openai\.yaml$/u)],
+      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+    );
+  });
+
+  it("does not import the OpenAI profile for another provider type", () => {
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const profiledUpsert = bindOpenAiProviderProfile(
+      upsertProvider,
+      runOpenshell,
+      vi.fn(),
+      (code): never => {
+        throw new Error(`exit ${code}`);
+      },
+    );
+
+    expect(
+      profiledUpsert(
+        "anthropic-prod",
+        "anthropic",
+        "ANTHROPIC_API_KEY",
+        "https://api.anthropic.com",
+        {},
+      ),
+    ).toEqual({ ok: true });
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      reason: "import failure",
+      results: [{ status: 1, stdout: "", stderr: "sensitive-import-output" }],
+      expected: "could not import the checked-in 'openai' inference provider profile",
+    },
+    {
+      reason: "export failure",
+      results: [
+        { status: 1, stdout: "", stderr: "provider profile already exists" },
+        { status: 1, stdout: "sensitive-export-output", stderr: "" },
+      ],
+      expected: "already exists but could not be read for validation",
+    },
+    {
+      reason: "incompatible profile",
+      results: [
+        { status: 1, stdout: "", stderr: "provider profile already exists" },
+        {
+          status: 0,
+          stdout: JSON.stringify({
+            id: "openai",
+            credentials: ["sensitive-profile-field"],
+            endpoints: [],
+            binaries: [],
+            inference_capable: true,
+          }),
+          stderr: "",
+        },
+      ],
+      expected: "does not match NemoClaw's endpointless inference contract",
+    },
+  ])("fails closed with fixed guidance for $reason", ({ results, expected }) => {
+    let resultIndex = 0;
+    const runOpenshell = vi.fn(() => results[resultIndex++]!);
+    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const error = vi.fn();
+    const profiledUpsert = bindOpenAiProviderProfile(
+      upsertProvider,
+      runOpenshell,
+      error,
+      (code): never => {
+        throw new Error(`exit ${code}`);
+      },
+    );
+
+    expect(() =>
+      profiledUpsert(
+        "compatible-endpoint",
+        "openai",
+        "COMPATIBLE_API_KEY",
+        "https://inference.example/v1",
+        {},
+      ),
+    ).toThrow("exit 1");
+
+    expect(upsertProvider).not.toHaveBeenCalled();
+    const output = error.mock.calls.flat().join("\n");
+    expect(output).toContain(expected);
+    expect(output).not.toMatch(/sensitive-(?:import|export|profile)-/u);
+  });
+});
 
 describe("createProviderReviewDeps", () => {
   it("prepares the Ollama proxy after review acceptance", async () => {
