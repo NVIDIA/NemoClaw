@@ -137,6 +137,7 @@ export interface HermesPortableOnboardingDeps<T> {
     authority: HermesPortableOpenShellExecutableAuthority,
   ) => void;
   readonly observeSandbox: () => HermesPortableSandboxObservation;
+  readonly delaySandboxReadyPublicationPoll?: (milliseconds: number) => Promise<void>;
   readonly createSandbox: (createArgv: readonly string[], buildContextPath: string) => Promise<T>;
   readonly readRegistry: () => SandboxEntry | null;
   readonly registerSandbox: (
@@ -541,6 +542,15 @@ function strictOpenShellText(value: string | Buffer): string {
   }
 }
 
+const HERMES_PORTABLE_READY_PUBLICATION_POLL_INTERVAL_MS = 1_000;
+const HERMES_PORTABLE_READY_PUBLICATION_MAX_POLLS = 10;
+const HERMES_PORTABLE_NOT_READY_DETAIL = "exact OpenShell sandbox is not Ready";
+function delayHermesPortableReadyPublicationPoll(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+}
+
 /** Prove gateway reachability before interpreting one exact not-found response as absence. */
 export function observeHermesPortableSandbox(
   sandboxName: string,
@@ -557,7 +567,7 @@ export function observeHermesPortableSandbox(
     const sandboxId = parseOpenShellSandboxId(output);
     const liveIdentityFingerprint = fingerprintOpenShellSandboxLiveIdentity(output);
     if (!/^Phase:\s*Ready\s*$/mu.test(output)) {
-      return { kind: "ambiguous", detail: "exact OpenShell sandbox is not Ready" };
+      return { kind: "ambiguous", detail: HERMES_PORTABLE_NOT_READY_DETAIL };
     }
     return sandboxId && liveIdentityFingerprint
       ? { kind: "present", sandboxId, liveIdentityFingerprint }
@@ -579,6 +589,25 @@ export function observeHermesPortableSandbox(
   return named.test(output) || coded
     ? { kind: "absent" }
     : { kind: "ambiguous", detail: "sandbox get did not prove exact sandbox absence" };
+}
+
+async function settleCreatedHermesPortableSandboxReadyPublication(
+  initialObservation: HermesPortableSandboxObservation,
+  observeSandbox: () => HermesPortableSandboxObservation,
+  delayPoll: (milliseconds: number) => Promise<void>,
+): Promise<HermesPortableSandboxObservation> {
+  let observation = initialObservation;
+  for (let poll = 0; poll < HERMES_PORTABLE_READY_PUBLICATION_MAX_POLLS; poll += 1) {
+    if (
+      observation.kind !== "ambiguous" ||
+      observation.detail !== HERMES_PORTABLE_NOT_READY_DETAIL
+    ) {
+      return observation;
+    }
+    await delayPoll(HERMES_PORTABLE_READY_PUBLICATION_POLL_INTERVAL_MS);
+    observation = observeSandbox();
+  }
+  return observation;
 }
 
 export function classifyHermesPortableRegistry(
@@ -1080,6 +1109,13 @@ export async function runHermesPortableOnboardingTransaction<T>(
         input.buildContext.assertCurrentSource();
         created = true;
         observation = observeSandbox();
+        observation = await settleCreatedHermesPortableSandboxReadyPublication(
+          observation,
+          observeSandbox,
+          deps.delaySandboxReadyPublicationPoll ?? delayHermesPortableReadyPublicationPoll,
+        );
+        buildContext.assertCurrent();
+        input.buildContext.assertCurrentSource();
       }
       if (observation.kind !== "present") {
         fail(

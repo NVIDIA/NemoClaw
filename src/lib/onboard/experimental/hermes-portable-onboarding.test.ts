@@ -33,6 +33,7 @@ import {
   createHermesPortableTestInput,
   createHermesPortableTransactionFixture,
   HERMES_PORTABLE_TEST_POLICY as POLICY,
+  HERMES_PORTABLE_TEST_LIVE_IDENTITY,
   hermesPortableReservationForOnboarding,
   hermesPortableTestOpenShellAuthority as openshellExecutableAuthority,
   hermesPortableTestPodmanAuthority as podmanExecutableAuthority,
@@ -117,7 +118,12 @@ describe("Hermes portable onboarding transaction", () => {
   });
 
   it("uses only the receipt-owned child environment and exact gateway observations (#9203)", () => {
-    const runtimeAuthority = input().runtimeAuthority;
+    const runtimeAuthority = {
+      ...input().runtimeAuthority,
+      uid: 1001,
+      runtimeDir: "/run/user/1001",
+      socketPath: "/run/user/1001/podman/podman.sock",
+    };
     const sourceEnv = {
       HOME: "/home/test",
       PATH: "/usr/bin",
@@ -155,7 +161,7 @@ describe("Hermes portable onboarding transaction", () => {
       ["sandbox", "list", "-g", "nemoclaw"],
       expect.objectContaining({
         env: {
-          DOCKER_HOST: "unix:///run/user/1000/podman/podman.sock",
+          DOCKER_HOST: `unix://${runtimeAuthority.socketPath}`,
           HOME: "/home/test",
           PATH: "/usr/bin",
           XDG_CONFIG_HOME: "/home/test/.config",
@@ -171,7 +177,7 @@ describe("Hermes portable onboarding transaction", () => {
       "XDG_CACHE_HOME",
     );
     expect(createHermesPortableChildEnvironment(sourceEnv, runtimeAuthority)).toMatchObject({
-      DOCKER_HOST: "unix:///run/user/1000/podman/podman.sock",
+      DOCKER_HOST: "unix:///run/user/1001/podman/podman.sock",
     });
     expect(() =>
       createHermesPortableChildEnvironment({ ...sourceEnv, HOME: "/home/other" }, runtimeAuthority),
@@ -234,6 +240,73 @@ describe("Hermes portable onboarding transaction", () => {
     expect(fixture.events.indexOf("registry")).toBeLessThan(
       fixture.events.lastIndexOf("policy-base"),
     );
+  });
+
+  it("settles the exact post-create sandbox identity when Ready publication lags (#9211)", async () => {
+    const present = {
+      kind: "present" as const,
+      sandboxId: "sandbox-id-1",
+      liveIdentityFingerprint: HERMES_PORTABLE_TEST_LIVE_IDENTITY,
+    };
+    const observations = [
+      { kind: "absent" as const },
+      { kind: "absent" as const },
+      { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" },
+      { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" },
+      present,
+    ];
+    const observeSandbox = vi.fn(() => observations.shift() ?? present);
+    const delaySandboxReadyPublicationPoll = vi.fn(async () => {});
+    const fixture = deps({ observeSandbox, delaySandboxReadyPublicationPoll });
+
+    const completed = await runHermesPortableOnboardingTransaction(input(), fixture.value);
+
+    expect(completed.active.receipt.phase).toBe("active");
+    expect(completed.created).toBe(true);
+    expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
+    expect(delaySandboxReadyPublicationPoll).toHaveBeenCalledTimes(2);
+    expect(delaySandboxReadyPublicationPoll).toHaveBeenCalledWith(1_000);
+    expect(fixture.events[0]).toBe("lock-enter");
+    expect(fixture.events.at(-1)).toBe("lock-exit");
+  });
+
+  it("fails closed when exact post-create Ready publication exceeds its bound (#9211)", async () => {
+    let observations = 0;
+    const observeSandbox = vi.fn(() =>
+      observations++ < 2
+        ? { kind: "absent" as const }
+        : { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" },
+    );
+    const delaySandboxReadyPublicationPoll = vi.fn(async () => {});
+    const fixture = deps({ observeSandbox, delaySandboxReadyPublicationPoll });
+
+    await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
+      "cannot classify create result: exact OpenShell sandbox is not Ready",
+    );
+
+    expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
+    expect(delaySandboxReadyPublicationPoll).toHaveBeenCalledTimes(10);
+    expect(fixture.events).not.toContain("registry");
+    expect(fixture.events.at(-1)).toBe("lock-exit");
+  });
+
+  it("does not retry an unrelated post-create ambiguity (#9211)", async () => {
+    let observations = 0;
+    const observeSandbox = vi.fn(() =>
+      observations++ < 2
+        ? { kind: "absent" as const }
+        : { kind: "ambiguous" as const, detail: "gateway unavailable" },
+    );
+    const delaySandboxReadyPublicationPoll = vi.fn(async () => {});
+    const fixture = deps({ observeSandbox, delaySandboxReadyPublicationPoll });
+
+    await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
+      "cannot classify create result: gateway unavailable",
+    );
+
+    expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
+    expect(delaySandboxReadyPublicationPoll).not.toHaveBeenCalled();
+    expect(fixture.events).not.toContain("registry");
   });
 
   it("accepts selected GPU CDI devices in the portable create intent", async () => {

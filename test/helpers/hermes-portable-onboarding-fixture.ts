@@ -272,6 +272,9 @@ export interface HermesPortableTransactionFixtureOptions {
   assertOpenShellExecutableAuthority?: () => void;
   afterRegistryCommit?: () => void | Promise<void>;
   observeSandbox?: HermesPortableOnboardingDeps<{ ready: true }>["observeSandbox"];
+  delaySandboxReadyPublicationPoll?: HermesPortableOnboardingDeps<{
+    ready: true;
+  }>["delaySandboxReadyPublicationPoll"];
   registryOpenShellVersion?: string | null;
   registryLiveFingerprint?: string;
   existingRegistry?: boolean;
@@ -380,6 +383,9 @@ export function createHermesPortableTransactionFixture(
               liveIdentityFingerprint: HERMES_PORTABLE_TEST_LIVE_IDENTITY,
             }
           : { kind: "absent" }),
+    ...(options.delaySandboxReadyPublicationPoll
+      ? { delaySandboxReadyPublicationPoll: options.delaySandboxReadyPublicationPoll }
+      : {}),
     createSandbox: async (argv, buildContextPath) => {
       events.push("create");
       if (options.createSandbox) {
