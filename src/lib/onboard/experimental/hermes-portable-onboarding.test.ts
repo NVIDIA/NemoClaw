@@ -902,14 +902,14 @@ describe("Hermes portable onboarding transaction", () => {
 
   it("rejects a different allowed GPU policy enrichment after configuring publication (#10121)", async () => {
     fs.writeFileSync(policyPath, NATIVE_GPU_CREATE, { mode: 0o600 });
-    const first = deps({ failAfterRegistry: true, policySource: NATIVE_GPU_LIVE });
+    const first = deps({ updateFails: true, policySource: NATIVE_GPU_LIVE });
     await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
-      "registry-to-active exit",
+      "restart-policy update failed",
     );
+    expect(first.events).not.toContain("registry");
     fs.writeFileSync(policyPath, NATIVE_GPU_CREATE, { mode: 0o600 });
     const second = deps({
       existingSandbox: true,
-      existingRegistry: true,
       policySource: NATIVE_GPU_LIVE.replace("/dev/nvidia0", "/dev/nvidia1"),
     });
 
