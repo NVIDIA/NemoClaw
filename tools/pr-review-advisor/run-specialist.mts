@@ -66,9 +66,15 @@ export function writeSpecialistSummary(
 
 export function writeSpecialistDiff(workspace: string, diff: string): string {
   const directory = path.join(workspace, ".pr-review-advisor-context");
+  if (fs.existsSync(directory) && fs.lstatSync(directory).isSymbolicLink()) {
+    throw new Error("Specialist diff directory must not be a symbolic link");
+  }
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   fs.chmodSync(directory, 0o700);
   const file = path.join(directory, "diff.patch");
+  if (fs.existsSync(file) && fs.lstatSync(file).isSymbolicLink()) {
+    throw new Error("Specialist diff file must not be a symbolic link");
+  }
   fs.writeFileSync(file, diff, { mode: 0o600 });
   fs.chmodSync(file, 0o600);
   return file;

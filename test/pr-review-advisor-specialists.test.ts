@@ -82,6 +82,36 @@ describe("PR review advisor specialist prompts", () => {
     expect(fs.statSync(expected).mode & 0o777).toBe(0o600);
   });
 
+  it("rejects a symbolic-link specialist diff directory", () => {
+    const workspace = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-workspace-"));
+    const target = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-target-"));
+    onTestFinished(() => {
+      fs.rmSync(workspace, { recursive: true, force: true });
+      fs.rmSync(target, { recursive: true, force: true });
+    });
+    fs.symlinkSync(target, path.join(workspace, ".pr-review-advisor-context"), "dir");
+
+    expect(() => writeSpecialistDiff(workspace, "diff evidence")).toThrow(
+      "Specialist diff directory must not be a symbolic link",
+    );
+    expect(fs.readdirSync(target)).toEqual([]);
+  });
+
+  it("rejects a symbolic-link specialist diff file", () => {
+    const workspace = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-workspace-"));
+    const target = path.join(workspace, "outside.patch");
+    onTestFinished(() => fs.rmSync(workspace, { recursive: true, force: true }));
+    const directory = path.join(workspace, ".pr-review-advisor-context");
+    fs.mkdirSync(directory);
+    fs.writeFileSync(target, "unchanged");
+    fs.symlinkSync(target, path.join(directory, "diff.patch"));
+
+    expect(() => writeSpecialistDiff(workspace, "diff evidence")).toThrow(
+      "Specialist diff file must not be a symbolic link",
+    );
+    expect(fs.readFileSync(target, "utf8")).toBe("unchanged");
+  });
+
   it("parses every discovered specialist interest (#9949)", () => {
     expect(ADVISOR_INTERESTS.map(parseAdvisorInterest)).toEqual(ADVISOR_INTERESTS);
     expect(() => parseAdvisorInterest("missing-specialist")).toThrowError(

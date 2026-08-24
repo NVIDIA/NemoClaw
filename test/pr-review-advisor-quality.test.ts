@@ -92,6 +92,15 @@ describe("PR review advisor", () => {
       (rubric: string) => rubric.replace("## Category 9: System Security", "## Category 9: Host Security"),
       "category 9 must be System Security",
     ],
+    [
+      "reordered category subsections",
+      (rubric: string) =>
+        rubric
+          .replace("### Meaning", "### Temporary")
+          .replace("### Questions", "### Meaning")
+          .replace("### Temporary", "### Questions"),
+      "must define Meaning, Questions, and Expected evidence in order",
+    ],
   ])("rejects a trusted security rubric with %s", (_case, mutate, message) => {
     const malformed = mutate(readTrustedSecurityRubric());
     vi.spyOn(fs, "readFileSync").mockReturnValueOnce(malformed);
