@@ -244,11 +244,11 @@ describe("platform readiness qualification (#7410)", () => {
     expect(result.findings.map(({ id }) => id)).toContain("host.platform.dgx_spark_unqualified");
   });
 
-  it("collects and qualifies the accepted N1x identity boundary (#8574)", () => {
+  it("qualifies N1x without pinning its GPU PCI device ID (#10076)", () => {
     const identityFiles: Readonly<Record<string, string>> = {
       product_name: "SKU 1\n",
       vendor: "0x10de\n",
-      device: "0x2e2a\n",
+      device: "0x2e03\n",
       class: "0x030000\n",
     };
     const identity = collectPlatformIdentity({
