@@ -186,6 +186,7 @@ export const loadAgentMock = vi.fn((name: string) => ({
 export const captureOpenshellMock = vi.fn<
   (args: string[], opts?: Record<string, unknown>) => OpenshellCaptureResult
 >((args) => defaultOpenshellResponses(args));
+export const dockerCaptureMock = vi.fn(() => "");
 export const dockerInspectMock = vi.fn(() => ({ status: 0, stdout: "true\n" }));
 export const establishRestoredSandboxGatewayPairingMock = vi.fn();
 export const findBackupMock = vi.fn();
@@ -271,6 +272,7 @@ export const runOpenshellMock = vi.fn((args: string[]) => {
   args[0] === "sandbox" && args[1] === "delete" && lifecycleMock.events.push("delete");
   return { status: 0, output: "" };
 });
+export const runMock = vi.fn(() => ({ status: 0 }));
 export const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(async () => ({
   status: 0,
   output: "",
@@ -285,7 +287,7 @@ export const latestBackupFixture = {
 export { lifecycleMock, shieldsMock };
 
 vi.mock("../../adapters/docker", () => ({
-  dockerCapture: vi.fn(() => ""),
+  dockerCapture: dockerCaptureMock,
   dockerForceRm: vi.fn(),
   dockerInspect: dockerInspectMock,
   dockerRunDetached: vi.fn(),
@@ -335,7 +337,7 @@ vi.mock("../../policy", () => ({
 
 vi.mock("../../runner", () => ({
   ROOT: "/repo",
-  run: vi.fn(() => ({ status: 0 })),
+  run: runMock,
   shellQuote: (value: string) => `'${value}'`,
   validateName: vi.fn((value: string) => value),
 }));
@@ -462,6 +464,7 @@ export function resetSnapshotRestoreMocks(): void {
   lifecycleMock.events.length = 0;
   lifecycleMock.readTimerMarkerMock.mockReturnValue(null);
   captureOpenshellMock.mockImplementation((args) => defaultOpenshellResponses(args));
+  dockerCaptureMock.mockReset().mockReturnValue("");
   dockerInspectMock.mockReturnValue({ status: 0, stdout: "true\n" });
   establishRestoredSandboxGatewayPairingMock.mockReset();
   findBackupMock.mockReturnValue({ match: null });
@@ -508,6 +511,7 @@ export function resetSnapshotRestoreMocks(): void {
         }
       : null;
   });
+  runMock.mockReset().mockReturnValue({ status: 0 });
   updateSandboxMock.mockReset().mockReturnValue(true);
   finalizePendingSandboxRegistrationMock.mockReset().mockReturnValue(true);
   inspectGlobalPolicyAuthorityMock.mockReset().mockReturnValue({

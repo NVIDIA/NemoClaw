@@ -4,12 +4,12 @@
 #
 # Compatibility wrapper for the TypeScript sandbox DNS proxy setup.
 #
-# Usage: ./scripts/setup-dns-proxy.sh [gateway-name] <sandbox-name>
+# Usage: ./scripts/setup-dns-proxy.sh <gateway-name> <sandbox-name> [policy-authority]
 
 set -euo pipefail
 
 if [ "$#" -lt 2 ]; then
-  echo "Usage: $0 [gateway-name] <sandbox-name>"
+  echo "Usage: $0 <gateway-name> <sandbox-name> [policy-authority]"
   exit 1
 fi
 

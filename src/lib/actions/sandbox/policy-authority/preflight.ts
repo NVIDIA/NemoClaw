@@ -9,6 +9,7 @@ import {
   assertRecordedPolicyAuthority,
   inspectGlobalPolicyAuthority,
   inspectSandboxPolicyAuthority,
+  PolicyAuthorityRefusalError,
   type SandboxPolicyAuthority,
   type SandboxPolicyAuthorityInspection,
 } from "../../../adapters/openshell/policy-authority";
@@ -40,6 +41,102 @@ export interface PolicyAuthorityInspectionOptions {
   readonly requiredPolicies: readonly RequiredPolicy[];
   readonly sandboxName: string;
   readonly verifyGlobalCreatePolicy: boolean;
+}
+
+export interface SandboxPolicyAuthorityRevalidatorOptions {
+  readonly gatewayName: string;
+  readonly readRecordedPolicyAuthority: () => unknown;
+  readonly recordedPolicyAuthority: unknown;
+  readonly sandboxName: string;
+}
+
+export interface SandboxPolicyAuthorityRevalidatorDeps {
+  readonly inspectSandboxPolicyAuthority?: typeof inspectSandboxPolicyAuthority;
+}
+
+export interface DnsSetupPolicyAuthorityRevalidatorOptions {
+  readonly gatewayName: string;
+  readonly recordedPolicyAuthority?: unknown;
+  readonly sandboxName: string;
+}
+
+export interface DnsSetupPolicyAuthorityRevalidatorDeps extends SandboxPolicyAuthorityRevalidatorDeps {
+  readonly getSandbox?: typeof registry.getSandbox;
+}
+
+/** Bind one recorded authority to the live sandbox policy at each mutation edge. */
+export function createSandboxPolicyAuthorityRevalidator(
+  options: SandboxPolicyAuthorityRevalidatorOptions,
+  deps: SandboxPolicyAuthorityRevalidatorDeps = {},
+): (operation: string) => void {
+  const inspect = deps.inspectSandboxPolicyAuthority ?? inspectSandboxPolicyAuthority;
+  return (operation) => {
+    assertRecordedPolicyAuthority(
+      options.recordedPolicyAuthority,
+      options.readRecordedPolicyAuthority(),
+      operation,
+    );
+    const observed = inspect({
+      sandboxName: options.sandboxName,
+      gatewayName: options.gatewayName,
+    });
+    assertRecordedPolicyAuthority(options.recordedPolicyAuthority, observed.authority, operation);
+    // The live query can block. Re-read durable authority before the mutation.
+    assertRecordedPolicyAuthority(
+      options.recordedPolicyAuthority,
+      options.readRecordedPolicyAuthority(),
+      operation,
+    );
+  };
+}
+
+function gatewayBindingRefusal(
+  sandboxName: string,
+  expectedGatewayName: string,
+  currentGatewayName: string,
+): PolicyAuthorityRefusalError {
+  return new PolicyAuthorityRefusalError(
+    `Refusing to repair the DNS proxy for sandbox '${sandboxName}': the recorded OpenShell gateway changed from ${expectedGatewayName} to ${currentGatewayName}.`,
+  );
+}
+
+/** Bind DNS setup for a registered sandbox, or a pending clone receipt, to live authority. */
+export function createDnsSetupPolicyAuthorityRevalidator(
+  options: DnsSetupPolicyAuthorityRevalidatorOptions,
+  deps: DnsSetupPolicyAuthorityRevalidatorDeps = {},
+): (operation: string) => void {
+  const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const initial = getSandbox(options.sandboxName);
+  const recordedPolicyAuthority = options.recordedPolicyAuthority ?? initial?.policyAuthority;
+  const callerOwnsUnregisteredReceipt =
+    options.recordedPolicyAuthority !== undefined &&
+    (initial === null || initial.pendingRouteReservation === true);
+
+  const readRecordedPolicyAuthority = (): unknown => {
+    const current = getSandbox(options.sandboxName);
+    if (current) {
+      const currentGatewayName = getPersistedSandboxTargetGatewayName(current);
+      if (currentGatewayName !== options.gatewayName) {
+        throw gatewayBindingRefusal(options.sandboxName, options.gatewayName, currentGatewayName);
+      }
+      if (current.policyAuthority !== undefined) return current.policyAuthority;
+      if (callerOwnsUnregisteredReceipt && current.pendingRouteReservation === true) {
+        return recordedPolicyAuthority;
+      }
+      return undefined;
+    }
+    return callerOwnsUnregisteredReceipt ? recordedPolicyAuthority : undefined;
+  };
+
+  return createSandboxPolicyAuthorityRevalidator(
+    {
+      gatewayName: options.gatewayName,
+      readRecordedPolicyAuthority,
+      recordedPolicyAuthority,
+      sandboxName: options.sandboxName,
+    },
+    { inspectSandboxPolicyAuthority: deps.inspectSandboxPolicyAuthority },
+  );
 }
 
 export function parseRequiredPolicyDocument(content: string, operation: string): RequiredPolicy {

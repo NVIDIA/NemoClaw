@@ -662,7 +662,9 @@ async function autoCreateSandboxFromSource(
     const srcGatewayName = resolveSandboxGatewayName(
       srcEntry as { gatewayName?: string | null; gatewayPort?: number | null },
     );
-    run(["bash", dnsScript, srcGatewayName, dstName], { ignoreError: true });
+    run(["bash", dnsScript, srcGatewayName, dstName, targetPolicyAuthorityReceipt.authority], {
+      ignoreError: true,
+    });
     targetPolicyAuthorityReceipt = inspectReadyClonePolicyAuthority(targetPolicyAuthorityReceipt);
   }
 

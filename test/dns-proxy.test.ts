@@ -40,7 +40,17 @@ describe("setup-dns-proxy.sh", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dns-proxy-"));
     const fakeBin = path.join(tmp, "bin");
     const dockerLog = path.join(tmp, "docker.log");
+    const openshellLog = path.join(tmp, "openshell.log");
     fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> ${JSON.stringify(openshellLog)}
+printf '%s\n' '{"scope":"sandbox","sandbox":"box-1","status":"effective","policy_source":"sandbox","policy":{}}'
+`,
+      { mode: 0o755 },
+    );
     fs.writeFileSync(
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
@@ -59,7 +69,7 @@ cmd="$*"
 case "$cmd" in
   *"get service kube-dns"*) echo "10.43.0.10"; exit 0 ;;
   *"get endpoints kube-dns"*) echo "10.42.0.15"; exit 0 ;;
-  *"get pods -n openshell -o name"*) echo "pod/box[1]-abc"; exit 0 ;;
+  *"get pods -n openshell -o name"*) echo "pod/box-1-abc"; exit 0 ;;
   *"ip addr show"*) echo "10.200.0.1"; exit 0 ;;
   *"cat /tmp/dns-proxy.pid"*) echo "12345"; exit 0 ;;
   *"cat /tmp/dns-proxy.log"*) echo "dns-proxy: 10.200.0.1:53 -> 10.43.0.10:53 pid=12345"; exit 0 ;;
@@ -75,18 +85,20 @@ exit 0
     );
 
     try {
-      const result = spawnSync("bash", [SETUP_DNS_PROXY, "nemoclaw", "box[1]"], {
+      const result = spawnSync("bash", [SETUP_DNS_PROXY, "nemoclaw", "box-1", "nemoclaw-managed"], {
         encoding: "utf-8",
         env: {
           ...process.env,
           DOCKER_HOST: "unix:///tmp/fake-docker.sock",
+          HOME: tmp,
+          NEMOCLAW_OPENSHELL_BIN: path.join(fakeBin, "openshell"),
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
         },
         timeout: 15000,
       });
       const output = `${result.stdout}${result.stderr}`;
-      expect(result.status).toBe(0);
-      expect(output).toContain("Setting up DNS proxy in pod 'box[1]-abc'");
+      expect(result.status, output).toBe(0);
+      expect(output).toContain("Setting up DNS proxy in pod 'box-1-abc'");
       expect(output).toContain("DNS verification: 4 passed, 0 failed");
 
       const calls = fs.readFileSync(dockerLog, "utf-8");
@@ -100,6 +112,9 @@ exit 0
       expect(calls).toContain("--dport 53");
       expect(calls).toContain("cp /etc/resolv.conf /tmp/resolv.conf.orig");
       expect(calls).not.toContain("nsenter");
+      const authorityChecks = fs.readFileSync(openshellLog, "utf-8").trim().split("\n");
+      expect(authorityChecks).toHaveLength(7);
+      expect(authorityChecks[0]).toBe("policy get -g nemoclaw --full --output json box-1");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

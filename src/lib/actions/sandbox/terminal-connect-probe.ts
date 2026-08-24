@@ -10,7 +10,7 @@ import { redact } from "../../runner";
 export type EnsureTerminalInferenceRoute = (
   sandboxName: string,
   options: { quiet: true },
-) => { routeHealthy: boolean | null };
+) => { routeHealthy: boolean | null; policyAuthorityRefusalDetail?: string };
 
 export function runTerminalAgentConnectProbe({
   agent,
@@ -26,6 +26,12 @@ export function runTerminalAgentConnectProbe({
   sandboxName: string;
 }): void {
   const routeResult = ensureInferenceRoute(sandboxName, { quiet: true });
+  if (routeResult.policyAuthorityRefusalDetail) {
+    console.error(
+      `  Probe failed: NemoClaw refused the ${agentName} inference route check in '${sandboxName}': ${routeResult.policyAuthorityRefusalDetail}`,
+    );
+    process.exit(1);
+  }
   // Dcode is the terminal runtime whose configured inference.local route is
   // itself part of readiness. Keep this fail-fast agent-scoped so terminal
   // runtimes without the dcode managed-proxy contract retain legacy smoke-only

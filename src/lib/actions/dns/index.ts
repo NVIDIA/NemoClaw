@@ -51,6 +51,7 @@ export interface SetupDnsProxyOptions {
 }
 
 export interface SetupDnsProxyDeps extends FixCoreDnsDeps {
+  revalidatePolicyAuthority?: (operation: string) => void;
   sleep?: (ms: number) => void;
 }
 
@@ -326,6 +327,7 @@ export function runSetupDnsProxy(
   const env = { ...process.env, ...(deps.env ?? {}) };
   const log = deps.log ?? console.log;
   const runDocker = deps.runDocker ?? defaultRunDocker;
+  const revalidatePolicyAuthority = deps.revalidatePolicyAuthority ?? (() => undefined);
   const sleep = deps.sleep ?? sleepSync;
   const detected = detectDockerHost(env, deps);
   const dockerEnv = detected.dockerHost ? { ...env, DOCKER_HOST: detected.dockerHost } : env;
@@ -427,6 +429,7 @@ export function runSetupDnsProxy(
   log(`Setting up DNS proxy in pod '${pod}' (${vethGateway}:53 -> ${dnsUpstream})...`);
 
   const proxyWriter = `cat > /tmp/dns-proxy.py << 'DNSPROXY'\n${buildDnsProxyPython()}DNSPROXY`;
+  revalidatePolicyAuthority(`write the DNS proxy script for sandbox '${options.sandboxName}'`);
   kctl(
     runDocker,
     cluster,
@@ -443,10 +446,12 @@ export function runSetupDnsProxy(
     ),
   ).trim();
   if (oldPid) {
+    revalidatePolicyAuthority(`stop the existing DNS proxy for sandbox '${options.sandboxName}'`);
     kctl(runDocker, cluster, ["exec", "-n", "openshell", pod, "--", "kill", oldPid], dockerEnv);
     sleep(1000);
   }
 
+  revalidatePolicyAuthority(`start the DNS proxy for sandbox '${options.sandboxName}'`);
   kctl(
     runDocker,
     cluster,
@@ -528,6 +533,7 @@ export function runSetupDnsProxy(
       }
     }
 
+    revalidatePolicyAuthority(`back up the DNS resolver for sandbox '${options.sandboxName}'`);
     kctl(
       runDocker,
       cluster,
@@ -569,6 +575,7 @@ export function runSetupDnsProxy(
         dockerEnv,
       );
       if (check.status !== 0) {
+        revalidatePolicyAuthority(`add the DNS firewall rule for sandbox '${options.sandboxName}'`);
         kctl(
           runDocker,
           cluster,
@@ -577,6 +584,7 @@ export function runSetupDnsProxy(
         );
       }
 
+      revalidatePolicyAuthority(`write the DNS resolver for sandbox '${options.sandboxName}'`);
       kctl(
         runDocker,
         cluster,
@@ -599,6 +607,7 @@ export function runSetupDnsProxy(
     } else {
       log("WARNING: iptables not found in pod (checked PATH, /sbin, /usr/sbin).");
       log("WARNING: Cannot add UDP DNS exception. Sandbox DNS resolution will not work.");
+      revalidatePolicyAuthority(`restore the DNS resolver for sandbox '${options.sandboxName}'`);
       kctl(
         runDocker,
         cluster,
@@ -712,6 +721,9 @@ export function runSetupDnsProxy(
     log("  [SKIP] Sandbox namespace not found; cannot verify resolv.conf, iptables, or DNS");
   }
 
+  revalidatePolicyAuthority(
+    `report successful DNS proxy repair for sandbox '${options.sandboxName}'`,
+  );
   log(`  DNS verification: ${verificationPass} passed, ${verificationFail} failed`);
   if (verificationFail > 0)
     log(

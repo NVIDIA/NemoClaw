@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { launchReadinessSandboxPolicyAuthorityFixture } from "../helpers/launch-readiness-fixture";
+
 import {
   execTimeout,
   runWithEnv,
@@ -33,6 +35,7 @@ describe("CLI connect readiness", () => {
             provider: "nvidia-prod",
             gpuEnabled: false,
             policies: [],
+            policyAuthority: "nemoclaw-managed",
           },
         },
         defaultSandbox: "alpha",
@@ -71,6 +74,10 @@ describe("CLI connect readiness", () => {
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "connect" ] && [ "$3" = "alpha" ]; then',
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "policy" ] && [ "$2" = "get" ] && [[ " $* " = *" --output json "* ]]; then',
+        `  printf '%s\n' ${JSON.stringify(launchReadinessSandboxPolicyAuthorityFixture("alpha"))}`,
         "  exit 0",
         "fi",
         "exit 0",

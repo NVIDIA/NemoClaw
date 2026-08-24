@@ -9,6 +9,12 @@ import {
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import {
+  createSandboxPolicyAuthorityRevalidator,
+  isPolicyAuthorityRefusalError,
+} from "./policy-authority/revalidator";
+
+export { isPolicyAuthorityRefusalError };
 
 function sandboxGatewayRouteCompatibility(
   sandboxName: string,
@@ -74,4 +80,17 @@ export function assertSandboxGatewayRouteCompatible(
   if (!result.ok && !isAdvisoryProviderModelRouteConflict(result)) {
     throw new GatewayRouteConflictError(result);
   }
+}
+
+export function createSandboxInferenceRoutePolicyAuthorityRevalidator(
+  sandboxName: string,
+  gatewayName: string,
+  recordedPolicyAuthority: unknown,
+): (operation: string) => void {
+  return createSandboxPolicyAuthorityRevalidator({
+    gatewayName,
+    readRecordedPolicyAuthority: () => registry.getSandbox(sandboxName)?.policyAuthority,
+    recordedPolicyAuthority,
+    sandboxName,
+  });
 }

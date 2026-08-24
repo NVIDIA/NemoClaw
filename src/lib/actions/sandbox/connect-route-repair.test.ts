@@ -39,7 +39,6 @@ vi.mock("./gateway-state", () => ({
 
 import {
   type ManagedInferenceRouteResetDeps,
-
   probeSandboxInferenceRoute,
   repairSandboxInferenceRouteWithDeps,
   resetManagedInferenceRouteWithDeps,
@@ -233,6 +232,37 @@ describe("sandbox connect route repair unit flow", () => {
     );
   });
 
+  it("withholds VM route-repair success when policy authority drifts after repair (#9833)", () => {
+    const refusal = new Error("policy authority changed");
+    const revalidatePolicyAuthority = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw refusal;
+      });
+    const { calls, deps } = makeRepairDeps([broken(), healthy()], {
+      shouldApplyVmDnsMonkeypatch: vi.fn(() => true),
+      revalidatePolicyAuthority,
+      applyVmDnsMonkeypatch: vi.fn((sandboxName, _sandbox, options) => {
+        calls.monkeypatches.push(sandboxName);
+        options?.revalidatePolicyAuthority?.("write VM resolver");
+        return { ok: true };
+      }),
+    });
+
+    expect(() =>
+      repairSandboxInferenceRouteWithDeps("vm-box", sandbox({ openshellDriver: "vm" }), {}, deps),
+    ).toThrow(refusal);
+
+    expect(revalidatePolicyAuthority).toHaveBeenNthCalledWith(1, "write VM resolver");
+    expect(revalidatePolicyAuthority).toHaveBeenNthCalledWith(
+      2,
+      "report successful VM inference route repair for sandbox 'vm-box'",
+    );
+    expect(calls.logs).not.toContain("  inference.local route repaired.");
+    expect(calls.reapplications).toEqual([]);
+  });
+
   it("falls back to inference reapply when the VM monkeypatch leaves the route broken", () => {
     const { calls, deps } = makeRepairDeps([broken(), broken(), healthy()], {
       shouldApplyVmDnsMonkeypatch: vi.fn(() => true),
@@ -255,6 +285,24 @@ describe("sandbox connect route repair unit flow", () => {
     expect(calls.errors).toContain(
       "  Warning: OpenShell VM DNS monkeypatch completed but inference.local is still unavailable.",
     );
+  });
+
+  it("refuses fallback route reapply when policy authority drifts before the write (#9833)", () => {
+    const refusal = new Error("policy authority changed before route reapply");
+    const { calls, deps } = makeRepairDeps([broken()], {
+      revalidatePolicyAuthority: vi.fn(() => {
+        throw refusal;
+      }),
+    });
+
+    expect(() =>
+      repairSandboxInferenceRouteWithDeps("vm-box", sandbox({ openshellDriver: "vm" }), {}, deps),
+    ).toThrow(refusal);
+
+    expect(deps.revalidatePolicyAuthority).toHaveBeenCalledWith(
+      "reapply the inference route for sandbox 'vm-box'",
+    );
+    expect(calls.reapplications).toEqual([]);
   });
 
   it("reports broken non-legacy routes after inference reapply cannot repair them", () => {
@@ -395,7 +443,6 @@ describe("managed inference route reset unit flow", () => {
     expect(calls.unrecoverable).toEqual([{ sandboxName: "demo", detail: "BROKEN 503 still down" }]);
   });
 });
-
 
 describe("connect inference route retries", () => {
   it("returns the third healthy probe result after two unhealthy probe results (#9218)", () => {

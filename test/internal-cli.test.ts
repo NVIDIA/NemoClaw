@@ -28,6 +28,10 @@ describe("internal oclif namespace", () => {
     expect(result.stdout).toContain(
       "nemoclaw internal dns setup-proxy <gateway-name> <sandbox-name>",
     );
+    expect(result.stdout).toContain("[policy-authority]");
+    expect(result.stdout).toContain(
+      "[POLICYAUTHORITY]  Policy authority receipt for an unregistered sandbox",
+    );
   });
 
   it("exposes uninstall plan commands through oclif routing", () => {

@@ -163,12 +163,19 @@ describe("runSetupDnsProxy", () => {
     const calls: string[][] = [];
     const log = vi.fn();
     let dnsReadyCalls = 0;
+    let iptablesCheckCalls = 0;
     let pidReads = 0;
     let getentCalls = 0;
+    const revalidatePolicyAuthority = vi.fn();
     const sleep = vi.fn();
     const runDocker = vi.fn((args: string[]) => {
       calls.push(args);
       const cmd = args.join(" ");
+      switch (true) {
+        case cmd.includes(" -C OUTPUT "):
+          iptablesCheckCalls += 1;
+          return iptablesCheckCalls === 1 ? fail("missing rule") : ok();
+      }
       if (args[0] === "ps") return ok("openshell-cluster-nemoclaw\n");
       if (cmd.includes("get service kube-dns")) return ok("10.43.0.10");
       if (cmd.includes("get endpoints kube-dns")) return ok("10.42.0.15");
@@ -199,6 +206,7 @@ describe("runSetupDnsProxy", () => {
       {
         env: { DOCKER_HOST: "unix:///tmp/fake-docker.sock" },
         log,
+        revalidatePolicyAuthority,
         runDocker,
         sleep,
       },
@@ -221,6 +229,171 @@ describe("runSetupDnsProxy", () => {
     expect(sleep.mock.calls.filter(([milliseconds]) => milliseconds === 2_000)).toHaveLength(2);
     expect(dnsReadyCalls).toBe(3);
     expect(sleep.mock.calls).toEqual([[1_000], [1_000], [2_000], [2_000]]);
+    expect(revalidatePolicyAuthority.mock.calls.map(([operation]) => operation)).toEqual([
+      "write the DNS proxy script for sandbox 'box[1]'",
+      "start the DNS proxy for sandbox 'box[1]'",
+      "back up the DNS resolver for sandbox 'box[1]'",
+      "add the DNS firewall rule for sandbox 'box[1]'",
+      "write the DNS resolver for sandbox 'box[1]'",
+      "report successful DNS proxy repair for sandbox 'box[1]'",
+    ]);
+  });
+
+  it("stops before the existing DNS proxy process when policy authority changes (#9833)", () => {
+    const calls: string[][] = [];
+    const refusal = new Error("policy authority changed before proxy stop");
+    const revalidatePolicyAuthority = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw refusal;
+      });
+    const runDocker = vi.fn((args: string[]) => {
+      calls.push(args);
+      const cmd = args.join(" ");
+      switch (true) {
+        case args[0] === "ps":
+          return ok("openshell-cluster-nemoclaw\n");
+        case cmd.includes("get service kube-dns"):
+          return ok("10.43.0.10");
+        case cmd.includes("get pods -n openshell -o name"):
+          return ok("pod/box-abc\n");
+        case cmd.includes("ip addr show"):
+          return ok("10.200.0.1\n");
+        case cmd.includes("cat /tmp/dns-proxy.pid"):
+          return ok("12345\n");
+        default:
+          return ok();
+      }
+    });
+
+    expect(() =>
+      runSetupDnsProxy(
+        { gatewayName: "nemoclaw", sandboxName: "box" },
+        {
+          env: { DOCKER_HOST: "unix:///tmp/fake-docker.sock" },
+          revalidatePolicyAuthority,
+          runDocker,
+          sleep: vi.fn(),
+        },
+      ),
+    ).toThrow(refusal);
+
+    expect(revalidatePolicyAuthority.mock.calls.map(([operation]) => operation)).toEqual([
+      "write the DNS proxy script for sandbox 'box'",
+      "stop the existing DNS proxy for sandbox 'box'",
+    ]);
+    expect(calls.some((args) => args.includes("kill"))).toBe(false);
+    expect(calls.some((args) => args.join(" ").includes("nohup python3"))).toBe(false);
+  });
+
+  it("stops before resolver restoration when policy authority changes (#9833)", () => {
+    const calls: string[][] = [];
+    const refusal = new Error("policy authority changed before resolver restore");
+    const revalidatePolicyAuthority = vi.fn((operation: string) => {
+      switch (operation) {
+        case "restore the DNS resolver for sandbox 'box'":
+          throw refusal;
+      }
+    });
+    const runDocker = vi.fn((args: string[]) => {
+      calls.push(args);
+      const cmd = args.join(" ");
+      switch (true) {
+        case args[0] === "ps":
+          return ok("openshell-cluster-nemoclaw\n");
+        case cmd.includes("get service kube-dns"):
+          return ok("10.43.0.10");
+        case cmd.includes("get pods -n openshell -o name"):
+          return ok("pod/box-abc\n");
+        case cmd.includes("ip addr show"):
+          return ok("10.200.0.1\n");
+        case cmd.includes("cat /tmp/dns-proxy.pid"):
+          return ok("");
+        case cmd.includes("python3 -c"):
+          return ok("ok");
+        case cmd.includes("ls /run/netns/"):
+          return ok("sandbox-ns\n");
+        case cmd.includes("test -x"):
+          return fail("not installed");
+        default:
+          return ok();
+      }
+    });
+
+    expect(() =>
+      runSetupDnsProxy(
+        { gatewayName: "nemoclaw", sandboxName: "box" },
+        {
+          env: { DOCKER_HOST: "unix:///tmp/fake-docker.sock" },
+          log: vi.fn(),
+          revalidatePolicyAuthority,
+          runDocker,
+          sleep: vi.fn(),
+        },
+      ),
+    ).toThrow(refusal);
+
+    expect(calls.some((args) => args.join(" ").includes("resolv.conf.orig /etc/resolv.conf"))).toBe(
+      false,
+    );
+  });
+
+  it("withholds DNS repair success when policy authority changes after verification (#9833)", () => {
+    const log = vi.fn();
+    const refusal = new Error("policy authority changed before DNS success");
+    let pidReads = 0;
+    const revalidatePolicyAuthority = vi.fn((operation: string) => {
+      switch (operation) {
+        case "report successful DNS proxy repair for sandbox 'box'":
+          throw refusal;
+      }
+    });
+    const runDocker = vi.fn((args: string[]) => {
+      const cmd = args.join(" ");
+      switch (true) {
+        case args[0] === "ps":
+          return ok("openshell-cluster-nemoclaw\n");
+        case cmd.includes("get service kube-dns"):
+          return ok("10.43.0.10");
+        case cmd.includes("get pods -n openshell -o name"):
+          return ok("pod/box-abc\n");
+        case cmd.includes("ip addr show"):
+          return ok("10.200.0.1\n");
+        case cmd.includes("cat /tmp/dns-proxy.pid"):
+          pidReads += 1;
+          return pidReads === 1 ? ok("") : ok("12345\n");
+        case cmd.includes("cat /tmp/dns-proxy.log"):
+          return ok("dns-proxy: 10.200.0.1:53 -> 10.43.0.10:53 pid=12345\n");
+        case cmd.includes("python3 -c"):
+          return ok("ok");
+        case cmd.includes("ls /run/netns/"):
+          return ok("sandbox-ns\n");
+        case cmd.includes("test -x"):
+          return ok();
+        case cmd.includes("cat /etc/resolv.conf"):
+          return ok("nameserver 10.200.0.1\n");
+        case cmd.includes("getent hosts github.com"):
+          return ok("140.82.112.4 github.com\n");
+        default:
+          return ok();
+      }
+    });
+
+    expect(() =>
+      runSetupDnsProxy(
+        { gatewayName: "nemoclaw", sandboxName: "box" },
+        {
+          env: { DOCKER_HOST: "unix:///tmp/fake-docker.sock" },
+          log,
+          revalidatePolicyAuthority,
+          runDocker,
+          sleep: vi.fn(),
+        },
+      ),
+    ).toThrow(refusal);
+
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("DNS verification:"));
   });
 
   it("falls back to the CoreDNS pod endpoint when the kube-dns service IP is unavailable", () => {
