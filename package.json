@@ -104,7 +104,12 @@
   "files": [
     ".version",
     ".source-revision",
-    "agents/",
+    "agents/*/manifest.yaml",
+    "agents/*/state-lock-plan.json",
+    "agents/hermes/host/",
+    "agents/nemocua/Dockerfile",
+    "agents/nemocua/policy-additions.yaml",
+    "agents/openclaw/policy-permissive.yaml",
     "bin/",
     "dist/",
     "src/lib/messaging/channels/**/policy/*.{yaml,yml}",

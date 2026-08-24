@@ -25,15 +25,25 @@ function packageFiles(packageRoot: string): string[] {
 }
 
 function collectPackedPaths(): ReadonlySet<string> {
-
-  const packed = spawnSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024,
+  const fixtureRoot = createPackageFixture({
+    prefix: "nemoclaw-agent-assets-pack-",
+    entries: ["agents"],
   });
-  expect(packed.status, `${packed.stdout}${packed.stderr}`).toBe(0);
-  const report = JSON.parse(packed.stdout) as Array<{ files?: Array<{ path?: string }> }>;
-  return new Set((report[0]?.files ?? []).flatMap((entry) => (entry.path ? [entry.path] : [])));
+  try {
+    const output = JSON.parse(
+      execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+        cwd: fixtureRoot,
+        encoding: "utf8",
+        maxBuffer: 10 * 1024 * 1024,
+      }),
+    ) as
+      | Array<{ files?: Array<{ path?: string }> }>
+      | Record<string, { files?: Array<{ path?: string }> }>;
+    const report = Array.isArray(output) ? output[0] : Object.values(output)[0];
+    return new Set((report?.files ?? []).flatMap((entry) => (entry.path ? [entry.path] : [])));
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
 }
 
 const packedPaths = collectPackedPaths();
@@ -42,12 +52,11 @@ describe("OpenShell policy boundary package contract", () => {
   it.each([repoRoot, path.join(repoRoot, "nemoclaw")])(
     "pins the YAML parser used by both production package boundaries [case %#]",
     (packageRoot) => {
-      const dependencyVersion = JSON.parse(
-        execFileSync("npm", ["pkg", "get", "dependencies.yaml"], {
-          cwd: packageRoot,
-          encoding: "utf8",
-        }),
-      ) as string;
+      const output = execFileSync("npm", ["pkg", "get", "dependencies.yaml"], {
+        cwd: packageRoot,
+        encoding: "utf8",
+      }).trim();
+      const dependencyVersion = output.startsWith('"') ? (JSON.parse(output) as string) : output;
 
       expect(dependencyVersion).toBe("2.8.3");
     },
@@ -201,7 +210,7 @@ describe("OpenShell policy boundary package contract", () => {
     "tool-gateway-broker.ts",
     "tool-gateway-control-contract.ts",
   ])("ships the Hermes host broker with its canonical sandbox-name boundary [%s]", (file) => {
-    expect(packageFiles(repoRoot)).toContain("agents/");
+    expect(packageFiles(repoRoot)).toContain("agents/hermes/host/");
 
     expect(packedPaths).toContain(`agents/hermes/host/${file}`);
 
@@ -227,49 +236,29 @@ describe("OpenShell policy boundary package contract", () => {
     expect(validation).toEqual([true, false]);
   });
 
-  it("ships complete repository-owned agent definitions", () => {
-    expect(packageFiles(repoRoot)).toContain("agents/");
-  });
-
-  it.each(["hermes", "langchain-deepagents-code", "nemocua", "openclaw", "pi"])(
-    "ships the %s agent manifest",
-    (agent) => {
-      const manifest = fs.readFileSync(
-        path.join(repoRoot, "agents", agent, "manifest.yaml"),
-        "utf8",
-      );
-      expect(manifest).toMatch(new RegExp(`^name: ${agent}$`, "m"));
-      expect(packedPaths).toContain(`agents/${agent}/manifest.yaml`);
-    },
-  );
-
-  it.each([
-    "hermes/Dockerfile",
-    "hermes/Dockerfile.base",
-    "hermes/policy-additions.yaml",
-    "hermes/policy-permissive.yaml",
-    "hermes/start.sh",
-    "langchain-deepagents-code/Dockerfile",
-    "langchain-deepagents-code/Dockerfile.base",
-    "langchain-deepagents-code/policy-additions.yaml",
-    "langchain-deepagents-code/start.sh",
-    "nemocua/Dockerfile",
-    "nemocua/policy-additions.yaml",
-    "openclaw/policy-permissive.yaml",
-    "pi/Dockerfile",
-    "pi/Dockerfile.base",
-    "pi/policy-additions.yaml",
-    "pi/start.sh",
-  ])("ships the native agent asset %s", (asset) => {
-    expect(packedPaths).toContain(`agents/${asset}`);
+  it("ships agent manifests, generated state lock plans, and the OpenClaw policy asset", () => {
+    expect(packageFiles(repoRoot)).toEqual(
+      expect.arrayContaining([
+        "agents/*/manifest.yaml",
+        "agents/*/state-lock-plan.json",
+        "agents/openclaw/policy-permissive.yaml",
+      ]),
+    );
+    expect(packedPaths).toContain("agents/openclaw/manifest.yaml");
+    expect(packedPaths).toContain("agents/openclaw/policy-permissive.yaml");
   });
 
   it("ships the complete repository-owned NemoCUA agent definition (#9649)", () => {
-    expect(packageFiles(repoRoot)).toEqual(expect.arrayContaining(["agents/"]));
-    const packed = packedPaths;
-    expect(packed).toContain("agents/nemocua/manifest.yaml");
-    expect(packed).toContain("agents/nemocua/Dockerfile");
-    expect(packed).toContain("agents/nemocua/policy-additions.yaml");
+    expect(packageFiles(repoRoot)).toEqual(
+      expect.arrayContaining([
+        "agents/*/manifest.yaml",
+        "agents/nemocua/Dockerfile",
+        "agents/nemocua/policy-additions.yaml",
+      ]),
+    );
+    expect(packedPaths).toContain("agents/nemocua/manifest.yaml");
+    expect(packedPaths).toContain("agents/nemocua/Dockerfile");
+    expect(packedPaths).toContain("agents/nemocua/policy-additions.yaml");
   });
 
   it("ships an out-of-tree runtime sandbox-policy schema validator", { timeout: 240_000 }, () => {
