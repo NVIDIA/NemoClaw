@@ -9,6 +9,7 @@ import {
 } from "./mcp-bridge-adapter-deepagents-projection";
 import {
   DEEPAGENTS_MCP_CONFIG_PATH,
+  MANAGED_MCP_RUNTIME_PLACEHOLDER_HELPERS,
   deepAgentsManagedServerConfig,
   pythonJsonLiteral,
 } from "./mcp-bridge-adapter-status";
@@ -85,6 +86,7 @@ export function buildDeepAgentsMcpRollbackRegisterCommand(
     `payload = json.loads(${pythonJsonLiteral(payload)})`,
     `managed_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_MCP_CONFIG_PATH)})`,
     `legacy_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_LEGACY_MCP_CONFIG_PATH)})`,
+    ...MANAGED_MCP_RUNTIME_PLACEHOLDER_HELPERS,
     ...DEEPAGENTS_STRICT_JSON_HELPERS,
     ...DEEPAGENTS_MANAGED_PROJECTION_HELPERS,
     ...DEEPAGENTS_LEGACY_CONFIG_HELPERS,
@@ -116,6 +118,13 @@ export function buildDeepAgentsMcpRollbackRegisterCommand(
     "    close_managed_projection_descriptor(managed_descriptor)",
     "    print(message, file=sys.stderr)",
     "    raise SystemExit(2)",
+    "canonical_expected_servers = payload['expectedServers']",
+    "if is_v2:",
+    "    try:",
+    "        payload['expected'] = materialize_managed_mcp_server(payload['expected'])",
+    "        payload['expectedServers'] = materialize_managed_mcp_servers(payload['expectedServers'])",
+    "    except ValueError as exc:",
+    "        fail_rollback(str(exc))",
     "try:",
     "    if is_v2:",
     "        data, managed_identity, managed_descriptor = load_managed_projection_for_update(config_path)",
@@ -131,7 +140,7 @@ export function buildDeepAgentsMcpRollbackRegisterCommand(
     "    servers = data.get('mcpServers', {})",
     "    if not isinstance(servers, dict):",
     "        fail_rollback(f'Invalid managed MCP v2 server map at {config_path}')",
-    "    if any(payload['expectedServers'].get(name) != current for name, current in servers.items()):",
+    "    if any(not managed_mcp_server_matches_intent(current, canonical_expected_servers.get(name), True) for name, current in servers.items()):",
     "        fail_rollback(f'Refusing to overwrite drifted managed MCP v2 projection at {config_path}')",
     "    data = {'mcpServers': payload['expectedServers']}",
     "else:",

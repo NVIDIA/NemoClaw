@@ -10,6 +10,82 @@ import { buildDeepAgentsMcpRemoveCommand } from "./mcp-bridge-adapter-deepagents
 import { buildDeepAgentsMcpStatusCommand } from "./mcp-bridge-adapter-status";
 
 describe("Deep Agents MCP config adapter v2 removal", () => {
+  it("requires the exact current revision while retaining bounded cleanup ownership", () => {
+    const revisionedServer = {
+      type: "http",
+      url: baseEntry.url,
+      headers: {
+        Authorization: "Bearer openshell:resolve:env:v11_GITHUB_TOKEN",
+      },
+    };
+    const runtimeEnvironment = {
+      GITHUB_TOKEN: "openshell:resolve:env:v12_GITHUB_TOKEN",
+    };
+    const status = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpStatusCommand(baseEntry),
+      { mcpServers: { github: revisionedServer } },
+      "v2",
+      undefined,
+      0o600,
+      {},
+      runtimeEnvironment,
+    );
+    expect(status.status, status.stderr).toBe(0);
+    expect(status.stdout.trim()).toBe("mismatch");
+
+    const currentStatus = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpStatusCommand(baseEntry),
+      {
+        mcpServers: {
+          github: {
+            ...revisionedServer,
+            headers: {
+              Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+            },
+          },
+        },
+      },
+      "v2",
+      undefined,
+      0o600,
+      {},
+      runtimeEnvironment,
+    );
+    expect(currentStatus.status, currentStatus.stderr).toBe(0);
+    expect(currentStatus.stdout.trim()).toBe("registered");
+
+    const canonicalStatus = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpStatusCommand(baseEntry),
+      {
+        mcpServers: {
+          github: {
+            ...revisionedServer,
+            headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
+          },
+        },
+      },
+      "v2",
+      undefined,
+      0o600,
+      {},
+      runtimeEnvironment,
+    );
+    expect(canonicalStatus.status, canonicalStatus.stderr).toBe(0);
+    expect(canonicalStatus.stdout.trim()).toBe("mismatch");
+
+    const removal = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRemoveCommand(baseEntry),
+      { mcpServers: { github: revisionedServer } },
+      "v2",
+      undefined,
+      0o600,
+      {},
+      runtimeEnvironment,
+    );
+    expect(removal.status, removal.stderr).toBe(0);
+    expect(removal.config).toEqual({ mcpServers: {} });
+  });
+
   it("fails Deep Agents removal on corrupt config unless forced", () => {
     const corruptProjection = { mcpServers: [] };
     const normal = runDeepAgentsConfigCommand(

@@ -1,10 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { resultText } from "./clients/command.ts";
 import type { HostCliClient } from "./clients/host.ts";
 import type { SandboxClient } from "./clients/sandbox.ts";
 import { expect } from "./e2e-test.ts";
+import {
+  bindHermesDiscordPolicyEndpoint,
+  unbindProviderPolicyEndpoints,
+} from "./hermes-discord-policy-binding.ts";
+import type { ShellProbeResult } from "./shell-probe.ts";
 
 const PROVIDER_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const CREDENTIAL_ENV = /^[A-Z_][A-Z0-9_]*$/u;
@@ -16,6 +25,153 @@ function shellQuote(value: string): string {
 function assertProviderName(providerName: string): void {
   if (!PROVIDER_NAME.test(providerName)) {
     throw new Error(`Unsafe OpenShell provider name: ${providerName}`);
+  }
+}
+
+async function runFixtureOpenShell(
+  host: HostCliClient,
+  args: string[],
+  options: {
+    readonly artifactName: string;
+    readonly env: NodeJS.ProcessEnv;
+    readonly redactionValues: readonly string[];
+  },
+): Promise<ShellProbeResult> {
+  const result = await host.command(host.openshellCommandPath, args, {
+    artifactName: options.artifactName,
+    env: options.env,
+    redactionValues: [...options.redactionValues],
+    timeoutMs: 120_000,
+  });
+  expect(result.exitCode, resultText(result)).toBe(0);
+  return result;
+}
+
+/** Refresh one already-attached fixture provider without discarding its existing policy bindings. */
+export async function rebindFixtureProviderPolicyEndpoint(
+  host: HostCliClient,
+  sandboxName: string,
+  options: {
+    readonly artifactName: string;
+    readonly credentialEnv: string;
+    readonly endpoint: {
+      readonly host: string;
+      readonly port: number | string;
+      readonly protocol: "rest" | "websocket";
+    };
+    readonly env: NodeJS.ProcessEnv;
+    readonly providerName: string;
+    readonly redactionValues?: readonly string[];
+  },
+): Promise<void> {
+  assertProviderName(options.providerName);
+  if (!CREDENTIAL_ENV.test(options.credentialEnv)) {
+    throw new Error(`Unsafe provider credential env name: ${options.credentialEnv}`);
+  }
+  if (!options.env[options.credentialEnv]) {
+    throw new Error(`Missing provider credential env value: ${options.credentialEnv}`);
+  }
+  const gatewayName = options.env.OPENSHELL_GATEWAY ?? "nemoclaw";
+  assertProviderName(gatewayName);
+  const endpointPort = Number(options.endpoint.port);
+  if (!Number.isInteger(endpointPort) || endpointPort < 1 || endpointPort > 65_535) {
+    throw new Error("Fixture provider endpoint port must be an integer between 1 and 65535.");
+  }
+
+  const redactionValues = options.redactionValues ?? [];
+  const policy = await host.command(
+    host.openshellCommandPath,
+    ["policy", "get", "--base", sandboxName],
+    {
+      artifactName: `${options.artifactName}-policy-before-rebind`,
+      env: options.env,
+      redactionValues: [...redactionValues],
+      timeoutMs: 60_000,
+    },
+  );
+  expect(policy.exitCode, resultText(policy)).toBe(0);
+
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-rebind-"));
+  const boundPolicy = path.join(temporary, "bound-policy.yaml");
+  const unboundPolicy = path.join(temporary, "unbound-policy.yaml");
+  try {
+    fs.writeFileSync(boundPolicy, policy.stdout, { mode: 0o600 });
+    fs.copyFileSync(boundPolicy, unboundPolicy);
+    fs.chmodSync(unboundPolicy, 0o600);
+    unbindProviderPolicyEndpoints(unboundPolicy, options.providerName);
+    await runFixtureOpenShell(
+      host,
+      ["policy", "set", "--policy", unboundPolicy, "--wait", sandboxName],
+      {
+        artifactName: `${options.artifactName}-policy-unbound`,
+        env: options.env,
+        redactionValues,
+      },
+    );
+    await runFixtureOpenShell(
+      host,
+      ["sandbox", "provider", "detach", "-g", gatewayName, sandboxName, options.providerName],
+      {
+        artifactName: `${options.artifactName}-provider-detach`,
+        env: options.env,
+        redactionValues,
+      },
+    );
+    await runFixtureOpenShell(
+      host,
+      ["sandbox", "provider", "attach", "-g", gatewayName, sandboxName, options.providerName],
+      {
+        artifactName: `${options.artifactName}-provider-attach`,
+        env: options.env,
+        redactionValues,
+      },
+    );
+    const attachments = await runFixtureOpenShell(
+      host,
+      ["sandbox", "provider", "list", "-g", gatewayName, sandboxName],
+      {
+        artifactName: `${options.artifactName}-provider-attachments`,
+        env: options.env,
+        redactionValues,
+      },
+    );
+    expect(resultText(attachments).split(/\s+/u)).toContain(options.providerName);
+
+    bindHermesDiscordPolicyEndpoint(
+      boundPolicy,
+      options.providerName,
+      options.endpoint.host,
+      endpointPort,
+      options.endpoint.protocol,
+    );
+    await runFixtureOpenShell(
+      host,
+      ["policy", "set", "--policy", boundPolicy, "--wait", sandboxName],
+      {
+        artifactName: `${options.artifactName}-policy-rebound`,
+        env: options.env,
+        redactionValues,
+      },
+    );
+    await runFixtureOpenShell(
+      host,
+      [
+        "provider",
+        "update",
+        "-g",
+        gatewayName,
+        options.providerName,
+        "--credential",
+        options.credentialEnv,
+      ],
+      {
+        artifactName: `${options.artifactName}-provider-publication`,
+        env: options.env,
+        redactionValues,
+      },
+    );
+  } finally {
+    fs.rmSync(temporary, { force: true, recursive: true });
   }
 }
 

@@ -1324,7 +1324,7 @@ mcpBridgeShardTest("deepagents")(
       model: COMPATIBLE_MODEL,
       toolChallenge: TOOL_CHALLENGE,
       toolResultToken: deepAgentsResult,
-      progressiveToolSearch: { toolName: "fake_fake_echo", query: "AuThEnTiCaTeD McP" },
+      toolNames: ["fake_fake_echo"],
     });
     cleanup.add("stop Deep Agents MCP bridge compatible endpoint mock", () =>
       compatibleMock.close(),

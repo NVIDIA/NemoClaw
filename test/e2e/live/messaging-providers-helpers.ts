@@ -20,6 +20,7 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { rebindFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
@@ -790,55 +791,18 @@ async function bindFixturePolicyEndpoint(
   env: NodeJS.ProcessEnv,
   redactionValues: string[],
 ): Promise<void> {
-  const binding = await host.command(
-    "bash",
-    [
-      "-lc",
-      String.raw`set -eu
-policy_file="$(mktemp)"
-trap 'rm -f "$policy_file"' EXIT
-"$1" policy get --base "$2" >"$policy_file"
-node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
-"$1" policy set --policy "$policy_file" --wait "$2"`,
-      `bind-${api.kind}-${protocol}-policy`,
-      host.openshellCommandPath,
-      SANDBOX_NAME,
-      providerName,
-      "host.openshell.internal",
-      api.port,
+  await rebindFixtureProviderPolicyEndpoint(host, SANDBOX_NAME, {
+    artifactName: `bind-${api.kind}-${protocol}-credential`,
+    credentialEnv: credentialKey,
+    endpoint: {
+      host: "host.openshell.internal",
+      port: api.port,
       protocol,
-      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
-    ],
-    {
-      artifactName: `bind-${api.kind}-${protocol}-credential`,
-      cwd: REPO_ROOT,
-      env,
-      redactionValues,
-      timeoutMs: 120_000,
     },
-  );
-  expectExitZero(binding, `bind ${api.kind} fake ${protocol} credential`);
-
-  const publication = await runHost(
-    host,
-    host.openshellCommandPath,
-    [
-      "provider",
-      "update",
-      "-g",
-      env.OPENSHELL_GATEWAY ?? "nemoclaw",
-      providerName,
-      "--credential",
-      credentialKey,
-    ],
-    {
-      artifactName: `publish-${api.kind}-${protocol}-credential`,
-      env,
-      redactionValues,
-      timeoutMs: 60_000,
-    },
-  );
-  expectExitZero(publication, `publish ${api.kind} fake ${protocol} credential`);
+    env,
+    providerName,
+    redactionValues,
+  });
 }
 
 export function lastJsonLine(

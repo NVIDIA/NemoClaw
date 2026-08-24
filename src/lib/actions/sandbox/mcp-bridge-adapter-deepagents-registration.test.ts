@@ -97,6 +97,75 @@ describe("Deep Agents MCP config adapter registration", () => {
     });
   });
 
+  it("refreshes every sibling to its bounded runtime credential revision", () => {
+    const jiraEntry: McpBridgeEntry = {
+      ...baseEntry,
+      server: "jira",
+      url: "https://mcp.atlassian.com/v1/",
+      env: ["JIRA_MCP_TOKEN"],
+      providerName: "alpha-mcp-jira",
+      policyName: "mcp-bridge-jira",
+    };
+    const registration = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRegisterCommand(jiraEntry, false, [baseEntry, jiraEntry]),
+      {
+        mcpServers: {
+          github: {
+            type: "http",
+            url: baseEntry.url,
+            headers: {
+              Authorization: "Bearer openshell:resolve:env:v11_GITHUB_TOKEN",
+            },
+          },
+        },
+      },
+      "v2",
+      undefined,
+      0o600,
+      {},
+      {
+        GITHUB_TOKEN: "openshell:resolve:env:v12_GITHUB_TOKEN",
+        JIRA_MCP_TOKEN: "openshell:resolve:env:v13_JIRA_MCP_TOKEN",
+      },
+    );
+
+    expect(registration.status, registration.stderr).toBe(0);
+    expect(registration.config).toEqual({
+      mcpServers: {
+        github: {
+          type: "http",
+          url: baseEntry.url,
+          headers: { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
+        },
+        jira: {
+          type: "http",
+          url: jiraEntry.url,
+          headers: { Authorization: "Bearer openshell:resolve:env:v13_JIRA_MCP_TOKEN" },
+        },
+      },
+    });
+  });
+
+  it("rejects raw or malformed runtime credential values before publication", () => {
+    const initialConfig = { mcpServers: {} };
+    const registration = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRegisterCommand(baseEntry),
+      initialConfig,
+      "v2",
+      undefined,
+      0o600,
+      {},
+      { GITHUB_TOKEN: "raw-secret" },
+    );
+
+    expect(registration.status).toBe(2);
+    expect(registration.stderr).toContain(
+      "managed MCP credential environment does not contain a bounded OpenShell placeholder",
+    );
+    expect(registration.stderr).not.toContain("raw-secret");
+    expect(registration.config).toEqual(initialConfig);
+  });
+
   it("rejects a 65-server projection before rendering a mutation command", () => {
     const managedEntries = Array.from(
       { length: 65 },

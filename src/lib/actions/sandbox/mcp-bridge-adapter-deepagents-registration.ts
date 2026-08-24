@@ -12,6 +12,7 @@ import {
 } from "./mcp-bridge-adapter-deepagents-projection";
 import {
   DEEPAGENTS_MCP_CONFIG_PATH,
+  MANAGED_MCP_RUNTIME_PLACEHOLDER_HELPERS,
   deepAgentsManagedServerConfig,
   pythonJsonLiteral,
 } from "./mcp-bridge-adapter-status";
@@ -51,6 +52,7 @@ export function buildDeepAgentsMcpRegisterCommand(
     "import json, os, pathlib, stat, sys, tempfile",
     `payload = json.loads(${pythonJsonLiteral(payload)})`,
     `config_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_MCP_CONFIG_PATH)})`,
+    ...MANAGED_MCP_RUNTIME_PLACEHOLDER_HELPERS,
     ...DEEPAGENTS_STRICT_JSON_HELPERS,
     ...DEEPAGENTS_MANAGED_PROJECTION_HELPERS,
     "source_descriptor = None",
@@ -58,6 +60,12 @@ export function buildDeepAgentsMcpRegisterCommand(
     "    close_managed_projection_descriptor(source_descriptor)",
     "    print(message, file=sys.stderr)",
     "    raise SystemExit(2)",
+    "canonical_expected_servers = payload['expectedServers']",
+    "try:",
+    "    payload['expected'] = materialize_managed_mcp_server(payload['expected'])",
+    "    payload['expectedServers'] = materialize_managed_mcp_servers(payload['expectedServers'])",
+    "except ValueError as exc:",
+    "    fail_registration(str(exc))",
     "try:",
     "    data, source_identity, source_descriptor = load_managed_projection_for_update(config_path)",
     "except (OSError, UnicodeDecodeError, ValueError) as exc:",
@@ -74,7 +82,7 @@ export function buildDeepAgentsMcpRegisterCommand(
     "for name, current in servers.items():",
     "    if name == payload['server'] and payload['replaceExisting']:",
     "        continue",
-    "    if payload['expectedServers'].get(name) != current:",
+    "    if not managed_mcp_server_matches_intent(current, canonical_expected_servers.get(name), True):",
     `        fail_registration(f"Invalid ${DEEPAGENTS_MCP_CONFIG_PATH}: MCP server '{name}' is not exact registry-owned state")`,
     "data = {'mcpServers': payload['expectedServers']}",
     "config_path.parent.mkdir(parents=True, exist_ok=True)",

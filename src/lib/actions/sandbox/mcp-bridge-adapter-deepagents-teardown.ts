@@ -17,6 +17,7 @@ import type {
 } from "./mcp-bridge-adapter-inspection";
 import {
   DEEPAGENTS_MCP_CONFIG_PATH,
+  MANAGED_MCP_RUNTIME_PLACEHOLDER_HELPERS,
   deepAgentsManagedServerConfig,
   pythonJsonLiteral,
 } from "./mcp-bridge-adapter-status";
@@ -37,6 +38,7 @@ export function buildDeepAgentsMcpRemoveCommand(
     `payload = json.loads(${pythonJsonLiteral(payload)})`,
     `managed_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_MCP_CONFIG_PATH)})`,
     `legacy_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_LEGACY_MCP_CONFIG_PATH)})`,
+    ...MANAGED_MCP_RUNTIME_PLACEHOLDER_HELPERS,
     ...DEEPAGENTS_STRICT_JSON_HELPERS,
     ...DEEPAGENTS_MANAGED_PROJECTION_HELPERS,
     ...DEEPAGENTS_LEGACY_CONFIG_HELPERS,
@@ -68,6 +70,11 @@ export function buildDeepAgentsMcpRemoveCommand(
     "    close_managed_projection_descriptor(managed_descriptor)",
     "    print(message, file=sys.stderr)",
     "    raise SystemExit(2)",
+    "if is_v2 and not payload['force']:",
+    "    try:",
+    "        materialize_managed_mcp_server(payload['expected'])",
+    "    except ValueError as exc:",
+    "        fail_teardown(str(exc))",
     "def repair_v2_projection(identity, descriptor):",
     "    try:",
     "        write_managed_projection(config_path, {'mcpServers': {}}, identity, descriptor)",
@@ -139,7 +146,7 @@ export function buildDeepAgentsMcpRemoveCommand(
     "            repair_v2_projection(managed_identity, managed_descriptor)",
     "            finish('removed')",
     "        fail_teardown(f'Invalid managed MCP v2 projection at {config_path}: only mcpServers is allowed')",
-    "    if present and not payload['force'] and current != payload['expected']:",
+    "    if present and not payload['force'] and not managed_mcp_server_matches_intent(current, payload['expected'], True):",
     "        fail_teardown(f\"Refusing to remove modified MCP server '{payload['server']}' from {config_path}. Use --force to remove it.\")",
     "    if not present:",
     "        finish('absent')",

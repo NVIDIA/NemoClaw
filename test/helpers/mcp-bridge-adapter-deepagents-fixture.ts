@@ -47,6 +47,7 @@ export function runDeepAgentsConfigCommand(
   initialLegacyConfig?: Record<string, unknown> | string,
   initialLegacyMode = 0o600,
   managedOptions: DeepAgentsManagedFixtureOptions = {},
+  runtimeEnvironment: NodeJS.ProcessEnv = {},
 ): DeepAgentsConfigCommandResult {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-deepagents-mcp-"));
   const configPath = path.join(tmp, ".deepagents", ".nemoclaw-mcp.json");
@@ -90,7 +91,16 @@ export function runDeepAgentsConfigCommand(
         'runtime_kind = "auto"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR',
         `runtime_kind = "${runtimeKind}"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR`,
       );
-    const result = spawnSync("bash", ["-c", fixtureCommand], { encoding: "utf-8", timeout: 5000 });
+    const canonicalEnvironment = Object.fromEntries(
+      [...command.matchAll(/openshell:resolve:env:([A-Za-z_][A-Za-z0-9_]*)/gu)].map(
+        ([, name]) => [name!, `openshell:resolve:env:${name!}`],
+      ),
+    );
+    const result = spawnSync("bash", ["-c", fixtureCommand], {
+      encoding: "utf-8",
+      env: { ...process.env, ...canonicalEnvironment, ...runtimeEnvironment },
+      timeout: 5000,
+    });
     const configExists = fs.existsSync(configPath);
     const legacyConfigExists = fs.existsSync(legacyConfigPath);
     const configIsFifo = configExists && fs.lstatSync(configPath).isFIFO();

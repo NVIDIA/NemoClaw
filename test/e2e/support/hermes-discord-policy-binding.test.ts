@@ -6,8 +6,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { rebindFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const HELPER = path.resolve(import.meta.dirname, "../fixtures/hermes-discord-policy-binding.ts");
 const tempDirs: string[] = [];
@@ -27,6 +31,34 @@ function runBinding(policyFile: string, protocol?: string) {
     ],
     { encoding: "utf8", timeout: 15_000 },
   );
+}
+
+function runUnbind(policyFile: string) {
+  return spawnSync(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      HELPER,
+      "--unbind-provider",
+      policyFile,
+      "e2e-hermes-discord-discord-bridge",
+    ],
+    { encoding: "utf8", timeout: 15_000 },
+  );
+}
+
+function successfulProbe(stdout = ""): ShellProbeResult {
+  return {
+    command: ["openshell"],
+    durationMs: 1,
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    stdout,
+    stderr: "",
+    artifacts: { stdout: "stdout", stderr: "stderr", result: "result" },
+  };
 }
 
 describe("Hermes Discord E2E policy binding", () => {
@@ -109,6 +141,157 @@ describe("Hermes Discord E2E policy binding", () => {
     expect(endpoints[0]).not.toHaveProperty("credential_binding");
     expect(endpoints[1]).toHaveProperty("credential_binding", {
       provider: "e2e-hermes-discord-discord-bridge",
+    });
+  });
+
+  it("temporarily unbinds only the selected provider before attachment refresh", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-unbind-policy-"));
+    tempDirs.push(tempDir);
+    const policyFile = path.join(tempDir, "policy.yaml");
+    fs.writeFileSync(
+      policyFile,
+      YAML.stringify({
+        version: 1,
+        network_policies: {
+          fake: {
+            endpoints: [
+              {
+                host: "discord.com",
+                port: 443,
+                credential_binding: { provider: "e2e-hermes-discord-discord-bridge" },
+              },
+              {
+                host: "example.com",
+                port: 443,
+                credential_binding: { provider: "another-provider" },
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    const result = runUnbind(policyFile);
+    const endpoints = YAML.parse(fs.readFileSync(policyFile, "utf8")).network_policies.fake
+      .endpoints as Array<Record<string, unknown>>;
+
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(endpoints[0]).not.toHaveProperty("credential_binding");
+    expect(endpoints[1]).toHaveProperty("credential_binding", {
+      provider: "another-provider",
+    });
+  });
+
+  it("refreshes one attachment while preserving its original credential bindings", async () => {
+    const providerName = "e2e-hermes-discord-discord-bridge";
+    const originalPolicy = {
+      version: 1,
+      network_policies: {
+        discord: {
+          endpoints: [
+            {
+              host: "discord.com",
+              port: 443,
+              credential_binding: { provider: providerName },
+            },
+            {
+              host: "host.openshell.internal",
+              port: 43117,
+              protocol: "websocket",
+            },
+            {
+              host: "example.com",
+              port: 443,
+              credential_binding: { provider: "another-provider" },
+            },
+          ],
+        },
+      },
+    };
+    const appliedPolicies: typeof originalPolicy[] = [];
+    const recordAppliedPolicy = (args: string[]) => {
+      const file = args.at(args.indexOf("--policy") + 1);
+      expect(file).toBeTruthy();
+      appliedPolicies.push(YAML.parse(fs.readFileSync(file!, "utf8")) as typeof originalPolicy);
+      return Promise.resolve(successfulProbe());
+    };
+    const command = vi
+      .fn<HostCliClient["command"]>()
+      .mockResolvedValueOnce(successfulProbe(YAML.stringify(originalPolicy)))
+      .mockImplementationOnce(async (_command, args = []) => recordAppliedPolicy(args))
+      .mockResolvedValueOnce(successfulProbe())
+      .mockResolvedValueOnce(successfulProbe())
+      .mockResolvedValueOnce(successfulProbe(providerName))
+      .mockImplementationOnce(async (_command, args = []) => recordAppliedPolicy(args))
+      .mockResolvedValueOnce(successfulProbe("updated"));
+    const host = {
+      command,
+      openshellCommandPath: "/usr/local/bin/openshell",
+    } as unknown as HostCliClient;
+
+    await rebindFixtureProviderPolicyEndpoint(host, "e2e-hermes-discord", {
+      artifactName: "hermes-discord-rebind",
+      credentialEnv: "DISCORD_BOT_TOKEN",
+      endpoint: {
+        host: "host.openshell.internal",
+        port: 43117,
+        protocol: "websocket",
+      },
+      env: {
+        DISCORD_BOT_TOKEN: "test-fixture-token",
+        OPENSHELL_GATEWAY: "nemoclaw",
+      },
+      providerName,
+      redactionValues: ["test-fixture-token"],
+    });
+
+    expect(command.mock.calls.map(([, args]) => args)).toEqual([
+      ["policy", "get", "--base", "e2e-hermes-discord"],
+      ["policy", "set", "--policy", expect.any(String), "--wait", "e2e-hermes-discord"],
+      [
+        "sandbox",
+        "provider",
+        "detach",
+        "-g",
+        "nemoclaw",
+        "e2e-hermes-discord",
+        providerName,
+      ],
+      [
+        "sandbox",
+        "provider",
+        "attach",
+        "-g",
+        "nemoclaw",
+        "e2e-hermes-discord",
+        providerName,
+      ],
+      ["sandbox", "provider", "list", "-g", "nemoclaw", "e2e-hermes-discord"],
+      ["policy", "set", "--policy", expect.any(String), "--wait", "e2e-hermes-discord"],
+      [
+        "provider",
+        "update",
+        "-g",
+        "nemoclaw",
+        providerName,
+        "--credential",
+        "DISCORD_BOT_TOKEN",
+      ],
+    ]);
+    expect(appliedPolicies).toHaveLength(2);
+
+    const unboundEndpoints = appliedPolicies[0]!.network_policies.discord.endpoints;
+    expect(unboundEndpoints[0]).not.toHaveProperty("credential_binding");
+    expect(unboundEndpoints[2]).toHaveProperty("credential_binding", {
+      provider: "another-provider",
+    });
+
+    const reboundEndpoints = appliedPolicies[1]!.network_policies.discord.endpoints;
+    expect(reboundEndpoints[0]).toHaveProperty("credential_binding", { provider: providerName });
+    expect(reboundEndpoints[1]).toHaveProperty("credential_binding", { provider: providerName });
+    expect(reboundEndpoints[2]).toHaveProperty("credential_binding", {
+      provider: "another-provider",
     });
   });
 });
