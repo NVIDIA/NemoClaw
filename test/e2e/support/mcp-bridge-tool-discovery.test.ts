@@ -394,22 +394,6 @@ describe("authenticated MCP discovery restart retry", () => {
     expect(shouldRetryMcpDiscoveryAfterRestart([])).toBe(true);
   });
 
-  it("retries when only the exact public tunnel readiness probe reached the fixture", () => {
-    expect(
-      shouldRetryMcpDiscoveryAfterRestart([
-        {
-          method: "HEAD",
-          path: "/mcp",
-          auth: "",
-          body: "",
-          sessionId: "",
-          protocolVersion: "",
-          responseStatus: 405,
-        },
-      ]),
-    ).toBe(true);
-  });
-
   it("does not retry after a malformed MCP request reached the fixture", () => {
     expect(
       shouldRetryMcpDiscoveryAfterRestart([

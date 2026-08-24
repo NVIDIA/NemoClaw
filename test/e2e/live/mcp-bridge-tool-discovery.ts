@@ -36,28 +36,10 @@ export function shouldRetryMcpToolDiscoveryTransportFailure(
 export function shouldRetryMcpDiscoveryAfterRestart(
   requestsSinceAttempt: readonly FakeMcpRequest[],
 ): boolean {
-  // The public tunnel uses one unauthenticated HEAD request to prove that the
-  // MCP endpoint is reachable. Every other fixture-visible request, including
-  // malformed JSON without an rpcMethod, is a terminal product observation.
-  return requestsSinceAttempt.every(
-    (request) =>
-      request.method === "HEAD" &&
-      request.path === "/mcp" &&
-      request.auth === "" &&
-      request.body === "" &&
-      request.sessionId === "" &&
-      request.protocolVersion === "" &&
-      request.rpcMethod === undefined &&
-      request.rpcId === undefined &&
-      request.responseStatus === 405 &&
-      request.responseHasResult === undefined &&
-      request.negotiatedSessionId === undefined &&
-      request.negotiatedProtocolVersion === undefined &&
-      request.legacySessionId === undefined &&
-      request.negotiatedLegacySessionId === undefined &&
-      request.legacyPhase === undefined &&
-      request.legacyResponseSequence === undefined,
-  );
+  // Public-tunnel HEAD readiness probes are excluded from this protocol
+  // ledger. Every recorded request, including malformed JSON without an
+  // rpcMethod, is a terminal product observation.
+  return requestsSinceAttempt.length === 0;
 }
 
 type McpToolDiscoveryStatusJson = {
