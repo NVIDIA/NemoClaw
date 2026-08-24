@@ -431,6 +431,47 @@ navigation:
               - page: "License"
                 path: _build/agent-variants/resources/license.openclaw.generated.mdx
                 slug: license
+      - title: NemoClaw for Pi
+        subtitle: Guide for Pi agents
+        slug: pi
+        layout:
+          - page: "Home"
+            path: index.mdx
+            slug: home
+          - changelog: ./changelog
+            title: Release Notes
+            slug: release-notes
+          - section: "Get Started"
+            slug: get-started
+            collapsed: open-by-default
+            contents:
+              - page: "Quickstart with Pi"
+                path: get-started/quickstart-pi.mdx
+                slug: quickstart
+          - section: "Operate Pi"
+            slug: manage-sandboxes
+            collapsed: open-by-default
+            contents:
+              - page: "Run and Manage Pi"
+                path: manage-sandboxes/run-pi.mdx
+                slug: run-pi
+          - section: "Reference"
+            slug: reference
+            collapsed: open-by-default
+            contents:
+              - page: "CLI Commands Reference"
+                path: reference/pi-commands.mdx
+                slug: commands
+              - page: "Pi Support and Security"
+                path: reference/pi-support.mdx
+                slug: pi-support
+          - section: "Resources"
+            slug: resources
+            contents:
+              - link: "Report Vulnerabilities"
+                href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
+              - link: "Discord"
+                href: https://discord.gg/XFpfPv9Uvx
       - title: NemoClaw for Deep Agents
         subtitle: Guide for LangChain Deep Agents Code
         slug: deepagents

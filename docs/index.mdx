@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "NVIDIA NemoClaw"
 sidebar-title: "Home"
-description: "NemoClaw is an open source reference stack for running supported AI agents more safely with guided onboarding, managed inference, policy, and lifecycle operations."
-keywords: "NemoClaw, OpenClaw, Hermes, LangChain Deep Agents Code, dcode, OpenShell, AI agents, Markdown docs, sandboxing, inference routing"
+description: "NemoClaw is an open source reference stack for running supported and qualified candidate AI agents more safely with guided onboarding, managed inference, policy, and lifecycle operations."
+keywords: "NemoClaw, OpenClaw, Hermes, LangChain Deep Agents Code, Pi coding agent, dcode, OpenShell, AI agents, Markdown docs, sandboxing, inference routing"
 layout: overview
 position: 1
 ---
@@ -32,8 +32,8 @@ import { CommandTerminal } from "./_components/CommandTerminal";
   ]}
 />
 
-NVIDIA NemoClaw is an open source reference stack for running supported AI agents more safely inside [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes.
-NemoClaw provides guided onboarding, managed inference, network policy, managed integrations, and lifecycle operations for supported agent runtimes.
+NVIDIA NemoClaw is an open source reference stack for running supported and qualified candidate AI agents more safely inside [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes.
+NemoClaw provides guided onboarding, managed inference, network policy, managed integrations, and lifecycle operations while keeping qualification-only candidates separate from supported agent runtimes.
 It installs OpenShell, part of NVIDIA Agent Toolkit, and applies the selected agent integration layer and versioned blueprint.
 OpenShell provides credential custody for managed inference and host-configured integration credentials.
 
@@ -76,6 +76,7 @@ By default, NemoClaw installs the OpenClaw agent. Use one of the following quick
 | OpenClaw (default) | [Quickstart with OpenClaw](../openclaw/get-started/quickstart) |
 | Hermes | [Quickstart with Hermes](../hermes/get-started/quickstart) |
 | LangChain Deep Agents Code | [Quickstart with Deep Agents](../deepagents/get-started/quickstart) |
+| Pi (release candidate) | [Quickstart with Pi](../pi/get-started/quickstart) |
 
 <section>
 
@@ -141,6 +142,13 @@ Read the Hermes-focused overview before launching a Hermes sandboxed agent.
 Read the Deep Agents-focused overview before launching a `dcode` sandboxed terminal agent.
 
 <Badge intent="tip" minimal outlined>Overview</Badge>
+</Card>
+
+<Card title="NemoClaw for Pi" href="../pi/get-started/quickstart">
+
+Review Pi's candidate status, initial support matrix, and terminal workflows before activation.
+
+<Badge intent="warning" minimal outlined>Release candidate</Badge>
 </Card>
 
 </Cards>

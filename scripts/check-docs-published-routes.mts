@@ -28,6 +28,11 @@ import { agentVariants, renderAgentVariantPage } from "./sync-agent-variant-docs
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const docsRoot = path.join(repoRoot, "docs");
 type AgentVariant = (typeof agentVariants)[number];
+const LEGACY_REDIRECT_VARIANTS = [
+  "openclaw",
+  "hermes",
+  "deepagents",
+] as const satisfies readonly AgentVariant[];
 
 export type PublishedRouteIndex = {
   /** Every published page route, e.g. `/user-guide/openclaw/reference/commands`. */
@@ -60,7 +65,7 @@ type NavNode = {
 // but remember that shared-source links must be checked after AgentOnly rendering.
 function agentVariantSourcePath(navPath: string): string | null {
   const match = navPath.match(
-    /^_build\/agent-variants\/(.+)\.(?:openclaw|hermes|deepagents)\.generated\.mdx$/,
+    /^_build\/agent-variants\/(.+)\.(?:openclaw|hermes|deepagents|pi)\.generated\.mdx$/,
   );
   return match ? `${match[1]}.mdx` : null;
 }
@@ -318,7 +323,9 @@ export function findBrokenPublishedRedirects(
     }
     const hasVariant =
       redirect.source.includes(":variant") || redirect.destination.includes(":variant");
-    const variants: Array<AgentVariant | null> = hasVariant ? [...agentVariants] : [null];
+    const variants: Array<AgentVariant | null> = hasVariant
+      ? [...LEGACY_REDIRECT_VARIANTS]
+      : [null];
     for (const variant of variants) {
       const source = variant ? redirect.source.replaceAll(":variant", variant) : redirect.source;
       const destination = variant
