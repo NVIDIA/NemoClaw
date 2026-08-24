@@ -58,7 +58,7 @@
     "src/lib/state/portable-uninstall-retirement.test.ts": 27072,
     "src/lib/tunnel/services.test.ts": 5573,
     "test/brev-launchable-e2e.test.ts": 34518,
-    "test/channels-remove-full-teardown.test.ts": 9727,
+    "test/channels/channels-remove-full-teardown.test.ts": 9727,
     "test/cli-oclif-compatibility.test.ts": 7416,
     "test/cli/connect-recovery.test.ts": 14143,
     "test/cli/credentials-command.test.ts": 6511,
