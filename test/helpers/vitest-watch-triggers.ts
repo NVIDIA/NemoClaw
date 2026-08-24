@@ -182,6 +182,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)test\/e2e\/live\/managed-image-activation-e2e-helpers\.ts$/,
+    testsToRun: runTests("test/managed-image-publication-workflow.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)\.github\/actions\/build-base-image-platform\/action\.yaml$/,
     testsToRun: runTests(
       "test/dcode-base-image-workflow.test.ts",

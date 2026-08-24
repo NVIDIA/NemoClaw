@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   assertExitZero,
   type CommandRunner,
@@ -25,6 +25,7 @@ import type {
   ShellProbeRunOptions,
   TrustedShellCommand,
 } from "../fixtures/shell-probe.ts";
+import { LAUNCH_TURN_SCRIPT, runOpenClawLaunchSession } from "../live/launch-agent-turn.ts";
 import { sandboxShWithArgs } from "../live/phase6-messaging-helpers.ts";
 
 interface RunnerCall {
@@ -144,6 +145,83 @@ describe("E2E fixture clients", () => {
     await expect(host.isCommandAvailable("openshell")).rejects.toThrow(
       "probe command availability for openshell failed: shell probe failed",
     );
+  });
+
+  it("host client resolves the configured OpenShell command through the fixture child environment", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ stdout: "/home/runner/.local/bin/openshell\n" });
+    const host = new HostCliClient(runner);
+
+    await expect(host.resolveOpenShellCommandPath()).resolves.toBe(
+      "/home/runner/.local/bin/openshell",
+    );
+
+    expect(host.openshellCommandPath).toBe("/home/runner/.local/bin/openshell");
+    expect(runner.calls).toEqual([
+      {
+        command: "bash",
+        args: ["-lc", 'command -v -- "$1"', "resolve-openshell-command", "openshell"],
+        options: {
+          artifactName: "resolve-openshell-command",
+          env: expect.objectContaining({ PATH: expect.any(String) }),
+          timeoutMs: 30_000,
+        },
+      },
+    ]);
+  });
+
+  it.each([
+    { label: "empty output", stdout: "" },
+    { label: "a relative path", stdout: "openshell\n" },
+    {
+      label: "multiple absolute paths",
+      stdout: "/home/runner/.local/bin/openshell\n/usr/bin/openshell\n",
+    },
+  ])("host client keeps its configured OpenShell command for $label", async ({ stdout }) => {
+    const runner = new FakeRunner();
+    runner.enqueue({ stdout });
+    const host = new HostCliClient(runner);
+
+    await expect(host.resolveOpenShellCommandPath()).rejects.toThrow(
+      "resolve OpenShell command path failed: expected exactly one non-empty absolute path",
+    );
+    expect(host.openshellCommandPath).toBe("openshell");
+  });
+
+  it("composes installation, OpenShell resolution, and launch in authority order", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ stdout: "installation complete\n" });
+    runner.enqueue({ stdout: "/home/runner/.local/bin/openshell\n" });
+    runner.enqueue({});
+    const host = new HostCliClient(runner);
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+
+    try {
+      const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
+        artifactName: "phase-1-install-sh",
+      });
+      expect(install.exitCode).toBe(0);
+      await host.resolveOpenShellCommandPath();
+      await runOpenClawLaunchSession({
+        artifactName: "phase-4-openclaw-launch-turn",
+        cliCommand: "nemoclaw",
+        env: {},
+        host,
+        redactionValues: [],
+        sandboxName: "alpha",
+      });
+
+      expect(runner.calls.map(({ args }) => args)).toEqual([
+        ["install.sh", "--non-interactive", "--fresh"],
+        ["-lc", 'command -v -- "$1"', "resolve-openshell-command", "openshell"],
+        ["-lc", LAUNCH_TURN_SCRIPT],
+      ]);
+      expect(runner.calls[2]?.options?.env?.NEMOCLAW_OPENSHELL_COMMAND).toBe(
+        "/home/runner/.local/bin/openshell",
+      );
+    } finally {
+      platform.mockRestore();
+    }
   });
 
   it("host client validates list/status and cleans up sandbox destroys", async () => {
