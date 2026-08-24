@@ -97,6 +97,10 @@ describe("OpenShell policy mutation read discovery (#6921)", () => {
       "function readPolicy(gatewayName: string, sandboxName: string) {",
       '  deps.capture(["policy", "get", "-g", gatewayName, "--base", sandboxName], { ignoreError: true });',
       '  deps.capture(["policy", "get", "-g", gatewayName, "--full", sandboxName], { ignoreError: true });',
+      '  deps.capture(["policy", "get", sandboxName], { ignoreError: true });',
+      '  deps.capture(["policy", "get", "--base", "--full", sandboxName], { ignoreError: true });',
+      "  const untypedReadPolicy = (request: object) => request;",
+      '  untypedReadPolicy({ scope: "base" });',
       "}",
     ].join("\n");
 

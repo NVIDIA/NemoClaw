@@ -34,12 +34,23 @@ export type LaunchReadinessObservationCategory =
 
 export type LaunchReadinessCaptureResult = ReturnType<typeof captureOpenshell>;
 
+export type LaunchReadinessCaptureOptions = {
+  ignoreError?: true;
+  includeStderr?: boolean;
+  includeStreams?: boolean;
+  timeout?: number;
+  maxBuffer?: number;
+};
+
 export type LaunchReadinessFailedCheck = "inference request";
 
 export interface LaunchReadinessHealthDeps {
   listAgents?: typeof listAgents;
   loadAgent?: typeof loadAgent;
-  capture?: (args: string[]) => LaunchReadinessCaptureResult;
+  capture?: (
+    args: string[],
+    options?: LaunchReadinessCaptureOptions,
+  ) => LaunchReadinessCaptureResult;
   gatewayHealth?: (sandboxName: string, gatewayName: string) => Promise<boolean | null>;
   forwardsHealthy?: (sandboxName: string, gatewayName: string) => boolean | null;
   smoke?: typeof runAgentSmokeCommands;
@@ -72,7 +83,7 @@ export class LaunchReadinessEvidenceError extends Error {
 
 export function captureLaunchReadiness(
   args: string[],
-  options: { includeStreams?: boolean; maxBuffer?: number } = {},
+  options: LaunchReadinessCaptureOptions = {},
 ): LaunchReadinessCaptureResult {
   return captureOpenshell(args, {
     ignoreError: true,
@@ -89,12 +100,11 @@ export async function readLaunchReadinessLivePolicy(
   const readPolicy: OpenShellSandboxPolicyReader["readSandboxPolicy"] =
     deps.readPolicy ??
     createCliOpenShellSandboxPolicyReader({
-      capture: (args) =>
-        (
-          deps.capture ??
-          ((captureArgs) =>
-            captureLaunchReadiness(captureArgs, { maxBuffer: LIVE_POLICY_MAX_BYTES }))
-        )(args),
+      capture: (args, options) =>
+        (deps.capture ?? captureLaunchReadiness)(args, {
+          ...options,
+          maxBuffer: LIVE_POLICY_MAX_BYTES,
+        }),
     }).readSandboxPolicy;
   const result = await readPolicy({
     target: namedOpenShellGateway(gatewayName),
