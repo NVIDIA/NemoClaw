@@ -100,6 +100,16 @@ describe("blueprint external OpenShell target schema", () => {
     expect(validate(blueprintWithExternalTarget()), JSON.stringify(validate.errors)).toBe(true);
   });
 
+  it.each(["https://openshell.example.test:8443/", "https://[2001:db8::1]:8443"])(
+    "accepts a valid bare HTTPS origin [%s]",
+    (endpoint) => {
+      expect(
+        validate(blueprintWithExternalTarget({ ...externalTarget, endpoint })),
+        JSON.stringify(validate.errors),
+      ).toBe(true);
+    },
+  );
+
   it("rejects mixed local and external lifecycle fields", () => {
     const target = {
       ...externalTarget,
@@ -143,6 +153,12 @@ describe("blueprint external OpenShell target schema", () => {
       "endpoint path",
       { ...externalTarget, endpoint: "https://openshell.example.test:8443/gateway" },
     ],
+    ["missing endpoint host", { ...externalTarget, endpoint: "https://:8443" }],
+    [
+      "out-of-range endpoint port",
+      { ...externalTarget, endpoint: "https://openshell.example.test:99999" },
+    ],
+    ["malformed IPv6 endpoint", { ...externalTarget, endpoint: "https://[:::]" }],
     ["relative CA file", { ...externalTarget, trust: { ca_file: "ca.pem" } }],
     [
       "relative authentication file",

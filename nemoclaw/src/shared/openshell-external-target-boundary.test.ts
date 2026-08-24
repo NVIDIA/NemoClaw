@@ -70,6 +70,7 @@ const defaultFileContents = new Map([
   [CA_FILE, CA_PEM],
   [AUTHENTICATION_FILE, AUTHENTICATION_CONTENTS],
 ]);
+const fileSizes = new Map<string, number>();
 const readFilePaths: string[] = [];
 let nextDescriptor = 100;
 
@@ -106,6 +107,7 @@ describe("external OpenShell target boundary", () => {
     specialFileMetadata.clear();
     openedFileMetadata.clear();
     descriptorFiles.clear();
+    fileSizes.clear();
     readFilePaths.length = 0;
     nextDescriptor = 100;
     fsMocks.lstatSync.mockImplementation(
@@ -126,7 +128,7 @@ describe("external OpenShell target boundary", () => {
     });
     fsMocks.fstatSync.mockImplementation((descriptor: number) => {
       const file = descriptorFiles.get(descriptor)!;
-      return { ...file.metadata, size: file.contents.length };
+      return { ...file.metadata, size: fileSizes.get(file.filePath) ?? file.contents.length };
     });
     fsMocks.readSync.mockImplementation(
       (descriptor: number, buffer: Buffer, offset: number, length: number) => {
@@ -156,10 +158,9 @@ describe("external OpenShell target boundary", () => {
         .update(new X509Certificate(CA_PEM).raw)
         .digest("hex")}`,
     });
-    expect(readFile.mock.calls.map(([filePath]) => filePath)).toEqual([
-      CA_FILE,
-      AUTHENTICATION_FILE,
-    ]);
+    expect(readFile.mock.calls.map(([filePath]) => filePath)).toEqual([CA_FILE]);
+    expect(fsMocks.openSync).toHaveBeenCalledWith(AUTHENTICATION_FILE, expect.any(Number));
+    expect(readFilePaths).not.toContain(AUTHENTICATION_FILE);
     const rendered = JSON.stringify(plan);
     expect(rendered).not.toContain(CA_FILE);
     expect(rendered).not.toContain(AUTHENTICATION_FILE);
@@ -294,12 +295,8 @@ describe("external OpenShell target boundary", () => {
         [AUTHENTICATION_FILE, AUTHENTICATION_CONTENTS],
       ]),
     );
-    const emptyAuthenticationReader = reader(
-      new Map([
-        [CA_FILE, CA_PEM],
-        [AUTHENTICATION_FILE, ""],
-      ]),
-    );
+    const emptyAuthenticationReader = reader(new Map([[CA_FILE, CA_PEM]]));
+    fileSizes.set(AUTHENTICATION_FILE, 0);
 
     const caError = expectError(() =>
       buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY, {
@@ -334,12 +331,8 @@ describe("external OpenShell target boundary", () => {
   });
 
   it("rejects an oversized authentication file without returning its path (#9872)", () => {
-    const readFile = reader(
-      new Map([
-        [CA_FILE, CA_PEM],
-        [AUTHENTICATION_FILE, "x".repeat(1024 * 1024 + 1)],
-      ]),
-    );
+    const readFile = reader(new Map([[CA_FILE, CA_PEM]]));
+    fileSizes.set(AUTHENTICATION_FILE, 1024 * 1024 + 1);
 
     const error = expectError(() =>
       buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY, { readFile }),
@@ -349,7 +342,8 @@ describe("external OpenShell target boundary", () => {
       "external OpenShell target authentication file is empty or exceeds its size limit",
     );
     expect(error.message).not.toContain(AUTHENTICATION_FILE);
-    expect(readFile).toHaveBeenCalledWith(AUTHENTICATION_FILE, 1024 * 1024);
+    expect(readFile.mock.calls.map(([filePath]) => filePath)).toEqual([CA_FILE]);
+    expect(readFilePaths).not.toContain(AUTHENTICATION_FILE);
   });
 
   it("redacts a file-read failure cause (#9872)", () => {
@@ -379,7 +373,7 @@ describe("external OpenShell target boundary", () => {
       buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY),
     );
 
-    expect(error.message).toMatch(/could not be read/);
+    expect(error.message).toMatch(/could not be (?:read|validated)/);
     expect(error.message).not.toContain(specialPath);
     expect(fsMocks.lstatSync).toHaveBeenCalledWith(specialPath);
     expect(fsMocks.openSync).toHaveBeenCalledWith(specialPath, expect.any(Number));

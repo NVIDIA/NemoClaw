@@ -26,10 +26,7 @@ import { isPlainObject, type UnknownRecord } from "../shared/object-record.js";
 import * as importedOpenShellExternalTargetBoundary from "../shared/openshell-external-target-boundary.cjs";
 import * as importedOpenShellPolicyBoundary from "../shared/openshell-policy-boundary.cjs";
 import * as importedSandboxName from "../shared/sandbox-name.cjs";
-import type {
-  ExternalOpenShellTarget,
-  SanitizedExternalOpenShellTargetPlan,
-} from "../shared/openshell-external-target-boundary.cjs";
+import type { SanitizedExternalOpenShellTargetPlan } from "../shared/openshell-external-target-boundary.cjs";
 import {
   attachRuntimeIdentity,
   buildRuntimeIdentityPlan,
@@ -65,7 +62,7 @@ const sourceOrGeneratedOpenShellExternalTargetBoundary =
   importedOpenShellExternalTargetBoundary as typeof importedOpenShellExternalTargetBoundary & {
     default?: typeof importedOpenShellExternalTargetBoundary;
   };
-const { buildSanitizedExternalOpenShellTargetPlan, isExternalOpenShellTarget } =
+const { buildSanitizedExternalOpenShellTargetPlan } =
   sourceOrGeneratedOpenShellExternalTargetBoundary.default ??
   sourceOrGeneratedOpenShellExternalTargetBoundary;
 
@@ -323,13 +320,6 @@ function isBlueprint(value: unknown): value is Blueprint {
   ) {
     return false;
   }
-  if (
-    value.openshell_target !== undefined &&
-    !isExternalOpenShellTarget(value.openshell_target)
-  ) {
-    return false;
-  }
-
   const components = value.components;
   if (components === undefined) {
     return true;
@@ -481,7 +471,7 @@ interface Blueprint {
   version?: string;
   min_openshell_version?: string;
   max_openshell_version?: string;
-  openshell_target?: ExternalOpenShellTarget;
+  openshell_target?: unknown;
   components?: {
     inference?: {
       profiles?: InferenceProfileMap;

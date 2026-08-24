@@ -43,6 +43,7 @@ export interface SanitizedExternalOpenShellTargetPlan {
 
 export interface ExternalOpenShellTargetPlanDependencies {
   readFile?: (filePath: string, maxBytes: number) => string | Buffer | Uint8Array;
+  inspectFile?: (filePath: string, maxBytes: number) => number;
 }
 
 type UnknownRecord = Record<string, unknown>;
@@ -263,6 +264,46 @@ function readFileAtMost(filePath: string, maxBytes: number): Buffer {
   }
 }
 
+function inspectRegularFileSize(filePath: string, _maxBytes: number): number {
+  const descriptor = openSync(
+    filePath,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+  );
+  try {
+    const file = fstatSync(descriptor);
+    const pathMetadata = lstatSync(filePath);
+    if (
+      !file.isFile() ||
+      !pathMetadata.isFile() ||
+      pathMetadata.isSymbolicLink() ||
+      file.dev !== pathMetadata.dev ||
+      file.ino !== pathMetadata.ino
+    ) {
+      throw new Error("not a regular file");
+    }
+    return file.size;
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+function validateFileReference(
+  filePath: string,
+  label: string,
+  maxBytes: number,
+  inspectFile: NonNullable<ExternalOpenShellTargetPlanDependencies["inspectFile"]>,
+): void {
+  let size: number;
+  try {
+    size = inspectFile(filePath, maxBytes);
+  } catch {
+    throw new Error(`external OpenShell target ${label} could not be validated`);
+  }
+  if (!Number.isSafeInteger(size) || size <= 0 || size > maxBytes) {
+    throw new Error(`external OpenShell target ${label} is empty or exceeds its size limit`);
+  }
+}
+
 function validateCaBundle(contents: Buffer): readonly Buffer[] {
   const text = contents.toString("utf8");
   const blocks = text.match(PEM_CERTIFICATE_PATTERN) ?? [];
@@ -313,11 +354,11 @@ export function buildSanitizedExternalOpenShellTargetPlan(
   );
   const caCertificates = validateCaBundle(caContents);
 
-  readBoundedFile(
+  validateFileReference(
     target.authentication.credential_file,
     "authentication file",
     MAX_AUTHENTICATION_FILE_BYTES,
-    readFile,
+    dependencies.inspectFile ?? inspectRegularFileSize,
   );
 
   const caFingerprint = createHash("sha256");

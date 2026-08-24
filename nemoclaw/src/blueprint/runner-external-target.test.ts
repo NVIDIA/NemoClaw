@@ -21,6 +21,7 @@ const { store, addFile } = createRunnerFsStore();
 const stdoutCapture = createStdoutCapture();
 const mockExeca = vi.fn();
 const externalFileSizes = new Map<string, number>();
+const externalFileReads: string[] = [];
 
 vi.mock("node:os", () => ({ homedir: () => FAKE_HOME }));
 
@@ -68,6 +69,7 @@ vi.mock("node:fs", async (importOriginal) => {
       _position: number | null,
     ) => {
       const file = descriptors.get(descriptor)!;
+      externalFileReads.push(file.filePath);
       const contents = Buffer.from(memory.readFileSync(file.filePath));
       const bytesRead = contents.copy(buffer, offset, file.offset, file.offset + length);
       file.offset += bytesRead;
@@ -128,6 +130,7 @@ describe("Blueprint Runner external OpenShell target", () => {
   beforeEach(() => {
     store.clear();
     externalFileSizes.clear();
+    externalFileReads.length = 0;
     stdoutCapture.reset();
     vi.clearAllMocks();
     delete process.env.NEMOCLAW_BLUEPRINT_PATH;
@@ -170,6 +173,7 @@ describe("Blueprint Runner external OpenShell target", () => {
     expect(output).not.toContain("/private/ambient-gateway-management.json");
     expect(output).not.toContain("docker");
     expect(output).not.toContain("podman");
+    expect(externalFileReads).not.toContain(EXTERNAL_AUTHENTICATION_FILE);
   });
 
   it("rejects apply before any subprocess or run-state effect (#9872)", async () => {
@@ -195,6 +199,23 @@ describe("Blueprint Runner external OpenShell target", () => {
     expect(mockExeca).not.toHaveBeenCalled();
     expect(mockedValidateEndpoint).not.toHaveBeenCalled();
     expect(stdoutCapture.text()).not.toContain("RUN_ID:");
+  });
+
+  it("preserves the actionable external endpoint validation error (#9872)", async () => {
+    const blueprint = externalTargetBlueprint();
+    blueprint.openshell_target = {
+      ...(blueprint.openshell_target as Record<string, unknown>),
+      endpoint: "https://:8443",
+    };
+    addFile("blueprint.yaml", YAML.stringify(blueprint));
+
+    await expect(main(["plan"])).rejects.toThrow(
+      "external OpenShell target endpoint must be a valid HTTPS origin",
+    );
+
+    expect(mockExeca).not.toHaveBeenCalled();
+    expect(mockedValidateEndpoint).not.toHaveBeenCalled();
+    expect(externalFileReads).toEqual([]);
   });
 
   it("rejects an oversized CA file before reading its contents (#9872)", async () => {
