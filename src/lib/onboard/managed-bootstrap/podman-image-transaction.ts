@@ -457,15 +457,19 @@ function boundedBootstrapSecurityFailure(
   engine: BootstrapEngine,
   runtimeId: string,
 ): string | null {
-  const result = engine.capture(
-    ["container", "logs", "--tail", "80", runtimeId],
-    DEFAULT_COMMAND_TIMEOUT_MS,
-  );
-  const containerLogFailure =
-    result.status === 0 && !result.error
-      ? safeBootstrapFailureLine(`${result.stdout}\n${result.stderr}`)
-      : null;
-  return containerLogFailure ?? boundedBootstrapStartLogFailure(engine, runtimeId);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const result = engine.capture(
+      ["container", "logs", "--tail", "80", runtimeId],
+      DEFAULT_COMMAND_TIMEOUT_MS,
+    );
+    const containerLogFailure =
+      result.status === 0 && !result.error
+        ? safeBootstrapFailureLine(`${result.stdout}\n${result.stderr}`)
+        : null;
+    if (containerLogFailure) return containerLogFailure;
+    if (attempt < 2) defaultSleep(100);
+  }
+  return boundedBootstrapStartLogFailure(engine, runtimeId);
 }
 
 function inspectStable(
