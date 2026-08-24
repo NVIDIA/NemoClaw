@@ -14,6 +14,8 @@ import { vi } from "vitest";
 import {
   handleHermesBrokerCoexistencePortal,
   handleHermesBrokerUpstream,
+  HERMES_BROKER_REDIRECT_BODY,
+  HERMES_BROKER_REDIRECT_HEADER,
   HERMES_BROKER_REDIRECT_TARGET,
   type HermesBrokerUpstreamRequest,
 } from "./helpers/hermes-tool-gateway-broker-fixture";
@@ -1147,16 +1149,22 @@ describe("Hermes managed-tool gateway broker", () => {
         authorization: "Bearer access-2",
       });
 
+      const upstreamRequestCount = upstreamRequests.length;
       const redirect = await fetch(`http://127.0.0.1:${brokerPort}/firecrawl/v1/redirect-probe`, {
         headers: { "x-api-key": "refresh-2" },
         redirect: "manual",
       });
       const redirectBody = await redirect.text();
-      expect(upstreamRequests.at(-1)?.url).toBe("/v1/redirect-probe");
+      expect(upstreamRequests.slice(upstreamRequestCount).map(({ url }) => url)).toEqual([
+        "/v1/redirect-probe",
+      ]);
       expect(redirect.status).toBe(502);
       expect(redirect.headers.get("location")).toBeNull();
+      expect(redirect.headers.get("x-redirect-probe")).toBeNull();
       expect(redirectBody).toContain("redirect");
       expect(redirectBody).not.toContain(HERMES_BROKER_REDIRECT_TARGET);
+      expect(redirectBody).not.toContain(HERMES_BROKER_REDIRECT_HEADER);
+      expect(redirectBody).not.toContain(HERMES_BROKER_REDIRECT_BODY);
       expect(tokenRequests).toHaveLength(1);
       expect(agentKeyRequests).toHaveLength(1);
       expect(output).not.toContain("refresh-1");

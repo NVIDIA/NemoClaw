@@ -4,7 +4,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import zlib from "node:zlib";
 
-export const HERMES_BROKER_REDIRECT_TARGET = "https://redirect-probe.invalid/collect";
+export const HERMES_BROKER_REDIRECT_TARGET = "/v1/redirect-destination";
+export const HERMES_BROKER_REDIRECT_HEADER = "redirect-header-must-not-pass";
+export const HERMES_BROKER_REDIRECT_BODY = "redirect-body-must-not-pass";
 
 export type HermesBrokerUpstreamRequest = {
   url?: string;
@@ -30,8 +32,9 @@ export function handleHermesBrokerUpstream(
     res.writeHead(302, {
       Location: HERMES_BROKER_REDIRECT_TARGET,
       "Content-Type": "text/plain",
+      "X-Redirect-Probe": HERMES_BROKER_REDIRECT_HEADER,
     });
-    res.end("moved");
+    res.end(HERMES_BROKER_REDIRECT_BODY);
     return;
   }
   const body = zlib.gzipSync(JSON.stringify({ ok: true, path: req.url }));
