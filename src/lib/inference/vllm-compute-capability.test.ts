@@ -408,6 +408,36 @@ describe("managed vLLM GPU memory preflight", () => {
     );
   });
 
+  it.each(["n1x", "spark"] as const)(
+    "continues on qualified %s unified memory when both fields are [N/A] (#10082)",
+    async (platform) => {
+      const profile = detectVllmProfile({ platform })!;
+      mockHostCommands({
+        computeCap: "12.1\n",
+        gpuMemory: "0, GPU-69adb14e-820e-bfb4-0993-171e73f68504, [N/A], [N/A]\n",
+      });
+      mockDockerDaemon(profile.containerName);
+
+      const result = await installVllm(profile, {
+        hasImage: false,
+        nonInteractive: true,
+        promptFn: vi.fn(),
+      });
+
+      expect(result).toEqual({ ok: true });
+      expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledOnce();
+      expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
+      const warnings = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
+      expect(warnings).toContain("reports [N/A] for both total and free memory");
+      expect(warnings).toContain("without inferring available memory");
+      expect(
+        errSpy.mock.calls.filter((call: unknown[]) =>
+          String(call[0]).includes("reports [N/A] for both total and free memory"),
+        ),
+      ).toHaveLength(1);
+    },
+  );
+
   it("checks the first GPU selected by Docker instead of aggregating every device", () => {
     const detected = detectVllmProfile({ type: "nvidia" })!;
     const model = VLLM_MODELS.find((entry) => entry.envValue === "muse-glimmer-30b")!;
@@ -485,6 +515,45 @@ describe("managed vLLM GPU memory preflight", () => {
         freeBytes: 52_806_287_360n,
       },
     ]);
+  });
+
+  it("preserves selected-device identity when both memory fields are [N/A] (#10082)", () => {
+    mockHostCommands({
+      computeCap: "12.1\n",
+      gpuMemory:
+        "0, GPU-69adb14e-820e-bfb4-0993-171e73f68504, [N/A], [N/A]\n" +
+        "1, GPU-00000000-0000-0000-0000-000000000001, [N/A], 1000\n" +
+        "2, GPU-00000000-0000-0000-0000-000000000002, 1000, [N/A]\n" +
+        "3, malformed-uuid, [N/A], [N/A]\n",
+    });
+
+    expect(readGpuMemoryDevices()).toEqual([
+      {
+        index: 0,
+        uuid: "GPU-69adb14e-820e-bfb4-0993-171e73f68504",
+        totalBytes: null,
+        freeBytes: null,
+      },
+    ]);
+  });
+
+  it("keeps unavailable memory fail-closed for non-unified profiles", () => {
+    const profile = { ...detectVllmProfile({ type: "nvidia" })!, gpuMemoryUtilization: 0.7 };
+    const model = profile.defaultModel;
+
+    expect(
+      gpuMemoryPreflight(model, profile, [
+        {
+          index: 0,
+          uuid: "GPU-69adb14e-820e-bfb4-0993-171e73f68504",
+          totalBytes: null,
+          freeBytes: null,
+        },
+      ]),
+    ).toEqual({
+      ok: false,
+      reason: expect.stringContaining("did not report numeric total and free memory"),
+    });
   });
 
   it("rejects missing telemetry for Docker's first selected GPU", () => {
