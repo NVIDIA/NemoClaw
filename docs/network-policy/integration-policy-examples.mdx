@@ -78,6 +78,12 @@ Messaging channel presets are scoped to the sandbox's active agent; if an agent 
 | WeChat (personal) iLink Bot API (experimental) | `wechat` | OpenClaw and Hermes |
 | WhatsApp Web messaging (experimental) | `whatsapp` | OpenClaw and Hermes |
 
+<Note>
+The `nous-*` presets authorize Hermes managed-tool gateway traffic; they do not configure the tools themselves.
+Select the corresponding tools during Hermes onboarding with Nous Portal OAuth.
+API-key onboarding does not enable managed tools, and `policy add <nous-preset>` only applies or restores network-policy entries for a tool that is already configured.
+</Note>
+
 Preview the endpoints before applying:
 
 ```bash
