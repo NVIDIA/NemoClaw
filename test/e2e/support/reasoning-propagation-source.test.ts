@@ -103,6 +103,29 @@ describe("cloud onboarding reasoning propagation source", () => {
     expect(sandboxExec).toHaveBeenCalledOnce();
   });
 
+  it("keeps a failed legacy environment inspection out of the error", async () => {
+    const hostCommand = vi
+      .fn()
+      .mockResolvedValueOnce(probeResult("123456789abc\n"))
+      .mockResolvedValueOnce({
+        ...probeResult("NVIDIA_INFERENCE_API_KEY=secret-value\n"),
+        exitCode: 1,
+        stderr: "token-bearing diagnostic",
+      });
+    const sandboxExec = vi.fn();
+
+    await expect(
+      probeReasoningPropagation({
+        expectedModel: "nvidia/test-model",
+        host: { command: hostCommand },
+        sandbox: { exec: sandboxExec },
+        sandboxName: "reasoning-legacy",
+        workloadKind: "legacy-dockerfile",
+      }),
+    ).rejects.toThrow(/^inspect legacy sandbox image reasoning environment failed$/u);
+    expect(sandboxExec).not.toHaveBeenCalled();
+  });
+
   it("rejects missing, ambiguous, and malformed legacy container identities", () => {
     expect(() => parseLegacyReasoningContainerId("\n")).toThrow(/exactly one valid/u);
     expect(() => parseLegacyReasoningContainerId("123456789abc\nabcdef123456\n")).toThrow(

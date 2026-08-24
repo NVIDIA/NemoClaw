@@ -182,7 +182,9 @@ async function probeLegacyReasoning(
       persistArtifacts: false,
     },
   );
-  assertExitZero(imageEnvironment, "inspect legacy sandbox image reasoning environment");
+  if (imageEnvironment.exitCode !== 0) {
+    throw new Error("inspect legacy sandbox image reasoning environment failed");
+  }
   const imageReasoning = parseLegacyImageReasoning(imageEnvironment.stdout);
   const modelProbe = await options.sandbox.exec(
     options.sandboxName,
