@@ -120,6 +120,15 @@ describe("MCP bridge onboarding environment", () => {
     ).not.toThrow();
   });
 
+  it("accepts the selected cross-release managed-image cohort revision", () => {
+    expect(() =>
+      assertMcpBridgeManagedImageReceipt({
+        environment: { E2E_MANAGED_IMAGE_REVISION: "c".repeat(40) },
+        workload: { kind: "managed-image", sourceRevision: "c".repeat(40) },
+      }),
+    ).not.toThrow();
+  });
+
   it("passes only exact-main OpenShell overrides after fixed onboarding values", () => {
     const env = buildMcpBridgeOnboardEnv({
       ...ONBOARD_OPTIONS,

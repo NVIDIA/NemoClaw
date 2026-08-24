@@ -27,10 +27,10 @@ describe("managed image buildless onboarding orchestration contract", () => {
       "utf8",
     );
     expect(commands).toContain(
-      "If registry or catalog availability prevents resolution, the ordinary `prefer-managed` path builds the shipped, reviewed repository Dockerfile instead; it never selects an unpinned `:latest` image.",
+      "If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile.",
     );
     expect(commands).toContain(
-      "Available catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent fails closed before sandbox creation.",
+      "Catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent also fails closed before sandbox creation.",
     );
 
     progress.phase("validate mocked all-agent buildless orchestration boundaries");

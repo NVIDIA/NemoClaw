@@ -103,6 +103,7 @@ export interface PublicationWaitOptions {
   history: FirstParentHistory;
   request: (path: string) => Promise<unknown>;
   requireWorkflowSuccess?: boolean;
+  selectNearestSuccessfulRun?: boolean;
   waitMs: number;
   pollMs: number;
   now?: () => number;
@@ -284,12 +285,13 @@ export function resolveFirstParentHistory(
   expectedSha: string,
   paths: readonly string[],
   runGit: (args: string[]) => string = defaultGit,
+  options: { readonly requireCheckedOutCommit?: boolean } = {},
 ): FirstParentHistory {
   sha(expectedSha, "expected SHA");
   if (paths.length === 0) throw new Error("at least one base-image path is required");
 
   const checkedOutSha = runGit(["rev-parse", "--verify", "HEAD^{commit}"]);
-  if (checkedOutSha !== expectedSha) {
+  if (options.requireCheckedOutCommit !== false && checkedOutSha !== expectedSha) {
     throw new Error(
       `checked-out commit ${checkedOutSha || "missing"} does not match ${expectedSha}`,
     );
@@ -405,6 +407,7 @@ export function selectPublicationRun(
   payload: unknown,
   history: FirstParentHistory,
   workflowId: number,
+  options: { readonly completedSuccessOnly?: boolean } = {},
 ): PublicationSelection {
   positiveSafeInteger(workflowId, "base-image workflow id");
   const response = asRecord(payload);
@@ -429,10 +432,13 @@ export function selectPublicationRun(
     const distance = history.distanceBySha.get(run.headSha);
     return distance === undefined ? [] : [{ run, distance }];
   });
-  if (eligible.length === 0) return { state: "missing" };
+  const selectable = options.completedSuccessOnly
+    ? eligible.filter(({ run }) => run.status === "completed" && run.conclusion === "success")
+    : eligible;
+  if (selectable.length === 0) return { state: "missing" };
 
-  const nearestDistance = Math.min(...eligible.map(({ distance }) => distance));
-  const nearest = eligible.filter(({ distance }) => distance === nearestDistance);
+  const nearestDistance = Math.min(...selectable.map(({ distance }) => distance));
+  const nearest = selectable.filter(({ distance }) => distance === nearestDistance);
   if (nearest.length !== 1) {
     throw new Error(
       `multiple trusted base-image workflow runs match ${nearest[0]?.run.headSha ?? history.relevantSha}`,
@@ -631,7 +637,9 @@ export async function waitForBaseImagePublication(
   const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${MAIN_BRANCH}&event=push&per_page=100`;
   while (true) {
     const runs = await collectPaginated(options.request, runsPath, "workflow_runs");
-    const selection = selectPublicationRun(runs, options.history, workflowId);
+    const selection = selectPublicationRun(runs, options.history, workflowId, {
+      completedSuccessOnly: options.selectNearestSuccessfulRun === true,
+    });
     if (selection.state === "selected") {
       const jobsPath = `/repos/${REPOSITORY}/actions/runs/${selection.run.id}/attempts/${selection.run.attempt}/jobs?per_page=100`;
       if (now() > deadline) {
@@ -803,6 +811,8 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   const expectedSha = env.EXPECTED_SHA ?? "";
   const outputPath = env.GITHUB_OUTPUT ?? "";
   const requireManagedImagePublication = env.REQUIRE_MANAGED_IMAGE_PUBLICATION ?? "0";
+  const selectNearestSuccessfulRun = env.SELECT_NEAREST_SUCCESSFUL_PUBLICATION ?? "0";
+  const allowNonHeadHistory = env.PUBLICATION_HISTORY_ALLOW_NON_HEAD ?? "0";
   const workspace = env.GITHUB_WORKSPACE ?? process.cwd();
   if (token.length === 0 || token.includes("\r") || token.includes("\n")) {
     throw new Error("GITHUB_TOKEN must be a non-empty single-line value");
@@ -823,14 +833,26 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   if (requireManagedImagePublication !== "0" && requireManagedImagePublication !== "1") {
     throw new Error("REQUIRE_MANAGED_IMAGE_PUBLICATION must be 0 or 1");
   }
+  if (selectNearestSuccessfulRun !== "0" && selectNearestSuccessfulRun !== "1") {
+    throw new Error("SELECT_NEAREST_SUCCESSFUL_PUBLICATION must be 0 or 1");
+  }
+  if (allowNonHeadHistory !== "0" && allowNonHeadHistory !== "1") {
+    throw new Error("PUBLICATION_HISTORY_ALLOW_NON_HEAD must be 0 or 1");
+  }
 
-  const workflowSource = readFileSync(resolve(workspace, WORKFLOW_PATH), "utf8");
+  const workflowSource =
+    allowNonHeadHistory === "1"
+      ? defaultGit(["show", `${expectedSha}:${WORKFLOW_PATH}`])
+      : readFileSync(resolve(workspace, WORKFLOW_PATH), "utf8");
   const paths = parseBaseImagePushPaths(workflowSource);
-  const history = resolveFirstParentHistory(expectedSha, paths);
+  const history = resolveFirstParentHistory(expectedSha, paths, defaultGit, {
+    requireCheckedOutCommit: allowNonHeadHistory !== "1",
+  });
   const run = await waitForBaseImagePublication({
     history,
     request: (path) => githubRequest(path, token),
     requireWorkflowSuccess: requireManagedImagePublication === "1",
+    selectNearestSuccessfulRun: selectNearestSuccessfulRun === "1",
     waitMs: waitSeconds * 1000,
     pollMs: pollSeconds * 1000,
   });

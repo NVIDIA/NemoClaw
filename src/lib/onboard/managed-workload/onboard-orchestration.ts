@@ -229,12 +229,6 @@ export function createManagedWorkloadOnboardRuntime(
           managedImageSelectionPolicy: "prefer-managed" as const,
           managedImages: null,
         };
-  const stockManagedImagePolicy =
-    input.stockManagedRuntime &&
-    !strictManagedRuntime &&
-    discoveredRuntimeCapabilities.legacyDockerfileBuilds
-      ? ("prefer-managed" as const)
-      : null;
   const runtimeProvider = resolveRuntimeProviderBundle(
     input.computePlan.driverName,
     CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -244,7 +238,9 @@ export function createManagedWorkloadOnboardRuntime(
   let preparedProfile: BuiltManagedStartupOnboardProfile | null = null;
 
   const ensurePreparedWorkload = async (): Promise<PreparedSandboxWorkloadSource> => {
-    const catalogRevision = liveE2eManagedImageRevision(input.startupProfile.environment);
+    const catalogRevision = input.stockManagedRuntime
+      ? liveE2eManagedImageRevision(input.startupProfile.environment)
+      : null;
     const liveCatalog = liveE2eManagedImageCatalog(input.startupProfile.environment);
     if (catalogRevision && liveCatalog) {
       throw new Error("live E2E managed-image revision and catalog authority conflict");
@@ -264,7 +260,6 @@ export function createManagedWorkloadOnboardRuntime(
           runtime: runtimeCapabilities,
           version: getVersion({ rootDir: input.rootDir }),
           catalogPath: input.tempManagedRuntimeCatalog ?? liveCatalog?.path ?? null,
-          ...(stockManagedImagePolicy ? { policy: stockManagedImagePolicy } : {}),
           ...(liveCatalog ? { expectedCatalogRevision: liveCatalog.revision } : {}),
           ...(catalogRevision ? { catalogRevision } : {}),
           acceptedCandidateContract: isCandidateAgent(input.agentName)

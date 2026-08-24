@@ -480,6 +480,48 @@ describe("base-image publication evidence", () => {
     });
   });
 
+  it("selects the nearest fully successful trusted run for branch reuse", () => {
+    const failedRunId = RUN_ID + 1;
+    const selection = selectPublicationRun(
+      runsPayload([
+        workflowRun({
+          id: failedRunId,
+          head_sha: DESCENDANT_SHA,
+          conclusion: "failure",
+          html_url: `${RUN_URL_ROOT}/${failedRunId}`,
+        }),
+        workflowRun(),
+      ]),
+      history(),
+      WORKFLOW_ID,
+      { completedSuccessOnly: true },
+    );
+
+    expect(selection).toMatchObject({
+      state: "selected",
+      run: { id: RUN_ID, headSha: RELEVANT_SHA, conclusion: "success" },
+    });
+  });
+
+  it("does not select an incomplete or failed publication for branch reuse", () => {
+    expect(
+      selectPublicationRun(
+        runsPayload([
+          workflowRun({ status: "in_progress", conclusion: null }),
+          workflowRun({
+            id: RUN_ID + 1,
+            head_sha: DESCENDANT_SHA,
+            conclusion: "failure",
+            html_url: `${RUN_URL_ROOT}/${RUN_ID + 1}`,
+          }),
+        ]),
+        history(),
+        WORKFLOW_ID,
+        { completedSuccessOnly: true },
+      ),
+    ).toEqual({ state: "missing" });
+  });
+
   it("ignores pre-rename workflow metadata outside the eligible history (#7372)", () => {
     const selection = selectPublicationRun(
       runsPayload([

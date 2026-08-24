@@ -1176,8 +1176,15 @@ function validateFreeStandingJobSelector(
   const job = asRecord(jobs[jobName]);
   const expectedNeeds =
     jobName === "mcp-bridge-dev"
-      ? ["generate-matrix", "openshell-dev-artifact"]
-      : "generate-matrix";
+      ? ["base-image-publication", "generate-matrix", "openshell-dev-artifact"]
+      : [
+            "mcp-bridge",
+            "openshell-credential-generation-window",
+            "cloud-onboard",
+            "messaging-providers",
+          ].includes(jobName)
+        ? ["base-image-publication", "generate-matrix"]
+        : "generate-matrix";
   if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
     errors.push(`${jobName} job must depend on generate-matrix`);
   }
@@ -1630,8 +1637,8 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
     return;
   }
 
-  if (job.needs !== "generate-matrix") {
-    errors.push("hermes-e2e job must depend on generate-matrix validation");
+  if (!isDeepStrictEqual(job.needs, ["base-image-publication", "generate-matrix"])) {
+    errors.push("hermes-e2e job must depend on publication and generate-matrix validation");
   }
   if (job.if !== "${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}") {
     errors.push("hermes-e2e job must use validated hermes_selected output");
@@ -1743,7 +1750,7 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
   const publication = asRecord(jobs["base-image-publication"]);
   if (
     asRecord(publication.outputs).managed_image_revision !==
-    "${{ steps.publication.outputs.head_sha || (steps.publication_mode.outputs.reuse == '1' && 'e38db201413b457614904187377ed9fd002d281d') || inputs.checkout_sha || github.sha }}"
+    "${{ steps.validate_managed_cohort.outputs.revision }}"
   ) {
     errors.push("base-image-publication must expose the managed-image revision to Jetson dispatch");
   }
@@ -2575,43 +2582,6 @@ function validateTrustedE2ePlannerBoundary(
   }
 }
 
-function validateExactPrManagedImageCatalogBoundary(
-  errors: string[],
-  generateSteps: WorkflowRecord[],
-  generate: WorkflowRecord | undefined,
-  generateCheckout: WorkflowRecord | undefined,
-): void {
-  const managedCatalog = requireStep(
-    errors,
-    generateSteps,
-    "Resolve exact PR managed-image catalog",
-  );
-  if (
-    managedCatalog?.if !==
-      "${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}" ||
-    !isDeepStrictEqual(asRecord(managedCatalog?.env), {
-      BASE_SHA: "${{ inputs.base_sha }}",
-      CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",
-      CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
-      GITHUB_TOKEN: "${{ github.token }}",
-      PR_NUMBER: "${{ inputs.pr_number }}",
-    }) ||
-    managedCatalog?.run !==
-      'node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "${RUNNER_TEMP}/pr-managed-image-catalog.json"'
-  ) {
-    errors.push("manual PR E2E must resolve the exact candidate managed-image publication");
-  }
-  if (
-    generate &&
-    managedCatalog &&
-    generateCheckout &&
-    (generateSteps.indexOf(managedCatalog) <= generateSteps.indexOf(generate) ||
-      generateSteps.indexOf(managedCatalog) >= generateSteps.indexOf(generateCheckout))
-  ) {
-    errors.push("exact managed-image publication must resolve before candidate checkout");
-  }
-}
-
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const workflow = asRecord(workflowValue);
   const errors: string[] = [];
@@ -2836,12 +2806,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateLargerRunnerRouting(errors, jobs, generateMatrix, generateSteps, generateCheckout);
   const generate = requireStep(errors, generateSteps, "Generate E2E target matrix");
   validateTrustedE2ePlannerBoundary(errors, generateSteps, generate, generateCheckout);
-  validateExactPrManagedImageCatalogBoundary(
-    errors,
-    generateSteps,
-    generate,
-    generateCheckout,
-  );
   const generateEnv = asRecord(generate?.env);
   if (generateEnv.CHECKOUT_SHA !== "${{ inputs.checkout_sha }}") {
     errors.push("matrix generation step must bind controller checkout through CHECKOUT_SHA env");

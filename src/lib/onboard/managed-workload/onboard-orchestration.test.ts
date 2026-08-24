@@ -173,20 +173,13 @@ describe("managed workload onboard orchestration", () => {
     ).toBe(false);
   });
 
-  it("uses the trusted Dockerfile when the stock managed-image catalog is unavailable", async () => {
+  it("rejects stock onboarding when the managed-image catalog is unavailable", async () => {
     const { runtime } = createFreshOnboardingRuntime(
       {},
       { stockManagedRuntime: true, unavailableCatalog: true },
     );
 
-    await expect(runtime.ensurePreparedWorkload()).resolves.toMatchObject({
-      source: {
-        kind: "legacy-dockerfile",
-        dockerfilePath: "agents/openclaw/Dockerfile",
-        reason: "contract-unavailable",
-      },
-      fallbackDiagnostic: expect.stringContaining("registry offline"),
-    });
+    await expect(runtime.ensurePreparedWorkload()).rejects.toThrow("registry offline");
   });
 
   it("rejects an unavailable catalog for explicit temporary managed-image onboarding", async () => {
@@ -256,15 +249,29 @@ describe("managed workload onboard orchestration", () => {
 
   it("retains the live qualification catalog revision during fresh onboarding (#9385)", async () => {
     const catalogRevision = "a".repeat(40);
-    const { prepared, runtime } = createFreshOnboardingRuntime({
-      GITHUB_ACTIONS: "true",
-      E2E_MANAGED_IMAGE_REVISION: catalogRevision,
-    });
+    const { prepared, runtime } = createFreshOnboardingRuntime(
+      {
+        GITHUB_ACTIONS: "true",
+        E2E_MANAGED_IMAGE_REVISION: catalogRevision,
+      },
+      { stockManagedRuntime: true },
+    );
 
     await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
     expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ catalogRevision }),
     );
+  });
+
+  it("does not apply the stock cohort revision outside stock onboarding", async () => {
+    const { prepared, runtime } = createFreshOnboardingRuntime({
+      GITHUB_ACTIONS: "true",
+      E2E_MANAGED_IMAGE_REVISION: "a".repeat(40),
+    });
+
+    await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
+    expect(prepareSandboxWorkloadSource).toHaveBeenCalledOnce();
+    expect(prepareSandboxWorkloadSource.mock.calls[0]?.[0]).not.toHaveProperty("catalogRevision");
   });
 
   it("binds fresh onboarding to the exact PR catalog (#9464)", async () => {

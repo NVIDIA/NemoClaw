@@ -90,16 +90,13 @@ After the checks pass, the action restores root `dist/` and `nemoclaw/dist/share
 If the version command fails, the action stops before the live test runs.
 This boundary keeps candidate source separate from the trusted workflow implementation.
 
-For a same-repository PR that changes a managed-image workflow path, the trusted planner also
-requires one successful `Images / Build, Test, and Publish Managed Images` run for the candidate commit. Before candidate
-checkout, the planner downloads the three nonexpired contract artifacts by immutable artifact ID.
-It verifies each artifact digest, producer run, attempt, and candidate commit. The planner rejects a
-missing, incomplete, or mixed all-agent publication before E2E jobs start.
-
-The planner adds the exact all-agent catalog to `dist/` after the candidate CLI build completes.
-Each live E2E consumer verifies that the catalog source revision matches `checkout_sha`. A PR that
-does not change a managed-image workflow path keeps the released catalog behavior. The GitHub token
-is available only to the trusted planner job and is not included in the candidate CLI artifact.
+The `base-image-publication` job selects the nearest fully successful publication on the PR base first-parent history.
+It downloads the complete cohort contract and Deep Agents Code base contract by immutable artifact ID.
+It binds each artifact to the selected workflow run, attempt, revision, artifact ID, and artifact digest.
+The cohort validator requires OpenClaw, Hermes, and LangChain Deep Agents Code on `linux/amd64` and `linux/arm64` before it emits `managed_image_revision`.
+`generate-matrix` and every stock-onboarding job depend on this job, so a missing, failed, incomplete, or mixed publication starts no onboarding consumer.
+Each stock-onboarding job receives the selected revision through `E2E_MANAGED_IMAGE_REVISION` and asserts the matching durable `managed-image` receipt before later probes.
+The candidate CLI artifact contains no managed-image catalog.
 
 The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the OpenClaw managed-image MCP
 discovery and lifecycle scope in two independent matrix jobs. Each job assembles one exact candidate
@@ -125,8 +122,7 @@ This baseline measures only the replaced build step.
 Artifact upload, download, validation, and the dependency on `generate-matrix` add runtime and can affect the workflow critical path.
 Do not use the build-step median to claim savings in runner time or workflow elapsed time.
 
-A manual PR E2E run tests candidate code but executes `.github/workflows/e2e.yaml` from `main`.
-The PR run cannot measure this workflow change before merge.
+A same-repository manual PR E2E run tests candidate code and executes `.github/workflows/e2e.yaml` from the PR branch at the exact latest PR commit.
 After merge, use a passing `main` run and complete these steps:
 
 1. Match the job selection, runner labels, and first attempt to the baseline.
@@ -565,8 +561,7 @@ to use `ubuntu-latest`. The trusted `generate-matrix` job builds one runner map
 before checking out test code, and it consumes the variable only when the
 workflow repository is `NVIDIA/NemoClaw`, the ref is `refs/heads/main`, and
 no alternate checkout SHA is requested. Manual PR E2E dispatches therefore remain on
-standard runners even though they use the trusted workflow definition from
-`main`.
+standard runners because an alternate candidate cannot select the administrator-managed label.
 
 Manual PR E2E dispatches and direct push or manual `main` runs use a
 bounded swap fallback for eligible hosted Hermes image-building lanes. The
@@ -1263,10 +1258,17 @@ The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
 Jetson and Launchable dispatch additionally require the PR branch to be in `NVIDIA/NemoClaw`; their operator and image-producer backends do not accept a sibling-repository candidate.
 It skips `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`
 unless their runner-queue flag is `true`.
-The trusted workflow definition remains on `main` and binds the latest PR commit to the current PR base SHA.
+For an NVIDIA-owned PR, the same-repository PR branch supplies the workflow definition and `workflow_sha` must match the latest PR commit.
+The workflow binds the latest PR commit to the current PR base SHA.
 It does not run GitHub's synthetic merge commit.
 Before candidate execution, the workflow uploads a `nemoclaw-e2e-dispatch-v2` receipt for the trusted manual run.
 The full-main `Release qualification` aggregate does not use this receipt.
+
+The `base-image-publication` job selects the nearest fully successful base and managed-image publication on the PR base first-parent history.
+It binds the selected run ID, attempt, revision, cohort contract artifact ID, and artifact digest before it emits `managed_image_revision`.
+The job validates the complete three-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that workflow attempt.
+`generate-matrix` and every stock-onboarding job depend on this publication job, so incomplete publication creates no onboarding fanout.
+Direct `main` runs use the same publication workflow and artifact contract.
 
 PR Review Advisor maps changes to either of these shared journaled-recreation handlers to recommended E2E coverage:
 
@@ -1340,7 +1342,7 @@ For a manual PR run, provide these inputs:
 - The lowercase 40-character SHA of the latest PR commit.
 - The PR source repository.
 - The lowercase 40-character PR base SHA.
-- The exact SHA of the trusted workflow commit on `main`.
+- The exact SHA of the workflow commit on the same-repository PR branch, equal to the latest PR commit.
 
 For the default NVIDIA-owned PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
 Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
@@ -1354,7 +1356,7 @@ To select native runtime qualification evidence production, set `jobs=native-run
 Leave `targets` empty and keep `include_staging_brev_launchable=false`.
 For this producer run, the executing workflow SHA, `workflow_sha` input, and PR base SHA must match.
 Confirm that the PR comes from `NVIDIA/NemoClaw`, the required ephemeral runner variables are configured, and the workflow has not been rerun.
-A trusted `main` workflow pre-checkout step validates the exact open PR and records whether its source repository has API-confirmed `NVIDIA` organization ownership.
+A trusted controller pre-checkout step validates the exact open PR and records whether its source repository has API-confirmed `NVIDIA` organization ownership.
 That ownership authorizes the full ordinary plan and credential profiles; external sources retain the bounded controller plan.
 A second validation after checkout rejects a changed candidate commit, base commit, PR source repository, or NVIDIA ownership before preparation.
 Candidate runs cannot publish release qualification.
@@ -1408,12 +1410,11 @@ No PR E2E controller dispatches the risk plan.
 The `full-e2e` target enforces a separate hard acceptance contract for the
 first fresh onboarding path in that job. It measures from the onboard root span
 (a conservative anchor before wizard step `[1/8]`) through the first non-empty
-agent response and reads the registered workload receipt. A `legacy-dockerfile`
-receipt requires the local BuildKit prebuild without a gateway-builder fallback.
-A `managed-image` receipt instead requires an exact digest that matches the
-registered sandbox image tag, a non-empty publication cohort, and an exact
-40-character source revision, and it forbids a local BuildKit prebuild. Both
-paths enforce the calibrated root and phase limits in the budget file and limit
+agent response and reads the registered workload receipt. The receipt must be
+`managed-image`, use an exact digest that matches the registered sandbox image
+tag, identify the selected publication cohort and exact source revision, and
+forbid a local BuildKit prebuild. The path enforces the calibrated root and phase
+limits in the budget file and limits
 the longest onboard output gap to 60 seconds. A violation fails
 `full-e2e`, and the target writes its evidence to `onboard-progress-budget.json`.
 The artifact records the first-turn command wall clock and OpenClaw's internal

@@ -13,6 +13,7 @@ import fs from "node:fs";
 
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { test } from "../fixtures/e2e-test.ts";
+import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import {
   accountBool,
   accountString,
@@ -166,6 +167,12 @@ test(
       return;
     }
     expectExitZero(install, "M0: install.sh completed");
+    assertStockManagedImageReceipt({
+      commandOutput: outputText(install),
+      environment: state.env,
+      expectedAgent: "openclaw",
+      sandboxName: SANDBOX_NAME,
+    });
 
     const openshellVersion = await runHost(host, "openshell", ["--version"], {
       artifactName: "openshell-version-messaging-providers",

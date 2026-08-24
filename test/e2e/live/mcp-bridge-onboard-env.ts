@@ -11,6 +11,7 @@ const EXACT_MAIN_OVERLAY_KEYS = new Set([
 ]);
 
 const MCP_BRIDGE_QUALIFICATION_ENV_KEYS = [
+  "E2E_MANAGED_IMAGE_REVISION",
   "NEMOCLAW_E2E_EXPECTED_SHA",
   "NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG",
   "NEMOCLAW_RUN_LIVE_E2E",
@@ -44,11 +45,14 @@ export function assertMcpBridgeManagedImageReceipt(options: {
   workload?: Record<string, unknown>;
 }): void {
   const environment = options.environment ?? process.env;
-  if (!environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim()) return;
+  const selectedRevision = environment.E2E_MANAGED_IMAGE_REVISION?.trim();
+  const exactCandidateCatalog = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim();
+  if (!selectedRevision && !exactCandidateCatalog) return;
 
-  const expectedRevision = environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
+  const expectedRevision =
+    selectedRevision ?? environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
   if (!/^[0-9a-f]{40}$/u.test(expectedRevision)) {
-    throw new Error("managed-image MCP qualification requires an exact candidate revision");
+    throw new Error("managed-image MCP qualification requires an exact cohort revision");
   }
   if (
     options.workload?.kind !== "managed-image" ||

@@ -13,6 +13,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import type { FakeOpenAiCompatibleRequest } from "../fixtures/fake-openai-compatible.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -261,6 +262,12 @@ fi`,
     });
     await artifacts.writeText("install-jetson-nvmap.log", resultText(install));
     expect(install.exitCode, resultText(install)).toBe(0);
+    assertStockManagedImageReceipt({
+      commandOutput: resultText(install),
+      environment: env(inferenceEnv),
+      expectedAgent: "openclaw",
+      sandboxName: SANDBOX_NAME,
+    });
 
     const inferenceRoute = await host.command(
       "bash",
