@@ -4,8 +4,7 @@
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
-import { redactFull, redactUrl } from "../../security/redact";
-import { URL_TOKEN_PATTERN } from "../../security/redact-url";
+import { redactFullWithUrls } from "../../security/redact";
 import { hermesMcpReconciliationRemediationLines } from "./mcp-bridge-hermes-reconciliation";
 import { inspectHermesMcpReconciliationRefusal } from "./mcp-bridge-recovery";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
@@ -173,11 +172,7 @@ const ANSI_CONTROL_RE =
 
 function sanitizeGatewayRestartFailureLine(line: string): string {
   const withoutControls = line.replace(ANSI_CONTROL_RE, "");
-  const withRedactedUrls = withoutControls.replace(
-    URL_TOKEN_PATTERN,
-    (url) => redactUrl(url) ?? "<REDACTED>",
-  );
-  return redactFull(withRedactedUrls);
+  return redactFullWithUrls(withoutControls);
 }
 
 function sanitizeGatewayRestartFailureDetail(detail: string): string {
