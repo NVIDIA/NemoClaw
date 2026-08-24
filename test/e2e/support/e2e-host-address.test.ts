@@ -62,7 +62,7 @@ describe("host address discovery", () => {
         },
         "linux",
       ),
-    ).resolves.toEqual({ source: "runtime-provider", address: "169.254.2.2", probe: null });
+    ).resolves.toEqual({ source: "runtime-provider", address: "10.254.254.254", probe: null });
   });
 
   it("preserves portable-profile route discovery", async () => {

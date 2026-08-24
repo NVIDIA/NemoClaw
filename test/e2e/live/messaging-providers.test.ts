@@ -848,6 +848,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       host,
       fakeSlackBot,
       `${SANDBOX_NAME}-slack-bridge`,
+      "SLACK_BOT_TOKEN",
       state.env,
       redactionValues,
     );
@@ -855,6 +856,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       host,
       fakeSlackApp,
       `${SANDBOX_NAME}-slack-app`,
+      "SLACK_APP_TOKEN",
       state.env,
       redactionValues,
     );
@@ -987,6 +989,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       host,
       fakeTelegram,
       `${SANDBOX_NAME}-telegram-bridge`,
+      "TELEGRAM_BOT_TOKEN",
       state.env,
       redactionValues,
     );
@@ -1044,6 +1047,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       host,
       fakeGateway,
       `${SANDBOX_NAME}-discord-bridge`,
+      "DISCORD_BOT_TOKEN",
       state.env,
       redactionValues,
     );

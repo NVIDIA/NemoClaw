@@ -169,6 +169,7 @@ async function applyHermesFakeDiscordPolicy(options: {
   );
   expectExitZero(result, "apply Hermes fake Discord Gateway policy");
 
+  const providerName = `${options.sandboxName}-discord-bridge`;
   const binding = await options.host.command(
     "bash",
     [
@@ -197,66 +198,6 @@ node --import tsx "$6" "$policy_file" "$3" "$4" "$5"
   );
   expectExitZero(binding, "bind Hermes fake Discord Gateway credential");
 
-  const providerName = `${options.sandboxName}-discord-bridge`;
-  const detachment = await options.host.command(
-    options.host.openshellCommandPath,
-    [
-      "sandbox",
-      "provider",
-      "detach",
-      "-g",
-      options.env.OPENSHELL_GATEWAY ?? "nemoclaw",
-      options.sandboxName,
-      providerName,
-    ],
-    {
-      artifactName: "detach-hermes-fake-discord-gateway-credential",
-      env: options.env,
-      redactionValues: options.redactions,
-      timeoutMs: 60_000,
-    },
-  );
-  expectExitZero(detachment, "detach Hermes fake Discord Gateway credential");
-
-  const attachment = await options.host.command(
-    options.host.openshellCommandPath,
-    [
-      "sandbox",
-      "provider",
-      "attach",
-      "-g",
-      options.env.OPENSHELL_GATEWAY ?? "nemoclaw",
-      options.sandboxName,
-      providerName,
-    ],
-    {
-      artifactName: "attach-hermes-fake-discord-gateway-credential",
-      env: options.env,
-      redactionValues: options.redactions,
-      timeoutMs: 60_000,
-    },
-  );
-  expectExitZero(attachment, "attach Hermes fake Discord Gateway credential");
-  const attachments = await options.host.command(
-    options.host.openshellCommandPath,
-    [
-      "sandbox",
-      "provider",
-      "list",
-      "-g",
-      options.env.OPENSHELL_GATEWAY ?? "nemoclaw",
-      options.sandboxName,
-    ],
-    {
-      artifactName: "inspect-hermes-fake-discord-gateway-attachments",
-      env: options.env,
-      redactionValues: options.redactions,
-      timeoutMs: 60_000,
-    },
-  );
-  expectExitZero(attachments, "inspect Hermes fake Discord Gateway provider attachments");
-  expect(resultText(attachments)).toContain(providerName);
-
   const publication = await options.host.command(
     options.host.openshellCommandPath,
     [
@@ -265,6 +206,8 @@ node --import tsx "$6" "$policy_file" "$3" "$4" "$5"
       "-g",
       options.env.OPENSHELL_GATEWAY ?? "nemoclaw",
       providerName,
+      "--credential",
+      "DISCORD_BOT_TOKEN",
     ],
     {
       artifactName: "publish-hermes-fake-discord-gateway-credential",

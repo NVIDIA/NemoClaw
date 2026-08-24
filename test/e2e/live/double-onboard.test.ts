@@ -237,12 +237,6 @@ exit 0
   );
 }
 
-function gatewayAliasEndpoint(): string {
-  return `${os.platform() === "linux" ? "http" : "https"}://127.0.0.1:${
-    process.env.NEMOCLAW_GATEWAY_PORT ?? "8080"
-  }`;
-}
-
 function stripAnsi(text: string): string {
   return text.replace(/\x1B\[[0-9;]*m/g, "");
 }
@@ -610,7 +604,14 @@ test(
   progress.phase("onboard sibling sandbox with isolated dashboard");
   // Phase 4: third onboard with a different name must not destroy A.
   await sandbox.openshell(
-    ["gateway", "add", "--local", "--name", ALT_GATEWAY_NAME, gatewayAliasEndpoint()],
+    [
+      "gateway",
+      "add",
+      "--local",
+      "--name",
+      ALT_GATEWAY_NAME,
+      gatewayServerEndpoint as string,
+    ],
     {
       artifactName: "phase-4-openshell-gateway-add-alt",
       env: commandEnv(),

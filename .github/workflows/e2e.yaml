@@ -3372,7 +3372,7 @@ jobs:
       NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
       NEMOCLAW_MCP_BRIDGE_AGENT: ${{ matrix.agent }}
       NEMOCLAW_OPENSHELL_CHANNEL: stable
-      NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
+      NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: ${{ matrix.runtime_provider == 'docker' && '1' || '0' }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
       OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01

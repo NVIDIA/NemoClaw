@@ -122,6 +122,7 @@ on:
   it("allows reuse only across host-installer and E2E-only changes", () => {
     expect(
       managedImagePublicationReuseAllowed([
+        ".github/actions/setup-native-podman-e2e/action.yaml",
         ".github/actions/restore-e2e-cli-artifact/action.yaml",
         ".github/workflows/e2e-standard-profile.yaml",
         ".github/workflows/e2e.yaml",
@@ -145,8 +146,11 @@ on:
         "src/lib/onboard/managed-bootstrap/podman-runtime.ts",
         "src/lib/onboard/managed-bootstrap/runtime-create.ts",
         "src/lib/onboard/managed-startup/state-roots.ts",
+        "src/lib/onboard/host-gateway-process-target.test.ts",
         "src/lib/onboard/managed-workload/onboard-orchestration.test.ts",
         "src/lib/onboard/managed-workload/onboard-orchestration.ts",
+        "src/lib/onboard/runtime-provider/podman-runtime-surfaces.test.ts",
+        "src/lib/onboard/runtime-provider/podman-runtime-surfaces.ts",
         "src/lib/onboard/sandbox-create/orchestration.ts",
         "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
         "src/lib/onboard/sandbox-gpu-create-flow.ts",
@@ -166,6 +170,7 @@ on:
 
   it.each(MANAGED_IMAGE_DOCKERFILES)("keeps reusable paths outside %s", (dockerfile) => {
     const source = fs.readFileSync(dockerfile, "utf8");
+    expect(source).not.toContain("setup-native-podman-e2e");
     expect(source).not.toContain("restore-e2e-cli-artifact");
     expect(source).not.toContain("scripts/install.sh");
     expect(source).not.toContain("scripts/checks/run-managed-image-openshell-e2e.ts");
@@ -183,7 +188,9 @@ on:
     expect(source).not.toContain("src/lib/onboard/managed-bootstrap/podman-runtime.ts");
     expect(source).not.toContain("src/lib/onboard/managed-bootstrap/runtime-create.ts");
     expect(source).not.toContain("src/lib/onboard/managed-startup/state-roots.ts");
+    expect(source).not.toContain("src/lib/onboard/host-gateway-process-target.test.ts");
     expect(source).not.toContain("src/lib/onboard/managed-workload/onboard-orchestration.ts");
+    expect(source).not.toContain("src/lib/onboard/runtime-provider/podman-runtime-surfaces.ts");
     expect(source).not.toContain("src/lib/onboard/sandbox-create/orchestration.ts");
     expect(source).not.toContain("src/lib/onboard/sandbox-gpu-create-flow.ts");
     expect(source).not.toContain("src/lib/onboard/sandbox-gpu-create-run-attempt.ts");

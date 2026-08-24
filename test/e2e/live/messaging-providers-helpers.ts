@@ -693,6 +693,7 @@ export async function applyRestRewritePolicy(
   host: HostCliClient,
   api: FakeDockerApi,
   providerName: string,
+  credentialKey: string,
   env: NodeJS.ProcessEnv,
   redactionValues: string[],
 ): Promise<void> {
@@ -723,13 +724,22 @@ export async function applyRestRewritePolicy(
     },
   );
   expectExitZero(result, `apply ${api.kind} fake REST policy`);
-  await bindFixturePolicyEndpoint(host, api, providerName, "rest", env, redactionValues);
+  await bindFixturePolicyEndpoint(
+    host,
+    api,
+    providerName,
+    credentialKey,
+    "rest",
+    env,
+    redactionValues,
+  );
 }
 
 export async function applyWebSocketRewritePolicy(
   host: HostCliClient,
   api: FakeDockerApi,
   providerName: string,
+  credentialKey: string,
   env: NodeJS.ProcessEnv,
   redactionValues: string[],
 ): Promise<void> {
@@ -760,13 +770,22 @@ export async function applyWebSocketRewritePolicy(
     },
   );
   expectExitZero(result, `apply ${api.kind} fake WebSocket policy`);
-  await bindFixturePolicyEndpoint(host, api, providerName, "websocket", env, redactionValues);
+  await bindFixturePolicyEndpoint(
+    host,
+    api,
+    providerName,
+    credentialKey,
+    "websocket",
+    env,
+    redactionValues,
+  );
 }
 
 async function bindFixturePolicyEndpoint(
   host: HostCliClient,
   api: FakeDockerApi,
   providerName: string,
+  credentialKey: string,
   protocol: "rest" | "websocket",
   env: NodeJS.ProcessEnv,
   redactionValues: string[],
@@ -800,72 +819,18 @@ node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
   );
   expectExitZero(binding, `bind ${api.kind} fake ${protocol} credential`);
 
-  const detachment = await runHost(
-    host,
-    host.openshellCommandPath,
-    [
-      "sandbox",
-      "provider",
-      "detach",
-      "-g",
-      env.OPENSHELL_GATEWAY ?? "nemoclaw",
-      SANDBOX_NAME,
-      providerName,
-    ],
-    {
-      artifactName: `detach-${api.kind}-${protocol}-credential`,
-      env,
-      redactionValues,
-      timeoutMs: 60_000,
-    },
-  );
-  expectExitZero(detachment, `detach ${api.kind} fake ${protocol} credential`);
-
-  const attachment = await runHost(
-    host,
-    host.openshellCommandPath,
-    [
-      "sandbox",
-      "provider",
-      "attach",
-      "-g",
-      env.OPENSHELL_GATEWAY ?? "nemoclaw",
-      SANDBOX_NAME,
-      providerName,
-    ],
-    {
-      artifactName: `attach-${api.kind}-${protocol}-credential`,
-      env,
-      redactionValues,
-      timeoutMs: 60_000,
-    },
-  );
-  expectExitZero(attachment, `attach ${api.kind} fake ${protocol} credential`);
-  const attachments = await runHost(
-    host,
-    host.openshellCommandPath,
-    [
-      "sandbox",
-      "provider",
-      "list",
-      "-g",
-      env.OPENSHELL_GATEWAY ?? "nemoclaw",
-      SANDBOX_NAME,
-    ],
-    {
-      artifactName: `inspect-${api.kind}-${protocol}-attachments`,
-      env,
-      redactionValues,
-      timeoutMs: 60_000,
-    },
-  );
-  expectExitZero(attachments, `inspect ${api.kind} fake ${protocol} provider attachments`);
-  expect(resultText(attachments)).toContain(providerName);
-
   const publication = await runHost(
     host,
     host.openshellCommandPath,
-    ["provider", "update", "-g", env.OPENSHELL_GATEWAY ?? "nemoclaw", providerName],
+    [
+      "provider",
+      "update",
+      "-g",
+      env.OPENSHELL_GATEWAY ?? "nemoclaw",
+      providerName,
+      "--credential",
+      credentialKey,
+    ],
     {
       artifactName: `publish-${api.kind}-${protocol}-credential`,
       env,

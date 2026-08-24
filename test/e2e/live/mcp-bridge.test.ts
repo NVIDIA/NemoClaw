@@ -1137,7 +1137,13 @@ mcpBridgeShardTest("hermes")(
     // Hermes builds its MCP registry at gateway startup. The add transaction
     // proves the config reload, then this explicit provider-backed restart
     // establishes the fresh registry before the first real agent turn.
+    const initialHermesDiscoveryOffset = fakeMcp.requests.length;
     await restartBridgeWithoutHostSecret(host, HERMES_SANDBOX_NAME, "hermes-initial");
+    await assertAuthenticatedMcpDiscovery(fakeMcp, {
+      requestOffset: initialHermesDiscoveryOffset,
+      expectedSecret: HOST_SECRET,
+      label: "Hermes initial MCP discovery after provider-backed restart",
+    });
     await assertHermesToolCall("hermes-real-mcp-tool-call-initial");
     await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
       artifacts,

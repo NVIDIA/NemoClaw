@@ -153,6 +153,7 @@ test(
     protocol: "websocket",
     rewrite: "websocket-credential-rewrite",
     providerName: `${SANDBOX_NAME}-discord-bridge`,
+    credentialKey: "DISCORD_BOT_TOKEN",
     env,
     redactions,
     artifactName: "apply-discord-gateway-policy",
