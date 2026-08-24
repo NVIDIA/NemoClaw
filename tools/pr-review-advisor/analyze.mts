@@ -44,11 +44,7 @@ import {
 import { validateSpecialistSessionDirectory } from "./specialist-sessions.mts";
 import { buildSynthesisTurn } from "./synthesis-turn.mts";
 import { renderSummary } from "./render-result.mts";
-import {
-  buildSystemPrompt,
-  readParsedTrustedSecurityRubric,
-  readSecurityCategoryNames,
-} from "./trusted-guidance.mts";
+import { buildSystemPrompt } from "./trusted-guidance.mts";
 import {
   collectGitHubReviewContext,
   hasOpenPrReplacement,
@@ -83,8 +79,6 @@ const CONFIDENCES = ["low", "medium", "high"] as const;
 const SUMMARY_RECOMMENDATIONS = [
   "merge_as_is",
   "merge_after_fixes",
-  "needs_rework",
-  "blocked",
   "superseded",
   "info_only",
 ] as const;
@@ -95,7 +89,6 @@ const TEST_DEPTH_VERDICTS = [
   "runtime_validation_recommended",
 ] as const;
 const ACCEPTANCE_STATUSES = ["met", "partial", "missing", "unknown"] as const;
-const SECURITY_VERDICTS = ["pass", "warning", "fail"] as const;
 const SOURCE_OF_TRUTH_STATUSES = [
   "not_applicable",
   "satisfied",
@@ -111,7 +104,6 @@ type SummaryRecommendation = (typeof SUMMARY_RECOMMENDATIONS)[number];
 type FindingCategory = (typeof FINDING_CATEGORIES)[number];
 type TestDepthVerdict = (typeof TEST_DEPTH_VERDICTS)[number];
 type AcceptanceStatus = (typeof ACCEPTANCE_STATUSES)[number];
-type SecurityVerdict = (typeof SECURITY_VERDICTS)[number];
 type SourceOfTruthStatus = (typeof SOURCE_OF_TRUTH_STATUSES)[number];
 type SimplificationTag = (typeof SIMPLIFICATION_TAGS)[number];
 
@@ -152,12 +144,6 @@ type AcceptanceCoverage = {
   evidence: string;
 };
 
-type SecurityCategory = {
-  category: string;
-  verdict: SecurityVerdict;
-  justification: string;
-};
-
 type SourceOfTruthReview = {
   surface: string;
   status: SourceOfTruthStatus;
@@ -195,7 +181,6 @@ export type ReviewAdvisorResult = {
   findings: Finding[];
   terminologyReview: TerminologyReview;
   acceptanceCoverage: AcceptanceCoverage[];
-  securityCategories: SecurityCategory[];
   sourceOfTruthReview: SourceOfTruthReview[];
   e2e: CombinedE2eResult;
   testDepth: {
@@ -330,7 +315,7 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  const { systemPrompt, promptTurns, securityCategoryNames } = preparePromptArtifacts({
+  const { systemPrompt, promptTurns } = preparePromptArtifacts({
     artifacts,
     metadata,
     diff,
@@ -355,7 +340,6 @@ async function main(): Promise<void> {
       headRef,
       metadata,
       schema,
-      securityCategoryNames,
     });
     sdkResult = conversation.run;
     submission = conversation.submission;
@@ -409,11 +393,9 @@ export function preparePromptArtifacts({
 }): {
   systemPrompt: string;
   promptTurns: AdvisorPromptTurn[];
-  securityCategoryNames: string[];
 } {
   try {
-    const securityRubric = readParsedTrustedSecurityRubric();
-    const systemPrompt = buildSystemPrompt(securityRubric);
+    const systemPrompt = buildSystemPrompt();
     const specialistSessionDirectory = process.env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR;
     if (!specialistSessionDirectory) {
       throw new Error("PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR is required");
@@ -423,7 +405,6 @@ export function preparePromptArtifacts({
     return {
       systemPrompt,
       promptTurns,
-      securityCategoryNames: securityRubric.categories,
     };
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -472,7 +453,6 @@ type AdvisorConversationOptions = {
   headRef: string;
   metadata: ReviewMetadata;
   schema: Record<string, unknown>;
-  securityCategoryNames: readonly string[];
 };
 
 type AdvisorConversationResult = {
@@ -502,7 +482,6 @@ async function runAdvisorConversation(
     },
     schema: options.schema,
     repositoryRoot: root,
-    securityCategoryNames: options.securityCategoryNames,
     terminologyTraces: () => terminologyTools.traces(),
     normalizeE2e: (value) => normalizeCombinedE2eResult(value, options.metadata),
   });
@@ -704,7 +683,6 @@ function unavailableResult(
         : `Advisor execution skipped: ${reason}`,
     },
     acceptanceCoverage: [],
-    securityCategories: [],
     sourceOfTruthReview: [],
     e2e: normalizeCombinedE2eResult({}, metadata),
     testDepth: metadata.deterministic.testDepth,

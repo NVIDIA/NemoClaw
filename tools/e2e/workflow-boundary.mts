@@ -1177,6 +1177,8 @@ function validateFreeStandingJobSelector(
   const expectedNeeds =
     jobName === "mcp-bridge-dev"
       ? ["generate-matrix", "openshell-dev-artifact"]
+      : jobName === "cloud-onboard"
+        ? ["base-image-publication", "generate-matrix"]
       : "generate-matrix";
   if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
     errors.push(`${jobName} job must depend on generate-matrix`);
@@ -2907,6 +2909,14 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
 
   const jobEnv = asRecord(liveTargets.env);
+  if (
+    jobEnv.E2E_MANAGED_IMAGE_REVISION !==
+    "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}"
+  ) {
+    errors.push(
+      "live stock onboarding must use the selected managed-image revision when no exact PR catalog is present",
+    );
+  }
   if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
     errors.push("live job must set NEMOCLAW_RUN_LIVE_E2E=1");
   }
