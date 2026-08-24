@@ -10,13 +10,13 @@ import {
   CONTEXT_PATTERNS,
   SECRET_BLOCK_PATTERNS,
   TOKEN_PREFIX_PATTERNS,
-} from "../src/lib/security/secret-patterns.ts";
+} from "../../../src/lib/security/secret-patterns.ts";
 import {
   CANONICAL_SECRET_POSITIVE_VECTORS,
   type CanonicalSecretPatternGroup,
-} from "./helpers/langchain-deepagents-code-secret-patterns.ts";
+} from "../../helpers/langchain-deepagents-code-secret-patterns.ts";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
+const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const managedRuntimePath = path.join(
   repoRoot,
   "agents",

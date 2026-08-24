@@ -14,7 +14,7 @@ type Step = {
   run?: string;
 };
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
+const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const baseDockerfiles = [
   "Dockerfile.base",
   "agents/hermes/Dockerfile.base",

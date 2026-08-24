@@ -11,8 +11,8 @@ import {
   makeNetworkSimulatingFixture,
   makeWrapperFixture,
   runWrapper,
-} from "./helpers/langchain-deepagents-code-image.ts";
-import { CANONICAL_SECRET_POSITIVE_VECTORS } from "./helpers/langchain-deepagents-code-secret-patterns.ts";
+} from "../../helpers/langchain-deepagents-code-image.ts";
+import { CANONICAL_SECRET_POSITIVE_VECTORS } from "../../helpers/langchain-deepagents-code-secret-patterns.ts";
 
 function fakePrivateKeyBlock(type = "", newline = "\\n"): string {
   const label = type ? `${type} PRIVATE KEY-----` : "PRIVATE KEY-----";

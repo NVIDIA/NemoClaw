@@ -7,15 +7,15 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { isValidProxyHost, isValidProxyPort } from "../src/lib/onboard/dockerfile-patch.ts";
-import { TRUSTED_FETCH_PROXY_ENV_NAME } from "./helpers/langchain-deepagents-code-headless.ts";
+import { isValidProxyHost, isValidProxyPort } from "../../../src/lib/onboard/dockerfile-patch.ts";
+import { TRUSTED_FETCH_PROXY_ENV_NAME } from "../../helpers/langchain-deepagents-code-headless.ts";
 import {
   DEFAULT_MANAGED_PROXY,
   dcodeStateDir,
   type ManagedProxyEndpoint,
   makeStartScriptFixture,
   prepareManagedProxyFixture,
-} from "./support/dcode-start-script-fixture.ts";
+} from "../../support/dcode-start-script-fixture.ts";
 
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
 const headlessCheckPath = path.join(

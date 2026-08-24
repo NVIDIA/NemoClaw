@@ -19,7 +19,7 @@ import { describe, expect, it } from "vitest";
 
 const WRAPPER = path.join(
   import.meta.dirname,
-  "..",
+  "../../..",
   "agents",
   "langchain-deepagents-code",
   "dcode-wrapper.sh",

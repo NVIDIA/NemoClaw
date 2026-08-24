@@ -19,22 +19,22 @@ const mocks = vi.hoisted(() => ({
   runOpenshellProviderCommand: vi.fn(),
 }));
 
-vi.mock("../src/lib/adapters/openshell/provider-command", () => ({
+vi.mock("../../../src/lib/adapters/openshell/provider-command", () => ({
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
 }));
 
-vi.mock("../src/lib/gateway-runtime-action", () => ({
+vi.mock("../../../src/lib/gateway-runtime-action", () => ({
   recoverNamedGatewayRuntime: mocks.recoverNamedGatewayRuntime,
 }));
 
-vi.mock("../src/lib/policy", () => ({
+vi.mock("../../../src/lib/policy", () => ({
   applyPresetContent: mocks.applyPresetContent,
   getLiveSandboxPolicyEntryDigest: mocks.getLiveSandboxPolicyEntryDigest,
   getPresetContentGatewayState: mocks.getPresetContentGatewayState,
   removePreset: mocks.removePreset,
 }));
 
-vi.mock("../src/lib/actions/sandbox/process-recovery", () => ({
+vi.mock("../../../src/lib/actions/sandbox/process-recovery", () => ({
   executeGatewaySupervisorAction: mocks.executeGatewaySupervisorAction,
   executeSandboxCommand: mocks.executeSandboxCommand,
   executeSandboxExecCommand: mocks.executeSandboxExecCommand,
@@ -49,8 +49,8 @@ const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-deepagents-mcp-
 process.env.HOME = TMP_HOME;
 process.env.NEMOCLAW_OPENSHELL_BIN = MATCHING_OPENSHELL;
 
-const registry = await import("../src/lib/state/registry");
-const bridge = await import("../src/lib/actions/sandbox/mcp-bridge");
+const registry = await import("../../../src/lib/state/registry");
+const bridge = await import("../../../src/lib/actions/sandbox/mcp-bridge");
 
 const providerId = "11111111-2222-4333-8444-555555555555";
 type ProviderType = "generic" | "nemoclaw-mcp-v1";

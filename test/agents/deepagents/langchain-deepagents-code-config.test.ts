@@ -8,12 +8,12 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { loadAgent } from "../src/lib/agent/defs";
+import { loadAgent } from "../../../src/lib/agent/defs";
 import {
   coerceAgentInferenceApi,
   getSandboxInferenceConfig,
   INFERENCE_ROUTE_URL,
-} from "../src/lib/inference/config";
+} from "../../../src/lib/inference/config";
 
 const tmpHomes: string[] = [];
 

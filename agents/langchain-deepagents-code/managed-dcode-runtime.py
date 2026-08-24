@@ -117,7 +117,7 @@ _DISPLAY_PROVIDER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 # Match the launchers' root-owned, image-baked proxy validator. Its deliberate
 # RFC 1123 deviation permits underscores only for controlled internal/container
 # aliases such as `proxy_name`; the cross-boundary cases in
-# test/langchain-deepagents-code-proxy-launcher.test.ts prevent validator drift.
+# test/agents/deepagents/langchain-deepagents-code-proxy-launcher.test.ts prevent validator drift.
 _MANAGED_PROXY_HOST = re.compile(r"[A-Za-z0-9._-]+")
 _MCP_SERVER_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
 _MCP_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
@@ -174,10 +174,10 @@ _MANAGED_MCP_READY = False
 # SECURITY -- Source boundary: this isolated Python runtime cannot import the
 # canonical TypeScript groups in src/lib/security/secret-patterns.ts, so these
 # expressions deliberately mirror their secret-shape behavior.
-# Regression gate: test/langchain-deepagents-code-secret-pattern-parity.test.ts
+# Regression gate: test/agents/deepagents/langchain-deepagents-code-secret-pattern-parity.test.ts
 # fingerprints all canonical groups and runs one shared positive corpus through
 # both those groups and _contains_secret_shape; the Bash wrapper consumes the
-# same corpus in test/langchain-deepagents-code-image-credentials.test.ts.
+# same corpus in test/agents/deepagents/langchain-deepagents-code-image-credentials.test.ts.
 # Removal condition: delete this mirror only when the managed runtime can consume
 # the canonical patterns directly or upstream rejects these shapes before boot.
 _SECRET_PATTERNS = tuple(

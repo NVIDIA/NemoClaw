@@ -10,7 +10,7 @@ import {
   headlessCheckPath,
   runHeadlessCheckHelper,
   runHeadlessCheckSnippet,
-} from "./helpers/langchain-deepagents-code-headless.ts";
+} from "../../helpers/langchain-deepagents-code-headless.ts";
 
 describe("LangChain Deep Agents Code headless runtime contracts", () => {
   it("binds bare connect to every observed OpenShell sandbox exec target (#7034)", () => {

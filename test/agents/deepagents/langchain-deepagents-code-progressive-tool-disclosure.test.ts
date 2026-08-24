@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
+const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const agentDir = path.join(repoRoot, "agents", "langchain-deepagents-code");
 const middlewarePath = path.join(agentDir, "progressive_tool_disclosure.py");
 const observabilityPath = path.join(agentDir, "nemoclaw_observability.py");

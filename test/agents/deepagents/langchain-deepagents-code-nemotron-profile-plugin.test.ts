@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
+const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const agentDir = path.join(repoRoot, "agents", "langchain-deepagents-code");
 const pluginProjectDir = path.join(agentDir, "profile-plugin");
 const pluginSourcePath = path.join(

@@ -230,7 +230,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/pi-candidate-runtime-artifacts.test.ts",
       "test/managed-base-image-contract.test.ts",
       "test/managed-image-publication-workflow.test.ts",
-      "test/dcode-base-image-workflow.test.ts",
+      "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/managed-images.yaml")).toEqual([
       "test/pi-candidate-runtime-artifacts.test.ts",
@@ -243,14 +243,14 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("scripts/export-managed-base-image-contract.sh")).toEqual([
       "test/managed-base-image-contract.test.ts",
       "test/managed-image-publication-workflow.test.ts",
-      "test/dcode-base-image-workflow.test.ts",
+      "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/actions/build-base-image-platform/action.yaml")).toEqual([
-      "test/dcode-base-image-workflow.test.ts",
+      "test/agents/deepagents/dcode-base-image-workflow.test.ts",
       "test/agents/openclaw/openclaw-dependency-review.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/base-image-platform.yaml")).toEqual([
-      "test/dcode-base-image-workflow.test.ts",
+      "test/agents/deepagents/dcode-base-image-workflow.test.ts",
       "test/managed-image-publication-workflow.test.ts",
       "test/perl-critical-cve-remediation.test.ts",
       "test/pi-candidate-runtime-artifacts.test.ts",
@@ -262,7 +262,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/retry-docker-imagetools-inspect.test.ts",
       "test/validate-managed-base-index.test.ts",
       "test/managed-image-publication-workflow.test.ts",
-      "test/dcode-base-image-workflow.test.ts",
+      "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ]);
     expect(triggeredBy("scripts/checks/pull-public-exact-digest.sh")).toEqual([
       "test/pull-public-exact-digest.test.ts",

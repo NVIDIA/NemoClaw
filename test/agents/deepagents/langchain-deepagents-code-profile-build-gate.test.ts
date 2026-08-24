@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
+const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const checkPath = path.join(repoRoot, "scripts", "check-dcode-profile-import-gate.sh");
 const reviewedDockerfiles = [
   "agents/langchain-deepagents-code/Dockerfile.base",

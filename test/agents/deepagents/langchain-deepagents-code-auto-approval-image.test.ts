@@ -7,9 +7,9 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { makeStartScriptFixture } from "./support/dcode-start-script-fixture.ts";
+import { makeStartScriptFixture } from "../../support/dcode-start-script-fixture.ts";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
+const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const agentDir = path.join(repoRoot, "agents", "langchain-deepagents-code");
 
 function readAgentFile(name: string): string {

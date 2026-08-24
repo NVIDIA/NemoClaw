@@ -7,11 +7,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { makeStartScriptFixture } from "./support/dcode-start-script-fixture.ts";
+import { makeStartScriptFixture } from "../../support/dcode-start-script-fixture.ts";
 
 const START_SCRIPT = path.join(
   import.meta.dirname,
-  "..",
+  "../../..",
   "agents",
   "langchain-deepagents-code",
   "start.sh",

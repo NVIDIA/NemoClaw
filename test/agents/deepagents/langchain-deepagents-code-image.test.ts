@@ -10,9 +10,9 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { loadAgent } from "../src/lib/agent/defs.ts";
-import { prepareInitialSandboxCreatePolicy } from "../src/lib/onboard/initial-policy.ts";
-import { TOKEN_PREFIX_PATTERNS } from "../src/lib/security/secret-patterns.ts";
+import { loadAgent } from "../../../src/lib/agent/defs.ts";
+import { prepareInitialSandboxCreatePolicy } from "../../../src/lib/onboard/initial-policy.ts";
+import { TOKEN_PREFIX_PATTERNS } from "../../../src/lib/security/secret-patterns.ts";
 import { cloudExperimentalChecksForOnboarding } from "./e2e/live/cloud-experimental-check-list.ts";
 import {
   ANALYTICS_DISABLE_ENV_NAMES,
@@ -23,14 +23,14 @@ import {
   runHeadlessCheckHelper,
   runStartScriptProxyProbe,
   TRACING_ENABLE_ENV_NAMES,
-} from "./helpers/langchain-deepagents-code-headless.ts";
+} from "../../helpers/langchain-deepagents-code-headless.ts";
 import {
   makeWrapperFixture,
   readAgentFile,
   runWrapper,
-} from "./helpers/langchain-deepagents-code-image.ts";
-import { dcodeStateDir, makeStartScriptFixture } from "./support/dcode-start-script-fixture.ts";
-import { expectManagedBootstrapNativeImageContract } from "./support/managed-bootstrap-image-contract";
+} from "../../helpers/langchain-deepagents-code-image.ts";
+import { dcodeStateDir, makeStartScriptFixture } from "../../support/dcode-start-script-fixture.ts";
+import { expectManagedBootstrapNativeImageContract } from "../../support/managed-bootstrap-image-contract";
 
 function containsTokenShapedSecret(value: string): boolean {
   return TOKEN_PREFIX_PATTERNS.some((pattern) => {
@@ -41,7 +41,7 @@ function containsTokenShapedSecret(value: string): boolean {
   });
 }
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
+const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const tuiStartupCheckPath = path.join(
   repoRoot,
   "test",

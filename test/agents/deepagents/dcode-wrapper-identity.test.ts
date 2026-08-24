@@ -8,11 +8,11 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { SECRET_BLOCK_PATTERNS } from "../src/lib/security/secret-patterns.ts";
+import { SECRET_BLOCK_PATTERNS } from "../../../src/lib/security/secret-patterns.ts";
 
 const WRAPPER = path.join(
   import.meta.dirname,
-  "..",
+  "../../..",
   "agents",
   "langchain-deepagents-code",
   "dcode-wrapper.sh",

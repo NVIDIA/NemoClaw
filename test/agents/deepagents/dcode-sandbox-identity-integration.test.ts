@@ -8,13 +8,13 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import type { AgentDefinition } from "../src/lib/agent/defs.ts";
-import { prepareSandboxCreateLaunch } from "../src/lib/onboard/sandbox-create-launch.ts";
-import { makeStartScriptFixture } from "./support/dcode-start-script-fixture.ts";
+import type { AgentDefinition } from "../../../src/lib/agent/defs.ts";
+import { prepareSandboxCreateLaunch } from "../../../src/lib/onboard/sandbox-create-launch.ts";
+import { makeStartScriptFixture } from "../../support/dcode-start-script-fixture.ts";
 
 const WRAPPER = path.join(
   import.meta.dirname,
-  "..",
+  "../../..",
   "agents",
   "langchain-deepagents-code",
   "dcode-wrapper.sh",

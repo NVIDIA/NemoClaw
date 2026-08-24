@@ -183,7 +183,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests(
       "test/managed-base-image-contract.test.ts",
       "test/managed-image-publication-workflow.test.ts",
-      "test/dcode-base-image-workflow.test.ts",
+      "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ),
   },
   {
@@ -200,14 +200,14 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/actions\/build-base-image-platform\/action\.yaml$/,
     testsToRun: runTests(
-      "test/dcode-base-image-workflow.test.ts",
+      "test/agents/deepagents/dcode-base-image-workflow.test.ts",
       "test/agents/openclaw/openclaw-dependency-review.test.ts",
     ),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/base-image-platform\.yaml$/,
     testsToRun: runTests(
-      "test/dcode-base-image-workflow.test.ts",
+      "test/agents/deepagents/dcode-base-image-workflow.test.ts",
       "test/managed-image-publication-workflow.test.ts",
       "test/perl-critical-cve-remediation.test.ts",
       "test/pi-candidate-runtime-artifacts.test.ts",
@@ -230,7 +230,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "test/retry-docker-imagetools-inspect.test.ts",
       "test/validate-managed-base-index.test.ts",
       "test/managed-image-publication-workflow.test.ts",
-      "test/dcode-base-image-workflow.test.ts",
+      "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ),
   },
   {

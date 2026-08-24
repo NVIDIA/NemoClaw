@@ -11,7 +11,7 @@ import {
   CONTEXT_PATTERNS,
   SECRET_BLOCK_PATTERNS,
   TOKEN_PREFIX_PATTERNS,
-} from "../src/lib/security/secret-patterns.ts";
+} from "../../../src/lib/security/secret-patterns.ts";
 
 const tuiStartupCheckPath = path.join(
   process.cwd(),

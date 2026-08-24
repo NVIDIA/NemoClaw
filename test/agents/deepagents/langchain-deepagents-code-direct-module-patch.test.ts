@@ -5,7 +5,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { addDarwinFcntlSealConstants } from "./helpers/darwin-fcntl-seal-fixture";
+import { addDarwinFcntlSealConstants } from "../../helpers/darwin-fcntl-seal-fixture";
 import {
   cleanupPackageFixtures,
   createPackageFixture,
@@ -13,7 +13,7 @@ import {
   patcher,
   patchFixture,
   writeManagedAutoApproval,
-} from "./helpers/langchain-deepagents-code-patch-fixture";
+} from "../../helpers/langchain-deepagents-code-patch-fixture";
 
 const progressiveDisclosureHarness = path.join(
   process.cwd(),

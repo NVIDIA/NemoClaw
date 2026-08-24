@@ -8,12 +8,12 @@ const mocks = vi.hoisted(() => ({
   executeSandboxCommand: vi.fn(),
 }));
 
-vi.mock("../src/lib/actions/sandbox/process-recovery", () => ({
+vi.mock("../../../src/lib/actions/sandbox/process-recovery", () => ({
   executeGatewaySupervisorAction: mocks.executeGatewaySupervisorAction,
   executeSandboxCommand: mocks.executeSandboxCommand,
 }));
 
-import { assertAgentMcpMutationRuntimeCapability } from "../src/lib/actions/sandbox/mcp-bridge-adapters";
+import { assertAgentMcpMutationRuntimeCapability } from "../../../src/lib/actions/sandbox/mcp-bridge-adapters";
 
 type ProbeResult = { status: number; stdout: string; stderr: string } | null;
 

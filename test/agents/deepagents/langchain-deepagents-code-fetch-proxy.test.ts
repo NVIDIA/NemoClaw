@@ -8,21 +8,21 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { prepareInitialSandboxCreatePolicy } from "../src/lib/onboard/initial-policy.ts";
+import { prepareInitialSandboxCreatePolicy } from "../../../src/lib/onboard/initial-policy.ts";
 
-import { addDarwinFcntlSealConstants } from "./helpers/darwin-fcntl-seal-fixture.ts";
+import { addDarwinFcntlSealConstants } from "../../helpers/darwin-fcntl-seal-fixture.ts";
 import {
   runStartScriptProxyProbe,
   TRUSTED_FETCH_PROXY_ENV_NAME,
-} from "./helpers/langchain-deepagents-code-headless.ts";
+} from "../../helpers/langchain-deepagents-code-headless.ts";
 import {
   cleanupPackageFixtures,
   createPackageFixture,
   patchFixture,
-} from "./helpers/langchain-deepagents-code-patch-fixture.ts";
-import { dcodeStateDir, makeStartScriptFixture } from "./support/dcode-start-script-fixture.ts";
+} from "../../helpers/langchain-deepagents-code-patch-fixture.ts";
+import { dcodeStateDir, makeStartScriptFixture } from "../../support/dcode-start-script-fixture.ts";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
+const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const agentDir = path.join(repoRoot, "agents", "langchain-deepagents-code");
 
 afterEach(cleanupPackageFixtures);
