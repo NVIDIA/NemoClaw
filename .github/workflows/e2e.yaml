@@ -101,6 +101,7 @@ jobs:
     outputs:
       dcode_base_contract: ${{ steps.validate_dcode_base.outputs.contract || steps.validate_reused_dcode_base.outputs.contract }}
       dcode_base_ref: ${{ steps.validate_dcode_base.outputs.base_ref || steps.validate_reused_dcode_base.outputs.base_ref }}
+      managed_image_revision: ${{ steps.publication.outputs.head_sha || (steps.publication_mode.outputs.reuse == '1' && 'e38db201413b457614904187377ed9fd002d281d') || inputs.checkout_sha || github.sha }}
     permissions:
       actions: read
       contents: read
@@ -5355,6 +5356,7 @@ jobs:
         env:
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu
           JETSON_DISPATCH_CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          JETSON_DISPATCH_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
           JETSON_DISPATCH_URL: ${{ vars.JETSON_DISPATCH_URL }}
         run: node --experimental-strip-types --no-warnings tools/e2e/jetson-dispatch-client.mts
 
