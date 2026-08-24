@@ -126,6 +126,10 @@ on:
         ".github/workflows/e2e-standard-profile.yaml",
         ".github/workflows/e2e.yaml",
         "scripts/install.sh",
+        "src/lib/adapters/podman/index.test.ts",
+        "src/lib/adapters/podman/index.ts",
+        "src/lib/onboard/managed-bootstrap/podman-runtime.test.ts",
+        "src/lib/onboard/managed-bootstrap/podman-runtime.ts",
         "src/lib/onboard/managed-workload/onboard-orchestration.test.ts",
         "src/lib/onboard/sandbox-workload-preparation.test.ts",
         "src/lib/onboard/workload/preparation.ts",
@@ -144,6 +148,8 @@ on:
     const source = fs.readFileSync(dockerfile, "utf8");
     expect(source).not.toContain("restore-e2e-cli-artifact");
     expect(source).not.toContain("scripts/install.sh");
+    expect(source).not.toContain("src/lib/adapters/podman/index.ts");
+    expect(source).not.toContain("src/lib/onboard/managed-bootstrap/podman-runtime.ts");
     expect(source).not.toContain("src/lib/onboard/workload/preparation.ts");
     expect(source).not.toMatch(/^COPY [.]github\/workflows\/e2e/mu);
     expect(source).not.toMatch(/^COPY src\/lib\/onboard\/.*[.]test[.]ts/mu);

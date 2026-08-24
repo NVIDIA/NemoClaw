@@ -33,6 +33,8 @@ const REUSABLE_NON_IMAGE_PATHS = [
   /^[.]github\/actions\/restore-e2e-cli-artifact\/action[.]yaml$/u,
   /^[.]github\/workflows\/e2e(?:-standard-profile)?[.]yaml$/u,
   /^scripts\/install[.]sh$/u,
+  /^src\/lib\/adapters\/podman\/index(?:[.]test)?[.]ts$/u,
+  /^src\/lib\/onboard\/managed-bootstrap\/podman-runtime(?:[.]test)?[.]ts$/u,
   /^src\/lib\/onboard\/managed-workload\/onboard-orchestration[.]test[.]ts$/u,
   /^src\/lib\/onboard\/sandbox-workload-preparation[.]test[.]ts$/u,
   /^src\/lib\/onboard\/workload\/preparation[.]ts$/u,
