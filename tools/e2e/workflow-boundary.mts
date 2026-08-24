@@ -1743,7 +1743,7 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
   const publication = asRecord(jobs["base-image-publication"]);
   if (
     asRecord(publication.outputs).managed_image_revision !==
-    "${{ steps.publication.outputs.head_sha || inputs.checkout_sha || github.sha }}"
+    "${{ steps.publication.outputs.head_sha || (steps.publication_mode.outputs.reuse == '1' && 'e38db201413b457614904187377ed9fd002d281d') || inputs.checkout_sha || github.sha }}"
   ) {
     errors.push("base-image-publication must expose the managed-image revision to Jetson dispatch");
   }

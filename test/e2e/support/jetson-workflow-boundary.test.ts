@@ -18,12 +18,13 @@ function validateWorkflowMutation(
 }
 
 describe("Jetson nvmap GPU E2E workflow boundary", () => {
-  it("passes the applicable managed-image publication commit to Jetson dispatch", () => {
+  it("passes the selected managed-image publication commit to Jetson dispatch", () => {
     const errors = validateWorkflowMutation((workflow) => {
       const publication = (workflow.jobs as Record<string, unknown>)["base-image-publication"] as {
         outputs?: Record<string, unknown>;
       };
-      delete publication.outputs!.managed_image_revision;
+      publication.outputs!.managed_image_revision =
+        "${{ steps.publication.outputs.head_sha || inputs.checkout_sha || github.sha }}";
     });
 
     expect(errors).toContain(
