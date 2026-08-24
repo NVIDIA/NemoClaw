@@ -4213,6 +4213,15 @@ prepare_portable_experimental_runtime_override() {
   info "Portable profile selected rootless Podman through DOCKER_HOST=${DOCKER_HOST}."
 }
 
+# Resolve the legacy Docker bootstrap requirement at the installer runtime
+# configuration boundary. Native managed Podman owns its host preparation via
+# the registered runtime provider; the portable experimental profile remains
+# on its existing Docker-CLI-over-Podman compatibility path.
+installer_requires_legacy_docker_bootstrap() {
+  [[ "${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]] && return 0
+  [[ "${NEMOCLAW_GATEWAY_RUNTIME:-docker}" != "podman" ]]
+}
+
 is_wsl_host() {
   if [ -n "${WSL_DISTRO_NAME:-}" ] || [ -n "${WSL_INTEROP:-}" ]; then
     return 0
@@ -5647,7 +5656,9 @@ prepare_installer_host() {
   # generic Docker bootstrap; ensure_station_express_host is a no-op elsewhere.
   ensure_station_express_host
   prepare_portable_experimental_runtime_override
-  ensure_docker
+  if installer_requires_legacy_docker_bootstrap; then
+    ensure_docker
+  fi
   ensure_openshell_build_deps
 }
 

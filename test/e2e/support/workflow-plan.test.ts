@@ -160,9 +160,14 @@ describe("E2E workflow plan", () => {
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
-    expect(catalogueIds).toHaveLength(53);
+    expect(catalogueIds).toHaveLength(52);
     expect(catalogueIds).not.toEqual(
-      expect.arrayContaining(["gateway-guard-recovery", "rebuild-hermes", "rebuild-openclaw"]),
+      expect.arrayContaining([
+        "bootstrap-install-smoke",
+        "gateway-guard-recovery",
+        "rebuild-hermes",
+        "rebuild-openclaw",
+      ]),
     );
     expect(catalogueIds.some((id) => id.startsWith("openshell-gateway-upgrade-"))).toBe(false);
     expect(selectedWorkflowJobs(plan)).toEqual([
@@ -503,7 +508,12 @@ describe("E2E workflow plan", () => {
     ],
     [
       "bootstrap-install-smoke",
-      { profile: "nvidia-inference", restoreCli: false, compatibleApiKey: true },
+      {
+        profile: "nvidia-inference",
+        restoreCli: false,
+        compatibleApiKey: true,
+        gatewayRuntimes: ["docker"],
+      },
     ],
     [
       "hermes-discord",
