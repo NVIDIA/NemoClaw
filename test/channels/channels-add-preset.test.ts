@@ -5,28 +5,35 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
-import { addSandboxChannel, removeSandboxChannel } from "../src/lib/actions/sandbox/policy-channel";
-import { policyChannelDependencies } from "../src/lib/actions/sandbox/policy-channel-dependencies";
-import * as processRecovery from "../src/lib/actions/sandbox/process-recovery";
-import * as httpProbe from "../src/lib/adapters/http/probe";
-import * as runtime from "../src/lib/adapters/openshell/runtime";
-import * as store from "../src/lib/credentials/store";
-import * as gatewayRuntime from "../src/lib/gateway-runtime-action";
+import {
+  addSandboxChannel,
+  removeSandboxChannel,
+} from "../../src/lib/actions/sandbox/policy-channel";
+import { policyChannelDependencies } from "../../src/lib/actions/sandbox/policy-channel-dependencies";
+import * as processRecovery from "../../src/lib/actions/sandbox/process-recovery";
+import * as httpProbe from "../../src/lib/adapters/http/probe";
+import * as runtime from "../../src/lib/adapters/openshell/runtime";
+import * as store from "../../src/lib/credentials/store";
+import * as gatewayRuntime from "../../src/lib/gateway-runtime-action";
 import {
   type MessagingAgentId,
   MessagingWorkflowPlanner,
   type SandboxMessagingPlan,
-} from "../src/lib/messaging";
+} from "../../src/lib/messaging";
 import {
   getMessagingChannelConfigEnvKeys,
   MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
-} from "../src/lib/messaging-channel-config";
-import * as policies from "../src/lib/policy";
-import { getChannelTokenKeys, knownChannelNames, listChannels } from "../src/lib/sandbox/channels";
-import * as onboardSession from "../src/lib/state/onboard-session";
-import type { SandboxEntry } from "../src/lib/state/registry";
-import * as registry from "../src/lib/state/registry";
-import { makeMessagingPlan } from "./helpers/messaging-plan-fixtures";
+} from "../../src/lib/messaging-channel-config";
+import * as policies from "../../src/lib/policy";
+import {
+  getChannelTokenKeys,
+  knownChannelNames,
+  listChannels,
+} from "../../src/lib/sandbox/channels";
+import * as onboardSession from "../../src/lib/state/onboard-session";
+import type { SandboxEntry } from "../../src/lib/state/registry";
+import * as registry from "../../src/lib/state/registry";
+import { makeMessagingPlan } from "../helpers/messaging-plan-fixtures";
 
 class ExitError extends Error {
   constructor(public readonly code: number | undefined) {
