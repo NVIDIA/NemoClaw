@@ -159,12 +159,12 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("managed-inference/models/example.yaml")).toEqual([
       "src/lib/inference/serving/catalog.test.ts",
       "src/lib/inference/serving/resolver.test.ts",
-      "test/managed-inference-catalog-compiler.test.ts",
+      "test/inference/managed/managed-inference-catalog-compiler.test.ts",
     ]);
     expect(triggeredBy("managed-inference/recipes/vllm.example.managed-cluster.v1.yaml")).toEqual([
       "src/lib/inference/serving/catalog.test.ts",
       "src/lib/inference/serving/resolver.test.ts",
-      "test/managed-inference-catalog-compiler.test.ts",
+      "test/inference/managed/managed-inference-catalog-compiler.test.ts",
     ]);
     expect(triggeredBy("internal/security-reviews/hermes-0.19.0-dependency-review.md")).toEqual([
       "test/agents/hermes/hermes-dependency-review.test.ts",
@@ -186,7 +186,7 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("agents/hermes/Dockerfile.base")).toEqual([
       "test/agents/hermes/hermes-dependency-review.test.ts",
       "test/agents/hermes/hermes-share-mount-deps.test.ts",
-      "test/managed-image-publication-workflow.test.ts",
+      "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/runtime/sandbox/sandbox-provisioning.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
@@ -195,7 +195,7 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("scripts/checks/download-hermes-source-archive.sh")).toEqual([
       "test/agents/hermes/hermes-share-mount-deps.test.ts",
-      "test/managed-image-publication-workflow.test.ts",
+      "test/inference/managed/managed-image-publication-workflow.test.ts",
     ]);
     expect(triggeredBy("agents/langchain-deepagents-code/Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",
@@ -228,21 +228,21 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy(".github/workflows/base-image.yaml")).toEqual([
       "test/pi-candidate-runtime-artifacts.test.ts",
-      "test/managed-base-image-contract.test.ts",
-      "test/managed-image-publication-workflow.test.ts",
+      "test/inference/managed/managed-base-image-contract.test.ts",
+      "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/managed-images.yaml")).toEqual([
       "test/pi-candidate-runtime-artifacts.test.ts",
-      "test/managed-image-publication-workflow.test.ts",
+      "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/pull-public-exact-digest.test.ts",
     ]);
     expect(triggeredBy("test/e2e/live/managed-image-activation-e2e-helpers.ts")).toEqual([
-      "test/managed-image-publication-workflow.test.ts",
+      "test/inference/managed/managed-image-publication-workflow.test.ts",
     ]);
     expect(triggeredBy("scripts/export-managed-base-image-contract.sh")).toEqual([
-      "test/managed-base-image-contract.test.ts",
-      "test/managed-image-publication-workflow.test.ts",
+      "test/inference/managed/managed-base-image-contract.test.ts",
+      "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/actions/build-base-image-platform/action.yaml")).toEqual([
@@ -251,7 +251,7 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy(".github/workflows/base-image-platform.yaml")).toEqual([
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
-      "test/managed-image-publication-workflow.test.ts",
+      "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/perl-critical-cve-remediation.test.ts",
       "test/pi-candidate-runtime-artifacts.test.ts",
     ]);
@@ -261,12 +261,12 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("scripts/checks/retry-docker-imagetools-inspect.sh")).toEqual([
       "test/retry-docker-imagetools-inspect.test.ts",
       "test/validate-managed-base-index.test.ts",
-      "test/managed-image-publication-workflow.test.ts",
+      "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ]);
     expect(triggeredBy("scripts/checks/pull-public-exact-digest.sh")).toEqual([
       "test/pull-public-exact-digest.test.ts",
-      "test/managed-image-publication-workflow.test.ts",
+      "test/inference/managed/managed-image-publication-workflow.test.ts",
     ]);
     expect(triggeredBy("scripts/e2e/sanitize-trace-timing.py")).toEqual([
       "test/e2e/support/e2e-scorecard.test.ts",
