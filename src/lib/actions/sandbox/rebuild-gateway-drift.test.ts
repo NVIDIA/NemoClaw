@@ -336,12 +336,8 @@ describe("rebuild gateway drift preflight", () => {
         staleRegistrySnapshot: registrySnapshot,
       });
       expect(result?.staleRegistrySnapshot).not.toBe(registrySnapshot);
-      expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledTimes(2);
-      expect(recoverNamedGatewayRuntimeSpy).toHaveBeenNthCalledWith(1, {
-        gatewayName,
-        recoverableStates: recoveryStates,
-      });
-      expect(recoverNamedGatewayRuntimeSpy).toHaveBeenNthCalledWith(2, {
+      expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledOnce();
+      expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({
         gatewayName,
         recoverableStates: recoveryStates,
       });
@@ -381,11 +377,7 @@ describe("rebuild gateway drift preflight", () => {
       "Failed to query running sandboxes from OpenShell.",
     );
 
-    expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledOnce();
-    expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({
-      gatewayName: "nemoclaw",
-      recoverableStates: recoveryStates,
-    });
+    expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
     expect(captureOpenshellSpy).toHaveBeenCalledOnce();
     expect(captureOpenshellSpy).toHaveBeenCalledWith(
       ["sandbox", "list", "-g", "nemoclaw"],
