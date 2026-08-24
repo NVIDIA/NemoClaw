@@ -197,7 +197,7 @@ describe("Fern changelog documentation", () => {
     );
   });
 
-  it("publishes the same native changelog source in all three user-guide variants", () => {
+  it("publishes the same native changelog source in all four user-guide variants", () => {
     const nav = parse(fs.readFileSync(path.join(docsDir, "index.yml"), "utf8")) as {
       navigation?: Array<{
         variants?: Array<{
@@ -214,7 +214,12 @@ describe("Fern changelog documentation", () => {
     };
     const variants = nav.navigation?.find((item) => item.variants)?.variants ?? [];
 
-    expect(variants.map((variant) => variant.slug)).toEqual(["openclaw", "deepagents", "hermes"]);
+    expect(variants.map((variant) => variant.slug)).toEqual([
+      "openclaw",
+      "pi",
+      "deepagents",
+      "hermes",
+    ]);
     variants.forEach((variant) => {
       expect(variant.layout?.filter((node) => node.changelog)).toEqual([
         {

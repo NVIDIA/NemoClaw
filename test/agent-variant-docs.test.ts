@@ -49,6 +49,9 @@ Hermes only.
 <AgentOnly variant="deepagents">
 Deep Agents only.
 </AgentOnly>
+<AgentOnly variant="pi">
+Pi only.
+</AgentOnly>
 <AgentOnly variant="openclaw,hermes">
 Gateway agents only.
 </AgentOnly>
@@ -98,6 +101,20 @@ describe("agent variant docs", () => {
       'description-agent: "Use when looking up nemo-deepagents commands."',
     );
     expect(rendered).toContain("nemo-deepagents list");
+    expect(rendered).not.toContain("$$nemoclaw");
+    expect(rendered).not.toContain("<AgentOnly");
+  });
+
+  it("renders Pi placeholder code and content", () => {
+    const rendered = renderAgentVariantPage(source, "pi");
+
+    expect(rendered).not.toContain("OpenClaw only.");
+    expect(rendered).not.toContain("Hermes only.");
+    expect(rendered).not.toContain("Deep Agents only.");
+    expect(rendered).toContain("Pi only.");
+    expect(rendered).not.toContain("Gateway agents only.");
+    expect(rendered).toContain('description-agent: "Use when looking up nemoclaw commands."');
+    expect(rendered).toContain("nemoclaw list");
     expect(rendered).not.toContain("$$nemoclaw");
     expect(rendered).not.toContain("<AgentOnly");
   });
