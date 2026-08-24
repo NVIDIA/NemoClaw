@@ -1,0 +1,107 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Quickstart with Pi"
+sidebar-title: "Quickstart with Pi"
+description: "Prepare for the Pi release candidate, review its activation gate, and learn its accepted interactive and headless workflows."
+description-agent: "Explains candidate-gated Pi onboarding, managed inference, interactive use, and headless automation in a NemoClaw sandbox."
+keywords: ["nemoclaw pi", "pi coding agent sandbox", "pi managed inference", "pi agent quickstart"]
+topics: ["get-started", "terminal-runtime", "pi"]
+tags: ["pi", "managed-inference", "docker"]
+difficulty: "intermediate"
+audience: "operators"
+status: published
+content:
+  type: "get_started"
+agent-variants: ["pi"]
+---
+Run the pinned Pi coding agent inside a NemoClaw-managed OpenShell sandbox.
+
+<Warning>
+Pi remains a qualified release candidate until the final activation change adds it to the supported agent inventory and managed-image release cohort. Normal installations reject `--agent pi` before that activation. The qualification controls are not a user setup path.
+</Warning>
+
+## Requirements
+
+Pi v1 requires:
+
+- Linux on AMD64 or ARM64.
+- Docker as the OpenShell compute runtime.
+- Node.js 22.19 or later for NemoClaw.
+- A provider and model that support OpenAI Chat Completions, streaming, and structured tool calls.
+
+Native Podman, macOS, Windows, WSL, messaging channels, dashboards, host mounts, and managed MCP are outside the initial Pi support matrix.
+
+## Install and Onboard
+
+After Pi activation is available in the selected NemoClaw release, install NemoClaw and select Pi explicitly.
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+  NEMOCLAW_AGENT=pi \
+  NEMOCLAW_SANDBOX_NAME=my-pi \
+  bash
+```
+
+For an existing installation, run the canonical onboarding command.
+
+```bash
+nemoclaw onboard --agent pi --name my-pi
+```
+
+Choose a provider and model that use the OpenAI Chat Completions API. NemoClaw keeps the upstream provider credential in OpenShell and gives Pi only the managed `https://inference.local/v1` route. The credential remains in the gateway across rebuild and sandbox destruction. When no sandbox needs that provider, remove it explicitly with `nemoclaw credentials reset <provider> --yes`.
+
+Stock onboarding selects an exact Pi managed-image digest. It does not build the Pi Dockerfile on the host. The reviewed Dockerfile is a trusted CI image-build source, not a user onboarding mechanism. A missing, incomplete, mutable, or inconsistent image contract fails before sandbox creation.
+
+## Check the Sandbox
+
+Wait for onboarding to finish, then inspect the registered agent and runtime.
+
+```bash
+nemoclaw my-pi status
+nemoclaw list
+```
+
+The status output identifies Pi as a terminal runtime. Pi has no dashboard, messaging, device-pairing, or managed MCP surface.
+
+## Start an Interactive Session
+
+Run Pi through the normal launch preflight.
+
+```bash
+nemoclaw launch my-pi
+```
+
+You can also open a shell and start Pi directly.
+
+```bash
+nemoclaw my-pi connect
+pi
+```
+
+Interactive Pi can ask before it trusts project-local skills, extensions, prompts, and packages. Pi loads `AGENTS.md` and `CLAUDE.md` context files before that trust decision; use `pi --no-context-files` when those files must not enter the prompt. OpenShell policy remains the execution and network authority.
+
+## Run a Headless Task
+
+Run one headless task through the public sandbox command boundary.
+
+```bash
+nemoclaw my-pi exec --workdir /sandbox --no-tty -- \
+  pi --no-approve --print "Summarise the files in this workspace"
+```
+
+Use JSON mode when automation needs structured event evidence.
+
+```bash
+nemoclaw my-pi exec --workdir /sandbox --no-tty -- \
+  pi --no-approve --mode json --print --tools read \
+    "Use the read tool to inspect README.md and report its title"
+```
+
+`--no-approve` ignores project-local executable resources but does not disable context files; add `--no-context-files` when required. `--tools read` limits that invocation to Pi's read tool. JSON mode writes newline-delimited session events, including structured tool execution events and the final assistant message.
+
+## Continue
+
+- [Run and Manage Pi](../manage-sandboxes/run-pi) covers lifecycle, state, backup, rebuild, recovery, and troubleshooting.
+- [NemoClaw for Pi CLI Commands Reference](../reference/commands) lists host and in-sandbox command forms.
+- [Pi Support and Security](../reference/pi-support) records the initial compatibility matrix, policy, credential, and qualification boundaries.
