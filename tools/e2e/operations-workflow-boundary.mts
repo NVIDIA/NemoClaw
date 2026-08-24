@@ -315,7 +315,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
-    GITHUB_TOKEN: "${{ github.token }}",
     INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     JOBS: "${{ inputs.jobs }}",
     PR_NUMBER: "${{ inputs.pr_number }}",
@@ -357,6 +356,9 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   ]) {
     if (!authSource.includes(fragment))
       errors.push(`Manual PR authentication must retain ${fragment}`);
+  }
+  if (authSource.includes("Authorization: Bearer") || Object.hasOwn(authentication.env ?? {}, "GITHUB_TOKEN")) {
+    errors.push("Manual PR authentication must use public PR metadata without a job token");
   }
 
   const qualificationPlanName = "native-runtime-qualification-producer-plan";
@@ -403,6 +405,9 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     if (!validationSource.includes(fragment)) {
       errors.push(`Manual PR checkout validation must retain ${fragment}`);
     }
+  }
+  if (validationSource.includes("Authorization: Bearer") || Object.hasOwn(validation.env ?? {}, "GITHUB_TOKEN")) {
+    errors.push("Manual PR checkout validation must use public PR metadata without a job token");
   }
 
   const credentialAuthorization =

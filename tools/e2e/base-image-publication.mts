@@ -122,6 +122,7 @@ export function writePublicationRunOutputs(path: string, run: PublicationRun): v
 }
 
 export interface GithubRequestOptions {
+  authenticated?: boolean;
   fetchImpl?: (input: string, init: RequestInit) => Promise<Response>;
   sleep?: (milliseconds: number) => Promise<void>;
   now?: () => number;
@@ -720,6 +721,7 @@ export async function githubRequest(
   const now = options.now ?? Date.now;
   const attempts = options.attempts ?? REQUEST_ATTEMPTS;
   const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  const authenticated = options.authenticated ?? true;
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > REQUEST_ATTEMPTS) {
     throw new Error(`request attempts must be between 1 and ${REQUEST_ATTEMPTS}`);
   }
@@ -733,7 +735,7 @@ export async function githubRequest(
       response = await fetchImpl(`${API_ROOT}${path}`, {
         headers: {
           Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${token}`,
+          ...(authenticated ? { Authorization: `Bearer ${token}` } : {}),
           "User-Agent": "NemoClaw-base-image-publication-gate",
           "X-GitHub-Api-Version": "2022-11-28",
         },

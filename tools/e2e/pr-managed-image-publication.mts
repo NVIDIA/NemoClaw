@@ -29,6 +29,8 @@ const MAX_CHANGED_FILES = 3_000;
 const PAGE_SIZE = 100;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/*-]+$/u;
+const PUBLIC_PULL_REQUEST_METADATA_PATH =
+  /^\/repos\/NVIDIA\/NemoClaw\/pulls\/[1-9][0-9]*(?:$|\/files(?:\?|$))/u;
 const REUSABLE_NON_IMAGE_PATHS = [
   /^[.]github\/actions\/restore-e2e-cli-artifact\/action[.]yaml$/u,
   /^[.]github\/workflows\/e2e(?:-standard-profile)?[.]yaml$/u,
@@ -431,7 +433,10 @@ export async function resolvePrManagedImageCatalog(
     readonly token: string;
     readonly workflowSource: string;
   },
-  request: (path: string) => Promise<unknown> = (apiPath) => githubRequest(apiPath, input.token),
+  request: (path: string) => Promise<unknown> = (apiPath) =>
+    githubRequest(apiPath, input.token, {
+      authenticated: !PUBLIC_PULL_REQUEST_METADATA_PATH.test(apiPath),
+    }),
 ): Promise<"not-required" | "reused" | "written"> {
   if (input.candidateRepository !== REPOSITORY) return "not-required";
   if (!SHA_PATTERN.test(input.baseSha) || !SHA_PATTERN.test(input.candidateSha)) {
