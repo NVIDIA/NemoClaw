@@ -106,19 +106,17 @@ describe("runSandboxSnapshot", () => {
   });
 
   it("rejects a schema-5 snapshot restore source or destination before effects (#9203)", async () => {
-    f.assertHermesPortableCommandUnavailableMock.mockImplementation(
-      (sandboxName: string) => {
-        switch (sandboxName) {
-          case "beta":
-            throw new Error("schema-5 destination rejected");
-        }
-      },
-    );
+    f.assertHermesPortableCommandUnavailableMock.mockImplementation((sandboxName: string) => {
+      switch (sandboxName) {
+        case "beta":
+          throw new Error("schema-5 destination rejected");
+      }
+    });
     const { runSandboxSnapshot } = await import("./snapshot");
 
-    await expect(
-      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
-    ).rejects.toThrow("schema-5 destination rejected");
+    await expect(runSandboxSnapshot("alpha", { kind: "restore", to: "beta" })).rejects.toThrow(
+      "schema-5 destination rejected",
+    );
 
     expect(f.assertHermesPortableCommandUnavailableMock).toHaveBeenCalledWith(
       "alpha",
@@ -616,11 +614,6 @@ describe("runSandboxSnapshot", () => {
     expect(output).toContain("alpha snapshot restore");
   });
 
-
-
-
-
-
   it("reserves an explicit llama.cpp clone with the original owner and exact gateway authority", async () => {
     const hostLocalInferenceReceipt = serializedLlamaCppHostLocalInferenceReceipt("docker");
     const hostLocalInferenceProvenance = createSandboxHostLocalInferenceProvenance(
@@ -715,17 +708,6 @@ describe("runSandboxSnapshot", () => {
     expect(confirm).toHaveBeenCalledTimes(2);
   });
 
-
-
-
-
-
-
-
-
-
-
-
   it("refuses snapshot creation before backup when the sandbox is not live", async () => {
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["beta"]));
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -764,6 +746,7 @@ describe("runSandboxSnapshot", () => {
   it("reconciles snapshot policies after restore and warns without failing on repair misses", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    f.getSandboxMock.mockReturnValue({ name: "alpha" });
     f.getLatestBackupMock.mockReturnValue({
       backupPath: "/tmp/alpha/v2",
       timestamp: "2026-06-02T00:00:00.000Z",
@@ -797,7 +780,9 @@ describe("runSandboxSnapshot", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/alpha/v2");
+    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/alpha/v2", {
+      validateBeforeMutation: expect.any(Function),
+    });
     expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "old-preset", { nonFatal: true });
     expect(f.applyPresetMock).toHaveBeenCalledWith("alpha", "github", { nonFatal: true });
     expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "old-custom", { nonFatal: true });
@@ -811,6 +796,100 @@ describe("runSandboxSnapshot", () => {
     expect(output).toContain("Reconciling custom policies on 'alpha': remove old-custom");
     expect(consoleWarn.mock.calls.flat().join("\n")).toContain(
       "Warning: could not reconcile custom policy(ies): old-custom (remove failed)",
+    );
+  });
+
+  it("reports the original policy mutation error before later authority revalidation (#9833)", async () => {
+    let injectedEarlyRevalidationFailure = false;
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {
+      f.inspectSandboxPolicyAuthorityMock.mockReturnValue({
+        authority: "nemoclaw-managed",
+        effectivePolicy: {},
+      });
+    });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    f.getSandboxMock.mockReturnValue({ name: "alpha" });
+    f.getLatestBackupMock.mockReturnValue({
+      backupPath: "/tmp/alpha/v2",
+      timestamp: "2026-06-02T00:00:00.000Z",
+      policyPresets: [],
+    });
+    f.getAppliedPresetsMock.mockReturnValue(["old-preset"]);
+    f.removePresetMock.mockImplementation(() => {
+      f.inspectSandboxPolicyAuthorityMock.mockImplementation(() => {
+        injectedEarlyRevalidationFailure = true;
+        throw new Error("authority inspection temporarily unavailable");
+      });
+      throw new Error("gateway unreachable");
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore" });
+
+    const warnings = consoleWarn.mock.calls.flat().join("\n");
+    expect(warnings).toContain("old-preset (remove: gateway unreachable)");
+    expect(warnings).not.toContain("authority inspection temporarily unavailable");
+    expect(injectedEarlyRevalidationFailure).toBe(false);
+  });
+
+  it("keeps policy-authority refusal final after a successful policy mutation (#9833)", async () => {
+    let authorityChanged = false;
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    f.getSandboxMock.mockReturnValue({ name: "alpha" });
+    f.getLatestBackupMock.mockReturnValue({
+      backupPath: "/tmp/alpha/v2",
+      timestamp: "2026-06-02T00:00:00.000Z",
+      policyPresets: [],
+    });
+    f.getAppliedPresetsMock.mockReturnValue(["old-preset"]);
+    f.removePresetMock.mockImplementation(() => {
+      authorityChanged = true;
+      return true;
+    });
+    f.inspectSandboxPolicyAuthorityMock.mockImplementation(() => ({
+      authority: authorityChanged ? "externally-managed" : "nemoclaw-managed",
+      effectivePolicy: {},
+    }));
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      name: "PolicyAuthorityRefusalError",
+    });
+
+    expect(consoleWarn.mock.calls.flat().join("\n")).not.toContain("could not reconcile preset(s)");
+  });
+
+  it("withholds config-permission success when authority changes during repair (#9833)", async () => {
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    f.getSandboxMock.mockReturnValue({ name: "alpha", policyAuthority: "nemoclaw-managed" });
+    f.getLatestBackupMock.mockReturnValue({
+      backupPath: "/tmp/alpha/v2",
+      timestamp: "2026-06-02T00:00:00.000Z",
+      policyPresets: [],
+    });
+    f.restoreSandboxStateMock.mockReturnValue({
+      success: true,
+      restoredDirs: [],
+      restoredFiles: ["openclaw.json"],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    f.shieldsMock.repairMutableConfigPermsMock.mockImplementation(() => {
+      f.inspectSandboxPolicyAuthorityMock.mockReturnValue({
+        authority: "externally-managed",
+        effectivePolicy: {},
+      });
+      return { applied: true, verified: true, errors: [] };
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore" })).rejects.toMatchObject({
+      name: "PolicyAuthorityRefusalError",
+    });
+
+    expect(consoleLog.mock.calls.flat().join("\n")).not.toContain(
+      "OpenClaw config permissions restored",
     );
   });
 });

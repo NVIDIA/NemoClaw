@@ -5,6 +5,10 @@ import {
   type RestoreGatewayPairingVerificationResult,
   verifyRestoredSandboxGatewayPairing,
 } from "../../adapters/openshell/restore-gateway-pairing";
+import {
+  isPolicyAuthorityRefusalError,
+  PolicyAuthorityRefusalError,
+} from "../../adapters/openshell/policy-authority";
 import { type AutoPairApprovalReceipt, runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
 import {
   CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
@@ -21,6 +25,8 @@ export type RestoreGatewayPairingDeps = {
   approveRestoredClonePairing: (sandboxName: string) => AutoPairApprovalReceipt | void;
   verifyGatewayPairing: (sandboxName: string) => RestoreGatewayPairingVerificationResult;
 };
+
+export type RestoreGatewayPairingAuthorityValidator = () => Promise<void>;
 
 const RESTORED_CLONE_PAIRING_BUDGET = {
   maxApprovals: CONNECT_AUTO_PAIR_MAX_APPROVALS,
@@ -132,16 +138,33 @@ function defaultRestoreGatewayPairingDeps(): RestoreGatewayPairingDeps {
 
 export async function establishRestoredSandboxGatewayPairing(
   targetSandbox: string,
+  validatePolicyAuthority: RestoreGatewayPairingAuthorityValidator,
   deps: RestoreGatewayPairingDeps = defaultRestoreGatewayPairingDeps(),
 ): Promise<void> {
+  const validateBoundary = async (): Promise<void> => {
+    try {
+      await validatePolicyAuthority();
+    } catch (error) {
+      if (isPolicyAuthorityRefusalError(error)) throw error;
+      throw new PolicyAuthorityRefusalError(error instanceof Error ? error.message : String(error));
+    }
+  };
+  const runWithPolicyAuthority = async <T>(operation: () => T): Promise<T> => {
+    await validateBoundary();
+    const result = operation();
+    await validateBoundary();
+    return result;
+  };
   try {
-    deps.restartRestoredSandboxGateway(targetSandbox);
-    deps.warmupScopeUpgrade(targetSandbox);
-    let approvalReceipt = deps.approveRestoredClonePairing(targetSandbox) ?? "exec-failed";
+    await runWithPolicyAuthority(() => deps.restartRestoredSandboxGateway(targetSandbox));
+    await runWithPolicyAuthority(() => deps.warmupScopeUpgrade(targetSandbox));
+    let approvalReceipt =
+      (await runWithPolicyAuthority(() => deps.approveRestoredClonePairing(targetSandbox))) ??
+      "exec-failed";
     // Publish the clone's approved pairing transition before an ordinary
     // authenticated verifier. The verifier alone decides success.
-    deps.restartRestoredSandboxGateway(targetSandbox);
-    let verification = deps.verifyGatewayPairing(targetSandbox);
+    await runWithPolicyAuthority(() => deps.restartRestoredSandboxGateway(targetSandbox));
+    let verification = await runWithPolicyAuthority(() => deps.verifyGatewayPairing(targetSandbox));
     if (
       !verification.ok &&
       approvalReceipt === "list-pending-unavailable" &&
@@ -151,9 +174,11 @@ export async function establishRestoredSandboxGatewayPairing(
       // because no clone-local pending file existed. The ordinary verifier then
       // published the exact scope-upgrade request. Approve that request once,
       // restart once, and keep the next ordinary verifier as the success gate.
-      approvalReceipt = deps.approveRestoredClonePairing(targetSandbox) ?? "exec-failed";
-      deps.restartRestoredSandboxGateway(targetSandbox);
-      verification = deps.verifyGatewayPairing(targetSandbox);
+      approvalReceipt =
+        (await runWithPolicyAuthority(() => deps.approveRestoredClonePairing(targetSandbox))) ??
+        "exec-failed";
+      await runWithPolicyAuthority(() => deps.restartRestoredSandboxGateway(targetSandbox));
+      verification = await runWithPolicyAuthority(() => deps.verifyGatewayPairing(targetSandbox));
     }
     if (!verification.ok) {
       throw new RestoreGatewayPairingClassifiedError(
@@ -161,6 +186,7 @@ export async function establishRestoredSandboxGatewayPairing(
       );
     }
   } catch (err) {
+    if (isPolicyAuthorityRefusalError(err)) throw err;
     const classification =
       err instanceof RestoreGatewayPairingClassifiedError ? err.message : "unexpected-failure";
     throw new Error(

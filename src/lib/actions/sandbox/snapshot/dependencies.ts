@@ -8,6 +8,10 @@ import { assertHermesPortableCommandUnavailable } from "../../../onboard/experim
 import type { SandboxEntry } from "../../../state/registry/types";
 
 export {
+  isPolicyAuthorityRefusalError,
+  PolicyAuthorityRefusalError,
+} from "../../../adapters/openshell/policy-authority";
+export {
   confirmHostLocalInferenceAuthority,
   type PreparedHostLocalInferenceAuthority,
   prepareHostLocalInferenceAuthority,
@@ -20,6 +24,19 @@ export type {
   PrepareManagedWorkloadCloneHandoffInput,
 } from "../../../onboard/workload/clone";
 export { backupSandboxStateWithManagedAuthority } from "./backup-authority";
+export {
+  inspectSnapshotCloneTargetPolicyAuthority,
+  qualifySnapshotPolicyAuthority,
+  revalidateDeletedSnapshotPolicyAuthority,
+  revalidateRemovedSnapshotPolicyAuthority,
+  resolveManagedMcpPolicyRequirementContents,
+  resolveSnapshotBuiltinPolicyRequirements,
+  resolveSnapshotPolicyRequirements,
+  revalidateSnapshotPolicyAuthority,
+  revalidateSnapshotPolicyAuthorityAtMutationBoundary,
+  type SnapshotPolicyAuthorityReceipt,
+  type SnapshotPolicyAuthorityRemovalReceipt,
+} from "../policy-authority/snapshot";
 export { createSnapshotCloneLifecycle, fingerprintSandboxLiveIdentity } from "./clone-lifecycle";
 export type {
   ManagedCloneProviderBinding,
@@ -62,10 +79,7 @@ export function requireCurrentSnapshotRuntimeProvider(
 
 export function assertSandboxSnapshotCommandAvailable(
   sandboxName: string,
-  commandId:
-    | "sandbox:snapshot:create"
-    | "sandbox:snapshot:list"
-    | "sandbox:snapshot:restore",
+  commandId: "sandbox:snapshot:create" | "sandbox:snapshot:list" | "sandbox:snapshot:restore",
 ): void {
   assertHermesPortableCommandUnavailable(sandboxName, commandId);
 }

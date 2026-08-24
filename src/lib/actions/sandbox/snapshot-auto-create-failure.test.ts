@@ -15,6 +15,7 @@ import {
 } from "../../onboard/runtime-provider/host-local-inference";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
 import { createSandboxHostLocalInferenceProvenance } from "../../state/registry/host-local-inference";
+import { refusePolicyAuthorityInspectionOnCall } from "./policy-authority/test-fixture";
 
 const harness = vi.hoisted(() => ({
   entries: new Map<string, Record<string, unknown>>(),
@@ -26,6 +27,17 @@ const captureOpenshellMock = vi.fn(() => ({
   status: 0,
   output: "alpha Ready\nbeta Ready\nId: beta-runtime-id\n",
 }));
+const inspectSandboxPolicyAuthorityMock = vi.fn(
+  (_input: {
+    sandboxName: string;
+  }): {
+    authority: "nemoclaw-managed" | "externally-managed";
+    effectivePolicy: Record<string, unknown>;
+  } => ({
+    authority: "nemoclaw-managed",
+    effectivePolicy: {},
+  }),
+);
 const getSandboxMock = vi.fn((name?: string) => harness.entries.get(name ?? "") ?? null);
 const registerSandboxMock = vi.fn(
   (
@@ -39,14 +51,15 @@ const registerSandboxMock = vi.fn(
     });
   },
 );
-const finalizePendingSandboxRegistrationMock = vi.fn((name: string) => {
+function finalizePendingSandboxRegistration(name: string): boolean {
   const entry = harness.entries.get(name);
   const finalized =
     entry?.pendingRouteReservation === true
       ? { ...entry, pendingRouteReservation: undefined }
       : null;
   return finalized === null ? false : Boolean(harness.entries.set(name, finalized));
-});
+}
+const finalizePendingSandboxRegistrationMock = vi.fn(finalizePendingSandboxRegistration);
 const reserveSandboxInferenceRouteMock = vi.fn((name: string, route: Record<string, unknown>) => {
   harness.entries.set(name, {
     name,
@@ -55,6 +68,7 @@ const reserveSandboxInferenceRouteMock = vi.fn((name: string, route: Record<stri
   });
   return true;
 });
+const removeSandboxMock = vi.fn((name: string) => harness.entries.delete(name));
 const restoreSandboxStateMock = vi.fn();
 const captureSnapshotRestoreAuthorityMock = vi.fn();
 const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(async () => ({
@@ -66,6 +80,18 @@ const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(async () 
 const removeSandboxRegistryEntryOutcomeMock = vi.fn((name: string) => {
   const removed = harness.entries.delete(name);
   return { status: removed ? ("complete" as const) : ("not-found" as const), removed };
+});
+const removeSandboxRegistryEntryWithReceiptMock = vi.fn((name: string) => {
+  const entry = harness.entries.get(name);
+  harness.entries.delete(name);
+  return entry
+    ? {
+        entry,
+        wasDefault: false,
+        fallbackDefault: "alpha",
+        postRemovalDefaultSelectionRevision: 1,
+      }
+    : null;
 });
 
 const managedRuntime: HostLocalInferenceRuntime = {
@@ -124,6 +150,7 @@ function sourceEntry(receipt?: string): Record<string, unknown> {
     name: "alpha",
     agent: "openclaw",
     gatewayName: "nemoclaw",
+    policyAuthority: "nemoclaw-managed",
     imageTag: "nemoclaw-alpha:test",
     openshellDriver: receipt ? "mxc" : "docker",
     provider: "vllm-local",
@@ -131,6 +158,26 @@ function sourceEntry(receipt?: string): Record<string, unknown> {
     endpointUrl: "https://inference.local/v1",
     lifecycleGeneration: "alpha-generation-1",
     ...(receipt ? { hostLocalInferenceReceipt: receipt } : {}),
+  };
+}
+
+function llamaCppSourceEntry(): { entry: Record<string, unknown>; receipt: string } {
+  const receipt = serializedLlamaCppHostLocalInferenceReceipt();
+  return {
+    entry: {
+      ...sourceEntry(),
+      openshellDriver: "docker",
+      provider: "llama-cpp-local",
+      model: "llama-cpp-model",
+      endpointUrl: "https://inference.local/v1",
+      endpointSource: "inference-set",
+      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      preferredInferenceApi: "openai-completions",
+      gatewayPort: 8080,
+      hostLocalInferenceReceipt: receipt,
+      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance("alpha", receipt),
+    },
+    receipt,
   };
 }
 
@@ -143,6 +190,14 @@ vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: captureOpenshellMock,
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: vi.fn(() => ({ status: 0, output: "" })),
+}));
+vi.mock("../../adapters/openshell/policy-authority", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/policy-authority")>()),
+  inspectGlobalPolicyAuthority: vi.fn(() => ({
+    authority: "nemoclaw-managed",
+    effectivePolicy: {},
+  })),
+  inspectSandboxPolicyAuthority: inspectSandboxPolicyAuthorityMock,
 }));
 vi.mock("../../credentials/store", () => ({
   deleteCredential: vi.fn(),
@@ -179,13 +234,16 @@ vi.mock("../../policy", () => ({
   getAppliedPresets: vi.fn(() => []),
   getCustomPolicies: vi.fn(() => []),
   getPresetContentGatewayState: vi.fn(() => "absent"),
-  loadPresetForSandbox: vi.fn(() => null),
+  loadPresetForSandbox: vi.fn((_sandbox: string, name: string) =>
+    name === "local-inference" ? "version: 1\nnetwork_policies:\n  local-inference: {}\n" : null,
+  ),
   removePreset: vi.fn(() => true),
   resolveAgentBaselinePolicy: resolveTestAgentBaselinePolicy,
 }));
 vi.mock("../../runner", () => ({
   ROOT: "/repo",
   run: vi.fn(() => ({ status: 0 })),
+  runCaptureEx: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
   shellQuote: (value: string) => `'${value}'`,
   validateName: vi.fn((value: string) => value),
 }));
@@ -202,6 +260,7 @@ vi.mock("../../shields", () => ({
 }));
 vi.mock("../../shields/timer-bound-lock", () => ({
   withTimerBoundShieldsMutationLock: vi.fn((_sandbox, _command, fn) => fn()),
+  withTimerBoundShieldsMutationLockAsync: vi.fn((_sandbox, _command, fn) => fn()),
 }));
 vi.mock("../../shields/timer-control", () => ({
   isProcessAlive: vi.fn(() => true),
@@ -227,7 +286,8 @@ vi.mock("../../state/registry", () => ({
   finalizePendingSandboxRegistration: finalizePendingSandboxRegistrationMock,
   registerSandbox: registerSandboxMock,
   reserveSandboxInferenceRoute: reserveSandboxInferenceRouteMock,
-  removeSandbox: vi.fn((name: string) => harness.entries.delete(name)),
+  removeSandbox: removeSandboxMock,
+  restoreSandboxEntryIfMissing: vi.fn(() => true),
   updateSandbox: vi.fn(),
 }));
 vi.mock("../../state/sandbox", () => ({
@@ -244,6 +304,7 @@ vi.mock("../../state/sandbox", () => ({
 vi.mock("./destroy", () => ({
   cleanupShieldsDestroyArtifacts: vi.fn(),
   removeSandboxRegistryEntryOutcome: removeSandboxRegistryEntryOutcomeMock,
+  removeSandboxRegistryEntryWithReceipt: removeSandboxRegistryEntryWithReceiptMock,
   requireSandboxDestructiveCleanupAuthority: vi.fn(() => ({ provider: runtimeProvider })),
 }));
 vi.mock("./restore-gateway-pairing", () => ({
@@ -263,8 +324,16 @@ vi.mock("./snapshot/dependencies", async (importOriginal) => ({
 describe("snapshot restore auto-create failures", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    finalizePendingSandboxRegistrationMock
+      .mockReset()
+      .mockImplementation(finalizePendingSandboxRegistration);
+    harness.preserveForRebuild.mockReset().mockImplementation((value) => value);
     harness.entries.clear();
     harness.entries.set("alpha", sourceEntry());
+    inspectSandboxPolicyAuthorityMock.mockImplementation(() => ({
+      authority: "nemoclaw-managed",
+      effectivePolicy: {},
+    }));
     streamSandboxCreateMock.mockResolvedValue({
       status: 7,
       output: "create failed before registry write",
@@ -295,20 +364,8 @@ describe("snapshot restore auto-create failures", () => {
   });
 
   it("releases an exact host-local clone reservation when auto-create fails", async () => {
-    const receipt = serializedLlamaCppHostLocalInferenceReceipt();
-    harness.entries.set("alpha", {
-      ...sourceEntry(),
-      openshellDriver: "docker",
-      provider: "llama-cpp-local",
-      model: "llama-cpp-model",
-      endpointUrl: "https://inference.local/v1",
-      endpointSource: "inference-set",
-      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
-      preferredInferenceApi: "openai-completions",
-      gatewayPort: 8080,
-      hostLocalInferenceReceipt: receipt,
-      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance("alpha", receipt),
-    });
+    const { entry, receipt } = llamaCppSourceEntry();
+    harness.entries.set("alpha", entry);
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
@@ -331,20 +388,8 @@ describe("snapshot restore auto-create failures", () => {
   });
 
   it("releases an exact host-local clone reservation when auto-create rejects", async () => {
-    const receipt = serializedLlamaCppHostLocalInferenceReceipt();
-    harness.entries.set("alpha", {
-      ...sourceEntry(),
-      openshellDriver: "docker",
-      provider: "llama-cpp-local",
-      model: "llama-cpp-model",
-      endpointUrl: "https://inference.local/v1",
-      endpointSource: "inference-set",
-      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
-      preferredInferenceApi: "openai-completions",
-      gatewayPort: 8080,
-      hostLocalInferenceReceipt: receipt,
-      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance("alpha", receipt),
-    });
+    const { entry, receipt } = llamaCppSourceEntry();
+    harness.entries.set("alpha", entry);
     streamSandboxCreateMock.mockRejectedValue(new Error("injected create rejection"));
     vi.spyOn(console, "log").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
@@ -364,6 +409,87 @@ describe("snapshot restore auto-create failures", () => {
     );
     expect(getSandboxMock("beta")).toBeNull();
     expect(registerSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves cleanup ownership when the Ready clone authority is refused (#9833)", async () => {
+    harness.entries.set("alpha", llamaCppSourceEntry().entry);
+    streamSandboxCreateMock.mockResolvedValue({
+      status: 0,
+      output: "beta Ready",
+      sawProgress: true,
+      forcedReady: false,
+    });
+    refusePolicyAuthorityInspectionOnCall(
+      inspectSandboxPolicyAuthorityMock,
+      7,
+      { authority: "nemoclaw-managed", effectivePolicy: {} },
+      "Ready clone authority changed",
+    );
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(reserveSandboxInferenceRouteMock).toHaveBeenCalledOnce();
+    expect(harness.entries.get("beta")).toEqual(
+      expect.objectContaining({ name: "beta", pendingRouteReservation: true }),
+    );
+    expect(removeSandboxMock).not.toHaveBeenCalled();
+    expect(registerSandboxMock).not.toHaveBeenCalled();
+    expect(restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
+  it("revalidates source authority before route reservation or clone creation (#9833)", async () => {
+    harness.entries.set("alpha", llamaCppSourceEntry().entry);
+    refusePolicyAuthorityInspectionOnCall(
+      inspectSandboxPolicyAuthorityMock,
+      3,
+      { authority: "nemoclaw-managed", effectivePolicy: {} },
+      "source authority changed before clone creation",
+    );
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(inspectSandboxPolicyAuthorityMock).toHaveBeenCalledTimes(3);
+    expect(reserveSandboxInferenceRouteMock).not.toHaveBeenCalled();
+    expect(streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(registerSandboxMock).not.toHaveBeenCalled();
+    expect(harness.entries.has("beta")).toBe(false);
+  });
+
+  it("withholds clone success when authority changes during registration finalization (#9833)", async () => {
+    streamSandboxCreateMock.mockResolvedValue({
+      status: 0,
+      output: "beta Ready",
+      sawProgress: true,
+      forcedReady: false,
+    });
+    finalizePendingSandboxRegistrationMock.mockImplementation((name: string) => {
+      const entry = harness.entries.get(name);
+      expect(entry).toBeDefined();
+      harness.entries.set(name, { ...entry!, pendingRouteReservation: undefined });
+      inspectSandboxPolicyAuthorityMock.mockReturnValue({
+        authority: "externally-managed",
+        effectivePolicy: {},
+      });
+      return entry !== undefined;
+    });
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "restore", to: "beta" })).rejects.toThrow(
+      /policy authority changed before clone setup completed/u,
+    );
+
+    expect(consoleLog.mock.calls.flat().join("\n")).not.toContain("Sandbox 'beta' created");
+    expect(restoreSandboxStateMock).not.toHaveBeenCalled();
+    expect(harness.entries.has("beta")).toBe(true);
   });
 
   it("removes a registered clone when live inference re-proof fails", async () => {
@@ -417,7 +543,7 @@ describe("snapshot restore auto-create failures", () => {
     const nimRuntime = await import("../../inference/nim");
     expect(nimRuntime.stopNimContainer).not.toHaveBeenCalled();
     expect(nimRuntime.stopNimContainerByName).not.toHaveBeenCalled();
-    expect(removeSandboxRegistryEntryOutcomeMock).toHaveBeenCalledWith("beta");
+    expect(removeSandboxRegistryEntryWithReceiptMock).toHaveBeenCalledWith("beta");
     expect(getSandboxMock("beta")).toBeNull();
     expect(consoleError.mock.calls.flat().join("\n")).toContain("injected live route failure");
     expect(restoreSandboxStateMock).not.toHaveBeenCalled();

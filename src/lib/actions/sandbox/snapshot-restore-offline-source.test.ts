@@ -61,7 +61,9 @@ describe("runSandboxSnapshot restore: source sandbox no longer running", () => {
       expect.any(Object),
       expect.any(Object),
     );
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
+    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha", {
+      validateBeforeMutation: expect.any(Function),
+    });
   });
 
   it("stops before creating a replacement when the source records no image", async () => {

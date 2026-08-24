@@ -13,6 +13,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { execTimeout } from "./helpers/timeouts";
+import { LAUNCH_READINESS_FIXTURE_POLICY } from "./helpers/launch-readiness-fixture";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
 const listenerProcesses: ChildProcess[] = [];
@@ -81,6 +82,7 @@ function writeSandboxRegistry(
           provider: "nvidia-prod",
           gpuEnabled: false,
           policies: [],
+          policyAuthority: "nemoclaw-managed",
           ...entry,
         },
       },
@@ -191,6 +193,8 @@ function makeHealthyVmGatewayEnv(prefix: string): Record<string, string> {
     '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
     '  "sandbox exec") printf "NEMOCLAW_DCODE_PROBE=no-runtime\\n"; exit 0 ;;',
     '  "sandbox ssh-config") for sandbox_ref in "$@"; do :; done; printf "Host openshell-%s\\n  HostName 127.0.0.1\\n  User sandbox\\n" "$sandbox_ref"; exit 0 ;;',
+    `  "policy get") for sandbox_ref in "$@"; do :; done; case " $* " in *" --output json "*) printf '{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":{}}\\n' "$sandbox_ref" ;; *) printf '%s' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)} ;; esac; exit 0 ;;`,
+    '  "policy list") exit 0 ;;',
     "esac",
     'if [ "$1" = "status" ]; then exit 0; fi',
     "exit 0",
@@ -254,6 +258,8 @@ function makeVmRestoreToEnv(
     `  "sandbox create") ${markCloneReady}; touch ${JSON.stringify(cloneRunningMarker)}; printf "created clone-1\\n"; exit 0 ;;`,
     `  "forward list") printf "SANDBOX BIND PORT PID STATUS\\nclone-1 ${dashboardBind} ${String(dashboardPort)} 4242 running\\n"; exit 0 ;;`,
     '  "forward stop") exit 1 ;;',
+    `  "policy get") for sandbox_ref in "$@"; do :; done; case " $* " in *" --global "*) exit 64 ;; *" --output json "*) if [ "$sandbox_ref" = alpha ] || [ -f ${JSON.stringify(cloneRunningMarker)} ]; then printf '{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":{}}\\n' "$sandbox_ref"; else exit 1; fi ;; *) printf '%s' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)} ;; esac; exit 0 ;;`,
+    '  "policy list") exit 0 ;;',
     "esac",
     'if [ "$1" = "status" ]; then exit 0; fi',
     "exit 0",
@@ -270,7 +276,7 @@ function makeVmRestoreToEnv(
     '  if printf "%s" "$cmd" | grep -q "cat --"; then cat "$REMOTE_OPENCLAW_JSON"; exit 0; fi',
     '  touch "$SNAPSHOT_RESTORE_MARKER"',
     '  if printf "%s" "$cmd" | grep -q ".nemoclaw-restore"; then cat > "$REMOTE_OPENCLAW_JSON"; exit 0; fi',
-    '  exit 92',
+    "  exit 92",
     "fi",
     "exit 0",
   ]);
@@ -319,6 +325,7 @@ function makeVmRestoreToEnv(
   return {
     HOME: home,
     NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS: "0",
+    NEMOCLAW_SANDBOX_READY_TIMEOUT: "1",
     NEMOCLAW_TEST_SNAPSHOT_RESTORE_MARKER: snapshotRestoreMarker,
     PATH: `${localBin}:${process.env.PATH ?? ""}`,
   };
@@ -377,9 +384,7 @@ describe("snapshot VM-driver gateway guard", () => {
         .update("fixture-clone-1")
         .digest("hex"),
     });
-    expect(registryState.sandboxes["clone-1"].lifecycleGeneration).not.toBe(
-      "source-generation",
-    );
+    expect(registryState.sandboxes["clone-1"].lifecycleGeneration).not.toBe("source-generation");
   }, 15000);
 
   it("snapshot restore --to rejects a malformed clone identity before registration (#8942)", () => {

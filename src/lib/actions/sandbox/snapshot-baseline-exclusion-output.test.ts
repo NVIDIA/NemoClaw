@@ -28,6 +28,9 @@ vi.mock("../../shields/timer-bound-lock", () => ({
   withTimerBoundShieldsMutationLock: vi.fn(
     (_sandboxName: string, _command: string, operation: () => unknown) => operation(),
   ),
+  withTimerBoundShieldsMutationLockAsync: vi.fn(
+    (_sandboxName: string, _command: string, operation: () => Promise<unknown>) => operation(),
+  ),
 }));
 
 vi.mock("../../state/registry", () => ({

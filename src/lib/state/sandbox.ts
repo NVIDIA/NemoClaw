@@ -261,7 +261,7 @@ export interface SnapshotRestoreOptions {
    * the first remote filesystem mutation.
    */
   readonly authority?: SnapshotRestoreAuthority;
-  /** Internal provider fence invoked at the same last-safe mutation edge. */
+  /** Restore-authority fence invoked immediately before each remote filesystem mutation. */
   readonly validateBeforeMutation?: () => void;
 }
 
@@ -2350,17 +2350,14 @@ function restoreSandboxStateInternal(
       restoreTar = tarResult.stdout;
     }
 
-    const mutationAuthorityError = validateSnapshotRestoreMutation(backupPath, options);
-    if (mutationAuthorityError) {
-      return failRestoreContract(mutationAuthorityError);
-    }
-
     // Remove existing state dirs before extracting so stale files from later
     // snapshots don't persist after restoring an earlier one. OpenClaw's
     // image-managed extensions are preserved from the freshly built image and
     // excluded from the restore tar; only user/non-managed extension entries
     // are cleared and restored from the backup.
     if (cleanupStateDirs.length > 0) {
+      const mutationAuthorityError = validateSnapshotRestoreMutation(backupPath, options);
+      if (mutationAuthorityError) return failRestoreContract(mutationAuthorityError);
       const rmCmd = buildRestoreCleanupCommand(
         dir,
         localDirs,
@@ -2391,6 +2388,8 @@ function restoreSandboxStateInternal(
     }
 
     if (restoreTar !== undefined) {
+      const mutationAuthorityError = validateSnapshotRestoreMutation(backupPath, options);
+      if (mutationAuthorityError) return failRestoreContract(mutationAuthorityError);
       const extractCmd = `tar --no-same-owner -xf - -C ${shellQuote(dir)}`;
       const sshResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), extractCmd], {
         input: restoreTar,
@@ -2405,6 +2404,8 @@ function restoreSandboxStateInternal(
         // which cannot chown even files it owns. The tar restore above runs as the
         // same user, so the real restore gate is whether the restored state dirs
         // are usable by that user.
+        const ownershipAuthorityError = validateSnapshotRestoreMutation(backupPath, options);
+        if (ownershipAuthorityError) return failRestoreContract(ownershipAuthorityError);
         const chownCmd = `chown -R sandbox:sandbox -- ${restoredPaths.map(shellQuote).join(" ")} 2>/dev/null || true`;
         _log(`Best-effort ownership repair: ${chownCmd}`);
         const chownResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), chownCmd], {
@@ -2454,6 +2455,8 @@ function restoreSandboxStateInternal(
     }
 
     for (const spec of localFiles) {
+      const mutationAuthorityError = validateSnapshotRestoreMutation(backupPath, options);
+      if (mutationAuthorityError) return failRestoreContract(mutationAuthorityError);
       const targetStateFile = targetStateFiles.get(spec.path);
       if (!targetStateFile) throw new Error(`Validated target state file missing: ${spec.path}`);
       if (
