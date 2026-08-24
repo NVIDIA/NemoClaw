@@ -488,7 +488,7 @@ describe("shields — unit logic", () => {
       );
     }
 
-    it("shieldsStatus attempts inline recovery for an expired timer marker", async () => {
+    it("shieldsStatus refuses expired-timer recovery without policy authority", async () => {
       const sandboxName = "openclaw";
       const configPath = "/sandbox/.openclaw/openclaw.json";
       const hashPath = "/sandbox/.openclaw/.config-hash";
@@ -548,13 +548,15 @@ describe("shields — unit logic", () => {
 
       const { shieldsStatus } = await loadShieldsModule();
 
-      shieldsStatus(sandboxName, true, { inspectPolicyRecovery: readyPolicyRecovery });
+      expect(() =>
+        shieldsStatus(sandboxName, true, { inspectPolicyRecovery: readyPolicyRecovery }),
+      ).toThrow(/policy authority/i);
 
       expect(processKillSpy).not.toHaveBeenCalled();
       expect(errorSpy).toHaveBeenCalledWith(
         "  Warning: auto-restore timer authority is expired, invalid, or no longer live; attempting inline restore.",
       );
-      expect(logSpy).toHaveBeenCalledWith("  Shields: DOWN (temporarily unlocked)");
+      expect(logSpy).not.toHaveBeenCalledWith("  Shields: DOWN (temporarily unlocked)");
     });
 
     it("deadline composition removes an unproven MCP add from the restrictive policy", async () => {
@@ -776,7 +778,7 @@ describe("shields — unit logic", () => {
       expect(fs.existsSync(path.join(stateDir(), `shields-timer-${sandboxName}.json`))).toBe(true);
     });
 
-    it("shieldsStatus attempts inline recovery when expired marker PID is alive but cmdline does not match recorded timer", async () => {
+    it("shieldsStatus refuses PID-reuse recovery without policy authority", async () => {
       const sandboxName = "openclaw";
       const snapshotPath = path.join(stateDir(), "policy-snapshot-test.yaml");
       fs.mkdirSync(stateDir(), { recursive: true });
@@ -842,12 +844,14 @@ describe("shields — unit logic", () => {
       );
 
       const { shieldsStatus } = await loadShieldsModule();
-      shieldsStatus(sandboxName, true, { inspectPolicyRecovery: readyPolicyRecovery });
+      expect(() =>
+        shieldsStatus(sandboxName, true, { inspectPolicyRecovery: readyPolicyRecovery }),
+      ).toThrow(/policy authority/i);
 
       expect(errorSpy).toHaveBeenCalledWith(
         "  Warning: auto-restore timer authority is expired, invalid, or no longer live; attempting inline restore.",
       );
-      expect(logSpy).toHaveBeenCalledWith("  Shields: DOWN (temporarily unlocked)");
+      expect(logSpy).not.toHaveBeenCalledWith("  Shields: DOWN (temporarily unlocked)");
     });
 
     it("rejects state files whose fileHashes entries are not SHA-256 hex strings", async () => {

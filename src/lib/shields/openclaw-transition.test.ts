@@ -15,14 +15,21 @@ import {
 } from "../../../test/helpers/hermes-unsafe-config-shields-harness";
 import {
   createShieldsFlowHarness,
+  managedPolicyMutationAuthority,
   type ShieldsFlowHarnessOptions,
+  writeLockedShieldsState,
 } from "../../../test/helpers/shields-flow-harness";
+import { PolicyAuthorityRefusalError } from "../adapters/openshell/policy-authority";
 import type { AgentConfigTarget } from "../sandbox/agent-config";
 
 const requireSource = createRequire(import.meta.url);
 const INDEX_MODULE = "./index.js";
 
 type ShieldsModule = typeof import("./index");
+
+function throwTestError(error: Error): never {
+  throw error;
+}
 
 const STATE_LOCK_PLAN = {
   version: 1 as const,
@@ -517,6 +524,82 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     delete require.cache[requireSource.resolve("./permissive-runtime.js")];
     delete require.cache[requireSource.resolve("../actions/sandbox/mcp-bridge-policy.js")];
     delete require.cache[requireSource.resolve("../cli/branding.js")];
+  });
+
+  it("rechecks authority after policy set and before config unlock (#9833)", () => {
+    writeLockedShieldsState(tmpDir, "openclaw", "/sandbox/.openclaw/openclaw.json");
+    const harness = createHarness({ initialOpenClawPosture: "locked" });
+    const refusal = new PolicyAuthorityRefusalError("Policy authority changed after policy set");
+    harness.policyRecheckSpy.mockImplementation(() =>
+      harness.runSpy.mock.calls.length > 0
+        ? throwTestError(refusal)
+        : managedPolicyMutationAuthority,
+    );
+
+    expect(() => harness.shieldsDown("openclaw", { throwOnError: true })).toThrow(refusal);
+
+    expect(harness.runSpy).toHaveBeenCalledOnce();
+    expect(harness.getOpenClawPosture()).toBe("locked");
+    expect(harness.dockerSpawnCalls.some(({ args }) => args.includes("unlock"))).toBe(false);
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+  });
+
+  it("relocks config and retains recovery after authority changes post-unlock (#9833)", () => {
+    writeLockedShieldsState(tmpDir, "openclaw", "/sandbox/.openclaw/openclaw.json");
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const harness = createHarness({
+      confirmOpenClawInodeFlags: true,
+      initialOpenClawPosture: "locked",
+    });
+    const refusal = new PolicyAuthorityRefusalError("Policy authority changed after config unlock");
+    harness.policyRecheckSpy.mockImplementation(() =>
+      harness.getOpenClawPosture() === "mutable"
+        ? throwTestError(refusal)
+        : managedPolicyMutationAuthority,
+    );
+
+    expect(() => harness.shieldsDown("openclaw", { throwOnError: true })).toThrow(refusal);
+
+    expect(harness.getOpenClawPosture()).toBe("locked");
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf8")),
+    ).toMatchObject({ shieldsDown: true });
+    expect(fs.existsSync(path.join(stateDir, "shields-timer-openclaw.json"))).toBe(true);
+    expect(harness.auditSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "shields_down" }),
+    );
+    expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain("Config unlocked for");
+  });
+
+  it("redacts relock failures and preserves the original authority refusal (#9833)", () => {
+    writeLockedShieldsState(tmpDir, "openclaw", "/sandbox/.openclaw/openclaw.json");
+    const harness = createHarness({
+      initialOpenClawPosture: "locked",
+      relockAndReconfirm: () => ({
+        ok: false,
+        attempts: 1,
+        lastResult: null,
+        error: "guard failed with nvapi-abcdefghijklmnopqrstuvwxyz0123456789",
+      }),
+    });
+    const refusal = new PolicyAuthorityRefusalError("Policy authority changed after config unlock");
+    harness.policyRecheckSpy.mockImplementation(() =>
+      harness.getOpenClawPosture() === "mutable"
+        ? throwTestError(refusal)
+        : managedPolicyMutationAuthority,
+    );
+    let caught: unknown;
+
+    try {
+      harness.shieldsDown("openclaw", { throwOnError: true });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBe(refusal);
+    const diagnostics = harness.errorSpy.mock.calls.flat().join("\n");
+    expect(diagnostics).toContain("restrictive config lock could not be re-confirmed");
+    expect(diagnostics).not.toContain("nvapi-abcdefghijklmnopqrstuvwxyz0123456789");
   });
 
   it.each(retryAgentCases)(

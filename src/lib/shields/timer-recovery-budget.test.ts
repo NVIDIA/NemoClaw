@@ -17,6 +17,7 @@ const shieldsIndexMock = vi.hoisted(() => ({
   applyShieldsPolicySnapshot: vi.fn(
     (): { status: number; managedMcpOmissions?: ManagedMcpPolicyOmission[] } => ({ status: 0 }),
   ),
+  assertShieldsPolicyMutationAuthority: vi.fn(),
   completeAutoRestoreTransition: vi.fn(() => true),
   lockAgentConfig: vi.fn(),
   prepareAutoRestoreTransitionTakeover: vi.fn(),

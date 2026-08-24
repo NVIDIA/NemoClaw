@@ -44,6 +44,11 @@ export interface ShieldsAuditEntry {
   lock_verified?: boolean;
 }
 
+/** Redact a Shields diagnostic before it reaches an error or audit record. */
+export function redactShieldsDiagnostic(value: string): string {
+  return redactFull(value);
+}
+
 /**
  * Append a single audit entry as a JSON line. Creates the directory and file
  * on first write. The file is append-only — entries are never modified.
@@ -51,8 +56,9 @@ export interface ShieldsAuditEntry {
 export function appendAuditEntry(entry: ShieldsAuditEntry): void {
   ensureConfigDir(AUDIT_DIR);
   const safe = { ...entry };
-  if (safe.reason) safe.reason = redactFull(safe.reason);
-  if (safe.error) safe.error = redactFull(safe.error);
+  if (safe.reason) safe.reason = redactShieldsDiagnostic(safe.reason);
+  if (safe.error) safe.error = redactShieldsDiagnostic(safe.error);
+  if (safe.warning) safe.warning = redactShieldsDiagnostic(safe.warning);
   appendFileSync(AUDIT_FILE, JSON.stringify(safe) + "\n", { mode: 0o600 });
 }
 

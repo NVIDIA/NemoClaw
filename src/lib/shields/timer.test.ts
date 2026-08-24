@@ -20,6 +20,7 @@ const shieldsIndexMock = vi.hoisted(() => ({
       managedMcpOmissions?: ManagedMcpPolicyOmission[];
     } => ({ status: 0 }),
   ),
+  assertShieldsPolicyMutationAuthority: vi.fn(),
   completeAutoRestoreTransition: vi.fn(() => true),
   lockAgentConfig: vi.fn() as unknown,
   prepareAutoRestoreTransitionTakeover: vi.fn(),
@@ -35,6 +36,7 @@ interface TimerTestOptions {
 
 vi.mock("./index", () => ({
   applyShieldsPolicySnapshot: shieldsIndexMock.applyShieldsPolicySnapshot,
+  assertShieldsPolicyMutationAuthority: shieldsIndexMock.assertShieldsPolicyMutationAuthority,
   completeAutoRestoreTransition: shieldsIndexMock.completeAutoRestoreTransition,
   get lockAgentConfig() {
     return shieldsIndexMock.lockAgentConfig;
@@ -52,6 +54,7 @@ describe("shields timer authorization", () => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "shields-timer-"));
     vi.stubEnv("HOME", tmpHome);
     shieldsIndexMock.applyShieldsPolicySnapshot.mockImplementation(() => ({ status: 0 }));
+    shieldsIndexMock.assertShieldsPolicyMutationAuthority.mockImplementation(() => undefined);
     shieldsIndexMock.lockAgentConfig = vi.fn();
     shieldsIndexMock.resolvePersistedAutoRestoreTarget = vi.fn(
       (

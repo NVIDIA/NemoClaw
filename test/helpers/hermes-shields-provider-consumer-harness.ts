@@ -26,6 +26,17 @@ const SEALED_PLAN_HELP = [
   "--state-lock-plan-json",
 ].join(" ");
 
+export function prepareRetainedHermesProviderMutation(homeDir: string): void {
+  const lifecycleDir = path.join(
+    homeDir,
+    ".nemoclaw",
+    "state",
+    "runtime-provider-lifecycle",
+  );
+  fs.mkdirSync(lifecycleDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(lifecycleDir, 0o700);
+}
+
 export const hermesProviderConsumerTarget = {
   agentName: "hermes",
   configPath: "/sandbox/.hermes/config.yaml",
@@ -75,6 +86,7 @@ export type HermesShieldsProviderConsumerHarness = {
   commands: string[][];
   dockerExecSpy: MockInstance;
   lifecycleGateSpy: MockInstance;
+  policyAuthoritySpy: MockInstance;
   registrySpy: MockInstance;
   routeSpy: MockInstance;
   runSpy: MockInstance;
@@ -270,6 +282,9 @@ export function createHermesShieldsProviderConsumerHarness(
     .spyOn(verifyLock, "verifyShieldsLockState")
     .mockReturnValue({ issues: [] });
   const runSpy = vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
+  const policyAuthoritySpy = vi
+    .spyOn(policy, "inspectPolicyMutationAuthority")
+    .mockReturnValue(managedPolicyMutationAuthority);
   spies.push(
     runSpy,
     vi.spyOn(runner, "validateName").mockImplementation((value: unknown) => String(value)),
@@ -281,9 +296,7 @@ export function createHermesShieldsProviderConsumerHarness(
         String(file),
         String(name),
       ]),
-    vi
-      .spyOn(policy, "inspectPolicyMutationAuthority")
-      .mockReturnValue(managedPolicyMutationAuthority),
+    policyAuthoritySpy,
     vi
       .spyOn(policy, "recheckPolicyMutationAuthority")
       .mockReturnValue(managedPolicyMutationAuthority),
@@ -361,6 +374,7 @@ export function createHermesShieldsProviderConsumerHarness(
     commands,
     dockerExecSpy,
     lifecycleGateSpy,
+    policyAuthoritySpy,
     registrySpy,
     routeSpy,
     runSpy,

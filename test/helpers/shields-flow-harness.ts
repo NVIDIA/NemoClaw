@@ -18,6 +18,30 @@ export const externalPolicyAuthorityInspection = {
   effectivePolicy: { version: 1, network_policies: {} },
 };
 
+export const externalPolicyMutationAuthority = {
+  authority: "externally-managed" as const,
+  authorityRecordedNow: false,
+  gatewayName: "nemoclaw",
+  inspection: externalPolicyAuthorityInspection,
+};
+
+export function writeLockedShieldsState(
+  homeDir: string,
+  sandboxName: string,
+  configPath: string,
+): void {
+  const stateDir = path.join(homeDir, ".nemoclaw", "state");
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(stateDir, `shields-${sandboxName}.json`),
+    JSON.stringify({
+      shieldsDown: false,
+      chattrApplied: true,
+      fileHashes: { [configPath]: "a".repeat(64) },
+    }),
+  );
+}
+
 export const managedPolicyMutationAuthority = {
   authority: "nemoclaw-managed" as const,
   authorityRecordedNow: false,
@@ -38,6 +62,7 @@ export type ShieldsFlowHarness = {
   getOpenClawPosture: () => "locked" | "mutable";
   logSpy: MockInstance;
   policyAuthoritySpy: MockInstance;
+  policyRecheckSpy: MockInstance;
   policySetBodies: string[];
   runCaptureSpy: MockInstance;
   runSpy: MockInstance;
@@ -72,6 +97,8 @@ export type ShieldsFlowHarnessOptions = {
   }>;
   processStartIdentity?: string;
   policyAuthorityInspection?: SandboxPolicyAuthorityInspection;
+  policyAuthorityRecheck?: typeof import("../../src/lib/policy").recheckPolicyMutationAuthority;
+  relockAndReconfirm?: typeof import("../../src/lib/shields/relock-reconfirm.js").relockAndReconfirm;
   timerAuthorizationOutcome?: "authorized" | "dies-before-proof";
   timerDiesAfterUnlock?: boolean;
   fork?: (...args: unknown[]) => {
@@ -237,7 +264,7 @@ export function createShieldsFlowHarness(
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
   const runner = requireDist("../runner.js");
-  const policy = requireDist("../policy/index.js");
+  const policy = requireDist("../policy/index.js") as typeof import("../../src/lib/policy");
   const agentConfig = requireDist("../sandbox/agent-config.js");
   const registry = requireDist("../state/registry.js");
   const policyAuthority = requireDist(
@@ -248,9 +275,14 @@ export function createShieldsFlowHarness(
   const audit = requireDist("./audit.js");
   const tempFiles = requireDist("../onboard/temp-files.js");
   const stateDirLock = requireDist("./state-dir-lock.js");
-  const relockReconfirm = requireDist("./relock-reconfirm.js");
+  const relockReconfirm = requireDist(
+    "./relock-reconfirm.js",
+  ) as typeof import("../../src/lib/shields/relock-reconfirm.js");
   const childProcess = requireDist("node:child_process");
   const policySetBodies: string[] = [];
+  if (options.relockAndReconfirm) {
+    vi.spyOn(relockReconfirm, "relockAndReconfirm").mockImplementation(options.relockAndReconfirm);
+  }
   let openClawPosture: "locked" | "mutable" = options.initialOpenClawPosture ?? "mutable";
   const stateLockPlan = {
     version: 1 as const,
@@ -369,7 +401,9 @@ export function createShieldsFlowHarness(
   const policyAuthoritySpy = vi
     .spyOn(policy, "inspectPolicyMutationAuthority")
     .mockReturnValue(policyMutationAuthority);
-  vi.spyOn(policy, "recheckPolicyMutationAuthority").mockReturnValue(policyMutationAuthority);
+  const policyRecheckSpy = vi
+    .spyOn(policy, "recheckPolicyMutationAuthority")
+    .mockImplementation(options.policyAuthorityRecheck ?? (() => policyMutationAuthority));
   vi.spyOn(registry, "listSandboxes").mockReturnValue({
     sandboxes: [{ name: options.sandboxName ?? "openclaw", agent: resolvedAgentConfig.agentName }],
   });
@@ -640,6 +674,7 @@ export function createShieldsFlowHarness(
     getOpenClawPosture: () => openClawPosture,
     logSpy,
     policyAuthoritySpy,
+    policyRecheckSpy,
     policySetBodies,
     runCaptureSpy,
     runSpy,

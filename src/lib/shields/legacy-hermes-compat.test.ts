@@ -16,13 +16,15 @@ import {
   createTransitionFailureForPosture,
   hermesProviderConsumerSandbox as sandbox,
   hermesProviderConsumerTarget as target,
+  prepareRetainedHermesProviderMutation,
   writeBoundForwardPolicy,
   writeTimerAuthorizationProof,
 } from "../../../test/helpers/hermes-shields-provider-consumer-harness";
-import { managedPolicyMutationAuthority } from "../../../test/helpers/shields-flow-harness";
-
+import {
+  externalPolicyMutationAuthority,
+  managedPolicyMutationAuthority,
+} from "../../../test/helpers/shields-flow-harness";
 import { testTimeout } from "../../../test/helpers/timeouts";
-
 const requireSource = createRequire(import.meta.url);
 const INDEX_MODULE = "./index.js";
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
@@ -761,6 +763,20 @@ describe("legacy Hermes shields compatibility", () => {
 
     afterEach(() => {
       harness.cleanup();
+    });
+    it("restores retained protection before refusing external policy authority (#9833)", () => {
+      prepareRetainedHermesProviderMutation(process.env.HOME!);
+      lifecycleGateSpy.mockReturnValue(true);
+      registrySpy.mockReturnValue({ ...sandbox, policyAuthority: "externally-managed" });
+      harness.policyAuthoritySpy.mockReturnValue(externalPolicyMutationAuthority);
+
+      expect(() => shields.shieldsUp(sandbox.name, { throwOnError: true })).toThrow(
+        /externally managed/u,
+      );
+      expect(transitionSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ target: "locked", rollback: "locked" }),
+      );
+      expect(transitionSpy).not.toHaveBeenCalledWith(expect.objectContaining({ target: "mutable" }));
     });
 
     it("migrates the current managed Hermes unlock leaf to the provider transaction", () => {

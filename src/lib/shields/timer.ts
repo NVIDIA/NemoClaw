@@ -10,6 +10,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isPolicyAuthorityRefusalError } from "../adapters/openshell/policy-authority";
 import { CLI_NAME } from "../cli/branding";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types";
 import {
@@ -304,6 +305,7 @@ async function runRestoreTimerWithBudget(
   let retryScheduled = false;
   let terminalContainment = false;
   let restoreCompleted = false;
+  let terminalPolicyAuthorityRefusal = false;
   let managedMcpWarning: string | undefined;
   const scheduleRetry = (): boolean => {
     if (!markerMatchesCurrentTimer(args)) return false;
@@ -316,6 +318,35 @@ async function runRestoreTimerWithBudget(
   const assertTakeoverAuthority = (): void => {
     if (!markerMatchesCurrentTimer(args)) {
       throw new Error("Auto-restore authority changed before Shields transition takeover");
+    }
+  };
+  const relockConfigAfterPolicyAuthorityRefusal = (): void => {
+    if (!args.configPath) return;
+    assertTakeoverAuthority();
+    const lockTarget = shields.resolvePersistedAutoRestoreTarget(args.sandboxName, args);
+    if (!lockTarget) {
+      throw new Error("Missing config directory for policy-authority recovery re-lock");
+    }
+    shields.relockAgentConfigAfterPolicyAuthorityRefusal(
+      args.sandboxName,
+      lockTarget,
+      args.processToken!,
+      args.allowLegacyHermesProtocol,
+    );
+  };
+  const preservePolicyAuthorityRefusal = (): void => {
+    try {
+      relockConfigAfterPolicyAuthorityRefusal();
+    } catch (error) {
+      appendAudit({
+        action: "shields_auto_restore_lock_warning",
+        sandbox: args.sandboxName,
+        timestamp: new Date().toISOString(),
+        restored_by: "auto_timer",
+        policy_snapshot: args.snapshotPath,
+        warning: error instanceof Error ? error.message : String(error),
+        lock_verified: false,
+      });
     }
   };
   const terminalRecoveryFailure = (attempt: number): Error => {
@@ -419,6 +450,11 @@ async function runRestoreTimerWithBudget(
             return "retry";
           }
 
+          shields.assertShieldsPolicyMutationAuthority(
+            args.sandboxName,
+            "continue automatic Shields restore",
+          );
+
           // Destroy and force-restore can revoke this marker while a slow
           // policy restore is already in flight. Stop before the next sandbox
           // mutation if this timer generation no longer owns recovery.
@@ -460,14 +496,18 @@ async function runRestoreTimerWithBudget(
                 // has settled, re-applying if it drifted. This narrows (does not
                 // close) the revert window; fail closed (leave shields DOWN + audit)
                 // when the lock will not re-confirm within the retry budget.
-                const relock = relockAndReconfirm(() =>
-                  lockAgentConfig(
+                const relock = relockAndReconfirm(() => {
+                  shields.assertShieldsPolicyMutationAuthority(
+                    args.sandboxName,
+                    "restore the automatic Shields config lock",
+                  );
+                  return lockAgentConfig(
                     args.sandboxName,
                     lockTarget,
                     false,
                     args.allowLegacyHermesProtocol,
-                  ),
-                );
+                  );
+                });
                 if (relock.ok && relock.lastResult) {
                   lockedChattr = relock.lastResult.chattrApplied;
                   lockedHashes = relock.lastResult.fileHashes;
@@ -484,6 +524,7 @@ async function runRestoreTimerWithBudget(
                   });
                 }
               } catch (error: unknown) {
+                if (isPolicyAuthorityRefusalError(error)) throw error;
                 lockVerified = false;
                 appendAudit({
                   action: "shields_auto_restore_lock_warning",
@@ -500,6 +541,10 @@ async function runRestoreTimerWithBudget(
           // Re-lock verification includes a settle window. Do not rewrite state
           // or remove a replacement marker if authority changed while it ran.
           if (!markerMatchesCurrentTimer(args)) return "revoked";
+          shields.assertShieldsPolicyMutationAuthority(
+            args.sandboxName,
+            "publish automatic Shields restore",
+          );
 
           // Only mark shields as UP if the lock was verified (or no config path).
           if (lockVerified) {
@@ -513,6 +558,10 @@ async function runRestoreTimerWithBudget(
             if (lockedChattr !== null) patch.chattrApplied = lockedChattr;
             if (lockedHashes !== null) patch.fileHashes = lockedHashes;
             updateState(args.stateFile, patch);
+            shields.assertShieldsPolicyMutationAuthority(
+              args.sandboxName,
+              "publish automatic Shields restore",
+            );
             if (
               !shields.completeAutoRestoreTransition(
                 args.sandboxName,
@@ -522,6 +571,10 @@ async function runRestoreTimerWithBudget(
             ) {
               return "revoked";
             }
+            shields.assertShieldsPolicyMutationAuthority(
+              args.sandboxName,
+              "publish automatic Shields restore",
+            );
 
             appendAudit({
               action: "shields_auto_restore",
@@ -532,6 +585,10 @@ async function runRestoreTimerWithBudget(
               scheduled_restore_at: args.restoreAtIso,
               ...(managedMcpWarning ? { warning: managedMcpWarning } : {}),
             });
+            shields.assertShieldsPolicyMutationAuthority(
+              args.sandboxName,
+              "publish automatic Shields restore",
+            );
             restoreCompleted = true;
             exitCode = 0;
             return "complete";
@@ -584,6 +641,11 @@ async function runRestoreTimerWithBudget(
             error: error instanceof Error ? error.message : String(error),
           });
           exitCode = 1;
+          if (isPolicyAuthorityRefusalError(error)) {
+            preservePolicyAuthorityRefusal();
+            terminalPolicyAuthorityRefusal = true;
+            return;
+          }
           outcome = "retry";
         }
         if (outcome !== "retry") return;
@@ -635,7 +697,13 @@ async function runRestoreTimerWithBudget(
         onReleased: () => {
           // Retire timer authority only after both exact lifecycle generations
           // are gone, without yielding another event-loop turn in between.
-          if (restoreCompleted) cleanupOwnedTimerMarker(args);
+          if (restoreCompleted) {
+            shields.assertShieldsPolicyMutationAuthority(
+              args.sandboxName,
+              "publish automatic Shields restore",
+            );
+            cleanupOwnedTimerMarker(args);
+          }
         },
       },
     );
@@ -643,6 +711,9 @@ async function runRestoreTimerWithBudget(
     let reportedError = error;
     if (isDurableContainmentFailure(reportedError)) {
       terminalContainment = true;
+    } else if (isPolicyAuthorityRefusalError(reportedError)) {
+      preservePolicyAuthorityRefusal();
+      terminalPolicyAuthorityRefusal = true;
     } else if (markerMatchesCurrentTimer(args)) {
       if (recoveryBudget.attemptsUsed === attemptsAtEntry) {
         recoveryBudget.attemptsUsed += 1;
@@ -660,7 +731,13 @@ async function runRestoreTimerWithBudget(
       error: reportedError instanceof Error ? reportedError.message : String(reportedError),
     });
     exitCode = 1;
-    if (!terminalContainment && recoveryBudget.attemptsUsed < maxRestoreAttempts) scheduleRetry();
+    if (
+      !terminalContainment &&
+      !terminalPolicyAuthorityRefusal &&
+      recoveryBudget.attemptsUsed < maxRestoreAttempts
+    ) {
+      scheduleRetry();
+    }
   } finally {
     if (!retryScheduled) process.exit(exitCode);
   }
