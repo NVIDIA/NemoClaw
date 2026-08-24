@@ -448,3 +448,48 @@ describe("llama.cpp existing-server provider registration", () => {
     );
   });
 });
+
+describe("OpenAI provider profile registration (#9895)", () => {
+  const args = {
+    sandboxName: SANDBOX,
+    model: MODEL,
+    provider: "compatible-endpoint",
+    endpointUrl: "http://localhost:8000/v1",
+    credentialEnv: "COMPATIBLE_API_KEY",
+    preferredInferenceApi: "openai-completions",
+    pinnedAddresses: ["127.0.0.1"],
+  };
+
+  it("imports the endpointless openai profile before registering the provider", async () => {
+    const harness = createHarness();
+
+    await expect(setupRemoteProviderInference(args, harness.deps)).resolves.toEqual({
+      done: false,
+    });
+
+    expect(harness.runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["provider", "profile", "import", "--file", expect.stringMatching(/openai\.yaml$/u)],
+      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    expect(harness.runOpenshell.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.upsertProvider.mock.invocationCallOrder[0],
+    );
+    expect(harness.upsertProvider).toHaveBeenCalledWith(
+      "compatible-endpoint",
+      "openai",
+      "COMPATIBLE_API_KEY",
+      expect.any(String),
+      expect.any(Object),
+    );
+  });
+
+  it("fails closed when the openai profile cannot be registered", async () => {
+    const harness = createHarness();
+    harness.runOpenshell.mockReturnValueOnce({ status: 1, stdout: "", stderr: "boom" });
+
+    await expect(setupRemoteProviderInference(args, harness.deps)).rejects.toThrow("EXIT_CALLED:1");
+
+    expect(harness.upsertProvider).not.toHaveBeenCalled();
+  });
+});
