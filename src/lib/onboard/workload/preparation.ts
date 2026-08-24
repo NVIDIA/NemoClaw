@@ -365,11 +365,14 @@ export async function prepareSandboxWorkloadSource(
       acceptedCandidateContract,
     );
   } else {
+    const trustedCatalogRevision = input.catalogPath
+      ? (input.expectedCatalogRevision ?? null)
+      : (input.catalogRevision ?? null);
     const catalogIdentity = requireCompleteManagedImageCatalog(
       catalog,
       release,
       platform,
-      input.expectedCatalogRevision ?? null,
+      trustedCatalogRevision,
     );
     release = catalogIdentity.release;
   }
