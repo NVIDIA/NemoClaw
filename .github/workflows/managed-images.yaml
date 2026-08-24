@@ -1886,7 +1886,6 @@ jobs:
 
       - name: Validate production build args
         env:
-          ARCH: ${{ matrix.arch }}
           BASE_IMAGE: ${{ steps.base.outputs.ref }}
           DOCKERFILE: ${{ matrix.dockerfile }}
         run: |
@@ -1896,7 +1895,6 @@ jobs:
             --build-arg "BASE_IMAGE=${BASE_IMAGE}"
             --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1"
             --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
-            --build-arg "TARGETARCH=${ARCH}"
           )
           scripts/check-production-build-args.sh "${build_args[@]}"
 
@@ -1926,7 +1924,6 @@ jobs:
             BASE_IMAGE=${{ steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
             NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
-            TARGETARCH=${{ matrix.arch }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.artifact_platform }}
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.artifact_platform }},mode=max
           provenance: mode=max
