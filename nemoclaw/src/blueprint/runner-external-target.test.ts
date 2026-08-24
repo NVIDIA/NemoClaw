@@ -15,7 +15,6 @@ import {
   FIXED_RUN_UUID,
   inMemoryFsMethods,
 } from "./runner-mock-fixtures.js";
-import { minimalBlueprint } from "./runner-test-fixtures.js";
 
 const { store, addFile } = createRunnerFsStore();
 const stdoutCapture = createStdoutCapture();
@@ -101,7 +100,7 @@ const EXTERNAL_CA_PEM = rootCertificates[0];
 
 function externalTargetBlueprint(): Record<string, unknown> {
   return {
-    ...minimalBlueprint(),
+    version: "1.0.0",
     min_openshell_version: "0.0.106",
     max_openshell_version: "0.0.106",
     openshell_target: {

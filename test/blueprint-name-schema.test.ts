@@ -52,7 +52,7 @@ const externalTarget = {
 
 function blueprintWithExternalTarget(target: object = externalTarget): object {
   return {
-    ...createBlueprint(),
+    version: "1.0.0",
     min_openshell_version: "0.0.106",
     max_openshell_version: "0.0.106",
     openshell_target: target,
@@ -96,8 +96,15 @@ describe("blueprint name schema", () => {
 });
 
 describe("blueprint external OpenShell target schema", () => {
-  it("accepts one explicit target", () => {
+  it("accepts one explicit target without managed components", () => {
     expect(validate(blueprintWithExternalTarget()), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("rejects an external target with managed components", () => {
+    expect(
+      validate({ ...createBlueprint(), ...blueprintWithExternalTarget() }),
+      JSON.stringify(validate.errors),
+    ).toBe(false);
   });
 
   it.each(["https://openshell.example.test:8443/", "https://[2001:db8::1]:8443"])(
@@ -174,7 +181,7 @@ describe("blueprint external OpenShell target schema", () => {
 
   it("rejects a target without the OpenShell release range", () => {
     const blueprint = {
-      ...createBlueprint(),
+      version: "1.0.0",
       openshell_target: externalTarget,
     };
 
