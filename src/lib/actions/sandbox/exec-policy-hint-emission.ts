@@ -67,8 +67,8 @@ function runtimeTimeoutMs(): number {
  * probe budget for a slow environment raises this one too, so the env override
  * stays a minimum rather than a cap.
  */
-function deviceProbeTimeoutMs(): number {
-  return Math.max(getLogsProbeTimeoutMs(), POLICY_HINT_DEVICE_PROBE_TIMEOUT_MS);
+function deviceProbeTimeoutMs(env: NodeJS.ProcessEnv): number {
+  return Math.max(getLogsProbeTimeoutMs(env), POLICY_HINT_DEVICE_PROBE_TIMEOUT_MS);
 }
 
 function defaultEnableAudit(sandboxName: string, gatewayName?: string): void {
@@ -99,7 +99,11 @@ function defaultProbeLogs(sandboxName: string, gatewayName?: string): string {
   return String(result.output ?? "");
 }
 
-function defaultProbePendingDevices(sandboxName: string, gatewayName?: string): string {
+function defaultProbePendingDevices(
+  sandboxName: string,
+  gatewayName: string | undefined,
+  env: NodeJS.ProcessEnv,
+): string {
   // Built inline rather than through buildOpenshellExecArgs so this optional
   // probe does not create an emission -> exec import cycle.
   const argv = ["sandbox", "exec", "--name", sandboxName];
@@ -108,7 +112,7 @@ function defaultProbePendingDevices(sandboxName: string, gatewayName?: string): 
   const result = captureOpenshell(argv, {
     ignoreError: true,
     includeStderr: false,
-    timeout: deviceProbeTimeoutMs(),
+    timeout: deviceProbeTimeoutMs(env),
   });
   if (result.error || result.status !== 0) {
     throw result.error ?? new Error(`failed to list pending devices (exit ${result.status})`);
@@ -142,10 +146,9 @@ export async function maybeEmitScopeUpgradeHint(
 
   let devicesOutput: string;
   try {
-    devicesOutput = (deps.probePendingDevices ?? defaultProbePendingDevices)(
-      sandboxName,
-      gatewayName,
-    );
+    devicesOutput = deps.probePendingDevices
+      ? deps.probePendingDevices(sandboxName, gatewayName)
+      : defaultProbePendingDevices(sandboxName, gatewayName, env);
   } catch {
     // Deliberately silent: a failed optional probe must not append host
     // diagnostics to the child's error output.

@@ -127,7 +127,10 @@ describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
       1,
       false,
       ["openclaw", "cron", "add"],
-      { env: {}, writeStderr: (line: string) => stderr.push(line) },
+      {
+        env: { NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "12000" },
+        writeStderr: (line: string) => stderr.push(line),
+      },
       "nemoclaw-8091",
     );
 
@@ -155,6 +158,7 @@ describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
     expect(captureOpenshell.mock.calls[0]?.[1]?.timeout).toBeGreaterThan(
       POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS,
     );
+    expect(captureOpenshell.mock.calls[0]?.[1]?.timeout).toBe(12_000);
     expect(captureOpenshell.mock.calls[0]?.[1]?.timeout).toBeGreaterThanOrEqual(
       POLICY_HINT_DEVICE_PROBE_TIMEOUT_MS,
     );
