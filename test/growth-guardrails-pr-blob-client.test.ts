@@ -9,6 +9,7 @@ import {
   type FetchLike,
   GRAPHQL_BATCH_SIZE,
   isTransientStatus,
+  RATE_LIMIT_DEFAULT_DELAY_MS,
 } from "./helpers/pr-blob-client";
 
 const DETERMINISTIC = { sleep: async () => {} } as const;
@@ -128,30 +129,110 @@ describe("growth-guardrails pr-blob-client", () => {
     expect(contentsAccept).toContain("application/vnd.github.raw");
   });
 
-  it("retries a rate-limited 403 then succeeds", async () => {
+  it("waits until the primary rate-limit reset before retrying a 403", async () => {
+    const sleeps: number[] = [];
     const { fetchImpl, urls } = scriptedFetch([
+      async () =>
+        jsonResponse({ message: "API rate limit exceeded" }, 403, {
+          "x-ratelimit-remaining": "0",
+          "x-ratelimit-reset": "1060",
+        }),
+      async () => jsonResponse([{ filename: "ok.ts" }]),
+    ]);
+    const client = createPrBlobClient({
+      token: "t",
+      fetchImpl,
+      now: () => 1_000_000,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    await expect(client.getPullFiles("NVIDIA/NemoClaw", "9")).resolves.toEqual([
+      { filename: "ok.ts" },
+    ]);
+    expect(urls).toHaveLength(2);
+    expect(sleeps).toEqual([60_000]);
+  });
+
+  it("uses retry-after for a secondary rate limit", async () => {
+    const sleeps: number[] = [];
+    const { fetchImpl } = scriptedFetch([
+      async () => jsonResponse({ message: "slow down" }, 429, { "retry-after": "7" }),
+      async () => jsonResponse([{ filename: "ok.ts" }]),
+    ]);
+    const client = createPrBlobClient({
+      token: "t",
+      fetchImpl,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    await expect(client.getPullFiles("NVIDIA/NemoClaw", "9")).resolves.toHaveLength(1);
+    expect(sleeps).toEqual([7000]);
+  });
+
+  it("does not retry before a reset outside the workflow wait budget", async () => {
+    const sleeps: number[] = [];
+    const { fetchImpl, urls } = scriptedFetch([
+      async () =>
+        jsonResponse({ message: "API rate limit exceeded" }, 403, {
+          "x-ratelimit-remaining": "0",
+          "x-ratelimit-reset": "1300",
+        }),
+    ]);
+    const client = createPrBlobClient({
+      token: "t",
+      fetchImpl,
+      now: () => 1_000_000,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    await expect(client.getPullFiles("NVIDIA/NemoClaw", "9")).rejects.toThrow(/HTTP 403/);
+    expect(urls).toHaveLength(1);
+    expect(sleeps).toEqual([]);
+  });
+
+  it("waits at least one minute when a rate-limit reset is unavailable", async () => {
+    const sleeps: number[] = [];
+    const { fetchImpl } = scriptedFetch([
       async () =>
         jsonResponse({ message: "API rate limit exceeded" }, 403, {
           "x-ratelimit-remaining": "0",
         }),
       async () => jsonResponse([{ filename: "ok.ts" }]),
     ]);
-    const client = createPrBlobClient({ token: "t", fetchImpl, ...DETERMINISTIC });
+    const client = createPrBlobClient({
+      token: "t",
+      fetchImpl,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
 
-    await expect(client.getPullFiles("NVIDIA/NemoClaw", "9")).resolves.toEqual([
-      { filename: "ok.ts" },
-    ]);
-    expect(urls).toHaveLength(2);
+    await expect(client.getPullFiles("NVIDIA/NemoClaw", "9")).resolves.toHaveLength(1);
+    expect(sleeps).toEqual([RATE_LIMIT_DEFAULT_DELAY_MS]);
   });
 
   it("does not retry a permission-denied 403", async () => {
+    const sleeps: number[] = [];
     const { fetchImpl, urls } = scriptedFetch([
       async () => jsonResponse({ message: "Resource not accessible" }, 403),
     ]);
-    const client = createPrBlobClient({ token: "t", fetchImpl, ...DETERMINISTIC });
+    const client = createPrBlobClient({
+      token: "t",
+      fetchImpl,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
 
     await expect(client.getPullFiles("NVIDIA/NemoClaw", "9")).rejects.toThrow(/HTTP 403/);
     expect(urls).toHaveLength(1);
+    expect(sleeps).toEqual([]);
   });
 
   it("retries a transient 500 then succeeds", async () => {

@@ -18,6 +18,8 @@ export const GRAPHQL_BATCH_SIZE = 25;
 export const RETRY_ATTEMPTS = 4;
 export const RETRY_BASE_MS = 250;
 export const RETRY_MAX_MS = 4000;
+export const RATE_LIMIT_DEFAULT_DELAY_MS = 60_000;
+export const RETRY_WAIT_BUDGET_MS = 180_000;
 
 export type FetchLike = (url: string, init?: Parameters<typeof fetch>[1]) => Promise<Response>;
 
@@ -37,6 +39,8 @@ export type PrBlobClientOptions = {
   readonly fetchImpl?: FetchLike;
   /** Injectable for deterministic tests; defaults to a real timer sleep. */
   readonly sleep?: (ms: number) => Promise<void>;
+  /** Injectable clock for deterministic rate-limit reset tests. */
+  readonly now?: () => number;
 };
 
 export type PrBlobClient = {
@@ -44,7 +48,7 @@ export type PrBlobClient = {
   fetchBlobs(repoFullName: string, oid: string, paths: readonly string[]): Promise<BlobMap>;
 };
 
-type RetriableError = Error & { transient?: boolean };
+type RetriableError = Error & { retryAfterMs?: number; transient?: boolean };
 type RetryResult<T> = { value: T } | { error: Error; transient: boolean };
 
 function defaultSleep(ms: number): Promise<void> {
@@ -55,13 +59,34 @@ export function isTransientStatus(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599);
 }
 
-function responseError(url: string, response: Response): RetriableError {
+function retryAfterMs(response: Response, nowMs: number): number | undefined {
+  const retryAfter = response.headers.get("retry-after")?.trim();
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.max(1000, seconds * 1000);
+    const retryAt = Date.parse(retryAfter);
+    if (Number.isFinite(retryAt)) return Math.max(1000, retryAt - nowMs);
+  }
+
+  const resetSeconds = Number(response.headers.get("x-ratelimit-reset"));
+  if (Number.isFinite(resetSeconds) && resetSeconds > 0) {
+    return Math.max(1000, resetSeconds * 1000 - nowMs);
+  }
+
+  if (
+    response.status === 429 ||
+    (response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0")
+  ) {
+    return RATE_LIMIT_DEFAULT_DELAY_MS;
+  }
+  return undefined;
+}
+
+function responseError(url: string, response: Response, nowMs: number): RetriableError {
   const error: RetriableError = new Error(`${url}: HTTP ${response.status}`);
-  error.transient =
-    isTransientStatus(response.status) ||
-    (response.status === 403 &&
-      (response.headers.get("x-ratelimit-remaining") === "0" ||
-        response.headers.has("retry-after")));
+  const rateLimitDelayMs = retryAfterMs(response, nowMs);
+  error.transient = isTransientStatus(response.status) || rateLimitDelayMs !== undefined;
+  if (rateLimitDelayMs !== undefined) error.retryAfterMs = rateLimitDelayMs;
   return error;
 }
 
@@ -85,12 +110,15 @@ function buildBlobQuery(paths: readonly string[]): string {
 export function createPrBlobClient(options: PrBlobClientOptions): PrBlobClient {
   const fetchImpl = options.fetchImpl ?? (globalThis.fetch as FetchLike);
   const sleep = options.sleep ?? defaultSleep;
+  const now = options.now ?? Date.now;
   const headers = {
     Authorization: `Bearer ${options.token}`,
     "X-GitHub-Api-Version": "2022-11-28",
   };
 
   async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+    let scheduledDelayMs = 0;
+    let totalWaitMs = 0;
     const result = await retryUntilAsync<RetryResult<T>>(
       async () => {
         try {
@@ -107,12 +135,19 @@ export function createPrBlobClient(options: PrBlobClientOptions): PrBlobClient {
         ),
         onRetry: (attempt, delayMs, attemptNumber) => {
           if ("error" in attempt) {
+            scheduledDelayMs = (attempt.error as RetriableError).retryAfterMs ?? delayMs;
+            if (totalWaitMs + scheduledDelayMs > RETRY_WAIT_BUDGET_MS) {
+              throw attempt.error;
+            }
             console.error(
-              `retry: ${label} attempt ${attemptNumber} failed (${attempt.error.message}); sleeping ${delayMs}ms`,
+              `retry: ${label} attempt ${attemptNumber} failed (${attempt.error.message}); sleeping ${scheduledDelayMs}ms`,
             );
           }
         },
-        sleep,
+        sleep: async () => {
+          totalWaitMs += scheduledDelayMs;
+          await sleep(scheduledDelayMs);
+        },
       },
     );
     if ("error" in result) throw result.error;
@@ -130,7 +165,7 @@ export function createPrBlobClient(options: PrBlobClientOptions): PrBlobClient {
       wrapped.transient = true;
       throw wrapped;
     }
-    if (!response.ok) throw responseError(url, response);
+    if (!response.ok) throw responseError(url, response, now());
     return response.json();
   }
 
@@ -192,7 +227,7 @@ export function createPrBlobClient(options: PrBlobClientOptions): PrBlobClient {
         throw wrapped;
       }
       if (response.status === 404) return null;
-      if (!response.ok) throw responseError(url, response);
+      if (!response.ok) throw responseError(url, response, now());
       return response.text();
     });
   }
