@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { loadAgent } from "../../../src/lib/agent/defs";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { readSandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -14,6 +15,7 @@ import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts
 import { type HostCliClient, resultText } from "../fixtures/clients/index.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { expectSandboxProviderAttachment } from "../fixtures/gateway-providers.ts";
 import {
   readJsonFileOr,
   restoreFile,
@@ -75,7 +77,6 @@ process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 // local NemoClaw registry/session state, and `nemoclaw <name> rebuild --yes`.
 // Literal interactive issue #3025 reproduction paths (`hermes rebuild`, modal
 // prompt, and `Y` confirmation) remain outside this Vitest migration.
-const HERMES_MANIFEST = path.join(REPO_ROOT, "agents", "hermes", "manifest.yaml");
 const OLD_HERMES_VERSION = `v${REBUILD_HERMES_OLD_BASE_FIXTURE.hermesCalver}`;
 const OLD_HERMES_REGISTRY_VERSION = OLD_HERMES_VERSION.slice(1);
 const STALE_BASE_REBUILD = process.env.NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E === "1";
@@ -209,21 +210,10 @@ function fail(message: string): never {
 }
 
 function expectedHermesVersion(): string {
-  const manifest = fs.readFileSync(HERMES_MANIFEST, "utf8");
-  const match = manifest.match(/^expected_version:\s*"?([^"\n]+)"?/m);
-  expect(match?.[1], `Could not parse expected Hermes version from ${HERMES_MANIFEST}`).toEqual(
-    expect.any(String),
+  return (
+    loadAgent("hermes").expectedVersion ??
+    fail("Hermes manifest must declare expected_version for live rebuild coverage")
   );
-  return match![1].trim();
-}
-
-function expectEqual(actual: string | undefined, expected: string, message: string): void {
-  switch (actual === expected) {
-    case true:
-      return;
-    default:
-      throw new Error(message);
-  }
 }
 
 async function bestEffortPrecleanHermesResources(
@@ -1156,6 +1146,16 @@ test(STALE_BASE_REBUILD
     /Hermes gateway (?:restarted and verified|recovered) after state restore/u,
   );
   await waitForSandboxReady(host, apiKey, activeOpenshellBin, "phase-6-post-rebuild");
+  await expectSandboxProviderAttachment(
+    sandbox,
+    SANDBOX_NAME,
+    `${SANDBOX_NAME}-discord-bridge`,
+    "present",
+    {
+      artifactName: "phase-6-post-rebuild-provider-attachments",
+      env: testEnv(apiKey),
+    },
+  );
 
   const backupPathText = rebuildOutput.match(/^\s*Backup:\s+(.+)$/mu)?.[1]?.trim();
   const rebuildBackupPath = backupPathText
@@ -1232,11 +1232,10 @@ test(STALE_BASE_REBUILD
   expectExitZero(hermesVersion, "Hermes version after rebuild");
   const hermesVersionText = resultText(hermesVersion);
   const actualHermesVersion = hermesVersionText.match(/v(\d+\.\d+\.\d+)/)?.[1];
-  expectEqual(
+  expect(
     actualHermesVersion,
-    expectedVersion,
     `Hermes version output did not include expected release ${expectedVersion}: ${hermesVersionText}`,
-  );
+  ).toBe(expectedVersion);
   await cronRestore.verify(rebuildOutput, rebuildBackupPath);
   await cronRestore.verifyStrandedGateRecovery();
   const restoredKanbanDatabase = await host.command(
