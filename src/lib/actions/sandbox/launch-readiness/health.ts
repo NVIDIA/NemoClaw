@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { captureOpenshell } from "../../../adapters/openshell/runtime";
+import {
+  captureOpenshell,
+  createCliOpenShellSandboxPolicyReader,
+  namedOpenShellGateway,
+  type OpenShellSandboxPolicyReader,
+} from "../../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../../adapters/openshell/timeouts";
 import type { AgentDefinition } from "../../../agent/defs";
 import { isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
@@ -44,7 +49,10 @@ export interface LaunchReadinessHealthDeps {
     gatewayName: string,
   ) => ReturnType<typeof parseSandboxInferenceRouteProbeResult>;
   inferenceInvocationProbe?: typeof runSandboxInferenceInvocationProbe;
+  readPolicy?: OpenShellSandboxPolicyReader["readSandboxPolicy"];
 }
+
+const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
 
 export class LaunchReadinessObservationError extends Error {
   constructor(
@@ -71,6 +79,30 @@ export function captureLaunchReadiness(
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
     ...options,
   });
+}
+
+export async function readLaunchReadinessLivePolicy(
+  sandboxName: string,
+  gatewayName: string,
+  deps: LaunchReadinessHealthDeps,
+): Promise<string> {
+  const readPolicy: OpenShellSandboxPolicyReader["readSandboxPolicy"] =
+    deps.readPolicy ??
+    createCliOpenShellSandboxPolicyReader({
+      capture: (args) =>
+        (
+          deps.capture ??
+          ((captureArgs) =>
+            captureLaunchReadiness(captureArgs, { maxBuffer: LIVE_POLICY_MAX_BYTES }))
+        )(args),
+    }).readSandboxPolicy;
+  const result = await readPolicy({
+    target: namedOpenShellGateway(gatewayName),
+    sandboxName,
+    scope: "effective",
+  });
+  if (!result.ok) throw new LaunchReadinessEvidenceError();
+  return result.value.document;
 }
 
 function normalizedString(value: unknown): string | null {

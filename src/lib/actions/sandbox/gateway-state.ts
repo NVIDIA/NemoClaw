@@ -50,10 +50,11 @@ import {
 import {
   captureOpenshell,
   captureOpenshellForStatus,
+  createCliOpenShellSandboxPolicyReader,
   getOpenshellBinary,
   getStatusProbeTimeoutMs,
-  isCommandTimeout,
   runOpenshell,
+  type OpenShellSandboxPolicyReader,
 } from "../../adapters/openshell/runtime";
 import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
@@ -125,11 +126,6 @@ type SandboxGatewayStateLookup = (
   sandboxName: string,
   gatewayName?: string,
 ) => SandboxGatewayState | Promise<SandboxGatewayState>;
-
-function gatewayScopedArgs(args: string[], gatewayName?: string): string[] {
-  if (!gatewayName) return args;
-  return [...args.slice(0, 2), "-g", gatewayName, ...args.slice(2)];
-}
 
 /** Recover a receipt-bound portable sandbox before the live lookup rejects a stopped container. */
 export function recoverPortableDemoSandboxLifecycleForConnect(
@@ -211,30 +207,23 @@ function formatGatewaySchemaMismatchOutput(
   return formatOpenShellStateRpcIssue(issue, { action, command }).join("\n");
 }
 
-export function mergeLivePolicyIntoSandboxOutput(output: string, livePolicyOutput: string): string {
+export function mergeLivePolicyIntoSandboxOutput(
+  output: string,
+  policyDocument: string,
+  appliedRevision: number | null,
+): string {
   const rawLines = String(output).split("\n");
   const cleanLines = stripOpenShellCliAnsi(String(output)).split("\n");
   const policyLineIdx = cleanLines.findIndex((line: string) => line.trim() === "Policy:");
   if (policyLineIdx === -1) return output;
 
   const before = rawLines.slice(0, policyLineIdx + 1).join("\n");
-  const cleanLivePolicy = stripOpenShellCliAnsi(String(livePolicyOutput));
-  const delimIdx = cleanLivePolicy.search(/^---\s*$/m);
-  const metadataPart = delimIdx !== -1 ? cleanLivePolicy.slice(0, delimIdx) : "";
-  const yamlPart =
-    delimIdx !== -1
-      ? cleanLivePolicy.slice(delimIdx).replace(/^---\s*[\r\n]+/, "")
-      : cleanLivePolicy;
-  const trimmedYaml = yamlPart.trim();
-  const looksLikeError = /^(error|failed|invalid|warning|status)\b/i.test(trimmedYaml);
-  if (!trimmedYaml || looksLikeError || !/^[a-z_][a-z0-9_]*\s*:/m.test(trimmedYaml)) {
-    return output;
-  }
+  const trimmedYaml = stripOpenShellCliAnsi(policyDocument).trim();
+  if (!trimmedYaml || !/^[a-z_][a-z0-9_]*\s*:/mu.test(trimmedYaml)) return output;
 
-  const activeMatch = metadataPart.match(/^Active:\s*(\d+)\s*$/m);
   const rewrittenYaml =
-    activeMatch && /^version:\s*\d+/m.test(trimmedYaml)
-      ? trimmedYaml.replace(/^version:\s*\d+/m, `version: ${activeMatch[1]}`)
+    appliedRevision !== null && /^version:\s*\d+/m.test(trimmedYaml)
+      ? trimmedYaml.replace(/^version:\s*\d+/m, `version: ${String(appliedRevision)}`)
       : trimmedYaml;
 
   const indented = rewrittenYaml
@@ -285,6 +274,12 @@ export async function getSandboxGatewayState(
     capture: captureOpenshell,
     defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
   }),
+  readPolicy: OpenShellSandboxPolicyReader["readSandboxPolicy"] = createCliOpenShellSandboxPolicyReader(
+    {
+      capture: captureOpenshell,
+      defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    },
+  ).readSandboxPolicy,
 ): Promise<SandboxGatewayState> {
   const endpointOverride = gatewayEndpointOverrideState();
   if (endpointOverride) return endpointOverride;
@@ -314,15 +309,18 @@ export async function getSandboxGatewayState(
   // do not parse this text.
   let output = observed.displayOutput;
   if (lookup.value.state === "present") {
-    const livePolicy = captureOpenshell(
-      gatewayScopedArgs(["policy", "get", "--full", sandboxName], gatewayName),
-      {
-        ignoreError: true,
-        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-      },
-    );
-    if (livePolicy.status === 0 && livePolicy.output.trim()) {
-      output = mergeLivePolicyIntoSandboxOutput(output, livePolicy.output);
+    const livePolicy = await readPolicy({
+      target: sandboxObservationTarget(gatewayName),
+      sandboxName,
+      scope: "effective",
+      timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
+    if (livePolicy.ok) {
+      output = mergeLivePolicyIntoSandboxOutput(
+        output,
+        livePolicy.value.document,
+        livePolicy.value.appliedRevision,
+      );
     }
     return { state: "present", output, phase: lookup.value.sandbox.phase };
   }
@@ -336,6 +334,12 @@ export async function getSandboxGatewayStateForStatus(
     capture: captureOpenshellForStatus,
     defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
   }),
+  readPolicy: OpenShellSandboxPolicyReader["readSandboxPolicy"] = createCliOpenShellSandboxPolicyReader(
+    {
+      capture: captureOpenshellForStatus,
+      defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    },
+  ).readSandboxPolicy,
 ): Promise<SandboxGatewayState> {
   const timeoutMs = getStatusProbeTimeoutMs();
   const endpointOverride = gatewayEndpointOverrideState();
@@ -373,15 +377,18 @@ export async function getSandboxGatewayStateForStatus(
   // do not parse this text.
   let output = observed.displayOutput;
   if (lookup.value.state === "present") {
-    const livePolicy = await captureOpenshellForStatus(
-      gatewayScopedArgs(["policy", "get", "--full", sandboxName], gatewayName),
-      {
-        ignoreError: true,
-        timeout: timeoutMs,
-      },
-    );
-    if (!isCommandTimeout(livePolicy) && livePolicy.status === 0 && livePolicy.output.trim()) {
-      output = mergeLivePolicyIntoSandboxOutput(output, livePolicy.output);
+    const livePolicy = await readPolicy({
+      target: sandboxObservationTarget(gatewayName),
+      sandboxName,
+      scope: "effective",
+      timeoutMs,
+    });
+    if (livePolicy.ok) {
+      output = mergeLivePolicyIntoSandboxOutput(
+        output,
+        livePolicy.value.document,
+        livePolicy.value.appliedRevision,
+      );
     }
     return { state: "present", output, phase: lookup.value.sandbox.phase };
   }

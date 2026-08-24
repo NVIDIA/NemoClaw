@@ -44,6 +44,10 @@ function preservingBase(site: string): DiscoveredPolicyRead {
   return { site, view: "base", failureHandling: "error-preserving" };
 }
 
+function preservingFull(site: string): DiscoveredPolicyRead {
+  return { site, view: "full", failureHandling: "error-preserving" };
+}
+
 function ignoredBase(site: string): DiscoveredPolicyRead {
   return { site, view: "base", failureHandling: "ignore-error" };
 }
@@ -57,6 +61,13 @@ function ignoredFull(site: string): DiscoveredPolicyRead {
 }
 
 export const MUTATION_READS: readonly AuditedPolicyReadFile[] = [
+  {
+    relativePath: "src/lib/adapters/openshell/sandbox-policy-cli.ts",
+    expectedReads: [
+      ignoredBase("createCliOpenShellSandboxPolicyRead/<anonymous>"),
+      ignoredFull("createCliOpenShellSandboxPolicyRead/<anonymous>"),
+    ],
+  },
   {
     relativePath: "src/lib/actions/sandbox/policy-get.ts",
     expectedReads: [preservingBase("getSandboxPolicy")],
@@ -88,6 +99,10 @@ export const MUTATION_READS: readonly AuditedPolicyReadFile[] = [
 ];
 
 const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
+  {
+    relativePath: "src/lib/actions/sandbox/launch-readiness/health.ts",
+    expectedReads: [preservingFull("readLaunchReadinessLivePolicy")],
+  },
   {
     relativePath: "src/lib/actions/sandbox/gateway-state.ts",
     expectedReads: [
@@ -128,11 +143,24 @@ interface PolicyBuilderBindings {
   readonly namespaces: ReadonlySet<ts.Symbol>;
 }
 
+type TypedPolicyReaderBindings = ReadonlySet<ts.Symbol>;
+
 const POLICY_BUILDER_MODULE_PATHS = [
   "src/lib/policy",
   "src/lib/policy/index",
   "src/lib/policy/commands",
 ] as const;
+
+const TYPED_POLICY_READER_MODULE_PATHS = [
+  "src/lib/adapters/openshell/sandbox-policy",
+  "src/lib/adapters/openshell/sandbox-policy-cli",
+  "src/lib/adapters/openshell/runtime",
+] as const;
+
+const TYPED_POLICY_READER_TYPES = new Set([
+  "CliOpenShellSandboxPolicyRead",
+  "OpenShellSandboxPolicyReader",
+]);
 
 function calledName(expression: ts.LeftHandSideExpression): string | null {
   if (ts.isIdentifier(expression)) return expression.text;
@@ -159,6 +187,74 @@ function isPolicyBuilderModule(
   return POLICY_BUILDER_MODULE_PATHS.some(
     (relativePath) => resolved === path.resolve(repoRoot, relativePath),
   );
+}
+
+function isTypedPolicyReaderModule(
+  fileName: string,
+  moduleSpecifier: string,
+  repoRoot: string,
+): boolean {
+  if (!moduleSpecifier.startsWith(".")) return false;
+  const resolved = path
+    .resolve(path.dirname(fileName), moduleSpecifier)
+    .replace(/\.[cm]?[jt]sx?$/u, "");
+  return TYPED_POLICY_READER_MODULE_PATHS.some(
+    (relativePath) => resolved === path.resolve(repoRoot, relativePath),
+  );
+}
+
+function typeUsesImportedPolicyReader(
+  type: ts.TypeNode,
+  importedNames: ReadonlySet<string>,
+): boolean {
+  let found = false;
+  function visit(node: ts.Node): void {
+    if (ts.isIdentifier(node) && importedNames.has(node.text)) found = true;
+    if (!found) ts.forEachChild(node, visit);
+  }
+  visit(type);
+  return found;
+}
+
+function collectTypedPolicyReaderBindings(
+  sourceFile: ts.SourceFile,
+  fileName: string,
+  repoRoot: string,
+  checker: ts.TypeChecker,
+): TypedPolicyReaderBindings {
+  const importedNames = new Set<string>();
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteralLike(statement.moduleSpecifier) ||
+      !statement.importClause ||
+      !isTypedPolicyReaderModule(fileName, statement.moduleSpecifier.text, repoRoot)
+    ) {
+      continue;
+    }
+    const { namedBindings } = statement.importClause;
+    if (!namedBindings || ts.isNamespaceImport(namedBindings)) continue;
+    for (const element of namedBindings.elements) {
+      const importedName = element.propertyName?.text ?? element.name.text;
+      if (TYPED_POLICY_READER_TYPES.has(importedName)) importedNames.add(element.name.text);
+    }
+  }
+
+  const readers = new Set<ts.Symbol>();
+  function visit(node: ts.Node): void {
+    if (
+      (ts.isParameter(node) || ts.isVariableDeclaration(node)) &&
+      ts.isIdentifier(node.name) &&
+      node.type &&
+      typeUsesImportedPolicyReader(node.type, importedNames)
+    ) {
+      const symbol = checker.getSymbolAtLocation(node.name);
+      if (symbol) readers.add(symbol);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return readers;
 }
 
 function requireModuleSpecifier(
@@ -418,8 +514,31 @@ function directPolicyReadView(
     ts.isExpression(element) ? literalText(element) : null,
   );
   if (values[offset] !== "policy" || values[offset + 1] !== "get") return null;
-  if (values[offset + 2] === "--base") return "base";
-  if (values[offset + 2] === "--full") return "full";
+  const policyArgs = values.slice(offset + 2);
+  const hasBase = policyArgs.includes("--base");
+  const hasFull = policyArgs.includes("--full");
+  if (hasBase === hasFull) return null;
+  if (hasBase) return "base";
+  if (hasFull) return "full";
+  return null;
+}
+
+function typedPolicyReadView(
+  expression: ts.CallExpression,
+  bindings: TypedPolicyReaderBindings,
+  checker: ts.TypeChecker,
+): PolicyReadView | null {
+  if (!ts.isIdentifier(expression.expression)) return null;
+  const symbol = checker.getSymbolAtLocation(expression.expression);
+  if (!symbol || !bindings.has(symbol)) return null;
+  const request = expression.arguments[0];
+  if (!request || !ts.isObjectLiteralExpression(request)) return null;
+  for (const property of request.properties) {
+    if (!ts.isPropertyAssignment(property) || propertyNameText(property.name) !== "scope") continue;
+    const scope = literalText(property.initializer);
+    if (scope === "base") return "base";
+    if (scope === "effective") return "full";
+  }
   return null;
 }
 
@@ -519,6 +638,7 @@ function classifyIgnoreErrorOption(expression: ts.Expression): IgnoreErrorOption
 }
 
 const POLICY_READ_RUNNERS = new Set([
+  "capture",
   "captureOpenshell",
   "captureOpenshellForStatus",
   "runCapture",
@@ -554,8 +674,9 @@ function catchGuaranteesDirectThrow(block: ts.Block): boolean {
 function policyReadFailureHandling(node: ts.Node): PolicyReadFailureHandling {
   let runnerHandling: PolicyReadFailureHandling = "unclassified";
   for (let current = node.parent; current && !isFunctionScope(current); current = current.parent) {
-    if (!ts.isCallExpression(current) || !ts.isIdentifier(current.expression)) continue;
-    if (!POLICY_READ_RUNNERS.has(current.expression.text)) continue;
+    if (!ts.isCallExpression(current)) continue;
+    const runnerName = calledName(current.expression);
+    if (!runnerName || !POLICY_READ_RUNNERS.has(runnerName)) continue;
     const command = current.arguments[0];
     if (!command || !isWithin(node, command)) return "unclassified";
     if (current.arguments.length === 1) {
@@ -585,6 +706,78 @@ function policyReadFailureHandling(node: ts.Node): PolicyReadFailureHandling {
   return runnerHandling;
 }
 
+function readResultVariable(node: ts.CallExpression, checker: ts.TypeChecker): ts.Symbol | null {
+  for (let current: ts.Node | undefined = node.parent; current; current = current.parent) {
+    if (ts.isVariableDeclaration(current) && ts.isIdentifier(current.name)) {
+      return checker.getSymbolAtLocation(current.name) ?? null;
+    }
+    if (isFunctionScope(current)) return null;
+  }
+  return null;
+}
+
+function resultOkCheck(
+  expression: ts.Expression,
+  result: ts.Symbol,
+  checker: ts.TypeChecker,
+): "failure" | "success" | null {
+  let current = expression;
+  let direction: "failure" | "success" = "success";
+  while (ts.isParenthesizedExpression(current)) current = current.expression;
+  if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.ExclamationToken) {
+    direction = "failure";
+    current = current.operand;
+    while (ts.isParenthesizedExpression(current)) current = current.expression;
+  }
+  if (!ts.isPropertyAccessExpression(current) || current.name.text !== "ok") return null;
+  let root: ts.Expression = current.expression;
+  while (ts.isPropertyAccessExpression(root)) root = root.expression;
+  if (!ts.isIdentifier(root) || checker.getSymbolAtLocation(root) !== result) return null;
+  return direction;
+}
+
+function typedPolicyReadFailureHandling(
+  node: ts.CallExpression,
+  checker: ts.TypeChecker,
+): PolicyReadFailureHandling {
+  const result = readResultVariable(node, checker);
+  if (!result) return "unclassified";
+  const resultSymbol = result;
+  let functionScope: ts.FunctionLikeDeclaration | null = null;
+  for (let current: ts.Node | undefined = node.parent; current; current = current.parent) {
+    if (isFunctionScope(current)) {
+      functionScope = current;
+      break;
+    }
+  }
+  if (!functionScope?.body) return "unclassified";
+
+  let handling: PolicyReadFailureHandling = "unclassified";
+  function visit(current: ts.Node): void {
+    if (handling !== "unclassified") return;
+    if (current !== functionScope && isFunctionScope(current)) return;
+    if (ts.isIfStatement(current)) {
+      const direction = resultOkCheck(current.expression, resultSymbol, checker);
+      if (direction === "failure") {
+        handling = containsThrowOutsideNestedFunctions(current.thenStatement)
+          ? "error-preserving"
+          : "ignore-error";
+        return;
+      }
+      if (direction === "success") {
+        handling =
+          current.elseStatement && containsThrowOutsideNestedFunctions(current.elseStatement)
+            ? "error-preserving"
+            : "ignore-error";
+        return;
+      }
+    }
+    ts.forEachChild(current, visit);
+  }
+  visit(functionScope.body);
+  return handling;
+}
+
 export function classifyPolicyReadCalls(
   source: string,
   fileName: string,
@@ -592,13 +785,23 @@ export function classifyPolicyReadCalls(
 ): DiscoveredPolicyRead[] {
   const { sourceFile, checker } = createBoundSourceFile(source, fileName);
   const builderBindings = collectPolicyBuilderBindings(sourceFile, fileName, repoRoot, checker);
+  const typedReaderBindings = collectTypedPolicyReaderBindings(
+    sourceFile,
+    fileName,
+    repoRoot,
+    checker,
+  );
   const reads: DiscoveredPolicyRead[] = [];
 
-  function record(node: ts.Node, view: PolicyReadView): void {
+  function record(
+    node: ts.Node,
+    view: PolicyReadView,
+    failureHandling = policyReadFailureHandling(node),
+  ): void {
     reads.push({
       site: policyReadSite(node),
       view,
-      failureHandling: policyReadFailureHandling(node),
+      failureHandling,
     });
   }
 
@@ -606,6 +809,8 @@ export function classifyPolicyReadCalls(
     if (ts.isCallExpression(node)) {
       const view = policyBuilderReferenceView(node.expression, builderBindings, checker);
       if (view) record(node, view);
+      const typedView = typedPolicyReadView(node, typedReaderBindings, checker);
+      if (typedView) record(node, typedView, typedPolicyReadFailureHandling(node, checker));
     } else if (ts.isArrayLiteralExpression(node)) {
       const view = directPolicyReadView(node, fileName, repoRoot, checker);
       if (view) record(node, view);

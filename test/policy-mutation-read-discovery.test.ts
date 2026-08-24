@@ -92,6 +92,39 @@ describe("OpenShell policy mutation read discovery (#6921)", () => {
     ]);
   });
 
+  it("audits adapter capture calls with target flags before the policy view", () => {
+    const source = [
+      "function readPolicy(gatewayName: string, sandboxName: string) {",
+      '  deps.capture(["policy", "get", "-g", gatewayName, "--base", sandboxName], { ignoreError: true });',
+      '  deps.capture(["policy", "get", "-g", gatewayName, "--full", sandboxName], { ignoreError: true });',
+      "}",
+    ].join("\n");
+
+    expect(classifyPolicyReadCalls(source, "/repo/src/lib/fixture.ts", "/repo")).toEqual([
+      { site: "readPolicy", view: "base", failureHandling: "ignore-error" },
+      { site: "readPolicy", view: "full", failureHandling: "ignore-error" },
+    ]);
+  });
+
+  it("keeps typed consumer scope and result handling in the audit", () => {
+    const source = [
+      'import type { OpenShellSandboxPolicyReader } from "../adapters/openshell/sandbox-policy";',
+      'async function preserve(readPolicy: OpenShellSandboxPolicyReader["readSandboxPolicy"]) {',
+      '  const result = await readPolicy({ scope: "base" });',
+      '  if (!result.ok) throw new Error("failed");',
+      "}",
+      'async function ignore(readPolicy: OpenShellSandboxPolicyReader["readSandboxPolicy"]) {',
+      '  const result = await readPolicy({ scope: "effective" });',
+      "  if (result.ok) return result.value;",
+      "}",
+    ].join("\n");
+
+    expect(classifyPolicyReadCalls(source, "/repo/src/lib/actions/fixture.ts", "/repo")).toEqual([
+      { site: "preserve", view: "base", failureHandling: "error-preserving" },
+      { site: "ignore", view: "full", failureHandling: "ignore-error" },
+    ]);
+  });
+
   it("discovers a full builder destructured from a canonical namespace import", () => {
     const source = [
       'import * as policy from "./policy/commands";',

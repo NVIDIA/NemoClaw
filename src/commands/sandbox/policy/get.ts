@@ -31,7 +31,7 @@ export default class SandboxPolicyGetCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(SandboxPolicyGetCommand);
 
-    const { raw, yaml } = getSandboxPolicy(args.sandboxName);
+    const { raw, yaml } = await getSandboxPolicy(args.sandboxName);
 
     if (!raw) {
       this.error("Failed to retrieve base policy from sandbox.");

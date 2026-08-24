@@ -8,11 +8,17 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
+import { captureOpenshellCommand } from "../../adapters/openshell/client";
+import {
+  createCliOpenShellSandboxPolicyRead,
+  type CliOpenShellSandboxPolicyRead,
+} from "../../adapters/openshell/sandbox-policy-cli";
 import { getSandboxPolicy } from "./policy-get";
 
 type FakeOpenShell = {
   argsPath: string;
   output: string;
+  readPolicy: CliOpenShellSandboxPolicyRead;
 };
 
 const tempDirs: string[] = [];
@@ -34,8 +40,14 @@ function createFakeOpenShell(output: string, exitCode = 0): FakeOpenShell {
     ].join("\n"),
     { mode: 0o755 },
   );
-  vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", executablePath);
-  return { argsPath, output };
+  const readPolicy = createCliOpenShellSandboxPolicyRead({
+    capture: (args, options) =>
+      captureOpenshellCommand(executablePath, args, {
+        ...options,
+        cwd: tempDir,
+      }),
+  });
+  return { argsPath, output, readPolicy };
 }
 
 describe("getSandboxPolicy", () => {
@@ -46,7 +58,7 @@ describe("getSandboxPolicy", () => {
     }
   });
 
-  it("reads --base and strips OpenShell metadata into round-trippable YAML (#6052)", () => {
+  it("reads --base and strips OpenShell metadata into round-trippable YAML (#6052)", async () => {
     const yaml = [
       "version: 1",
       "filesystem_policy:",
@@ -67,7 +79,7 @@ describe("getSandboxPolicy", () => {
       ].join("\n"),
     );
 
-    const result = getSandboxPolicy("alpha");
+    const result = await getSandboxPolicy("alpha", fake.readPolicy);
 
     expect(fs.readFileSync(fake.argsPath, "utf8").trim()).toBe("policy get --base alpha");
     expect(result.raw).toBe(fake.output.trim());
@@ -79,28 +91,56 @@ describe("getSandboxPolicy", () => {
     });
   });
 
-  it("returns empty output when OpenShell succeeds without a policy", () => {
+  it("returns empty output when OpenShell succeeds without a policy", async () => {
     const fake = createFakeOpenShell("");
 
-    expect(getSandboxPolicy("alpha")).toEqual({ raw: "", yaml: "" });
+    await expect(getSandboxPolicy("alpha", fake.readPolicy)).resolves.toEqual({
+      raw: "",
+      yaml: "",
+    });
     expect(fs.readFileSync(fake.argsPath, "utf8").trim()).toBe("policy get --base alpha");
   });
 
-  it("preserves unparsed output while rejecting malformed policy YAML", () => {
+  it("preserves unparsed output while rejecting malformed policy YAML", async () => {
     const fake = createFakeOpenShell("Version: 1\nHash: sha256:abc\nStatus: active\n");
 
-    expect(getSandboxPolicy("alpha")).toEqual({
+    await expect(getSandboxPolicy("alpha", fake.readPolicy)).resolves.toEqual({
       raw: fake.output.trim(),
       yaml: "",
     });
   });
 
-  it("adds sandbox context when the OpenShell subprocess fails", () => {
+  it("adds sandbox context when the OpenShell subprocess fails", async () => {
     const fake = createFakeOpenShell("gateway unavailable\n", 42);
 
-    expect(() => getSandboxPolicy("alpha")).toThrow(
-      /Failed to retrieve base policy for sandbox 'alpha'\. Command failed with status 42/,
+    await expect(getSandboxPolicy("alpha", fake.readPolicy)).rejects.toThrow(
+      /Failed to retrieve base policy for sandbox 'alpha'\. The OpenShell sandbox policy read failed/,
     );
     expect(fs.readFileSync(fake.argsPath, "utf8").trim()).toBe("policy get --base alpha");
+  });
+
+  it("requests the base policy through a typed policy fake (#9805)", async () => {
+    const readPolicy: CliOpenShellSandboxPolicyRead = vi.fn(async () => ({
+      result: {
+        ok: true as const,
+        value: {
+          scope: "base" as const,
+          document: "version: 1\nnetwork_policies: {}",
+          reportedRevision: 7,
+          appliedRevision: 7,
+          hasProviderComposedEntries: false,
+        },
+      },
+      displayOutput: "Version: 7\nActive: 7\n---\nversion: 1\nnetwork_policies: {}",
+    }));
+
+    await expect(getSandboxPolicy("alpha", readPolicy)).resolves.toMatchObject({
+      yaml: "version: 1\nnetwork_policies: {}",
+    });
+    expect(readPolicy).toHaveBeenCalledWith({
+      target: { kind: "selected" },
+      sandboxName: "alpha",
+      scope: "base",
+    });
   });
 });

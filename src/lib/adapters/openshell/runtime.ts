@@ -15,6 +15,9 @@ import {
 import { buildOpenShellSubprocessEnv, resolveOpenshellBinaryOrNull } from "./resolve-shared";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
+export { createCliOpenShellSandboxPolicyReader, namedOpenShellGateway } from "./sandbox-policy-cli";
+export type { OpenShellSandboxPolicyReader } from "./sandbox-policy-cli";
+
 type CommandArgs = string[];
 
 export { buildOpenShellSubprocessEnv };

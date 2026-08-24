@@ -53,6 +53,7 @@ import {
   type LaunchReadinessHealthDeps,
   LaunchReadinessObservationError as ObservationError,
   requireLaunchSemanticHealth,
+  readLaunchReadinessLivePolicy,
   resolveLaunchInteractiveCommand,
   resolveTrustedLaunchAgent,
 } from "./launch-readiness/health";
@@ -72,7 +73,6 @@ import {
 
 export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/timing";
 
-const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
 const ALLOWED_OPENSHELL_DRIVERS = new Set(["docker", "kubernetes", "vm"]);
 
 export type LaunchReadinessPerformanceStage =
@@ -658,17 +658,15 @@ function classifyReceipt(
   return read.kind === "valid" ? "config" : read.kind;
 }
 
-function captureLivePolicy(
+async function captureLivePolicy(
   sandboxName: string,
   gatewayName: string,
   deps: LaunchReadinessDeps,
-): string {
-  const result = (
-    deps.capture ?? ((args) => captureLaunchReadiness(args, { maxBuffer: LIVE_POLICY_MAX_BYTES }))
-  )(["policy", "get", "-g", gatewayName, "--full", sandboxName]);
-  if (result.status !== 0 || !result.output?.trim()) throw new LaunchReadinessEvidenceError();
+): Promise<string> {
   try {
-    return launchReadinessPolicyDigest(result.output);
+    return launchReadinessPolicyDigest(
+      await readLaunchReadinessLivePolicy(sandboxName, gatewayName, deps),
+    );
   } catch {
     throw new LaunchReadinessEvidenceError();
   }
@@ -758,7 +756,7 @@ async function captureLaunchIdentity(
     throw new ObservationError("identity");
   }
 
-  const livePolicy = captureLivePolicy(sandboxName, gatewayName, deps);
+  const livePolicy = await captureLivePolicy(sandboxName, gatewayName, deps);
   const inferenceSelection = normalizeInferenceSelection(entry);
   const inference = registry.getSandboxEntryInference(entry);
   const inferenceResult = (deps.capture ?? ((args) => captureLaunchReadiness(args)))(
@@ -945,8 +943,7 @@ function resolveOpenClawPairingSettlementTarget(
   // command shape, so its caller may preserve that unknown value as the empty
   // string while retaining the exact registry and live-lifecycle checks.
   const customDockerfile = normalizedString(entry.fromDockerfile);
-  const version =
-    recordedVersion ?? (allowUnknownCustomVersion && customDockerfile ? "" : null);
+  const version = recordedVersion ?? (allowUnknownCustomVersion && customDockerfile ? "" : null);
   const expectedVersion = normalizedString(agent.expected_version);
   const stateDirectory = normalizedString(agent.config?.dir);
   const lifecycleGeneration = normalizedString(entry.lifecycleGeneration);
@@ -1014,12 +1011,7 @@ async function waitForPortablePairingObservation(
     const remaining = deadline - now();
     if (remaining <= 0) return { kind: "timeout" };
     try {
-      const value = observe(
-        sandboxName,
-        target.gatewayName,
-        target.version,
-        target.stateDirectory,
-      );
+      const value = observe(sandboxName, target.gatewayName, target.version, target.stateDirectory);
       if (deadline - now() <= 0) return { kind: "timeout" };
       const decision = decide(value);
       if (deadline - now() <= 0) return { kind: "timeout" };
@@ -1056,7 +1048,8 @@ export async function settlePortableOpenClawPairing(
   const runApproval = deps.runPortablePairingApproval ?? runPortableOpenClawPairingApproval;
   const now = deps.now ?? (() => performance.now());
   const sleep =
-    deps.sleep ?? ((milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+    deps.sleep ??
+    ((milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
 
   return withSandboxLock(sandboxName, async () => {
     let firstEntry = getSandbox(sandboxName);

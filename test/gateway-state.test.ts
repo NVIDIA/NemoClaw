@@ -463,7 +463,11 @@ describe("mergeLivePolicyIntoSandboxOutput (#1961)", () => {
       "  include_workdir: false",
     ].join("\n");
 
-    const merged = mergeLivePolicyIntoSandboxOutput(sandboxOutput, livePolicy);
+    const merged = mergeLivePolicyIntoSandboxOutput(
+      sandboxOutput,
+      livePolicy.split("---\n")[1] ?? "",
+      6,
+    );
     expect(merged).toContain("  version: 6");
     expect(merged).not.toContain("  version: 1");
     expect(merged).not.toContain("  version: 5");
@@ -474,12 +478,16 @@ describe("mergeLivePolicyIntoSandboxOutput (#1961)", () => {
       "\n",
     );
 
-    const merged = mergeLivePolicyIntoSandboxOutput(sandboxOutput, livePolicy);
+    const merged = mergeLivePolicyIntoSandboxOutput(
+      sandboxOutput,
+      livePolicy.split("---\n")[1] ?? "",
+      null,
+    );
     expect(merged).toContain("  version: 1");
   });
 
   it("returns the original output when livePolicy is an error string", () => {
-    const merged = mergeLivePolicyIntoSandboxOutput(sandboxOutput, "Error: not found");
+    const merged = mergeLivePolicyIntoSandboxOutput(sandboxOutput, "Error: not found", null);
     expect(merged).toBe(sandboxOutput);
   });
 
@@ -493,7 +501,11 @@ describe("mergeLivePolicyIntoSandboxOutput (#1961)", () => {
       "  include_workdir: false",
     ].join("\n");
 
-    const merged = mergeLivePolicyIntoSandboxOutput(sandboxOutput, livePolicy);
+    const merged = mergeLivePolicyIntoSandboxOutput(
+      sandboxOutput,
+      livePolicy.split("\x1b[2m---\x1b[0m\n")[1] ?? "",
+      6,
+    );
     expect(merged).toContain("  version: 6");
     expect(merged).not.toContain("  version: 1");
   });
