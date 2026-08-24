@@ -179,6 +179,7 @@ async function probeLegacyReasoning(
     {
       ...options.commandOptions,
       artifactName: "phase-2-compatible-endpoint-reasoning-image-environment",
+      persistArtifacts: false,
     },
   );
   assertExitZero(imageEnvironment, "inspect legacy sandbox image reasoning environment");

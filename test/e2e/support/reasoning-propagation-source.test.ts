@@ -97,6 +97,7 @@ describe("cloud onboarding reasoning propagation source", () => {
       ],
       expect.objectContaining({
         artifactName: "phase-2-compatible-endpoint-reasoning-image-environment",
+        persistArtifacts: false,
       }),
     );
     expect(sandboxExec).toHaveBeenCalledOnce();
