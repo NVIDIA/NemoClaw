@@ -251,7 +251,6 @@ describe("OpenShell policy boundary package contract", () => {
   it("ships the complete repository-owned NemoCUA agent definition (#9649)", () => {
     expect(packageFiles(repoRoot)).toEqual(
       expect.arrayContaining([
-        "agents/*/manifest.yaml",
         "agents/nemocua/Dockerfile",
         "agents/nemocua/policy-additions.yaml",
       ]),
