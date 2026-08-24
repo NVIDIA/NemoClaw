@@ -364,6 +364,13 @@ describe("authenticated MCP live fixtures", () => {
       });
 
     expect((await request("HEAD")).status).toBe(405);
+    expect(server.observations).toEqual([
+      expect.objectContaining({
+        method: "HEAD",
+        path: "/mcp",
+        responseStatus: 405,
+      }),
+    ]);
     expect(server.requests, "public tunnel readiness must not pollute security assertions").toEqual(
       [],
     );

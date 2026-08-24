@@ -1130,7 +1130,8 @@ mcpBridgeShardTest("hermes")(
       expectedAdapter: "hermes-config",
       artifactPrefix: "hermes",
     });
-    const initialDiscoveryOffset = fakeMcp.requests.length;
+    const initialDiscoveryRequestOffset = fakeMcp.requests.length;
+    const initialDiscoveryObservationOffset = fakeMcp.observations.length;
     const providerName = await addBridgeAndReadStatus(host, {
       sandboxName: HERMES_SANDBOX_NAME,
       mcpUrl,
@@ -1140,9 +1141,12 @@ mcpBridgeShardTest("hermes")(
     await runHermesInitialMcpReadiness({
       discover: () =>
         assertAuthenticatedMcpDiscoveryWithOneRestart(fakeMcp, {
-          requestOffset: initialDiscoveryOffset,
+          requestOffset: initialDiscoveryRequestOffset,
+          observationOffset: initialDiscoveryObservationOffset,
           expectedSecret: HOST_SECRET,
           label: "Hermes initial MCP discovery",
+          artifacts,
+          artifactName: "hermes-initial-mcp-discovery-retry-evidence.json",
           restart: async () => {
             progress.event("Hermes MCP discovery did not reach the fixture; restarting once");
             await restartBridgeWithoutHostSecret(

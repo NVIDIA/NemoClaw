@@ -30,6 +30,7 @@ const SESSION_ID = "fake-session-1";
 const LEGACY_SESSION_ID = "opaque-legacy-session";
 const PROTOCOL_VERSION = "2025-03-26";
 const STATUS_SECRET = "unregistered-sensitive-status-value";
+const DISCOVERY_RETRY_ARTIFACT = "hermes-initial-mcp-discovery-retry-evidence.json";
 
 function request(rpcMethod: string, overrides: Partial<FakeMcpRequest> = {}): FakeMcpRequest {
   return {
@@ -53,6 +54,33 @@ function successfulInitialize(): FakeMcpRequest {
     negotiatedSessionId: SESSION_ID,
     negotiatedProtocolVersion: PROTOCOL_VERSION,
   });
+}
+
+function fakeDiscoveryServer(
+  requests: FakeMcpRequest[] = [],
+  observations: FakeMcpRequest[] = [...requests],
+): FakeMcpHttpsServer {
+  return { observations, requests } as unknown as FakeMcpHttpsServer;
+}
+
+function discoveryArtifacts() {
+  return { writeJson: vi.fn().mockResolvedValue("/tmp/discovery-evidence.json") };
+}
+
+function discoveryRestartOptions(
+  restart: () => Promise<void>,
+  artifacts: ReturnType<typeof discoveryArtifacts>,
+  offsets: { observationOffset?: number; requestOffset?: number } = {},
+) {
+  return {
+    requestOffset: offsets.requestOffset ?? 0,
+    observationOffset: offsets.observationOffset ?? 0,
+    expectedSecret: EXPECTED_SECRET,
+    label: "initial discovery",
+    restart,
+    artifacts,
+    artifactName: DISCOVERY_RETRY_ARTIFACT,
+  };
 }
 
 function successfulLegacyDiscovery(): FakeMcpRequest[] {
@@ -410,26 +438,102 @@ describe("authenticated MCP discovery restart retry", () => {
     ).toBe(false);
   });
 
+  it.each([
+    ["authenticated", { auth: `Bearer ${EXPECTED_SECRET}` }],
+    ["metadata-bearing", { sessionId: SESSION_ID, protocolVersion: PROTOCOL_VERSION }],
+    ["wrong-path", { path: "/health", responseStatus: 404 }],
+    ["body-bearing", { body: "unexpected readiness body" }],
+  ])("does not restart after a %s HEAD request arrived after the offset", async (_case, override) => {
+    const readinessHead: FakeMcpRequest = {
+      method: "HEAD",
+      path: "/mcp",
+      auth: "",
+      body: "",
+      sessionId: "",
+      protocolVersion: "",
+      responseStatus: 405,
+    };
+    const fakeMcp = fakeDiscoveryServer([], [readinessHead, { ...readinessHead, ...override }]);
+    const failure = new Error("discovery failed after observed HEAD request");
+    const assertDiscovery = vi.fn().mockRejectedValueOnce(failure);
+    const restart = vi.fn().mockResolvedValueOnce(undefined);
+    const artifacts = discoveryArtifacts();
+
+    await expect(
+      assertAuthenticatedMcpDiscoveryWithOneRestart(
+        fakeMcp,
+        discoveryRestartOptions(restart, artifacts, { observationOffset: 1 }),
+        { assertDiscovery },
+      ),
+    ).rejects.toBe(failure);
+
+    expect(restart).not.toHaveBeenCalled();
+    expect(artifacts.writeJson).toHaveBeenCalledWith(DISCOVERY_RETRY_ARTIFACT, {
+      schemaVersion: 1,
+      attempts: [
+        {
+          attempt: 1,
+          requestCount: 1,
+          classification: "request-observed",
+          restartDecision: "no-restart",
+          outcome: "failed",
+        },
+      ],
+      finalOutcome: "failed-no-restart",
+    });
+  });
+
   it("does not retry after the fixture received a request", () => {
     expect(shouldRetryMcpDiscoveryAfterRestart([request("initialize")])).toBe(false);
   });
 
+  it("records bounded first-attempt evidence without request content", async () => {
+    const sensitiveBody = "sensitive-request-body";
+    const fakeMcp = fakeDiscoveryServer([
+      request("initialize", { body: sensitiveBody, sessionId: SESSION_ID }),
+    ]);
+    const assertDiscovery = vi.fn().mockResolvedValueOnce(undefined);
+    const restart = vi.fn().mockResolvedValueOnce(undefined);
+    const artifacts = discoveryArtifacts();
+
+    await assertAuthenticatedMcpDiscoveryWithOneRestart(
+      fakeMcp,
+      discoveryRestartOptions(restart, artifacts),
+      { assertDiscovery },
+    );
+
+    expect(artifacts.writeJson).toHaveBeenCalledWith(DISCOVERY_RETRY_ARTIFACT, {
+      schemaVersion: 1,
+      attempts: [
+        {
+          attempt: 1,
+          requestCount: 1,
+          classification: "authenticated-discovery-complete",
+          restartDecision: "not-needed",
+          outcome: "passed",
+        },
+      ],
+      finalOutcome: "passed-first-attempt",
+    });
+    const evidence = JSON.stringify(artifacts.writeJson.mock.calls[0]?.[1]);
+    expect(evidence).not.toContain(sensitiveBody);
+    expect(evidence).not.toContain(EXPECTED_SECRET);
+    expect(evidence).not.toContain(SESSION_ID);
+    expect(restart).not.toHaveBeenCalled();
+  });
+
   it("restarts once and retries discovery when no request reached the fixture", async () => {
-    const fakeMcp = { requests: [] } as unknown as FakeMcpHttpsServer;
+    const fakeMcp = fakeDiscoveryServer();
     const assertDiscovery = vi
       .fn()
       .mockRejectedValueOnce(new Error("first discovery failed"))
       .mockResolvedValueOnce(undefined);
     const restart = vi.fn().mockResolvedValueOnce(undefined);
+    const artifacts = discoveryArtifacts();
 
     await assertAuthenticatedMcpDiscoveryWithOneRestart(
       fakeMcp,
-      {
-        requestOffset: 0,
-        expectedSecret: EXPECTED_SECRET,
-        label: "initial discovery",
-        restart,
-      },
+      discoveryRestartOptions(restart, artifacts),
       { assertDiscovery },
     );
 
@@ -438,55 +542,75 @@ describe("authenticated MCP discovery restart retry", () => {
     expect(assertDiscovery.mock.calls[1]?.[1]).toMatchObject({
       label: "initial discovery after one bridge restart",
     });
+    expect(artifacts.writeJson).toHaveBeenCalledWith(DISCOVERY_RETRY_ARTIFACT, {
+      schemaVersion: 1,
+      attempts: [
+        {
+          attempt: 1,
+          requestCount: 0,
+          classification: "no-request-observed",
+          restartDecision: "restart-once",
+          outcome: "retrying",
+        },
+        {
+          attempt: 2,
+          requestCount: 0,
+          classification: "authenticated-discovery-complete",
+          restartDecision: "not-needed",
+          outcome: "passed",
+        },
+      ],
+      finalOutcome: "passed-after-restart",
+    });
   });
 
   it("does not restart when the failed attempt reached the fixture", async () => {
-    const fakeMcp = { requests: [request("initialize")] } as unknown as FakeMcpHttpsServer;
+    const fakeMcp = fakeDiscoveryServer([request("initialize")]);
     const failure = new Error("fixture-visible discovery failed");
     const assertDiscovery = vi.fn().mockRejectedValueOnce(failure);
     const restart = vi.fn().mockResolvedValueOnce(undefined);
+    const artifacts = discoveryArtifacts();
 
     await expect(
       assertAuthenticatedMcpDiscoveryWithOneRestart(
         fakeMcp,
-        {
-          requestOffset: 0,
-          expectedSecret: EXPECTED_SECRET,
-          label: "initial discovery",
-          restart,
-        },
+        discoveryRestartOptions(restart, artifacts),
         { assertDiscovery },
       ),
     ).rejects.toBe(failure);
 
     expect(restart).not.toHaveBeenCalled();
     expect(assertDiscovery).toHaveBeenCalledOnce();
+    expect(artifacts.writeJson).toHaveBeenCalledWith(
+      DISCOVERY_RETRY_ARTIFACT,
+      expect.objectContaining({ finalOutcome: "failed-no-restart" }),
+    );
   });
 
   it("propagates the retry failure without a second restart", async () => {
-    const fakeMcp = { requests: [] } as unknown as FakeMcpHttpsServer;
+    const fakeMcp = fakeDiscoveryServer();
     const retryFailure = new Error("retry discovery failed");
     const assertDiscovery = vi
       .fn()
       .mockRejectedValueOnce(new Error("first discovery failed"))
       .mockRejectedValueOnce(retryFailure);
     const restart = vi.fn().mockResolvedValueOnce(undefined);
+    const artifacts = discoveryArtifacts();
 
     await expect(
       assertAuthenticatedMcpDiscoveryWithOneRestart(
         fakeMcp,
-        {
-          requestOffset: 0,
-          expectedSecret: EXPECTED_SECRET,
-          label: "initial discovery",
-          restart,
-        },
+        discoveryRestartOptions(restart, artifacts),
         { assertDiscovery },
       ),
     ).rejects.toBe(retryFailure);
 
     expect(restart).toHaveBeenCalledOnce();
     expect(assertDiscovery).toHaveBeenCalledTimes(2);
+    expect(artifacts.writeJson).toHaveBeenCalledWith(
+      DISCOVERY_RETRY_ARTIFACT,
+      expect.objectContaining({ finalOutcome: "failed-after-restart" }),
+    );
   });
 });
 
