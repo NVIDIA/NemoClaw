@@ -287,7 +287,18 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     const result = uninstall(host);
 
     expect(result.exitCode).toBe(0);
-    expect(host.rmSync.mock.calls.map(([target]) => String(target))).toContain(host.stateDir);
+    const removedPaths = host.rmSync.mock.calls.map(([target]) => String(target));
+    const stagedCleanupPrefix = path.join(
+      path.dirname(host.stateDir),
+      `.${path.basename(host.stateDir)}-cleanup-`,
+    );
+    expect(
+      removedPaths.some(
+        (target) => target.startsWith(stagedCleanupPrefix) && path.basename(target) === "content",
+      ),
+    ).toBe(true);
+    expect(removedPaths).not.toContain(host.stateDir);
+    expect(fs.existsSync(host.stateDir)).toBe(false);
   });
 
   it("refuses an unknown portable uninstall artifact in the configuration directory (#9581)", () => {

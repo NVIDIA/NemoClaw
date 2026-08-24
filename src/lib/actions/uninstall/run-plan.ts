@@ -453,20 +453,22 @@ function removePathExcept(
   deps: Required<Pick<UninstallRunDeps, "existsSync" | "log" | "rmSync">> &
     Pick<UninstallRuntime, "warn">,
 ): boolean {
-  if (!deps.existsSync(target)) {
-    try {
-      const stagedTargets = findUnreconciledCleanupTargets(target);
-      if (stagedTargets.length === 0) return true;
-      deps.warn(
-        `Cleanup cannot continue because ${target} is absent and unreconciled staging remains at ${stagedTargets.join(", ")}. Do not retry uninstall until you inspect both paths without following links. If a staging entry is the intended directory, move it back to ${target}; otherwise, stop and reconcile the paths before continuing.`,
-      );
-    } catch (error) {
-      deps.warn(
-        `Failed to inspect interrupted cleanup state for ${target}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+  let stagedTargets: readonly string[];
+  try {
+    stagedTargets = findUnreconciledCleanupTargets(target);
+  } catch (error) {
+    deps.warn(
+      `Failed to inspect interrupted cleanup state for ${target}: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return false;
   }
+  if (stagedTargets.length > 0) {
+    deps.warn(
+      `Cleanup cannot continue for ${target} because unreconciled staging remains at ${stagedTargets.join(", ")}. Do not retry uninstall until you inspect both paths without following links. If a staging entry is the intended directory, move it back to ${target}; otherwise, stop and reconcile the paths before continuing.`,
+    );
+    return false;
+  }
+  if (!deps.existsSync(target)) return true;
   if (preserve.length === 0) {
     deps.rmSync(target, { force: true, recursive: true });
     deps.log(`Removed ${target}`);
