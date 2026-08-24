@@ -611,7 +611,7 @@ export async function startFakeDockerApi(
     "--name",
     container,
     "-p",
-    "0:8080",
+    "127.0.0.1::8080",
     "-e",
     `${options.portEnv}=8080`,
     "-e",

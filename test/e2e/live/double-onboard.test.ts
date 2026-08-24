@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
+import type { GatewayClient } from "../fixtures/clients/gateway.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -190,16 +191,10 @@ async function cleanupDoubleOnboardState(
 }
 
 async function gatewayRuntimeId(
-  _host: HostCliClient,
-  runtimeProvider: RuntimeProviderPrerequisite,
-  artifactName: string,
+  gateway: GatewayClient,
 ): Promise<string> {
-  const resource = await runtimeProvider.command(
-    ["container", "ps", "--filter", "name=^openshell-cluster-nemoclaw$", "--format", "{{.ID}}"],
-    { artifactName: `${artifactName}-runtime-resource`, timeoutMs: 30_000 },
-  );
-  const resourceId = resource.stdout.trim().split(/\s+/u)[0] ?? "";
-  return resource.exitCode === 0 && resourceId ? `container:${resourceId}` : "";
+  const runtime = await gateway.resolveHostRuntime();
+  return runtime ? `${runtime.kind}:${runtime.id}` : "";
 }
 
 async function stopGatewayRuntime(
@@ -463,7 +458,7 @@ test(
     ],
   },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip }) => {
+  async ({ artifacts, cleanup, gateway, host, progress, runtimeProvider, sandbox, skip }) => {
   expect(
     fs.existsSync(CLI_DIST_ENTRYPOINT),
     "run `npm run build:cli` before live repo CLI targets",
@@ -595,19 +590,11 @@ test(
 
   progress.phase("re-onboard same sandbox on existing gateway");
   // Phase 3: second onboard with the same name must reuse the healthy gateway.
-    const gatewayBeforeSecond = await gatewayRuntimeId(
-      host,
-      runtimeProvider,
-      "phase-3-gateway-id-before",
-    );
+    const gatewayBeforeSecond = await gatewayRuntimeId(gateway);
   const second = await runOnboard(host, SANDBOX_A, fake.baseUrl, "phase-3-second-onboard", true);
   const secondText = resultText(second);
   expect(second.exitCode, secondText).toBe(0);
-    const gatewayAfterSecond = await gatewayRuntimeId(
-      host,
-      runtimeProvider,
-      "phase-3-gateway-id-after",
-    );
+    const gatewayAfterSecond = await gatewayRuntimeId(gateway);
   expect(gatewayBeforeSecond, "gateway runtime id before second onboard").not.toBe("");
   expect(gatewayAfterSecond).toBe(gatewayBeforeSecond);
   expect(secondText).toContain("Reusing healthy NemoClaw gateway.");
@@ -647,19 +634,11 @@ test(
   );
   expect(gatewayNameFromOutput(resultText(selectedAlt))).toBe(ALT_GATEWAY_NAME);
 
-    const gatewayBeforeThird = await gatewayRuntimeId(
-      host,
-      runtimeProvider,
-      "phase-4-gateway-id-before",
-    );
+    const gatewayBeforeThird = await gatewayRuntimeId(gateway);
   const third = await runOnboard(host, SANDBOX_B, fake.baseUrl, "phase-4-third-onboard");
   const thirdText = resultText(third);
   expect(third.exitCode, thirdText).toBe(0);
-    const gatewayAfterThird = await gatewayRuntimeId(
-      host,
-      runtimeProvider,
-      "phase-4-gateway-id-after",
-    );
+    const gatewayAfterThird = await gatewayRuntimeId(gateway);
   expect(gatewayBeforeThird, "gateway runtime id before third onboard").not.toBe("");
   expect(gatewayAfterThird).toBe(gatewayBeforeThird);
   expect(thirdText).not.toContain("Port 8080 is not available");
