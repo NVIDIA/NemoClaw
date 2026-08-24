@@ -8,6 +8,7 @@ import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 const mocks = vi.hoisted(() => ({
   getSandbox: vi.fn(),
   runOpenshellProviderCommand: vi.fn(),
+  sleepMs: vi.fn(),
 }));
 
 vi.mock("../../state/registry", () => ({
@@ -16,6 +17,10 @@ vi.mock("../../state/registry", () => ({
 
 vi.mock("../../adapters/openshell/provider-command", () => ({
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
+}));
+
+vi.mock("./mcp-bridge/timing", () => ({
+  sleepMcpBridgeRetry: mocks.sleepMs,
 }));
 
 import {
@@ -55,6 +60,7 @@ describe("Hermes MCP host reconciliation", () => {
       stdout: '{"ok":true,"state":"matched"}\n',
       stderr: "",
     });
+    mocks.sleepMs.mockReset();
   });
 
   afterEach(() => {
@@ -144,6 +150,8 @@ describe("Hermes MCP host reconciliation", () => {
 
     expect(() => assertHermesMcpRuntimeIntent("alpha")).not.toThrow();
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(2);
+    expect(mocks.sleepMs).toHaveBeenCalledOnce();
+    expect(mocks.sleepMs).toHaveBeenCalledWith(500);
   });
 
   it("bounds raced integrity snapshot retries and still fails closed", () => {
@@ -156,7 +164,8 @@ describe("Hermes MCP host reconciliation", () => {
     expect(() => assertHermesMcpRuntimeIntent("alpha")).toThrow(
       /refusing raced Hermes MCP integrity snapshot/,
     );
-    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(3);
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(6);
+    expect(mocks.sleepMs).toHaveBeenCalledTimes(5);
   });
 
   it("sanitizes thrown helper failures before returning or throwing them", () => {

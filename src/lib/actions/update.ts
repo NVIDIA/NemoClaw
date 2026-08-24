@@ -11,7 +11,15 @@ import { normalizeVersion } from "../domain/installer/version";
 
 export const NEMOCLAW_INSTALLER_URL = "https://www.nvidia.com/nemoclaw.sh";
 export const NEMOCLAW_REPO_URL = "https://github.com/NVIDIA/NemoClaw.git";
-export const NEMOCLAW_UPDATE_COMMAND = `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | bash`;
+/**
+ * Pipeline `nemoclaw update` runs to install the maintained build.
+ * `--proto '=https'` and `--proto-redir '=https'` hold the transfer on HTTPS for
+ * the initial request and for every redirect, so a downgrade redirect fails
+ * closed instead of piping plaintext-fetched bytes into `bash`. Same fetch
+ * hardening as `src/lib/onboard/install-ollama-linux.ts`.
+ */
+const NEMOCLAW_UPDATE_FETCH_COMMAND = `curl -fsSL --proto '=https' --proto-redir '=https' ${NEMOCLAW_INSTALLER_URL}`;
+export const NEMOCLAW_UPDATE_COMMAND = `${NEMOCLAW_UPDATE_FETCH_COMMAND} | bash`;
 export const NEMOCLAW_MAINTAINED_INSTALL_TAG = "lkg";
 
 type LogFn = (message?: string) => void;
@@ -80,6 +88,11 @@ function trimOutput(value: string | Buffer | null | undefined): string {
 
 const UPDATE_BRANDING_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 
+function maintainedUpdateCommand(agent?: (typeof UPDATE_BRANDING_AGENTS)[number]): string {
+  const agentAssignment = agent ? `NEMOCLAW_AGENT=${agent} ` : "";
+  return `${NEMOCLAW_UPDATE_FETCH_COMMAND} | ${agentAssignment}bash`;
+}
+
 function updateBranding(env: NodeJS.ProcessEnv): UpdateBranding {
   const agent =
     resolveAgentNameAlias(env.NEMOCLAW_AGENT, UPDATE_BRANDING_AGENTS) ?? env.NEMOCLAW_AGENT;
@@ -87,20 +100,20 @@ function updateBranding(env: NodeJS.ProcessEnv): UpdateBranding {
     return {
       cliName: "nemohermes",
       displayName: "NemoHermes",
-      maintainedUpdateCommand: `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | NEMOCLAW_AGENT=hermes bash`,
+      maintainedUpdateCommand: maintainedUpdateCommand("hermes"),
     };
   }
   if (agent === "langchain-deepagents-code") {
     return {
       cliName: "nemo-deepagents",
       displayName: "NemoDeepAgents",
-      maintainedUpdateCommand: `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | NEMOCLAW_AGENT=langchain-deepagents-code bash`,
+      maintainedUpdateCommand: maintainedUpdateCommand("langchain-deepagents-code"),
     };
   }
   return {
     cliName: "nemoclaw",
     displayName: "NemoClaw",
-    maintainedUpdateCommand: NEMOCLAW_UPDATE_COMMAND,
+    maintainedUpdateCommand: maintainedUpdateCommand(),
   };
 }
 

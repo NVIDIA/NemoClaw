@@ -61,14 +61,26 @@ function plan(): DualStationVllmPlan {
       home: mockedLocalHome,
       uid: 1000,
       gid: 1000,
-      gpu: { index: 0, name: "NVIDIA GB300", uuid: "GPU-a" },
+      gpu: {
+        index: 0,
+        name: "NVIDIA GB300",
+        uuid: "GPU-a",
+        totalMemoryMiB: 100_000,
+        freeMemoryMiB: 95_000,
+      },
     },
     peer: {
       hostname: "station-b",
       home: "/home/nvidia",
       uid: 1000,
       gid: 1000,
-      gpu: { index: 0, name: "NVIDIA GB300", uuid: "GPU-b" },
+      gpu: {
+        index: 0,
+        name: "NVIDIA GB300",
+        uuid: "GPU-b",
+        totalMemoryMiB: 100_000,
+        freeMemoryMiB: 95_000,
+      },
     },
     rails: [
       {

@@ -12,10 +12,12 @@ import {
   evaluateFirstTurnLatencyRecurrence,
   type FirstTurnLatencySample,
 } from "../../../scripts/scorecard/analyze-first-turn-latency.mts";
+import type { SandboxPhaseTailSample } from "../../../scripts/scorecard/analyze-sandbox-phase-tail.mts";
 import {
   buildRuntimeHistory,
   createRuntimeSummary,
   formatRuntimeHistory,
+  loadPriorPushHistory,
   loadPriorPushSummaries,
   normalizeRuntimeSummary,
   RUNTIME_SUMMARY_ARTIFACT,
@@ -47,6 +49,22 @@ function firstTurnSample(anomaly: boolean): FirstTurnLatencySample {
     },
     measurementMs: anomaly ? 14_500 : 8_000,
     overageMs: anomaly ? 500 : 0,
+  };
+}
+
+function sandboxPhaseSample(anomaly: boolean): SandboxPhaseTailSample {
+  return {
+    anomaly,
+    budgetMs: 208_000,
+    cohort: {
+      agent: "openclaw",
+      baseBuildMode: "published-base",
+      platform: "linux",
+      setupMode: "source-install",
+      workloadKind: "legacy-dockerfile",
+    },
+    measurementMs: anomaly ? 208_136 : 201_808,
+    overageMs: anomaly ? 136 : 0,
   };
 }
 
@@ -156,13 +174,14 @@ describe("E2E rolling runtime history", () => {
         },
         [runtimeSample()],
         output,
-        { loadPriorPushSummaries: vi.fn().mockRejectedValue(new Error("unavailable")) },
+        { loadPriorPushHistory: vi.fn().mockRejectedValue(new Error("unavailable")) },
         new Date("2026-07-24T00:00:00.000Z"),
       );
 
       expect(JSON.parse(fs.readFileSync(output, "utf8"))).toMatchObject({
-        schemaVersion: "nemoclaw.e2e_runtime_summary.v2",
+        schemaVersion: "nemoclaw.e2e_runtime_summary.v3",
         firstTurnLatency: null,
+        sandboxPhaseTail: null,
         runId: 123,
       });
       expect(fs.statSync(output).mode & 0o777).toBe(0o600);
@@ -196,7 +215,10 @@ describe("E2E rolling runtime history", () => {
         output,
         {
           currentFirstTurnLatency: firstTurnSample(true),
-          loadPriorPushSummaries: vi.fn().mockResolvedValue(prior),
+          loadPriorPushHistory: vi.fn().mockResolvedValue({
+            summaries: prior,
+            unavailableRuns: 0,
+          }),
         },
         new Date("2026-07-24T00:00:00.000Z"),
       );
@@ -213,15 +235,92 @@ describe("E2E rolling runtime history", () => {
     }
   });
 
+  it("saves one sandbox anomaly after four passing same-cohort samples (#6660)", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-history-"));
+    const output = path.join(directory, "e2e-runtime-summary.json");
+    const setFailed = vi.fn();
+    const prior = Array.from({ length: 4 }, (_, index) =>
+      createRuntimeSummary(
+        index + 1,
+        new Date(Date.UTC(2026, 7, index + 1)).toISOString(),
+        [runtimeSample()],
+        null,
+        sandboxPhaseSample(false),
+      ),
+    );
+    try {
+      const markdown = await buildRuntimeHistory(
+        {
+          github: {},
+          context: { repo: { owner: "NVIDIA", repo: "NemoClaw" }, runId: 123 },
+          core: { setFailed },
+        },
+        [runtimeSample({ target: "full-e2e", scenario: "cold onboard" })],
+        output,
+        {
+          currentSandboxPhaseTail: sandboxPhaseSample(true),
+          loadPriorPushHistory: vi.fn().mockResolvedValue({
+            summaries: prior,
+            unavailableRuns: 0,
+          }),
+        },
+        new Date("2026-08-21T00:00:00.000Z"),
+      );
+
+      expect(JSON.parse(fs.readFileSync(output, "utf8"))).toMatchObject({
+        sandboxPhaseTail: { anomaly: true, overageMs: 136 },
+      });
+      expect(markdown).toContain("## Sandbox Phase Latency");
+      expect(setFailed).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when one sandbox anomaly has no readable history (#6660)", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-history-"));
+    const output = path.join(directory, "e2e-runtime-summary.json");
+    const setFailed = vi.fn();
+    try {
+      await buildRuntimeHistory(
+        {
+          github: {},
+          context: { repo: { owner: "NVIDIA", repo: "NemoClaw" }, runId: 123 },
+          core: { setFailed, warning: vi.fn() },
+        },
+        [runtimeSample({ target: "full-e2e", scenario: "cold onboard" })],
+        output,
+        {
+          currentSandboxPhaseTail: sandboxPhaseSample(true),
+          loadPriorPushHistory: vi.fn().mockRejectedValue(new Error("unavailable")),
+        },
+        new Date("2026-08-21T00:00:00.000Z"),
+      );
+
+      expect(setFailed).toHaveBeenCalledWith(
+        expect.stringContaining("one or more prior push summaries are unavailable"),
+      );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("rejects duplicate identities, duplicate phases, and extra fields", () => {
     const summary = createRuntimeSummary(1, "2026-07-24T00:00:00.000Z", [runtimeSample()]);
-    const { firstTurnLatency: _, ...legacy } = summary;
+    const { firstTurnLatency: _, sandboxPhaseTail: __, ...legacy } = summary;
     expect(
       normalizeRuntimeSummary({
         ...legacy,
         schemaVersion: "nemoclaw.e2e_runtime_summary.v1",
       }),
     ).toMatchObject({ firstTurnLatency: null });
+    const { sandboxPhaseTail: ___, ...previous } = summary;
+    expect(
+      normalizeRuntimeSummary({
+        ...previous,
+        schemaVersion: "nemoclaw.e2e_runtime_summary.v2",
+      }),
+    ).toMatchObject({ sandboxPhaseTail: null });
     expect(normalizeRuntimeSummary({ ...summary, extra: true })).toBeNull();
     expect(
       normalizeRuntimeSummary({ ...summary, rows: [summary.rows[0], summary.rows[0]] }),
@@ -244,7 +343,7 @@ describe("E2E rolling runtime history", () => {
       data: { workflow_runs: [{ id: 123 }, { id: 122 }] },
     });
     const paginate = vi.fn().mockResolvedValue([]);
-    const summaries = await loadPriorPushSummaries({
+    const history = await loadPriorPushHistory({
       context: { repo: { owner: "NVIDIA", repo: "NemoClaw" }, runId: 123 },
       github: {
         paginate,
@@ -258,7 +357,7 @@ describe("E2E rolling runtime history", () => {
       },
     });
 
-    expect(summaries).toEqual([]);
+    expect(history).toEqual({ summaries: [], unavailableRuns: 1 });
     expect(listWorkflowRuns).toHaveBeenCalledWith(
       expect.objectContaining({
         event: "push",

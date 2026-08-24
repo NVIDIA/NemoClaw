@@ -94,5 +94,9 @@
   {
     "name": "NEMOCLAW_MANAGED_HERMES_HASH_B64",
     "reason": "Internal one-shot transport from the privileged managed-startup runtime or root image applicator to the sandbox-owned Hermes compatibility-hash writer. The value is a bounded base64-encoded hash receipt that only the private internal writer consumes; NemoClaw synthesizes it and users must not set it."
+  },
+  {
+    "name": "NEMOCLAW_VLLM_GPU_DEVICE",
+    "reason": "Internal command-scoped handoff for the public --vllm-gpu-device flag. NemoClaw validates, persists, scopes, and restores it; users should set the CLI flag instead."
   }
 ]

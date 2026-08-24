@@ -56,6 +56,8 @@ const PLATFORM_DIGESTS = {
   hermes: `sha256:${"2".repeat(64)}`,
   dcode: `sha256:${"3".repeat(64)}`,
 } as const;
+const DCODE_BASE_REF =
+  `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@${PLATFORM_DIGESTS.dcode}`;
 const E2E_WORKFLOW = YAML.parse(
   readFileSync(path.join(ROOT, ".github", "workflows", "e2e.yaml"), "utf8"),
 ) as {
@@ -123,6 +125,10 @@ printf '%s  %s\n' "$digest" "$1"
       encoding: "utf8",
       env: {
         ...process.env,
+        DCODE_BASE_CONTRACT: JSON.stringify({
+          platformReferences: { "linux/amd64": DCODE_BASE_REF },
+        }),
+        DCODE_BASE_REF,
         GITHUB_OUTPUT: outputPath,
         PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
         PLATFORM: "linux/amd64",
@@ -175,7 +181,7 @@ describe("protected managed-image build contract", () => {
   it.each([
     ["managed-image-multiarch-startup", "Resolve exact platform base images"],
     ["managed-image-protected-runtime", "Resolve exact amd64 runtime base images"],
-  ])("%s keeps non-Hermes base resolution separate", (jobId, stepName) => {
+  ])("%s keeps immutable DCode resolution separate from Hermes", (jobId, stepName) => {
     const { result, output } = runBaseResolution(jobId, stepName);
     expect(result.status, result.stderr).toBe(0);
     expect(Object.fromEntries(output.trim().split("\n").map((line) => line.split("=")))).toEqual(

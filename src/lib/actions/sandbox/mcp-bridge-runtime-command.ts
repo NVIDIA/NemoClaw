@@ -4,6 +4,9 @@
 import type { AgentMcpAdapter } from "../../agent/defs";
 import { shellQuote } from "../../core/shell-quote";
 
+/** Quote one argument for an MCP bridge-owned shell command. */
+export const quoteMcpBridgeShellArg = shellQuote;
+
 /**
  * Process-control variables that must not reach a credential-bearing child
  * diagnostic. Trusted proxy and CA variables remain available; OpenShell

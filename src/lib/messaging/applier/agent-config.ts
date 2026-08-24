@@ -66,8 +66,13 @@ export async function applyAgentConfigAtOpenShell(
   }
 
   const enabledRender = filterEnabledPlanEntries(plan, plan.agentRender);
+  const disabledChannelIds = new Set(plan.disabledChannels);
+  const disabledJsonRender = plan.agentRender.filter(
+    (entry): entry is SandboxMessagingJsonRenderPlan =>
+      entry.kind === "json-fragment" && disabledChannelIds.has(entry.channelId),
+  );
 
-  for (const [target, render] of groupRenderByTarget(enabledRender)) {
+  for (const [target, render] of groupRenderByTarget([...enabledRender, ...disabledJsonRender])) {
     const resolvedTarget = resolveSandboxAgentConfigTarget(target, plan.agent);
     const kind = render[0]?.kind;
     if (!kind) continue;
@@ -77,7 +82,19 @@ export async function applyAgentConfigAtOpenShell(
     const existing = readSandboxFile(plan.sandboxName, resolvedTarget, options.runOpenshell);
     const contents =
       kind === "json-fragment"
-        ? applyJsonFragments(plan, existing, render.filter(isJsonRender), resolvedTarget)
+        ? applyJsonFragments(
+            plan,
+            existing,
+            render.filter(
+              (entry): entry is SandboxMessagingJsonRenderPlan =>
+                isJsonRender(entry) && !disabledChannelIds.has(entry.channelId),
+            ),
+            render.filter(
+              (entry): entry is SandboxMessagingJsonRenderPlan =>
+                isJsonRender(entry) && disabledChannelIds.has(entry.channelId),
+            ),
+            resolvedTarget,
+          )
         : applyEnvLines(existing, render.filter(isEnvLinesRender));
     writeSandboxFile(plan.sandboxName, resolvedTarget, contents, options.runOpenshell);
     appliedTargets.push(resolvedTarget);
@@ -204,11 +221,15 @@ function applyJsonFragments(
   plan: SandboxMessagingPlan,
   existing: string | undefined,
   render: readonly SandboxMessagingJsonRenderPlan[],
+  disabledRender: readonly SandboxMessagingJsonRenderPlan[],
   target: string,
 ): string {
   const format = target.endsWith(".yaml") || target.endsWith(".yml") ? "yaml" : "json";
   const root = parseStructuredConfig(existing, target, format);
   const rules = credentialPlaceholderRules(plan);
+  for (const entry of disabledRender) {
+    deleteJsonPath(root, entry.path);
+  }
   for (const entry of render) {
     setJsonPath(
       root,
@@ -218,6 +239,23 @@ function applyJsonFragments(
   }
   if (plan.agent === "openclaw") allowRenderedOpenClawPlugins(root, render);
   return format === "yaml" ? YAML.stringify(root) : JSON.stringify(root, null, 2) + "\n";
+}
+
+function deleteJsonPath(root: Record<string, MessagingSerializableValue>, pathValue: string): void {
+  const segments = pathValue.split(".").filter(Boolean);
+  if (segments.length === 0) {
+    throw new Error("Messaging render path must not be empty.");
+  }
+  let cursor: Record<string, MessagingSerializableValue> = root;
+  for (const segment of segments.slice(0, -1)) {
+    assertSafeObjectKey(segment, "Messaging render path");
+    const next = cursor[segment];
+    if (!isObjectRecord(next)) return;
+    cursor = next as Record<string, MessagingSerializableValue>;
+  }
+  const finalSegment = segments[segments.length - 1] as string;
+  assertSafeObjectKey(finalSegment, "Messaging render path");
+  delete cursor[finalSegment];
 }
 
 function parseStructuredConfig(

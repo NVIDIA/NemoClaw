@@ -87,6 +87,7 @@ const LOCAL_COPY_SOURCES = [
   "src/lib/messaging/",
   "src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py",
   "src/lib/tool-disclosure.ts",
+  "tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
@@ -266,9 +267,8 @@ function parseDockerfileSources(bytes: Buffer): readonly string[] {
       if (
         sources.length !== 1 ||
         !sources[0]!.startsWith("https://files.pythonhosted.org/") ||
-        options.length !== 2 ||
-        options[0] !== "--chmod=0444" ||
-        !/^--checksum=sha256:[a-f0-9]{64}$/u.test(options[1]!)
+        options.length !== 1 ||
+        !/^--checksum=sha256:[a-f0-9]{64}$/u.test(options[0]!)
       ) {
         fail("Dockerfile has an unsupported local or unpinned ADD instruction");
       }

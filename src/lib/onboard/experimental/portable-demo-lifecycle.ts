@@ -35,6 +35,11 @@ import {
   recordUserLocalOllamaOwnership,
 } from "./ollama-user-local-runtime";
 import {
+  createPortableLifecycleTimingRecorder,
+  type PortableLifecycleAttemptOutcome,
+  type PortableLifecycleTimingRecorder,
+} from "./portable-demo-lifecycle-timing";
+import {
   inspectPortablePodmanReadiness,
   portablePodmanCommandEnvironment,
   portablePodmanReadinessError,
@@ -106,7 +111,13 @@ export interface PortablePodmanLifecycleTransport {
 export interface PreparedPortableDemoSandboxRemoval {
   readonly present: boolean;
   readonly receipt: PortableDemoLifecycleReceiptRecord;
+  revalidate(): void;
   removeAndVerify(): void;
+  verifyAbsent(): void;
+}
+
+export interface PreparedPortableDemoSandboxDestroyAuthority {
+  revalidate(): void;
   verifyAbsent(): void;
 }
 
@@ -147,6 +158,8 @@ export interface PortableDemoLifecycleDeps {
   loadManagedOllama?: () => string | null;
   sleep?: (milliseconds: number) => void;
   now?: () => number;
+  /** Diagnostic-only clock; never used for lifecycle deadlines. */
+  timingNow?: () => number;
   log?: (message: string) => void;
 }
 
@@ -167,6 +180,11 @@ export interface PortableDemoLifecycleContext {
   openshellDriver?: string | null;
   provider?: string | null;
 }
+
+export type PortableDemoDestroyContext = Pick<
+  PortableDemoLifecycleContext,
+  "agent" | "lifecycleGeneration" | "openshellDriver"
+>;
 
 function defaultPodmanCapture(env: NodeJS.ProcessEnv): ContainerEngineCommandCapture {
   return (_executable, args, timeoutMs) => {
@@ -691,35 +709,40 @@ export function preparePortableDemoSandboxRemoval(
   transport: PortablePodmanLifecycleTransport,
   stateDir = defaultStateDir(process.env),
 ): PreparedPortableDemoSandboxRemoval {
-  const loaded = loadReceipt(receiptRecord.sandboxName, stateDir);
-  if (!loaded || !isDeepStrictEqual(currentReceipt(loaded), receiptRecord)) {
-    throw new Error(
-      `Portable demo lifecycle receipt changed for sandbox '${receiptRecord.sandboxName}'`,
+  const assertReceiptAndAuthority = (): PortableDemoLifecycleReceipt => {
+    const current = loadReceipt(receiptRecord.sandboxName, stateDir);
+    if (!current || !isDeepStrictEqual(currentReceipt(current), receiptRecord)) {
+      throw new Error(
+        `Portable demo lifecycle receipt changed for sandbox '${receiptRecord.sandboxName}'`,
+      );
+    }
+    requireCurrentRegistryGeneration(current, receiptRecord.registryGeneration);
+    transport.assertRuntimeAuthority();
+    return current;
+  };
+  const inspectPresence = (): boolean => {
+    const loaded = assertReceiptAndAuthority();
+    const matches = matchingPortableSandboxContainerIds(
+      receiptRecord.sandboxName,
+      transport.podman,
     );
-  }
-  requireCurrentRegistryGeneration(loaded, receiptRecord.registryGeneration);
-  transport.assertRuntimeAuthority();
-  const matches = matchingPortableSandboxContainerIds(receiptRecord.sandboxName, transport.podman);
-  if (matches.length > 1 || (matches.length === 1 && matches[0] !== receiptRecord.containerId)) {
-    throw new Error(
-      `Portable demo lifecycle found a replaced or ambiguous container for sandbox '${receiptRecord.sandboxName}'`,
-    );
-  }
-  const initial = transport.podman(["inspect", receiptRecord.containerId]);
-  let present = true;
-  if (isMissingPodmanContainer(initial)) {
-    present = false;
-    if (matches.length !== 0) {
+    if (matches.length > 1 || (matches.length === 1 && matches[0] !== receiptRecord.containerId)) {
+      throw new Error(
+        `Portable demo lifecycle found a replaced or ambiguous container for sandbox '${receiptRecord.sandboxName}'`,
+      );
+    }
+    const result = transport.podman(["inspect", receiptRecord.containerId]);
+    if (isMissingPodmanContainer(result)) {
+      if (matches.length === 0) return false;
       throw new Error(
         `Portable demo lifecycle found a replacement container for sandbox '${receiptRecord.sandboxName}'`,
       );
     }
-  } else {
     const inspection = inspectPodmanContainer(
       receiptRecord.containerId,
       receiptRecord.sandboxName,
       transport.podman,
-      initial,
+      result,
     );
     requireReceiptOwnedInspection(loaded, inspection);
     if (matches.length !== 1) {
@@ -727,16 +750,16 @@ export function preparePortableDemoSandboxRemoval(
         `Portable demo lifecycle could not prove the label index for sandbox '${receiptRecord.sandboxName}'`,
       );
     }
-  }
-
-  const assertReceiptAndAuthority = (): void => {
-    const current = loadReceipt(receiptRecord.sandboxName, stateDir);
-    if (!current || !isDeepStrictEqual(currentReceipt(current), receiptRecord)) {
+    transport.assertRuntimeAuthority();
+    return true;
+  };
+  const present = inspectPresence();
+  const revalidate = (): void => {
+    if (inspectPresence() !== present) {
       throw new Error(
-        `Portable demo lifecycle receipt changed for sandbox '${receiptRecord.sandboxName}'`,
+        `Portable demo lifecycle container presence changed for sandbox '${receiptRecord.sandboxName}'`,
       );
     }
-    transport.assertRuntimeAuthority();
   };
   const verifyAbsent = (): void => {
     assertReceiptAndAuthority();
@@ -766,12 +789,62 @@ export function preparePortableDemoSandboxRemoval(
   return {
     present,
     receipt: receiptRecord,
+    revalidate,
     removeAndVerify: () => {
       assertReceiptAndAuthority();
       if (present) transport.podman(["rm", "--force", receiptRecord.containerId]);
       verifyAbsent();
     },
     verifyAbsent,
+  };
+}
+
+function requirePortableDemoDestroyContext(
+  sandboxName: string,
+  receipt: PortableDemoLifecycleReceiptRecord,
+  context: PortableDemoDestroyContext | null,
+): void {
+  // Portable OpenClaw registrations before #9413 stored the default agent as null.
+  if (
+    !context ||
+    (context.agent !== "openclaw" && context.agent !== null) ||
+    context.openshellDriver !== "docker" ||
+    context.lifecycleGeneration !== receipt.registryGeneration
+  ) {
+    throw new Error(
+      `Portable demo lifecycle receipt does not match the OpenClaw sandbox registry record for '${sandboxName}'`,
+    );
+  }
+}
+
+/** Revalidate schema-4 receipt and Podman identity without granting Podman removal authority. */
+export function preparePortableDemoSandboxDestroyAuthority(
+  sandboxName: string,
+  readContext: () => PortableDemoDestroyContext | null,
+  deps: PortableDemoLifecycleDeps = {},
+): PreparedPortableDemoSandboxDestroyAuthority | null {
+  const commandEnv = deps.env ?? process.env;
+  const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
+  const receipt = loadReceipt(sandboxName, stateDir);
+  if (!receipt) return null;
+  const receiptRecord = currentReceipt(receipt);
+  if ((deps.platform ?? process.platform) !== "linux") {
+    throw new Error("Portable demo lifecycle receipt is only valid on Linux");
+  }
+  requirePortableDemoDestroyContext(sandboxName, receiptRecord, readContext());
+  const transport = qualifiedPodmanAuthority(receipt, commandEnv, deps);
+  const prepared = preparePortableDemoSandboxRemoval(receiptRecord, transport, stateDir);
+  const assertRegistryAuthority = (): void =>
+    requirePortableDemoDestroyContext(sandboxName, receiptRecord, readContext());
+  return {
+    revalidate: () => {
+      assertRegistryAuthority();
+      prepared.revalidate();
+    },
+    verifyAbsent: () => {
+      assertRegistryAuthority();
+      prepared.verifyAbsent();
+    },
   };
 }
 
@@ -894,11 +967,24 @@ function waitFor(
   return false;
 }
 
+function commandAttemptOutcome(
+  result: CommandResult,
+  ready: boolean,
+): PortableLifecycleAttemptOutcome {
+  if (ready) return "ready";
+  if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+    return "timeout";
+  }
+  if (result.error) return "error";
+  return "not-ready";
+}
+
 function gatewayIsRunning(
   receipt: PortableDemoLifecycleReceipt,
   gatewayName: string,
   capture: NonNullable<PortableDemoLifecycleDeps["captureOpenshell"]>,
   timeoutMs: number,
+  lifecycleTiming: PortableLifecycleTimingRecorder,
 ): boolean {
   const result = capture(
     openshellExecArgs(gatewayName, receipt.sandboxName, [
@@ -913,7 +999,9 @@ function gatewayIsRunning(
     ]),
     Math.min(PROBE_TIMEOUT_MS, timeoutMs),
   );
-  return result.status === 0 && /(?:^|\D)(?:200|401)\s*$/u.test(String(result.stdout ?? ""));
+  const ready = result.status === 0 && /(?:^|\D)(?:200|401)\s*$/u.test(String(result.stdout ?? ""));
+  lifecycleTiming.recordGatewayAttempt(commandAttemptOutcome(result, ready));
+  return ready;
 }
 
 function ollamaIsHealthy(
@@ -1005,6 +1093,7 @@ function recoverManagedOllama(
   stateDir: string,
   timing: Required<Pick<PortableDemoLifecycleDeps, "now" | "sleep">>,
   deps: PortableDemoLifecycleDeps,
+  lifecycleTiming: PortableLifecycleTimingRecorder,
 ): void {
   const reenrollRequested = commandEnv[PORTABLE_OLLAMA_REENROLL_ENV] === "1";
   const homeDir = commandEnv.HOME ?? os.homedir();
@@ -1016,6 +1105,7 @@ function recoverManagedOllama(
     }
     return;
   }
+  lifecycleTiming.setOllamaAction("checking");
   if (reenrollRequested) {
     const binPath = path.join(homeDir, ".local", "bin", "ollama");
     assertManagedOllamaBinary(binPath);
@@ -1027,12 +1117,22 @@ function recoverManagedOllama(
   const captureHost =
     deps.captureHost ??
     ((command, args, timeoutMs) => defaultCaptureHost(command, args, timeoutMs, commandEnv));
-  if (ollamaIsHealthy(captureHost, PROBE_TIMEOUT_MS)) return;
+  const checkOllamaHealth = (timeoutMs: number): boolean => {
+    lifecycleTiming.incrementOllamaAttempts();
+    return ollamaIsHealthy(captureHost, timeoutMs);
+  };
+  if (checkOllamaHealth(PROBE_TIMEOUT_MS)) {
+    lifecycleTiming.setOllamaAction("reused");
+    return;
+  }
 
   const binPath = deps.loadManagedOllama
     ? deps.loadManagedOllama()
     : loadUserLocalOllamaOwnership({ homeDir, stateDir });
-  if (!binPath) return;
+  if (!binPath) {
+    lifecycleTiming.setOllamaAction("not-owned");
+    return;
+  }
   const executable = openManagedOllamaBinary(binPath);
 
   try {
@@ -1055,6 +1155,7 @@ function recoverManagedOllama(
       OLLAMA_HOST: `127.0.0.1:${String(OLLAMA_PORT)}`,
     };
     delete launchEnv[PORTABLE_OLLAMA_REENROLL_ENV];
+    lifecycleTiming.setOllamaAction("start-attempted");
     launchHost(
       `/proc/self/fd/${String(MANAGED_EXECUTABLE_CHILD_FD)}`,
       ["serve"],
@@ -1065,13 +1166,14 @@ function recoverManagedOllama(
     executable.close();
   }
   const recovered = waitFor(OLLAMA_STARTUP_TIMEOUT_MS, timing, (remainingMs) =>
-    ollamaIsHealthy(captureHost, remainingMs),
+    checkOllamaHealth(remainingMs),
   );
   if (!recovered) {
     throw new Error(
       `NemoClaw-managed Ollama did not become healthy at http://127.0.0.1:${String(OLLAMA_PORT)}/api/tags within 30 seconds; start the receipt-bound executable at ${JSON.stringify(binPath)} with the 'serve' argument, then retry`,
     );
   }
+  lifecycleTiming.setOllamaAction("started");
   (deps.log ?? console.log)("  Portable demo lifecycle restarted NemoClaw-managed Ollama.");
 }
 
@@ -1170,107 +1272,151 @@ export function recoverPortableDemoSandboxLifecycle(
   const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
   const receipt = loadReceipt(sandboxName, stateDir);
   if (!receipt) return { kind: "not-installed" };
-  if ((deps.platform ?? process.platform) !== "linux") {
-    throw new Error("Portable demo lifecycle receipt is only valid on Linux");
-  }
-  requireCurrentRegistryGeneration(receipt, context.lifecycleGeneration);
-  const authority = qualifiedPodmanAuthority(receipt, commandEnv, deps);
+  const clock = deps.now ?? Date.now;
+  const lifecycleTiming = createPortableLifecycleTimingRecorder({
+    now: deps.timingNow,
+    write: deps.log ?? console.log,
+  });
+  const authority = lifecycleTiming.measure("authority", () => {
+    if ((deps.platform ?? process.platform) !== "linux") {
+      throw new Error("Portable demo lifecycle receipt is only valid on Linux");
+    }
+    requireCurrentRegistryGeneration(receipt, context.lifecycleGeneration);
+    return qualifiedPodmanAuthority(receipt, commandEnv, deps);
+  });
   const podman = authority.podman;
-  const initialInspection = podman(["inspect", receipt.containerId]);
+  const initialInspection = lifecycleTiming.measure("inspect", () =>
+    podman(["inspect", receipt.containerId]),
+  );
   if (isMissingPodmanContainer(initialInspection)) {
-    removeReceipt(sandboxName, stateDir);
+    lifecycleTiming.measure("inspect", () => removeReceipt(sandboxName, stateDir));
+    lifecycleTiming.finish("not-installed");
     return { kind: "not-installed" };
   }
-  let inspection = inspectPodmanContainer(
-    receipt.containerId,
-    sandboxName,
-    podman,
-    initialInspection,
+  let inspection = lifecycleTiming.measure("inspect", () =>
+    inspectPodmanContainer(receipt.containerId, sandboxName, podman, initialInspection),
   );
   if (inspection.sandboxId !== receipt.sandboxId) {
+    lifecycleTiming.markFailureStage("inspect");
+    lifecycleTiming.finish("failed");
     throw new Error(
       `Portable demo lifecycle refused container '${receipt.containerId}' because its OpenShell sandbox ID changed`,
     );
   }
   if (!inspection.running) {
-    requireCommand(
-      podman(["start", receipt.containerId]),
-      `Starting portable sandbox '${sandboxName}'`,
-    );
-    inspection = inspectPodmanContainer(receipt.containerId, sandboxName, podman);
+    lifecycleTiming.setContainerAction("started");
+    inspection = lifecycleTiming.measure("containerStart", () => {
+      requireCommand(
+        podman(["start", receipt.containerId]),
+        `Starting portable sandbox '${sandboxName}'`,
+      );
+      return inspectPodmanContainer(receipt.containerId, sandboxName, podman);
+    });
     if (!inspection.running) {
+      lifecycleTiming.markFailureStage("containerStart");
+      lifecycleTiming.finish("failed");
       throw new Error(`Portable sandbox '${sandboxName}' did not enter the running state`);
     }
+  } else {
+    lifecycleTiming.setContainerAction("reused");
   }
 
   const openshellBinary = deps.openshellBinary ?? commandEnv.NEMOCLAW_OPENSHELL_BIN ?? "openshell";
   const capture =
     deps.captureOpenshell ??
     ((args, timeoutMs) => defaultCaptureOpenshell(openshellBinary, args, timeoutMs, commandEnv));
-  const timing = { now: deps.now ?? Date.now, sleep: deps.sleep ?? defaultSleep };
+  const timing = { now: clock, sleep: deps.sleep ?? defaultSleep };
   const gatewayName = context.gatewayName;
-  const execReady = waitFor(EXEC_READY_TIMEOUT_MS, timing, (remainingMs) => {
-    const result = capture(
-      openshellExecArgs(gatewayName, sandboxName, ["true"]),
-      Math.min(PROBE_TIMEOUT_MS, remainingMs),
-    );
-    return result.status === 0 && !result.error;
-  });
+  const execReady = lifecycleTiming.measure("execReady", () =>
+    waitFor(EXEC_READY_TIMEOUT_MS, timing, (remainingMs) => {
+      const result = capture(
+        openshellExecArgs(gatewayName, sandboxName, ["true"]),
+        Math.min(PROBE_TIMEOUT_MS, remainingMs),
+      );
+      const ready = result.status === 0 && !result.error;
+      lifecycleTiming.recordExecAttempt(commandAttemptOutcome(result, ready));
+      return ready;
+    }),
+  );
   if (!execReady) {
+    lifecycleTiming.markFailureStage("execReady");
+    lifecycleTiming.finish("failed");
     throw new Error(`Portable sandbox '${sandboxName}' did not reconnect to the OpenShell gateway`);
   }
-  recoverManagedOllama(context, commandEnv, stateDir, timing, deps);
-  const gatewayRunning = gatewayIsRunning(receipt, gatewayName, capture, PROBE_TIMEOUT_MS);
+  lifecycleTiming.measure("ollama", () =>
+    recoverManagedOllama(context, commandEnv, stateDir, timing, deps, lifecycleTiming),
+  );
+  const gatewayRunning = lifecycleTiming.measure("gatewayHealth", () =>
+    gatewayIsRunning(receipt, gatewayName, capture, PROBE_TIMEOUT_MS, lifecycleTiming),
+  );
   const refreshStartup = receipt.schemaVersion === 1;
   if (!refreshStartup && gatewayRunning) {
+    lifecycleTiming.setGatewayAction("reused");
+    lifecycleTiming.finish("already-running");
     return { kind: "already-running" };
   }
-  let startupProbe = capture(
-    openshellExecArgs(gatewayName, sandboxName, ["pgrep", "-f", STARTUP_PROCESS_PATTERN]),
-    PROBE_TIMEOUT_MS,
+  let startupProbe = lifecycleTiming.measure("startupProbe", () =>
+    capture(
+      openshellExecArgs(gatewayName, sandboxName, ["pgrep", "-f", STARTUP_PROCESS_PATTERN]),
+      PROBE_TIMEOUT_MS,
+    ),
   );
   if (refreshStartup && gatewayRunning && startupProbe.status === 1 && !startupProbe.error) {
+    lifecycleTiming.markFailureStage("startupProbe");
+    lifecycleTiming.finish("failed");
     throw new Error(
       `Portable sandbox '${sandboxName}' has an agent gateway without its managed startup process`,
     );
   }
   if (refreshStartup && startupProbe.status === 0 && !startupProbe.error) {
-    const stopped = capture(
-      openshellExecArgs(gatewayName, sandboxName, [
-        "pkill",
-        "-TERM",
-        "-f",
-        STARTUP_PROCESS_PATTERN,
-      ]),
-      PROBE_TIMEOUT_MS,
-    );
-    if (stopped.error || (stopped.status !== 0 && stopped.status !== 1)) {
-      throw new Error(
-        `Stopping the stale managed startup process for portable sandbox '${sandboxName}' failed: ${commandDetail(stopped)}`,
+    lifecycleTiming.measure("startupProbe", () => {
+      const stopped = capture(
+        openshellExecArgs(gatewayName, sandboxName, [
+          "pkill",
+          "-TERM",
+          "-f",
+          STARTUP_PROCESS_PATTERN,
+        ]),
+        PROBE_TIMEOUT_MS,
       );
-    }
-    const startupStopped = waitFor(STARTUP_STOP_TIMEOUT_MS, timing, (remainingMs) => {
-      startupProbe = capture(
-        openshellExecArgs(gatewayName, sandboxName, ["pgrep", "-f", STARTUP_PROCESS_PATTERN]),
-        Math.min(PROBE_TIMEOUT_MS, remainingMs),
-      );
-      return startupProbe.status === 1 && !startupProbe.error;
+      if (stopped.error || (stopped.status !== 0 && stopped.status !== 1)) {
+        throw new Error(
+          `Stopping the stale managed startup process for portable sandbox '${sandboxName}' failed: ${commandDetail(stopped)}`,
+        );
+      }
+      const startupStopped = waitFor(STARTUP_STOP_TIMEOUT_MS, timing, (remainingMs) => {
+        startupProbe = capture(
+          openshellExecArgs(gatewayName, sandboxName, ["pgrep", "-f", STARTUP_PROCESS_PATTERN]),
+          Math.min(PROBE_TIMEOUT_MS, remainingMs),
+        );
+        return startupProbe.status === 1 && !startupProbe.error;
+      });
+      if (!startupStopped) {
+        throw new Error(
+          `Portable sandbox '${sandboxName}' stale managed startup process did not stop`,
+        );
+      }
     });
-    if (!startupStopped) {
-      throw new Error(
-        `Portable sandbox '${sandboxName}' stale managed startup process did not stop`,
-      );
-    }
   }
   if (startupProbe.status !== 1 || startupProbe.error) {
     if (startupProbe.status === 0 && !startupProbe.error) {
-      const recovered = waitFor(STARTUP_TIMEOUT_MS, timing, (remainingMs) =>
-        gatewayIsRunning(receipt, gatewayName, capture, remainingMs),
+      lifecycleTiming.setGatewayAction("waited");
+      const recovered = lifecycleTiming.measure("gatewayReady", () =>
+        waitFor(STARTUP_TIMEOUT_MS, timing, (remainingMs) => {
+          return gatewayIsRunning(receipt, gatewayName, capture, remainingMs, lifecycleTiming);
+        }),
       );
-      if (recovered) return { kind: "already-running" };
+      if (recovered) {
+        lifecycleTiming.finish("already-running");
+        return { kind: "already-running" };
+      }
     }
+    lifecycleTiming.markFailureStage(
+      startupProbe.status === 0 && !startupProbe.error ? "gatewayReady" : "startupProbe",
+    );
+    lifecycleTiming.finish("failed");
     throw new Error(
-      startupProbe.status === 0
+      startupProbe.status === 0 && !startupProbe.error
         ? `Portable sandbox '${sandboxName}' has a startup process, but its agent gateway did not pass the dashboard health check`
         : `Portable sandbox '${sandboxName}' startup process state could not be determined`,
     );
@@ -1279,16 +1425,24 @@ export function recoverPortableDemoSandboxLifecycle(
   const launch =
     deps.launchOpenshell ??
     ((args: readonly string[]) => defaultLaunchOpenshell(openshellBinary, args, commandEnv));
-  launch(openshellExecArgs(gatewayName, sandboxName, startupArgv(receipt)));
-  const recovered = waitFor(STARTUP_TIMEOUT_MS, timing, (remainingMs) =>
-    gatewayIsRunning(receipt, gatewayName, capture, remainingMs),
+  lifecycleTiming.setGatewayAction("started");
+  lifecycleTiming.measure("startupLaunch", () =>
+    launch(openshellExecArgs(gatewayName, sandboxName, startupArgv(receipt))),
+  );
+  const recovered = lifecycleTiming.measure("gatewayReady", () =>
+    waitFor(STARTUP_TIMEOUT_MS, timing, (remainingMs) => {
+      return gatewayIsRunning(receipt, gatewayName, capture, remainingMs, lifecycleTiming);
+    }),
   );
   if (!recovered) {
+    lifecycleTiming.markFailureStage("gatewayReady");
+    lifecycleTiming.finish("failed");
     throw new Error(
       `Portable sandbox '${sandboxName}' startup did not start its agent gateway; inspect /tmp/nemoclaw-start.log inside the sandbox`,
     );
   }
   (deps.log ?? console.log)(`  Portable demo lifecycle recovered sandbox '${sandboxName}'.`);
+  lifecycleTiming.finish("recovered");
   return { kind: "recovered" };
 }
 

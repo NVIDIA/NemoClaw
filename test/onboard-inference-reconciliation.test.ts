@@ -197,6 +197,7 @@ describe("onboard helpers", () => {
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
+    fs.writeFileSync(path.join(fakeBin, "brew"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -233,6 +234,28 @@ preflight.assessHost = () => ({
 const bridgeDnsPreflight = require(${bridgeDnsPreflightPath});
 bridgeDnsPreflight.assertDockerBridgeAndContainerDnsHealthy = () => {};
 const preflightGatewayAuthority = require(${preflightGatewayAuthorityPath});
+const createPreflightGatewayAuthority =
+  preflightGatewayAuthority.createOnboardPreflightGatewayAuthority;
+preflightGatewayAuthority.createOnboardPreflightGatewayAuthority = (deps) => ({
+  ...createPreflightGatewayAuthority(deps),
+  runRuntimePreflight: async () => ({
+    gpu: null,
+    host: preflight.assessHost(),
+    readinessReport: {},
+    sandboxGpuConfig: {
+      mode: "0",
+      hostGpuDetected: false,
+      hostGpuPlatform: null,
+      sandboxGpuEnabled: false,
+      sandboxGpuDevice: null,
+      errors: [],
+    },
+  }),
+  prepareGatewayAuthority: async () => ({
+    externallySupervised: false,
+    gatewayReuseState: "healthy",
+  }),
+});
 
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const commands = [];

@@ -30,6 +30,7 @@ import {
   selectedWorkflowJobs,
   validateE2eWorkflowPlan,
   withoutCredentialedCatalogueProfiles,
+  withoutUnavailableOptionalCredentialTargets,
   writeE2eWorkflowPlanCiOutput,
 } from "../../../tools/e2e/workflow-plan.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -117,6 +118,18 @@ describe("E2E workflow plan", () => {
     expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");
     expect(releaseRequiredWorkflowJobs()).not.toContain("staging-brev-launchable-identity");
     expect(releaseRequiredWorkflowJobs()).not.toContain("llama-cpp-dgx-spark-qualification");
+  });
+
+  it("omits only targets whose optional credential is unavailable", () => {
+    const plan = withoutUnavailableOptionalCredentialTargets(buildE2eWorkflowPlan(), new Set());
+    const braveRows = plan.catalogueMatrices["brave-nvidia-inference"].map((row) => row.id);
+
+    expect(braveRows).not.toContain("brave-search");
+    expect(braveRows).not.toContain("common-egress-agent-openclaw-balanced-weather");
+    expect(braveRows).toContain("common-egress-agent-openclaw-open-reference");
+    expect(braveRows).toContain("common-egress-agent-hermes-open-reference");
+    expect(plan.coverageMatrix.map((row) => row.id)).not.toContain("brave-search");
+    expect(() => validateE2eWorkflowPlan(plan)).not.toThrow();
   });
 
   it("keeps multiple inert declarations visibly unresolved without treating them as evidence (#9167)", () => {

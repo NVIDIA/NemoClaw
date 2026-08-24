@@ -31,7 +31,6 @@ describe("Docker GPU final lifecycle release", () => {
     ["a gateway error", "Error: gateway unavailable\n"],
     ["a phase-free row", "beta  2026-08-21 05:53:18\n"],
     ["an unrecognized phase", "beta  2026-08-21 05:53:18  Retiring\n"],
-    ["the selected sandbox in Deleting", "alpha  2026-08-21 05:53:18  Deleting\n"],
     ["the selected sandbox in Ready", "alpha  2026-08-21 05:53:18  Ready\n"],
     ["the selected sandbox in Provisioning", "alpha  2026-08-21 05:53:18  Provisioning\n"],
     ["the selected sandbox in Error", "alpha  2026-08-21 05:53:18  Error\n"],
@@ -48,6 +47,26 @@ describe("Docker GPU final lifecycle release", () => {
     expect(runOpenshell).toHaveBeenCalledTimes(2);
   });
 
+  it.each(["Error", "Deleting"])(
+    "accepts a corroborated stopped replacement in %s",
+    (phase) => {
+      const corroborate = vi.fn(() => true);
+      const runOpenshell = vi.fn(() => ({
+        status: 0,
+        stdout: `alpha  2026-08-23 01:40:35  ${phase}\n`,
+      }));
+
+      expect(
+        waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
+          runOpenshell,
+          sleep: vi.fn(),
+          soleLabeledReplacementCorroboratesRetiringPhase: corroborate,
+        }),
+      ).toBe(true);
+      expect(corroborate).toHaveBeenCalledOnce();
+    },
+  );
+
   it.each([
     ["a failed probe", { status: 1, stderr: "gateway unavailable" }],
     ["a probe without an exit status", { status: null, stderr: "timed out" }],
@@ -61,6 +80,33 @@ describe("Docker GPU final lifecycle release", () => {
       }),
     ).toBe(false);
     expect(runOpenshell).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not start Error corroboration after the lifecycle-release deadline (#9962)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const corroborate = vi.fn(() => true);
+    const runOpenshell = vi.fn(() => {
+      vi.setSystemTime(1000);
+      return {
+        status: 0,
+        stdout: "alpha  2026-08-23 01:40:35  Error\n",
+      };
+    });
+
+    try {
+      expect(
+        waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
+          runOpenshell,
+          sleep: vi.fn(),
+          soleLabeledReplacementCorroboratesRetiringPhase: corroborate,
+        }),
+      ).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(runOpenshell).toHaveBeenCalledOnce();
+    expect(corroborate).not.toHaveBeenCalled();
   });
 });
 

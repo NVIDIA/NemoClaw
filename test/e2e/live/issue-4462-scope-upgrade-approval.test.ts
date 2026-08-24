@@ -9,6 +9,7 @@ import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { trackIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import { ISSUE_4462_PAIRING_SEED_PY } from "../fixtures/issue-4462-pairing-seed.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -1259,11 +1260,10 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
     }),
   );
   cleanupRegistry.trackSandbox(host, SANDBOX_NAME, {
-    artifactName: "cleanup-nemoclaw-destroy",
-    env: env({ NEMOCLAW_CLEANUP_GATEWAY: "1" }),
-    redactionValues: [apiKey],
-    timeoutMs: 120_000,
+    artifactName: "cleanup-nemoclaw-destroy", env: env(),
+    redactionValues: [apiKey], timeoutMs: 120_000,
   });
+  trackIssue4462FailureDiagnostics(cleanupRegistry, sandbox, SANDBOX_NAME, env(), [apiKey]);
   await cleanup(host, sandbox);
   progress.phase("install the OpenClaw sandbox");
   const install = await host.command(

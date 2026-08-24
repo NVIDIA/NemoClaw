@@ -99,11 +99,22 @@ const OPAQUE_INPUTS = [
   ".agents/skills/nemoclaw-maintainer-policies/references/release-train.md",
 ] as const;
 
+const WORKFLOW_NAME_TEST = "test/github-actions-workflow-names.test.ts";
+
 function triggeredBy(relativePath: string): string[] {
-  return resolveVitestWatchTests(path.resolve(relativePath));
+  return resolveVitestWatchTests(path.resolve(relativePath)).filter(
+    (test) => test !== WORKFLOW_NAME_TEST,
+  );
 }
 
 describe("Vitest opaque-input watch triggers", () => {
+  it.each([".github/workflows/pr.yaml", ".github/workflows/pr.yml"])(
+    "maps YAML workflow files to the shared display-name contract [%s]",
+    (workflowPath) => {
+      expect(resolveVitestWatchTests(path.resolve(workflowPath))).toContain(WORKFLOW_NAME_TEST);
+    },
+  );
+
   it.each([
     ".github/workflows/release-daily-brev-image.yaml",
     "scripts/release-daily-brev-image.sh",
@@ -118,9 +129,10 @@ describe("Vitest opaque-input watch triggers", () => {
     },
   );
 
-  it("maps the Launchable host harness to its integration contract (#6409)", () => {
+  it("maps the Launchable host harness to its integration tests (#6409)", () => {
     expect(triggeredBy("tools/e2e/brev-launchable-e2e.sh")).toEqual([
       "test/brev-launchable-e2e.test.ts",
+      "test/brev-launchable-gateway-diagnostics.test.ts",
     ]);
   });
 

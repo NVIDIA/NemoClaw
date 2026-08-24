@@ -504,15 +504,30 @@ def observability_counts(result):
 
 os.environ.pop("NEMOCLAW_TOOL_DISCLOSURE", None)
 no_mcp = counts(agent.create_cli_agent(None, "assistant"))
-empty_mcp = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(())]))
-active = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(("mcp_echo",))]))
+empty_mcp = counts(
+    agent.create_cli_agent(
+        None,
+        "assistant",
+        mcp_tools=[],
+        mcp_server_info=[Info(("metadata_only",))],
+    )
+)
+active = counts(
+    agent.create_cli_agent(
+        None,
+        "assistant",
+        mcp_tools=[NamedTool("mcp_echo")],
+        mcp_server_info=[Info(())],
+    )
+)
 parent_only = harness.BaseTool("parent_only", "Parent graph tool")
 subagent_only = harness.BaseTool("subagent_only", "Subagent graph tool")
 subagent_result = agent.create_cli_agent(
     None,
     "assistant",
     tools=[parent_only],
-    mcp_server_info=[Info(("mcp_echo",))],
+    mcp_tools=[NamedTool("mcp_echo")],
+    mcp_server_info=[Info(())],
     subagents=[
         {"name": "inherits", "middleware": []},
         {"name": "overrides", "middleware": [], "tools": [subagent_only]},
@@ -544,7 +559,14 @@ subagent_catalogs = {
     "visible": [tool.name for tool in subagent_visible.tools],
 }
 os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = "direct"
-direct = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(("mcp_echo",))]))
+direct = counts(
+    agent.create_cli_agent(
+        None,
+        "assistant",
+        mcp_tools=[NamedTool("mcp_echo")],
+        mcp_server_info=[Info(())],
+    )
+)
 
 os.environ["NEMOCLAW_OBSERVABILITY"] = "true"
 observability_noncanonical = observability_counts(
@@ -622,7 +644,12 @@ finally:
 
 os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = "invalid"
 try:
-    agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(("mcp_echo",))])
+    agent.create_cli_agent(
+        None,
+        "assistant",
+        mcp_tools=[NamedTool("mcp_echo")],
+        mcp_server_info=[Info(())],
+    )
 except RuntimeError as exc:
     invalid = str(exc)
 else:

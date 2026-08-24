@@ -129,10 +129,10 @@ describe("PR review advisor", () => {
       buildComment({
         summary,
         result,
-        marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->",
-        title: "PR Review Advisor (Nemotron Ultra)",
+        marker: "<!-- nemoclaw-pr-review-advisor-alternate -->",
+        title: "Alternate Review Title",
       }),
-    ).toContain("## PR Review Advisor (Nemotron Ultra) — Blocking findings reported");
+    ).toContain("## Alternate Review Title — Blocking findings reported");
     expect(() =>
       buildComment({
         summary,

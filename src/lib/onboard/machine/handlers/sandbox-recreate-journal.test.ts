@@ -282,6 +282,7 @@ it("carries filtered presets through post-delete onboard resume", async () => {
     const createIntent = args.at(-1);
     expect(createIntent).toMatchObject({
       recreate: true,
+      recreateJournalTargetIntentFingerprint: targetIntentFingerprint,
       rebuildPolicyPresets: ["github"],
       resolved: {
         policy: { options: { additionalPresets: ["github"] } },

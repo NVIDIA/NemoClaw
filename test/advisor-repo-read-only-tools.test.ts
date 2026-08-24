@@ -8,9 +8,14 @@ import path from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createRepoConfinedReadOnlyTools } from "../tools/advisors/repo-read-only-tools.mts";
+import {
+  canonicalRepoReadPath,
+  createRepoConfinedReadOnlyTools,
+  MAX_ADVISOR_TOOL_RESULT_JSON_BYTES,
+} from "../tools/advisors/repo-read-only-tools.mts";
 
 const tempDirs: string[] = [];
+const PI_SESSION_READ_LINE_LIMIT_BYTES = 50 * 1024;
 let workspace: string;
 let outside: string;
 let tools: Map<string, ToolDefinition>;
@@ -156,6 +161,7 @@ describe("repo-confined advisor read-only tools", () => {
 
   it("reports ordinary read ranges and file size (#9949)", async () => {
     fs.writeFileSync(path.join(workspace, "ranges.txt"), "one\ntwo\nthree\n", "utf8");
+    const realPath = fs.realpathSync(path.join(workspace, "ranges.txt"));
     const observations: Parameters<
       NonNullable<Parameters<typeof createRepoConfinedReadOnlyTools>[1]>
     >[0][] = [];
@@ -169,9 +175,105 @@ describe("repo-confined advisor read-only tools", () => {
     await execute("read", { path: "ranges.txt", offset: 3 });
 
     expect(observations).toEqual([
-      { path: path.join(workspace, "ranges.txt"), offset: 1, endOffset: 2, fileSize: 14, reachesEnd: false },
-      { path: path.join(workspace, "ranges.txt"), offset: 3, endOffset: null, fileSize: 14, reachesEnd: true },
+      { path: realPath, offset: 1, endOffset: 2, fileSize: 14, reachesEnd: false },
+      { path: realPath, offset: 3, endOffset: null, fileSize: 14, reachesEnd: true },
     ]);
+  });
+
+  it("keeps escaped read results within the specialist session line limit (#9949)", async () => {
+    const lineCount = 40;
+    const escapedLine = `const value = ${JSON.stringify('\\"'.repeat(96))};`;
+    fs.writeFileSync(
+      path.join(workspace, "escaped-read.txt"),
+      `${Array.from({ length: lineCount }, () => escapedLine).join("\n")}\n`,
+      "utf8",
+    );
+    const observations: Parameters<
+      NonNullable<Parameters<typeof createRepoConfinedReadOnlyTools>[1]>
+    >[0][] = [];
+    tools = new Map(
+      createRepoConfinedReadOnlyTools(workspace, (observation) => observations.push(observation)).map(
+        (tool) => [tool.name, tool],
+      ),
+    );
+
+    const first = await execute("read", { path: "escaped-read.txt", offset: 1 });
+    expect(Buffer.byteLength(JSON.stringify(first), "utf8")).toBeLessThanOrEqual(
+      MAX_ADVISOR_TOOL_RESULT_JSON_BYTES,
+    );
+    expect(
+      Buffer.byteLength(
+        JSON.stringify({
+          type: "message",
+          id: "result-1",
+          parentId: "call-1",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: {
+            role: "toolResult",
+            toolCallId: "call-1",
+            toolName: "read",
+            content: first.content,
+            details: first.details,
+            isError: false,
+          },
+        }),
+        "utf8",
+      ),
+    ).toBeLessThanOrEqual(PI_SESSION_READ_LINE_LIMIT_BYTES);
+    const firstTruncation = (
+      first.details as { truncation?: { truncated: boolean; outputLines: number } } | undefined
+    )?.truncation;
+    expect(firstTruncation?.truncated).toBe(true);
+    expect(firstTruncation?.outputLines).toBeGreaterThan(0);
+    const nextOffset = 1 + (firstTruncation?.outputLines ?? 0);
+    expect((first.content[0] as { text: string }).text).toContain(
+      `Use offset=${nextOffset} to continue`,
+    );
+
+    const second = await execute("read", { path: "escaped-read.txt", offset: nextOffset });
+    expect(Buffer.byteLength(JSON.stringify(second), "utf8")).toBeLessThanOrEqual(
+      MAX_ADVISOR_TOOL_RESULT_JSON_BYTES,
+    );
+    expect(
+      Buffer.byteLength(
+        JSON.stringify({
+          type: "message",
+          id: "result-2",
+          parentId: "call-2",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          message: {
+            role: "toolResult",
+            toolCallId: "call-2",
+            toolName: "read",
+            content: second.content,
+            details: second.details,
+            isError: false,
+          },
+        }),
+        "utf8",
+      ),
+    ).toBeLessThanOrEqual(PI_SESSION_READ_LINE_LIMIT_BYTES);
+
+    expect(observations.at(-1)?.reachesEnd).toBe(true);
+    expect(observations.at(-1)?.endOffset).toBeNull();
+  });
+
+  it("uses one canonical path for configured and observed reads", async () => {
+    fs.writeFileSync(path.join(workspace, "required.txt"), "required\n", "utf8");
+    const observations: Parameters<
+      NonNullable<Parameters<typeof createRepoConfinedReadOnlyTools>[1]>
+    >[0][] = [];
+    tools = new Map(
+      createRepoConfinedReadOnlyTools(workspace, (observation) => observations.push(observation)).map(
+        (tool) => [tool.name, tool],
+      ),
+    );
+
+    const configuredPath = await canonicalRepoReadPath(workspace, "required.txt");
+    await execute("read", { path: "required.txt" });
+
+    expect(configuredPath).toBe(fs.realpathSync(path.join(workspace, "required.txt")));
+    expect(observations[0]?.path).toBe(configuredPath);
   });
 
   it("keeps ordinary read, grep, find, and ls behavior inside the workspace (#6446)", async () => {
