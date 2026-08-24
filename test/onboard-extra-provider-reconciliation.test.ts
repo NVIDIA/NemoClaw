@@ -127,11 +127,11 @@ const { createSandbox } = require(${onboardPath});
   const sandboxNames = [
     await createSandbox(
       null, "gpt-5.4", undefined, undefined, undefined, undefined, undefined,
-      ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+      ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
     ),
     await createSandbox(
       null, "gpt-5.4", undefined, undefined, undefined, undefined, undefined,
-      ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+      ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
     ),
   ];
   console.log(JSON.stringify({

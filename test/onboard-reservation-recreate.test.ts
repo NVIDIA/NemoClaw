@@ -135,7 +135,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
   );
   console.log(JSON.stringify({ sandboxName, events }));
 })().catch((error) => {

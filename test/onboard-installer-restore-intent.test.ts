@@ -155,7 +155,7 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
   process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
   );
 
   // Prove the recreated + restored sandbox is reachable through the real
@@ -344,7 +344,7 @@ const { createSandbox } = require(${onboardPath});
   try {
     await createSandbox(
       null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-      ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+      ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
     );
     console.log(JSON.stringify({ error: null, mutations }));
   } catch (caught) {
@@ -444,7 +444,7 @@ const { createSandbox } = require(${onboardPath});
   delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
   await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
   );
   console.log("ERROR_DID_NOT_EXIT");
 })().catch((error) => {

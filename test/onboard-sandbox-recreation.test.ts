@@ -66,7 +66,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
   );
   console.log("ERROR_DID_NOT_EXIT");
 })().catch((error) => {
@@ -196,7 +196,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
   );
   console.log(JSON.stringify({ sandboxName, commands, registeredSandbox }));
 })().catch((error) => {
@@ -357,7 +357,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
   );
   console.log(JSON.stringify({ sandboxName, events }));
 })().catch((error) => {
@@ -505,7 +505,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
   );
   console.log(JSON.stringify({ sandboxName, events }));
 })().catch((error) => {
@@ -656,7 +656,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
   );
   console.log(JSON.stringify({ sandboxName, events }));
 })().catch((error) => {
@@ -796,7 +796,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
   await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
   );
   const session = onboardSession.loadSession();
   console.log(JSON.stringify({ policyPresets: session && session.policyPresets }));
@@ -928,7 +928,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
   );
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
@@ -1083,7 +1083,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
   );
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
@@ -1233,7 +1233,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
   );
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
@@ -1419,7 +1419,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxName = await createSandbox(
     null, "gpt-5.4", undefined, undefined, undefined, undefined, undefined,
-    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
   );
   const createCommand = commands.find((entry) => entry.command.includes("sandbox create"));
   fs.writeFileSync(${JSON.stringify(payloadPath)}, JSON.stringify({

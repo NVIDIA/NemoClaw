@@ -136,7 +136,7 @@ try {
   Object.defineProperty(process, "arch", { value: "x64" });
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null,
-    ${JSON.stringify(path.join(repoRoot, "Dockerfile"))},
+    ${JSON.stringify(path.join(repoRoot, "test", "fixtures", "explicit-custom.Dockerfile"))},
   );
   console.log(JSON.stringify({ sandboxName, commands }));
 } catch (error) {
