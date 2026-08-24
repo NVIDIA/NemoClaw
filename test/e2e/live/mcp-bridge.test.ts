@@ -1134,9 +1134,10 @@ mcpBridgeShardTest("hermes")(
       expectedAdapter: "hermes-config",
       artifactPrefix: "hermes",
     });
-    // Hermes discovery is intentionally allowed to finish on the next agent
-    // turn when the bounded startup window expires. Prove the product contract
-    // through the real gateway instead of requiring an eager startup request.
+    // Hermes builds its MCP registry at gateway startup. The add transaction
+    // proves the config reload, then this explicit provider-backed restart
+    // establishes the fresh registry before the first real agent turn.
+    await restartBridgeWithoutHostSecret(host, HERMES_SANDBOX_NAME, "hermes-initial");
     await assertHermesToolCall("hermes-real-mcp-tool-call-initial");
     await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
       artifacts,
