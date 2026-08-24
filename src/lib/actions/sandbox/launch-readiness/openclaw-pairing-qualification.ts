@@ -137,7 +137,14 @@ export function parseOpenClawPairingSettlementObservation(
   output: string,
 ): OpenClawPairingSettlementObservation | null {
   const record = parseOpenClawPairingSettlementRecord(output);
-  if (!record || (record.state !== "pairing-only" && record.state !== "settled")) return null;
+  if (
+    !record ||
+    (record.state !== "pairing-only" &&
+      record.state !== "scope-upgrade-pending" &&
+      record.state !== "settled")
+  ) {
+    return null;
+  }
   return record as OpenClawPairingSettlementObservation;
 }
 

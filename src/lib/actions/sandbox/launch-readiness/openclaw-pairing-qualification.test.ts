@@ -414,7 +414,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       });
 
       expect(observeOrdinarySettlement()).toEqual({
-        state: "pairing-only",
+        state: "scope-upgrade-pending",
         deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       });
       expect(() => observeRepairSettlement()).toThrow(
