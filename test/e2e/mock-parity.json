@@ -585,7 +585,7 @@
         "src/lib/onboard/local-model-profile/plan.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/install-express-prompt.test.ts",
+        "test/installer-integration/install-express-prompt.test.ts",
         "test/install-local-model-profile.test.ts"
       ]
     },

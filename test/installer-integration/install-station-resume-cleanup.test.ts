@@ -8,10 +8,10 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { assertStationExpressInstallerResumeMatches } from "../src/lib/onboard/station-express-resume";
-import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+import { assertStationExpressInstallerResumeMatches } from "../../src/lib/onboard/station-express-resume";
+import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const STATION_REVISION = "a".repeat(40);
 const STATION_GENERATION = "0123456789abcdef0123456789abcdef";
 
