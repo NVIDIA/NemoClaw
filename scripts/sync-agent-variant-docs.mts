@@ -9,9 +9,10 @@ import { parse } from "yaml";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const docsRoot = path.join(repoRoot, "docs");
 const generatedDocsRoot = path.join(repoRoot, "docs/_build/agent-variants");
-export const agentVariants = ["openclaw", "hermes", "deepagents"] as const;
+export const agentVariants = ["openclaw", "hermes", "deepagents", "pi"] as const;
 
 type AgentVariant = (typeof agentVariants)[number];
+const defaultSharedAgentVariants = new Set<AgentVariant>(["openclaw", "hermes", "deepagents"]);
 type RenderedFile = {
   path: string;
   contents: string;
@@ -366,7 +367,7 @@ function updateCommandsFrontmatter(frontmatter: string, variant: AgentVariant): 
       "keywords",
       '["nemohermes cli commands", "hermes command reference", "nemohermes command reference"]',
     );
-  } else {
+  } else if (variant === "deepagents") {
     next = replaceFrontmatterLine(next, "title", '"NemoDeepAgents CLI Commands Reference"');
     next = replaceFrontmatterLine(
       next,
@@ -382,6 +383,23 @@ function updateCommandsFrontmatter(frontmatter: string, variant: AgentVariant): 
       next,
       "keywords",
       '["nemo-deepagents cli commands", "deep agents command reference", "nemo-deepagents command reference"]',
+    );
+  } else {
+    next = replaceFrontmatterLine(next, "title", '"NemoClaw for Pi CLI Commands Reference"');
+    next = replaceFrontmatterLine(
+      next,
+      "description",
+      '"Full CLI reference for Pi sandboxes and the Pi terminal runtime."',
+    );
+    next = replaceFrontmatterLine(
+      next,
+      "description-agent",
+      '"Includes NemoClaw lifecycle commands and Pi interactive and headless commands. Use when operating a Pi sandbox."',
+    );
+    next = replaceFrontmatterLine(
+      next,
+      "keywords",
+      '["nemoclaw pi commands", "pi agent command reference", "pi sandbox commands"]',
     );
   }
   next = replaceFrontmatterLine(next, "sidebar-title", '"Commands"');
@@ -501,7 +519,7 @@ function normalizeNavigationSourcePath(navPath: string | undefined): string | nu
 function normalizeGeneratedNavigationSourcePath(navPath: string | undefined): string | null {
   if (!navPath) return null;
   const generatedMatch = navPath.match(
-    /^_build\/agent-variants\/(.+)\.(?:openclaw|hermes|deepagents)\.generated\.mdx$/,
+    /^_build\/agent-variants\/(.+)\.(?:openclaw|hermes|deepagents|pi)\.generated\.mdx$/,
   );
   return generatedMatch?.[1] ? `${generatedMatch[1]}.mdx` : null;
 }
@@ -530,7 +548,10 @@ function assertDeclaredAgentVariantScope(membership: NavigationVariantMembership
     const published = orderedAgentVariants(publishedVariants);
 
     if (!declaredVariants) {
-      if (publishedVariants.size < agentVariants.length) {
+      const completeDefaultScope =
+        publishedVariants.size === defaultSharedAgentVariants.size &&
+        [...defaultSharedAgentVariants].every((variant) => publishedVariants.has(variant));
+      if (publishedVariants.size < agentVariants.length && !completeDefaultScope) {
         violations.push(
           `docs/${sourcePath} is published for [${published.join(", ")}] but does not declare agent-variants`,
         );
@@ -778,6 +799,7 @@ const PROTECTED_LITERALS = [
     "nemoclaw onboard --agent langchain-deepagents-code",
     "__NEMOCLAW_ONBOARD_AGENT_LANGCHAIN_DEEPAGENTS_CODE__",
   ],
+  ["nemoclaw onboard --agent pi", "__NEMOCLAW_ONBOARD_AGENT_PI__"],
 ] as const;
 
 function protectNonAliasableLiterals(body: string): string {

@@ -69,6 +69,7 @@ const OPAQUE_INPUTS = [
   "tools/e2e/contracts/v1/jetson-dispatch.json",
   ".github/workflows/base-image.yaml",
   ".github/workflows/base-image-platform.yaml",
+  "test/e2e/live/managed-image-activation-e2e-helpers.ts",
   "scripts/export-managed-base-image-contract.sh",
   "scripts/checks/download-hermes-source-archive.sh",
   "scripts/checks/validate-managed-base-index.sh",
@@ -222,6 +223,9 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/pi-candidate-runtime-artifacts.test.ts",
       "test/managed-image-publication-workflow.test.ts",
       "test/pull-public-exact-digest.test.ts",
+    ]);
+    expect(triggeredBy("test/e2e/live/managed-image-activation-e2e-helpers.ts")).toEqual([
+      "test/managed-image-publication-workflow.test.ts",
     ]);
     expect(triggeredBy("scripts/export-managed-base-image-contract.sh")).toEqual([
       "test/managed-base-image-contract.test.ts",

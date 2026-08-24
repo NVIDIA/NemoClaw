@@ -782,8 +782,12 @@ const { createSandbox } = require(${onboardPath});
         "OPENAI_API_KEY",
       );
 
-      // provider get + provider update + inference set
-      assert.equal(harness.commands.length, 3);
+      // openai provider profile import + provider get + provider update + inference set
+      assert.match(
+        harness.commands[0].command,
+        /^provider profile -g nemoclaw import --file .*openai\.yaml$/u,
+      );
+      assert.equal(harness.commands.length, 4);
     });
   });
   it("accepts gateway inference output that omits the Route line", async () => {
@@ -817,8 +821,12 @@ const { createSandbox } = require(${onboardPath});
         "OPENAI_API_KEY",
       );
 
-      // provider get + provider update + inference set
-      assert.equal(harness.commands.length, 3);
+      // openai provider profile import + provider get + provider update + inference set
+      assert.match(
+        harness.commands[0].command,
+        /^provider profile -g nemoclaw import --file .*openai\.yaml$/u,
+      );
+      assert.equal(harness.commands.length, 4);
     });
   });
   it("uses the sandbox-base registry in pullAndResolveBaseImageDigest (#1904)", () => {

@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { CANDIDATE_MANAGED_IMAGE_AGENTS } from "../onboard/managed-image/contract";
-import { CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS } from "./candidate-authority";
 import {
   CANDIDATE_AGENT_FEATURE_ENV,
   CANDIDATE_QUALIFICATION_RECEIPT_ENV,
@@ -24,6 +24,11 @@ import {
 } from "./candidate-test-fixture";
 
 const receipts: Array<() => void> = [];
+const ROOT = path.resolve(import.meta.dirname, "../../..");
+const PUBLISHED_PI_RECEIPTS = [
+  ["linux/amd64", "ci/pi-agent-qualification-v1-linux-amd64.json"],
+  ["linux/arm64", "ci/pi-agent-qualification-v1-linux-arm64.json"],
+] as const;
 
 function callerMintedReceipt(): NodeJS.ProcessEnv {
   const fixture = candidateQualificationEnvironment();
@@ -49,10 +54,17 @@ describe("candidate agent gate", () => {
     expect(isCandidateAgent("langchain-deepagents-code")).toBe(false);
   });
 
-  it.each(CANDIDATE_MANAGED_IMAGE_AGENTS)(
-    "publishes no qualified %s candidate receipt in this release (#7927)",
-    (agent) => {
-      expect(CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS[agent]).toEqual([]);
+  it.each(PUBLISHED_PI_RECEIPTS)(
+    "publishes the exact Pi receipt for %s",
+    (platform, relativePath) => {
+      const receiptPath = path.join(ROOT, relativePath);
+
+      expect(
+        readCandidateQualificationReceipt("pi", {
+          [CANDIDATE_AGENT_FEATURE_ENV]: "1",
+          [CANDIDATE_QUALIFICATION_RECEIPT_ENV]: receiptPath,
+        }),
+      ).toMatchObject({ agent: "pi", platform });
     },
   );
 
@@ -76,7 +88,7 @@ describe("candidate agent gate", () => {
     expect(isCandidateQualificationEnabled("pi", env)).toBe(false);
     expect(() => readCandidateQualificationReceipt("pi", env)).toThrow(CandidateQualificationError);
     expect(() => readCandidateQualificationReceipt("pi", env)).toThrow(
-      "no qualified receipt is published for release candidate 'pi'",
+      "the receipt is not a published qualification for that candidate",
     );
   });
 
