@@ -151,6 +151,22 @@ describe("PR review advisor workflow boundary", () => {
     );
   });
 
+  it("supplies comparison refs while preparing specialist context", () => {
+    const errors = validateMutation((value) => {
+      const prepare = value.jobs["review-specialists"].steps.find(
+        (step: Record<string, any>) => step.name === "Prepare advisor sandbox inputs",
+      );
+      delete prepare.env.BASE_REF;
+      delete prepare.env.HEAD_REF;
+    });
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "Prepare advisor sandbox inputs must receive the selected base ref",
+        "Prepare advisor sandbox inputs must receive the selected head ref",
+      ]),
+    );
+  });
+
   it("keeps trusted code and same-run artifacts", () => {
     const errors = validateMutation((value) => {
       const checkout = value.jobs.review.steps.find(
