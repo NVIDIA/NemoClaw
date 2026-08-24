@@ -10,9 +10,8 @@
  * (#9314). They are now recorded and archived; symlink and special-file
  * rejection is unchanged.
  *
- * The same harness covers how a row is parsed. Rows are tab-delimited, and a
- * tab is a legal byte in a Linux filename, so a crafted path must not be able
- * to desynchronise the split.
+ * The same harness covers record parsing. NUL delimiters keep tabs and
+ * newlines inside a filename from changing the field boundaries.
  */
 
 import fs from "node:fs";
@@ -84,12 +83,18 @@ process.exit(0);
   return openshell;
 }
 
+function encodePreBackupAuditEntries(
+  entries: readonly (readonly [string, string, string])[],
+): string {
+  return entries.flat().join("\0") + (entries.length > 0 ? "\0" : "");
+}
+
 /**
  * Run `backupSandboxState` against a fake sandbox whose pre-backup audit
- * reports `auditLines` (raw `find -printf "%y\t%p\t%l\n"` rows).
+ * reports `auditOutput` (raw `find -printf "%y\0%p\0%l\0"` fields).
  */
 function backupWithAuditOutput(
-  auditLines: string,
+  auditOutput: string,
 ): ReturnType<SandboxStateModule["backupSandboxState"]> {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-fixture-"));
   const oldPath = process.env.PATH;
@@ -122,7 +127,7 @@ if (cmd.includes("[ -d ")) {
   process.exit(0);
 }
 if (cmd.includes("find ")) {
-  process.stdout.write(${JSON.stringify(auditLines)} + (${JSON.stringify(auditLines)} ? "\\n" : ""));
+  process.stdout.write(${JSON.stringify(auditOutput)});
   process.exit(0);
 }
 if (cmd.includes("tar ") && cmd.includes("-cf -")) {
@@ -160,13 +165,13 @@ describe("pre-backup audit — multiply-linked regular files (#9314)", () => {
       // Shape emitted by `find -type f -a -links +1`: type `f`, empty link
       // target. A lazily installed dependency hard-links out of the package
       // manager cache, so every installed file looks like this.
-      const auditLines = [
-        "f\t/sandbox/.openclaw/workspace/lazy-packages/aiohappyeyeballs/impl.py\t",
-        "f\t/sandbox/.openclaw/workspace/lazy-packages/aiohappyeyeballs/utils.py\t",
-        "f\t/sandbox/.openclaw/workspace/lazy-packages/edge_tts/__init__.py\t",
-      ].join("\n");
+      const auditOutput = encodePreBackupAuditEntries([
+        ["f", "/sandbox/.openclaw/workspace/lazy-packages/aiohappyeyeballs/impl.py", ""],
+        ["f", "/sandbox/.openclaw/workspace/lazy-packages/aiohappyeyeballs/utils.py", ""],
+        ["f", "/sandbox/.openclaw/workspace/lazy-packages/edge_tts/__init__.py", ""],
+      ]);
 
-      const backup = backupWithAuditOutput(auditLines);
+      const backup = backupWithAuditOutput(auditOutput);
 
       expect(backup.success, backup.error).toBe(true);
       expect(backup.error).toBeUndefined();
@@ -183,12 +188,12 @@ describe("pre-backup audit — multiply-linked regular files (#9314)", () => {
 
   it("still rejects an unsafe symlink alongside hard-linked files", () => {
     // Regression lock: accepting hard links must not weaken symlink rejection.
-    const auditLines = [
-      "f\t/sandbox/.openclaw/workspace/lazy-packages/edge_tts/__init__.py\t",
-      "l\t/sandbox/.openclaw/workspace/escape\t../openclaw.json",
-    ].join("\n");
+    const auditOutput = encodePreBackupAuditEntries([
+      ["f", "/sandbox/.openclaw/workspace/lazy-packages/edge_tts/__init__.py", ""],
+      ["l", "/sandbox/.openclaw/workspace/escape", "../openclaw.json"],
+    ]);
 
-    const backup = backupWithAuditOutput(auditLines);
+    const backup = backupWithAuditOutput(auditOutput);
 
     expect(backup.success).toBe(false);
     expect(backup.error).toMatch(/Pre-backup audit rejected/);
@@ -197,7 +202,9 @@ describe("pre-backup audit — multiply-linked regular files (#9314)", () => {
 
   it("still rejects special files", () => {
     // Regression lock: sockets/fifos/devices remain violations.
-    const backup = backupWithAuditOutput("s\t/sandbox/.openclaw/workspace/agent.sock\t");
+    const backup = backupWithAuditOutput(
+      encodePreBackupAuditEntries([["s", "/sandbox/.openclaw/workspace/agent.sock", ""]]),
+    );
 
     expect(backup.success).toBe(false);
     expect(backup.error).toMatch(/Pre-backup audit rejected/);
@@ -205,15 +212,18 @@ describe("pre-backup audit — multiply-linked regular files (#9314)", () => {
   });
 });
 
-describe("pre-backup audit — tab-delimited row parsing", () => {
-  it("rejects a symlink row carrying a tab in its path", () => {
-    // `x<TAB>../qq/evil` is one filename an agent can create inside its own
-    // state dir. `find` emits its bytes verbatim, so the row splits into four
-    // fields: the audit reads `../qq/evil` as the link target — a shape the
-    // npm-bin whitelist accepts — and discards the real target in the fourth
-    // field, whitelisting a symlink it is meant to reject.
+describe("pre-backup audit record framing", () => {
+  it("rejects a symlink path containing tabs and newlines", () => {
+    // NUL framing must keep every control character inside the pathname field
+    // so it cannot create synthetic audit records or change the link target.
     const backup = backupWithAuditOutput(
-      "l\t/sandbox/.openclaw/extensions/example-not-a-real-value-1/node_modules/.bin/x\t../qq/evil\t/etc/passwd",
+      encodePreBackupAuditEntries([
+        [
+          "l",
+          "/sandbox/.openclaw/extensions/example-not-a-real-value-1/node_modules/.bin/x\t../qq/evil\nf\t/synthetic",
+          "/etc/passwd",
+        ],
+      ]),
     );
 
     expect(String(backup.error ?? "")).toMatch(/Pre-backup audit rejected/);
@@ -221,15 +231,20 @@ describe("pre-backup audit — tab-delimited row parsing", () => {
     expect(backup.success).toBe(false);
   });
 
-  it("keeps accepting a hard-link row whose empty link target was trimmed away", () => {
-    // The audit output is trimmed as a whole, so the trailing empty %l of the
-    // last row is removed and that row carries two fields. This is the normal
-    // shape of every audit that ends on a non-symlink; it must not be read as
-    // a malformed row.
+  it("keeps accepting a hard-link entry with an empty link target", () => {
     const backup = backupWithAuditOutput(
-      "f\t/sandbox/.openclaw/workspace/lazy-packages/edge_tts/__init__.py\t",
+      encodePreBackupAuditEntries([
+        ["f", "/sandbox/.openclaw/workspace/lazy-packages/edge_tts/__init__.py", ""],
+      ]),
     );
 
     expect(backup.error ?? "").not.toMatch(/Pre-backup audit rejected/);
+  });
+
+  it("rejects output that does not contain complete field triples", () => {
+    const backup = backupWithAuditOutput("f\0/sandbox/.openclaw/workspace/file");
+
+    expect(backup.success).toBe(false);
+    expect(backup.error).toBe("Pre-backup audit rejected malformed output");
   });
 });

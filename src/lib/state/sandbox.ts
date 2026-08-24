@@ -1307,29 +1307,25 @@ function resolveOpenClawBackupMetadata(
   };
 }
 
-/**
- * Classify one pre-backup audit row emitted by
- * `find -printf "%y\t%p\t%l\n"`, where `dirPrefix` is the state-dir root the
- * row's absolute path is reported under.
- *
- * A tab is a legal byte in a Linux filename, so a crafted path splits the row
- * into extra fields: the real link target moves past the third field and is
- * discarded, and a fragment of the row is checked against the symlink
- * whitelist in its place, so an entry the audit is meant to reject can be
- * recorded as allowed. Extra fields can only come from such a tab, so a row
- * that carries them is a violation rather than something to audit further.
- * Shorter rows are ordinary: the audit output is trimmed as a whole, which
- * removes the trailing empty `%l` of a final non-symlink row.
- */
-function classifyPreBackupAuditRow(
-  entry: string,
+type PreBackupAuditEntry = readonly [type: string, absPath: string, linkTarget: string];
+
+/** Parse NUL-delimited type, path, and link-target fields from the remote audit. */
+function parsePreBackupAuditEntries(output: string): PreBackupAuditEntry[] | null {
+  if (output.length === 0) return [];
+  const fields = output.split("\0");
+  if (fields.pop() !== "" || fields.length % 3 !== 0) return null;
+  const entries: PreBackupAuditEntry[] = [];
+  for (let index = 0; index < fields.length; index += 3) {
+    entries.push([fields[index] ?? "", fields[index + 1] ?? "", fields[index + 2] ?? ""]);
+  }
+  return entries;
+}
+
+/** Classify one strictly framed pre-backup audit entry. */
+function classifyPreBackupAuditEntry(
+  [type, absPath, linkTarget]: PreBackupAuditEntry,
   dirPrefix: string,
 ): "whitelisted" | "hardLinked" | "violation" {
-  const parts = entry.split("\t");
-  if (parts.length > 3) return "violation";
-  const type = parts[0] || "";
-  const absPath = parts[1] || entry;
-  const linkTarget = parts[2] || "";
   const relPath = absPath.startsWith(dirPrefix) ? absPath.slice(dirPrefix.length) : absPath;
   if (type === "l" && isAllowedStateSymlink(relPath, linkTarget)) return "whitelisted";
   // The audit's `find` only emits regular files through its `-links +1`
@@ -1596,11 +1592,9 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // their cache, so every Hermes sandbox that lazily installed a
         // dependency failed its pre-upgrade backup.
         //
-        // The printf format emits "<type>\t<absPath>\t<linkTarget>" — %l is
-        // empty for non-symlinks but always present, so a well-formed row has
-        // three fields. A tab is a legal byte in a Linux filename, so
-        // `classifyPreBackupAuditRow` enforces that count instead of assuming
-        // it.
+        // The printf format emits NUL-delimited type, absolute-path, and
+        // link-target fields. Linux filenames can contain tabs and newlines but
+        // cannot contain NUL, so only NUL framing can preserve each entry.
         // Per-dir `find` invocations are joined with `;` (not `&&`) and each
         // is tolerant of its own exit code via `|| true`. The base image bakes
         // a few state subdirs as root-owned (e.g. `extensions/<plugin>`,
@@ -1612,7 +1606,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         const auditCmd = existingDirs
           .map(
             (d) =>
-              `{ find ${shellQuote(`${dir}/${d}`)} \\( -type l -o \\( -type f -a -links +1 \\) -o \\( ! -type f -a ! -type d \\) \\) -printf "%y\\t%p\\t%l\\n" 2>/dev/null || true; }`,
+              `{ find ${shellQuote(`${dir}/${d}`)} \\( -type l -o \\( -type f -a -links +1 \\) -o \\( ! -type f -a ! -type d \\) \\) -printf "%y\\0%p\\0%l\\0" 2>/dev/null || true; }`,
           )
           .join("; ");
         _log(`Pre-backup audit: checking for symlinks, hard links, and special files`);
@@ -1637,18 +1631,30 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
             error: `Pre-backup audit failed: ${detail}`,
           };
         }
-        const auditOutput = (auditResult.stdout || "").trim();
-        if (auditOutput.length > 0) {
-          const allEntries = auditOutput.split("\n").filter((l) => l.length > 0);
+        const auditOutput = auditResult.stdout || "";
+        const allEntries = parsePreBackupAuditEntries(auditOutput);
+        if (allEntries === null) {
+          _log("SECURITY: Pre-backup audit returned malformed NUL-delimited output");
+          return {
+            success: false,
+            manifest,
+            backedUpDirs,
+            failedDirs: [...existingDirs],
+            backedUpFiles,
+            failedFiles: stateFiles.map((f) => f.path),
+            error: "Pre-backup audit rejected malformed output",
+          };
+        }
+        if (allEntries.length > 0) {
           const whitelisted: string[] = [];
           const hardLinked: string[] = [];
           const violations: string[] = [];
           const dirPrefix = `${dir}/`;
           const rows = { whitelisted, hardLinked, violation: violations };
           for (const entry of allEntries) {
-            // find -printf "%y\t%p\t%l\n" → "<type>\t<absPath>\t<linkTarget>"
-            // (linkTarget is empty for non-symlinks).
-            rows[classifyPreBackupAuditRow(entry, dirPrefix)].push(entry);
+            // JSON escapes embedded controls before the entry reaches logs or
+            // the user-facing rejection detail.
+            rows[classifyPreBackupAuditEntry(entry, dirPrefix)].push(JSON.stringify(entry));
           }
           if (whitelisted.length > 0) {
             _log(
