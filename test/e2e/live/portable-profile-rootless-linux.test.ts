@@ -362,12 +362,20 @@ async function main(progress: TestProgress): Promise<void> {
       assert.ok(hermesPrebuild.imageRef, "The staged Hermes image was not built.");
       assert.ok(hermesPrebuild.imageId, "The staged Hermes image identity was not proven.");
       hermesImageRef = hermesPrebuild.imageRef;
-      hermesImageId = hermesPrebuild.imageId;
       assert.equal(hermesPrebuild.createArgs[1], hermesImageRef);
-      assert.match(
-        run("podman", ["image", "inspect", "--format", "{{.Id}}", hermesImageRef]),
-        /^(?:sha256:)?[a-f0-9]{64}$/,
+      const inspectedHermesImageId = run("podman", [
+        "image",
+        "inspect",
+        "--format",
+        "{{.Id}}",
+        hermesImageRef,
+      ]).toLowerCase();
+      assert.match(inspectedHermesImageId, /^(?:sha256:)?[a-f0-9]{64}$/);
+      assert.equal(
+        inspectedHermesImageId.replace(/^sha256:/u, ""),
+        hermesPrebuild.imageId.replace(/^sha256:/u, ""),
       );
+      hermesImageId = inspectedHermesImageId;
     } finally {
       try {
         hermesImageRef && run("podman", ["image", "rm", "--force", hermesImageRef]);

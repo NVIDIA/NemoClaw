@@ -551,8 +551,10 @@ function strictOpenShellText(value: string | Buffer): string {
 }
 
 const HERMES_PORTABLE_READY_PUBLICATION_POLL_INTERVAL_MS = 1_000;
-const HERMES_PORTABLE_READY_PUBLICATION_MAX_POLLS = 10;
-const HERMES_PORTABLE_READY_PUBLICATION_TIMEOUT_MS = 10_000;
+const HERMES_PORTABLE_READY_PUBLICATION_TIMEOUT_MS = 60_000;
+const HERMES_PORTABLE_READY_PUBLICATION_MAX_POLLS = Math.ceil(
+  HERMES_PORTABLE_READY_PUBLICATION_TIMEOUT_MS / HERMES_PORTABLE_READY_PUBLICATION_POLL_INTERVAL_MS,
+);
 const HERMES_PORTABLE_NOT_READY_DETAIL = "exact OpenShell sandbox is not Ready";
 const HERMES_PORTABLE_READY_PUBLICATION_TIMEOUT_DETAIL =
   "exact OpenShell sandbox Ready publication exceeded its total deadline";
@@ -1110,6 +1112,16 @@ export async function runHermesPortableOnboardingTransaction<T>(
         stateDir: input.stateDir,
       });
       let observation = observeSandbox();
+      if (
+        observation.kind === "ambiguous" &&
+        observation.detail === HERMES_PORTABLE_NOT_READY_DETAIL
+      ) {
+        observation = await settleCreatedHermesPortableSandboxReadyPublication(
+          observeSandbox,
+          deps.delaySandboxReadyPublicationPoll ?? delayHermesPortableReadyPublicationPoll,
+          deps.readSandboxReadyPublicationClockMs ?? performance.now.bind(performance),
+        );
+      }
       if (observation.kind === "ambiguous")
         fail(`cannot classify create effects: ${observation.detail}`);
       if (observation.kind === "absent") {
