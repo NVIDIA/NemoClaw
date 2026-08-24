@@ -10,8 +10,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const requireSource = createRequire(import.meta.url);
 const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } = requireSource(
-  "../src/lib/actions/sandbox/process-recovery.ts",
-) as typeof import("../src/lib/actions/sandbox/process-recovery.js");
+  "../../src/lib/actions/sandbox/process-recovery.ts",
+) as typeof import("../../src/lib/actions/sandbox/process-recovery.js");
 
 function checkAndRecoverSandboxProcesses(
   sandboxName: string,
@@ -108,10 +108,10 @@ function withFakeOpenshellBinary<T>(fn: () => T): T {
 
 describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
   it("retains SSH health-probe compatibility for an explicitly loaded custom gateway agent", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.ts");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.ts");
-    const registry = requireSource("../src/lib/state/registry.ts");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.ts");
+    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.ts");
+    const agentRuntime = requireSource("../../src/lib/agent/runtime.ts");
+    const registry = requireSource("../../src/lib/state/registry.ts");
+    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.ts");
     const childProcess = requireSource("node:child_process");
     const sshCommands: string[] = [];
 
@@ -164,10 +164,10 @@ custom-box  127.0.0.1  19000  12345  running`,
   });
 
   it("recovers a stopped custom gateway agent over SSH fallback", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.ts");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.ts");
-    const registry = requireSource("../src/lib/state/registry.ts");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.ts");
+    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.ts");
+    const agentRuntime = requireSource("../../src/lib/agent/runtime.ts");
+    const registry = requireSource("../../src/lib/state/registry.ts");
+    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.ts");
     const childProcess = requireSource("node:child_process");
     const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
 custom-box  127.0.0.1  19000  12345  running`;
@@ -248,8 +248,8 @@ custom-box  127.0.0.1  19000  12345  running`;
   });
 
   it("fails closed when a persisted non-OpenClaw manifest cannot be loaded", () => {
-    const agentRuntime = requireSource("../src/lib/agent/runtime.ts");
-    const registry = requireSource("../src/lib/state/registry.ts");
+    const agentRuntime = requireSource("../../src/lib/agent/runtime.ts");
+    const registry = requireSource("../../src/lib/state/registry.ts");
     const childProcess = requireSource("node:child_process");
     const commands: string[] = [];
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
