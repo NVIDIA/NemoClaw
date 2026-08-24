@@ -185,6 +185,35 @@ describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
     ]);
   });
 
+  it("retries a transient Docker Desktop WSL GPU-mode probe", () => {
+    const dockerRun = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stderr: "request returned 500 Internal Server Error" })
+      .mockReturnValueOnce({ status: 0, stdout: "probe-id" });
+    const sleep = vi.fn();
+
+    const selected = selectDockerGpuPatchMode(
+      {
+        image: "openshell/sandbox:abc",
+        dockerDesktopWsl: true,
+      },
+      {
+        dockerCapture: vi.fn(() => ""),
+        dockerRun,
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        sleep,
+      },
+    );
+
+    expect(selected.mode?.kind).toBe("gpus");
+    expect(selected.attempts.map((attempt) => [attempt.mode.kind, attempt.ok])).toEqual([
+      ["gpus", false],
+      ["gpus", true],
+    ]);
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledWith(1);
+  });
+
   it("probes only NVIDIA runtime for Jetson Docker GPU mode", () => {
     const dockerCapture = vi.fn(() => "");
     const dockerRun = vi.fn(() => ({ status: 0, stdout: "probe-id" }));

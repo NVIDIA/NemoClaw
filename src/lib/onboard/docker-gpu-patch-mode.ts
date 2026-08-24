@@ -224,26 +224,47 @@ function probeDockerGpuMode(
   }
 }
 
+function sleepBeforeGpuModeRetry(seconds: number): void {
+  if (seconds <= 0 || !Number.isFinite(seconds)) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, seconds * 1_000);
+}
+
 export function selectDockerGpuPatchMode(
   options: {
     image: string;
     device?: string | null;
     backend?: DockerGpuPatchBackend;
     dockerDesktopWsl?: boolean;
+    attemptsPerMode?: number;
+    retryDelaySeconds?: number;
   },
   deps: DockerGpuPatchDeps = {},
 ): { mode: DockerGpuPatchMode | null; attempts: DockerGpuPatchModeAttempt[] } {
   const cdiAvailable = options.backend === "jetson" ? false : dockerReportsNvidiaCdiDevices(deps);
   const attempts: DockerGpuPatchModeAttempt[] = [];
+  const attemptsPerMode = Math.max(
+    1,
+    Math.floor(options.attemptsPerMode ?? (options.dockerDesktopWsl ? 2 : 1)),
+  );
+  const retryDelaySeconds = Math.max(
+    0,
+    options.retryDelaySeconds ?? (options.dockerDesktopWsl ? 1 : 0),
+  );
+  const sleep = deps.sleep ?? sleepBeforeGpuModeRetry;
   for (const mode of buildDockerGpuModeCandidates(options.device, {
     cdiAvailable,
     backend: options.backend,
     dockerDesktopWsl: options.dockerDesktopWsl,
   })) {
-    const result = probeDockerGpuMode(mode, options.image, deps);
-    const attempt = { mode, ok: result.ok, error: result.error };
-    attempts.push(attempt);
-    if (attempt.ok) return { mode, attempts };
+    for (let attemptNumber = 0; attemptNumber < attemptsPerMode; attemptNumber += 1) {
+      const result = probeDockerGpuMode(mode, options.image, deps);
+      const attempt = { mode, ok: result.ok, error: result.error };
+      attempts.push(attempt);
+      if (attempt.ok) return { mode, attempts };
+      if (attemptNumber + 1 < attemptsPerMode && retryDelaySeconds > 0) {
+        sleep(retryDelaySeconds);
+      }
+    }
   }
   return { mode: null, attempts };
 }

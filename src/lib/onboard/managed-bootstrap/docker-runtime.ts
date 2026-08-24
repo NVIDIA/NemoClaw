@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createDockerGpuDiagnosticRedactor } from "../docker-gpu-diagnostic-redaction";
 import { detectTegraDeviceGroupGids } from "../docker-gpu-jetson-groups";
 import { buildDockerGpuMode, selectDockerGpuPatchMode } from "../docker-gpu-patch-mode";
-import type { DockerGpuPatchMode } from "../docker-gpu-patch-types";
+import type { DockerGpuPatchMode, DockerGpuPatchModeAttempt } from "../docker-gpu-patch-types";
 import { renderCompatibilityFallbackCreateArgs } from "../docker-gpu-route";
 import {
   createDockerGpuSandboxCreatePatch,
@@ -100,11 +101,24 @@ function selectedDockerMode(
     input.dependencies,
   );
   if (selection.mode) return selection.mode;
-  throw new Error(
+  const message =
     backend === "jetson"
       ? "Docker did not accept the Jetson NVIDIA runtime GPU mode for managed bootstrap."
-      : "Docker did not accept a compatibility GPU mode for managed bootstrap.",
-  );
+      : "Docker did not accept a compatibility GPU mode for managed bootstrap.";
+  throw new Error(`${message}${formatDockerGpuModeFailureDetails(selection.attempts)}`);
+}
+
+export function formatDockerGpuModeFailureDetails(
+  attempts: readonly DockerGpuPatchModeAttempt[],
+): string {
+  const redactor = createDockerGpuDiagnosticRedactor();
+  const failures = attempts
+    .filter((attempt) => !attempt.ok && attempt.error)
+    .map(
+      (attempt) =>
+        `${attempt.mode.label}: ${redactor.redactText(attempt.error ?? "docker create failed").slice(0, 240)}`,
+    );
+  return failures.length > 0 ? ` Attempts: ${failures.join("; ")}`.slice(0, 1_200) : "";
 }
 
 function createDockerLifecycle(
