@@ -55,6 +55,7 @@ export const GATEWAY_TOPOLOGY_FILES = [
   "src/lib/onboard/docker-driver-gateway-env.ts",
   "src/lib/onboard/docker-driver-gateway-local-tls.ts",
   "src/lib/onboard/docker-driver-platform.ts",
+  "src/lib/onboard/experimental/docker-network-authority.ts",
   "src/lib/onboard/experimental/hermes-portable-ollama-authority.ts",
   "src/lib/onboard/experimental/portable-host-preparation.ts",
   "src/lib/onboard/experimental/portable-profile.ts",

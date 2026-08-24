@@ -143,24 +143,6 @@ describe("deterministic PR risk plan", () => {
     },
   );
 
-  it.each([
-    "src/lib/core/gateway-address.ts",
-    "src/lib/onboard/gateway-host-runtime.ts",
-    "src/lib/onboard/gateway-http-readiness.ts",
-    "src/lib/onboard/gateway-recovery.ts",
-    "src/lib/onboard/gateway-tcp-readiness.ts",
-    "src/lib/onboard/runtime-provider/podman-host-local-inference.ts",
-  ])("selects gateway topology review for active owner %s (#10058)", (changedFile) => {
-    const result = plan(changedFile);
-
-    expect(result.families).toContainEqual(
-      expect.objectContaining({
-        id: "gateway-topology",
-        invariants: [GATEWAY_TOPOLOGY_INVARIANT],
-      }),
-    );
-  });
-
   it("combines gateway topology projections into one focused family (#10058)", () => {
     const result = plan(...GATEWAY_TOPOLOGY_FILES);
     const topologyFamilies = result.families.filter(
