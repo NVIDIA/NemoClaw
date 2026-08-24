@@ -222,7 +222,10 @@ describe("buildPolicyContext", () => {
       "- Shields state and configuration lock (owner: nemoclaw) — NemoClaw retains Shields state and locks configuration after it verifies restrictive policy",
     );
     expect(markdown).toContain(
-      "Run `nemoclaw alpha policy exclude <key> --dry-run`, then ask the external policy authority to remove baseline policy entry `<key>`.",
+      "- preview a baseline exclusion: Run `nemoclaw alpha policy exclude <key> --dry-run`, then ask the external policy authority to remove baseline policy entry `<key>`.",
+    );
+    expect(markdown).not.toContain(
+      "- preview a baseline exclusion: `Run `nemoclaw alpha policy exclude <key> --dry-run`",
     );
     expect(markdown).not.toMatch(/nemoclaw alpha policy (?:add|remove|restore)(?:\s|`)/u);
   });
