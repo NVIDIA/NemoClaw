@@ -20,7 +20,7 @@ import { minimalBlueprint } from "./runner-test-fixtures.js";
 const { store, addFile } = createRunnerFsStore();
 const stdoutCapture = createStdoutCapture();
 const mockExeca = vi.fn();
-const fsReadCalls: number[] = [];
+const externalFileSizes = new Map<string, number>();
 
 vi.mock("node:os", () => ({ homedir: () => FAKE_HOME }));
 
@@ -32,7 +32,7 @@ vi.mock("node:crypto", async (importOriginal) => ({
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof fs>();
   const memory = inMemoryFsMethods(store, { spy: vi.fn });
-  const descriptors = new Map<number, { contents: Buffer; offset: number }>();
+  const descriptors = new Map<number, { filePath: string; offset: number }>();
   let nextDescriptor = 100;
   return {
     ...original,
@@ -40,15 +40,18 @@ vi.mock("node:fs", async (importOriginal) => {
     readFileSync: memory.readFileSync,
     writeFileSync: memory.writeFileSync,
     readdirSync: memory.readdirSync,
+    lstatSync: (filePath: string) => ({
+      isFile: () => externalFileSizes.has(filePath),
+      isSymbolicLink: () => false,
+    }),
     openSync: (filePath: string) => {
-      const contents = Buffer.from(memory.readFileSync(filePath));
       const descriptor = nextDescriptor++;
-      descriptors.set(descriptor, { contents, offset: 0 });
+      descriptors.set(descriptor, { filePath, offset: 0 });
       return descriptor;
     },
     fstatSync: (descriptor: number) => {
       const file = descriptors.get(descriptor)!;
-      return { isFile: () => true, size: file.contents.length };
+      return { isFile: () => true, size: externalFileSizes.get(file.filePath)! };
     },
     readSync: (
       descriptor: number,
@@ -58,8 +61,8 @@ vi.mock("node:fs", async (importOriginal) => {
       _position: number | null,
     ) => {
       const file = descriptors.get(descriptor)!;
-      fsReadCalls.push(descriptor);
-      const bytesRead = file.contents.copy(buffer, offset, file.offset, file.offset + length);
+      const contents = Buffer.from(memory.readFileSync(file.filePath));
+      const bytesRead = contents.copy(buffer, offset, file.offset, file.offset + length);
       file.offset += bytesRead;
       return bytesRead;
     },
@@ -105,14 +108,19 @@ function externalTargetBlueprint(): Record<string, unknown> {
 
 function seedExternalTarget(): void {
   addFile("blueprint.yaml", YAML.stringify(externalTargetBlueprint()));
-  addFile(EXTERNAL_CA_FILE, EXTERNAL_CA_PEM);
-  addFile(EXTERNAL_TOKEN_FILE, EXTERNAL_TOKEN);
+  addExternalFile(EXTERNAL_CA_FILE, EXTERNAL_CA_PEM);
+  addExternalFile(EXTERNAL_TOKEN_FILE, EXTERNAL_TOKEN);
+}
+
+function addExternalFile(filePath: string, contents: string): void {
+  addFile(filePath, contents);
+  externalFileSizes.set(filePath, Buffer.byteLength(contents));
 }
 
 describe("Blueprint Runner external OpenShell target", () => {
   beforeEach(() => {
     store.clear();
-    fsReadCalls.length = 0;
+    externalFileSizes.clear();
     stdoutCapture.reset();
     vi.clearAllMocks();
     delete process.env.NEMOCLAW_BLUEPRINT_PATH;
@@ -184,12 +192,11 @@ describe("Blueprint Runner external OpenShell target", () => {
 
   it("rejects an oversized CA file before reading its contents (#9872)", async () => {
     addFile("blueprint.yaml", YAML.stringify(externalTargetBlueprint()));
-    addFile(EXTERNAL_CA_FILE, "x".repeat(1024 * 1024 + 1));
-    addFile(EXTERNAL_TOKEN_FILE, EXTERNAL_TOKEN);
+    externalFileSizes.set(EXTERNAL_CA_FILE, 1024 * 1024 + 1);
+    addExternalFile(EXTERNAL_TOKEN_FILE, EXTERNAL_TOKEN);
 
     await expect(main(["plan"])).rejects.toThrow(/CA file is empty or exceeds its size limit/);
 
-    expect(fsReadCalls).toHaveLength(0);
     expect(mockExeca).not.toHaveBeenCalled();
     expect(mockedValidateEndpoint).not.toHaveBeenCalled();
     expect(stdoutCapture.text()).not.toContain(EXTERNAL_CA_FILE);

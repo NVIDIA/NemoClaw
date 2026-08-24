@@ -4,7 +4,20 @@
 import { createHash, X509Certificate } from "node:crypto";
 import { rootCertificates } from "node:tls";
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const fsMocks = vi.hoisted(() => ({
+  closeSync: vi.fn(),
+  fstatSync: vi.fn(),
+  lstatSync: vi.fn(),
+  openSync: vi.fn(),
+  readSync: vi.fn(),
+}));
+
+vi.mock("node:fs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:fs")>()),
+  ...fsMocks,
+}));
 
 import {
   buildSanitizedExternalOpenShellTargetPlan,
@@ -36,6 +49,18 @@ const OTHER_CLIENT_KEY_PEM = `-----BEGIN ${PRIVATE_KEY_LABEL}-----
 MC4CAQAwBQYDK2VwBCIEIPzdNLmPz7FCEIJK3Kclxe6ZW67boddYBowDcQA98CnJ
 -----END ${PRIVATE_KEY_LABEL}-----`;
 const COMPATIBILITY = { minVersion: "0.0.106", maxVersion: "0.0.106" };
+const REGULAR_FILE_METADATA = { isFile: () => true, isSymbolicLink: () => false };
+const FIFO_METADATA = { isFile: () => false, isSymbolicLink: () => false };
+const SYMBOLIC_LINK_METADATA = { isFile: () => false, isSymbolicLink: () => true };
+const specialFileMetadata = new Map<string, typeof REGULAR_FILE_METADATA>();
+const descriptorFiles = new Map<number, { contents: Buffer; offset: number }>();
+const defaultFileContents = new Map([
+  [CA_FILE, CA_PEM],
+  [TOKEN_FILE, OIDC_TOKEN],
+  [CLIENT_CERTIFICATE_FILE, CLIENT_CERTIFICATE_PEM],
+  [CLIENT_KEY_FILE, CLIENT_KEY_PEM],
+]);
+let nextDescriptor = 100;
 
 function oidcTarget(): ExternalOpenShellTarget {
   return {
@@ -76,6 +101,36 @@ function missingFile(filePath: string): never {
 }
 
 describe("external OpenShell target boundary", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    specialFileMetadata.clear();
+    descriptorFiles.clear();
+    nextDescriptor = 100;
+    fsMocks.lstatSync.mockImplementation(
+      (filePath: string) => specialFileMetadata.get(filePath) ?? REGULAR_FILE_METADATA,
+    );
+    fsMocks.openSync.mockImplementation((filePath: string) => {
+      const descriptor = nextDescriptor++;
+      descriptorFiles.set(descriptor, {
+        contents: Buffer.from(defaultFileContents.get(filePath)!),
+        offset: 0,
+      });
+      return descriptor;
+    });
+    fsMocks.fstatSync.mockImplementation((descriptor: number) => {
+      const file = descriptorFiles.get(descriptor)!;
+      return { isFile: () => true, size: file.contents.length };
+    });
+    fsMocks.readSync.mockImplementation(
+      (descriptor: number, buffer: Buffer, offset: number, length: number) => {
+        const file = descriptorFiles.get(descriptor)!;
+        const bytesRead = file.contents.copy(buffer, offset, file.offset, file.offset + length);
+        file.offset += bytesRead;
+        return bytesRead;
+      },
+    );
+  });
+
   it("builds the canonical sanitized target-only plan (#9872)", () => {
     const readFile = reader();
 
@@ -215,6 +270,7 @@ describe("external OpenShell target boundary", () => {
 
   it.each([
     ["non-semantic", { minVersion: "current", maxVersion: "0.0.106" }],
+    ["unsafe", { minVersion: "0.0.106", maxVersion: "9007199254740992.0.0" }],
     ["reversed", { minVersion: "0.0.107", maxVersion: "0.0.106" }],
   ])("rejects a %s compatibility range before reading files", (_name, compatibility) => {
     const readFile = reader();
@@ -328,6 +384,25 @@ describe("external OpenShell target boundary", () => {
     expect(error.message).toBe("external OpenShell target CA file could not be read");
     expect(error.message).not.toContain(CA_FILE);
     expect(error.message).not.toContain("credential/private-value");
+  });
+
+  it.each([
+    ["CA FIFO", oidcTarget(), CA_FILE, FIFO_METADATA],
+    ["OIDC token FIFO", oidcTarget(), TOKEN_FILE, FIFO_METADATA],
+    ["mTLS certificate FIFO", mtlsTarget(), CLIENT_CERTIFICATE_FILE, FIFO_METADATA],
+    ["mTLS key FIFO", mtlsTarget(), CLIENT_KEY_FILE, FIFO_METADATA],
+    ["CA symbolic link", oidcTarget(), CA_FILE, SYMBOLIC_LINK_METADATA],
+  ])("rejects a %s before opening it (#9872)", (_name, target, specialPath, metadata) => {
+    specialFileMetadata.set(specialPath, metadata);
+
+    const error = expectError(() =>
+      buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY),
+    );
+
+    expect(error.message).toMatch(/could not be read/);
+    expect(error.message).not.toContain(specialPath);
+    expect(fsMocks.lstatSync).toHaveBeenCalledWith(specialPath);
+    expect(fsMocks.openSync).not.toHaveBeenCalledWith(specialPath, expect.anything());
   });
 
   it("recognizes only complete, canonical target shapes", () => {

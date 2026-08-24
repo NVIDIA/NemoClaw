@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash, createPrivateKey, createPublicKey, X509Certificate } from "node:crypto";
-import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
 import * as importedSandboxName from "./sandbox-name.cjs";
@@ -208,6 +208,9 @@ function semverParts(version: string): readonly [number, number, number] {
     throw new Error("OpenShell compatibility range must use exact semantic versions");
   }
   const [major, minor, patch] = version.split(".").map((part) => Number(part));
+  if (![major, minor, patch].every(Number.isSafeInteger)) {
+    throw new Error("OpenShell compatibility range must use safe exact semantic versions");
+  }
   return [major, minor, patch];
 }
 
@@ -255,7 +258,14 @@ function readBoundedFile(
 }
 
 function readFileAtMost(filePath: string, maxBytes: number): Buffer {
-  const descriptor = openSync(filePath, constants.O_RDONLY);
+  const pathMetadata = lstatSync(filePath);
+  if (!pathMetadata.isFile() || pathMetadata.isSymbolicLink()) {
+    throw new Error("not a regular file");
+  }
+  const descriptor = openSync(
+    filePath,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+  );
   try {
     const file = fstatSync(descriptor);
     if (!file.isFile()) {
