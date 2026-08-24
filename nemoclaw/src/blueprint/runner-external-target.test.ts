@@ -92,9 +92,9 @@ const { validateEndpointUrl } = await import("./ssrf.js");
 const mockedValidateEndpoint = vi.mocked(validateEndpointUrl);
 const { main } = await import("./runner.js");
 
-const EXTERNAL_CA_FILE = "/run/secrets/openshell/private-ca.pem";
-const EXTERNAL_TOKEN_FILE = "/run/secrets/openshell/private-oidc-token";
-const EXTERNAL_TOKEN = "header.private-credential.signature";
+const EXTERNAL_CA_FILE = "/var/run/openshell-target/private-ca.pem";
+const EXTERNAL_AUTHENTICATION_FILE = "/var/run/openshell-target/private-authentication";
+const EXTERNAL_AUTHENTICATION_CONTENTS = "private-authentication-material";
 const EXTERNAL_CA_PEM = rootCertificates[0];
 
 function externalTargetBlueprint(): Record<string, unknown> {
@@ -108,7 +108,7 @@ function externalTargetBlueprint(): Record<string, unknown> {
       expected_release: "0.0.106",
       lifecycle: "external",
       trust: { ca_file: EXTERNAL_CA_FILE },
-      authentication: { kind: "oidc", token_file: EXTERNAL_TOKEN_FILE },
+      authentication: { credential_file: EXTERNAL_AUTHENTICATION_FILE },
     },
   };
 }
@@ -116,7 +116,7 @@ function externalTargetBlueprint(): Record<string, unknown> {
 function seedExternalTarget(): void {
   addFile("blueprint.yaml", YAML.stringify(externalTargetBlueprint()));
   addExternalFile(EXTERNAL_CA_FILE, EXTERNAL_CA_PEM);
-  addExternalFile(EXTERNAL_TOKEN_FILE, EXTERNAL_TOKEN);
+  addExternalFile(EXTERNAL_AUTHENTICATION_FILE, EXTERNAL_AUTHENTICATION_CONTENTS);
 }
 
 function addExternalFile(filePath: string, contents: string): void {
@@ -152,7 +152,7 @@ describe("Blueprint Runner external OpenShell target", () => {
         workspace: "default",
         expected_release: "0.0.106",
         lifecycle: "external",
-        authentication_kind: "oidc",
+        authentication_source: "file",
         ca_fingerprint: `sha256:${createHash("sha256")
           .update(new X509Certificate(EXTERNAL_CA_PEM).raw)
           .digest("hex")}`,
@@ -163,8 +163,8 @@ describe("Blueprint Runner external OpenShell target", () => {
     expect(mockedValidateEndpoint).not.toHaveBeenCalled();
     const output = stdoutCapture.text().toLowerCase();
     expect(output).not.toContain(EXTERNAL_CA_FILE.toLowerCase());
-    expect(output).not.toContain(EXTERNAL_TOKEN_FILE.toLowerCase());
-    expect(output).not.toContain(EXTERNAL_TOKEN.toLowerCase());
+    expect(output).not.toContain(EXTERNAL_AUTHENTICATION_FILE.toLowerCase());
+    expect(output).not.toContain(EXTERNAL_AUTHENTICATION_CONTENTS.toLowerCase());
     expect(output).not.toContain("begin certificate");
     expect(output).not.toContain("ambient-gateway");
     expect(output).not.toContain("/private/ambient-gateway-management.json");
@@ -200,7 +200,7 @@ describe("Blueprint Runner external OpenShell target", () => {
   it("rejects an oversized CA file before reading its contents (#9872)", async () => {
     addFile("blueprint.yaml", YAML.stringify(externalTargetBlueprint()));
     externalFileSizes.set(EXTERNAL_CA_FILE, 1024 * 1024 + 1);
-    addExternalFile(EXTERNAL_TOKEN_FILE, EXTERNAL_TOKEN);
+    addExternalFile(EXTERNAL_AUTHENTICATION_FILE, EXTERNAL_AUTHENTICATION_CONTENTS);
 
     await expect(main(["plan"])).rejects.toThrow(/CA file is empty or exceeds its size limit/);
 

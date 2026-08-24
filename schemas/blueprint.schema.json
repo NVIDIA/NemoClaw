@@ -14,13 +14,13 @@
     },
     "min_openshell_version": {
       "type": "string",
-      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
-      "description": "Minimum compatible OpenShell version."
+      "pattern": "^[0-9]{1,15}\\.[0-9]{1,15}\\.[0-9]{1,15}$",
+      "description": "Minimum compatible OpenShell release. The Blueprint Runner rejects a range whose minimum exceeds its maximum."
     },
     "max_openshell_version": {
       "type": "string",
-      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
-      "description": "Maximum compatible OpenShell version."
+      "pattern": "^[0-9]{1,15}\\.[0-9]{1,15}\\.[0-9]{1,15}$",
+      "description": "Maximum compatible OpenShell release. The Blueprint Runner rejects a range whose minimum exceeds its maximum."
     },
     "min_openclaw_version": {
       "type": "string",
@@ -148,7 +148,7 @@
   "$defs": {
     "externalOpenShellTarget": {
       "type": "object",
-      "description": "Explicit externally managed OpenShell gateway target for target-only planning.",
+      "description": "Explicit externally managed OpenShell gateway target for target-only planning. This contract does not establish remote readiness, machine-authentication compatibility, or Kubernetes qualification.",
       "required": [
         "endpoint",
         "workspace",
@@ -161,54 +161,51 @@
       "properties": {
         "endpoint": {
           "type": "string",
-          "pattern": "^https://",
-          "description": "Bare HTTPS gateway origin without credentials, path, query, or fragment."
+          "pattern": "^https://[^\\s/?#@]+/?$",
+          "description": "Bare HTTPS gateway origin without credentials, path, query, or fragment. The runner rejects loopback and unspecified addresses."
         },
         "workspace": {
           "type": "string",
           "pattern": "^(?!.*--)[a-z]([a-z0-9-]*[a-z0-9])?$",
-          "maxLength": 19
+          "maxLength": 19,
+          "description": "Explicit OpenShell workspace name for the target-only plan."
         },
         "expected_release": {
           "type": "string",
-          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+          "pattern": "^[0-9]{1,15}\\.[0-9]{1,15}\\.[0-9]{1,15}$",
+          "description": "Exact OpenShell release expected by the plan. The runner requires safe numeric components and validates this value against min_openshell_version and max_openshell_version."
         },
         "lifecycle": {
-          "const": "external"
+          "const": "external",
+          "description": "Declares that NemoClaw does not manage the target gateway lifecycle."
         },
         "trust": {
           "type": "object",
           "required": ["ca_file"],
           "additionalProperties": false,
           "properties": {
-            "ca_file": { "type": "string", "minLength": 1 }
+            "ca_file": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^/",
+              "description": "Absolute path to a regular PEM CA bundle no larger than 1 MiB. Every certificate must be a CA certificate. Symbolic-link paths are not accepted."
+            }
           }
         },
         "authentication": {
-          "oneOf": [
-            { "$ref": "#/$defs/externalOpenShellMtlsAuthentication" },
-            { "$ref": "#/$defs/externalOpenShellOidcAuthentication" }
-          ]
+          "type": "object",
+          "required": ["credential_file"],
+          "additionalProperties": false,
+          "description": "File-backed authentication input for target-only planning. This field does not select or validate a machine-authentication protocol.",
+          "properties": {
+            "credential_file": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^/",
+              "description": "Absolute path to a non-empty regular authentication file no larger than 1 MiB. Symbolic-link paths are not accepted. The plan does not return the path or contents."
+            }
+          }
         }
-      }
-    },
-    "externalOpenShellMtlsAuthentication": {
-      "type": "object",
-      "required": ["kind", "client_certificate_file", "client_key_file"],
-      "additionalProperties": false,
-      "properties": {
-        "kind": { "const": "mtls" },
-        "client_certificate_file": { "type": "string", "minLength": 1 },
-        "client_key_file": { "type": "string", "minLength": 1 }
-      }
-    },
-    "externalOpenShellOidcAuthentication": {
-      "type": "object",
-      "required": ["kind", "token_file"],
-      "additionalProperties": false,
-      "properties": {
-        "kind": { "const": "oidc" },
-        "token_file": { "type": "string", "minLength": 1 }
       }
     },
     "inferenceProfile": {

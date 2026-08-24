@@ -26,29 +26,10 @@ import {
   type ExternalOpenShellTarget,
 } from "./openshell-external-target-boundary.cjs";
 
-const CA_FILE = "/run/secrets/openshell/private-ca.pem";
-const TOKEN_FILE = "/run/secrets/openshell/private-oidc-token";
-const CLIENT_CERTIFICATE_FILE = "/run/secrets/openshell/private-client.crt";
-const CLIENT_KEY_FILE = "/run/secrets/openshell/private-client.key";
-const OIDC_TOKEN = "header.private-credential.signature";
+const CA_FILE = "/var/run/openshell-target/private-ca.pem";
+const AUTHENTICATION_FILE = "/var/run/openshell-target/private-authentication";
+const AUTHENTICATION_CONTENTS = "private-authentication-material";
 const CA_PEM = rootCertificates[0];
-const CLIENT_CERTIFICATE_PEM = `-----BEGIN CERTIFICATE-----
-MIIBczCCASWgAwIBAgIUc6u16vRHoTSFkoJ5JDxy+eoCvykwBQYDK2VwMC8xLTAr
-BgNVBAMMJE5lbW9DbGF3IGV4dGVybmFsIHRhcmdldCB0ZXN0IGNsaWVudDAeFw0y
-NjA4MjQwMDIyNDRaFw0zNjA4MjEwMDIyNDRaMC8xLTArBgNVBAMMJE5lbW9DbGF3
-IGV4dGVybmFsIHRhcmdldCB0ZXN0IGNsaWVudDAqMAUGAytlcAMhABCvaNyHlkEa
-75YhATM3d/uSSi9xZVTy847slsn2N1xHo1MwUTAdBgNVHQ4EFgQUMsWyQj5Kub0m
-gzDVpRipT6+r8owwHwYDVR0jBBgwFoAUMsWyQj5Kub0mgzDVpRipT6+r8owwDwYD
-VR0TAQH/BAUwAwEB/zAFBgMrZXADQQB/o1lK+sF+sTFVEMOzu4k+prnGQ7fPYqux
-n6hN+hDkBtOg2KHxy9V/Kv4WzzROmscdCuj+KYrnTgHKMmT7afoM
------END CERTIFICATE-----`;
-const PRIVATE_KEY_LABEL = `${"PRIVATE"} KEY`;
-const CLIENT_KEY_PEM = `-----BEGIN ${PRIVATE_KEY_LABEL}-----
-MC4CAQAwBQYDK2VwBCIEIBX8tF759OyKafVaSsBXDYYT2k76SD+5MkpLJKASbJkv
------END ${PRIVATE_KEY_LABEL}-----`;
-const OTHER_CLIENT_KEY_PEM = `-----BEGIN ${PRIVATE_KEY_LABEL}-----
-MC4CAQAwBQYDK2VwBCIEIPzdNLmPz7FCEIJK3Kclxe6ZW67boddYBowDcQA98CnJ
------END ${PRIVATE_KEY_LABEL}-----`;
 const COMPATIBILITY = { minVersion: "0.0.106", maxVersion: "0.0.106" };
 const REGULAR_FILE_METADATA = {
   isFile: () => true,
@@ -87,32 +68,19 @@ const descriptorFiles = new Map<
 >();
 const defaultFileContents = new Map([
   [CA_FILE, CA_PEM],
-  [TOKEN_FILE, OIDC_TOKEN],
-  [CLIENT_CERTIFICATE_FILE, CLIENT_CERTIFICATE_PEM],
-  [CLIENT_KEY_FILE, CLIENT_KEY_PEM],
+  [AUTHENTICATION_FILE, AUTHENTICATION_CONTENTS],
 ]);
 const readFilePaths: string[] = [];
 let nextDescriptor = 100;
 
-function oidcTarget(): ExternalOpenShellTarget {
+function externalTarget(): ExternalOpenShellTarget {
   return {
     endpoint: "https://openshell.example.test:8443",
     workspace: "default",
     expected_release: "0.0.106",
     lifecycle: "external",
     trust: { ca_file: CA_FILE },
-    authentication: { kind: "oidc", token_file: TOKEN_FILE },
-  };
-}
-
-function mtlsTarget(): ExternalOpenShellTarget {
-  return {
-    ...oidcTarget(),
-    authentication: {
-      kind: "mtls",
-      client_certificate_file: CLIENT_CERTIFICATE_FILE,
-      client_key_file: CLIENT_KEY_FILE,
-    },
+    authentication: { credential_file: AUTHENTICATION_FILE },
   };
 }
 
@@ -121,7 +89,7 @@ function reader(files?: ReadonlyMap<string, string>) {
     files ??
     new Map([
       [CA_FILE, CA_PEM],
-      [TOKEN_FILE, OIDC_TOKEN],
+      [AUTHENTICATION_FILE, AUTHENTICATION_CONTENTS],
     ]);
   return vi.fn((filePath: string, _maxBytes: number) => {
     return contents.get(filePath) ?? missingFile(filePath);
@@ -174,7 +142,7 @@ describe("external OpenShell target boundary", () => {
   it("builds the canonical sanitized target-only plan (#9872)", () => {
     const readFile = reader();
 
-    const plan = buildSanitizedExternalOpenShellTargetPlan(oidcTarget(), COMPATIBILITY, {
+    const plan = buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY, {
       readFile,
     });
 
@@ -183,17 +151,21 @@ describe("external OpenShell target boundary", () => {
       workspace: "default",
       expected_release: "0.0.106",
       lifecycle: "external",
-      authentication_kind: "oidc",
+      authentication_source: "file",
       ca_fingerprint: `sha256:${createHash("sha256")
         .update(new X509Certificate(CA_PEM).raw)
         .digest("hex")}`,
     });
-    expect(readFile.mock.calls.map(([filePath]) => filePath)).toEqual([CA_FILE, TOKEN_FILE]);
+    expect(readFile.mock.calls.map(([filePath]) => filePath)).toEqual([
+      CA_FILE,
+      AUTHENTICATION_FILE,
+    ]);
     const rendered = JSON.stringify(plan);
     expect(rendered).not.toContain(CA_FILE);
-    expect(rendered).not.toContain(TOKEN_FILE);
-    expect(rendered).not.toContain(OIDC_TOKEN);
+    expect(rendered).not.toContain(AUTHENTICATION_FILE);
+    expect(rendered).not.toContain(AUTHENTICATION_CONTENTS);
     expect(rendered).not.toContain("BEGIN CERTIFICATE");
+    expect(rendered).not.toMatch(/mtls|oidc/iu);
   });
 
   it.each([
@@ -211,7 +183,7 @@ describe("external OpenShell target boundary", () => {
     "https://[::ffff:127.0.0.1]:8443",
   ])("rejects a malformed or non-external HTTPS endpoint before reading files [%s]", (endpoint) => {
     const readFile = reader();
-    const target = { ...oidcTarget(), endpoint };
+    const target = { ...externalTarget(), endpoint };
 
     expect(() =>
       buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY, { readFile }),
@@ -231,22 +203,13 @@ describe("external OpenShell target boundary", () => {
       },
     ],
     [
-      "OIDC token file",
+      "authentication file",
       (target: Record<string, unknown>) => {
-        target.authentication = { kind: "oidc" };
-      },
-    ],
-    [
-      "mTLS client key file",
-      (target: Record<string, unknown>) => {
-        target.authentication = {
-          kind: "mtls",
-          client_certificate_file: CLIENT_CERTIFICATE_FILE,
-        };
+        target.authentication = {};
       },
     ],
   ] as const)("rejects missing %s before reading files", (_name, corrupt) => {
-    const target = { ...oidcTarget() } as Record<string, unknown>;
+    const target = { ...externalTarget() } as Record<string, unknown>;
     corrupt(target);
     const readFile = reader();
 
@@ -258,7 +221,7 @@ describe("external OpenShell target boundary", () => {
 
   it("rejects mixed local and external lifecycle input before reading files (#9872)", () => {
     const readFile = reader();
-    const target = { ...oidcTarget(), local: { mode: "managed" } };
+    const target = { ...externalTarget(), local: { mode: "managed" } };
 
     expect(() =>
       buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY, { readFile }),
@@ -268,27 +231,29 @@ describe("external OpenShell target boundary", () => {
 
   it.each([
     ["target", null],
-    ["target field", { ...oidcTarget(), unsupported: true }],
-    ["lifecycle", { ...oidcTarget(), lifecycle: "managed" }],
-    ["workspace", { ...oidcTarget(), workspace: "not valid" }],
-    ["expected release", { ...oidcTarget(), expected_release: "0.0" }],
-    ["authentication", { ...oidcTarget(), authentication: "oidc" }],
+    ["target field", { ...externalTarget(), unsupported: true }],
+    ["lifecycle", { ...externalTarget(), lifecycle: "managed" }],
+    ["workspace", { ...externalTarget(), workspace: "not valid" }],
+    ["expected release", { ...externalTarget(), expected_release: "0.0" }],
+    ["authentication", { ...externalTarget(), authentication: "file" }],
     [
-      "mTLS authentication field",
-      { ...mtlsTarget(), authentication: { ...mtlsTarget().authentication, unsupported: true } },
-    ],
-    [
-      "OIDC authentication field",
+      "authentication field",
       {
-        ...oidcTarget(),
-        authentication: { ...oidcTarget().authentication, unsupported: true },
+        ...externalTarget(),
+        authentication: { ...externalTarget().authentication, unsupported: true },
       },
     ],
     [
       "relative authentication file",
-      { ...oidcTarget(), authentication: { kind: "oidc", token_file: "token.txt" } },
+      { ...externalTarget(), authentication: { credential_file: "authentication.txt" } },
     ],
-    ["authentication kind", { ...oidcTarget(), authentication: { kind: "password" } }],
+    [
+      "protocol-specific authentication form",
+      {
+        ...externalTarget(),
+        authentication: { kind: "oidc", token_file: AUTHENTICATION_FILE },
+      },
+    ],
   ])("rejects an unsupported %s before reading files", (_name, target) => {
     const readFile = reader();
 
@@ -300,7 +265,7 @@ describe("external OpenShell target boundary", () => {
 
   it("rejects an incompatible expected release before reading files (#9872)", () => {
     const readFile = reader();
-    const target = { ...oidcTarget(), expected_release: "0.0.107" };
+    const target = { ...externalTarget(), expected_release: "0.0.107" };
 
     expect(() =>
       buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY, { readFile }),
@@ -316,93 +281,49 @@ describe("external OpenShell target boundary", () => {
     const readFile = reader();
 
     expect(() =>
-      buildSanitizedExternalOpenShellTargetPlan(oidcTarget(), compatibility, { readFile }),
+      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), compatibility, { readFile }),
     ).toThrow(/compatibility range/);
     expect(readFile).not.toHaveBeenCalled();
   });
 
-  it("rejects invalid trust and authentication without exposing private input (#9872)", () => {
+  it("rejects invalid trust and empty authentication without exposing private input (#9872)", () => {
     const privateCaContents = "not-a-certificate private-ca-value";
-    const privateTokenContents = "private token with whitespace";
     const invalidCaReader = reader(
       new Map([
         [CA_FILE, privateCaContents],
-        [TOKEN_FILE, OIDC_TOKEN],
+        [AUTHENTICATION_FILE, AUTHENTICATION_CONTENTS],
       ]),
     );
-    const invalidTokenReader = reader(
+    const emptyAuthenticationReader = reader(
       new Map([
         [CA_FILE, CA_PEM],
-        [TOKEN_FILE, privateTokenContents],
+        [AUTHENTICATION_FILE, ""],
       ]),
     );
 
     const caError = expectError(() =>
-      buildSanitizedExternalOpenShellTargetPlan(oidcTarget(), COMPATIBILITY, {
+      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY, {
         readFile: invalidCaReader,
       }),
     );
-    const tokenError = expectError(() =>
-      buildSanitizedExternalOpenShellTargetPlan(oidcTarget(), COMPATIBILITY, {
-        readFile: invalidTokenReader,
+    const authenticationError = expectError(() =>
+      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY, {
+        readFile: emptyAuthenticationReader,
       }),
     );
-    const output = `${caError.message}\n${tokenError.message}`;
+    const output = `${caError.message}\n${authenticationError.message}`;
 
     expect(output).not.toContain(CA_FILE);
-    expect(output).not.toContain(TOKEN_FILE);
+    expect(output).not.toContain(AUTHENTICATION_FILE);
     expect(output).not.toContain(privateCaContents);
-    expect(output).not.toContain(privateTokenContents);
-    expect(output).not.toContain(OIDC_TOKEN);
-  });
-
-  it("validates matching mTLS authentication without returning private input (#9872)", () => {
-    const readFile = reader(
-      new Map([
-        [CA_FILE, CA_PEM],
-        [CLIENT_CERTIFICATE_FILE, CLIENT_CERTIFICATE_PEM],
-        [CLIENT_KEY_FILE, CLIENT_KEY_PEM],
-      ]),
-    );
-
-    const plan = buildSanitizedExternalOpenShellTargetPlan(mtlsTarget(), COMPATIBILITY, {
-      readFile,
-    });
-
-    expect(plan.authentication_kind).toBe("mtls");
-    const rendered = JSON.stringify(plan);
-    expect(rendered).not.toContain(CLIENT_CERTIFICATE_FILE);
-    expect(rendered).not.toContain(CLIENT_KEY_FILE);
-    expect(rendered).not.toContain(CLIENT_CERTIFICATE_PEM);
-    expect(rendered).not.toContain(CLIENT_KEY_PEM);
-  });
-
-  it("rejects a mismatched mTLS key without returning private input (#9872)", () => {
-    const readFile = reader(
-      new Map([
-        [CA_FILE, CA_PEM],
-        [CLIENT_CERTIFICATE_FILE, CLIENT_CERTIFICATE_PEM],
-        [CLIENT_KEY_FILE, OTHER_CLIENT_KEY_PEM],
-      ]),
-    );
-
-    const error = expectError(() =>
-      buildSanitizedExternalOpenShellTargetPlan(mtlsTarget(), COMPATIBILITY, { readFile }),
-    );
-    const output = error.message;
-
-    expect(output).toBe("external OpenShell target mTLS authentication files are invalid");
-    expect(output).not.toContain(CLIENT_CERTIFICATE_FILE);
-    expect(output).not.toContain(CLIENT_KEY_FILE);
-    expect(output).not.toContain(CLIENT_CERTIFICATE_PEM);
-    expect(output).not.toContain(OTHER_CLIENT_KEY_PEM);
+    expect(output).not.toContain(AUTHENTICATION_CONTENTS);
   });
 
   it("rejects an oversized trust file without returning its path (#9872)", () => {
     const readFile = reader(new Map([[CA_FILE, "x".repeat(1024 * 1024 + 1)]]));
 
     const error = expectError(() =>
-      buildSanitizedExternalOpenShellTargetPlan(oidcTarget(), COMPATIBILITY, { readFile }),
+      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY, { readFile }),
     );
 
     expect(error.message).toBe(
@@ -412,13 +333,32 @@ describe("external OpenShell target boundary", () => {
     expect(readFile).toHaveBeenCalledWith(CA_FILE, 1024 * 1024);
   });
 
+  it("rejects an oversized authentication file without returning its path (#9872)", () => {
+    const readFile = reader(
+      new Map([
+        [CA_FILE, CA_PEM],
+        [AUTHENTICATION_FILE, "x".repeat(1024 * 1024 + 1)],
+      ]),
+    );
+
+    const error = expectError(() =>
+      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY, { readFile }),
+    );
+
+    expect(error.message).toBe(
+      "external OpenShell target authentication file is empty or exceeds its size limit",
+    );
+    expect(error.message).not.toContain(AUTHENTICATION_FILE);
+    expect(readFile).toHaveBeenCalledWith(AUTHENTICATION_FILE, 1024 * 1024);
+  });
+
   it("redacts a file-read failure cause (#9872)", () => {
     const readFile = vi.fn((filePath: string) => {
       throw new Error(`credential/private-value from ${filePath}`);
     });
 
     const error = expectError(() =>
-      buildSanitizedExternalOpenShellTargetPlan(oidcTarget(), COMPATIBILITY, { readFile }),
+      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY, { readFile }),
     );
 
     expect(error.message).toBe("external OpenShell target CA file could not be read");
@@ -427,11 +367,10 @@ describe("external OpenShell target boundary", () => {
   });
 
   it.each([
-    ["CA FIFO", oidcTarget(), CA_FILE, FIFO_METADATA],
-    ["OIDC token FIFO", oidcTarget(), TOKEN_FILE, FIFO_METADATA],
-    ["mTLS certificate FIFO", mtlsTarget(), CLIENT_CERTIFICATE_FILE, FIFO_METADATA],
-    ["mTLS key FIFO", mtlsTarget(), CLIENT_KEY_FILE, FIFO_METADATA],
-    ["CA symbolic link", oidcTarget(), CA_FILE, SYMBOLIC_LINK_METADATA],
+    ["CA FIFO", externalTarget(), CA_FILE, FIFO_METADATA],
+    ["authentication FIFO", externalTarget(), AUTHENTICATION_FILE, FIFO_METADATA],
+    ["CA symbolic link", externalTarget(), CA_FILE, SYMBOLIC_LINK_METADATA],
+    ["authentication symbolic link", externalTarget(), AUTHENTICATION_FILE, SYMBOLIC_LINK_METADATA],
   ])("rejects a %s without reading it (#9872)", (_name, target, specialPath, metadata) => {
     specialFileMetadata.set(specialPath, metadata);
     openedFileMetadata.set(specialPath, metadata);
@@ -454,7 +393,7 @@ describe("external OpenShell target boundary", () => {
     specialFileMetadata.set(CA_FILE, REPLACED_FILE_METADATA);
 
     const error = expectError(() =>
-      buildSanitizedExternalOpenShellTargetPlan(oidcTarget(), COMPATIBILITY),
+      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), COMPATIBILITY),
     );
 
     expect(error.message).toBe("external OpenShell target CA file could not be read");
@@ -463,13 +402,14 @@ describe("external OpenShell target boundary", () => {
   });
 
   it("recognizes only complete, canonical target shapes", () => {
-    expect(isExternalOpenShellTarget(oidcTarget())).toBe(true);
+    expect(isExternalOpenShellTarget(externalTarget())).toBe(true);
     expect(
       isExternalOpenShellTarget({
-        ...mtlsTarget(),
+        ...externalTarget(),
+        authentication: { kind: "oidc", token_file: AUTHENTICATION_FILE },
       }),
-    ).toBe(true);
-    expect(isExternalOpenShellTarget({ ...oidcTarget(), lifecycle: "managed" })).toBe(false);
+    ).toBe(false);
+    expect(isExternalOpenShellTarget({ ...externalTarget(), lifecycle: "managed" })).toBe(false);
   });
 });
 

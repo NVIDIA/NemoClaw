@@ -44,10 +44,9 @@ const externalTarget = {
   workspace: "default",
   expected_release: "0.0.106",
   lifecycle: "external",
-  trust: { ca_file: "/run/secrets/openshell/ca.pem" },
+  trust: { ca_file: "/var/run/openshell-target/ca.pem" },
   authentication: {
-    kind: "oidc",
-    token_file: "/run/secrets/openshell/token",
+    credential_file: "/var/run/openshell-target/authentication",
   },
 };
 
@@ -110,32 +109,50 @@ describe("blueprint external OpenShell target schema", () => {
     expect(validate(blueprintWithExternalTarget(target))).toBe(false);
   });
 
-  it("accepts the mTLS authentication form", () => {
+  it.each([
+    [
+      "OIDC",
+      {
+        kind: "oidc",
+        token_file: "/var/run/openshell-target/token",
+      },
+    ],
+    [
+      "mTLS",
+      {
+        kind: "mtls",
+        client_certificate_file: "/var/run/openshell-target/client.crt",
+        client_key_file: "/var/run/openshell-target/client.key",
+      },
+    ],
+  ])("rejects the protocol-specific %s authentication form", (_name, authentication) => {
     const target = {
       ...externalTarget,
-      authentication: {
-        kind: "mtls",
-        client_certificate_file: "/run/secrets/openshell/client.crt",
-        client_key_file: "/run/secrets/openshell/client.key",
-      },
+      authentication,
     };
 
-    expect(validate(blueprintWithExternalTarget(target)), JSON.stringify(validate.errors)).toBe(
-      true,
-    );
+    expect(validate(blueprintWithExternalTarget(target))).toBe(false);
   });
 
-  it("rejects mixed authentication forms", () => {
-    const target = {
-      ...externalTarget,
-      authentication: {
-        kind: "oidc",
-        token_file: "/run/secrets/openshell/token",
-        client_certificate_file: "/run/secrets/openshell/client.crt",
-        client_key_file: "/run/secrets/openshell/client.key",
-      },
-    };
-
+  it.each([
+    [
+      "credential-bearing endpoint",
+      { ...externalTarget, endpoint: "https://user@openshell.example.test:8443" },
+    ],
+    [
+      "endpoint path",
+      { ...externalTarget, endpoint: "https://openshell.example.test:8443/gateway" },
+    ],
+    ["relative CA file", { ...externalTarget, trust: { ca_file: "ca.pem" } }],
+    [
+      "relative authentication file",
+      { ...externalTarget, authentication: { credential_file: "authentication" } },
+    ],
+    [
+      "unsafe-large expected release",
+      { ...externalTarget, expected_release: "9007199254740992.0.0" },
+    ],
+  ])("rejects a target with a %s", (_name, target) => {
     expect(validate(blueprintWithExternalTarget(target))).toBe(false);
   });
 

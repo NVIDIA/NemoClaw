@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash, createPrivateKey, createPublicKey, X509Certificate } from "node:crypto";
+import { createHash, X509Certificate } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
@@ -12,16 +12,9 @@ const sourceOrGeneratedSandboxName = importedSandboxName as typeof importedSandb
 };
 const { isValidName } = sourceOrGeneratedSandboxName.default ?? sourceOrGeneratedSandboxName;
 
-export type ExternalOpenShellAuthentication =
-  | {
-      kind: "mtls";
-      client_certificate_file: string;
-      client_key_file: string;
-    }
-  | {
-      kind: "oidc";
-      token_file: string;
-    };
+export interface ExternalOpenShellAuthentication {
+  credential_file: string;
+}
 
 export interface ExternalOpenShellTarget {
   endpoint: string;
@@ -44,7 +37,7 @@ export interface SanitizedExternalOpenShellTargetPlan {
   workspace: string;
   expected_release: string;
   lifecycle: "external";
-  authentication_kind: ExternalOpenShellAuthentication["kind"];
+  authentication_source: "file";
   ca_fingerprint: string;
 }
 
@@ -63,9 +56,8 @@ const TARGET_KEYS = new Set([
   "authentication",
 ]);
 const TRUST_KEYS = new Set(["ca_file"]);
-const MTLS_KEYS = new Set(["kind", "client_certificate_file", "client_key_file"]);
-const OIDC_KEYS = new Set(["kind", "token_file"]);
-const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
+const AUTHENTICATION_KEYS = new Set(["credential_file"]);
+const SEMVER_PATTERN = /^\d{1,15}\.\d{1,15}\.\d{1,15}$/;
 const PEM_CERTIFICATE_PATTERN = /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/gu;
 const MAX_TRUST_FILE_BYTES = 1024 * 1024;
 const MAX_AUTHENTICATION_FILE_BYTES = 1024 * 1024;
@@ -127,7 +119,7 @@ function parseEndpoint(value: unknown): string {
     (mappedIpv4 !== null && mappedIpv4[1] === "0" && mappedIpv4[2] === "0")
   ) {
     throw new Error(
-      "external OpenShell target endpoint must not use the same-host loopback gateway contract",
+      "external OpenShell target endpoint must not use a loopback or unspecified address",
     );
   }
   return endpoint.origin;
@@ -137,32 +129,12 @@ function parseAuthentication(value: unknown): ExternalOpenShellAuthentication {
   if (!isRecord(value)) {
     throw new Error("external OpenShell target authentication must be a mapping");
   }
-  if (value.kind === "mtls") {
-    if (!hasOnlyKeys(value, MTLS_KEYS)) {
-      throw new Error("external OpenShell target mTLS authentication contains unsupported fields");
-    }
-    return {
-      kind: "mtls",
-      client_certificate_file: requiredAbsolutePath(
-        value.client_certificate_file,
-        "authentication.client_certificate_file",
-      ),
-      client_key_file: requiredAbsolutePath(
-        value.client_key_file,
-        "authentication.client_key_file",
-      ),
-    };
+  if (!hasOnlyKeys(value, AUTHENTICATION_KEYS)) {
+    throw new Error("external OpenShell target authentication contains unsupported fields");
   }
-  if (value.kind === "oidc") {
-    if (!hasOnlyKeys(value, OIDC_KEYS)) {
-      throw new Error("external OpenShell target OIDC authentication contains unsupported fields");
-    }
-    return {
-      kind: "oidc",
-      token_file: requiredAbsolutePath(value.token_file, "authentication.token_file"),
-    };
-  }
-  throw new Error("external OpenShell target authentication kind must be mtls or oidc");
+  return {
+    credential_file: requiredAbsolutePath(value.credential_file, "authentication.credential_file"),
+  };
 }
 
 function parseTarget(value: unknown): ExternalOpenShellTarget {
@@ -311,27 +283,6 @@ function validateCaBundle(contents: Buffer): readonly Buffer[] {
   }
 }
 
-function validateOidcToken(contents: Buffer): void {
-  const token = contents.toString("utf8").trim();
-  if (token === "" || /\s/u.test(token)) {
-    throw new Error("external OpenShell target OIDC token file is invalid");
-  }
-}
-
-function validateMtlsAuthentication(certificateContents: Buffer, keyContents: Buffer): void {
-  try {
-    const certificate = new X509Certificate(certificateContents);
-    const privateKey = createPrivateKey(keyContents);
-    const certificatePublicKey = certificate.publicKey.export({ format: "der", type: "spki" });
-    const privateKeyPublicKey = createPublicKey(privateKey).export({ format: "der", type: "spki" });
-    if (!Buffer.from(certificatePublicKey).equals(Buffer.from(privateKeyPublicKey))) {
-      throw new Error("certificate and key do not match");
-    }
-  } catch {
-    throw new Error("external OpenShell target mTLS authentication files are invalid");
-  }
-}
-
 export function isExternalOpenShellTarget(value: unknown): value is ExternalOpenShellTarget {
   try {
     parseTarget(value);
@@ -362,30 +313,12 @@ export function buildSanitizedExternalOpenShellTargetPlan(
   );
   const caCertificates = validateCaBundle(caContents);
 
-  if (target.authentication.kind === "oidc") {
-    validateOidcToken(
-      readBoundedFile(
-        target.authentication.token_file,
-        "OIDC token file",
-        MAX_AUTHENTICATION_FILE_BYTES,
-        readFile,
-      ),
-    );
-  } else {
-    const certificateContents = readBoundedFile(
-      target.authentication.client_certificate_file,
-      "mTLS client certificate file",
-      MAX_AUTHENTICATION_FILE_BYTES,
-      readFile,
-    );
-    const keyContents = readBoundedFile(
-      target.authentication.client_key_file,
-      "mTLS client key file",
-      MAX_AUTHENTICATION_FILE_BYTES,
-      readFile,
-    );
-    validateMtlsAuthentication(certificateContents, keyContents);
-  }
+  readBoundedFile(
+    target.authentication.credential_file,
+    "authentication file",
+    MAX_AUTHENTICATION_FILE_BYTES,
+    readFile,
+  );
 
   const caFingerprint = createHash("sha256");
   for (const certificate of caCertificates) {
@@ -396,7 +329,7 @@ export function buildSanitizedExternalOpenShellTargetPlan(
     workspace: target.workspace,
     expected_release: target.expected_release,
     lifecycle: "external",
-    authentication_kind: target.authentication.kind,
+    authentication_source: "file",
     ca_fingerprint: `sha256:${caFingerprint.digest("hex")}`,
   };
 }
