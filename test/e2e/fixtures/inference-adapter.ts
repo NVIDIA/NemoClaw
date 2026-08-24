@@ -27,9 +27,10 @@ import type { TestProgress, TestProgressCapability } from "./progress.ts";
  * `mock` exposes an authenticated local compatible endpoint and stages only
  * `COMPATIBLE_API_KEY`; `internal-nvidia` stages the internal NVIDIA endpoint
  * as compatible inference and rejects endpoint overrides outside its static
- * allowlist; `public-nvidia` uses the public NVIDIA provider and stages only
- * `NVIDIA_INFERENCE_API_KEY`. Every mode registers its credential for artifact
- * redaction and removes credentials owned by the other modes.
+ * allowlist; `public-nvidia` reads the public `NVIDIA_API_KEY` credential and
+ * stages it only under the runtime's historical `NVIDIA_INFERENCE_API_KEY`
+ * alias. Every mode registers its credential for artifact redaction and
+ * removes credentials owned by the other modes.
  *
  * Tests normally consume the `inference` fixture from `e2e-test.ts`, pass
  * `inference.env()` to install/onboard commands, use its model and provider
@@ -77,6 +78,7 @@ export interface E2EInferenceAdapterOptions {
 const DEFAULT_MOCK_MODEL = "nvidia/nvidia/nemotron-3-ultra";
 const DEFAULT_PUBLIC_NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 const DEFAULT_PUBLIC_NVIDIA_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+const PUBLIC_NVIDIA_CREDENTIAL_ENV = "NVIDIA_API_KEY";
 const DIRECT_CHAT_TIMEOUT_MS = 120_000;
 const INTERNAL_NVIDIA_ALLOWED_HOSTS = ["inference-api.nvidia.com"] as const;
 const MODEL_PROBE_TIMEOUT_MS = 30_000;
@@ -434,7 +436,9 @@ export async function createE2EInferenceAdapter(
       artifacts: options.artifacts,
     });
   }
-  const apiKey = requirePublicNvidiaInferenceKey(options.secrets.required(HOSTED_INFERENCE_SECRET));
+  const apiKey = requirePublicNvidiaInferenceKey(
+    options.secrets.required(PUBLIC_NVIDIA_CREDENTIAL_ENV),
+  );
   const model = env.NEMOCLAW_MODEL || DEFAULT_PUBLIC_NVIDIA_MODEL;
   return new PublicNvidiaInferenceAdapter({
     apiKey,

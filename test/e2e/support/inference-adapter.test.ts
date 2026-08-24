@@ -331,7 +331,7 @@ describe("E2E inference adapter", () => {
       artifacts: artifactSink,
       env: { NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia" },
       provider: provider((request) => requests.push(request)),
-      secrets: { NVIDIA_INFERENCE_API_KEY: apiKey },
+      secrets: { NVIDIA_API_KEY: apiKey },
     });
     const env = adapter.env({
       COMPATIBLE_API_KEY: "ambient-compatible-key",
@@ -370,9 +370,18 @@ describe("E2E inference adapter", () => {
     await expect(
       createAdapter({
         env: { NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia" },
-        secrets: { NVIDIA_INFERENCE_API_KEY: "sk-compatible-key" },
+        secrets: { NVIDIA_API_KEY: "sk-compatible-key" },
       }),
     ).rejects.toThrow(/must start with nvapi-/);
+  });
+
+  it("does not treat the internal NVIDIA inference credential as public authority", async () => {
+    await expect(
+      createAdapter({
+        env: { NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia" },
+        secrets: { NVIDIA_INFERENCE_API_KEY: "nvapi-wrong-source" },
+      }),
+    ).rejects.toThrow(/missing NVIDIA_API_KEY/);
   });
 
   it("rejects unknown explicit modes instead of silently falling back", async () => {
