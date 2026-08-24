@@ -155,9 +155,10 @@ function assertShieldsPolicyMutationAuthority(
 
 function externalPolicyRecoveryHandoff(sandboxName: string): string {
   return (
-    `NemoClaw cannot restore the externally managed policy for sandbox '${sandboxName}' ` +
-    "from its saved Shields policy snapshot. Ask the external policy authority to restore " +
-    `the restrictive policy, then run \`${CLI_NAME} ${sandboxName} shields up\` to retry Shields reconciliation.`
+    `NemoClaw cannot restore or reconcile the saved Shields policy snapshot for sandbox '${sandboxName}' ` +
+    "while an external authority manages policy. The external policy authority must keep the restrictive " +
+    "policy active and return policy authority to NemoClaw management. " +
+    `Then run \`${CLI_NAME} ${sandboxName} shields up\` to restore the saved snapshot and finish the Shields transition.`
   );
 }
 

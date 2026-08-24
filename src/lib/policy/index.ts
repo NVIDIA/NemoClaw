@@ -3330,6 +3330,7 @@ function applyPermissivePolicy(sandboxName: string): void {
 
   console.log("  Applying permissive policy...");
   assertOpenshellResolvable();
+  if (!recheckNemoClawManagedPolicy(sandboxName, operation, authority)) return;
   setPolicyDocument(sandboxName, materializedPolicy, { gatewayName: authority.gatewayName });
   const observed = inspectPolicyAuthority(sandboxName, operation, authority.gatewayName, true);
   registry.assertRecordedPolicyAuthority(authority.authority, observed.authority, operation);
