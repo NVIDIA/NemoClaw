@@ -1890,9 +1890,12 @@ jobs:
           DOCKERFILE: ${{ matrix.dockerfile }}
         run: |
           set -euo pipefail
+          target_arch='${{ matrix.arch }}'
+          case "$target_arch" in amd64|arm64) ;; *) exit 1 ;; esac
           build_args=(
             -f "$DOCKERFILE"
             --build-arg "BASE_IMAGE=${BASE_IMAGE}"
+            --build-arg "TARGETARCH=${target_arch}"
             --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1"
             --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
           )
@@ -1922,6 +1925,7 @@ jobs:
             ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution={0}', steps.base.outputs.resolution_label) || '' }}
           build-args: |
             BASE_IMAGE=${{ steps.base.outputs.ref }}
+            TARGETARCH=${{ matrix.arch }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
             NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.artifact_platform }}
