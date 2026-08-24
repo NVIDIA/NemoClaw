@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ConfigCorruptError,
@@ -86,6 +86,35 @@ describe("config-io", () => {
     // The write path already refuses this exact path; the read path must agree.
     expect(() => writeConfigFile(plantedFile, { sandboxes: {} })).toThrow(/symbolic link/);
     expect(() => readConfigFile(plantedFile, null)).toThrow(/symbolic link/);
+  });
+
+  it("reports permission failures while checking a read path with remediation", () => {
+    const home = process.env.HOME || os.homedir();
+    const tmp = fs.mkdtempSync(path.join(home, ".nemoclaw-test-"));
+    tmpDirs.push(tmp);
+    const configDir = path.join(tmp, ".nemoclaw");
+    fs.mkdirSync(configDir, { mode: 0o700 });
+    const configFile = path.join(configDir, "sandboxes.json");
+    fs.writeFileSync(configFile, JSON.stringify({ sandboxes: {} }), { mode: 0o600 });
+
+    const realLstatSync = fs.lstatSync.bind(fs);
+    const rejectInspection = (): never => {
+      throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+    };
+    const lstatSpy = vi.spyOn(fs, "lstatSync").mockImplementation((target, options) => {
+      return path.resolve(String(target)) === path.resolve(configDir)
+        ? rejectInspection()
+        : realLstatSync(target, options as never);
+    });
+
+    try {
+      const read = () => readConfigFile(configFile, null);
+      expect(read).toThrow(ConfigPermissionError);
+      expect(read).toThrow(/Cannot read config directory/);
+      expect(read).toThrow(/sudo chown/);
+    } finally {
+      lstatSpy.mockRestore();
+    }
   });
 
   it("allows a normal directory (no symlinks)", () => {
