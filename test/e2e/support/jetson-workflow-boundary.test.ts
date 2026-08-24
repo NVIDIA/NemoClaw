@@ -18,6 +18,20 @@ function validateWorkflowMutation(
 }
 
 describe("Jetson nvmap GPU E2E workflow boundary", () => {
+  it("passes the selected managed-image publication commit to Jetson dispatch", () => {
+    const errors = validateWorkflowMutation((workflow) => {
+      const publication = (workflow.jobs as Record<string, unknown>)["base-image-publication"] as {
+        outputs?: Record<string, unknown>;
+      };
+      publication.outputs!.managed_image_revision =
+        "${{ steps.publication.outputs.head_sha || inputs.checkout_sha || github.sha }}";
+    });
+
+    expect(errors).toContain(
+      "base-image-publication must expose the managed-image revision to Jetson dispatch",
+    );
+  });
+
   it("waits for the exact managed-image publication before Jetson dispatch", () => {
     const errors = validateWorkflowMutation((workflow) => {
       const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {
@@ -125,7 +139,7 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
       expect.arrayContaining([
         "jetson-nvmap-gpu controller must grant only contents:read and id-token:write",
         "jetson-nvmap-gpu checkout must use the trusted workflow SHA without credentials",
-        "jetson-nvmap-gpu controller must dispatch only the exact candidate and configured URL",
+        "jetson-nvmap-gpu controller must dispatch the exact candidate, managed-image revision, and configured URL",
       ]),
     );
   });
@@ -164,7 +178,7 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
     expect(errors).toEqual(
       expect.arrayContaining([
         "jetson-nvmap-gpu controller must not define a job-level environment",
-        "jetson-nvmap-gpu controller must dispatch only the exact candidate and configured URL",
+        "jetson-nvmap-gpu controller must dispatch the exact candidate, managed-image revision, and configured URL",
       ]),
     );
   });
