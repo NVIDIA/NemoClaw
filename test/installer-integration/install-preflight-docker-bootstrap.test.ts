@@ -10,7 +10,7 @@ import {
   INSTALLER_PAYLOAD,
   TEST_SYSTEM_PATH,
   writeExecutable,
-} from "./helpers/installer-sourced-env";
+} from "../helpers/installer-sourced-env";
 
 describe("installer Docker bootstrap (sourced)", () => {
   function runEnsureDockerWithStubs({

@@ -244,6 +244,15 @@ export interface SetupNimFlowDeps {
   maybePromptForInferenceInputCapability(model: string | null): Promise<void>;
 }
 
+function maybePromptForSupportedInferenceInputCapability(
+  deps: Pick<SetupNimFlowDeps, "maybePromptForInferenceInputCapability">,
+  agent: AgentDefinition | null,
+  model: string | null,
+): Promise<void> {
+  if ((agent?.name ?? "openclaw") !== "openclaw") return Promise.resolve();
+  return deps.maybePromptForInferenceInputCapability(model);
+}
+
 function requireSelectedProvider(
   selected: ProviderMenuChoice | undefined,
   deps: Pick<SetupNimFlowDeps, "error" | "exitProcess">,
@@ -651,7 +660,7 @@ async function resolveFreshHermesPortableOllamaSelection(input: {
   state.preferredInferenceApi = "openai-completions";
   state.assertRouteCompatible?.();
   const selectedModel = isBackToSelection(state.model) ? null : state.model;
-  await input.deps.maybePromptForInferenceInputCapability(selectedModel);
+  await maybePromptForSupportedInferenceInputCapability(input.deps, input.agent, selectedModel);
   return {
     model: selectedModel,
     provider: state.provider,
@@ -1237,7 +1246,7 @@ export function createSetupNim(
       : endpointPinnedAddresses || endpointTrustedPrivateCapability
         ? "onboard"
         : null;
-    await deps.maybePromptForInferenceInputCapability(selectedModel);
+    await maybePromptForSupportedInferenceInputCapability(deps, agent, selectedModel);
     return {
       model: selectedModel,
       provider,

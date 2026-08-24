@@ -46,7 +46,7 @@ Review this fallback at every stable OpenShell bump and remove it in the same Ne
 - `invalidState`: A host below OpenShell's native glibc floor silently receives a privileged compatibility path, or the path is treated as equivalent to native execution even though read-only Docker socket access still exposes privileged Docker APIs.
 - `sourceBoundary`: OpenShell owns its native glibc floor; NemoClaw owns the explicit `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` opt-in, host-networking configuration, read-only socket mount, and gateway authentication controls.
 - `whyNotSourceFix`: NemoClaw cannot make an upstream binary support an older host libc, so supported legacy hosts require an explicit, audited container boundary until the host floor is raised.
-- `regressionTest`: `test/install-openshell-version-check.test.ts` proves the flag gates the fallback, while `src/lib/onboard/docker-driver-gateway-compat-container.test.ts` covers container launch, the trust boundary, and the glibc decision.
+- `regressionTest`: `src/lib/onboard/docker-driver-gateway-compat-container.test.ts` proves the explicit opt-in gates the fallback and covers container launch, the trust boundary, and the glibc decision.
 - `removalCondition`: Remove the fallback when every supported Linux host meets OpenShell's native glibc 2.39-or-newer floor and the gateway-authentication and gateway-upgrade matrix passes for the release candidate commit without the flag.
 
 The release source boundary is the immutable upstream tag, its GitHub release asset digests, and the GHCR manifest digest produced by the linked release workflow.
@@ -60,7 +60,7 @@ These version-specific pins are removed only when NemoClaw drops `0.0.72` suppor
 - `invalidState`: A mutable development artifact is installed without SHA-256 verification or an explicit operator risk acknowledgment.
 - `sourceBoundary`: NVIDIA/OpenShell owns the mutable `dev` tag; NemoClaw owns the opt-in that permits consuming it for pre-release compatibility tests.
 - `whyNotSourceFix`: NemoClaw cannot make an upstream development tag immutable, so it must fail closed unless the operator explicitly accepts that unverified install.
-- `regressionTest`: `test/install-openshell-version-check.test.ts` proves the development channel fails without `NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1` and succeeds with it.
+- `regressionTest`: `test/installer-integration/install-openshell-version-check.test.ts` proves the development channel fails without `NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1` and succeeds with it.
 - `removalCondition`: Remove the opt-in when NemoClaw no longer tests unreleased OpenShell builds or the development channel publishes artifacts through an independently verified immutable pipeline.
 
 The development channel is compatibility evidence only.

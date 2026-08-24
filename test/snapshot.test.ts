@@ -123,6 +123,9 @@ function restoreEnv(name: string, value: string | undefined): void {
     ? Reflect.deleteProperty(process.env, name)
     : Reflect.set(process.env, name, value);
 }
+function encodePreBackupAuditRows(rows: readonly string[]): string {
+  return rows.flatMap((row) => row.split("\t")).join("\0") + (rows.length > 0 ? "\0" : "");
+}
 function writeAgentRegistry(
   sandboxName: string,
   agent: string | null,
@@ -851,13 +854,13 @@ process.exit(0);
       const existingDirs = ["agents", "extensions", "workspace"];
       fs.mkdirSync(binDir, { recursive: true });
       for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
-      const auditLines = [
+      const auditOutput = encodePreBackupAuditRows([
         "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/.bin/qrcode-terminal\t../qrcode-terminal/bin/qrcode-terminal.js",
         "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
         "l\t/sandbox/.openclaw/extensions/slack/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
         "l\t/sandbox/.openclaw/extensions/whatsapp/node_modules/openclaw\t/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw",
         "l\t/sandbox/.openclaw/extensions/weather/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
-      ].join("\n");
+      ]);
 
       const openshell = writeFakeOpenshell(binDir);
       writeExecutable(
@@ -872,7 +875,7 @@ if (cmd.includes("[ -d ")) {
   process.exit(0);
 }
 if (cmd.includes("find ")) {
-  process.stdout.write(${JSON.stringify(auditLines)} + "\\n");
+  process.stdout.write(${JSON.stringify(auditOutput)});
   process.exit(0);
 }
 if (cmd.includes("-cf -")) {
@@ -916,11 +919,11 @@ process.exit(0);
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(path.join(openclawDir, "extensions"), { recursive: true });
 
-      const auditLines = [
+      const auditOutput = encodePreBackupAuditRows([
         "l\t/sandbox/.openclaw/extensions/nemoclaw/node_modules/.bin/json5\t../json5/lib/cli.js",
         "l\t/sandbox/.openclaw/extensions/nemoclaw/node_modules/.bin/yaml\t../yaml/bin.mjs",
         "l\t/sandbox/.openclaw/extensions/nemoclaw/node_modules/.bin/node-which\t../which/bin/node-which",
-      ].join("\n");
+      ]);
 
       const openshell = writeFakeOpenshell(binDir);
       writeExecutable(
@@ -936,7 +939,7 @@ if (cmd.includes("[ -d ")) {
   process.exit(0);
 }
 if (cmd.includes("find ")) {
-  process.stdout.write(${JSON.stringify(auditLines)} + "\\n");
+  process.stdout.write(${JSON.stringify(auditOutput)});
   process.exit(0);
 }
 if (cmd.includes("-cf -")) {
@@ -979,9 +982,9 @@ process.exit(0);
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(path.join(openclawDir, "extensions"), { recursive: true });
 
-      const auditLines = [
+      const auditOutput = encodePreBackupAuditRows([
         "l\t/sandbox/.openclaw/extensions/nemoclaw/node_modules/.bin/leak\t../../../../openclaw.json",
-      ].join("\n");
+      ]);
 
       const openshell = writeFakeOpenshell(binDir);
       writeExecutable(
@@ -994,7 +997,7 @@ if (cmd.includes("[ -d ")) {
   process.exit(0);
 }
 if (cmd.includes("find ")) {
-  process.stdout.write(${JSON.stringify(auditLines)} + "\\n");
+  process.stdout.write(${JSON.stringify(auditOutput)});
   process.exit(0);
 }
 process.exit(0);
@@ -1031,10 +1034,10 @@ process.exit(0);
       fs.mkdirSync(binDir, { recursive: true });
       for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
 
-      const auditLines = [
+      const auditOutput = encodePreBackupAuditRows([
         "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
         "l\t/sandbox/.openclaw/workspace/leak\t/etc/passwd",
-      ].join("\n");
+      ]);
 
       const openshell = writeFakeOpenshell(binDir);
       writeExecutable(
@@ -1047,7 +1050,7 @@ if (cmd.includes("[ -d ")) {
   process.exit(0);
 }
 if (cmd.includes("find ")) {
-  process.stdout.write(${JSON.stringify(auditLines)} + "\\n");
+  process.stdout.write(${JSON.stringify(auditOutput)});
   process.exit(0);
 }
 process.exit(0);
@@ -1089,9 +1092,9 @@ process.exit(0);
       fs.mkdirSync(binDir, { recursive: true });
       for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
 
-      const auditLines = [
+      const auditOutput = encodePreBackupAuditRows([
         `l\t/sandbox/.openclaw/extensions/${extensionName}/node_modules/openclaw\t/etc/passwd`,
-      ].join("\n");
+      ]);
 
       const openshell = writeFakeOpenshell(binDir);
       writeExecutable(
@@ -1104,7 +1107,7 @@ if (cmd.includes("[ -d ")) {
   process.exit(0);
 }
 if (cmd.includes("find ")) {
-  process.stdout.write(${JSON.stringify(auditLines)} + "\\n");
+  process.stdout.write(${JSON.stringify(auditOutput)});
   process.exit(0);
 }
 process.exit(0);
@@ -1282,7 +1285,9 @@ process.exit(0);
       // `agents` simulates perm-denied (no rows emitted); `workspace` emits
       // a symlink that is not in the audit allow-list, which must still be
       // caught even when a sibling find exits non-zero.
-      const auditLines = ["l\t/sandbox/.openclaw/workspace/leak\t../openclaw.json"].join("\n");
+      const auditOutput = encodePreBackupAuditRows([
+        "l\t/sandbox/.openclaw/workspace/leak\t../openclaw.json",
+      ]);
 
       const openshell = writeFakeOpenshell(binDir);
       writeExecutable(
@@ -1304,7 +1309,7 @@ if (cmd.includes("find ")) {
     process.stderr.write("find: '/sandbox/.openclaw/agents/main': Permission denied\\n");
     process.exit(1);
   }
-  process.stdout.write(${JSON.stringify(auditLines)} + "\\n");
+  process.stdout.write(${JSON.stringify(auditOutput)});
   process.exit(0);
 }
 process.exit(0);

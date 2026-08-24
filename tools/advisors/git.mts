@@ -21,13 +21,14 @@ export function getChangedFiles(base: string, head: string): string[] {
     .sort();
 }
 
-export function getDiff(base: string, head: string): string {
+export function getDiff(base: string, head: string, cwd?: string): string {
   const stdout = gitOutput(
     [
       ["diff", "--find-renames", "--find-copies", "--unified=80", `${base}...${head}`],
       ["diff", "--find-renames", "--find-copies", "--unified=80", `${base}..${head}`],
     ],
     Number.POSITIVE_INFINITY,
+    cwd,
   );
   if (stdout === undefined) {
     throw new Error(`failed to read complete diff ${base}..${head}; ensure both refs are fetched`);
@@ -59,10 +60,10 @@ export function getHeadSha(head: string): string {
   return execFileSync("git", ["rev-parse", head], { encoding: "utf8" }).trim();
 }
 
-export function gitOutput(commands: string[][], maxBuffer: number): string | undefined {
+export function gitOutput(commands: string[][], maxBuffer: number, cwd?: string): string | undefined {
   for (const command of commands) {
     try {
-      return execFileSync("git", command, { encoding: "utf8", maxBuffer });
+      return execFileSync("git", command, { encoding: "utf8", maxBuffer, cwd });
     } catch {
       // Try the next form. Some checkouts do not have a merge base locally.
     }
