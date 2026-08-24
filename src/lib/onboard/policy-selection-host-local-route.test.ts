@@ -92,6 +92,50 @@ describe("host-local route-only policy selection", () => {
     });
   });
 
+  it("refuses tier attribution when authority changes during the prompt (#9833)", async () => {
+    const { deps, syncPresetSelection } = createHarness();
+    deps.isNonInteractive.mockReturnValue(false);
+    const refuseTierAttribution = () => {
+      throw new Error("policy authority changed");
+    };
+    const policyChecks = new Map([
+      ["record the policy tier for sandbox 'alpha'", refuseTierAttribution],
+    ]);
+    const revalidatePolicyRequirements = vi.fn((operation: string) =>
+      policyChecks.get(operation)?.(),
+    );
+
+    await expect(
+      setupPoliciesWithSelection(deps, "alpha", {
+        selectedPresets: null,
+        provider: null,
+        excludedPresets: ["local-inference"],
+        revalidatePolicyRequirements,
+      }),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(deps.selectPolicyTier).toHaveBeenCalledOnce();
+    expect(deps.setPolicyTier).not.toHaveBeenCalled();
+    expect(syncPresetSelection).not.toHaveBeenCalled();
+  });
+
+  it("does not attribute presets when the policy mutation is refused (#9833)", async () => {
+    const { deps, syncPresetSelection } = createHarness();
+    const onSelection = vi.fn();
+    syncPresetSelection.mockImplementation(() => {
+      throw new Error("policy authority changed");
+    });
+
+    await expect(
+      setupPoliciesWithSelection(deps, "alpha", {
+        selectedPresets: ["npm"],
+        onSelection,
+      }),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(onSelection).not.toHaveBeenCalled();
+  });
+
   it("removes a live stale local-inference preset even when ordinary policy setup is skipped", async () => {
     const { deps, syncPresetSelection } = createHarness();
     deps.env.NEMOCLAW_POLICY_MODE = "skip";

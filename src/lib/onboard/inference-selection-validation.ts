@@ -342,6 +342,7 @@ export function createInferenceSelectionValidationHelpers(
       }
       return { ok: false, retry };
     }
+    options.revalidatePolicyRequirements?.("report validated inference endpoint");
     if (probe.note) {
       console.log(`  ℹ ${probe.note}`);
     } else {
@@ -391,6 +392,7 @@ export function createInferenceSelectionValidationHelpers(
       }
       return { ok: false, retry };
     }
+    revalidatePolicyRequirements?.("report validated inference endpoint");
     console.log(`  ${probe.label} available — ${deps.agentProductName()} will use ${probe.api}.`);
     return { ok: true, api: probe.api };
   }
@@ -426,6 +428,7 @@ export function createInferenceSelectionValidationHelpers(
       trustedPrivateCapability,
     });
     if (probe.ok) {
+      revalidatePolicyRequirements?.("report validated inference endpoint");
       if (probe.note) {
         console.log(`  ℹ ${probe.note}`);
       } else {
@@ -517,6 +520,7 @@ export function createInferenceSelectionValidationHelpers(
             trustedPrivateCapability,
           });
     if (probe.ok) {
+      options.revalidatePolicyRequirements?.("report validated inference endpoint");
       if (probe.note) {
         console.log(`  ℹ ${probe.note}`);
       } else {

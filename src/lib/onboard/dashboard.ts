@@ -133,8 +133,11 @@ export interface OnboardDashboardHelpers {
   ): number;
   ensureFinalizationAgentDashboardForward(
     sandboxName: string,
-    agent: { forwardPort?: number | null; forward_ports?: number[] | null } | null,
+    agent: { name: string; forwardPort?: number | null; forward_ports?: number[] | null } | null,
     revalidatePolicyAuthority?: (operation: string) => void,
+    portReservation?: {
+      releaseBeforeForward(agentName: string, port: number): Promise<void> | void;
+    },
   ): Promise<number> | number;
   ensureAgentFixedForward(
     sandboxName: string,
@@ -570,11 +573,19 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
 
   function ensureFinalizationAgentDashboardForward(
     sandboxName: string,
-    agent: { forwardPort?: number | null; forward_ports?: number[] | null } | null,
+    agent: { name: string; forwardPort?: number | null; forward_ports?: number[] | null } | null,
     revalidatePolicyAuthority?: (operation: string) => void,
+    portReservation?: {
+      releaseBeforeForward(agentName: string, port: number): Promise<void> | void;
+    },
   ): Promise<number> | number {
     return agent
-      ? ensureAgentDashboardForward(sandboxName, agent, { revalidatePolicyAuthority })
+      ? ensureAgentDashboardForward(sandboxName, agent, {
+          revalidatePolicyAuthority,
+          beforeForwardPort: portReservation
+            ? (port) => portReservation.releaseBeforeForward(agent.name, port)
+            : undefined,
+        })
       : ensureFinalizationDashboardForward(sandboxName, revalidatePolicyAuthority);
   }
 

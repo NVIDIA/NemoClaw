@@ -3346,8 +3346,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         revalidatePolicyRequirements: policyAuthorityBindings.revalidatePolicyRequirements,
         agentSetupDeps: {
           handleAgentSetup: agentOnboard.handleAgentSetup,
-          agentSetupContext: () => ({
-            ...{ step, runCaptureOpenshell, captureOpenshell },
+          agentSetupContext: (revalidatePolicyRequirements) => ({
+            ...{ step, runCaptureOpenshell, captureOpenshell, revalidatePolicyRequirements },
             openshellShellCommand,
             openshellBinary: getOpenshellBinary(),
             buildSandboxConfigSyncScript,
@@ -3358,13 +3358,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             recordStepFailed,
             skippedStepMessage,
           }),
-          ensureAgentDashboardForward: (name, selectedAgent) =>
-            selectedAgent
-              ? ensureAgentDashboardForward(name, selectedAgent, {
-                  beforeForwardPort: (port) =>
-                    hermesApiPortReservationScope.releaseBeforeForward(selectedAgent.name, port),
-                })
-              : 0,
+          ensureAgentDashboardForward: (name, selectedAgent, revalidate) =>
+            ensureFinalizationAgentDashboardForward(
+              name,
+              selectedAgent,
+              revalidate,
+              hermesApiPortReservationScope,
+            ),
           persistDashboardPort: (name, port) =>
             registry.updateSandbox(name, { dashboardPort: port }),
           recordStepSkipped,

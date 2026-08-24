@@ -26,6 +26,19 @@ describe("sandbox policy authority preflight", () => {
     ).toEqual(["github", "local-inference", "tavily", "observability-otlp-local"]);
   });
 
+  it("does not require a local-inference preset for a proven route-only provider (#9833)", () => {
+    expect(
+      requiredOnboardPolicyPresets({
+        additionalPresets: ["github"],
+        provider: "vllm-local",
+        hostLocalInferenceRouteOnly: true,
+        webSearchConfig: null,
+        agentName: "openclaw",
+        observabilityEnabled: false,
+      }),
+    ).toEqual(["github"]);
+  });
+
   it("uses live sandbox metadata and accepts externally supplied requirements (#9833)", () => {
     const inspectSandbox = vi.fn(() => ({
       authority: "externally-managed" as const,

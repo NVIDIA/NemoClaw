@@ -109,6 +109,51 @@ describe("ordinary OpenClaw pairing settlement", () => {
     expect(scope.deps.runApproval).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
   });
 
+  it("stops before warm-up and approval when authority changes during pairing observation (#9833)", async () => {
+    let revalidatePolicyRequirements = () => undefined;
+    const scope = ordinaryPairingDeps({
+      observePairing: vi
+        .fn()
+        .mockImplementationOnce(() => {
+          throw new Error("not published");
+        })
+        .mockImplementationOnce(() => {
+          revalidatePolicyRequirements = () => {
+            throw new Error("policy authority changed");
+          };
+          return PAIRING_ONLY;
+        }),
+      revalidatePolicyRequirements: vi.fn(() => revalidatePolicyRequirements()),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).rejects.toThrow(
+      "policy authority changed",
+    );
+
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+    expect(scope.deps.runApproval).not.toHaveBeenCalled();
+  });
+
+  it("does not publish settled pairing when authority changes during observation (#9833)", async () => {
+    let revalidatePolicyRequirements = () => undefined;
+    const scope = ordinaryPairingDeps({
+      observePairing: vi.fn(() => {
+        revalidatePolicyRequirements = () => {
+          throw new Error("policy authority changed");
+        };
+        return SETTLED;
+      }),
+      revalidatePolicyRequirements: vi.fn(() => revalidatePolicyRequirements()),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).rejects.toThrow(
+      "policy authority changed",
+    );
+
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+    expect(scope.deps.runApproval).not.toHaveBeenCalled();
+  });
+
   it("holds lifecycle then gateway-route ownership across the full settlement (#9844)", async () => {
     const events: string[] = [];
     const scope = ordinaryPairingDeps({
@@ -489,10 +534,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
   });
 
   it("wires default warm-up and approval adapters to the finalized gateway (#9844)", async () => {
-    const observePairing = vi
-      .fn()
-      .mockReturnValueOnce(PAIRING_ONLY)
-      .mockReturnValueOnce(SETTLED);
+    const observePairing = vi.fn().mockReturnValueOnce(PAIRING_ONLY).mockReturnValueOnce(SETTLED);
     const runSandboxScopeWarmupRun = vi.fn();
     const runConnectAutoPairApprovalPass = vi.fn();
     vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({

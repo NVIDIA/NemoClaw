@@ -87,7 +87,7 @@ export function parseGlobalPolicyAuthorityMetadata(
   if (
     metadata.scope !== "global" ||
     Object.hasOwn(metadata, "sandbox") ||
-    (metadata.policy_source !== undefined && metadata.policy_source !== "global")
+    metadata.policy_source !== "global"
   ) {
     throw new Error("OpenShell returned invalid global policy authority metadata");
   }

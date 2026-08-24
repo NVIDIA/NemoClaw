@@ -57,6 +57,20 @@ export type RecorderOverrides = {
     nimContainer: string | null,
     agent: Agent | null,
   ) => void;
+  reportDeploymentReadiness?: (healthy: boolean) => void;
+  getActiveSandbox?: PoliciesStateOptions<Agent | null, WebSearchConfig>["deps"]["getActiveSandbox"];
+  setupPoliciesWithSelection?: PoliciesStateOptions<
+    Agent | null,
+    WebSearchConfig
+  >["deps"]["setupPoliciesWithSelection"];
+  persistAppliedPolicyPresets?: PoliciesStateOptions<
+    Agent | null,
+    WebSearchConfig
+  >["deps"]["persistAppliedPolicyPresets"];
+  revalidatePolicyRequirements?: (
+    context: OnboardFlowContext<Agent | null>,
+    operation: string,
+  ) => void;
 };
 
 function cloneSession(session: Session): Session {
@@ -183,6 +197,7 @@ export function createPhases(
     VerifyDeploymentResult
   >({
     branchState,
+    revalidatePolicyRequirements: recorders.revalidatePolicyRequirements,
     agentSetupDeps: {
       handleAgentSetup: vi.fn(async () => {
         order.push("agent-setup");
@@ -210,8 +225,9 @@ export function createPhases(
       toSessionUpdates: (updates) => updates as SessionUpdates,
     },
     policiesDeps: {
-      loadSession: recorders.loadSession ?? (() => createSession()),
-      getActiveSandbox: () => null,
+      loadSession:
+        recorders.loadSession ?? (() => createSession({ policyAuthority: "nemoclaw-managed" })),
+      getActiveSandbox: recorders.getActiveSandbox ?? (() => null),
       mergePolicyMessagingChannels:
         recorders.mergePolicyMessagingChannels ?? ((selected) => selected),
       detectUnconfiguredMessagingChannels: () => [],
@@ -226,10 +242,12 @@ export function createPhases(
       skippedStepMessage: vi.fn(),
       recordStateSkipped: recorders.recordStateSkipped ?? vi.fn(async () => createSession()),
       startRecordedStep: recorders.startRecordedStep ?? vi.fn(async () => undefined),
-      setupPoliciesWithSelection: vi.fn(async () => {
-        order.push("policies");
-        return ["balanced"];
-      }),
+      setupPoliciesWithSelection:
+        recorders.setupPoliciesWithSelection ??
+        vi.fn(async () => {
+          order.push("policies");
+          return ["balanced"];
+        }),
       updateSession:
         recorders.updateSession ?? vi.fn((mutator) => mutator(createSession()) ?? createSession()),
       recordStepComplete:
@@ -238,7 +256,7 @@ export function createPhases(
           sessionWithUpdates(updates),
         ),
       toSessionUpdates: (updates) => updates as SessionUpdates,
-      persistAppliedPolicyPresets: vi.fn(),
+      persistAppliedPolicyPresets: recorders.persistAppliedPolicyPresets ?? vi.fn(),
     },
     finalization: {
       stagedLegacyKeys: [],
@@ -269,7 +287,7 @@ export function createPhases(
       ),
       isDeploymentHealthy:
         recorders.isDeploymentHealthy ?? ((result: VerifyDeploymentResult) => result.healthy),
-      reportDeploymentReadiness: vi.fn(),
+      reportDeploymentReadiness: recorders.reportDeploymentReadiness ?? vi.fn(),
       getChatUiUrl: () => "http://127.0.0.1:45123",
       buildVerifyChain: (): DashboardDeliveryChain => ({
         accessUrl: "http://127.0.0.1:45123",

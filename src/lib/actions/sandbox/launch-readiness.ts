@@ -935,8 +935,7 @@ function resolveOpenClawPairingSettlementTarget(
   // command shape, so its caller may preserve that unknown value as the empty
   // string while retaining the exact registry and live-lifecycle checks.
   const customDockerfile = normalizedString(entry.fromDockerfile);
-  const version =
-    recordedVersion ?? (allowUnknownCustomVersion && customDockerfile ? "" : null);
+  const version = recordedVersion ?? (allowUnknownCustomVersion && customDockerfile ? "" : null);
   const expectedVersion = normalizedString(agent.expected_version);
   const stateDirectory = normalizedString(agent.config?.dir);
   const lifecycleGeneration = normalizedString(entry.lifecycleGeneration);
@@ -988,6 +987,7 @@ export async function settlePortableOpenClawPairing(
   sandboxName: string,
   options: {
     readonly portableRequired?: boolean;
+    readonly revalidatePolicyRequirements?: (operation: string) => void;
   } = {},
   deps: LaunchReadinessDeps = {},
 ): Promise<PortableOpenClawPairingSettlementResult> {
@@ -999,6 +999,7 @@ export async function settlePortableOpenClawPairing(
   const observePairing = deps.observeOpenClawPairingSettlement ?? observeOpenClawPairingSettlement;
   const runProducer = deps.runPortablePairingProducer ?? runPortableOpenClawPairingRequestProducer;
   const runApproval = deps.runPortablePairingApproval ?? runPortableOpenClawPairingApproval;
+  const revalidatePolicyRequirements = options.revalidatePolicyRequirements;
 
   return withSandboxLock(sandboxName, async () => {
     let firstEntry = getSandbox(sandboxName);
@@ -1018,6 +1019,7 @@ export async function settlePortableOpenClawPairing(
       firstEntry.policyPresetsFinalized === true &&
       portableLifecycleReceiptMatchesGeneration(firstReceipt, firstEntry.lifecycleGeneration)
     ) {
+      revalidatePolicyRequirements?.(`update the recorded agent for sandbox '${sandboxName}'`);
       if (!updateSandbox(sandboxName, { agent: "openclaw" })) {
         return incompletePortablePairing("portable-runtime-identity-invalid");
       }
@@ -1086,24 +1088,40 @@ export async function settlePortableOpenClawPairing(
       } catch {
         return incompletePortablePairing("portable-pairing-incomplete");
       }
-      if (first.state === "settled") return { kind: "settled" };
+      if (first.state === "settled") {
+        revalidatePolicyRequirements?.(
+          `publish settled Portable OpenClaw pairing for sandbox '${sandboxName}'`,
+        );
+        return { kind: "settled" };
+      }
 
+      revalidatePolicyRequirements?.(
+        `request Portable OpenClaw pairing for sandbox '${sandboxName}'`,
+      );
       runProducer(sandboxName, target.gatewayName);
+      revalidatePolicyRequirements?.(
+        `approve Portable OpenClaw pairing for sandbox '${sandboxName}'`,
+      );
       runApproval(sandboxName, target.gatewayName, first.deviceIdentitySha256);
 
+      let final: OpenClawPairingSettlementObservation;
       try {
-        const final = observePairing(
+        final = observePairing(
           sandboxName,
           target.gatewayName,
           target.version,
           target.stateDirectory,
         );
-        return final.state === "settled"
-          ? { kind: "settled" }
-          : incompletePortablePairing("portable-pairing-incomplete");
       } catch {
         return incompletePortablePairing("portable-pairing-incomplete");
       }
+      if (final.state !== "settled") {
+        return incompletePortablePairing("portable-pairing-incomplete");
+      }
+      revalidatePolicyRequirements?.(
+        `publish settled Portable OpenClaw pairing for sandbox '${sandboxName}'`,
+      );
+      return { kind: "settled" };
     });
   });
 }

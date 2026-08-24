@@ -227,6 +227,7 @@ describe("global policy authority boundary", () => {
     ["malformed", "{"],
     ["wrong scope", JSON.stringify({ scope: "sandbox", status: "loaded", policy })],
     ["sandbox identity", JSON.stringify({ scope: "global", sandbox: "alpha", status: "loaded", policy })],
+    ["missing source", JSON.stringify({ scope: "global", status: "loaded", policy })],
     ["unknown source", JSON.stringify({ scope: "global", status: "loaded", policy_source: "sandbox", policy })],
     ["unknown status", JSON.stringify({ scope: "global", status: "pending", policy })],
   ])("rejects %s global authority metadata", (_caseName, raw) => {

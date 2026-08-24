@@ -111,4 +111,33 @@ describe("provider inference policy authority", () => {
     expect(calls.complete).toHaveBeenCalledWith("provider_selection", expect.any(Object));
     expect(calls.complete).not.toHaveBeenCalledWith("inference", expect.any(Object));
   });
+
+  it("withholds resumed provider reuse output when policy authority changes (#9833)", async () => {
+    const session = createSession({
+      provider: "ollama-local",
+      model: "llama3.1",
+      credentialEnv: null,
+    });
+    session.steps.provider_selection.status = "complete";
+    const refuseReusePublication = () => {
+      throw new Error("policy authority changed");
+    };
+    const policyChecks = new Map([["record resumed provider selection", refuseReusePublication]]);
+    const { deps, calls } = createDeps({
+      isInferenceRouteReady: vi.fn(() => true),
+      preflightPolicyRequirements: (input) => policyChecks.get(input.operation)?.(),
+    });
+
+    await expect(
+      handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+      }),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(calls.skipped).not.toHaveBeenCalled();
+    expect(calls.log).not.toHaveBeenCalledWith(expect.stringContaining("Reusing sandbox name"));
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+  });
 });

@@ -455,6 +455,7 @@ describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
       commitAfterReady: vi.fn(),
       rollbackManagedStartupAfterCreateFailure: vi.fn(),
     };
+    const log = vi.fn();
 
     await expect(
       verifyGpuSandboxLocalInferenceAndCommitAfterReady(
@@ -462,6 +463,7 @@ describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
         "ollama-local",
         {
           ...options(),
+          log,
           deps: { execInSandbox: execEmitting("HTTP_200"), sleep: vi.fn() },
         },
         runtimePatch,
@@ -473,6 +475,7 @@ describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
 
     expect(runtimePatch.commitAfterReady).not.toHaveBeenCalled();
     expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("reached local inference"));
   });
 });
 

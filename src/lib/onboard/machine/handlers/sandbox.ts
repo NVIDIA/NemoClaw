@@ -313,6 +313,7 @@ export interface SandboxStateOptions<
       hermesToolGateways: readonly string[];
       gpuPassthrough: boolean;
       provider: string | null;
+      hostLocalInferenceRouteOnly?: boolean;
       webSearchConfig: WebSearchConfig | null;
       observabilityEnabled: boolean;
       operation: string;
@@ -1481,6 +1482,7 @@ class SandboxStateFlow<
       ),
       gpuPassthrough: session?.gpuPassthrough === true,
       provider: this.options.provider,
+      hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
       webSearchConfig,
       observabilityEnabled: session?.observabilityEnabled === true,
       operation,

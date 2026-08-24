@@ -142,6 +142,7 @@ type ProviderPolicyRequirements = {
   readonly hermesToolGateways: readonly string[];
   readonly gpuPassthrough: boolean;
   readonly provider: string | null;
+  readonly hostLocalInferenceRouteOnly?: boolean;
   readonly webSearchConfig: WebSearchConfig | null;
   readonly observabilityEnabled: boolean;
   readonly operation: string;
@@ -210,6 +211,7 @@ export function createOnboardPolicyAuthorityBindings<Session extends PolicyAutho
     };
   },
   policyTier: string | null | undefined,
+  inspectionDeps: PolicyAuthorityInspectionDeps = {},
 ): {
   readonly bindPolicyAuthority: (gatewayName: string, session: Session | null) => Promise<Session>;
   readonly preflightPolicyRequirements: (requirements: ProviderPolicyRequirements) => void;
@@ -222,43 +224,50 @@ export function createOnboardPolicyAuthorityBindings<Session extends PolicyAutho
     const sandboxName =
       requirements.sandboxName ?? getDefaultSandboxNameForAgent(requirements.agent);
     const observed = runtime.inspectSandboxForCreate(sandboxName);
-    qualifySandboxPolicyAuthority({
-      sandboxName,
-      gatewayName: requirements.gatewayName,
-      liveExists: observed.liveExists,
-      recordedAuthorities: [
-        observed.existingEntry?.policyAuthority,
-        runtime.onboardSession.loadSession()?.policyAuthority,
-      ],
-      operation: requirements.operation,
-      prepareRequiredPolicy: () =>
-        prepareInitialSandboxCreatePolicy(
-          runtime.agentOnboard.getAgentPolicyPath(requirements.agent) ??
-            path.join(runtime.ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
-          [...requirements.selectedMessagingChannels],
-          {
-            directGpu: requirements.gpuPassthrough,
-            additionalPresets: requiredOnboardPolicyPresets({
-              additionalPresets: requirements.hermesToolGateways,
-              provider: requirements.provider,
-              webSearchConfig: requirements.webSearchConfig,
+    qualifySandboxPolicyAuthority(
+      {
+        sandboxName,
+        gatewayName: requirements.gatewayName,
+        liveExists: observed.liveExists,
+        recordedAuthorities: [
+          observed.existingEntry?.policyAuthority,
+          runtime.onboardSession.loadSession()?.policyAuthority,
+        ],
+        operation: requirements.operation,
+        prepareRequiredPolicy: () =>
+          prepareInitialSandboxCreatePolicy(
+            runtime.agentOnboard.getAgentPolicyPath(requirements.agent) ??
+              path.join(runtime.ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+            [...requirements.selectedMessagingChannels],
+            {
+              directGpu: requirements.gpuPassthrough,
+              additionalPresets: requiredOnboardPolicyPresets({
+                additionalPresets: requirements.hermesToolGateways,
+                provider: requirements.provider,
+                hostLocalInferenceRouteOnly: requirements.hostLocalInferenceRouteOnly,
+                webSearchConfig: requirements.webSearchConfig,
+                agentName: requirements.agent.name,
+                observabilityEnabled: requirements.observabilityEnabled,
+              }),
               agentName: requirements.agent.name,
-              observabilityEnabled: requirements.observabilityEnabled,
-            }),
-            agentName: requirements.agent.name,
-            policyTier: observed.existingEntry?.policyTier ?? policyTier,
-            baselineExclusions: observed.existingEntry?.baselineExclusions ?? [],
-          },
-        ),
-    });
+              policyTier: observed.existingEntry?.policyTier ?? policyTier,
+              baselineExclusions: observed.existingEntry?.baselineExclusions ?? [],
+            },
+          ),
+      },
+      inspectionDeps,
+    );
   };
   return {
     async bindPolicyAuthority(gatewayName, session) {
-      const inspection = qualifyGlobalPolicyAuthority({
-        gatewayName,
-        recordedAuthority: session?.policyAuthority,
-        operation: "continue onboarding after gateway setup",
-      });
+      const inspection = qualifyGlobalPolicyAuthority(
+        {
+          gatewayName,
+          recordedAuthority: session?.policyAuthority,
+          operation: "continue onboarding after gateway setup",
+        },
+        inspectionDeps,
+      );
       return runtime.onboardSession.updateSession((current) => {
         current.policyAuthority = inspection.authority;
         if (inspection.authority === "externally-managed") current.policyPresets = null;
@@ -274,6 +283,7 @@ export function createOnboardPolicyAuthorityBindings<Session extends PolicyAutho
         hermesToolGateways: context.hermesToolGateways,
         gpuPassthrough: context.gpuPassthrough,
         provider: context.provider,
+        hostLocalInferenceRouteOnly: context.hostLocalInferenceRouteOnly,
         webSearchConfig: context.webSearchConfig,
         observabilityEnabled: context.session?.observabilityEnabled === true,
         operation,

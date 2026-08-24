@@ -12,7 +12,10 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
   let session = createSession();
   const calls = {
     handleAgentSetup: vi.fn(async () => undefined),
-    context: vi.fn(() => ({ ctx: true })),
+    context: vi.fn((revalidatePolicyRequirements?: (operation: string) => void) => ({
+      ctx: true,
+      revalidatePolicyRequirements,
+    })),
     ensureDashboard: vi.fn(() => 18789),
     persistDashboardPort: vi.fn(),
     skipped: vi.fn(async (stepName: string) => {
@@ -70,6 +73,25 @@ function baseOptions(
 }
 
 describe("handleAgentSetupState", () => {
+  it("refuses agent setup before its first effect when policy authority drifts (#9833)", async () => {
+    const { deps, calls } = createDeps();
+    const revalidatePolicyRequirements = vi.fn(() => {
+      throw new Error("policy authority changed");
+    });
+
+    await expect(
+      handleAgentSetupState({
+        ...baseOptions(deps, { name: "hermes", displayName: "Hermes" }),
+        revalidatePolicyRequirements,
+      }),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(calls.handleAgentSetup).not.toHaveBeenCalled();
+    expect(calls.ensureDashboard).not.toHaveBeenCalled();
+    expect(calls.persistDashboardPort).not.toHaveBeenCalled();
+    expect(calls.skipped).not.toHaveBeenCalled();
+  });
+
   it("delegates non-OpenClaw agent setup and skips openclaw", async () => {
     const { deps, calls } = createDeps();
     const agent = { name: "hermes", displayName: "Hermes" };
@@ -88,9 +110,9 @@ describe("handleAgentSetupState", () => {
       agent,
       true,
       session,
-      { ctx: true },
+      { ctx: true, revalidatePolicyRequirements: undefined },
     );
-    expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", agent);
+    expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", agent, undefined);
     expect(calls.skipped).toHaveBeenCalledWith("openclaw");
     expect(calls.setupOpenclaw).not.toHaveBeenCalled();
     expect(result.session?.steps.openclaw.status).toBe("skipped");
@@ -103,6 +125,59 @@ describe("handleAgentSetupState", () => {
     });
   });
 
+  it("passes policy revalidation into non-OpenClaw agent setup (#9833)", async () => {
+    const { deps, calls } = createDeps();
+    const revalidatePolicyRequirements = vi.fn();
+
+    await handleAgentSetupState({
+      ...baseOptions(deps, { name: "hermes", displayName: "Hermes" }),
+      revalidatePolicyRequirements,
+    });
+
+    expect(calls.context).toHaveBeenCalledWith(revalidatePolicyRequirements);
+    expect(calls.handleAgentSetup).toHaveBeenCalledWith(
+      "my-assistant",
+      "model",
+      "provider",
+      { name: "hermes", displayName: "Hermes" },
+      false,
+      expect.anything(),
+      { ctx: true, revalidatePolicyRequirements },
+    );
+  });
+
+  it("stops dashboard forwarding when authority changes during the first forward (#9833)", async () => {
+    const refuseDashboardForward = () => {
+      throw new Error("policy authority changed");
+    };
+    const policyChecks = new Map([["start optional dashboard forward", refuseDashboardForward]]);
+    const revalidatePolicyRequirements = vi.fn<(operation: string) => void>((operation) =>
+      policyChecks.get(operation)?.(),
+    );
+    const ensureAgentDashboardForward = vi.fn(
+      async (_sandboxName: string, _agent: Agent, revalidate?: (operation: string) => void) => {
+        revalidate?.("start optional dashboard forward");
+        return 18791;
+      },
+    );
+    const { deps, calls } = createDeps({ ensureAgentDashboardForward });
+
+    await expect(
+      handleAgentSetupState({
+        ...baseOptions(deps, { name: "hermes", displayName: "Hermes" }),
+        revalidatePolicyRequirements,
+      }),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(ensureAgentDashboardForward).toHaveBeenCalledWith(
+      "my-assistant",
+      { name: "hermes", displayName: "Hermes" },
+      revalidatePolicyRequirements,
+    );
+    expect(calls.persistDashboardPort).not.toHaveBeenCalled();
+    expect(calls.skipped).not.toHaveBeenCalled();
+  });
+
   it("persists the bumped dashboard port returned by the forward (#8214)", async () => {
     const { deps, calls } = createDeps({});
     calls.ensureDashboard.mockReturnValue(18791);
@@ -110,7 +185,7 @@ describe("handleAgentSetupState", () => {
 
     await handleAgentSetupState({ ...baseOptions(deps, agent), resume: true });
 
-    expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", agent);
+    expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", agent, undefined);
     expect(calls.persistDashboardPort).toHaveBeenCalledWith("my-assistant", 18791);
   });
 
@@ -175,7 +250,12 @@ describe("handleAgentSetupState", () => {
       provider: "provider",
       model: "model",
     });
-    expect(calls.setupOpenclaw).toHaveBeenCalledWith("my-assistant", "model", "provider");
+    expect(calls.setupOpenclaw).toHaveBeenCalledWith(
+      "my-assistant",
+      "model",
+      "provider",
+      undefined,
+    );
     expect(calls.syncConfig).not.toHaveBeenCalled();
     expect(calls.complete).toHaveBeenCalledWith(
       "openclaw",
