@@ -512,15 +512,9 @@ export function readGpuMemoryDevices(): GpuMemoryDevice[] {
     const fields = line.split(",").map((field) => field.trim());
     if (fields.length !== 4) continue;
     const [indexRaw, uuid, totalMiBRaw, freeMiBRaw] = fields;
+    if (!NVIDIA_GPU_INDEX_PATTERN.test(indexRaw) || !uuid) continue;
     const index = Number(indexRaw);
-    if (
-      !NVIDIA_GPU_INDEX_PATTERN.test(indexRaw) ||
-      !Number.isSafeInteger(index) ||
-      index < 0 ||
-      !uuid
-    ) {
-      continue;
-    }
+    if (!Number.isSafeInteger(index) || index < 0) continue;
     if (totalMiBRaw === "[N/A]" && freeMiBRaw === "[N/A]") {
       if (!NVIDIA_GPU_UUID_PATTERN.test(uuid)) continue;
       devices.push({ index, uuid, totalBytes: null, freeBytes: null });
