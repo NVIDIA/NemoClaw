@@ -100,6 +100,11 @@ The bot token remains in the OpenShell provider across the stop and start cycle.
 
 Google Chat stop and start cycles also preserve the bridge provider and its gateway-side refresh material.
 
+<AgentOnly variant="hermes">
+When you stop Discord, NemoClaw retains its exact credential-bound provider because the stopped channel policy still references it.
+The stopped Discord runtime does not start, and NemoClaw does not create a replacement provider from the available bot token.
+</AgentOnly>
+
 <AgentOnly variant="openclaw">
 They preserve the dedicated public webhook endpoint so the Google Cloud configuration can keep the same URL.
 The next rebuild reuses that provider without requiring the service-account JSON again.
