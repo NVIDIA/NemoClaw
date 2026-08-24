@@ -184,26 +184,27 @@ describe("buildPolicyContext", () => {
     expect(context.tier).toBeNull();
     expect(getTier).not.toHaveBeenCalled();
     expect(context.supportBoundaries).toContainEqual({
-      capability: "preset selection",
-      owner: "external",
-      note: "the external policy authority applies each requested add or remove action to the live policy",
-    });
-    expect(context.supportBoundaries).toContainEqual({
-      capability: "Shields network policy",
-      owner: "external",
-      note: "the external policy authority controls live network policy changes while authority remains external",
-    });
-    expect(context.supportBoundaries).toContainEqual({
-      capability: "Shields state, configuration protection, and cleanup",
+      capability: "policy requirement selection and verification",
       owner: "nemoclaw",
-      note: "NemoClaw retains Shields state, configuration protection, and cleanup. Saved snapshot restoration requires NemoClaw-managed authority.",
+      note: "NemoClaw selects preset and baseline requirements and verifies the live policy",
+    });
+    expect(context.supportBoundaries).toContainEqual({
+      capability: "policy mutation",
+      owner: "external",
+      note: "the external policy authority applies each required add, remove, restore, or baseline exclusion to the live policy",
+    });
+    expect(context.supportBoundaries).toContainEqual({
+      capability: "Shields state and configuration lock",
+      owner: "nemoclaw",
+      note: "NemoClaw retains Shields state and locks configuration after it verifies restrictive policy",
     });
     expect(context.approvalPath).toEqual({
       inspect: "nemoclaw alpha policy list",
       add: "Ask the external policy authority to add or replace the policy entries required by `<preset>`.",
       remove:
         "Ask the external policy authority to remove the policy entries supplied by `<preset>`.",
-      excludeBaseline: "nemoclaw alpha policy exclude <key> --dry-run",
+      excludeBaseline:
+        "Run `nemoclaw alpha policy exclude <key> --dry-run`, then ask the external policy authority to remove baseline policy entry `<key>`.",
       restoreBaseline:
         "Ask the external policy authority to restore baseline policy entry `<key>`.",
       documentation: "docs/network-policy/customize-network-policy.mdx",
@@ -215,12 +216,14 @@ describe("buildPolicyContext", () => {
       "- restore a baseline entry: Ask the external policy authority to restore baseline policy entry `<key>`.",
     );
     expect(markdown).toContain(
-      "- Shields network policy (owner: external) — the external policy authority controls live network policy changes while authority remains external",
+      "- policy mutation (owner: external) — the external policy authority applies each required add, remove, restore, or baseline exclusion to the live policy",
     );
     expect(markdown).toContain(
-      "- Shields state, configuration protection, and cleanup (owner: nemoclaw) — NemoClaw retains Shields state, configuration protection, and cleanup. Saved snapshot restoration requires NemoClaw-managed authority.",
+      "- Shields state and configuration lock (owner: nemoclaw) — NemoClaw retains Shields state and locks configuration after it verifies restrictive policy",
     );
-    expect(markdown).toContain("`nemoclaw alpha policy exclude <key> --dry-run`");
+    expect(markdown).toContain(
+      "Run `nemoclaw alpha policy exclude <key> --dry-run`, then ask the external policy authority to remove baseline policy entry `<key>`.",
+    );
     expect(markdown).not.toMatch(/nemoclaw alpha policy (?:add|remove|restore)(?:\s|`)/u);
   });
 
