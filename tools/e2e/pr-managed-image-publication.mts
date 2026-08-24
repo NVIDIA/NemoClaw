@@ -34,6 +34,7 @@ const REUSABLE_NON_IMAGE_PATHS = [
   /^[.]github\/workflows\/e2e(?:-standard-profile)?[.]yaml$/u,
   /^scripts\/install[.]sh$/u,
   /^src\/lib\/actions\/maintenance(?:[.]test)?[.]ts$/u,
+  /^src\/lib\/actions\/sandbox\/mcp-bridge-tool-discovery(?:[.]test)?[.]ts$/u,
   /^src\/lib\/actions\/sandbox\/stopped-sandbox-backup(?:[.]test)?[.]ts$/u,
   /^src\/lib\/adapters\/podman\/index(?:[.]test)?[.]ts$/u,
   /^src\/lib\/onboard\/managed-bootstrap\/podman-bootstrap-replacement(?:[.]test)?[.]ts$/u,
