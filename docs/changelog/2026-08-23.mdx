@@ -1,0 +1,45 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.114
+
+NemoClaw v0.0.114 adds deterministic read-only MCP tool calls for LangChain Deep Agents Code and per-stage launch-readiness probe timing.
+It strengthens destructive-operation warnings, session export cleanup, sealed configuration recovery, and installation verification.
+It also improves managed local inference, Portable and Hermes onboarding, image provenance, and release documentation automation.
+
+- Managed LangChain Deep Agents Code automation can invoke one uniquely registered, coherently read-only MCP tool with `dcode tools call-read-only TOOL --json` without model participation.
+  The command accepts one bounded JSON object on standard input, rejects ambiguous or mutating tools, bounds execution and cleanup, redacts recognized credential-shaped output, and returns one versioned JSON envelope.
+  For more information, refer to [Run LangChain Deep Agents Code](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code) and the [NemoClaw CLI Commands Reference](/user-guide/deepagents/reference/commands).
+  Related change: [PR #9894](https://github.com/NVIDIA/NemoClaw/pull/9894).
+- `nemoclaw <name> connect --probe-only`, `nemohermes <name> connect --probe-only`, and `nemo-deepagents <name> connect --probe-only` now report credential-free elapsed time for each readiness stage.
+  The timing line identifies lifecycle and forwarding actions and names the failed stage when available without changing the command's readiness exit status.
+  For more information, refer to [Deploy NemoClaw to a Headless Server](/user-guide/openclaw/deployment/deploy-to-headless-server) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+  Related change: [PR #9865](https://github.com/NVIDIA/NemoClaw/pull/9865).
+- Sandbox destruction now warns before terminating active SSH sessions, including unattended runs that use `--yes` or `--force`.
+  OpenClaw session tar export now reports a retained in-sandbox staging artifact and its exact manual removal command when cleanup fails, because the artifact can contain pasted secrets.
+  Host-mount diagnostics report the actual failed directory condition, and pending OpenClaw scope upgrades identify the exact device-review path.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Understand Sandbox State](/user-guide/openclaw/manage-sandboxes/state-and-backups/understand-sandbox-state).
+  Related changes: [PR #9782](https://github.com/NVIDIA/NemoClaw/pull/9782), [PR #9787](https://github.com/NVIDIA/NemoClaw/pull/9787), [PR #9853](https://github.com/NVIDIA/NemoClaw/pull/9853), and [PR #9858](https://github.com/NVIDIA/NemoClaw/pull/9858).
+- Snapshot restore now preserves sealed OpenClaw configuration, and rebuild verifies final OpenClaw configuration integrity before it reports success.
+  Shields timer authority retires only after lifecycle gates complete.
+  For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+  Related changes: [PR #9231](https://github.com/NVIDIA/NemoClaw/pull/9231), [PR #9791](https://github.com/NVIDIA/NemoClaw/pull/9791), and [PR #9866](https://github.com/NVIDIA/NemoClaw/pull/9866).
+- Installation now fails closed when neither `sha256sum` nor `shasum` can verify the nvm installer before a required Node.js installation or upgrade.
+  Hermes retries throttled source archive downloads.
+  For more information, refer to [Prerequisites](/user-guide/openclaw/get-started/prerequisites) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+  Related changes: [PR #9776](https://github.com/NVIDIA/NemoClaw/pull/9776) and [PR #9822](https://github.com/NVIDIA/NemoClaw/pull/9822).
+- Managed vLLM onboarding restores DGX Station large-model selection and strengthens fixed-profile selection, running-server reuse, and resumed-session validation.
+  Portable Podman inference validation gives the first real completion request a 120-second deadline within a 150-second outer wait while retaining the existing readiness, GPU, identity, and cleanup bounds.
+  Recovery now distinguishes bind refusals for Ollama, unauthenticated compatible endpoints, and backends whose type is unavailable.
+  Protected loopback-route diagnostics also name the endpoint that the route fronts.
+  For more information, refer to [Use vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm), [Configure Inference Timeouts](/user-guide/openclaw/inference/manage-inference/configure-inference-timeouts), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+  Related changes: [PR #9836](https://github.com/NVIDIA/NemoClaw/pull/9836), [PR #9843](https://github.com/NVIDIA/NemoClaw/pull/9843), [PR #9852](https://github.com/NVIDIA/NemoClaw/pull/9852), [PR #9868](https://github.com/NVIDIA/NemoClaw/pull/9868), and [PR #9906](https://github.com/NVIDIA/NemoClaw/pull/9906).
+- Managed llama.cpp images include the required patched dependencies, bind lifecycle receipts to published software bill of materials files, and isolate platform-specific receipt pulls.
+  For more information, refer to [Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server).
+  Related changes: [PR #9821](https://github.com/NVIDIA/NemoClaw/pull/9821), [PR #9849](https://github.com/NVIDIA/NemoClaw/pull/9849), and [PR #9857](https://github.com/NVIDIA/NemoClaw/pull/9857).
+- Portable keeps its Podman proxy setting attached across process boundaries so later lifecycle work retains the selected proxy behavior.
+  The inference model-limit documentation now shows each agent only the settings it supports and states that Deep Agents Code has no equivalent model-limit operation.
+  For more information, refer to [Configure Model Limits](/user-guide/deepagents/inference/manage-inference/configure-model-limits).
+  Related changes: [PR #9785](https://github.com/NVIDIA/NemoClaw/pull/9785) and [PR #9867](https://github.com/NVIDIA/NemoClaw/pull/9867).
