@@ -11,6 +11,8 @@ on:
     types: [opened, synchronize, reopened]
     paths:
       - ".github/workflows/portable-profile-e2e.yaml"
+      - "agents/hermes/Dockerfile"
+      - "src/lib/onboard/experimental/hermes-portable-build-context.ts"
       - "src/lib/onboard/experimental/portable-host-preparation.ts"
       - "src/lib/onboard/experimental/portable-profile.ts"
       - "src/lib/onboard/experimental/portable-retired-subnet-recovery.test.ts"

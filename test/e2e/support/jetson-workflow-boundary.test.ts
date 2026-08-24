@@ -18,6 +18,19 @@ function validateWorkflowMutation(
 }
 
 describe("Jetson nvmap GPU E2E workflow boundary", () => {
+  it("waits for the exact managed-image publication before Jetson dispatch", () => {
+    const errors = validateWorkflowMutation((workflow) => {
+      const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {
+        needs?: unknown;
+      };
+      job.needs = "generate-matrix";
+    });
+
+    expect(errors).toContain(
+      "jetson-nvmap-gpu job must depend on managed publication and generate-matrix",
+    );
+  });
+
   it("keeps manual Jetson dispatch disabled by default (#8142)", () => {
     const inputErrors = validateWorkflowMutation((workflow) => {
       const triggers = (workflow.on ?? workflow[true as unknown as string]) as {

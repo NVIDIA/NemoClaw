@@ -197,6 +197,10 @@ describe("base-image publication workflow boundary (#7372)", () => {
       (value) => (gateSteps(value)[3].env!.EXPECTED_SHA = "${{ inputs.checkout_sha }}"),
     ],
     [
+      "managed-image publication requirement",
+      (value) => (gateSteps(value)[3].env!.REQUIRE_MANAGED_IMAGE_PUBLICATION = "0"),
+    ],
+    [
       "verifier command",
       (value) => {
         gateSteps(value)[3].run = "node tools/e2e/base-image-publication.mts";
