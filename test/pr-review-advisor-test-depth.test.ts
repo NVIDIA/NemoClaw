@@ -31,7 +31,6 @@ function reviewResult(testDepth: TestDepth): ReviewResult {
       noChangesReason: "No semantic terminology candidates were selected.",
     },
     acceptanceCoverage: [],
-    securityCategories: [],
     sourceOfTruthReview: [],
     e2e: {
       coverage: {

@@ -8,10 +8,10 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { INSTALLER_PAYLOAD } from "./helpers/installer-sourced-env";
-import { testTimeoutOptions } from "./helpers/timeouts";
+import { INSTALLER_PAYLOAD } from "../helpers/installer-sourced-env";
+import { testTimeoutOptions } from "../helpers/timeouts";
 
-const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
+const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "../..", "install.sh");
 
 describe("installer git checkout", testTimeoutOptions(15_000), () => {
   it("fetches fully-qualified refs into a detached checkout without group- or other-writable source entries", () => {
