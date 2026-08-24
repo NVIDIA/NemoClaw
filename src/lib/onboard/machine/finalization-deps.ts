@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { OpenClawPairingSettlementObservation } from "../../actions/sandbox/launch-readiness/openclaw-pairing-qualification";
+import {
+  OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS,
+  type OpenClawPairingSettlementObservation,
+} from "../../actions/sandbox/launch-readiness/openclaw-pairing-qualification";
 import type { OpenClawPairingSettlementTarget } from "../../actions/sandbox/launch-readiness";
 import { WARMUP_TIMEOUT_MS } from "../../actions/sandbox/auto-pair-warmup";
 import { CONNECT_AUTO_PAIR_TIMEOUT_MS } from "../../actions/sandbox/connect-autopair-budget";
@@ -22,10 +25,12 @@ type GatewayRouteLock =
 export const OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS = 60_000;
 export const OPENCLAW_ONBOARDING_PAIRING_POLL_MS = 1_000;
 export const OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS = 30_000;
-// Keep one outer cap while reserving each bounded child's fixed budget.
-// Pairing appearance retains its existing 30-second limit, and
+// Keep one outer cap while reserving each bounded child's fixed budget,
+// including the settled/already-pending precheck. Pairing appearance retains
+// its existing limit, and
 // a capped warm-up can no longer consume the approval or final-read budget.
 export const OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS =
+  OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS +
   OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS +
   WARMUP_TIMEOUT_MS +
   CONNECT_AUTO_PAIR_TIMEOUT_MS +
@@ -179,8 +184,8 @@ function defaultPairingSettlementDeps(): OrdinaryOpenClawPairingSettlementDeps {
 }
 
 /**
- * Run one bounded request producer, then wait for one canonical CLI pairing.
- * When the device has only its pairing scope, approve the write scope once.
+ * Observe canonical state, run one bounded request producer when needed, then
+ * wait for its exact pending write upgrade before approving it once.
  * A final read verifies the exact device and no pending request for that device.
  */
 export async function settleOrdinaryOpenClawPairing(
@@ -204,36 +209,74 @@ export async function settleOrdinaryOpenClawPairing(
           }
           const settlementDeadline = deps.now() + OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS;
 
-          // A valid non-interactive path can reach finalization before the
-          // startup watcher publishes its first CLI request. Run the accepted,
-          // bounded direct request producer once before waiting for canonical
-          // state. Approval and the final exact-device observation remain the
-          // only completion authority (#10014).
+          // Avoid creating another hidden warm-up session when re-onboarding an
+          // already-settled device, and reuse an exact upgrade already pending.
+          let initial: OpenClawPairingSettlementObservation | null = null;
+          let sawCanonicalPairing = false;
           try {
-            await deps.runWarmup(name, target.gatewayName);
+            initial = deps.observePairing(
+              name,
+              target.gatewayName,
+              target.version,
+              target.stateDirectory,
+            );
+            sawCanonicalPairing = true;
           } catch {
-            // The bounded observation below remains fail closed.
+            // Pairing may not have appeared yet; the producer handles that path.
           }
           if (!samePairingTarget(target, deps.getTarget(name))) {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
-          const pairingAppearanceDeadline = Math.min(
-            settlementDeadline,
-            deps.now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
-          );
+          if (deps.now() >= settlementDeadline) {
+            return { kind: "incomplete", reason: "pairing-unavailable" };
+          }
+          if (initial?.state === "settled") return { kind: "settled" };
 
-          const baseline = await waitForPairingObservation(
-            name,
-            target,
-            pairingAppearanceDeadline,
-            () => true,
-            deps,
-          );
+          let baseline: PairingWaitResult;
+          if (initial?.state === "scope-upgrade-pending") {
+            baseline = { kind: "observed", value: initial };
+          } else {
+            // A valid non-interactive path can reach finalization before the
+            // startup watcher publishes its first CLI request. Run the bounded
+            // direct producer once, then require canonical evidence that its
+            // exact write upgrade is pending before the approval pass (#10014).
+            try {
+              await deps.runWarmup(name, target.gatewayName);
+            } catch {
+              // The bounded observation below remains fail closed.
+            }
+            if (!samePairingTarget(target, deps.getTarget(name))) {
+              return { kind: "incomplete", reason: "runtime-identity-invalid" };
+            }
+            const pairingAppearanceDeadline = Math.min(
+              settlementDeadline,
+              deps.now() + OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS,
+            );
+            baseline = await waitForPairingObservation(
+              name,
+              target,
+              pairingAppearanceDeadline,
+              (value) => {
+                sawCanonicalPairing = true;
+                return value.state !== "pairing-only";
+              },
+              deps,
+            );
+          }
           if (baseline.kind === "target-changed") {
             return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
           if (baseline.kind === "timeout") {
-            return { kind: "incomplete", reason: "pairing-unavailable" };
+            return {
+              kind: "incomplete",
+              reason: sawCanonicalPairing ? "scope-upgrade-incomplete" : "pairing-unavailable",
+            };
+          }
+          if (
+            initial &&
+            baseline.value.deviceIdentitySha256 !== initial.deviceIdentitySha256
+          ) {
+            return { kind: "incomplete", reason: "runtime-identity-invalid" };
           }
           if (baseline.value.state === "settled") return { kind: "settled" };
           if (!samePairingTarget(target, deps.getTarget(name))) {

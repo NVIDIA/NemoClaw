@@ -1592,10 +1592,10 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
       "pending pairing settlement list",
     );
     proofPhase = "ordinary-settlement-observation-before-approval";
-    const pairingOnlyObservation = observeOrdinaryPairing();
+    const pendingUpgradeObservation = observeOrdinaryPairing();
     requireLiveProof(
-      pairingOnlyObservation.state === "pairing-only",
-      "ordinary settlement did not observe pairing-only state before canonical approval",
+      pendingUpgradeObservation.state === "scope-upgrade-pending",
+      "ordinary settlement did not observe the pending scope upgrade before canonical approval",
     );
     const pendingBeforeOrdinaryApproval = fs.readFileSync(pendingPath, "utf8");
     const pairedBeforeOrdinaryApproval = fs.readFileSync(pairedPath, "utf8");
@@ -1660,7 +1660,7 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
     const settledObservation = observeOrdinaryPairing();
     requireLiveProof(
       settledObservation.state === "settled" &&
-        settledObservation.deviceIdentitySha256 === pairingOnlyObservation.deviceIdentitySha256,
+        settledObservation.deviceIdentitySha256 === pendingUpgradeObservation.deviceIdentitySha256,
       "ordinary settlement did not preserve the canonical device through scope approval",
     );
     proofPhase = "ordinary-stored-device-approval-output";
