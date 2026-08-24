@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 
 import type {
   ChannelAuthMode,
@@ -139,6 +141,30 @@ export function messagingPlanLiteral(
       credentialBindings: channels.flatMap((channelId) => CREDENTIAL_BINDINGS[channelId] ?? []),
     }),
   );
+}
+
+export function parseMessagingFixturePayload<T = Record<string, any>>(stdout: string): T {
+  const line = stdout
+    .trim()
+    .split("\n")
+    .reverse()
+    .find((value) => /^[{[]/.test(value) && /[}\]]$/.test(value));
+  assert.ok(line, `expected JSON payload in stdout:\n${stdout}`);
+  return JSON.parse(line);
+}
+
+export function writeCustomMessagingDockerfile(directory: string): string {
+  const dockerfilePath = path.join(directory, "Dockerfile");
+  fs.writeFileSync(
+    dockerfilePath,
+    [
+      "FROM scratch",
+      "ARG NEMOCLAW_MESSAGING_PLAN_B64=",
+      "ARG NEMOCLAW_TOOL_DISCLOSURE=progressive",
+      "ENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}",
+    ].join("\n"),
+  );
+  return dockerfilePath;
 }
 
 function readMessagingPlanFromDockerfile(dockerfileContent: string | undefined): DockerfilePlan {
