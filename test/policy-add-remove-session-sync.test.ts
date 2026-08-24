@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Regression test for the same session/registry divergence that motivated
-// the channels-add fix (see test/channels-add-preset.test.ts). The bug
+// the channels-add fix (see test/channels/channels-add-preset.test.ts). The bug
 // surfaced first via `nemoclaw <sb> channels add slack` → `rebuild`
 // (registry got slack, session did not, rebuild's resume step narrowed
 // it back away). The exact same divergence applies to the standalone
