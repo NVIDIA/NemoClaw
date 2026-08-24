@@ -30,8 +30,13 @@ concurrency:
 jobs:
   select-llama-cpp-generic-gpu:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 55
+    permissions:
+      actions: read
+      contents: read
     outputs:
+      base_sha: ${{ steps.changed.outputs.base_sha }}
+      managed_image_revision: ${{ steps.publication.outputs.head_sha }}
       selected: ${{ steps.changed.outputs.selected }}
     steps:
       - id: changed
@@ -48,6 +53,7 @@ jobs:
           pr_number="${BASH_REMATCH[1]}"
           pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number")"
           head_sha="$(jq -er '.head.sha | select(test("^[a-f0-9]{40}$"))' <<<"$pr_json")"
+          base_sha="$(jq -er '.base.sha | select(test("^[a-f0-9]{40}$"))' <<<"$pr_json")"
           [[ "$head_sha" == "$GITHUB_SHA" ]] || {
             echo "::error::Copied PR branch SHA does not match the current PR head" >&2
             exit 1
@@ -79,7 +85,42 @@ jobs:
           else
             selected=false
           fi
-          printf 'selected=%s\n' "$selected" >>"$GITHUB_OUTPUT"
+          {
+            printf 'base_sha=%s\n' "$base_sha"
+            printf 'selected=%s\n' "$selected"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Check out trusted publication gate
+        if: ${{ steps.changed.outputs.selected == 'true' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ steps.changed.outputs.base_sha }}
+
+      - name: Set up Node for publication verification
+        if: ${{ steps.changed.outputs.selected == 'true' }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Install trusted publication gate dependencies
+        if: ${{ steps.changed.outputs.selected == 'true' }}
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - id: publication
+        name: Verify applicable base-image publication
+        if: ${{ steps.changed.outputs.selected == 'true' }}
+        env:
+          EXPECTED_SHA: ${{ steps.changed.outputs.base_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          REQUIRE_MANAGED_IMAGE_PUBLICATION: "1"
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GITHUB_REF=refs/heads/main
+          export GITHUB_SHA="$EXPECTED_SHA"
+          node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30
 
   llama-cpp-generic-gpu:
     name: llama.cpp on generic NVIDIA GPU
@@ -90,6 +131,7 @@ jobs:
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-generic-gpu
       E2E_JOB: "1"
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.select-llama-cpp-generic-gpu.outputs.managed_image_revision }}
       E2E_TARGET_ID: llama-cpp-generic-gpu
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js

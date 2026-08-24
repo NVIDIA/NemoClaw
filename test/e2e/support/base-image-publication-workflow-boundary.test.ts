@@ -184,7 +184,10 @@ describe("base-image publication workflow boundary (#7372)", () => {
     ],
     ["checkout condition", (value) => (gateSteps(value)[1].if = "${{ always() }}")],
     ["checkout pin", (value) => (gateSteps(value)[1].uses = "actions/checkout@v6")],
-    ["checkout ref", (value) => (gateSteps(value)[1].with!.ref = "${{ inputs.checkout_sha }}")],
+    [
+      "candidate checkout ref",
+      (value) => (gateSteps(value)[1].with!.ref = "${{ inputs.checkout_sha }}"),
+    ],
     ["checkout history", (value) => (gateSteps(value)[1].with!["fetch-depth"] = 1)],
     ["checkout credentials", (value) => (gateSteps(value)[1].with!["persist-credentials"] = true)],
     ["Node condition", (value) => (gateSteps(value)[2].if = "${{ always() }}")],
@@ -231,6 +234,19 @@ describe("base-image publication workflow boundary (#7372)", () => {
       (value) => (value.jobs["generate-matrix"].needs = "base-image-publication"),
     ],
     ["live publication dependency", (value) => (value.jobs.live.needs = ["generate-matrix"])],
+    [
+      "live managed-image revision",
+      (value) => (value.jobs.live.env!.E2E_MANAGED_IMAGE_REVISION = "${{ github.sha }}"),
+    ],
+    [
+      "cloud-onboard publication dependency",
+      (value) => (value.jobs["cloud-onboard"].needs = ["generate-matrix"]),
+    ],
+    [
+      "cloud-onboard managed-image revision",
+      (value) =>
+        (value.jobs["cloud-onboard"].env!.E2E_MANAGED_IMAGE_REVISION = "${{ github.sha }}"),
+    ],
     [
       "Launchable publication dependency",
       (value) =>

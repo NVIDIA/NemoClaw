@@ -10,9 +10,15 @@ import http from "node:http";
 import { createRequire } from "node:module";
 import net from "node:net";
 import path from "node:path";
-import zlib from "node:zlib";
 import { vi } from "vitest";
-import { handleHermesBrokerCoexistencePortal } from "./helpers/hermes-tool-gateway-broker-fixture";
+import {
+  handleHermesBrokerCoexistencePortal,
+  handleHermesBrokerUpstream,
+  HERMES_BROKER_REDIRECT_BODY,
+  HERMES_BROKER_REDIRECT_HEADER,
+  HERMES_BROKER_REDIRECT_TARGET,
+  type HermesBrokerUpstreamRequest,
+} from "./helpers/hermes-tool-gateway-broker-fixture";
 import {
   describe,
   expect,
@@ -988,32 +994,9 @@ describe("Hermes managed-tool gateway broker", () => {
       );
       const portalPort = await listen(portal);
 
-      const upstreamRequests: Array<{
-        url?: string;
-        authorization?: string;
-        browserUseApiKey?: string;
-        apiKey?: string;
-        acceptEncoding?: string;
-      }> = [];
+      const upstreamRequests: HermesBrokerUpstreamRequest[] = [];
       const upstream = resources.ownServer(
-        http.createServer((req, res) => {
-          upstreamRequests.push({
-            url: req.url,
-            authorization: req.headers.authorization,
-            browserUseApiKey: req.headers["x-browser-use-api-key"] as string | undefined,
-            apiKey: req.headers["x-api-key"] as string | undefined,
-            acceptEncoding: req.headers["accept-encoding"] as string | undefined,
-          });
-          const body = zlib.gzipSync(JSON.stringify({ ok: true, path: req.url }));
-          res.writeHead(200, {
-            "Content-Type": "application/json",
-            "Content-Encoding": "gzip",
-            "Content-Length": String(body.length),
-            "Content-MD5": "not-a-real-digest",
-            "Set-Cookie": "fixture_session=1; HttpOnly; Secure; SameSite=Strict",
-          });
-          res.end(body);
-        }),
+        http.createServer((req, res) => handleHermesBrokerUpstream(upstreamRequests, req, res)),
       );
       const upstreamPort = await listen(upstream);
       const matrixPath = path.join(tmp, "matrix.json");
@@ -1165,6 +1148,23 @@ describe("Hermes managed-tool gateway broker", () => {
         url: "/sandboxes",
         authorization: "Bearer access-2",
       });
+
+      const upstreamRequestCount = upstreamRequests.length;
+      const redirect = await fetch(`http://127.0.0.1:${brokerPort}/firecrawl/v1/redirect-probe`, {
+        headers: { "x-api-key": "refresh-2" },
+        redirect: "manual",
+      });
+      const redirectBody = await redirect.text();
+      expect(upstreamRequests.slice(upstreamRequestCount).map(({ url }) => url)).toEqual([
+        "/v1/redirect-probe",
+      ]);
+      expect(redirect.status).toBe(502);
+      expect(redirect.headers.get("location")).toBeNull();
+      expect(redirect.headers.get("x-redirect-probe")).toBeNull();
+      expect(redirectBody).toContain("redirect");
+      expect(redirectBody).not.toContain(HERMES_BROKER_REDIRECT_TARGET);
+      expect(redirectBody).not.toContain(HERMES_BROKER_REDIRECT_HEADER);
+      expect(redirectBody).not.toContain(HERMES_BROKER_REDIRECT_BODY);
       expect(tokenRequests).toHaveLength(1);
       expect(agentKeyRequests).toHaveLength(1);
       expect(output).not.toContain("refresh-1");

@@ -485,7 +485,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         jobName === "base-image-publication" &&
         step.name === "Check out trusted E2E workflow" &&
         step.if === PUBLICATION_REQUIRED_OR_REUSE_CONDITION &&
-        step.with?.ref === "${{ inputs.checkout_sha || github.sha }}";
+        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
       const trustedManagedImageRuntimeCheckout =
         jobName === "managed-image-protected-runtime" &&
         step.name === "Checkout trusted protected runtime qualification" &&
@@ -622,7 +622,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         if: PUBLICATION_REQUIRED_OR_REUSE_CONDITION,
         uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         with: {
-          ref: "${{ inputs.checkout_sha || github.sha }}",
+          ref: "${{ inputs.workflow_sha || github.workflow_sha }}",
           "fetch-depth": 0,
           "persist-credentials": false,
         },
@@ -716,6 +716,26 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   const live = workflow.jobs.live ?? {};
   if (!sameMembers(needs(live), ["base-image-publication", "generate-matrix"])) {
     errors.push("live E2E must wait for matrix generation and base-image publication");
+  }
+  const cloudOnboard = workflow.jobs["cloud-onboard"] ?? {};
+  if (!sameMembers(needs(cloudOnboard), ["base-image-publication", "generate-matrix"])) {
+    errors.push("cloud-onboard must wait for matrix generation and base-image publication");
+  }
+  if (
+    cloudOnboard.env?.E2E_MANAGED_IMAGE_REVISION !==
+    "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}"
+  ) {
+    errors.push(
+      "cloud-onboard must use the selected managed-image revision when no exact PR catalog is present",
+    );
+  }
+  if (
+    live.env?.E2E_MANAGED_IMAGE_REVISION !==
+    "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}"
+  ) {
+    errors.push(
+      "live stock onboarding must use the selected managed-image revision when no exact PR catalog is present",
+    );
   }
   if (
     live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==
