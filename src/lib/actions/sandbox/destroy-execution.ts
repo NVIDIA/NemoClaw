@@ -205,8 +205,9 @@ function wipeAndHardenLiveSandbox(
     );
     console.warn(
       `  Continuing with delete — '${sandboxName}' and its unguarded config are removed together. ` +
-        "If the delete fails, the auto-restore timer keeps retrying the lock until it succeeds " +
-        "or the sandbox is deleted or rebuilt.",
+        "If the delete fails, the auto-restore timer retries the lock within a bounded recovery " +
+        "window. If recovery is exhausted, durable containment blocks sandbox changes; " +
+        `run \`nemoclaw ${sandboxName} shields status\` and follow its recovery guidance.`,
     );
     return { hardenedForDelete: false, hardeningFailed: true, timerProcessToken };
   }

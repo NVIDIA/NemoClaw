@@ -1346,6 +1346,10 @@ describe("destroySandbox flow", () => {
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
     expectFailedHardeningStillDeletes(harness);
+    const warning = harness.warnSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(warning).toContain("retries the lock within a bounded recovery window");
+    expect(warning).toContain("durable containment blocks sandbox changes");
+    expect(warning).toContain("nemoclaw alpha shields status");
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
