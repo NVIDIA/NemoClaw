@@ -3,6 +3,7 @@
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -48,6 +49,35 @@ const context: InvestigateTurnContext = {
 };
 
 describe("PR review advisor specialist prompts", () => {
+  it("renders the workflow matrix without runtime packages", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-specialist-matrix-"));
+    onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const toolsDirectory = path.join(directory, "tools", "pr-review-advisor");
+    fs.mkdirSync(toolsDirectory, { recursive: true });
+    fs.copyFileSync(
+      path.join(process.cwd(), "tools/pr-review-advisor/render-specialist-matrix.mts"),
+      path.join(toolsDirectory, "render-specialist-matrix.mts"),
+    );
+    fs.copyFileSync(
+      path.join(process.cwd(), "tools/pr-review-advisor/specialist-catalog.mts"),
+      path.join(toolsDirectory, "specialist-catalog.mts"),
+    );
+    fs.cpSync(
+      path.join(process.cwd(), "tools/pr-review-advisor/specialists"),
+      path.join(toolsDirectory, "specialists"),
+      { recursive: true },
+    );
+
+    const output = execFileSync(
+      process.execPath,
+      ["--experimental-strip-types", path.join(toolsDirectory, "render-specialist-matrix.mts")],
+      { cwd: directory, encoding: "utf8" },
+    );
+    const matrix = JSON.parse(output) as Array<{ interest: string }>;
+
+    expect(matrix.map(({ interest }) => interest)).toEqual(ADVISOR_INTERESTS);
+  });
+
   it("writes diff evidence to a new owner-only runtime path", () => {
     const configDir = fs.mkdtempSync(path.join(process.cwd(), ".tmp-specialist-config-"));
     onTestFinished(() => fs.rmSync(configDir, { recursive: true, force: true }));
