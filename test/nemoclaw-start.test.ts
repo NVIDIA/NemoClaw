@@ -125,7 +125,7 @@ function nonRootFallbackBlock(src: string): string {
   const end = src.indexOf("# ── Root path", start);
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
-  return src.slice(start, end);
+  return `${extractShellFunctionFromSource(src, "_nemoclaw_capture_epoch_realtime")}\n${src.slice(start, end)}`;
 }
 
 function startScriptHeredoc(src: string, marker: string): string {
@@ -225,7 +225,7 @@ function nonRootIntegrityGateBlock(src: string): string {
   if (start === -1 || end === -1 || end <= start) {
     throw new Error("Expected non-root integrity gate in scripts/nemoclaw-start.sh");
   }
-  return `${src.slice(start, end)}fi\n`;
+  return `${extractShellFunctionFromSource(src, "_nemoclaw_capture_epoch_realtime")}\n${src.slice(start, end)}fi\n`;
 }
 
 function rootIntegrityGateBlock(src: string): string {
@@ -3334,7 +3334,7 @@ describe("Telegram diagnostics (#2766)", () => {
       .slice(start, end)
       .replaceAll("/tmp/gateway.log", gatewayLog)
       .replaceAll("/tmp/auto-pair.log", autoPairLog);
-    return kind === "non-root" ? `${block}fi\n` : block;
+    return kind === "non-root" ? `${extractShellFunctionFromSource(src, "_nemoclaw_capture_epoch_realtime")}\n${block}fi\n` : block;
   }
 
   function runPreGatewaySetup(kind: EntryKind) {
