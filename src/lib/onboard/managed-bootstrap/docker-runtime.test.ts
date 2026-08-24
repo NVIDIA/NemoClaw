@@ -92,6 +92,27 @@ describe("Docker managed-bootstrap native fallback owner cleanup", () => {
     expect(runOpenshell).not.toHaveBeenCalled();
     expect(recoverUnfinished).not.toHaveBeenCalled();
   });
+
+  it("blocks fallback even if a mutable name would resolve to the expected ID", async () => {
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: "ID: sandbox-alpha\n",
+      stderr: "",
+    }));
+    const recoverUnfinished = vi.fn();
+
+    await expect(
+      completeDockerManagedNativeGpuFallbackOwnerCleanup({
+        providerId: "docker",
+        bootstrapIdentity: IDENTITY,
+        handoff,
+        runOpenshell,
+        recoverUnfinished,
+      }),
+    ).resolves.toBe(handoff);
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(recoverUnfinished).not.toHaveBeenCalled();
+  });
 });
 
 describe("Docker managed-bootstrap GPU probe diagnostics", () => {
