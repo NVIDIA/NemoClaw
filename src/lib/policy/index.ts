@@ -582,16 +582,16 @@ export interface PolicyMutationAuthority {
 }
 
 export const isPolicyAuthorityRefusalError = registry.isPolicyAuthorityRefusalError;
-export const isExternalPolicyAuthorityRefusalError =
-  registry.isExternalPolicyAuthorityRefusalError;
+export const isExternalPolicyAuthorityRefusalError = registry.isExternalPolicyAuthorityRefusalError;
 
-/** Inspect and, when needed, persist the authority that owns one sandbox policy. */
-export function inspectPolicyMutationAuthority(
+function inspectLivePolicyAuthority(
   sandboxName: string,
   operation: string,
   requestedGatewayName?: string,
-  requireRecordedAuthority = false,
-): PolicyMutationAuthority {
+): {
+  sandbox: ReturnType<typeof registry.getSandbox>;
+  authority: PolicyMutationAuthority;
+} {
   let sandbox: ReturnType<typeof registry.getSandbox>;
   try {
     sandbox = registry.getSandbox(sandboxName);
@@ -616,7 +616,8 @@ export function inspectPolicyMutationAuthority(
   }
   let gatewayName: string;
   try {
-    gatewayName = recordedGatewayName ?? requestedGatewayName ?? resolveSandboxGatewayName(undefined);
+    gatewayName =
+      recordedGatewayName ?? requestedGatewayName ?? resolveSandboxGatewayName(undefined);
   } catch {
     throw new registry.PolicyAuthorityRefusalError(
       `Refusing to ${operation}: the sandbox gateway is unavailable or invalid.`,
@@ -627,6 +628,42 @@ export function inspectPolicyMutationAuthority(
     gatewayName,
     runCaptureEx,
   });
+  return {
+    sandbox,
+    authority: {
+      authority: inspection.authority,
+      authorityRecordedNow: false,
+      gatewayName,
+      inspection,
+    },
+  };
+}
+
+/** Read live authority for Shields recovery without changing its durable owner. */
+export function inspectPolicyRecoveryAuthority(
+  sandboxName: string,
+  operation: string,
+  requestedGatewayName?: string,
+): PolicyMutationAuthority {
+  const live = inspectLivePolicyAuthority(sandboxName, operation, requestedGatewayName);
+  if (!live.sandbox) {
+    throw new registry.PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: sandbox policy authority is unavailable.`,
+    );
+  }
+  return live.authority;
+}
+
+/** Inspect and, when needed, persist the authority that owns one sandbox policy. */
+export function inspectPolicyMutationAuthority(
+  sandboxName: string,
+  operation: string,
+  requestedGatewayName?: string,
+  requireRecordedAuthority = false,
+): PolicyMutationAuthority {
+  const live = inspectLivePolicyAuthority(sandboxName, operation, requestedGatewayName);
+  const { sandbox } = live;
+  const { gatewayName, inspection } = live.authority;
   if (sandbox?.policyAuthority !== undefined) {
     try {
       registry.assertRecordedPolicyAuthority(
@@ -640,7 +677,7 @@ export function inspectPolicyMutationAuthority(
         inspection.authority === "externally-managed"
       ) {
         throw new registry.PolicyAuthorityRefusalError(
-          `${policyAuthorityError(error)} Ask the external policy authority to change the required entry.`,
+          `${policyAuthorityError(error)} The external policy authority must perform the requested policy mutation.`,
           inspection.authority,
         );
       }
@@ -691,7 +728,7 @@ export function assertNemoClawManagedPolicy(
   if (authority.authority === "nemoclaw-managed") return;
   throw new registry.PolicyAuthorityRefusalError(
     `Refusing to ${operation}: this sandbox policy is externally managed. ` +
-      "Ask the external policy authority to change the required entry.",
+      "The external policy authority must perform the requested policy mutation.",
     authority.authority,
   );
 }
@@ -3330,7 +3367,7 @@ function applyPermissivePolicy(sandboxName: string): void {
 
   console.log("  Applying permissive policy...");
   assertOpenshellResolvable();
-  if (!recheckNemoClawManagedPolicy(sandboxName, operation, authority)) return;
+  recheckPolicyMutationAuthority(sandboxName, operation, authority);
   setPolicyDocument(sandboxName, materializedPolicy, { gatewayName: authority.gatewayName });
   const observed = inspectPolicyAuthority(sandboxName, operation, authority.gatewayName, true);
   registry.assertRecordedPolicyAuthority(authority.authority, observed.authority, operation);
